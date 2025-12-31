@@ -184,7 +184,7 @@ test.describe('Error Recovery - Data Validation', () => {
   });
 
   test('should validate point data ranges', async ({ page }) => {
-    const DATASET = 'http://localhost:9000/packages/luxar/examples/build_example_structured.zarr';
+    const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
 
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
@@ -216,7 +216,7 @@ test.describe('Error Recovery - Data Validation', () => {
   });
 
   test('should handle malformed transform matrices', async ({ page }) => {
-    const DATASET = 'http://localhost:9000/packages/luxar/examples/transform_example.zarr';
+    const DATASET = 'http://localhost:9000/datasets/examples/transform_example.zarr';
 
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
@@ -248,7 +248,7 @@ test.describe('Error Recovery - Data Validation', () => {
 
 test.describe('Error Recovery - Memory Limits', () => {
   test('should handle reasonable memory usage', async ({ page }) => {
-    const DATASET = 'http://localhost:9000/packages/luxar/examples/dense_grid_5d_example.zarr';
+    const DATASET = 'http://localhost:9000/datasets/examples/dense_grid_5d_example.zarr';
 
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
@@ -275,7 +275,7 @@ test.describe('Error Recovery - Memory Limits', () => {
   });
 
   test('should report cache statistics for memory monitoring', async ({ page }) => {
-    const DATASET = 'http://localhost:9000/packages/luxar/examples/dense_grid_5d_example.zarr';
+    const DATASET = 'http://localhost:9000/datasets/examples/dense_grid_5d_example.zarr';
 
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);

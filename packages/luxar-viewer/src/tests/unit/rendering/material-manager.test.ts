@@ -82,25 +82,25 @@ describe('MaterialManager', () => {
       // Verify it's a real PointMaterial instance
       expect(material).toBeInstanceOf(PointMaterial);
 
-      // Test REAL vertex shader content (THREE.js provides position, we provide custom attributes)
-      expect(material.vertexShader).toContain('attribute float radius');
-      expect(material.vertexShader).toContain('attribute float sharpness');
-      expect(material.vertexShader).toContain('uniform float tanHalfFov');
-      expect(material.vertexShader).toContain('uniform vec2 resolution');
-      expect(material.vertexShader).toContain('varying vec3 vColor');
+      // Test REAL vertex shader content (GLSL ES 3.0 uses "in" instead of "attribute")
+      expect(material.vertexShader).toContain('in float radius');
+      expect(material.vertexShader).toContain('in float sharpness');
+      expect(material.vertexShader).toContain('uniform float pointSizeFactor');
+      expect(material.vertexShader).toContain('uniform float maxPointSize');
+      expect(material.vertexShader).toContain('out mediump vec3 vColor');
 
-      // Test REAL fragment shader content
-      expect(material.fragmentShader).toContain('uniform float hdrMultiplier');
-      expect(material.fragmentShader).toContain('uniform float opacity');
-      expect(material.fragmentShader).toContain('uniform float gamma');
-      expect(material.fragmentShader).toContain('gl_FragColor');
+      // Test REAL fragment shader content (GLSL ES 3.0 uses "out vec4 fragColor")
+      expect(material.fragmentShader).toContain('uniform mediump float hdrMultiplier');
+      expect(material.fragmentShader).toContain('uniform mediump float opacity');
+      expect(material.fragmentShader).toContain('uniform mediump float invGamma');
+      expect(material.fragmentShader).toContain('out vec4 fragColor');
 
-      // Test REAL uniforms initialized (with optimized tanHalfFov)
-      expect(material.uniforms.tanHalfFov).toBeDefined();
-      expect(material.uniforms.resolution).toBeDefined();
+      // Test REAL uniforms initialized (with pre-computed pointSizeFactor)
+      expect(material.uniforms.pointSizeFactor).toBeDefined();
+      expect(material.uniforms.maxPointSize).toBeDefined();
       expect(material.uniforms.hdrMultiplier).toBeDefined();
       expect(material.uniforms.opacity).toBeDefined();
-      expect(material.uniforms.gamma).toBeDefined();
+      expect(material.uniforms.invGamma).toBeDefined();
     });
 
     it('should respect custom opacity', () => {
@@ -120,7 +120,7 @@ describe('MaterialManager', () => {
         gamma: 2.2,
       });
 
-      expect(material.uniforms.gamma.value).toBe(2.2);
+      expect(material.userData.gamma).toBe(2.2); // gamma stored in userData
       expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.2);
     });
 
@@ -282,14 +282,13 @@ describe('MaterialManager', () => {
 
       manager.updateCameraParams(newFov, newResolution);
 
-      // Both materials should be updated with pre-computed tanHalfFov
-      expect(material1.uniforms.tanHalfFov.value).toBeCloseTo(Math.tan(newFov / 2), 10);
-      expect(material1.uniforms.resolution.value.x).toBe(1920);
-      expect(material1.uniforms.resolution.value.y).toBe(1080);
+      // Both materials should be updated with pre-computed pointSizeFactor and maxPointSize
+      const expectedPointSizeFactor = (2.0 * 1080) / Math.tan(newFov / 2);
+      expect(material1.uniforms.pointSizeFactor.value).toBeCloseTo(expectedPointSizeFactor, 5);
+      expect(material1.uniforms.maxPointSize.value).toBe(1080 * 0.5);
 
-      expect(material2.uniforms.tanHalfFov.value).toBeCloseTo(Math.tan(newFov / 2), 10);
-      expect(material2.uniforms.resolution.value.x).toBe(1920);
-      expect(material2.uniforms.resolution.value.y).toBe(1080);
+      expect(material2.uniforms.pointSizeFactor.value).toBeCloseTo(expectedPointSizeFactor, 5);
+      expect(material2.uniforms.maxPointSize.value).toBe(1080 * 0.5);
     });
 
     it('should update HDR multiplier for all materials', () => {
@@ -327,10 +326,10 @@ describe('MaterialManager', () => {
         gamma: 1.0,
       });
 
-      // Should have current params (with pre-computed tanHalfFov)
-      expect(material.uniforms.tanHalfFov.value).toBeCloseTo(Math.tan(fov / 2), 10);
-      expect(material.uniforms.resolution.value.x).toBe(2560);
-      expect(material.uniforms.resolution.value.y).toBe(1440);
+      // Should have current params (with pre-computed pointSizeFactor and maxPointSize)
+      const expectedPointSizeFactor = (2.0 * 1440) / Math.tan(fov / 2);
+      expect(material.uniforms.pointSizeFactor.value).toBeCloseTo(expectedPointSizeFactor, 5);
+      expect(material.uniforms.maxPointSize.value).toBe(1440 * 0.5);
     });
 
     it('should store current HDR multiplier for new materials (Bug Fix #11)', () => {
@@ -538,16 +537,16 @@ describe('MaterialManager', () => {
   // =========================================================================
 
   describe('Shader Content Verification', () => {
-    it('should generate shaders with world-space sizing', () => {
+    it('should generate shaders with optimized world-space sizing', () => {
       const material = manager.getPointMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
       });
 
-      // Verify world-space sizing formula
-      expect(material.vertexShader).toContain('2.0 * normalizedRadius * resolution.y');
-      expect(material.vertexShader).toContain('distance * tanHalfFov');
+      // Verify optimized world-space sizing formula using inversesqrt and pre-computed pointSizeFactor
+      expect(material.vertexShader).toContain('normalizedRadius * pointSizeFactor * invDistance');
+      expect(material.vertexShader).toContain('inversesqrt(dot(mvPosition.xyz, mvPosition.xyz))');
     });
 
     it('should generate shaders with HDR support', () => {
@@ -604,10 +603,10 @@ describe('MaterialManager', () => {
         gamma: 1.0,
       });
 
-      // Should have current params (with pre-computed tanHalfFov)
-      expect(material.uniforms.tanHalfFov.value).toBeCloseTo(Math.tan(fov / 2), 10);
-      expect(material.uniforms.resolution.value.x).toBe(3840);
-      expect(material.uniforms.resolution.value.y).toBe(2160);
+      // Should have current params (with pre-computed pointSizeFactor and maxPointSize)
+      const expectedPointSizeFactor = (2.0 * 2160) / Math.tan(fov / 2);
+      expect(material.uniforms.pointSizeFactor.value).toBeCloseTo(expectedPointSizeFactor, 5);
+      expect(material.uniforms.maxPointSize.value).toBe(2160 * 0.5);
     });
 
     it('should update existing materials when params change', () => {
@@ -617,15 +616,16 @@ describe('MaterialManager', () => {
         gamma: 1.0,
       });
 
-      const initialTanHalfFov = material.uniforms.tanHalfFov.value;
+      const initialPointSizeFactor = material.uniforms.pointSizeFactor.value;
 
       // Update params
       const newFov = Math.PI / 4;
       manager.updateCameraParams(newFov, new THREE.Vector2(1280, 720));
 
-      // Material should be updated with pre-computed tanHalfFov
-      expect(material.uniforms.tanHalfFov.value).toBeCloseTo(Math.tan(newFov / 2), 10);
-      expect(material.uniforms.tanHalfFov.value).not.toBe(initialTanHalfFov);
+      // Material should be updated with pre-computed pointSizeFactor
+      const expectedPointSizeFactor = (2.0 * 720) / Math.tan(newFov / 2);
+      expect(material.uniforms.pointSizeFactor.value).toBeCloseTo(expectedPointSizeFactor, 5);
+      expect(material.uniforms.pointSizeFactor.value).not.toBe(initialPointSizeFactor);
     });
   });
 
@@ -652,7 +652,7 @@ describe('MaterialManager', () => {
         gamma: 10.0, // Extreme value
       });
 
-      expect(material.uniforms.gamma.value).toBe(10.0);
+      expect(material.userData.gamma).toBe(10.0); // gamma stored in userData
       expect(material.uniforms.invGamma.value).toBeCloseTo(0.1);
     });
 

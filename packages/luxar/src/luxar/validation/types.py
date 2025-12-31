@@ -342,6 +342,7 @@ def is_transform_matrix(obj: Any) -> bool:
 
 
 # Import shared category validation (centralized to avoid duplication)
+from .category_validation import validate_categories
 
 
 def validate_category_indices(

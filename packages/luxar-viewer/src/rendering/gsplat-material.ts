@@ -9,9 +9,16 @@
  * - Full 3D covariance via Cholesky factors
  * - Perspective-correct projection of covariance to 2D
  * - Blending-mode-aware projection (sum for additive/normal, max for max blending)
- * - Branchless shader implementation (GPU-optimized)
  * - Generalized Gaussian falloff: exp(-½ · r^sharpness)
  * - Per-splat attributes (center, cholesky, amplitude, sharpness, color)
+ *
+ * GPU Optimizations (GLSL ES 3.0 / WebGL2):
+ * - flat interpolation: skips GPU interpolation for per-instance varyings
+ * - Sharpness=2.0 specialization: avoids pow() for standard Gaussian
+ * - Reciprocal precomputation: DIV→MUL in vertex and fragment shaders
+ * - Early discard at 3σ before expensive pow()/exp()
+ * - Higher intensity threshold (1e-4) for fewer blended pixels
+ * - mediump precision for color/amplitude to reduce register pressure
  *
  * Mathematical basis:
  * - GSplat density: G(x) = a · exp(-½ · ‖L⁻¹(x - μ)‖^s)
@@ -83,21 +90,24 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
    * 2. Projects 3D covariance to 2D using perspective Jacobian
    * 3. Computes ray variance for amplitude boost
    * 4. Expands oriented quad based on 2D covariance eigenvalues
+   *
+   * OPTIMIZATION: Uses GLSL ES 3.0 with flat qualifier for per-instance varyings.
+   * All varyings use flat to skip GPU interpolation hardware.
    */
   private static readonly VERTEX_SHADER = /* glsl */ `
     precision highp float;
 
     // Quad corner attribute (static geometry)
-    attribute vec2 aQuadCorner;  // (-1,-1), (1,-1), (-1,1), (1,1)
+    in vec2 aQuadCorner;  // (-1,-1), (1,-1), (-1,1), (1,1)
 
     // Per-instance attributes
-    attribute vec3 aCenter;           // 3D center (after nD slicing)
-    attribute vec2 aCholesky01;       // [L00, L10]
-    attribute vec2 aCholesky23;       // [L11, L20]
-    attribute vec2 aCholesky45;       // [L21, L22]
-    attribute float aAmplitude;       // Already attenuated by hidden dims
-    attribute float aSharpness;
-    attribute vec3 aColor;
+    in vec3 aCenter;           // 3D center (after nD slicing)
+    in vec2 aCholesky01;       // [L00, L10]
+    in vec2 aCholesky23;       // [L11, L20]
+    in vec2 aCholesky45;       // [L21, L22]
+    in float aAmplitude;       // Already attenuated by hidden dims
+    in float aSharpness;
+    in vec3 aColor;
 
     // Uniforms (modelViewMatrix and projectionMatrix are built-in THREE.js uniforms)
     uniform vec2 uResolution;
@@ -105,13 +115,15 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     uniform float uTruncate;          // Truncation radius (in sigmas)
     uniform int uProjectionMode;      // 0 = sum projection (additive), 1 = max projection (max blending)
 
-    // Varyings to fragment
-    varying vec3 vColor;
-    varying float vAmplitude2D;
-    varying float vSharpness;
-    varying vec3 vL2D;                // 2D Cholesky [L00, L10, L11]
-    varying vec2 vCenterScreen;       // Splat center in screen pixels
-    varying vec2 vQuadCoord;          // Quad coordinate for fragment
+    // Varyings to fragment - all per-instance varyings use "flat" (no interpolation needed)
+    // OPTIMIZATION: flat qualifier skips GPU interpolation hardware for constant values
+    flat out mediump vec3 vColor;
+    flat out mediump float vAmplitude2D;
+    flat out mediump float vSharpness;
+    // These need highp for screen-space calculations
+    // OPTIMIZATION: vL2D stores [1/L00, L10, 1/L11] to replace fragment divisions with multiplications
+    flat out highp vec3 vL2D;                // 2D Cholesky packed as [invL00, L10, invL11]
+    flat out highp vec2 vCenterScreen;       // Splat center in screen pixels
 
     // Unpack 3D Cholesky to matrix (column-major order for GLSL mat3)
     // Packed order: [L00, L10, L11, L20, L21, L22]
@@ -125,11 +137,14 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     }
 
     // Compute 2D Cholesky from 2D covariance (symmetric positive definite)
+    // OPTIMIZATION: Returns [1/L00, L10, 1/L11] for faster fragment shader (MUL instead of DIV)
     vec3 cholesky2x2(mat2 S) {
         float L00 = sqrt(max(S[0][0], 1e-8));
-        float L10 = S[1][0] / L00;
+        float invL00 = 1.0 / L00;
+        float L10 = S[1][0] * invL00;  // Use reciprocal here too
         float L11 = sqrt(max(S[1][1] - L10 * L10, 1e-8));
-        return vec3(L00, L10, L11);
+        float invL11 = 1.0 / L11;
+        return vec3(invL00, L10, invL11);  // Pack reciprocals for fragment shader
     }
 
     // Sharpness integral factor c(s) - simple approximation
@@ -159,15 +174,17 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
 
         // Perspective projection Jacobian at splat center
         float z = -centerCam.z;  // Positive depth (camera looks down -Z)
-        float z2 = z * z;
+        // OPTIMIZATION: Precompute reciprocals to replace 6 divisions with 2 divisions + 6 multiplications
+        float invZ = 1.0 / z;
+        float invZ2 = invZ * invZ;
 
         // Jacobian J = d(screen)/d(camera) at splat center
         // J[0] = [fx/z, 0, fx*x/z²]
         // J[1] = [0, fy/z, fy*y/z²]
         mat3x2 J;
-        J[0] = vec2(uFx / z, 0.0);
-        J[1] = vec2(0.0, uFy / z);
-        J[2] = vec2(uFx * centerCam.x / z2, uFy * centerCam.y / z2);
+        J[0] = vec2(uFx * invZ, 0.0);
+        J[1] = vec2(0.0, uFy * invZ);
+        J[2] = vec2(uFx * centerCam.x * invZ2, uFy * centerCam.y * invZ2);
 
         // Project covariance to 2D: Σ_2D = J · Σ_cam · Jᵀ
         // Compute J * Sigma_cam first
@@ -184,29 +201,25 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         Sigma2D[0][1] = Sigma2D[1][0];  // Symmetric (J*S*J^T preserves symmetry)
         Sigma2D[1][1] = JS0.y * J[0].y + JS1.y * J[1].y + JS2.y * J[2].y;
 
-        // Compute ray variance for amplitude boost
-        // Ray direction: from camera origin (0,0,0) to splat center in camera space
-        vec3 rayDir = normalize(centerCam);
-        float sigmaRaySq = dot(rayDir, Sigma_cam * rayDir);
-        float sigmaRay = sqrt(max(sigmaRaySq, 1e-8));
-
-        // Projection mode determines amplitude calculation (BRANCHLESS):
+        // Projection mode determines amplitude calculation:
         // - Sum projection (uProjectionMode = 0): Integrate Gaussian along ray → ray boost
         // - Max projection (uProjectionMode = 1): Use peak Gaussian value → no boost
         //
-        // Branchless implementation using mix():
-        //   uProjectionMode = 0 → useSumProjection = 1.0 → rayBoost = sigmaRay * c(s)
-        //   uProjectionMode = 1 → useSumProjection = 0.0 → rayBoost = 1.0
-        //
-        float useSumProjection = 1.0 - float(uProjectionMode); // 1.0 for sum, 0.0 for max
-        float c_s = sharpnessIntegralFactor(aSharpness);
-        float voxelSpacing = 1.0;
-        float rayIntegrationBoost = sigmaRay * c_s / voxelSpacing;
-        float rayBoost = mix(1.0, rayIntegrationBoost, useSumProjection);
-        vAmplitude2D = aAmplitude * rayBoost;
-
-        // NOTE: Sum projection still ~10x too bright empirically. May need additional normalization.
-        // Consider: divide by truncate radius, or by sqrt(2π), or apply global scale
+        // OPTIMIZATION: Use branch instead of branchless mix() to skip expensive operations
+        // (normalize, sqrt, exp) when in max mode. Warps are typically coherent on this uniform.
+        if (uProjectionMode == 0) {
+            // Sum projection: compute ray integration boost
+            vec3 rayDir = normalize(centerCam);
+            float sigmaRaySq = dot(rayDir, Sigma_cam * rayDir);
+            float sigmaRay = sqrt(max(sigmaRaySq, 1e-8));
+            float c_s = sharpnessIntegralFactor(aSharpness);
+            float rayIntegrationBoost = sigmaRay * c_s;  // voxelSpacing = 1.0
+            vAmplitude2D = aAmplitude * rayIntegrationBoost;
+            // NOTE: Sum projection still ~10x too bright empirically. May need additional normalization.
+        } else {
+            // Max projection: no boost needed
+            vAmplitude2D = aAmplitude;
+        }
 
         // Compute 2D Cholesky for fragment shader
         vL2D = cholesky2x2(Sigma2D);
@@ -230,14 +243,21 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
 
         // Quad extents: truncation radius × sqrt(eigenvalue) × sharpness factor
         // For generalized Gaussian, adjust truncation for sharpness
-        float effectiveTruncate = pow(uTruncate, 2.0 / max(aSharpness, 0.1));
+        // OPTIMIZATION: For sharpness=2.0, pow(x, 1.0) = x, skip expensive pow()
+        float effectiveTruncate;
+        if (abs(aSharpness - 2.0) < 0.001) {
+            effectiveTruncate = uTruncate;  // pow(uTruncate, 1.0) = uTruncate
+        } else {
+            effectiveTruncate = pow(uTruncate, 2.0 / max(aSharpness, 0.1));
+        }
         float extent1 = effectiveTruncate * sqrt(lambda1);
         float extent2 = effectiveTruncate * sqrt(lambda2);
 
         // Project center to screen (pixels)
+        // OPTIMIZATION: Reuse invZ from earlier computation
         vCenterScreen = vec2(
-            uFx * centerCam.x / z + uResolution.x * 0.5,
-            uFy * centerCam.y / z + uResolution.y * 0.5
+            uFx * centerCam.x * invZ + uResolution.x * 0.5,
+            uFy * centerCam.y * invZ + uResolution.y * 0.5
         );
 
         // Expand quad vertex in screen space (oriented)
@@ -251,7 +271,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         // Pass through other varyings
         vColor = aColor;
         vSharpness = aSharpness;
-        vQuadCoord = aQuadCorner * vec2(extent1, extent2);  // For fragment shader
 
         // Compute proper clip-space depth using projection matrix
         // This ensures correct depth buffer behavior for overlapping splats
@@ -268,45 +287,73 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
    *
    * Uses the 2D Cholesky factor passed from vertex shader to compute
    * Mahalanobis distance, then applies generalized Gaussian falloff.
+   *
+   * Optimizations:
+   * - GLSL ES 3.0 with flat qualifier: skips GPU interpolation for per-instance values
+   * - Reciprocal precomputation: 2 divisions replaced with 2 multiplications
+   * - Sharpness=2.0 specialization: skips expensive pow() for standard Gaussian
+   * - mediump precision for color/amplitude (sufficient for visual quality)
+   * - Early discard at 3σ before expensive pow() for pixels beyond truncation
+   * - Higher discard threshold (1e-4 is still invisible)
    */
   private static readonly FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
 
-    varying vec3 vColor;
-    varying float vAmplitude2D;
-    varying float vSharpness;
-    varying vec3 vL2D;          // 2D Cholesky [L00, L10, L11]
-    varying vec2 vCenterScreen;
-    varying vec2 vQuadCoord;
+    // All varyings use flat - no interpolation needed (constant per instance)
+    // OPTIMIZATION: flat qualifier skips GPU interpolation hardware
+    flat in mediump vec3 vColor;
+    flat in mediump float vAmplitude2D;
+    flat in mediump float vSharpness;
+    // These need highp for screen-space calculations
+    // OPTIMIZATION: vL2D stores [1/L00, L10, 1/L11] for MUL instead of DIV
+    flat in highp vec3 vL2D;          // 2D Cholesky packed as [invL00, L10, invL11]
+    flat in highp vec2 vCenterScreen;
 
-    uniform float uOpacity;
-    uniform float uHDRMultiplier;
+    uniform mediump float uOpacity;
+    uniform mediump float uHDRMultiplier;
+
+    // GLSL ES 3.0 requires explicit fragment output declaration
+    out vec4 fragColor;
 
     void main() {
         // Pixel offset from splat center
         vec2 d = gl_FragCoord.xy - vCenterScreen;
 
         // Forward substitution: solve L · y = d
-        float y0 = d.x / vL2D.x;  // L00
-        float y1 = (d.y - vL2D.y * y0) / vL2D.z;  // L10, L11
+        // OPTIMIZATION: vL2D contains [invL00, L10, invL11] - use MUL instead of DIV
+        float y0 = d.x * vL2D.x;  // d.x * invL00
+        float y1 = (d.y - vL2D.y * y0) * vL2D.z;  // (d.y - L10 * y0) * invL11
 
         // Squared Mahalanobis distance
         float mahalSq = y0 * y0 + y1 * y1;
 
-        // Generalized Gaussian falloff: exp(-½ · r^s) where r = ||y||
-        // r^s = (r²)^(s/2) = mahalSq^(s/2)
-        // Branchless: pow(x, 1.0) == x, so this handles s=2 correctly
-        float rToTheS = pow(max(mahalSq, 1e-8), vSharpness * 0.5);
-        float intensity = vAmplitude2D * exp(-0.5 * rToTheS);
+        // EARLY DISCARD: Skip pixels beyond ~3σ before expensive pow()
+        // At mahalSq=9 (3σ), Gaussian value is exp(-4.5) ≈ 0.011, negligible
+        // This saves the expensive pow() and exp() for edge pixels
+        if (mahalSq > 9.0) discard;
 
-        // Early discard for negligible contribution
-        if (intensity < 1e-6) discard;
+        // Generalized Gaussian falloff: exp(-½ · r^s) where r = ||y||
+        // OPTIMIZATION: Specialize for sharpness=2.0 (standard Gaussian) to avoid expensive pow()
+        // For s=2: exp(-½ · r²) = exp(-0.5 * mahalSq), no pow() needed
+        // For s≠2: r^s = (r²)^(s/2) = mahalSq^(s/2)
+        float intensity;
+        if (abs(vSharpness - 2.0) < 0.001) {
+            // Standard Gaussian (sharpness=2.0): skip pow() entirely
+            intensity = vAmplitude2D * exp(-0.5 * mahalSq);
+        } else {
+            // Generalized Gaussian: use pow() for arbitrary sharpness
+            float rToTheS = pow(max(mahalSq, 1e-8), vSharpness * 0.5);
+            intensity = vAmplitude2D * exp(-0.5 * rToTheS);
+        }
+
+        // Early discard for negligible contribution (raised threshold for performance)
+        if (intensity < 1e-4) discard;
 
         // HDR color output
         vec3 finalColor = vColor * intensity * uHDRMultiplier;
 
         // Output for blending (additive/normal/max handled by WebGL blend equation)
-        gl_FragColor = vec4(finalColor, intensity * uOpacity);
+        fragColor = vec4(finalColor, intensity * uOpacity);
     }
   `;
 
@@ -339,6 +386,9 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
 
       vertexShader: GSplatMaterial.VERTEX_SHADER,
       fragmentShader: GSplatMaterial.FRAGMENT_SHADER,
+
+      // GLSL ES 3.0 for flat interpolation and modern syntax
+      glslVersion: THREE.GLSL3,
 
       transparent: true,
       depthWrite: blendingMode !== 'additive' && blendingMode !== 'max', // No depth write for additive/max

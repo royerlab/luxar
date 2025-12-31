@@ -13,11 +13,9 @@
 import { test, expect } from '@playwright/test';
 import { waitForLuxarReady, waitForDataLoaded, waitForPointsLoaded } from './helpers';
 
-const DATASET_3D = 'http://localhost:9000/packages/luxar/examples/radius_basic_example.zarr';
-const DATASET_5D =
-  'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr';
-const DATASET_LARGE =
-  'http://localhost:9000/packages/luxar/examples/performance_benchmark_example.zarr';
+const DATASET_3D = 'http://localhost:9000/datasets/examples/radius_basic_example.zarr';
+const DATASET_5D = 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.zarr';
+const DATASET_LARGE = 'http://localhost:9000/datasets/examples/performance_benchmark_example.zarr';
 
 test.describe('Worker Integration E2E', () => {
   test.beforeEach(async ({ page }) => {

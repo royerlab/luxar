@@ -92,17 +92,20 @@ describe('GSplatMaterial', () => {
     it('should have correct vertex shader structure', () => {
       const material = new GSplatMaterial();
 
-      // Check for quad corner attribute
-      expect(material.vertexShader).toContain('attribute vec2 aQuadCorner');
+      // Check for GLSL ES 3.0 syntax: "in" for attributes, "flat out" for varyings
+      // (glslVersion: THREE.GLSL3 is set in constructor, THREE.js adds #version 300 es)
+
+      // Check for quad corner attribute (GLSL ES 3.0 uses "in" instead of "attribute")
+      expect(material.vertexShader).toContain('in vec2 aQuadCorner');
 
       // Check for per-instance attributes
-      expect(material.vertexShader).toContain('attribute vec3 aCenter');
-      expect(material.vertexShader).toContain('attribute vec2 aCholesky01');
-      expect(material.vertexShader).toContain('attribute vec2 aCholesky23');
-      expect(material.vertexShader).toContain('attribute vec2 aCholesky45');
-      expect(material.vertexShader).toContain('attribute float aAmplitude');
-      expect(material.vertexShader).toContain('attribute float aSharpness');
-      expect(material.vertexShader).toContain('attribute vec3 aColor');
+      expect(material.vertexShader).toContain('in vec3 aCenter');
+      expect(material.vertexShader).toContain('in vec2 aCholesky01');
+      expect(material.vertexShader).toContain('in vec2 aCholesky23');
+      expect(material.vertexShader).toContain('in vec2 aCholesky45');
+      expect(material.vertexShader).toContain('in float aAmplitude');
+      expect(material.vertexShader).toContain('in float aSharpness');
+      expect(material.vertexShader).toContain('in vec3 aColor');
 
       // Check for uniforms
       expect(material.vertexShader).toContain('uniform vec2 uResolution');
@@ -110,12 +113,12 @@ describe('GSplatMaterial', () => {
       expect(material.vertexShader).toContain('uniform float uTruncate');
       expect(material.vertexShader).toContain('uniform int uProjectionMode');
 
-      // Check for varyings
-      expect(material.vertexShader).toContain('varying vec3 vColor');
-      expect(material.vertexShader).toContain('varying float vAmplitude2D');
-      expect(material.vertexShader).toContain('varying float vSharpness');
-      expect(material.vertexShader).toContain('varying vec3 vL2D');
-      expect(material.vertexShader).toContain('varying vec2 vCenterScreen');
+      // Check for flat varyings (GLSL ES 3.0 uses "flat out" for non-interpolated values)
+      expect(material.vertexShader).toContain('flat out mediump vec3 vColor');
+      expect(material.vertexShader).toContain('flat out mediump float vAmplitude2D');
+      expect(material.vertexShader).toContain('flat out mediump float vSharpness');
+      expect(material.vertexShader).toContain('flat out highp vec3 vL2D');
+      expect(material.vertexShader).toContain('flat out highp vec2 vCenterScreen');
     });
 
     it('should have Cholesky unpacking function', () => {
@@ -126,13 +129,18 @@ describe('GSplatMaterial', () => {
       expect(material.vertexShader).toContain('return mat3(');
     });
 
-    it('should have 2D Cholesky computation', () => {
+    it('should have 2D Cholesky computation with reciprocal optimization', () => {
       const material = new GSplatMaterial();
 
       expect(material.vertexShader).toContain('vec3 cholesky2x2(mat2 S)');
       expect(material.vertexShader).toContain('float L00 = sqrt');
-      expect(material.vertexShader).toContain('float L10 = S[1][0] / L00');
+      // OPTIMIZATION: Uses reciprocal multiplication instead of division
+      expect(material.vertexShader).toContain('float invL00 = 1.0 / L00');
+      expect(material.vertexShader).toContain('float L10 = S[1][0] * invL00');
       expect(material.vertexShader).toContain('float L11 = sqrt');
+      expect(material.vertexShader).toContain('float invL11 = 1.0 / L11');
+      // Returns reciprocals for faster fragment shader
+      expect(material.vertexShader).toContain('return vec3(invL00, L10, invL11)');
     });
 
     it('should have sharpness integral factor function', () => {
@@ -178,26 +186,35 @@ describe('GSplatMaterial', () => {
     it('should have correct fragment shader with Mahalanobis distance', () => {
       const material = new GSplatMaterial();
 
-      // Check for uniforms
-      expect(material.fragmentShader).toContain('uniform float uOpacity');
-      expect(material.fragmentShader).toContain('uniform float uHDRMultiplier');
+      // Check for uniforms (mediump for GPU optimization)
+      expect(material.fragmentShader).toContain('uniform mediump float uOpacity');
+      expect(material.fragmentShader).toContain('uniform mediump float uHDRMultiplier');
 
       // Check for forward substitution to solve L·y = d
-      expect(material.fragmentShader).toContain('float y0 = d.x / vL2D.x');
-      expect(material.fragmentShader).toContain('float y1 = (d.y - vL2D.y * y0) / vL2D.z');
+      // OPTIMIZATION: Uses multiplication with precomputed reciprocals instead of division
+      expect(material.fragmentShader).toContain('float y0 = d.x * vL2D.x'); // MUL with invL00
+      expect(material.fragmentShader).toContain('float y1 = (d.y - vL2D.y * y0) * vL2D.z'); // MUL with invL11
 
       // Check for Mahalanobis distance
       expect(material.fragmentShader).toContain('float mahalSq = y0 * y0 + y1 * y1');
 
-      // Check for generalized Gaussian falloff
+      // Check for early discard at 3σ
+      expect(material.fragmentShader).toContain('if (mahalSq > 9.0) discard');
+
+      // Check for generalized Gaussian falloff (in else branch for non-standard sharpness)
       expect(material.fragmentShader).toContain('pow(max(mahalSq, 1e-8), vSharpness * 0.5)');
       expect(material.fragmentShader).toContain('exp(-0.5 * rToTheS)');
+
+      // Check for sharpness=2.0 optimization (standard Gaussian fast path)
+      expect(material.fragmentShader).toContain('if (abs(vSharpness - 2.0) < 0.001)');
+      expect(material.fragmentShader).toContain('intensity = vAmplitude2D * exp(-0.5 * mahalSq)');
     });
 
     it('should discard negligible contributions', () => {
       const material = new GSplatMaterial();
 
-      expect(material.fragmentShader).toContain('if (intensity < 1e-6) discard');
+      // Higher threshold (1e-4) for better performance while still invisible
+      expect(material.fragmentShader).toContain('if (intensity < 1e-4) discard');
     });
   });
 

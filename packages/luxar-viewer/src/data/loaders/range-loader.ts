@@ -285,9 +285,16 @@ export class RangeLoader {
       : (lutMetadata.lut as number[]);
 
     let destOffset = 0;
+    const shape = array.shape;
 
     for (const range of ranges) {
-      const sliceSpec: zarr.Slice[] = [slice(range.start, range.end)];
+      // Handle both 1D and 2D LUT-encoded arrays:
+      // - 1D: row mode with one index per row (e.g., colors [N])
+      // - 2D: scalar mode with one index per element (e.g., cholesky_factors [N, K])
+      const sliceSpec: zarr.Slice[] =
+        shape.length === 2
+          ? [slice(range.start, range.end), slice(null)]
+          : [slice(range.start, range.end)];
 
       // Main thread fetches indices
       const chunkData = await get(array, sliceSpec);

@@ -21,7 +21,7 @@ test.describe('Scene E2E Tests', () => {
 
       // Load hierarchy_example.zarr which has hierarchical transforms
       await page.goto(
-        'http://localhost:5173/?debug&src=http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr'
+        'http://localhost:5173/?debug&src=http://localhost:9000/datasets/examples/hierarchy_example.zarr'
       );
 
       // Wait for scene to initialize
@@ -72,7 +72,7 @@ test.describe('Scene E2E Tests', () => {
     test('should compose parent-child transforms correctly', async ({ page }) => {
       // Load hierarchy dataset
       await page.goto(
-        'http://localhost:5173/?debug&src=http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr'
+        'http://localhost:5173/?debug&src=http://localhost:9000/datasets/examples/hierarchy_example.zarr'
       );
 
       await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, {
@@ -119,7 +119,7 @@ test.describe('Scene E2E Tests', () => {
     test('should handle transform_example dataset', async ({ page }) => {
       // Load transform_example.zarr
       await page.goto(
-        'http://localhost:5173/?debug&src=http://localhost:9000/packages/luxar/examples/transform_example.zarr'
+        'http://localhost:5173/?debug&src=http://localhost:9000/datasets/examples/transform_example.zarr'
       );
 
       await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, {
@@ -149,7 +149,7 @@ test.describe('Scene E2E Tests', () => {
   test.describe('Scene Graph Composition', () => {
     test('should handle multiple objects in scene', async ({ page }) => {
       await page.goto(
-        'http://localhost:5173/?debug&src=http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr'
+        'http://localhost:5173/?debug&src=http://localhost:9000/datasets/examples/hierarchy_example.zarr'
       );
 
       await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, {
@@ -175,7 +175,7 @@ test.describe('Scene E2E Tests', () => {
 
     test('should preserve scene hierarchy structure', async ({ page }) => {
       await page.goto(
-        'http://localhost:5173/?debug&src=http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr'
+        'http://localhost:5173/?debug&src=http://localhost:9000/datasets/examples/hierarchy_example.zarr'
       );
 
       await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, {
@@ -209,7 +209,7 @@ test.describe('Scene E2E Tests', () => {
   test.describe('Metadata Propagation', () => {
     test('should load scene dimensions from dataset', async ({ page }) => {
       await page.goto(
-        'http://localhost:5173/?debug&src=http://localhost:9000/packages/luxar/examples/dimension_navigation_example.zarr'
+        'http://localhost:5173/?debug&src=http://localhost:9000/datasets/examples/dimension_navigation_example.zarr'
       );
 
       // Wait for scene AND data to load (dimensions populated when data loads)
@@ -255,7 +255,7 @@ test.describe('Scene E2E Tests', () => {
 
     test('should load rendering properties from dataset', async ({ page }) => {
       await page.goto(
-        'http://localhost:5173/?debug&src=http://localhost:9000/packages/luxar/examples/rendering_attributes_example.zarr'
+        'http://localhost:5173/?debug&src=http://localhost:9000/datasets/examples/rendering_attributes_example.zarr'
       );
 
       await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, {
