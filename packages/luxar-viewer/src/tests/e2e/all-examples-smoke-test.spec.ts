@@ -22,9 +22,9 @@ import {
 } from './helpers';
 
 // Base URL for examples (served by HTTP server on port 9000)
-const EXAMPLES_BASE = 'http://localhost:9000/packages/luxar/examples';
+const EXAMPLES_BASE = 'http://localhost:9000/datasets/examples';
 
-// ALL example datasets (auto-discovered from packages/luxar/examples/)
+// ALL example datasets (auto-discovered from datasets/examples/)
 const ALL_EXAMPLES = [
   'build_example_manual.zarr',
   'build_example_structured.zarr',

@@ -17,11 +17,11 @@ import { test, expect } from '@playwright/test';
 import { waitForLuxarReady, getLuxarState } from './helpers';
 
 const DATASETS = {
-  basic: 'http://localhost:9000/packages/luxar/examples/build_example_structured.zarr',
-  hierarchy: 'http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr',
-  transforms: 'http://localhost:9000/packages/luxar/examples/transform_example.zarr',
-  nD5D: 'http://localhost:9000/packages/luxar/examples/dense_grid_5d_example.zarr',
-  nD4D: 'http://localhost:9000/packages/luxar/examples/dimension_navigation_example.zarr',
+  basic: 'http://localhost:9000/datasets/examples/build_example_structured.zarr',
+  hierarchy: 'http://localhost:9000/datasets/examples/hierarchy_example.zarr',
+  transforms: 'http://localhost:9000/datasets/examples/transform_example.zarr',
+  nD5D: 'http://localhost:9000/datasets/examples/dense_grid_5d_example.zarr',
+  nD4D: 'http://localhost:9000/datasets/examples/dimension_navigation_example.zarr',
 };
 
 test.describe('Python→TypeScript Integration', () => {

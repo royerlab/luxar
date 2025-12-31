@@ -65,35 +65,37 @@ export class LineMaterial extends THREE.ShaderMaterial {
    * - aSegmentLength: 3D segment length (for cap factor)
    * - aStartClipped, aEndClipped: Whether endpoints were clipped (force capFactor=1.0)
    */
+  // GLSL ES 3.0 for consistency with other materials
+  // Note: varyings need smooth interpolation (not flat) as they vary across the quad
   private static readonly VERTEX_SHADER = /* glsl */ `
     precision highp float;
 
     // Static geometry attribute (per quad vertex)
-    attribute vec2 aQuadCorner;  // (-1,-1), (1,-1), (-1,1), (1,1)
+    in vec2 aQuadCorner;  // (-1,-1), (1,-1), (-1,1), (1,1)
 
     // Instanced attributes (per segment)
-    attribute vec3 aStartPos;
-    attribute vec3 aEndPos;
-    attribute vec3 aStartColor;
-    attribute vec3 aEndColor;
-    attribute float aStartWidth;
-    attribute float aEndWidth;
-    attribute float aStartSharpness;
-    attribute float aEndSharpness;
-    attribute float aSegmentLength;
-    attribute float aStartClipped;
-    attribute float aEndClipped;
+    in vec3 aStartPos;
+    in vec3 aEndPos;
+    in vec3 aStartColor;
+    in vec3 aEndColor;
+    in float aStartWidth;
+    in float aEndWidth;
+    in float aStartSharpness;
+    in float aEndSharpness;
+    in float aSegmentLength;
+    in float aStartClipped;
+    in float aEndClipped;
 
     // Uniforms
     uniform float uFOV;
     uniform vec2 uResolution;
 
-    // Varyings to fragment shader
-    varying vec3 vColor;
-    varying float vSharpness;
-    varying float vPerpNorm;  // Signed: -1 at bottom edge, +1 at top edge
-    varying float vCapFactor; // 0.5 at true endpoints, 1.0 in body
-    varying float vPixelWidth; // Line width in pixels (for anti-aliasing)
+    // Varyings to fragment shader (smooth interpolation needed)
+    out vec3 vColor;
+    out float vSharpness;
+    out float vPerpNorm;  // Signed: -1 at bottom edge, +1 at top edge
+    out float vCapFactor; // 0.5 at true endpoints, 1.0 in body
+    out float vPixelWidth; // Line width in pixels (for anti-aliasing)
 
     void main() {
       // Position along segment: 0 = start, 1 = end
@@ -178,17 +180,20 @@ export class LineMaterial extends THREE.ShaderMaterial {
    * - Smooth intensity falloff from centerline to edge
    * - Correct half-intensity at endpoints for seamless joints
    */
+  // GLSL ES 3.0 for consistency with other materials
   private static readonly FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
 
     uniform float uHDRMultiplier;
     uniform float uOpacity;
 
-    varying vec3 vColor;
-    varying float vSharpness;
-    varying float vPerpNorm;  // Interpolated: 0 at centerline, ±1 at edges
-    varying float vCapFactor; // 0.5 at endpoints, 1.0 in body
-    varying float vPixelWidth; // Raw line width in pixels (before minimum clamping)
+    in vec3 vColor;
+    in float vSharpness;
+    in float vPerpNorm;  // Interpolated: 0 at centerline, ±1 at edges
+    in float vCapFactor; // 0.5 at endpoints, 1.0 in body
+    in float vPixelWidth; // Raw line width in pixels (before minimum clamping)
+
+    out vec4 fragColor;
 
     void main() {
       // Compute distance from centerline (0 to 1)
@@ -221,7 +226,7 @@ export class LineMaterial extends THREE.ShaderMaterial {
       // HDR output (gamma correction in post-processing)
       vec3 finalColor = vColor * intensity * uHDRMultiplier;
 
-      gl_FragColor = vec4(finalColor, intensity * uOpacity);
+      fragColor = vec4(finalColor, intensity * uOpacity);
     }
   `;
 
@@ -251,6 +256,9 @@ export class LineMaterial extends THREE.ShaderMaterial {
 
       vertexShader: LineMaterial.VERTEX_SHADER,
       fragmentShader: LineMaterial.FRAGMENT_SHADER,
+
+      // GLSL ES 3.0 for consistency with other materials
+      glslVersion: THREE.GLSL3,
 
       transparent: true,
       depthWrite: blendingMode !== 'additive' && blendingMode !== 'max', // No depth write for additive/max

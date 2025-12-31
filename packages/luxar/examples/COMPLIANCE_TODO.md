@@ -92,7 +92,7 @@ Use cases:
 
 **Additional fixes:**
 - Add docstrings to `get_zarr_size()` and `create_dataset_with_encoding_mode()`
-- Change output from "delme/" to "packages/luxar/examples/"
+- Change output from "delme/" to use `get_examples_output_dir()` (outputs to `datasets/examples/`)
 - Add comparison table in output
 - Add specific recommendations for each mode
 

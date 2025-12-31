@@ -15,9 +15,9 @@ import { waitForLuxarReady, getLuxarState } from './helpers';
 
 // Dataset paths (served from Python HTTP server on port 8001)
 const DATASETS = {
-  nav: 'http://localhost:9000/packages/luxar/examples/dimension_navigation_example.zarr',
-  grid5D: 'http://localhost:9000/packages/luxar/examples/dense_grid_5d_example.zarr',
-  build: 'http://localhost:9000/packages/luxar/examples/build_example_structured.zarr',
+  nav: 'http://localhost:9000/datasets/examples/dimension_navigation_example.zarr',
+  grid5D: 'http://localhost:9000/datasets/examples/dense_grid_5d_example.zarr',
+  build: 'http://localhost:9000/datasets/examples/build_example_structured.zarr',
 };
 
 test.describe('Performance - Load Times', () => {

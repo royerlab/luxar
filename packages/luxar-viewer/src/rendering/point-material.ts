@@ -27,19 +27,23 @@ export interface PointMaterialConfig {
  */
 export class PointMaterial extends THREE.ShaderMaterial {
   // Static vertex shader with CORRECT world-space sizing formula
+  // GLSL ES 3.0 for consistency with other materials
+  // OPTIMIZATIONS:
+  // - inversesqrt() instead of length() + divide (native GPU instruction)
+  // - Pre-computed pointSizeFactor uniform (2.0 * resolution.y / tanHalfFov)
   private static readonly VERTEX_SHADER = /* glsl */ `
     precision highp float;
 
-    attribute float radius;
-    attribute float sharpness;
-    uniform float tanHalfFov; // Pre-computed tan(fov/2) for performance
-    uniform vec2 resolution;
+    in float radius;
+    in float sharpness;
+    uniform float pointSizeFactor; // Pre-computed: 2.0 * resolution.y / tanHalfFov
+    uniform float maxPointSize;    // Pre-computed: resolution.y * 0.5
     uniform float radiusScale;
     uniform float sharpnessScale;
 
-    varying vec3 vColor;
-    varying float vSharpness;
-    varying float vRadius; // Pass radius to fragment for zero-check
+    out mediump vec3 vColor;
+    out mediump float vSharpness;
+    out highp float vRadius; // Pass radius to fragment for zero-check (needs precision)
 
     void main() {
       // Pass vertex color to fragment shader
@@ -53,16 +57,16 @@ export class PointMaterial extends THREE.ShaderMaterial {
       vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
       gl_Position = projectionMatrix * mvPosition;
 
-      // CORRECT world-space point sizing formula
-      // This ensures two points with radius r at distance 2r will just touch
-      float distance = length(mvPosition.xyz);
       // Apply radius scale for dtype normalization (e.g., uint8 needs 1/255 scale)
       float normalizedRadius = radius * radiusScale;
       vRadius = normalizedRadius; // Pass to fragment shader
 
-      // Calculate base point size using pre-computed tanHalfFov (saves tan() per vertex)
-      float basePointSize = 2.0 * normalizedRadius * resolution.y / (distance * tanHalfFov);
-      
+      // OPTIMIZED world-space point sizing:
+      // - inversesqrt is a native GPU instruction (faster than sqrt + divide)
+      // - pointSizeFactor pre-computed in JS: 2.0 * resolution.y / tanHalfFov
+      float invDistance = inversesqrt(dot(mvPosition.xyz, mvPosition.xyz));
+      float basePointSize = normalizedRadius * pointSizeFactor * invDistance;
+
       // Sharpness compensation based on visibility threshold
       // For falloff function f(r) = (1-r)^s, the visible radius where intensity drops to 1% is:
       // r_vis = 1 - 0.01^(1/s)
@@ -71,59 +75,66 @@ export class PointMaterial extends THREE.ShaderMaterial {
       // This gives: s=1→1.0, s=2→1.15, s=4→1.45, s=8→2.05
       float sharpnessCompensation = 1.0 + (vSharpness - 1.0) * 0.15;
       float pointSize = basePointSize * sharpnessCompensation;
-      
+
       // Clamp to hardware limits, with minimum of 1.0 to avoid undefined behavior
       // Zero-radius filtering happens in fragment shader
-      gl_PointSize = max(1.0, min(pointSize, resolution.y * 0.5));
+      gl_PointSize = max(1.0, min(pointSize, maxPointSize));
     }
   `;
 
-  // Optimized fragment shader with simple, effective optimizations
+  // Optimized fragment shader
+  // GLSL ES 3.0 for consistency with other materials
+  // OPTIMIZATIONS:
+  // - mediump precision for color/falloff (reduces register pressure)
+  // - sqrt(4.0 * r2) instead of sqrt(r2) * 2.0 (one fewer multiply)
+  // - Removed unused gamma uniform (only invGamma is used)
   private static readonly FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
-    
-    uniform float hdrMultiplier;
-    uniform float opacity;
-    uniform float gamma;
-    uniform float baseAlpha;
-    uniform float invGamma; // Pre-computed 1/gamma for performance
-    varying vec3 vColor;
-    varying float vSharpness;
-    varying float vRadius; // Radius from vertex shader
-    
+
+    uniform mediump float hdrMultiplier;
+    uniform mediump float opacity;
+    uniform mediump float baseAlpha;
+    uniform mediump float invGamma; // Pre-computed 1/gamma for performance
+
+    in mediump vec3 vColor;
+    in mediump float vSharpness;
+    in highp float vRadius; // Radius from vertex shader (needs precision for zero-check)
+
+    out vec4 fragColor;
+
     void main() {
       // Discard zero-radius points (from nD slicing where points don't intersect hyperplane)
       if (vRadius < 0.0001) {
         discard;
       }
-      
+
       // OPTIMIZATION: Use dot product for squared distance calculation
       vec2 centered = gl_PointCoord - 0.5;
       float r2 = dot(centered, centered);
-      
+
       // OPTIMIZATION: Compare squared distances to avoid sqrt in discard check
       if (r2 > 0.25) {
         discard;
       }
-      
-      // Calculate actual radius for falloff (single sqrt operation)
-      float r = sqrt(r2);
-      float normalizedR = r * 2.0; // Normalize to 0-1 range
-      
+
+      // OPTIMIZATION: sqrt(4.0 * r2) combines sqrt and multiply into one operation
+      // normalizedR is in 0-1 range (gl_PointCoord is 0-1, centered is -0.5 to 0.5)
+      mediump float normalizedR = sqrt(4.0 * r2);
+
       // Simple power function for falloff - modern GPUs optimize pow() well
-      float falloff = pow(max(1.0 - normalizedR, 0.0), vSharpness);
-      
+      mediump float falloff = pow(max(1.0 - normalizedR, 0.0), vSharpness);
+
       // Apply HDR multiplier
-      vec3 hdrColor = vColor * hdrMultiplier;
-      
+      mediump vec3 hdrColor = vColor * hdrMultiplier;
+
       // Apply gamma correction using pre-computed inverse
-      vec3 finalColor = pow(hdrColor, vec3(invGamma));
-      
+      mediump vec3 finalColor = pow(hdrColor, vec3(invGamma));
+
       // Calculate final alpha
-      float alpha = baseAlpha * falloff * opacity;
-      
+      mediump float alpha = baseAlpha * falloff * opacity;
+
       // Output final color with alpha
-      gl_FragColor = vec4(finalColor, alpha);
+      fragColor = vec4(finalColor, alpha);
     }
   `;
 
@@ -132,18 +143,23 @@ export class PointMaterial extends THREE.ShaderMaterial {
    */
   constructor(materialConfig: PointMaterialConfig = {}) {
     const gammaValue = Math.max(0.001, materialConfig.gamma ?? 1.0); // Prevent division by zero
+    // Default values for initial computation
+    const defaultFov = (60 * Math.PI) / 180;
+    const defaultResolutionY = 1080;
+    const defaultTanHalfFov = Math.tan(defaultFov / 2);
+
     super({
       uniforms: {
         // HDR and color uniforms
         hdrMultiplier: { value: config.shader.points.hdrMultiplier },
         baseAlpha: { value: config.shader.points.baseAlpha },
         opacity: { value: materialConfig.opacity ?? 1.0 },
-        gamma: { value: gammaValue },
         invGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
 
-        // Camera uniforms for world-space sizing
-        tanHalfFov: { value: Math.tan((60 * Math.PI) / 180 / 2) }, // Pre-computed tan(fov/2) for performance
-        resolution: { value: new THREE.Vector2(1, 1) }, // Will be updated immediately
+        // OPTIMIZED camera uniforms - pre-computed for shader performance
+        // pointSizeFactor = 2.0 * resolution.y / tan(fov/2)
+        pointSizeFactor: { value: (2.0 * defaultResolutionY) / defaultTanHalfFov },
+        maxPointSize: { value: defaultResolutionY * 0.5 }, // resolution.y * 0.5
 
         // Radius and sharpness scaling for dtype normalization
         radiusScale: { value: materialConfig.radiusScale ?? 1.0 }, // Default 1.0 (no scaling)
@@ -154,6 +170,9 @@ export class PointMaterial extends THREE.ShaderMaterial {
       vertexShader: PointMaterial.VERTEX_SHADER,
       fragmentShader: PointMaterial.FRAGMENT_SHADER,
 
+      // GLSL ES 3.0 for consistency with other materials
+      glslVersion: THREE.GLSL3,
+
       // Material properties
       vertexColors: true, // Enable per-vertex colors
       transparent: true, // Enable transparency for blending
@@ -161,16 +180,22 @@ export class PointMaterial extends THREE.ShaderMaterial {
       toneMapped: false, // HDR values pass through to post-processing
       blending: materialConfig.blending ?? THREE.AdditiveBlending,
     });
+
+    // Store gamma in userData for clone() method (not in shader uniforms)
+    this.userData.gamma = gammaValue;
   }
 
   /**
    * Update camera parameters for world-space point sizing
+   * Pre-computes pointSizeFactor and maxPointSize for shader performance
    */
   updateCameraParams(fov: number, resolution: THREE.Vector2): void {
-    // Pre-compute tan(fov/2) for shader performance (saves tan() per vertex)
-    this.uniforms.tanHalfFov.value = Math.tan(fov / 2);
-    // Copy values to avoid reference issues
-    this.uniforms.resolution.value.copy(resolution);
+    const tanHalfFov = Math.tan(fov / 2);
+    // Pre-compute values that were previously computed per-vertex in shader
+    // pointSizeFactor = 2.0 * resolution.y / tan(fov/2)
+    this.uniforms.pointSizeFactor.value = (2.0 * resolution.y) / tanHalfFov;
+    // maxPointSize = resolution.y * 0.5 (hardware limit)
+    this.uniforms.maxPointSize.value = resolution.y * 0.5;
   }
 
   /**
@@ -189,10 +214,11 @@ export class PointMaterial extends THREE.ShaderMaterial {
 
   /**
    * Update gamma correction
+   * Only invGamma is used in shader; gamma value stored in userData for clone()
    */
   updateGamma(gamma: number): void {
     const safeGamma = Math.max(0.001, gamma); // Prevent division by zero
-    this.uniforms.gamma.value = safeGamma;
+    this.userData.gamma = safeGamma; // Store for clone() method
     this.uniforms.invGamma.value = 1.0 / safeGamma;
   }
 
@@ -219,7 +245,7 @@ export class PointMaterial extends THREE.ShaderMaterial {
   clone(): this {
     const cloned = new PointMaterial({
       opacity: this.uniforms.opacity.value,
-      gamma: this.uniforms.gamma.value,
+      gamma: this.userData.gamma ?? 1.0, // gamma stored in userData, not uniforms
       blending: this.blending,
       depthWrite: this.depthWrite,
     });
@@ -234,8 +260,8 @@ export class PointMaterial extends THREE.ShaderMaterial {
     // Copy current uniform values
     cloned.uniforms.hdrMultiplier.value = this.uniforms.hdrMultiplier.value;
     cloned.uniforms.baseAlpha.value = this.uniforms.baseAlpha.value;
-    cloned.uniforms.tanHalfFov.value = this.uniforms.tanHalfFov.value;
-    cloned.uniforms.resolution.value.copy(this.uniforms.resolution.value);
+    cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
+    cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;
 
     return cloned as this;
