@@ -96,6 +96,8 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
             raise RuntimeError(
                 "No splats were fitted; try lowering thresholds or increasing iterations."
             )
+        
+        result.save("mitosis_splats.gsplats.zarr")
 
 # ----- Compression ranking by approximate L2 energy -----
 # ||G||_2^2 = (sqrt(pi))^d * sqrt(det Σ); with Σ = L L^T, sqrt(det Σ) = prod(diag(L))

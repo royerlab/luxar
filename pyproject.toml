@@ -35,7 +35,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -43,9 +42,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed"
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
-    "numpy>=2.0",
+    "numpy>=2.0,<2.4", # because they removed np.trapz and numba uses it
     "zarr>=2.16,<3.0",
     "typer>=0.12,<1.0",
     "fastapi>=0.111,<1.0",
@@ -56,7 +55,8 @@ dependencies = [
     "aiohttp>=3.9.0",
     "fsspec>=2023.1.0",
     "xxhash>=3.0.0",
-    "hilbertcurve>=2.0.5"
+    "hilbertcurve>=2.0.5",
+    "torch>=2.9.1",
 ]
 
 [project.urls]
@@ -90,6 +90,11 @@ docs = [
     "sphinx-rtd-theme>=1.3.0",
     "myst-parser>=2.0.0"
 ]
+tracksdata = [
+    "tracksdata @ git+https://github.com/royerlab/tracksdata.git@main",
+    "spatial-graph",
+    "napari[pyqt6]>=0.4.18",
+]
 
 # CLI entry point
 [project.scripts]
@@ -98,6 +103,8 @@ luxar = "luxar.cli:app"
 # ---------------------------------------------
 # Hatch Configuration
 # ---------------------------------------------
+[tool.hatch.metadata]
+allow-direct-references = true
 
 # Version management
 [tool.hatch.version]
@@ -139,7 +146,6 @@ dependencies = [
     "mlx>=0.29.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # Demo dependencies
     "scikit-image>=0.19.0",
-    "napari[all]>=0.4.18"
 ]
 
 [tool.hatch.envs.default.scripts]
@@ -182,7 +188,7 @@ dependencies = [
 ]
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.9", "3.10", "3.11", "3.12"]
+python = ["3.10", "3.11", "3.12"]
 
 [tool.hatch.envs.test.scripts]
 run = "pytest {args:packages/luxar/src/luxar}"
@@ -199,7 +205,7 @@ disable = false  # Enable publishing to PyPI
 # Black and isort configuration removed - using ruff instead
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 
 # Strict mode settings
 strict = true
