@@ -85,7 +85,6 @@ Controls:
 
 from __future__ import annotations
 
-import subprocess
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -97,6 +96,7 @@ from arbol import aprint, asection
 from PIL import Image
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -934,25 +934,10 @@ def main() -> None:
             aprint("Press Ctrl+C when done.")
             aprint("")
 
-            subprocess.run(
-                ["luxar", "serve", str(output_path), "--viewer", "--open"],
-                check=True,
-            )
+            launch_viewer(output_path)
 
         except KeyboardInterrupt:
             aprint("\n🛑 Stopping demo...")
-        except subprocess.CalledProcessError as e:
-            aprint(f"\n❌ Error launching viewer: {e}")
-            aprint("Make sure viewer is built:")
-            aprint("   cd packages/luxar-viewer && pnpm build")
-            sys.exit(1)
-        except FileNotFoundError as e:
-            if "luxar" in str(e):
-                aprint("\n❌ Error: 'luxar' command not found")
-                aprint("Install luxar: pip install -e .")
-            else:
-                aprint(f"\n❌ Error: {e}")
-            sys.exit(1)
         except Exception as e:
             aprint(f"\n❌ Error: {e}")
             sys.exit(1)

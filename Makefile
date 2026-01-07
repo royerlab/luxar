@@ -1,24 +1,264 @@
 # Makefile for Luxar development tasks
 # Uses Hatch for on-demand environment management
+#
+# This Makefile is designed to work on fresh Linux/macOS machines with minimal
+# pre-installed tools. Run 'make dev-setup' to automatically install all dependencies.
+#
 .PHONY: help install install-dev format format-all lint type-check security test test-python \
         test-cov test-all test-fixtures clean clean-examples pre-commit-install pre-commit-run check dev-setup \
         check-docs check-docs-verbose docs-clean docs-build docs-serve \
         demo run-examples serve-examples serve-data viewer-install viewer viewer-build viewer-rebuild \
         viewer-test viewer-test-fixtures viewer-test-cov viewer-lint viewer-typecheck viewer-format viewer-check \
         setup-rust wasm-build wasm-test wasm-clean \
-        demo-and-serve stats env-show env-prune shell build publish-test publish
+        demo-and-serve stats env-show env-prune shell build publish-test publish \
+        check-deps install-node install-pnpm install-hatch deep-clean-dev-setup
+
+# ============================================================================
+# OS Detection and Configuration
+# ============================================================================
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    OS := macos
+    PKG_MANAGER := brew
+else ifeq ($(UNAME_S),Linux)
+    OS := linux
+    # Detect package manager (apt, dnf, or yum)
+    ifneq ($(shell command -v apt-get 2>/dev/null),)
+        PKG_MANAGER := apt
+    else ifneq ($(shell command -v dnf 2>/dev/null),)
+        PKG_MANAGER := dnf
+    else ifneq ($(shell command -v yum 2>/dev/null),)
+        PKG_MANAGER := yum
+    else
+        PKG_MANAGER := unknown
+    endif
+else
+    OS := unknown
+    PKG_MANAGER := unknown
+endif
+
+# Minimum Node.js version required by Vite 7.x
+MIN_NODE_MAJOR := 20
+MIN_NODE_MINOR := 19
+
+# ============================================================================
+# Dependency Checking and Installation Helpers
+# ============================================================================
+
+# Helper function to check Node.js version
+define check_node_version
+	@if command -v node >/dev/null 2>&1; then \
+		NODE_VERSION=$$(node -v | sed 's/v//'); \
+		NODE_MAJOR=$$(echo $$NODE_VERSION | cut -d. -f1); \
+		NODE_MINOR=$$(echo $$NODE_VERSION | cut -d. -f2); \
+		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
+		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
+			echo "❌ Node.js $$NODE_VERSION is too old. Vite requires Node.js $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
+			echo "   Please upgrade Node.js:"; \
+			if [ "$(OS)" = "macos" ]; then \
+				echo "   brew install node@22"; \
+			elif [ "$(PKG_MANAGER)" = "apt" ]; then \
+				echo "   # Using NodeSource for latest Node.js:"; \
+				echo "   curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -"; \
+				echo "   sudo apt-get install -y nodejs"; \
+			else \
+				echo "   Visit https://nodejs.org/ for installation instructions"; \
+			fi; \
+			exit 1; \
+		else \
+			echo "✅ Node.js $$NODE_VERSION (meets $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+ requirement)"; \
+		fi; \
+	else \
+		echo "❌ Node.js not found"; \
+		exit 1; \
+	fi
+endef
+
+check-deps:  ## Check all development dependencies and their versions
+	@echo "🔍 Checking development dependencies..."
+	@echo ""
+	@echo "System: $(OS) (package manager: $(PKG_MANAGER))"
+	@echo ""
+	@echo "=== Required Dependencies ==="
+	@echo ""
+	@# Python
+	@if command -v python3 >/dev/null 2>&1; then \
+		echo "✅ Python: $$(python3 --version)"; \
+	else \
+		echo "❌ Python3 not found"; \
+	fi
+	@# pipx (required for installing Hatch on modern systems)
+	@if command -v pipx >/dev/null 2>&1; then \
+		echo "✅ pipx: $$(pipx --version 2>/dev/null)"; \
+	else \
+		echo "❌ pipx not found (run: sudo apt-get install pipx)"; \
+	fi
+	@# hatch (primary Python environment manager)
+	@if command -v hatch >/dev/null 2>&1; then \
+		echo "✅ Hatch: $$(hatch --version)"; \
+	elif [ -x "$$HOME/.local/bin/hatch" ]; then \
+		echo "✅ Hatch: $$($$HOME/.local/bin/hatch --version) (in ~/.local/bin)"; \
+	else \
+		echo "❌ Hatch not found (run 'make install-hatch')"; \
+	fi
+	@# Source nvm if available for Node.js checks
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	if command -v node >/dev/null 2>&1; then \
+		NODE_VERSION=$$(node -v | sed 's/v//'); \
+		NODE_MAJOR=$$(echo $$NODE_VERSION | cut -d. -f1); \
+		NODE_MINOR=$$(echo $$NODE_VERSION | cut -d. -f2); \
+		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
+		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
+			echo "⚠️  Node.js v$$NODE_VERSION (UPGRADE NEEDED: requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+)"; \
+		else \
+			echo "✅ Node.js: v$$NODE_VERSION (via nvm)"; \
+		fi; \
+	elif [ -d "$$HOME/.nvm" ]; then \
+		echo "⚠️  nvm installed but Node.js not found. Run: nvm install 22"; \
+	else \
+		echo "❌ Node.js not found (run 'make install-node')"; \
+	fi; \
+	if command -v npm >/dev/null 2>&1; then \
+		echo "✅ npm: $$(npm --version)"; \
+	else \
+		echo "❌ npm not found"; \
+	fi; \
+	if command -v pnpm >/dev/null 2>&1; then \
+		echo "✅ pnpm: $$(pnpm --version)"; \
+	else \
+		echo "❌ pnpm not found (run: npm install -g pnpm)"; \
+	fi
+	@echo ""
+	@echo "=== Optional Dependencies (for WASM builds) ==="
+	@echo ""
+	@# Rust
+	@if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if command -v rustc >/dev/null 2>&1; then \
+		echo "✅ Rust: $$(rustc --version)"; \
+	else \
+		echo "⚪ Rust not installed (run 'make setup-rust' if needed)"; \
+	fi
+	@# wasm-pack
+	@if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if command -v wasm-pack >/dev/null 2>&1; then \
+		echo "✅ wasm-pack: $$(wasm-pack --version)"; \
+	else \
+		echo "⚪ wasm-pack not installed (run 'make setup-rust' if needed)"; \
+	fi
+	@echo ""
+
+install-node:  ## Install or upgrade Node.js to required version (no sudo needed)
+	@echo "📦 Installing Node.js $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+..."
+	@echo ""
+ifeq ($(OS),macos)
+	@# macOS: use Homebrew (no sudo needed)
+	@if ! command -v brew >/dev/null 2>&1; then \
+		echo "📥 Installing Homebrew first..."; \
+		/bin/bash -c "$$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; \
+	fi
+	brew install node@22 || brew upgrade node
+	@echo "✅ Node.js installed via Homebrew"
+	@echo "Installed version: $$(node --version)"
+else
+	@# Linux: use nvm (no sudo needed)
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ ! -s "$$NVM_DIR/nvm.sh" ]; then \
+		echo "📥 Installing nvm (Node Version Manager)..."; \
+		curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash; \
+	fi; \
+	echo "📥 Installing Node.js 22 via nvm..."; \
+	export NVM_DIR="$$HOME/.nvm"; \
+	. "$$NVM_DIR/nvm.sh" && nvm install 22 && nvm use 22 && nvm alias default 22; \
+	echo ""; \
+	echo "✅ Node.js installed via nvm"; \
+	. "$$NVM_DIR/nvm.sh" && echo "   Version: $$(node --version)"; \
+	echo ""; \
+	echo "⚠️  Note: nvm is a shell function. For this terminal session, run:"; \
+	echo "   source ~/.bashrc   # or source ~/.nvm/nvm.sh"; \
+	echo ""; \
+	echo "   Or simply restart your terminal."
+endif
+
+install-pnpm:  ## Install pnpm package manager
+	@echo "📦 Installing pnpm..."
+	@if ! command -v npm >/dev/null 2>&1; then \
+		echo "❌ npm not found. Install Node.js first with: make install-node"; \
+		exit 1; \
+	fi
+	npm install -g pnpm
+	@echo "✅ pnpm installed: $$(pnpm --version)"
+
+install-hatch:  ## Install Hatch for Python environment management
+	@echo "📦 Installing Hatch..."
+	@# Check if already installed
+	@if command -v hatch >/dev/null 2>&1; then \
+		echo "✅ Hatch already installed: $$(hatch --version)"; \
+	elif [ -x "$$HOME/.local/bin/hatch" ]; then \
+		echo "✅ Hatch already installed: $$($$HOME/.local/bin/hatch --version)"; \
+		echo "⚠️  Run 'pipx ensurepath' and restart terminal to add to PATH"; \
+	elif command -v pipx >/dev/null 2>&1; then \
+		echo "Installing via pipx..."; \
+		pipx install hatch; \
+		echo "✅ Hatch installed"; \
+		if command -v hatch >/dev/null 2>&1; then \
+			echo "   Version: $$(hatch --version)"; \
+		elif [ -x "$$HOME/.local/bin/hatch" ]; then \
+			echo "   Version: $$($$HOME/.local/bin/hatch --version)"; \
+			echo "⚠️  Run 'pipx ensurepath' and restart terminal to add to PATH"; \
+		fi; \
+	else \
+		echo "❌ pipx not found."; \
+		echo ""; \
+		echo "Modern Ubuntu/Debian requires pipx for installing Python CLI tools."; \
+		echo "Please install pipx first:"; \
+		echo ""; \
+		if [ "$(PKG_MANAGER)" = "apt" ]; then \
+			echo "  sudo apt-get install -y pipx"; \
+			echo "  pipx ensurepath"; \
+			echo "  source ~/.bashrc  # or restart terminal"; \
+		elif [ "$(PKG_MANAGER)" = "dnf" ]; then \
+			echo "  sudo dnf install -y pipx"; \
+			echo "  pipx ensurepath"; \
+		elif [ "$(OS)" = "macos" ]; then \
+			echo "  brew install pipx"; \
+			echo "  pipx ensurepath"; \
+		else \
+			echo "  python3 -m pip install --user pipx"; \
+			echo "  pipx ensurepath"; \
+		fi; \
+		echo ""; \
+		echo "Then run 'make install-hatch' again."; \
+		exit 1; \
+	fi
+
+# ============================================================================
+# Main Targets
+# ============================================================================
 
 # Default target
 help:  ## Show this help message
 	@echo "Available targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 	@echo ""
-	@echo "Quick start:"
-	@echo "  make dev-setup      - Set up development environment"
+	@echo "Quick start (for a fresh machine):"
+	@echo "  make dev-setup      - Set up development environment (auto-installs dependencies)"
+	@echo "  make check-deps     - Check what dependencies are installed/missing"
+	@echo ""
+	@echo "Common workflows:"
 	@echo "  make test-all       - Run all tests"
-	@echo "  make run-examples   - Generate all example datasets"
-	@echo "  make serve-examples - Browse generated examples"
+	@echo "  make viewer         - Start the viewer dev server"
 	@echo "  make demo-and-serve - Create demo and start servers"
+	@echo "  make run-examples   - Generate all example datasets"
+	@echo ""
+	@echo "System: $(OS) (package manager: $(PKG_MANAGER))"
+	@echo "Node.js requirement: $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"
 
 # Installation
 install:  ## Install the package
@@ -67,7 +307,11 @@ test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtur
 	hatch run test
 	@echo ""
 	@echo "🦀 Checking Rust/WASM tests..."
-	@if command -v cargo >/dev/null 2>&1; then \
+	@# Source cargo env to find cargo/wasm-pack
+	@if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if command -v cargo >/dev/null 2>&1; then \
 		echo "Running Rust unit tests..."; \
 		cd packages/luxar-viewer && pnpm test:wasm; \
 		echo ""; \
@@ -175,19 +419,272 @@ clean-examples:  ## Clean up only generated example zarr files
 	fi
 	@echo "✅ Example zarr files cleaned!"
 
+deep-clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUTION)
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "⚠️  DEEP CLEAN - This will remove all development tools!"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@echo "This target will remove:"
+	@echo "  • node_modules/           (project-local)"
+	@echo "  • Hatch virtual envs      (in ~/.local/share/hatch/)"
+	@echo "  • WASM build artifacts    (public/wasm/, rust/target/)"
+	@echo "  • wasm-pack               (Rust tool)"
+	@echo "  • Rust toolchain          (rustup, cargo, rustc)"
+	@echo "  • Hatch                   (Python tool)"
+	@echo "  • nvm + Node.js           (~/.nvm directory)"
+	@echo "  • pnpm cache              (~/.local/share/pnpm)"
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@read -p "Are you sure you want to continue? [y/N] " confirm; \
+	if [ "$$confirm" != "y" ] && [ "$$confirm" != "Y" ]; then \
+		echo "Aborted."; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "🧹 [1/6] Removing node_modules..."
+	@rm -rf packages/luxar-viewer/node_modules
+	@echo "   ✓ Done"
+	@echo ""
+	@echo "🧹 [2/6] Removing Hatch environments..."
+	@if command -v hatch >/dev/null 2>&1; then \
+		hatch env prune -y 2>/dev/null || true; \
+	fi
+	@rm -rf ~/.local/share/hatch/env/virtual/luxar* 2>/dev/null || true
+	@echo "   ✓ Done"
+	@echo ""
+	@echo "🧹 [3/6] Removing WASM build artifacts..."
+	@rm -rf packages/luxar-viewer/public/wasm
+	@rm -rf packages/luxar-viewer/src/wasm/rust/target
+	@echo "   ✓ Done"
+	@echo ""
+	@echo "🧹 [4/6] Removing wasm-pack..."
+	@if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if command -v cargo >/dev/null 2>&1 && command -v wasm-pack >/dev/null 2>&1; then \
+		cargo uninstall wasm-pack 2>/dev/null || true; \
+		echo "   ✓ Done"; \
+	else \
+		echo "   ⚪ Not installed, skipping"; \
+	fi
+	@echo ""
+	@echo "🧹 [5/6] Removing Rust toolchain..."
+	@if command -v rustup >/dev/null 2>&1; then \
+		rustup self uninstall -y 2>/dev/null || true; \
+		echo "   ✓ Done"; \
+	else \
+		echo "   ⚪ Not installed, skipping"; \
+	fi
+	@echo ""
+	@echo "🧹 [6/8] Removing Hatch..."
+	@if [ -x "$(HOME)/.local/bin/hatch" ]; then \
+		rm -f "$(HOME)/.local/bin/hatch"; \
+		echo "   ✓ Removed from ~/.local/bin"; \
+	elif command -v hatch >/dev/null 2>&1; then \
+		echo "   ⚠️  Hatch found but not in ~/.local/bin"; \
+		echo "   Try: pipx uninstall hatch"; \
+	else \
+		echo "   ⚪ Not installed, skipping"; \
+	fi
+	@echo ""
+	@echo "🧹 [7/8] Removing nvm and Node.js..."
+	@if [ -d "$(HOME)/.nvm" ]; then \
+		rm -rf "$(HOME)/.nvm"; \
+		echo "   ✓ Removed ~/.nvm"; \
+		echo "   ⚠️  You may want to remove nvm lines from ~/.bashrc manually"; \
+	else \
+		echo "   ⚪ nvm not installed, skipping"; \
+	fi
+	@echo ""
+	@echo "🧹 [8/8] Removing pnpm cache..."
+	@if [ -d "$(HOME)/.local/share/pnpm" ]; then \
+		rm -rf "$(HOME)/.local/share/pnpm"; \
+		echo "   ✓ Removed ~/.local/share/pnpm"; \
+	else \
+		echo "   ⚪ pnpm cache not found, skipping"; \
+	fi
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "✅ Deep clean complete!"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@echo "Optional: Remove nvm configuration from ~/.bashrc (lines added by nvm installer)"
+	@echo ""
+ifeq ($(OS),macos)
+	@echo "If Node.js was installed via Homebrew (not nvm), also run:"
+	@echo "  brew uninstall node"
+endif
+	@echo ""
+	@echo "After cleanup, run 'make check-deps' to verify the state."
+	@echo "Then run 'make dev-setup' to set up the environment again."
+	@echo ""
+
 # Development setup
-dev-setup:  ## Complete development setup with Hatch
-	@echo "🚀 Setting up development environment with Hatch..."
-	@command -v hatch >/dev/null 2>&1 || { echo "❌ Hatch not found. Please install with: pip install hatch"; exit 1; }
-	@command -v pnpm >/dev/null 2>&1 || { echo "❌ pnpm not found. Please install with: npm install -g pnpm"; exit 1; }
-	hatch env create
-	hatch run pre-commit install
-	@echo "📦 Installing TypeScript/viewer dependencies..."
+dev-setup:  ## Complete development setup (auto-installs missing dependencies)
+	@echo "🚀 Setting up development environment..."
+	@echo ""
+	@echo "System: $(OS) (package manager: $(PKG_MANAGER))"
+	@echo ""
+	@# Step 1: Check and install Python dependencies
+	@echo "=== Step 1: Python Environment ==="
+	@if ! command -v python3 >/dev/null 2>&1; then \
+		echo "❌ Python3 not found. Please install Python 3.9+ first:"; \
+		if [ "$(OS)" = "macos" ]; then \
+			echo "   brew install python@3.11"; \
+		elif [ "$(PKG_MANAGER)" = "apt" ]; then \
+			echo "   sudo apt-get install python3 python3-pip python3-venv"; \
+		fi; \
+		exit 1; \
+	fi
+	@echo "✅ Python: $$(python3 --version)"
+	@# Install/fix hatch (use pipx)
+	@if command -v hatch >/dev/null 2>&1; then \
+		echo "✅ Hatch: $$(hatch --version)"; \
+	elif [ -x "$$HOME/.local/bin/hatch" ]; then \
+		echo "✅ Hatch: $$($$HOME/.local/bin/hatch --version) (in ~/.local/bin)"; \
+		echo "⚠️  Note: Run 'pipx ensurepath' and restart terminal to add to PATH"; \
+	elif command -v pipx >/dev/null 2>&1; then \
+		echo "📥 Installing Hatch via pipx..."; \
+		if pipx list 2>/dev/null | grep -q "package hatch"; then \
+			echo "   Hatch found in pipx but symlink missing, reinstalling..."; \
+			pipx reinstall hatch; \
+		else \
+			pipx install hatch; \
+		fi; \
+		if command -v hatch >/dev/null 2>&1; then \
+			echo "✅ Hatch: $$(hatch --version)"; \
+		elif [ -x "$$HOME/.local/bin/hatch" ]; then \
+			echo "✅ Hatch: $$($$HOME/.local/bin/hatch --version) (in ~/.local/bin)"; \
+			echo "⚠️  Note: Run 'pipx ensurepath' and restart terminal to add to PATH"; \
+		else \
+			echo "❌ Hatch installation failed. Try: pipx reinstall hatch"; \
+			exit 1; \
+		fi; \
+	else \
+		echo ""; \
+		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+		echo "⚠️  pipx not found (required for installing Hatch on modern Ubuntu/Debian)"; \
+		echo ""; \
+		echo "Please install pipx first, then re-run 'make dev-setup':"; \
+		echo ""; \
+		if [ "$(PKG_MANAGER)" = "apt" ]; then \
+			echo "  sudo apt-get install -y pipx"; \
+			echo "  pipx ensurepath"; \
+			echo "  source ~/.bashrc  # or restart terminal"; \
+		elif [ "$(PKG_MANAGER)" = "dnf" ]; then \
+			echo "  sudo dnf install -y pipx"; \
+			echo "  pipx ensurepath"; \
+		elif [ "$(OS)" = "macos" ]; then \
+			echo "  brew install pipx"; \
+			echo "  pipx ensurepath"; \
+		else \
+			echo "  python3 -m pip install --user pipx"; \
+			echo "  pipx ensurepath"; \
+		fi; \
+		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+		exit 1; \
+	fi
+	@echo ""
+	@# Step 2: Check Node.js (auto-install via nvm if needed - no sudo required)
+	@echo "=== Step 2: Node.js Environment ==="
+	@# Source nvm if available
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	NODE_OK=1; \
+	if command -v node >/dev/null 2>&1; then \
+		NODE_VERSION=$$(node -v | sed 's/v//'); \
+		NODE_MAJOR=$$(echo $$NODE_VERSION | cut -d. -f1); \
+		NODE_MINOR=$$(echo $$NODE_VERSION | cut -d. -f2); \
+		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
+		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
+			echo "⚠️  Node.js v$$NODE_VERSION is too old (need $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+)"; \
+			NODE_OK=0; \
+		else \
+			echo "✅ Node.js: v$$NODE_VERSION"; \
+		fi; \
+	else \
+		echo "❌ Node.js not found"; \
+		NODE_OK=0; \
+	fi; \
+	if [ "$$NODE_OK" = "0" ]; then \
+		if [ "$(OS)" = "macos" ]; then \
+			echo "📥 Installing Node.js via Homebrew..."; \
+			if ! command -v brew >/dev/null 2>&1; then \
+				echo "📥 Installing Homebrew first..."; \
+				/bin/bash -c "$$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; \
+			fi; \
+			brew install node@22 || brew upgrade node; \
+			echo "✅ Node.js installed: $$(node --version)"; \
+		else \
+			if [ ! -s "$$NVM_DIR/nvm.sh" ]; then \
+				echo "📥 Installing nvm (Node Version Manager)..."; \
+				curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash; \
+				export NVM_DIR="$$HOME/.nvm"; \
+			fi; \
+			echo "📥 Installing Node.js 22 via nvm..."; \
+			. "$$NVM_DIR/nvm.sh" && nvm install 22 && nvm use 22 && nvm alias default 22; \
+			echo "✅ Node.js installed: $$( . $$NVM_DIR/nvm.sh && node --version)"; \
+		fi; \
+	fi
+	@# Check/install pnpm (source nvm first if needed)
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	if ! command -v pnpm >/dev/null 2>&1; then \
+		echo "📥 Installing pnpm..."; \
+		npm install -g pnpm; \
+	fi; \
+	if command -v pnpm >/dev/null 2>&1; then \
+		echo "✅ pnpm: $$(pnpm --version)"; \
+	else \
+		echo "❌ pnpm installation failed"; \
+		exit 1; \
+	fi
+	@echo ""
+	@# Step 3: Set up Python environment with Hatch
+	@echo "=== Step 3: Creating Python Environment ==="
+	@# Use hatch from PATH or ~/.local/bin
+	@HATCH_CMD="$$(command -v hatch 2>/dev/null || echo $$HOME/.local/bin/hatch)"; \
+	echo "Creating Hatch environment..."; \
+	$$HATCH_CMD env create || true; \
+	echo "Installing pre-commit hooks..."; \
+	$$HATCH_CMD run pre-commit install || echo "⚠️  pre-commit install skipped"
+	@echo ""
+	@# Step 4: Install TypeScript dependencies (source nvm first if needed)
+	@echo "=== Step 4: Installing TypeScript Dependencies ==="
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
 	cd packages/luxar-viewer && pnpm install
+	@echo ""
+	@# Step 5: Optional Rust/WASM setup prompt
+	@echo "=== Step 5: Optional WASM Support ==="
+	@if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if command -v wasm-pack >/dev/null 2>&1; then \
+		echo "✅ Rust/WASM already configured"; \
+	else \
+		echo "⚪ Rust/WASM not installed (optional, for production builds)"; \
+		echo "   Run 'make setup-rust' to enable WASM acceleration"; \
+	fi
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "✅ Development environment setup complete!"
-	@echo "💡 Use 'hatch shell' to activate the environment"
-	@echo "💡 Run 'make check' to verify everything works"
-	@echo "💡 For WASM/Rust support, also run 'make setup-rust'"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  make check        - Verify everything works"
+	@echo "  make viewer       - Start the viewer dev server"
+	@echo "  make demo         - Generate a demo dataset"
+	@echo "  make setup-rust   - Enable WASM acceleration (optional)"
+	@echo ""
+	@echo "💡 Use 'hatch shell' to activate the Python environment"
 
 # Demo and serving
 demo:  ## Generate a demo dataset (datasets/demos/demo.zarr with 100k points)
@@ -252,43 +749,127 @@ viewer-install:  ## Install viewer dependencies
 	cd packages/luxar-viewer && pnpm install
 
 viewer:  ## Start the web viewer development server
+	@# Source nvm if available
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	if command -v node >/dev/null 2>&1; then \
+		NODE_VERSION=$$(node -v | sed 's/v//'); \
+		NODE_MAJOR=$$(echo $$NODE_VERSION | cut -d. -f1); \
+		NODE_MINOR=$$(echo $$NODE_VERSION | cut -d. -f2); \
+		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
+		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
+			echo "❌ Node.js v$$NODE_VERSION is too old. Vite requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
+			echo "   Run 'make install-node' to upgrade, or 'make dev-setup' for full setup."; \
+			exit 1; \
+		fi; \
+	else \
+		echo "❌ Node.js not found. Run 'make dev-setup' first."; \
+		exit 1; \
+	fi; \
+	if ! command -v pnpm >/dev/null 2>&1; then \
+		echo "❌ pnpm not found. Run 'make dev-setup' first."; \
+		exit 1; \
+	fi; \
+	if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi; \
 	cd packages/luxar-viewer && pnpm dev
 
-viewer-build:  ## Build the viewer for production (requires Rust + wasm-pack)
+viewer-build:  ## Build the viewer for production (auto-installs Rust/wasm-pack if needed)
+	@# Source nvm and check Node.js version first
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	if command -v node >/dev/null 2>&1; then \
+		NODE_VERSION=$$(node -v | sed 's/v//'); \
+		NODE_MAJOR=$$(echo $$NODE_VERSION | cut -d. -f1); \
+		NODE_MINOR=$$(echo $$NODE_VERSION | cut -d. -f2); \
+		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
+		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
+			echo "❌ Node.js v$$NODE_VERSION is too old. Vite requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
+			echo "   Run 'make install-node' to upgrade, or 'make dev-setup' for full setup."; \
+			exit 1; \
+		fi; \
+	else \
+		echo "❌ Node.js not found. Run 'make dev-setup' first."; \
+		exit 1; \
+	fi
+	@# Check for wasm-pack, install if needed (separate command to ensure Make waits)
 	@if [ -f "$(HOME)/.cargo/env" ]; then \
 		. "$(HOME)/.cargo/env"; \
 	fi; \
 	if ! command -v wasm-pack >/dev/null 2>&1; then \
-		echo "❌ wasm-pack not found. Run 'make setup-rust' first"; \
-		exit 1; \
+		echo "⚠️  wasm-pack not found. Installing Rust/WASM toolchain..."; \
+		echo ""; \
+		$(MAKE) setup-rust; \
+	fi
+	@# Build viewer (source nvm for pnpm; build-wasm.sh sources cargo env itself)
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
 	fi; \
-	echo "🦀 Building with Rust/WASM support..."; \
+	echo "🦀 Building viewer with Rust/WASM support..."; \
 	cd packages/luxar-viewer && pnpm build
 
-viewer-rebuild:  ## Complete clean rebuild of viewer (removes dist, .vite, reinstalls deps)
+viewer-rebuild:  ## Complete clean rebuild of viewer (auto-installs dependencies as needed)
 	@echo "🧹 Cleaning viewer build artifacts..."
 	@rm -rf packages/luxar-viewer/dist/
 	@rm -rf packages/luxar-viewer/.vite/
 	@rm -f packages/luxar-viewer/*.tsbuildinfo
 	@rm -f packages/luxar-viewer/vite.config.*.timestamp-*
-	@echo "📦 Reinstalling dependencies..."
-	@cd packages/luxar-viewer && pnpm install
-	@echo "🔨 Building viewer..."
+	@# Source nvm and check Node.js version
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	if command -v node >/dev/null 2>&1; then \
+		NODE_VERSION=$$(node -v | sed 's/v//'); \
+		NODE_MAJOR=$$(echo $$NODE_VERSION | cut -d. -f1); \
+		NODE_MINOR=$$(echo $$NODE_VERSION | cut -d. -f2); \
+		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
+		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
+			echo "❌ Node.js v$$NODE_VERSION is too old. Vite requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
+			echo "   Run 'make install-node' to upgrade, or 'make dev-setup' for full setup."; \
+			exit 1; \
+		fi; \
+	else \
+		echo "❌ Node.js not found. Run 'make dev-setup' first."; \
+		exit 1; \
+	fi
+	@# Check for wasm-pack, install if needed (separate command to ensure Make waits)
 	@if [ -f "$(HOME)/.cargo/env" ]; then \
 		. "$(HOME)/.cargo/env"; \
 	fi; \
 	if ! command -v wasm-pack >/dev/null 2>&1; then \
-		echo "❌ wasm-pack not found. Run 'make setup-rust' first"; \
-		exit 1; \
+		echo "⚠️  wasm-pack not found. Installing Rust/WASM toolchain..."; \
+		echo ""; \
+		$(MAKE) setup-rust; \
+	fi
+	@# Reinstall dependencies and build (source nvm for pnpm)
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
 	fi; \
-	echo "🦀 Building with Rust/WASM support..."; \
-	cd packages/luxar-viewer && pnpm build
-	@echo "✅ Viewer rebuild complete!"
+	echo "📦 Reinstalling dependencies..."; \
+	cd packages/luxar-viewer && pnpm install; \
+	echo "🦀 Building viewer with Rust/WASM support..."; \
+	cd packages/luxar-viewer && pnpm build; \
+	echo "✅ Viewer rebuild complete!"
 
 # WASM/Rust setup and build (Phase 3)
 setup-rust:  ## Install/update Rust and wasm-pack for WASM development
-	@echo "🦀 Checking Rust installation..."
-	@if command -v rustc >/dev/null 2>&1; then \
+	@# This must be a SINGLE shell command so PATH updates persist after Rust install
+	@echo "🦀 Setting up Rust/WASM development environment..."; \
+	echo ""; \
+	CARGO_ENV="$$HOME/.cargo/env"; \
+	if [ -f "$$CARGO_ENV" ]; then \
+		. "$$CARGO_ENV"; \
+	fi; \
+	if command -v rustc >/dev/null 2>&1; then \
 		echo "✅ Rust is already installed: $$(rustc --version)"; \
 		echo "🔄 Updating Rust to latest stable..."; \
 		rustup update stable; \
@@ -297,38 +878,85 @@ setup-rust:  ## Install/update Rust and wasm-pack for WASM development
 		echo "📥 Installing Rust via rustup..."; \
 		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
 		echo ""; \
-		echo "⚠️  Please run: source \"$$HOME/.cargo/env\" to update PATH"; \
-		echo "⚠️  Then run 'make setup-rust' again to install wasm-pack"; \
-		exit 0; \
-	fi
-	@echo "🔧 Checking wasm-pack installation..."
-	@if command -v wasm-pack >/dev/null 2>&1; then \
+		echo "✅ Rust installed! Loading environment..."; \
+		if [ -f "$$CARGO_ENV" ]; then \
+			. "$$CARGO_ENV"; \
+		else \
+			echo "❌ Error: Rust installed but $$CARGO_ENV not found"; \
+			exit 1; \
+		fi; \
+	fi; \
+	echo ""; \
+	echo "🔧 Checking wasm-pack installation..."; \
+	if command -v wasm-pack >/dev/null 2>&1; then \
 		echo "✅ wasm-pack is already installed: $$(wasm-pack --version)"; \
 	else \
-		echo "📥 Installing wasm-pack..."; \
+		echo "📥 Installing wasm-pack (this may take a minute)..."; \
 		cargo install wasm-pack; \
 		echo "✅ wasm-pack installed successfully!"; \
-	fi
-	@echo ""
-	@echo "✅ Rust/WASM development environment ready!"
-	@echo "   Rust version: $$(rustc --version)"
-	@echo "   Cargo version: $$(cargo --version)"
-	@echo "   wasm-pack version: $$(wasm-pack --version)"
-	@echo ""
-	@echo "💡 Run 'make wasm-test' to test the Rust code"
-	@echo "💡 Run 'make wasm-build' to compile the WASM module"
+	fi; \
+	echo ""; \
+	echo "✅ Rust/WASM development environment ready!"; \
+	echo "   Rust version: $$(rustc --version)"; \
+	echo "   Cargo version: $$(cargo --version)"; \
+	echo "   wasm-pack version: $$(wasm-pack --version)"; \
+	echo ""; \
+	echo "💡 Run 'make wasm-test' to test the Rust code"; \
+	echo "💡 Run 'make wasm-build' to compile the WASM module"
 
 wasm-build:  ## Build the WASM module (requires Rust + wasm-pack)
-	@command -v wasm-pack >/dev/null 2>&1 || { echo "❌ wasm-pack not found. Run 'make setup-rust' first"; exit 1; }
-	@echo "🦀 Building WASM module..."
-	cd packages/luxar-viewer && pnpm build:wasm
-	@echo "✅ WASM module built successfully!"
+	@# Source nvm and cargo env to ensure pnpm and wasm-pack are in PATH
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if ! command -v wasm-pack >/dev/null 2>&1; then \
+		echo "❌ wasm-pack not found."; \
+		echo ""; \
+		echo "Run 'make setup-rust' to install Rust and wasm-pack."; \
+		echo ""; \
+		exit 1; \
+	fi; \
+	if ! command -v pnpm >/dev/null 2>&1; then \
+		echo "❌ pnpm not found."; \
+		echo ""; \
+		echo "Run 'make dev-setup' to install Node.js and pnpm."; \
+		echo ""; \
+		exit 1; \
+	fi; \
+	echo "🦀 Building WASM module..."; \
+	cd packages/luxar-viewer && pnpm build:wasm && \
+	echo "✅ WASM module built successfully!"
 
 wasm-test:  ## Run Rust unit tests for WASM module
-	@command -v cargo >/dev/null 2>&1 || { echo "❌ cargo not found. Run 'make setup-rust' first"; exit 1; }
-	@echo "🧪 Running Rust tests..."
-	cd packages/luxar-viewer && pnpm test:wasm
-	@echo "✅ All Rust tests passed!"
+	@# Source nvm and cargo env to ensure pnpm and cargo are in PATH
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if ! command -v cargo >/dev/null 2>&1; then \
+		echo "❌ cargo not found."; \
+		echo ""; \
+		echo "Run 'make setup-rust' to install Rust."; \
+		echo ""; \
+		exit 1; \
+	fi; \
+	if ! command -v pnpm >/dev/null 2>&1; then \
+		echo "❌ pnpm not found."; \
+		echo ""; \
+		echo "Run 'make dev-setup' to install Node.js and pnpm."; \
+		echo ""; \
+		exit 1; \
+	fi; \
+	echo "🧪 Running Rust tests..."; \
+	cd packages/luxar-viewer && pnpm test:wasm && \
+	echo "✅ All Rust tests passed!"
 
 wasm-clean:  ## Clean WASM build artifacts
 	@echo "🧹 Cleaning WASM artifacts..."

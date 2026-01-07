@@ -27,8 +27,10 @@ pnpm format       # Format
 ### Make Commands (from project root)
 ```bash
 # Development Setup
-make dev-setup    # Complete development environment setup
+make dev-setup    # Complete development environment setup (auto-installs dependencies)
+make check-deps   # Check what dependencies are installed/missing
 make setup-rust   # Install Rust + wasm-pack for viewer builds
+make deep-clean-dev-setup  # Remove ALL dev tools to simulate fresh machine
 
 # Quality & Testing
 make test-all     # All tests (Python + TypeScript)
@@ -49,6 +51,51 @@ make demo-and-serve # Create demo + start servers
 make clean        # Clean artifacts
 make help         # Show all available commands
 ```
+
+### Development Environment Setup
+
+The build system is designed to work on **fresh Linux/macOS machines** with minimal pre-installed tools.
+
+**Prerequisites:**
+- Python 3.9+ (usually pre-installed)
+- Git and curl
+- **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
+
+**What `make dev-setup` installs (no sudo needed):**
+- **Node.js 22+**: via nvm (Linux) or Homebrew (macOS)
+- **pnpm**: TypeScript package manager
+- **Hatch**: Python environment manager (via pipx)
+- **Pre-commit hooks**: Automatic code quality checks
+
+**Key tools and their locations:**
+| Tool | Installation | Location |
+|------|--------------|----------|
+| nvm | Auto-installed | `~/.nvm/` |
+| Node.js | Via nvm | `~/.nvm/versions/node/` |
+| Hatch | Via pipx | `~/.local/bin/hatch` |
+| pnpm | Via npm | Global npm package |
+| Rust/wasm-pack | `make setup-rust` | `~/.cargo/` |
+
+**Troubleshooting:**
+```bash
+# Check what's installed
+make check-deps
+
+# If pipx/hatch issues on Ubuntu
+pipx reinstall hatch
+pipx ensurepath
+source ~/.bashrc
+
+# If Node.js not found after nvm install
+source ~/.nvm/nvm.sh
+# or restart terminal
+
+# Full reset and reinstall
+make deep-clean-dev-setup
+make dev-setup
+```
+
+See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
@@ -408,6 +455,7 @@ Before PR/merge:
 
 | Topic | Location |
 |-------|----------|
+| Build System & Dev Setup | `docs/guides/developer/BUILD_SYSTEM_SPEC.md` |
 | E2E Testing Quick Ref | `docs/guides/user/E2E_TESTING_GUIDE.md` |
 | Playwright Full Guide | `docs/guides/developer/PLAYWRIGHT_GUIDE.md` |
 | Data Format Spec | `docs/guides/user/LUXAR_ZARR_FORMAT.md` |

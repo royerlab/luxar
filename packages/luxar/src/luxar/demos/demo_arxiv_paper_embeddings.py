@@ -76,7 +76,6 @@ Download pre-computed embeddings and metadata directly!
 """
 
 import json
-import subprocess
 import sys
 import tempfile
 import time
@@ -87,6 +86,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -663,19 +663,7 @@ def main() -> None:
         aprint("Press Ctrl+C when done.")
         aprint("")
 
-        try:
-            subprocess.run(
-                ["luxar", "serve", str(output_path), "--viewer", "--open"],
-                check=True,
-            )
-        except KeyboardInterrupt:
-            aprint("\nStopping demo...")
-        except subprocess.CalledProcessError as e:
-            aprint(f"\nError: {e}")
-            sys.exit(1)
-        except FileNotFoundError:
-            aprint("\nError: 'luxar' command not found")
-            sys.exit(1)
+        launch_viewer(output_path)
 
     aprint("Cleanup complete")
     aprint("")
