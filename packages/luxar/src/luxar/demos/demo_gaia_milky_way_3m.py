@@ -118,7 +118,6 @@ Viewing Tips:
     - Colors reflect real stellar temperatures!
 """
 
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -128,6 +127,7 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # Find the data file relative to this script
@@ -417,63 +417,38 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
         tmp_path = Path(tmpdir)
 
-        try:
-            # Load from zip and convert to Luxar format (extracts to temp_dir)
-            zarr_path = load_and_convert_from_zip(DATA_FILE, tmp_path)
+        # Load from zip and convert to Luxar format (extracts to temp_dir)
+        zarr_path = load_and_convert_from_zip(DATA_FILE, tmp_path)
 
-            aprint("")
-            aprint("=" * 70)
-            aprint("VIEWING TIPS")
-            aprint("=" * 70)
-            aprint("")
-            aprint("Navigation:")
-            aprint("  • Start zoomed OUT to see the full galactic structure")
-            aprint("  • Look for the thin disk and central bulge")
-            aprint("  • The Milky Way is a flat disk ~30 kpc across")
-            aprint("  • Zoom IN to see individual stars with colors")
-            aprint("")
-            aprint("What to Explore:")
-            aprint("  • Yellow marker: Our Sun (you are here!)")
-            aprint("  • Red marker: Betelgeuse (red supergiant, 168 pc)")
-            aprint("  • Blue marker: Rigel (blue supergiant, 265 pc)")
-            aprint("  • Origin (0,0,0): The Galactic Center (8 kpc away)")
-            aprint("  • Top-down view: See the disk structure")
-            aprint("  • Edge-on view: See how thin the disk is")
-            aprint("  • Navigate toward origin to approach Galactic Center")
-            aprint("")
-            aprint("This is Real Science:")
-            aprint("  • Every point is a real star with measured position")
-            aprint("  • Colors reflect actual stellar surface temperatures")
-            aprint("  • Distances determined from parallax measurements")
-            aprint("  • Published in: Gaia Collaboration (2022), A&A")
-            aprint("")
-            aprint("=" * 70)
-            aprint("LAUNCHING VIEWER")
-            aprint("=" * 70)
-            aprint("Browser will open automatically...")
-            aprint("Press Ctrl+C when done to cleanup.")
-            aprint("")
+        aprint("")
+        aprint("=" * 70)
+        aprint("VIEWING TIPS")
+        aprint("=" * 70)
+        aprint("")
+        aprint("Navigation:")
+        aprint("  • Start zoomed OUT to see the full galactic structure")
+        aprint("  • Look for the thin disk and central bulge")
+        aprint("  • The Milky Way is a flat disk ~30 kpc across")
+        aprint("  • Zoom IN to see individual stars with colors")
+        aprint("")
+        aprint("What to Explore:")
+        aprint("  • Yellow marker: Our Sun (you are here!)")
+        aprint("  • Red marker: Betelgeuse (red supergiant, 168 pc)")
+        aprint("  • Blue marker: Rigel (blue supergiant, 265 pc)")
+        aprint("  • Origin (0,0,0): The Galactic Center (8 kpc away)")
+        aprint("  • Top-down view: See the disk structure")
+        aprint("  • Edge-on view: See how thin the disk is")
+        aprint("  • Navigate toward origin to approach Galactic Center")
+        aprint("")
+        aprint("This is Real Science:")
+        aprint("  • Every point is a real star with measured position")
+        aprint("  • Colors reflect actual stellar surface temperatures")
+        aprint("  • Distances determined from parallax measurements")
+        aprint("  • Published in: Gaia Collaboration (2022), A&A")
+        aprint("")
 
-            # Launch viewer
-            subprocess.run(
-                ["luxar", "serve", str(zarr_path), "--viewer", "--open"],
-                check=True,
-            )
-
-        except KeyboardInterrupt:
-            aprint("\n🛑 Stopping demo...")
-        except subprocess.CalledProcessError as e:
-            aprint(f"\n❌ Error launching viewer: {e}")
-            aprint("Make sure viewer is built:")
-            aprint("   cd packages/luxar-viewer && pnpm build")
-            sys.exit(1)
-        except FileNotFoundError as e:
-            if "luxar" in str(e):
-                aprint("\n❌ Error: 'luxar' command not found")
-                aprint("Install luxar: pip install -e .")
-            else:
-                aprint(f"\n❌ Error: {e}")
-            sys.exit(1)
+        # Launch viewer
+        launch_viewer(zarr_path)
 
     aprint("")
     aprint("Cleanup complete - temporary files removed")

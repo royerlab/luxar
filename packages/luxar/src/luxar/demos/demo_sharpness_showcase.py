@@ -26,7 +26,6 @@ Controls:
     - Browser opens automatically
 """
 
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -35,6 +34,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -376,23 +376,7 @@ def main() -> None:
         aprint("   - Sharp points have crisp, disc-like edges")
         aprint("")
 
-        try:
-            # Use luxar CLI to serve - it handles server lifecycle
-            subprocess.run(
-                ["luxar", "serve", str(output_path), "--viewer", "--open"], check=True
-            )
-        except KeyboardInterrupt:
-            aprint("\nStopping demo...")
-        except subprocess.CalledProcessError as e:
-            aprint(f"\nError: {e}")
-            aprint(
-                "Make sure the viewer is built: cd packages/luxar-viewer && pnpm build"
-            )
-            sys.exit(1)
-        except FileNotFoundError:
-            aprint("\nError: 'luxar' command not found")
-            aprint("Install luxar: pip install -e .")
-            sys.exit(1)
+        launch_viewer(output_path)
 
     # Cleanup happens automatically
     aprint("Cleanup complete - temporary files removed")
