@@ -1,7 +1,6 @@
 #!/bin/bash
 # Build Luxar WASM module using wasm-pack
 #
-# Phase 3: WASM Acceleration
 # This script compiles the Rust code to WebAssembly and generates JavaScript bindings
 #
 # Usage:
@@ -9,6 +8,11 @@
 #   ./build-wasm.sh --dev    # Development build (faster compilation)
 
 set -e  # Exit on error
+
+# Source cargo environment if available (needed for wasm-pack and rustc)
+if [ -f "$HOME/.cargo/env" ]; then
+    source "$HOME/.cargo/env"
+fi
 
 # Parse arguments
 BUILD_MODE="--release"
@@ -27,15 +31,25 @@ cd "$(dirname "$0")/../src/wasm/rust"
 # Check if wasm-pack is installed
 if ! command -v wasm-pack &> /dev/null; then
     echo "❌ Error: wasm-pack is not installed"
-    echo "Install with: cargo install wasm-pack"
-    echo "Or visit: https://rustwasm.github.io/wasm-pack/installer/"
+    echo ""
+    echo "To install Rust and wasm-pack, run from the project root:"
+    echo "  make setup-rust"
+    echo ""
+    echo "Or install manually:"
+    echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    echo "  source ~/.cargo/env"
+    echo "  cargo install wasm-pack"
     exit 1
 fi
 
 # Check if Rust is installed
 if ! command -v rustc &> /dev/null; then
     echo "❌ Error: Rust is not installed"
-    echo "Install from: https://rustup.rs/"
+    echo ""
+    echo "To install Rust, run from the project root:"
+    echo "  make setup-rust"
+    echo ""
+    echo "Or install manually from: https://rustup.rs/"
     exit 1
 fi
 
@@ -57,4 +71,3 @@ echo ""
 echo "Generated files:"
 ls -lh ../../../public/wasm/
 echo ""
-echo "🎯 WASM module ready for Phase 3 integration"

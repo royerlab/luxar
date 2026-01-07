@@ -18,17 +18,17 @@ Large multi-cluster dataset (1M points) for testing viewer performance under net
 **Run**:
 ```bash
 # Default: 1M points with slow broadband simulation
-python packages/luxar/src/luxar/demos/demo_network_performance.py
+hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py
 
 # Test with 3G mobile connection
-python packages/luxar/src/luxar/demos/demo_network_performance.py --profile 3g
+hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py --profile 3g
 
 # Large dataset with satellite latency
-python packages/luxar/src/luxar/demos/demo_network_performance.py --points=2000000 --profile satellite
+hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py --points=2000000 --profile satellite
 
 # Compare full speed vs throttled
-python packages/luxar/src/luxar/demos/demo_network_performance.py --no-simulation
-python packages/luxar/src/luxar/demos/demo_network_performance.py --profile slow-broadband
+hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py --no-simulation
+hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py --profile slow-broadband
 ```
 
 **Demonstrates**:
@@ -56,9 +56,9 @@ Beautiful chaotic attractor with rainbow color gradient.
 
 **Run**:
 ```bash
-python packages/luxar/src/luxar/demos/demo_lorenz.py
+hatch run python packages/luxar/src/luxar/demos/demo_lorenz.py
 # Or with custom point count:
-python packages/luxar/src/luxar/demos/demo_lorenz.py --points=100000
+hatch run python packages/luxar/src/luxar/demos/demo_lorenz.py --points=100000
 ```
 
 **Demonstrates**:
@@ -73,9 +73,9 @@ Dense sphere (200k points) with perfect distribution and rainbow colors.
 
 **Run**:
 ```bash
-python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py
+hatch run python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py
 # Or with custom point count:
-python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py --points=100000
+hatch run python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py --points=100000
 ```
 
 **Demonstrates**:
@@ -90,9 +90,9 @@ Realistic cloud using multi-octave fractal noise and varying point sizes.
 
 **Run**:
 ```bash
-python packages/luxar/src/luxar/demos/demo_volumetric_cloud.py
+hatch run python packages/luxar/src/luxar/demos/demo_volumetric_cloud.py
 # Or with custom candidate count:
-python packages/luxar/src/luxar/demos/demo_volumetric_cloud.py --points=1000000
+hatch run python packages/luxar/src/luxar/demos/demo_volumetric_cloud.py --points=1000000
 ```
 
 **Demonstrates**:
@@ -109,7 +109,7 @@ Dense 100³ grid (1M points) with 500k background stars.
 
 **Run**:
 ```bash
-python packages/luxar/src/luxar/demos/demo_cubic_array.py
+hatch run python packages/luxar/src/luxar/demos/demo_cubic_array.py
 ```
 
 **Demonstrates**:
@@ -127,9 +127,9 @@ Stunning volumetric representation of the famous Mandelbulb 3D fractal.
 
 **Run**:
 ```bash
-python packages/luxar/src/luxar/demos/demo_mandelbulb.py
+hatch run python packages/luxar/src/luxar/demos/demo_mandelbulb.py
 # Or with custom resolution:
-python packages/luxar/src/luxar/demos/demo_mandelbulb.py --resolution=128 --power=8
+hatch run python packages/luxar/src/luxar/demos/demo_mandelbulb.py --resolution=128 --power=8
 ```
 
 **Demonstrates**:
@@ -146,9 +146,9 @@ Beautiful astronomical simulation of a barred spiral galaxy.
 
 **Run**:
 ```bash
-python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py
+hatch run python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py
 # Or with custom parameters:
-python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py --stars=500000 --arms=4
+hatch run python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py --stars=500000 --arms=4
 ```
 
 **Demonstrates**:
@@ -166,9 +166,9 @@ Interactive exploration of 6 different 4D geometric fractals with categorical di
 
 **Run**:
 ```bash
-python packages/luxar/src/luxar/demos/demo_4d_fractals.py
+hatch run python packages/luxar/src/luxar/demos/demo_4d_fractals.py
 # Or with custom grid resolution:
-python packages/luxar/src/luxar/demos/demo_4d_fractals.py --grid=64
+hatch run python packages/luxar/src/luxar/demos/demo_4d_fractals.py --grid=64
 ```
 
 **Demonstrates**:
@@ -188,9 +188,9 @@ Beautiful procedural forest using L-system grammars to showcase the **Lines** no
 
 **Run**:
 ```bash
-python packages/luxar/src/luxar/demos/demo_lsystem_forest.py
+hatch run python packages/luxar/src/luxar/demos/demo_lsystem_forest.py
 # Or with custom iterations (more = more detail, exponentially larger):
-python packages/luxar/src/luxar/demos/demo_lsystem_forest.py --iterations=6 --trees=16
+hatch run python packages/luxar/src/luxar/demos/demo_lsystem_forest.py --iterations=6 --trees=16
 ```
 
 **Demonstrates**:
@@ -251,14 +251,9 @@ def main():
         # Generate
         generate_my_data(output_path)
 
-        # Serve using CLI (handles server lifecycle)
-        try:
-            subprocess.run([
-                "luxar", "serve", str(output_path),
-                "--viewer", "--open"
-            ], check=True)
-        except KeyboardInterrupt:
-            aprint("\\n🛑 Stopping...")
+        # Serve using the launch_viewer helper
+        from luxar.demos import launch_viewer
+        launch_viewer(output_path)
 
     # Auto-cleanup
     aprint("✓ Cleanup complete")
@@ -302,34 +297,35 @@ with tempfile.TemporaryDirectory(prefix="luxar_demo_myname_") as tmpdir:
 # Automatic cleanup when context exits
 ```
 
-### 3. Use CLI for Serving
-Don't reimplement server logic - use the luxar CLI:
+### 3. Use launch_viewer Helper
+Don't reimplement server logic - use the `launch_viewer` helper:
 
 ```python
-subprocess.run([
-    "luxar", "serve", str(output_path),
-    "--viewer",  # Also serve viewer
-    "--open"     # Open browser automatically
-], check=True)
+from luxar.demos import launch_viewer
+
+# At the end of your demo, after generating data:
+launch_viewer(output_path)
 ```
 
 Benefits:
+- Uses `sys.executable -m luxar` so it works regardless of how the demo was run
+- Works with hatch, conda, or any Python environment where luxar is installed
+- Handles all error cases (KeyboardInterrupt, missing viewer, etc.)
 - Reuses tested server code
 - Handles CORS, directory listing, etc.
 - Stops cleanly on Ctrl+C
-- No complex server lifecycle code
 
-### 4. Handle Errors Gracefully
+### 4. Running Demos
 
-```python
-try:
-    subprocess.run(["luxar", "serve", ...], check=True)
-except KeyboardInterrupt:
-    aprint("\\n🛑 Stopping...")  # Normal user stop
-except subprocess.CalledProcessError:
-    aprint("❌ Error - is viewer built?")  # Helpful message
-except FileNotFoundError:
-    aprint("❌ luxar command not found")  # Installation issue
+Demos should be run through hatch to ensure luxar is available:
+
+```bash
+# From project root
+hatch run python packages/luxar/src/luxar/demos/demo_lorenz.py
+
+# Or activate hatch shell first
+hatch shell
+python packages/luxar/src/luxar/demos/demo_lorenz.py
 ```
 
 ### 5. Use arbol for Output
@@ -354,7 +350,7 @@ with asection("Writing to Zarr"):
 2. **Rename** to demo_yourname.py
 3. **Update docstring** with what it demonstrates
 4. **Implement generation** in the generate_* function (keep everything in that function!)
-5. **Test** by running: `python demo_yourname.py`
+5. **Test** by running: `hatch run python demo_yourname.py`
 6. **Ctrl+C** to stop and verify cleanup works
 
 ## Tips
@@ -404,32 +400,27 @@ theta = np.arccos(np.random.uniform(-1, 1, n))
 ## Running All Demos
 
 ```bash
-# From project root:
-python packages/luxar/src/luxar/demos/demo_lorenz.py
-python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py
-python packages/luxar/src/luxar/demos/demo_volumetric_cloud.py
-python packages/luxar/src/luxar/demos/demo_cubic_array.py
-python packages/luxar/src/luxar/demos/demo_mandelbulb.py
-python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py
-python packages/luxar/src/luxar/demos/demo_4d_fractals.py
-python packages/luxar/src/luxar/demos/demo_lsystem_forest.py  # Lines demo!
-
-# Or since they're executable:
-./packages/luxar/src/luxar/demos/demo_lorenz.py
-./packages/luxar/src/luxar/demos/demo_rainbow_sphere.py
-./packages/luxar/src/luxar/demos/demo_volumetric_cloud.py
-./packages/luxar/src/luxar/demos/demo_cubic_array.py
-./packages/luxar/src/luxar/demos/demo_mandelbulb.py
-./packages/luxar/src/luxar/demos/demo_spiral_galaxy.py
-./packages/luxar/src/luxar/demos/demo_4d_fractals.py
-./packages/luxar/src/luxar/demos/demo_lsystem_forest.py  # Lines demo!
+# From project root (use hatch to ensure luxar is available):
+hatch run python packages/luxar/src/luxar/demos/demo_lorenz.py
+hatch run python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py
+hatch run python packages/luxar/src/luxar/demos/demo_volumetric_cloud.py
+hatch run python packages/luxar/src/luxar/demos/demo_cubic_array.py
+hatch run python packages/luxar/src/luxar/demos/demo_mandelbulb.py
+hatch run python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py
+hatch run python packages/luxar/src/luxar/demos/demo_4d_fractals.py
+hatch run python packages/luxar/src/luxar/demos/demo_lsystem_forest.py  # Lines demo!
 ```
 
 ## Troubleshooting
 
-**"luxar command not found"**:
+**"luxar command not found"** or **"No module named luxar"**:
 ```bash
-pip install -e .  # Install luxar in development mode
+# Always run demos through hatch to ensure luxar is available:
+hatch run python packages/luxar/src/luxar/demos/demo_lorenz.py
+
+# Or activate the hatch shell first:
+hatch shell
+python packages/luxar/src/luxar/demos/demo_lorenz.py
 ```
 
 **"Viewer not built"**:

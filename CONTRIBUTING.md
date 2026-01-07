@@ -31,11 +31,29 @@ git push origin feature/amazing-feature
 
 ## 🛠️ Development Environment
 
+### Prerequisites
+
+The build system works on **fresh Linux/macOS machines** with minimal pre-installed tools:
+- Python 3.9+ (usually pre-installed)
+- Git and curl
+
+**Ubuntu/Debian only** (due to PEP 668):
+```bash
+sudo apt-get install -y pipx && pipx ensurepath && source ~/.bashrc
+```
+
 ### First-time Setup
 ```bash
-make dev-setup     # Complete development environment
-make check         # Verify everything works
+make dev-setup     # Complete development environment (auto-installs Node.js, pnpm, Hatch)
+make check-deps    # Verify what's installed
+make check         # Run all quality checks
 ```
+
+`make dev-setup` automatically installs (no sudo needed):
+- Node.js 22+ via nvm (Linux) or Homebrew (macOS)
+- pnpm for TypeScript package management
+- Hatch for Python environment management
+- All project dependencies
 
 ### Daily Development Workflow
 ```bash
@@ -44,26 +62,41 @@ make check         # Run all quality checks
 make test-cov      # Run tests with coverage
 ```
 
+### Troubleshooting Setup Issues
+```bash
+make check-deps              # See what's installed/missing
+make deep-clean-dev-setup    # Reset everything and start fresh
+```
+
+For detailed build system documentation, see [BUILD_SYSTEM_SPEC.md](docs/guides/developer/BUILD_SYSTEM_SPEC.md).
+
 ### Available Commands
 
 | Command | Purpose |
 |---------|---------|
-| `make dev-setup` | Complete development environment setup |
+| **Setup** | |
+| `make dev-setup` | Complete development environment setup (auto-installs dependencies) |
+| `make check-deps` | Check what dependencies are installed/missing |
 | `make setup-rust` | Install Rust + wasm-pack for viewer builds |
+| `make deep-clean-dev-setup` | Remove ALL dev tools (for testing fresh setup) |
+| **Quality** | |
 | `make format` | Format code with ruff |
 | `make format-all` | Format all code (Python + TypeScript) |
 | `make lint` | Run ruff linting |
 | `make type-check` | Run mypy type checking |
 | `make security` | Run bandit security scan |
-| `make test` | Run Python test suite |
-| `make test-all` | Run all tests (Python + TypeScript) |
-| `make test-cov` | Run tests with coverage report |
 | `make check` | Run all quality checks |
+| **Testing** | |
+| `make test` | Run Python test suite |
+| `make test-all` | Run all tests (Python + TypeScript + Rust) |
+| `make test-cov` | Run tests with coverage report |
+| `make viewer-test` | Run TypeScript tests |
+| `make wasm-test` | Run Rust unit tests |
+| **Viewer** | |
 | `make viewer` | Start viewer development server |
 | `make viewer-build` | Build viewer for production (requires Rust) |
-| `make viewer-test` | Run TypeScript tests |
 | `make wasm-build` | Build WASM module |
-| `make wasm-test` | Run Rust unit tests |
+| **Utilities** | |
 | `make clean` | Clean temporary files |
 | `make help` | Show all available commands |
 
