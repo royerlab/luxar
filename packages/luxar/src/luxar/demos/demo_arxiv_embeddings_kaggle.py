@@ -80,7 +80,6 @@ Controls:
     - Ctrl+C to stop
 """
 
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -89,6 +88,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -742,15 +742,7 @@ def main() -> None:
         aprint("Press Ctrl+C when done.")
         aprint("")
 
-        try:
-            subprocess.run(
-                ["luxar", "serve", str(output_path), "--viewer", "--open"],
-                check=True,
-            )
-        except KeyboardInterrupt:
-            aprint("\nStopping demo...")
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
+        launch_viewer(output_path)
 
     aprint("Cleanup complete")
 

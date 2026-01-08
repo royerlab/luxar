@@ -107,6 +107,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -770,21 +771,7 @@ def main() -> None:
         aprint("Press Ctrl+C when done.")
         aprint("")
 
-        subprocess.run(
-            ["luxar", "serve", str(scene_path), "--viewer", "--open"],
-            check=True,
-        )
-
-    except KeyboardInterrupt:
-        aprint("\nStopping demo...")
-    except Exception as e:
-        aprint(f"\nError: {e}")
-        import traceback
-
-        traceback.print_exc()
-        sys.exit(1)
-
-    aprint("Cleanup complete")
+        launch_viewer(scene_path)
 
 
 if __name__ == "__main__":

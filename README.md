@@ -30,17 +30,19 @@ GPU-accelerated WebGL renderer with HDR pipeline, real-time effects, and streami
 
 ### Prerequisites
 
-- **Python**: 3.10 or higher
-- **Node.js**: 18 or higher
+- **Python**: 3.9 or higher (usually pre-installed on Linux/macOS)
+- **Node.js**: 20.19+ (auto-installed by `make dev-setup`)
 - **Modern browser**: WebGL 2.0 support required
+- **Ubuntu/Debian only**: Install pipx first: `sudo apt-get install -y pipx`
 
-### One-Command Demo
+### One-Command Setup + Demo
 
 ```bash
-# Clone and see Luxar in action
+# Clone and set up development environment
 git clone https://github.com/royerlab/luxar.git
 cd luxar
-make demo-and-serve
+make dev-setup      # Auto-installs Node.js, pnpm, Hatch (no sudo needed)
+make demo-and-serve # Creates demo and starts viewer
 
 # Opens browser with a beautiful Lorenz attractor visualization
 ```
@@ -48,17 +50,15 @@ make demo-and-serve
 ### Basic Workflow
 
 ```bash
-# 1. Install Luxar
-pip install -e .
-# Optional Gaussian splatting support
-pip install -e ".[gsplats]"
+# 1. Set up environment (first time only)
+make dev-setup
 
 # 2. Create a scene in Python
-luxar demo --no-serve --output my_scene.zarr --points 1000000
+hatch run luxar demo --no-serve --output my_scene.zarr --points 1000000
 
-# 3. Visualize in browser
-make viewer  # Starts viewer at http://localhost:5173
-make serve-data DATASET=my_scene.zarr  # Serves your data
+# 3. Visualize in browser (run in separate terminals)
+make viewer                            # Starts viewer at http://localhost:5173
+make serve-data DATASET=my_scene.zarr  # Serves your data at http://localhost:8000
 ```
 
 ### Python Example
@@ -152,6 +152,7 @@ luxar/
 
 ### 🌐 Luxar Viewer
 - **GPU Acceleration** - WebGL 2.0 with custom shaders
+- **WASM Acceleration** - Rust-on-WASM hot function acceleration
 - **nD Navigation** - Browse through multiple dimensions with keyboard controls
 - **Radius-Based Slicing** - Natural point visibility based on hypersphere intersections
 - **HDR Rendering** - 16-bit precision with bloom effects
@@ -160,25 +161,30 @@ luxar/
 
 📚 [Full Viewer Documentation →](packages/luxar-viewer/README.md)
 
-### 🆕 New in Latest Version
-- **Dimension Sliders UI**: Beautiful napari-inspired sliders for navigating nD data
-- **Scene-Level Dimensions**: Define coordinate systems once, validate all objects
-- **nD Point Cloud Support**: Visualize time series, multi-channel, and high-dimensional data
-- **Smart Slicing**: Points visible based on their radius in nD space
-- **Keyboard Navigation**: 
-  - Press `1-9` to select dimension to control
-  - Use `[` and `]` to navigate through selected dimension
-  - Custom step sizes per dimension for precise control
-- **4D Hypersphere Example**: Educational example showing true 4D spatial geometry
-- **Enhanced Camera Controls**: Smart centering with edge case handling
 
 ## 🔧 Development
+
+### Prerequisites
+
+The build system is designed to work on **fresh Linux and macOS machines** with minimal pre-installed tools. All other dependencies are installed automatically.
+
+**Minimal requirements:**
+- Python 3.9+ (usually pre-installed)
+- Git and curl
+
+**Ubuntu/Debian only** (due to PEP 668):
+```bash
+sudo apt-get install -y pipx && pipx ensurepath && source ~/.bashrc
+```
 
 ### Quick Setup
 
 ```bash
-# Complete setup with all tools
+# Complete setup - auto-installs everything (no sudo needed for most tools)
 make dev-setup
+
+# Check what's installed
+make check-deps
 
 # Run all quality checks
 make check
@@ -187,8 +193,15 @@ make check
 make help
 ```
 
+`make dev-setup` automatically installs:
+- **Python**: Hatch (via pipx) for environment management
+- **Node.js**: v22+ via nvm (Linux) or Homebrew (macOS) - no sudo needed
+- **TypeScript**: pnpm and all npm dependencies
+- **Pre-commit hooks**: Automatic code quality checks
+
 ### Development Resources
 
+- 📚 [Build System Guide](docs/guides/developer/BUILD_SYSTEM_SPEC.md) - Complete Makefile documentation
 - 📚 [Python Development Guide](packages/luxar/README.md#-development) - Testing, code style, extending
 - 📚 [Viewer Development Guide](packages/luxar-viewer/README.md#-development) - TypeScript, WebGL, shaders
 - 📚 [Contributing Guidelines](CONTRIBUTING.md) - How to contribute
@@ -197,12 +210,30 @@ make help
 
 | Task | Command |
 |------|---------|
-| Format code | `make format` |
-| Run tests | `make test` |
-| Type check | `make type-check` |
-| Start viewer | `make viewer` |
+| **Setup** | |
+| Full dev setup | `make dev-setup` |
+| Check dependencies | `make check-deps` |
+| Setup Rust/WASM | `make setup-rust` |
+| **Quality** | |
+| All checks | `make check` |
+| Format code | `make format-all` |
+| Run all tests | `make test-all` |
+| **Viewer** | |
+| Start dev server | `make viewer` |
+| Build for production | `make viewer-build` |
+| **Data** | |
 | Create demo | `make demo-and-serve` |
-| Project stats | `make stats` |
+| Run examples | `make run-examples` |
+
+### Rust/WASM Support (Optional)
+
+WASM acceleration is optional. The viewer works without it (uses TypeScript fallback):
+
+```bash
+make setup-rust    # Install Rust + wasm-pack
+make wasm-build    # Build WASM module
+make wasm-test     # Run Rust tests
+```
 
 ## 📋 Data Format
 
@@ -274,38 +305,47 @@ scene.zarr/
 ### Scientific Visualization
 
 ```python
+from luxar import LuxarZarrCompiler, Dimensions
+
 # Visualize experimental data points
 positions = load_experimental_coordinates()  # Your data loading
 colors = map_values_to_colors(experimental_values)
-scene = Scene("experiment_results.zarr")
-scene.add_points("ExperimentData", positions, colors)
-scene.finalize()
+
+with LuxarZarrCompiler("experiment_results.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=Dimensions.from_positions(positions))
+    scene.add_points("ExperimentData", positions, colors=colors)
 ```
 
 ### Geographic Data
 
 ```python
+from luxar import LuxarZarrCompiler, Dimensions
+
 # Visualize GPS coordinates with elevation
 lat_lon_alt = load_gps_data()
 positions = convert_to_cartesian(lat_lon_alt)
 colors = elevation_to_color_map(lat_lon_alt[:, 2])
-scene = Scene("geographic_data.zarr")
-scene.add_points("GPSData", positions, colors)
-scene.finalize()
+
+with LuxarZarrCompiler("geographic_data.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=Dimensions.from_positions(positions))
+    scene.add_points("GPSData", positions, colors=colors)
 ```
 
 ### Synthetic Datasets
 
 ```python
+from luxar import LuxarZarrCompiler, Dimensions
+
 # Generate procedural points
 def generate_fractal_points(iterations=5, scale=2.0):
     # Your fractal algorithm here
     return positions, colors
 
 positions, colors = generate_fractal_points()
-scene = Scene("fractal.zarr")
-scene.add_points("FractalPoints", positions, colors)
-scene.finalize()
+
+with LuxarZarrCompiler("fractal.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=Dimensions.from_positions(positions))
+    scene.add_points("FractalPoints", positions, colors=colors)
 ```
 
 ## 🚨 Troubleshooting
@@ -314,7 +354,9 @@ scene.finalize()
 
 **ImportError: No module named 'luxar'**
 ```bash
-pip install -e .  # Install in development mode
+make dev-setup    # Sets up complete environment including luxar
+# Or if you have hatch installed:
+hatch shell       # Activates the development environment
 ```
 
 **Viewer shows white screen**
@@ -503,9 +545,9 @@ For detailed contributing guidelines, development setup, coding standards, and m
 ## 🎓 Learning Resources
 
 ### Getting Started
-1. Run the basic demo: `luxar demo --no-serve --output demo.zarr --points 50000`
-2. Start the viewer: `cd packages/luxar-viewer && pnpm dev`
-3. Load your data: `http://localhost:5173/?src=http://localhost:8000/data/demo.zarr/`
+1. Run the basic demo: `hatch run luxar demo --no-serve --output demo.zarr --points 50000`
+2. Start the viewer: `make viewer`
+3. Serve and load data: `make serve-data DATASET=demo.zarr` then open `http://localhost:5173/?src=http://localhost:8000`
 
 ### Advanced Topics
 - Custom shader development for specialized rendering

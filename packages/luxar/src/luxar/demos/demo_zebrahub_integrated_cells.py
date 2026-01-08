@@ -9,7 +9,6 @@ Paper: https://www.biorxiv.org/content/10.1101/2024.10.18.618987v1
 Navigate between Cell Type and Timepoint views using the categorical dimension dropdown!
 """
 
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -20,6 +19,7 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -185,12 +185,7 @@ def main() -> None:
         aprint("   1: Timepoint (6 stages)")
         aprint("")
 
-        try:
-            subprocess.run(
-                ["luxar", "serve", str(output), "--viewer", "--open"], check=True
-            )
-        except (KeyboardInterrupt, subprocess.CalledProcessError, FileNotFoundError):
-            pass
+        launch_viewer(output)
 
     aprint("Done")
 
