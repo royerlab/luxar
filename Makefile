@@ -92,6 +92,10 @@ check-deps:  ## Check all development dependencies and their versions
 		echo "✅ pipx: $$(pipx --version 2>/dev/null)"; \
 	elif [ "$(OS)" = "macos" ]; then \
 		echo "❌ pipx not found (run: brew install pipx)"; \
+	elif [ "$(PKG_MANAGER)" = "dnf" ]; then \
+		echo "❌ pipx not found (run: sudo dnf install pipx)"; \
+	elif [ "$(PKG_MANAGER)" = "yum" ]; then \
+		echo "❌ pipx not found (run: sudo yum install pipx)"; \
 	else \
 		echo "❌ pipx not found (run: sudo apt-get install pipx)"; \
 	fi
@@ -459,23 +463,23 @@ deep-clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE 
 		exit 1; \
 	fi
 	@echo ""
-	@echo "🧹 [1/6] Removing node_modules..."
+	@echo "🧹 [1/8] Removing node_modules..."
 	@rm -rf packages/luxar-viewer/node_modules
 	@echo "   ✓ Done"
 	@echo ""
-	@echo "🧹 [2/6] Removing Hatch environments..."
+	@echo "🧹 [2/8] Removing Hatch environments..."
 	@if command -v hatch >/dev/null 2>&1; then \
 		hatch env prune -y 2>/dev/null || true; \
 	fi
 	@rm -rf ~/.local/share/hatch/env/virtual/luxar* 2>/dev/null || true
 	@echo "   ✓ Done"
 	@echo ""
-	@echo "🧹 [3/6] Removing WASM build artifacts..."
+	@echo "🧹 [3/8] Removing WASM build artifacts..."
 	@rm -rf packages/luxar-viewer/public/wasm
 	@rm -rf packages/luxar-viewer/src/wasm/rust/target
 	@echo "   ✓ Done"
 	@echo ""
-	@echo "🧹 [4/6] Removing wasm-pack..."
+	@echo "🧹 [4/8] Removing wasm-pack..."
 	@if [ -f "$(HOME)/.cargo/env" ]; then \
 		. "$(HOME)/.cargo/env"; \
 	fi; \
@@ -486,7 +490,7 @@ deep-clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE 
 		echo "   ⚪ Not installed, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [5/6] Removing Rust toolchain..."
+	@echo "🧹 [5/8] Removing Rust toolchain..."
 	@if command -v rustup >/dev/null 2>&1; then \
 		rustup self uninstall -y 2>/dev/null || true; \
 		echo "   ✓ Done"; \
@@ -547,15 +551,9 @@ deep-clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE 
 	@echo "✅ Deep clean complete!"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo ""
-	@echo "Optional: Remove nvm configuration from ~/.bashrc (lines added by nvm installer)"
-	@echo ""
-ifeq ($(OS),macos)
-	@echo "If Node.js was installed via Homebrew (not nvm), also run:"
-	@echo "  brew uninstall node"
-endif
-	@echo ""
-	@echo "After cleanup, run 'make check-deps' to verify the state."
-	@echo "Then run 'make dev-setup' to set up the environment again."
+	@echo "Next steps:"
+	@echo "  1. Run 'make check-deps' to verify the cleanup"
+	@echo "  2. Run 'make dev-setup' to reinstall everything"
 	@echo ""
 
 # Development setup
