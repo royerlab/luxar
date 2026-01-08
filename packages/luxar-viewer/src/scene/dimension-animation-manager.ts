@@ -100,8 +100,8 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   private ensureRegistered(): void {
     if (this.isRegistered) return;
 
-    // Register per-frame callback
-    this.animationController.setPerFrameCallback(() => {
+    // Register per-frame callback with unique ID (won't overwrite other callbacks like dynamic clipping)
+    this.animationController.addPerFrameCallback('dimension-animation', () => {
       this.onFrame();
     });
 
@@ -612,9 +612,9 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     // Clear state
     this.animationStates.clear();
 
-    // Unregister from animation controller
+    // Unregister from animation controller (only removes our callback, not others)
     if (this.isRegistered) {
-      this.animationController.setPerFrameCallback(null);
+      this.animationController.removePerFrameCallback('dimension-animation');
       this.isRegistered = false;
     }
 
