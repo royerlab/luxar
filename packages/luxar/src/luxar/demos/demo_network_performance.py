@@ -52,6 +52,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -346,16 +347,7 @@ def main() -> None:
         aprint("Press Ctrl+C when done to stop and cleanup.")
         aprint("")
 
-        try:
-            subprocess.run(cmd, check=True)
-        except KeyboardInterrupt:
-            aprint("\n🛑 Stopping demo...")
-        except subprocess.CalledProcessError as e:
-            aprint(f"\n❌ Error: {e}")
-            aprint(
-                "💡 Make sure the luxar viewer is built: cd packages/luxar-viewer && pnpm build"
-            )
-            sys.exit(1)
+        launch_viewer(output_path)
 
 
 if __name__ == "__main__":

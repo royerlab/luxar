@@ -645,7 +645,7 @@ def viewer(
 
             data_url = f"http://{host}:{actual_data_port}"  # No trailing slash!
             if data.name.endswith(".zarr"):
-                data_url += data.name
+                data_url += "/" + data.name
 
         # Find available port for viewer
         actual_viewer_port = find_available_port(port)

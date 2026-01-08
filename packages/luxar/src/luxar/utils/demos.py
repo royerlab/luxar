@@ -6,7 +6,10 @@ and demonstration purposes.
 
 from __future__ import annotations
 
-from typing import Optional
+import subprocess
+import sys
+from pathlib import Path
+from typing import Optional, Union
 
 import numpy as np
 from arbol import aprint
@@ -15,6 +18,41 @@ from ..core.dimensions import Dimension, Dimensions
 from ..io.compiler import LuxarZarrCompiler
 from ..typing_utils.config import check_dataset_size_warning
 from ..typing_utils.protocols import PathLike
+
+
+def launch_viewer(output_path: Union[str, Path], open_browser: bool = True) -> None:
+    """Launch the Luxar viewer to display a dataset.
+
+    This function uses sys.executable to ensure it works regardless of how
+    the demo script was launched (hatch run, hatch shell, conda, etc.).
+
+    Args:
+        output_path: Path to the .zarr dataset to view
+        open_browser: Whether to automatically open a browser window
+
+    Raises:
+        SystemExit: If the viewer fails to launch
+    """
+    cmd = [sys.executable, "-m", "luxar", "serve", str(output_path), "--viewer"]
+    if open_browser:
+        cmd.append("--open")
+
+    try:
+        subprocess.run(cmd, check=True)
+    except KeyboardInterrupt:
+        aprint("\n🛑 Stopping demo...")
+    except subprocess.CalledProcessError as e:
+        # Check if it's a "module not found" error
+        if e.returncode == 1:
+            aprint(f"\n❌ Error running luxar: {e}")
+            aprint("Make sure luxar is installed in your Python environment.")
+            aprint("If using hatch: run this demo with 'hatch run python <demo.py>'")
+        else:
+            aprint(f"\n❌ Error: {e}")
+            aprint(
+                "Make sure the viewer is built: cd packages/luxar-viewer && pnpm build"
+            )
+        sys.exit(1)
 
 
 def create_lorenz_attractor(

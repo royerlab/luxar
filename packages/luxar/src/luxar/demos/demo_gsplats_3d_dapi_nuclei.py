@@ -88,7 +88,6 @@ import os
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -98,6 +97,7 @@ import zarr
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.demos import launch_viewer
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fit_result import GSplatData
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
@@ -445,24 +445,7 @@ def view_with_napari(volume, gsplats_data):
 
 def serve_scene(scene_path):
     """Launch luxar viewer to display the scene."""
-    aprint("\n" + "=" * 70)
-    aprint("🚀 Launching Luxar Viewer...")
-    aprint("=" * 70)
-    aprint(f"Scene: {scene_path}")
-    aprint("URL: http://localhost:8000")
-    aprint("\nPress Ctrl+C to stop the server")
-    aprint("=" * 70 + "\n")
-
-    try:
-        # Launch luxar serve
-        cmd = ["luxar", "serve", str(scene_path), "--viewer"]
-        subprocess.run(cmd, check=True)
-    except KeyboardInterrupt:
-        aprint("\n✓ Server stopped")
-    except Exception as e:
-        aprint(f"\n⚠ Error: {e}")
-        aprint("\nYou can manually serve with:")
-        aprint(f"  luxar serve {scene_path} --viewer")
+    launch_viewer(scene_path)
 
 
 # =============================================================================
