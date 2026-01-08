@@ -17,7 +17,6 @@ Controls:
     - Browser opens automatically
 """
 
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -26,6 +25,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -187,23 +187,7 @@ def main() -> None:
         aprint("Press Ctrl+C when done to stop and cleanup.")
         aprint("")
 
-        try:
-            # Use luxar CLI to serve - it handles server lifecycle
-            subprocess.run(
-                ["luxar", "serve", str(output_path), "--viewer", "--open"], check=True
-            )
-        except KeyboardInterrupt:
-            aprint("\n🛑 Stopping demo...")
-        except subprocess.CalledProcessError as e:
-            aprint(f"\n❌ Error: {e}")
-            aprint(
-                "💡 Make sure the luxar viewer is built: cd packages/luxar-viewer && pnpm build"
-            )
-            sys.exit(1)
-        except FileNotFoundError:
-            aprint("\n❌ Error: 'luxar' command not found")
-            aprint("💡 Make sure luxar is installed: pip install -e .")
-            sys.exit(1)
+        launch_viewer(output_path)
 
     # Cleanup happens automatically when tempfile context exits
     aprint("✓ Cleanup complete - temporary files removed")
