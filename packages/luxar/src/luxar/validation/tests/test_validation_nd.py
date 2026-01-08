@@ -173,7 +173,7 @@ class TestValidateDimensionalCoverage:
             ]
         )
 
-        groups = {}
+        groups: dict[str, np.ndarray] = {}
 
         # Should not raise for empty groups (nothing to validate)
         validate_dimensional_coverage(dims, groups)
@@ -218,6 +218,8 @@ class TestBroadcastToAllSlices:
 
         # Should return same arrays
         assert np.array_equal(new_pos, positions)
+        assert new_col is not None
+        assert new_rad is not None
         assert np.array_equal(new_col, colors)
         assert np.array_equal(new_rad, radii)
 
@@ -242,6 +244,8 @@ class TestBroadcastToAllSlices:
 
         # Should broadcast to 3 time points (0, 1, 2)
         assert new_pos.shape == (15, 2)  # 5 points * 3 times
+        assert new_col is not None
+        assert new_rad is not None
         assert new_col.shape == (15, 3)
         assert new_rad.shape == (15,)
 
@@ -335,12 +339,14 @@ class TestBroadcastToAllSlices:
         )
 
         # Check colors are replicated correctly
+        assert new_col is not None
         assert np.array_equal(new_col[0], [1, 0, 0])  # First point, time=0
         assert np.array_equal(new_col[1], [0, 1, 0])  # Second point, time=0
         assert np.array_equal(new_col[2], [1, 0, 0])  # First point, time=1
         assert np.array_equal(new_col[3], [0, 1, 0])  # Second point, time=1
 
         # Check radii are replicated correctly
+        assert new_rad is not None
         assert new_rad[0] == 0.5
         assert new_rad[1] == 1.0
         assert new_rad[2] == 0.5

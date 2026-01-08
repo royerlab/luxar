@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import torch
+from arbol import aprint
 
 
 class TestCentersReordering:
@@ -258,10 +259,10 @@ class TestEndToEndCoordinates:
         peak_val_metal = output_metal[10, 8, 8].item()
         peak_val_pytorch = output_pytorch[10, 8, 8].item()
 
-        print("\nAsymmetric splat test:")
-        print(f"  Metal peak at [10,8,8]: {peak_val_metal:.6f}")
-        print(f"  PyTorch peak at [10,8,8]: {peak_val_pytorch:.6f}")
-        print(f"  Difference: {abs(peak_val_metal - peak_val_pytorch):.6e}")
+        aprint("\nAsymmetric splat test:")
+        aprint(f"  Metal peak at [10,8,8]: {peak_val_metal:.6f}")
+        aprint(f"  PyTorch peak at [10,8,8]: {peak_val_pytorch:.6f}")
+        aprint(f"  Difference: {abs(peak_val_metal - peak_val_pytorch):.6e}")
 
         assert abs(peak_val_metal - peak_val_pytorch) < 0.02, (
             "Peak values should match within 2%"

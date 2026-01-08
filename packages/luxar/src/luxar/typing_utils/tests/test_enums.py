@@ -252,14 +252,14 @@ class TestEnumStringBehavior:
     def test_blending_mode_is_str(self) -> None:
         """Test BlendingMode inherits from str."""
         assert isinstance(BlendingMode.NORMAL, str)
-        assert BlendingMode.NORMAL == "normal"
+        assert BlendingMode.NORMAL.value == "normal"
 
     def test_node_type_is_str(self) -> None:
         """Test NodeType inherits from str."""
         assert isinstance(NodeType.POINTS, str)
-        assert NodeType.POINTS == "points"
+        assert NodeType.POINTS.value == "points"
 
     def test_physical_unit_is_str(self) -> None:
         """Test PhysicalUnit inherits from str."""
         assert isinstance(PhysicalUnit.MICROMETER, str)
-        assert PhysicalUnit.MICROMETER == "um"
+        assert PhysicalUnit.MICROMETER.value == "um"

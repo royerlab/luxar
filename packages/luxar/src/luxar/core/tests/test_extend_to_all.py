@@ -1,6 +1,7 @@
 """Tests for extend_to_all functionality in Scene.add_points()."""
 
 import warnings
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -154,7 +155,7 @@ class TestExtendToAll:
                 scene.add_points(
                     "points",
                     positions,
-                    extend_to_all=123,  # Invalid type
+                    extend_to_all=cast(Any, 123),  # Invalid type
                 )
 
     def test_extend_with_colors_and_radii(self, tmp_path) -> None:

@@ -100,25 +100,35 @@ class TestSceneMethods:
             # Cholesky factors for 4D: k = 4*(4+1)/2 = 10
             cholesky_4d = np.random.randn(100, 10).astype(np.float32)
             with pytest.raises(ValueError, match="Dimension mismatch"):
-                scene.add_gsplats("bad_gsplats", centers_4d, amplitudes=1.0, cholesky_factors=cholesky_4d)
+                scene.add_gsplats(
+                    "bad_gsplats",
+                    centers_4d,
+                    amplitudes=1.0,
+                    cholesky_factors=cholesky_4d,
+                )
 
     def test_dimension_range_warning(self, tmp_path) -> None:
         """Test that values outside declared range produce a warning."""
-        dims = Dimensions([
-            Dimension("x", range=(0, 100)),
-            Dimension("y", range=(0, 100)),
-            Dimension("z", range=(0, 100)),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", range=(0, 100)),
+                Dimension("y", range=(0, 100)),
+                Dimension("z", range=(0, 100)),
+            ]
+        )
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Positions outside declared range should produce warning
-            positions = np.array([
-                [50, 50, 50],     # Within range
-                [150, 50, 50],   # x outside range
-                [-10, 50, 50],   # x outside range (negative)
-            ], dtype=np.float32)
+            positions = np.array(
+                [
+                    [50, 50, 50],  # Within range
+                    [150, 50, 50],  # x outside range
+                    [-10, 50, 50],  # x outside range (negative)
+                ],
+                dtype=np.float32,
+            )
 
             with warnings.catch_warnings(record=True) as w:
                 warnings.simplefilter("always")
@@ -126,7 +136,8 @@ class TestSceneMethods:
 
                 # Should have warning about x dimension
                 range_warnings = [
-                    warning for warning in w
+                    warning
+                    for warning in w
                     if "outside declared range" in str(warning.message)
                 ]
                 assert len(range_warnings) >= 1
@@ -134,21 +145,26 @@ class TestSceneMethods:
 
     def test_dimension_range_no_warning_when_within(self, tmp_path) -> None:
         """Test that values within declared range produce no warning."""
-        dims = Dimensions([
-            Dimension("x", range=(0, 100)),
-            Dimension("y", range=(0, 100)),
-            Dimension("z", range=(0, 100)),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", range=(0, 100)),
+                Dimension("y", range=(0, 100)),
+                Dimension("z", range=(0, 100)),
+            ]
+        )
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Positions within declared range should not produce warning
-            positions = np.array([
-                [0, 0, 0],
-                [50, 50, 50],
-                [100, 100, 100],
-            ], dtype=np.float32)
+            positions = np.array(
+                [
+                    [0, 0, 0],
+                    [50, 50, 50],
+                    [100, 100, 100],
+                ],
+                dtype=np.float32,
+            )
 
             with warnings.catch_warnings(record=True) as w:
                 warnings.simplefilter("always")
@@ -156,19 +172,22 @@ class TestSceneMethods:
 
                 # Should have no warnings about range
                 range_warnings = [
-                    warning for warning in w
+                    warning
+                    for warning in w
                     if "outside declared range" in str(warning.message)
                 ]
                 assert len(range_warnings) == 0
 
     def test_dimension_validation_helpful_error_message(self, tmp_path) -> None:
         """Test that dimension mismatch error has helpful message."""
-        dims = Dimensions([
-            Dimension("time", display=False),
-            Dimension("x"),
-            Dimension("y"),
-            Dimension("z"),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("time", display=False),
+                Dimension("x"),
+                Dimension("y"),
+                Dimension("z"),
+            ]
+        )
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)

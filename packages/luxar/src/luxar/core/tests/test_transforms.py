@@ -82,7 +82,9 @@ class TestTransformUtilities:
         ],
         ids=lambda x: x if isinstance(x, str) else None,
     )
-    def test_axis_rotations(self, rotation_func, angle, input_axis, expected_output, test_id) -> None:
+    def test_axis_rotations(
+        self, rotation_func, angle, input_axis, expected_output, test_id
+    ) -> None:
         """Test axis rotations with various angles and inputs."""
         t = rotation_func(angle)
         rotated = t @ np.array(input_axis)
@@ -111,7 +113,9 @@ class TestTransformUtilities:
         ],
         ids=lambda x: x if isinstance(x, str) else None,
     )
-    def test_rotate_string_axis_valid(self, axis, angle, expected_func, test_id) -> None:
+    def test_rotate_string_axis_valid(
+        self, axis, angle, expected_func, test_id
+    ) -> None:
         """Test rotation with valid string axis names."""
         assert np.allclose(rotate(angle, axis), expected_func())
 
@@ -370,6 +374,9 @@ class TestNodeTransformIntegration:
             g3 = g2.add_group("Level3", transform=to_list(scale(2, 2, 2)))
 
             # Verify each has its own transform
+            assert g1.transform is not None
+            assert g2.transform is not None
+            assert g3.transform is not None
             assert np.allclose(g1.transform, translate(5, 0, 0))
             assert np.allclose(g2.transform, rotate_z(45))
             assert np.allclose(g3.transform, scale(2, 2, 2))

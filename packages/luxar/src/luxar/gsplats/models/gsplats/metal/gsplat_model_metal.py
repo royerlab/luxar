@@ -7,12 +7,26 @@ using Metal compute shaders for the forward and backward passes.
 
 from __future__ import annotations
 
-from typing import Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Iterator,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+    cast,
+    overload,
+)
 
 import numpy as np
 import torch
+from arbol import aprint
+from torch.nn.modules.module import _IncompatibleKeys
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+
+T_destination = TypeVar("T_destination", bound=dict[str, Any])
 
 # Import C++ extension (compiled separately)
 try:
@@ -110,7 +124,7 @@ class MetalSplatFunction(torch.autograd.Function):
 
     @staticmethod
     def forward(
-        ctx,
+        ctx: Any,
         centers: torch.Tensor,  # (N, d)
         Ls: torch.Tensor,  # (N, d, d)
         amps: torch.Tensor,  # (N,)
@@ -180,7 +194,7 @@ class MetalSplatFunction(torch.autograd.Function):
                 intensity_floor,
                 tile_size,  # Configurable tile size
             )
-            output = result[0].to(device)
+            output = cast(torch.Tensor, result[0].to(device))
 
             # CRITICAL: Save tile data for backward pass (no grad needed)
             tile_counts = result[1]
@@ -215,7 +229,9 @@ class MetalSplatFunction(torch.autograd.Function):
         return output
 
     @staticmethod
-    def backward(ctx, grad_output: torch.Tensor):
+    def backward(
+        ctx: Any, grad_output: torch.Tensor
+    ) -> Tuple[Optional[torch.Tensor], ...]:
         """
         Backward pass: compute gradients.
 
@@ -269,28 +285,30 @@ class MetalSplatFunction(torch.autograd.Function):
             import os
 
             if os.environ.get("DEBUG_METAL_GRADIENTS"):
-                print("\n" + "=" * 80)
-                print("DEBUG: RAW METAL BACKWARD OUTPUT")
-                print("=" * 80)
-                print(f"grad_output shape: {grad_output.shape}")
-                print(f"grad_output sum: {grad_output.sum().item():.6f}")
-                print(f"\nd_centers shape: {d_centers.shape}")
-                print("d_centers (first 3 splats):")
+                aprint("\n" + "=" * 80)
+                aprint("DEBUG: RAW METAL BACKWARD OUTPUT")
+                aprint("=" * 80)
+                aprint(f"grad_output shape: {grad_output.shape}")
+                aprint(f"grad_output sum: {grad_output.sum().item():.6f}")
+                aprint(f"\nd_centers shape: {d_centers.shape}")
+                aprint("d_centers (first 3 splats):")
                 for i in range(min(3, d_centers.shape[0])):
                     dc = (
                         d_centers[i].cpu().numpy()
                         if d_centers.device.type == "mps"
                         else d_centers[i].numpy()
                     )
-                    print(f"  Splat {i}: [Z={dc[0]:.6e}, Y={dc[1]:.6e}, X={dc[2]:.6e}]")
-                print(
+                    aprint(
+                        f"  Splat {i}: [Z={dc[0]:.6e}, Y={dc[1]:.6e}, X={dc[2]:.6e}]"
+                    )
+                aprint(
                     "\nPython reference expects: [Z=2.707e-01, Y=-6.601e-08, X=-1.346e-07]"
                 )
-                print("If Y gradient is already wrong here, bug is in METAL.")
-                print(
+                aprint("If Y gradient is already wrong here, bug is in METAL.")
+                aprint(
                     "If Y gradient is correct here, bug is in PYTHON chain rule below."
                 )
-                print("=" * 80 + "\n")
+                aprint("=" * 80 + "\n")
             # === END DEBUG PROBE ===
 
             # Move back to original device and reorder d_conic
@@ -303,24 +321,24 @@ class MetalSplatFunction(torch.autograd.Function):
 
             # === DEBUG PROBE: Check d_conic before and after reordering ===
             if os.environ.get("DEBUG_METAL_GRADIENTS"):
-                print("DEBUG: d_conic from Metal (before reorder, [X,Y,Z] order):")
-                print("  [c_xx, c_xy, c_xz, c_yy, c_yz, c_zz]")
+                aprint("DEBUG: d_conic from Metal (before reorder, [X,Y,Z] order):")
+                aprint("  [c_xx, c_xy, c_xz, c_yy, c_yz, c_zz]")
                 dc_before = (
                     d_conic[0].cpu().numpy()
                     if d_conic.device.type == "mps"
                     else d_conic[0].numpy()
                 )
-                print(f"  {dc_before}")
+                aprint(f"  {dc_before}")
 
             d_conic = d_conic[:, [5, 4, 2, 3, 1, 0]].to(device)
 
             if os.environ.get("DEBUG_METAL_GRADIENTS"):
-                print("DEBUG: d_conic after reorder ([Z,Y,X] order):")
-                print("  [c_zz, c_yz, c_xz, c_yy, c_xy, c_xx]")
+                aprint("DEBUG: d_conic after reorder ([Z,Y,X] order):")
+                aprint("  [c_zz, c_yz, c_xz, c_yy, c_xy, c_xx]")
                 dc_after = d_conic[0].detach().cpu().numpy()
-                print(f"  {dc_after}")
-                print("  Note: Contributions come from ALL pixels, not just peak")
-                print()
+                aprint(f"  {dc_after}")
+                aprint("  Note: Contributions come from ALL pixels, not just peak")
+                aprint()
 
             d_amps = d_amps.to(device)
             d_sharpness = d_sharpness.to(device)
@@ -328,7 +346,7 @@ class MetalSplatFunction(torch.autograd.Function):
             # === PyTorch: Chain rule d_conic → d_Ls ===
             # CRITICAL: Custom autograd.Function.backward runs with grad mode disabled!
             # Must explicitly enable grad mode for the recomputation.
-            with torch.enable_grad():
+            with torch.enable_grad():  # type: ignore[no-untyped-call]
                 conic_recomputed = cholesky_to_conic(Ls_for_conic)  # In [Z,Y,X]
 
             # CRITICAL: d_conic is in [X,Y,Z], but recomputed conic is in [Z,Y,X]
@@ -348,15 +366,15 @@ class MetalSplatFunction(torch.autograd.Function):
 
             # === DEBUG: Check inputs to chain rule ===
             if os.environ.get("DEBUG_METAL_GRADIENTS"):
-                print("DEBUG: Chain rule inputs:")
-                print(f"  conic_recomputed shape: {conic_recomputed.shape}")
-                print(
+                aprint("DEBUG: Chain rule inputs:")
+                aprint(f"  conic_recomputed shape: {conic_recomputed.shape}")
+                aprint(
                     f"  conic_recomputed[0]: {conic_recomputed[0].detach().cpu().numpy()}"
                 )
-                print(
+                aprint(
                     f"  d_conic_for_chain[0]: {d_conic_for_chain[0].detach().cpu().numpy()}"
                 )
-                print()
+                aprint()
 
             # Use torch.autograd.grad for chain rule
             (d_Ls,) = torch.autograd.grad(
@@ -370,11 +388,11 @@ class MetalSplatFunction(torch.autograd.Function):
 
             # === DEBUG: Check chain rule output ===
             if os.environ.get("DEBUG_METAL_GRADIENTS"):
-                print("DEBUG: Chain rule output (d_Ls):")
-                print(f"  d_Ls shape: {d_Ls.shape}")
-                print("  d_Ls[0]:")
-                print(f"{d_Ls[0].detach().cpu().numpy()}")
-                print()
+                aprint("DEBUG: Chain rule output (d_Ls):")
+                aprint(f"  d_Ls shape: {d_Ls.shape}")
+                aprint("  d_Ls[0]:")
+                aprint(f"{d_Ls[0].detach().cpu().numpy()}")
+                aprint()
 
         else:
             # Fallback: PyTorch forward was used, so PyTorch Autograd handled it
@@ -382,7 +400,7 @@ class MetalSplatFunction(torch.autograd.Function):
             # Just return None for all outputs (Autograd will handle it)
             # NOTE: This should never be called if forward used PyTorch fallback,
             # because render_gaussians is already tracked by Autograd
-            return None, None, None, None, None, None, None, None, None
+            return (None, None, None, None, None, None, None, None, None)
 
         # Return gradients: (centers, Ls, amps, sharpness, shape, truncate, intensity_floor, tile_size, use_metal_conic)
         return d_centers, d_Ls, d_amps, d_sharpness, None, None, None, None, None
@@ -413,8 +431,8 @@ class GaussianSplatModelMetal(torch.nn.Module):
         intensity_floor: float = 1e-5,
         tile_size: int = 4,  # Tile size for 3D binning (4 is optimal)
         use_metal_conic: bool = False,  # DISABLED: Gradient bug found, investigating
-        device: Optional[torch.device] = None,
-    ):
+        device: Optional[torch.device | str] = None,
+    ) -> None:
         super().__init__()
 
         # CRITICAL: Feature parity check - prevent silent failures
@@ -452,6 +470,7 @@ class GaussianSplatModelMetal(torch.nn.Module):
             )
 
         # Create base model for parameter management
+        base_device = torch.device(device) if isinstance(device, str) else device
         self._base = GaussianSplatModel(
             shape=shape,
             centers0=centers0,
@@ -460,7 +479,7 @@ class GaussianSplatModelMetal(torch.nn.Module):
             sigma_min_diag=sigma_min_diag,
             sigma_max_diag=sigma_max_diag,
             truncate=truncate,
-            device=device,
+            device=base_device,
         )
 
         # Store Metal-specific parameters
@@ -474,7 +493,7 @@ class GaussianSplatModelMetal(torch.nn.Module):
         self._params_cache = None
         self._params_cache_valid = False
 
-    def _invalidate_cache(self):
+    def _invalidate_cache(self) -> None:
         """Invalidate cached parameters (call after optimizer.step())."""
         self._params_cache_valid = False
 
@@ -488,26 +507,31 @@ class GaussianSplatModelMetal(torch.nn.Module):
         centers, Ls, amps, sharpness = self._base.current_params()
 
         # Use Metal-accelerated forward pass
-        output = MetalSplatFunction.apply(
-            centers,
-            Ls,
-            amps,
-            sharpness,
-            self._shape,
-            self._truncate,
-            self._intensity_floor,
-            self._tile_size,  # Configurable tile size
-            self._use_metal_conic,  # Optional: Metal L→Conic (faster)
+        output = cast(
+            torch.Tensor,
+            MetalSplatFunction.apply(  # type: ignore[no-untyped-call]
+                centers,
+                Ls,
+                amps,
+                sharpness,
+                self._shape,
+                self._truncate,
+                self._intensity_floor,
+                self._tile_size,  # Configurable tile size
+                self._use_metal_conic,  # Optional: Metal L→Conic (faster)
+            ),
         )
 
         return output
 
     # Delegate all other methods to base model
-    def current_params(self):
+    def current_params(
+        self,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Get current parameter values."""
         return self._base.current_params()
 
-    def prune_(self, mask: torch.Tensor):
+    def prune_(self, mask: torch.Tensor) -> None:
         """Remove splats according to boolean mask."""
         self._base.prune_(mask)
 
@@ -517,7 +541,7 @@ class GaussianSplatModelMetal(torch.nn.Module):
         Ls: torch.Tensor,
         amps: torch.Tensor,
         sharpness: torch.Tensor,
-    ):
+    ) -> None:
         """Add new splats to the model."""
         self._base.append_(centers, Ls, amps, sharpness)
 
@@ -527,7 +551,7 @@ class GaussianSplatModelMetal(torch.nn.Module):
         Ls: torch.Tensor,
         amps: torch.Tensor,
         sharpness: torch.Tensor,
-    ):
+    ) -> None:
         """Replace all splats with new values."""
         self._base.replace_with(centers, Ls, amps, sharpness)
 
@@ -535,78 +559,119 @@ class GaussianSplatModelMetal(torch.nn.Module):
         """Return number of splats."""
         return self._base.n_splats()
 
-    def parameters(self, recurse: bool = True):
+    def parameters(self, recurse: bool = True) -> Iterator[torch.nn.Parameter]:
         """Return iterator over model parameters."""
         # Delegate to base model to avoid double-registration
         return self._base.parameters(recurse=recurse)
 
-    def named_parameters(self, prefix: str = "", recurse: bool = True):
+    def named_parameters(
+        self,
+        prefix: str = "",
+        recurse: bool = True,
+        remove_duplicate: bool = True,
+    ) -> Iterator[tuple[str, torch.nn.Parameter]]:
         """Return iterator over (name, parameter) pairs."""
-        return self._base.named_parameters(prefix=prefix, recurse=recurse)
+        return self._base.named_parameters(
+            prefix=prefix, recurse=recurse, remove_duplicate=remove_duplicate
+        )
 
-    def state_dict(self, *args, **kwargs):
+    @overload
+    def state_dict(
+        self,
+        *,
+        destination: T_destination,
+        prefix: str = "",
+        keep_vars: bool = False,
+    ) -> T_destination:
+        ...
+
+    @overload
+    def state_dict(
+        self, *, prefix: str = "", keep_vars: bool = False
+    ) -> dict[str, Any]:
+        ...
+
+    def state_dict(
+        self,
+        *,
+        destination: Optional[T_destination] = None,
+        prefix: str = "",
+        keep_vars: bool = False,
+    ) -> dict[str, Any] | T_destination:
         """Return state dict for serialization."""
-        return self._base.state_dict(*args, **kwargs)
+        if destination is None:
+            return self._base.state_dict(prefix=prefix, keep_vars=keep_vars)
+        return self._base.state_dict(
+            destination=destination, prefix=prefix, keep_vars=keep_vars
+        )
 
-    def load_state_dict(self, state_dict, *args, **kwargs):
+    def load_state_dict(
+        self,
+        state_dict: Mapping[str, Any],
+        strict: bool = True,
+        assign: bool = False,
+    ) -> _IncompatibleKeys:
         """Load state dict from serialization."""
-        return self._base.load_state_dict(state_dict, *args, **kwargs)
+        return cast(
+            _IncompatibleKeys,
+            self._base.load_state_dict(state_dict, strict=strict, assign=assign),
+        )
 
-    def to(self, device):
+    def to(self, *args: Any, **kwargs: Any) -> "GaussianSplatModelMetal":
         """Move model to device."""
-        self._base = self._base.to(device)
-        return super().to(device)
+        self._base = self._base.to(*args, **kwargs)
+        return self
 
     # Expose base model attributes needed by optimizer and utilities
     @property
-    def shape(self):
+    def shape(self) -> Tuple[int, ...]:
         """Return volume shape (required by optimizer)."""
         return self._base.shape
 
     @property
-    def dim(self):
+    def dim(self) -> int:
         """Return dimensionality (required by optimizer)."""
         return self._base.dim
 
     @property
-    def truncate(self):
+    def truncate(self) -> float:
         """Return truncate value (required by some utilities)."""
         return self._base.truncate
 
     @property
-    def raw_mu(self):
+    def raw_mu(self) -> torch.Tensor:
         """Delegate to base model (required by optimizer)."""
         return self._base.raw_mu
 
     @property
-    def raw_L_diag(self):
+    def raw_L_diag(self) -> torch.Tensor:
         """Delegate to base model (required by optimizer)."""
         return self._base.raw_L_diag
 
     @property
-    def L_off(self):
+    def L_off(self) -> torch.Tensor:
         """Delegate to base model (required by optimizer)."""
         return self._base.L_off
 
     @property
-    def raw_a(self):
+    def raw_a(self) -> torch.Tensor:
         """Delegate to base model (required by optimizer)."""
         return self._base.raw_a
 
     @property
-    def sharpness_offsets_raw(self):
+    def sharpness_offsets_raw(self) -> torch.Tensor:
         """Delegate to base model (required by optimizer)."""
         return self._base.sharpness_offsets_raw
 
     @property
-    def sigma_min_diag(self):
+    def sigma_min_diag(self) -> torch.Tensor:
         """Delegate to base model (required by optimizer)."""
         return self._base.sigma_min_diag
 
     @property
-    def sigma_max_diag(self):
+    def sigma_max_diag(self) -> Optional[torch.Tensor]:
         """Delegate to base model (required by optimizer)."""
         return self._base.sigma_max_diag
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"GaussianSplatModelMetal(n_splats={self.n_splats()}, shape={self._shape}, device={next(self.parameters()).device})"

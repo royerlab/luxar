@@ -694,7 +694,7 @@ setuptools.setup(
     description="Metal-accelerated Gaussian splatting for Luxar",
     ext_modules=ext_modules,
     cmdclass={"build_ext": CustomBuildExtension},
-    python_requires=">=3.9",
+    python_requires=">=3.10",
 )
 ```
 

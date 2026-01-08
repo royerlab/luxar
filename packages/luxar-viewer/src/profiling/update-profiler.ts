@@ -24,6 +24,8 @@
  * ```
  */
 
+import { log, Modules } from '../utils/log';
+
 /**
  * Metadata that can be attached to timing entries
  */
@@ -253,7 +255,7 @@ export class UpdateProfiler {
   beginUpdate(): UpdateSession {
     // End any previous session that wasn't properly closed
     if (this.activeSession) {
-      console.warn('[UpdateProfiler] Previous session was not ended properly');
+      log.warning(Modules.PERFORMANCE, 'Previous session was not ended properly');
     }
 
     this.activeSession = new RootSession(this);
@@ -580,7 +582,7 @@ export class UpdateProfiler {
       try {
         listener();
       } catch (e) {
-        console.error('[UpdateProfiler] Listener error:', e);
+        log.error(Modules.PERFORMANCE, 'Listener error', e);
       }
     }
   }

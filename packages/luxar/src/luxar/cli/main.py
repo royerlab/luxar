@@ -14,7 +14,7 @@ import threading
 import time
 from collections.abc import Generator
 from pathlib import Path
-from typing import Any, MutableMapping, Optional, Tuple
+from typing import Any, MutableMapping, Optional, Tuple, cast
 
 import typer
 import uvicorn
@@ -23,6 +23,7 @@ from arbol import aprint, asection
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.types import ASGIApp
 
 from .network_simulation import (
     NETWORK_PROFILES,
@@ -157,7 +158,7 @@ def create_server_app(path: str, serve_viewer: bool = False) -> FastAPI:
 
     # Add health check endpoint
     @api.get("/health")
-    async def health():
+    async def health() -> dict[str, str]:
         """Health check endpoint."""
         return {"status": "ok"}
 
@@ -421,14 +422,17 @@ def serve(
             open_browser_func(viewer_url)
 
         # Wrap the complete ASGI app with network simulation (if enabled)
-        asgi_app = api
+        asgi_app: ASGIApp = api
         if any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0]):
-            asgi_app = NetworkSimulationMiddleware(
-                api,
-                bandwidth_limit_mbps=bandwidth_mbps,
-                latency_ms=latency_ms,
-                jitter_percent=jitter_percent,
-                packet_loss_rate=packet_loss_rate,
+            asgi_app = cast(
+                ASGIApp,
+                NetworkSimulationMiddleware(
+                    api,
+                    bandwidth_limit_mbps=bandwidth_mbps,
+                    latency_ms=latency_ms,
+                    jitter_percent=jitter_percent,
+                    packet_loss_rate=packet_loss_rate,
+                ),
             )
 
         uvicorn.run(
@@ -701,14 +705,17 @@ def _serve_data(
     aprint(f"💾 Data server running at http://{host}:{port}/")
 
     # Wrap with network simulation if enabled
-    asgi_app = api
+    asgi_app: ASGIApp = api
     if any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0]):
-        asgi_app = NetworkSimulationMiddleware(
-            api,
-            bandwidth_limit_mbps=bandwidth_mbps,
-            latency_ms=latency_ms,
-            jitter_percent=jitter_percent,
-            packet_loss_rate=packet_loss_rate,
+        asgi_app = cast(
+            ASGIApp,
+            NetworkSimulationMiddleware(
+                api,
+                bandwidth_limit_mbps=bandwidth_mbps,
+                latency_ms=latency_ms,
+                jitter_percent=jitter_percent,
+                packet_loss_rate=packet_loss_rate,
+            ),
         )
 
     uvicorn.run(asgi_app, host=host, port=port, reload=False, log_level="warning")
@@ -957,6 +964,7 @@ def info(
         if format == "json":
             import json
 
+            # Use print() not aprint() to avoid ANSI color codes in JSON output
             print(json.dumps(info_dict, indent=2))
             return
 
@@ -1039,10 +1047,10 @@ def _print_tree(
 
     # Print node
     if depth == 0:
-        print(format_tree_node("/", depth, is_last, prefix, node_type, attrs))
+        aprint(format_tree_node("/", depth, is_last, prefix, node_type, attrs))
     else:
         name = group.basename or "?"
-        print(format_tree_node(name, depth, is_last, prefix, node_type, attrs))
+        aprint(format_tree_node(name, depth, is_last, prefix, node_type, attrs))
 
     # Update prefix for children
     if depth > 0:

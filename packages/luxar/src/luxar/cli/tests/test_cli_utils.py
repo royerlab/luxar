@@ -355,6 +355,7 @@ class TestValidateZarrStore:
 
             is_valid, error = validate_zarr_store(invalid_path)
             assert is_valid is False
+            assert error is not None
             assert "Not a valid Zarr store" in error
 
     def test_valid_zarr_store(self) -> None:

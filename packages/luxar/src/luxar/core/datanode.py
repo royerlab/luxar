@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from .node import Node
 
 if TYPE_CHECKING:
-    from ..io.protocols import ZarrWriterProtocol
+    from ..io.writer import ZarrWriterProtocol
 
 
 class DataNode(Node, ABC):
@@ -79,7 +79,8 @@ class DataNode(Node, ABC):
             Number of dimensions (from metadata)
         """
         # Handle both "ndim" (Lines, GSplats) and "dims" (Points) for compatibility
-        return self._metadata.get("ndim", self._metadata.get("dims", 0))
+        value = self._metadata.get("ndim", self._metadata.get("dims", 0))
+        return int(value) if value is not None else 0
 
     @property
     def metadata(self) -> Dict[str, Any]:

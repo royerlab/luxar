@@ -79,7 +79,11 @@ class WorkerPool {
             log.info(Modules.WORKER_POOL, `Worker ${index + 1}/${workerCount} ready`);
             return { worker, api, activeQueries: 0 };
           } catch (error) {
-            console.error(`[WorkerPool] Worker ${index + 1} initialization FAILED:`, error);
+            log.error(
+              Modules.WORKER_POOL,
+              `Worker ${index + 1} initialization failed`,
+              error
+            );
             worker.terminate();
             throw error;
           }

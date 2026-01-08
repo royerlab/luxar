@@ -14,6 +14,7 @@ Tests cover uncovered lines in scene.py:
 import tempfile
 import warnings
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -29,7 +30,7 @@ class TestSceneInitialization:
     def test_scene_requires_writer(self) -> None:
         """Test that Scene requires a writer."""
         with pytest.raises(ValueError, match="Writer is required"):
-            Scene(writer=None, dimensions=Dimensions.default_3d())  # type: ignore[arg-type]
+            Scene(writer=cast(Any, None), dimensions=Dimensions.default_3d())
 
 
 class TestAddPointsExtendToAll:
@@ -171,7 +172,7 @@ class TestAddPointsExtendToAll:
                     scene.add_points(
                         "test_points",
                         positions,
-                        extend_to_all="invalid_value",  # type: ignore[arg-type]
+                        extend_to_all="invalid_value",
                     )
 
     def test_add_points_1d_positions_error(self) -> None:
@@ -375,7 +376,7 @@ class TestAddLinesExtendToAll:
                         "test_lines",
                         vertices,
                         widths=0.1,
-                        extend_to_all="invalid_value",  # type: ignore[arg-type]
+                        extend_to_all="invalid_value",
                     )
 
     def test_extend_to_all_with_warning_for_candidates(self) -> None:
@@ -627,7 +628,7 @@ class TestDimensionsProperty:
 
                 # Setting to None should raise ValueError
                 with pytest.raises(ValueError, match="dimensions cannot be None"):
-                    scene.dimensions = None
+                    scene.dimensions = cast(Any, None)
 
     def test_dimensions_setter_new_dims(self) -> None:
         """Test setting new dimensions."""

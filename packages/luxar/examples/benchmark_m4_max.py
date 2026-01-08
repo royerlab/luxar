@@ -21,9 +21,9 @@ import torch
 from arbol import aprint, asection
 
 # Check torch version and available backends
-print(f"PyTorch version: {torch.__version__}")
-print(f"MPS available: {torch.backends.mps.is_available()}")
-print(f"MPS built: {torch.backends.mps.is_built()}")
+aprint(f"PyTorch version: {torch.__version__}")
+aprint(f"MPS available: {torch.backends.mps.is_available()}")
+aprint(f"MPS built: {torch.backends.mps.is_built()}")
 
 
 @dataclass
@@ -331,15 +331,15 @@ def profile_model(
                 torch.mps.synchronize()
 
         # Print results
-        print("\n" + "=" * 80)
-        print(f"PROFILE RESULTS ({device_str}) - Top 20 by CPU time")
-        print("=" * 80)
-        print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=20))
+        aprint("\n" + "=" * 80)
+        aprint(f"PROFILE RESULTS ({device_str}) - Top 20 by CPU time")
+        aprint("=" * 80)
+        aprint(prof.key_averages().table(sort_by="cpu_time_total", row_limit=20))
 
-        print("\n" + "=" * 80)
-        print(f"PROFILE RESULTS ({device_str}) - Top 10 by Self CPU time")
-        print("=" * 80)
-        print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
+        aprint("\n" + "=" * 80)
+        aprint(f"PROFILE RESULTS ({device_str}) - Top 10 by Self CPU time")
+        aprint("=" * 80)
+        aprint(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
 
 
 def main():
@@ -412,11 +412,11 @@ def main():
     # =========================================================================
     # Summary
     # =========================================================================
-    print("\n" + "=" * 100)
-    print("BENCHMARK SUMMARY")
-    print("=" * 100)
-    print(f"{'Configuration':<40} {'Forward (ms)':<15} {'Backward (ms)':<15} {'Total (ms)':<15} {'Speedup':<10}")
-    print("-" * 100)
+    aprint("\n" + "=" * 100)
+    aprint("BENCHMARK SUMMARY")
+    aprint("=" * 100)
+    aprint(f"{'Configuration':<40} {'Forward (ms)':<15} {'Backward (ms)':<15} {'Total (ms)':<15} {'Speedup':<10}")
+    aprint("-" * 100)
 
     baseline_time = results[0].total_iter_time_ms if results else 1.0
 
@@ -424,14 +424,14 @@ def main():
         compiled_str = " + compile" if r.compiled else ""
         config = f"{r.device}{compiled_str}"
         speedup = baseline_time / r.total_iter_time_ms
-        print(f"{config:<40} {r.forward_time_ms:<15.2f} {r.backward_time_ms:<15.2f} {r.total_iter_time_ms:<15.2f} {speedup:<10.2f}x")
+        aprint(f"{config:<40} {r.forward_time_ms:<15.2f} {r.backward_time_ms:<15.2f} {r.total_iter_time_ms:<15.2f} {speedup:<10.2f}x")
 
-    print("=" * 100)
+    aprint("=" * 100)
 
     # =========================================================================
     # Profiling (CPU only - it's the fastest)
     # =========================================================================
-    print("\n")
+    aprint("\n")
     with asection("Profiling CPU to identify bottlenecks"):
         profile_model(volume, "cpu", n_splats=n_splats, n_iterations=20)
 

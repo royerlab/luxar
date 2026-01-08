@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import warnings
 from os import PathLike
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 from arbol import aprint
@@ -123,13 +123,15 @@ class Scene(Node):
     def add_points(
         self,
         name: str,
-        positions: Union[PositionArray, np.ndarray[Any, Any]],
-        colors: Optional[Union[ColorArray, np.ndarray[Any, Any]]] = None,
+        positions: Union[PositionArray, np.ndarray[Any, Any], Sequence[Sequence[float]]],
+        colors: Optional[
+            Union[ColorArray, np.ndarray[Any, Any], Sequence[float | int]]
+        ] = None,
         radii: Optional[
-            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]
+            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float]
         ] = None,
         sharpness: Optional[
-            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]
+            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float]
         ] = None,
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
@@ -232,6 +234,17 @@ class Scene(Node):
                     ]
             elif isinstance(extend_to_all, list):
                 # Use explicit list (including empty list to silence warning)
+                if self._dimensions is not None:
+                    unknown_dims = [
+                        dim_name
+                        for dim_name in extend_to_all
+                        if dim_name not in self._dimensions.names
+                    ]
+                    if unknown_dims:
+                        raise ValueError(
+                            f"Unknown dimension(s) in extend_to_all: {unknown_dims}. "
+                            f"Valid dimensions: {self._dimensions.names}"
+                        )
                 final_extend_dims = extend_to_all
             else:
                 raise ValueError(
@@ -279,13 +292,15 @@ class Scene(Node):
     def add_lines(
         self,
         name: str,
-        vertices: Union[PositionArray, np.ndarray[Any, Any]],
+        vertices: Union[PositionArray, np.ndarray[Any, Any], Sequence[Sequence[float]]],
         widths: Union[
             np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float
         ],
-        colors: Optional[Union[ColorArray, np.ndarray[Any, Any]]] = None,
+        colors: Optional[
+            Union[ColorArray, np.ndarray[Any, Any], Sequence[float | int]]
+        ] = None,
         sharpness: Optional[
-            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]
+            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float]
         ] = None,
         indices: Optional[np.ndarray[Any, Any]] = None,
         line_type: str = "polyline",
@@ -383,6 +398,17 @@ class Scene(Node):
                     ]
             elif isinstance(extend_to_all, list):
                 # Use explicit list (including empty list to silence warning)
+                if self._dimensions is not None:
+                    unknown_dims = [
+                        dim_name
+                        for dim_name in extend_to_all
+                        if dim_name not in self._dimensions.names
+                    ]
+                    if unknown_dims:
+                        raise ValueError(
+                            f"Unknown dimension(s) in extend_to_all: {unknown_dims}. "
+                            f"Valid dimensions: {self._dimensions.names}"
+                        )
                 final_extend_dims = extend_to_all
             else:
                 raise ValueError(
@@ -426,16 +452,18 @@ class Scene(Node):
     def add_gsplats(
         self,
         name: str,
-        centers: Union[PositionArray, np.ndarray[Any, Any]],
+        centers: Union[PositionArray, np.ndarray[Any, Any], Sequence[Sequence[float]]],
         amplitudes: Union[
             np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float
         ],
         cholesky_factors: Union[
             np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]
         ],
-        colors: Optional[Union[ColorArray, np.ndarray[Any, Any]]] = None,
+        colors: Optional[
+            Union[ColorArray, np.ndarray[Any, Any], Sequence[float | int]]
+        ] = None,
         sharpness: Optional[
-            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]
+            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float]
         ] = None,
         parent: Optional[Node] = None,
         **attrs: Any,
@@ -537,9 +565,7 @@ class Scene(Node):
         from luxar.gsplats.fit_result import GSplatData
 
         if not isinstance(result, GSplatData):
-            raise TypeError(
-                f"Expected GSplatData, got {type(result).__name__}"
-            )
+            raise TypeError(f"Expected GSplatData, got {type(result).__name__}")
 
         # Extract arrays from result
         return self.add_gsplats(

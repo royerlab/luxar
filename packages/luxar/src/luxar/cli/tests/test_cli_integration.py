@@ -47,7 +47,9 @@ def test_server(sample_scene, available_port):
     server_started = threading.Event()
 
     def run_server():
-        config = uvicorn.Config(app, host="127.0.0.1", port=available_port, log_level="error")
+        config = uvicorn.Config(
+            app, host="127.0.0.1", port=available_port, log_level="error"
+        )
         server = uvicorn.Server(config)
 
         # Signal that server is starting
@@ -69,7 +71,9 @@ def test_server(sample_scene, available_port):
     max_retries = 10
     for i in range(max_retries):
         try:
-            response = requests.get(f"http://127.0.0.1:{available_port}/health", timeout=1)
+            response = requests.get(
+                f"http://127.0.0.1:{available_port}/health", timeout=1
+            )
             if response.status_code == 200:
                 break
         except requests.exceptions.RequestException:
@@ -107,7 +111,9 @@ class TestServeIntegration:
         metadata = response.json()
 
         # Verify expected metadata structure
-        assert metadata["luxar_version"] == "0.1"  # Changed from "version" to "luxar_version"
+        assert (
+            metadata["luxar_version"] == "0.1"
+        )  # Changed from "version" to "luxar_version"
         assert "scene_dimensions" in metadata
 
     def test_zarr_group_listing(self, test_server):
@@ -309,10 +315,30 @@ class TestDemoCommand:
 
         # Run twice with same seed
         result1 = runner.invoke(
-            app, ["demo", "--no-serve", "--output", str(output1), "--points", "50", "--seed", "42"]
+            app,
+            [
+                "demo",
+                "--no-serve",
+                "--output",
+                str(output1),
+                "--points",
+                "50",
+                "--seed",
+                "42",
+            ],
         )
         result2 = runner.invoke(
-            app, ["demo", "--no-serve", "--output", str(output2), "--points", "50", "--seed", "42"]
+            app,
+            [
+                "demo",
+                "--no-serve",
+                "--output",
+                str(output2),
+                "--points",
+                "50",
+                "--seed",
+                "42",
+            ],
         )
 
         assert result1.exit_code == 0
@@ -427,4 +453,6 @@ class TestServePerformance:
         # Performance check: 95th percentile should be under 1 second
         times = sorted([r[1] for r in results])
         p95 = times[int(len(times) * 0.95)]
-        assert p95 < 1.0, f"95th percentile response time {p95:.2f}s exceeds 1s threshold"
+        assert p95 < 1.0, (
+            f"95th percentile response time {p95:.2f}s exceeds 1s threshold"
+        )

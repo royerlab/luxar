@@ -138,9 +138,7 @@ def seed_from_decomposition(
     scales_to_process = list(range(ignore_finest_k, len(actual_scales)))
 
     if verbose:
-        aprint(
-            f"[Decomposition Seeds] Processing {len(scales_to_process)} scale(s)"
-        )
+        aprint(f"[Decomposition Seeds] Processing {len(scales_to_process)} scale(s)")
 
     # Process scales from coarse to fine
     for scale_idx in reversed(scales_to_process):
@@ -149,8 +147,7 @@ def seed_from_decomposition(
 
         if verbose:
             aprint(
-                f"[Decomposition Seeds]   Scale {scale_factor}: "
-                f"shape {scale_img.shape}"
+                f"[Decomposition Seeds]   Scale {scale_factor}: shape {scale_img.shape}"
             )
 
         # Compute threshold for this scale
@@ -217,7 +214,9 @@ def seed_from_decomposition(
     amplitudes = V[tuple(seeds_int.T)].astype(np.float32)
 
     # Build Cholesky factors from scales (sigma = scale_factor)
-    cholesky_factors = sigmas_to_cholesky_isotropic(seed_scales.astype(np.float32), ndim)
+    cholesky_factors = sigmas_to_cholesky_isotropic(
+        seed_scales.astype(np.float32), ndim
+    )
 
     # Standard Gaussian sharpness
     sharpnesses = np.full(len(seeds), 2.0, dtype=np.float32)

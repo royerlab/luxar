@@ -129,7 +129,7 @@ export class ThemeManager {
    */
   public registerTheme(theme: Theme): void {
     if (this.themes.has(theme.id)) {
-      console.warn(`[ThemeManager] Theme "${theme.id}" is already registered, overwriting`);
+      log.warning(Modules.UI, `Theme "${theme.id}" is already registered, overwriting`);
     }
     this.themes.set(theme.id, theme);
   }
@@ -432,7 +432,7 @@ export class ThemeManager {
       try {
         handler(theme);
       } catch (error) {
-        console.error('[ThemeManager] Error in theme change handler:', error);
+        log.error(Modules.UI, 'Error in theme change handler', error);
       }
     });
   }
@@ -446,7 +446,7 @@ export class ThemeManager {
     try {
       localStorage.setItem(this.STORAGE_KEY, themeId);
     } catch (error) {
-      console.warn('[ThemeManager] Failed to save theme to localStorage:', error);
+      log.warning(Modules.UI, 'Failed to save theme to localStorage', error);
     }
   }
 
@@ -459,7 +459,7 @@ export class ThemeManager {
     try {
       return localStorage.getItem(this.STORAGE_KEY);
     } catch (error) {
-      console.warn('[ThemeManager] Failed to load theme from localStorage:', error);
+      log.warning(Modules.UI, 'Failed to load theme from localStorage', error);
       return null;
     }
   }

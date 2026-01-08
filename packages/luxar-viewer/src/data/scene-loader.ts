@@ -688,9 +688,10 @@ export class SceneLoader {
           Modules.SCENE_LOADER,
           `⚠️ ${this.failedLoaders.size} loader(s) failed: ${failedPaths}`
         );
-        console.warn(
-          `[SceneLoader] Some data could not be loaded. Failed loaders: ${failedPaths}. ` +
-            'Check browser console for details. Data may be incomplete.'
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Some data could not be loaded. Failed loaders: ${failedPaths}. ` +
+            'Check console output for details. Data may be incomplete.'
         );
       }
     } finally {
@@ -1307,7 +1308,7 @@ export class SceneLoader {
       log.error(Modules.SCENE_LOADER, `Failed to load ${node.path}: ${errorMessage}`);
       // Also log stack trace for debugging
       if (error instanceof Error && error.stack) {
-        console.error(`[SceneLoader] Stack trace for ${node.path}:`, error.stack);
+        log.error(Modules.SCENE_LOADER, `Stack trace for ${node.path}`, error.stack);
       }
       return null;
     }
@@ -1427,7 +1428,7 @@ export class SceneLoader {
             : JSON.stringify(error);
       log.error(Modules.SCENE_LOADER, `Failed to load lines ${node.path}: ${errorMessage}`);
       if (error instanceof Error && error.stack) {
-        console.error(`[SceneLoader] Stack trace for ${node.path}:`, error.stack);
+        log.error(Modules.SCENE_LOADER, `Stack trace for ${node.path}`, error.stack);
       }
       return null;
     }
@@ -1557,7 +1558,7 @@ export class SceneLoader {
             : JSON.stringify(error);
       log.error(Modules.SCENE_LOADER, `Failed to load gsplats ${node.path}: ${errorMessage}`);
       if (error instanceof Error && error.stack) {
-        console.error(`[SceneLoader] Stack trace for ${node.path}:`, error.stack);
+        log.error(Modules.SCENE_LOADER, `Stack trace for ${node.path}`, error.stack);
       }
       return null;
     }

@@ -48,11 +48,15 @@ def noisy_image():
     return np.random.randn(32, 32) + 1.0
 
 
-def validate_gsplatdata(result: GSplatData, expected_ndim: int, image_shape: tuple) -> None:
+def validate_gsplatdata(
+    result: GSplatData, expected_ndim: int, image_shape: tuple
+) -> None:
     """Validate GSplatData output format."""
     assert isinstance(result, GSplatData), "Result should be GSplatData"
     assert result.centers.ndim == 2, "Centers should be 2D array (N, ndim)"
-    assert result.centers.shape[1] == expected_ndim, f"Should have {expected_ndim}D coordinates"
+    assert result.centers.shape[1] == expected_ndim, (
+        f"Should have {expected_ndim}D coordinates"
+    )
 
     N = len(result.centers)
     assert len(result.amplitudes) == N, "Amplitudes should match centers count"
@@ -65,8 +69,12 @@ def validate_gsplatdata(result: GSplatData, expected_ndim: int, image_shape: tup
 
     # Check coordinates within bounds
     if N > 0:
-        assert np.all(result.centers >= 0), "Centers should have non-negative coordinates"
-        assert np.all(result.centers < np.array(image_shape)), "Centers should be within bounds"
+        assert np.all(result.centers >= 0), (
+            "Centers should have non-negative coordinates"
+        )
+        assert np.all(result.centers < np.array(image_shape)), (
+            "Centers should be within bounds"
+        )
 
 
 class TestMethodSelection:
@@ -112,15 +120,23 @@ class TestParameterRouting:
 
     def test_percentile_thresh_affects_gaussian(self, simple_2d_image) -> None:
         """Test percentile_thresh parameter."""
-        result_strict = generate_seeds(simple_2d_image, method="gaussian", percentile_thresh=90.0)
-        result_loose = generate_seeds(simple_2d_image, method="gaussian", percentile_thresh=50.0)
+        result_strict = generate_seeds(
+            simple_2d_image, method="gaussian", percentile_thresh=90.0
+        )
+        result_loose = generate_seeds(
+            simple_2d_image, method="gaussian", percentile_thresh=50.0
+        )
 
         assert len(result_loose.centers) >= len(result_strict.centers)
 
     def test_ignore_finest_k_affects_decomposition(self, simple_2d_image) -> None:
         """Test ignore_finest_k parameter."""
-        result_k0 = generate_seeds(simple_2d_image, method="decomposition", ignore_finest_k=0)
-        result_k2 = generate_seeds(simple_2d_image, method="decomposition", ignore_finest_k=2)
+        result_k0 = generate_seeds(
+            simple_2d_image, method="decomposition", ignore_finest_k=0
+        )
+        result_k2 = generate_seeds(
+            simple_2d_image, method="decomposition", ignore_finest_k=2
+        )
 
         validate_gsplatdata(result_k0, 2, simple_2d_image.shape)
         validate_gsplatdata(result_k2, 2, simple_2d_image.shape)
@@ -128,8 +144,12 @@ class TestParameterRouting:
     def test_min_distance_common_param(self, simple_2d_image) -> None:
         """Test min_distance parameter."""
         for method in ["gaussian", "decomposition", "both"]:
-            result_close = generate_seeds(simple_2d_image, method=method, min_distance=1.0)
-            result_far = generate_seeds(simple_2d_image, method=method, min_distance=8.0)
+            result_close = generate_seeds(
+                simple_2d_image, method=method, min_distance=1.0
+            )
+            result_far = generate_seeds(
+                simple_2d_image, method=method, min_distance=8.0
+            )
 
             validate_gsplatdata(result_close, 2, simple_2d_image.shape)
             validate_gsplatdata(result_far, 2, simple_2d_image.shape)
@@ -210,7 +230,9 @@ class TestIntegration:
     def test_combined_produces_more_seeds(self, simple_2d_image) -> None:
         """Test that combining methods produces more seeds."""
         result_g = generate_seeds(simple_2d_image, method="gaussian", min_distance=2.0)
-        result_d = generate_seeds(simple_2d_image, method="decomposition", min_distance=2.0)
+        result_d = generate_seeds(
+            simple_2d_image, method="decomposition", min_distance=2.0
+        )
         result_both = generate_seeds(simple_2d_image, method="both", min_distance=2.0)
 
         max_individual = max(len(result_g.centers), len(result_d.centers))
@@ -275,7 +297,9 @@ class TestReproducibility:
 
         np.testing.assert_array_equal(result1.centers, result2.centers)
         np.testing.assert_array_equal(result1.amplitudes, result2.amplitudes)
-        np.testing.assert_array_equal(result1.cholesky_factors, result2.cholesky_factors)
+        np.testing.assert_array_equal(
+            result1.cholesky_factors, result2.cholesky_factors
+        )
 
     def test_default_params_work(self, simple_2d_image) -> None:
         """Test default parameters work."""

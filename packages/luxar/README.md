@@ -17,6 +17,9 @@ Luxar Core is built on the principle that **data compilation should never be the
 # From PyPI (when available)
 pip install luxar
 
+# Optional Gaussian splatting support
+pip install "luxar[gsplats]"
+
 # Development installation
 git clone https://github.com/royerlab/luxar.git
 cd luxar

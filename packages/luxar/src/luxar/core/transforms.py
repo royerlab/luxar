@@ -8,7 +8,7 @@ with the Luxar scene graph.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Tuple, Union
+from typing import Any, Literal, Tuple, Union, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -25,7 +25,7 @@ def identity() -> TransformMatrix:
 
     Example:
         >>> t = identity()
-        >>> print(t)
+        >>> aprint(t)
         [[1. 0. 0. 0.]
          [0. 1. 0. 0.]
          [0. 0. 1. 0.]
@@ -47,7 +47,7 @@ def translate(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> TransformMatrix
 
     Example:
         >>> t = translate(5, 0, 0)  # Move 5 units along X
-        >>> print(t[:, 3])  # Translation column
+        >>> aprint(t[:, 3])  # Translation column
         [5. 0. 0. 1.]
     """
     matrix = identity()
@@ -191,19 +191,19 @@ def rotate(
             raise ValueError(f"Invalid axis string: {axis}. Use 'x', 'y', or 'z'")
 
     # Arbitrary axis rotation using Rodrigues' formula
-    axis = np.array(axis, dtype=np.float32)
-    if axis.shape != (3,):
-        raise ValueError(f"Axis must be a 3D vector, got shape {axis.shape}")
+    axis_vector = cast(NDArray[np.float32], np.asarray(axis, dtype=np.float32))
+    if axis_vector.shape != (3,):
+        raise ValueError(f"Axis must be a 3D vector, got shape {axis_vector.shape}")
 
     # Normalize axis
-    axis = axis / np.linalg.norm(axis)
+    axis_vector = axis_vector / np.linalg.norm(axis_vector)
 
     radians = np.radians(degrees)
     cos_a = np.cos(radians)
     sin_a = np.sin(radians)
     one_minus_cos = 1 - cos_a
 
-    x, y, z = axis
+    x, y, z = axis_vector
 
     matrix = np.array(
         [
@@ -457,7 +457,7 @@ def read_transform_from_zarr(transform_list: list[float]) -> TransformMatrix:
         >>> # Read transform from zarr attributes
         >>> transform_list = node_attrs['transform']
         >>> matrix = read_transform_from_zarr(transform_list)
-        >>> print(matrix.shape)  # (4, 4)
+        >>> aprint(matrix.shape)  # (4, 4)
 
     See Also:
         prepare_transform_for_zarr: Inverse operation to write to storage

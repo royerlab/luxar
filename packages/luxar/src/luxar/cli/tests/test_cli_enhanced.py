@@ -131,6 +131,7 @@ class TestCLIUtils:
         # Non-existent path
         is_valid, error = validate_zarr_store(tmp_path / "nonexistent.zarr")
         assert is_valid is False
+        assert error is not None
         assert "does not exist" in error
 
         # Not a directory
@@ -138,6 +139,7 @@ class TestCLIUtils:
         file_path.write_text("test")
         is_valid, error = validate_zarr_store(file_path)
         assert is_valid is False
+        assert error is not None
         assert "not a directory" in error
 
         # Invalid zarr store
@@ -145,6 +147,7 @@ class TestCLIUtils:
         bad_dir.mkdir()
         is_valid, error = validate_zarr_store(bad_dir)
         assert is_valid is False
+        assert error is not None
         assert "Not a valid Zarr store" in error
 
     def test_get_zarr_info(self, complex_scene) -> None:

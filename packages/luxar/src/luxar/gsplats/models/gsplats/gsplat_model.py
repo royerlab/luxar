@@ -97,6 +97,7 @@ class GaussianSplatModel(nn.Module):
         )
 
         # ---- Cholesky factor parameterization: ensure positive definiteness ----
+        self.sigma_max_diag: torch.Tensor | None
         L0 = np.asarray(L0, dtype=np.float32)
         assert L0.shape == (N, d, d), (
             f"Expected L0 shape ({N}, {d}, {d}), got {L0.shape}"
@@ -113,14 +114,14 @@ class GaussianSplatModel(nn.Module):
             else np.zeros((N, 0), np.float32)
         )
 
-        sigma_min_diag = np.asarray(sigma_min_diag, dtype=np.float32)
-        assert sigma_min_diag.shape == (d,), "sigma_min_diag must be length d"
+        sigma_min_diag_arr = np.asarray(sigma_min_diag, dtype=np.float32)
+        assert sigma_min_diag_arr.shape == (d,), "sigma_min_diag must be length d"
 
         if sigma_max_diag is not None:
-            sigma_max_diag = np.asarray(sigma_max_diag, dtype=np.float32)
-            assert sigma_max_diag.shape == (d,), "sigma_max_diag must be length d"
+            sigma_max_diag_arr = np.asarray(sigma_max_diag, dtype=np.float32)
+            assert sigma_max_diag_arr.shape == (d,), "sigma_max_diag must be length d"
             self.sigma_max_diag = torch.tensor(
-                sigma_max_diag, dtype=torch.float32, device=device
+                sigma_max_diag_arr, dtype=torch.float32, device=device
             )
         else:
             self.sigma_max_diag = None
@@ -128,7 +129,7 @@ class GaussianSplatModel(nn.Module):
         # Parameterize diagonal elements: sigma_min + softplus(raw) ensures positivity
         # Use inverse softplus to initialize raw parameters from desired diagonal values
         raw_diag0 = stable_inverse_softplus(
-            np.maximum(diag0, sigma_min_diag) - sigma_min_diag
+            np.maximum(diag0, sigma_min_diag_arr) - sigma_min_diag_arr
         )
         self.raw_L_diag = nn.Parameter(
             torch.tensor(raw_diag0, dtype=torch.float32, device=device)

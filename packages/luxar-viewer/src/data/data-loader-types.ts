@@ -7,6 +7,7 @@
 
 import { SimpleDims } from '../types/dims';
 import * as THREE from 'three';
+import { log, Modules } from '../utils/log';
 
 /**
  * Represents the current view state for data loading.
@@ -52,10 +53,10 @@ export function validateViewStateForExtendToAll(
   nodePath: string
 ): boolean {
   if (extendToAll && extendToAll.length > 0 && !viewState.dimensions) {
-    console.warn(
-      `[ViewState] Node "${nodePath}" has extend_to_all configured but ` +
-        'ViewState.dimensions is undefined. The extend_to_all optimization will be skipped. ' +
-        'Provide dimensions in ViewState for this feature to work.'
+    log.warning(
+      Modules.SCENE_DIMS,
+      `Node "${nodePath}" has extend_to_all configured but ViewState.dimensions is undefined. ` +
+        'The extend_to_all optimization will be skipped. Provide dimensions in ViewState for this feature to work.'
     );
     return false;
   }

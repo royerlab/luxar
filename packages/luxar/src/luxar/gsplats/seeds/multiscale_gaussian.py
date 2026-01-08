@@ -172,9 +172,7 @@ def seed_from_gaussian(
     centers = _refine_positions(coords, V_work)
 
     # Get amplitudes from original image at refined positions
-    centers_int = np.clip(
-        np.round(centers).astype(int), 0, np.array(V.shape) - 1
-    )
+    centers_int = np.clip(np.round(centers).astype(int), 0, np.array(V.shape) - 1)
     amplitudes = V[tuple(centers_int.T)].astype(np.float32)
 
     # Build Cholesky factors from scales (sigma = scale)

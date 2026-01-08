@@ -1540,7 +1540,9 @@ def main() -> None:
                 n_frames=n_frames,
             )
         aprint(f"Dataset generated at {output_path}")
-        aprint(f"Total: {total_segments:,} segments, {total_points:,} points, {n_frames} frames")
+        aprint(
+            f"Total: {total_segments:,} segments, {total_points:,} points, {n_frames} frames"
+        )
         return
 
     # Use temporary directory for serving (auto-cleanup on exit)

@@ -41,24 +41,41 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         # Extract pre-initialized parameters from GSplatData
         _extract_gsplatdata_init(config, seeds)
         if config.verbose:
-            aprint(f"Using GSplatData seeds: {len(seed_centers)} splats with pre-initialized parameters")
+            aprint(
+                f"Using GSplatData seeds: {len(seed_centers)} splats with pre-initialized parameters"
+            )
     elif seeds is None:
         # Auto-generate using specified method
         seed_centers = _generate_seeds(
-            V, None, None, config.seed_method, config.verbose,
-            config=config, **seed_kwargs
+            V,
+            None,
+            None,
+            config.seed_method,
+            config.verbose,
+            config=config,
+            **seed_kwargs,
         )
     elif isinstance(seeds, int):
         # User-specified exact count (seed_method still applies)
         seed_centers = _generate_seeds(
-            V, None, seeds, config.seed_method, config.verbose,
-            config=config, **seed_kwargs
+            V,
+            None,
+            seeds,
+            config.seed_method,
+            config.verbose,
+            config=config,
+            **seed_kwargs,
         )
     elif isinstance(seeds, float):
         # User-specified proportion (seed_method still applies)
         seed_centers = _generate_seeds(
-            V, seeds, None, config.seed_method, config.verbose,
-            config=config, **seed_kwargs
+            V,
+            seeds,
+            None,
+            config.seed_method,
+            config.verbose,
+            config=config,
+            **seed_kwargs,
         )
     else:
         # User-provided array of seed centers
@@ -387,6 +404,7 @@ def _ensure_minimum_seeds(
 
         # Extract centers from GSplatData
         from luxar.gsplats.fit_result import GSplatData
+
         if isinstance(gaussian_result, GSplatData):
             gaussian_seeds = gaussian_result.centers
         else:

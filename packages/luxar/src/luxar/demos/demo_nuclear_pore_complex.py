@@ -707,7 +707,9 @@ def main() -> None:
         aprint("  - Protein backbone showing 3D architecture")
         aprint("")
         aprint("Color guide (spoke mode):")
-        aprint("  Red -> Orange -> Yellow -> Green -> Cyan -> Blue -> Purple -> Magenta")
+        aprint(
+            "  Red -> Orange -> Yellow -> Green -> Cyan -> Blue -> Purple -> Magenta"
+        )
         aprint("  (Each color = one of the 8 identical spokes)")
         aprint("")
         aprint(f"Total atoms: {n_atoms:,}")

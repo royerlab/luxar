@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from arbol import aprint, asection
 
@@ -56,7 +56,7 @@ def robust_download(
         ...     Path("data/dataset.zip"),
         ...     max_retries=5
         ... )
-        >>> print(f"Downloaded to {path}")
+        >>> aprint(f"Downloaded to {path}")
     """
     import requests
     from requests.adapters import HTTPAdapter
@@ -103,10 +103,7 @@ def robust_download(
             with asection(f"Download Attempt {attempt + 1}/{max_retries + 1}"):
                 # Make request
                 response = session.get(
-                    url,
-                    headers=headers,
-                    stream=True,
-                    timeout=timeout
+                    url, headers=headers, stream=True, timeout=timeout
                 )
                 response.raise_for_status()
 
@@ -152,18 +149,30 @@ def robust_download(
                             progress_mb = downloaded / (1024 * 1024)
                             if progress_mb - last_progress_mb >= 100:
                                 if total_size > 0:
-                                    percent = (downloaded / total_size * 100)
+                                    percent = downloaded / total_size * 100
                                     elapsed = time.time() - start_time
-                                    rate_mbps = (downloaded - resume_byte_pos) / (1024 * 1024) / elapsed if elapsed > 0 else 0
+                                    rate_mbps = (
+                                        (downloaded - resume_byte_pos)
+                                        / (1024 * 1024)
+                                        / elapsed
+                                        if elapsed > 0
+                                        else 0
+                                    )
                                     remaining_bytes = total_size - downloaded
-                                    eta_seconds = remaining_bytes / (rate_mbps * 1024 * 1024) if rate_mbps > 0 else 0
+                                    eta_seconds = (
+                                        remaining_bytes / (rate_mbps * 1024 * 1024)
+                                        if rate_mbps > 0
+                                        else 0
+                                    )
 
                                     aprint(
                                         f"  {downloaded / (1024**3):.2f} GB / {total_size / (1024**3):.2f} GB "
                                         f"({percent:.1f}%) - {rate_mbps:.1f} MB/s - ETA: {eta_seconds / 60:.0f}min"
                                     )
                                 else:
-                                    aprint(f"  Downloaded: {downloaded / (1024**3):.2f} GB")
+                                    aprint(
+                                        f"  Downloaded: {downloaded / (1024**3):.2f} GB"
+                                    )
 
                                 last_progress_mb = progress_mb
 
@@ -182,23 +191,33 @@ def robust_download(
                     aprint(f"✓ Size verified: {final_size} bytes")
 
                 if expected_size and final_size != expected_size:
-                    aprint(f"⚠️  Warning: File size ({final_size}) doesn't match expected ({expected_size})")
+                    aprint(
+                        f"⚠️  Warning: File size ({final_size}) doesn't match expected ({expected_size})"
+                    )
 
                 return output_path
 
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.ChunkedEncodingError) as e:
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+            requests.exceptions.ChunkedEncodingError,
+        ) as e:
             attempt += 1
             if attempt <= max_retries:
-                wait_time = 2 ** attempt  # Exponential backoff
+                wait_time = 2**attempt  # Exponential backoff
                 aprint(f"❌ Download error: {type(e).__name__}: {e}")
-                aprint(f"   Retrying in {wait_time} seconds... (attempt {attempt}/{max_retries})")
+                aprint(
+                    f"   Retrying in {wait_time} seconds... (attempt {attempt}/{max_retries})"
+                )
                 time.sleep(wait_time)
                 # Keep partial file for resume attempt
             else:
                 aprint(f"❌ Download failed after {max_retries + 1} attempts")
                 if output_path.exists():
                     aprint(f"   Partial download saved at: {output_path}")
-                    aprint(f"   You can retry to resume from {output_path.stat().st_size / (1024**2):.1f} MB")
+                    aprint(
+                        f"   You can retry to resume from {output_path.stat().st_size / (1024**2):.1f} MB"
+                    )
                 raise
 
         except requests.exceptions.HTTPError as e:
@@ -216,7 +235,11 @@ def robust_download(
     raise RuntimeError("Download failed after all retry attempts")
 
 
-def verify_file_checksum(file_path: Path, expected_md5: Optional[str] = None, expected_sha256: Optional[str] = None) -> bool:
+def verify_file_checksum(
+    file_path: Path,
+    expected_md5: Optional[str] = None,
+    expected_sha256: Optional[str] = None,
+) -> bool:
     """Verify file integrity using checksums.
 
     Args:
@@ -278,7 +301,7 @@ def download_with_checksum(
     output_path: Path,
     expected_md5: Optional[str] = None,
     expected_sha256: Optional[str] = None,
-    **kwargs
+    **kwargs: Any,
 ) -> Path:
     """Download file and verify checksum.
 

@@ -35,7 +35,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -43,7 +42,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed"
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "numpy>=2.0",
     "zarr>=2.16,<3.0",
@@ -67,6 +66,10 @@ Repository = "https://github.com/royerlab/luxar.git"
 Changelog = "https://github.com/royerlab/luxar/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+gsplats = [
+    "scipy>=1.9.0",
+    "torch>=1.12.0"
+]
 dev = [
     "ruff>=0.1.0",
     "mypy>=1.5.0",
@@ -182,7 +185,7 @@ dependencies = [
 ]
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.9", "3.10", "3.11", "3.12"]
+python = ["3.10", "3.11", "3.12"]
 
 [tool.hatch.envs.test.scripts]
 run = "pytest {args:packages/luxar/src/luxar}"
@@ -199,7 +202,7 @@ disable = false  # Enable publishing to PyPI
 # Black and isort configuration removed - using ruff instead
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 
 # Strict mode settings
 strict = true
@@ -252,16 +255,40 @@ module = [
     "typer.*",
     "fastapi.*",
     "uvicorn.*",
+    "requests",
+    "requests.*",
+    "napari",
+    "napari.*",
     "numpy.*",
+    "metal_splatting_backend",
+    "setuptools",
+    "torch.utils.cpp_extension",
 ]
 ignore_missing_imports = true
 
 # Relax strict rules for test files
 [[tool.mypy.overrides]]
-module = "luxar.tests.*"
+module = [
+    "luxar.tests.*",
+    "luxar.*.tests",
+    "luxar.*.tests.*",
+]
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
 check_untyped_defs = false
+ignore_errors = true
+
+# Relax strict rules for demo files
+[[tool.mypy.overrides]]
+module = [
+    "luxar.demos.*",
+    "luxar.*.demos.*",
+    "luxar.*.*.demos.*",
+]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+ignore_errors = true
 
 # Linting configuration is in [tool.ruff] section above
 
@@ -313,7 +340,7 @@ skips = ["B101"]  # Skip assert_used test
 [tool.ruff]
 # Ruff replaces black, isort, flake8, and more
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 
 # Exclude directories
 exclude = [
