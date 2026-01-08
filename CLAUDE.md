@@ -480,6 +480,6 @@ Python Data -> Luxar Core -> Zarr Archive -> Luxar Viewer -> WebGL -> Display
 - Points have positions (nD), colors, radii, sharpness
 
 ### Performance Targets
-- 100K-10M points for smooth interaction
+- 100K-10M elements for smooth interaction
 - Chunk size: 32KB-1MB optimal
 - Compression: Blosc with zstd level 3

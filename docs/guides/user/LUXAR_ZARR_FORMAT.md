@@ -9,11 +9,11 @@
 - HDR color support with float32
 - Transform system with matrix transposition for THREE.js compatibility
 
-This document specifies the Zarr-based storage format used by Luxar for high-performance 3D and nD points visualization.
+This document specifies the Zarr-based storage format used by Luxar for high-performance 3D and nD scientific visualization.
 
 ## Overview
 
-The Luxar Zarr format is a hierarchical data structure designed for efficient storage and streaming of large-scale points data with support for arbitrary dimensionality, transformations, and rendering attributes.
+The Luxar Zarr format is a hierarchical data structure designed for efficient storage and streaming of large-scale scientific data with support for arbitrary dimensionality, transformations, and rendering attributes.
 
 ## End-to-End Data Flow
 
@@ -127,7 +127,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 │  └────────┬─────────┘                                                      │
 │           │                                                                 │
 │           ↓                                                                 │
-│  Display: 60 FPS interactive visualization of 100K-10M points              │
+│  Display: 60 FPS interactive visualization of 100K-10M elements            │
 │                                                                             │
 └───────────────────────────────────────────────────────────────────────────┘
 
@@ -136,7 +136,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 - Compression ratio: 4-40× (quantization + blosc)
 - Network bandwidth: 50-500KB/sec for smooth navigation
 - Cache hit rate: 80-95% with prefetching
-- GPU rendering: 100K-10M points at 60 FPS
+- GPU rendering: 100K-10M elements at 60 FPS
 ```
 
 ## Format Structure

@@ -9,12 +9,12 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 - **🖱️ Intuitive Navigation**: Smooth camera controls optimized for scientific data exploration
 - **📱 Responsive Design**: Seamless fullscreen support and dynamic viewport management
 - **⚡ Unlimited Performance**: GPU-accelerated pipeline designed to scale with hardware capabilities
-- **🎯 Geometry Rendering**: Extensible architecture supporting points, lines, surfaces, volumes (currently points)
+- **🎯 Geometry Rendering**: Extensible architecture supporting points, lines, Gaussian splats, and more
 - **📊 Performance Monitoring**: Built-in FPS and timing metrics for optimization
 - **🌊 Streaming Ready**: Chunked Zarr format enables progressive loading of massive datasets
 - **🔌 Extensible Architecture**: Modular design ready for additional geometry types and rendering modes
 - **🎛️ nD Navigation**: Beautiful dimension sliders UI for exploring higher-dimensional data
-- **🔍 Radius-Based Slicing**: Natural visualization of nD points as hyperspheres
+- **🔍 Radius-Based Slicing**: Natural visualization of nD data using hypersphere intersection
 - **⌨️ Keyboard Controls**: Intuitive keyboard navigation for dimension selection and stepping
 - **⚙️ Advanced Anti-Aliasing**: Multiple AA techniques (FXAA, SMAA, MSAA, SSAA) with known compatibility notes
 - **🧩 Unified Configuration**: Centralized config system in `src/config/` with TypeScript types
@@ -392,7 +392,7 @@ renderingControls: {
 
 ### Performance Optimization
 
-- **Point Count**: Optimize for datasets with millions of points
+- **Element Count**: Optimize for datasets with millions of elements
 - **Chunk Size**: Zarr chunk sizes of 64KB-1MB work well
 - **LOD**: Consider implementing level-of-detail for very large datasets
 - **Compression**: Use Zarr compression (e.g., blosc) to reduce network transfer
@@ -421,8 +421,8 @@ const frameTime = monitor.getAverageFrameTime();
 
 ## 🎯 Performance Tips
 
-1. **Ideal Dataset Size**: 100K-10M points for smooth interaction
-2. **Chunk Strategy**: Use roughly square chunks (e.g., 1000x1000 points)
+1. **Ideal Dataset Size**: 100K-10M elements for smooth interaction
+2. **Chunk Strategy**: Use roughly square chunks (e.g., 1000x1000 elements)
 3. **Network**: Serve Zarr data from same domain to avoid CORS issues
 4. **Browser**: Chrome and Firefox offer best WebGL performance
 5. **Hardware**: Dedicated GPU recommended for large datasets
@@ -437,7 +437,7 @@ const frameTime = monitor.getAverageFrameTime();
 - Ensure CORS headers are set if serving from different domain
 
 **Poor performance**
-- Check dataset size (>10M points may be slow)
+- Check dataset size (>10M elements may be slow)
 - Reduce bloom quality in config
 - Verify GPU acceleration is enabled in browser
 - Try disabling MSAA/SSAA and using FXAA instead

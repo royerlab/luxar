@@ -1562,11 +1562,15 @@ if (measurementElapsed >= 1000) {
 **Registration**:
 
 ```typescript
-animationController.setPerFrameCallback(() => {
+// Register with unique ID (won't overwrite other callbacks like dynamic clipping)
+animationController.addPerFrameCallback('dimension-animation', () => {
   this.onFrame(); // Update all active animations
 });
 
 animationController.startAnimation(); // Ensure loop is running
+
+// Later, to unregister:
+animationController.removePerFrameCallback('dimension-animation');
 ```
 
 **Per-Frame Execution**:
