@@ -9,7 +9,8 @@ import { DirectoryNavigator, type DirectoryEntry } from '../data';
 
 export interface DatasetBrowserConfig {
   container: HTMLElement;
-  onDatasetSelect: (path: string) => void;
+  /** Callback when a dataset is selected. Receives the full URL (not just the path). */
+  onDatasetSelect: (fullUrl: string) => void;
   onClose?: () => void;
 }
 
@@ -20,7 +21,7 @@ export class DatasetBrowser {
   private container: HTMLElement;
   private panel: HTMLElement;
   private navigator: DirectoryNavigator;
-  private onDatasetSelect: (path: string) => void;
+  private onDatasetSelect: (fullUrl: string) => void;
   private onClose?: () => void;
   private currentDataset?: string;
 
@@ -227,7 +228,8 @@ export class DatasetBrowser {
         result.currentPath !== '/' &&
         result.currentPath.includes('.zarr')
       ) {
-        this.onDatasetSelect(result.currentPath);
+        // Pass full URL to preserve directory context
+        this.onDatasetSelect(this.navigator.getFullUrl(result.currentPath));
         this.close();
         return;
       }
@@ -395,7 +397,8 @@ export class DatasetBrowser {
       // Click handler
       item.onclick = () => {
         if (entry.type === 'zarr') {
-          this.onDatasetSelect(entry.path);
+          // Pass full URL to preserve directory context
+          this.onDatasetSelect(this.navigator.getFullUrl(entry.path));
           this.close();
         } else if (entry.type === 'directory') {
           this.navigate(entry.path);
@@ -438,7 +441,10 @@ export class DatasetBrowser {
     loadBtn.onclick = () => {
       const path = input.value.trim();
       if (path) {
-        this.onDatasetSelect(path);
+        // If it's already a full URL, use it directly; otherwise use navigator's base URL
+        const isFullUrl = path.startsWith('http://') || path.startsWith('https://');
+        const fullUrl = isFullUrl ? path : this.navigator.getFullUrl(path);
+        this.onDatasetSelect(fullUrl);
         this.close();
       }
     };

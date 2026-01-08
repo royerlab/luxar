@@ -35,6 +35,7 @@ vi.mock('three', async () => {
     AdditiveBlending: 'AdditiveBlending',
     NormalBlending: 'NormalBlending',
     CustomBlending: 'CustomBlending',
+    AddEquation: 'AddEquation',
     MaxEquation: 'MaxEquation',
     OneFactor: 'OneFactor',
     DoubleSide: 'DoubleSide',
@@ -56,9 +57,12 @@ describe('GSplatMaterial', () => {
       expect(material.transparent).toBe(true);
       expect(material.depthWrite).toBe(false);
       expect(material.toneMapped).toBe(false);
-      expect(material.blending).toBe('AdditiveBlending');
+      // Default 'additive' mode now uses CustomBlending with OneFactor (luminous pre-multiplied)
+      expect(material.blending).toBe('CustomBlending');
       expect(material.side).toBe('DoubleSide');
       expect(material.uniforms.uProjectionMode.value).toBe(0); // Default additive uses sum projection
+      // Default is luminous mode
+      expect(material.uniforms.uLuminous.value).toBe(true);
     });
 
     it('should accept custom configuration', () => {
@@ -73,7 +77,8 @@ describe('GSplatMaterial', () => {
       expect(material.uniforms.uHDRMultiplier.value).toBe(32.0);
       expect(material.uniforms.uTruncate.value).toBe(4.0);
       expect(material.blending).toBe('NormalBlending');
-      expect(material.depthWrite).toBe(true); // Normal blending enables depth write
+      // depthWrite is only true for normal blending when opacity >= 0.99
+      expect(material.depthWrite).toBe(false); // opacity 0.5 < 0.99, so no depth write
       expect(material.uniforms.uProjectionMode.value).toBe(0); // Sum projection for normal
     });
 
@@ -276,6 +281,58 @@ describe('GSplatMaterial', () => {
 
       // Ensure it's a new instance
       expect(cloned).not.toBe(original);
+    });
+  });
+
+  describe('luminous mode', () => {
+    it('should have uLuminous uniform true by default (additive mode)', () => {
+      const material = new GSplatMaterial();
+
+      expect(material.uniforms.uLuminous).toBeDefined();
+      expect(material.uniforms.uLuminous.value).toBe(true);
+      expect(material.userData.luminous).toBe(true);
+    });
+
+    it('should set uLuminous false when blendingMode is normal', () => {
+      const material = new GSplatMaterial({ blendingMode: 'normal' });
+
+      expect(material.uniforms.uLuminous.value).toBe(false);
+      expect(material.userData.luminous).toBe(false);
+    });
+
+    it('should set uLuminous true when blendingMode is luminous', () => {
+      const material = new GSplatMaterial({ blendingMode: 'luminous' });
+
+      expect(material.uniforms.uLuminous.value).toBe(true);
+      expect(material.userData.luminous).toBe(true);
+      expect(material.blending).toBe('CustomBlending');
+    });
+
+    it('should have luminous mode branching in fragment shader', () => {
+      const material = new GSplatMaterial();
+
+      // Check for uLuminous uniform declaration
+      expect(material.fragmentShader).toContain('uniform bool uLuminous');
+
+      // Check for luminous mode conditional
+      expect(material.fragmentShader).toContain('if (uLuminous)');
+
+      // Check for pre-multiplied RGB output in luminous mode (alpha=1.0)
+      expect(material.fragmentShader).toContain('fragColor = vec4(finalColor * intensity, 1.0)');
+
+      // Check for standard alpha output in non-luminous mode (with pre-multiplied color and opacity)
+      expect(material.fragmentShader).toContain(
+        'fragColor = vec4(finalColor * intensity, intensity * uOpacity)'
+      );
+    });
+
+    it('should configure opaque mode correctly', () => {
+      const material = new GSplatMaterial({ blendingMode: 'opaque' });
+
+      expect(material.transparent).toBe(false);
+      expect(material.depthWrite).toBe(true);
+      expect(material.blending).toBe('NormalBlending');
+      expect(material.uniforms.uLuminous.value).toBe(false);
     });
   });
 });
