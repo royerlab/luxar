@@ -213,10 +213,10 @@ MIN_NODE_MINOR := 19
 | Command | Description |
 |---------|-------------|
 | `make demo` | Generate demo dataset (100k points) |
-| `make demo-and-serve` | Create demo and start both servers |
+| `luxar demo` | Generate demo + serve + open browser (all-in-one) |
 | `make run-examples` | Generate all example datasets |
 | `make serve-examples` | Serve datasets directory |
-| `make serve-data` | Serve a specific dataset |
+| `make serve-dataset` | Serve a specific dataset |
 
 ### Documentation
 
@@ -407,7 +407,7 @@ The build system uses these environment variables:
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `NVM_DIR` | nvm installation directory | `~/.nvm` |
-| `DATASET` | Dataset path for `make serve-data` | `datasets/demos/demo.zarr` |
+| `DATASET` | Dataset path for `make serve-dataset` | `datasets/demos/demo.zarr` |
 | `PORT` | Server port for data serving | `8000` |
 
 ## CI/CD Integration

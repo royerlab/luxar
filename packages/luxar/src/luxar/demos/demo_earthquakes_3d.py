@@ -69,10 +69,14 @@ been attenuated by traveling through the mantle.
 ================================================================================
 
 This demo visualizes:
-- Earth as a 3D sphere with continents and oceans
-- Earthquakes as glowing vertical spikes (height = magnitude)
+- Earth as a 3D sphere with continents and oceans (opaque blending)
+- Earthquakes as glowing vertical spikes (luminous blending, height = magnitude)
 - Color gradient showing earthquake age (red = recent, blue = older)
 - Real USGS data from the past 30 days
+
+The demo showcases the opaque vs luminous blending modes:
+- Opaque Earth: solid rendering, occludes objects behind it
+- Luminous rays: additive glow, rays behind Earth are hidden but overlapping rays combine
 
 Usage:
     python demo_earthquakes_3d.py [--days=30] [--minmag=4.5]
@@ -806,19 +810,24 @@ def generate_earthquake_scene(
             scene = compiler.create_scene(dimensions=dims)
 
             # Add Earth surface
-            earth_radii = np.full(len(earth_positions), 0.01, dtype=np.float32)
+            earth_radii = np.full(len(earth_positions), 0.003, dtype=np.float32)
             earth_sharpness = np.full(len(earth_positions), 3.0, dtype=np.float32)
 
+            # Earth surface uses opaque blending - solid rendering with depth write
+            # This means the Earth will occlude earthquake rays behind it
             scene.add_points(
                 "Earth",
                 positions=earth_positions,
                 colors=earth_colors,
                 radii=earth_radii,
                 sharpness=earth_sharpness,
-                opacity=0.95,
+                opacity=1.0,
+                blending_mode="opaque",
             )
 
-            # Add earthquake lines
+            # Add earthquake lines with luminous blending - glowing additive effect
+            # Luminous objects are occluded by opaque Earth but add together
+            # where they overlap (multiple earthquake rays at same location glow brighter)
             if len(line_verts) > 0:
                 scene.add_lines(
                     "Earthquakes",
@@ -827,6 +836,7 @@ def generate_earthquake_scene(
                     colors=line_colors,
                     sharpness=line_sharp,
                     line_type="segments",
+                    blending_mode="luminous",
                 )
 
         aprint(f"✓ Written to {output_path}")
@@ -865,10 +875,11 @@ def main() -> None:
     aprint(f"    • Minimum magnitude: {min_mag}")
     aprint("")
     aprint("  Visualization:")
-    aprint("    • Earth sphere: continents (green) and oceans (blue)")
-    aprint("    • Vertical spikes: earthquake locations")
+    aprint("    • Earth sphere: continents/oceans (opaque - solid surface)")
+    aprint("    • Vertical spikes: earthquake locations (luminous - glowing)")
     aprint("    • Spike height: magnitude (taller = stronger)")
     aprint("    • Spike color: time (red = recent, purple = older)")
+    aprint("    • Blending: Earth occludes rays behind it, rays add together")
     aprint("")
     aprint("  What to look for:")
     aprint("    🔥 Ring of Fire - Pacific Ocean rim (most activity)")

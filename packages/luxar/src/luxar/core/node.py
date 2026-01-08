@@ -279,7 +279,8 @@ class Node:
         """Get the blending mode for this node.
 
         Returns:
-            Blending mode string, defaults to "additive" if not set
+            Blending mode string, defaults to "additive" if not set.
+            Valid modes: "normal", "additive", "max", "opaque", "luminous"
         """
         return str(self.attrs.get("blending_mode", "additive"))
 
@@ -288,7 +289,12 @@ class Node:
         """Set the blending mode for this node.
 
         Args:
-            value: Blending mode ("normal", "additive", "max")
+            value: Blending mode string. Valid modes:
+                - "normal": Standard alpha blending (semi-transparent)
+                - "additive": Legacy mode, maps to luminous internally
+                - "max": Maximum of source and destination (brightest wins)
+                - "opaque": Solid rendering with depth write (closest wins)
+                - "luminous": Emissive additive blending (glow effect)
 
         Raises:
             ValueError: If blending mode is not valid
@@ -326,7 +332,12 @@ class Node:
         """Set blending mode and return self for chaining.
 
         Args:
-            value: Blending mode string ("normal", "additive", "max")
+            value: Blending mode string. Valid modes:
+                - "normal": Standard alpha blending (semi-transparent)
+                - "additive": Legacy mode, maps to luminous internally
+                - "max": Maximum of source and destination (brightest wins)
+                - "opaque": Solid rendering with depth write (closest wins)
+                - "luminous": Emissive additive blending (glow effect)
 
         Returns:
             Self for method chaining

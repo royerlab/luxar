@@ -43,7 +43,6 @@ Controls:
     - Watch browser DevTools Network tab to see throttling in action
 """
 
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -318,7 +317,6 @@ def main() -> None:
         if no_simulation:
             aprint("Serving at full speed (no network simulation)")
             aprint("")
-            cmd = ["luxar", "serve", str(output_path), "--viewer", "--open"]
         else:
             aprint(f"Simulating {network_profile} network conditions:")
             aprint("")
@@ -333,16 +331,6 @@ def main() -> None:
             aprint("  python demo_network_performance.py --profile broadband")
             aprint("  python demo_network_performance.py --no-simulation")
             aprint("")
-
-            cmd = [
-                "luxar",
-                "serve",
-                str(output_path),
-                "--viewer",
-                "--open",
-                "--profile",
-                network_profile,
-            ]
 
         aprint("Press Ctrl+C when done to stop and cleanup.")
         aprint("")
