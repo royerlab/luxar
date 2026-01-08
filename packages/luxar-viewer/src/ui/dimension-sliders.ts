@@ -2,6 +2,7 @@ import { SimpleDims } from '../types/dims';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { DimensionAnimationManager } from '../scene/dimension-animation-manager';
 import { config } from '../config';
+import { log, Modules } from '../utils/log';
 
 /**
  * Configuration interface for initializing dimension sliders.
@@ -679,8 +680,10 @@ export class DimensionSliders {
           // Handle invalid index gracefully
           valueLabel.textContent = `Invalid (${index})`;
           valueLabel.title = `Index ${index} is out of range [0, ${categories.length - 1}]`;
-          console.warn(
-            `Invalid category index ${index} for dimension ${dimMeta.name}, valid range: [0, ${categories.length - 1}]`
+          log.warning(
+            Modules.UI,
+            `Invalid category index ${index} for dimension ${dimMeta.name}, ` +
+              `valid range: [0, ${categories.length - 1}]`
           );
         }
       } else if (isDiscrete) {

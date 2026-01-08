@@ -30,8 +30,8 @@ class LuxarScene:
 
     Example:
         >>> scene = LuxarScene.load('scene.zarr')
-        >>> print(f"Version: {scene.version}")
-        >>> print(f"Nodes: {[n['name'] for n in scene.nodes]}")
+        >>> aprint(f"Version: {scene.version}")
+        >>> aprint(f"Nodes: {[n['name'] for n in scene.nodes]}")
         >>> points = scene.get_points('my_cloud')
         >>> positions = points['positions']  # Decoded array
     """
@@ -84,7 +84,7 @@ class LuxarScene:
     @property
     def version(self) -> str:
         """Luxar format version."""
-        return self._root.attrs.get("luxar_version", "unknown")
+        return str(self._root.attrs.get("luxar_version", "unknown"))
 
     @property
     def root_attrs(self) -> Dict[str, Any]:
@@ -108,7 +108,7 @@ class LuxarScene:
         - type: 'points', 'gsplats', 'lines', or 'group'
         - Additional metadata depending on type
         """
-        nodes = []
+        nodes: List[Dict[str, Any]] = []
         self._collect_nodes(self._root, "", nodes)
         return nodes
 
@@ -176,7 +176,7 @@ class LuxarScene:
         """Get the type of a node."""
         if not self.has_node(name):
             raise KeyError(f"Node not found: {name}")
-        return self._root[name].attrs.get("type", "group")
+        return str(self._root[name].attrs.get("type", "group"))
 
     def get_node_metadata(self, name: str) -> Dict[str, Any]:
         """Get metadata for a node (no data arrays)."""

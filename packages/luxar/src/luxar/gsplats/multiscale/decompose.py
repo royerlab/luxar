@@ -882,7 +882,7 @@ def decomposition_loss(
     # Secondary: Hierarchical energy penalty
     # Exponentially penalize finer scales to push energy toward coarse scales
     total_target_energy = torch.sum(target)
-    energy_loss = 0.0
+    energy_loss = torch.zeros((), device=target.device, dtype=target.dtype)
 
     for k, img_scale in enumerate(scales_list):
         # Weight grows exponentially with fineness
@@ -1028,13 +1028,13 @@ def decompose_image(
     >>> # 2D example
     >>> V = np.random.rand(256, 256)
     >>> scales_list, stats = decompose_image(V, scales=[1, 2, 4])
-    >>> print([s.shape for s in scales_list])
+    >>> aprint([s.shape for s in scales_list])
     [(256, 256), (128, 128), (64, 64)]
     >>>
     >>> # 3D example
     >>> V = np.random.rand(128, 128, 128)
     >>> scales_list, stats = decompose_image(V, scales=[1, 2, 4, 8])
-    >>> print(f"Energy distribution: {stats['energy_distribution']}")
+    >>> aprint(f"Energy distribution: {stats['energy_distribution']}")
     Energy distribution: [0.62, 0.23, 0.11, 0.04]
 
     Notes
@@ -1154,7 +1154,7 @@ def decompose_image(
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
         # Movie recording setup (only if enabled)
-        movie_frames = None
+        movie_frames: Optional[Dict[str, Any]] = {} if napari_movie else None
         if napari_movie:
             if movie_max_frames is None:
                 movie_max_frames = 10000  # Large but finite limit
@@ -1258,7 +1258,9 @@ def decompose_image(
                     break
 
             # Movie frame recording (only if enabled and at specified intervals)
-            if napari_movie and movie_frames is not None and it % movie_every == 0:
+            if movie_frames is not None and it % movie_every == 0:
+                if movie_max_frames is None:
+                    movie_max_frames = 10000
                 with torch.no_grad():
                     # Memory-bounded recording: remove oldest frames if limit exceeded
                     if len(movie_frames["target"]) >= movie_max_frames:

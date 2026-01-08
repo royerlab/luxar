@@ -7,7 +7,7 @@ including peak detection, spatial deduplication algorithms, and Cholesky factor
 construction for Gaussian initialization.
 """
 
-from typing import Optional
+from typing import Optional, cast
 
 import numpy as np
 from scipy import ndimage as ndi
@@ -116,7 +116,7 @@ def local_maxima(
 
     # Handle empty result case
     if coords.size == 0:
-        return coords  # type: ignore[no-any-return]
+        return cast(np.ndarray, coords)
 
     # Optionally limit to top_k strongest peaks
     if top_k is not None and len(coords) > top_k:
@@ -125,7 +125,7 @@ def local_maxima(
         # Select indices of top_k strongest peaks (highest intensities)
         keep = np.argsort(vals)[-top_k:]
         coords = coords[keep]
-    return coords  # type: ignore[no-any-return]
+    return cast(np.ndarray, coords)
 
 
 def dedupe_farthest_first(
@@ -205,6 +205,7 @@ def dedupe_farthest_first(
         # Query KD-tree for all remaining seeds at once (vectorized)
         remaining_coords = coords_sorted[remaining_indices]
         distances, _ = tree.query(remaining_coords, k=1)
+        distances = np.atleast_1d(distances)
 
         # Find seeds that satisfy min_distance constraint
         valid_mask = distances >= min_distance
@@ -227,7 +228,7 @@ def dedupe_farthest_first(
         selected_array = np.array(selected)
         tree = cKDTree(selected_array)
 
-    return np.array(selected, dtype=float)  # type: ignore[no-any-return]
+    return np.array(selected, dtype=float)
 
 
 def _dedupe_simple(
@@ -264,7 +265,7 @@ def _dedupe_simple(
         dist2 = np.sum(diffs**2, axis=1) if coords_sorted.ndim > 1 else diffs**2
         used |= dist2 < (min_distance**2)
 
-    return np.array(selected, dtype=float)  # type: ignore[no-any-return]
+    return np.array(selected, dtype=float)
 
 
 def combine_seeds(
@@ -311,7 +312,7 @@ def combine_seeds(
     >>>
     >>> # Combine centers with deduplication
     >>> combined = combine_seeds(result1.centers, result2.centers, min_distance=3.0)
-    >>> print(f"Combined: {len(result1.centers)} + {len(result2.centers)} → {len(combined)} seeds")
+    >>> aprint(f"Combined: {len(result1.centers)} + {len(result2.centers)} → {len(combined)} seeds")
 
     Notes
     -----
@@ -333,8 +334,8 @@ def combine_seeds(
         # Infer ndim from first non-None array, or default to 2
         for arr in candidate_arrays:
             if arr is not None:
-                return np.zeros((0, arr.shape[1]), dtype=float)  # type: ignore[no-any-return]
-        return np.zeros((0, 2), dtype=float)  # type: ignore[no-any-return]  # Default to 2D
+                return cast(np.ndarray, np.zeros((0, arr.shape[1]), dtype=float))
+        return cast(np.ndarray, np.zeros((0, 2), dtype=float))  # Default to 2D
 
     # Concatenate all non-empty arrays
     combined = np.vstack(non_empty)
@@ -343,4 +344,4 @@ def combine_seeds(
     if min_distance is not None:
         combined = dedupe_farthest_first(combined, min_distance=min_distance)
 
-    return combined  # type: ignore[no-any-return]
+    return combined

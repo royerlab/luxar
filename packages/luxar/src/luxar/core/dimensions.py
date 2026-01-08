@@ -138,7 +138,7 @@ class Dimension:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
-        result = {
+        result: Dict[str, Any] = {
             "name": self.name,
             "unit": self.unit,
             "range": list(self.range) if self.range else None,

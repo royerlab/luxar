@@ -24,6 +24,7 @@
 
 import { TypeScriptFallback } from './typescript';
 import type { WasmModule } from './types';
+import { log, Modules } from '../utils/log';
 
 // Re-export types for convenience
 export type { WasmModule } from './types';
@@ -51,15 +52,18 @@ export async function initWasm(): Promise<WasmModule> {
     // Initialize WASM (loads the .wasm binary)
     await wasmModule.default();
 
-    console.log('[WASM] Loaded compiled WASM module');
+    log.info(Modules.WASM, 'Loaded compiled WASM module');
 
     // Return the WASM module (it already implements WasmModule interface)
     return wasmModule as unknown as WasmModule;
   } catch (error) {
     // WASM not available - use TypeScript fallback
-    console.warn('[WASM] Failed to load WASM module, using TypeScript fallback:', error);
-    console.log('[WASM] To build WASM module: pnpm build:wasm (or make wasm-build)');
-    console.log('[WASM] See packages/luxar-viewer/src/wasm/rust/README.md for build instructions');
+    log.warning(Modules.WASM, 'Failed to load WASM module, using TypeScript fallback', error);
+    log.info(Modules.WASM, 'To build WASM module: pnpm build:wasm (or make wasm-build)');
+    log.info(
+      Modules.WASM,
+      'See packages/luxar-viewer/src/wasm/rust/README.md for build instructions'
+    );
 
     return new TypeScriptFallback();
   }

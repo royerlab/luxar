@@ -11,10 +11,11 @@ import sys
 from pathlib import Path
 
 import setuptools
+from arbol import aprint
 from torch.utils.cpp_extension import BuildExtension, CppExtension
 
 
-def compile_metal_shaders():
+def compile_metal_shaders() -> None:
     """Compile Metal shaders to .metallib format."""
     src_dir = Path(__file__).parent / "src"
     metal_file = src_dir / "kernels.metal"
@@ -27,10 +28,10 @@ def compile_metal_shaders():
     # Skip if already compiled and source unchanged
     if lib_file.exists():
         if lib_file.stat().st_mtime > metal_file.stat().st_mtime:
-            print("Metal library up to date, skipping compilation")
+            aprint("Metal library up to date, skipping compilation")
             return
 
-    print(f"Compiling Metal shaders: {metal_file}")
+    aprint(f"Compiling Metal shaders: {metal_file}")
 
     # Compile .metal -> .air (intermediate representation)
     subprocess.check_call(
@@ -63,16 +64,16 @@ def compile_metal_shaders():
 
     # Clean up intermediate file
     air_file.unlink()
-    print(f"Metal library created: {lib_file}")
+    aprint(f"Metal library created: {lib_file}")
 
 
 class CustomBuildExtension(BuildExtension):
     """Build extension with Metal shader compilation."""
 
-    def run(self):
+    def run(self) -> None:
         # Check platform
         if sys.platform != "darwin":
-            print("WARNING: Metal extension only supported on macOS")
+            aprint("WARNING: Metal extension only supported on macOS")
             return
 
         # Compile Metal shaders first
@@ -84,7 +85,7 @@ class CustomBuildExtension(BuildExtension):
 
 # C++ extension configuration
 ext_modules = [
-    CppExtension(
+    CppExtension(  # type: ignore[no-untyped-call]
         name="metal_splatting_backend",
         sources=["src/bindings.mm"],
         extra_compile_args={
@@ -110,5 +111,5 @@ setuptools.setup(
     description="Metal-accelerated Gaussian splatting for Luxar",
     ext_modules=ext_modules,
     cmdclass={"build_ext": CustomBuildExtension},
-    python_requires=">=3.9",
+    python_requires=">=3.10",
 )

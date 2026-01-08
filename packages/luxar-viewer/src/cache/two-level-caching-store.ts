@@ -2,6 +2,7 @@ import type { AsyncReadable } from '@zarrita/storage';
 import { SegmentedLRUCache } from './segmented-lru-cache';
 import { OPFSStore } from './opfs-store';
 import type { ChunkPrefetcher } from './chunk-prefetcher';
+import { log, Modules } from '../utils/log';
 
 export interface TwoLevelCachingStoreOptions {
   /** L1 memory cache size in bytes (default: 100MB) */
@@ -273,7 +274,7 @@ export class TwoLevelCachingStore implements AsyncReadable {
     } catch (error) {
       // Log error with message (error objects don't serialize well in console)
       const errorMsg = error instanceof Error ? error.message : String(error);
-      console.warn(`[Cache] Network error fetching ${key}: ${errorMsg}`);
+      log.warning(Modules.CACHE, `Network error fetching ${key}: ${errorMsg}`);
       return undefined;
     }
   }

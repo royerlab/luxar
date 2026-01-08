@@ -49,21 +49,21 @@ class TestNodeProperties:
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             # Root with no children is a leaf
-            assert scene.is_leaf is True
+            assert scene.is_leaf
 
             # Add a group - root is no longer a leaf
             group1 = scene.add_group("group1")
-            assert scene.is_leaf is False
-            assert group1.is_leaf is True  # Empty group is a leaf
+            assert not scene.is_leaf
+            assert group1.is_leaf  # Empty group is a leaf
 
             # Add children to group1
             group1.add_group("subgroup")
-            assert group1.is_leaf is False
+            assert not group1.is_leaf
 
             # Points are always leaves
             positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
             points = scene.add_points("points1", positions)
-            assert points.is_leaf is True  # Points node is always a leaf
+            assert points.is_leaf  # Points node is always a leaf
 
     def test_is_root_property(self, tmp_path: Path) -> None:
         """Test is_root property."""

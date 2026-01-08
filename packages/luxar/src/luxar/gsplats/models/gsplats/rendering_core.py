@@ -121,7 +121,7 @@ def _cached_base_and_offsets(
     return _GRID_CACHE[key]
 
 
-@torch.jit.ignore  # jit-able but optional; ignore keeps it simple if torch.compile() is used outside
+@torch.jit.ignore  # type: ignore[misc]  # jit-able but optional; ignore keeps it simple if torch.compile() is used outside
 def _group_by_box_gpu(
     lo: torch.Tensor, hi: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -184,7 +184,7 @@ def _fwd_norm2_3d(
 # ---- Helper functions for nD rendering --------------------------------------
 
 
-def _linear_strides(shape: Sequence[int], device) -> torch.Tensor:
+def _linear_strides(shape: Sequence[int], device: torch.device | str) -> torch.Tensor:
     """Row-major linear strides for an nD tensor with given shape."""
     d = len(shape)
     s = [1]

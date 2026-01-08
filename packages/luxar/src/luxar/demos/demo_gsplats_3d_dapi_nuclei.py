@@ -86,7 +86,7 @@ Controls:
 # Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
 
-os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import subprocess
 import sys
@@ -235,9 +235,12 @@ def fit_or_load_gsplats(volume):
         global DEVICE
         if DEVICE is None:
             import torch
+
             if is_metal_available() and torch.backends.mps.is_available():
                 DEVICE = "mps"
-                aprint("🚀 Metal acceleration detected - will use MPS device for 5-7x speedup!")
+                aprint(
+                    "🚀 Metal acceleration detected - will use MPS device for 5-7x speedup!"
+                )
                 aprint("   (MPS→CPU fallback enabled for unsupported PyTorch ops)")
             elif torch.cuda.is_available():
                 DEVICE = "cuda"
@@ -336,7 +339,7 @@ Controls:
 
 def add_reference_points(scene, volume, sample_rate=0.01):
     """Add sampled points from original volume as reference (optional)."""
-    aprint(f"Adding reference points (sample rate: {sample_rate*100:.1f}%)...")
+    aprint(f"Adding reference points (sample rate: {sample_rate * 100:.1f}%)...")
 
     # Sample volume at points above threshold
     threshold = np.percentile(volume, 90)
@@ -502,12 +505,18 @@ def main():
     with asection("Applying transformations for web viewer"):
         aprint("Centering at center-of-mass...")
         gsplats_data = gsplats_data_original.center_at_centroid()
-        centroid_check = (gsplats_data.centers.T @ gsplats_data.amplitudes) / gsplats_data.amplitudes.sum()
-        aprint(f"Centered (centroid: [{centroid_check[0]:.3f}, {centroid_check[1]:.3f}, {centroid_check[2]:.3f}])")
+        centroid_check = (
+            gsplats_data.centers.T @ gsplats_data.amplitudes
+        ) / gsplats_data.amplitudes.sum()
+        aprint(
+            f"Centered (centroid: [{centroid_check[0]:.3f}, {centroid_check[1]:.3f}, {centroid_check[2]:.3f}])"
+        )
 
         aprint("Reducing brightness by 10x for better visualization...")
         gsplats_data = gsplats_data.scale_intensity(0.1)
-        aprint(f"Brightness scaled to 0.1x (amplitude range: [{gsplats_data.amplitudes.min():.4f}, {gsplats_data.amplitudes.max():.4f}])")
+        aprint(
+            f"Brightness scaled to 0.1x (amplitude range: [{gsplats_data.amplitudes.min():.4f}, {gsplats_data.amplitudes.max():.4f}])"
+        )
 
     # Create scene with transformed data
     scene_path = create_luxar_scene(gsplats_data, output_path)
@@ -526,7 +535,7 @@ def main():
     aprint(f"Raw size: {volume_bytes / 1024 / 1024:.2f} MB")
     aprint(f"Splat size: {splats_bytes / 1024:.2f} KB")
     aprint(f"Compression ratio: {compression:.1f}:1")
-    aprint(f"Space savings: {(1 - 1/compression)*100:.1f}%")
+    aprint(f"Space savings: {(1 - 1 / compression) * 100:.1f}%")
     aprint("=" * 70)
 
     # Launch viewer

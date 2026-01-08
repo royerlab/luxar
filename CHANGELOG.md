@@ -4,6 +4,14 @@ All notable changes to Luxar are documented in this file.
 
 ## [Unreleased]
 
+### March 2026
+
+#### Maintenance
+
+- Added `luxar[gsplats]` optional dependency group and lazy imports for gsplats tooling
+- Standardized Python console output on `arbol` and viewer output on `utils/log`
+- Filled missing package `README.md` and `SPECIFICATIONS.md` files across Python and viewer packages
+
 ### December 2025
 
 #### Major Features

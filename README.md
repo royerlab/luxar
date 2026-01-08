@@ -30,7 +30,7 @@ GPU-accelerated WebGL renderer with HDR pipeline, real-time effects, and streami
 
 ### Prerequisites
 
-- **Python**: 3.9 or higher
+- **Python**: 3.10 or higher
 - **Node.js**: 18 or higher
 - **Modern browser**: WebGL 2.0 support required
 
@@ -50,6 +50,8 @@ make demo-and-serve
 ```bash
 # 1. Install Luxar
 pip install -e .
+# Optional Gaussian splatting support
+pip install -e ".[gsplats]"
 
 # 2. Create a scene in Python
 luxar demo --no-serve --output my_scene.zarr --points 1000000

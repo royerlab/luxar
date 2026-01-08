@@ -141,6 +141,8 @@ export const Modules = {
   ZARR_LOADER: 'ZarrLoader',
   RANGE_CACHE: 'RangeCache',
   CACHE: 'Cache',
+  LINES_LOADER: 'LinesSpatialIndexLoader',
+  WASM: 'WASM',
   SCENE_DIMS: 'SceneDims',
 
   // Rendering

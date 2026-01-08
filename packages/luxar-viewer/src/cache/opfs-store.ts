@@ -1,4 +1,5 @@
 import type { OPFSMetadata } from './types';
+import { log, Modules } from '../utils/log';
 
 /**
  * OPFS persistence layer (L2 cache) with LRU eviction and shallow bucketing.
@@ -60,7 +61,7 @@ export class OPFSStore {
       this.opfsRoot = await root.getDirectoryHandle(this.datasetId, { create: true });
       await this.loadMetadata();
     } catch (error) {
-      console.warn('[OPFSStore] Failed to initialize:', error);
+      log.warning(Modules.CACHE, 'OPFSStore failed to initialize', error);
       this.opfsRoot = null;
     }
   }
@@ -79,7 +80,7 @@ export class OPFSStore {
       // Verify size matches metadata
       const entry = this.index.get(key);
       if (entry && entry.size !== data.byteLength) {
-        console.warn(`[OPFSStore] Size mismatch for ${key}, removing corrupted entry`);
+        log.warning(Modules.CACHE, `OPFSStore size mismatch for ${key}, removing corrupted entry`);
         await this.delete(key);
         return undefined;
       }
@@ -104,7 +105,7 @@ export class OPFSStore {
 
     // Check quota before writing
     if (!(await this.checkQuota(size))) {
-      console.warn('[OPFSStore] Insufficient storage quota, skipping write');
+      log.warning(Modules.CACHE, 'OPFSStore insufficient storage quota, skipping write');
       return;
     }
 
@@ -148,7 +149,7 @@ export class OPFSStore {
     } catch (error) {
       // Log error with message (error objects don't serialize well in console)
       const errorMsg = error instanceof Error ? error.message : String(error);
-      console.warn(`[OPFSStore] Failed to write ${key}: ${errorMsg}`);
+      log.warning(Modules.CACHE, `OPFSStore failed to write ${key}: ${errorMsg}`);
     }
   }
 
@@ -189,7 +190,7 @@ export class OPFSStore {
           await this.opfsRoot.removeEntry(name, { recursive: true });
         }
       } catch (error) {
-        console.warn('[OPFSStore] Failed to clear:', error);
+        log.warning(Modules.CACHE, 'OPFSStore failed to clear', error);
       }
     }
     // Clear all in-memory state
@@ -377,7 +378,7 @@ export class OPFSStore {
       await writable.close();
     } catch (error) {
       // Ignore metadata save failures
-      console.warn('[OPFSStore] Failed to save metadata:', error);
+      log.warning(Modules.CACHE, 'OPFSStore failed to save metadata', error);
     }
   }
 }

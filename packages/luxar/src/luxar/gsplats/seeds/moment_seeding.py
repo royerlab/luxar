@@ -158,8 +158,14 @@ def seed_from_moments(
     all_covariances = []
     all_masses = []
 
-    with asection("Phase 2: Peak finding and moment computation") if verbose else nullcontext():
-        for scale_idx, (scale_factor, V_scale) in enumerate(zip(scale_list, scales_result)):
+    with (
+        asection("Phase 2: Peak finding and moment computation")
+        if verbose
+        else nullcontext()
+    ):
+        for scale_idx, (scale_factor, V_scale) in enumerate(
+            zip(scale_list, scales_result)
+        ):
             # Skip finest scales
             if scale_idx < skip_finest_scales:
                 if verbose:
@@ -302,9 +308,7 @@ def _find_peaks_in_scale(
     return np.array(peak_tuples, dtype=np.float32)
 
 
-def _simple_peak_finding(
-    V: torch.Tensor, nms_radius: float
-) -> List[Tuple[int, ...]]:
+def _simple_peak_finding(V: torch.Tensor, nms_radius: float) -> List[Tuple[int, ...]]:
     """Simple fallback peak finding using max pooling."""
     import torch.nn.functional as F
 
@@ -390,7 +394,8 @@ def _compute_local_moments(
             shape = [1] * ndim
             shape[d] = window_size
             dim_valid_full = np.tile(
-                dim_valid.reshape(shape), [window_size if j != d else 1 for j in range(ndim)]
+                dim_valid.reshape(shape),
+                [window_size if j != d else 1 for j in range(ndim)],
             ).ravel()
             valid_mask &= dim_valid_full
 
@@ -416,7 +421,9 @@ def _compute_local_moments(
             continue
 
         # Centroid
-        centroid_offset = (valid_offsets * weighted_intensities[:, None]).sum(axis=0) / mass
+        centroid_offset = (valid_offsets * weighted_intensities[:, None]).sum(
+            axis=0
+        ) / mass
         refined_centers[i] = center_int + centroid_offset
 
         # Covariance

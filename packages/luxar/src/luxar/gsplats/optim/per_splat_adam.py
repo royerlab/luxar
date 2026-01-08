@@ -9,7 +9,7 @@ for each Gaussian splat, enabling:
 4. Efficient dynamic operations
 """
 
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, cast
 
 import torch
 
@@ -99,7 +99,7 @@ class PerSplatAdam:
 
         # Per-splat state storage
         # Each splat has its own: lr, step, exp_avg_*, max_exp_avg_sq_*
-        self.splat_states: Dict[int, Dict] = {}
+        self.splat_states: Dict[int, Dict[str, Any]] = {}
         self.global_step = 0
 
         # Track model state to detect topology changes
@@ -151,7 +151,7 @@ class PerSplatAdam:
                     splat_idx
                 )  # Create fresh state with zero momentum
 
-    def _initialize_splat(self, splat_idx: int, lr: Optional[float] = None):
+    def _initialize_splat(self, splat_idx: int, lr: Optional[float] = None) -> None:
         """Initialize optimizer state for a single splat."""
         # Validate splat index
         if splat_idx < 0:
@@ -178,7 +178,7 @@ class PerSplatAdam:
                 raise ValueError("Model L_off parameter is invalid")
 
             # Per-splat state: separate momentum for each parameter type
-            state = {
+            state: Dict[str, Any] = {
                 "lr": lr,  # Gradient-dilution-compensated LR (used for position/variance/amplitude)
                 "base_lr": self.base_lr,  # Base LR without gradient dilution (used for sharpness)
                 "step": 0,
@@ -302,10 +302,8 @@ class PerSplatAdam:
 
         # Unpack hyperparameters for this splat
         beta1, beta2 = self.betas  # Momentum decay rates
-        lr = state[
-            "lr"
-        ]  # Gradient-dilution-compensated LR (for position/variance/amplitude)
-        base_lr = state["base_lr"]  # Base LR without gradient dilution (for sharpness)
+        lr = cast(float, state["lr"])
+        base_lr = cast(float, state["base_lr"])
 
         # Validate hyperparameters to catch configuration errors early
         if lr <= 0:
@@ -452,16 +450,16 @@ class PerSplatAdam:
 
     def _update_parameter(
         self,
-        param,
-        grad,
-        exp_avg,
-        exp_avg_sq,
-        max_exp_avg_sq,
-        beta1,
-        beta2,
-        lr,
-        bias_correction1,
-        bias_correction2,
+        param: torch.Tensor,
+        grad: torch.Tensor,
+        exp_avg: torch.Tensor,
+        exp_avg_sq: torch.Tensor,
+        max_exp_avg_sq: Optional[torch.Tensor],
+        beta1: float,
+        beta2: float,
+        lr: float,
+        bias_correction1: float,
+        bias_correction2: float,
     ) -> None:
         """
         Core Adam parameter update following PyTorch's implementation.
@@ -506,6 +504,8 @@ class PerSplatAdam:
         # Compute denominator for parameter update
         if self.amsgrad:
             # AMSGrad: use maximum of past squared gradients for stability
+            if max_exp_avg_sq is None:
+                raise RuntimeError("AMSGrad enabled but max_exp_avg_sq is missing")
             torch.maximum(max_exp_avg_sq, exp_avg_sq, out=max_exp_avg_sq)
             denom = (max_exp_avg_sq.sqrt() / (bias_correction2**0.5)).add_(self.eps)
         else:
@@ -518,7 +518,7 @@ class PerSplatAdam:
         # Apply parameter update: θ ← θ - step_size * m̂_t / (√v̂_t + ε)
         param.addcdiv_(exp_avg, denom, value=-step_size)
 
-    def add_splats(self, n_new_splats: int, lr_new: Optional[float] = None):
+    def add_splats(self, n_new_splats: int, lr_new: Optional[float] = None) -> None:
         """
         Add optimizer state for newly added splats.
 
@@ -548,7 +548,7 @@ class PerSplatAdam:
         except Exception as e:
             raise RuntimeError(f"Failed to add {n_new_splats} new splats: {e}") from e
 
-    def remove_splats(self, keep_mask: torch.Tensor):
+    def remove_splats(self, keep_mask: torch.Tensor) -> None:
         """
         Remove optimizer state for pruned splats.
 
@@ -586,7 +586,7 @@ class PerSplatAdam:
         except Exception as e:
             raise RuntimeError(f"Failed to remove splats: {e}") from e
 
-    def set_learning_rate(self, splat_idx: int, lr: float):
+    def set_learning_rate(self, splat_idx: int, lr: float) -> None:
         """Set learning rate for a specific splat."""
         if lr <= 0:
             raise ValueError(f"Learning rate must be positive, got {lr}")
@@ -605,7 +605,7 @@ class PerSplatAdam:
     def get_learning_rate(self, splat_idx: int) -> float:
         """Get learning rate for a specific splat."""
         if splat_idx in self.splat_states:
-            return self.splat_states[splat_idx]["lr"]
+            return float(self.splat_states[splat_idx]["lr"])
         return self.base_lr
 
     def get_effective_learning_rates(self) -> torch.Tensor:
@@ -618,7 +618,7 @@ class PerSplatAdam:
 
         return lrs
 
-    def state_dict(self) -> Dict:
+    def state_dict(self) -> Dict[str, Any]:
         """Get optimizer state for serialization."""
         return {
             "splat_states": self.splat_states,
@@ -630,7 +630,7 @@ class PerSplatAdam:
             "amsgrad": self.amsgrad,
         }
 
-    def load_state_dict(self, state_dict: Dict) -> None:
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         """Load optimizer state from serialization."""
         self.splat_states = state_dict["splat_states"]
         self.global_step = state_dict["global_step"]
