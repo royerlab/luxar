@@ -70,12 +70,14 @@ been attenuated by traveling through the mantle.
 
 This demo visualizes:
 - Earth as a 3D sphere with continents and oceans (opaque blending)
+- Subtle cloud layer generated with Perlin noise (luminous blending)
 - Earthquakes as glowing vertical spikes (luminous blending, height = magnitude)
 - Color gradient showing earthquake age (red = recent, blue = older)
 - Real USGS data from the past 30 days
 
 The demo showcases the opaque vs luminous blending modes:
 - Opaque Earth: solid rendering, occludes objects behind it
+- Luminous clouds: subtle atmospheric glow layer
 - Luminous rays: additive glow, rays behind Earth are hidden but overlapping rays combine
 
 Usage:
@@ -110,8 +112,12 @@ from luxar.utils.paths import get_demos_output_dir
 # Earth radius (arbitrary units for visualization)
 EARTH_RADIUS = 1.0
 
+# Cloud layer radius (slightly above Earth surface)
+CLOUD_RADIUS = 1.015  # About 1.5% above Earth surface (~100km at Earth scale)
+
 # Sphere resolution (number of points on Earth surface)
 EARTH_POINTS = 120000  # High resolution for texture mapping (4x increase)
+CLOUD_POINTS = 60000  # Fewer points for clouds (they're diffuse)
 
 # NASA Blue Marble image URL (5400x2700 equirectangular projection)
 BLUE_MARBLE_URL = "https://neo.gsfc.nasa.gov/archive/bluemarble/bmng/world_8km/world.200401.3x5400x2700.jpg"
@@ -557,6 +563,494 @@ def compute_earth_colors(positions: np.ndarray) -> np.ndarray:
 
 
 # =============================================================================
+# Perlin Noise for Cloud Generation
+# =============================================================================
+
+
+def _fade(t: np.ndarray) -> np.ndarray:
+    """Perlin noise fade function: 6t^5 - 15t^4 + 10t^3."""
+    return t * t * t * (t * (t * 6 - 15) + 10)
+
+
+def _lerp(a: np.ndarray, b: np.ndarray, t: np.ndarray) -> np.ndarray:
+    """Linear interpolation."""
+    return a + t * (b - a)
+
+
+def _grad3d(hash_val: int, x: float, y: float, z: float) -> float:
+    """3D gradient function for Perlin noise."""
+    h = hash_val & 15
+    u = x if h < 8 else y
+    v = y if h < 4 else (x if h in (12, 14) else z)
+    return (u if (h & 1) == 0 else -u) + (v if (h & 2) == 0 else -v)
+
+
+# Permutation table for Perlin noise (standard permutation)
+_PERM = [
+    151,
+    160,
+    137,
+    91,
+    90,
+    15,
+    131,
+    13,
+    201,
+    95,
+    96,
+    53,
+    194,
+    233,
+    7,
+    225,
+    140,
+    36,
+    103,
+    30,
+    69,
+    142,
+    8,
+    99,
+    37,
+    240,
+    21,
+    10,
+    23,
+    190,
+    6,
+    148,
+    247,
+    120,
+    234,
+    75,
+    0,
+    26,
+    197,
+    62,
+    94,
+    252,
+    219,
+    203,
+    117,
+    35,
+    11,
+    32,
+    57,
+    177,
+    33,
+    88,
+    237,
+    149,
+    56,
+    87,
+    174,
+    20,
+    125,
+    136,
+    171,
+    168,
+    68,
+    175,
+    74,
+    165,
+    71,
+    134,
+    139,
+    48,
+    27,
+    166,
+    77,
+    146,
+    158,
+    231,
+    83,
+    111,
+    229,
+    122,
+    60,
+    211,
+    133,
+    230,
+    220,
+    105,
+    92,
+    41,
+    55,
+    46,
+    245,
+    40,
+    244,
+    102,
+    143,
+    54,
+    65,
+    25,
+    63,
+    161,
+    1,
+    216,
+    80,
+    73,
+    209,
+    76,
+    132,
+    187,
+    208,
+    89,
+    18,
+    169,
+    200,
+    196,
+    135,
+    130,
+    116,
+    188,
+    159,
+    86,
+    164,
+    100,
+    109,
+    198,
+    173,
+    186,
+    3,
+    64,
+    52,
+    217,
+    226,
+    250,
+    124,
+    123,
+    5,
+    202,
+    38,
+    147,
+    118,
+    126,
+    255,
+    82,
+    85,
+    212,
+    207,
+    206,
+    59,
+    227,
+    47,
+    16,
+    58,
+    17,
+    182,
+    189,
+    28,
+    42,
+    223,
+    183,
+    170,
+    213,
+    119,
+    248,
+    152,
+    2,
+    44,
+    154,
+    163,
+    70,
+    221,
+    153,
+    101,
+    155,
+    167,
+    43,
+    172,
+    9,
+    129,
+    22,
+    39,
+    253,
+    19,
+    98,
+    108,
+    110,
+    79,
+    113,
+    224,
+    232,
+    178,
+    185,
+    112,
+    104,
+    218,
+    246,
+    97,
+    228,
+    251,
+    34,
+    242,
+    193,
+    238,
+    210,
+    144,
+    12,
+    191,
+    179,
+    162,
+    241,
+    81,
+    51,
+    145,
+    235,
+    249,
+    14,
+    239,
+    107,
+    49,
+    192,
+    214,
+    31,
+    181,
+    199,
+    106,
+    157,
+    184,
+    84,
+    204,
+    176,
+    115,
+    121,
+    50,
+    45,
+    127,
+    4,
+    150,
+    254,
+    138,
+    236,
+    205,
+    93,
+    222,
+    114,
+    67,
+    29,
+    24,
+    72,
+    243,
+    141,
+    128,
+    195,
+    78,
+    66,
+    215,
+    61,
+    156,
+    180,
+]
+_PERM = _PERM + _PERM  # Double for overflow handling
+
+
+def perlin_noise_3d(x: float, y: float, z: float) -> float:
+    """Generate 3D Perlin noise value at given coordinates.
+
+    Returns a value roughly in range [-1, 1].
+
+    Args:
+        x, y, z: 3D coordinates
+
+    Returns:
+        Noise value
+    """
+    # Find unit cube containing point
+    xi = int(np.floor(x)) & 255
+    yi = int(np.floor(y)) & 255
+    zi = int(np.floor(z)) & 255
+
+    # Find relative position in cube
+    xf = x - np.floor(x)
+    yf = y - np.floor(y)
+    zf = z - np.floor(z)
+
+    # Compute fade curves
+    u = _fade(np.array([xf]))[0]
+    v = _fade(np.array([yf]))[0]
+    w = _fade(np.array([zf]))[0]
+
+    # Hash coordinates of cube corners
+    aaa = _PERM[_PERM[_PERM[xi] + yi] + zi]
+    aba = _PERM[_PERM[_PERM[xi] + yi + 1] + zi]
+    aab = _PERM[_PERM[_PERM[xi] + yi] + zi + 1]
+    abb = _PERM[_PERM[_PERM[xi] + yi + 1] + zi + 1]
+    baa = _PERM[_PERM[_PERM[xi + 1] + yi] + zi]
+    bba = _PERM[_PERM[_PERM[xi + 1] + yi + 1] + zi]
+    bab = _PERM[_PERM[_PERM[xi + 1] + yi] + zi + 1]
+    bbb = _PERM[_PERM[_PERM[xi + 1] + yi + 1] + zi + 1]
+
+    # Blend gradients
+    x1 = _lerp(
+        np.array([_grad3d(aaa, xf, yf, zf)]),
+        np.array([_grad3d(baa, xf - 1, yf, zf)]),
+        np.array([u]),
+    )[0]
+    x2 = _lerp(
+        np.array([_grad3d(aba, xf, yf - 1, zf)]),
+        np.array([_grad3d(bba, xf - 1, yf - 1, zf)]),
+        np.array([u]),
+    )[0]
+    y1 = _lerp(np.array([x1]), np.array([x2]), np.array([v]))[0]
+
+    x1 = _lerp(
+        np.array([_grad3d(aab, xf, yf, zf - 1)]),
+        np.array([_grad3d(bab, xf - 1, yf, zf - 1)]),
+        np.array([u]),
+    )[0]
+    x2 = _lerp(
+        np.array([_grad3d(abb, xf, yf - 1, zf - 1)]),
+        np.array([_grad3d(bbb, xf - 1, yf - 1, zf - 1)]),
+        np.array([u]),
+    )[0]
+    y2 = _lerp(np.array([x1]), np.array([x2]), np.array([v]))[0]
+
+    return _lerp(np.array([y1]), np.array([y2]), np.array([w]))[0]
+
+
+def fractal_noise_3d(
+    x: float,
+    y: float,
+    z: float,
+    octaves: int = 4,
+    persistence: float = 0.5,
+    lacunarity: float = 2.0,
+) -> float:
+    """Generate fractal (multi-octave) 3D Perlin noise.
+
+    Combines multiple octaves of noise at different frequencies
+    to create more natural-looking patterns.
+
+    Args:
+        x, y, z: 3D coordinates
+        octaves: Number of noise layers to combine
+        persistence: Amplitude decay per octave (0.5 = halve each time)
+        lacunarity: Frequency increase per octave (2.0 = double each time)
+
+    Returns:
+        Combined noise value roughly in range [-1, 1]
+    """
+    total = 0.0
+    amplitude = 1.0
+    frequency = 1.0
+    max_value = 0.0
+
+    for _ in range(octaves):
+        total += (
+            perlin_noise_3d(x * frequency, y * frequency, z * frequency) * amplitude
+        )
+        max_value += amplitude
+        amplitude *= persistence
+        frequency *= lacunarity
+
+    return total / max_value if max_value > 0 else 0.0
+
+
+# =============================================================================
+# Cloud Layer Generation
+# =============================================================================
+
+
+def generate_cloud_layer(
+    n_points: int,
+    radius: float,
+    noise_scale: float = 3.0,
+    threshold: float = 0.1,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Generate a cloud layer using Perlin noise.
+
+    Creates cloud points distributed on a sphere with density and opacity
+    controlled by Perlin noise to create realistic cloud patterns.
+
+    Args:
+        n_points: Base number of points to sample
+        radius: Radius of the cloud sphere
+        noise_scale: Scale of the noise (higher = finer detail)
+        threshold: Noise threshold below which clouds don't appear
+
+    Returns:
+        Tuple of (positions, colors, radii, sharpness) for cloud points
+    """
+    aprint(f"Generating cloud layer ({n_points:,} candidate points)...")
+
+    # Generate candidate positions using Fibonacci sphere
+    candidates = generate_fibonacci_sphere(n_points, radius)
+
+    # Evaluate noise at each point to determine cloud density
+    cloud_positions = []
+    cloud_colors = []
+    cloud_radii = []
+    cloud_sharpness = []
+
+    # Cloud color: subtle white with slight blue tint
+    base_color = np.array([0.9, 0.92, 1.0])
+
+    for i in range(n_points):
+        x, y, z = candidates[i]
+
+        # Sample fractal noise for cloud density
+        noise_val = fractal_noise_3d(
+            x * noise_scale,
+            y * noise_scale,
+            z * noise_scale,
+            octaves=4,
+            persistence=0.5,
+        )
+
+        # Map noise to cloud density (only keep positive values above threshold)
+        # This creates gaps in the clouds
+        density = (noise_val + 1.0) / 2.0  # Map from [-1,1] to [0,1]
+
+        # Apply threshold and non-linear mapping for more interesting patterns
+        if density > threshold:
+            # Keep this point as a cloud
+            cloud_positions.append(candidates[i])
+
+            # Vary opacity based on density (denser = more opaque)
+            opacity_factor = (density - threshold) / (1.0 - threshold)
+            opacity_factor = opacity_factor**0.7  # Non-linear for softer edges
+
+            # Color with subtle variation
+            variation = np.random.uniform(-0.02, 0.02, 3)
+            color = base_color * (0.3 + 0.7 * opacity_factor) + variation
+            cloud_colors.append(np.clip(color, 0, 1))
+
+            # Radius varies with density (denser = larger points)
+            base_radius = 0.006 + 0.004 * opacity_factor
+            cloud_radii.append(base_radius)
+
+            # Soft, diffuse sharpness
+            cloud_sharpness.append(1.5)
+
+        # Progress indicator
+        if (i + 1) % 20000 == 0:
+            aprint(f"  Progress: {i + 1:,}/{n_points:,}")
+
+    n_clouds = len(cloud_positions)
+    aprint(
+        f"✓ Generated {n_clouds:,} cloud points ({n_clouds / n_points * 100:.1f}% density)"
+    )
+
+    if n_clouds == 0:
+        return (
+            np.array([]).reshape(0, 3).astype(np.float32),
+            np.array([]).reshape(0, 3).astype(np.float32),
+            np.array([]).astype(np.float32),
+            np.array([]).astype(np.float32),
+        )
+
+    return (
+        np.array(cloud_positions, dtype=np.float32),
+        np.array(cloud_colors, dtype=np.float32),
+        np.array(cloud_radii, dtype=np.float32),
+        np.array(cloud_sharpness, dtype=np.float32),
+    )
+
+
+# =============================================================================
 # USGS Earthquake Data
 # =============================================================================
 
@@ -750,18 +1244,18 @@ def generate_earthquake_scene(
     output_path: Path,
     days: int = DEFAULT_DAYS,
     min_magnitude: float = DEFAULT_MIN_MAGNITUDE,
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     """Generate complete earthquake visualization scene.
 
     Returns:
-        Tuple of (total_points, total_line_segments)
+        Tuple of (earth_points, cloud_points, earthquake_lines)
     """
     # Download earthquake data
     earthquakes = download_earthquake_data(days, min_magnitude)
 
     if len(earthquakes) == 0:
         aprint("⚠️  No earthquakes found matching criteria")
-        return 0, 0
+        return 0, 0, 0
 
     # Download and prepare Earth texture
     cache_dir = Path.home() / ".cache" / "luxar"
@@ -786,6 +1280,18 @@ def generate_earthquake_scene(
             earth_colors = compute_earth_colors(earth_positions)
 
         aprint(f"✓ Generated Earth surface with {EARTH_POINTS:,} points")
+
+    # Generate cloud layer
+    with asection("Generating cloud layer"):
+        cloud_positions, cloud_colors, cloud_radii, cloud_sharpness = (
+            generate_cloud_layer(
+                CLOUD_POINTS,
+                CLOUD_RADIUS,
+                noise_scale=3.5,  # Moderate detail
+                threshold=0.35,  # Sparse clouds (only ~40% coverage)
+            )
+        )
+        n_clouds = len(cloud_positions)
 
     # Generate earthquake lines
     with asection("Generating earthquake visualization"):
@@ -825,6 +1331,19 @@ def generate_earthquake_scene(
                 blending_mode="opaque",
             )
 
+            # Add cloud layer with luminous blending - subtle atmospheric glow
+            # Clouds are semi-transparent and glow softly above the Earth surface
+            if len(cloud_positions) > 0:
+                scene.add_points(
+                    "Clouds",
+                    positions=cloud_positions,
+                    colors=cloud_colors,
+                    radii=cloud_radii,
+                    sharpness=cloud_sharpness,
+                    opacity=0.15,  # Very subtle - don't overwhelm the visualization
+                    blending_mode="luminous",
+                )
+
             # Add earthquake lines with luminous blending - glowing additive effect
             # Luminous objects are occluded by opaque Earth but add together
             # where they overlap (multiple earthquake rays at same location glow brighter)
@@ -841,7 +1360,7 @@ def generate_earthquake_scene(
 
         aprint(f"✓ Written to {output_path}")
 
-    return len(earth_positions), n_lines
+    return len(earth_positions), n_clouds, n_lines
 
 
 # =============================================================================
@@ -876,6 +1395,7 @@ def main() -> None:
     aprint("")
     aprint("  Visualization:")
     aprint("    • Earth sphere: continents/oceans (opaque - solid surface)")
+    aprint("    • Cloud layer: Perlin noise patterns (luminous - subtle glow)")
     aprint("    • Vertical spikes: earthquake locations (luminous - glowing)")
     aprint("    • Spike height: magnitude (taller = stronger)")
     aprint("    • Spike color: time (red = recent, purple = older)")
@@ -892,7 +1412,7 @@ def main() -> None:
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "earthquakes.zarr"
         try:
-            total_points, total_lines = generate_earthquake_scene(
+            total_points, total_clouds, total_lines = generate_earthquake_scene(
                 output_path, days=days, min_magnitude=min_mag
             )
             if total_points == 0:
@@ -909,7 +1429,7 @@ def main() -> None:
         output_path = Path(tmpdir) / "earthquakes.zarr"
 
         try:
-            total_points, total_lines = generate_earthquake_scene(
+            total_points, total_clouds, total_lines = generate_earthquake_scene(
                 output_path, days=days, min_magnitude=min_mag
             )
 
