@@ -7,10 +7,10 @@
 .PHONY: help install install-dev format format-all lint type-check security test test-python \
         test-cov test-all test-fixtures clean clean-examples pre-commit-install pre-commit-run check dev-setup \
         check-docs check-docs-verbose docs-clean docs-build docs-serve \
-        demo run-demos run-examples serve-examples serve-data viewer-install viewer viewer-build viewer-rebuild \
+        demo run-demos run-examples serve-examples serve-dataset viewer-install viewer viewer-build viewer-rebuild \
         viewer-test viewer-test-fixtures viewer-test-cov viewer-lint viewer-typecheck viewer-format viewer-check \
         setup-rust wasm-build wasm-test wasm-clean readme-images readme-videos \
-        demo-and-serve stats env-show env-prune shell build publish-test publish \
+        stats env-show env-prune shell build publish-test publish \
         check-deps install-node install-pnpm install-hatch deep-clean-dev-setup
 
 # ============================================================================
@@ -275,7 +275,7 @@ help:  ## Show this help message
 	@echo "Common workflows:"
 	@echo "  make test-all       - Run all tests"
 	@echo "  make viewer         - Start the viewer dev server"
-	@echo "  make demo-and-serve - Create demo and start servers"
+	@echo "  luxar demo          - Generate demo + serve + open browser"
 	@echo "  make run-examples   - Generate all example datasets"
 	@echo ""
 	@echo "System: $(OS) (package manager: $(PKG_MANAGER))"
@@ -873,11 +873,11 @@ serve-examples:  ## Serve the datasets directory for browsing generated datasets
 	@echo ""
 	hatch run luxar serve datasets/ -p 8000
 
-# Default values for serve-data (override with: make serve-data DATASET=path/to/data.zarr PORT=8080)
+# Default values for serve-dataset (override with: make serve-dataset DATASET=path/to/data.zarr PORT=8080)
 DATASET ?= datasets/demos/demo.zarr
 PORT ?= 8000
 
-serve-data:  ## Serve a dataset (default: datasets/demos/demo.zarr, port: 8000)
+serve-dataset:  ## Serve a dataset (default: datasets/demos/demo.zarr, port: 8000)
 	@if [ ! -d "datasets/demos/demo.zarr" ]; then \
 		echo "No demo dataset found. Creating one..."; \
 		$(MAKE) demo; \
@@ -1156,14 +1156,6 @@ viewer-check:  ## Run all TypeScript checks (typecheck, lint, test)
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm run check
-
-# Combined workflows
-demo-and-serve: demo  ## Create demo and start both servers
-	@echo "Starting data server and viewer..."
-	@echo "Data will be served at: http://localhost:$(PORT)"
-	@echo "Viewer will be at: http://localhost:5173/?src=http://localhost:$(PORT)"
-	@echo "💡 Dataset: datasets/demos/demo.zarr (100k points)"
-	@$(MAKE) -j2 serve-data viewer
 
 # Documentation
 docs-build:  ## Build documentation with Sphinx

@@ -223,9 +223,7 @@ export class LuxarApp {
 
     try {
       const results = await Promise.allSettled(zarrChecks);
-      const hasZarrMetadata = results.some(
-        (r) => r.status === 'fulfilled' && r.value.ok
-      );
+      const hasZarrMetadata = results.some((r) => r.status === 'fulfilled' && r.value.ok);
       if (hasZarrMetadata) {
         return false; // It's a Zarr dataset, load directly
       }

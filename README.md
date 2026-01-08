@@ -54,8 +54,8 @@ Scientific visualization is often software-limited. Luxar changes this by separa
 ```bash
 git clone https://github.com/royerlab/luxar.git
 cd luxar
-make dev-setup      # Auto-installs Node.js, pnpm, Hatch (no sudo)
-make demo-and-serve # Opens browser with visualization
+make dev-setup  # Auto-installs Node.js, pnpm, Hatch (no sudo)
+luxar demo      # Generates demo + opens browser with visualization
 ```
 
 This generates a Lorenz attractor and opens the viewer:

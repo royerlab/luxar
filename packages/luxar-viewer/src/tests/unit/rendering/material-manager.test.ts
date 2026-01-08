@@ -137,7 +137,8 @@ describe('MaterialManager', () => {
         gamma: 1.0,
       });
 
-      expect(additive.blending).toBe(THREE.AdditiveBlending);
+      // additive now uses CustomBlending with OneFactor (luminous mode)
+      expect(additive.blending).toBe(THREE.CustomBlending);
       expect(normal.blending).toBe(THREE.NormalBlending);
     });
 
@@ -480,14 +481,19 @@ describe('MaterialManager', () => {
       expect(material.blending).toBe(THREE.NormalBlending);
     });
 
-    it('should convert additive blending mode', () => {
+    it('should convert additive blending mode to custom blending (luminous)', () => {
       const material = manager.getPointMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
       });
 
-      expect(material.blending).toBe(THREE.AdditiveBlending);
+      // additive now maps to luminous mode with pre-multiplied intensity
+      // Uses CustomBlending with OneFactor, OneFactor (src + dst)
+      expect(material.blending).toBe(THREE.CustomBlending);
+      expect(material.blendEquation).toBe(THREE.AddEquation);
+      expect(material.blendSrc).toBe(THREE.OneFactor);
+      expect(material.blendDst).toBe(THREE.OneFactor);
     });
 
     it('should set depth write for opaque normal blending', () => {
@@ -529,6 +535,64 @@ describe('MaterialManager', () => {
 
       expect(material.blending).toBe(THREE.CustomBlending);
       expect(material.depthWrite).toBe(false); // Max blending disables depth write
+    });
+
+    it('should configure opaque blending mode with depth write', () => {
+      const material = manager.getPointMaterial({
+        blendingMode: 'opaque',
+        opacity: 1.0,
+        gamma: 1.0,
+      });
+
+      expect(material.blending).toBe(THREE.NormalBlending);
+      expect(material.depthWrite).toBe(true); // Opaque writes to depth
+      expect(material.transparent).toBe(false); // Not transparent
+    });
+
+    it('should configure luminous blending mode with custom blending', () => {
+      const material = manager.getPointMaterial({
+        blendingMode: 'luminous',
+        opacity: 1.0,
+        gamma: 1.0,
+      });
+
+      // Luminous uses pre-multiplied intensity with OneFactor blending
+      expect(material.blending).toBe(THREE.CustomBlending);
+      expect(material.blendEquation).toBe(THREE.AddEquation);
+      expect(material.blendSrc).toBe(THREE.OneFactor);
+      expect(material.blendDst).toBe(THREE.OneFactor);
+      expect(material.depthWrite).toBe(false); // Luminous doesn't write to depth
+      expect(material.transparent).toBe(true); // Is transparent (for render order)
+    });
+
+    it('should set uLuminous uniform for luminous mode', () => {
+      const material = manager.getPointMaterial({
+        blendingMode: 'luminous',
+        opacity: 1.0,
+        gamma: 1.0,
+      });
+
+      expect(material.uniforms.uLuminous.value).toBe(true);
+    });
+
+    it('should set uLuminous uniform for additive mode (backward compat)', () => {
+      const material = manager.getPointMaterial({
+        blendingMode: 'additive',
+        opacity: 1.0,
+        gamma: 1.0,
+      });
+
+      expect(material.uniforms.uLuminous.value).toBe(true);
+    });
+
+    it('should not set uLuminous uniform for opaque mode', () => {
+      const material = manager.getPointMaterial({
+        blendingMode: 'opaque',
+        opacity: 1.0,
+        gamma: 1.0,
+      });
+
+      expect(material.uniforms.uLuminous.value).toBe(false);
     });
   });
 

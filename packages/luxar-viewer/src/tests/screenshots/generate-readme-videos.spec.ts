@@ -158,11 +158,7 @@ async function hideUI(page: any): Promise<void> {
 /**
  * Rotate camera around the scene
  */
-async function rotateCamera(
-  page: any,
-  durationMs: number,
-  rotationSpeed: number
-): Promise<void> {
+async function rotateCamera(page: any, durationMs: number, rotationSpeed: number): Promise<void> {
   const startTime = Date.now();
   let angle = 0;
 
@@ -332,7 +328,9 @@ test('Video Summary', async () => {
   for (const demo of VIDEO_DEMOS) {
     const gifExists = fs.existsSync(path.join(OUTPUT_DIR, `${demo.filename}.gif`));
     const webpExists = fs.existsSync(path.join(OUTPUT_DIR, `${demo.filename}.webp`));
-    console.log(`  ${gifExists ? '[GIF]' : '[---]'} ${webpExists ? '[WebP]' : '[----]'} ${demo.filename}`);
+    console.log(
+      `  ${gifExists ? '[GIF]' : '[---]'} ${webpExists ? '[WebP]' : '[----]'} ${demo.filename}`
+    );
   }
   console.log('');
 });

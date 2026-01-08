@@ -43,8 +43,12 @@ export interface GSplatMaterialConfig {
   hdrMultiplier?: number;
   /** Truncation radius in sigmas (default 3.0) */
   truncationRadius?: number;
-  /** Blending mode ('additive' | 'normal' | 'max') */
-  blendingMode?: 'additive' | 'normal' | 'max';
+  /** Blending mode */
+  blendingMode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
+  /** Whether material is transparent (default true) */
+  transparent?: boolean;
+  /** Whether to use luminous mode (pre-multiply intensity, alpha=1.0) */
+  luminous?: boolean;
 }
 
 /**
@@ -65,6 +69,8 @@ export interface GSplatMaterialUniforms {
   uOpacity: { value: number };
   /** Projection mode: 0=sum (additive/normal), 1=max (max blending) */
   uProjectionMode: { value: number };
+  /** Luminous mode flag */
+  uLuminous: { value: boolean };
 }
 
 /**
@@ -311,6 +317,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
 
     uniform mediump float uOpacity;
     uniform mediump float uHDRMultiplier;
+    uniform bool uLuminous; // Luminous mode: pre-multiply intensity into RGB, alpha=1.0
 
     // GLSL ES 3.0 requires explicit fragment output declaration
     out vec4 fragColor;
@@ -350,10 +357,17 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         if (intensity < 1e-4) discard;
 
         // HDR color output
-        vec3 finalColor = vColor * intensity * uHDRMultiplier;
+        vec3 finalColor = vColor * uHDRMultiplier;
 
-        // Output for blending (additive/normal/max handled by WebGL blend equation)
-        fragColor = vec4(finalColor, intensity * uOpacity);
+        if (uLuminous) {
+            // LUMINOUS MODE: Pre-multiply intensity into RGB, output alpha=1.0
+            // With OneFactor,OneFactor blending: result.rgb = src.rgb + dst.rgb
+            // Alpha=1.0 avoids overflow issues in HDR Float16 buffers
+            fragColor = vec4(finalColor * intensity, 1.0);
+        } else {
+            // NORMAL/OPAQUE MODE: Standard alpha output for alpha blending
+            fragColor = vec4(finalColor * intensity, intensity * uOpacity);
+        }
     }
   `;
 
@@ -364,12 +378,23 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
    */
   constructor(materialConfig: GSplatMaterialConfig = {}) {
     const blendingMode = materialConfig.blendingMode ?? 'additive';
-    const blending =
-      blendingMode === 'additive'
-        ? THREE.AdditiveBlending
-        : blendingMode === 'max'
-          ? THREE.CustomBlending
-          : THREE.NormalBlending;
+
+    // Determine if this is luminous or opaque mode
+    const isLuminous =
+      materialConfig.luminous ?? (blendingMode === 'luminous' || blendingMode === 'additive');
+    const isOpaque = blendingMode === 'opaque';
+
+    // Determine THREE.js blending mode
+    let blending: THREE.Blending;
+    if (isOpaque || blendingMode === 'normal') {
+      blending = THREE.NormalBlending;
+    } else if (isLuminous) {
+      blending = THREE.CustomBlending; // Will use OneFactor, OneFactor
+    } else if (blendingMode === 'max') {
+      blending = THREE.CustomBlending;
+    } else {
+      blending = THREE.NormalBlending;
+    }
 
     super({
       uniforms: {
@@ -382,6 +407,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
         uProjectionMode: { value: blendingMode === 'max' ? 1 : 0 }, // 0=sum, 1=max
+        uLuminous: { value: isLuminous }, // Luminous mode flag
       },
 
       vertexShader: GSplatMaterial.VERTEX_SHADER,
@@ -390,12 +416,20 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
       // GLSL ES 3.0 for flat interpolation and modern syntax
       glslVersion: THREE.GLSL3,
 
-      transparent: true,
-      depthWrite: blendingMode !== 'additive' && blendingMode !== 'max', // No depth write for additive/max
+      transparent: materialConfig.transparent ?? !isOpaque,
+      depthWrite:
+        isOpaque || (blendingMode === 'normal' && (materialConfig.opacity ?? 1.0) >= 0.99),
       toneMapped: false, // HDR values pass through to post-processing
       blending: blending,
       side: THREE.DoubleSide, // Splats visible from both sides
     });
+
+    // Configure custom blending for luminous/additive mode (pre-multiplied intensity)
+    if (isLuminous) {
+      this.blendEquation = THREE.AddEquation;
+      this.blendSrc = THREE.OneFactor; // Output color IS the contribution
+      this.blendDst = THREE.OneFactor; // Add to framebuffer
+    }
 
     // Configure custom blending for max mode
     if (blendingMode === 'max') {
@@ -403,6 +437,10 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
       this.blendSrc = THREE.OneFactor;
       this.blendDst = THREE.OneFactor;
     }
+
+    // Store luminous flag in userData for clone()
+    this.userData.luminous = isLuminous;
+    this.userData.blendingMode = blendingMode;
   }
 
   /**
@@ -454,18 +492,23 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
       opacity: this.uniforms.uOpacity.value,
       hdrMultiplier: this.uniforms.uHDRMultiplier.value,
       truncationRadius: this.uniforms.uTruncate.value,
-      blendingMode:
-        this.blending === THREE.AdditiveBlending
-          ? 'additive'
-          : this.blending === THREE.CustomBlending && this.blendEquation === THREE.MaxEquation
-            ? 'max'
-            : 'normal',
+      blendingMode: this.userData.blendingMode ?? 'additive',
+      transparent: this.transparent,
+      luminous: this.userData.luminous ?? false,
     });
+
+    // Copy blend equation settings for custom blending (max or luminous)
+    if (this.blending === THREE.CustomBlending) {
+      cloned.blendEquation = this.blendEquation;
+      cloned.blendSrc = this.blendSrc;
+      cloned.blendDst = this.blendDst;
+    }
 
     cloned.uniforms.uFx.value = this.uniforms.uFx.value;
     cloned.uniforms.uFy.value = this.uniforms.uFy.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
+    cloned.uniforms.uLuminous.value = this.uniforms.uLuminous.value;
 
     return cloned as this;
   }

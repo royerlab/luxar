@@ -75,7 +75,7 @@ export interface PointsMetadata {
   gamma?: number;
 
   /** Blending mode */
-  blending_mode?: 'additive' | 'normal' | 'max';
+  blending_mode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
 
   /**
    * List of dimension names to extend visibility across.

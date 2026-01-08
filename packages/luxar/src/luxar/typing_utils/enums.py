@@ -8,14 +8,26 @@ from enum import Enum
 
 
 class BlendingMode(str, Enum):
-    """Blending modes for points rendering.
+    """Blending modes for points/lines/gsplats rendering.
 
-    These control how overlapping points combine their colors.
+    These control how overlapping elements combine their colors:
+
+    - NORMAL: Standard alpha blending (semi-transparent)
+    - ADDITIVE: Legacy mode, maps to LUMINOUS internally (backward compatible)
+    - MAX: Maximum of source and destination (brightest wins)
+    - OPAQUE: Solid rendering with depth write (closest object wins)
+    - LUMINOUS: Emissive additive blending (glowing effect, no depth write)
+
+    Render order: Opaque objects render first and write to depth buffer.
+    Luminous objects render second, are occluded by opaque objects (read depth),
+    but don't occlude each other (don't write depth).
     """
 
     NORMAL = "normal"  # Standard alpha blending
-    ADDITIVE = "additive"  # Colors add together (glow effect)
+    ADDITIVE = "additive"  # Legacy: maps to luminous internally
     MAX = "max"  # Maximum of source and destination (brightest wins)
+    OPAQUE = "opaque"  # Solid rendering with depth write
+    LUMINOUS = "luminous"  # Emissive additive blending (glow effect)
 
     @classmethod
     def validate(cls, value: str) -> "BlendingMode":

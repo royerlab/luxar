@@ -765,7 +765,9 @@ describe('TwoLevelCachingStore', () => {
       await storeWithSlash.get('/Mandelbulb/positions/0.0.0');
 
       // Should normalize to single slash
-      expect(mocks.fetchedUrls).toContain('https://example.com/data.zarr/Mandelbulb/positions/0.0.0');
+      expect(mocks.fetchedUrls).toContain(
+        'https://example.com/data.zarr/Mandelbulb/positions/0.0.0'
+      );
       // No triple slashes
       expect(mocks.fetchedUrls.some((u) => u.includes('///'))).toBe(false);
     });
