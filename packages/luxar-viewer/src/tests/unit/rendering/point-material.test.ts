@@ -28,6 +28,9 @@ vi.mock('three', async () => {
     Vector2: actual.Vector2,
     AdditiveBlending: 'AdditiveBlending',
     NormalBlending: 'NormalBlending',
+    CustomBlending: 'CustomBlending',
+    AddEquation: 'AddEquation',
+    OneFactor: 'OneFactor',
   };
 });
 
@@ -271,6 +274,57 @@ describe('PointMaterial', () => {
 
       // Should NOT use length() for distance calculation
       expect(material.vertexShader).not.toContain('length(mvPosition');
+    });
+  });
+
+  describe('luminous mode', () => {
+    it('should have uLuminous uniform defaulting to false', () => {
+      const material = new PointMaterial();
+
+      expect(material.uniforms.uLuminous).toBeDefined();
+      expect(material.uniforms.uLuminous.value).toBe(false);
+      expect(material.userData.luminous).toBe(false);
+    });
+
+    it('should set uLuminous uniform when luminous config is true', () => {
+      const material = new PointMaterial({ luminous: true });
+
+      expect(material.uniforms.uLuminous.value).toBe(true);
+      expect(material.userData.luminous).toBe(true);
+    });
+
+    it('should have luminous mode branching in fragment shader', () => {
+      const material = new PointMaterial();
+
+      // Check for uLuminous uniform declaration
+      expect(material.fragmentShader).toContain('uniform bool uLuminous');
+
+      // Check for luminous mode conditional
+      expect(material.fragmentShader).toContain('if (uLuminous)');
+
+      // Check for pre-multiplied RGB output in luminous mode (alpha=1.0)
+      expect(material.fragmentShader).toContain('fragColor = vec4(finalColor * intensity, 1.0)');
+
+      // Check for standard alpha output in non-luminous mode
+      expect(material.fragmentShader).toContain('fragColor = vec4(finalColor, intensity)');
+    });
+
+    it('should preserve luminous setting when cloning', () => {
+      const original = new PointMaterial({ luminous: true });
+      const cloned = original.clone();
+
+      expect(cloned.uniforms.uLuminous.value).toBe(true);
+      expect(cloned.userData.luminous).toBe(true);
+    });
+
+    it('should respect transparent config for opaque mode', () => {
+      const opaqueMaterial = new PointMaterial({
+        transparent: false,
+        depthWrite: true,
+      });
+
+      expect(opaqueMaterial.transparent).toBe(false);
+      expect(opaqueMaterial.depthWrite).toBe(true);
     });
   });
 });

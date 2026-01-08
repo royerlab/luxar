@@ -391,7 +391,7 @@ def serve(
         # Mount the static files handler with directory listing
         api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
 
-        aprint(f"🛰️  Serving {serve_path} at http://{host}:{actual_port}/")
+        aprint(f"🛰️  Serving {serve_path} at http://{host}:{actual_port}")
 
         # Also serve viewer if requested
         if viewer:
@@ -702,7 +702,7 @@ def _serve_data(
 
     api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
 
-    aprint(f"💾 Data server running at http://{host}:{port}/")
+    aprint(f"💾 Data server running at http://{host}:{port}")
 
     # Wrap with network simulation if enabled
     asgi_app: ASGIApp = api

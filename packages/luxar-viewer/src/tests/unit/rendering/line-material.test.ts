@@ -31,6 +31,9 @@ vi.mock('three', async () => {
     Vector2: actual.Vector2,
     AdditiveBlending: 'AdditiveBlending',
     NormalBlending: 'NormalBlending',
+    CustomBlending: 'CustomBlending',
+    AddEquation: 'AddEquation',
+    OneFactor: 'OneFactor',
     DoubleSide: 2,
   };
 });
@@ -47,9 +50,10 @@ describe('LineMaterial', () => {
       expect(material.uniforms.uOpacity.value).toBe(1.0);
 
       expect(material.transparent).toBe(true);
-      expect(material.depthWrite).toBe(false); // Additive blending default
+      expect(material.depthWrite).toBe(false); // Luminous/additive blending default
       expect(material.toneMapped).toBe(false);
-      expect(material.blending).toBe('AdditiveBlending');
+      // Additive mode now uses CustomBlending with OneFactor (luminous pre-multiplied)
+      expect(material.blending).toBe('CustomBlending');
       expect(material.side).toBe(2); // DoubleSide
     });
 
@@ -63,7 +67,8 @@ describe('LineMaterial', () => {
       expect(material.uniforms.uOpacity.value).toBe(0.5);
       expect(material.uniforms.uHDRMultiplier.value).toBe(20.0);
       expect(material.blending).toBe('NormalBlending');
-      expect(material.depthWrite).toBe(true); // Normal blending has depth write
+      // depthWrite is only true for normal blending when opacity >= 0.99
+      expect(material.depthWrite).toBe(false); // opacity 0.5 < 0.99, so no depth write
     });
 
     it('should create additive material without depth write', () => {
@@ -71,7 +76,8 @@ describe('LineMaterial', () => {
         blendingMode: 'additive',
       });
 
-      expect(material.blending).toBe('AdditiveBlending');
+      // Additive now uses CustomBlending with OneFactor (luminous pre-multiplied)
+      expect(material.blending).toBe('CustomBlending');
       expect(material.depthWrite).toBe(false);
     });
   });
@@ -211,6 +217,58 @@ describe('LineMaterial', () => {
       // Check for perspective-correct pixel width calculation
       expect(material.vertexShader).toContain('tanHalfFov');
       expect(material.vertexShader).toContain('uResolution.y');
+    });
+  });
+
+  describe('luminous mode', () => {
+    it('should have uLuminous uniform true by default (additive mode)', () => {
+      const material = new LineMaterial();
+
+      expect(material.uniforms.uLuminous).toBeDefined();
+      expect(material.uniforms.uLuminous.value).toBe(true);
+      expect(material.userData.luminous).toBe(true);
+    });
+
+    it('should set uLuminous false when blendingMode is normal', () => {
+      const material = new LineMaterial({ blendingMode: 'normal' });
+
+      expect(material.uniforms.uLuminous.value).toBe(false);
+      expect(material.userData.luminous).toBe(false);
+    });
+
+    it('should set uLuminous true when blendingMode is luminous', () => {
+      const material = new LineMaterial({ blendingMode: 'luminous' });
+
+      expect(material.uniforms.uLuminous.value).toBe(true);
+      expect(material.userData.luminous).toBe(true);
+      expect(material.blending).toBe('CustomBlending');
+    });
+
+    it('should have luminous mode branching in fragment shader', () => {
+      const material = new LineMaterial();
+
+      // Check for uLuminous uniform declaration
+      expect(material.fragmentShader).toContain('uniform bool uLuminous');
+
+      // Check for luminous mode conditional
+      expect(material.fragmentShader).toContain('if (uLuminous)');
+
+      // Check for pre-multiplied RGB output in luminous mode (alpha=1.0)
+      expect(material.fragmentShader).toContain('fragColor = vec4(finalColor * intensity, 1.0)');
+
+      // Check for standard alpha output in non-luminous mode (with pre-multiplied color and opacity)
+      expect(material.fragmentShader).toContain(
+        'fragColor = vec4(finalColor * intensity, intensity * uOpacity)'
+      );
+    });
+
+    it('should configure opaque mode correctly', () => {
+      const material = new LineMaterial({ blendingMode: 'opaque' });
+
+      expect(material.transparent).toBe(false);
+      expect(material.depthWrite).toBe(true);
+      expect(material.blending).toBe('NormalBlending');
+      expect(material.uniforms.uLuminous.value).toBe(false);
     });
   });
 });

@@ -123,7 +123,9 @@ class Scene(Node):
     def add_points(
         self,
         name: str,
-        positions: Union[PositionArray, np.ndarray[Any, Any], Sequence[Sequence[float]]],
+        positions: Union[
+            PositionArray, np.ndarray[Any, Any], Sequence[Sequence[float]]
+        ],
         colors: Optional[
             Union[ColorArray, np.ndarray[Any, Any], Sequence[float | int]]
         ] = None,

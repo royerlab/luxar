@@ -98,7 +98,6 @@ Controls:
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 
@@ -772,6 +771,10 @@ def main() -> None:
         aprint("")
 
         launch_viewer(scene_path)
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

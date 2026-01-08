@@ -23,7 +23,6 @@ from ..typing_utils.constants import (
     OPACITY_MIN,
 )
 from ..typing_utils.enums import BlendingMode, NodeType, PhysicalUnit
-from ..validation.category_validation import validate_categories
 
 
 def validate_positions(positions: Any, ndim: Optional[int] = None) -> PositionArray:
@@ -293,7 +292,12 @@ def validate_blending_mode(mode: Any) -> BlendingMode:
     """Validate blending mode string.
 
     Args:
-        mode: Blending mode to validate
+        mode: Blending mode to validate. Valid modes are:
+            - "normal": Standard alpha blending (semi-transparent)
+            - "additive": Legacy mode, maps to luminous internally
+            - "max": Maximum of source and destination (brightest wins)
+            - "opaque": Solid rendering with depth write (closest wins)
+            - "luminous": Emissive additive blending (glow effect)
 
     Returns:
         Valid blending mode
@@ -305,7 +309,7 @@ def validate_blending_mode(mode: Any) -> BlendingMode:
     if not isinstance(mode, str):
         raise TypeError(f"Blending mode must be a string, got {type(mode).__name__}")
 
-    valid_modes = {"normal", "additive", "max"}
+    valid_modes = {"normal", "additive", "max", "opaque", "luminous"}
     if mode not in valid_modes:
         raise ValueError(
             f"Invalid blending mode '{mode}'. Must be one of: {', '.join(sorted(valid_modes))}"

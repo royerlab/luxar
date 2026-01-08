@@ -45,7 +45,7 @@ make wasm-test    # Run Rust unit tests
 
 # Data & Examples
 make run-examples # Generate example datasets
-make demo-and-serve # Create demo + start servers
+make demo         # Generate demo dataset only (use 'luxar demo' to also serve)
 
 # Utilities
 make clean        # Clean artifacts
