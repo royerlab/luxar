@@ -20,6 +20,8 @@
  * ```
  */
 
+import { log, Modules } from '../../utils/log';
+
 export interface PollingLoopConfig {
   /** Interval between ticks in milliseconds */
   interval: number;
@@ -163,7 +165,7 @@ export class PollingLoop {
       this.config.onTick();
     } catch (error) {
       // Don't let tick errors stop the loop
-      console.error('[PollingLoop] Error in onTick callback:', error);
+      log.error(Modules.UI, 'PollingLoop error in onTick callback', error);
     }
   }
 }

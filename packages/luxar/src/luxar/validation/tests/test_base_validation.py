@@ -1,5 +1,7 @@
 """Direct unit tests for validation/base.py functions."""
 
+from typing import Any, cast
+
 import numpy as np
 import pytest
 
@@ -30,12 +32,12 @@ class TestValidationError:
         assert "Invalid array shape" in str(error)
         assert "💡 Suggestion: Reshape your array to (N, 3)" in str(error)
 
-    def test_validation_error_can_be_caught_as_value_error(self) -> None:  # type: ignore[no-untyped-def]
+    def test_validation_error_can_be_caught_as_value_error(self) -> None:
         """Test that ValidationError is a ValueError subclass."""
         with pytest.raises(ValueError):
             raise ValidationError("test error")
 
-    def test_validation_error_preserves_suggestion(self) -> None:  # type: ignore[no-untyped-def]
+    def test_validation_error_preserves_suggestion(self) -> None:
         """Test that suggestion is accessible in error message."""
         try:
             raise ValidationError("problem", "try this fix")
@@ -64,11 +66,11 @@ class TestValidatePositionsForWriting:
     def test_not_numpy_array(self) -> None:
         """Test non-numpy array raises ValidationError."""
         with pytest.raises(ValidationError, match="Expected numpy array"):
-            validate_positions_for_writing([[0.0, 0.0], [1.0, 1.0]])
+            validate_positions_for_writing(cast(Any, [[0.0, 0.0], [1.0, 1.0]]))
 
         # Check suggestion is present
         try:
-            validate_positions_for_writing([1, 2, 3])
+            validate_positions_for_writing(cast(Any, [1, 2, 3]))
         except ValidationError as e:
             assert "Convert your data to a numpy array" in str(e)
 
@@ -117,7 +119,7 @@ class TestValidatePositionsForWriting:
         positions = [[1, 2, 3]]  # Not numpy array
 
         with pytest.raises(ValidationError, match="mydata"):
-            validate_positions_for_writing(positions, context="mydata")
+            validate_positions_for_writing(cast(Any, positions), context="mydata")
 
 
 class TestValidateColorsForWriting:
@@ -132,7 +134,7 @@ class TestValidateColorsForWriting:
     def test_not_numpy_array(self) -> None:
         """Test non-numpy array raises ValidationError."""
         with pytest.raises(ValidationError, match="Expected numpy array"):
-            validate_colors_for_writing([[1.0, 0.0, 0.0]], n_points=1)
+            validate_colors_for_writing(cast(Any, [[1.0, 0.0, 0.0]]), n_points=1)
 
     def test_wrong_shape_suggestions(self) -> None:
         """Test wrong shape error includes helpful suggestions."""
@@ -177,7 +179,7 @@ class TestValidateRadiiForWriting:
     def test_not_numpy_array(self) -> None:
         """Test non-numpy array raises ValidationError."""
         with pytest.raises(ValidationError, match="Expected numpy array"):
-            validate_radii_for_writing([1.0, 2.0], n_points=2)
+            validate_radii_for_writing(cast(Any, [1.0, 2.0]), n_points=2)
 
     def test_wrong_shape(self) -> None:
         """Test wrong shape raises ValidationError."""
@@ -227,7 +229,7 @@ class TestValidateSharpnessForWriting:
     def test_not_numpy_array(self) -> None:
         """Test non-numpy array raises ValidationError."""
         with pytest.raises(ValidationError, match="Expected numpy array"):
-            validate_sharpness_for_writing([1.0, 2.0], n_points=2)
+            validate_sharpness_for_writing(cast(Any, [1.0, 2.0]), n_points=2)
 
     def test_wrong_shape(self) -> None:
         """Test wrong shape raises ValidationError."""
@@ -338,7 +340,7 @@ class TestValidateZarrAttributes:
 
     def test_validation_error_has_suggestions(self) -> None:
         """Test that ValidationErrors include helpful suggestions."""
-        attrs_missing_type = {}
+        attrs_missing_type: dict[str, object] = {}
 
         try:
             validate_zarr_attributes(attrs_missing_type, is_root=False)

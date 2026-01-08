@@ -1156,22 +1156,43 @@ export function buildInstanceBuffers(
 
   // DEBUG: Log input data for particle tracks investigation
   if (segmentCount > 10000) {
-    console.log('[DEBUG buildInstanceBuffers] Input:');
-    console.log('  segmentCount:', segmentCount);
-    console.log(
-      '  positions.length:',
+    log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'buildInstanceBuffers input');
+    log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'segmentCount', segmentCount);
+    log.custom(
+      LogEmoji.DEBUG,
+      Modules.LINES_LOADER,
+      'positions.length',
       positions.length,
       '(should be',
       segmentCount * 2 * ndim,
       ')'
     );
-    console.log('  segments.length:', segments.length, '(should be', segmentCount * 2, ')');
-    console.log('  ndim:', ndim);
-    console.log('  slicePosition:', slicePosition);
-    console.log('  tolerance:', tolerance);
-    console.log('  displayDims:', displayDims);
-    console.log('  First vertex:', Array.from(positions.slice(0, ndim)));
-    console.log('  First segment indices:', segments[0], segments[1]);
+    log.custom(
+      LogEmoji.DEBUG,
+      Modules.LINES_LOADER,
+      'segments.length',
+      segments.length,
+      '(should be',
+      segmentCount * 2,
+      ')'
+    );
+    log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'ndim', ndim);
+    log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'slicePosition', slicePosition);
+    log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'tolerance', tolerance);
+    log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'displayDims', displayDims);
+    log.custom(
+      LogEmoji.DEBUG,
+      Modules.LINES_LOADER,
+      'First vertex',
+      Array.from(positions.slice(0, ndim))
+    );
+    log.custom(
+      LogEmoji.DEBUG,
+      Modules.LINES_LOADER,
+      'First segment indices',
+      segments[0],
+      segments[1]
+    );
   }
 
   // Pre-allocate output arrays (may be smaller after clipping)
@@ -1202,7 +1223,11 @@ export function buildInstanceBuffers(
 
     // DEBUG: Log first few segments for particle tracks
     if (segmentCount > 10000 && i < 3) {
-      console.log(`  Segment ${i}: v0=${v0}, v1=${v1}, p1=[${p1}], p2=[${p2}]`);
+      log.custom(
+        LogEmoji.DEBUG,
+        Modules.LINES_LOADER,
+        `Segment ${i}: v0=${v0}, v1=${v1}, p1=[${p1}], p2=[${p2}]`
+      );
     }
 
     // Clip to slice
@@ -1250,14 +1275,26 @@ export function buildInstanceBuffers(
 
   // DEBUG: Log results for particle tracks
   if (segmentCount > 10000) {
-    console.log('[DEBUG buildInstanceBuffers] Output:');
-    console.log('  Input segments:', segmentCount, '→ Output segments:', outIdx);
-    console.log('  Clipped rate:', ((1 - outIdx / segmentCount) * 100).toFixed(1), '%');
+    log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'buildInstanceBuffers output');
+    log.custom(
+      LogEmoji.DEBUG,
+      Modules.LINES_LOADER,
+      'Input segments',
+      segmentCount,
+      '→ Output segments:',
+      outIdx
+    );
+    log.custom(
+      LogEmoji.DEBUG,
+      Modules.LINES_LOADER,
+      'Clipped rate',
+      `${((1 - outIdx / segmentCount) * 100).toFixed(1)}%`
+    );
     if (firstClippedReason) {
-      console.log('  First clip reason:', firstClippedReason);
+      log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'First clip reason', firstClippedReason);
     }
     if (outIdx > 0) {
-      console.log('  First output segment:', {
+      log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'First output segment', {
         p1: Array.from(startPositions.slice(0, 3)),
         p2: Array.from(endPositions.slice(0, 3)),
       });

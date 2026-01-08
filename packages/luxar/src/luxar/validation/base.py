@@ -4,7 +4,7 @@ This module provides validation functions with detailed, user-friendly error
 messages that help users understand and fix issues quickly.
 """
 
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -32,7 +32,7 @@ class ValidationError(ValueError):
 
 
 def validate_positions_for_writing(
-    positions: NDArray[np.float32], context: str = "positions"
+    positions: NDArray[Any], context: str = "positions"
 ) -> Tuple[int, int]:
     """Validate positions array for writing to Zarr.
 
@@ -97,7 +97,7 @@ def validate_positions_for_writing(
 
 
 def validate_colors_for_writing(
-    colors: NDArray, n_points: int, context: str = "colors"
+    colors: NDArray[Any], n_points: int, context: str = "colors"
 ) -> None:
     """Validate colors array for writing.
 
@@ -163,7 +163,7 @@ def validate_colors_for_writing(
 
 
 def validate_radii_for_writing(
-    radii: NDArray, n_points: int, context: str = "radii"
+    radii: NDArray[Any], n_points: int, context: str = "radii"
 ) -> None:
     """Validate radii array for writing.
 
@@ -217,7 +217,7 @@ def validate_radii_for_writing(
 
 
 def validate_sharpness_for_writing(
-    sharpness: NDArray, n_points: int, context: str = "sharpness"
+    sharpness: NDArray[Any], n_points: int, context: str = "sharpness"
 ) -> None:
     """Validate sharpness array for writing.
 

@@ -153,7 +153,9 @@ def download_cafa5_dataset(output_dir: Path) -> Path:
 
     with asection("Downloading CAFA5 ProtT5 Embeddings"):
         aprint("Dataset: CAFA5 Protein Function Prediction")
-        aprint("URL: https://www.kaggle.com/datasets/horikitasaku/prott5-embedding-for-cafa5")
+        aprint(
+            "URL: https://www.kaggle.com/datasets/horikitasaku/prott5-embedding-for-cafa5"
+        )
         aprint("")
         aprint("Download: 540 MB (pre-computed embeddings)")
         aprint("Features: Auto-retry on errors, resume on interruption")
@@ -180,7 +182,9 @@ def download_cafa5_dataset(output_dir: Path) -> Path:
                 aprint(f"❌ Download failed after all retries: {e}")
                 if dataset_zip.exists():
                     partial_size = dataset_zip.stat().st_size
-                    aprint(f"   Partial download saved: {partial_size / (1024**2):.0f} MB")
+                    aprint(
+                        f"   Partial download saved: {partial_size / (1024**2):.0f} MB"
+                    )
                     aprint("   Run again to resume from this point")
                 raise
 
@@ -188,7 +192,7 @@ def download_cafa5_dataset(output_dir: Path) -> Path:
         extracted_dir = output_dir / "cafa5_data"
         if not extracted_dir.exists():
             aprint("Extracting...")
-            with zipfile.ZipFile(dataset_zip, 'r') as zf:
+            with zipfile.ZipFile(dataset_zip, "r") as zf:
                 zf.extractall(extracted_dir)
             aprint(f"✓ Extracted to {extracted_dir}")
 
@@ -221,15 +225,15 @@ def load_go_annotations(data_dir: Path) -> dict:
         go_file = tsv_files[0]
         aprint(f"File: {go_file.name}")
 
-        df = pd.read_csv(go_file, sep='\t')
+        df = pd.read_csv(go_file, sep="\t")
         aprint(f"✓ Loaded {len(df):,} GO annotations")
         aprint(f"  Columns: {list(df.columns)}")
 
         # Group by protein ID
         protein_to_go = {}
         for _, row in df.iterrows():
-            protein_id = row['EntryID']
-            go_term = row['term']
+            protein_id = row["EntryID"]
+            go_term = row["term"]
 
             if protein_id not in protein_to_go:
                 protein_to_go[protein_id] = []
@@ -261,17 +265,25 @@ def load_protein_embeddings(
             raise FileNotFoundError(f"No .npy files found in {data_dir}")
 
         # Find the LARGEST train_embeddings.npy (main dataset, not subsets)
-        embedding_candidates = [f for f in npy_files if 'embeddings' in f.name and 'train' in f.name]
-        ids_candidates = [f for f in npy_files if 'ids' in f.name and 'train' in f.name]
+        embedding_candidates = [
+            f for f in npy_files if "embeddings" in f.name and "train" in f.name
+        ]
+        ids_candidates = [f for f in npy_files if "ids" in f.name and "train" in f.name]
 
         if not embedding_candidates:
             raise FileNotFoundError("Could not find train_embeddings.npy")
 
         # Use the largest embedding file (full dataset)
         embedding_file = max(embedding_candidates, key=lambda f: f.stat().st_size)
-        ids_file = max(ids_candidates, key=lambda f: f.stat().st_size) if ids_candidates else None
+        ids_file = (
+            max(ids_candidates, key=lambda f: f.stat().st_size)
+            if ids_candidates
+            else None
+        )
 
-        aprint(f"Selected embeddings file: {embedding_file.name} ({embedding_file.stat().st_size / (1024**2):.1f} MB)")
+        aprint(
+            f"Selected embeddings file: {embedding_file.name} ({embedding_file.stat().st_size / (1024**2):.1f} MB)"
+        )
 
         aprint(f"Loading embeddings: {embedding_file.name}")
         embeddings = np.load(embedding_file)
@@ -295,13 +307,15 @@ def load_protein_embeddings(
         for pid in protein_ids:
             if pid in protein_to_go:
                 go_terms = protein_to_go[pid]
-                func = classify_go_term(go_terms[0]) if go_terms else 'other'
+                func = classify_go_term(go_terms[0]) if go_terms else "other"
                 matched_go += 1
             else:
-                func = 'other'
+                func = "other"
             functions.append(func)
 
-        aprint(f"  GO matches: {matched_go}/{len(protein_ids)} ({matched_go/len(protein_ids)*100:.1f}%)")
+        aprint(
+            f"  GO matches: {matched_go}/{len(protein_ids)} ({matched_go / len(protein_ids) * 100:.1f}%)"
+        )
 
         # If no GO matches, use k-means clustering for coloring!
         if matched_go < len(protein_ids) * 0.01:  # Less than 1% annotated
@@ -361,44 +375,44 @@ def classify_go_term(go_id: str) -> str:
     """
     try:
         # Extract numeric part
-        go_num = int(go_id.split(':')[1])
+        go_num = int(go_id.split(":")[1])
 
         # Molecular Functions (catalytic activities, binding)
         if 3000 <= go_num < 6000:
             if 3700 <= go_num < 3800:  # Transcription factors
-                return 'regulator'
+                return "regulator"
             elif 4000 <= go_num < 5000:  # Enzyme activities
-                return 'enzyme'
+                return "enzyme"
             elif 5000 <= go_num < 6000:  # Binding
-                return 'binding'
+                return "binding"
             else:
-                return 'catalytic'
+                return "catalytic"
 
         # Biological Processes
         elif 6000 <= go_num < 9000 or 40000 <= go_num < 100000:
             if 6350 <= go_num < 6400:  # DNA/RNA processes
-                return 'nucleic_acid'
+                return "nucleic_acid"
             elif 6800 <= go_num < 7000:  # Signal transduction
-                return 'signaling'
+                return "signaling"
             elif 6900 <= go_num < 7000:  # Transport
-                return 'transporter'
+                return "transporter"
             else:
-                return 'binding'  # General biological process
+                return "binding"  # General biological process
 
         # Cellular Components (location-based)
         elif 5000 <= go_num < 6000 or 9000 <= go_num < 10000:
             if 5886 == go_num:  # Membrane
-                return 'membrane'
+                return "membrane"
             elif 5840 <= go_num < 5850:  # Ribosome
-                return 'structural'
+                return "structural"
             else:
-                return 'membrane'
+                return "membrane"
 
         else:
-            return 'other'
+            return "other"
 
     except (ValueError, IndexError):
-        return 'other'
+        return "other"
 
 
 # =============================================================================
@@ -437,7 +451,9 @@ def reduce_embeddings_umap(
         raise ValueError("Embeddings required when not loading from cache")
 
     with asection(f"Reducing {embeddings.shape[1]}D → 3D with UMAP"):
-        aprint(f"Input: {embeddings.shape[0]:,} proteins × {embeddings.shape[1]} dimensions")
+        aprint(
+            f"Input: {embeddings.shape[0]:,} proteins × {embeddings.shape[1]} dimensions"
+        )
         aprint("Parameters: n_neighbors=15, metric=cosine, all CPU cores")
 
         reducer = UMAP(
@@ -467,7 +483,7 @@ def reduce_embeddings_umap(
             np.savez(
                 cache_path,
                 positions=reduced,
-                functions=np.array(functions, dtype=object)  # Store functions too!
+                functions=np.array(functions, dtype=object),  # Store functions too!
             )
             aprint(f"✓ Cached UMAP + functions to {cache_path}")
             aprint("  Future runs will load instantly!")
@@ -517,7 +533,9 @@ def generate_protein_landscape(
             return 0
 
         # Reduce to 3D with UMAP and cache
-        positions, functions = reduce_embeddings_umap(embeddings, functions, cache_path=umap_cache)
+        positions, functions = reduce_embeddings_umap(
+            embeddings, functions, cache_path=umap_cache
+        )
 
     # Generate visualization
     with asection("Generating visualization"):
@@ -540,13 +558,15 @@ def generate_protein_landscape(
         # Size: annotated proteins are 3x larger to stand out!
         radii = np.zeros(n_proteins, dtype=np.float32)
         for i, func in enumerate(functions):
-            if func == 'other':
+            if func == "other":
                 radii[i] = 0.02  # Small gray background points
             else:
                 radii[i] = 0.06  # 3x larger for annotated proteins!
 
-        n_annotated = sum(1 for f in functions if f != 'other')
-        aprint(f"✓ Radii: {n_annotated:,} annotated (large), {n_proteins - n_annotated:,} unannotated (small)")
+        n_annotated = sum(1 for f in functions if f != "other")
+        aprint(
+            f"✓ Radii: {n_annotated:,} annotated (large), {n_proteins - n_annotated:,} unannotated (small)"
+        )
 
     # Write to Zarr
     with asection("Writing to Zarr"):
@@ -605,7 +625,9 @@ def main() -> None:
     aprint("  • Size = sequence complexity")
     aprint("")
     aprint("Parameters:")
-    aprint(f"  Proteins: {sample_size:,}" if sample_size else "  Proteins: All (142,246)")
+    aprint(
+        f"  Proteins: {sample_size:,}" if sample_size else "  Proteins: All (142,246)"
+    )
     aprint("")
 
     # Check dependencies
@@ -632,6 +654,7 @@ def main() -> None:
         except Exception as e:
             aprint(f"\nError: {e}")
             import traceback
+
             traceback.print_exc()
             sys.exit(1)
         aprint(f"Dataset generated at {output_path}")
@@ -654,6 +677,7 @@ def main() -> None:
         except Exception as e:
             aprint(f"\nError: {e}")
             import traceback
+
             traceback.print_exc()
             sys.exit(1)
 

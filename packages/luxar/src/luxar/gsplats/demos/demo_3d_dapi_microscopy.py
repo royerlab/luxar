@@ -303,9 +303,12 @@ with asection("3D DAPI Gaussian Splatting Demo"):
     # Auto-detect best device (Metal on Apple Silicon for 3-7x speedup!)
     if DEVICE is None:
         import torch
+
         if USE_METAL and is_metal_available() and torch.backends.mps.is_available():
             DEVICE = "mps"
-            aprint("🚀 Metal acceleration available - using MPS device for 3-7x speedup!")
+            aprint(
+                "🚀 Metal acceleration available - using MPS device for 3-7x speedup!"
+            )
         elif torch.cuda.is_available():
             DEVICE = "cuda"
             aprint("Using CUDA device")

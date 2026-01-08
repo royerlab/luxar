@@ -20,9 +20,15 @@ def validate_gsplatdata(result: GSplatData, expected_ndim: int) -> None:
     """Validate GSplatData output format."""
     assert isinstance(result, GSplatData), "Result should be GSplatData"
     assert result.centers.ndim == 2, "Centers should be 2D array"
-    assert result.centers.shape[1] == expected_ndim, f"Should have {expected_ndim}D coordinates"
-    assert len(result.amplitudes) == len(result.centers), "Amplitudes should match centers count"
-    assert len(result.sharpnesses) == len(result.centers), "Sharpnesses should match centers count"
+    assert result.centers.shape[1] == expected_ndim, (
+        f"Should have {expected_ndim}D coordinates"
+    )
+    assert len(result.amplitudes) == len(result.centers), (
+        "Amplitudes should match centers count"
+    )
+    assert len(result.sharpnesses) == len(result.centers), (
+        "Sharpnesses should match centers count"
+    )
 
     tril_size = expected_ndim * (expected_ndim + 1) // 2
     assert result.cholesky_factors.shape == (len(result.centers), tril_size), (
@@ -111,7 +117,9 @@ def test_seeds_integration_with_fitting() -> None:
     centers_decomp = result_decomp.centers
 
     assert isinstance(centers_gaussian, np.ndarray), "Centers should be numpy arrays"
-    assert centers_gaussian.dtype in [np.float32, np.float64], "Centers should be float type"
+    assert centers_gaussian.dtype in [np.float32, np.float64], (
+        "Centers should be float type"
+    )
     assert centers_gaussian.ndim == 2, "Centers should be 2D arrays"
     assert centers_gaussian.shape[1] == 2, "Centers should have 2D coordinates"
 

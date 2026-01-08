@@ -172,7 +172,7 @@ class GSplatData:
         Example:
             >>> # Center splats at origin for easier viewing
             >>> centered = data.center_at_centroid()
-            >>> print(centered.centers.mean(axis=0))  # Should be close to [0, 0, 0]
+            >>> aprint(centered.centers.mean(axis=0))  # Should be close to [0, 0, 0]
         """
         # Compute amplitude-weighted centroid
         total_amplitude = self.amplitudes.sum()
@@ -228,7 +228,7 @@ class GSplatData:
 
         Example:
             >>> data = GSplatData.load("fitted.gsplats.zarr")
-            >>> print(data.centers.shape)
+            >>> aprint(data.centers.shape)
         """
         from luxar.gsplats.io.load_gsplats import load_gsplats
 

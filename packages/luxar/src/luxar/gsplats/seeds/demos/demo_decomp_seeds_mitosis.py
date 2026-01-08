@@ -59,14 +59,18 @@ with asection("Seed Generation Methods Comparison"):
             result_gaussian = seed_from_gaussian(V)
             seeds_gaussian = result_gaussian.centers
             aprint(f"Generated {len(seeds_gaussian)} seeds")
-            aprint(f"  Scale info in cholesky_factors shape: {result_gaussian.cholesky_factors.shape}")
+            aprint(
+                f"  Scale info in cholesky_factors shape: {result_gaussian.cholesky_factors.shape}"
+            )
 
         # Method 2: Decomposition-based
         with asection("Decomposition method"):
             result_decomp = seed_from_decomposition(V, verbose=True)
             seeds_decomp = result_decomp.centers
             aprint(f"Generated {len(seeds_decomp)} seeds")
-            aprint(f"  Scale info in cholesky_factors shape: {result_decomp.cholesky_factors.shape}")
+            aprint(
+                f"  Scale info in cholesky_factors shape: {result_decomp.cholesky_factors.shape}"
+            )
 
         # Method 3: Combined (as used in fit_gaussian_splats)
         with asection("Combined method"):

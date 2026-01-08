@@ -138,13 +138,17 @@ with asection("Human Mitosis Demo with Explicit Seeding"):
         aprint(f"Generated {len(seeds.centers)} seeds")
         aprint(f"  centers shape: {seeds.centers.shape}")
         aprint(f"  cholesky_factors shape: {seeds.cholesky_factors.shape}")
-        aprint(f"  amplitudes range: [{seeds.amplitudes.min():.4f}, {seeds.amplitudes.max():.4f}]")
+        aprint(
+            f"  amplitudes range: [{seeds.amplitudes.min():.4f}, {seeds.amplitudes.max():.4f}]"
+        )
         aprint(f"  sharpnesses: all {seeds.sharpnesses[0]:.1f} (standard Gaussian)")
 
         # Show scale distribution from Cholesky factors
         L_seeds = unpack_tril(seeds.cholesky_factors, 2)  # (N, 2, 2)
         sigmas = np.sqrt(L_seeds[:, 0, 0] ** 2 + L_seeds[:, 1, 1] ** 2) / np.sqrt(2)
-        aprint(f"  sigma range: [{sigmas.min():.2f}, {sigmas.max():.2f}] (from scale info)")
+        aprint(
+            f"  sigma range: [{sigmas.min():.2f}, {sigmas.max():.2f}] (from scale info)"
+        )
 
     # Configure dynamic operations
     dynamic_config = DynamicOpsConfig()
@@ -174,7 +178,9 @@ with asection("Human Mitosis Demo with Explicit Seeding"):
                 "No splats were fitted; try lowering thresholds or increasing iterations."
             )
 
-        aprint(f"Final splat count: {len(result.amplitudes)} (started with {len(seeds.centers)} seeds)")
+        aprint(
+            f"Final splat count: {len(result.amplitudes)} (started with {len(seeds.centers)} seeds)"
+        )
 
 # ----- Compression ranking by approximate L2 energy -----
 # ||G||_2^2 = (sqrt(pi))^d * sqrt(det Sigma); with Sigma = L L^T, sqrt(det Sigma) = prod(diag(L))

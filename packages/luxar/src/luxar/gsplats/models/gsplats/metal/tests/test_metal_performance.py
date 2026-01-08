@@ -13,6 +13,7 @@ from typing import Tuple
 import numpy as np
 import pytest
 import torch
+from arbol import aprint
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.models.gsplats.metal import (
@@ -155,10 +156,10 @@ class TestForwardPassPerformance:
 
         speedup = cpu_time / metal_time
 
-        print(f"\n[Forward] shape={shape}, n_splats={n_splats}:")
-        print(f"  CPU:    {cpu_time:7.2f} ms/iter")
-        print(f"  Metal:  {metal_time:7.2f} ms/iter")
-        print(f"  Speedup: {speedup:6.2f}x")
+        aprint(f"\n[Forward] shape={shape}, n_splats={n_splats}:")
+        aprint(f"  CPU:    {cpu_time:7.2f} ms/iter")
+        aprint(f"  Metal:  {metal_time:7.2f} ms/iter")
+        aprint(f"  Speedup: {speedup:6.2f}x")
 
         # Note: Metal overhead may exceed benefit for small problems on fast CPUs.
         # This test benchmarks performance without asserting speedup.
@@ -215,14 +216,14 @@ class TestBackwardPassPerformance:
         bwd_speedup = cpu_bwd / metal_bwd
         total_speedup = (cpu_fwd + cpu_bwd) / (metal_fwd + metal_bwd)
 
-        print(f"\n[Forward+Backward] shape={shape}, n_splats={n_splats}:")
-        print(
+        aprint(f"\n[Forward+Backward] shape={shape}, n_splats={n_splats}:")
+        aprint(
             f"  CPU:    fwd={cpu_fwd:7.2f} ms, bwd={cpu_bwd:7.2f} ms, total={cpu_fwd + cpu_bwd:7.2f} ms"
         )
-        print(
+        aprint(
             f"  Metal:  fwd={metal_fwd:7.2f} ms, bwd={metal_bwd:7.2f} ms, total={metal_fwd + metal_bwd:7.2f} ms"
         )
-        print(
+        aprint(
             f"  Speedup: fwd={fwd_speedup:5.2f}x, bwd={bwd_speedup:5.2f}x, total={total_speedup:5.2f}x"
         )
 
@@ -273,11 +274,11 @@ class TestPerformanceScaling:
 
             results.append((size, cpu_time, metal_time, speedup))
 
-        print(f"\n[Scaling Test] n_splats={n_splats}")
-        print(f"{'Size':<10} {'CPU (ms)':<12} {'Metal (ms)':<12} {'Speedup':<10}")
-        print("-" * 50)
+        aprint(f"\n[Scaling Test] n_splats={n_splats}")
+        aprint(f"{'Size':<10} {'CPU (ms)':<12} {'Metal (ms)':<12} {'Speedup':<10}")
+        aprint("-" * 50)
         for size, cpu_t, metal_t, speedup in results:
-            print(
+            aprint(
                 f"{size}³{'':<7} {cpu_t:8.2f}     {metal_t:8.2f}       {speedup:6.2f}x"
             )
 
@@ -323,11 +324,11 @@ class TestPerformanceScaling:
 
             results.append((n_splats, cpu_time, metal_time, speedup))
 
-        print(f"\n[Scaling Test] shape={shape}")
-        print(f"{'N Splats':<10} {'CPU (ms)':<12} {'Metal (ms)':<12} {'Speedup':<10}")
-        print("-" * 50)
+        aprint(f"\n[Scaling Test] shape={shape}")
+        aprint(f"{'N Splats':<10} {'CPU (ms)':<12} {'Metal (ms)':<12} {'Speedup':<10}")
+        aprint("-" * 50)
         for n, cpu_t, metal_t, speedup in results:
-            print(f"{n:<10} {cpu_t:8.2f}     {metal_t:8.2f}       {speedup:6.2f}x")
+            aprint(f"{n:<10} {cpu_t:8.2f}     {metal_t:8.2f}       {speedup:6.2f}x")
 
 
 class TestMemoryUsage:
@@ -372,9 +373,9 @@ class TestPerformanceSummary:
     @pytest.mark.slow
     def test_comprehensive_benchmark(self):
         """Run comprehensive benchmark suite and generate report."""
-        print("\n" + "=" * 80)
-        print("METAL BACKEND PERFORMANCE REPORT")
-        print("=" * 80)
+        aprint("\n" + "=" * 80)
+        aprint("METAL BACKEND PERFORMANCE REPORT")
+        aprint("=" * 80)
 
         configs = [
             ("Small", (32, 32, 32), 100),
@@ -382,10 +383,10 @@ class TestPerformanceSummary:
             ("Large", (64, 64, 64), 1000),
         ]
 
-        print(
+        aprint(
             f"\n{'Config':<10} {'Shape':<15} {'N':<6} {'CPU Fwd':<10} {'Metal Fwd':<12} {'Speedup':<10}"
         )
-        print("-" * 80)
+        aprint("-" * 80)
 
         for name, shape, n_splats in configs:
             np.random.seed(42)
@@ -421,18 +422,18 @@ class TestPerformanceSummary:
             cpu_fwd = benchmark_forward(model_cpu, n_warmup=2, n_iters=10)
             fwd_speedup = cpu_fwd / metal_fwd
 
-            print(
+            aprint(
                 f"{name:<10} {str(shape):<15} {n_splats:<6} {cpu_fwd:8.2f} ms {metal_fwd:8.2f} ms   {fwd_speedup:6.2f}x"
             )
 
-        print("\n" + "=" * 80)
-        print("FORWARD + BACKWARD PERFORMANCE")
-        print("=" * 80)
+        aprint("\n" + "=" * 80)
+        aprint("FORWARD + BACKWARD PERFORMANCE")
+        aprint("=" * 80)
 
-        print(
+        aprint(
             f"\n{'Config':<10} {'CPU Total':<12} {'Metal Total':<12} {'Total Speedup':<15}"
         )
-        print("-" * 60)
+        aprint("-" * 60)
 
         for name, shape, n_splats in configs[:2]:  # Skip large for backward (slow)
             np.random.seed(42)
@@ -470,11 +471,11 @@ class TestPerformanceSummary:
 
             total_speedup = (cpu_fwd + cpu_bwd) / (metal_fwd + metal_bwd)
 
-            print(
+            aprint(
                 f"{name:<10} {cpu_fwd + cpu_bwd:8.2f} ms   {metal_fwd + metal_bwd:8.2f} ms     {total_speedup:6.2f}x"
             )
 
-        print("\n" + "=" * 80)
+        aprint("\n" + "=" * 80)
 
         # All configs should show speedup
         assert True

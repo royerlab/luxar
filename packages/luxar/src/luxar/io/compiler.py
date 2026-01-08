@@ -374,7 +374,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Validate arrays only (scalars validated by encoder)
             if isinstance(sharpness, np.ndarray):
                 validate_sharpness_for_writing(sharpness, n_points)
-            max_sharpness = self._write_sharpness_dataset(group, sharpness, ordering_data)
+            max_sharpness = self._write_sharpness_dataset(
+                group, sharpness, ordering_data
+            )
             metadata["max_sharpness"] = max_sharpness
             metadata["has_sharpness"] = True
             group.attrs["max_sharpness"] = max_sharpness

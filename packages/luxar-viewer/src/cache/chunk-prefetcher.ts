@@ -1,4 +1,5 @@
 import type { TwoLevelCachingStore } from './two-level-caching-store';
+import { log, Modules, LogEmoji } from '../utils/log';
 
 export interface ChunkPrefetcherOptions {
   /** Maximum concurrent prefetch requests (default: 4) */
@@ -220,7 +221,7 @@ export class ChunkPrefetcher {
    */
   private log(message: string): void {
     if (this.debug) {
-      console.log(`[Prefetch] ${message}`);
+      log.custom(LogEmoji.NETWORK, Modules.CACHE, `Prefetch: ${message}`);
     }
   }
 }

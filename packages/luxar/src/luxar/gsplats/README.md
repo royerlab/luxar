@@ -6,6 +6,14 @@ High-performance n-dimensional oriented Gaussian splatting with automatic optimi
 
 This package implements a sophisticated Gaussian splatting system that fits collections of oriented Gaussian functions (splats) to reconstruct n-dimensional data. Each splat is a multivariate Gaussian characterized by position, full covariance matrix, and amplitude. The implementation features automatic convergence detection, adaptive learning, and GPU acceleration.
 
+## Installation
+
+Gaussian splatting requires optional dependencies:
+
+```bash
+pip install \"luxar[gsplats]\"
+```
+
 ## Key Features
 
 - **N-dimensional Support**: Works seamlessly with 2D images, 3D volumes, and 4D+ hypercubes (validated to 4D) with automatic gradient dilution compensation

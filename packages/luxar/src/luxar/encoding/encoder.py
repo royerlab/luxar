@@ -51,7 +51,7 @@ class ArrayEncoder:
 
     def encode(
         self,
-        data: Union[np.ndarray, float, int, tuple, list],
+        data: Union[np.ndarray, float, int, np.number, tuple, list],
         zarr_group: zarr.Group,
         name: str,
         semantic_type: SemanticType,
@@ -176,6 +176,10 @@ class ArrayEncoder:
         # Priority 2: Array Reference
         match = self._registry.check(data, array_path)
         if match.is_duplicate:
+            if match.target_path is None:
+                raise ValueError(
+                    "Duplicate array match missing target path in registry."
+                )
             self._encode_array_ref(
                 zarr_group,
                 name,
@@ -425,7 +429,7 @@ class ArrayEncoder:
 
     def _scalar_to_array(
         self,
-        data: Union[float, int, tuple, list],
+        data: Union[float, int, np.number, tuple, list],
         semantic_type: SemanticType,
     ) -> np.ndarray:
         """Convert scalar input to (1,) or (1, d) array.
@@ -454,18 +458,14 @@ class ArrayEncoder:
             # Convert to (1, d) array
             return np.array([data], dtype=np.float32)
         else:
-            # Python scalar: float or int
-            if isinstance(data, (int, float)):
+            # Python or NumPy scalar
+            if isinstance(data, (int, float, np.number)):
                 # Convert to (1,) array
                 return np.array([float(data)], dtype=np.float32)
-            elif isinstance(data, np.number):
-                # NumPy scalar
-                return np.array([data], dtype=np.float32)
-            else:
-                raise ValueError(
-                    f"Unsupported scalar type: {type(data)}. "
-                    f"Expected float, int, tuple, list, or numpy scalar."
-                )
+            raise ValueError(
+                f"Unsupported scalar type: {type(data)}. "
+                f"Expected float, int, tuple, list, or numpy scalar."
+            )
 
     def _encode_broadcasted_scalar(
         self,
@@ -568,6 +568,7 @@ class ArrayEncoder:
             and semantic_type == SemanticType.COLOR
             and data.shape[1] <= 4
         )
+        indices_chunks: Optional[tuple] = None
         if is_color_2d:
             # Row mode: treat each row as a value
             unique_rows, indices = np.unique(data, axis=0, return_inverse=True)
@@ -644,6 +645,8 @@ class ArrayEncoder:
             compressor: Optional compressor
         """
         if mode == EncodingMode.CUSTOM:
+            if custom_encoder is None:
+                raise ValueError("CUSTOM mode requires custom_encoder parameter")
             # Use explicitly specified encoder
             self._encode_custom(
                 zarr_group, name, data, custom_encoder, bounds, chunks, compressor
@@ -696,14 +699,15 @@ class ArrayEncoder:
             chunks: Optional chunk shape
             compressor: Optional compressor
         """
+        target_dtype: np.dtype[Any]
         if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
-            target_dtype = np.float32
+            target_dtype = np.dtype("float32")
         elif mode == EncodingMode.MEMORY:
             # Check if float16 is allowed, fallback to float32 if not
             if self._float16_allowed:
-                target_dtype = np.float16
+                target_dtype = np.dtype("float16")
             else:
-                target_dtype = np.float32
+                target_dtype = np.dtype("float32")
         else:
             raise ValueError(f"Unexpected mode for COORDINATE: {mode}")
 
@@ -715,7 +719,7 @@ class ArrayEncoder:
             compressor=compressor,
             overwrite=True,
         )
-        zarr_group[name].attrs["encoding"] = {"name": np.dtype(target_dtype).name}
+        zarr_group[name].attrs["encoding"] = {"name": target_dtype.name}
 
     def _encode_color(
         self,
@@ -739,7 +743,6 @@ class ArrayEncoder:
             compressor: Optional compressor
         """
         original_dtype = str(data.dtype)
-
         # Determine target dtype based on mode and color_mode
         if np.issubdtype(data.dtype, np.integer):
             # Integer input: already quantized, keep as-is
@@ -822,6 +825,7 @@ class ArrayEncoder:
                     f"found [{np.min(data)}, {np.max(data)}]"
                 )
 
+        metadata: dict[str, Any]
         # Select encoding based on mode
         if mode == EncodingMode.PRECISION:
             # No quantization
@@ -881,6 +885,7 @@ class ArrayEncoder:
             compressor: Optional compressor
         """
         original_dtype = str(data.dtype)
+        metadata: dict[str, Any]
 
         if mode == EncodingMode.PRECISION:
             # No quantization
@@ -966,14 +971,15 @@ class ArrayEncoder:
         """
         original_dtype = str(data.dtype)
 
+        target_dtype: np.dtype[Any]
         if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
-            target_dtype = np.float32
+            target_dtype = np.dtype("float32")
         elif mode == EncodingMode.MEMORY:
             # Check if float16 is allowed, fallback to float32 if not
             if self._float16_allowed:
-                target_dtype = np.float16
+                target_dtype = np.dtype("float16")
             else:
-                target_dtype = np.float32
+                target_dtype = np.dtype("float32")
         else:
             raise ValueError(f"Unexpected mode for CHOLESKY: {mode}")
 
@@ -986,7 +992,7 @@ class ArrayEncoder:
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
-            "name": np.dtype(target_dtype).name,
+            "name": target_dtype.name,
             "original_dtype": original_dtype,
         }
 
@@ -1012,16 +1018,17 @@ class ArrayEncoder:
         original_dtype = str(data.dtype)
 
         # Select smallest uint dtype that fits max value
+        target_dtype: np.dtype[Any]
         max_val = int(np.max(data))
 
         if max_val <= 255:
-            target_dtype = np.uint8
+            target_dtype = np.dtype("uint8")
         elif max_val <= 65535:
-            target_dtype = np.uint16
+            target_dtype = np.dtype("uint16")
         elif max_val <= 4294967295:
-            target_dtype = np.uint32
+            target_dtype = np.dtype("uint32")
         else:
-            target_dtype = np.uint64
+            target_dtype = np.dtype("uint64")
 
         encoded_data = data.astype(target_dtype)
         zarr_group.create_dataset(
@@ -1032,7 +1039,7 @@ class ArrayEncoder:
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
-            "name": np.dtype(target_dtype).name,
+            "name": target_dtype.name,
             "original_dtype": original_dtype,
         }
 
@@ -1060,14 +1067,15 @@ class ArrayEncoder:
         """
         original_dtype = str(data.dtype)
 
+        target_dtype: np.dtype[Any]
         if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
-            target_dtype = np.float32
+            target_dtype = np.dtype("float32")
         elif mode == EncodingMode.MEMORY:
             # Check if float16 is allowed, fallback to float32 if not
             if self._float16_allowed:
-                target_dtype = np.float16
+                target_dtype = np.dtype("float16")
             else:
-                target_dtype = np.float32
+                target_dtype = np.dtype("float32")
         else:
             raise ValueError(f"Unexpected mode for UNIT_VECTOR: {mode}")
 
@@ -1080,7 +1088,7 @@ class ArrayEncoder:
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
-            "name": np.dtype(target_dtype).name,
+            "name": target_dtype.name,
             "original_dtype": original_dtype,
         }
 
@@ -1106,6 +1114,7 @@ class ArrayEncoder:
             compressor: Optional compressor
         """
         original_dtype = str(data.dtype)
+        metadata: dict[str, Any]
 
         if encoder_name in ("float32", "float16"):
             # Passthrough with dtype conversion

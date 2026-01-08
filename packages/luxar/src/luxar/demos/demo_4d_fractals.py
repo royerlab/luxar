@@ -578,9 +578,7 @@ def main() -> None:
             aprint("\n🛑 Stopping demo...")
         except subprocess.CalledProcessError as e:
             aprint(f"\n❌ Error: {e}")
-            aprint(
-                "Make sure viewer is built: cd packages/luxar-viewer && pnpm build"
-            )
+            aprint("Make sure viewer is built: cd packages/luxar-viewer && pnpm build")
             sys.exit(1)
         except FileNotFoundError:
             aprint("\n❌ Error: 'luxar' command not found")

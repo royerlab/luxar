@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import torch
+from arbol import aprint
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.models.gsplats.metal import (
@@ -180,11 +181,11 @@ class TestMetalVsPyTorchAccuracy:
         )
         relative_max_diff = max_diff / (output_max + 1e-10)
 
-        print("\nMetal vs PyTorch:")
-        print(f"  Max diff: {max_diff:.6e}")
-        print(f"  Mean diff: {mean_diff:.6e}")
-        print(f"  Relative max diff: {relative_max_diff:.4f}")
-        print(f"  Output range: [{output_metal.min():.4f}, {output_metal.max():.4f}]")
+        aprint("\nMetal vs PyTorch:")
+        aprint(f"  Max diff: {max_diff:.6e}")
+        aprint(f"  Mean diff: {mean_diff:.6e}")
+        aprint(f"  Relative max diff: {relative_max_diff:.4f}")
+        aprint(f"  Output range: [{output_metal.min():.4f}, {output_metal.max():.4f}]")
 
         # Tolerance: Metal has per-pixel intensity culling that PyTorch doesn't have,
         # causing up to ~3% difference. Use 5% relative tolerance or 0.05 absolute.
@@ -254,10 +255,10 @@ class TestMetalPerformance:
 
         speedup = cpu_time / metal_time
 
-        print(f"\nPerformance (shape={shape}, n_splats={n_splats}):")
-        print(f"  CPU:   {cpu_time * 1000:.2f} ms/iter")
-        print(f"  Metal: {metal_time * 1000:.2f} ms/iter")
-        print(f"  Speedup: {speedup:.2f}x")
+        aprint(f"\nPerformance (shape={shape}, n_splats={n_splats}):")
+        aprint(f"  CPU:   {cpu_time * 1000:.2f} ms/iter")
+        aprint(f"  Metal: {metal_time * 1000:.2f} ms/iter")
+        aprint(f"  Speedup: {speedup:.2f}x")
 
         # Note: Metal overhead may exceed benefit for small problems on fast CPUs.
         # This test benchmarks performance without asserting speedup.
@@ -307,10 +308,10 @@ class TestMetalGradients:
                         raise_exception=False,
                     )
                     if not result:
-                        print(f"  gradcheck failed for parameter {i}")
+                        aprint(f"  gradcheck failed for parameter {i}")
                         pass_gradcheck = False
         except Exception as e:
-            print(f"  gradcheck error: {e}")
+            aprint(f"  gradcheck error: {e}")
             pass_gradcheck = False
 
         # Note: Numerical gradcheck on GPU compute is notoriously finicky

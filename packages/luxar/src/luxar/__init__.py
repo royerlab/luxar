@@ -16,13 +16,14 @@ Key Features:
 
 Basic Usage:
     >>> import luxar
+    >>> dims = luxar.Dimensions.default_3d()
     >>> with luxar.LuxarZarrCompiler('output.zarr') as compiler:
-    ...     scene = compiler.create_scene()
+    ...     scene = compiler.create_scene(dimensions=dims)
     ...     scene.add_points('my_points', positions, colors, radii)
 
 Large Datasets (process in chunks):
     >>> with luxar.LuxarZarrCompiler('huge.zarr') as compiler:
-    ...     scene = compiler.create_scene()
+    ...     scene = compiler.create_scene(dimensions=dims)
     ...     for i in range(100):
     ...         chunk = load_chunk(i)  # 10M points each
     ...         scene.add_points(f'chunk_{i}', chunk)

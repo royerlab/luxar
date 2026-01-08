@@ -60,7 +60,9 @@ def initialize_optimization(
         # Use pre-computed amplitudes
         amps0 = config.init_amps.astype(np.float32)
         if config.verbose:
-            aprint(f"Using pre-initialized amplitudes: range [{amps0.min():.4f}, {amps0.max():.4f}]")
+            aprint(
+                f"Using pre-initialized amplitudes: range [{amps0.min():.4f}, {amps0.max():.4f}]"
+            )
     else:
         # Default: extract amplitudes from image at seed locations
         idx = np.clip(
@@ -75,7 +77,9 @@ def initialize_optimization(
     if config.init_sharpness is not None:
         sharpness0 = config.init_sharpness.astype(np.float32)
         if config.verbose:
-            aprint(f"Using pre-initialized sharpness: range [{sharpness0.min():.2f}, {sharpness0.max():.2f}]")
+            aprint(
+                f"Using pre-initialized sharpness: range [{sharpness0.min():.2f}, {sharpness0.max():.2f}]"
+            )
 
     # Build model - use Metal acceleration when available
     use_metal = (
@@ -108,7 +112,9 @@ def initialize_optimization(
                 if config.verbose:
                     from arbol import aprint
 
-                    aprint("Using Metal-accelerated model (3-7x faster on Apple Silicon)")
+                    aprint(
+                        "Using Metal-accelerated model (3-7x faster on Apple Silicon)"
+                    )
             else:
                 # Metal not available, fall back
                 use_metal = False

@@ -1,3 +1,5 @@
+from typing import cast
+
 import torch
 
 
@@ -49,9 +51,9 @@ def solve_lower_triangular(L: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     # FUTURE: Consider removing fallback when PyTorch 1.x support is no longer needed
     try:
         # Modern PyTorch (>= 1.9): use torch.linalg.solve_triangular
-        return torch.linalg.solve_triangular(L, B, upper=False)
+        return cast(torch.Tensor, torch.linalg.solve_triangular(L, B, upper=False))
     except Exception:
         # Legacy PyTorch (1.12-1.13): use deprecated torch.triangular_solve
         # Note: triangular_solve returns (solution, cloned_L_matrix) tuple
         X, _ = torch.triangular_solve(B, L, upper=False)
-        return X
+        return cast(torch.Tensor, X)

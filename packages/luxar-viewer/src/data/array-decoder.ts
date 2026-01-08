@@ -158,7 +158,14 @@ export class ArrayDecoder {
 
     // PRIORITY 1: Check for broadcasting FIRST (highest priority per spec)
     // Broadcasting detection: name="broadcasted" AND (shape[0]==1 OR scalar input)
-    if (enc?.name === 'broadcasted' && expectedElements) {
+    if (enc?.name === 'broadcasted') {
+      const targetElements = expectedElements ?? enc?.n_elements;
+      if (!targetElements) {
+        throw new Error(
+          '[ArrayDecoder] Broadcasted array missing target size. ' +
+            'Provide expectedElements or encoding.n_elements.'
+        );
+      }
       // Load the single value
       const rawData = await get(zarrArray);
       const rawArray = rawData.data;
@@ -168,10 +175,10 @@ export class ArrayDecoder {
           : new Float32Array(rawArray as ArrayBuffer | number[]);
 
       // Broadcast if needed
-      if (expectedElements > data.length) {
+      if (targetElements > data.length) {
         const shape = zarrArray.shape;
         const k = shape.length > 1 ? shape[1] : 1;
-        const result = this.decodeBroadcasted(data, expectedElements, k, expectedElements);
+        const result = this.decodeBroadcasted(data, targetElements, k, targetElements);
 
         // Register for potential array ref usage
         if (enc?.hash) {
@@ -180,6 +187,12 @@ export class ArrayDecoder {
 
         return result;
       }
+
+      if (enc?.hash) {
+        this.refRegistry.register(enc.hash, data);
+      }
+
+      return data;
     }
 
     // PRIORITY 2: Check for array reference (second priority per spec)

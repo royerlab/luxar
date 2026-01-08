@@ -123,14 +123,16 @@ DEFAULT_MAX_LOCALIZATIONS = 5_000_000  # Limit for demo performance
 
 # Visualization parameters
 WIDEFIELD_PSF_SIGMA = 100.0  # nm - conventional microscopy PSF width
-SUPERRES_PSF_SIGMA = 20.0    # nm - super-resolution PSF width
+SUPERRES_PSF_SIGMA = 20.0  # nm - super-resolution PSF width
 PIXEL_SIZE = 106.0  # nm - from dataset metadata
 
 # Scale factor for visualization (physical PSF is too small to see in the viewer)
 # The scene spans ~60 μm, so 20 nm splats would be invisible. Scale up for visibility.
 # With VIS_SCALE=40: super-res=800nm≈0.8μm, widefield=4μm - matches original committed scale
 # (Original used SUPER_RES_PRECISION_SCALE_XY=100 with ~8nm precision → 0.8μm sigma)
-VIS_SCALE = 1.0  # Makes splats visible while maintaining relative widefield/superres ratio
+VIS_SCALE = (
+    1.0  # Makes splats visible while maintaining relative widefield/superres ratio
+)
 
 
 # Cache paths
@@ -186,13 +188,18 @@ def download_storm_localizations(
                 cmd = [
                     "curl",
                     "-L",  # Follow redirects
-                    "-C", "-",  # Resume from partial
-                    "--retry", "10",
-                    "--retry-delay", "5",
-                    "--max-time", "3600",
-                    "-o", str(cache_file),
+                    "-C",
+                    "-",  # Resume from partial
+                    "--retry",
+                    "10",
+                    "--retry-delay",
+                    "5",
+                    "--max-time",
+                    "3600",
+                    "-o",
+                    str(cache_file),
                     "-#",  # Progress bar
-                    url
+                    url,
                 ]
 
                 subprocess.run(cmd, check=True)
@@ -209,7 +216,9 @@ def download_storm_localizations(
             resume_pos = 0
             if temp_file.exists():
                 resume_pos = temp_file.stat().st_size
-                aprint(f"Found partial download ({resume_pos / (1024**2):.1f} MB), resuming...")
+                aprint(
+                    f"Found partial download ({resume_pos / (1024**2):.1f} MB), resuming..."
+                )
 
             # Robust download with resume support
             max_retries = 5
@@ -219,23 +228,27 @@ def download_storm_localizations(
                 try:
                     # Request with resume support + browser headers
                     headers = {
-                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                        'Accept-Language': 'en-US,en;q=0.5',
-                        'Accept-Encoding': 'gzip, deflate, br',
-                        'DNT': '1',
-                        'Connection': 'keep-alive',
-                        'Upgrade-Insecure-Requests': '1',
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                        "Accept-Language": "en-US,en;q=0.5",
+                        "Accept-Encoding": "gzip, deflate, br",
+                        "DNT": "1",
+                        "Connection": "keep-alive",
+                        "Upgrade-Insecure-Requests": "1",
                     }
                     if resume_pos > 0:
-                        headers['Range'] = f'bytes={resume_pos}-'
+                        headers["Range"] = f"bytes={resume_pos}-"
 
-                    response = requests.get(url, headers=headers, stream=True, timeout=300)
+                    response = requests.get(
+                        url, headers=headers, stream=True, timeout=300
+                    )
 
                     # Handle rate limiting
                     if response.status_code == 429:
                         if attempt < max_retries - 1:
-                            aprint(f"⚠️  Rate limited, waiting {retry_delay}s (attempt {attempt + 1}/{max_retries})...")
+                            aprint(
+                                f"⚠️  Rate limited, waiting {retry_delay}s (attempt {attempt + 1}/{max_retries})..."
+                            )
                             time.sleep(retry_delay)
                             retry_delay *= 2
                             continue
@@ -254,11 +267,13 @@ def download_storm_localizations(
                         continue
 
                     # Get total size
-                    content_range = response.headers.get('Content-Range')
+                    content_range = response.headers.get("Content-Range")
                     if content_range:
-                        total_size = int(content_range.split('/')[-1])
+                        total_size = int(content_range.split("/")[-1])
                     else:
-                        total_size = int(response.headers.get("content-length", 0)) + resume_pos
+                        total_size = (
+                            int(response.headers.get("content-length", 0)) + resume_pos
+                        )
 
                     aprint(f"File size: {total_size / (1024**2):.1f} MB")
 
@@ -274,21 +289,33 @@ def download_storm_localizations(
 
                                 # Progress every 100 MB
                                 if downloaded - last_progress >= 100 * 1024 * 1024:
-                                    percent = (downloaded / total_size * 100) if total_size > 0 else 0
-                                    aprint(f"  Progress: {downloaded / (1024**2):.0f} / {total_size / (1024**2):.0f} MB ({percent:.0f}%)")
+                                    percent = (
+                                        (downloaded / total_size * 100)
+                                        if total_size > 0
+                                        else 0
+                                    )
+                                    aprint(
+                                        f"  Progress: {downloaded / (1024**2):.0f} / {total_size / (1024**2):.0f} MB ({percent:.0f}%)"
+                                    )
                                     last_progress = downloaded
 
                     # Download complete - move temp to final
                     temp_file.rename(cache_file)
                     aprint(f"✓ Downloaded to {cache_file}")
-                    aprint(f"  Final size: {cache_file.stat().st_size / (1024**2):.1f} MB")
+                    aprint(
+                        f"  Final size: {cache_file.stat().st_size / (1024**2):.1f} MB"
+                    )
                     break  # Success!
 
-                except (requests.exceptions.ChunkedEncodingError,
-                        requests.exceptions.ConnectionError) as e:
+                except (
+                    requests.exceptions.ChunkedEncodingError,
+                    requests.exceptions.ConnectionError,
+                ) as e:
                     if attempt < max_retries - 1:
                         aprint(f"⚠️  Download interrupted ({e})")
-                        aprint(f"   Retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})...")
+                        aprint(
+                            f"   Retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})..."
+                        )
                         time.sleep(retry_delay)
                         retry_delay = min(retry_delay * 2, 120)  # Max 2 min
                         continue
@@ -332,7 +359,9 @@ def parse_storm_localizations(
         # Read CSV (may have millions of rows!)
         if max_localizations:
             df = pd.read_csv(csv_path, nrows=max_localizations)
-            aprint(f"✓ Loaded {len(df):,} localizations (limited to {max_localizations:,})")
+            aprint(
+                f"✓ Loaded {len(df):,} localizations (limited to {max_localizations:,})"
+            )
         else:
             df = pd.read_csv(csv_path)
             aprint(f"✓ Loaded {len(df):,} total localizations")
@@ -344,43 +373,60 @@ def parse_storm_localizations(
         result = {}
 
         # Extract coordinates (prioritize nm columns!)
-        for key_base in ['x', 'y', 'z']:
+        for key_base in ["x", "y", "z"]:
             # Try nm columns first, then pixel columns
-            for variant in [f'{key_base}_nm', f'{key_base}nm', f'{key_base} [nm]', f'{key_base}_pix', key_base]:
+            for variant in [
+                f"{key_base}_nm",
+                f"{key_base}nm",
+                f"{key_base} [nm]",
+                f"{key_base}_pix",
+                key_base,
+            ]:
                 if variant in df.columns:
                     values = df[variant].values
                     # Convert pixels to nm if needed
-                    if '_pix' in variant:
+                    if "_pix" in variant:
                         values = values * PIXEL_SIZE
                     result[key_base] = values
                     break
 
         # Precision/uncertainty (CRLB = Cramér-Rao Lower Bound)
-        for key_base in ['x', 'y', 'z']:
+        for key_base in ["x", "y", "z"]:
             # Try various precision column names
-            for variant in [f'crlb_{key_base}nm', f'crlb_{key_base}', f'precision_{key_base}', f'sigma_{key_base}']:
+            for variant in [
+                f"crlb_{key_base}nm",
+                f"crlb_{key_base}",
+                f"precision_{key_base}",
+                f"sigma_{key_base}",
+            ]:
                 if variant in df.columns:
                     values = df[variant].values
                     # CRLB is already in nm (or pixels)
-                    if 'crlb_' in variant and '_pix' not in variant and 'nm' not in variant:
+                    if (
+                        "crlb_" in variant
+                        and "_pix" not in variant
+                        and "nm" not in variant
+                    ):
                         # Plain 'crlb_x' might be in pixels
                         values = values * PIXEL_SIZE
-                    result[f'precision_{key_base}'] = values
+                    result[f"precision_{key_base}"] = values
                     break
 
         # Additional attributes
-        if 'photons' in df.columns:
-            result['photons'] = df['photons'].values
-        if 'intensity' in df.columns:
-            result['intensity'] = df['intensity'].values
-        if 'frame' in df.columns:
-            result['frame'] = df['frame'].values
+        if "photons" in df.columns:
+            result["photons"] = df["photons"].values
+        if "intensity" in df.columns:
+            result["intensity"] = df["intensity"].values
+        if "frame" in df.columns:
+            result["frame"] = df["frame"].values
 
         # Filter out NaN values (some localizations have bad data)
-        if 'x' in result and 'y' in result and 'z' in result:
-            valid_mask = ~(np.isnan(result['x']) | np.isnan(result['y']) | np.isnan(result['z']))
+        if "x" in result and "y" in result and "z" in result:
+            valid_mask = ~(
+                np.isnan(result["x"]) | np.isnan(result["y"]) | np.isnan(result["z"])
+            )
             # Also filter NaN precision values
-            for prec_key in ['precision_x', 'precision_y', 'precision_z']:
+            for prec_key in ["precision_x", "precision_y", "precision_z"]:
                 if prec_key in result:
                     valid_mask &= ~np.isnan(result[prec_key])
             n_invalid = (~valid_mask).sum()
@@ -391,10 +437,12 @@ def parse_storm_localizations(
                 aprint(f"  Kept {len(result['x']):,} valid localizations")
 
         aprint("✓ Extracted columns:")
-        for key in ['x', 'y', 'z']:
+        for key in ["x", "y", "z"]:
             if key in result:
-                aprint(f"  {key}: [{result[key].min():.1f}, {result[key].max():.1f}] nm")
-        for key in ['precision_x', 'precision_y', 'precision_z']:
+                aprint(
+                    f"  {key}: [{result[key].min():.1f}, {result[key].max():.1f}] nm"
+                )
+        for key in ["precision_x", "precision_y", "precision_z"]:
             if key in result:
                 aprint(f"  {key}: median = {np.median(result[key]):.1f} nm")
 
@@ -413,23 +461,25 @@ def extract_centers_and_amplitudes(
         Tuple of (centers_um, amplitudes) where centers are in micrometers
     """
     with asection("Extracting splat data from localizations"):
-        n_loc = len(localizations['x'])
+        n_loc = len(localizations["x"])
         aprint(f"Processing {n_loc:,} localizations...")
 
         # Centers in micrometers (nm -> μm)
-        centers_um = np.column_stack([
-            localizations['x'] / 1000,
-            localizations['y'] / 1000,
-            localizations['z'] / 1000,
-        ]).astype(np.float32)
+        centers_um = np.column_stack(
+            [
+                localizations["x"] / 1000,
+                localizations["y"] / 1000,
+                localizations["z"] / 1000,
+            ]
+        ).astype(np.float32)
 
         # Amplitudes from photon counts (or uniform if not available)
-        if 'photons' in localizations:
-            amplitudes = localizations['photons'].astype(np.float32)
+        if "photons" in localizations:
+            amplitudes = localizations["photons"].astype(np.float32)
             # Normalize to reasonable range
             amplitudes = amplitudes / np.percentile(amplitudes, 99) * 0.5
-        elif 'intensity' in localizations:
-            amplitudes = localizations['intensity'].astype(np.float32)
+        elif "intensity" in localizations:
+            amplitudes = localizations["intensity"].astype(np.float32)
             amplitudes = amplitudes / np.percentile(amplitudes, 99) * 0.5
         else:
             amplitudes = np.ones(n_loc, dtype=np.float32) * 0.3
@@ -438,7 +488,9 @@ def extract_centers_and_amplitudes(
 
         aprint(f"✓ Extracted {n_loc:,} localizations")
         aprint(f"  Centers: {centers_um.shape}")
-        aprint(f"  Spatial range: [{centers_um.min(axis=0)}] to [{centers_um.max(axis=0)}] μm")
+        aprint(
+            f"  Spatial range: [{centers_um.min(axis=0)}] to [{centers_um.max(axis=0)}] μm"
+        )
 
     return centers_um, amplitudes
 
@@ -474,17 +526,19 @@ def create_storm_scene(
     with asection("Creating Luxar scene"):
         # 4D scene: VIEW (categorical) + X, Y, Z (spatial)
         # VIEW dimension: 0 = widefield (blurry), 1 = super-resolution (sharp)
-        dims = Dimensions([
-            Dimension(
-                "view",
-                unit="",
-                display=False,
-                categories=["Widefield", "Super-resolution"],  # Named categories!
-            ),
-            Dimension("x", unit="μm", display=True),
-            Dimension("y", unit="μm", display=True),
-            Dimension("z", unit="μm", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension(
+                    "view",
+                    unit="",
+                    display=False,
+                    categories=["Widefield", "Super-resolution"],  # Named categories!
+                ),
+                Dimension("x", unit="μm", display=True),
+                Dimension("y", unit="μm", display=True),
+                Dimension("z", unit="μm", display=True),
+            ]
+        )
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
@@ -504,30 +558,44 @@ def create_storm_scene(
                     centroid = centers_um.mean(axis=0)
 
                 centered = centers_um - centroid
-                aprint(f"Centered at COM (was at [{centroid[0]:.1f}, {centroid[1]:.1f}, {centroid[2]:.1f}] μm)")
-                aprint(f"  New range: [{centered.min(axis=0)}] to [{centered.max(axis=0)}]")
+                aprint(
+                    f"Centered at COM (was at [{centroid[0]:.1f}, {centroid[1]:.1f}, {centroid[2]:.1f}] μm)"
+                )
+                aprint(
+                    f"  New range: [{centered.min(axis=0)}] to [{centered.max(axis=0)}]"
+                )
 
                 n_splats = len(centers_um)
                 aprint(f"Creating {n_splats:,} splats × 2 views...")
-                aprint(f"  Physical PSF: widefield={WIDEFIELD_PSF_SIGMA} nm, super-res={SUPERRES_PSF_SIGMA} nm")
-                aprint(f"  Vis scale: {VIS_SCALE}x (effective: {WIDEFIELD_PSF_SIGMA * VIS_SCALE} nm / {SUPERRES_PSF_SIGMA * VIS_SCALE} nm)")
+                aprint(
+                    f"  Physical PSF: widefield={WIDEFIELD_PSF_SIGMA} nm, super-res={SUPERRES_PSF_SIGMA} nm"
+                )
+                aprint(
+                    f"  Vis scale: {VIS_SCALE}x (effective: {WIDEFIELD_PSF_SIGMA * VIS_SCALE} nm / {SUPERRES_PSF_SIGMA * VIS_SCALE} nm)"
+                )
 
                 # Precompute covariance matrices (simple isotropic)
                 # Apply visualization scale to make splats visible
-                widefield_sigma_um = (WIDEFIELD_PSF_SIGMA * VIS_SCALE) / 1000  # nm -> μm
-                superres_sigma_um = (SUPERRES_PSF_SIGMA * VIS_SCALE) / 1000    # nm -> μm
+                widefield_sigma_um = (
+                    WIDEFIELD_PSF_SIGMA * VIS_SCALE
+                ) / 1000  # nm -> μm
+                superres_sigma_um = (SUPERRES_PSF_SIGMA * VIS_SCALE) / 1000  # nm -> μm
 
                 # Z has 2x worse resolution (typical for 3D STORM)
-                widefield_cov = np.diag([
-                    widefield_sigma_um**2,
-                    widefield_sigma_um**2,
-                    (widefield_sigma_um * 2)**2,
-                ])
-                superres_cov = np.diag([
-                    superres_sigma_um**2,
-                    superres_sigma_um**2,
-                    (superres_sigma_um * 2)**2,
-                ])
+                widefield_cov = np.diag(
+                    [
+                        widefield_sigma_um**2,
+                        widefield_sigma_um**2,
+                        (widefield_sigma_um * 2) ** 2,
+                    ]
+                )
+                superres_cov = np.diag(
+                    [
+                        superres_sigma_um**2,
+                        superres_sigma_um**2,
+                        (superres_sigma_um * 2) ** 2,
+                    ]
+                )
 
                 # Precompute 4D covariances and their Cholesky factors
                 def make_4d_cholesky(cov_3d: np.ndarray) -> np.ndarray:
@@ -537,10 +605,21 @@ def create_storm_scene(
                     cov_4d[0, 0] = 1e-6  # Tiny variance in view dimension
                     chol = np.linalg.cholesky(cov_4d)
                     # Pack lower triangular: [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33]
-                    return np.array([
-                        chol[0,0], chol[1,0], chol[1,1], chol[2,0], chol[2,1], chol[2,2],
-                        chol[3,0], chol[3,1], chol[3,2], chol[3,3]
-                    ], dtype=np.float32)
+                    return np.array(
+                        [
+                            chol[0, 0],
+                            chol[1, 0],
+                            chol[1, 1],
+                            chol[2, 0],
+                            chol[2, 1],
+                            chol[2, 2],
+                            chol[3, 0],
+                            chol[3, 1],
+                            chol[3, 2],
+                            chol[3, 3],
+                        ],
+                        dtype=np.float32,
+                    )
 
                 widefield_chol = make_4d_cholesky(widefield_cov)
                 superres_chol = make_4d_cholesky(superres_cov)
@@ -657,7 +736,9 @@ def main() -> None:
         # If --no-serve, generate and exit without launching viewer
         if "--no-serve" in sys.argv:
             output_path = get_demos_output_dir() / "storm_3d_microtubules.zarr"
-            scene_path = create_storm_scene(centers_um, amplitudes, output_path=output_path)
+            scene_path = create_storm_scene(
+                centers_um, amplitudes, output_path=output_path
+            )
             aprint(f"Dataset generated at {scene_path}")
             aprint(f"Localizations: {len(centers_um):,}")
             return
@@ -671,7 +752,9 @@ def main() -> None:
         aprint("STORM VISUALIZATION COMPLETE")
         aprint("=" * 70)
         aprint(f"Localizations: {len(centers_um):,}")
-        aprint(f"Microtubule network visible in {len(centers_um):,} molecular detections!")
+        aprint(
+            f"Microtubule network visible in {len(centers_um):,} molecular detections!"
+        )
         aprint("")
         aprint("In the viewer:")
         aprint("  - Press '1' to select VIEW dimension")
@@ -697,6 +780,7 @@ def main() -> None:
     except Exception as e:
         aprint(f"\nError: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

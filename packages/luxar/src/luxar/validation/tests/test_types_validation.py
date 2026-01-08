@@ -1,5 +1,7 @@
 """Test validation functions in types.py module."""
 
+from typing import Any, cast
+
 import numpy as np
 import pytest
 
@@ -705,10 +707,10 @@ class TestCategoriesValidation:
     def test_non_string_category_rejected(self) -> None:
         """Test that non-string categories are rejected."""
         with pytest.raises(TypeError, match="must be a string"):
-            validate_categories(["DAPI", 123, "GFP"])  # type: ignore
+            validate_categories(cast(Any, ["DAPI", 123, "GFP"]))
 
         with pytest.raises(TypeError, match="must be a string"):
-            validate_categories([None, "GFP"])  # type: ignore
+            validate_categories(cast(Any, [None, "GFP"]))
 
     def test_duplicate_categories_rejected(self) -> None:
         """Test that duplicate category names are rejected."""

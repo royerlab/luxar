@@ -16,6 +16,7 @@
  */
 
 import { LRUCache } from './lru-cache';
+import { log, Modules, LogEmoji } from '../utils/log';
 
 /**
  * Cached decompressed chunk structure.
@@ -99,7 +100,11 @@ export class DecompressedChunkCache {
     });
 
     if (this.debug) {
-      console.log(`[L0 Cache] Initialized with max size: ${(maxSize / 1024 / 1024).toFixed(1)}MB`);
+      log.custom(
+        LogEmoji.CACHE,
+        Modules.CACHE,
+        `L0 initialized with max size: ${(maxSize / 1024 / 1024).toFixed(1)}MB`
+      );
     }
   }
 
@@ -114,9 +119,13 @@ export class DecompressedChunkCache {
 
     if (this.debug) {
       if (chunk) {
-        console.log(`[L0 Cache] HIT: ${key} (${chunk.data.byteLength} bytes)`);
+        log.custom(
+          LogEmoji.CACHE,
+          Modules.CACHE,
+          `L0 HIT: ${key} (${chunk.data.byteLength} bytes)`
+        );
       } else {
-        console.log(`[L0 Cache] MISS: ${key}`);
+        log.custom(LogEmoji.CACHE, Modules.CACHE, `L0 MISS: ${key}`);
       }
     }
 
@@ -133,8 +142,10 @@ export class DecompressedChunkCache {
     this.cache.set(key, chunk);
 
     if (this.debug) {
-      console.log(
-        `[L0 Cache] SET: ${key} (${chunk.data.byteLength} bytes, ` +
+      log.custom(
+        LogEmoji.CACHE,
+        Modules.CACHE,
+        `L0 SET: ${key} (${chunk.data.byteLength} bytes, ` +
           `total: ${(this.cache.size / 1024 / 1024).toFixed(1)}MB)`
       );
     }
@@ -157,7 +168,7 @@ export class DecompressedChunkCache {
     this.cache.clear();
 
     if (this.debug) {
-      console.log('[L0 Cache] Cleared');
+      log.custom(LogEmoji.CACHE, Modules.CACHE, 'L0 cleared');
     }
   }
 

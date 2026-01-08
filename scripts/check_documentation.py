@@ -8,13 +8,14 @@ Run this script before commits or in CI/CD to ensure documentation standards.
 Usage:
     python scripts/check_documentation.py [--fix] [--verbose]
 """
-
 import argparse
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
+
+from arbol import aprint
 
 
 @dataclass
@@ -37,7 +38,7 @@ class DocumentationChecker:
 
     def check_all(self) -> bool:
         """Run all documentation checks. Returns True if all pass."""
-        print("🔍 Checking documentation quality...\n")
+        aprint("🔍 Checking documentation quality...\n")
 
         # Check Python packages
         self._check_python_packages()
@@ -280,28 +281,28 @@ class DocumentationChecker:
 
     def _print_summary(self):
         """Print summary of all checks."""
-        print("\n" + "="*70)
-        print("📊 DOCUMENTATION QUALITY REPORT")
-        print("="*70 + "\n")
+        aprint("\n" + "="*70)
+        aprint("📊 DOCUMENTATION QUALITY REPORT")
+        aprint("="*70 + "\n")
 
         passed = [r for r in self.results if r.passed]
         failed = [r for r in self.results if not r.passed]
 
-        print(f"✅ Passed: {len(passed)}")
-        print(f"❌ Failed: {len(failed)}")
-        print(f"📈 Overall: {len(passed)}/{len(self.results)} ({len(passed)/len(self.results)*100:.0f}%)\n")
+        aprint(f"✅ Passed: {len(passed)}")
+        aprint(f"❌ Failed: {len(failed)}")
+        aprint(f"📈 Overall: {len(passed)}/{len(self.results)} ({len(passed)/len(self.results)*100:.0f}%)\n")
 
         if failed:
-            print("Failed checks:\n")
+            aprint("Failed checks:\n")
             for result in failed:
-                print(f"  ❌ {result.check_name}")
-                print(f"     {result.message}")
-                print(f"     File: {result.file_path}\n")
+                aprint(f"  ❌ {result.check_name}")
+                aprint(f"     {result.message}")
+                aprint(f"     File: {result.file_path}\n")
 
         if self.verbose and passed:
-            print("\nPassed checks:\n")
+            aprint("\nPassed checks:\n")
             for result in passed:
-                print(f"  ✅ {result.message}")
+                aprint(f"  ✅ {result.message}")
 
 
 def main():
@@ -318,10 +319,10 @@ def main():
     success = checker.check_all()
 
     if not success:
-        print("\n⚠️  Some documentation checks failed. Please address the issues above.")
+        aprint("\n⚠️  Some documentation checks failed. Please address the issues above.")
         sys.exit(1)
     else:
-        print("\n✅ All documentation checks passed!")
+        aprint("\n✅ All documentation checks passed!")
         sys.exit(0)
 
 

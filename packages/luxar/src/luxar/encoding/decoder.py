@@ -69,7 +69,7 @@ class ArrayDecoder:
 
         # Passthrough (none, float16, float32, uint8, etc.)
         else:
-            return zarr_array[:]
+            return np.asarray(zarr_array[:])
 
     def _decode_bounded_scalar(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode bounded scalar: uint → original dtype using min/max.
@@ -81,16 +81,16 @@ class ArrayDecoder:
         Returns:
             Decoded array with original dtype
         """
-        data = arr[:]
-        min_val = enc["min"]
-        max_val = enc["max"]
-        bits = enc["bits"]
-        original_dtype = enc.get("original_dtype", "float32")
+        data = np.asarray(arr[:])
+        min_val = float(enc["min"])
+        max_val = float(enc["max"])
+        bits = int(enc["bits"])
+        original_dtype = np.dtype(enc.get("original_dtype", "float32"))
 
         # Use float64 intermediate for precision, then cast to original dtype
         normalized = data.astype(np.float64) / (2**bits - 1)
         result = normalized * (max_val - min_val) + min_val
-        return result.astype(original_dtype)
+        return np.asarray(result, dtype=original_dtype)
 
     def _decode_log_scalar(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode log scalar: uint → original dtype using expm1.
@@ -102,15 +102,15 @@ class ArrayDecoder:
         Returns:
             Decoded array with original dtype
         """
-        data = arr[:]
-        max_log = enc["max_log"]
-        bits = enc["bits"]
-        original_dtype = enc.get("original_dtype", "float32")
+        data = np.asarray(arr[:])
+        max_log = float(enc["max_log"])
+        bits = int(enc["bits"])
+        original_dtype = np.dtype(enc.get("original_dtype", "float32"))
 
         # Use float64 intermediate for precision, then cast to original dtype
         normalized = data.astype(np.float64) / (2**bits - 1)
         result = np.expm1(normalized * max_log)
-        return result.astype(original_dtype)
+        return np.asarray(result, dtype=original_dtype)
 
     def _decode_color(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode color: uint8/uint16 [0,max] → original dtype [0,1].
@@ -122,8 +122,8 @@ class ArrayDecoder:
         Returns:
             Decoded array with original dtype in [0, 1] range
         """
-        data = arr[:]
-        original_dtype = enc.get("original_dtype", "float32")
+        data = np.asarray(arr[:])
+        original_dtype = np.dtype(enc.get("original_dtype", "float32"))
 
         # Determine max value based on stored dtype
         max_val = 255.0 if data.dtype == np.uint8 else 65535.0
@@ -142,18 +142,18 @@ class ArrayDecoder:
         Returns:
             Decoded array by looking up values in LUT
         """
-        indices = arr[:]
+        indices = np.asarray(arr[:], dtype=np.int64)
         lut = np.array(enc["lut"], dtype=enc["original_dtype"])
         lut_mode = enc.get("lut_mode", "scalar")  # Default for 1D
 
         if lut_mode == "row":
             # Row mode: indices are (N,), lut is (K, d)
             # Result is (N, d)
-            return lut[indices]
+            return np.asarray(lut[indices])
         else:
             # Scalar mode: indices match original shape
             # lut is (K,), indices may be (N,) or (N, d)
-            return lut[indices]
+            return np.asarray(lut[indices])
 
     def _expand_broadcasted(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Expand broadcasted array to full size.
@@ -165,7 +165,7 @@ class ArrayDecoder:
         Returns:
             Expanded array with repeated value
         """
-        data = arr[:]  # Shape (1,) or (1, d)
+        data = np.asarray(arr[:])  # Shape (1,) or (1, d)
         n_elements = enc["n_elements"]
 
         # Repeat the single value n_elements times along axis 0

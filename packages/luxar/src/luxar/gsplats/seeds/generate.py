@@ -111,7 +111,7 @@ def generate_seeds(
 
     >>> from luxar.gsplats.seeds import generate_seeds
     >>> seeds = generate_seeds(image)  # Returns GSplatData
-    >>> print(f"Generated {len(seeds.centers)} seed splats")
+    >>> aprint(f"Generated {len(seeds.centers)} seed splats")
 
     **Using Gaussian method:**
 
@@ -242,8 +242,14 @@ def generate_seeds(
         if "moments" in methods and used_by_moment:
             moment_kwargs[key] = value
 
-        if not (used_by_gaussian or used_by_decomposition or used_by_moment or key in passthrough_params):
+        if not (
+            used_by_gaussian
+            or used_by_decomposition
+            or used_by_moment
+            or key in passthrough_params
+        ):
             import warnings
+
             warnings.warn(
                 f"Parameter '{key}' is not used by any selected method: {methods}",
                 UserWarning,
@@ -265,6 +271,7 @@ def generate_seeds(
             results.append(result)
         elif m == "moments":
             from luxar.gsplats.seeds.moment_seeding import seed_from_moments
+
             result = seed_from_moments(V, **moment_kwargs)
             results.append(result)
 
@@ -273,7 +280,9 @@ def generate_seeds(
         return GSplatData(
             centers=np.zeros((0, V.ndim), dtype=np.float32),
             amplitudes=np.zeros(0, dtype=np.float32),
-            cholesky_factors=np.zeros((0, V.ndim * (V.ndim + 1) // 2), dtype=np.float32),
+            cholesky_factors=np.zeros(
+                (0, V.ndim * (V.ndim + 1) // 2), dtype=np.float32
+            ),
             sharpnesses=np.zeros(0, dtype=np.float32),
         )
     elif len(results) == 1:
@@ -292,9 +301,15 @@ def _combine_gsplatdata(
     """
     # Concatenate all arrays
     all_centers = np.vstack([r.centers for r in results if len(r.centers) > 0])
-    all_amplitudes = np.concatenate([r.amplitudes for r in results if len(r.amplitudes) > 0])
-    all_cholesky = np.vstack([r.cholesky_factors for r in results if len(r.cholesky_factors) > 0])
-    all_sharpnesses = np.concatenate([r.sharpnesses for r in results if len(r.sharpnesses) > 0])
+    all_amplitudes = np.concatenate(
+        [r.amplitudes for r in results if len(r.amplitudes) > 0]
+    )
+    all_cholesky = np.vstack(
+        [r.cholesky_factors for r in results if len(r.cholesky_factors) > 0]
+    )
+    all_sharpnesses = np.concatenate(
+        [r.sharpnesses for r in results if len(r.sharpnesses) > 0]
+    )
 
     if len(all_centers) == 0:
         ndim = results[0].centers.shape[1] if results else 2

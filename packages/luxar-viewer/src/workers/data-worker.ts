@@ -17,6 +17,7 @@
 
 import { expose, transfer } from 'comlink';
 import { initWasm, type WasmModule } from '../wasm';
+import { log, Modules } from '../utils/log';
 
 // Worker-side persistent state
 let wasmModule: WasmModule | null = null;
@@ -31,14 +32,14 @@ let visibilityMaskBuffer: Uint8Array | null = null;
  * Phase 3: Loads actual WASM module (REQUIRED - fails if unavailable)
  */
 async function initialize(): Promise<void> {
-  console.log('[DataWorker] Initializing...');
+  log.info(Modules.WORKER_POOL, 'DataWorker initializing...');
 
   // Load WASM module (Phase 2: TypeScript fallback, Phase 3: actual WASM)
   try {
     wasmModule = await initWasm();
-    console.log('[DataWorker] WASM module loaded successfully');
+    log.info(Modules.WORKER_POOL, 'DataWorker WASM module loaded successfully');
   } catch (error) {
-    console.error('[DataWorker] WASM initialization FAILED:', error);
+    log.error(Modules.WORKER_POOL, 'DataWorker WASM initialization failed', error);
     throw new Error(
       'WASM unavailable. Luxar requires WebAssembly support. ' +
         'Please use a modern browser (Chrome 57+, Firefox 52+, Safari 11+).'
@@ -48,7 +49,7 @@ async function initialize(): Promise<void> {
   // Pre-allocate visibility buffer (will grow as needed)
   visibilityMaskBuffer = new Uint8Array(100000); // 100K elements max
 
-  console.log('[DataWorker] Ready');
+  log.info(Modules.WORKER_POOL, 'DataWorker ready');
 }
 
 /**

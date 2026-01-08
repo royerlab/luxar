@@ -5,12 +5,13 @@ Generate project statistics report for Luxar.
 Analyzes Python and TypeScript code to produce comprehensive statistics
 including lines of code, file counts, function/class counts, etc.
 """
-
 import re
 import subprocess
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+
+from arbol import aprint
 
 
 def count_lines_in_file(filepath):
@@ -155,7 +156,7 @@ def get_test_statistics(project_root):
             test_stats["error"] = f"Could not collect tests: {e}"
 
         # Run Python tests with coverage (include ALL tests for accurate coverage)
-        print("    Running Python tests with coverage (this may take a minute)...")
+        aprint("    Running Python tests with coverage (this may take a minute)...")
         try:
             result = subprocess.run(
                 [
@@ -198,7 +199,7 @@ def get_test_statistics(project_root):
                         test_stats["test_passed"] = int(match.group(1))
 
         except Exception as e:
-            print(f"    Could not run Python coverage: {e}")
+            aprint(f"    Could not run Python coverage: {e}")
             # Fallback to existing coverage file if present
             coverage_file = root_path / "coverage" / "python" / ".coverage"
             if coverage_file.exists():
@@ -235,7 +236,7 @@ def get_test_statistics(project_root):
             )
 
             # Run TypeScript tests (without coverage first, it's faster)
-            print("    Running TypeScript tests...")
+            aprint("    Running TypeScript tests...")
             try:
                 result = subprocess.run(
                     ["pnpm", "test", "--run"],
@@ -266,10 +267,10 @@ def get_test_statistics(project_root):
                         break
 
             except Exception as e:
-                print(f"    Could not run TypeScript tests: {e}")
+                aprint(f"    Could not run TypeScript tests: {e}")
 
             # Run TypeScript coverage separately
-            print("    Running TypeScript coverage...")
+            aprint("    Running TypeScript coverage...")
             try:
                 result = subprocess.run(
                     ["pnpm", "run", "test:coverage"],
@@ -291,7 +292,7 @@ def get_test_statistics(project_root):
                             break
 
             except Exception as e:
-                print(f"    Could not run TypeScript coverage: {e}")
+                aprint(f"    Could not run TypeScript coverage: {e}")
 
     except Exception as e:
         test_stats["error"] = str(e)
@@ -955,7 +956,7 @@ def generate_html_report(stats, output_file):
 
 def main():
     """Main analysis function."""
-    print("Analyzing Luxar project...")
+    aprint("Analyzing Luxar project...")
 
     # Get project root (script is in stats/, so parent.parent is project root)
     script_path = Path(__file__).resolve()
@@ -965,15 +966,15 @@ def main():
         project_root = script_path.parent
 
     # Analyze Python code
-    print("  Analyzing Python code...")
+    aprint("  Analyzing Python code...")
     python_stats = analyze_directory(project_root, [".py"], "python")
 
     # Analyze TypeScript code
-    print("  Analyzing TypeScript code...")
+    aprint("  Analyzing TypeScript code...")
     typescript_stats = analyze_directory(project_root, [".ts", ".tsx"], "typescript")
 
     # Get test statistics
-    print("  Gathering test statistics...")
+    aprint("  Gathering test statistics...")
     test_stats = get_test_statistics(project_root)
 
     # Combine statistics
@@ -1000,34 +1001,34 @@ def main():
     stats_dir = project_root / "stats"
     stats_dir.mkdir(exist_ok=True)
     output_file = stats_dir / "project_stats.html"
-    print("  Generating HTML report...")
+    aprint("  Generating HTML report...")
     generate_html_report(stats, output_file)
 
-    print(f"\n✅ Report generated: {output_file}")
-    print("\n📊 Summary:")
-    print(f"  Total files: {stats['total']['files']:,}")
-    print(f"  Lines of code: {stats['total']['code_lines']:,}")
-    print(f"  Python files: {stats['python']['files']:,}")
-    print(f"  TypeScript files: {stats['typescript']['files']:,}")
-    print(f"  Classes: {stats['total']['classes']:,}")
-    print(f"  Functions: {stats['total']['functions']:,}")
-    print(
+    aprint(f"\n✅ Report generated: {output_file}")
+    aprint("\n📊 Summary:")
+    aprint(f"  Total files: {stats['total']['files']:,}")
+    aprint(f"  Lines of code: {stats['total']['code_lines']:,}")
+    aprint(f"  Python files: {stats['python']['files']:,}")
+    aprint(f"  TypeScript files: {stats['typescript']['files']:,}")
+    aprint(f"  Classes: {stats['total']['classes']:,}")
+    aprint(f"  Functions: {stats['total']['functions']:,}")
+    aprint(
         f"  Test files: {stats['tests']['test_files'] + stats['tests']['ts_test_files']:,} (Python: {stats['tests']['test_files']}, TS: {stats['tests']['ts_test_files']})"
     )
-    print(
+    aprint(
         f"  Tests: {stats['tests']['test_count'] + stats['tests']['ts_test_count']:,} (Python: {stats['tests']['test_count']:,}, TS: {stats['tests']['ts_test_count']:,})"
     )
     if (
         stats["tests"]["coverage_percent"] > 0
         or stats["tests"]["ts_coverage_percent"] > 0
     ):
-        print(
+        aprint(
             f"  Coverage: Python: {stats['tests']['coverage_percent']:.1f}%, TypeScript: {stats['tests']['ts_coverage_percent']:.1f}%"
         )
     total_tests = stats["tests"]["test_count"] + stats["tests"]["ts_test_count"]
     total_passing = stats["tests"]["test_count"] + stats["tests"]["ts_test_passed"]
     if total_tests > 0:
-        print(
+        aprint(
             f"  Pass rate: {total_passing / total_tests * 100:.1f}% ({total_passing}/{total_tests})"
         )
 

@@ -1,5 +1,7 @@
 """Tests for the validation module with helpful error messages."""
 
+from typing import Any, cast
+
 import numpy as np
 import pytest
 
@@ -41,7 +43,7 @@ class TestPositionValidation:
     def test_non_numpy_positions(self) -> None:
         """Test error for non-numpy positions."""
         with pytest.raises(ValidationError) as exc_info:
-            validate_positions_for_writing([[1, 2, 3], [4, 5, 6]])
+            validate_positions_for_writing(cast(Any, [[1, 2, 3], [4, 5, 6]]))
 
         assert "Expected numpy array, got list" in str(exc_info.value)
         assert "np.array(data)" in str(exc_info.value)

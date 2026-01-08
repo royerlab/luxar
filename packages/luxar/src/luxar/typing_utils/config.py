@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Final, Literal, Optional
+from typing import Any, Final, Literal, Optional
 
 from ..typing_utils.constants import (
     CHUNK_SIZE_DEFAULT,
@@ -135,7 +135,7 @@ except ImportError:
 # =============================================================================
 
 
-def validate_chunk_size(chunk_size: int) -> int:
+def validate_chunk_size(chunk_size: Any) -> int:
     """Validate chunk size is within acceptable bounds.
 
     Args:
@@ -163,7 +163,7 @@ def validate_chunk_size(chunk_size: int) -> int:
     return chunk_size
 
 
-def validate_compression_level(level: int) -> int:
+def validate_compression_level(level: Any) -> int:
     """Validate compression level is within acceptable bounds.
 
     Args:

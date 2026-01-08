@@ -66,7 +66,8 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       const { array, attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points/colors');
 
       // Verify metadata indicates broadcasting (nested under "encoding")
-      // NOTE: n_elements is the stored array size (1), NOT the target count (1000)
+      // NOTE: n_elements stores the source array size, not the target count
+      // The decoder uses nPoints parameter for the actual expansion
       expect(attrs.encoding?.n_elements).toBe(1);
       expect(attrs.encoding?.name).toBe('broadcasted');
       expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
@@ -98,7 +99,8 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       const { array, attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points/radii');
 
       // Verify metadata (nested under "encoding")
-      // NOTE: n_elements is the stored array size (1), NOT the target count (1000)
+      // NOTE: n_elements stores the source array size, not the target count
+      // The decoder uses nPoints parameter for the actual expansion
       expect(attrs.encoding?.n_elements).toBe(1);
       expect(attrs.encoding?.name).toBe('broadcasted');
       expect(ArrayDecoder.isEncoded(attrs)).toBe(true);

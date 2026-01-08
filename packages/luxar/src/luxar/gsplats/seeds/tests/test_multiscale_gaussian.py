@@ -20,9 +20,15 @@ def validate_gsplatdata(result: GSplatData, expected_ndim: int) -> None:
     """Validate GSplatData output format."""
     assert isinstance(result, GSplatData), "Result should be GSplatData"
     assert result.centers.ndim == 2, "Centers should be 2D array"
-    assert result.centers.shape[1] == expected_ndim, f"Should have {expected_ndim}D coordinates"
-    assert len(result.amplitudes) == len(result.centers), "Amplitudes should match centers count"
-    assert len(result.sharpnesses) == len(result.centers), "Sharpnesses should match centers count"
+    assert result.centers.shape[1] == expected_ndim, (
+        f"Should have {expected_ndim}D coordinates"
+    )
+    assert len(result.amplitudes) == len(result.centers), (
+        "Amplitudes should match centers count"
+    )
+    assert len(result.sharpnesses) == len(result.centers), (
+        "Sharpnesses should match centers count"
+    )
 
     # Check cholesky factors shape
     tril_size = expected_ndim * (expected_ndim + 1) // 2
@@ -140,7 +146,9 @@ class TestSeedFromGaussianEdgeCases:
         V = np.zeros((32, 32), dtype=np.float32)
         V[16, 16] = 1.0
 
-        result = seed_from_gaussian(V, scales=[1], min_distance=1.0, percentile_thresh=50.0)
+        result = seed_from_gaussian(
+            V, scales=[1], min_distance=1.0, percentile_thresh=50.0
+        )
         validate_gsplatdata(result, 2)
 
     def test_very_small_image(self) -> None:

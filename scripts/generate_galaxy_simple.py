@@ -33,7 +33,6 @@ OUTPUT:
     Raw zarr table with arrays: x_kpc, y_kpc, z_kpc, phot_g_mean_mag, bp_rp
     (NOT Luxar format - demo converts to Luxar)
 """
-
 import argparse
 import shutil
 import sys
@@ -42,14 +41,15 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from arbol import aprint
 
 try:
     import astropy.units as u
     from astropy.coordinates import Galactocentric, SkyCoord
     from astroquery.gaia import Gaia
 except ImportError:
-    print("ERROR: Missing dependencies.")
-    print("Please install: pip install astroquery astropy")
+    aprint("ERROR: Missing dependencies.")
+    aprint("Please install: pip install astroquery astropy")
     sys.exit(1)
 
 R0_KPC = 8.122  # Sun-GC distance
@@ -57,7 +57,7 @@ R0_KPC = 8.122  # Sun-GC distance
 
 def fetch_stars(count: int) -> pd.DataFrame:
     """Fetch top N brightest stars from Gaia DR3."""
-    print(f"\nFetching {count:,} brightest stars from Gaia DR3...")
+    aprint(f"\nFetching {count:,} brightest stars from Gaia DR3...")
 
     query = f"""
 SELECT TOP {count}
@@ -72,14 +72,14 @@ WHERE parallax > 0.1
 ORDER BY phot_g_mean_mag ASC
 """
 
-    print("  Querying ESA Gaia Archive...")
+    aprint("  Querying ESA Gaia Archive...")
     job = Gaia.launch_job_async(query)
     results = job.get_results()
 
-    print(f"  ✓ Retrieved {len(results):,} stars")
+    aprint(f"  ✓ Retrieved {len(results):,} stars")
 
     df = results.to_pandas()
-    print(
+    aprint(
         f"  Magnitude range: {df['phot_g_mean_mag'].min():.2f} to {df['phot_g_mean_mag'].max():.2f}"
     )
 
@@ -88,9 +88,9 @@ ORDER BY phot_g_mean_mag ASC
 
 def compute_distances(df: pd.DataFrame) -> pd.DataFrame:
     """Compute distances from parallax."""
-    print("\nComputing distances...")
+    aprint("\nComputing distances...")
     df["dist_pc"] = 1000.0 / df["parallax"]
-    print(
+    aprint(
         f"  Distance range: {df['dist_pc'].min():.1f} to {df['dist_pc'].max():.1f} pc"
     )
     return df
@@ -98,7 +98,7 @@ def compute_distances(df: pd.DataFrame) -> pd.DataFrame:
 
 def transform_to_galactocentric(df: pd.DataFrame, rmax_kpc: float) -> pd.DataFrame:
     """Transform to Galactocentric coordinates."""
-    print(f"\nTransforming to Galactocentric (R0={R0_KPC} kpc)...")
+    aprint(f"\nTransforming to Galactocentric (R0={R0_KPC} kpc)...")
 
     dist_kpc = (df["dist_pc"].values * u.pc).to(u.kpc)
     c_icrs = SkyCoord(
@@ -114,10 +114,10 @@ def transform_to_galactocentric(df: pd.DataFrame, rmax_kpc: float) -> pd.DataFra
     df["z_kpc"] = gc.z.to(u.kpc).value
     df["r_gc_kpc"] = np.sqrt(df["x_kpc"] ** 2 + df["y_kpc"] ** 2 + df["z_kpc"] ** 2)
 
-    print(f"  Applying cut: r_gc <= {rmax_kpc} kpc")
+    aprint(f"  Applying cut: r_gc <= {rmax_kpc} kpc")
     df_cut = df[df["r_gc_kpc"] <= rmax_kpc].copy()
 
-    print(f"  Stars within {rmax_kpc} kpc: {len(df_cut):,} / {len(df):,}")
+    aprint(f"  Stars within {rmax_kpc} kpc: {len(df_cut):,} / {len(df):,}")
 
     return df_cut
 
@@ -126,7 +126,7 @@ def create_zarr(df: pd.DataFrame, output_path: Path):
     """Save raw Gaia data as zarr table (NOT Luxar format)."""
     import zarr
 
-    print(f"\nSaving raw data to zarr: {output_path}")
+    aprint(f"\nSaving raw data to zarr: {output_path}")
 
     if output_path.exists():
         shutil.rmtree(output_path)
@@ -165,14 +165,14 @@ def create_zarr(df: pd.DataFrame, output_path: Path):
     store.attrs["data_source"] = "ESA Gaia DR3"
 
     size_mb = sum(f.stat().st_size for f in output_path.rglob("*") if f.is_file()) / 1e6
-    print(f"✓ Saved raw data: {output_path} ({size_mb:.2f} MB)")
-    print("  Arrays: x_kpc, y_kpc, z_kpc, phot_g_mean_mag, bp_rp")
+    aprint(f"✓ Saved raw data: {output_path} ({size_mb:.2f} MB)")
+    aprint("  Arrays: x_kpc, y_kpc, z_kpc, phot_g_mean_mag, bp_rp")
 
 
 def create_zip(zarr_path: Path):
     """Create zip archive."""
     zip_path = zarr_path.with_suffix(".zarr.zip")
-    print(f"\nCreating zip: {zip_path}")
+    aprint(f"\nCreating zip: {zip_path}")
 
     if zip_path.exists():
         zip_path.unlink()
@@ -182,7 +182,7 @@ def create_zip(zarr_path: Path):
             if file.is_file():
                 zipf.write(file, file.relative_to(zarr_path.parent))
 
-    print(f"✓ Created: {zip_path} ({zip_path.stat().st_size / 1e6:.2f} MB)")
+    aprint(f"✓ Created: {zip_path} ({zip_path.stat().st_size / 1e6:.2f} MB)")
 
 
 def main():
@@ -200,9 +200,9 @@ def main():
     )
     args = parser.parse_args()
 
-    print("=" * 60)
-    print(f"Simple Gaia Galaxy Generator - {args.count:,} stars")
-    print("=" * 60)
+    aprint("=" * 60)
+    aprint(f"Simple Gaia Galaxy Generator - {args.count:,} stars")
+    aprint("=" * 60)
 
     df = fetch_stars(args.count)
     df = compute_distances(df)
@@ -210,14 +210,14 @@ def main():
     create_zarr(df, args.output)
     create_zip(args.output)
 
-    print("\n" + "=" * 60)
-    print("SUCCESS!")
-    print(f"  Stars: {len(df):,}")
-    print(f"  Zarr: {args.output}")
-    print(f"  Zip: {args.output.with_suffix('.zarr.zip')}")
-    print("=" * 60)
-    print("\nNote: This is a RAW data table (not Luxar format).")
-    print("Use demo_gaia_milky_way_3m.py to convert and visualize.")
+    aprint("\n" + "=" * 60)
+    aprint("SUCCESS!")
+    aprint(f"  Stars: {len(df):,}")
+    aprint(f"  Zarr: {args.output}")
+    aprint(f"  Zip: {args.output.with_suffix('.zarr.zip')}")
+    aprint("=" * 60)
+    aprint("\nNote: This is a RAW data table (not Luxar format).")
+    aprint("Use demo_gaia_milky_way_3m.py to convert and visualize.")
 
 
 if __name__ == "__main__":
