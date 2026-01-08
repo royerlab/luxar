@@ -250,7 +250,10 @@ export class TwoLevelCachingStore implements AsyncReadable {
     // L3: Remote fetch (~100ms)
     try {
       this.log(`HTTP fetch: ${key}`, 'info');
-      const response = await fetch(`${this.baseUrl}/${key}`);
+      // Ensure proper URL joining regardless of trailing/leading slashes
+      const cleanBase = this.baseUrl.replace(/\/+$/, '');
+      const cleanKey = key.replace(/^\/+/, '');
+      const response = await fetch(`${cleanBase}/${cleanKey}`);
       if (!response.ok) return undefined;
 
       const data = new Uint8Array(await response.arrayBuffer());
@@ -318,7 +321,8 @@ export class TwoLevelCachingStore implements AsyncReadable {
   private async getRemoteContentHash(): Promise<string | null> {
     try {
       // Direct HTTP fetch, no cache lookup
-      const response = await fetch(`${this.baseUrl}/.zattrs`);
+      const cleanBase = this.baseUrl.replace(/\/+$/, '');
+      const response = await fetch(`${cleanBase}/.zattrs`);
       if (!response.ok) return null;
 
       const data = await response.arrayBuffer();

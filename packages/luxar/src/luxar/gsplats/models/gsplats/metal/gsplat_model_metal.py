@@ -582,14 +582,12 @@ class GaussianSplatModelMetal(torch.nn.Module):
         destination: T_destination,
         prefix: str = "",
         keep_vars: bool = False,
-    ) -> T_destination:
-        ...
+    ) -> T_destination: ...
 
     @overload
     def state_dict(
         self, *, prefix: str = "", keep_vars: bool = False
-    ) -> dict[str, Any]:
-        ...
+    ) -> dict[str, Any]: ...
 
     def state_dict(
         self,

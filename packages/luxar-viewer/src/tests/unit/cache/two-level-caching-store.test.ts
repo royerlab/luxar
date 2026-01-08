@@ -714,4 +714,108 @@ describe('TwoLevelCachingStore', () => {
       expect(result).toBeDefined();
     });
   });
+
+  describe('URL Construction (Triple-Slash Bug Prevention)', () => {
+    it('should construct correct URL without trailing slash in baseUrl', async () => {
+      mocks.fetchedUrls.length = 0;
+
+      // Store created with NO trailing slash
+      const storeNoSlash = new TwoLevelCachingStore('https://example.com/data.zarr', {
+        urlParams: new URLSearchParams(''),
+      });
+      await storeNoSlash.init();
+      mocks.fetchedUrls.length = 0;
+
+      await storeNoSlash.get('test.chunk');
+
+      // Should be exactly one slash between base and key
+      expect(mocks.fetchedUrls).toContain('https://example.com/data.zarr/test.chunk');
+      // No double slashes in path (after protocol)
+      expect(mocks.fetchedUrls.some((u) => u.replace('https://', '').includes('//'))).toBe(false);
+    });
+
+    it('should construct correct URL WITH trailing slash in baseUrl', async () => {
+      mocks.fetchedUrls.length = 0;
+
+      // Store created WITH trailing slash (as normalizeURL would produce)
+      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/', {
+        urlParams: new URLSearchParams(''),
+      });
+      await storeWithSlash.init();
+      mocks.fetchedUrls.length = 0;
+
+      await storeWithSlash.get('test.chunk');
+
+      // Should still be exactly one slash between base and key
+      expect(mocks.fetchedUrls).toContain('https://example.com/data.zarr/test.chunk');
+      // No double slashes in middle of URL (after protocol)
+      expect(mocks.fetchedUrls.some((u) => u.replace('https://', '').includes('//'))).toBe(false);
+    });
+
+    it('should handle key with leading slash', async () => {
+      mocks.fetchedUrls.length = 0;
+
+      // Store with trailing slash + key with leading slash = potential triple slash
+      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/', {
+        urlParams: new URLSearchParams(''),
+      });
+      await storeWithSlash.init();
+      mocks.fetchedUrls.length = 0;
+
+      await storeWithSlash.get('/Mandelbulb/positions/0.0.0');
+
+      // Should normalize to single slash
+      expect(mocks.fetchedUrls).toContain('https://example.com/data.zarr/Mandelbulb/positions/0.0.0');
+      // No triple slashes
+      expect(mocks.fetchedUrls.some((u) => u.includes('///'))).toBe(false);
+    });
+
+    it('should handle multiple trailing slashes in baseUrl', async () => {
+      mocks.fetchedUrls.length = 0;
+
+      // Store with MULTIPLE trailing slashes (edge case)
+      const storeMultiSlash = new TwoLevelCachingStore('https://example.com/data.zarr///', {
+        urlParams: new URLSearchParams(''),
+      });
+      await storeMultiSlash.init();
+      mocks.fetchedUrls.length = 0;
+
+      await storeMultiSlash.get('test.chunk');
+
+      // Should normalize to single slash
+      expect(mocks.fetchedUrls).toContain('https://example.com/data.zarr/test.chunk');
+    });
+
+    it('should handle multiple leading slashes in key', async () => {
+      mocks.fetchedUrls.length = 0;
+
+      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/', {
+        urlParams: new URLSearchParams(''),
+      });
+      await storeWithSlash.init();
+      mocks.fetchedUrls.length = 0;
+
+      await storeWithSlash.get('///test.chunk');
+
+      // Should normalize to single slash
+      expect(mocks.fetchedUrls).toContain('https://example.com/data.zarr/test.chunk');
+    });
+
+    it('should correctly construct .zattrs URL for content hash validation', async () => {
+      mocks.fetchedUrls.length = 0;
+
+      // Store with trailing slash
+      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/', {
+        urlParams: new URLSearchParams(''),
+      });
+      await storeWithSlash.init();
+
+      // .zattrs should be fetched correctly during init
+      const zattrsUrls = mocks.fetchedUrls.filter((u) => u.includes('.zattrs'));
+      expect(zattrsUrls.length).toBeGreaterThan(0);
+      expect(zattrsUrls[0]).toBe('https://example.com/data.zarr/.zattrs');
+      // No double slashes before .zattrs
+      expect(zattrsUrls.some((u) => u.includes('//.zattrs'))).toBe(false);
+    });
+  });
 });

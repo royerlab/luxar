@@ -213,23 +213,29 @@ export class LuxarApp {
       return true;
     }
 
-    // Check if it's a Zarr dataset
+    // Check if it's a Zarr dataset by looking for zarr metadata files
+    // Try both v2 (.zgroup) and v3 (zarr.json) formats
+    const zarrChecks = [
+      fetch(src + '/.zgroup', { method: 'HEAD' }),
+      fetch(src + '/.zattrs', { method: 'HEAD' }),
+      fetch(src + '/zarr.json', { method: 'HEAD' }),
+    ];
+
     try {
-      const response = await fetch(src + '/.zgroup', { method: 'HEAD' });
-      if (response.ok) {
+      const results = await Promise.allSettled(zarrChecks);
+      const hasZarrMetadata = results.some(
+        (r) => r.status === 'fulfilled' && r.value.ok
+      );
+      if (hasZarrMetadata) {
         return false; // It's a Zarr dataset, load directly
       }
     } catch {
-      // Ignore errors, proceed with check
+      // Ignore errors, proceed with directory assumption
     }
 
-    // Check if it looks like a directory (no file extension)
-    const hasExtension = src.split('/').pop()?.includes('.');
-    if (!hasExtension) {
-      return true; // Likely a directory
-    }
-
-    return false;
+    // If none of the zarr metadata files exist, it's likely a directory
+    // Show the browser so user can navigate to a dataset
+    return true;
   }
 
   /**
@@ -246,36 +252,18 @@ export class LuxarApp {
 
     this.datasetBrowser = new DatasetBrowser({
       container: document.body,
-      onDatasetSelect: async (path: string) => {
-        // Construct full URL for the selected dataset
-        const params = new URLSearchParams(window.location.search);
-        const currentSrc = params.get('src') || '';
-
-        let baseUrl: string;
-
-        // Only try to parse as URL if currentSrc is not empty and looks like a URL
-        if (currentSrc && (currentSrc.startsWith('http://') || currentSrc.startsWith('https://'))) {
-          try {
-            const url = new URL(currentSrc);
-            baseUrl = url.origin;
-          } catch {
-            baseUrl = window.location.origin;
-          }
-        } else {
-          // No src parameter or relative path - use current origin
-          baseUrl = window.location.origin;
-        }
-
-        // Ensure proper path joining without double slashes
-        const cleanPath = path.startsWith('/') ? path : '/' + path;
-        const fullUrl = baseUrl + cleanPath;
+      onDatasetSelect: async (fullUrl: string) => {
+        // The browser now passes full URLs directly, preserving directory context
+        // Strip any trailing slashes to ensure consistent URL format
+        const cleanUrl = fullUrl.replace(/\/+$/, '');
 
         // Update URL parameter
-        params.set('src', fullUrl);
+        const params = new URLSearchParams(window.location.search);
+        params.set('src', cleanUrl);
         window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
 
         // Load the dataset
-        await this.loadDataset(fullUrl);
+        await this.loadDataset(cleanUrl);
       },
       onClose: () => {
         this.datasetBrowser = undefined;

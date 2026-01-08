@@ -23,7 +23,6 @@ from ..typing_utils.constants import (
     OPACITY_MIN,
 )
 from ..typing_utils.enums import BlendingMode, NodeType, PhysicalUnit
-from ..validation.category_validation import validate_categories
 
 
 def validate_positions(positions: Any, ndim: Optional[int] = None) -> PositionArray:

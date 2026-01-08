@@ -7,9 +7,9 @@
 .PHONY: help install install-dev format format-all lint type-check security test test-python \
         test-cov test-all test-fixtures clean clean-examples pre-commit-install pre-commit-run check dev-setup \
         check-docs check-docs-verbose docs-clean docs-build docs-serve \
-        demo run-examples serve-examples serve-data viewer-install viewer viewer-build viewer-rebuild \
+        demo run-demos run-examples serve-examples serve-data viewer-install viewer viewer-build viewer-rebuild \
         viewer-test viewer-test-fixtures viewer-test-cov viewer-lint viewer-typecheck viewer-format viewer-check \
-        setup-rust wasm-build wasm-test wasm-clean \
+        setup-rust wasm-build wasm-test wasm-clean readme-images readme-videos \
         demo-and-serve stats env-show env-prune shell build publish-test publish \
         check-deps install-node install-pnpm install-hatch deep-clean-dev-setup
 
@@ -762,12 +762,116 @@ run-examples:  ## Run all examples to generate zarr files (output to datasets/ex
 	@echo "💡 To browse the generated datasets, run:"
 	@echo "   make serve-examples"
 
+run-demos:  ## Generate ALL demo datasets (output to datasets/demos/)
+	@echo "🚀 Generating all demo datasets..."
+	@echo "📂 Output directory: datasets/demos/"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@mkdir -p datasets/demos
+	@# Run all demo scripts (skip if output exists)
+	@total=$$(ls -1 packages/luxar/src/luxar/demos/demo_*.py 2>/dev/null | wc -l); \
+	count=0; \
+	for script in packages/luxar/src/luxar/demos/demo_*.py; do \
+		count=$$((count + 1)); \
+		name=$$(basename $$script .py | sed 's/demo_//'); \
+		echo ""; \
+		echo "[$${count}/$${total}] 📊 $$name"; \
+		zarr_candidates="datasets/demos/$${name}.zarr datasets/demos/$$(echo $$name | tr '_' '-').zarr"; \
+		found=0; \
+		for zarr in $$zarr_candidates; do \
+			if [ -d "$$zarr" ]; then \
+				echo "   ✓ Already exists: $$zarr"; \
+				found=1; \
+				break; \
+			fi; \
+		done; \
+		if [ "$$found" = "0" ]; then \
+			hatch run python $$script --no-serve 2>&1 | head -20 || echo "   ⚠️  Failed or requires manual run"; \
+		fi; \
+	done
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "✅ Demo generation complete!"
+	@echo ""
+	@echo "📁 Generated zarr files in datasets/demos/:"
+	@for zarr in datasets/demos/*.zarr; do \
+		if [ -d "$$zarr" ]; then \
+			size=$$(du -sh "$$zarr" | cut -f1); \
+			name=$$(basename "$$zarr"); \
+			echo "   • $$name ($${size})"; \
+		fi; \
+	done 2>/dev/null || echo "   No .zarr files found"
+
+readme-demos:  ## Generate only the demo datasets needed for README screenshots
+	@echo "🚀 Generating README demo datasets..."
+	@mkdir -p datasets/demos
+	@echo "[1/5] 🌀 Lorenz Attractor..."
+	@if [ -d "datasets/demos/lorenz.zarr" ]; then echo "   ✓ exists"; else hatch run python packages/luxar/src/luxar/demos/demo_lorenz.py --no-serve || echo "   ⚠️  Failed"; fi
+	@echo "[2/5] 🔮 Mandelbulb..."
+	@if [ -d "datasets/demos/mandelbulb.zarr" ]; then echo "   ✓ exists"; else hatch run python packages/luxar/src/luxar/demos/demo_mandelbulb.py --no-serve || echo "   ⚠️  Failed"; fi
+	@echo "[3/5] 🌌 Spiral Galaxy..."
+	@if [ -d "datasets/demos/spiral_galaxy.zarr" ]; then echo "   ✓ exists"; else hatch run python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py --no-serve || echo "   ⚠️  Failed"; fi
+	@echo "[4/5] 🧬 Zebrahub Multiome UMAP..."
+	@if [ -d "datasets/demos/zebrahub_multiome_peak_umap.zarr" ]; then echo "   ✓ exists"; else hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_multiome_peak_umap.py --no-serve || echo "   ⚠️  Failed"; fi
+	@echo "[5/5] 🌈 Rainbow Sphere..."
+	@if [ -d "datasets/demos/rainbow_sphere.zarr" ]; then echo "   ✓ exists"; else hatch run python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py --no-serve || echo "   ⚠️  Failed"; fi
+	@echo "✅ README demos ready!"
+
+readme-images: readme-demos  ## Generate README screenshots using Playwright
+	@echo "📸 Generating README screenshots..."
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	@# Source nvm if available
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	cd packages/luxar-viewer && pnpm readme-images
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "✅ README screenshots generated!"
+	@echo ""
+	@echo "📁 Generated images in docs/images/readme/:"
+	@ls -la docs/images/readme/*.png 2>/dev/null || echo "   No images found"
+	@echo ""
+	@echo "💡 Commit these images to include them in the README"
+
+readme-videos: readme-demos  ## Generate README videos (GIF/WebP) using Playwright
+	@echo "🎬 Generating README videos..."
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@# Check for ffmpeg
+	@if ! command -v ffmpeg >/dev/null 2>&1; then \
+		echo "❌ ffmpeg is required for video conversion"; \
+		echo "   Install with: brew install ffmpeg (macOS) or apt-get install ffmpeg (Linux)"; \
+		exit 1; \
+	fi
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	@# Source nvm if available
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	cd packages/luxar-viewer && pnpm readme-videos
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "✅ README videos generated!"
+	@echo ""
+	@echo "📁 Generated videos in docs/images/readme/:"
+	@ls -la docs/images/readme/*.gif docs/images/readme/*.webp 2>/dev/null || echo "   No videos found"
+	@echo ""
+	@echo "💡 Commit these videos to include them in the README"
+
 serve-examples:  ## Serve the datasets directory for browsing generated datasets
-	@echo "🌐 Serving datasets/ directory at http://localhost:8000/"
-	@echo "📊 Open viewer at: http://localhost:5173/?src=http://localhost:8000/"
+	@echo "🌐 Serving datasets/ directory at http://localhost:8000"
+	@echo "📊 Open viewer at: http://localhost:5173/?src=http://localhost:8000"
 	@echo "💡 Press 'O' in the viewer to browse available datasets"
 	@echo ""
-	hatch run luxar serve datasets/
+	hatch run luxar serve datasets/ -p 8000
 
 # Default values for serve-data (override with: make serve-data DATASET=path/to/data.zarr PORT=8080)
 DATASET ?= datasets/demos/demo.zarr
@@ -1056,9 +1160,9 @@ viewer-check:  ## Run all TypeScript checks (typecheck, lint, test)
 # Combined workflows
 demo-and-serve: demo  ## Create demo and start both servers
 	@echo "Starting data server and viewer..."
-	@echo "Data will be served at: http://localhost:$(PORT)/"
-	@echo "Viewer will be at: http://localhost:5173/?src=http://localhost:$(PORT)/"
-	@echo "💡 Press 'O' in the viewer to browse datasets"
+	@echo "Data will be served at: http://localhost:$(PORT)"
+	@echo "Viewer will be at: http://localhost:5173/?src=http://localhost:$(PORT)"
+	@echo "💡 Dataset: datasets/demos/demo.zarr (100k points)"
 	@$(MAKE) -j2 serve-data viewer
 
 # Documentation
