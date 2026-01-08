@@ -114,7 +114,8 @@ export class LuxarApp {
       );
 
       // Set up per-frame callback for dynamic clipping plane updates
-      this.animationController.setPerFrameCallback(() => {
+      // Uses unique ID so it won't conflict with other per-frame callbacks (e.g., dimension animation)
+      this.animationController.addPerFrameCallback('dynamic-clipping', () => {
         this.sceneManager.updateDynamicClippingPlanes();
       });
 

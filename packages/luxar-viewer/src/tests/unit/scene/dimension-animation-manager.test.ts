@@ -36,8 +36,12 @@ describe('DimensionAnimationManager', () => {
 
     // Create mock animation controller
     mockAnimationController = {
-      setPerFrameCallback: vi.fn((callback) => {
+      addPerFrameCallback: vi.fn((_id: string, callback: () => void) => {
         perFrameCallback = callback;
+      }),
+      removePerFrameCallback: vi.fn((_id: string) => {
+        perFrameCallback = null;
+        return true;
       }),
       startAnimation: vi.fn(),
     } as any;
@@ -57,7 +61,7 @@ describe('DimensionAnimationManager', () => {
     });
 
     it('should not register with animation controller until first play', () => {
-      expect(mockAnimationController.setPerFrameCallback).not.toHaveBeenCalled();
+      expect(mockAnimationController.addPerFrameCallback).not.toHaveBeenCalled();
     });
 
     it('should cache dimension ranges on creation', () => {
@@ -76,7 +80,10 @@ describe('DimensionAnimationManager', () => {
 
     it('should register with animation controller on first play', () => {
       manager.play(3);
-      expect(mockAnimationController.setPerFrameCallback).toHaveBeenCalled();
+      expect(mockAnimationController.addPerFrameCallback).toHaveBeenCalledWith(
+        'dimension-animation',
+        expect.any(Function)
+      );
       expect(mockAnimationController.startAnimation).toHaveBeenCalled();
     });
 
@@ -377,7 +384,9 @@ describe('DimensionAnimationManager', () => {
       manager.play(3);
       manager.dispose();
 
-      expect(mockAnimationController.setPerFrameCallback).toHaveBeenCalledWith(null);
+      expect(mockAnimationController.removePerFrameCallback).toHaveBeenCalledWith(
+        'dimension-animation'
+      );
     });
 
     it('should clear all state', () => {

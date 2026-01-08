@@ -811,13 +811,15 @@ function disposeObject(object: THREE.Object3D) {
 
 ### AnimationController
 
-| Method                       | Description                                         |
-| ---------------------------- | --------------------------------------------------- |
-| `startAnimation()`           | Begin render loop                                   |
-| `stopAnimation()`            | Stop render loop                                    |
-| `setPerFrameCallback(fn)`    | Set per-frame callback (e.g., for dynamic clipping) |
-| `setPerformanceStats(stats)` | Attach performance monitor                          |
-| `dispose()`                  | Clean up resources                                  |
+| Method                          | Description                                              |
+| ------------------------------- | -------------------------------------------------------- |
+| `startAnimation()`              | Begin render loop                                        |
+| `stopAnimation()`               | Stop render loop                                         |
+| `addPerFrameCallback(id, fn)`   | Add named per-frame callback (e.g., for dynamic clipping)|
+| `removePerFrameCallback(id)`    | Remove per-frame callback by ID                          |
+| `hasPerFrameCallback(id)`       | Check if callback exists                                 |
+| `setAdaptiveDPRManager(manager)`| Set adaptive DPR manager for dynamic resolution          |
+| `dispose()`                     | Clean up resources                                       |
 
 ### SceneDimsManager
 

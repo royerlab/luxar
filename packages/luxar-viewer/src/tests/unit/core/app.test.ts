@@ -86,6 +86,8 @@ describe('LuxarApp', () => {
       startAnimation: vi.fn(),
       stopAnimation: vi.fn(),
       setPerFrameCallback: vi.fn(),
+      addPerFrameCallback: vi.fn(),
+      removePerFrameCallback: vi.fn(),
       setAdaptiveDPRManager: vi.fn(),
       dispose: vi.fn(),
       isActive: false,

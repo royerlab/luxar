@@ -1,10 +1,10 @@
 # Luxar Data Package
 
-> High-performance Zarr data loading and nD slicing for points visualization
+> High-performance Zarr data loading and nD slicing for scientific visualization
 
 ## Overview
 
-The Luxar Data package provides the critical data loading infrastructure for visualizing massive nD points and lines datasets. It handles Zarr store access, hierarchical scene loading, dimension metadata extraction, and intelligent slicing operations for multi-dimensional data navigation.
+The Luxar Data package provides the critical data loading infrastructure for visualizing massive nD datasets. It handles Zarr store access, hierarchical scene loading, dimension metadata extraction, and intelligent slicing operations for multi-dimensional data navigation.
 
 ### Key Features
 

@@ -42,8 +42,8 @@ export class AnimationController {
   /** Performance monitoring instance for FPS/timing metrics */
   private performanceMonitor: PerformanceMonitor;
 
-  /** Optional per-frame callback for additional updates (e.g., dynamic clipping) */
-  private perFrameCallback: (() => void) | null = null;
+  /** Per-frame callbacks for additional updates (keyed by ID for safe add/remove) */
+  private perFrameCallbacks: Map<string, () => void> = new Map();
 
   /** Adaptive DPR manager for dynamic resolution scaling */
   private adaptiveDPRManager: AdaptiveDPRManager | null = null;
@@ -84,30 +84,81 @@ export class AnimationController {
   }
 
   /**
-   * Set callback function to execute every frame before rendering.
+   * Add a per-frame callback with a unique identifier.
+   *
+   * Multiple callbacks can be registered simultaneously (unlike setPerFrameCallback).
+   * Use unique IDs to allow safe removal without affecting other callbacks.
    *
    * Useful for operations that need to run every frame:
    * - Dynamic clipping plane adjustments
+   * - Dimension animations
    * - Camera-based LOD updates
    * - Custom animations or effects
    *
    * The callback is executed after controls.update() but before rendering.
    *
-   * @param callback - Function to call each frame, or null to clear callback
+   * @param id - Unique identifier for this callback (for later removal)
+   * @param callback - Function to call each frame
    *
    * @example
    * ```typescript
    * // Add dynamic clipping plane updates
-   * animController.setPerFrameCallback(() => {
+   * animController.addPerFrameCallback('dynamic-clipping', () => {
    *   sceneManager.updateDynamicClippingPlanes();
    * });
    *
-   * // Clear callback
-   * animController.setPerFrameCallback(null);
+   * // Add dimension animation updates
+   * animController.addPerFrameCallback('dimension-animation', () => {
+   *   animationManager.onFrame();
+   * });
    * ```
    */
+  addPerFrameCallback(id: string, callback: () => void): void {
+    this.perFrameCallbacks.set(id, callback);
+  }
+
+  /**
+   * Remove a per-frame callback by its identifier.
+   *
+   * @param id - Identifier of the callback to remove
+   * @returns true if callback was found and removed, false otherwise
+   *
+   * @example
+   * ```typescript
+   * // Remove dimension animation callback
+   * animController.removePerFrameCallback('dimension-animation');
+   * ```
+   */
+  removePerFrameCallback(id: string): boolean {
+    return this.perFrameCallbacks.delete(id);
+  }
+
+  /**
+   * Check if a per-frame callback with the given ID exists.
+   *
+   * @param id - Identifier to check
+   * @returns true if callback exists
+   */
+  hasPerFrameCallback(id: string): boolean {
+    return this.perFrameCallbacks.has(id);
+  }
+
+  /**
+   * @deprecated Use addPerFrameCallback/removePerFrameCallback instead.
+   * This method is kept for backward compatibility but will be removed.
+   *
+   * Set callback function to execute every frame before rendering.
+   * WARNING: This uses a fixed ID 'legacy' and will conflict with other
+   * code using this method. Prefer addPerFrameCallback for new code.
+   *
+   * @param callback - Function to call each frame, or null to clear callback
+   */
   setPerFrameCallback(callback: (() => void) | null): void {
-    this.perFrameCallback = callback;
+    if (callback) {
+      this.perFrameCallbacks.set('legacy', callback);
+    } else {
+      this.perFrameCallbacks.delete('legacy');
+    }
   }
 
   /**
@@ -158,9 +209,9 @@ export class AnimationController {
     // This must happen before rendering to reflect user interactions
     this.controls.update();
 
-    // Call per-frame callback (e.g., dynamic clipping plane updates)
-    if (this.perFrameCallback) {
-      this.perFrameCallback();
+    // Call all registered per-frame callbacks (e.g., dynamic clipping, dimension animation)
+    for (const callback of this.perFrameCallbacks.values()) {
+      callback();
     }
 
     // Render through HDR post-processing pipeline

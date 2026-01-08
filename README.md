@@ -237,7 +237,7 @@ make wasm-test     # Run Rust tests
 
 ## 📋 Data Format
 
-Luxar uses Zarr for efficient, chunked storage of large points datasets with support for arbitrary dimensionality.
+Luxar uses Zarr for efficient, chunked storage of large scientific datasets with support for arbitrary dimensionality.
 
 ### Zarr Structure
 
@@ -296,7 +296,7 @@ scene.zarr/
 
 - **Chunk Size**: Default 32KB elements, optimal range 64KB-1MB per chunk
 - **Compression**: Blosc with zstd level 3 and bit-shuffle for scientific data
-- **Point Count**: 100K-10M points per scene for smooth interaction
+- **Element Count**: 100K-10M elements per scene for smooth interaction
 - **Data Types**: Float32 for positions/radii/sharpness, Uint8 for colors
 - **Dimensionality**: Supports arbitrary nD points, viewer displays 3D slices
 
