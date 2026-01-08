@@ -90,6 +90,8 @@ check-deps:  ## Check all development dependencies and their versions
 	@# pipx (required for installing Hatch on modern systems)
 	@if command -v pipx >/dev/null 2>&1; then \
 		echo "✅ pipx: $$(pipx --version 2>/dev/null)"; \
+	elif [ "$(OS)" = "macos" ]; then \
+		echo "❌ pipx not found (run: brew install pipx)"; \
 	else \
 		echo "❌ pipx not found (run: sudo apt-get install pipx)"; \
 	fi
@@ -110,11 +112,19 @@ check-deps:  ## Check all development dependencies and their versions
 		NODE_VERSION=$$(node -v | sed 's/v//'); \
 		NODE_MAJOR=$$(echo $$NODE_VERSION | cut -d. -f1); \
 		NODE_MINOR=$$(echo $$NODE_VERSION | cut -d. -f2); \
+		NODE_PATH=$$(which node 2>/dev/null); \
+		if echo "$$NODE_PATH" | grep -q ".nvm"; then \
+			NODE_SOURCE="via nvm"; \
+		elif echo "$$NODE_PATH" | grep -q "brew\|Homebrew\|Cellar"; then \
+			NODE_SOURCE="via Homebrew"; \
+		else \
+			NODE_SOURCE="system"; \
+		fi; \
 		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
 		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
-			echo "⚠️  Node.js v$$NODE_VERSION (UPGRADE NEEDED: requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+)"; \
+			echo "⚠️  Node.js v$$NODE_VERSION ($$NODE_SOURCE) - UPGRADE NEEDED: requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
 		else \
-			echo "✅ Node.js: v$$NODE_VERSION (via nvm)"; \
+			echo "✅ Node.js: v$$NODE_VERSION ($$NODE_SOURCE)"; \
 		fi; \
 	elif [ -d "$$HOME/.nvm" ]; then \
 		echo "⚠️  nvm installed but Node.js not found. Run: nvm install 22"; \
@@ -139,7 +149,14 @@ check-deps:  ## Check all development dependencies and their versions
 		. "$(HOME)/.cargo/env"; \
 	fi; \
 	if command -v rustc >/dev/null 2>&1; then \
-		echo "✅ Rust: $$(rustc --version)"; \
+		RUST_VERSION=$$(rustc --version 2>&1); \
+		if echo "$$RUST_VERSION" | grep -q "rustup could not choose"; then \
+			echo "⚠️  Rust: rustup installed but no default toolchain (run: rustup default stable)"; \
+		else \
+			echo "✅ Rust: $$RUST_VERSION"; \
+		fi; \
+	elif command -v rustup >/dev/null 2>&1; then \
+		echo "⚠️  Rust: rustup installed but no toolchain (run: rustup default stable)"; \
 	else \
 		echo "⚪ Rust not installed (run 'make setup-rust' if needed)"; \
 	fi
@@ -478,22 +495,43 @@ deep-clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE 
 	fi
 	@echo ""
 	@echo "🧹 [6/8] Removing Hatch..."
-	@if [ -x "$(HOME)/.local/bin/hatch" ]; then \
+	@if command -v pipx >/dev/null 2>&1 && pipx list 2>/dev/null | grep -q hatch; then \
+		pipx uninstall hatch 2>/dev/null || true; \
+		echo "   ✓ Removed via pipx"; \
+	elif [ -x "$(HOME)/.local/bin/hatch" ]; then \
 		rm -f "$(HOME)/.local/bin/hatch"; \
 		echo "   ✓ Removed from ~/.local/bin"; \
 	elif command -v hatch >/dev/null 2>&1; then \
-		echo "   ⚠️  Hatch found but not in ~/.local/bin"; \
-		echo "   Try: pipx uninstall hatch"; \
+		HATCH_PATH=$$(which hatch 2>/dev/null); \
+		if echo "$$HATCH_PATH" | grep -q "brew\|Homebrew\|Cellar"; then \
+			echo "   ⚠️  Hatch installed via Homebrew"; \
+			echo "   Try: brew uninstall hatch"; \
+		else \
+			echo "   ⚠️  Hatch found at $$HATCH_PATH but cannot auto-remove"; \
+			echo "   Try: pipx uninstall hatch (if installed via pipx)"; \
+		fi; \
 	else \
 		echo "   ⚪ Not installed, skipping"; \
 	fi
 	@echo ""
 	@echo "🧹 [7/8] Removing nvm and Node.js..."
-	@if [ -d "$(HOME)/.nvm" ]; then \
+	@NVM_REMOVED=0; \
+	HOMEBREW_NODE=0; \
+	if [ -d "$(HOME)/.nvm" ]; then \
 		rm -rf "$(HOME)/.nvm"; \
 		echo "   ✓ Removed ~/.nvm"; \
-		echo "   ⚠️  You may want to remove nvm lines from ~/.bashrc manually"; \
-	else \
+		echo "   ⚠️  You may want to remove nvm lines from ~/.bashrc or ~/.zshrc manually"; \
+		NVM_REMOVED=1; \
+	fi; \
+	if command -v node >/dev/null 2>&1; then \
+		NODE_PATH=$$(which node 2>/dev/null); \
+		if echo "$$NODE_PATH" | grep -q "brew\|Homebrew\|Cellar"; then \
+			echo "   ⚠️  Node.js installed via Homebrew (not removed automatically)"; \
+			echo "   To remove: brew uninstall node"; \
+			HOMEBREW_NODE=1; \
+		fi; \
+	fi; \
+	if [ "$$NVM_REMOVED" = "0" ] && [ "$$HOMEBREW_NODE" = "0" ]; then \
 		echo "   ⚪ nvm not installed, skipping"; \
 	fi
 	@echo ""
