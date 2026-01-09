@@ -294,7 +294,7 @@ Fixtures are automatically regenerated before tests to match current Python enco
 
 ```bash
 pnpm test:with-fixtures  # Auto-gen + test
-make test-all            # Python tests + gen fixtures + TypeScript tests
+make test                # Python tests + gen fixtures + TypeScript tests
 ```
 
 ### Test Data Builders
@@ -350,7 +350,7 @@ pnpm test:e2e:report
 
 ```bash
 # From project root:
-make test-all  # Python + TypeScript (with fixture gen)
+make test  # Python + TypeScript (with fixture gen)
 
 # From packages/luxar-viewer:
 pnpm test:with-fixtures && pnpm test:e2e

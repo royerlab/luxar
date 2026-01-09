@@ -27,7 +27,7 @@ This report provides a comprehensive analysis of the testing infrastructure acro
 
 ### Priority Improvements (Updated 2025-12-27)
 1. ~~Fix 1 failing Python test (`test_factory_with_plateau_custom_params`)~~ ✅ DONE
-2. ~~Enable WASM tests in CI pipeline~~ ✅ DONE (added to `make test-all`)
+2. ~~Enable WASM tests in CI pipeline~~ ✅ DONE (added to `make test`)
 3. ~~Add dimension limit validation in Rust/WASM~~ ✅ DONE (2 tests added)
 4. ~~Expand parametrization in Python tests~~ ✅ DONE (3 → 11+ uses)
 5. ~~Create centralized conftest.py~~ ✅ DONE
@@ -170,7 +170,7 @@ graph LR
 - ~~No dimension limit validation tests~~ → 2 tests added (16-dim limit + panic test) ✅
 - No performance benchmarks
 - SIMD claims unvalidated
-- ~~Not in CI by default~~ → Added to `make test-all` ✅
+- ~~Not in CI by default~~ → Added to `make test` ✅
 
 **Priority Actions:** ✅ Core items completed
 1. ~~Add dimension limit boundary tests~~ ✅
@@ -256,7 +256,7 @@ graph LR
 
 | Check | Python | TypeScript | Rust |
 |-------|:------:|:----------:|:----:|
-| Unit Tests | Yes | Yes | Yes (via make test-all) |
+| Unit Tests | Yes | Yes | Yes (via make test) |
 | E2E Tests | - | Yes | - |
 | Coverage | Yes | Yes | No |
 | Type Check | Yes | Yes | Yes |
@@ -265,7 +265,7 @@ graph LR
 ### 6.2 Recommended CI Pipeline
 
 ```yaml
-test-all:
+test:
   steps:
     # Python
     - hatch run test-cov
@@ -274,7 +274,7 @@ test-all:
     - pnpm test --run
 
     # Rust
-    - make wasm-test
+    - make test-wasm
 
     # TypeScript E2E (on merge)
     - pnpm test:e2e
@@ -362,11 +362,11 @@ pnpm test:e2e               # E2E tests
 pnpm agent:debug            # Debug mode
 
 # Rust
-make wasm-test              # Rust tests
+make test-wasm              # Rust tests
 make wasm-build             # Build WASM
 
 # All
-make test-all               # Everything
+make test                   # Everything
 make check                  # Lint + Type + Test
 ```
 

@@ -30,10 +30,12 @@ pnpm format       # Format
 make dev-setup    # Complete development environment setup (auto-installs dependencies)
 make check-deps   # Check what dependencies are installed/missing
 make setup-rust   # Install Rust + wasm-pack for viewer builds
-make deep-clean-dev-setup  # Remove ALL dev tools to simulate fresh machine
+make clean-dev-setup  # Remove ALL dev tools to simulate fresh machine
 
 # Quality & Testing
-make test-all     # All tests (Python + TypeScript)
+make test         # All tests (Python + TypeScript + WASM)
+make test-python  # Python tests only
+make test-e2e     # Playwright E2E tests
 make check        # All quality checks
 make format-all   # Format everything
 
@@ -41,7 +43,7 @@ make format-all   # Format everything
 make viewer       # Start viewer dev server (port 5173)
 make viewer-build # Build viewer for production (requires Rust)
 make wasm-build   # Build WASM module only
-make wasm-test    # Run Rust unit tests
+make test-wasm    # Run Rust unit tests
 
 # Data & Examples
 make run-examples # Generate example datasets
@@ -91,7 +93,7 @@ source ~/.nvm/nvm.sh
 # or restart terminal
 
 # Full reset and reinstall
-make deep-clean-dev-setup
+make clean-dev-setup
 make dev-setup
 ```
 
@@ -171,7 +173,7 @@ with asection("Processing"):
 ### Strategy
 - **Minimum coverage**: 80%
 - **NEVER skip tests** - fix them or create proper mocks
-- **Run before committing**: `make test-all && make check`
+- **Run before committing**: `make test && make check`
 
 ### Python Tests
 ```bash
@@ -420,7 +422,7 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 ## Pre-commit Checklist
 
 ```bash
-make test-all                    # All tests pass
+make test                        # All tests pass
 make check                       # Linting, type checking
 pnpm run format                  # Format TypeScript (from luxar-viewer/)
 ```

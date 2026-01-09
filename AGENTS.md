@@ -10,9 +10,9 @@
 ## Build, Test, and Development Commands
 - `make dev-setup` sets up the full dev environment (Python + viewer tooling).
 - `make check` runs formatting, linting, type checks, and tests.
-- `make test` or `make test-cov` runs the Python suite (coverage is enforced).
+- `make test` runs all tests (Python + TypeScript + WASM); `make test-python` runs Python only.
 - `make viewer` starts the viewer dev server at `http://localhost:5173`.
-- `make viewer-test` runs TypeScript unit tests; `make test-all` runs Python + TS.
+- `make test-viewer` runs TypeScript unit tests; `make test-wasm` runs Rust tests.
 - For Python-only tasks, `hatch run test` / `hatch run test-cov` is the standard path.
 
 ## Coding Style & Naming Conventions
@@ -26,7 +26,7 @@
 - Python tests live under `packages/luxar/src/luxar/**/tests` and use pytest.
 - Viewer tests live under `packages/luxar-viewer/src/tests/unit` (Vitest) and `.../e2e` (Playwright).
 - Coverage target is 80%+; mark slow tests with `@pytest.mark.slow` and integration tests with `@pytest.mark.integration`.
-- Typical runs: `make test-cov`, `pnpm test --run`, `pnpm test:e2e` (from `packages/luxar-viewer/`).
+- Typical runs: `make test-cov-python`, `pnpm test --run`, `pnpm test:e2e` (from `packages/luxar-viewer/`).
 
 ## Commit & Pull Request Guidelines
 - Commit messages follow `<type>: <summary>` (examples seen: `fix: ...`, `refactor: ...`, `docs: ...`).

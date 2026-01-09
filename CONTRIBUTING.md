@@ -20,7 +20,7 @@ git checkout -b feature/amazing-feature
 
 # 5. Run quality checks (before committing)
 make check      # Runs all quality checks
-make test-cov   # Ensure tests pass with coverage
+make test-cov-python   # Ensure tests pass with coverage
 
 # 6. Commit (pre-commit hooks run automatically)
 git commit -m "Add amazing feature"
@@ -57,15 +57,15 @@ make check         # Run all quality checks
 
 ### Daily Development Workflow
 ```bash
-make format        # Format code before editing
+make format-all    # Format code before editing
 make check         # Run all quality checks
-make test-cov      # Run tests with coverage
+make test-cov-python   # Run tests with coverage
 ```
 
 ### Troubleshooting Setup Issues
 ```bash
 make check-deps              # See what's installed/missing
-make deep-clean-dev-setup    # Reset everything and start fresh
+make clean-dev-setup         # Reset everything and start fresh
 ```
 
 For detailed build system documentation, see [BUILD_SYSTEM_SPEC.md](docs/guides/developer/BUILD_SYSTEM_SPEC.md).
@@ -78,20 +78,26 @@ For detailed build system documentation, see [BUILD_SYSTEM_SPEC.md](docs/guides/
 | `make dev-setup` | Complete development environment setup (auto-installs dependencies) |
 | `make check-deps` | Check what dependencies are installed/missing |
 | `make setup-rust` | Install Rust + wasm-pack for viewer builds |
-| `make deep-clean-dev-setup` | Remove ALL dev tools (for testing fresh setup) |
+| `make clean-dev-setup` | Remove ALL dev tools (for testing fresh setup) |
 | **Quality** | |
-| `make format` | Format code with ruff |
+| `make format-python` | Format Python code with ruff |
+| `make format-typescript` | Format TypeScript code with prettier |
 | `make format-all` | Format all code (Python + TypeScript) |
-| `make lint` | Run ruff linting |
-| `make type-check` | Run mypy type checking |
+| `make lint-python` | Run ruff linting on Python |
+| `make lint-typescript` | Run ESLint on TypeScript |
+| `make type-check-python` | Run mypy type checking |
+| `make type-check-typescript` | Run TypeScript type checking |
 | `make security` | Run bandit security scan |
 | `make check` | Run all quality checks |
+| `make check-typescript` | Run all TypeScript checks |
 | **Testing** | |
-| `make test` | Run Python test suite |
-| `make test-all` | Run all tests (Python + TypeScript + Rust) |
-| `make test-cov` | Run tests with coverage report |
-| `make viewer-test` | Run TypeScript tests |
-| `make wasm-test` | Run Rust unit tests |
+| `make test` | Run all tests (Python + TypeScript + Rust) |
+| `make test-python` | Run Python tests only |
+| `make test-cov-python` | Run Python tests with coverage report |
+| `make test-cov-typescript` | Run TypeScript tests with coverage |
+| `make test-viewer` | Run TypeScript unit tests |
+| `make test-e2e` | Run Playwright E2E tests |
+| `make test-wasm` | Run Rust unit tests |
 | **Viewer** | |
 | `make viewer` | Start viewer development server |
 | `make viewer-build` | Build viewer for production (requires Rust) |
@@ -173,7 +179,7 @@ Maintainers review for:
 
 ### Before Submitting
 - ✅ `make check` passes without errors
-- ✅ `make test-cov` shows adequate coverage
+- ✅ `make test-cov-python` shows adequate coverage
 - ✅ All pre-commit hooks pass
 - ✅ Documentation updated for new features
 - ✅ Examples added for new functionality
@@ -196,7 +202,7 @@ Why is this change needed? What problem does it solve?
 - [ ] Documentation update
 
 ## Testing
-- [ ] Tests pass locally with `make test-cov`
+- [ ] Tests pass locally with `make test-cov-python`
 - [ ] New tests added for new functionality
 - [ ] Existing tests updated if needed
 
@@ -268,18 +274,19 @@ make pre-commit-run  # Run manually to see specific errors
 
 **Type checking errors:**
 ```bash
-make type-check     # Run mypy to see detailed type issues
+make type-check-python      # Run mypy to see detailed Python type issues
+make type-check-typescript  # Run tsc to see TypeScript type issues
 ```
 
 **Test failures:**
 ```bash
-make test-cov      # Run tests with detailed output and coverage
+make test-cov-python   # Run tests with detailed output and coverage
 pytest -v -s       # Verbose output with print statements
 ```
 
 **Code formatting issues:**
 ```bash
-make format        # Auto-fix most formatting problems
+make format-all    # Auto-fix most formatting problems
 ```
 
 **Clean development environment:**

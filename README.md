@@ -389,7 +389,7 @@ make check-deps    # Verify installation
 
 | Task | Command |
 |------|---------|
-| Run all tests | `make test-all` |
+| Run all tests | `make test` |
 | Quality checks | `make check` |
 | Format code | `make format-all` |
 | Start viewer | `make viewer` |
