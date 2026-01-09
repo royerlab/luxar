@@ -294,10 +294,10 @@ def validate_blending_mode(mode: Any) -> BlendingMode:
     Args:
         mode: Blending mode to validate. Valid modes are:
             - "normal": Standard alpha blending (semi-transparent)
-            - "additive": Legacy mode, maps to luminous internally
+            - "additive": Classic additive blending, ignores depth (renders on top)
             - "max": Maximum of source and destination (brightest wins)
             - "opaque": Solid rendering with depth write (closest wins)
-            - "luminous": Emissive additive blending (glow effect)
+            - "luminous": Same as additive visually, but respects depth occlusion
 
     Returns:
         Valid blending mode
