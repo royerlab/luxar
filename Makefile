@@ -4,14 +4,15 @@
 # This Makefile is designed to work on fresh Linux/macOS machines with minimal
 # pre-installed tools. Run 'make dev-setup' to automatically install all dependencies.
 #
-.PHONY: help install install-dev format format-all lint type-check security test test-python \
-        test-cov test-all test-fixtures clean clean-examples pre-commit-install pre-commit-run check dev-setup \
+.PHONY: help install install-dev format-python format-typescript format-all lint-python lint-typescript \
+        type-check-python type-check-typescript security test test-python \
+        test-cov-python test-cov-typescript test-fixtures test-wasm test-viewer test-viewer-fixtures test-e2e \
+        clean clean-examples clean-dev-setup pre-commit-install pre-commit-run check check-typescript dev-setup \
         check-docs check-docs-verbose docs-clean docs-build docs-serve \
         demo run-demos run-examples serve-examples serve-dataset viewer-install viewer viewer-build viewer-rebuild \
-        viewer-test viewer-test-fixtures viewer-test-cov viewer-lint viewer-typecheck viewer-format viewer-check \
-        setup-rust wasm-build wasm-test wasm-clean readme-images readme-videos \
+        setup-rust wasm-build wasm-clean readme-images readme-videos \
         stats env-show env-prune shell build publish-test publish \
-        check-deps install-node install-pnpm install-hatch deep-clean-dev-setup
+        check-deps install-node install-pnpm install-hatch
 
 # ============================================================================
 # OS Detection and Configuration
@@ -273,7 +274,7 @@ help:  ## Show this help message
 	@echo "  make check-deps     - Check what dependencies are installed/missing"
 	@echo ""
 	@echo "Common workflows:"
-	@echo "  make test-all       - Run all tests"
+	@echo "  make test           - Run all tests"
 	@echo "  make viewer         - Start the viewer dev server"
 	@echo "  luxar demo          - Generate demo + serve + open browser"
 	@echo "  make run-examples   - Generate all example datasets"
@@ -290,8 +291,15 @@ install-dev:  ## Install with development dependencies (legacy - use hatch inste
 	pip install -e ".[dev]"
 
 # Code formatting (using Hatch)
-format:  ## Format Python code with ruff
+format-python:  ## Format Python code with ruff
 	hatch run format
+
+format-typescript:  ## Format TypeScript code with prettier
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm run format
 
 format-all:  ## Format all code (Python and TypeScript)
 	@echo "🐍 Formatting Python code..."
@@ -304,26 +312,31 @@ format-all:  ## Format all code (Python and TypeScript)
 	cd packages/luxar-viewer && pnpm run format
 
 # Code quality checks (using Hatch)
-lint:  ## Run ruff linting
+lint-python:  ## Run ruff linting on Python code
 	hatch run python -m ruff check packages/luxar/src/luxar/
 
-type-check:  ## Run mypy type checking
+lint-typescript:  ## Run ESLint on TypeScript code
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm run lint
+
+type-check-python:  ## Run mypy type checking on Python code
 	hatch run mypy packages/luxar/src/luxar/
+
+type-check-typescript:  ## Run TypeScript type checking
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm run typecheck
 
 security:  ## Run bandit security checks
 	hatch run bandit -r packages/luxar/src/luxar/ -c pyproject.toml
 
 # Testing (using Hatch)
-test:  ## Run Python tests
-	hatch run test
-
-test-python:  ## Run Python tests (alias for test)
-	hatch run test
-
-test-cov:  ## Run Python tests with coverage report
-	hatch run test-cov
-
-test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtures)
+test:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtures)
 	@echo "🐍 Running Python tests..."
 	hatch run test
 	@echo ""
@@ -356,6 +369,12 @@ test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtur
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm test --run
+
+test-python:  ## Run Python tests only
+	hatch run test
+
+test-cov-python:  ## Run Python tests with coverage report
+	hatch run test-cov
 
 # Pre-commit
 pre-commit-install:  ## Install pre-commit hooks
@@ -440,7 +459,7 @@ clean-examples:  ## Clean up only generated example zarr files
 	fi
 	@echo "✅ Example zarr files cleaned!"
 
-deep-clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUTION)
+clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUTION)
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "⚠️  DEEP CLEAN - This will remove all development tools!"
@@ -1041,7 +1060,7 @@ setup-rust:  ## Install/update Rust and wasm-pack for WASM development
 	echo "   Cargo version: $$(cargo --version)"; \
 	echo "   wasm-pack version: $$(wasm-pack --version)"; \
 	echo ""; \
-	echo "💡 Run 'make wasm-test' to test the Rust code"; \
+	echo "💡 Run 'make test-wasm' to test the Rust code"; \
 	echo "💡 Run 'make wasm-build' to compile the WASM module"
 
 wasm-build:  ## Build the WASM module (requires Rust + wasm-pack)
@@ -1071,7 +1090,7 @@ wasm-build:  ## Build the WASM module (requires Rust + wasm-pack)
 	cd packages/luxar-viewer && pnpm build:wasm && \
 	echo "✅ WASM module built successfully!"
 
-wasm-test:  ## Run Rust unit tests for WASM module
+test-wasm:  ## Run Rust unit tests for WASM module
 	@# Source nvm and cargo env to ensure pnpm and cargo are in PATH
 	@export NVM_DIR="$$HOME/.nvm"; \
 	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
@@ -1108,49 +1127,35 @@ test-fixtures:  ## Generate test fixtures for TypeScript tests
 	@echo "🔬 Generating test fixtures..."
 	hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 
-viewer-test-fixtures: test-fixtures  ## Generate fixtures + run TypeScript tests
+test-viewer-fixtures: test-fixtures  ## Generate fixtures + run TypeScript tests
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm test --run
 
-viewer-test:  ## Run TypeScript tests (without regenerating fixtures)
+test-viewer:  ## Run TypeScript tests (without regenerating fixtures)
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm test --run
 
-viewer-test-cov:  ## Run TypeScript tests with coverage
+test-cov-typescript:  ## Run TypeScript tests with coverage
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm run test:coverage
 
-viewer-lint:  ## Run TypeScript linting
+test-e2e:  ## Run Playwright E2E tests
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-viewer && pnpm run lint
+	cd packages/luxar-viewer && pnpm test:e2e
 
-viewer-typecheck:  ## Run TypeScript type checking
-	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
-		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-viewer && pnpm install; \
-	fi
-	cd packages/luxar-viewer && pnpm run typecheck
-
-viewer-format:  ## Format TypeScript code
-	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
-		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-viewer && pnpm install; \
-	fi
-	cd packages/luxar-viewer && pnpm run format
-
-viewer-check:  ## Run all TypeScript checks (typecheck, lint, test)
+check-typescript:  ## Run all TypeScript checks (typecheck, lint, test)
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \

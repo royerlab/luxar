@@ -69,7 +69,7 @@ make check-deps
 
 # Start developing
 make viewer      # Start viewer dev server
-make test-all    # Run all tests
+make test        # Run all tests
 ```
 
 ## Development Setup Process
@@ -170,20 +170,25 @@ MIN_NODE_MINOR := 19
 | `make install-pnpm` | Install pnpm package manager |
 | `make install-hatch` | Install Hatch via pipx |
 | `make setup-rust` | Install Rust toolchain and wasm-pack |
-| `make deep-clean-dev-setup` | Remove ALL dev tools to simulate fresh machine |
+| `make clean-dev-setup` | Remove ALL dev tools to simulate fresh machine |
 
 ### Quality & Testing
 
 | Command | Description |
 |---------|-------------|
 | `make check` | Run all quality checks (Python + TypeScript) |
-| `make test` | Run Python tests |
-| `make test-all` | Run all tests (Python + Rust + TypeScript) |
-| `make test-cov` | Run Python tests with coverage |
-| `make lint` | Run ruff linting |
-| `make type-check` | Run mypy type checking |
+| `make check-typescript` | Run all TypeScript checks (typecheck, lint, test) |
+| `make test` | Run all tests (Python + Rust + TypeScript) |
+| `make test-python` | Run Python tests only |
+| `make test-cov-python` | Run Python tests with coverage |
+| `make test-e2e` | Run Playwright E2E tests |
+| `make lint-python` | Run ruff linting on Python |
+| `make lint-typescript` | Run ESLint on TypeScript |
+| `make type-check-python` | Run mypy type checking |
+| `make type-check-typescript` | Run TypeScript type checking |
 | `make security` | Run bandit security scan |
-| `make format` | Format Python code |
+| `make format-python` | Format Python code |
+| `make format-typescript` | Format TypeScript code |
 | `make format-all` | Format all code (Python + TypeScript) |
 
 ### Viewer Development
@@ -193,19 +198,15 @@ MIN_NODE_MINOR := 19
 | `make viewer` | Start viewer dev server (port 5173) |
 | `make viewer-build` | Build viewer for production (requires Rust) |
 | `make viewer-rebuild` | Clean rebuild of viewer |
-| `make viewer-test` | Run TypeScript unit tests |
-| `make viewer-test-cov` | Run TypeScript tests with coverage |
-| `make viewer-lint` | Run TypeScript linting |
-| `make viewer-typecheck` | Run TypeScript type checking |
-| `make viewer-format` | Format TypeScript code |
-| `make viewer-check` | Run all TypeScript checks |
+| `make test-viewer` | Run TypeScript unit tests |
+| `make test-cov-typescript` | Run TypeScript tests with coverage |
 
 ### WASM Development
 
 | Command | Description |
 |---------|-------------|
 | `make wasm-build` | Build WASM module |
-| `make wasm-test` | Run Rust unit tests |
+| `make test-wasm` | Run Rust unit tests |
 | `make wasm-clean` | Clean WASM build artifacts |
 
 ### Data & Demos
@@ -394,7 +395,7 @@ If something goes wrong, reset everything:
 
 ```bash
 # Remove all dev tools (interactive, confirms before proceeding)
-make deep-clean-dev-setup
+make clean-dev-setup
 
 # Then start fresh
 make dev-setup
@@ -429,7 +430,7 @@ For automated environments (GitHub Actions, etc.):
 - name: Run checks
   run: |
     make check
-    make test-all
+    make test
 ```
 
 **Note**: In CI environments, the shell doesn't reload between steps, so we explicitly add `~/.local/bin` to `$GITHUB_PATH` to ensure pipx-installed tools are available.
