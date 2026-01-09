@@ -485,7 +485,7 @@ make test-fixtures
 
 # Generate + run tests
 pnpm test:with-fixtures
-make viewer-test-fixtures
+make test-viewer-fixtures
 ```
 
 ### What Fixtures Test
@@ -566,9 +566,10 @@ open coverage/typescript/index.html
 
 ```bash
 # From repo root
-make viewer-test                # Unit tests only
-make viewer-test-fixtures       # Generate fixtures + run tests
-make test-all                   # Python + TypeScript tests
+make test-viewer                # Unit tests only
+make test-viewer-fixtures       # Generate fixtures + run tests
+make test-e2e                   # Playwright E2E tests
+make test                       # All tests (Python + TypeScript + WASM)
 ```
 
 ---

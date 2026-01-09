@@ -121,7 +121,7 @@ pnpm build:wasm:dev
 
 ```bash
 # From project root:
-make wasm-test
+make test-wasm
 
 # Or from luxar-viewer:
 pnpm test:wasm
@@ -328,7 +328,7 @@ The TypeScript fallback in `src/wasm/typescript/` provides full parity with Rust
 
 ```bash
 # From project root
-make wasm-test       # Run 39 Rust tests
+make test-wasm       # Run 39 Rust tests
 make wasm-build      # Build WASM module
 
 # From luxar-viewer

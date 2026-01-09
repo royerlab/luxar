@@ -91,7 +91,7 @@ strip = true
 # Rust native tests
 cargo test                           # Direct
 pnpm test:wasm                       # Via npm
-make wasm-test                       # Via make
+make test-wasm                       # Via make
 
 # TypeScript comparison tests
 pnpm test --run src/tests/unit/wasm/  # Vitest
@@ -245,7 +245,7 @@ if (!wasmFilesExist) {
 ```bash
 make setup-rust    # Install Rust + wasm-pack
 make wasm-build    # Compile WASM
-make wasm-test     # Run Rust tests
+make test-wasm     # Run Rust tests
 ```
 
 **npm Scripts:**
@@ -359,11 +359,11 @@ fn test_dimension_limit_validation() {
 
 **Build:**
 - `scripts/build-wasm.sh` - Build script
-- `Makefile` - wasm-test, wasm-build targets
+- `Makefile` - test-wasm, wasm-build targets
 
 **Commands:**
 ```bash
-make wasm-test         # Run Rust tests
+make test-wasm         # Run Rust tests
 make wasm-build        # Build WASM
 pnpm build:wasm        # Build via npm
 pnpm test:wasm         # Test via npm

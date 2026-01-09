@@ -504,7 +504,7 @@ Final report with:
 
 **Next Steps**:
 1. **Commit these changes** with detailed commit message
-2. **Run full test suite** to verify (make test-all)
+2. **Run full test suite** to verify (make test)
 3. **Review documentation** (TESTING_GUIDELINES.md, OVERMOCKING_ISSUES.md)
 4. **Plan UI test sprint** (2-day focused effort)
 5. **Begin Phase 1 over-mocking fixes** (1 test file per week)

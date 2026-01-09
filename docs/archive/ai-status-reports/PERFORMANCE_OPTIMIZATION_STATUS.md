@@ -129,7 +129,7 @@ dataLoading: {
 **Build Commands**:
 ```bash
 make setup-rust      # Install Rust + wasm-pack (one-time)
-make wasm-test       # Run Rust tests
+make test-wasm       # Run Rust tests
 make wasm-build      # Build WASM module
 ```
 
