@@ -50,10 +50,10 @@ describe('LineMaterial', () => {
       expect(material.uniforms.uOpacity.value).toBe(1.0);
 
       expect(material.transparent).toBe(true);
-      expect(material.depthWrite).toBe(false); // Luminous/additive blending default
+      expect(material.depthWrite).toBe(false); // Additive blending default
       expect(material.toneMapped).toBe(false);
-      // Additive mode now uses CustomBlending with OneFactor (luminous pre-multiplied)
-      expect(material.blending).toBe('CustomBlending');
+      // Default 'additive' mode uses classic THREE.AdditiveBlending (SrcAlpha, One)
+      expect(material.blending).toBe('AdditiveBlending');
       expect(material.side).toBe(2); // DoubleSide
     });
 
@@ -76,8 +76,8 @@ describe('LineMaterial', () => {
         blendingMode: 'additive',
       });
 
-      // Additive now uses CustomBlending with OneFactor (luminous pre-multiplied)
-      expect(material.blending).toBe('CustomBlending');
+      // 'additive' uses classic THREE.AdditiveBlending (SrcAlpha, One)
+      expect(material.blending).toBe('AdditiveBlending');
       expect(material.depthWrite).toBe(false);
     });
   });
@@ -220,45 +220,40 @@ describe('LineMaterial', () => {
     });
   });
 
-  describe('luminous mode', () => {
-    it('should have uLuminous uniform true by default (additive mode)', () => {
-      const material = new LineMaterial();
+  describe('blending mode depth test configuration', () => {
+    it('should have depthTest false for additive mode (ignores depth)', () => {
+      const material = new LineMaterial({ blendingMode: 'additive' });
 
-      expect(material.uniforms.uLuminous).toBeDefined();
-      expect(material.uniforms.uLuminous.value).toBe(true);
-      expect(material.userData.luminous).toBe(true);
+      // 'additive' ignores depth entirely (renders on top of everything)
+      expect(material.userData.depthTest).toBe(false);
+      expect(material.blending).toBe('AdditiveBlending');
     });
 
-    it('should set uLuminous false when blendingMode is normal', () => {
-      const material = new LineMaterial({ blendingMode: 'normal' });
-
-      expect(material.uniforms.uLuminous.value).toBe(false);
-      expect(material.userData.luminous).toBe(false);
-    });
-
-    it('should set uLuminous true when blendingMode is luminous', () => {
+    it('should have depthTest true for luminous mode (respects depth occlusion)', () => {
       const material = new LineMaterial({ blendingMode: 'luminous' });
 
-      expect(material.uniforms.uLuminous.value).toBe(true);
-      expect(material.userData.luminous).toBe(true);
-      expect(material.blending).toBe('CustomBlending');
+      // 'luminous' respects depth occlusion but uses same visual output as additive
+      expect(material.userData.depthTest).toBe(true);
+      expect(material.blending).toBe('AdditiveBlending'); // Same as additive
     });
 
-    it('should have luminous mode branching in fragment shader', () => {
+    it('should have depthTest true for normal mode', () => {
+      const material = new LineMaterial({ blendingMode: 'normal' });
+
+      expect(material.userData.depthTest).toBe(true);
+      expect(material.blending).toBe('NormalBlending');
+    });
+
+    it('should use simple alpha output in fragment shader', () => {
       const material = new LineMaterial();
 
-      // Check for uLuminous uniform declaration
-      expect(material.fragmentShader).toContain('uniform bool uLuminous');
+      // No uLuminous uniform - shader always uses same output pattern
+      expect(material.fragmentShader).not.toContain('uniform bool uLuminous');
+      expect(material.fragmentShader).not.toContain('if (uLuminous)');
 
-      // Check for luminous mode conditional
-      expect(material.fragmentShader).toContain('if (uLuminous)');
-
-      // Check for pre-multiplied RGB output in luminous mode (alpha=1.0)
-      expect(material.fragmentShader).toContain('fragColor = vec4(finalColor * intensity, 1.0)');
-
-      // Check for standard alpha output in non-luminous mode (with pre-multiplied color and opacity)
+      // Check for alpha output for AdditiveBlending (SrcAlpha, One)
       expect(material.fragmentShader).toContain(
-        'fragColor = vec4(finalColor * intensity, intensity * uOpacity)'
+        'fragColor = vec4(finalColor, intensity * uOpacity)'
       );
     });
 
@@ -268,7 +263,7 @@ describe('LineMaterial', () => {
       expect(material.transparent).toBe(false);
       expect(material.depthWrite).toBe(true);
       expect(material.blending).toBe('NormalBlending');
-      expect(material.uniforms.uLuminous.value).toBe(false);
+      expect(material.userData.depthTest).toBe(true);
     });
   });
 });
