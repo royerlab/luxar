@@ -17,14 +17,14 @@ import { config } from '../config';
  * Supported blending modes for materials.
  *
  * - 'normal': Standard alpha blending (semi-transparent)
- * - 'additive': Legacy mode, maps to luminous internally (backward compatible)
+ * - 'additive': Classic additive blending, ignores depth (renders on top of everything)
  * - 'max': Maximum of source and destination (brightest wins)
  * - 'opaque': Solid rendering with depth write (closest object wins)
- * - 'luminous': Emissive additive blending with pre-multiplied intensity (glow effect)
+ * - 'luminous': Same as additive visually, but respects depth occlusion (occluded by closer objects)
  *
- * Render order: Opaque objects render first (write depth), then luminous/additive
- * objects render second (read depth but don't write). This means luminous objects
- * are occluded by opaque objects but don't occlude each other.
+ * Depth behavior:
+ * - 'additive': depthTest=false, depthWrite=false (ignores depth entirely)
+ * - 'luminous': depthTest=true, depthWrite=false (respects occlusion, doesn't occlude others)
  */
 export type BlendingMode = 'normal' | 'additive' | 'max' | 'opaque' | 'luminous';
 
@@ -90,28 +90,22 @@ export class MaterialManager {
     }
 
     // Determine material properties based on mode
-    const isLuminous = this.isLuminousMode(props.blendingMode);
     const isOpaque = this.isOpaqueMode(props.blendingMode);
+    const isAdditive = props.blendingMode === 'additive';
 
     // Create new PointMaterial instance
     material = new PointMaterial({
       opacity: props.opacity,
       gamma: props.gamma,
       blending: this.getThreeBlending(props.blendingMode),
-      // Opaque: write depth, not transparent. Luminous/additive/max: no depth write, transparent
+      // Opaque: write depth. All others: no depth write
       depthWrite: isOpaque || (props.blendingMode === 'normal' && props.opacity >= 0.99),
+      // Additive ignores depth entirely (renders on top of everything)
+      depthTest: !isAdditive,
       transparent: !isOpaque,
-      luminous: isLuminous, // Signal to shader to pre-multiply intensity
       radiusScale: props.radiusScale,
       sharpnessScale: props.sharpnessScale,
     });
-
-    // Configure custom blending for luminous/additive mode (pre-multiplied intensity)
-    if (isLuminous) {
-      material.blendEquation = THREE.AddEquation;
-      material.blendSrc = THREE.OneFactor; // Output color IS the contribution
-      material.blendDst = THREE.OneFactor; // Add to framebuffer
-    }
 
     // Configure custom blending for max mode
     if (props.blendingMode === 'max') {
@@ -226,22 +220,17 @@ export class MaterialManager {
         return THREE.NormalBlending; // Solid rendering
       case 'normal':
         return THREE.NormalBlending; // Semi-transparent alpha blending
+      case 'additive':
       case 'luminous':
-      case 'additive': // Legacy alias for luminous
-        return THREE.CustomBlending; // Will use OneFactor, OneFactor for pre-multiplied
+        // Both use AdditiveBlending (SrcAlpha, One) - same visual output
+        // Difference is only in depthTest (additive=false, luminous=true)
+        return THREE.AdditiveBlending;
       case 'max':
         return THREE.CustomBlending; // Max blending uses CustomBlending with MaxEquation
       default:
         log.warning(Modules.RENDERER, `Unknown blending mode: ${mode}, using normal`);
         return THREE.NormalBlending;
     }
-  }
-
-  /**
-   * Check if a blending mode is luminous (additive glow effect)
-   */
-  private isLuminousMode(mode: BlendingMode): boolean {
-    return mode === 'luminous' || mode === 'additive';
   }
 
   /**

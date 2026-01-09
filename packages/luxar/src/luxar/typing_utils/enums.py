@@ -13,21 +13,24 @@ class BlendingMode(str, Enum):
     These control how overlapping elements combine their colors:
 
     - NORMAL: Standard alpha blending (semi-transparent)
-    - ADDITIVE: Legacy mode, maps to LUMINOUS internally (backward compatible)
+    - ADDITIVE: Classic additive blending, ignores depth (renders on top of everything)
     - MAX: Maximum of source and destination (brightest wins)
     - OPAQUE: Solid rendering with depth write (closest object wins)
-    - LUMINOUS: Emissive additive blending (glowing effect, no depth write)
+    - LUMINOUS: Same as additive visually, but respects depth occlusion
 
-    Render order: Opaque objects render first and write to depth buffer.
-    Luminous objects render second, are occluded by opaque objects (read depth),
-    but don't occlude each other (don't write depth).
+    Depth behavior:
+    - ADDITIVE: depthTest=false, depthWrite=false (ignores depth entirely)
+    - LUMINOUS: depthTest=true, depthWrite=false (respects occlusion, doesn't occlude others)
+    - OPAQUE: depthTest=true, depthWrite=true (solid rendering)
+    - NORMAL: depthTest=true, depthWrite=true when opacity >= 0.99
+    - MAX: depthTest=true, depthWrite=false
     """
 
     NORMAL = "normal"  # Standard alpha blending
-    ADDITIVE = "additive"  # Legacy: maps to luminous internally
+    ADDITIVE = "additive"  # Ignores depth entirely (renders on top of everything)
     MAX = "max"  # Maximum of source and destination (brightest wins)
     OPAQUE = "opaque"  # Solid rendering with depth write
-    LUMINOUS = "luminous"  # Emissive additive blending (glow effect)
+    LUMINOUS = "luminous"  # Same visual as additive, but respects depth occlusion
 
     @classmethod
     def validate(cls, value: str) -> "BlendingMode":

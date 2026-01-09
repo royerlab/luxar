@@ -137,8 +137,8 @@ describe('MaterialManager', () => {
         gamma: 1.0,
       });
 
-      // additive now uses CustomBlending with OneFactor (luminous mode)
-      expect(additive.blending).toBe(THREE.CustomBlending);
+      // additive uses classic THREE.AdditiveBlending (SrcAlpha, One)
+      expect(additive.blending).toBe(THREE.AdditiveBlending);
       expect(normal.blending).toBe(THREE.NormalBlending);
     });
 
@@ -481,19 +481,15 @@ describe('MaterialManager', () => {
       expect(material.blending).toBe(THREE.NormalBlending);
     });
 
-    it('should convert additive blending mode to custom blending (luminous)', () => {
+    it('should convert additive blending mode to THREE.AdditiveBlending', () => {
       const material = manager.getPointMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
       });
 
-      // additive now maps to luminous mode with pre-multiplied intensity
-      // Uses CustomBlending with OneFactor, OneFactor (src + dst)
-      expect(material.blending).toBe(THREE.CustomBlending);
-      expect(material.blendEquation).toBe(THREE.AddEquation);
-      expect(material.blendSrc).toBe(THREE.OneFactor);
-      expect(material.blendDst).toBe(THREE.OneFactor);
+      // additive uses classic THREE.AdditiveBlending (SrcAlpha, One)
+      expect(material.blending).toBe(THREE.AdditiveBlending);
     });
 
     it('should set depth write for opaque normal blending', () => {
@@ -549,50 +545,50 @@ describe('MaterialManager', () => {
       expect(material.transparent).toBe(false); // Not transparent
     });
 
-    it('should configure luminous blending mode with custom blending', () => {
+    it('should configure luminous blending mode with AdditiveBlending and depthTest', () => {
       const material = manager.getPointMaterial({
         blendingMode: 'luminous',
         opacity: 1.0,
         gamma: 1.0,
       });
 
-      // Luminous uses pre-multiplied intensity with OneFactor blending
-      expect(material.blending).toBe(THREE.CustomBlending);
-      expect(material.blendEquation).toBe(THREE.AddEquation);
-      expect(material.blendSrc).toBe(THREE.OneFactor);
-      expect(material.blendDst).toBe(THREE.OneFactor);
+      // Luminous uses same blending as additive (AdditiveBlending = SrcAlpha, One)
+      // Only difference is depthTest: luminous=true (respects depth), additive=false (ignores depth)
+      expect(material.blending).toBe(THREE.AdditiveBlending);
       expect(material.depthWrite).toBe(false); // Luminous doesn't write to depth
       expect(material.transparent).toBe(true); // Is transparent (for render order)
+      expect(material.userData.depthTest).toBe(true); // Respects depth occlusion
     });
 
-    it('should set uLuminous uniform for luminous mode', () => {
+    it('should have depthTest true for luminous mode (respects depth occlusion)', () => {
       const material = manager.getPointMaterial({
         blendingMode: 'luminous',
         opacity: 1.0,
         gamma: 1.0,
       });
 
-      expect(material.uniforms.uLuminous.value).toBe(true);
+      expect(material.userData.depthTest).toBe(true);
     });
 
-    it('should set uLuminous uniform for additive mode (backward compat)', () => {
+    it('should have depthTest false for additive mode (ignores depth entirely)', () => {
       const material = manager.getPointMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
       });
 
-      expect(material.uniforms.uLuminous.value).toBe(true);
+      // 'additive' ignores depth entirely (renders on top of everything)
+      expect(material.userData.depthTest).toBe(false);
     });
 
-    it('should not set uLuminous uniform for opaque mode', () => {
+    it('should have depthTest true for opaque mode', () => {
       const material = manager.getPointMaterial({
         blendingMode: 'opaque',
         opacity: 1.0,
         gamma: 1.0,
       });
 
-      expect(material.uniforms.uLuminous.value).toBe(false);
+      expect(material.userData.depthTest).toBe(true);
     });
   });
 

@@ -291,10 +291,10 @@ class Node:
         Args:
             value: Blending mode string. Valid modes:
                 - "normal": Standard alpha blending (semi-transparent)
-                - "additive": Legacy mode, maps to luminous internally
+                - "additive": Classic additive blending, ignores depth (renders on top)
                 - "max": Maximum of source and destination (brightest wins)
                 - "opaque": Solid rendering with depth write (closest wins)
-                - "luminous": Emissive additive blending (glow effect)
+                - "luminous": Same as additive visually, but respects depth occlusion
 
         Raises:
             ValueError: If blending mode is not valid
@@ -334,10 +334,10 @@ class Node:
         Args:
             value: Blending mode string. Valid modes:
                 - "normal": Standard alpha blending (semi-transparent)
-                - "additive": Legacy mode, maps to luminous internally
+                - "additive": Classic additive blending, ignores depth (renders on top)
                 - "max": Maximum of source and destination (brightest wins)
                 - "opaque": Solid rendering with depth write (closest wins)
-                - "luminous": Emissive additive blending (glow effect)
+                - "luminous": Same as additive visually, but respects depth occlusion
 
         Returns:
             Self for method chaining

@@ -277,44 +277,36 @@ describe('PointMaterial', () => {
     });
   });
 
-  describe('luminous mode', () => {
-    it('should have uLuminous uniform defaulting to false', () => {
+  describe('depth test configuration', () => {
+    it('should have depthTest true by default', () => {
       const material = new PointMaterial();
 
-      expect(material.uniforms.uLuminous).toBeDefined();
-      expect(material.uniforms.uLuminous.value).toBe(false);
-      expect(material.userData.luminous).toBe(false);
+      // Default depthTest is true
+      expect(material.userData.depthTest).toBe(true);
     });
 
-    it('should set uLuminous uniform when luminous config is true', () => {
-      const material = new PointMaterial({ luminous: true });
+    it('should allow disabling depthTest via config', () => {
+      const material = new PointMaterial({ depthTest: false });
 
-      expect(material.uniforms.uLuminous.value).toBe(true);
-      expect(material.userData.luminous).toBe(true);
+      expect(material.userData.depthTest).toBe(false);
     });
 
-    it('should have luminous mode branching in fragment shader', () => {
+    it('should use simple alpha output in fragment shader', () => {
       const material = new PointMaterial();
 
-      // Check for uLuminous uniform declaration
-      expect(material.fragmentShader).toContain('uniform bool uLuminous');
+      // No uLuminous uniform - shader always uses same output pattern
+      expect(material.fragmentShader).not.toContain('uniform bool uLuminous');
+      expect(material.fragmentShader).not.toContain('if (uLuminous)');
 
-      // Check for luminous mode conditional
-      expect(material.fragmentShader).toContain('if (uLuminous)');
-
-      // Check for pre-multiplied RGB output in luminous mode (alpha=1.0)
-      expect(material.fragmentShader).toContain('fragColor = vec4(finalColor * intensity, 1.0)');
-
-      // Check for standard alpha output in non-luminous mode
-      expect(material.fragmentShader).toContain('fragColor = vec4(finalColor, intensity)');
+      // Check for alpha output for AdditiveBlending (SrcAlpha, One)
+      expect(material.fragmentShader).toContain('fragColor = vec4(finalColor, alpha)');
     });
 
-    it('should preserve luminous setting when cloning', () => {
-      const original = new PointMaterial({ luminous: true });
+    it('should preserve depthTest setting when cloning', () => {
+      const original = new PointMaterial({ depthTest: false });
       const cloned = original.clone();
 
-      expect(cloned.uniforms.uLuminous.value).toBe(true);
-      expect(cloned.userData.luminous).toBe(true);
+      expect(cloned.userData.depthTest).toBe(false);
     });
 
     it('should respect transparent config for opaque mode', () => {

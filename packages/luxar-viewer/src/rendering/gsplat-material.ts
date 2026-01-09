@@ -47,8 +47,8 @@ export interface GSplatMaterialConfig {
   blendingMode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
   /** Whether material is transparent (default true) */
   transparent?: boolean;
-  /** Whether to use luminous mode (pre-multiply intensity, alpha=1.0) */
-  luminous?: boolean;
+  /** Whether to test against depth buffer (default true; additive sets false) */
+  depthTest?: boolean;
 }
 
 /**
@@ -69,8 +69,6 @@ export interface GSplatMaterialUniforms {
   uOpacity: { value: number };
   /** Projection mode: 0=sum (additive/normal), 1=max (max blending) */
   uProjectionMode: { value: number };
-  /** Luminous mode flag */
-  uLuminous: { value: boolean };
 }
 
 /**
@@ -317,7 +315,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
 
     uniform mediump float uOpacity;
     uniform mediump float uHDRMultiplier;
-    uniform bool uLuminous; // Luminous mode: pre-multiply intensity into RGB, alpha=1.0
 
     // GLSL ES 3.0 requires explicit fragment output declaration
     out vec4 fragColor;
@@ -356,18 +353,9 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         // Early discard for negligible contribution (raised threshold for performance)
         if (intensity < 1e-4) discard;
 
-        // HDR color output
-        vec3 finalColor = vColor * uHDRMultiplier;
-
-        if (uLuminous) {
-            // LUMINOUS MODE: Pre-multiply intensity into RGB, output alpha=1.0
-            // With OneFactor,OneFactor blending: result.rgb = src.rgb + dst.rgb
-            // Alpha=1.0 avoids overflow issues in HDR Float16 buffers
-            fragColor = vec4(finalColor * intensity, 1.0);
-        } else {
-            // NORMAL/OPAQUE MODE: Standard alpha output for alpha blending
-            fragColor = vec4(finalColor * intensity, intensity * uOpacity);
-        }
+        // HDR color output with alpha for AdditiveBlending (SrcAlpha, One)
+        vec3 finalColor = vColor * intensity * uHDRMultiplier;
+        fragColor = vec4(finalColor, intensity * uOpacity);
     }
   `;
 
@@ -378,18 +366,16 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
    */
   constructor(materialConfig: GSplatMaterialConfig = {}) {
     const blendingMode = materialConfig.blendingMode ?? 'additive';
-
-    // Determine if this is luminous or opaque mode
-    const isLuminous =
-      materialConfig.luminous ?? (blendingMode === 'luminous' || blendingMode === 'additive');
     const isOpaque = blendingMode === 'opaque';
+    const isAdditive = blendingMode === 'additive';
 
     // Determine THREE.js blending mode
+    // 'additive' and 'luminous' both use AdditiveBlending - only depthTest differs
     let blending: THREE.Blending;
     if (isOpaque || blendingMode === 'normal') {
       blending = THREE.NormalBlending;
-    } else if (isLuminous) {
-      blending = THREE.CustomBlending; // Will use OneFactor, OneFactor
+    } else if (blendingMode === 'additive' || blendingMode === 'luminous') {
+      blending = THREE.AdditiveBlending; // Classic additive: SrcAlpha, One
     } else if (blendingMode === 'max') {
       blending = THREE.CustomBlending;
     } else {
@@ -407,7 +393,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
         uProjectionMode: { value: blendingMode === 'max' ? 1 : 0 }, // 0=sum, 1=max
-        uLuminous: { value: isLuminous }, // Luminous mode flag
       },
 
       vertexShader: GSplatMaterial.VERTEX_SHADER,
@@ -419,17 +404,12 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
       transparent: materialConfig.transparent ?? !isOpaque,
       depthWrite:
         isOpaque || (blendingMode === 'normal' && (materialConfig.opacity ?? 1.0) >= 0.99),
+      // Additive ignores depth (renders on top), luminous respects depth occlusion
+      depthTest: materialConfig.depthTest ?? !isAdditive,
       toneMapped: false, // HDR values pass through to post-processing
       blending: blending,
       side: THREE.DoubleSide, // Splats visible from both sides
     });
-
-    // Configure custom blending for luminous/additive mode (pre-multiplied intensity)
-    if (isLuminous) {
-      this.blendEquation = THREE.AddEquation;
-      this.blendSrc = THREE.OneFactor; // Output color IS the contribution
-      this.blendDst = THREE.OneFactor; // Add to framebuffer
-    }
 
     // Configure custom blending for max mode
     if (blendingMode === 'max') {
@@ -438,9 +418,9 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
       this.blendDst = THREE.OneFactor;
     }
 
-    // Store luminous flag in userData for clone()
-    this.userData.luminous = isLuminous;
+    // Store blendingMode in userData for clone()
     this.userData.blendingMode = blendingMode;
+    this.userData.depthTest = materialConfig.depthTest ?? !isAdditive;
   }
 
   /**
@@ -494,10 +474,10 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
       truncationRadius: this.uniforms.uTruncate.value,
       blendingMode: this.userData.blendingMode ?? 'additive',
       transparent: this.transparent,
-      luminous: this.userData.luminous ?? false,
+      depthTest: this.userData.depthTest ?? true,
     });
 
-    // Copy blend equation settings for custom blending (max or luminous)
+    // Copy blend equation settings for custom blending (max mode)
     if (this.blending === THREE.CustomBlending) {
       cloned.blendEquation = this.blendEquation;
       cloned.blendSrc = this.blendSrc;
@@ -508,7 +488,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     cloned.uniforms.uFy.value = this.uniforms.uFy.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
-    cloned.uniforms.uLuminous.value = this.uniforms.uLuminous.value;
 
     return cloned as this;
   }

@@ -17,8 +17,8 @@ export interface PointMaterialConfig {
   gamma?: number;
   blending?: THREE.Blending;
   depthWrite?: boolean;
+  depthTest?: boolean; // Whether to test against depth buffer (default true)
   transparent?: boolean; // Whether material is transparent (default true)
-  luminous?: boolean; // Whether to use luminous mode (pre-multiply intensity into RGB, alpha=1.0)
   radiusScale?: number; // Scale factor for radius normalization (e.g., 1/255 for uint8)
   sharpnessScale?: number; // Scale factor for sharpness normalization (e.g., 1/255 for uint8)
 }
@@ -97,7 +97,6 @@ export class PointMaterial extends THREE.ShaderMaterial {
     uniform mediump float opacity;
     uniform mediump float baseAlpha;
     uniform mediump float invGamma; // Pre-computed 1/gamma for performance
-    uniform bool uLuminous; // Luminous mode: pre-multiply intensity into RGB, alpha=1.0
 
     in mediump vec3 vColor;
     in mediump float vSharpness;
@@ -133,19 +132,11 @@ export class PointMaterial extends THREE.ShaderMaterial {
       // Apply gamma correction using pre-computed inverse
       mediump vec3 finalColor = pow(hdrColor, vec3(invGamma));
 
-      // Calculate intensity (used as alpha or pre-multiplied into color)
-      mediump float intensity = baseAlpha * falloff * opacity;
+      // Calculate alpha (intensity) for additive blending
+      mediump float alpha = baseAlpha * falloff * opacity;
 
-      if (uLuminous) {
-        // LUMINOUS MODE: Pre-multiply intensity into RGB, output alpha=1.0
-        // With OneFactor,OneFactor blending: result.rgb = src.rgb + dst.rgb
-        // The color IS the contribution - alpha doesn't matter for RGB blending
-        // Alpha=1.0 avoids overflow issues in HDR Float16 buffers
-        fragColor = vec4(finalColor * intensity, 1.0);
-      } else {
-        // NORMAL/OPAQUE MODE: Standard alpha output for alpha blending
-        fragColor = vec4(finalColor, intensity);
-      }
+      // Output final color with alpha for AdditiveBlending (SrcAlpha, One)
+      fragColor = vec4(finalColor, alpha);
     }
   `;
 
@@ -166,7 +157,6 @@ export class PointMaterial extends THREE.ShaderMaterial {
         baseAlpha: { value: config.shader.points.baseAlpha },
         opacity: { value: materialConfig.opacity ?? 1.0 },
         invGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
-        uLuminous: { value: materialConfig.luminous ?? false }, // Luminous mode flag
 
         // OPTIMIZED camera uniforms - pre-computed for shader performance
         // pointSizeFactor = 2.0 * resolution.y / tan(fov/2)
@@ -189,13 +179,14 @@ export class PointMaterial extends THREE.ShaderMaterial {
       vertexColors: true, // Enable per-vertex colors
       transparent: materialConfig.transparent ?? true, // Enable transparency for blending (false for opaque)
       depthWrite: materialConfig.depthWrite ?? false, // Usually false for additive blending
+      depthTest: materialConfig.depthTest ?? true, // Default true; additive mode sets false
       toneMapped: false, // HDR values pass through to post-processing
       blending: materialConfig.blending ?? THREE.AdditiveBlending,
     });
 
-    // Store gamma and luminous in userData for clone() method
+    // Store gamma in userData for clone() method
     this.userData.gamma = gammaValue;
-    this.userData.luminous = materialConfig.luminous ?? false;
+    this.userData.depthTest = materialConfig.depthTest ?? true;
   }
 
   /**
@@ -261,11 +252,11 @@ export class PointMaterial extends THREE.ShaderMaterial {
       gamma: this.userData.gamma ?? 1.0, // gamma stored in userData, not uniforms
       blending: this.blending,
       depthWrite: this.depthWrite,
+      depthTest: this.userData.depthTest ?? true, // depthTest stored in userData
       transparent: this.transparent,
-      luminous: this.userData.luminous ?? false,
     });
 
-    // Copy blend equation settings for custom blending (max or luminous)
+    // Copy blend equation settings for custom blending (max mode)
     if (this.blending === THREE.CustomBlending) {
       cloned.blendEquation = this.blendEquation;
       cloned.blendSrc = this.blendSrc;
@@ -278,7 +269,6 @@ export class PointMaterial extends THREE.ShaderMaterial {
     cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;
-    cloned.uniforms.uLuminous.value = this.uniforms.uLuminous.value;
 
     return cloned as this;
   }
