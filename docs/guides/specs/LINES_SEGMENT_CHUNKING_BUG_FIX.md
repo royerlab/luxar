@@ -820,7 +820,7 @@ if slice_dims:
 - [ ] Add entry to CHANGELOG.md
 
 ### Phase 5: Validation
-- [ ] Run `make test`
+- [ ] Run `make test-all`
 - [ ] Generate large dataset, verify encoding logs show more chunks
 - [ ] Load in viewer, verify ~31K vertices per frame (not 294K)
 - [ ] Measure time scrubbing performance improvement

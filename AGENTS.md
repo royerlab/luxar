@@ -8,9 +8,9 @@
 - `scripts/`, `datasets/`, and `stats/` host utilities and supporting data.
 
 ## Build, Test, and Development Commands
-- `make dev-setup` sets up the full dev environment (Python + viewer tooling).
-- `make check` runs formatting, linting, type checks, and tests.
-- `make test` runs all tests (Python + TypeScript + WASM); `make test-python` runs Python only.
+- `make setup-dev` sets up the full dev environment (Python + viewer tooling).
+- `make check-all` runs formatting, linting, type checks, and tests.
+- `make test-all` runs all tests (Python + TypeScript + WASM); `make test-python` runs Python only.
 - `make viewer` starts the viewer dev server at `http://localhost:5173`.
 - `make test-viewer` runs TypeScript unit tests; `make test-wasm` runs Rust tests.
 - For Python-only tasks, `hatch run test` / `hatch run test-cov` is the standard path.

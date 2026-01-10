@@ -27,17 +27,18 @@ pnpm format       # Format
 ### Make Commands (from project root)
 ```bash
 # Development Setup
-make dev-setup    # Complete development environment setup (auto-installs dependencies)
+make setup-dev    # Complete development environment setup (auto-installs dependencies)
 make check-deps   # Check what dependencies are installed/missing
 make setup-rust   # Install Rust + wasm-pack for viewer builds
-make clean-dev-setup  # Remove ALL dev tools to simulate fresh machine
+make clean-setup  # Remove ALL dev tools to simulate fresh machine
 
 # Quality & Testing
-make test         # All tests (Python + TypeScript + WASM)
+make test-all     # All tests (Python + TypeScript + WASM)
 make test-python  # Python tests only
 make test-e2e     # Playwright E2E tests
-make check        # All quality checks
-make format-all   # Format everything
+make check-all    # All quality checks
+make check-rust   # Rust type/lint checks (cargo check + clippy)
+make format-all   # Format all code (Python, TypeScript, Rust, CUDA)
 
 # Viewer
 make viewer       # Start viewer dev server (port 5173)
@@ -58,7 +59,8 @@ make benchmark-cuda   # Run performance benchmarks
 make clean-cuda       # Clean CUDA build artifacts
 
 # Utilities
-make clean        # Clean artifacts
+make clean-all    # Clean all artifacts
+make clean-viewer # Clean viewer artifacts only
 make help         # Show all available commands
 ```
 
@@ -71,7 +73,7 @@ The build system is designed to work on **fresh Linux/macOS machines** with mini
 - Git and curl
 - **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
 
-**What `make dev-setup` installs (no sudo needed):**
+**What `make setup-dev` installs (no sudo needed):**
 - **Node.js 22+**: via nvm (Linux) or Homebrew (macOS)
 - **pnpm**: TypeScript package manager
 - **Hatch**: Python environment manager (via pipx)
@@ -103,8 +105,8 @@ source ~/.nvm/nvm.sh
 # or restart terminal
 
 # Full reset and reinstall
-make clean-dev-setup
-make dev-setup
+make clean-setup
+make setup-dev
 ```
 
 See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
@@ -183,7 +185,7 @@ with asection("Processing"):
 ### Strategy
 - **Minimum coverage**: 80%
 - **NEVER skip tests** - fix them or create proper mocks
-- **Run before committing**: `make test && make check`
+- **Run before committing**: `make test-all && make check-all`
 
 ### Python Tests
 ```bash
@@ -432,8 +434,8 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 ## Pre-commit Checklist
 
 ```bash
-make test                        # All tests pass
-make check                       # Linting, type checking
+make test-all                    # All tests pass
+make check-all                   # Linting, type checking
 pnpm run format                  # Format TypeScript (from luxar-viewer/)
 ```
 

@@ -54,7 +54,7 @@ Scientific visualization is often software-limited. Luxar changes this by separa
 ```bash
 git clone https://github.com/royerlab/luxar.git
 cd luxar
-make dev-setup  # Auto-installs Node.js, pnpm, Hatch (no sudo)
+make setup-dev  # Auto-installs Node.js, pnpm, Hatch (no sudo)
 luxar demo      # Generates demo + opens browser with visualization
 ```
 
@@ -381,7 +381,7 @@ See [Zarr Format Specification](docs/guides/user/LUXAR_ZARR_FORMAT.md) for compl
 ### Setup
 
 ```bash
-make dev-setup     # Complete environment (Node.js, pnpm, Hatch)
+make setup-dev     # Complete environment (Node.js, pnpm, Hatch)
 make check-deps    # Verify installation
 ```
 
@@ -389,9 +389,10 @@ make check-deps    # Verify installation
 
 | Task | Command |
 |------|---------|
-| Run all tests | `make test` |
-| Quality checks | `make check` |
-| Format code | `make format-all` |
+| Run all tests | `make test-all` |
+| Quality checks | `make check-all` |
+| Format all code | `make format-all` |
+| Clean all artifacts | `make clean-all` |
 | Start viewer | `make viewer` |
 | Build viewer | `make build-viewer` |
 | Run examples | `make run-examples` |
@@ -493,7 +494,7 @@ luxar profiles                          # List network simulation profiles
 
 **ImportError: No module named 'luxar'**
 ```bash
-make dev-setup    # Set up environment
+make setup-dev    # Set up environment
 # Or: hatch shell  # Activate environment
 ```
 
