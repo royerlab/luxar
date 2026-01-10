@@ -3,9 +3,9 @@
 Human mitosis image Gaussian splatting demo with EXPLICIT seed initialization.
 
 This demo showcases the new seeding API where seeds are generated explicitly
-using `seed_from_decomposition()` or `seed_from_gaussian()`, which return
-GSplatData with scale-informed Gaussian shapes. The seeds are then passed
-to `fit_gaussian_splats()` for optimization.
+using `seed_from_decomposition()`, `seed_from_grid()`, or `seed_from_edges()`,
+which return GSplatData with scale-informed Gaussian shapes. The seeds are then
+passed to `fit_gaussian_splats()` for optimization.
 
 Key difference from demo_splats_mitosis.py:
 - Seeds are generated EXPLICITLY using the new API
@@ -27,14 +27,15 @@ from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_num
 from luxar.gsplats.seeds import (
     generate_seeds,
     seed_from_decomposition,
-    seed_from_gaussian,
+    seed_from_edges,
+    seed_from_grid,
 )
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI:
-    aprint("🔬 Human Mitosis Demo with Explicit Seeding (napari disabled)")
+    aprint("Human Mitosis Demo with Explicit Seeding (napari disabled)")
     aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
@@ -42,7 +43,7 @@ N_ITERS = 2000  # Number of optimization iterations
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 40  # number of compression steps (<= #splats)
 TRUNCATE_SIG = 3.0  # rendering support truncation (approx +-3 sigma)
-SEED_METHOD = "decomposition"  # "gaussian", "decomposition", "both", or "moments"
+SEED_METHOD = "decomposition"  # "grid", "decomposition", "edges", or "auto"
 # ==========================
 
 # Setup Arbol
@@ -68,7 +69,7 @@ def ellipse_polygon_from_L(
 
 
 with asection("Human Mitosis Demo with Explicit Seeding"):
-    aprint("🔬 Demonstrating the new explicit seeding API")
+    aprint("Demonstrating the new explicit seeding API")
 
     with asection("Loading and preprocessing data"):
         # Load human_mitosis and prepare a soft grayscale target
@@ -86,15 +87,14 @@ with asection("Human Mitosis Demo with Explicit Seeding"):
     # ========== NEW: Explicit seed generation ==========
     with asection(f"Generating seeds using '{SEED_METHOD}' method"):
         # The new API returns GSplatData with scale-informed shapes!
-        if SEED_METHOD == "gaussian":
-            # Multiscale Gaussian blob detection
-            seeds = seed_from_gaussian(
+        if SEED_METHOD == "grid":
+            # Uniform grid seeding for baseline coverage
+            seeds = seed_from_grid(
                 V,
-                scales=(1.0, 2.0, 4.0, 8.0, 16.0),
-                percentile_thresh=75.0,
-                min_distance=2.0,
+                spacing=8.0,
+                sigma=4.0,
             )
-            aprint("Used seed_from_gaussian() - fast multiscale detection")
+            aprint("Used seed_from_grid() - uniform spatial coverage")
 
         elif SEED_METHOD == "decomposition":
             # Scale-hierarchical decomposition (most principled)
@@ -107,29 +107,24 @@ with asection("Human Mitosis Demo with Explicit Seeding"):
             )
             aprint("Used seed_from_decomposition() - principled scale separation")
 
-        elif SEED_METHOD == "both":
-            # Combined approach (decomposition + gaussian)
+        elif SEED_METHOD == "edges":
+            # Edge-based seeding with anisotropic shapes
+            seeds = seed_from_edges(
+                V,
+                min_distance=2.0,
+                edge_threshold_rel=0.1,
+                structure_radius=3.0,
+            )
+            aprint("Used seed_from_edges() - anisotropic edge detection")
+
+        elif SEED_METHOD == "auto":
+            # Combined approach (decomposition + edges + grid)
             seeds = generate_seeds(
                 V,
-                method="both",
-                scales=[1, 2, 4, 8, 16],
-                percentile_thresh=75.0,
+                method="auto",
                 min_distance=2.0,
             )
-            aprint("Used generate_seeds(method='both') - hybrid approach")
-
-        elif SEED_METHOD == "moments":
-            # Full covariance estimation (for anisotropic features)
-            from luxar.gsplats.seeds import seed_from_moments
-
-            seeds = seed_from_moments(
-                V,
-                scales=(1, 2, 4, 8),
-                peak_threshold_rel=0.1,  # Relative threshold (0-1)
-                nms_radius_vox=2.0,
-                skip_finest_scales=1,  # Skip finest scale (noise)
-            )
-            aprint("Used seed_from_moments() - full covariance estimation")
+            aprint("Used generate_seeds(method='auto') - principled combination")
 
         else:
             raise ValueError(f"Unknown seed method: {SEED_METHOD}")
@@ -332,4 +327,4 @@ if not NO_NAPARI:
     )
     napari.run()
 else:
-    aprint("\n✅ Demo completed successfully (napari visualization disabled)")
+    aprint("\nDemo completed successfully (napari visualization disabled)")

@@ -301,13 +301,13 @@ def combine_seeds(
     Examples
     --------
     >>> from luxar.gsplats.seeds import (
-    ...     seed_from_gaussian,
+    ...     seed_from_grid,
     ...     seed_from_decomposition,
     ... )
     >>> from luxar.gsplats.seeds.utils import combine_seeds
     >>>
     >>> # Generate seeds from both methods (returns GSplatData)
-    >>> result1 = seed_from_gaussian(image)
+    >>> result1 = seed_from_grid(image, spacing=5.0)
     >>> result2 = seed_from_decomposition(image, scales=[1, 2, 4, 8])
     >>>
     >>> # Combine centers with deduplication

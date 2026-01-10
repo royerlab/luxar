@@ -12,7 +12,6 @@ from luxar.gsplats.seeds import (
     dedupe_farthest_first,
     local_maxima,
     seed_from_decomposition,
-    seed_from_gaussian,
 )
 
 HAS_SCIPY = importlib.util.find_spec("scipy") is not None
@@ -43,31 +42,6 @@ def validate_gsplatdata(result: GSplatData, expected_ndim: int) -> None:
 
 class TestInputValidation:
     """Test input validation for all functions."""
-
-    def test_seed_from_gaussian_validation(self) -> None:
-        """Test input validation in seed_from_gaussian."""
-        V = np.random.randn(10, 10)
-
-        with pytest.raises(ValueError, match="cannot be empty"):
-            seed_from_gaussian(np.array([]))
-
-        with pytest.raises(ValueError, match="at least 1 dimension"):
-            seed_from_gaussian(5.0)
-
-        with pytest.raises(ValueError, match="non-empty sequence"):
-            seed_from_gaussian(V, scales=[])
-
-        with pytest.raises(ValueError, match="positive"):
-            seed_from_gaussian(V, scales=[0.5, -1.0, 2.0])
-
-        with pytest.raises(ValueError, match="peaks_per_scale must be positive"):
-            seed_from_gaussian(V, peaks_per_scale=0)
-
-        with pytest.raises(ValueError, match="between 0 and 100"):
-            seed_from_gaussian(V, percentile_thresh=150.0)
-
-        with pytest.raises(ValueError, match="min_distance must be positive"):
-            seed_from_gaussian(V, min_distance=-1.0)
 
     def test_local_maxima_edge_cases(self) -> None:
         """Test edge cases for local_maxima."""

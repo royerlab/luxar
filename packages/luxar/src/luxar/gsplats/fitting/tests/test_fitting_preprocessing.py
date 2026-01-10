@@ -25,7 +25,7 @@ if HAS_TORCH:
 def mock_config_2d():
     """Create a mock 2D configuration for testing."""
     V = np.random.rand(32, 32).astype(np.float32)
-    centers = np.random.rand(10, 2).astype(np.float32)
+    centers = np.random.rand(10, 2).astype(np.float32) * 32  # Scale to image size
 
     return FitConfig(
         V=V,
@@ -56,6 +56,8 @@ def mock_config_2d():
         movie_max_frames=100,
         device=torch.device("cpu"),
         verbose=False,
+        seed_method="auto",  # Use new default
+        seed_kwargs={},
     )
 
 
@@ -161,8 +163,8 @@ class TestPreprocessData:
 
         mock_config_2d.V = V
         mock_config_2d.seeds = 5  # Request exactly 5 seeds
-        mock_config_2d.seed_method = "gaussian"
-        mock_config_2d.seed_kwargs = {"scales": [2.0, 4.0], "percentile_thresh": 75}
+        mock_config_2d.seed_method = "grid"  # Use grid method
+        mock_config_2d.seed_kwargs = {"spacing": 8.0}
 
         result = preprocess_data(mock_config_2d)
 
@@ -182,13 +184,9 @@ class TestPreprocessData:
             V += 50 * np.exp(-r2 / (2 * 2**2))
 
         mock_config_2d.V = V
-        mock_config_2d.seeds = 8  # Request 8 seeds (should subsample from ~16)
-        mock_config_2d.seed_method = "gaussian"
-        mock_config_2d.seed_kwargs = {
-            "scales": [2.0, 4.0],
-            "percentile_thresh": 60,
-            "apply_clahe": False,
-        }
+        mock_config_2d.seeds = 8  # Request 8 seeds (should subsample from many)
+        mock_config_2d.seed_method = "grid"  # Use grid method
+        mock_config_2d.seed_kwargs = {"spacing": 5.0}  # Dense grid
 
         result = preprocess_data(mock_config_2d)
 
@@ -205,8 +203,8 @@ class TestPreprocessData:
     def test_seeds_as_float_proportion(self, mock_config_2d) -> None:
         """Test seeds parameter as float proportion."""
         mock_config_2d.seeds = 0.01  # 1% of voxels
-        mock_config_2d.seed_method = "gaussian"
-        mock_config_2d.seed_kwargs = {"scales": [2.0, 4.0]}
+        mock_config_2d.seed_method = "grid"  # Use grid method
+        mock_config_2d.seed_kwargs = {"spacing": 8.0}
 
         result = preprocess_data(mock_config_2d)
 
@@ -256,8 +254,8 @@ class TestPreprocessData:
 
         mock_config_2d.V = V
         mock_config_2d.seeds = target_count  # Will trigger subsampling
-        mock_config_2d.seed_method = "gaussian"
-        mock_config_2d.seed_kwargs = {"scales": [2.0], "percentile_thresh": 50}
+        mock_config_2d.seed_method = "grid"  # Use grid method
+        mock_config_2d.seed_kwargs = {"spacing": 5.0}  # Dense grid
 
         result = preprocess_data(mock_config_2d)
 
@@ -296,8 +294,8 @@ class TestPreprocessData:
 
         mock_config_2d.V = V
         mock_config_2d.seeds = 10  # Request more seeds than detectable peaks
-        mock_config_2d.seed_method = "gaussian"
-        mock_config_2d.seed_kwargs = {"scales": [3.0], "percentile_thresh": 90}
+        mock_config_2d.seed_method = "decomposition"  # Use decomposition method
+        mock_config_2d.seed_kwargs = {"scales": [2, 4], "percentile_thresh": 95}
 
         # Set init arrays - these should be cleared when more seeds are generated
         mock_config_2d.init_L = np.eye(2, dtype=np.float32)[None, :, :].repeat(
