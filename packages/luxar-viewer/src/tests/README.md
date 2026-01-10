@@ -569,7 +569,7 @@ open coverage/typescript/index.html
 make test-viewer                # Unit tests only
 make test-viewer-fixtures       # Generate fixtures + run tests
 make test-e2e                   # Playwright E2E tests
-make test                       # All tests (Python + TypeScript + WASM)
+make test-all                   # All tests (Python + TypeScript + WASM)
 ```
 
 ---

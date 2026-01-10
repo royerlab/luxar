@@ -8,7 +8,7 @@ Luxar uses a Makefile-based build system designed to work on fresh Linux and mac
 
 ### Design Goals
 
-1. **Zero-friction setup**: Run `make dev-setup` on a fresh machine
+1. **Zero-friction setup**: Run `make setup-dev` on a fresh machine
 2. **No sudo required**: Use nvm for Node.js, pipx for Python tools
 3. **Cross-platform**: Support Linux (apt, dnf, yum) and macOS (brew)
 4. **Graceful degradation**: Clear error messages with copy-paste solutions
@@ -18,7 +18,7 @@ Luxar uses a Makefile-based build system designed to work on fresh Linux and mac
 
 ### Minimal Requirements
 
-Before running `make dev-setup`, you need:
+Before running `make setup-dev`, you need:
 
 | Tool | Required Version | Notes |
 |------|-----------------|-------|
@@ -62,19 +62,19 @@ git clone https://github.com/royerlab/luxar.git
 cd luxar
 
 # Complete setup (auto-installs all dependencies)
-make dev-setup
+make setup-dev
 
 # Verify installation
 make check-deps
 
 # Start developing
 make viewer      # Start viewer dev server
-make test        # Run all tests
+make test-all    # Run all tests
 ```
 
 ## Development Setup Process
 
-### What `make dev-setup` Does
+### What `make setup-dev` Does
 
 The setup process has 5 steps:
 
@@ -164,21 +164,21 @@ MIN_NODE_MINOR := 19
 
 | Command | Description |
 |---------|-------------|
-| `make dev-setup` | Complete development environment setup |
+| `make setup-dev` | Complete development environment setup |
 | `make check-deps` | Check all dependencies and their versions |
 | `make install-node` | Install/upgrade Node.js via nvm (Linux) or brew (macOS) |
 | `make install-pnpm` | Install pnpm package manager |
 | `make install-hatch` | Install Hatch via pipx |
 | `make setup-rust` | Install Rust toolchain and wasm-pack |
-| `make clean-dev-setup` | Remove ALL dev tools to simulate fresh machine |
+| `make clean-setup` | Remove ALL dev tools to simulate fresh machine |
 
 ### Quality & Testing
 
 | Command | Description |
 |---------|-------------|
-| `make check` | Run all quality checks (Python + TypeScript) |
+| `make check-all` | Run all quality checks (Python + TypeScript) |
 | `make check-typescript` | Run all TypeScript checks (typecheck, lint, test) |
-| `make test` | Run all tests (Python + Rust + TypeScript) |
+| `make test-all` | Run all tests (Python + Rust + TypeScript) |
 | `make test-python` | Run Python tests only |
 | `make test-cov-python` | Run Python tests with coverage |
 | `make test-e2e` | Run Playwright E2E tests |
@@ -233,7 +233,7 @@ MIN_NODE_MINOR := 19
 | Command | Description |
 |---------|-------------|
 | `make help` | Show all available commands |
-| `make clean` | Clean temporary files and caches |
+| `make clean-all` | Clean all artifacts (Python, TypeScript, WASM, CUDA, datasets) |
 | `make clean-examples` | Clean generated example datasets |
 | `make stats` | Generate project statistics report |
 | `make shell` | Enter Hatch development shell |
@@ -317,7 +317,7 @@ pipx ensurepath
 source ~/.bashrc
 
 # Then retry
-make dev-setup
+make setup-dev
 ```
 
 #### "Node.js not found" or "version too old"
@@ -395,10 +395,10 @@ If something goes wrong, reset everything:
 
 ```bash
 # Remove all dev tools (interactive, confirms before proceeding)
-make clean-dev-setup
+make clean-setup
 
 # Then start fresh
-make dev-setup
+make setup-dev
 ```
 
 ## Environment Variables
@@ -425,12 +425,12 @@ For automated environments (GitHub Actions, etc.):
     echo "$HOME/.local/bin" >> $GITHUB_PATH
 
 - name: Setup development environment
-  run: make dev-setup
+  run: make setup-dev
 
 - name: Run checks
   run: |
-    make check
-    make test
+    make check-all
+    make test-all
 ```
 
 **Note**: In CI environments, the shell doesn't reload between steps, so we explicitly add `~/.local/bin` to `$GITHUB_PATH` to ensure pipx-installed tools are available.
