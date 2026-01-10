@@ -7,7 +7,7 @@
 .PHONY: help install-python format-python format-typescript format-rust format-cuda format-all \
         lint-python lint-typescript type-check-python type-check-typescript security \
         test-all test-python test-cov-python test-cov-typescript test-fixtures test-wasm test-viewer test-viewer-fixtures test-e2e \
-        clean-all clean-viewer clean-examples clean-setup install-pre-commit run-pre-commit \
+        clean-all clean-python clean-viewer clean-examples clean-setup install-pre-commit run-pre-commit \
         check-all check-typescript check-rust check-wasm-deps setup-dev \
         check-docs check-docs-verbose clean-docs build-docs serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer viewer build-viewer rebuild-viewer \
@@ -293,14 +293,16 @@ help:  ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Quick start (for a fresh machine):"
-	@echo "  make dev-setup      - Set up development environment (auto-installs dependencies)"
+	@echo "  make setup-dev      - Set up development environment (auto-installs dependencies)"
 	@echo "  make check-deps     - Check what dependencies are installed/missing"
 	@echo ""
 	@echo "Common workflows:"
-	@echo "  make test           - Run all tests"
+	@echo "  make test-all       - Run all tests"
+	@echo "  make check-all      - Run all quality checks"
+	@echo "  make clean-all      - Clean all artifacts"
+	@echo "  make format-all     - Format all code"
 	@echo "  make viewer         - Start the viewer dev server"
 	@echo "  luxar demo          - Generate demo + serve + open browser"
-	@echo "  make run-examples   - Generate all example datasets"
 	@echo ""
 	@echo "Optional accelerators:"
 	@echo "  make setup-rust     - Install Rust/WASM for viewer builds"
@@ -324,15 +326,41 @@ format-typescript:  ## Format TypeScript code with prettier
 	fi
 	cd packages/luxar-viewer && pnpm run format
 
-format-all:  ## Format all code (Python and TypeScript)
-	@echo "🐍 Formatting Python code..."
-	hatch run format
-	@echo "📘 Formatting TypeScript code..."
-	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
-		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-viewer && pnpm install; \
+format-rust:  ## Format Rust code with cargo fmt
+	@if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if ! command -v cargo >/dev/null 2>&1; then \
+		echo "⚠️  cargo not found - skipping Rust formatting"; \
+		echo "   Run 'make setup-rust' to install Rust"; \
+	else \
+		echo "🦀 Formatting Rust code..."; \
+		cd packages/luxar-viewer/src/wasm/rust && cargo fmt; \
+		echo "✅ Rust code formatted"; \
 	fi
-	cd packages/luxar-viewer && pnpm run format
+
+format-cuda:  ## Format CUDA/C++ code with clang-format (skips if not installed)
+	@if ! command -v clang-format >/dev/null 2>&1; then \
+		echo "⚠️  clang-format not found - skipping CUDA formatting"; \
+		echo "   Install with:"; \
+		echo "     Ubuntu/Debian: sudo apt install clang-format"; \
+		echo "     macOS: brew install clang-format"; \
+	else \
+		echo "🔧 Formatting CUDA/C++ code..."; \
+		find $(CUDA_EXT_DIR) \( -name "*.cu" -o -name "*.cuh" -o -name "*.cpp" -o -name "*.hpp" \) -exec clang-format -i {} +; \
+		echo "✅ CUDA/C++ code formatted"; \
+	fi
+
+format-all:  ## Format all code (Python, TypeScript, Rust, CUDA)
+	@echo "🐍 Formatting Python code..."
+	$(MAKE) format-python
+	@echo ""
+	@echo "📘 Formatting TypeScript code..."
+	$(MAKE) format-typescript
+	@echo ""
+	$(MAKE) format-rust
+	@echo ""
+	$(MAKE) format-cuda
 
 # Code quality checks (using Hatch)
 lint-python:  ## Run ruff linting on Python code
@@ -445,8 +473,19 @@ clean-docs:  ## Clean built documentation
 	@echo "✅ Documentation artifacts cleaned"
 
 # Clean up
-clean:  ## Clean up temporary files and caches
-	@echo "🧹 Cleaning Python artifacts..."
+clean-all:  ## Clean all artifacts (Python, TypeScript, WASM, CUDA, datasets)
+	@echo "🧹 Cleaning all artifacts..."
+	@echo ""
+	$(MAKE) clean-python
+	$(MAKE) clean-viewer
+	$(MAKE) clean-wasm
+	$(MAKE) clean-cuda
+	$(MAKE) clean-examples
+	@echo ""
+	@echo "✅ Clean complete!"
+
+clean-python:  ## Clean Python build artifacts and caches
+	@echo "🐍 Cleaning Python artifacts..."
 	find . -type f -name "*.pyc" -delete
 	find . -type d -name "__pycache__" -delete
 	find . -type d -name "*.egg-info" -exec rm -rf {} +
@@ -457,32 +496,24 @@ clean:  ## Clean up temporary files and caches
 	rm -rf dist/
 	rm -rf coverage/
 	rm -rf .coverage*
-	@echo "🧹 Cleaning TypeScript/Node.js artifacts..."
+
+clean-viewer:  ## Clean viewer build artifacts (node_modules, dist, etc.)
+	@echo "📘 Cleaning TypeScript/Node.js artifacts..."
 	rm -rf packages/luxar-viewer/dist/
 	rm -rf packages/luxar-viewer/node_modules/
 	rm -rf packages/luxar-viewer/.vite/
 	rm -rf packages/luxar-viewer/.parcel-cache/
 	rm -f packages/luxar-viewer/*.tsbuildinfo
 	rm -f packages/luxar-viewer/vite.config.*.timestamp-*
+
+clean-examples:  ## Clean up generated datasets (examples, demos, zarr files)
 	@echo "🧹 Cleaning generated datasets..."
 	rm -rf datasets/
 	rm -rf *.zarr
 	rm -rf zarr_scenes/  # Remove deprecated directory
-	@echo "✅ Clean complete!"
+	@echo "✅ Datasets cleaned!"
 
-clean-examples:  ## Clean up only generated example zarr files
-	@echo "🧹 Cleaning generated datasets..."
-	@if [ -d "datasets/examples" ]; then \
-		for zarr in datasets/examples/*.zarr; do \
-			if [ -d "$$zarr" ]; then \
-				echo "   Removing $$zarr..."; \
-				rm -rf "$$zarr"; \
-			fi; \
-		done; \
-	fi
-	@echo "✅ Example zarr files cleaned!"
-
-clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUTION)
+clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUTION)
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "⚠️  DEEP CLEAN - This will remove all development tools!"
@@ -602,11 +633,11 @@ clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH 
 	@echo ""
 	@echo "Next steps:"
 	@echo "  1. Run 'make check-deps' to verify the cleanup"
-	@echo "  2. Run 'make dev-setup' to reinstall everything"
+	@echo "  2. Run 'make setup-dev' to reinstall everything"
 	@echo ""
 
 # Development setup
-dev-setup:  ## Complete development setup (auto-installs missing dependencies)
+setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	@echo "🚀 Setting up development environment..."
 	@echo ""
 	@echo "System: $(OS) (package manager: $(PKG_MANAGER))"
@@ -651,7 +682,7 @@ dev-setup:  ## Complete development setup (auto-installs missing dependencies)
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 		echo "⚠️  pipx not found (required for installing Hatch on modern Ubuntu/Debian)"; \
 		echo ""; \
-		echo "Please install pipx first, then re-run 'make dev-setup':"; \
+		echo "Please install pipx first, then re-run 'make setup-dev':"; \
 		echo ""; \
 		if [ "$(PKG_MANAGER)" = "apt" ]; then \
 			echo "  sudo apt-get install -y pipx"; \
@@ -778,7 +809,7 @@ dev-setup:  ## Complete development setup (auto-installs missing dependencies)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo ""
 	@echo "Next steps:"
-	@echo "  make check        - Verify everything works"
+	@echo "  make check-all    - Verify everything works"
 	@echo "  make viewer       - Start the viewer dev server"
 	@echo "  make demo         - Generate a demo dataset"
 	@echo ""
@@ -967,15 +998,15 @@ viewer:  ## Start the web viewer development server
 		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
 		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
 			echo "❌ Node.js v$$NODE_VERSION is too old. Vite requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
-			echo "   Run 'make install-node' to upgrade, or 'make dev-setup' for full setup."; \
+			echo "   Run 'make install-node' to upgrade, or 'make setup-dev' for full setup."; \
 			exit 1; \
 		fi; \
 	else \
-		echo "❌ Node.js not found. Run 'make dev-setup' first."; \
+		echo "❌ Node.js not found. Run 'make setup-dev' first."; \
 		exit 1; \
 	fi; \
 	if ! command -v pnpm >/dev/null 2>&1; then \
-		echo "❌ pnpm not found. Run 'make dev-setup' first."; \
+		echo "❌ pnpm not found. Run 'make setup-dev' first."; \
 		exit 1; \
 	fi; \
 	if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -997,11 +1028,11 @@ build-viewer:  ## Build the viewer for production (auto-installs Rust/wasm-pack 
 		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
 		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
 			echo "❌ Node.js v$$NODE_VERSION is too old. Vite requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
-			echo "   Run 'make install-node' to upgrade, or 'make dev-setup' for full setup."; \
+			echo "   Run 'make install-node' to upgrade, or 'make setup-dev' for full setup."; \
 			exit 1; \
 		fi; \
 	else \
-		echo "❌ Node.js not found. Run 'make dev-setup' first."; \
+		echo "❌ Node.js not found. Run 'make setup-dev' first."; \
 		exit 1; \
 	fi
 	@# Check for wasm-pack, install if needed (separate command to ensure Make waits)
@@ -1039,11 +1070,11 @@ rebuild-viewer:  ## Complete clean rebuild of viewer (auto-installs dependencies
 		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
 		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
 			echo "❌ Node.js v$$NODE_VERSION is too old. Vite requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
-			echo "   Run 'make install-node' to upgrade, or 'make dev-setup' for full setup."; \
+			echo "   Run 'make install-node' to upgrade, or 'make setup-dev' for full setup."; \
 			exit 1; \
 		fi; \
 	else \
-		echo "❌ Node.js not found. Run 'make dev-setup' first."; \
+		echo "❌ Node.js not found. Run 'make setup-dev' first."; \
 		exit 1; \
 	fi
 	@# Check for wasm-pack, install if needed (separate command to ensure Make waits)
@@ -1129,7 +1160,7 @@ build-wasm:  ## Build the WASM module (requires Rust + wasm-pack)
 	if ! command -v pnpm >/dev/null 2>&1; then \
 		echo "❌ pnpm not found."; \
 		echo ""; \
-		echo "Run 'make dev-setup' to install Node.js and pnpm."; \
+		echo "Run 'make setup-dev' to install Node.js and pnpm."; \
 		echo ""; \
 		exit 1; \
 	fi; \
@@ -1156,7 +1187,7 @@ test-wasm:  ## Run Rust unit tests for WASM module
 	if ! command -v pnpm >/dev/null 2>&1; then \
 		echo "❌ pnpm not found."; \
 		echo ""; \
-		echo "Run 'make dev-setup' to install Node.js and pnpm."; \
+		echo "Run 'make setup-dev' to install Node.js and pnpm."; \
 		echo ""; \
 		exit 1; \
 	fi; \
@@ -1522,6 +1553,59 @@ check-typescript:  ## Run all TypeScript checks (typecheck, lint, test)
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm run check
+
+check-rust:  ## Run Rust type/lint checks (cargo check + clippy)
+	@if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if ! command -v cargo >/dev/null 2>&1; then \
+		echo "❌ cargo not found."; \
+		echo "   Run 'make setup-rust' to install Rust."; \
+		exit 1; \
+	fi; \
+	echo "🦀 Running Rust checks..."; \
+	cd packages/luxar-viewer/src/wasm/rust && cargo check && cargo clippy -- -D warnings; \
+	echo "✅ Rust checks passed!"
+
+check-wasm-deps:  ## Check WASM development dependencies (Rust, wasm-pack)
+	@echo "🔍 Checking WASM development dependencies..."
+	@echo ""
+	@echo "=== Rust Toolchain ==="
+	@if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if command -v rustc >/dev/null 2>&1; then \
+		echo "✅ Rust: $$(rustc --version)"; \
+	elif command -v rustup >/dev/null 2>&1; then \
+		echo "⚠️  rustup installed but no toolchain (run: rustup default stable)"; \
+	else \
+		echo "❌ Rust not installed (run 'make setup-rust')"; \
+	fi
+	@if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if command -v cargo >/dev/null 2>&1; then \
+		echo "✅ Cargo: $$(cargo --version)"; \
+	else \
+		echo "❌ Cargo not found"; \
+	fi
+	@if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if command -v wasm-pack >/dev/null 2>&1; then \
+		echo "✅ wasm-pack: $$(wasm-pack --version)"; \
+	else \
+		echo "❌ wasm-pack not installed (run 'make setup-rust')"; \
+	fi
+	@echo ""
+	@echo "=== WASM Build Status ==="
+	@if [ -f "packages/luxar-viewer/public/wasm/luxar_wasm_bg.wasm" ]; then \
+		SIZE=$$(du -h packages/luxar-viewer/public/wasm/luxar_wasm_bg.wasm | cut -f1); \
+		echo "✅ WASM module built ($$SIZE)"; \
+	else \
+		echo "⚪ WASM module not built (run 'make build-wasm')"; \
+	fi
+	@echo ""
 
 # Documentation
 build-docs:  ## Build documentation with Sphinx

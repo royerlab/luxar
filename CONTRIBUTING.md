@@ -10,7 +10,7 @@ git clone <your-fork-url>
 cd luxar
 
 # 2. Set up development environment
-make dev-setup  # Installs dependencies and pre-commit hooks
+make setup-dev  # Installs dependencies and pre-commit hooks
 
 # 3. Create feature branch
 git checkout -b feature/amazing-feature
@@ -19,7 +19,7 @@ git checkout -b feature/amazing-feature
 # ... edit code ...
 
 # 5. Run quality checks (before committing)
-make check      # Runs all quality checks
+make check-all  # Runs all quality checks
 make test-cov-python   # Ensure tests pass with coverage
 
 # 6. Commit (pre-commit hooks run automatically)
@@ -44,12 +44,12 @@ sudo apt-get install -y pipx && pipx ensurepath && source ~/.bashrc
 
 ### First-time Setup
 ```bash
-make dev-setup     # Complete development environment (auto-installs Node.js, pnpm, Hatch)
+make setup-dev     # Complete development environment (auto-installs Node.js, pnpm, Hatch)
 make check-deps    # Verify what's installed
-make check         # Run all quality checks
+make check-all     # Run all quality checks
 ```
 
-`make dev-setup` automatically installs (no sudo needed):
+`make setup-dev` automatically installs (no sudo needed):
 - Node.js 22+ via nvm (Linux) or Homebrew (macOS)
 - pnpm for TypeScript package management
 - Hatch for Python environment management
@@ -58,14 +58,14 @@ make check         # Run all quality checks
 ### Daily Development Workflow
 ```bash
 make format-all    # Format code before editing
-make check         # Run all quality checks
+make check-all     # Run all quality checks
 make test-cov-python   # Run tests with coverage
 ```
 
 ### Troubleshooting Setup Issues
 ```bash
 make check-deps              # See what's installed/missing
-make clean-dev-setup         # Reset everything and start fresh
+make clean-setup         # Reset everything and start fresh
 ```
 
 For detailed build system documentation, see [BUILD_SYSTEM_SPEC.md](docs/guides/developer/BUILD_SYSTEM_SPEC.md).
@@ -75,10 +75,10 @@ For detailed build system documentation, see [BUILD_SYSTEM_SPEC.md](docs/guides/
 | Command | Purpose |
 |---------|---------|
 | **Setup** | |
-| `make dev-setup` | Complete development environment setup (auto-installs dependencies) |
+| `make setup-dev` | Complete development environment setup (auto-installs dependencies) |
 | `make check-deps` | Check what dependencies are installed/missing |
 | `make setup-rust` | Install Rust + wasm-pack for viewer builds |
-| `make clean-dev-setup` | Remove ALL dev tools (for testing fresh setup) |
+| `make clean-setup` | Remove ALL dev tools (for testing fresh setup) |
 | **Quality** | |
 | `make format-python` | Format Python code with ruff |
 | `make format-typescript` | Format TypeScript code with prettier |
@@ -88,10 +88,11 @@ For detailed build system documentation, see [BUILD_SYSTEM_SPEC.md](docs/guides/
 | `make type-check-python` | Run mypy type checking |
 | `make type-check-typescript` | Run TypeScript type checking |
 | `make security` | Run bandit security scan |
-| `make check` | Run all quality checks |
+| `make check-all` | Run all quality checks |
 | `make check-typescript` | Run all TypeScript checks |
+| `make check-rust` | Run Rust type/lint checks |
 | **Testing** | |
-| `make test` | Run all tests (Python + TypeScript + Rust) |
+| `make test-all` | Run all tests (Python + TypeScript + Rust) |
 | `make test-python` | Run Python tests only |
 | `make test-cov-python` | Run Python tests with coverage report |
 | `make test-cov-typescript` | Run TypeScript tests with coverage |
@@ -103,7 +104,8 @@ For detailed build system documentation, see [BUILD_SYSTEM_SPEC.md](docs/guides/
 | `make build-viewer` | Build viewer for production (requires Rust) |
 | `make build-wasm` | Build WASM module |
 | **Utilities** | |
-| `make clean` | Clean temporary files |
+| `make clean-all` | Clean all artifacts |
+| `make clean-viewer` | Clean viewer artifacts only |
 | `make help` | Show all available commands |
 
 ## 📋 Development Standards
@@ -178,7 +180,7 @@ Maintainers review for:
 ## 📝 Pull Request Guidelines
 
 ### Before Submitting
-- ✅ `make check` passes without errors
+- ✅ `make check-all` passes without errors
 - ✅ `make test-cov-python` shows adequate coverage
 - ✅ All pre-commit hooks pass
 - ✅ Documentation updated for new features
@@ -291,7 +293,7 @@ make format-all    # Auto-fix most formatting problems
 
 **Clean development environment:**
 ```bash
-make clean         # Remove all temporary files and caches
+make clean-all     # Remove all temporary files and caches
 ```
 
 ## 🎓 Learning Resources
