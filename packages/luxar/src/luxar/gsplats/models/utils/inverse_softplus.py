@@ -2,6 +2,7 @@
 # Small utilities
 # -------------------------------
 import numpy as np
+import torch
 
 
 def stable_inverse_softplus(y: np.ndarray, beta: float = 1.0) -> np.ndarray:
@@ -68,3 +69,50 @@ def stable_inverse_softplus(y: np.ndarray, beta: float = 1.0) -> np.ndarray:
 
     # Convert back to original dtype
     return result.astype(original_dtype)
+
+
+def stable_inverse_softplus_torch(y: torch.Tensor, beta: float = 1.0) -> torch.Tensor:
+    """
+    Compute numerically stable inverse of softplus function (PyTorch version).
+
+    This is a GPU-compatible version that avoids CPU-GPU transfers.
+    Runs entirely on the same device as the input tensor.
+
+    The softplus function is softplus(x) = (1/beta) * log(1 + exp(beta*x)).
+    This function computes its inverse: x such that softplus(x) = y.
+
+    Parameters
+    ----------
+    y : torch.Tensor
+        Input values (must be positive since softplus range is (0, inf)).
+    beta : float, default=1.0
+        Softplus scaling parameter. Higher values make function steeper.
+
+    Returns
+    -------
+    torch.Tensor
+        Inverse softplus values with same shape, dtype, and device as input.
+
+    Notes
+    -----
+    Mathematical relationship:
+        softplus(x) = (1/beta) * log(1 + exp(beta*x))
+        inverse_softplus(y) = (1/beta) * log(exp(beta*y) - 1)
+                            = (1/beta) * log(expm1(beta*y))  # numerically stable
+    """
+    beta_y = beta * y
+
+    # For large beta*y (>= 50), use asymptotic approximation: log(exp(z) - 1) ≈ z
+    # For normal values: use expm1 for numerical stability
+    large_mask = beta_y >= 50.0
+
+    # Use torch.where for GPU-efficient conditional computation
+    # For large values: inverse_softplus(y) ≈ y (asymptotically)
+    # For small values: log(expm1(beta*y)) / beta
+    result = torch.where(
+        large_mask,
+        y,  # Asymptotic: inverse_softplus(y) ≈ y for large y
+        torch.log(torch.expm1(beta_y)) / beta,  # Numerically stable formula
+    )
+
+    return result

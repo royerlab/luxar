@@ -208,7 +208,9 @@ def main():
     aprint(f"  1. Manual: {manual_path}")
     aprint(f"  2. Structured: {structured_path}")
     aprint("\nKey Takeaways:")
-    aprint("- Context manager (with LuxarZarrCompiler) handles finalization automatically")
+    aprint(
+        "- Context manager (with LuxarZarrCompiler) handles finalization automatically"
+    )
     aprint("- Break complex scenes into reusable helper functions")
     aprint("- Use try/except for proper error handling")
     aprint("- Modular design makes scenes easier to maintain and test")

@@ -18,7 +18,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from arbol import aprint, asection
 
-from luxar.gsplats.models.utils.inverse_softplus import stable_inverse_softplus
+from luxar.gsplats.models.utils.inverse_softplus import stable_inverse_softplus_torch
 
 
 def _cubic_upsample_2x_1d(img: torch.Tensor, axis: int) -> torch.Tensor:
@@ -486,12 +486,8 @@ class MultiScaleDecomposer(nn.Module):
             # But we let the remaining signal carry negatives
             img_scale_clamped = torch.clamp(img_scale, min=1e-6)
 
-            # Use stable inverse softplus
-            img_scale_np = img_scale_clamped.cpu().numpy()
-            raw_init = stable_inverse_softplus(img_scale_np)
-            raw_param.data = torch.tensor(
-                raw_init, dtype=torch.float32, device=target.device
-            )
+            # Use stable inverse softplus (GPU-native, no CPU transfer)
+            raw_param.data = stable_inverse_softplus_torch(img_scale_clamped)
 
             # Subtract this scale's contribution from remaining
             img_upsampled = _upsample_to_shape(
@@ -534,12 +530,10 @@ class MultiScaleDecomposer(nn.Module):
         else:
             img_scale = _downsample_to_scale(target, finest_scale, mode="area")
 
-        # Initialize using inverse softplus
+        # Initialize using inverse softplus (GPU-native, no CPU transfer)
         img_scale_clamped = torch.clamp(img_scale, min=1e-6)
-        img_scale_np = img_scale_clamped.cpu().numpy()
-        raw_init = stable_inverse_softplus(img_scale_np)
-        self.raw_images[finest_idx].data = torch.tensor(
-            raw_init, dtype=torch.float32, device=target.device
+        self.raw_images[finest_idx].data = stable_inverse_softplus_torch(
+            img_scale_clamped
         )
 
     @torch.no_grad()
@@ -589,13 +583,9 @@ class MultiScaleDecomposer(nn.Module):
                     img_scale, energy_per_scale_downsampled / img_scale.numel()
                 )
 
-            # Initialize using inverse softplus
+            # Initialize using inverse softplus (GPU-native, no CPU transfer)
             img_scale_clamped = torch.clamp(img_scale, min=1e-6)
-            img_scale_np = img_scale_clamped.cpu().numpy()
-            raw_init = stable_inverse_softplus(img_scale_np)
-            raw_param.data = torch.tensor(
-                raw_init, dtype=torch.float32, device=target.device
-            )
+            raw_param.data = stable_inverse_softplus_torch(img_scale_clamped)
 
     @torch.no_grad()
     def initialize_coarse(self, target: torch.Tensor) -> None:
@@ -650,13 +640,9 @@ class MultiScaleDecomposer(nn.Module):
                     img_scale, energy_per_scale_downsampled / img_scale.numel()
                 )
 
-            # Initialize using inverse softplus
+            # Initialize using inverse softplus (GPU-native, no CPU transfer)
             img_scale_clamped = torch.clamp(img_scale, min=1e-6)
-            img_scale_np = img_scale_clamped.cpu().numpy()
-            raw_init = stable_inverse_softplus(img_scale_np)
-            raw_param.data = torch.tensor(
-                raw_init, dtype=torch.float32, device=target.device
-            )
+            raw_param.data = stable_inverse_softplus_torch(img_scale_clamped)
 
     @torch.no_grad()
     def initialize_zero(self, target: torch.Tensor) -> None:

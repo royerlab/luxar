@@ -72,6 +72,11 @@ class FitConfig:
     metal_intensity_floor: float = 1e-5  # Early culling threshold for Metal kernels
     metal_tile_size: int = 4  # Tile size for 3D binning (4=64 threads, 8=512 threads)
 
+    # CUDA acceleration (with defaults)
+    use_cuda: bool = True  # Enable custom CUDA kernels when available (NVIDIA GPUs)
+    cuda_intensity_floor: float = 1e-5  # Early culling threshold for CUDA kernels
+    cuda_tile_size: Optional[int] = None  # Auto-select based on dimension if None
+
     # Seed generation (with defaults - must come after required fields)
     seed_method: str = "both"  # "gaussian", "decomposition", "both", etc.
     seed_kwargs: Dict[str, Any] = None  # Additional parameters for seed generation
@@ -109,6 +114,12 @@ class PreprocessedData:
 
     # Convergence threshold
     max_abs_error: float
+
+    # Computed L1 regularization values (set during preprocessing)
+    # These are stored here instead of mutating FitConfig
+    l1_amp: Optional[float] = None
+    l1_diag: Optional[float] = None
+    l1_sharpness: Optional[float] = None
 
 
 @dataclass

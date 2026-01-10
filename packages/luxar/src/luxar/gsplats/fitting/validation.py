@@ -203,4 +203,7 @@ def prepare_fit_config(
         movie_max_frames=movie_max_frames,
         device=fitter.device,
         verbose=verbose,
+        # Hardware acceleration flags from fitter
+        use_metal=fitter.use_metal,
+        use_cuda=fitter.use_cuda,
     )

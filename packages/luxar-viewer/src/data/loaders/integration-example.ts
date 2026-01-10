@@ -262,7 +262,7 @@ export class PointsLoaderIntegrationExample {
     allocations: number;
     reuseCount: number;
     peakMemoryBytes: number;
-    } {
+  } {
     const stats = this.accumulator.getStats();
     return {
       capacity: this.accumulator.getCapacity(),

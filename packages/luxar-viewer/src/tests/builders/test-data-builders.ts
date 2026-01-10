@@ -126,7 +126,7 @@ export class PointsBuilder {
     sharpness: Float32Array | null;
     numPoints: number;
     dimensions: number;
-    } {
+  } {
     // Generate positions if not set
     if (!this.positions) {
       this.withRandomPositions();
@@ -431,7 +431,7 @@ export class ChunkBuilder {
     dtype: string;
     data: Float32Array | Uint8Array;
     chunkGrid: number[];
-    } {
+  } {
     if (!this.data) {
       this.withRandomData();
     }

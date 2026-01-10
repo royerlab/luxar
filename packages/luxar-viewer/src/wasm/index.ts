@@ -59,7 +59,7 @@ export async function initWasm(): Promise<WasmModule> {
   } catch (error) {
     // WASM not available - use TypeScript fallback
     log.warning(Modules.WASM, 'Failed to load WASM module, using TypeScript fallback', error);
-    log.info(Modules.WASM, 'To build WASM module: pnpm build:wasm (or make wasm-build)');
+    log.info(Modules.WASM, 'To build WASM module: pnpm build:wasm (or make build-wasm)');
     log.info(
       Modules.WASM,
       'See packages/luxar-viewer/src/wasm/rust/README.md for build instructions'

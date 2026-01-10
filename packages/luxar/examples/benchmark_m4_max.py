@@ -29,6 +29,7 @@ aprint(f"MPS built: {torch.backends.mps.is_built()}")
 @dataclass
 class BenchmarkResult:
     """Results from a single benchmark run."""
+
     device: str
     compiled: bool
     forward_time_ms: float
@@ -56,7 +57,7 @@ def create_test_volume(size: int = 64, n_blobs: int = 5, seed: int = 42) -> np.n
         z, y, x = np.ogrid[:size, :size, :size]
 
         # Add Gaussian blob
-        dist_sq = (z - center[0])**2 + (y - center[1])**2 + (x - center[2])**2
+        dist_sq = (z - center[0]) ** 2 + (y - center[1]) ** 2 + (x - center[2]) ** 2
         volume += amp * np.exp(-dist_sq / (2 * sigma**2))
 
     return volume
@@ -73,6 +74,7 @@ def benchmark_forward_backward(
 
     Returns: (forward_ms, backward_ms, total_ms) averaged over iterations
     """
+
     # Loss function
     def compute_loss(pred: torch.Tensor) -> torch.Tensor:
         return torch.mean((pred - target) ** 2)
@@ -236,7 +238,7 @@ def run_optimization_benchmark(
             step_times.append((step_end - iter_start) * 1000)
 
             if (it + 1) % 25 == 0:
-                aprint(f"  [{it+1:3d}/{n_iterations}] loss={loss.item():.5f}")
+                aprint(f"  [{it + 1:3d}/{n_iterations}] loss={loss.item():.5f}")
 
         end_total = time.perf_counter()
         total_time = end_total - start_total
@@ -361,7 +363,8 @@ def main():
     # =========================================================================
     with asection("Benchmark 1: CPU (baseline)"):
         result = run_optimization_benchmark(
-            volume, "cpu",
+            volume,
+            "cpu",
             use_compile=False,
             n_iterations=n_iterations,
             n_splats=n_splats,
@@ -377,7 +380,8 @@ def main():
     if torch.backends.mps.is_available():
         with asection("Benchmark 2: MPS"):
             result = run_optimization_benchmark(
-                volume, "mps",
+                volume,
+                "mps",
                 use_compile=False,
                 n_iterations=n_iterations,
                 n_splats=n_splats,
@@ -396,7 +400,8 @@ def main():
     with asection("Benchmark 3: CPU + torch.compile(eager)"):
         try:
             result = run_optimization_benchmark(
-                volume, "cpu",
+                volume,
+                "cpu",
                 use_compile=True,
                 compile_backend="eager",
                 n_iterations=n_iterations,
@@ -415,7 +420,9 @@ def main():
     aprint("\n" + "=" * 100)
     aprint("BENCHMARK SUMMARY")
     aprint("=" * 100)
-    aprint(f"{'Configuration':<40} {'Forward (ms)':<15} {'Backward (ms)':<15} {'Total (ms)':<15} {'Speedup':<10}")
+    aprint(
+        f"{'Configuration':<40} {'Forward (ms)':<15} {'Backward (ms)':<15} {'Total (ms)':<15} {'Speedup':<10}"
+    )
     aprint("-" * 100)
 
     baseline_time = results[0].total_iter_time_ms if results else 1.0
@@ -424,7 +431,9 @@ def main():
         compiled_str = " + compile" if r.compiled else ""
         config = f"{r.device}{compiled_str}"
         speedup = baseline_time / r.total_iter_time_ms
-        aprint(f"{config:<40} {r.forward_time_ms:<15.2f} {r.backward_time_ms:<15.2f} {r.total_iter_time_ms:<15.2f} {speedup:<10.2f}x")
+        aprint(
+            f"{config:<40} {r.forward_time_ms:<15.2f} {r.backward_time_ms:<15.2f} {r.total_iter_time_ms:<15.2f} {speedup:<10.2f}x"
+        )
 
     aprint("=" * 100)
 

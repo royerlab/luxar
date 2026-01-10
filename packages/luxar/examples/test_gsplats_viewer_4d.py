@@ -66,26 +66,27 @@ def create_4d_time_varying_blobs(shape=(8, 32, 32, 32), n_blobs=4):
 
             # Amplitude varies with time (Gaussian envelope in time)
             t_center = t_steps // 2
-            time_attenuation = np.exp(-((t - t_center)**2) / (2 * sigma_time**2))
+            time_attenuation = np.exp(-((t - t_center) ** 2) / (2 * sigma_time**2))
             amplitude = base_amplitude * time_attenuation
 
             # Create spatial grids for this time slice
             z_grid, y_grid, x_grid = np.meshgrid(
-                np.arange(depth),
-                np.arange(height),
-                np.arange(width),
-                indexing='ij'
+                np.arange(depth), np.arange(height), np.arange(width), indexing="ij"
             )
 
             # Compute spatial distance
             if blob_idx < 2:
-                dist_sq = ((z_grid - z_center)**2 +
-                          (y_grid - y_center)**2 +
-                          (x_grid - x_center)**2)
+                dist_sq = (
+                    (z_grid - z_center) ** 2
+                    + (y_grid - y_center) ** 2
+                    + (x_grid - x_center) ** 2
+                )
             else:
-                dist_sq = ((z_grid - z_center)**2 +
-                          (y_grid - y_pos)**2 +
-                          (x_grid - x_center)**2)
+                dist_sq = (
+                    (z_grid - z_center) ** 2
+                    + (y_grid - y_pos) ** 2
+                    + (x_grid - x_center) ** 2
+                )
 
             # Add blob for this time step
             blob = amplitude * np.exp(-dist_sq / (2 * sigma_spatial**2))
@@ -126,35 +127,37 @@ with asection("GSplats 4D Viewer Test"):
 
     with asection("Creating Luxar scene with 4D dimensions"):
         # Create scene with 4 dimensions
-        output_path = Path(__file__).parent / 'test_gsplats_4d_example.zarr'
+        output_path = Path(__file__).parent / "test_gsplats_4d_example.zarr"
 
-        dims = Dimensions([
-            Dimension(name='t', unit='frame', scale=1.0, step=1.0),
-            Dimension(name='z', unit='px', scale=1.0),
-            Dimension(name='y', unit='px', scale=1.0),
-            Dimension(name='x', unit='px', scale=1.0),
-        ])
+        dims = Dimensions(
+            [
+                Dimension(name="t", unit="frame", scale=1.0, step=1.0),
+                Dimension(name="z", unit="px", scale=1.0),
+                Dimension(name="y", unit="px", scale=1.0),
+                Dimension(name="x", unit="px", scale=1.0),
+            ]
+        )
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Add 4D gsplats to scene
             scene.add_gsplats(
-                name='test_gsplats_4d',
+                name="test_gsplats_4d",
                 centers=result.centers,
                 cholesky_factors=result.cholesky_factors,
                 amplitudes=result.amplitudes,
                 sharpness=result.sharpnesses,
                 colors=None,
                 opacity=1.0,
-                blending_mode='additive',
+                blending_mode="additive",
             )
 
         aprint(f"✓ Saved scene to: {output_path}")
 
-    aprint("\n" + "="*60)
+    aprint("\n" + "=" * 60)
     aprint("4D test data created successfully!")
-    aprint("="*60)
+    aprint("=" * 60)
     aprint("\nTo view in the browser:")
     aprint(f"  luxar serve {output_path} --viewer")
     aprint("\nExpected behavior:")
@@ -168,4 +171,4 @@ with asection("GSplats 4D Viewer Test"):
     aprint("  ✓ Amplitude attenuation for hidden dimensions")
     aprint("  ✓ Spatial index queries with tolerance")
     aprint("  ✓ View updates during dimension navigation")
-    aprint("="*60)
+    aprint("=" * 60)

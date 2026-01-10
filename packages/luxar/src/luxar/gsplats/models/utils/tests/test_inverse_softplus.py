@@ -5,7 +5,10 @@ Tests for stable inverse softplus function.
 import numpy as np
 import pytest
 
-from luxar.gsplats.models.utils.inverse_softplus import stable_inverse_softplus
+from luxar.gsplats.models.utils.inverse_softplus import (
+    stable_inverse_softplus,
+    stable_inverse_softplus_torch,
+)
 
 try:
     import torch
@@ -223,6 +226,143 @@ class TestNumericalStability:
         y_tiny = np.array([1e-10])
         x_stable_tiny = stable_inverse_softplus(y_tiny)
         assert np.isfinite(x_stable_tiny).all()
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
+class TestTorchNumpyEquivalence:
+    """Test that PyTorch and NumPy implementations produce identical results."""
+
+    def test_basic_values_match(self) -> None:
+        """Test that basic values produce identical results."""
+        y_np = np.array([0.5, 1.0, 2.0, 5.0, 10.0], dtype=np.float32)
+        y_torch = torch.from_numpy(y_np)
+
+        x_np = stable_inverse_softplus(y_np)
+        x_torch = stable_inverse_softplus_torch(y_torch)
+
+        np.testing.assert_array_almost_equal(
+            x_np,
+            x_torch.numpy(),
+            decimal=5,
+            err_msg="NumPy and PyTorch implementations should match for basic values",
+        )
+
+    def test_small_values_match(self) -> None:
+        """Test numerical stability for small values matches."""
+        y_np = np.array([1e-6, 1e-4, 1e-2, 0.1], dtype=np.float32)
+        y_torch = torch.from_numpy(y_np)
+
+        x_np = stable_inverse_softplus(y_np)
+        x_torch = stable_inverse_softplus_torch(y_torch)
+
+        np.testing.assert_array_almost_equal(
+            x_np,
+            x_torch.numpy(),
+            decimal=5,
+            err_msg="NumPy and PyTorch should match for small values",
+        )
+
+    def test_large_values_match(self) -> None:
+        """Test asymptotic behavior for large values matches."""
+        y_np = np.array([50.0, 100.0, 200.0], dtype=np.float32)
+        y_torch = torch.from_numpy(y_np)
+
+        x_np = stable_inverse_softplus(y_np)
+        x_torch = stable_inverse_softplus_torch(y_torch)
+
+        np.testing.assert_array_almost_equal(
+            x_np,
+            x_torch.numpy(),
+            decimal=5,
+            err_msg="NumPy and PyTorch should match for large values (asymptotic)",
+        )
+
+    def test_multidimensional_arrays_match(self) -> None:
+        """Test that multi-dimensional arrays produce matching results."""
+        shapes = [(10,), (5, 5), (3, 4, 5), (2, 3, 4, 5)]
+
+        for shape in shapes:
+            y_np = np.random.rand(*shape).astype(np.float32) * 10 + 0.1
+            y_torch = torch.from_numpy(y_np)
+
+            x_np = stable_inverse_softplus(y_np)
+            x_torch = stable_inverse_softplus_torch(y_torch)
+
+            np.testing.assert_array_almost_equal(
+                x_np,
+                x_torch.numpy(),
+                decimal=5,
+                err_msg=f"NumPy and PyTorch should match for shape {shape}",
+            )
+
+    def test_different_beta_values_match(self) -> None:
+        """Test that different beta values produce matching results."""
+        y_np = np.array([1.0, 2.0, 5.0], dtype=np.float32)
+
+        for beta in [0.5, 1.0, 2.0, 5.0]:
+            y_torch = torch.from_numpy(y_np)
+
+            x_np = stable_inverse_softplus(y_np, beta=beta)
+            x_torch = stable_inverse_softplus_torch(y_torch, beta=beta)
+
+            np.testing.assert_array_almost_equal(
+                x_np,
+                x_torch.numpy(),
+                decimal=5,
+                err_msg=f"NumPy and PyTorch should match for beta={beta}",
+            )
+
+    def test_gpu_produces_same_as_cpu(self) -> None:
+        """Test that GPU computation produces same results as CPU/NumPy."""
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+
+        y_np = np.random.rand(100).astype(np.float32) * 10 + 0.1
+        y_cpu = torch.from_numpy(y_np)
+        y_gpu = y_cpu.cuda()
+
+        x_np = stable_inverse_softplus(y_np)
+        x_cpu = stable_inverse_softplus_torch(y_cpu)
+        x_gpu = stable_inverse_softplus_torch(y_gpu)
+
+        np.testing.assert_array_almost_equal(
+            x_np, x_cpu.numpy(), decimal=5, err_msg="NumPy and PyTorch CPU should match"
+        )
+        np.testing.assert_array_almost_equal(
+            x_np,
+            x_gpu.cpu().numpy(),
+            decimal=5,
+            err_msg="NumPy and PyTorch GPU should match",
+        )
+
+    def test_inverse_property_torch(self) -> None:
+        """Test that softplus(inverse_softplus(y)) = y for PyTorch version."""
+        y_np = np.array([0.5, 1.0, 2.0, 5.0, 10.0], dtype=np.float32)
+        y_torch = torch.from_numpy(y_np)
+
+        x_torch = stable_inverse_softplus_torch(y_torch)
+        y_reconstructed = torch.nn.functional.softplus(x_torch)
+
+        np.testing.assert_array_almost_equal(
+            y_np,
+            y_reconstructed.numpy(),
+            decimal=5,
+            err_msg="softplus(inverse_softplus(y)) should equal y",
+        )
+
+    def test_device_preservation(self) -> None:
+        """Test that output stays on same device as input."""
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+
+        y_cpu = torch.tensor([1.0, 2.0, 3.0])
+        y_gpu = y_cpu.cuda()
+
+        x_cpu = stable_inverse_softplus_torch(y_cpu)
+        x_gpu = stable_inverse_softplus_torch(y_gpu)
+
+        assert x_cpu.device.type == "cpu", "CPU input should produce CPU output"
+        assert x_gpu.device.type == "cuda", "GPU input should produce GPU output"
 
 
 if __name__ == "__main__":

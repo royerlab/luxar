@@ -128,7 +128,7 @@ The Rust/WASM toolchain enables high-performance WebAssembly computations in the
 
 **Build flow:**
 ```
-make viewer-build
+make build-viewer
   ├─ Checks for wasm-pack
   ├─ If missing: runs make setup-rust
   └─ Runs pnpm build
@@ -196,8 +196,8 @@ MIN_NODE_MINOR := 19
 | Command | Description |
 |---------|-------------|
 | `make viewer` | Start viewer dev server (port 5173) |
-| `make viewer-build` | Build viewer for production (requires Rust) |
-| `make viewer-rebuild` | Clean rebuild of viewer |
+| `make build-viewer` | Build viewer for production (requires Rust) |
+| `make rebuild-viewer` | Clean rebuild of viewer |
 | `make test-viewer` | Run TypeScript unit tests |
 | `make test-cov-typescript` | Run TypeScript tests with coverage |
 
@@ -205,9 +205,9 @@ MIN_NODE_MINOR := 19
 
 | Command | Description |
 |---------|-------------|
-| `make wasm-build` | Build WASM module |
+| `make build-wasm` | Build WASM module |
 | `make test-wasm` | Run Rust unit tests |
-| `make wasm-clean` | Clean WASM build artifacts |
+| `make clean-wasm` | Clean WASM build artifacts |
 
 ### Data & Demos
 
@@ -223,9 +223,9 @@ MIN_NODE_MINOR := 19
 
 | Command | Description |
 |---------|-------------|
-| `make docs-build` | Build Sphinx documentation |
-| `make docs-serve` | Serve documentation locally |
-| `make docs-clean` | Clean documentation artifacts |
+| `make build-docs` | Build Sphinx documentation |
+| `make serve-docs` | Serve documentation locally |
+| `make clean-docs` | Clean documentation artifacts |
 | `make check-docs` | Check documentation quality |
 
 ### Utilities
@@ -237,8 +237,8 @@ MIN_NODE_MINOR := 19
 | `make clean-examples` | Clean generated example datasets |
 | `make stats` | Generate project statistics report |
 | `make shell` | Enter Hatch development shell |
-| `make env-show` | Show Hatch environments |
-| `make env-prune` | Remove unused Hatch environments |
+| `make show-env` | Show Hatch environments |
+| `make prune-env` | Remove unused Hatch environments |
 
 ## Dependency Management
 
@@ -358,7 +358,7 @@ This command:
 2. Installs wasm-pack (if not present)
 3. Sources cargo environment automatically
 
-The Makefile commands (`make wasm-build`, `make viewer-build`, etc.) automatically source the cargo environment, so you don't need to run `source ~/.cargo/env` manually.
+The Makefile commands (`make build-wasm`, `make build-viewer`, etc.) automatically source the cargo environment, so you don't need to run `source ~/.cargo/env` manually.
 
 #### nvm not available in make commands
 

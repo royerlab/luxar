@@ -81,7 +81,10 @@ def initialize_optimization(
                 f"Using pre-initialized sharpness: range [{sharpness0.min():.2f}, {sharpness0.max():.2f}]"
             )
 
-    # Build model - use Metal acceleration when available
+    # Build model - use hardware acceleration when available
+    model = None
+
+    # Try Metal acceleration (macOS + MPS)
     use_metal = (
         config.use_metal
         and d == 3  # Metal ONLY for 3D (overhead > benefit for 2D)
@@ -89,14 +92,19 @@ def initialize_optimization(
     )
 
     if use_metal:
-        # Try to use Metal-accelerated model
         try:
             from luxar.gsplats.models.gsplats.metal import (
                 GaussianSplatModelMetal,
                 is_metal_available,
             )
 
-            if is_metal_available():
+            metal_available = is_metal_available()
+            if config.verbose:
+                aprint(
+                    f"Metal backend: {'available' if metal_available else 'NOT available'}"
+                )
+
+            if metal_available:
                 model = GaussianSplatModelMetal(
                     shape=config.V.shape,
                     centers0=preprocessed_data.seed_centers,
@@ -106,24 +114,69 @@ def initialize_optimization(
                     sigma_max_diag=config.sigma_max_diag,
                     truncate=config.truncate,
                     intensity_floor=config.metal_intensity_floor,
-                    tile_size=config.metal_tile_size,  # Configurable tile size
+                    tile_size=config.metal_tile_size,
                     device=config.device,
                 )
                 if config.verbose:
-                    from arbol import aprint
-
                     aprint(
-                        "Using Metal-accelerated model (3-7x faster on Apple Silicon)"
+                        f"✓ Model class: GaussianSplatModelMetal (3-7x faster on Apple Silicon)"
+                    )
+        except ImportError:
+            if config.verbose:
+                aprint("Metal backend: NOT installed")
+            pass  # Metal backend not installed
+
+    # Try CUDA acceleration (NVIDIA GPUs)
+    use_cuda = (
+        model is None  # Not already using Metal
+        and config.use_cuda
+        and 2 <= d <= 8  # CUDA supports 2D-8D
+        and config.device.type == "cuda"  # Requires CUDA device
+    )
+
+    if use_cuda:
+        try:
+            from luxar.gsplats.models.gsplats.cuda import (
+                GaussianSplatModelCUDA,
+                CUDA_BACKEND_AVAILABLE,
+            )
+
+            if config.verbose:
+                aprint(
+                    f"CUDA custom kernels: {'compiled and available' if CUDA_BACKEND_AVAILABLE else 'NOT compiled (using PyTorch fallback)'}"
+                )
+
+            if CUDA_BACKEND_AVAILABLE:
+                model = GaussianSplatModelCUDA(
+                    shape=config.V.shape,
+                    centers0=preprocessed_data.seed_centers,
+                    L0=L0,
+                    amps0=amps0,
+                    sigma_min_diag=config.sigma_min_diag,
+                    sigma_max_diag=config.sigma_max_diag,
+                    truncate=config.truncate,
+                    intensity_floor=config.cuda_intensity_floor,
+                    tile_size=config.cuda_tile_size,  # None = auto-select
+                    device=config.device,
+                )
+                if config.verbose:
+                    aprint(
+                        f"✓ Model class: GaussianSplatModelCUDA (10-50x faster on NVIDIA GPUs)"
                     )
             else:
-                # Metal not available, fall back
-                use_metal = False
+                if config.verbose:
+                    aprint(
+                        "  → Will use PyTorch-based GaussianSplatModel on CUDA device"
+                    )
         except ImportError:
-            # Metal backend not installed
-            use_metal = False
+            if config.verbose:
+                aprint(
+                    "CUDA backend: NOT installed (cuda_splatting_backend module missing)"
+                )
+            pass  # CUDA backend not compiled
 
-    if not use_metal:
-        # Standard PyTorch model
+    # Fall back to standard PyTorch model
+    if model is None:
         model = GaussianSplatModel(
             shape=config.V.shape,
             centers0=preprocessed_data.seed_centers,
@@ -134,15 +187,27 @@ def initialize_optimization(
             truncate=config.truncate,
             device=config.device,
         )
+        if config.verbose:
+            device_type = config.device.type
+            aprint(f"✓ Model class: GaussianSplatModel (PyTorch, device={device_type})")
 
-    # Setup per-splat optimizer
-    # Note: Gradient dilution compensation is handled internally by the optimizer
+    # Setup optimizer
+    # Use fast standard PyTorch Adam when dynamic ops disabled (58x faster than per-splat)
+    # Use per-splat optimizer only when dynamic topology changes are needed
+    use_standard = not config.enable_dynamic_ops
+    if config.verbose:
+        if use_standard:
+            aprint("Using standard PyTorch Adam optimizer (fast, static topology)")
+        else:
+            aprint("Using per-splat Adam optimizer (supports dynamic topology changes)")
+
     optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
         model,
         lr=config.lr,  # Base learning rate (optimizer handles gradient dilution internally)
         scheduler_type=config.scheduler_type,
         patience=config.patience,
-        lr_reduction_factor=config.lr_reduction_factor,
+        factor=config.lr_reduction_factor,
+        use_standard_optimizer=use_standard,
     )
 
     return ModelComponents(

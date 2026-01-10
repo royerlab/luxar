@@ -119,8 +119,15 @@ def run_optimization_loop(
 
         optimizer.step()
 
-        # Learning rate scheduling (detach to avoid warning)
-        scheduler.step(loss.detach())
+        # Learning rate scheduling
+        if scheduler is not None:
+            # ReduceLROnPlateau schedulers require metrics, others don't
+            # Check by class name to handle both PyTorch and per-splat versions
+            scheduler_name = type(scheduler).__name__
+            if "Plateau" in scheduler_name:
+                scheduler.step(loss.detach())  # Plateau schedulers need loss
+            else:
+                scheduler.step()  # Exponential and other schedulers don't need loss
 
         # Tracking
         current_loss = loss.item()
@@ -221,8 +228,7 @@ def run_optimization_loop(
                 rel = torch.linalg.norm((pred - V_t).reshape(-1)) / (
                     torch.linalg.norm(V_t.reshape(-1)) + 1e-12
                 )
-                # Calculate max absolute error for display
-                current_max_abs_error = _compute_max_abs_error(pred, V_t)
+            # Reuse current_max_abs_error computed earlier (line 142) - no redundant computation
             aprint(
                 f"[{it:4d}/{config.n_iters}] loss={current_loss:.5g}  "
                 f"relL2={float(rel):.4f}  maxAbsErr={current_max_abs_error:.5g}  N={N}"

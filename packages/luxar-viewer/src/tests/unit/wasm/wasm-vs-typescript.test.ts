@@ -10,7 +10,7 @@
  * 3. Compare outputs for exact match (within floating-point tolerance)
  *
  * Note: Tests are skipped if WASM module is not built.
- * Build with: pnpm build:wasm (or make wasm-build)
+ * Build with: pnpm build:wasm (or make build-wasm)
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -63,7 +63,7 @@ beforeAll(async () => {
   // Skip WASM loading if files don't exist
   if (!wasmFilesExist) {
     console.log('[Test] WASM module not found at:', wasmJsPath);
-    console.log('[Test] Build WASM with: pnpm build:wasm (or make wasm-build)');
+    console.log('[Test] Build WASM with: pnpm build:wasm (or make build-wasm)');
     return;
   }
 
@@ -82,7 +82,7 @@ beforeAll(async () => {
     console.log('[Test] WASM module loaded successfully');
   } catch (error) {
     console.log('[Test] WASM module failed to load:', error);
-    console.log('[Test] Build WASM with: pnpm build:wasm (or make wasm-build)');
+    console.log('[Test] Build WASM with: pnpm build:wasm (or make build-wasm)');
   }
 });
 

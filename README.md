@@ -111,7 +111,7 @@ luxar serve my_data.zarr --profile 3g --viewer
 
 ## Gallery
 
-Luxar includes demos showcasing different visualization techniques. Media are auto-generated using Playwright (run `make readme-images` and `make readme-videos`).
+Luxar includes demos showcasing different visualization techniques. Media are auto-generated using Playwright (run `make generate-readme-images` and `make generate-readme-videos`).
 
 ### In Action
 
@@ -393,10 +393,10 @@ make check-deps    # Verify installation
 | Quality checks | `make check` |
 | Format code | `make format-all` |
 | Start viewer | `make viewer` |
-| Build viewer | `make viewer-build` |
+| Build viewer | `make build-viewer` |
 | Run examples | `make run-examples` |
-| Generate README images | `make readme-images` |
-| Generate README videos | `make readme-videos` |
+| Generate README images | `make generate-readme-images` |
+| Generate README videos | `make generate-readme-videos` |
 
 ### Python Development
 
@@ -422,7 +422,7 @@ The viewer works without WASM, but Rust acceleration improves performance:
 
 ```bash
 make setup-rust    # Install Rust + wasm-pack
-make wasm-build    # Build WASM module
+make build-wasm    # Build WASM module
 ```
 
 ---
