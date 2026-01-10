@@ -146,10 +146,11 @@ def test_poisson_loss_asymmetric(target_tensor, pred_tensor) -> None:
 def test_l1_regularization_amplitude(basic_model) -> None:
     """Test L1 regularization on amplitudes."""
     V = np.random.rand(8, 8).astype(np.float32)
-    config = create_test_config(V, n_iters=10, l1_amp=0.1)
+    config = create_test_config(V, n_iters=10)
 
     V_tensor = torch.from_numpy(V).to(config.device)
-    preprocessed_data = PreprocessedData(
+    # L1 values are now stored in PreprocessedData (not config)
+    preprocessed_data_with_reg = PreprocessedData(
         d=2,
         N=3,
         seed_centers=np.random.rand(3, 2).astype(np.float32) * 6,
@@ -159,15 +160,27 @@ def test_l1_regularization_amplitude(basic_model) -> None:
         image_max=1.0,
         intensity_range=1.0,
         max_abs_error=0.01,
+        l1_amp=0.1,  # L1 regularization on amplitude
     )
 
-    loss_fn = create_loss_function(config, preprocessed_data, basic_model)
+    loss_fn = create_loss_function(config, preprocessed_data_with_reg, basic_model)
     pred = basic_model()
     loss_with_reg = loss_fn(pred)
 
     # Now test without regularization
-    config_no_reg = create_test_config(V, n_iters=10, l1_amp=None)
-    loss_fn_no_reg = create_loss_function(config_no_reg, preprocessed_data, basic_model)
+    preprocessed_data_no_reg = PreprocessedData(
+        d=2,
+        N=3,
+        seed_centers=np.random.rand(3, 2).astype(np.float32) * 6,
+        V_normalized=V,
+        V_tensor=V_tensor,
+        image_min=0.0,
+        image_max=1.0,
+        intensity_range=1.0,
+        max_abs_error=0.01,
+        l1_amp=None,  # No L1 regularization
+    )
+    loss_fn_no_reg = create_loss_function(config, preprocessed_data_no_reg, basic_model)
     loss_without_reg = loss_fn_no_reg(pred)
 
     # Loss with regularization should be higher
@@ -177,10 +190,11 @@ def test_l1_regularization_amplitude(basic_model) -> None:
 def test_l1_regularization_diagonal(basic_model) -> None:
     """Test L1 regularization on diagonal elements."""
     V = np.random.rand(8, 8).astype(np.float32)
-    config = create_test_config(V, n_iters=10, l1_diag=0.05)
+    config = create_test_config(V, n_iters=10)
 
     V_tensor = torch.from_numpy(V).to(config.device)
-    preprocessed_data = PreprocessedData(
+    # L1 values are now stored in PreprocessedData (not config)
+    preprocessed_data_with_reg = PreprocessedData(
         d=2,
         N=3,
         seed_centers=np.random.rand(3, 2).astype(np.float32) * 6,
@@ -190,15 +204,27 @@ def test_l1_regularization_diagonal(basic_model) -> None:
         image_max=1.0,
         intensity_range=1.0,
         max_abs_error=0.01,
+        l1_diag=0.05,  # L1 regularization on diagonal
     )
 
-    loss_fn = create_loss_function(config, preprocessed_data, basic_model)
+    loss_fn = create_loss_function(config, preprocessed_data_with_reg, basic_model)
     pred = basic_model()
     loss_with_reg = loss_fn(pred)
 
     # Test without regularization
-    config_no_reg = create_test_config(V, n_iters=10, l1_diag=None)
-    loss_fn_no_reg = create_loss_function(config_no_reg, preprocessed_data, basic_model)
+    preprocessed_data_no_reg = PreprocessedData(
+        d=2,
+        N=3,
+        seed_centers=np.random.rand(3, 2).astype(np.float32) * 6,
+        V_normalized=V,
+        V_tensor=V_tensor,
+        image_min=0.0,
+        image_max=1.0,
+        intensity_range=1.0,
+        max_abs_error=0.01,
+        l1_diag=None,  # No L1 regularization
+    )
+    loss_fn_no_reg = create_loss_function(config, preprocessed_data_no_reg, basic_model)
     loss_without_reg = loss_fn_no_reg(pred)
 
     assert loss_with_reg > loss_without_reg
@@ -207,10 +233,11 @@ def test_l1_regularization_diagonal(basic_model) -> None:
 def test_l1_regularization_sharpness(basic_model) -> None:
     """Test L1 regularization on sharpness."""
     V = np.random.rand(8, 8).astype(np.float32)
-    config = create_test_config(V, n_iters=10, l1_sharpness=0.02)
+    config = create_test_config(V, n_iters=10)
 
     V_tensor = torch.from_numpy(V).to(config.device)
-    preprocessed_data = PreprocessedData(
+    # L1 values are now stored in PreprocessedData (not config)
+    preprocessed_data_with_reg = PreprocessedData(
         d=2,
         N=3,
         seed_centers=np.random.rand(3, 2).astype(np.float32) * 6,
@@ -220,15 +247,27 @@ def test_l1_regularization_sharpness(basic_model) -> None:
         image_max=1.0,
         intensity_range=1.0,
         max_abs_error=0.01,
+        l1_sharpness=0.02,  # L1 regularization on sharpness
     )
 
-    loss_fn = create_loss_function(config, preprocessed_data, basic_model)
+    loss_fn = create_loss_function(config, preprocessed_data_with_reg, basic_model)
     pred = basic_model()
     loss_with_reg = loss_fn(pred)
 
     # Test without regularization
-    config_no_reg = create_test_config(V, n_iters=10, l1_sharpness=None)
-    loss_fn_no_reg = create_loss_function(config_no_reg, preprocessed_data, basic_model)
+    preprocessed_data_no_reg = PreprocessedData(
+        d=2,
+        N=3,
+        seed_centers=np.random.rand(3, 2).astype(np.float32) * 6,
+        V_normalized=V,
+        V_tensor=V_tensor,
+        image_min=0.0,
+        image_max=1.0,
+        intensity_range=1.0,
+        max_abs_error=0.01,
+        l1_sharpness=None,  # No L1 regularization
+    )
+    loss_fn_no_reg = create_loss_function(config, preprocessed_data_no_reg, basic_model)
     loss_without_reg = loss_fn_no_reg(pred)
 
     # Loss with regularization should be >= loss without regularization
@@ -242,12 +281,31 @@ def test_l1_regularization_sharpness(basic_model) -> None:
 def test_combined_regularization(basic_model) -> None:
     """Test all regularizations combined."""
     V = np.random.rand(8, 8).astype(np.float32)
-    config = create_test_config(
-        V, n_iters=10, l1_amp=0.1, l1_diag=0.05, l1_sharpness=0.02
-    )
+    config = create_test_config(V, n_iters=10)
 
     V_tensor = torch.from_numpy(V).to(config.device)
-    preprocessed_data = PreprocessedData(
+    # L1 values are now stored in PreprocessedData (not config)
+    preprocessed_data_with_reg = PreprocessedData(
+        d=2,
+        N=3,
+        seed_centers=np.random.rand(3, 2).astype(np.float32) * 6,
+        V_normalized=V,
+        V_tensor=V_tensor,
+        image_min=0.0,
+        image_max=1.0,
+        intensity_range=1.0,
+        max_abs_error=0.01,
+        l1_amp=0.1,
+        l1_diag=0.05,
+        l1_sharpness=0.02,
+    )
+
+    loss_fn = create_loss_function(config, preprocessed_data_with_reg, basic_model)
+    pred = basic_model()
+    loss_combined = loss_fn(pred)
+
+    # Compare with no regularization
+    preprocessed_data_no_reg = PreprocessedData(
         d=2,
         N=3,
         seed_centers=np.random.rand(3, 2).astype(np.float32) * 6,
@@ -258,14 +316,7 @@ def test_combined_regularization(basic_model) -> None:
         intensity_range=1.0,
         max_abs_error=0.01,
     )
-
-    loss_fn = create_loss_function(config, preprocessed_data, basic_model)
-    pred = basic_model()
-    loss_combined = loss_fn(pred)
-
-    # Compare with no regularization
-    config_no_reg = create_test_config(V, n_iters=10)
-    loss_fn_no_reg = create_loss_function(config_no_reg, preprocessed_data, basic_model)
+    loss_fn_no_reg = create_loss_function(config, preprocessed_data_no_reg, basic_model)
     loss_no_reg = loss_fn_no_reg(pred)
 
     # Combined should be higher

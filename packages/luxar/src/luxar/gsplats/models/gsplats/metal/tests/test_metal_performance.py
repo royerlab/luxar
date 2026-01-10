@@ -7,6 +7,7 @@ Tests multiple configurations to characterize performance.
 
 from __future__ import annotations
 
+import sys
 import time
 from typing import Tuple
 
@@ -16,15 +17,23 @@ import torch
 from arbol import aprint
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
-from luxar.gsplats.models.gsplats.metal import (
-    GaussianSplatModelMetal,
-    is_metal_available,
+
+# Skip entire module on non-macOS platforms
+pytestmark = pytest.mark.skipif(
+    sys.platform != "darwin" or not torch.backends.mps.is_available(),
+    reason="Metal backend only available on macOS with MPS",
 )
 
-pytestmark = pytest.mark.skipif(
-    not is_metal_available() or not torch.backends.mps.is_available(),
-    reason="Metal backend or MPS not available",
-)
+# Import Metal-specific modules only on macOS
+if sys.platform == "darwin":
+    from luxar.gsplats.models.gsplats.metal import (
+        GaussianSplatModelMetal,
+        is_metal_available,
+    )
+else:
+    # Provide dummies for type checking
+    GaussianSplatModelMetal = None  # type: ignore[misc, assignment]
+    is_metal_available = lambda: False  # noqa: E731
 
 
 def benchmark_forward(model, n_warmup: int = 3, n_iters: int = 20) -> float:

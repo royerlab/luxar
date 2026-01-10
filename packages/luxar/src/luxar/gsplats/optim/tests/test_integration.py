@@ -485,5 +485,96 @@ class TestCoordinatorIntegration:
         assert torch.isfinite(torch.tensor(status["learning_rates"]["mean"]))
 
 
+class TestStandardOptimizerPath:
+    """Test the standard PyTorch optimizer path (use_standard_optimizer=True)."""
+
+    def test_standard_optimizer_returns_none_coordinator(self, simple_model) -> None:
+        """Standard optimizer path returns None for coordinator."""
+        optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
+            simple_model, lr=0.1, scheduler_type="plateau", use_standard_optimizer=True
+        )
+
+        # Standard optimizer path returns None coordinator
+        assert coordinator is None
+        # Optimizer should be standard PyTorch Adam
+        assert isinstance(optimizer, torch.optim.Adam)
+        # Scheduler should be standard PyTorch scheduler
+        assert isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau)
+
+    def test_standard_optimizer_with_exponential_scheduler(self, simple_model) -> None:
+        """Standard optimizer works with exponential scheduler."""
+        optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
+            simple_model,
+            lr=0.05,
+            scheduler_type="exponential",
+            gamma=0.95,
+            use_standard_optimizer=True,
+        )
+
+        assert coordinator is None
+        assert isinstance(optimizer, torch.optim.Adam)
+        assert isinstance(scheduler, torch.optim.lr_scheduler.ExponentialLR)
+
+    def test_standard_optimizer_without_scheduler(self, simple_model) -> None:
+        """Standard optimizer works without scheduler."""
+        optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
+            simple_model, lr=0.1, scheduler_type=None, use_standard_optimizer=True
+        )
+
+        assert coordinator is None
+        assert isinstance(optimizer, torch.optim.Adam)
+        assert scheduler is None
+
+    def test_standard_optimizer_training_works(self, simple_model) -> None:
+        """Standard optimizer can perform training iterations."""
+        optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
+            simple_model, lr=0.01, scheduler_type="plateau", use_standard_optimizer=True
+        )
+
+        target = torch.randn(simple_model.shape)
+        initial_loss = None
+
+        for _ in range(10):
+            optimizer.zero_grad()
+            pred = simple_model()
+            loss = torch.nn.functional.mse_loss(pred, target)
+            if initial_loss is None:
+                initial_loss = loss.item()
+            loss.backward()
+            optimizer.step()
+            scheduler.step(loss)
+
+        # Verify optimizer updated parameters (loss should change)
+        final_pred = simple_model()
+        final_loss = torch.nn.functional.mse_loss(final_pred, target).item()
+        # Loss should have changed (optimization doing something)
+        assert final_loss != initial_loss
+
+    def test_standard_optimizer_custom_params(self, simple_model) -> None:
+        """Standard optimizer accepts custom parameters."""
+        optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
+            simple_model,
+            lr=0.001,
+            scheduler_type="plateau",
+            betas=(0.8, 0.99),
+            eps=1e-6,
+            weight_decay=0.01,
+            amsgrad=True,
+            patience=5,
+            factor=0.2,
+            use_standard_optimizer=True,
+        )
+
+        assert coordinator is None
+        assert isinstance(optimizer, torch.optim.Adam)
+        # Verify parameters were passed correctly
+        param_group = optimizer.param_groups[0]
+        assert param_group["lr"] == 0.001
+        assert param_group["betas"] == (0.8, 0.99)
+        assert param_group["eps"] == 1e-6
+        assert param_group["weight_decay"] == 0.01
+        assert param_group["amsgrad"] is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

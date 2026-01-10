@@ -24,9 +24,9 @@ The module provides two complementary approaches:
 ```python
 def generate_seeds(
     V: np.ndarray,
-    method: str = "both",
+    method: str = "decomposition",
     **method_kwargs
-) -> np.ndarray
+) -> GSplatData
 ```
 
 **Parameters**:
@@ -34,8 +34,9 @@ def generate_seeds(
 - `method` (str): Seed generation method
   - `"decomposition"`: Hierarchical scale decomposition-based detection - **DEFAULT**
   - `"gaussian"`: Fast multiscale Gaussian peak detection
-  - `"both"`: Combines decomposition + gaussian methods
   - `"moments"`: Full covariance estimation for anisotropic features
+  - `"all"`: Combines all methods (decomposition + gaussian + moments)
+  - Comma-separated: e.g., `"gaussian,decomposition"` for specific combination
 - `**kwargs`: Method-specific parameters passed to underlying functions
 
 **Returns**:
@@ -65,7 +66,7 @@ seeds = generate_seeds(image, method="decomposition",
 - **"decomposition"** (default): Most principled scale separation, recommended for most use cases
 - **"gaussian"**: Fast generation when speed is critical
 - **"moments"**: Full covariance estimation for anisotropic features
-- **"both"**: Combines decomposition and gaussian methods for comprehensive coverage
+- **"all"**: Combines all methods (decomposition + gaussian + moments) for maximum coverage
 
 **Integration with fit_gaussian_splats()**:
 ```python
@@ -93,7 +94,7 @@ The default method is "decomposition" for principled scale separation:
 
 - **Default**: `method="decomposition"` - Most accurate scale information
 - **Alternative**: `method="gaussian"` - Faster but less principled scale mapping
-- **Full coverage**: `method="both"` - Combines both methods
+- **Full coverage**: `method="all"` - Combines all methods
 - **Anisotropic**: `method="moments"` - Full covariance for elliptical features
 
 **Note**: All methods return `GSplatData` with scale-informed Gaussian shapes.
@@ -103,8 +104,8 @@ The default method is "decomposition" for principled scale separation:
 All parameters from `generate_seeds()` can be passed through the API via `**seed_kwargs`:
 
 ```python
-# Default (hybrid: decomposition + Gaussian for best convergence)
-result = fit_gaussian_splats(image)  # seed_method="both" is the default
+# Default uses decomposition method
+result = fit_gaussian_splats(image)  # seed_method="decomposition" is the default
 
 # Faster with decomposition only
 result = fit_gaussian_splats(
@@ -336,13 +337,16 @@ print(f"Final splats: {len(result.amplitudes)}")
 
 ### Combining Methods
 
-Use `generate_seeds(method="both")` to combine methods automatically:
+Use `generate_seeds(method="all")` to combine all methods automatically:
 
 ```python
 from luxar.gsplats.seeds import generate_seeds
 
-# Automatic combination with deduplication
-seeds = generate_seeds(image, method="both", min_distance=3.0)
+# Automatic combination of all methods with deduplication
+seeds = generate_seeds(image, method="all", min_distance=3.0)
+
+# Or combine specific methods
+seeds = generate_seeds(image, method="gaussian,decomposition", min_distance=3.0)
 
 # Use combined seeds (returns GSplatData)
 result = fit_gaussian_splats(image, seeds=seeds)
@@ -353,7 +357,7 @@ Alternatively, combine manually using `combine_seeds`:
 ```python
 from luxar.gsplats.seeds import seed_from_gaussian, seed_from_decomposition, combine_seeds
 
-# Generate seeds from both methods (returns GSplatData)
+# Generate seeds from individual methods (returns GSplatData)
 seeds_gaussian = seed_from_gaussian(image, min_distance=3.0)
 seeds_decomp = seed_from_decomposition(image, scales=[1, 2, 4, 8])
 

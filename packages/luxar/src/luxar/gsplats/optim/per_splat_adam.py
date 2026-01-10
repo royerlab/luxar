@@ -606,7 +606,9 @@ class PerSplatAdam:
         """Get learning rate for a specific splat."""
         if splat_idx in self.splat_states:
             return float(self.splat_states[splat_idx]["lr"])
-        return self.base_lr
+        # Return effective_lr (with gradient dilution compensation) for consistency
+        # with how new splats are initialized in _initialize_splat
+        return self.effective_lr
 
     def get_effective_learning_rates(self) -> torch.Tensor:
         """Get effective learning rates for all splats (for monitoring)."""

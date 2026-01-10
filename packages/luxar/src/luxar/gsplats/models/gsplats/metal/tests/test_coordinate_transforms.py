@@ -6,10 +6,15 @@ Each test focuses on one specific transformation to isolate issues.
 
 from __future__ import annotations
 
+import sys
+
 import numpy as np
 import pytest
 import torch
 from arbol import aprint
+
+# Check if Metal is available (for TestEndToEndCoordinates)
+_metal_available = sys.platform == "darwin" and torch.backends.mps.is_available()
 
 
 class TestCentersReordering:
@@ -210,6 +215,9 @@ class TestGradientsReordering:
         assert torch.allclose(d_conic_pytorch_back, d_conic_pytorch_orig)
 
 
+@pytest.mark.skipif(
+    not _metal_available, reason="Metal backend only available on macOS with MPS"
+)
 class TestEndToEndCoordinates:
     """End-to-end test of coordinate transformations."""
 

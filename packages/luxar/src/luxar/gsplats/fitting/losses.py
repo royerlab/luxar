@@ -26,7 +26,7 @@ def create_loss_function(
     config : FitConfig
         Configuration containing loss type and parameters
     preprocessed_data : PreprocessedData
-        Preprocessed data containing target tensor
+        Preprocessed data containing target tensor and computed L1 values
     model : GaussianSplatModel
         Model for accessing parameters (needed for L1 regularization)
 
@@ -38,9 +38,11 @@ def create_loss_function(
     V_t = preprocessed_data.V_tensor
     loss_type = config.loss_type
     asymmetric_penalty = config.asymmetric_penalty
-    l1_amp = config.l1_amp
-    l1_diag = config.l1_diag
-    l1_sharpness = config.l1_sharpness
+    # Use L1 values from preprocessed_data (computed during preprocessing)
+    # This avoids mutating the input config object
+    l1_amp = preprocessed_data.l1_amp
+    l1_diag = preprocessed_data.l1_diag
+    l1_sharpness = preprocessed_data.l1_sharpness
 
     def loss_fn(pred: torch.Tensor) -> torch.Tensor:
         """

@@ -51,7 +51,11 @@ def main():
             aprint(f"Volume range: [{volume.min():.3f}, {volume.max():.3f}]")
 
         # Fit with Metal (if available)
-        device = "mps" if is_metal_available() and torch.backends.mps.is_available() else "cpu"
+        device = (
+            "mps"
+            if is_metal_available() and torch.backends.mps.is_available()
+            else "cpu"
+        )
         backend = "Metal" if device == "mps" else "CPU"
 
         with asection(f"Fitting with {backend} backend"):
@@ -77,7 +81,9 @@ def main():
         else:
             aprint("\n💡 Note: To enable Metal acceleration:")
             aprint("   1. Use macOS with Apple Silicon (M1/M2/M3/M4)")
-            aprint("   2. Install Metal backend: cd metal && python setup.py build_ext --inplace")
+            aprint(
+                "   2. Install Metal backend: cd metal && python setup.py build_ext --inplace"
+            )
             aprint("   3. Use device='mps' when calling fit_gaussian_splats()")
 
 

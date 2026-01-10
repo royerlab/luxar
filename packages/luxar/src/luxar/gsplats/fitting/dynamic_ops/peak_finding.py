@@ -10,6 +10,68 @@ from typing import List, Tuple
 import torch
 
 
+def _separable_nd_max_pool(data: torch.Tensor, kernel_size: int) -> torch.Tensor:
+    """
+    Apply separable n-dimensional max pooling using 1D max pooling along each dimension.
+
+    This is an efficient implementation for >3D data where native max_pool functions
+    don't exist. The approach applies 1D max pooling sequentially along each dimension,
+    which is equivalent to a full nD max pool for local maxima detection.
+
+    Args:
+        data: Input tensor of any dimensionality
+        kernel_size: Size of the max pooling kernel (same for all dimensions)
+
+    Returns:
+        Max-pooled tensor with same shape as input
+    """
+    result = data
+    d = data.ndim
+    padding = kernel_size // 2
+
+    # Apply 1D max pooling along each dimension sequentially
+    for dim in range(d):
+        # Move the current dimension to the last position for max_pool1d
+        # max_pool1d expects input of shape (N, C, L) - we use (1, 1, L) for each slice
+        perm = list(range(d))
+        perm[dim], perm[-1] = perm[-1], perm[dim]
+        result = result.permute(*perm)
+
+        # Store original shape (with swapped dimensions)
+        original_shape = result.shape
+
+        # Reshape to (batch, 1, length) for max_pool1d
+        # Flatten all dimensions except the last one as batch
+        batch_size = result[..., 0].numel()
+        length = original_shape[-1]
+        result = result.reshape(batch_size, 1, length)
+
+        # Apply 1D max pooling
+        result = torch.nn.functional.max_pool1d(
+            result, kernel_size=kernel_size, stride=1, padding=padding
+        )
+
+        # Handle edge case where output size differs slightly from input
+        if result.shape[-1] != length:
+            # Truncate or pad to match original size
+            if result.shape[-1] > length:
+                result = result[..., :length]
+            else:
+                pad_size = length - result.shape[-1]
+                result = torch.nn.functional.pad(
+                    result, (0, pad_size), mode="replicate"
+                )
+
+        # Reshape back and reverse permutation
+        result = result.reshape(original_shape)
+        inv_perm = [0] * d
+        for i, p in enumerate(perm):
+            inv_perm[p] = i
+        result = result.permute(*inv_perm)
+
+    return result
+
+
 def _find_residual_peaks(
     residual: torch.Tensor,
     k_max_residuals: int,
@@ -102,8 +164,9 @@ def _find_residual_peaks_global(
                 padding=kernel_size // 2,
             )[0, 0]
     else:
-        # Fallback for other dimensions
-        max_pooled = residual_abs
+        # nD NMS using separable 1D max pooling along each dimension
+        # This is efficient and works for any dimensionality
+        max_pooled = _separable_nd_max_pool(residual_abs, kernel_size)
 
     # Find local maxima
     is_peak = (residual_abs >= max_pooled) & (residual_abs > 0)
@@ -151,7 +214,8 @@ def _find_residual_peaks_tiled(
     Notes:
         - k_per_tile = k_max_residuals / total_tiles is auto-calculated
         - If k_per_tile >= 1: Keep floor(k_per_tile) peaks per tile (deterministic)
-        - If k_per_tile < 1: Keep each peak with probability k_per_tile (random)
+        - If k_per_tile < 1: Keep each peak with probability k_per_tile (random),
+          but strong peaks (above global median) are always kept
         - Expected total ≈ k_max_residuals regardless of tiling
         - Randomness ensures fairness (no bias toward bright regions)
         - Each tile processed independently (spatial fairness guaranteed)
@@ -181,10 +245,16 @@ def _find_residual_peaks_tiled(
         # Probabilistic: each peak kept with probability k_per_tile
         keep_probability = k_per_tile_float
         k_deterministic = None
+        # Calculate threshold for "strong" peaks that should always be kept
+        # Use 75th percentile of absolute residual as threshold
+        strong_peak_threshold = torch.quantile(
+            residual_abs.float().flatten(), 0.75
+        ).item()
     else:
         # Deterministic: keep floor(k_per_tile) peaks per tile
         k_deterministic = int(k_per_tile_float)
         keep_probability = None
+        strong_peak_threshold = float("inf")  # Not used in deterministic mode
 
     all_peaks = []
 
@@ -224,13 +294,22 @@ def _find_residual_peaks_tiled(
 
         # Find peaks within this tile using NMS
         if use_probabilistic:
-            # Find best peak in tile, keep it with probability keep_probability
+            # Find best peak in tile
             tile_peaks = _find_peaks_in_tile(
                 tile, k_max=1, nms_radius_vox=nms_radius_vox
             )
-            # Probabilistic selection: keep peak with probability keep_probability
-            if tile_peaks and random.random() >= keep_probability:
-                tile_peaks = []  # Reject this tile's peak (failed probability check)
+            if tile_peaks:
+                # Get peak value to check if it's a strong peak
+                peak_coords = tile_peaks[0]
+                peak_value = tile[peak_coords].item()
+
+                # Strong peaks are always kept, others use probabilistic selection
+                if peak_value >= strong_peak_threshold:
+                    # Keep strong peak unconditionally
+                    pass
+                elif random.random() >= keep_probability:
+                    # Reject weak peak based on probability
+                    tile_peaks = []
         else:
             # Deterministic: keep top k_deterministic peaks per tile
             tile_peaks = _find_peaks_in_tile(
@@ -313,8 +392,8 @@ def _find_peaks_in_tile(
                 padding=kernel_size // 2,
             )[0, 0]
     else:
-        # Fallback: no NMS for unsupported dimensions
-        max_pooled = tile
+        # Use separable n-dimensional max pooling for >3D (consistent with global mode)
+        max_pooled = _separable_nd_max_pool(tile, kernel_size)
 
     # Find local maxima
     is_peak = (tile >= max_pooled) & (tile > 0)

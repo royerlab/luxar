@@ -597,7 +597,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     rotationDamping: number;
     movementSpeed: number;
     rotationSpeed: number;
-    } {
+  } {
     return {
       inertialMode: this.config.flyInertialMode ?? config.controls.fly.inertialMode.default,
       damping: this.config.flyDamping ?? config.controls.fly.movement.damping.default,

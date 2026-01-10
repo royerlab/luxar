@@ -165,6 +165,8 @@ def create_per_splat_optimizer_setup(
     min_lr: float = 1e-8,
     gamma: float = 0.95,
     age_based_decay: bool = True,
+    # Performance option
+    use_standard_optimizer: bool = False,
     **extra_kwargs,
 ):
     """
@@ -190,10 +192,53 @@ def create_per_splat_optimizer_setup(
         gamma: Exponential decay rate
         age_based_decay: Whether to use age-based decay
 
+        use_standard_optimizer: Use standard PyTorch Adam instead of per-splat optimizer.
+            This is much faster (~50x) but doesn't support dynamic topology changes.
+            Use this when enable_dynamic_ops=False for best performance.
+
     Returns:
         tuple: (optimizer, scheduler, coordinator)
     """
-    # Create optimizer with only optimizer-specific arguments
+    # Use standard PyTorch Adam for better performance when dynamic ops not needed
+    if use_standard_optimizer:
+        # Apply gradient dilution compensation for consistency with PerSplatAdam
+        # Higher dimensions have more parameters per splat, diluting gradients
+        from luxar.gsplats.utils.trils import calculate_gradient_dilution_factor
+
+        d = len(model.shape)
+        effective_lr = lr * calculate_gradient_dilution_factor(d)
+
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=effective_lr,
+            betas=betas,
+            eps=eps,
+            weight_decay=weight_decay,
+            amsgrad=amsgrad,
+        )
+
+        # Create standard scheduler
+        if scheduler_type == "plateau":
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode="min",
+                patience=patience,
+                factor=factor,
+                threshold=threshold,
+                cooldown=cooldown,
+                min_lr=min_lr,
+            )
+        elif scheduler_type == "exponential":
+            scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
+        elif scheduler_type is None:
+            scheduler = None
+        else:
+            raise ValueError(f"Unknown scheduler_type: {scheduler_type}")
+
+        # No coordinator needed for standard optimizer
+        return optimizer, scheduler, None
+
+    # Create per-splat optimizer with only optimizer-specific arguments
     optimizer_kwargs = {
         "betas": betas,
         "eps": eps,

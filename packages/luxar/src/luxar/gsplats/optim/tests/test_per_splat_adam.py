@@ -114,6 +114,7 @@ def test_factory_function() -> None:
         L0=L0,
         amps0=amps0,
         sigma_min_diag=[0.5, 0.5],
+        device=torch.device("cpu"),  # Explicitly use CPU for test consistency
     )
 
     optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
@@ -125,11 +126,12 @@ def test_factory_function() -> None:
     )
     aprint(f"✓ Coordinator status: {coordinator.get_status()}")
 
-    # Test coordinated operations
-    centers_new = torch.tensor([[8.0, 8.0]], dtype=torch.float32)
-    Ls_new = torch.stack([torch.eye(2)], dim=0)
-    amps_new = torch.tensor([0.8], dtype=torch.float32)
-    sharpness_new = torch.tensor([2.0], dtype=torch.float32)
+    # Test coordinated operations (use CPU device to match model)
+    device = torch.device("cpu")
+    centers_new = torch.tensor([[8.0, 8.0]], dtype=torch.float32, device=device)
+    Ls_new = torch.stack([torch.eye(2, device=device)], dim=0)
+    amps_new = torch.tensor([0.8], dtype=torch.float32, device=device)
+    sharpness_new = torch.tensor([2.0], dtype=torch.float32, device=device)
 
     n_added = coordinator.add_splats(
         centers_new, Ls_new, amps_new, sharpness_new, lr_new=0.05

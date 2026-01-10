@@ -2,17 +2,19 @@
 # Uses Hatch for on-demand environment management
 #
 # This Makefile is designed to work on fresh Linux/macOS machines with minimal
-# pre-installed tools. Run 'make dev-setup' to automatically install all dependencies.
+# pre-installed tools. Run 'make setup-dev' to automatically install all dependencies.
 #
-.PHONY: help install install-dev format-python format-typescript format-all lint-python lint-typescript \
-        type-check-python type-check-typescript security test test-python \
-        test-cov-python test-cov-typescript test-fixtures test-wasm test-viewer test-viewer-fixtures test-e2e \
-        clean clean-examples clean-dev-setup pre-commit-install pre-commit-run check check-typescript dev-setup \
-        check-docs check-docs-verbose docs-clean docs-build docs-serve \
-        demo run-demos run-examples serve-examples serve-dataset viewer-install viewer viewer-build viewer-rebuild \
-        setup-rust wasm-build wasm-clean readme-images readme-videos \
-        stats env-show env-prune shell build publish-test publish \
-        check-deps install-node install-pnpm install-hatch
+.PHONY: help install-python format-python format-typescript format-rust format-cuda format-all \
+        lint-python lint-typescript type-check-python type-check-typescript security \
+        test-all test-python test-cov-python test-cov-typescript test-fixtures test-wasm test-viewer test-viewer-fixtures test-e2e \
+        clean-all clean-viewer clean-examples clean-setup install-pre-commit run-pre-commit \
+        check-all check-typescript check-rust check-wasm-deps setup-dev \
+        check-docs check-docs-verbose clean-docs build-docs serve-docs \
+        demo run-demos run-examples serve-examples serve-dataset install-viewer viewer build-viewer rebuild-viewer \
+        setup-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-readme-videos \
+        stats show-env prune-env shell build publish-test publish \
+        check-deps install-node install-pnpm install-hatch \
+        setup-cuda check-cuda-deps build-cuda clean-cuda test-cuda benchmark-cuda
 
 # ============================================================================
 # OS Detection and Configuration
@@ -175,6 +177,27 @@ check-deps:  ## Check all development dependencies and their versions
 		echo "⚪ wasm-pack not installed (run 'make setup-rust' if needed)"; \
 	fi
 	@echo ""
+	@echo "=== Optional Dependencies (for CUDA builds) ==="
+	@echo ""
+	@# CUDA toolkit (nvcc)
+	@if command -v nvcc >/dev/null 2>&1; then \
+		echo "✅ CUDA: $$(nvcc --version | grep release | sed 's/.*release //' | sed 's/,.*//')"; \
+	else \
+		echo "⚪ CUDA toolkit not installed (nvcc not found)"; \
+	fi
+	@# PyTorch CUDA support
+	@if hatch run python -c "import torch; print('✅ PyTorch CUDA:', torch.version.cuda if torch.cuda.is_available() else 'not available')" 2>/dev/null; then \
+		:; \
+	else \
+		echo "⚪ PyTorch CUDA not available"; \
+	fi
+	@# CUDA extension build status
+	@if ls packages/luxar/src/luxar/gsplats/models/gsplats/cuda/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then \
+		echo "✅ CUDA extension: built"; \
+	else \
+		echo "⚪ CUDA extension: not built (run 'make build-cuda')"; \
+	fi
+	@echo ""
 
 install-node:  ## Install or upgrade Node.js to required version (no sudo needed)
 	@echo "📦 Installing Node.js $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+..."
@@ -279,16 +302,16 @@ help:  ## Show this help message
 	@echo "  luxar demo          - Generate demo + serve + open browser"
 	@echo "  make run-examples   - Generate all example datasets"
 	@echo ""
+	@echo "Optional accelerators:"
+	@echo "  make setup-rust     - Install Rust/WASM for viewer builds"
+	@echo "  make setup-cuda     - Install CUDA dependencies + build extension"
+	@echo ""
 	@echo "System: $(OS) (package manager: $(PKG_MANAGER))"
 	@echo "Node.js requirement: $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"
 
 # Installation
-install:  ## Install the package
+install-python:  ## Install the Python package in editable mode
 	pip install -e .
-
-install-dev:  ## Install with development dependencies (legacy - use hatch instead)
-	@echo "⚠️  Note: Consider using 'hatch shell' for development environments"
-	pip install -e ".[dev]"
 
 # Code formatting (using Hatch)
 format-python:  ## Format Python code with ruff
@@ -336,7 +359,7 @@ security:  ## Run bandit security checks
 	hatch run bandit -r packages/luxar/src/luxar/ -c pyproject.toml
 
 # Testing (using Hatch)
-test:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtures)
+test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtures)
 	@echo "🐍 Running Python tests..."
 	hatch run test
 	@echo ""
@@ -377,14 +400,14 @@ test-cov-python:  ## Run Python tests with coverage report
 	hatch run test-cov
 
 # Pre-commit
-pre-commit-install:  ## Install pre-commit hooks
+install-pre-commit:  ## Install pre-commit hooks
 	hatch run pre-commit install
 
-pre-commit-run:  ## Run pre-commit on all files
+run-pre-commit:  ## Run pre-commit on all files
 	hatch run pre-commit run --all-files
 
 # Quality checks (run all using Hatch)
-check:  ## Run all quality checks (Python and TypeScript)
+check-all:  ## Run all quality checks (Python and TypeScript)
 	@echo "🐍 Running Python checks..."
 	hatch run check
 	@echo "📘 Running TypeScript checks..."
@@ -414,7 +437,7 @@ check-docs-verbose:  ## Check documentation with detailed output
 	fi
 	cd packages/luxar-viewer && npx tsx scripts/check-jsdoc-coverage.ts --threshold=70 --verbose
 
-docs-clean:  ## Clean built documentation
+clean-docs:  ## Clean built documentation
 	@echo "🧹 Cleaning documentation build artifacts..."
 	rm -rf docs/_build/
 	rm -rf docs/_autosummary/
@@ -469,6 +492,7 @@ clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH 
 	@echo "  • node_modules/           (project-local)"
 	@echo "  • Hatch virtual envs      (in ~/.local/share/hatch/)"
 	@echo "  • WASM build artifacts    (public/wasm/, rust/target/)"
+	@echo "  • CUDA build artifacts    (*.so, build/)"
 	@echo "  • wasm-pack               (Rust tool)"
 	@echo "  • Rust toolchain          (rustup, cargo, rustc)"
 	@echo "  • Hatch                   (Python tool)"
@@ -482,23 +506,29 @@ clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH 
 		exit 1; \
 	fi
 	@echo ""
-	@echo "🧹 [1/8] Removing node_modules..."
+	@echo "🧹 [1/9] Removing node_modules..."
 	@rm -rf packages/luxar-viewer/node_modules
 	@echo "   ✓ Done"
 	@echo ""
-	@echo "🧹 [2/8] Removing Hatch environments..."
+	@echo "🧹 [2/9] Removing Hatch environments..."
 	@if command -v hatch >/dev/null 2>&1; then \
 		hatch env prune -y 2>/dev/null || true; \
 	fi
 	@rm -rf ~/.local/share/hatch/env/virtual/luxar* 2>/dev/null || true
 	@echo "   ✓ Done"
 	@echo ""
-	@echo "🧹 [3/8] Removing WASM build artifacts..."
+	@echo "🧹 [3/9] Removing WASM build artifacts..."
 	@rm -rf packages/luxar-viewer/public/wasm
 	@rm -rf packages/luxar-viewer/src/wasm/rust/target
 	@echo "   ✓ Done"
 	@echo ""
-	@echo "🧹 [4/8] Removing wasm-pack..."
+	@echo "🧹 [4/9] Removing CUDA build artifacts..."
+	@rm -rf $(CUDA_EXT_DIR)/build/
+	@rm -rf $(CUDA_EXT_DIR)/*.egg-info/
+	@rm -f $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so
+	@echo "   ✓ Done"
+	@echo ""
+	@echo "🧹 [5/9] Removing wasm-pack..."
 	@if [ -f "$(HOME)/.cargo/env" ]; then \
 		. "$(HOME)/.cargo/env"; \
 	fi; \
@@ -509,7 +539,7 @@ clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH 
 		echo "   ⚪ Not installed, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [5/8] Removing Rust toolchain..."
+	@echo "🧹 [6/9] Removing Rust toolchain..."
 	@if command -v rustup >/dev/null 2>&1; then \
 		rustup self uninstall -y 2>/dev/null || true; \
 		echo "   ✓ Done"; \
@@ -517,7 +547,7 @@ clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH 
 		echo "   ⚪ Not installed, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [6/8] Removing Hatch..."
+	@echo "🧹 [7/9] Removing Hatch..."
 	@if command -v pipx >/dev/null 2>&1 && pipx list 2>/dev/null | grep -q hatch; then \
 		pipx uninstall hatch 2>/dev/null || true; \
 		echo "   ✓ Removed via pipx"; \
@@ -537,7 +567,7 @@ clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH 
 		echo "   ⚪ Not installed, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [7/8] Removing nvm and Node.js..."
+	@echo "🧹 [8/9] Removing nvm and Node.js..."
 	@NVM_REMOVED=0; \
 	HOMEBREW_NODE=0; \
 	if [ -d "$(HOME)/.nvm" ]; then \
@@ -558,7 +588,7 @@ clean-dev-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH 
 		echo "   ⚪ nvm not installed, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [8/8] Removing pnpm cache..."
+	@echo "🧹 [9/9] Removing pnpm cache..."
 	@if [ -d "$(HOME)/.local/share/pnpm" ]; then \
 		rm -rf "$(HOME)/.local/share/pnpm"; \
 		echo "   ✓ Removed ~/.local/share/pnpm"; \
@@ -718,15 +748,29 @@ dev-setup:  ## Complete development setup (auto-installs missing dependencies)
 	cd packages/luxar-viewer && pnpm install
 	@echo ""
 	@# Step 5: Optional Rust/WASM setup prompt
-	@echo "=== Step 5: Optional WASM Support ==="
+	@echo "=== Step 5: Optional Accelerators ==="
+	@echo ""
+	@echo "WASM (viewer performance):"
 	@if [ -f "$(HOME)/.cargo/env" ]; then \
 		. "$(HOME)/.cargo/env"; \
 	fi; \
 	if command -v wasm-pack >/dev/null 2>&1; then \
-		echo "✅ Rust/WASM already configured"; \
+		echo "  ✅ Rust/WASM already configured"; \
 	else \
-		echo "⚪ Rust/WASM not installed (optional, for production builds)"; \
-		echo "   Run 'make setup-rust' to enable WASM acceleration"; \
+		echo "  ⚪ Not installed (run 'make setup-rust' to enable)"; \
+	fi
+	@echo ""
+	@echo "CUDA (Gaussian splatting GPU acceleration):"
+	@if command -v nvcc >/dev/null 2>&1; then \
+		echo "  ✅ CUDA toolkit installed"; \
+		if hatch run python -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then \
+			echo "  ✅ PyTorch CUDA available"; \
+		else \
+			echo "  ⚠️  PyTorch CUDA not available (run 'make check-cuda-deps' for details)"; \
+		fi; \
+	else \
+		echo "  ⚪ CUDA toolkit not installed"; \
+		echo "     For GPU-accelerated splatting, install CUDA toolkit and run 'make build-cuda'"; \
 	fi
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -737,7 +781,10 @@ dev-setup:  ## Complete development setup (auto-installs missing dependencies)
 	@echo "  make check        - Verify everything works"
 	@echo "  make viewer       - Start the viewer dev server"
 	@echo "  make demo         - Generate a demo dataset"
-	@echo "  make setup-rust   - Enable WASM acceleration (optional)"
+	@echo ""
+	@echo "Optional accelerators:"
+	@echo "  make setup-rust   - Enable WASM acceleration (viewer)"
+	@echo "  make setup-cuda   - Install CUDA dependencies + build extension"
 	@echo ""
 	@echo "💡 Use 'hatch shell' to activate the Python environment"
 
@@ -820,7 +867,7 @@ run-demos:  ## Generate ALL demo datasets (output to datasets/demos/)
 		fi; \
 	done 2>/dev/null || echo "   No .zarr files found"
 
-readme-demos:  ## Generate only the demo datasets needed for README screenshots
+generate-readme-demos:  ## Generate only the demo datasets needed for README screenshots
 	@echo "🚀 Generating README demo datasets..."
 	@mkdir -p datasets/demos
 	@echo "[1/5] 🌀 Lorenz Attractor..."
@@ -835,7 +882,7 @@ readme-demos:  ## Generate only the demo datasets needed for README screenshots
 	@if [ -d "datasets/demos/rainbow_sphere.zarr" ]; then echo "   ✓ exists"; else hatch run python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py --no-serve || echo "   ⚠️  Failed"; fi
 	@echo "✅ README demos ready!"
 
-readme-images: readme-demos  ## Generate README screenshots using Playwright
+generate-readme-images: generate-readme-demos  ## Generate README screenshots using Playwright
 	@echo "📸 Generating README screenshots..."
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -857,7 +904,7 @@ readme-images: readme-demos  ## Generate README screenshots using Playwright
 	@echo ""
 	@echo "💡 Commit these images to include them in the README"
 
-readme-videos: readme-demos  ## Generate README videos (GIF/WebP) using Playwright
+generate-readme-videos: generate-readme-demos  ## Generate README videos (GIF/WebP) using Playwright
 	@echo "🎬 Generating README videos..."
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@# Check for ffmpeg
@@ -904,7 +951,7 @@ serve-dataset:  ## Serve a dataset (default: datasets/demos/demo.zarr, port: 800
 	hatch run luxar serve $(DATASET) -p $(PORT)
 
 # Web viewer
-viewer-install:  ## Install viewer dependencies
+install-viewer:  ## Install viewer dependencies
 	cd packages/luxar-viewer && pnpm install
 
 viewer:  ## Start the web viewer development server
@@ -937,7 +984,7 @@ viewer:  ## Start the web viewer development server
 	fi; \
 	cd packages/luxar-viewer && pnpm dev
 
-viewer-build:  ## Build the viewer for production (auto-installs Rust/wasm-pack if needed)
+build-viewer:  ## Build the viewer for production (auto-installs Rust/wasm-pack if needed)
 	@# Source nvm and check Node.js version first
 	@export NVM_DIR="$$HOME/.nvm"; \
 	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
@@ -974,7 +1021,7 @@ viewer-build:  ## Build the viewer for production (auto-installs Rust/wasm-pack 
 	echo "🦀 Building viewer with Rust/WASM support..."; \
 	cd packages/luxar-viewer && pnpm build
 
-viewer-rebuild:  ## Complete clean rebuild of viewer (auto-installs dependencies as needed)
+rebuild-viewer:  ## Complete clean rebuild of viewer (auto-installs dependencies as needed)
 	@echo "🧹 Cleaning viewer build artifacts..."
 	@rm -rf packages/luxar-viewer/dist/
 	@rm -rf packages/luxar-viewer/.vite/
@@ -1061,9 +1108,9 @@ setup-rust:  ## Install/update Rust and wasm-pack for WASM development
 	echo "   wasm-pack version: $$(wasm-pack --version)"; \
 	echo ""; \
 	echo "💡 Run 'make test-wasm' to test the Rust code"; \
-	echo "💡 Run 'make wasm-build' to compile the WASM module"
+	echo "💡 Run 'make build-wasm' to compile the WASM module"
 
-wasm-build:  ## Build the WASM module (requires Rust + wasm-pack)
+build-wasm:  ## Build the WASM module (requires Rust + wasm-pack)
 	@# Source nvm and cargo env to ensure pnpm and wasm-pack are in PATH
 	@export NVM_DIR="$$HOME/.nvm"; \
 	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
@@ -1117,11 +1164,325 @@ test-wasm:  ## Run Rust unit tests for WASM module
 	cd packages/luxar-viewer && pnpm test:wasm && \
 	echo "✅ All Rust tests passed!"
 
-wasm-clean:  ## Clean WASM build artifacts
+clean-wasm:  ## Clean WASM build artifacts
 	@echo "🧹 Cleaning WASM artifacts..."
 	rm -rf packages/luxar-viewer/public/wasm/
 	rm -rf packages/luxar-viewer/src/wasm/rust/target/
 	@echo "✅ WASM artifacts cleaned!"
+
+# ============================================================================
+# CUDA Backend (Gaussian Splatting)
+# ============================================================================
+
+# Path to CUDA extension directory
+CUDA_EXT_DIR := packages/luxar/src/luxar/gsplats/models/gsplats/cuda
+
+setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
+	@echo "🔧 Setting up CUDA development environment..."
+	@echo ""
+	@# Step 1: Check/install system dependencies (may need sudo)
+	@echo "=== Step 1: System Dependencies ==="
+	@NEED_SUDO=0; \
+	MISSING=""; \
+	if ! command -v nvidia-smi >/dev/null 2>&1; then \
+		MISSING="$$MISSING nvidia-driver"; \
+		NEED_SUDO=1; \
+	else \
+		echo "✅ NVIDIA driver already installed"; \
+	fi; \
+	if ! command -v nvcc >/dev/null 2>&1; then \
+		MISSING="$$MISSING cuda-toolkit"; \
+		NEED_SUDO=1; \
+	else \
+		echo "✅ CUDA toolkit already installed"; \
+	fi; \
+	if ! command -v g++ >/dev/null 2>&1 && ! command -v clang++ >/dev/null 2>&1; then \
+		MISSING="$$MISSING build-essential"; \
+		NEED_SUDO=1; \
+	else \
+		echo "✅ C++ compiler already installed"; \
+	fi; \
+	if [ "$$NEED_SUDO" = "1" ]; then \
+		echo ""; \
+		echo "⚠️  Some system packages need to be installed (requires sudo):"; \
+		echo ""; \
+		if [ "$(PKG_MANAGER)" = "apt" ]; then \
+			CMD="sudo apt update && sudo apt install -y"; \
+			for pkg in $$MISSING; do \
+				case $$pkg in \
+					nvidia-driver) CMD="$$CMD nvidia-driver-535";; \
+					cuda-toolkit) CMD="$$CMD nvidia-cuda-toolkit";; \
+					build-essential) CMD="$$CMD build-essential";; \
+				esac; \
+			done; \
+			echo "   $$CMD"; \
+			echo ""; \
+			read -p "Run this command now? [y/N] " confirm; \
+			if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+				eval $$CMD; \
+			else \
+				echo ""; \
+				echo "Skipped. Please install manually and re-run 'make setup-cuda'."; \
+				exit 1; \
+			fi; \
+		else \
+			echo "   Please install the following packages manually:"; \
+			for pkg in $$MISSING; do echo "   - $$pkg"; done; \
+			echo ""; \
+			echo "   Then re-run 'make setup-cuda'."; \
+			exit 1; \
+		fi; \
+	fi
+	@echo ""
+	@# Step 2: Install PyTorch with CUDA (no sudo needed)
+	@echo "=== Step 2: PyTorch with CUDA ==="
+	@if hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
+		TORCH_CUDA=$$(hatch run python -c "import torch; print(torch.version.cuda)" 2>/dev/null); \
+		echo "✅ PyTorch with CUDA $$TORCH_CUDA already installed"; \
+	else \
+		echo "📥 Installing PyTorch with CUDA 12.1 support..."; \
+		echo ""; \
+		hatch run pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121; \
+		echo ""; \
+		if hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
+			echo "✅ PyTorch with CUDA installed successfully"; \
+		else \
+			echo "⚠️  PyTorch installed but CUDA not available"; \
+			echo "   This may happen if NVIDIA driver is not properly installed."; \
+		fi; \
+	fi
+	@echo ""
+	@# Step 3: Build the extension
+	@echo "=== Step 3: Build CUDA Extension ==="
+	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then \
+		echo "✅ CUDA extension already built"; \
+	else \
+		if command -v nvcc >/dev/null 2>&1 && hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
+			echo "Building CUDA extension..."; \
+			hatch run pip install -q ninja 2>/dev/null || true; \
+			hatch run python $(CUDA_EXT_DIR)/build.py; \
+		else \
+			echo "⚠️  Cannot build - prerequisites not satisfied"; \
+			echo "   Run 'make check-cuda-deps' for details"; \
+		fi; \
+	fi
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then \
+		echo "✅ CUDA setup complete!"; \
+		echo ""; \
+		echo "Next steps:"; \
+		echo "  make test-cuda      - Verify installation"; \
+		echo "  make benchmark-cuda - Run performance benchmarks"; \
+	else \
+		echo "⚠️  CUDA setup incomplete - run 'make check-cuda-deps' for details"; \
+	fi
+	@echo ""
+
+check-cuda-deps:  ## Check CUDA development dependencies
+	@echo "🔍 Checking CUDA dependencies..."
+	@echo ""
+	@echo "=== 1. CUDA Toolkit ==="
+	@if command -v nvcc >/dev/null 2>&1; then \
+		CUDA_VERSION=$$(nvcc --version | grep release | sed 's/.*release //' | sed 's/,.*//'); \
+		echo "✅ CUDA toolkit: $$CUDA_VERSION"; \
+		echo "   Location: $$(which nvcc)"; \
+	else \
+		echo "❌ CUDA toolkit not found (nvcc not in PATH)"; \
+		echo ""; \
+		echo "   Installation options:"; \
+		if [ "$(PKG_MANAGER)" = "apt" ]; then \
+			echo "   Ubuntu/Debian (recommended):"; \
+			echo "     sudo apt install nvidia-cuda-toolkit"; \
+			echo ""; \
+			echo "   Or for latest version:"; \
+		fi; \
+		echo "     https://developer.nvidia.com/cuda-downloads"; \
+		echo ""; \
+		echo "   After installing, ensure nvcc is in PATH:"; \
+		echo "     export PATH=/usr/local/cuda/bin:\$$PATH"; \
+	fi
+	@echo ""
+	@echo "=== 2. NVIDIA GPU Driver ==="
+	@if command -v nvidia-smi >/dev/null 2>&1; then \
+		DRIVER_VERSION=$$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1); \
+		GPU_NAME=$$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1); \
+		if [ -n "$$DRIVER_VERSION" ]; then \
+			echo "✅ NVIDIA driver: $$DRIVER_VERSION"; \
+			echo "   GPU: $$GPU_NAME"; \
+		else \
+			echo "⚠️  nvidia-smi found but GPU not detected"; \
+		fi; \
+	else \
+		echo "❌ NVIDIA driver not found (nvidia-smi not available)"; \
+		echo ""; \
+		echo "   Install NVIDIA drivers:"; \
+		if [ "$(PKG_MANAGER)" = "apt" ]; then \
+			echo "     sudo apt install nvidia-driver-535  # or latest version"; \
+		else \
+			echo "     https://www.nvidia.com/drivers"; \
+		fi; \
+	fi
+	@echo ""
+	@echo "=== 3. PyTorch with CUDA ==="
+	@hatch run python -c "\
+import sys; \
+try: \
+    import torch; \
+    print('✅ PyTorch:', torch.__version__); \
+    if torch.cuda.is_available(): \
+        print('✅ PyTorch CUDA:', torch.version.cuda); \
+        print('   GPU:', torch.cuda.get_device_name(0)); \
+        cap = torch.cuda.get_device_capability(); \
+        print('   Compute capability:', f'{cap[0]}.{cap[1]}'); \
+    else: \
+        print('❌ PyTorch CUDA not available'); \
+        print(''); \
+        print('   Current PyTorch was built without CUDA support.'); \
+        print('   Install PyTorch with CUDA (in hatch environment):'); \
+        print(''); \
+        print('     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu121'); \
+        print(''); \
+        print('   Or for CUDA 12.4:'); \
+        print('     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu124'); \
+except ImportError: \
+    print('❌ PyTorch not installed'); \
+    print(''); \
+    print('   Install PyTorch with CUDA:'); \
+    print('     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu121'); \
+" 2>/dev/null || echo "❌ Could not check PyTorch (hatch environment issue)"
+	@echo ""
+	@echo "=== 4. C++ Compiler ==="
+	@if command -v g++ >/dev/null 2>&1; then \
+		echo "✅ g++: $$(g++ --version | head -1)"; \
+	elif command -v clang++ >/dev/null 2>&1; then \
+		echo "✅ clang++: $$(clang++ --version | head -1)"; \
+	else \
+		echo "❌ C++ compiler not found"; \
+		echo ""; \
+		echo "   Install build essentials:"; \
+		if [ "$(PKG_MANAGER)" = "apt" ]; then \
+			echo "     sudo apt install build-essential"; \
+		elif [ "$(OS)" = "macos" ]; then \
+			echo "     xcode-select --install"; \
+		fi; \
+	fi
+	@echo ""
+	@echo "=== 5. CUDA Extension Status ==="
+	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then \
+		SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so | head -1); \
+		echo "✅ CUDA extension built: $$(basename $$SO_FILE)"; \
+		echo "   Size: $$(du -h $$SO_FILE | cut -f1)"; \
+	else \
+		echo "⚪ CUDA extension not built"; \
+		echo "   Run 'make build-cuda' after dependencies are satisfied"; \
+	fi
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@# Summary - check if extension can be built
+	@NVCC_OK=0; DRIVER_OK=0; TORCH_OK=0; EXT_OK=0; \
+	if command -v nvcc >/dev/null 2>&1; then NVCC_OK=1; fi; \
+	if command -v nvidia-smi >/dev/null 2>&1; then DRIVER_OK=1; fi; \
+	if ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then EXT_OK=1; fi; \
+	if [ "$$EXT_OK" = "1" ]; then \
+		echo "✅ CUDA extension is ready to use!"; \
+		echo ""; \
+		echo "   make test-cuda      - Run tests"; \
+		echo "   make benchmark-cuda - Run benchmarks"; \
+	elif [ "$$NVCC_OK" = "1" ] && [ "$$DRIVER_OK" = "1" ]; then \
+		echo "✅ System dependencies OK. PyTorch with CUDA may need setup."; \
+		echo ""; \
+		echo "   Run 'make setup-cuda' to install PyTorch CUDA and build extension."; \
+	else \
+		echo "⚠️  Some dependencies missing - see above for installation instructions."; \
+		echo ""; \
+		echo "   Run 'make setup-cuda' to install dependencies."; \
+	fi
+	@echo ""
+
+build-cuda:  ## Build the CUDA splatting extension
+	@echo "🔧 Building CUDA splatting extension..."
+	@echo ""
+	@# Check prerequisites
+	@if ! command -v nvcc >/dev/null 2>&1; then \
+		echo "❌ CUDA toolkit not found (nvcc not in PATH)"; \
+		echo ""; \
+		echo "   Run 'make check-cuda-deps' for installation instructions."; \
+		exit 1; \
+	fi
+	@if ! command -v nvidia-smi >/dev/null 2>&1; then \
+		echo "❌ NVIDIA driver not found"; \
+		echo ""; \
+		echo "   Run 'make check-cuda-deps' for installation instructions."; \
+		exit 1; \
+	fi
+	@if ! hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
+		echo "❌ PyTorch with CUDA support not available"; \
+		echo ""; \
+		echo "   Install PyTorch with CUDA in hatch environment:"; \
+		echo "     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu121"; \
+		echo ""; \
+		echo "   Or run 'make check-cuda-deps' for more details."; \
+		exit 1; \
+	fi
+	@echo "✅ Prerequisites OK"
+	@echo ""
+	@# Ensure ninja is installed (required by torch cpp_extension)
+	@hatch run pip install -q ninja 2>/dev/null || true
+	@echo "Building extension (this may take a few minutes)..."
+	@echo ""
+	hatch run python $(CUDA_EXT_DIR)/build.py
+	@echo ""
+	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then \
+		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+		echo "✅ CUDA extension built successfully!"; \
+		SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so | head -1); \
+		echo "   Output: $$(basename $$SO_FILE)"; \
+		echo ""; \
+		echo "Next steps:"; \
+		echo "  make test-cuda      - Run tests to verify"; \
+		echo "  make benchmark-cuda - Run performance benchmarks"; \
+	else \
+		echo "❌ Build may have failed - .so file not found"; \
+		echo "   Check the build output above for errors."; \
+		exit 1; \
+	fi
+
+clean-cuda:  ## Clean CUDA build artifacts
+	@echo "🧹 Cleaning CUDA build artifacts..."
+	rm -rf $(CUDA_EXT_DIR)/build/
+	rm -rf $(CUDA_EXT_DIR)/*.egg-info/
+	rm -f $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so
+	rm -rf $(CUDA_EXT_DIR)/__pycache__/
+	@echo "✅ CUDA artifacts cleaned!"
+
+test-cuda:  ## Run CUDA extension tests
+	@echo "🧪 Running CUDA extension tests..."
+	@echo ""
+	@# Check if extension is built
+	@if ! ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then \
+		echo "⚠️  CUDA extension not built. Building first..."; \
+		$(MAKE) build-cuda; \
+		echo ""; \
+	fi
+	@# Run tests
+	hatch run pytest $(CUDA_EXT_DIR)/tests/ -v
+	@echo ""
+	@echo "✅ CUDA tests completed!"
+
+benchmark-cuda:  ## Run CUDA performance benchmarks
+	@echo "🚀 Running CUDA performance benchmarks..."
+	@echo ""
+	@# Check if extension is built
+	@if ! ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then \
+		echo "⚠️  CUDA extension not built. Building first..."; \
+		$(MAKE) build-cuda; \
+		echo ""; \
+	fi
+	@# Run benchmark
+	hatch run python $(CUDA_EXT_DIR)/benchmark.py
+	@echo ""
+	@echo "✅ Benchmark completed!"
 
 test-fixtures:  ## Generate test fixtures for TypeScript tests
 	@echo "🔬 Generating test fixtures..."
@@ -1163,10 +1524,10 @@ check-typescript:  ## Run all TypeScript checks (typecheck, lint, test)
 	cd packages/luxar-viewer && pnpm run check
 
 # Documentation
-docs-build:  ## Build documentation with Sphinx
+build-docs:  ## Build documentation with Sphinx
 	hatch run docs:build
 
-docs-serve:  ## Serve documentation locally
+serve-docs:  ## Serve documentation locally
 	hatch run docs:serve
 
 # Project statistics
@@ -1177,10 +1538,10 @@ stats:  ## Generate project statistics report (HTML)
 	@echo "💡 Open with: open stats/project_stats.html"
 
 # Hatch environment management
-env-show:  ## Show all Hatch environments
+show-env:  ## Show all Hatch environments
 	hatch env show
 
-env-prune:  ## Remove unused Hatch environments
+prune-env:  ## Remove unused Hatch environments
 	hatch env prune
 
 shell:  ## Enter Hatch development shell

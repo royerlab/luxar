@@ -27,6 +27,8 @@ class MockGaussianSplatFitter:
         self.device = torch.device("cpu")
         self.enable_dynamic_ops = True
         self.dynamic_config = DynamicOpsConfig()
+        self.use_metal = False
+        self.use_cuda = False
 
 
 class TestPrepareConfig:

@@ -400,7 +400,7 @@ export class TwoLevelCachingStore implements AsyncReadable {
     };
     l2: { size: number; count: number; reads: number; writes: number };
     network: { bytesTransferred: number; requestCount: number; bandwidth: number };
-    } {
+  } {
     // Calculate average bandwidth (bytes per second since start)
     const elapsedSeconds = Math.max(1, (Date.now() - this.networkStartTime) / 1000);
     const bandwidth = this.networkBytesTransferred / elapsedSeconds;

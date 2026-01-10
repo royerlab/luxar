@@ -206,9 +206,15 @@ def test_learning_rate_scheduling(simple_2d_setup) -> None:
     components = initialize_optimization(config, preprocessed_data)
     loss_fn = create_loss_function(config, preprocessed_data, components.model)
 
-    # PerSplatAdam uses get_effective_learning_rates() instead of param_groups
-    initial_lrs = components.optimizer.get_effective_learning_rates()
-    assert initial_lrs is not None
+    # Get initial learning rate (works with both PerSplatAdam and standard Adam)
+    if hasattr(components.optimizer, "get_effective_learning_rates"):
+        # PerSplatAdam
+        initial_lrs = components.optimizer.get_effective_learning_rates()
+        assert initial_lrs is not None
+    else:
+        # Standard Adam - use param_groups
+        initial_lr = components.optimizer.param_groups[0]["lr"]
+        assert initial_lr > 0
 
     results = run_optimization_loop(components, loss_fn, config, preprocessed_data)
 

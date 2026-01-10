@@ -166,7 +166,7 @@ with asection("Human Mitosis Demo with Explicit Seeding"):
             verbose=True,
             lr_reduction_factor=0.95,
             # Dynamic operations
-            enable_dynamic_ops=True,
+            enable_dynamic_ops=False,
             dynamic_config=dynamic_config,
             napari_movie=(not NO_NAPARI),
             movie_every=1,

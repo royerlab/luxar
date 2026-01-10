@@ -5,7 +5,7 @@ Specialized schedulers that work with PerSplatAdam to provide
 individual learning rate schedules for each splat.
 """
 
-from typing import Dict, Union
+from typing import Any, Dict, Optional, Union
 
 import torch
 
@@ -331,8 +331,16 @@ class PerSplatExponentialLR:
         for i in range(self.optimizer.model.n_splats()):
             self.splat_ages[i] = 0
 
-    def step(self) -> None:
-        """Apply exponential decay to all splats."""
+    def step(self, metrics: Optional[Any] = None) -> None:
+        """
+        Apply exponential decay to all splats.
+
+        Args:
+            metrics: Ignored. Accepts optional argument for API consistency
+                with ReduceLROnPlateau scheduler, allowing interchangeable use.
+        """
+        # metrics parameter is ignored - exponential decay doesn't use loss
+        del metrics  # Explicitly mark as unused
         self.current_epoch += 1
 
         for splat_idx in range(self.optimizer.model.n_splats()):

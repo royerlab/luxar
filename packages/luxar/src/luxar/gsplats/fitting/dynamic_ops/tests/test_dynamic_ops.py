@@ -182,6 +182,7 @@ class TestDynamicOperationsIntegration:
             L0=L0,
             amps0=amps0,
             sigma_min_diag=[0.5, 0.5],
+            device=torch.device("cpu"),  # Explicitly use CPU for test consistency
         )
 
         # Create dummy optimizer and scheduler
@@ -371,6 +372,7 @@ class TestDynamicOperationsIntegration:
             L0=L0,
             amps0=amps0,
             sigma_min_diag=[0.1, 0.1],
+            device=torch.device("cpu"),  # Explicitly use CPU for test consistency
         )
 
         from luxar.gsplats.fitting.dynamic_ops import (
@@ -382,7 +384,7 @@ class TestDynamicOperationsIntegration:
         optimizer = PerSplatAdam(model, lr=0.1)
         scheduler = PerSplatReduceLROnPlateau(optimizer)
 
-        V_target = torch.tensor(V, dtype=torch.float32)
+        V_target = torch.tensor(V, dtype=torch.float32, device=torch.device("cpu"))
         V_pred = model()
 
         cfg = DynamicOpsConfig()

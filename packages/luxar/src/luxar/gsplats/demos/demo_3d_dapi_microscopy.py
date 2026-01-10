@@ -64,18 +64,20 @@ if NO_NAPARI:
     aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
-N_ITERS = 2000
-DEVICE = None  # None -> auto (will use Metal on Apple Silicon for 3-7x speedup!)
+N_ITERS = 6000
+DEVICE = None  # None -> auto: CUDA on Linux with NVIDIA, MPS on macOS, CPU fallback
 N_FRAMES = 30  # number of compression steps (<= #splats)
 ZARR_URL = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.2/6001240.zarr"
 DAPI_CHANNEL = 1  # DAPI is typically channel 1 (0-indexed)
 TARGET_SIZE = 128  # Downscale to this size for manageable computation
 TIME_POINT = 0  # Use first time point
+# Hardware acceleration (enabled by default, auto-detected)
 USE_METAL = True  # Enable Metal acceleration on Apple Silicon (3-7x faster!)
+USE_CUDA = True  # Enable CUDA acceleration on NVIDIA GPUs (10-50x faster!)
 # ==========================
 
 # Setup Arbol
-Arbol.max_depth = 3
+Arbol.max_depth = 4
 
 
 # --- Helper: oriented 3D ellipsoid wireframe from covariance ---
@@ -300,41 +302,42 @@ with asection("3D DAPI Gaussian Splatting Demo"):
     aprint(f"  k_max_residuals={dynamic_config.k_max_residuals}")
     aprint(f"  nms_radius_vox={dynamic_config.nms_radius_vox}")
 
-    # Auto-detect best device (Metal on Apple Silicon for 3-7x speedup!)
+    # Device auto-detection: fitter will automatically select best backend:
+    # - Linux + NVIDIA GPU: CUDA with custom kernels (10-50x speedup)
+    # - macOS + Apple Silicon: MPS with Metal acceleration (3-7x speedup)
+    # - Fallback: CPU
     if DEVICE is None:
         import torch
 
-        if USE_METAL and is_metal_available() and torch.backends.mps.is_available():
-            DEVICE = "mps"
-            aprint(
-                "🚀 Metal acceleration available - using MPS device for 3-7x speedup!"
-            )
-        elif torch.cuda.is_available():
-            DEVICE = "cuda"
-            aprint("Using CUDA device")
+        if USE_CUDA and torch.cuda.is_available():
+            aprint("🚀 CUDA available - will use custom CUDA kernels (10-50x speedup!)")
+        elif USE_METAL and is_metal_available() and torch.backends.mps.is_available():
+            aprint("🚀 Metal available - will use MPS device (3-7x speedup!)")
         else:
-            DEVICE = "cpu"
-            aprint("Using CPU device")
+            aprint("Using CPU device (no GPU acceleration available)")
     else:
         aprint(f"Using specified device: {DEVICE}")
 
     with asection(f"Fitting 3D Gaussian splats ({N_ITERS} iterations)"):
         # Fit oriented (full-covariance) 3D Gaussians with auto-seed generation
-        # Metal backend automatically activates on MPS device for 3-7x speedup!
+        # Hardware acceleration is automatic:
+        # - CUDA kernels on NVIDIA GPUs (10-50x speedup)
+        # - Metal kernels on Apple Silicon (3-7x speedup)
         result = fit_gaussian_splats(
             V,
-            seeds=2000,  # initial seed count
+            seeds=5000,  # initial seed count
             n_iters=N_ITERS,
             device=DEVICE,
-            use_metal=USE_METAL,  # Enable Metal acceleration
+            use_metal=USE_METAL,  # Enable Metal acceleration (macOS)
+            use_cuda=USE_CUDA,  # Enable CUDA acceleration (NVIDIA)
             verbose=True,
             # Dynamic operations
-            enable_dynamic_ops=True,
+            enable_dynamic_ops=False,
             dynamic_config=dynamic_config,
             max_abs_error=0.1,
             # convergence movie:
             napari_movie=(not NO_NAPARI),
-            movie_every=1,
+            movie_every=N_ITERS / 30,
         )
 
         aprint(f"🎉 Fitted {len(result.amplitudes)} splats successfully")
@@ -481,25 +484,7 @@ if not NO_NAPARI:
                 viewer.layers.remove(layer)
 
         # Get current frame data
-        wireframes = wireframes_frames[t_index]
         centers = centers_frames[t_index]
-
-        # Add wireframe ellipsoids (one shape layer per splat for better control)
-        all_wireframe_pts = []
-        for wf in wireframes:
-            all_wireframe_pts.append(wf)
-
-        if all_wireframe_pts:
-            # Combine all wireframes into one layer
-            combined_wireframes = np.vstack(all_wireframe_pts)
-            viewer.add_points(
-                combined_wireframes,
-                name="3D ellipsoid wireframes",
-                size=0.5,
-                face_color="yellow",
-                border_color="yellow",
-                opacity=0.3,
-            )
 
         # Add splat centers
         viewer.add_points(
