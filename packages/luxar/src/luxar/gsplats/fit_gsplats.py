@@ -91,7 +91,7 @@ class GaussianSplatFitter:
         sigma_min_diag: Optional[Sequence[float]] = None,
         sigma_max_diag: Optional[Sequence[float]] = None,
         truncate: float = 3.0,
-        seed_method: str = "both",
+        seed_method: str = "auto",
         verbose: bool = True,
         max_abs_error: Optional[float] = None,
         gradient_clip: Optional[float] = 1.0,
@@ -113,22 +113,20 @@ class GaussianSplatFitter:
 
         Parameters
         ----------
-        seed_method : str, default="both" (RECOMMENDED)
+        seed_method : str, default="auto" (RECOMMENDED)
             Method for generating seeds when seeds=None:
 
-            - **"both"** (DEFAULT, RECOMMENDED): Hybrid approach combining decomposition +
-              Gaussian blob detection. Provides best convergence by capturing both global
-              structure (from decomposition) and local features (from Gaussian detection).
+            - **"auto"** (DEFAULT, RECOMMENDED): Principled combination of decomposition,
+              edges, and grid methods. Provides best convergence by capturing global
+              structure (decomposition), boundaries (edges), and coverage (grid).
 
-            - "gaussian": Gaussian multi-scale blob detection only. Faster but may miss
-              global structure.
+            - "decomposition": Multi-scale decomposition for blob-like features.
 
-            - "decomposition": Dictionary/PCA-based decomposition only. Captures global
-              structure but may miss fine details.
+            - "grid": Uniform grid seeding for spatial coverage.
 
-            - "decomposition,gaussian": Sequential - decomposition first, then Gaussian.
+            - "edges": Edge-based seeding with anisotropic shapes.
 
-            - "gaussian,decomposition": Sequential - Gaussian first, then decomposition.
+            - Comma-separated combinations (e.g., "decomposition,edges").
 
             This parameter is only used when seeds=None.
         **seed_kwargs
@@ -217,7 +215,7 @@ def fit_gaussian_splats(
     sigma_max_diag: Optional[Sequence[float]] = None,
     truncate: float = 3.0,
     device: Optional[str] = None,
-    seed_method: str = "both",
+    seed_method: str = "auto",
     verbose: bool = True,
     # Optimization parameters
     max_abs_error: Optional[float] = None,
@@ -309,29 +307,24 @@ def fit_gaussian_splats(
         Truncation radius in standard deviations for rendering efficiency.
     device : str, optional
         PyTorch device ("cpu", "cuda", "mps"). Auto-detects if None.
-    seed_method : str, default="both" (RECOMMENDED)
+    seed_method : str, default="auto" (RECOMMENDED)
         Method for generating seeds when seeds=None:
 
-        - **"both"** (DEFAULT, RECOMMENDED): Hybrid approach combining decomposition +
-          Gaussian blob detection. Provides best convergence by capturing both global
-          structure (from decomposition) and local features (from Gaussian detection).
-          This is the most robust method for diverse image types.
+        - **"auto"** (DEFAULT, RECOMMENDED): Principled combination of decomposition,
+          edges, and grid methods. Provides best convergence by capturing global
+          structure (decomposition), boundaries (edges), and spatial coverage (grid).
+          Budget allocation: ~50% decomposition, ~30% edges, ~20% grid.
 
-        - "gaussian": Gaussian multi-scale blob detection only. Faster than "both" but
-          may miss global structure. Good for images with clear local features.
+        - "decomposition": Multi-scale decomposition for blob-like features.
+          Captures global structure but may miss boundaries and fine details.
 
-        - "decomposition": Dictionary/PCA-based decomposition only. Captures global
-          structure but may miss fine details. Good for smooth, low-frequency images.
+        - "grid": Uniform grid seeding for spatial coverage.
+          Fast and simple, good for uniform textures.
 
-        - "decomposition,gaussian": Sequential - decomposition first, then Gaussian.
-          Similar to "both" but processes methods separately.
+        - "edges": Edge-based seeding with anisotropic shapes.
+          Good for images with clear boundaries and structure.
 
-        - "gaussian,decomposition": Sequential - Gaussian first, then decomposition.
-
-        **Performance note**: "both" is ~1.5-2× slower than single methods during seed
-        generation but typically converges in fewer iterations, resulting in faster
-        overall optimization. The improved initial seeding often reduces total fitting
-        time by 20-40%.
+        - Comma-separated combinations (e.g., "decomposition,edges").
 
         This parameter is only used when seeds=None. If seeds are provided explicitly,
         this parameter is ignored.

@@ -167,8 +167,8 @@ def _generate_seeds(
         - As last resort: add grid-based seeds to reach target
         If None, uses all generated seeds.
     seed_method : str
-        Seed generation method: "gaussian", "decomposition", "both",
-        "decomposition,gaussian", or "gaussian,decomposition"
+        Seed generation method: "decomposition", "grid", "edges", "auto",
+        or comma-separated combinations (e.g., "decomposition,edges")
     verbose : bool
         Whether to print progress
     config : FitConfig | None
@@ -261,7 +261,6 @@ def _generate_seeds(
             # preserving scale information. To avoid this, either:
             # 1. Don't specify target_count (use automatic count)
             # 2. Use seeding parameters that generate enough seeds initially
-            # 3. Use method="moments" for richer scale-informed initialization
             if config is not None:
                 had_scale_info = config.init_L is not None
                 config.init_L = None
@@ -405,15 +404,12 @@ def _ensure_minimum_seeds(
     **seed_kwargs,
 ) -> np.ndarray:
     """
-    Ensure minimum seed count by generating with low threshold once.
+    Ensure minimum seed count by adding grid-based seeds.
 
     Strategy:
     1. KEEP initial seeds (don't discard!)
-    2. If method supports Gaussian: regenerate with low threshold, use best result
-    3. If still not enough, ADD grid-based seeds to initial seeds
-    4. Subsample to exact target_count using spatial diversity
-
-    This is much faster than iterative threshold lowering!
+    2. ADD grid-based seeds to reach target
+    3. Subsample to exact target_count using spatial diversity
 
     Parameters
     ----------
@@ -424,87 +420,25 @@ def _ensure_minimum_seeds(
     initial_seeds : np.ndarray
         Seeds already found (MUST be preserved!)
     seed_method : str
-        Seed generation method
+        Seed generation method (for logging only)
     verbose : bool
         Whether to print progress
     **seed_kwargs
-        Seed generation parameters
+        Seed generation parameters (unused, kept for compatibility)
 
     Returns
     -------
     np.ndarray
         Seed centers (exactly target_count)
     """
-    from luxar.gsplats.seeds import generate_seeds
-
     # Start with initial seeds - NEVER discard these!
     current_seeds = initial_seeds
 
-    # Check if method includes Gaussian (supports percentile_thresh)
-    method_lower = seed_method.lower()
-    has_gaussian = (
-        method_lower == "gaussian"
-        or method_lower == "both"
-        or "gaussian" in method_lower.split(",")
-    )
-
-    if has_gaussian:
-        # Method includes Gaussian - regenerate Gaussian with low threshold
-        if verbose:
-            aprint(
-                f"Regenerating Gaussian with low threshold (10th percentile) "
-                f"to find {target_count} seeds"
-            )
-
-        kwargs_adjusted = seed_kwargs.copy()
-        kwargs_adjusted["percentile_thresh"] = 10.0  # Very inclusive
-        gaussian_result = generate_seeds(V, method="gaussian", **kwargs_adjusted)
-
-        # Extract centers from GSplatData
-        from luxar.gsplats.fit_result import GSplatData
-
-        if isinstance(gaussian_result, GSplatData):
-            gaussian_seeds = gaussian_result.centers
-        else:
-            gaussian_seeds = gaussian_result
-
-        if verbose:
-            aprint(f"Found {len(gaussian_seeds)} Gaussian seeds with low threshold")
-
-        # For "both" or combined methods: merge with initial seeds
-        # For pure "gaussian": use whichever gives more
-        if method_lower == "both" or "," in method_lower:
-            # Combine initial (decomposition+gaussian) with new gaussian seeds
-            # Use minimal deduplication (0.5 voxels) to remove only near-duplicates
-            # We want to KEEP seeds, not aggressively filter them
-            from luxar.gsplats.seeds.utils import combine_seeds
-
-            combined = combine_seeds(initial_seeds, gaussian_seeds, min_distance=0.5)
-            current_seeds = combined
-            if verbose:
-                aprint(
-                    f"Combined {len(initial_seeds)} initial + "
-                    f"{len(gaussian_seeds)} new → {len(combined)} total seeds"
-                )
-        else:
-            # Pure gaussian: use whichever gives more
-            if len(gaussian_seeds) > len(current_seeds):
-                current_seeds = gaussian_seeds
-                if verbose:
-                    aprint(
-                        f"Using new Gaussian seeds "
-                        f"(more than initial {len(initial_seeds)})"
-                    )
-            else:
-                if verbose:
-                    aprint(f"Keeping initial {len(current_seeds)} seeds")
-    else:
-        # Pure decomposition - can't adjust threshold
-        if verbose:
-            aprint(
-                f"Method '{seed_method}' is decomposition-only, "
-                f"keeping initial {len(current_seeds)} seeds"
-            )
+    if verbose:
+        aprint(
+            f"Method '{seed_method}' generated {len(current_seeds)} seeds, "
+            f"need {target_count} - will add grid fallback"
+        )
 
     # If still not enough, add grid-based seeds
     if len(current_seeds) < target_count:

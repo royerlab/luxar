@@ -7,38 +7,40 @@ return GSplatData with scale-informed Gaussian shapes.
 
 **Seeding Methods:**
 
-1. **seed_from_gaussian**: Multiscale Gaussian-blurred peak detection.
-   Each seed's sigma equals the blur scale at which it was detected.
-
-2. **seed_from_decomposition**: Scale-hierarchical detection via image
+1. **seed_from_decomposition**: Scale-hierarchical detection via image
    decomposition. Each seed's sigma equals the decomposition scale factor.
+   Best for blob-like features.
 
-3. **seed_from_moments**: Moment-based seeding with full covariance estimation.
-   Captures anisotropic (elliptical) features. Slower but most accurate shapes.
+2. **seed_from_grid**: Uniform grid seeding for spatial coverage.
+   Isotropic Gaussians with user-defined or auto-computed sigma.
+
+3. **seed_from_edges**: Edge-based seeding with anisotropic shapes.
+   Uses structure tensor for Gaussian orientation along edges.
 
 **Unified Entry Point:**
 
-Use `generate_seeds()` for a unified interface to all methods.
+Use `generate_seeds()` for a unified interface to all methods. The default
+method is "auto" which combines all methods with principled deduplication.
 
 Examples
 --------
->>> from luxar.gsplats.seeds import generate_seeds, seed_from_gaussian
+>>> from luxar.gsplats.seeds import generate_seeds
 >>>
->>> # Unified entry point (recommended)
+>>> # Automatic method selection (recommended) - combines all methods
+>>> seeds = generate_seeds(image)
+>>>
+>>> # Single method
 >>> seeds = generate_seeds(image, method="decomposition")
->>>
->>> # Direct method access
->>> seeds = seed_from_gaussian(image, scales=[2, 4, 8])
 >>>
 >>> # Use with fitter
 >>> from luxar.gsplats import fit_gaussian_splats
 >>> result = fit_gaussian_splats(image, seeds=seeds)
 """
 
+from luxar.gsplats.seeds.edges import seed_from_edges
 from luxar.gsplats.seeds.generate import generate_seeds
-from luxar.gsplats.seeds.moment_seeding import seed_from_moments
+from luxar.gsplats.seeds.grid import seed_from_grid
 from luxar.gsplats.seeds.multiscale_decomposition import seed_from_decomposition
-from luxar.gsplats.seeds.multiscale_gaussian import seed_from_gaussian
 from luxar.gsplats.seeds.utils import (
     combine_seeds,
     dedupe_farthest_first,
@@ -50,9 +52,9 @@ __all__ = [
     # Primary public API
     "generate_seeds",  # Unified entry point (recommended)
     # Individual seeding methods
-    "seed_from_gaussian",
     "seed_from_decomposition",
-    "seed_from_moments",
+    "seed_from_grid",
+    "seed_from_edges",
     # Utility functions (for advanced usage)
     "sigmas_to_cholesky_isotropic",
     "local_maxima",

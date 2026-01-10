@@ -13,8 +13,8 @@ try:
     from luxar.gsplats.seeds import (
         generate_seeds,
         seed_from_decomposition,
-        seed_from_gaussian,
-        seed_from_moments,
+        seed_from_edges,
+        seed_from_grid,
     )
 except ImportError as exc:
     _GSPLATS_IMPORT_ERROR = exc
@@ -49,10 +49,10 @@ except ImportError as exc:
     def seed_from_decomposition(*_args: Any, **_kwargs: Any) -> Any:
         _raise_gsplats_import_error()
 
-    def seed_from_gaussian(*_args: Any, **_kwargs: Any) -> Any:
+    def seed_from_grid(*_args: Any, **_kwargs: Any) -> Any:
         _raise_gsplats_import_error()
 
-    def seed_from_moments(*_args: Any, **_kwargs: Any) -> Any:
+    def seed_from_edges(*_args: Any, **_kwargs: Any) -> Any:
         _raise_gsplats_import_error()
 
 
@@ -65,9 +65,9 @@ __all__ = [
     "DynamicOpsConfig",
     # Seeding functions
     "generate_seeds",
-    "seed_from_gaussian",
     "seed_from_decomposition",
-    "seed_from_moments",
+    "seed_from_grid",
+    "seed_from_edges",
     # Submodules
     "seeds",
     "clahe",
