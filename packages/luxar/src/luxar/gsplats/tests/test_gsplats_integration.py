@@ -14,7 +14,7 @@ from luxar.gsplats.models.gsplats import (
     render_gaussians,
     render_gaussians_numpy,
 )
-from luxar.gsplats.seeds import seed_from_gaussian
+from luxar.gsplats.seeds import seed_from_grid
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 
@@ -44,13 +44,7 @@ class TestGaussianSplatsIntegration:
         image = self.create_test_image((64, 64), n_blobs=3)
 
         # Find seeds (returns GSplatData with scale-informed shapes)
-        seeds = seed_from_gaussian(
-            image,
-            scales=(1.0, 2.0, 3.0),
-            peaks_per_scale=50,
-            percentile_thresh=80,
-            min_distance=2.0,
-        )
+        seeds = seed_from_grid(image, spacing=5.0)
         n_seeds = len(seeds.centers)
         assert n_seeds > 0
         assert seeds.centers.shape[1] == 2
@@ -91,13 +85,7 @@ class TestGaussianSplatsIntegration:
         volume = self.create_test_image((32, 32, 32), n_blobs=3)
 
         # Find seeds (returns GSplatData)
-        seeds = seed_from_gaussian(
-            volume,
-            scales=(1.0, 2.0),
-            peaks_per_scale=30,
-            percentile_thresh=85,
-            min_distance=3.0,
-        )
+        seeds = seed_from_grid(volume, spacing=6.0)
         n_seeds = len(seeds.centers)
         assert n_seeds > 0
         assert seeds.centers.shape[1] == 3
@@ -153,14 +141,8 @@ class TestGaussianSplatsIntegration:
 
         data = np.clip(data, 0, 1)
 
-        # Find seeds using fewer scales for 4D (returns GSplatData)
-        seeds = seed_from_gaussian(
-            data,
-            scales=(1.0, 2.0),  # Fewer scales for 4D
-            peaks_per_scale=20,  # Fewer seeds
-            percentile_thresh=75,
-            min_distance=2.0,
-        )
+        # Find seeds using grid for 4D (returns GSplatData)
+        seeds = seed_from_grid(data, spacing=4.0)
         n_seeds = len(seeds.centers)
         assert n_seeds > 0
         assert seeds.centers.shape[1] == 4  # 4D coordinates
@@ -205,7 +187,7 @@ class TestGaussianSplatsIntegration:
         image = 0.8 * np.exp(-((y - 16) ** 2 + (x - 16) ** 2) / (2 * 4**2))
 
         # Find seeds (returns GSplatData)
-        seeds = seed_from_gaussian(image, peaks_per_scale=10)
+        seeds = seed_from_grid(image, spacing=8.0)
 
         # Fit with early stopping (more iterations to allow convergence)
         fitter = GaussianSplatFitter(enable_dynamic_ops=False)
@@ -251,7 +233,7 @@ class TestGaussianSplatsIntegration:
             pytest.skip("Requires GPU for batched renderer test")
 
         image = self.create_test_image((64, 64), n_blobs=3)
-        seeds = seed_from_gaussian(image, peaks_per_scale=30)
+        seeds = seed_from_grid(image, spacing=5.0)
 
         # Fit splats (accepts GSplatData)
         result = fit_gaussian_splats(
@@ -288,7 +270,7 @@ class TestGaussianSplatsIntegration:
     def test_loss_functions(self) -> None:
         """Test both MSE and Poisson loss functions."""
         image = self.create_test_image((32, 32), n_blobs=2)
-        seeds = seed_from_gaussian(image, peaks_per_scale=20)
+        seeds = seed_from_grid(image, spacing=6.0)
 
         # Test MSE loss
         result_mse = fit_gaussian_splats(
@@ -332,7 +314,7 @@ class TestGaussianSplatsIntegration:
     def test_regularization(self) -> None:
         """Test L1 regularization on amplitudes."""
         image = self.create_test_image((32, 32), n_blobs=5)
-        seeds = seed_from_gaussian(image, peaks_per_scale=50)
+        seeds = seed_from_grid(image, spacing=4.0)
 
         # Without regularization
         result_no_reg = fit_gaussian_splats(
@@ -364,7 +346,7 @@ class TestGaussianSplatsIntegration:
     def test_sigma_constraints(self) -> None:
         """Test that sigma constraints are respected."""
         image = self.create_test_image((32, 32), n_blobs=2)
-        seeds = seed_from_gaussian(image, peaks_per_scale=10)
+        seeds = seed_from_grid(image, spacing=8.0)
 
         # Fit with constraints
         sigma_min = [0.5, 0.5]
@@ -398,7 +380,7 @@ class TestGaussianSplatsIntegration:
     def test_device_compatibility(self) -> None:
         """Test that fitting works on different devices."""
         image = self.create_test_image((32, 32), n_blobs=2)
-        seeds = seed_from_gaussian(image, peaks_per_scale=10)
+        seeds = seed_from_grid(image, spacing=8.0)
 
         # Test CPU
         result_cpu = fit_gaussian_splats(
@@ -478,7 +460,7 @@ class TestGaussianSplatsIntegration:
 
         # Uniform image
         uniform_image = np.ones((32, 32), dtype=np.float32) * 0.5
-        seeds = seed_from_gaussian(uniform_image, peaks_per_scale=10)
+        seeds = seed_from_grid(uniform_image, spacing=8.0)
 
         result = fit_gaussian_splats(
             uniform_image,

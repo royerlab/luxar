@@ -9,10 +9,11 @@ Seed generation is the first step in Gaussian splat fitting - identifying potent
 - **Reconstruction quality**: Better coverage of important features
 - **Computational efficiency**: Fewer redundant splats
 
-The module provides two complementary approaches:
+The module provides three complementary approaches:
 
-1. **Multiscale Gaussian Detection** (`seed_from_gaussian`): Multi-method detection with spatial redundancy
-2. **Decomposition-Based** (`seed_from_decomposition`): Scale-hierarchical detection via image decomposition
+1. **Decomposition-Based** (`seed_from_decomposition`): Scale-hierarchical detection via image decomposition
+2. **Grid-Based** (`seed_from_grid`): Uniform spatial coverage with isotropic shapes
+3. **Edge-Based** (`seed_from_edges`): Boundary detection with anisotropic shapes
 
 ## Methods
 
@@ -24,7 +25,7 @@ The module provides two complementary approaches:
 ```python
 def generate_seeds(
     V: np.ndarray,
-    method: str = "decomposition",
+    method: str = "auto",
     **method_kwargs
 ) -> GSplatData
 ```
@@ -32,11 +33,11 @@ def generate_seeds(
 **Parameters**:
 - `V` (np.ndarray): Input n-dimensional image/volume
 - `method` (str): Seed generation method
-  - `"decomposition"`: Hierarchical scale decomposition-based detection - **DEFAULT**
-  - `"gaussian"`: Fast multiscale Gaussian peak detection
-  - `"moments"`: Full covariance estimation for anisotropic features
-  - `"all"`: Combines all methods (decomposition + gaussian + moments)
-  - Comma-separated: e.g., `"gaussian,decomposition"` for specific combination
+  - `"auto"`: Principled combination of all methods - **DEFAULT, RECOMMENDED**
+  - `"decomposition"`: Hierarchical scale decomposition-based detection
+  - `"grid"`: Uniform grid seeding for spatial coverage
+  - `"edges"`: Edge-based seeding with anisotropic shapes
+  - Comma-separated: e.g., `"decomposition,edges"` for specific combination
 - `**kwargs`: Method-specific parameters passed to underlying functions
 
 **Returns**:
@@ -54,162 +55,53 @@ from luxar.gsplats.seeds import generate_seeds
 seeds = generate_seeds(image)
 print(f"Generated {len(seeds.centers)} seed splats")
 
-# Gaussian method with custom parameters
-seeds = generate_seeds(image, method="gaussian", scales=(1.0, 2.0, 4.0))
-
 # Decomposition method with custom parameters
 seeds = generate_seeds(image, method="decomposition",
                       scales=[1, 2, 4, 8], ignore_finest_k=1)
+
+# Grid method with custom spacing
+seeds = generate_seeds(image, method="grid", spacing=10.0)
+
+# Edge-based seeding
+seeds = generate_seeds(image, method="edges", edge_threshold_rel=0.15)
 ```
 
 **Method Selection Guide**:
-- **"decomposition"** (default): Most principled scale separation, recommended for most use cases
-- **"gaussian"**: Fast generation when speed is critical
-- **"moments"**: Full covariance estimation for anisotropic features
-- **"all"**: Combines all methods (decomposition + gaussian + moments) for maximum coverage
+- **"auto"** (default): Principled combination of all methods - recommended for most use cases
+- **"decomposition"**: Best for blob-like features with principled scale separation
+- **"grid"**: Fast uniform coverage, good for textures or as baseline
+- **"edges"**: Best for images with clear boundaries
+
+**Auto Mode Budget Allocation**:
+The "auto" method combines all three methods with priority-based allocation:
+- Decomposition: 50% (global structure, blob-like features)
+- Edges: 30% (boundaries with anisotropic shapes)
+- Grid: 20% (coverage for gaps)
 
 **Integration with fit_gaussian_splats()**:
 ```python
 from luxar.gsplats import fit_gaussian_splats
 
 # Method 1: Automatic (most common)
-result = fit_gaussian_splats(image)  # seeds auto-generated internally
+result = fit_gaussian_splats(image)  # seeds auto-generated internally with "auto" method
 
 # Method 2: Explicit seed generation - pass GSplatData directly
-seeds = generate_seeds(image, method="gaussian")
+seeds = generate_seeds(image, method="decomposition")
 result = fit_gaussian_splats(image, seeds=seeds)  # Uses full geometry
 
 # Method 3: Custom seed_method parameter
 result = fit_gaussian_splats(
     image,
-    seed_method="decomposition",  # Override default
-    seed_kwargs={"scales": [1, 2, 4, 8], "ignore_finest_k": 2}
+    seed_method="edges",  # Override default
+    seed_kwargs={"edge_threshold_rel": 0.15}
 )
 ```
-
-
-**Seed Method Defaults**
-
-The default method is "decomposition" for principled scale separation:
-
-- **Default**: `method="decomposition"` - Most accurate scale information
-- **Alternative**: `method="gaussian"` - Faster but less principled scale mapping
-- **Full coverage**: `method="all"` - Combines all methods
-- **Anisotropic**: `method="moments"` - Full covariance for elliptical features
 
 **Note**: All methods return `GSplatData` with scale-informed Gaussian shapes.
 
-**Configuration with seed_kwargs**:
-
-All parameters from `generate_seeds()` can be passed through the API via `**seed_kwargs`:
-
-```python
-# Default uses decomposition method
-result = fit_gaussian_splats(image)  # seed_method="decomposition" is the default
-
-# Faster with decomposition only
-result = fit_gaussian_splats(
-    image,
-    seed_method="decomposition",  # Most principled scale separation
-    seed_kwargs={}                # Additional parameters passed to generate_seeds()
-)
-
-# Custom multiscale Gaussian parameters
-result = fit_gaussian_splats(
-    image,
-    seed_method="gaussian",
-    seed_kwargs={
-        "scales": (1.0, 2.0, 4.0),
-        "peaks_per_scale": 2000
-    }
-)
-
-# Custom decomposition parameters
-result = fit_gaussian_splats(
-    image,
-    seed_method="decomposition",
-    seed_kwargs={
-        "scales": [1, 2, 4, 8],
-        "ignore_finest_k": 2
-    }
-)
-```
-
-See docstring for `fit_gaussian_splats()` for complete `seed_kwargs` options.
-
 ---
 
----
-
-
-### 1. Multiscale Gaussian Seed Generation
-
-**Function**: `seed_from_gaussian()`
-
-**Strategy**: Combine multiple detection methods to create a rich, overcomplete set of seeds.
-
-**Detection Methods**:
-1. **CLAHE Preprocessing** (optional): Enhances local contrast for balanced detection in heterogeneous data
-2. **Multiscale Gaussian-Blurred Peaks**: Detects blob-like structures at various scales
-4. **Intensity-Weighted Grid Sampling**: Ensures spatial coverage in high-intensity regions
-
-**When to Use**:
-- Standard use case for most images
-- When you want comprehensive feature detection
-- When computational cost of many seeds is acceptable
-- For complex scenes with mixed feature types
-
-**Key Parameters**:
-```python
-seeds = seed_from_gaussian(
-    V,                                    # Input image/volume
-    scales=(0.7, 1.0, 1.4, 2.0, 2.8, 4.0),  # Detection scales (in voxels)
-    peaks_per_scale=1000,                 # Max peaks per scale
-    percentile_thresh=70.0,               # Intensity threshold (0-100)
-    min_distance=2.0,                         # Min distance between candidates
-    apply_clahe=True,                     # Enable CLAHE preprocessing
-    add_intensity_grid=True,              # Add grid sampling
-)
-```
-
-**Example**:
-```python
-from luxar.gsplats.seeds import seed_from_gaussian
-from skimage import data
-import numpy as np
-
-# Load image
-image = data.cell().astype(np.float32)
-
-# Generate seeds with CLAHE
-seeds = seed_from_gaussian(
-    image,
-    scales=(0.7, 1.0, 1.4, 2.0, 2.8, 4.0),
-    apply_clahe=True,
-    clahe_tile_size=32,
-    clahe_clip_limit=16.0,
-    min_distance=2.0,
-)
-
-print(f"Generated {len(seeds.centers)} seeds with scale info")
-# seeds.centers shape: (N, 2) for 2D image
-# seeds.cholesky_factors contains scale-informed sigmas
-```
-
-**Advantages**:
-- Comprehensive detection across multiple methods
-- CLAHE preprocessing for heterogeneous data
-- Proven track record in production use
-- Handles complex scenes well
-
-**Limitations**:
-- Can produce many redundant candidates
-- No explicit scale hierarchy
-- Computationally intensive with many scales
-
----
-
-### 2. Decomposition-Based Seed Generation
+### 1. Decomposition-Based Seed Generation
 
 **Function**: `seed_from_decomposition()`
 
@@ -242,34 +134,6 @@ seeds = seed_from_decomposition(
 )
 ```
 
-**Example**:
-```python
-from luxar.gsplats.seeds import seed_from_decomposition
-from skimage import data
-import numpy as np
-
-# Load image
-image = data.cell().astype(np.float32)
-
-# Generate seeds using decomposition
-seeds = seed_from_decomposition(
-    image,
-    scales=[1, 2, 4, 8, 16],
-    ignore_finest_k=1,              # Skip full-resolution scale (noise)
-    min_distance=3.0,
-    threshold_rel=0.15,             # Peaks must be 15% of scale max
-    decompose_kwargs={
-        'n_iters': 500,             # Decomposition iterations
-        'energy_weight': 0.01,       # Hierarchical energy penalty
-        'loss_type': 'l1',          # Robust loss function
-    },
-    verbose=True,
-)
-
-print(f"Generated {len(seeds.centers)} seeds with scale info")
-# seeds.amplitudes sorted by energy (descending)
-```
-
 **Advantages**:
 - **Principled scale separation**: Energy explicitly distributed across scales
 - **Noise suppression**: Ignoring finest scales removes high-frequency noise
@@ -277,36 +141,99 @@ print(f"Generated {len(seeds.centers)} seeds with scale info")
 - **Sparse representation**: Fewer, higher-quality seeds
 - **Energy-based quality**: Seeds sorted by importance
 
-**Limitations**:
-- Requires decomposition step (adds computation time)
-- May miss very fine details if ignore_finest_k is too large
-- Sensitive to decomposition convergence
+---
 
-**Parameter Guide**:
-- `ignore_finest_k=1`: Standard setting, good noise suppression
-- `ignore_finest_k=2`: Aggressive noise suppression for very noisy data
-- `ignore_finest_k=0`: Include all scales (no noise filtering)
-- `threshold_rel=0.1`: Standard setting (10% of scale maximum)
-- `threshold_rel=0.05`: More permissive (find more seeds)
-- `threshold_rel=0.2`: More selective (fewer, stronger seeds)
+### 2. Grid-Based Seed Generation
+
+**Function**: `seed_from_grid()`
+
+**Strategy**: Place seeds on a uniform grid with optional jitter and intensity filtering.
+
+**How It Works**:
+1. Generate uniform grid coordinates based on spacing
+2. Apply optional jitter for randomness
+3. Filter by intensity threshold
+4. Sample amplitudes from image
+5. Create isotropic Cholesky factors (sigma * I)
+
+**When to Use**:
+- When you want uniform spatial coverage
+- For textures and uniform regions
+- As a baseline or fallback method
+- When speed is important
+
+**Key Parameters**:
+```python
+seeds = seed_from_grid(
+    V,                                    # Input image/volume
+    spacing=None,                         # Grid spacing (None = auto ~5% of min dim)
+    jitter=0.0,                           # Jitter fraction (0.0-0.5)
+    sigma=None,                           # Gaussian sigma (None = spacing/2)
+    exclude_below=None,                   # Absolute intensity threshold
+    exclude_below_percentile=None,        # Percentile threshold (0-100)
+)
+```
+
+**Advantages**:
+- **Fast**: Simple grid generation
+- **Predictable**: Uniform coverage guaranteed
+- **Easy to tune**: Just adjust spacing
+- **Good baseline**: Works for any image type
 
 ---
 
-## Comparison: Multiscale Gaussian vs Decomposition
+### 3. Edge-Based Seed Generation
 
-| Aspect | Multiscale Gaussian | Decomposition |
-|--------|-------------|---------------|
-| **Philosophy** | Multiscale Gaussian peak detection | Hierarchical scale-based selection |
-| **Candidate Count** | Many (1000-10000+) | Fewer (100-1000) |
-| **Scale Treatment** | Gaussian peaks at multiple scales | Optimized scale decomposition |
-| **Noise Handling** | CLAHE preprocessing | Scale filtering (ignore_finest_k) |
-| **Computation Time** | Fast (seconds) | Slower (decomposition overhead) |
-| **Quality** | High coverage, some redundancy | Sparse, principled selection |
-| **Best For** | General use, complex scenes | Noisy data, hierarchical structure |
+**Function**: `seed_from_edges()`
+
+**Strategy**: Detect edges using Sobel gradients, sample along edges, and compute anisotropic Gaussian shapes from the local structure tensor.
+
+**How It Works**:
+1. Compute nD Sobel gradient magnitude
+2. Threshold to get edge mask
+3. Poisson disk sampling weighted by edge response
+4. Compute structure tensor at each point
+5. Convert eigenvalues to anisotropic sigmas
+6. Build oriented Cholesky factors
+
+**When to Use**:
+- For images with clear boundaries
+- When you need anisotropic (oriented) Gaussians
+- For capturing edge structure
+
+**Key Parameters**:
+```python
+seeds = seed_from_edges(
+    V,                                    # Input image/volume
+    n_seeds=None,                         # Target number (None = auto)
+    min_distance=2.0,                     # Min distance between seeds
+    edge_threshold_rel=0.1,               # Relative edge threshold (0.0-1.0)
+    structure_radius=3.0,                 # Radius for structure tensor
+    min_sigma=0.5,                        # Minimum sigma
+    max_sigma=16.0,                       # Maximum sigma
+)
+```
+
+**Advantages**:
+- **Anisotropic shapes**: Captures edge orientation
+- **Structure-aware**: Uses gradient information
+- **Boundary-focused**: Seeds placed along edges
+
+---
+
+## Comparison: Methods Overview
+
+| Aspect | Decomposition | Grid | Edges |
+|--------|---------------|------|-------|
+| **Philosophy** | Scale-hierarchical | Uniform coverage | Boundary detection |
+| **Shape Type** | Isotropic | Isotropic | Anisotropic |
+| **Best For** | Blob-like features | Textures, coverage | Boundaries |
+| **Noise Handling** | ignore_finest_k | Intensity threshold | Edge threshold |
+| **Speed** | Slower (decomposition) | Fast | Medium |
 
 ## Integration with fit_gaussian_splats
 
-Both methods seamlessly integrate with the main fitting API:
+All methods seamlessly integrate with the main fitting API:
 
 ```python
 from luxar.gsplats import fit_gaussian_splats
@@ -337,16 +264,16 @@ print(f"Final splats: {len(result.amplitudes)}")
 
 ### Combining Methods
 
-Use `generate_seeds(method="all")` to combine all methods automatically:
+Use `generate_seeds(method="auto")` to combine all methods automatically:
 
 ```python
 from luxar.gsplats.seeds import generate_seeds
 
 # Automatic combination of all methods with deduplication
-seeds = generate_seeds(image, method="all", min_distance=3.0)
+seeds = generate_seeds(image, method="auto", min_distance=3.0)
 
 # Or combine specific methods
-seeds = generate_seeds(image, method="gaussian,decomposition", min_distance=3.0)
+seeds = generate_seeds(image, method="decomposition,edges", min_distance=3.0)
 
 # Use combined seeds (returns GSplatData)
 result = fit_gaussian_splats(image, seeds=seeds)
@@ -355,16 +282,23 @@ result = fit_gaussian_splats(image, seeds=seeds)
 Alternatively, combine manually using `combine_seeds`:
 
 ```python
-from luxar.gsplats.seeds import seed_from_gaussian, seed_from_decomposition, combine_seeds
+from luxar.gsplats.seeds import (
+    seed_from_decomposition,
+    seed_from_grid,
+    seed_from_edges,
+    combine_seeds,
+)
 
 # Generate seeds from individual methods (returns GSplatData)
-seeds_gaussian = seed_from_gaussian(image, min_distance=3.0)
 seeds_decomp = seed_from_decomposition(image, scales=[1, 2, 4, 8])
+seeds_grid = seed_from_grid(image, spacing=10.0)
+seeds_edges = seed_from_edges(image, min_distance=3.0)
 
 # Combine positions with deduplication
 combined_centers = combine_seeds(
     seeds_decomp.centers,  # Decomposition first (global structure)
-    seeds_gaussian.centers,  # Then gaussian (local features)
+    seeds_edges.centers,   # Then edges (boundaries)
+    seeds_grid.centers,    # Finally grid (coverage)
     min_distance=3.0,
 )
 
@@ -387,21 +321,19 @@ seeds = seed_from_decomposition(
 
 **For clean synthetic data**:
 ```python
-seeds = seed_from_gaussian(
+seeds = seed_from_grid(
     image,
-    scales=(0.5, 0.7, 1.0, 1.4, 2.0),  # Include fine scales
-    apply_clahe=False,          # No preprocessing needed
-    percentile_thresh=60.0,     # Lower threshold (find more)
+    spacing=5.0,                # Dense grid
+    exclude_below_percentile=50.0,  # Skip low-intensity
 )
 ```
 
-**For large sparse features**:
+**For images with strong edges**:
 ```python
-seeds = seed_from_decomposition(
+seeds = seed_from_edges(
     image,
-    scales=[2, 4, 8, 16, 32],   # Skip finest scales entirely
-    ignore_finest_k=0,          # Process all provided scales
-    threshold_rel=0.2,          # Higher threshold (stronger peaks only)
+    edge_threshold_rel=0.2,     # Higher edge threshold
+    structure_radius=5.0,       # Larger integration radius
 )
 ```
 
@@ -409,7 +341,7 @@ seeds = seed_from_decomposition(
 
 ### Peak Detection Algorithm
 
-Both methods use `_local_maxima()` for peak detection:
+The decomposition method uses `local_maxima()` for peak detection:
 - L∞ (Chebyshev) neighborhood with configurable radius
 - Threshold-based filtering
 - Top-k limiting for computational efficiency
@@ -417,76 +349,49 @@ Both methods use `_local_maxima()` for peak detection:
 
 ### Deduplication Strategy
 
-Uses `_dedupe_farthest_first()` for spatial deduplication:
+Uses `dedupe_farthest_first()` for spatial deduplication:
 1. Sort candidates by energy/intensity (highest first)
 2. Keep first (highest energy) candidate
 3. Iteratively select candidate farthest from all selected
 4. Only keep candidates satisfying min_distance constraint
 5. Ensures maximum spatial diversity with quality priority
 
-### Coordinate Precision
+### Structure Tensor (Edges)
 
-- Multiscale Gaussian method: Sub-voxel precision via intensity-weighted centroid refinement
-- Decomposition method: Sub-voxel precision via scale interpolation
-- Both return float coordinates for downstream optimization
+The edges method computes the structure tensor S = Σ (∇V)(∇V)^T:
+- Eigendecomposition gives orientation (eigenvectors) and scale (eigenvalues)
+- Sigma = 1/sqrt(eigenvalue) with clamping
+- Cholesky factor L = Q @ diag(sigma) for anisotropic shape
 
 ## Testing
 
-Comprehensive test suite available in `tests/test_candidates.py`:
+Comprehensive test suite available:
 
 ```bash
-# Run all candidate tests
-hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_candidates.py::TestDecompositionCandidates -v
+# Run all seeds tests
+hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/ -v
 
-# Run specific test
-hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_candidates.py::TestDecompositionCandidates::test_basic_functionality_2d -v
+# Run specific test files
+hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_grid.py -v
+hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_edges.py -v
+hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_generate_seeds.py -v
 ```
-
-Tests cover:
-- Basic functionality (1D, 2D, 3D)
-- Parameter validation
-- Edge cases (empty results, uniform images)
-- Parameter effects (ignore_finest_k, threshold_rel, min_distance)
-- Integration with decompose_image
-
-## Performance Considerations
-
-### Computational Cost
-
-**Multiscale Gaussian Method**:
-- **Gaussian filtering**: O(n_scales × n_voxels × kernel_size)
-- **Peak detection**: O(n_scales × n_voxels)
-- **Total**: ~1-10 seconds for typical images
-
-**Decomposition Method**:
-- **Decomposition**: O(n_iters × n_scales × n_voxels) - dominant cost
-- **Peak detection**: O(n_scales × n_voxels) - negligible
-- **Total**: ~10-60 seconds for typical images
-
-### Memory Usage
-
-Both methods have modest memory requirements:
-- Multiscale Gaussian: ~2-3× input size (filtered images)
-- Decomposition: ~4-6× input size (scale images at different resolutions)
-- Final candidates: ~8 bytes per coordinate × ndim × N_candidates
-
-### Optimization Tips
-
-1. **Reduce decomposition iterations**: `decompose_kwargs={'n_iters': 200}` (faster, slightly lower quality)
-2. **Limit peaks per scale**: `peaks_per_scale=500` (faster deduplication)
-3. **Use fewer scales**: `scales=[1, 4, 16]` (faster, coarser hierarchy)
-4. **Increase min_distance**: `min_distance=5.0` (fewer candidates, faster downstream)
 
 ## References
 
-- **Specification**: See `SPECIFICATIONS.md` for comprehensive technical details
 - **Main API**: See `fit_gsplats.py` for integration with fitting pipeline
 - **Decomposition**: See `multiscale/decompose.py` for multi-scale decomposition details
-- **Tests**: See `tests/test_candidates.py` for usage examples and validation
+- **Tests**: See `tests/` for usage examples and validation
 
 ## Version History
 
-- **v0.1 (2025-01-16)**: Initial implementation of decomposition-based candidate generation
+- **v2.0 (2025-01)**: Major refactor
+  - Removed `seed_from_gaussian()` and `seed_from_moments()` methods
+  - Added `seed_from_grid()` for uniform coverage
+  - Added `seed_from_edges()` for anisotropic edge seeding
+  - Changed default method from "decomposition" to "auto"
+  - "auto" now combines decomposition (50%), edges (30%), grid (20%)
+
+- **v0.1 (2025-01)**: Initial implementation
   - Added `seed_from_decomposition()` function
   - Comprehensive test suite
-  - Integration with existing overcomplete method

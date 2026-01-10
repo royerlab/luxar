@@ -13,7 +13,7 @@ from luxar.gsplats.fitting.dynamic_ops import (
     apply_dynamic_operations,
 )
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
-from luxar.gsplats.seeds import seed_from_gaussian
+from luxar.gsplats.seeds import seed_from_grid
 
 
 class TestDynamicOpsConfig:
@@ -227,9 +227,7 @@ class TestDynamicOperationsIntegration:
         V = blob.astype(np.float32)
 
         # Find seeds (returns GSplatData with scale-informed shapes)
-        seeds = seed_from_gaussian(
-            V, scales=(1.0, 2.0), peaks_per_scale=10, percentile_thresh=50.0
-        )
+        seeds = seed_from_grid(V, spacing=5.0)
 
         if len(seeds.centers) == 0:
             pytest.skip("No seeds found for test data")
@@ -264,9 +262,7 @@ class TestDynamicOperationsIntegration:
         V = blob.astype(np.float32)
 
         # Find seeds (returns GSplatData)
-        seeds = seed_from_gaussian(
-            V, scales=(1.0,), peaks_per_scale=5, percentile_thresh=50.0
-        )
+        seeds = seed_from_grid(V, spacing=8.0)
 
         if len(seeds.centers) == 0:
             pytest.skip("No seeds found for test data")
@@ -297,7 +293,7 @@ class TestDynamicOperationsIntegration:
 
         # Create test model with varying importance splats
         V = np.random.random((32, 32)).astype(np.float32)
-        seeds = seed_from_gaussian(V, peaks_per_scale=50)
+        seeds = seed_from_grid(V, spacing=4.0)
         centers = seeds.centers
 
         # Create model with many splats to trigger pruning
@@ -333,7 +329,7 @@ class TestDynamicOperationsIntegration:
     def test_asymmetric_penalty_with_all_loss_types(self) -> None:
         """Test asymmetric penalty works with all loss functions."""
         V = np.random.random((24, 24)).astype(np.float32)
-        seeds = seed_from_gaussian(V, peaks_per_scale=20)
+        seeds = seed_from_grid(V, spacing=5.0)
 
         for loss_type in ["mse", "poisson", "l1"]:
             result = fit_gaussian_splats(
@@ -412,7 +408,7 @@ class TestDynamicOperationsIntegration:
     def test_auto_convergence_threshold_behavior(self) -> None:
         """Test auto-convergence threshold integration with dynamic operations."""
         V = np.random.random((24, 24)).astype(np.float32)
-        seeds = seed_from_gaussian(V, peaks_per_scale=30)
+        seeds = seed_from_grid(V, spacing=4.0)
 
         # Test that auto-threshold works with dynamic operations
         result = fit_gaussian_splats(

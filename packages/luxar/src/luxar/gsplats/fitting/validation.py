@@ -42,7 +42,7 @@ def prepare_fit_config(
     lr_reduction_factor: float = 0.5,
     early_stop_patience: Optional[int] = None,
     dynamic_ops_verbose: bool = False,
-    seed_method: str = "both",
+    seed_method: str = "auto",
     **seed_kwargs,
 ) -> FitConfig:
     """
@@ -54,11 +54,12 @@ def prepare_fit_config(
         The fitter instance (for device and dynamic ops config)
     V : np.ndarray
         Input image/volume to reconstruct
-    seed_method : str, default="both"
+    seed_method : str, default="auto"
         Method for generating seeds when seeds=None:
-        - "gaussian": Gaussian multi-scale blob detection
-        - "decomposition": Dictionary/PCA-based decomposition
-        - "both": Hybrid approach combining both methods
+        - "decomposition": Scale-hierarchical detection via image decomposition
+        - "grid": Uniform grid seeding for spatial coverage
+        - "edges": Edge-based seeding with anisotropic shapes
+        - "auto": Principled combination of all methods (recommended)
         This parameter is only used when seeds=None. If seeds are provided,
         this parameter is ignored.
     **seed_kwargs

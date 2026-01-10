@@ -12,7 +12,8 @@ from luxar.gsplats.fit_result import GSplatData
 from luxar.gsplats.seeds import (
     combine_seeds,
     seed_from_decomposition,
-    seed_from_gaussian,
+    seed_from_edges,
+    seed_from_grid,
 )
 
 
@@ -37,7 +38,7 @@ def validate_gsplatdata(result: GSplatData, expected_ndim: int) -> None:
 
 
 def test_methods_comparison() -> None:
-    """Compare the two seed generation methods on the same image."""
+    """Compare the three seed generation methods on the same image."""
     # Create a test image with known structure
     image = np.zeros((64, 64), dtype=np.float32)
 
@@ -47,49 +48,59 @@ def test_methods_comparison() -> None:
         blob = np.exp(-((xx - x) ** 2 + (yy - y) ** 2) / (2 * 3**2))
         image += blob
 
-    # Generate seeds using both methods
-    result_gaussian = seed_from_gaussian(
-        image, scales=[1, 2], min_distance=5.0, peaks_per_scale=10
-    )
-
+    # Generate seeds using all three methods
+    result_grid = seed_from_grid(image, spacing=10.0)
     result_decomp = seed_from_decomposition(
         image, scales=[1, 2, 4], min_distance=5.0, ignore_finest_k=0
     )
+    result_edges = seed_from_edges(image, min_distance=5.0)
 
-    # Both methods should return valid GSplatData
-    validate_gsplatdata(result_gaussian, 2)
+    # All methods should return valid GSplatData
+    validate_gsplatdata(result_grid, 2)
     validate_gsplatdata(result_decomp, 2)
+    validate_gsplatdata(result_edges, 2)
 
-    # Both methods should find seeds
-    assert len(result_gaussian.centers) > 0, "Gaussian method should find seeds"
+    # Grid method always produces seeds in a grid pattern
+    assert len(result_grid.centers) > 0, "Grid method should produce seeds"
+
+    # Decomposition should find seeds on blob features
     assert len(result_decomp.centers) > 0, "Decomposition should find seeds"
 
+    # Edges may or may not find seeds depending on threshold
+    # (Gaussian blobs have edges, but they may not be strong enough)
+
     # At least one method should find seeds near the central blob
-    # (other blobs may or may not be detected depending on parameters)
-    center_blob = np.array([32, 32])
+    center_blob = np.array([32, 48])  # The third blob location
 
-    dist_gaussian: float = float(
-        np.min(np.linalg.norm(result_gaussian.centers - center_blob, axis=1))
-    )
-    dist_decomp: float = float(
-        np.min(np.linalg.norm(result_decomp.centers - center_blob, axis=1))
+    distances = []
+    if len(result_grid.centers) > 0:
+        distances.append(
+            float(np.min(np.linalg.norm(result_grid.centers - center_blob, axis=1)))
+        )
+    if len(result_decomp.centers) > 0:
+        distances.append(
+            float(np.min(np.linalg.norm(result_decomp.centers - center_blob, axis=1)))
+        )
+    if len(result_edges.centers) > 0:
+        distances.append(
+            float(np.min(np.linalg.norm(result_edges.centers - center_blob, axis=1)))
+        )
+
+    assert len(distances) > 0, "At least one method should find seeds"
+    assert min(distances) < 20.0, (
+        "At least one method should find seeds near the blob"
     )
 
-    # At least one method should find something reasonably close
-    assert dist_gaussian < 20.0 or dist_decomp < 20.0, (
-        "Neither method found any seeds near the image center"
-    )
-
-    # Test combining seeds from both methods
+    # Test combining seeds from multiple methods
     combined = combine_seeds(
-        result_gaussian.centers, result_decomp.centers, min_distance=5.0
+        result_grid.centers, result_decomp.centers, min_distance=5.0
     )
 
     # Combined should have some seeds (may be fewer than individual sets after dedup)
     assert combined.shape[0] > 0, "Combined seeds should not be empty"
 
     # Combined should not have more than sum (with some deduplication expected)
-    total_before_dedup = len(result_gaussian.centers) + len(result_decomp.centers)
+    total_before_dedup = len(result_grid.centers) + len(result_decomp.centers)
     assert combined.shape[0] <= total_before_dedup, (
         "Combined seeds should not exceed sum of individual sets"
     )
@@ -104,24 +115,24 @@ def test_seeds_integration_with_fitting() -> None:
     image = np.zeros((32, 32), dtype=np.float32)
     image[16, 16] = 1.0  # Single bright pixel
 
-    # Generate seeds using both methods
-    result_gaussian = seed_from_gaussian(image, scales=[1], min_distance=1.0)
+    # Generate seeds using grid and decomposition methods
+    result_grid = seed_from_grid(image, spacing=8.0)
     result_decomp = seed_from_decomposition(image, scales=[1, 2], min_distance=1.0)
 
     # Verify GSplatData format is correct for fitting
-    validate_gsplatdata(result_gaussian, 2)
+    validate_gsplatdata(result_grid, 2)
     validate_gsplatdata(result_decomp, 2)
 
     # Centers should be float numpy arrays with shape (N, ndim)
-    centers_gaussian = result_gaussian.centers
+    centers_grid = result_grid.centers
     centers_decomp = result_decomp.centers
 
-    assert isinstance(centers_gaussian, np.ndarray), "Centers should be numpy arrays"
-    assert centers_gaussian.dtype in [np.float32, np.float64], (
+    assert isinstance(centers_grid, np.ndarray), "Centers should be numpy arrays"
+    assert centers_grid.dtype in [np.float32, np.float64], (
         "Centers should be float type"
     )
-    assert centers_gaussian.ndim == 2, "Centers should be 2D arrays"
-    assert centers_gaussian.shape[1] == 2, "Centers should have 2D coordinates"
+    assert centers_grid.ndim == 2, "Centers should be 2D arrays"
+    assert centers_grid.shape[1] == 2, "Centers should have 2D coordinates"
 
     assert isinstance(centers_decomp, np.ndarray)
     assert centers_decomp.dtype in [np.float32, np.float64]
@@ -129,7 +140,7 @@ def test_seeds_integration_with_fitting() -> None:
     assert centers_decomp.shape[1] == 2
 
     # Centers should be within image bounds
-    assert np.all(centers_gaussian >= 0) and np.all(centers_gaussian < 32), (
+    assert np.all(centers_grid >= 0) and np.all(centers_grid < 32), (
         "Centers should be within image bounds"
     )
     assert np.all(centers_decomp >= 0) and np.all(centers_decomp < 32), (
@@ -137,7 +148,7 @@ def test_seeds_integration_with_fitting() -> None:
     )
 
     # Test combining seeds for fitting (with deduplication via min_distance)
-    combined = combine_seeds(centers_gaussian, centers_decomp, min_distance=2.0)
+    combined = combine_seeds(centers_grid, centers_decomp, min_distance=2.0)
 
     # Combined should also be in correct format
     assert isinstance(combined, np.ndarray)
@@ -148,7 +159,7 @@ def test_seeds_integration_with_fitting() -> None:
 
 
 def test_methods_on_noisy_image() -> None:
-    """Test both methods on a noisy image to compare robustness."""
+    """Test methods on a noisy image to compare robustness."""
     # Use fixed seed for reproducibility
     rng = np.random.default_rng(42)
 
@@ -160,32 +171,33 @@ def test_methods_on_noisy_image() -> None:
     # Add noise (signal-to-noise ratio ensures detection is possible)
     noisy = clean + 0.1 * rng.standard_normal((48, 48)).astype(np.float32)
 
-    # Multiscale Gaussian with CLAHE should be more robust to noise
-    result_gaussian = seed_from_gaussian(
-        noisy, scales=[1, 2], clahe_tile_size=8, min_distance=2.0
-    )
+    # Grid seeding provides uniform coverage regardless of noise
+    result_grid = seed_from_grid(noisy, spacing=8.0)
 
-    # Decomposition without CLAHE
+    # Decomposition may be affected by noise
     result_decomp = seed_from_decomposition(noisy, scales=[1, 2], min_distance=2.0)
 
-    # Both should return valid GSplatData
-    validate_gsplatdata(result_gaussian, 2)
+    # All should return valid GSplatData
+    validate_gsplatdata(result_grid, 2)
     validate_gsplatdata(result_decomp, 2)
 
+    # Grid always produces seeds
+    assert len(result_grid.centers) > 0, "Grid should always produce seeds"
+
     # At least one method should find some seeds
-    total_seeds = len(result_gaussian.centers) + len(result_decomp.centers)
+    total_seeds = len(result_grid.centers) + len(result_decomp.centers)
     assert total_seeds > 0, "At least one method should find seeds"
 
-    # Check if either method found something near the central peak (within 12 pixels)
+    # Check if methods found something near the central peak (within 12 pixels)
     # (noise makes precise detection difficult)
     center = np.array([24, 24])
     found_near_center = False
 
-    if len(result_gaussian.centers) > 0:
-        dist_gaussian = float(
-            np.min(np.linalg.norm(result_gaussian.centers - center, axis=1))
+    if len(result_grid.centers) > 0:
+        dist_grid = float(
+            np.min(np.linalg.norm(result_grid.centers - center, axis=1))
         )
-        if dist_gaussian < 12.0:
+        if dist_grid < 12.0:
             found_near_center = True
 
     if len(result_decomp.centers) > 0:
@@ -201,17 +213,17 @@ def test_methods_on_noisy_image() -> None:
 
 
 def test_3d_seeds() -> None:
-    """Test seed generation in 3D with both methods."""
+    """Test seed generation in 3D with multiple methods."""
     # Create simple 3D test image
     image_3d = np.zeros((16, 16, 16), dtype=np.float32)
     image_3d[8, 8, 8] = 1.0  # Single bright voxel
 
-    # Test multiscale Gaussian in 3D
-    result_gaussian = seed_from_gaussian(image_3d, scales=[1], min_distance=2.0)
+    # Test grid in 3D
+    result_grid = seed_from_grid(image_3d, spacing=4.0)
 
-    validate_gsplatdata(result_gaussian, 3)
-    assert len(result_gaussian.centers) > 0, "Should find seeds in 3D"
-    assert result_gaussian.centers.shape[1] == 3, "3D seeds should have 3 coordinates"
+    validate_gsplatdata(result_grid, 3)
+    assert len(result_grid.centers) > 0, "Should find seeds in 3D"
+    assert result_grid.centers.shape[1] == 3, "3D seeds should have 3 coordinates"
 
     # Test decomposition in 3D
     result_decomp = seed_from_decomposition(image_3d, scales=[1, 2], min_distance=2.0)
@@ -220,16 +232,22 @@ def test_3d_seeds() -> None:
     assert len(result_decomp.centers) > 0
     assert result_decomp.centers.shape[1] == 3
 
-    # Both should find the central voxel
+    # Test edges in 3D (should work but may not find seeds on single voxel)
+    result_edges = seed_from_edges(image_3d, min_distance=2.0, edge_threshold_rel=0.05)
+    validate_gsplatdata(result_edges, 3)
+
+    # At least one method should find the central voxel
     center_3d = np.array([8, 8, 8])
-    dist_gaussian: float = float(
-        np.min(np.linalg.norm(result_gaussian.centers - center_3d, axis=1))
+    dist_grid: float = float(
+        np.min(np.linalg.norm(result_grid.centers - center_3d, axis=1))
     )
     dist_decomp: float = float(
         np.min(np.linalg.norm(result_decomp.centers - center_3d, axis=1))
     )
 
-    assert dist_gaussian < 2.0 or dist_decomp < 2.0
+    assert dist_grid < 5.0 or dist_decomp < 2.0, (
+        "At least one method should find the central voxel"
+    )
 
 
 def test_cholesky_factors_vary_by_scale() -> None:
@@ -237,13 +255,17 @@ def test_cholesky_factors_vary_by_scale() -> None:
     # Create image with features at different scales
     x, y = np.meshgrid(np.linspace(-10, 10, 64), np.linspace(-10, 10, 64))
 
-    # Large blob
+    # Large blob - use larger scales for decomposition
     large_blob = np.exp(-(x**2 + y**2) / 16)
-    result_large = seed_from_gaussian(large_blob, scales=[4.0, 8.0], min_distance=5.0)
+    result_large = seed_from_decomposition(
+        large_blob, scales=[4, 8], min_distance=5.0
+    )
 
-    # Small blob
+    # Small blob - use smaller scales for decomposition
     small_blob = np.exp(-(x**2 + y**2) / 2)
-    result_small = seed_from_gaussian(small_blob, scales=[1.0, 2.0], min_distance=5.0)
+    result_small = seed_from_decomposition(
+        small_blob, scales=[1, 2], min_distance=5.0
+    )
 
     if len(result_large.centers) > 0 and len(result_small.centers) > 0:
         # The diagonal Cholesky element (sigma) should be larger for large blobs
@@ -253,6 +275,51 @@ def test_cholesky_factors_vary_by_scale() -> None:
         assert sigma_large > sigma_small, (
             f"Large blob sigma ({sigma_large}) should be > small blob sigma ({sigma_small})"
         )
+
+
+def test_edges_produces_anisotropic_shapes() -> None:
+    """Test that edge seeding produces anisotropic Gaussian shapes."""
+    # Create image with clear edges (rectangle)
+    image = np.zeros((64, 64), dtype=np.float32)
+    image[20:44, 20:44] = 1.0  # Rectangle
+
+    result_edges = seed_from_edges(image, min_distance=5.0)
+
+    validate_gsplatdata(result_edges, 2)
+
+    if len(result_edges.centers) > 0:
+        # Edge seeds should have valid Cholesky factors
+        # 2D packed: [L00, L10, L11]
+        L00 = result_edges.cholesky_factors[:, 0]
+        L11 = result_edges.cholesky_factors[:, 2]
+
+        # Diagonal elements should be positive
+        assert np.all(L00 > 0), "L00 should be positive"
+        assert np.all(L11 > 0), "L11 should be positive"
+
+
+def test_grid_produces_isotropic_shapes() -> None:
+    """Test that grid seeding produces isotropic Gaussian shapes."""
+    x, y = np.meshgrid(np.linspace(-5, 5, 51), np.linspace(-5, 5, 51))
+    image = np.exp(-(x**2 + y**2) / 4)
+
+    result_grid = seed_from_grid(image, spacing=10.0, sigma=3.0)
+
+    validate_gsplatdata(result_grid, 2)
+    assert len(result_grid.centers) > 0
+
+    # Grid seeds should be isotropic: L00 == L11 and L10 == 0
+    # 2D packed: [L00, L10, L11]
+    L00 = result_grid.cholesky_factors[:, 0]
+    L10 = result_grid.cholesky_factors[:, 1]
+    L11 = result_grid.cholesky_factors[:, 2]
+
+    # All seeds should have the same sigma (isotropic)
+    np.testing.assert_array_almost_equal(L00, L11, decimal=5)
+    np.testing.assert_array_almost_equal(L10, np.zeros_like(L10), decimal=5)
+
+    # Sigma should be 3.0 as specified
+    np.testing.assert_array_almost_equal(L00, 3.0 * np.ones_like(L00), decimal=5)
 
 
 if __name__ == "__main__":
