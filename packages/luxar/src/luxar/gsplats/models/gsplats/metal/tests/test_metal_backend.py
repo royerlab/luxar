@@ -6,20 +6,28 @@ Tests the Metal-accelerated Gaussian splatting implementation.
 
 from __future__ import annotations
 
+import sys
+
 import numpy as np
 import pytest
 import torch
 
-from luxar.gsplats.models.gsplats.metal import (
-    GaussianSplatModelMetal,
-    is_metal_available,
+# Skip entire module on non-macOS platforms
+pytestmark = pytest.mark.skipif(
+    sys.platform != "darwin" or not torch.backends.mps.is_available(),
+    reason="Metal backend only available on macOS with MPS",
 )
 
-# Skip all tests if Metal is not available
-pytestmark = pytest.mark.skipif(
-    not is_metal_available() or not torch.backends.mps.is_available(),
-    reason="Metal backend or MPS not available",
-)
+# Import Metal-specific modules only on macOS
+if sys.platform == "darwin":
+    from luxar.gsplats.models.gsplats.metal import (
+        GaussianSplatModelMetal,
+        is_metal_available,
+    )
+else:
+    # Provide dummy for type checking
+    GaussianSplatModelMetal = None  # type: ignore[misc, assignment]
+    is_metal_available = lambda: False  # noqa: E731
 
 
 class TestMetalBackendAvailability:

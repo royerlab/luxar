@@ -41,13 +41,21 @@ make format-all   # Format everything
 
 # Viewer
 make viewer       # Start viewer dev server (port 5173)
-make viewer-build # Build viewer for production (requires Rust)
-make wasm-build   # Build WASM module only
+make build-viewer # Build viewer for production (requires Rust)
+make build-wasm   # Build WASM module only
 make test-wasm    # Run Rust unit tests
 
 # Data & Examples
 make run-examples # Generate example datasets
 make demo         # Generate demo dataset only (use 'luxar demo' to also serve)
+
+# CUDA (Gaussian Splatting)
+make setup-cuda       # Install CUDA deps + build extension (may need sudo)
+make check-cuda-deps  # Check CUDA dependencies (nvcc, PyTorch CUDA, etc.)
+make build-cuda       # Build CUDA splatting extension
+make test-cuda        # Run CUDA tests
+make benchmark-cuda   # Run performance benchmarks
+make clean-cuda       # Clean CUDA build artifacts
 
 # Utilities
 make clean        # Clean artifacts
@@ -77,6 +85,8 @@ The build system is designed to work on **fresh Linux/macOS machines** with mini
 | Hatch | Via pipx | `~/.local/bin/hatch` |
 | pnpm | Via npm | Global npm package |
 | Rust/wasm-pack | `make setup-rust` | `~/.cargo/` |
+| CUDA toolkit | Manual install | `/usr/local/cuda/` (typical) |
+| CUDA extension | `make build-cuda` | `packages/luxar/.../cuda/*.so` |
 
 **Troubleshooting:**
 ```bash

@@ -334,7 +334,7 @@ export class MaterialManager {
     gsplatMaterials: number;
     totalRegistered: number;
     keys: string[];
-    } {
+  } {
     return {
       pointMaterials: this.pointMaterialCache.size,
       lineMaterials: this.lineMaterialCache.size,

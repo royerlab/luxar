@@ -100,8 +100,8 @@ For detailed build system documentation, see [BUILD_SYSTEM_SPEC.md](docs/guides/
 | `make test-wasm` | Run Rust unit tests |
 | **Viewer** | |
 | `make viewer` | Start viewer development server |
-| `make viewer-build` | Build viewer for production (requires Rust) |
-| `make wasm-build` | Build WASM module |
+| `make build-viewer` | Build viewer for production (requires Rust) |
+| `make build-wasm` | Build WASM module |
 | **Utilities** | |
 | `make clean` | Clean temporary files |
 | `make help` | Show all available commands |
@@ -269,7 +269,7 @@ Create `.vscode/settings.json`:
 
 **Pre-commit hooks failing:**
 ```bash
-make pre-commit-run  # Run manually to see specific errors
+make run-pre-commit  # Run manually to see specific errors
 ```
 
 **Type checking errors:**

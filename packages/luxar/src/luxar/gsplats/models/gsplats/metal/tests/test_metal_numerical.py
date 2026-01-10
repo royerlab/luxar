@@ -10,25 +10,36 @@ Tests:
 
 from __future__ import annotations
 
+import sys
+
 import numpy as np
 import pytest
 import torch
 from arbol import aprint
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
-from luxar.gsplats.models.gsplats.metal import (
-    GaussianSplatModelMetal,
-    is_metal_available,
-)
-from luxar.gsplats.models.gsplats.metal.gsplat_model_metal import (
-    cholesky_to_conic,
-)
 from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
+# Skip entire module on non-macOS platforms
 pytestmark = pytest.mark.skipif(
-    not is_metal_available() or not torch.backends.mps.is_available(),
-    reason="Metal backend or MPS not available",
+    sys.platform != "darwin" or not torch.backends.mps.is_available(),
+    reason="Metal backend only available on macOS with MPS",
 )
+
+# Import Metal-specific modules only on macOS
+if sys.platform == "darwin":
+    from luxar.gsplats.models.gsplats.metal import (
+        GaussianSplatModelMetal,
+        is_metal_available,
+    )
+    from luxar.gsplats.models.gsplats.metal.gsplat_model_metal import (
+        cholesky_to_conic,
+    )
+else:
+    # Provide dummies for type checking
+    GaussianSplatModelMetal = None  # type: ignore[misc, assignment]
+    is_metal_available = lambda: False  # noqa: E731
+    cholesky_to_conic = None  # type: ignore[misc, assignment]
 
 
 class TestCholeskyToConic:

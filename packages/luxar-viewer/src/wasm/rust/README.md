@@ -102,7 +102,7 @@ make setup-rust
 pnpm build:wasm
 
 # Or via Makefile (from project root):
-make wasm-build
+make build-wasm
 
 # Or directly:
 cd src/wasm/rust
@@ -329,7 +329,7 @@ The TypeScript fallback in `src/wasm/typescript/` provides full parity with Rust
 ```bash
 # From project root
 make test-wasm       # Run 39 Rust tests
-make wasm-build      # Build WASM module
+make build-wasm      # Build WASM module
 
 # From luxar-viewer
 pnpm test:wasm       # Rust tests

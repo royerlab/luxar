@@ -92,9 +92,9 @@ class TestMethodSelection:
         validate_gsplatdata(result, 2, simple_2d_image.shape)
         assert len(result.centers) > 0
 
-    def test_method_both(self, simple_2d_image) -> None:
-        """Test method='both'."""
-        result = generate_seeds(simple_2d_image, method="both")
+    def test_method_all(self, simple_2d_image) -> None:
+        """Test method='all' runs all seeding methods."""
+        result = generate_seeds(simple_2d_image, method="all")
         validate_gsplatdata(result, 2, simple_2d_image.shape)
         assert len(result.centers) > 0
 
@@ -143,7 +143,7 @@ class TestParameterRouting:
 
     def test_min_distance_common_param(self, simple_2d_image) -> None:
         """Test min_distance parameter."""
-        for method in ["gaussian", "decomposition", "both"]:
+        for method in ["gaussian", "decomposition", "all"]:
             result_close = generate_seeds(
                 simple_2d_image, method=method, min_distance=1.0
             )
@@ -176,10 +176,13 @@ class TestErrorCases:
         with pytest.raises(ValueError, match="Invalid method"):
             generate_seeds(simple_2d_image, method="gaussian,invalid")
 
-    def test_too_many_methods_raises(self, simple_2d_image) -> None:
-        """Test too many methods raises error."""
-        with pytest.raises(ValueError, match="Expected single method or two"):
-            generate_seeds(simple_2d_image, method="gaussian,decomposition,both")
+    def test_three_methods_comma_separated(self, simple_2d_image) -> None:
+        """Test three methods can be combined via comma-separation."""
+        result = generate_seeds(
+            simple_2d_image, method="gaussian,decomposition,moments"
+        )
+        validate_gsplatdata(result, 2, simple_2d_image.shape)
+        assert len(result.centers) > 0
 
     def test_empty_image_raises(self) -> None:
         """Test empty image raises error."""
@@ -197,19 +200,19 @@ class TestOutputFormat:
 
     def test_returns_gsplatdata(self, simple_2d_image) -> None:
         """Test that all methods return GSplatData."""
-        for method in ["gaussian", "decomposition", "both"]:
+        for method in ["gaussian", "decomposition", "all"]:
             result = generate_seeds(simple_2d_image, method=method)
             assert isinstance(result, GSplatData)
 
     def test_correct_shape_2d(self, simple_2d_image) -> None:
         """Test correct shape for 2D images."""
-        for method in ["gaussian", "decomposition", "both"]:
+        for method in ["gaussian", "decomposition", "all"]:
             result = generate_seeds(simple_2d_image, method=method)
             validate_gsplatdata(result, 2, simple_2d_image.shape)
 
     def test_correct_shape_3d(self, simple_3d_image) -> None:
         """Test correct shape for 3D images."""
-        for method in ["gaussian", "decomposition", "both"]:
+        for method in ["gaussian", "decomposition", "all"]:
             result = generate_seeds(simple_3d_image, method=method)
             validate_gsplatdata(result, 3, simple_3d_image.shape)
 
@@ -233,15 +236,15 @@ class TestIntegration:
         result_d = generate_seeds(
             simple_2d_image, method="decomposition", min_distance=2.0
         )
-        result_both = generate_seeds(simple_2d_image, method="both", min_distance=2.0)
+        result_all = generate_seeds(simple_2d_image, method="all", min_distance=2.0)
 
         max_individual = max(len(result_g.centers), len(result_d.centers))
-        assert len(result_both.centers) >= max_individual
+        assert len(result_all.centers) >= max_individual
 
     def test_min_distance_deduplicates_combined(self, simple_2d_image) -> None:
         """Test min_distance deduplicates combined results."""
-        result_small = generate_seeds(simple_2d_image, method="both", min_distance=1.0)
-        result_large = generate_seeds(simple_2d_image, method="both", min_distance=5.0)
+        result_small = generate_seeds(simple_2d_image, method="all", min_distance=1.0)
+        result_large = generate_seeds(simple_2d_image, method="all", min_distance=5.0)
 
         assert len(result_large.centers) <= len(result_small.centers)
 
@@ -250,7 +253,7 @@ class TestIntegration:
         x = np.linspace(-3, 3, 101)
         V = np.exp(-(x**2)) + 0.3 * np.exp(-((x - 1) ** 2))
 
-        for method in ["gaussian", "decomposition", "both"]:
+        for method in ["gaussian", "decomposition", "all"]:
             result = generate_seeds(V, method=method)
             validate_gsplatdata(result, 1, V.shape)
 
@@ -260,20 +263,20 @@ class TestSpecialCases:
 
     def test_uniform_image(self, uniform_image) -> None:
         """Test uniform image handling."""
-        for method in ["gaussian", "decomposition", "both"]:
+        for method in ["gaussian", "decomposition", "all"]:
             result = generate_seeds(uniform_image, method=method)
             validate_gsplatdata(result, 2, uniform_image.shape)
 
     def test_noisy_image(self, noisy_image) -> None:
         """Test noisy image handling."""
-        for method in ["gaussian", "decomposition", "both"]:
+        for method in ["gaussian", "decomposition", "all"]:
             result = generate_seeds(noisy_image, method=method)
             validate_gsplatdata(result, 2, noisy_image.shape)
 
     def test_small_image(self) -> None:
         """Test small image."""
         small_img = np.random.rand(8, 8)
-        for method in ["gaussian", "decomposition", "both"]:
+        for method in ["gaussian", "decomposition", "all"]:
             result = generate_seeds(small_img, method=method, scales=[1, 2])
             validate_gsplatdata(result, 2, small_img.shape)
 
@@ -282,7 +285,7 @@ class TestSpecialCases:
         x, y = np.meshgrid(np.linspace(-5, 5, 51), np.linspace(-5, 5, 51))
         V = np.exp(-(x**2 + y**2) / 4) - 0.5
 
-        for method in ["gaussian", "decomposition", "both"]:
+        for method in ["gaussian", "decomposition", "all"]:
             result = generate_seeds(V, method=method)
             validate_gsplatdata(result, 2, V.shape)
 

@@ -51,7 +51,9 @@ def create_grid_lines(size: float = 10.0, n_lines: int = 10):
     return np.array(vertices, dtype=np.float32)
 
 
-def create_star_burst(n_rays: int = 20, inner_radius: float = 1.0, outer_radius: float = 8.0):
+def create_star_burst(
+    n_rays: int = 20, inner_radius: float = 1.0, outer_radius: float = 8.0
+):
     """Create a star burst pattern of line segments."""
     vertices = []
     angles = np.linspace(0, 2 * np.pi, n_rays, endpoint=False)
@@ -85,8 +87,8 @@ def main():
         t = np.linspace(0, 1, n_spiral)
         spiral_colors = np.zeros((n_spiral, 3), dtype=np.float32)
         spiral_colors[:, 0] = np.sin(t * np.pi * 2) * 0.5 + 0.5  # Red
-        spiral_colors[:, 1] = np.sin(t * np.pi * 2 + np.pi * 2/3) * 0.5 + 0.5  # Green
-        spiral_colors[:, 2] = np.sin(t * np.pi * 2 + np.pi * 4/3) * 0.5 + 0.5  # Blue
+        spiral_colors[:, 1] = np.sin(t * np.pi * 2 + np.pi * 2 / 3) * 0.5 + 0.5  # Green
+        spiral_colors[:, 2] = np.sin(t * np.pi * 2 + np.pi * 4 / 3) * 0.5 + 0.5  # Blue
 
         # Varying width along the spiral
         spiral_widths = 0.1 + 0.2 * np.sin(t * np.pi * 4) ** 2
@@ -153,11 +155,13 @@ def main():
         n_loop = 50
         loop_angles = np.linspace(0, 2 * np.pi, n_loop, endpoint=False)
         loop_radius = 2.0 + 0.5 * np.sin(5 * loop_angles)  # Flower shape
-        loop_vertices = np.column_stack([
-            loop_radius * np.cos(loop_angles),
-            loop_radius * np.sin(loop_angles),
-            np.full(n_loop, 12.0),  # Z = 12
-        ]).astype(np.float32)
+        loop_vertices = np.column_stack(
+            [
+                loop_radius * np.cos(loop_angles),
+                loop_radius * np.sin(loop_angles),
+                np.full(n_loop, 12.0),  # Z = 12
+            ]
+        ).astype(np.float32)
 
         # Magenta/pink colors
         loop_colors = np.full((n_loop, 3), [1.0, 0.2, 0.8], dtype=np.float32)
@@ -173,8 +177,8 @@ def main():
 
         aprint("Created scene with 4 lines objects:")
         aprint(f"  - rainbow_spiral: {len(spiral_vertices)} vertices (polyline)")
-        aprint(f"  - floor_grid: {len(grid_vertices)//2} segments")
-        aprint(f"  - star_burst: {len(star_vertices)//2} segments")
+        aprint(f"  - floor_grid: {len(grid_vertices) // 2} segments")
+        aprint(f"  - star_burst: {len(star_vertices) // 2} segments")
         aprint(f"  - flower_loop: {len(loop_vertices)} vertices (loop)")
 
     aprint(f"Scene saved to: {output_path}")

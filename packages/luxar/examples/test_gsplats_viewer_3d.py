@@ -33,25 +33,25 @@ def create_simple_3d_blobs(shape=(32, 32, 32), n_blobs=5):
         if i < 4:
             # Four corners of a square in the middle of the volume
             centers = [
-                [shape[0]//4, shape[1]//4, shape[2]//2],
-                [3*shape[0]//4, shape[1]//4, shape[2]//2],
-                [shape[0]//4, 3*shape[1]//4, shape[2]//2],
-                [3*shape[0]//4, 3*shape[1]//4, shape[2]//2],
+                [shape[0] // 4, shape[1] // 4, shape[2] // 2],
+                [3 * shape[0] // 4, shape[1] // 4, shape[2] // 2],
+                [shape[0] // 4, 3 * shape[1] // 4, shape[2] // 2],
+                [3 * shape[0] // 4, 3 * shape[1] // 4, shape[2] // 2],
             ]
             center = centers[i]
         else:
             # One in the center
-            center = [shape[0]//2, shape[1]//2, shape[2]//2]
+            center = [shape[0] // 2, shape[1] // 2, shape[2] // 2]
 
         # Vary size and intensity
         sigma = 3.0 if i < 4 else 5.0
         amplitude = 0.8 if i < 4 else 1.0
 
         # Create 3D coordinate grids
-        grids = np.meshgrid(*[np.arange(s) for s in shape], indexing='ij')
+        grids = np.meshgrid(*[np.arange(s) for s in shape], indexing="ij")
 
         # Compute 3D distance from center
-        dist_sq = sum((g - c)**2 for g, c in zip(grids, center))
+        dist_sq = sum((g - c) ** 2 for g, c in zip(grids, center))
 
         # Add 3D Gaussian blob
         blob = amplitude * np.exp(-dist_sq / (2 * sigma**2))
@@ -91,28 +91,28 @@ with asection("GSplats 3D Viewer Test"):
 
     with asection("Creating Luxar scene"):
         # Create scene with LuxarZarrCompiler
-        output_path = Path(__file__).parent / 'test_gsplats_3d_example.zarr'
+        output_path = Path(__file__).parent / "test_gsplats_3d_example.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Add gsplats to scene
             scene.add_gsplats(
-                name='test_gsplats',
+                name="test_gsplats",
                 centers=result.centers,
                 cholesky_factors=result.cholesky_factors,
                 amplitudes=result.amplitudes,
                 sharpness=result.sharpnesses,
                 colors=None,  # Default white color
                 opacity=1.0,
-                blending_mode='additive',
+                blending_mode="additive",
             )
 
         aprint(f"✓ Saved scene to: {output_path}")
 
-    aprint("\n" + "="*60)
+    aprint("\n" + "=" * 60)
     aprint("Test data created successfully!")
-    aprint("="*60)
+    aprint("=" * 60)
     aprint("\nTo view in the browser:")
     aprint(f"  luxar serve {output_path} --viewer")
     aprint("\nExpected result:")
@@ -121,4 +121,4 @@ with asection("GSplats 3D Viewer Test"):
     aprint("  • 1 larger splat in the center")
     aprint("  • All splats should be white (no colors)")
     aprint("  • Additive blending should show overlap")
-    aprint("="*60)
+    aprint("=" * 60)

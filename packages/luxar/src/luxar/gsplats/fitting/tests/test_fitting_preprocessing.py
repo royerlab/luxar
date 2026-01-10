@@ -224,3 +224,99 @@ class TestPreprocessData:
         # Should use exact seeds provided
         assert result.N == 3
         assert np.allclose(result.seed_centers, explicit_seeds)
+
+    def test_init_arrays_subsampled_with_seeds(self, mock_config_2d) -> None:
+        """Test that init_L, init_amps, init_sharpness are sliced when seeds are subsampled.
+
+        This guards against a regression where subsampling seeds would leave the
+        init arrays at their original size, causing shape mismatches during model init.
+        """
+        # Setup: create more seeds than target with pre-initialized arrays
+        n_original = 20
+        target_count = 5
+        d = 2
+
+        # Create init arrays for all original seeds
+        mock_config_2d.init_L = np.eye(d, dtype=np.float32)[None, :, :].repeat(
+            n_original, axis=0
+        )
+        mock_config_2d.init_L *= np.random.uniform(0.5, 2.0, size=(n_original, 1, 1))
+        mock_config_2d.init_amps = np.random.rand(n_original).astype(np.float32)
+        mock_config_2d.init_sharpness = np.full(n_original, 2.0, dtype=np.float32)
+
+        # Create many explicit seeds that will be subsampled
+        V = np.zeros((50, 50), dtype=np.float32)
+        centers = []
+        for i in range(n_original):
+            cx = 5 + (i % 5) * 10
+            cy = 5 + (i // 5) * 10
+            centers.append([cx, cy])
+            x, y = np.meshgrid(np.arange(50) - cx, np.arange(50) - cy, indexing="ij")
+            V += 50 * np.exp(-(x**2 + y**2) / (2 * 2**2))
+
+        mock_config_2d.V = V
+        mock_config_2d.seeds = target_count  # Will trigger subsampling
+        mock_config_2d.seed_method = "gaussian"
+        mock_config_2d.seed_kwargs = {"scales": [2.0], "percentile_thresh": 50}
+
+        result = preprocess_data(mock_config_2d)
+
+        # After preprocessing, init arrays should match the subsampled seed count
+        if result.N < n_original:
+            # Subsampling occurred
+            if mock_config_2d.init_L is not None:
+                assert mock_config_2d.init_L.shape[0] == result.N, (
+                    f"init_L not sliced: got {mock_config_2d.init_L.shape[0]}, expected {result.N}"
+                )
+            if mock_config_2d.init_amps is not None:
+                assert mock_config_2d.init_amps.shape[0] == result.N, (
+                    f"init_amps not sliced: got {mock_config_2d.init_amps.shape[0]}, expected {result.N}"
+                )
+            if mock_config_2d.init_sharpness is not None:
+                assert mock_config_2d.init_sharpness.shape[0] == result.N, (
+                    f"init_sharpness not sliced: got {mock_config_2d.init_sharpness.shape[0]}, expected {result.N}"
+                )
+
+    def test_init_arrays_cleared_when_more_seeds_needed(self, mock_config_2d) -> None:
+        """Test that init arrays are cleared when more seeds need to be generated.
+
+        When fewer seeds are detected than requested, more seeds are added via
+        _ensure_minimum_seeds. Since these new seeds don't have scale information,
+        the init arrays must be cleared to avoid shape mismatches.
+        """
+        # Setup: create sparse volume with few detectable peaks
+        V = np.zeros((50, 50), dtype=np.float32)
+        # Add only 2 clear peaks
+        for cx, cy in [(15, 15), (35, 35)]:
+            x, y = np.meshgrid(np.arange(50) - cx, np.arange(50) - cy, indexing="ij")
+            V += 80 * np.exp(-(x**2 + y**2) / (2 * 3**2))
+
+        # Add small amount of noise
+        V += np.random.rand(50, 50).astype(np.float32) * 5
+
+        mock_config_2d.V = V
+        mock_config_2d.seeds = 10  # Request more seeds than detectable peaks
+        mock_config_2d.seed_method = "gaussian"
+        mock_config_2d.seed_kwargs = {"scales": [3.0], "percentile_thresh": 90}
+
+        # Set init arrays - these should be cleared when more seeds are generated
+        mock_config_2d.init_L = np.eye(2, dtype=np.float32)[None, :, :].repeat(
+            2, axis=0
+        )
+        mock_config_2d.init_amps = np.array([1.0, 1.0], dtype=np.float32)
+        mock_config_2d.init_sharpness = np.array([2.0, 2.0], dtype=np.float32)
+
+        result = preprocess_data(mock_config_2d)
+
+        # When more seeds are added, init arrays should be cleared (set to None)
+        # This avoids shape mismatch since new seeds don't have scale info
+        if result.N > 2:  # More seeds were generated
+            assert mock_config_2d.init_L is None, (
+                "init_L should be cleared when more seeds are generated"
+            )
+            assert mock_config_2d.init_amps is None, (
+                "init_amps should be cleared when more seeds are generated"
+            )
+            assert mock_config_2d.init_sharpness is None, (
+                "init_sharpness should be cleared when more seeds are generated"
+            )

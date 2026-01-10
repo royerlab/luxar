@@ -1,7 +1,7 @@
 # Seed Generation for Gaussian Splatting
 
-**Version**: 1.0.0
-**Last Updated**: 2025-11-27
+**Version**: 1.1.0
+**Last Updated**: 2026-01-10
 
 ## Overview
 
@@ -28,8 +28,10 @@ This subpackage provides two complementary methods for generating seed Gaussian 
 ```
 seeds/
 ├── __init__.py                    # Public API exports
+├── generate.py                    # Unified entry point (generate_seeds)
 ├── multiscale_gaussian.py         # Multiscale Gaussian seed generation
-├── decomposition.py               # Decomposition-based candidate generation
+├── multiscale_decomposition.py    # Decomposition-based seed generation
+├── moment_seeding.py              # Moment-based seeding with full covariance
 ├── utils.py                       # Shared utilities (peak detection, deduplication)
 ├── README.md                      # User-facing documentation
 └── SPECIFICATIONS.md              # This file (technical specification)
@@ -45,9 +47,9 @@ seeds/
 
 **Integration Philosophy:**
 - Both methods use shared utilities for consistency
-- Both produce identical output format: `(N, ndim)` float arrays
+- Both produce identical output format: `GSplatData` with scale-informed shapes
 - Both integrate seamlessly with `fit_gaussian_splats()`
-- Methods can be combined for comprehensive coverage
+- Methods can be combined for comprehensive coverage via `generate_seeds(method="all")`
 
 ## Method 1: Multiscale Gaussian Seed Generation
 
@@ -128,8 +130,17 @@ Steps:
      d. Calculate: mu = Σ(w × coords) / Σ(w)
    - Return refined float coordinates
 
+6. Build GSplatData with scale-informed shapes
+   - Convert scales to Cholesky factors: L = diag(scale, scale, ..., scale)
+   - Get amplitudes from original image at refined positions
+   - Set sharpness to 2.0 (standard Gaussian)
+
 Output:
-  - candidates: np.ndarray of shape (N, ndim) with float coordinates
+  - GSplatData containing:
+    - centers: (N, ndim) float coordinates
+    - amplitudes: (N,) peak intensities
+    - cholesky_factors: (N, ndim*(ndim+1)//2) scale-informed shapes
+    - sharpnesses: (N,) all set to 2.0
 ```
 
 #### Detailed Algorithm Steps
@@ -243,7 +254,6 @@ centers = np.array(centers, float)
 ```python
 def seed_from_gaussian(
     V: np.ndarray,
-    spacing: Optional[Sequence[float]] = None,
     scales: Sequence[float] = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0),
     peaks_per_scale: Optional[int] = None,
     percentile_thresh: float = 75.0,
@@ -252,13 +262,12 @@ def seed_from_gaussian(
     clahe_tile_size: int = 32,
     clahe_clip_limit: float = 16.0,
     clahe_nbins: int = 256,
-) -> np.ndarray
+) -> GSplatData
 ```
 
 **Parameters:**
 
 - `V` (np.ndarray): Input n-dimensional image/volume
-- `spacing` (Optional[Sequence[float]]): Physical voxel spacing (reserved for future use)
 - `scales` (Sequence[float]): Standard deviations for Gaussian filtering (in voxels)
   - Default: `(1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0)`
   - Should cover range of expected feature sizes
@@ -286,7 +295,11 @@ def seed_from_gaussian(
   - Default: `256`
 
 **Returns:**
-- `np.ndarray`: Candidate coordinates of shape `(N, ndim)` with float values
+- `GSplatData`: Gaussian splat seeds containing:
+  - `centers`: Peak coordinates of shape `(N, ndim)` with float values
+  - `amplitudes`: Peak intensities of shape `(N,)`
+  - `cholesky_factors`: Isotropic Cholesky factors of shape `(N, ndim*(ndim+1)//2)` where sigma = scale
+  - `sharpnesses`: All set to 2.0 (standard Gaussian) of shape `(N,)`
 
 **Raises:**
 - `ValueError`: If input array is empty or 0-dimensional
@@ -411,11 +424,17 @@ Steps:
    - Remove candidates closer than min_distance
    - Keep higher-energy peaks
 
-6. Return sorted candidates
-   - Already sorted by energy (from deduplication)
+6. Build GSplatData with scale-informed shapes
+   - Convert scale_factors to Cholesky factors: L = diag(scale_factor, ..., scale_factor)
+   - Get amplitudes from original image at seed positions
+   - Set sharpness to 2.0 (standard Gaussian)
 
 Output:
-  - candidates: np.ndarray of shape (N, ndim) with float coordinates
+  - GSplatData containing:
+    - centers: (N, ndim) float coordinates in full resolution
+    - amplitudes: (N,) intensities from original image
+    - cholesky_factors: (N, ndim*(ndim+1)//2) scale-informed shapes
+    - sharpnesses: (N,) all set to 2.0
 ```
 
 #### Detailed Algorithm Steps
@@ -552,7 +571,7 @@ def seed_from_decomposition(
     threshold_rel: float = 0.1,
     decompose_kwargs: Optional[Dict[str, Any]] = None,
     verbose: bool = False,
-) -> np.ndarray
+) -> GSplatData
 ```
 
 **Parameters:**
@@ -587,7 +606,11 @@ def seed_from_decomposition(
   - Default: `False`
 
 **Returns:**
-- `np.ndarray`: Candidate coordinates of shape `(N, ndim)` with float values, sorted by energy (descending)
+- `GSplatData`: Gaussian splat seeds containing:
+  - `centers`: Coordinates of shape `(N, ndim)` with float values, sorted by energy (descending)
+  - `amplitudes`: Intensities of shape `(N,)` from original image
+  - `cholesky_factors`: Isotropic Cholesky factors of shape `(N, ndim*(ndim+1)//2)` where sigma = scale_factor
+  - `sharpnesses`: All set to 2.0 (standard Gaussian) of shape `(N,)`
 
 **Raises:**
 - `ValueError`: If input array is empty or 0-dimensional
@@ -1084,7 +1107,7 @@ The two methods are **complementary**, not competing:
 
 **Combining Both:**
 ```python
-# Generate seeds from both methods (returns GSplatData)
+# Generate seeds from all methods (returns GSplatData)
 seeds_gaussian = seed_from_gaussian(image, min_distance=3.0)
 seeds_decomp = seed_from_decomposition(image, scales=[1,2,4,8])
 

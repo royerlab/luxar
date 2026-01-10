@@ -417,8 +417,9 @@ class TestGradientFlow:
         setup = simple_2d_setup
         model = GaussianSplatModel(**setup)
 
-        # Create a simple target (Gaussian at center)
-        target = torch.zeros(setup["shape"], dtype=torch.float32)
+        # Create a simple target (Gaussian at center) on the same device as model
+        device = model.raw_mu.device
+        target = torch.zeros(setup["shape"], dtype=torch.float32, device=device)
         target[5, 5] = 1.0
 
         # Forward pass
@@ -447,8 +448,9 @@ class TestGradientFlow:
         setup = simple_2d_setup
         model = GaussianSplatModel(**setup)
 
-        # Simple target
-        target = torch.ones(setup["shape"], dtype=torch.float32) * 0.1
+        # Simple target on the same device as model
+        device = model.raw_mu.device
+        target = torch.ones(setup["shape"], dtype=torch.float32, device=device) * 0.1
 
         # Optimizer
         optimizer = torch.optim.Adam(model.parameters(), lr=0.1)

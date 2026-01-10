@@ -76,7 +76,8 @@ def test_initialize_optimization_normal(basic_config, basic_preprocessed_data) -
     assert components.model is not None
     assert components.optimizer is not None
     assert components.scheduler is not None
-    assert components.coordinator is not None
+    # Coordinator is None when enable_dynamic_ops=False (uses fast standard optimizer)
+    assert components.coordinator is None  # basic_config has enable_dynamic_ops=False
 
     # Check model has correct number of splats
     assert components.model.n_splats() == basic_preprocessed_data.N
@@ -119,14 +120,34 @@ def test_model_initialization_parameters(basic_config, basic_preprocessed_data) 
 
 
 def test_optimizer_setup(basic_config, basic_preprocessed_data) -> None:
-    """Test that per-splat optimizer is created correctly."""
+    """Test that optimizer is created correctly (standard Adam when dynamic ops disabled)."""
     components = initialize_optimization(basic_config, basic_preprocessed_data)
 
     assert components.optimizer is not None
     assert components.scheduler is not None
-    assert components.coordinator is not None
+    # Coordinator is None when enable_dynamic_ops=False (uses fast standard optimizer)
+    assert components.coordinator is None  # basic_config has enable_dynamic_ops=False
 
-    # PerSplatAdam is a custom optimizer - check it has the expected methods
+    # Standard PyTorch Adam optimizer
+    assert hasattr(components.optimizer, "step")
+    assert hasattr(components.optimizer, "zero_grad")
+    # Standard optimizer is torch.optim.Adam
+    assert isinstance(components.optimizer, torch.optim.Adam)
+
+
+def test_per_splat_optimizer_setup(basic_config, basic_preprocessed_data) -> None:
+    """Test that per-splat optimizer is created when dynamic ops enabled."""
+    # Enable dynamic ops to get per-splat optimizer
+    basic_config.enable_dynamic_ops = True
+    components = initialize_optimization(basic_config, basic_preprocessed_data)
+
+    assert components.optimizer is not None
+    assert components.scheduler is not None
+    assert (
+        components.coordinator is not None
+    )  # Coordinator exists with per-splat optimizer
+
+    # PerSplatAdam has these methods
     assert hasattr(components.optimizer, "step")
     assert hasattr(components.optimizer, "zero_grad")
     assert hasattr(components.optimizer, "get_effective_learning_rates")

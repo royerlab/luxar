@@ -36,8 +36,8 @@ def generate_seeds(
         - "gaussian": Multiscale Gaussian-blurred peak detection
         - "decomposition": Multi-scale decomposition method (default, recommended)
         - "moments": Moment-based with full covariance estimation
-        - "both" or "decomposition,gaussian": Decomposition first, then Gaussian
-        - "gaussian,decomposition": Gaussian first, then decomposition
+        - "all": All methods (decomposition + gaussian + moments) combined
+        - "decomposition,gaussian": Combine two specific methods (comma-separated)
     **kwargs
         Method-specific parameters. Common parameters are routed to all applicable
         methods, while method-specific parameters are routed only to their respective
@@ -131,9 +131,9 @@ def generate_seeds(
     ...     min_distance=3.0,
     ... )
 
-    **Combining methods:**
+    **Combining all methods:**
 
-    >>> seeds = generate_seeds(image, method="both")
+    >>> seeds = generate_seeds(image, method="all")
 
     **Use with fit_gaussian_splats:**
 
@@ -156,30 +156,31 @@ def generate_seeds(
 
     # Parse method string
     method = method.lower().strip()
-    valid_methods = {"gaussian", "decomposition", "moments", "both"}
+    single_methods = {"gaussian", "decomposition", "moments"}
+    valid_methods = single_methods | {"all", "both"}
 
-    # Handle comma-separated methods
+    # Handle comma-separated methods (e.g., "gaussian,decomposition")
     if "," in method:
         methods = [m.strip() for m in method.split(",")]
-        if len(methods) != 2:
-            raise ValueError(
-                f"Invalid method string: '{method}'. "
-                "Expected single method or two comma-separated methods."
-            )
         for m in methods:
-            if m not in {"gaussian", "decomposition"}:
+            if m not in single_methods:
                 raise ValueError(
                     f"Invalid method: '{m}'. "
-                    "Combined methods must be 'gaussian' or 'decomposition'"
+                    f"Combined methods must be one of: {single_methods}"
                 )
+    elif method == "all":
+        # Run all seeding methods for maximum coverage
+        methods = ["decomposition", "gaussian", "moments"]
     elif method == "both":
+        # Legacy alias: "both" = decomposition + gaussian (not moments)
         methods = ["decomposition", "gaussian"]
-    elif method in valid_methods:
+    elif method in single_methods:
         methods = [method]
     else:
         raise ValueError(
             f"Invalid method: '{method}'. "
-            "Valid options: 'gaussian', 'decomposition', 'moments', 'both'"
+            "Valid options: 'gaussian', 'decomposition', 'moments', 'both', 'all', "
+            "or comma-separated combination (e.g., 'gaussian,decomposition')"
         )
 
     # Extract min_distance for combining

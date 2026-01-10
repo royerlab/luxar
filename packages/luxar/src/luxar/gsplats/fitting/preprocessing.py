@@ -93,19 +93,23 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     d = V.ndim
     N = int(seed_centers.shape[0])
 
-    # Set L1 regularization defaults based on parameter type learning rate multipliers
+    # Compute L1 regularization values based on parameter type learning rate multipliers
     # These scale with the learning rates used by the optimizer for each parameter type
-    if config.l1_amp is None:
+    # Use config values if provided, otherwise calculate defaults
+    l1_amp = config.l1_amp
+    if l1_amp is None:
         # Amplitude learns at 2.0× base lr, so L1 should be ~5% of that
-        config.l1_amp = 0.1 * config.lr  # 10% of base LR = 5% of amplitude LR (2.0×)
-    if config.l1_diag is None:
+        l1_amp = 0.1 * config.lr  # 10% of base LR = 5% of amplitude LR (2.0×)
+
+    l1_diag = config.l1_diag
+    if l1_diag is None:
         # Diagonal learns at 1.0× base lr (with dilution), L1 ~1%
-        config.l1_diag = 0.01 * config.lr  # 1% of base LR
-    if config.l1_sharpness is None:
+        l1_diag = 0.01 * config.lr  # 1% of base LR
+
+    l1_sharpness = config.l1_sharpness
+    if l1_sharpness is None:
         # Sharpness learns at 0.5× base lr (no dilution), L1 ~2%
-        config.l1_sharpness = (
-            0.01 * config.lr
-        )  # 1% of base LR = 2% of sharpness LR (0.5×)
+        l1_sharpness = 0.01 * config.lr  # 1% of base LR = 2% of sharpness LR (0.5×)
 
     # Move to device
     V_tensor = torch.tensor(V_normalized, dtype=torch.float32, device=config.device)
@@ -113,14 +117,10 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     # Log L1 regularization settings
     if config.verbose:
         aprint("L1 regularization (as % of parameter type LR):")
+        aprint(f"  Amplitude: {l1_amp:.4f} (5% of amp LR: {config.lr:.3f} × 2.0)")
+        aprint(f"  Diagonal: {l1_diag:.5f} (1% of diag LR: {config.lr:.3f} × 1.0)")
         aprint(
-            f"  Amplitude: {config.l1_amp:.4f} (5% of amp LR: {config.lr:.3f} × 2.0)"
-        )
-        aprint(
-            f"  Diagonal: {config.l1_diag:.5f} (1% of diag LR: {config.lr:.3f} × 1.0)"
-        )
-        aprint(
-            f"  Sharpness: {config.l1_sharpness:.5f} "
+            f"  Sharpness: {l1_sharpness:.5f} "
             f"(2% of sharpness LR: {config.lr:.3f} × 0.5)"
         )
 
@@ -134,6 +134,9 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         d=d,
         N=N,
         max_abs_error=max_abs_error,
+        l1_amp=l1_amp,
+        l1_diag=l1_diag,
+        l1_sharpness=l1_sharpness,
     )
 
 
@@ -214,9 +217,28 @@ def _generate_seeds(
                 np.array(V.shape) - 1,
             )
             intensities = V[tuple(idx.T)]
-            seed_centers = _subsample_seeds_spatially_diverse(
-                seed_centers, intensities, target_count, verbose
-            )
+
+            # Need indices when we have pre-initialized arrays to slice
+            has_init_arrays = config is not None and config.init_L is not None
+
+            if has_init_arrays:
+                seed_centers, selected_indices = _subsample_seeds_spatially_diverse(
+                    seed_centers,
+                    intensities,
+                    target_count,
+                    verbose,
+                    return_indices=True,
+                )
+                # Slice the pre-initialized arrays to match subsampled seeds
+                config.init_L = config.init_L[selected_indices]
+                if config.init_amps is not None:
+                    config.init_amps = config.init_amps[selected_indices]
+                if config.init_sharpness is not None:
+                    config.init_sharpness = config.init_sharpness[selected_indices]
+            else:
+                seed_centers = _subsample_seeds_spatially_diverse(
+                    seed_centers, intensities, target_count, verbose
+                )
 
             if verbose:
                 actual_proportion = len(seed_centers) / V.size * 100
@@ -226,7 +248,31 @@ def _generate_seeds(
                 )
 
         elif len(seed_centers) < target_count:
-            # Not enough: regenerate with low threshold to get more seeds
+            # Not enough seeds: regenerate with low threshold to reach target_count.
+            #
+            # IMPORTANT: Scale-informed initialization loss
+            # --------------------------------------------
+            # When regenerating seeds, the original GSplatData's scale-informed
+            # Cholesky factors (init_L), amplitudes (init_amps), and sharpness
+            # (init_sharpness) are discarded. The new seeds will use default
+            # isotropic initialization instead of scale-aware shapes.
+            #
+            # This tradeoff prioritizes reaching the requested seed count over
+            # preserving scale information. To avoid this, either:
+            # 1. Don't specify target_count (use automatic count)
+            # 2. Use seeding parameters that generate enough seeds initially
+            # 3. Use method="moments" for richer scale-informed initialization
+            if config is not None:
+                had_scale_info = config.init_L is not None
+                config.init_L = None
+                config.init_amps = None
+                config.init_sharpness = None
+                if verbose and had_scale_info:
+                    aprint(
+                        "Note: Discarding scale-informed initialization to reach "
+                        f"target_count={target_count}. Seeds will use default "
+                        "isotropic initialization."
+                    )
             seed_centers = _ensure_minimum_seeds(
                 V, target_count, seed_centers, seed_method, verbose, **seed_kwargs
             )
@@ -239,7 +285,8 @@ def _subsample_seeds_spatially_diverse(
     intensities: np.ndarray,
     target_count: int,
     verbose: bool,
-) -> np.ndarray:
+    return_indices: bool = False,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """
     Subsample seeds to exact count with spatial diversity and intensity weighting.
 
@@ -262,16 +309,21 @@ def _subsample_seeds_spatially_diverse(
         Exact number of seeds to select
     verbose : bool
         Whether to print progress
+    return_indices : bool, default=False
+        If True, also return the original indices of selected seeds
 
     Returns
     -------
-    np.ndarray, shape (target_count, ndim)
-        Selected seeds with spatial diversity and high intensity
+    np.ndarray, shape (target_count, ndim) or tuple
+        Selected seeds with spatial diversity and high intensity.
+        If return_indices=True, returns (seeds, original_indices).
     """
     from scipy.spatial import cKDTree
 
     n_available = len(seeds)
     if n_available <= target_count:
+        if return_indices:
+            return seeds, np.arange(n_available)
         return seeds  # Return all if not enough
 
     # Determine intensity threshold to filter low-quality seeds
@@ -285,6 +337,7 @@ def _subsample_seeds_spatially_diverse(
 
     # Filter to candidates above threshold
     valid_mask = intensities >= intensity_threshold
+    valid_indices = np.where(valid_mask)[0]  # Track original indices
     valid_seeds = seeds[valid_mask]
     valid_intensities = intensities[valid_mask]
 
@@ -294,6 +347,7 @@ def _subsample_seeds_spatially_diverse(
         # (can happen with many tied intensity values at percentile boundary)
         valid_seeds = seeds
         valid_intensities = intensities
+        valid_indices = np.arange(len(seeds))  # All original indices
 
     # Farthest-first selection with intensity priority
     # Start with highest intensity seed
@@ -323,6 +377,8 @@ def _subsample_seeds_spatially_diverse(
         remaining_indices.remove(farthest_idx_global)
 
     result = np.array(selected)
+    # Map selected_indices (within valid_seeds) back to original indices
+    original_indices = valid_indices[selected_indices]
 
     if verbose and len(result) == target_count:
         # Calculate spatial distribution metric (average nearest-neighbor distance)
@@ -335,6 +391,8 @@ def _subsample_seeds_spatially_diverse(
                 f"{avg_spacing:.1f} voxels"
             )
 
+    if return_indices:
+        return result, original_indices
     return result
 
 

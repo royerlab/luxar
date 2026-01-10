@@ -99,6 +99,10 @@ def _cached_base_and_offsets(
     Returns:
       base: (d, P) float tensor with coordinates [0..h_i-1] mesh, flattened.
       lin_offsets: (P,) long tensor of row-major flat offsets for this box_shape.
+
+    Note: Uses integer coordinates [0, 1, 2, ...] for backwards compatibility.
+    The CUDA backend uses pixel-centered coordinates (i + 0.5) which is
+    more physically accurate but produces small numerical differences.
     """
     key = (
         device.type,
