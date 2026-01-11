@@ -20,7 +20,7 @@
  *
  * Converts Python types to C++ types and calls the CUDA forward function.
  */
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 forward_wrapper(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
@@ -56,6 +56,7 @@ backward_wrapper(
     const torch::Tensor& tile_offsets,
     const torch::Tensor& tile_counts,
     const torch::Tensor& tile_content,
+    const torch::Tensor& global_splat_ids,
     const std::vector<int64_t>& shape,
     double truncate,
     double intensity_floor,
@@ -70,6 +71,7 @@ backward_wrapper(
         tile_offsets,
         tile_counts,
         tile_content,
+        global_splat_ids,
         shape,
         (float)truncate,
         (float)intensity_floor,
@@ -125,11 +127,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
             Returns
             -------
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
                 - output: (prod(shape),) float32 - Rendered volume (flattened)
                 - tile_counts: (num_tiles,) int32 - Splats per tile
                 - tile_offsets: (num_tiles,) int64 - Exclusive prefix sum
                 - tile_content: (total_pairs,) int32 - Splat IDs per tile
+                - global_splat_ids: (num_global,) int32 - Global splat IDs (for backward)
         )doc",
         py::arg("centers"),
         py::arg("conic"),
@@ -165,6 +168,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                 (num_tiles,) int32 - From forward pass
             tile_content : torch.Tensor
                 (total_pairs,) int32 - From forward pass
+            global_splat_ids : torch.Tensor
+                (num_global,) int32 - Global splat IDs from forward pass
             shape : List[int]
                 Target volume shape
             truncate : float
@@ -190,6 +195,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("tile_offsets"),
         py::arg("tile_counts"),
         py::arg("tile_content"),
+        py::arg("global_splat_ids"),
         py::arg("shape"),
         py::arg("truncate"),
         py::arg("intensity_floor"),

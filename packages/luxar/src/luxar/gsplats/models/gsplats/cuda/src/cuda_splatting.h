@@ -95,8 +95,9 @@ struct BinningState {
  *   - tile_counts: (num_tiles,) int32 - splats per tile
  *   - tile_offsets: (num_tiles,) int64 - exclusive prefix sum
  *   - tile_content: (total_pairs,) int32 - splat IDs per tile
+ *   - global_splat_ids: (num_global,) int32 - IDs of global splats (for backward)
  */
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 forward(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
@@ -123,6 +124,7 @@ forward(
  * @param tile_offsets    (num_tiles,) int64 - from forward pass
  * @param tile_counts     (num_tiles,) int32 - from forward pass
  * @param tile_content    (total_pairs,) int32 - from forward pass
+ * @param global_splat_ids (num_global,) int32 - from forward pass
  * @param shape           Target volume shape
  * @param truncate        Base truncation radius
  * @param intensity_floor Minimum intensity threshold
@@ -144,6 +146,7 @@ backward(
     const torch::Tensor& tile_offsets,
     const torch::Tensor& tile_counts,
     const torch::Tensor& tile_content,
+    const torch::Tensor& global_splat_ids,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
@@ -180,6 +183,7 @@ void dispatch_backward(
     const torch::Tensor& tile_offsets,
     const torch::Tensor& tile_counts,
     const torch::Tensor& tile_content,
+    const torch::Tensor& global_splat_ids,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
@@ -280,6 +284,42 @@ void launch_rasterize_backward(
     float* d_sharpness,
     int64_t num_tiles,
     const std::vector<int>& host_tile_dims,
+    cudaStream_t stream
+);
+
+// Global splat forward: Render global splats to all pixels
+template <int DIM>
+void launch_rasterize_global_forward(
+    const float* centers,
+    const float* conic,
+    const float* amps,
+    const float* sharpness,
+    const int* global_splat_ids,
+    int n_global_splats,
+    const int* shape,
+    float truncate,
+    float* output,
+    int64_t num_pixels,
+    cudaStream_t stream
+);
+
+// Global splat backward: Compute gradients for global splats
+template <int DIM>
+void launch_rasterize_global_backward(
+    const float* grad_output,
+    const float* centers,
+    const float* conic,
+    const float* amps,
+    const float* sharpness,
+    const int* global_splat_ids,
+    int n_global_splats,
+    const int* shape,
+    float truncate,
+    float* d_centers,
+    float* d_conic,
+    float* d_amps,
+    float* d_sharpness,
+    int64_t num_pixels,
     cudaStream_t stream
 );
 

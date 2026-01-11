@@ -148,6 +148,7 @@ class CUDASplatFunction(torch.autograd.Function):
             tile_counts = result[1] if len(result) > 1 else None
             tile_offsets = result[2] if len(result) > 2 else None
             tile_content = result[3] if len(result) > 3 else None
+            global_splat_ids = result[4] if len(result) > 4 else None
         else:
             # Fallback to PyTorch rendering
             from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
@@ -158,6 +159,7 @@ class CUDASplatFunction(torch.autograd.Function):
             tile_counts = None
             tile_offsets = None
             tile_content = None
+            global_splat_ids = None
 
         # Save for backward
         ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps, sharpness)
@@ -168,6 +170,7 @@ class CUDASplatFunction(torch.autograd.Function):
         ctx.tile_counts = tile_counts
         ctx.tile_offsets = tile_offsets
         ctx.tile_content = tile_content
+        ctx.global_splat_ids = global_splat_ids
         ctx.d = d
 
         return output
@@ -200,6 +203,7 @@ class CUDASplatFunction(torch.autograd.Function):
                 ctx.tile_offsets,
                 ctx.tile_counts,
                 ctx.tile_content,
+                ctx.global_splat_ids,
                 list(shape),
                 truncate,
                 intensity_floor,
