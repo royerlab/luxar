@@ -99,9 +99,11 @@ def prepare_fit_config(
             if seeds <= 0:
                 raise ValueError("seeds as int must be positive")
         elif isinstance(seeds, float):
-            # Float proportion of voxels
+            # Float compression ratio (splat floats / image floats)
             if seeds <= 0 or seeds > 1.0:
-                raise ValueError("seeds as float must be in range (0, 1.0]")
+                raise ValueError(
+                    "seeds as float (compression ratio) must be in range (0, 1.0]"
+                )
         else:
             # Array of seed centers
             seeds = np.asarray(seeds, dtype=np.float32)

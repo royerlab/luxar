@@ -13,6 +13,71 @@ from arbol import aprint
 from luxar.gsplats.fitting.config import FitConfig, PreprocessedData
 
 
+def _compute_floats_per_splat(ndim: int) -> int:
+    """
+    Compute number of floats needed to represent one Gaussian splat.
+
+    Each splat requires:
+    - d floats for center position
+    - d*(d+1)/2 floats for Cholesky factor (lower triangular)
+    - 1 float for amplitude
+    - 1 float for sharpness
+
+    Parameters
+    ----------
+    ndim : int
+        Number of dimensions
+
+    Returns
+    -------
+    int
+        Number of floats per splat
+    """
+    # center (d) + cholesky (d*(d+1)/2) + amplitude (1) + sharpness (1)
+    return ndim + ndim * (ndim + 1) // 2 + 2
+
+
+def _compression_ratio_to_target_count(
+    ratio: float,
+    shape: tuple[int, ...],
+) -> int:
+    """
+    Convert compression ratio to target seed count.
+
+    The compression ratio is defined as:
+        ratio = (n_splats * floats_per_splat) / total_voxels
+
+    This function inverts that to compute the target number of splats:
+        n_splats = ratio * total_voxels / floats_per_splat
+
+    Parameters
+    ----------
+    ratio : float
+        Compression ratio (splat floats / image floats), in range (0, 1.0]
+    shape : tuple[int, ...]
+        Volume shape
+
+    Returns
+    -------
+    int
+        Target number of seeds (at least 1)
+
+    Examples
+    --------
+    >>> _compression_ratio_to_target_count(0.1, (100, 100))  # 2D
+    142  # 0.1 * 10000 / 7 = 142.8 -> 142
+
+    >>> _compression_ratio_to_target_count(0.1, (64, 64, 64))  # 3D
+    2383  # 0.1 * 262144 / 11 = 2383.1 -> 2383
+    """
+    ndim = len(shape)
+    total_voxels = int(np.prod(shape))
+    floats_per_splat = _compute_floats_per_splat(ndim)
+
+    target = int(ratio * total_voxels / floats_per_splat)
+    return max(1, target)  # At least 1 seed
+
+
 def preprocess_data(config: FitConfig) -> PreprocessedData:
     """
     Preprocess input data for optimization.
@@ -67,11 +132,19 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
             **seed_kwargs,
         )
     elif isinstance(seeds, float):
-        # User-specified proportion (seed_method still applies)
+        # User-specified compression ratio → compute target seed count
+        # Compression ratio = (n_splats * floats_per_splat) / total_voxels
+        target_count = _compression_ratio_to_target_count(seeds, V.shape)
+        if config.verbose:
+            floats_per_splat = _compute_floats_per_splat(V.ndim)
+            aprint(
+                f"Compression ratio {seeds:.3f} → target {target_count} seeds "
+                f"({floats_per_splat} floats/splat in {V.ndim}D)"
+            )
         seed_centers = _generate_seeds(
             V,
-            seeds,
-            None,
+            None,  # proportion no longer used
+            target_count,
             config.seed_method,
             config.verbose,
             config=config,
@@ -157,9 +230,8 @@ def _generate_seeds(
     V : np.ndarray
         Input image/volume
     proportion : float | None
-        Target proportion of voxels to use as seeds (0 < proportion <= 1.0).
-        If None, uses default heuristic (~1% of voxels).
-        Note: Currently not enforced, seed generation methods use their own heuristics.
+        Deprecated parameter, no longer used. Kept for API compatibility.
+        Use target_count instead.
     target_count : int | None
         Target number of seeds to generate. If specified:
         - If more seeds detected: subsample to exact count (keep highest intensity)
