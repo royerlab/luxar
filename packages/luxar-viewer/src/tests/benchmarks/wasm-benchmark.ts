@@ -38,6 +38,8 @@ interface BenchmarkResult {
   tsTime: number;
   wasmTime: number;
   speedup: number;
+  /** If true, this is a utility function not used in production hot paths */
+  utility?: boolean;
 }
 
 // ============================================================================
@@ -714,6 +716,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         tsTime,
         wasmTime,
         speedup: tsTime / wasmTime,
+        utility: true, // Not used in production - batch version inlines the logic
       };
     },
     (size) => {
@@ -960,6 +963,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         tsTime,
         wasmTime,
         speedup: tsTime / wasmTime,
+        utility: true, // Not used in production - batch functions inline the math
       };
     },
     (size) => {
@@ -985,6 +989,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         tsTime,
         wasmTime,
         speedup: tsTime / wasmTime,
+        utility: true, // Not used in production - batch functions inline the math
       };
     },
     (size) => {
@@ -1010,6 +1015,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         tsTime,
         wasmTime,
         speedup: tsTime / wasmTime,
+        utility: true, // Not used in production - batch functions inline the math
       };
     },
   ],
@@ -1139,6 +1145,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         tsTime,
         wasmTime,
         speedup: tsTime / wasmTime,
+        utility: true, // Not used in production - inlined by batch functions
       };
     },
     (size) => {
@@ -1169,6 +1176,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         tsTime,
         wasmTime,
         speedup: tsTime / wasmTime,
+        utility: true, // Not used in production - inlined by batch functions
       };
     },
     (size) => {
@@ -1256,9 +1264,14 @@ function printCategoryResults(category: string, results: BenchmarkResult[]): voi
 
   // Results
   for (const result of results) {
-    const name = result.name.length > nameWidth - 2 ? result.name.slice(0, nameWidth - 3) + '...' : result.name;
+    let name = result.name;
+    // Add utility marker for functions not used in production hot paths
+    if (result.utility) {
+      name = '\x1b[90m* ' + name + '\x1b[0m';
+    }
+    const displayName = name.length > nameWidth - 2 ? name.slice(0, nameWidth - 3) + '...' : name;
     console.log(
-      `${name.padEnd(nameWidth)} ${formatTime(result.tsTime).padStart(colWidth)} ${formatTime(result.wasmTime).padStart(colWidth)} ${formatSpeedup(result.speedup).padStart(colWidth + 9)}`
+      `${displayName.padEnd(nameWidth + (result.utility ? 9 : 0))} ${formatTime(result.tsTime).padStart(colWidth)} ${formatTime(result.wasmTime).padStart(colWidth)} ${formatSpeedup(result.speedup).padStart(colWidth + 9)}`
     );
   }
   console.log('');
@@ -1269,17 +1282,40 @@ function printSummary(results: BenchmarkResult[]): void {
   console.log('\x1b[1m\x1b[36m  SUMMARY\x1b[0m');
   console.log('\x1b[1m\x1b[36m' + '='.repeat(70) + '\x1b[0m\n');
 
-  const speedups = results.map((r) => r.speedup);
-  const avgSpeedup = speedups.reduce((a, b) => a + b, 0) / speedups.length;
-  const maxSpeedup = Math.max(...speedups);
-  const minSpeedup = Math.min(...speedups);
-  const maxResult = results.find((r) => r.speedup === maxSpeedup)!;
-  const minResult = results.find((r) => r.speedup === minSpeedup)!;
+  // Separate batch (production) vs utility functions
+  const batchResults = results.filter((r) => !r.utility);
+  const utilityResults = results.filter((r) => r.utility);
 
-  console.log(`   Functions tested: ${results.length}`);
-  console.log(`   Average speedup:  ${formatSpeedup(avgSpeedup)}`);
-  console.log(`   Fastest speedup:  ${formatSpeedup(maxSpeedup)} (${maxResult.name})`);
-  console.log(`   Slowest speedup:  ${formatSpeedup(minSpeedup)} (${minResult.name})`);
+  // Batch function stats (what matters in production)
+  const batchSpeedups = batchResults.map((r) => r.speedup);
+  const batchAvg = batchSpeedups.reduce((a, b) => a + b, 0) / batchSpeedups.length;
+  const batchMax = Math.max(...batchSpeedups);
+  const batchMin = Math.min(...batchSpeedups);
+  const batchMaxResult = batchResults.find((r) => r.speedup === batchMax)!;
+  const batchMinResult = batchResults.find((r) => r.speedup === batchMin)!;
+
+  console.log('\x1b[1m  Batch Functions (used in production):\x1b[0m');
+  console.log(`   Functions:        ${batchResults.length}`);
+  console.log(`   Average speedup:  ${formatSpeedup(batchAvg)}`);
+  console.log(`   Fastest speedup:  ${formatSpeedup(batchMax)} (${batchMaxResult.name})`);
+  console.log(`   Slowest speedup:  ${formatSpeedup(batchMin)} (${batchMinResult.name})`);
+  console.log('');
+
+  // Utility function stats (API completeness only)
+  if (utilityResults.length > 0) {
+    const utilitySpeedups = utilityResults.map((r) => r.speedup);
+    const utilityAvg = utilitySpeedups.reduce((a, b) => a + b, 0) / utilitySpeedups.length;
+
+    console.log('\x1b[90m  * Utility Functions (API completeness, not used in hot paths):\x1b[0m');
+    console.log(`\x1b[90m   Functions:        ${utilityResults.length}\x1b[0m`);
+    console.log(`\x1b[90m   Average speedup:  ${utilityAvg.toFixed(1)}x (expected <1x due to WASM call overhead)\x1b[0m`);
+    console.log('');
+  }
+
+  // Explanation
+  console.log('\x1b[90m  Note: Utility functions (*) exist for API completeness and testing.\x1b[0m');
+  console.log('\x1b[90m  In production, batch functions inline the math, avoiding per-call overhead.\x1b[0m');
+  console.log('\x1b[90m  WASM call overhead dominates for trivial operations like lerp/distance.\x1b[0m');
   console.log('');
 }
 
