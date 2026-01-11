@@ -209,9 +209,10 @@ def seed_from_decomposition(
     if verbose:
         aprint(f"[Decomposition Seeds] Seeds after dedup: {len(seeds)}")
 
-    # Get amplitudes from original image
+    # Get amplitudes from original image, scaled to 90% to avoid overlap overshoot
+    # (over-prediction penalty causes divergence with overlapping splats)
     seeds_int = np.clip(np.round(seeds).astype(int), 0, np.array(V.shape) - 1)
-    amplitudes = V[tuple(seeds_int.T)].astype(np.float32)
+    amplitudes = V[tuple(seeds_int.T)].astype(np.float32) * 0.9
 
     # Build Cholesky factors from scales (sigma = scale_factor)
     cholesky_factors = sigmas_to_cholesky_isotropic(

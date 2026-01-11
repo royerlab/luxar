@@ -2,7 +2,8 @@
 Integration tests for seeds sub-package.
 
 Tests cross-method comparisons and integration with the main fitting pipeline.
-All seeding methods now return GSplatData with scale-informed Gaussian shapes.
+All seeding methods return GSplatData with simplified σ=1.0 isotropic initialization
+and 90% amplitude scaling (to avoid overlap and divergence during optimization).
 """
 
 import numpy as np
@@ -246,8 +247,13 @@ def test_3d_seeds() -> None:
     )
 
 
-def test_cholesky_factors_vary_by_scale() -> None:
-    """Test that Cholesky factors (sigmas) vary by detection scale."""
+def test_decomposition_uses_scale_based_sigma() -> None:
+    """Test that decomposition seeding uses scale-based sigma initialization.
+
+    NOTE: seed_from_decomposition uses the detection scale as σ, because the
+    multi-scale decomposition provides meaningful scale information.
+    Other methods (edges, grid) use σ=1.0 since they lack scale info.
+    """
     # Create image with features at different scales
     x, y = np.meshgrid(np.linspace(-10, 10, 64), np.linspace(-10, 10, 64))
 
@@ -260,17 +266,26 @@ def test_cholesky_factors_vary_by_scale() -> None:
     result_small = seed_from_decomposition(small_blob, scales=[1, 2], min_distance=5.0)
 
     if len(result_large.centers) > 0 and len(result_small.centers) > 0:
-        # The diagonal Cholesky element (sigma) should be larger for large blobs
+        # Decomposition uses scale-based σ (detection scale from decomposition)
         sigma_large = result_large.cholesky_factors[0, 0]
         sigma_small = result_small.cholesky_factors[0, 0]
 
+        # Large blob detected at larger scale should have larger σ
+        # Small blob detected at smaller scale should have smaller σ
         assert sigma_large > sigma_small, (
             f"Large blob sigma ({sigma_large}) should be > small blob sigma ({sigma_small})"
         )
+        # Decomposition uses the scale factor as σ, so expect σ >= 1.0
+        assert sigma_large >= 1.0, f"Large blob sigma should be >= 1.0, got {sigma_large}"
+        assert sigma_small >= 1.0, f"Small blob sigma should be >= 1.0, got {sigma_small}"
 
 
-def test_edges_produces_anisotropic_shapes() -> None:
-    """Test that edge seeding produces anisotropic Gaussian shapes."""
+def test_edges_produces_isotropic_shapes() -> None:
+    """Test that edge seeding produces isotropic Gaussian shapes with σ=1.0.
+
+    NOTE: As of 2024, seeding methods always use σ=1.0 isotropic initialization
+    (the structure tensor anisotropic shapes were not effective in practice).
+    """
     # Create image with clear edges (rectangle)
     image = np.zeros((64, 64), dtype=np.float32)
     image[20:44, 20:44] = 1.0  # Rectangle
@@ -280,22 +295,29 @@ def test_edges_produces_anisotropic_shapes() -> None:
     validate_gsplatdata(result_edges, 2)
 
     if len(result_edges.centers) > 0:
-        # Edge seeds should have valid Cholesky factors
+        # Edge seeds should have valid Cholesky factors with σ=1.0
         # 2D packed: [L00, L10, L11]
         L00 = result_edges.cholesky_factors[:, 0]
+        L10 = result_edges.cholesky_factors[:, 1]
         L11 = result_edges.cholesky_factors[:, 2]
 
-        # Diagonal elements should be positive
-        assert np.all(L00 > 0), "L00 should be positive"
-        assert np.all(L11 > 0), "L11 should be positive"
+        # Should be isotropic with σ=1.0
+        assert np.allclose(L00, 1.0), "L00 should be 1.0"
+        assert np.allclose(L11, 1.0), "L11 should be 1.0"
+        assert np.allclose(L10, 0.0), "L10 (off-diagonal) should be 0"
 
 
 def test_grid_produces_isotropic_shapes() -> None:
-    """Test that grid seeding produces isotropic Gaussian shapes."""
+    """Test that grid seeding produces isotropic Gaussian shapes with spacing-based σ.
+
+    Grid seeding uses σ = spacing/2 so that splats cover the image with
+    ~60% overlap at midpoints between grid points.
+    """
     x, y = np.meshgrid(np.linspace(-5, 5, 51), np.linspace(-5, 5, 51))
     image = np.exp(-(x**2 + y**2) / 4)
 
-    result_grid = seed_from_grid(image, spacing=10.0, sigma=3.0)
+    spacing = 10.0
+    result_grid = seed_from_grid(image, spacing=spacing)
 
     validate_gsplatdata(result_grid, 2)
     assert len(result_grid.centers) > 0
@@ -310,8 +332,9 @@ def test_grid_produces_isotropic_shapes() -> None:
     np.testing.assert_array_almost_equal(L00, L11, decimal=5)
     np.testing.assert_array_almost_equal(L10, np.zeros_like(L10), decimal=5)
 
-    # Sigma should be 3.0 as specified
-    np.testing.assert_array_almost_equal(L00, 3.0 * np.ones_like(L00), decimal=5)
+    # Sigma should be spacing / 2 for coverage
+    expected_sigma = spacing / 2.0
+    assert np.allclose(L00, expected_sigma), f"Expected σ={expected_sigma}, got {L00[0]}"
 
 
 if __name__ == "__main__":

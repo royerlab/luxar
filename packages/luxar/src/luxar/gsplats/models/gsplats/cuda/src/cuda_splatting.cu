@@ -1196,6 +1196,7 @@ __global__ void rasterize_global_forward_kernel(
     int n_global_splats,                        // Number of global splats
     const int* __restrict__ shape,
     float truncate,
+    float intensity_floor,  // Minimum intensity threshold (must match tile-based kernel)
     float* __restrict__ output,  // Output to add to (already has tile-based contributions)
     int64_t num_pixels
 ) {
@@ -1258,7 +1259,11 @@ __global__ void rasterize_global_forward_kernel(
 
         // Compute intensity
         float intensity = gaussian_intensity(dist_sq, amp, s);
-        intensity_sum += intensity;
+
+        // Skip if below threshold (must match tile-based kernel behavior)
+        if (intensity >= intensity_floor) {
+            intensity_sum += intensity;
+        }
     }
 
     // Add to output using atomicAdd (tile-based kernel may have already written)
@@ -1283,6 +1288,7 @@ __global__ void rasterize_global_backward_kernel(
     int n_global_splats,
     const int* __restrict__ shape,
     float truncate,
+    float intensity_floor,  // Minimum intensity threshold (must match tile-based kernel)
     float* __restrict__ d_centers,
     float* __restrict__ d_conic,
     float* __restrict__ d_amps,
@@ -1349,7 +1355,7 @@ __global__ void rasterize_global_backward_kernel(
 
         // Compute intensity and gradients
         float intensity = gaussian_intensity(dist_sq, amp, s);
-        if (intensity < 1e-10f) continue;
+        if (intensity < intensity_floor) continue;  // Must match tile-based kernel behavior
 
         // d_amp = grad_out * (I / a)
         float local_d_amp = grad_out * (intensity / fmaxf(amp, 1e-10f));
@@ -1432,6 +1438,7 @@ void launch_rasterize_global_forward(
     int n_global_splats,
     const int* shape,
     float truncate,
+    float intensity_floor,
     float* output,
     int64_t num_pixels,
     cudaStream_t stream
@@ -1444,7 +1451,7 @@ void launch_rasterize_global_forward(
     rasterize_global_forward_kernel<DIM><<<num_blocks, BLOCK_SIZE, 0, stream>>>(
         centers, conic, amps, sharpness,
         global_splat_ids, n_global_splats,
-        shape, truncate, output, num_pixels
+        shape, truncate, intensity_floor, output, num_pixels
     );
 }
 
@@ -1460,6 +1467,7 @@ void launch_rasterize_global_backward(
     int n_global_splats,
     const int* shape,
     float truncate,
+    float intensity_floor,
     float* d_centers,
     float* d_conic,
     float* d_amps,
@@ -1475,7 +1483,7 @@ void launch_rasterize_global_backward(
     rasterize_global_backward_kernel<DIM><<<num_blocks, BLOCK_SIZE, 0, stream>>>(
         grad_output, centers, conic, amps, sharpness,
         global_splat_ids, n_global_splats,
-        shape, truncate,
+        shape, truncate, intensity_floor,
         d_centers, d_conic, d_amps, d_sharpness, num_pixels
     );
 }
@@ -1554,21 +1562,21 @@ template void launch_rasterize_forward<8>(const float*, const float*, const floa
 template void launch_rasterize_backward<8>(const float*, const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
 
-// Global splat kernel instantiations
-template void launch_rasterize_global_forward<2>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<2>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, float*, float*, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_forward<3>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<3>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, float*, float*, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_forward<4>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<4>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, float*, float*, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_forward<5>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<5>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, float*, float*, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_forward<6>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<6>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, float*, float*, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_forward<7>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<7>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, float*, float*, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_forward<8>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<8>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+// Global splat kernel instantiations (with intensity_floor parameter)
+template void launch_rasterize_global_forward<2>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<2>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<3>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<3>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<4>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<4>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<5>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<5>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<6>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<6>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<7>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<7>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<8>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<8>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
 
 // =============================================================================
 // UTILITY FUNCTIONS
@@ -1848,6 +1856,7 @@ void dispatch_forward(
                 state.num_global_splats, \
                 shape_tensor.data_ptr<int>(), \
                 truncate, \
+                intensity_floor, \
                 output.data_ptr<float>(), \
                 num_pixels, stream)
 
@@ -1969,6 +1978,7 @@ void dispatch_backward(
                 n_global_splats, \
                 shape_tensor.data_ptr<int>(), \
                 truncate, \
+                intensity_floor, \
                 d_centers.data_ptr<float>(), \
                 d_conic.data_ptr<float>(), \
                 d_amps.data_ptr<float>(), \

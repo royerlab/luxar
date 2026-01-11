@@ -182,15 +182,11 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
         # Fit oriented (full-covariance) Gaussians with auto-candidate generation
         result = fit_gaussian_splats(
             V,
-            seeds=1000,
+            seeds=0.05,
             n_iters=N_ITERS,
             max_abs_error=0.05,
             device=DEVICE,
             verbose=True,
-            # Dynamic operations
-            enable_dynamic_ops=True,
-            dynamic_ops_verbose=False,
-            dynamic_config=dynamic_config,
             napari_movie=(not NO_NAPARI),
             movie_every=1,
             movie_max_frames=None,

@@ -53,6 +53,10 @@ class GaussianSplatModel(nn.Module):
         Minimum diagonal values for Cholesky factor (prevents degeneracy).
     sigma_max_diag : Sequence[float], optional
         Maximum diagonal values for Cholesky factor (prevents over-smoothing).
+    amp_max : float, optional
+        Maximum amplitude value. Prevents amplitude explosion during optimization,
+        especially with aggressive compression (few splats). Since images are
+        normalized to [0, 1], a value of 1.0 matches the max possible intensity.
     truncate : float, default=3.0
         Truncation radius in standard deviations for computational efficiency.
     device : torch.device, optional
@@ -67,6 +71,7 @@ class GaussianSplatModel(nn.Module):
         amps0: np.ndarray,  # (N,)
         sigma_min_diag: Sequence[float],  # per-axis minimal diag(L) (≈ σ floor)
         sigma_max_diag: Optional[Sequence[float]] = None,
+        amp_max: Optional[float] = None,  # Maximum amplitude (prevents explosion)
         truncate: float = 3.0,
         device: Optional[torch.device] = None,
     ) -> None:
@@ -95,6 +100,9 @@ class GaussianSplatModel(nn.Module):
         self.raw_mu = nn.Parameter(
             torch.tensor(raw_mu0, dtype=torch.float32, device=device)
         )
+
+        # Store amplitude maximum constraint (prevents amplitude explosion during optimization)
+        self.amp_max: float | None = amp_max
 
         # ---- Cholesky factor parameterization: ensure positive definiteness ----
         self.sigma_max_diag: torch.Tensor | None
@@ -232,6 +240,10 @@ class GaussianSplatModel(nn.Module):
         # Reconstruct Cholesky factors and apply amplitude transformation
         L = self._build_L()
         amps = F.softplus(self.raw_a)  # Ensures non-negative amplitudes
+
+        # Apply maximum amplitude constraint if specified (prevents explosion during optimization)
+        if self.amp_max is not None:
+            amps = torch.clamp(amps, max=self.amp_max)
 
         # Apply exponential mapping for sharpness: s = 2 * exp(s')
         # This ensures s > 0 always, with s = 2 when s' = 0 (standard Gaussian)

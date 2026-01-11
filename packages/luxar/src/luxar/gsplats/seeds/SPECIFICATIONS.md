@@ -1,7 +1,7 @@
 # Seed Generation for Gaussian Splatting
 
-**Version**: 1.1.0
-**Last Updated**: 2026-01-10
+**Version**: 1.3.0
+**Last Updated**: 2026-01-11
 
 ## Overview
 
@@ -132,8 +132,10 @@ Steps:
 
 6. Build GSplatData with scale-informed shapes
    - Convert scales to Cholesky factors: L = diag(scale, scale, ..., scale)
-   - Get amplitudes from original image at refined positions
+   - Get amplitudes from original image at refined positions (scaled to 90%)
    - Set sharpness to 2.0 (standard Gaussian)
+   - **Note**: Amplitudes are on original image scale; preprocessing will rescale
+     them to [0, 1] to match the normalized optimization target
 
 Output:
   - GSplatData containing:
@@ -426,8 +428,10 @@ Steps:
 
 6. Build GSplatData with scale-informed shapes
    - Convert scale_factors to Cholesky factors: L = diag(scale_factor, ..., scale_factor)
-   - Get amplitudes from original image at seed positions
+   - Get amplitudes from original image at seed positions (scaled to 90%)
    - Set sharpness to 2.0 (standard Gaussian)
+   - **Note**: Amplitudes are on original image scale; preprocessing will rescale
+     them to [0, 1] to match the normalized optimization target
 
 Output:
   - GSplatData containing:
@@ -1776,6 +1780,20 @@ def seed_learned(V, model, threshold=0.5):
 - **Farthest-First Traversal**: Hochbaum, D. S., & Shmoys, D. B. (1985). "A best possible heuristic for the k-center problem." Mathematics of Operations Research.
 
 ## Changelog
+
+- **v1.3.0 (2026-01-11)**: Grid seeding uses spacing-based sigma
+  - `seed_from_grid`: Changed sigma initialization from σ=1.0 to σ=spacing/2
+    - Splats now cover the image with ~60% overlap at midpoints between grid points
+    - Provides better initial coverage for uniform grid seeds
+  - Sigma initialization summary across all methods:
+    - **Decomposition**: Uses scale_factor from decomposition as σ (scale-informed)
+    - **Edges**: Uses σ=1.0 isotropic (no scale info from edge detection)
+    - **Grid**: Uses σ=spacing/2 for coverage (spacing-informed)
+  - All methods: amplitudes scaled to 90% to avoid overlap overshoot
+
+- **v1.2.0 (2026-01-11)**: Amplitude rescaling documentation
+  - Added documentation about amplitude rescaling during preprocessing
+  - Amplitudes extracted from original image scale are rescaled to [0, 1] in `preprocessing.py`
 
 - **v1.0 (2025-11-27)**: Initial comprehensive specification
   - Documented both multiscale Gaussian and decomposition methods

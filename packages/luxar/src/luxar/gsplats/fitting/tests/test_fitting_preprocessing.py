@@ -296,12 +296,12 @@ class TestPreprocessData:
                     f"init_sharpness not sliced: got {mock_config_2d.init_sharpness.shape[0]}, expected {result.N}"
                 )
 
-    def test_init_arrays_cleared_when_more_seeds_needed(self, mock_config_2d) -> None:
-        """Test that init arrays are cleared when more seeds need to be generated.
+    def test_init_arrays_extended_when_more_seeds_needed(self, mock_config_2d) -> None:
+        """Test that init arrays are extended when more seeds need to be generated.
 
         When fewer seeds are detected than requested, more seeds are added via
-        _ensure_minimum_seeds. Since these new seeds don't have scale information,
-        the init arrays must be cleared to avoid shape mismatches.
+        _ensure_minimum_seeds. The init arrays should be extended to include
+        the new grid fallback seeds while preserving the original seeds' values.
         """
         # Setup: create sparse volume with few detectable peaks
         V = np.zeros((50, 50), dtype=np.float32)
@@ -318,7 +318,7 @@ class TestPreprocessData:
         mock_config_2d.seed_method = "decomposition"  # Use decomposition method
         mock_config_2d.seed_kwargs = {"scales": [2, 4], "percentile_thresh": 95}
 
-        # Set init arrays - these should be cleared when more seeds are generated
+        # Set init arrays - these should be preserved and extended
         mock_config_2d.init_L = np.eye(2, dtype=np.float32)[None, :, :].repeat(
             2, axis=0
         )
@@ -327,17 +327,26 @@ class TestPreprocessData:
 
         result = preprocess_data(mock_config_2d)
 
-        # When more seeds are added, init arrays should be cleared (set to None)
-        # This avoids shape mismatch since new seeds don't have scale info
+        # When more seeds are added, init arrays should be EXTENDED (not cleared)
+        # to include values for the new grid fallback seeds
         if result.N > 2:  # More seeds were generated
-            assert mock_config_2d.init_L is None, (
-                "init_L should be cleared when more seeds are generated"
+            assert mock_config_2d.init_L is not None, (
+                "init_L should be extended (not cleared) when more seeds are generated"
             )
-            assert mock_config_2d.init_amps is None, (
-                "init_amps should be cleared when more seeds are generated"
+            assert mock_config_2d.init_L.shape[0] == result.N, (
+                f"init_L should have {result.N} entries, got {mock_config_2d.init_L.shape[0]}"
             )
-            assert mock_config_2d.init_sharpness is None, (
-                "init_sharpness should be cleared when more seeds are generated"
+            assert mock_config_2d.init_amps is not None, (
+                "init_amps should be extended (not cleared) when more seeds are generated"
+            )
+            assert len(mock_config_2d.init_amps) == result.N, (
+                f"init_amps should have {result.N} entries, got {len(mock_config_2d.init_amps)}"
+            )
+            assert mock_config_2d.init_sharpness is not None, (
+                "init_sharpness should be extended (not cleared)"
+            )
+            assert len(mock_config_2d.init_sharpness) == result.N, (
+                f"init_sharpness should have {result.N} entries"
             )
 
 
