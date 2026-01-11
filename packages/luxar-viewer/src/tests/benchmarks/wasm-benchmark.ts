@@ -17,15 +17,17 @@ import { existsSync, readFileSync } from 'fs';
 // Configuration
 // ============================================================================
 
+const SIZES = {
+  small: 1_000,
+  medium: 100_000,
+  large: 1_000_000,
+} as const;
+
 const CONFIG = {
   iterations: 5, // Number of iterations for timing
   warmupIterations: 2, // Warmup runs before timing
-  sizes: {
-    small: 1_000,
-    medium: 100_000,
-    large: 1_000_000,
-  },
-  defaultSize: 'medium' as keyof typeof CONFIG.sizes,
+  sizes: SIZES,
+  defaultSize: 'medium' as keyof typeof SIZES,
 };
 
 // ============================================================================
@@ -184,31 +186,39 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(size);
       const wasmOutput = new Float32Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.calculate_effective_radii(
-          positions,
-          radii,
-          displayDims,
-          slicePos,
-          spatialExtend,
-          ndim,
-          size,
-          tsOutput
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.calculate_effective_radii(
+            positions,
+            radii,
+            displayDims,
+            slicePos,
+            spatialExtend,
+            ndim,
+            size,
+            tsOutput
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.calculate_effective_radii(
-          positions,
-          radii,
-          displayDims,
-          slicePos,
-          spatialExtend,
-          ndim,
-          size,
-          wasmOutput
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.calculate_effective_radii(
+            positions,
+            radii,
+            displayDims,
+            slicePos,
+            spatialExtend,
+            ndim,
+            size,
+            wasmOutput
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'calculate_effective_radii',
@@ -220,7 +230,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
     },
   ],
 
-  'VISIBILITY': [
+  VISIBILITY: [
     (size) => {
       const ndim = 5;
       const positions = generatePositions(size, ndim);
@@ -230,29 +240,37 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Uint8Array(size);
       const wasmOutput = new Uint8Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.compute_nd_visibility_points(
-          positions,
-          radii,
-          slicePos,
-          tolerance,
-          ndim,
-          size,
-          tsOutput
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.compute_nd_visibility_points(
+            positions,
+            radii,
+            slicePos,
+            tolerance,
+            ndim,
+            size,
+            tsOutput
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.compute_nd_visibility_points(
-          positions,
-          radii,
-          slicePos,
-          tolerance,
-          ndim,
-          size,
-          wasmOutput
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.compute_nd_visibility_points(
+            positions,
+            radii,
+            slicePos,
+            tolerance,
+            ndim,
+            size,
+            wasmOutput
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'compute_nd_visibility_points',
@@ -272,31 +290,39 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Uint8Array(size);
       const wasmOutput = new Uint8Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.compute_nd_visibility_lines(
-          vertices,
-          segments,
-          widths,
-          slicePos,
-          tolerance,
-          ndim,
-          size,
-          tsOutput
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.compute_nd_visibility_lines(
+            vertices,
+            segments,
+            widths,
+            slicePos,
+            tolerance,
+            ndim,
+            size,
+            tsOutput
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.compute_nd_visibility_lines(
-          vertices,
-          segments,
-          widths,
-          slicePos,
-          tolerance,
-          ndim,
-          size,
-          wasmOutput
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.compute_nd_visibility_lines(
+            vertices,
+            segments,
+            widths,
+            slicePos,
+            tolerance,
+            ndim,
+            size,
+            wasmOutput
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'compute_nd_visibility_lines',
@@ -315,29 +341,37 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Uint8Array(size);
       const wasmOutput = new Uint8Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.compute_nd_visibility_gsplats(
-          centers,
-          choleskyFactors,
-          slicePos,
-          tolerance,
-          ndim,
-          size,
-          tsOutput
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.compute_nd_visibility_gsplats(
+            centers,
+            choleskyFactors,
+            slicePos,
+            tolerance,
+            ndim,
+            size,
+            tsOutput
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.compute_nd_visibility_gsplats(
-          centers,
-          choleskyFactors,
-          slicePos,
-          tolerance,
-          ndim,
-          size,
-          wasmOutput
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.compute_nd_visibility_gsplats(
+            centers,
+            choleskyFactors,
+            slicePos,
+            tolerance,
+            ndim,
+            size,
+            wasmOutput
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'compute_nd_visibility_gsplats',
@@ -349,19 +383,27 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
     },
   ],
 
-  'DECODE': [
+  DECODE: [
     (size) => {
       const data = generateQuantizedU8(size);
       const tsOutput = new Float32Array(size);
       const wasmOutput = new Float32Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.decode_quantized_u8(data, -10.0, 10.0, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.decode_quantized_u8(data, -10.0, 10.0, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.decode_quantized_u8(data, -10.0, 10.0, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.decode_quantized_u8(data, -10.0, 10.0, wasmOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'decode_quantized_u8',
@@ -376,13 +418,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(size);
       const wasmOutput = new Float32Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.decode_quantized_u16(data, -10.0, 10.0, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.decode_quantized_u16(data, -10.0, 10.0, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.decode_quantized_u16(data, -10.0, 10.0, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.decode_quantized_u16(data, -10.0, 10.0, wasmOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'decode_quantized_u16',
@@ -397,13 +447,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(size);
       const wasmOutput = new Float32Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.decode_log_scalar_u8(data, 5.0, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.decode_log_scalar_u8(data, 5.0, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.decode_log_scalar_u8(data, 5.0, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.decode_log_scalar_u8(data, 5.0, wasmOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'decode_log_scalar_u8',
@@ -418,13 +476,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(size);
       const wasmOutput = new Float32Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.decode_log_scalar_u16(data, 5.0, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.decode_log_scalar_u16(data, 5.0, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.decode_log_scalar_u16(data, 5.0, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.decode_log_scalar_u16(data, 5.0, wasmOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'decode_log_scalar_u16',
@@ -444,13 +510,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(size);
       const wasmOutput = new Float32Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.decode_lut_scalar_u8(indices, lut, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.decode_lut_scalar_u8(indices, lut, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.decode_lut_scalar_u8(indices, lut, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.decode_lut_scalar_u8(indices, lut, wasmOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'decode_lut_scalar_u8',
@@ -474,13 +548,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(size);
       const wasmOutput = new Float32Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.decode_lut_scalar_u16(indices, lut, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.decode_lut_scalar_u16(indices, lut, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.decode_lut_scalar_u16(indices, lut, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.decode_lut_scalar_u16(indices, lut, wasmOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'decode_lut_scalar_u16',
@@ -501,13 +583,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(size * rowSize);
       const wasmOutput = new Float32Array(size * rowSize);
 
-      const tsTime = measureTime(() => {
-        tsModule.decode_lut_row_u8(indices, lut, rowSize, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.decode_lut_row_u8(indices, lut, rowSize, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.decode_lut_row_u8(indices, lut, rowSize, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.decode_lut_row_u8(indices, lut, rowSize, wasmOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'decode_lut_row_u8',
@@ -532,13 +622,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(size * rowSize);
       const wasmOutput = new Float32Array(size * rowSize);
 
-      const tsTime = measureTime(() => {
-        tsModule.decode_lut_row_u16(indices, lut, rowSize, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.decode_lut_row_u16(indices, lut, rowSize, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.decode_lut_row_u16(indices, lut, rowSize, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.decode_lut_row_u16(indices, lut, rowSize, wasmOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'decode_lut_row_u16',
@@ -553,13 +651,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(size * 3);
       const wasmOutput = new Float32Array(size * 3);
 
-      const tsTime = measureTime(() => {
-        tsModule.decode_broadcasted(value, size, 3, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.decode_broadcasted(value, size, 3, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.decode_broadcasted(value, size, 3, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.decode_broadcasted(value, size, 3, wasmOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'decode_broadcasted',
@@ -571,7 +677,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
     },
   ],
 
-  'PROJECTION': [
+  PROJECTION: [
     (size) => {
       const ndim = 5;
       const positionsNd = generatePositions(size, ndim);
@@ -579,13 +685,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(size * 3);
       const wasmOutput = new Float32Array(size * 3);
 
-      const tsTime = measureTime(() => {
-        tsModule.extract_3d_positions(positionsNd, displayDims, ndim, size, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.extract_3d_positions(positionsNd, displayDims, ndim, size, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.extract_3d_positions(positionsNd, displayDims, ndim, size, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.extract_3d_positions(positionsNd, displayDims, ndim, size, wasmOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'extract_3d_positions',
@@ -600,13 +714,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(6);
       const wasmOutput = new Float32Array(6);
 
-      const tsTime = measureTime(() => {
-        tsModule.calculate_bounds_3d(positions, size, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.calculate_bounds_3d(positions, size, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.calculate_bounds_3d(positions, size, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.calculate_bounds_3d(positions, size, wasmOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'calculate_bounds_3d',
@@ -627,13 +749,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(size * stride);
       const wasmOutput = new Float32Array(size * stride);
 
-      const tsTime = measureTime(() => {
-        tsModule.compact_by_mask(input, mask, size, stride, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.compact_by_mask(input, mask, size, stride, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.compact_by_mask(input, mask, size, stride, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.compact_by_mask(input, mask, size, stride, wasmOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'compact_by_mask',
@@ -649,13 +779,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         mask[i] = Math.random() > 0.5 ? 1 : 0;
       }
 
-      const tsTime = measureTime(() => {
-        tsModule.count_visible(mask, size);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.count_visible(mask, size);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.count_visible(mask, size);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.count_visible(mask, size);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'count_visible',
@@ -670,13 +808,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Uint8Array(size);
       const wasmOutput = new Uint8Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.radii_to_visibility_mask(radii, 0.01, size, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.radii_to_visibility_mask(radii, 0.01, size, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.radii_to_visibility_mask(radii, 0.01, size, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.radii_to_visibility_mask(radii, 0.01, size, wasmOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'radii_to_visibility_mask',
@@ -689,7 +835,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
   ],
 
   'LINES CLIPPING': [
-    (size) => {
+    (_size) => {
       // clip_segment_single - single segment clipping (per-call benchmark)
       const ndim = 5;
       const p1 = new Float32Array([0, 0, 0, -0.5, -0.5]);
@@ -698,17 +844,25 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tolerance = new Float32Array([1e10, 1e10, 1e10, 1.0, 1.0]);
       const displayDims = new Uint32Array([0, 1, 2]);
 
-      const tsTime = measureTime(() => {
-        for (let i = 0; i < 1000; i++) {
-          tsModule.clip_segment_single(p1, p2, slicePos, tolerance, displayDims, ndim);
-        }
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          for (let i = 0; i < 1000; i++) {
+            tsModule.clip_segment_single(p1, p2, slicePos, tolerance, displayDims, ndim);
+          }
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        for (let i = 0; i < 1000; i++) {
-          wasmModule!.clip_segment_single(p1, p2, slicePos, tolerance, displayDims, ndim);
-        }
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          for (let i = 0; i < 1000; i++) {
+            wasmModule!.clip_segment_single(p1, p2, slicePos, tolerance, displayDims, ndim);
+          }
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'clip_segment_single (1K calls)',
@@ -733,35 +887,43 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const wasmT1 = new Float32Array(size);
       const wasmT2 = new Float32Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.clip_segments_batch(
-          positions,
-          segments,
-          slicePos,
-          tolerance,
-          displayDims,
-          ndim,
-          size,
-          tsVisibility,
-          tsT1,
-          tsT2
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.clip_segments_batch(
+            positions,
+            segments,
+            slicePos,
+            tolerance,
+            displayDims,
+            ndim,
+            size,
+            tsVisibility,
+            tsT1,
+            tsT2
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.clip_segments_batch(
-          positions,
-          segments,
-          slicePos,
-          tolerance,
-          displayDims,
-          ndim,
-          size,
-          wasmVisibility,
-          wasmT1,
-          wasmT2
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.clip_segments_batch(
+            positions,
+            segments,
+            slicePos,
+            tolerance,
+            displayDims,
+            ndim,
+            size,
+            wasmVisibility,
+            wasmT1,
+            wasmT2
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'clip_segments_batch',
@@ -790,19 +952,43 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const wasmOutputStart = new Float32Array(size * 3);
       const wasmOutputEnd = new Float32Array(size * 3);
 
-      const tsTime = measureTime(() => {
-        tsModule.interpolate_clipped_positions(
-          positions, segments, visibility, t1Params, t2Params,
-          displayDims, ndim, size, tsOutputStart, tsOutputEnd
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.interpolate_clipped_positions(
+            positions,
+            segments,
+            visibility,
+            t1Params,
+            t2Params,
+            displayDims,
+            ndim,
+            size,
+            tsOutputStart,
+            tsOutputEnd
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.interpolate_clipped_positions(
-          positions, segments, visibility, t1Params, t2Params,
-          displayDims, ndim, size, wasmOutputStart, wasmOutputEnd
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.interpolate_clipped_positions(
+            positions,
+            segments,
+            visibility,
+            t1Params,
+            t2Params,
+            displayDims,
+            ndim,
+            size,
+            wasmOutputStart,
+            wasmOutputEnd
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'interpolate_clipped_positions',
@@ -829,19 +1015,39 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const wasmOutputStart = new Float32Array(size);
       const wasmOutputEnd = new Float32Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.interpolate_scalars_batch(
-          values, segments, visibility, t1Params, t2Params,
-          size, tsOutputStart, tsOutputEnd
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.interpolate_scalars_batch(
+            values,
+            segments,
+            visibility,
+            t1Params,
+            t2Params,
+            size,
+            tsOutputStart,
+            tsOutputEnd
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.interpolate_scalars_batch(
-          values, segments, visibility, t1Params, t2Params,
-          size, wasmOutputStart, wasmOutputEnd
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.interpolate_scalars_batch(
+            values,
+            segments,
+            visibility,
+            t1Params,
+            t2Params,
+            size,
+            wasmOutputStart,
+            wasmOutputEnd
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'interpolate_scalars_batch',
@@ -868,19 +1074,39 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const wasmOutputStart = new Float32Array(size * 3);
       const wasmOutputEnd = new Float32Array(size * 3);
 
-      const tsTime = measureTime(() => {
-        tsModule.interpolate_colors_batch(
-          colors, segments, visibility, t1Params, t2Params,
-          size, tsOutputStart, tsOutputEnd
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.interpolate_colors_batch(
+            colors,
+            segments,
+            visibility,
+            t1Params,
+            t2Params,
+            size,
+            tsOutputStart,
+            tsOutputEnd
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.interpolate_colors_batch(
-          colors, segments, visibility, t1Params, t2Params,
-          size, wasmOutputStart, wasmOutputEnd
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.interpolate_colors_batch(
+            colors,
+            segments,
+            visibility,
+            t1Params,
+            t2Params,
+            size,
+            wasmOutputStart,
+            wasmOutputEnd
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'interpolate_colors_batch',
@@ -896,13 +1122,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(size);
       const wasmOutput = new Float32Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.calculate_segment_lengths(startPos, endPos, size, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.calculate_segment_lengths(startPos, endPos, size, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.calculate_segment_lengths(startPos, endPos, size, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.calculate_segment_lengths(startPos, endPos, size, wasmOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'calculate_segment_lengths',
@@ -927,13 +1161,35 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const wasmStartClipped = new Uint8Array(size);
       const wasmEndClipped = new Uint8Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.mark_clipped_endpoints(visibility, t1Params, t2Params, size, tsStartClipped, tsEndClipped);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.mark_clipped_endpoints(
+            visibility,
+            t1Params,
+            t2Params,
+            size,
+            tsStartClipped,
+            tsEndClipped
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.mark_clipped_endpoints(visibility, t1Params, t2Params, size, wasmStartClipped, wasmEndClipped);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.mark_clipped_endpoints(
+            visibility,
+            t1Params,
+            t2Params,
+            size,
+            wasmStartClipped,
+            wasmEndClipped
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'mark_clipped_endpoints',
@@ -943,19 +1199,27 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         speedup: tsTime / wasmTime,
       };
     },
-    (size) => {
+    (_size) => {
       // lerp - scalar linear interpolation (per-call benchmark)
-      const tsTime = measureTime(() => {
-        for (let i = 0; i < 10000; i++) {
-          tsModule.lerp(0.0, 1.0, 0.5);
-        }
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          for (let i = 0; i < 10000; i++) {
+            tsModule.lerp(0.0, 1.0, 0.5);
+          }
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        for (let i = 0; i < 10000; i++) {
-          wasmModule!.lerp(0.0, 1.0, 0.5);
-        }
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          for (let i = 0; i < 10000; i++) {
+            wasmModule!.lerp(0.0, 1.0, 0.5);
+          }
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'lerp (10K calls)',
@@ -966,22 +1230,30 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         utility: true, // Not used in production - batch functions inline the math
       };
     },
-    (size) => {
+    (_size) => {
       // lerp_vec3 - 3D vector linear interpolation (per-call benchmark)
       const a = new Float32Array([0, 0, 0]);
       const b = new Float32Array([1, 2, 3]);
 
-      const tsTime = measureTime(() => {
-        for (let i = 0; i < 10000; i++) {
-          tsModule.lerp_vec3(a, b, 0.5);
-        }
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          for (let i = 0; i < 10000; i++) {
+            tsModule.lerp_vec3(a, b, 0.5);
+          }
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        for (let i = 0; i < 10000; i++) {
-          wasmModule!.lerp_vec3(a, b, 0.5);
-        }
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          for (let i = 0; i < 10000; i++) {
+            wasmModule!.lerp_vec3(a, b, 0.5);
+          }
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'lerp_vec3 (10K calls)',
@@ -992,22 +1264,30 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         utility: true, // Not used in production - batch functions inline the math
       };
     },
-    (size) => {
+    (_size) => {
       // distance_3d - 3D Euclidean distance (per-call benchmark)
       const a = new Float32Array([0, 0, 0]);
       const b = new Float32Array([1, 2, 3]);
 
-      const tsTime = measureTime(() => {
-        for (let i = 0; i < 10000; i++) {
-          tsModule.distance_3d(a, b);
-        }
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          for (let i = 0; i < 10000; i++) {
+            tsModule.distance_3d(a, b);
+          }
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        for (let i = 0; i < 10000; i++) {
-          wasmModule!.distance_3d(a, b);
-        }
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          for (let i = 0; i < 10000; i++) {
+            wasmModule!.distance_3d(a, b);
+          }
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'distance_3d (10K calls)',
@@ -1020,7 +1300,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
     },
   ],
 
-  'SPATIAL': [
+  SPATIAL: [
     (size) => {
       // For spatial queries, we use fewer chunks but realistic bounds
       const numChunks = Math.min(size, 10000);
@@ -1040,20 +1320,28 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Uint32Array(numChunks);
       const wasmOutput = new Uint32Array(numChunks);
 
-      const tsTime = measureTime(() => {
-        tsModule.query_chunks_for_view(chunkBounds, slicePos, tolerance, 3, numChunks, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.query_chunks_for_view(chunkBounds, slicePos, tolerance, 3, numChunks, tsOutput);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.query_chunks_for_view(
-          chunkBounds,
-          slicePos,
-          tolerance,
-          3,
-          numChunks,
-          wasmOutput
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.query_chunks_for_view(
+            chunkBounds,
+            slicePos,
+            tolerance,
+            3,
+            numChunks,
+            wasmOutput
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'query_chunks_for_view',
@@ -1079,37 +1367,45 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const wasmVisibility = new Uint8Array(size);
       const wasmAttenuation = new Float32Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.compute_gsplats_attenuation(
-          positions,
-          cholesky,
-          amplitudes,
-          sharpness,
-          slicePos,
-          hiddenDims,
-          ndim,
-          size,
-          0.01,
-          tsVisibility,
-          tsAttenuation
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.compute_gsplats_attenuation(
+            positions,
+            cholesky,
+            amplitudes,
+            sharpness,
+            slicePos,
+            hiddenDims,
+            ndim,
+            size,
+            0.01,
+            tsVisibility,
+            tsAttenuation
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.compute_gsplats_attenuation(
-          positions,
-          cholesky,
-          amplitudes,
-          sharpness,
-          slicePos,
-          hiddenDims,
-          ndim,
-          size,
-          0.01,
-          wasmVisibility,
-          wasmAttenuation
-        );
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.compute_gsplats_attenuation(
+            positions,
+            cholesky,
+            amplitudes,
+            sharpness,
+            slicePos,
+            hiddenDims,
+            ndim,
+            size,
+            0.01,
+            wasmVisibility,
+            wasmAttenuation
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'compute_gsplats_attenuation',
@@ -1119,7 +1415,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         speedup: tsTime / wasmTime,
       };
     },
-    (size) => {
+    (_size) => {
       // mahalanobis_distance - per-point operation, benchmark with many calls
       const ndim = 4;
       const diff = new Float32Array(ndim);
@@ -1127,17 +1423,25 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       for (let i = 0; i < ndim; i++) diff[i] = Math.random() * 2 - 1;
       for (let i = 0; i < packedL.length; i++) packedL[i] = Math.random() * 0.5 + 0.5;
 
-      const tsTime = measureTime(() => {
-        for (let i = 0; i < 1000; i++) {
-          tsModule.mahalanobis_distance(diff, packedL, ndim);
-        }
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          for (let i = 0; i < 1000; i++) {
+            tsModule.mahalanobis_distance(diff, packedL, ndim);
+          }
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        for (let i = 0; i < 1000; i++) {
-          wasmModule!.mahalanobis_distance(diff, packedL, ndim);
-        }
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          for (let i = 0; i < 1000; i++) {
+            wasmModule!.mahalanobis_distance(diff, packedL, ndim);
+          }
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'mahalanobis_distance (1K calls)',
@@ -1148,7 +1452,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         utility: true, // Not used in production - inlined by batch functions
       };
     },
-    (size) => {
+    (_size) => {
       // extract_cholesky_submatrix - extract 3D from 4D
       const ndim = 4;
       const subNdim = 3;
@@ -1158,17 +1462,25 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array((subNdim * (subNdim + 1)) / 2);
       const wasmOutput = new Float32Array((subNdim * (subNdim + 1)) / 2);
 
-      const tsTime = measureTime(() => {
-        for (let i = 0; i < 1000; i++) {
-          tsModule.extract_cholesky_submatrix(packed, keepDims, subNdim, tsOutput);
-        }
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          for (let i = 0; i < 1000; i++) {
+            tsModule.extract_cholesky_submatrix(packed, keepDims, subNdim, tsOutput);
+          }
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        for (let i = 0; i < 1000; i++) {
-          wasmModule!.extract_cholesky_submatrix(packed, keepDims, subNdim, wasmOutput);
-        }
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          for (let i = 0; i < 1000; i++) {
+            wasmModule!.extract_cholesky_submatrix(packed, keepDims, subNdim, wasmOutput);
+          }
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'extract_cholesky_submatrix (1K)',
@@ -1189,13 +1501,35 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(size * 6);
       const wasmOutput = new Float32Array(size * 6);
 
-      const tsTime = measureTime(() => {
-        tsModule.extract_visible_cholesky_3d(cholesky, visibility, displayDims, ndim, size, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.extract_visible_cholesky_3d(
+            cholesky,
+            visibility,
+            displayDims,
+            ndim,
+            size,
+            tsOutput
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.extract_visible_cholesky_3d(cholesky, visibility, displayDims, ndim, size, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.extract_visible_cholesky_3d(
+            cholesky,
+            visibility,
+            displayDims,
+            ndim,
+            size,
+            wasmOutput
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'extract_visible_cholesky_3d',
@@ -1215,13 +1549,33 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOutput = new Float32Array(size);
       const wasmOutput = new Float32Array(size);
 
-      const tsTime = measureTime(() => {
-        tsModule.compact_attenuated_amplitudes(amplitudes, attenuation, visibility, size, tsOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const tsTime = measureTime(
+        () => {
+          tsModule.compact_attenuated_amplitudes(
+            amplitudes,
+            attenuation,
+            visibility,
+            size,
+            tsOutput
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
-      const wasmTime = measureTime(() => {
-        wasmModule!.compact_attenuated_amplitudes(amplitudes, attenuation, visibility, size, wasmOutput);
-      }, CONFIG.iterations, CONFIG.warmupIterations);
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.compact_attenuated_amplitudes(
+            amplitudes,
+            attenuation,
+            visibility,
+            size,
+            wasmOutput
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
 
       return {
         name: 'compact_attenuated_amplitudes',
@@ -1240,14 +1594,14 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
 
 function printHeader(size: number): void {
   console.log('\n\x1b[1m\x1b[36m' + '='.repeat(70) + '\x1b[0m');
-  console.log(
-    '\x1b[1m\x1b[36m  WASM vs TypeScript Performance Benchmark\x1b[0m'
-  );
+  console.log('\x1b[1m\x1b[36m  WASM vs TypeScript Performance Benchmark\x1b[0m');
   console.log('\x1b[1m\x1b[36m' + '='.repeat(70) + '\x1b[0m\n');
 
   const nodeVersion = process.version;
   console.log(`System: Node.js ${nodeVersion}, WASM module loaded \x1b[32m\u2713\x1b[0m`);
-  console.log(`\nRunning benchmarks with ${size.toLocaleString()} elements, ${CONFIG.iterations} iterations each...\n`);
+  console.log(
+    `\nRunning benchmarks with ${size.toLocaleString()} elements, ${CONFIG.iterations} iterations each...\n`
+  );
 }
 
 function printCategoryResults(category: string, results: BenchmarkResult[]): void {
@@ -1308,14 +1662,22 @@ function printSummary(results: BenchmarkResult[]): void {
 
     console.log('\x1b[90m  * Utility Functions (API completeness, not used in hot paths):\x1b[0m');
     console.log(`\x1b[90m   Functions:        ${utilityResults.length}\x1b[0m`);
-    console.log(`\x1b[90m   Average speedup:  ${utilityAvg.toFixed(1)}x (expected <1x due to WASM call overhead)\x1b[0m`);
+    console.log(
+      `\x1b[90m   Average speedup:  ${utilityAvg.toFixed(1)}x (expected <1x due to WASM call overhead)\x1b[0m`
+    );
     console.log('');
   }
 
   // Explanation
-  console.log('\x1b[90m  Note: Utility functions (*) exist for API completeness and testing.\x1b[0m');
-  console.log('\x1b[90m  In production, batch functions inline the math, avoiding per-call overhead.\x1b[0m');
-  console.log('\x1b[90m  WASM call overhead dominates for trivial operations like lerp/distance.\x1b[0m');
+  console.log(
+    '\x1b[90m  Note: Utility functions (*) exist for API completeness and testing.\x1b[0m'
+  );
+  console.log(
+    '\x1b[90m  In production, batch functions inline the math, avoiding per-call overhead.\x1b[0m'
+  );
+  console.log(
+    '\x1b[90m  WASM call overhead dominates for trivial operations like lerp/distance.\x1b[0m'
+  );
   console.log('');
 }
 
@@ -1326,7 +1688,9 @@ function printSummary(results: BenchmarkResult[]): void {
 async function main(): Promise<void> {
   // Parse command line args
   const sizeArg = process.argv.find((arg) => arg.startsWith('--size='));
-  const sizeKey = sizeArg ? (sizeArg.split('=')[1] as keyof typeof CONFIG.sizes) : CONFIG.defaultSize;
+  const sizeKey = sizeArg
+    ? (sizeArg.split('=')[1] as keyof typeof CONFIG.sizes)
+    : CONFIG.defaultSize;
   const size = CONFIG.sizes[sizeKey] || CONFIG.sizes[CONFIG.defaultSize];
 
   // Load modules
