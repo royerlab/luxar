@@ -242,8 +242,8 @@ result = fit_gaussian_splats(image, seeds=1000)  # Exactly 1000 splats
 # - Subsamples with spatial diversity + intensity if too many
 # - Grid fallback ensures target is reached
 
-# Option 3: Proportion of voxels
-result = fit_gaussian_splats(image, seeds=0.01)  # ~1% of voxels (hint)
+# Option 3: Compression ratio (splat floats / image floats)
+result = fit_gaussian_splats(image, seeds=0.1)  # Target 10% of original storage
 
 # Option 4: Explicit seed array
 custom_seeds = np.array([[10, 20], [30, 40]])  # (N, ndim)
@@ -675,7 +675,7 @@ Main fitting function with automatic optimizations.
 
 **Key Parameters:**
 - `V`: Input n-dimensional array to reconstruct
-- `seeds`: Initial candidate positions (N, d) or float proportion for auto-generation
+- `seeds`: Initial candidate positions (N, d), int count, or float compression ratio
 - `n_iters`: Maximum iterations (default: 1000)
 - `lr`: Learning rate (default: 0.01)
 - `loss_type`: "mse", "poisson", or "l1" (default: "l1")

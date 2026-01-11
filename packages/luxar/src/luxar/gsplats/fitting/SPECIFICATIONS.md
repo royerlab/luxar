@@ -44,7 +44,7 @@ class FitConfig:
 
     # Input data
     V: np.ndarray                            # Input image/volume to fit (ndim >= 1)
-    seeds: Optional[np.ndarray | int | float]  # Centers array (N, d), int count, OR float proportion (e.g., 0.01 = 1%)
+    seeds: Optional[np.ndarray | int | float]  # Centers array (N, d), int count, OR float compression ratio
     seed_method: str                         # Method for auto seed generation: "gaussian", "decomposition", "both", or combinations
     seed_kwargs: Dict[str, Any]              # Additional parameters for seed generation function
 
@@ -208,7 +208,7 @@ class OptimizationResults:
 def prepare_fit_config(
     fitter: "GaussianSplatFitter",
     V: np.ndarray,
-    seeds: Optional[np.ndarray | int | float] = None,  # Can be array, int count, OR float proportion
+    seeds: Optional[np.ndarray | int | float] = None,  # Can be array, int count, OR float compression ratio
     norm_percentile: float = 0.0,
     init_sigma_vox: float = 1.5,
     n_iters: int = 1000,

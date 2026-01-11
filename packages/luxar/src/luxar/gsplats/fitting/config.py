@@ -23,7 +23,7 @@ class FitConfig:
 
     # Input data (required)
     V: np.ndarray
-    seeds: Optional[np.ndarray | int | float | "GSplatData"]  # noqa: F821 - Array, int, proportion, or GSplatData
+    seeds: Optional[np.ndarray | int | float | "GSplatData"]  # noqa: F821 - Array, int, compression ratio, or GSplatData
 
     # Normalization
     norm_percentile: float
