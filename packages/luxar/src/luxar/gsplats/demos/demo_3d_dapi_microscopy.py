@@ -52,7 +52,6 @@ from arbol import Arbol, aprint, asection
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fit_result import GSplatData
-from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
@@ -294,7 +293,6 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             V = np.clip(V, 0, 100).astype(np.float32)
             aprint(f"Created synthetic DAPI-like volume: {V.shape}")
 
-
     # Device auto-detection: fitter will automatically select best backend:
     # - Linux + NVIDIA GPU: CUDA with custom kernels (10-50x speedup)
     # - macOS + Apple Silicon: MPS with Metal acceleration (3-7x speedup)
@@ -327,7 +325,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             max_abs_error=0.1,
             # convergence movie:
             napari_movie=(not NO_NAPARI),
-            movie_every= int(N_ITERS / 30),
+            movie_every=int(N_ITERS / 30),
         )
 
         aprint(f"🎉 Fitted {len(result.amplitudes)} splats successfully")

@@ -8,6 +8,7 @@ Run this script before commits or in CI/CD to ensure documentation standards.
 Usage:
     python scripts/check_documentation.py [--fix] [--verbose]
 """
+
 import argparse
 import re
 import sys
@@ -21,6 +22,7 @@ from arbol import aprint
 @dataclass
 class CheckResult:
     """Result of a documentation check."""
+
     passed: bool
     file_path: str
     check_name: str
@@ -59,34 +61,40 @@ class DocumentationChecker:
             return
 
         for package_dir in packages_dir.iterdir():
-            if package_dir.is_dir() and not package_dir.name.startswith('_'):
+            if package_dir.is_dir() and not package_dir.name.startswith("_"):
                 self._check_python_package(package_dir)
 
     def _check_python_package(self, package_dir: Path):
         """Check a single Python package."""
-        package_name = package_dir.relative_to(self.project_root / "packages" / "luxar" / "src" / "luxar")
+        package_name = package_dir.relative_to(
+            self.project_root / "packages" / "luxar" / "src" / "luxar"
+        )
 
         # Check for README.md
         readme = package_dir / "README.md"
         if not readme.exists():
-            self.results.append(CheckResult(
-                passed=False,
-                file_path=str(readme),
-                check_name="README existence",
-                message=f"Missing README.md for package: {package_name}"
-            ))
+            self.results.append(
+                CheckResult(
+                    passed=False,
+                    file_path=str(readme),
+                    check_name="README existence",
+                    message=f"Missing README.md for package: {package_name}",
+                )
+            )
         else:
             self._check_readme_quality(readme, package_name)
 
         # Check for SPECIFICATIONS.md
         specs = package_dir / "SPECIFICATIONS.md"
         if not specs.exists():
-            self.results.append(CheckResult(
-                passed=False,
-                file_path=str(specs),
-                check_name="SPECIFICATIONS existence",
-                message=f"Missing SPECIFICATIONS.md for package: {package_name}"
-            ))
+            self.results.append(
+                CheckResult(
+                    passed=False,
+                    file_path=str(specs),
+                    check_name="SPECIFICATIONS existence",
+                    message=f"Missing SPECIFICATIONS.md for package: {package_name}",
+                )
+            )
         else:
             self._check_specifications_quality(specs, package_name)
 
@@ -101,37 +109,45 @@ class DocumentationChecker:
 
         # Check for Quick Start section (Phase 3 enhancement)
         if "## Quick Start" not in content and "## Getting Started" not in content:
-            self.results.append(CheckResult(
-                passed=False,
-                file_path=str(readme),
-                check_name="Quick Start section",
-                message=f"README missing 'Quick Start' or 'Getting Started' section: {package_name}"
-            ))
+            self.results.append(
+                CheckResult(
+                    passed=False,
+                    file_path=str(readme),
+                    check_name="Quick Start section",
+                    message=f"README missing 'Quick Start' or 'Getting Started' section: {package_name}",
+                )
+            )
         else:
-            self.results.append(CheckResult(
-                passed=True,
-                file_path=str(readme),
-                check_name="Quick Start section",
-                message=f"✓ README has Quick Start section: {package_name}"
-            ))
+            self.results.append(
+                CheckResult(
+                    passed=True,
+                    file_path=str(readme),
+                    check_name="Quick Start section",
+                    message=f"✓ README has Quick Start section: {package_name}",
+                )
+            )
 
         # Check minimum length (should have substance)
         if len(content) < 500:
-            self.results.append(CheckResult(
-                passed=False,
-                file_path=str(readme),
-                check_name="README length",
-                message=f"README too short (<500 chars): {package_name}"
-            ))
+            self.results.append(
+                CheckResult(
+                    passed=False,
+                    file_path=str(readme),
+                    check_name="README length",
+                    message=f"README too short (<500 chars): {package_name}",
+                )
+            )
 
         # Check for code examples
         if "```python" not in content and "```typescript" not in content:
-            self.results.append(CheckResult(
-                passed=False,
-                file_path=str(readme),
-                check_name="Code examples",
-                message=f"README missing code examples: {package_name}"
-            ))
+            self.results.append(
+                CheckResult(
+                    passed=False,
+                    file_path=str(readme),
+                    check_name="Code examples",
+                    message=f"README missing code examples: {package_name}",
+                )
+            )
 
     def _check_specifications_quality(self, specs: Path, package_name: str):
         """Check SPECIFICATIONS.md quality."""
@@ -142,59 +158,69 @@ class DocumentationChecker:
             "## Purpose",
             "## Core Concepts",
             "## Data Structures",
-            "## Algorithms"
+            "## Algorithms",
         ]
 
         for section in required_sections:
             if section not in content:
-                self.results.append(CheckResult(
-                    passed=False,
-                    file_path=str(specs),
-                    check_name=f"Required section: {section}",
-                    message=f"SPECIFICATIONS missing {section}: {package_name}"
-                ))
+                self.results.append(
+                    CheckResult(
+                        passed=False,
+                        file_path=str(specs),
+                        check_name=f"Required section: {section}",
+                        message=f"SPECIFICATIONS missing {section}: {package_name}",
+                    )
+                )
 
         # Check for changelog
         if "## Changelog" not in content and "# Changelog" not in content:
-            self.results.append(CheckResult(
-                passed=False,
-                file_path=str(specs),
-                check_name="Changelog",
-                message=f"SPECIFICATIONS missing Changelog: {package_name}"
-            ))
+            self.results.append(
+                CheckResult(
+                    passed=False,
+                    file_path=str(specs),
+                    check_name="Changelog",
+                    message=f"SPECIFICATIONS missing Changelog: {package_name}",
+                )
+            )
 
         # Check for complexity analysis in algorithms (Phase 3 enhancement)
         if "## Algorithms" in content:
             # Look for algorithm sections
-            algorithm_sections = re.findall(r'###\s+(.+)', content)
-            has_complexity = bool(re.search(r'\*\*Complexity\*\*:', content))
+            algorithm_sections = re.findall(r"###\s+(.+)", content)
+            has_complexity = bool(re.search(r"\*\*Complexity\*\*:", content))
 
             if algorithm_sections and not has_complexity:
-                self.results.append(CheckResult(
-                    passed=False,
-                    file_path=str(specs),
-                    check_name="Algorithm complexity",
-                    message=f"SPECIFICATIONS has algorithms but missing complexity analysis: {package_name}"
-                ))
+                self.results.append(
+                    CheckResult(
+                        passed=False,
+                        file_path=str(specs),
+                        check_name="Algorithm complexity",
+                        message=f"SPECIFICATIONS has algorithms but missing complexity analysis: {package_name}",
+                    )
+                )
 
     def _check_python_file_docstrings(self, py_file: Path, package_name: str):
         """Check Python file for docstring coverage."""
         content = py_file.read_text()
 
         # Check for module docstring
-        if not content.strip().startswith('"""') and not content.strip().startswith("'''"):
-            self.results.append(CheckResult(
-                passed=False,
-                file_path=str(py_file),
-                check_name="Module docstring",
-                message=f"Missing module docstring: {package_name}/{py_file.name}"
-            ))
+        if not content.strip().startswith('"""') and not content.strip().startswith(
+            "'''"
+        ):
+            self.results.append(
+                CheckResult(
+                    passed=False,
+                    file_path=str(py_file),
+                    check_name="Module docstring",
+                    message=f"Missing module docstring: {package_name}/{py_file.name}",
+                )
+            )
 
         # Count functions/classes and docstrings
-        func_class_pattern = r'^(def |class )'
+        func_class_pattern = r"^(def |class )"
         docstring_pattern = r'^\s+["\']'
 
-        lines = content.split('\n')
+        lines = content.split("\n")
         func_class_count = 0
         docstring_count = 0
 
@@ -211,12 +237,14 @@ class DocumentationChecker:
         if func_class_count > 0:
             coverage = (docstring_count / func_class_count) * 100
             if coverage < 70:  # Minimum 70% coverage
-                self.results.append(CheckResult(
-                    passed=False,
-                    file_path=str(py_file),
-                    check_name="Docstring coverage",
-                    message=f"Low docstring coverage ({coverage:.0f}%): {package_name}/{py_file.name}"
-                ))
+                self.results.append(
+                    CheckResult(
+                        passed=False,
+                        file_path=str(py_file),
+                        check_name="Docstring coverage",
+                        message=f"Low docstring coverage ({coverage:.0f}%): {package_name}/{py_file.name}",
+                    )
+                )
 
     def _check_typescript_packages(self):
         """Check TypeScript packages for JSDoc coverage."""
@@ -236,12 +264,14 @@ class DocumentationChecker:
         # Check for README.md
         readme = package_dir / "README.md"
         if not readme.exists():
-            self.results.append(CheckResult(
-                passed=False,
-                file_path=str(readme),
-                check_name="README existence",
-                message=f"Missing README.md for TypeScript package: {package_name}"
-            ))
+            self.results.append(
+                CheckResult(
+                    passed=False,
+                    file_path=str(readme),
+                    check_name="README existence",
+                    message=f"Missing README.md for TypeScript package: {package_name}",
+                )
+            )
 
         # Check TypeScript files for JSDoc
         for ts_file in package_dir.glob("*.ts"):
@@ -253,10 +283,10 @@ class DocumentationChecker:
         content = ts_file.read_text()
 
         # Count exported functions/classes
-        export_pattern = r'^export (function|class|interface|type|const)'
-        jsdoc_pattern = r'/\*\*'
+        export_pattern = r"^export (function|class|interface|type|const)"
+        jsdoc_pattern = r"/\*\*"
 
-        lines = content.split('\n')
+        lines = content.split("\n")
         export_count = 0
         jsdoc_count = 0
 
@@ -272,25 +302,29 @@ class DocumentationChecker:
         if export_count > 0:
             coverage = (jsdoc_count / export_count) * 100
             if coverage < 70:  # Minimum 70% JSDoc coverage
-                self.results.append(CheckResult(
-                    passed=False,
-                    file_path=str(ts_file),
-                    check_name="JSDoc coverage",
-                    message=f"Low JSDoc coverage ({coverage:.0f}%): {package_name}/{ts_file.name}"
-                ))
+                self.results.append(
+                    CheckResult(
+                        passed=False,
+                        file_path=str(ts_file),
+                        check_name="JSDoc coverage",
+                        message=f"Low JSDoc coverage ({coverage:.0f}%): {package_name}/{ts_file.name}",
+                    )
+                )
 
     def _print_summary(self):
         """Print summary of all checks."""
-        aprint("\n" + "="*70)
+        aprint("\n" + "=" * 70)
         aprint("📊 DOCUMENTATION QUALITY REPORT")
-        aprint("="*70 + "\n")
+        aprint("=" * 70 + "\n")
 
         passed = [r for r in self.results if r.passed]
         failed = [r for r in self.results if not r.passed]
 
         aprint(f"✅ Passed: {len(passed)}")
         aprint(f"❌ Failed: {len(failed)}")
-        aprint(f"📈 Overall: {len(passed)}/{len(self.results)} ({len(passed)/len(self.results)*100:.0f}%)\n")
+        aprint(
+            f"📈 Overall: {len(passed)}/{len(self.results)} ({len(passed) / len(self.results) * 100:.0f}%)\n"
+        )
 
         if failed:
             aprint("Failed checks:\n")
@@ -307,8 +341,12 @@ class DocumentationChecker:
 
 def main():
     parser = argparse.ArgumentParser(description="Check documentation quality")
-    parser.add_argument("--fix", action="store_true", help="Attempt to fix issues automatically")
-    parser.add_argument("--verbose", action="store_true", help="Show all checks including passed")
+    parser.add_argument(
+        "--fix", action="store_true", help="Attempt to fix issues automatically"
+    )
+    parser.add_argument(
+        "--verbose", action="store_true", help="Show all checks including passed"
+    )
     args = parser.parse_args()
 
     # Find project root
@@ -319,7 +357,9 @@ def main():
     success = checker.check_all()
 
     if not success:
-        aprint("\n⚠️  Some documentation checks failed. Please address the issues above.")
+        aprint(
+            "\n⚠️  Some documentation checks failed. Please address the issues above."
+        )
         sys.exit(1)
     else:
         aprint("\n✅ All documentation checks passed!")

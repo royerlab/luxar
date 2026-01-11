@@ -33,6 +33,7 @@ OUTPUT:
     Raw zarr table with arrays: x_kpc, y_kpc, z_kpc, phot_g_mean_mag, bp_rp
     (NOT Luxar format - demo converts to Luxar)
 """
+
 import argparse
 import shutil
 import sys

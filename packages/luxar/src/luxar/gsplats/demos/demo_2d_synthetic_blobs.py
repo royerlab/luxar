@@ -45,7 +45,6 @@ from skimage import data, filters
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fit_result import GSplatData
-from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 

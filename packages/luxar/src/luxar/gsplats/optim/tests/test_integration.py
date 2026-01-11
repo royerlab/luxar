@@ -150,7 +150,9 @@ class TestGradientDilution:
         """Test 3D model gets appropriate LR scaling."""
         # Create 3D model
         shape = (16, 16, 16)
-        centers0 = torch.tensor([[8.0, 8.0, 8.0], [10.0, 10.0, 10.0]], dtype=torch.float32)
+        centers0 = torch.tensor(
+            [[8.0, 8.0, 8.0], [10.0, 10.0, 10.0]], dtype=torch.float32
+        )
         L0 = torch.stack([torch.eye(3) * 0.5 for _ in range(2)], dim=0)
         amps0 = torch.tensor([1.0, 1.0], dtype=torch.float32)
 
@@ -163,7 +165,9 @@ class TestGradientDilution:
             device=torch.device("cpu"),
         )
 
-        optimizer, _ = create_optimizer_and_scheduler(model, lr=0.1, scheduler_type=None)
+        optimizer, _ = create_optimizer_and_scheduler(
+            model, lr=0.1, scheduler_type=None
+        )
 
         # For 3D, should have larger scaling factor than 2D
         actual_lr = optimizer.param_groups[0]["lr"]

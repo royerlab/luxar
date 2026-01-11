@@ -132,11 +132,13 @@ class TestSplatImportanceCalculation:
         # Create model with varying properties
         centers = np.array([[5.0, 5.0], [10.0, 10.0], [15.0, 15.0]])
         # Different sizes: small, medium, large
-        L0 = np.stack([
-            np.eye(2) * 0.5,  # Small
-            np.eye(2) * 1.0,  # Medium
-            np.eye(2) * 2.0,  # Large
-        ])
+        L0 = np.stack(
+            [
+                np.eye(2) * 0.5,  # Small
+                np.eye(2) * 1.0,  # Medium
+                np.eye(2) * 2.0,  # Large
+            ]
+        )
         # Different amplitudes
         amps0 = np.array([1.0, 0.1, 0.5])
 
@@ -239,11 +241,13 @@ class TestDynamicOperationsIntegration:
 
         # Create initial model with a few splats (one weak, one strong)
         centers = np.array([[7.0, 7.0], [9.0, 9.0], [3.0, 3.0]])  # Third is far away
-        L0 = np.stack([
-            np.eye(2) * 2.0,  # Large
-            np.eye(2) * 2.0,  # Large
-            np.eye(2) * 0.3,  # Small (weak)
-        ])
+        L0 = np.stack(
+            [
+                np.eye(2) * 2.0,  # Large
+                np.eye(2) * 2.0,  # Large
+                np.eye(2) * 0.3,  # Small (weak)
+            ]
+        )
         amps0 = np.array([1.0, 1.0, 0.01])  # Third is weak amplitude
         model = GaussianSplatModel(
             shape=(16, 16),
@@ -411,11 +415,13 @@ class TestDynamicOperationsIntegration:
 
         # Create splats - one strong, two weak
         centers = np.array([[10, 10], [15, 15], [3, 3]], dtype=np.float32)
-        L0 = np.stack([
-            np.eye(2) * 2.0,  # Large
-            np.eye(2) * 0.3,  # Small (weak)
-            np.eye(2) * 0.2,  # Very small (weak)
-        ])
+        L0 = np.stack(
+            [
+                np.eye(2) * 2.0,  # Large
+                np.eye(2) * 0.3,  # Small (weak)
+                np.eye(2) * 0.2,  # Very small (weak)
+            ]
+        )
         amps0 = np.array([0.8, 0.01, 0.005])  # Strong, weak, very weak
 
         model = GaussianSplatModel(

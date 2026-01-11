@@ -78,22 +78,16 @@ with asection("Astronaut Gaussian Splatting Demo"):
         aprint(f"Data range: [{V.min():.4f}, {V.max():.4f}]")
         aprint("🎯 Focused on astronaut face and helmet for detailed reconstruction")
 
-    # Configure dynamic operations (use defaults like mitosis)
-    dynamic_config = DynamicOpsConfig()
-    aprint(f"Dynamic operations enabled (step_every={dynamic_config.step_every})")
 
     with asection(f"Fitting Gaussian splats ({N_ITERS} iterations)"):
         # Fit oriented (full-covariance) Gaussians with auto-candidate generation
         result = fit_gaussian_splats(
             V,
-            # seeds auto-generated with intelligent defaults
+            seeds=4000,
             n_iters=N_ITERS,
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
-            # Dynamic operations
-            enable_dynamic_ops=True,
-            dynamic_config=dynamic_config,
             max_abs_error=0.1,  # Same as mitosis
             napari_movie=(not NO_NAPARI),
             movie_every=1,  # Same as mitosis

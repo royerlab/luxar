@@ -39,16 +39,21 @@ def generate_broadcasting_test():
         # Single uniform radius
         uniform_radius = np.array([0.5], dtype=np.float32)
 
-        dims = Dimensions([
-            Dimension("x", unit="units", display=True),
-            Dimension("y", unit="units", display=True),
-            Dimension("z", unit="units", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
 
         # Disable compression for Node.js compatibility (blosc has WASM issues)
         # Disable float16 for TypeScript/Zarrita compatibility
         with LuxarZarrCompiler(
-            output, encoding_mode=EncodingMode.MEMORY, compressor=None, float16_allowed=False
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
         ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
@@ -74,33 +79,43 @@ def generate_lut_test():
         positions = np.random.randn(1000, 3).astype(np.float32) * 10
 
         # Create 10 unique colors
-        unique_colors = np.array([
-            [1.0, 0.0, 0.0],  # Red
-            [0.0, 1.0, 0.0],  # Green
-            [0.0, 0.0, 1.0],  # Blue
-            [1.0, 1.0, 0.0],  # Yellow
-            [1.0, 0.0, 1.0],  # Magenta
-            [0.0, 1.0, 1.0],  # Cyan
-            [1.0, 0.5, 0.0],  # Orange
-            [0.5, 0.0, 1.0],  # Purple
-            [0.0, 0.5, 0.5],  # Teal
-            [0.5, 0.5, 0.5],  # Gray
-        ], dtype=np.float32)
+        unique_colors = np.array(
+            [
+                [1.0, 0.0, 0.0],  # Red
+                [0.0, 1.0, 0.0],  # Green
+                [0.0, 0.0, 1.0],  # Blue
+                [1.0, 1.0, 0.0],  # Yellow
+                [1.0, 0.0, 1.0],  # Magenta
+                [0.0, 1.0, 1.0],  # Cyan
+                [1.0, 0.5, 0.0],  # Orange
+                [0.5, 0.0, 1.0],  # Purple
+                [0.0, 0.5, 0.5],  # Teal
+                [0.5, 0.5, 0.5],  # Gray
+            ],
+            dtype=np.float32,
+        )
 
         # Randomly assign colors (indices 0-9)
         color_indices = np.random.randint(0, 10, size=1000)
         colors = unique_colors[color_indices]
 
-        dims = Dimensions([
-            Dimension("x", unit="units", display=True),
-            Dimension("y", unit="units", display=True),
-            Dimension("z", unit="units", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
 
         # Add uniform radii so points are visible
         radii = np.ones(1000, dtype=np.float32) * 0.5
 
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None, float16_allowed=False) as compiler:
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             scene.add_points(
@@ -130,20 +145,27 @@ def generate_quantization_test():
         # Colors in [0, 1] - will be quantized to uint8
         colors = np.random.rand(1000, 3).astype(np.float32)
 
-        dims = Dimensions([
-            Dimension("x", unit="units", display=True),
-            Dimension("y", unit="units", display=True),
-            Dimension("z", unit="units", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
 
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None, float16_allowed=False) as compiler:
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             scene.add_points(
                 "points",
                 positions,
                 colors=colors,  # Will quantize to uint8
-                radii=radii,    # Will quantize to uint8
+                radii=radii,  # Will quantize to uint8
             )
 
         aprint(f"✓ Created {output}")
@@ -164,11 +186,13 @@ def generate_array_refs_test():
         # Same colors for both groups
         shared_colors = np.random.rand(500, 3).astype(np.float32)
 
-        dims = Dimensions([
-            Dimension("x", unit="units", display=True),
-            Dimension("y", unit="units", display=True),
-            Dimension("z", unit="units", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
 
         # Disable spatial index to prevent Morton ordering from creating new arrays
         with LuxarZarrCompiler(
@@ -176,7 +200,7 @@ def generate_array_refs_test():
             encoding_mode=EncodingMode.MEMORY,
             compressor=None,
             float16_allowed=False,
-            enable_spatial_index=False  # CRITICAL: Disable to preserve array identity
+            enable_spatial_index=False,  # CRITICAL: Disable to preserve array identity
         ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
@@ -202,19 +226,28 @@ def generate_mixed_encoding_test():
 
         # Group 2: LUT
         pos2 = np.random.randn(500, 3).astype(np.float32) * 10
-        lut_colors = np.tile(np.array([[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32), (250, 1))
+        lut_colors = np.tile(
+            np.array([[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32), (250, 1)
+        )
 
         # Group 3: Direct (no encoding)
         pos3 = np.random.randn(500, 3).astype(np.float32) * 10
         direct_colors = np.random.rand(500, 3).astype(np.float32)
 
-        dims = Dimensions([
-            Dimension("x", unit="units", display=True),
-            Dimension("y", unit="units", display=True),
-            Dimension("z", unit="units", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
 
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None, float16_allowed=False) as compiler:
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Add points with different encoding modes
@@ -258,7 +291,7 @@ def generate_4d_test():
 
             # Colors that change with time
             hue = t / num_time_steps
-            color = np.array([hue, 1-hue, 0.5], dtype=np.float32)
+            color = np.array([hue, 1 - hue, 0.5], dtype=np.float32)
             colors_4d.append(np.tile(color, (num_points, 1)))
 
         positions = np.vstack(positions_4d)
@@ -267,15 +300,28 @@ def generate_4d_test():
         # Add radii so points are visible
         radii = np.ones(num_points * num_time_steps, dtype=np.float32) * 0.5
 
-        dims = Dimensions([
-            Dimension("time", unit="frame", range=(0, num_time_steps-1),
-                     step=1, display=False, discrete=True),
-            Dimension("x", unit="units", display=True),
-            Dimension("y", unit="units", display=True),
-            Dimension("z", unit="units", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension(
+                    "time",
+                    unit="frame",
+                    range=(0, num_time_steps - 1),
+                    step=1,
+                    display=False,
+                    discrete=True,
+                ),
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
 
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None, float16_allowed=False) as compiler:
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
             scene.add_points("points", positions, colors=colors, radii=radii)
 
@@ -306,22 +352,32 @@ def generate_hierarchical_transforms_test():
         from luxar.transforms import translate
 
         # Child points at origin initially
-        positions = np.array([
-            [0, 0, 0],
-            [1, 0, 0],
-            [0, 1, 0],
-        ], dtype=np.float32)
+        positions = np.array(
+            [
+                [0, 0, 0],
+                [1, 0, 0],
+                [0, 1, 0],
+            ],
+            dtype=np.float32,
+        )
 
         # Add radii so points are visible
         radii = np.ones(3, dtype=np.float32) * 0.5
 
-        dims = Dimensions([
-            Dimension("x", unit="units", display=True),
-            Dimension("y", unit="units", display=True),
-            Dimension("z", unit="units", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
 
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None, float16_allowed=False) as compiler:
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Create parent group with translation [10, 0, 0]
@@ -371,14 +427,21 @@ def generate_hdr_colors_test():
         # Add radii so points are visible
         radii = np.ones(num_points, dtype=np.float32) * 0.5
 
-        dims = Dimensions([
-            Dimension("x", unit="units", display=True),
-            Dimension("y", unit="units", display=True),
-            Dimension("z", unit="units", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
 
         # Use PRECISION mode to force float32 storage (no quantization)
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.PRECISION, compressor=None, float16_allowed=False) as compiler:
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             scene.add_points(
@@ -421,14 +484,21 @@ def generate_log_scalar_test():
         colors = np.zeros((num_points, 3), dtype=np.float32)
         colors[:, 0] = np.linspace(0, 1, num_points)  # Red gradient
 
-        dims = Dimensions([
-            Dimension("x", unit="units", display=True),
-            Dimension("y", unit="units", display=True),
-            Dimension("z", unit="units", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
 
         # Use MEMORY mode which uses log_scalar for wide-range scalars
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None, float16_allowed=False) as compiler:
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             scene.add_points(
@@ -468,7 +538,9 @@ def generate_4d_scalar_lut_test():
         num_points = 200
 
         # Use only 10 unique values per dimension to guarantee LUT encoding
-        unique_values = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], dtype=np.float32)
+        unique_values = np.array(
+            [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], dtype=np.float32
+        )
 
         # Generate positions by randomly selecting from unique values
         np.random.seed(42)  # Reproducible for testing
@@ -488,21 +560,25 @@ def generate_4d_scalar_lut_test():
         radii = np.ones(num_points, dtype=np.float32) * 0.5
         colors = np.random.rand(num_points, 3).astype(np.float32)
 
-        dims = Dimensions([
-            Dimension("time", unit="frame", range=(0, 9), step=1, display=False),
-            Dimension("x", unit="units", display=True),
-            Dimension("y", unit="units", display=True),
-            Dimension("z", unit="units", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("time", unit="frame", range=(0, 9), step=1, display=False),
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
 
         # Use MEMORY mode which enables LUT encoding for arrays with ≤256 unique values
-        with LuxarZarrCompiler(
-            output,
-            encoding_mode=EncodingMode.MEMORY,
-            compressor=None,
-            float16_allowed=False,
-            enable_spatial_index=False  # Disable to preserve exact positions for testing
-        ) as compiler:
+        with (
+            LuxarZarrCompiler(
+                output,
+                encoding_mode=EncodingMode.MEMORY,
+                compressor=None,
+                float16_allowed=False,
+                enable_spatial_index=False,  # Disable to preserve exact positions for testing
+            ) as compiler
+        ):
             scene = compiler.create_scene(dimensions=dims)
             scene.add_points("points", positions, colors=colors, radii=radii)
 
@@ -541,13 +617,20 @@ def generate_sharpness_range_test():
         # Add radii so points are visible
         radii = np.ones(num_points, dtype=np.float32) * 0.5
 
-        dims = Dimensions([
-            Dimension("x", unit="units", display=True),
-            Dimension("y", unit="units", display=True),
-            Dimension("z", unit="units", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
 
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None, float16_allowed=False) as compiler:
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             scene.add_points(
