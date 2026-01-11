@@ -78,7 +78,9 @@ class FitConfig:
     cuda_tile_size: Optional[int] = None  # Auto-select based on dimension if None
 
     # Seed generation (with defaults - must come after required fields)
-    seed_method: str = "auto"  # "decomposition", "grid", "edges", "auto", or comma-separated
+    seed_method: str = (
+        "auto"  # "decomposition", "grid", "edges", "auto", or comma-separated
+    )
     seed_kwargs: Dict[str, Any] = None  # Additional parameters for seed generation
 
     # Pre-initialized parameters (for GSplatData seeds or moment pursuit)

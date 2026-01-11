@@ -322,7 +322,9 @@ class TestReproducibility:
 
         np.testing.assert_array_equal(result1.centers, result2.centers)
         np.testing.assert_array_equal(result1.amplitudes, result2.amplitudes)
-        np.testing.assert_array_equal(result1.cholesky_factors, result2.cholesky_factors)
+        np.testing.assert_array_equal(
+            result1.cholesky_factors, result2.cholesky_factors
+        )
 
 
 if __name__ == "__main__":

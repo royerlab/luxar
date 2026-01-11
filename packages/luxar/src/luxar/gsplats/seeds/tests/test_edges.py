@@ -30,7 +30,7 @@ def image_with_circle():
     center = (50, 50)
     radius = 30
     dist = np.sqrt((x - center[1]) ** 2 + (y - center[0]) ** 2)
-    V = np.exp(-(dist - radius) ** 2 / (2 * 3 ** 2))  # Ring
+    V = np.exp(-((dist - radius) ** 2) / (2 * 3**2))  # Ring
     return V
 
 
@@ -154,9 +154,7 @@ class TestParameters:
 
     def test_sigma_clamping(self, image_with_edges) -> None:
         """Test min_sigma and max_sigma clamping."""
-        result = seed_from_edges(
-            image_with_edges, min_sigma=2.0, max_sigma=5.0
-        )
+        result = seed_from_edges(image_with_edges, min_sigma=2.0, max_sigma=5.0)
         validate_gsplatdata(result, 2)
 
     def test_sigma_validation(self, image_with_edges) -> None:
@@ -178,12 +176,8 @@ class TestAnisotropicShapes:
         if len(result.centers) > 0:
             # Diagonal elements should be positive
             # 2D packed: [L00, L10, L11]
-            assert np.all(result.cholesky_factors[:, 0] > 0), (
-                "L00 should be positive"
-            )
-            assert np.all(result.cholesky_factors[:, 2] > 0), (
-                "L11 should be positive"
-            )
+            assert np.all(result.cholesky_factors[:, 0] > 0), "L00 should be positive"
+            assert np.all(result.cholesky_factors[:, 2] > 0), "L11 should be positive"
 
     def test_some_anisotropy(self, image_with_edges) -> None:
         """Test that edge seeds have some anisotropy."""
@@ -278,7 +272,9 @@ class TestReproducibility:
 
         np.testing.assert_array_equal(result1.centers, result2.centers)
         np.testing.assert_array_equal(result1.amplitudes, result2.amplitudes)
-        np.testing.assert_array_equal(result1.cholesky_factors, result2.cholesky_factors)
+        np.testing.assert_array_equal(
+            result1.cholesky_factors, result2.cholesky_factors
+        )
 
 
 class TestCircularEdge:

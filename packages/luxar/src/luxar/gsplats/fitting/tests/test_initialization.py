@@ -130,7 +130,9 @@ def test_optimizer_setup(basic_config, basic_preprocessed_data) -> None:
     assert isinstance(components.optimizer, torch.optim.Adam)
 
 
-def test_standard_optimizer_with_dynamic_ops(basic_config, basic_preprocessed_data) -> None:
+def test_standard_optimizer_with_dynamic_ops(
+    basic_config, basic_preprocessed_data
+) -> None:
     """Test that standard optimizer is used even with dynamic ops enabled."""
     # Enable dynamic ops - should still use standard optimizer (no per-splat)
     basic_config.enable_dynamic_ops = True

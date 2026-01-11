@@ -209,9 +209,7 @@ class TestErrorCases:
 
     def test_three_methods_comma_separated(self, image_with_edges) -> None:
         """Test three methods can be combined via comma-separation."""
-        result = generate_seeds(
-            image_with_edges, method="decomposition,grid,edges"
-        )
+        result = generate_seeds(image_with_edges, method="decomposition,grid,edges")
         validate_gsplatdata(result, 2, image_with_edges.shape)
         assert len(result.centers) > 0
 
@@ -272,9 +270,7 @@ class TestIntegration:
         result_d = generate_seeds(
             simple_2d_image, method="decomposition", min_distance=2.0
         )
-        result_g = generate_seeds(
-            simple_2d_image, method="grid", min_distance=2.0
-        )
+        result_g = generate_seeds(simple_2d_image, method="grid", min_distance=2.0)
         result_combined = generate_seeds(
             simple_2d_image, method="decomposition,grid", min_distance=2.0
         )

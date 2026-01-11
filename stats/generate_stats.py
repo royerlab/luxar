@@ -5,6 +5,7 @@ Generate project statistics report for Luxar.
 Analyzes Python and TypeScript code to produce comprehensive statistics
 including lines of code, file counts, function/class counts, etc.
 """
+
 import re
 import subprocess
 from collections import defaultdict

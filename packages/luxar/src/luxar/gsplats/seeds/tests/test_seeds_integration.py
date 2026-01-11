@@ -87,9 +87,7 @@ def test_methods_comparison() -> None:
         )
 
     assert len(distances) > 0, "At least one method should find seeds"
-    assert min(distances) < 20.0, (
-        "At least one method should find seeds near the blob"
-    )
+    assert min(distances) < 20.0, "At least one method should find seeds near the blob"
 
     # Test combining seeds from multiple methods
     combined = combine_seeds(
@@ -194,9 +192,7 @@ def test_methods_on_noisy_image() -> None:
     found_near_center = False
 
     if len(result_grid.centers) > 0:
-        dist_grid = float(
-            np.min(np.linalg.norm(result_grid.centers - center, axis=1))
-        )
+        dist_grid = float(np.min(np.linalg.norm(result_grid.centers - center, axis=1)))
         if dist_grid < 12.0:
             found_near_center = True
 
@@ -257,15 +253,11 @@ def test_cholesky_factors_vary_by_scale() -> None:
 
     # Large blob - use larger scales for decomposition
     large_blob = np.exp(-(x**2 + y**2) / 16)
-    result_large = seed_from_decomposition(
-        large_blob, scales=[4, 8], min_distance=5.0
-    )
+    result_large = seed_from_decomposition(large_blob, scales=[4, 8], min_distance=5.0)
 
     # Small blob - use smaller scales for decomposition
     small_blob = np.exp(-(x**2 + y**2) / 2)
-    result_small = seed_from_decomposition(
-        small_blob, scales=[1, 2], min_distance=5.0
-    )
+    result_small = seed_from_decomposition(small_blob, scales=[1, 2], min_distance=5.0)
 
     if len(result_large.centers) > 0 and len(result_small.centers) > 0:
         # The diagonal Cholesky element (sigma) should be larger for large blobs
