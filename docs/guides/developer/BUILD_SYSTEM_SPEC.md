@@ -207,6 +207,7 @@ MIN_NODE_MINOR := 19
 |---------|-------------|
 | `make build-wasm` | Build WASM module |
 | `make test-wasm` | Run Rust unit tests |
+| `make benchmark-wasm` | Run WASM vs TypeScript performance benchmarks |
 | `make clean-wasm` | Clean WASM build artifacts |
 
 ### Data & Demos

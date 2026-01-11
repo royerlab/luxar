@@ -14,7 +14,8 @@
         setup-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-readme-videos \
         stats show-env prune-env shell build publish-test publish \
         check-deps install-node install-pnpm install-hatch \
-        setup-cuda check-cuda-deps build-cuda clean-cuda test-cuda benchmark-cuda
+        setup-cuda check-cuda-deps build-cuda clean-cuda test-cuda benchmark-cuda \
+        benchmark-wasm
 
 # ============================================================================
 # OS Detection and Configuration
@@ -1194,6 +1195,28 @@ test-wasm:  ## Run Rust unit tests for WASM module
 	echo "🧪 Running Rust tests..."; \
 	cd packages/luxar-viewer && pnpm test:wasm && \
 	echo "✅ All Rust tests passed!"
+
+benchmark-wasm:  ## Run WASM vs TypeScript performance benchmarks
+	@# Source nvm and cargo env to ensure pnpm is in PATH
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	if ! command -v pnpm >/dev/null 2>&1; then \
+		echo "❌ pnpm not found."; \
+		echo ""; \
+		echo "Run 'make setup-dev' to install Node.js and pnpm."; \
+		echo ""; \
+		exit 1; \
+	fi; \
+	if [ ! -f "packages/luxar-viewer/public/wasm/luxar_wasm_bg.wasm" ]; then \
+		echo "⚠️  WASM module not built. Building first..."; \
+		echo ""; \
+		$(MAKE) build-wasm; \
+		echo ""; \
+	fi; \
+	echo "🚀 Running WASM benchmarks..."; \
+	cd packages/luxar-viewer && pnpm bench:wasm
 
 clean-wasm:  ## Clean WASM build artifacts
 	@echo "🧹 Cleaning WASM artifacts..."
