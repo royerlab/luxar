@@ -193,7 +193,7 @@ check-deps:  ## Check all development dependencies and their versions
 		echo "⚪ PyTorch CUDA not available"; \
 	fi
 	@# CUDA extension build status
-	@if ls packages/luxar/src/luxar/gsplats/models/gsplats/cuda/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then \
+	@if ls packages/luxar/src/luxar/gsplats/models/gsplats/cuda/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
 		echo "✅ CUDA extension: built"; \
 	else \
 		echo "⚪ CUDA extension: not built (run 'make build-cuda')"; \
@@ -557,7 +557,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 	@echo "🧹 [4/9] Removing CUDA build artifacts..."
 	@rm -rf $(CUDA_EXT_DIR)/build/
 	@rm -rf $(CUDA_EXT_DIR)/*.egg-info/
-	@rm -f $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so
+	@rm -f $(CUDA_EXT_DIR)/cuda_splatting_backend*.so
 	@echo "   ✓ Done"
 	@echo ""
 	@echo "🧹 [5/9] Removing wasm-pack..."
@@ -1308,7 +1308,7 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 	@echo ""
 	@# Step 3: Build the extension
 	@echo "=== Step 3: Build CUDA Extension ==="
-	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then \
+	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
 		echo "✅ CUDA extension already built"; \
 	else \
 		if command -v nvcc >/dev/null 2>&1 && hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
@@ -1322,7 +1322,7 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 	fi
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then \
+	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
 		echo "✅ CUDA setup complete!"; \
 		echo ""; \
 		echo "Next steps:"; \
@@ -1423,8 +1423,8 @@ except ImportError: \
 	fi
 	@echo ""
 	@echo "=== 5. CUDA Extension Status ==="
-	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then \
-		SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so | head -1); \
+	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
+		SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1); \
 		echo "✅ CUDA extension built: $$(basename $$SO_FILE)"; \
 		echo "   Size: $$(du -h $$SO_FILE | cut -f1)"; \
 	else \
@@ -1437,7 +1437,7 @@ except ImportError: \
 	@NVCC_OK=0; DRIVER_OK=0; TORCH_OK=0; EXT_OK=0; \
 	if command -v nvcc >/dev/null 2>&1; then NVCC_OK=1; fi; \
 	if command -v nvidia-smi >/dev/null 2>&1; then DRIVER_OK=1; fi; \
-	if ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then EXT_OK=1; fi; \
+	if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then EXT_OK=1; fi; \
 	if [ "$$EXT_OK" = "1" ]; then \
 		echo "✅ CUDA extension is ready to use!"; \
 		echo ""; \
@@ -1487,10 +1487,10 @@ build-cuda:  ## Build the CUDA splatting extension
 	@echo ""
 	hatch run python $(CUDA_EXT_DIR)/build.py
 	@echo ""
-	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then \
+	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 		echo "✅ CUDA extension built successfully!"; \
-		SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so | head -1); \
+		SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1); \
 		echo "   Output: $$(basename $$SO_FILE)"; \
 		echo ""; \
 		echo "Next steps:"; \
@@ -1506,7 +1506,7 @@ clean-cuda:  ## Clean CUDA build artifacts
 	@echo "🧹 Cleaning CUDA build artifacts..."
 	rm -rf $(CUDA_EXT_DIR)/build/
 	rm -rf $(CUDA_EXT_DIR)/*.egg-info/
-	rm -f $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so
+	rm -f $(CUDA_EXT_DIR)/cuda_splatting_backend*.so
 	rm -rf $(CUDA_EXT_DIR)/__pycache__/
 	@echo "✅ CUDA artifacts cleaned!"
 
@@ -1514,7 +1514,7 @@ test-cuda:  ## Run CUDA extension tests
 	@echo "🧪 Running CUDA extension tests..."
 	@echo ""
 	@# Check if extension is built
-	@if ! ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then \
+	@if ! ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
 		echo "⚠️  CUDA extension not built. Building first..."; \
 		$(MAKE) build-cuda; \
 		echo ""; \
@@ -1528,7 +1528,7 @@ benchmark-cuda:  ## Run CUDA performance benchmarks
 	@echo "🚀 Running CUDA performance benchmarks..."
 	@echo ""
 	@# Check if extension is built
-	@if ! ls $(CUDA_EXT_DIR)/cuda_splatting_backend.cpython-*.so 1>/dev/null 2>&1; then \
+	@if ! ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
 		echo "⚠️  CUDA extension not built. Building first..."; \
 		$(MAKE) build-cuda; \
 		echo ""; \

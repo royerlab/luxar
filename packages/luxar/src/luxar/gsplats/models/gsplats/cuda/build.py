@@ -6,7 +6,6 @@ Uses torch.utils.cpp_extension directly without setuptools complexity.
 Run from project root: hatch run python packages/luxar/.../cuda/build.py
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -66,6 +65,10 @@ def build():
     print("Compiling CUDA extension (this may take a minute)...")
     print()
 
+    # Ensure build directory exists (PyTorch's cpp_extension needs it for lock file)
+    build_dir = SCRIPT_DIR / "build"
+    build_dir.mkdir(exist_ok=True)
+
     # Build using torch's JIT compilation
     # This compiles and loads the module, placing .so in a cache dir
     # We'll then copy it to the cuda/ directory
@@ -76,13 +79,11 @@ def build():
         extra_cuda_cflags=extra_cuda_cflags,
         extra_include_paths=[str(SRC_DIR)],
         verbose=True,
-        build_directory=str(SCRIPT_DIR / "build"),
+        build_directory=str(build_dir),
     )
 
     # Find the built .so file and copy/link to cuda/ directory
-    import glob
 
-    build_dir = SCRIPT_DIR / "build"
     so_files = list(build_dir.glob("cuda_splatting_backend*.so"))
 
     if so_files:
