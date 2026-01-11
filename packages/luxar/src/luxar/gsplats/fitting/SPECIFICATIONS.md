@@ -1,7 +1,7 @@
 # Gaussian Splat Fitting Pipeline Specification
 
-**Version**: 2.0.0
-**Last Updated**: 2025-01
+**Version**: 2.2.0
+**Last Updated**: 2026-01-11
 
 ## Overview
 
@@ -52,9 +52,10 @@ class FitConfig:
     norm_percentile: float                   # Percentile for normalization (0 = full range, >0 = percentile clipping)
 
     # Model parameters
-    init_sigma_vox: float                    # Initial sigma in voxels for isotropic covariances
+    init_sigma_vox: Optional[float]          # Initial sigma in voxels (None = use scale-informed init_L from seeding)
     sigma_min_diag: Optional[Sequence[float]]  # Minimum diagonal values per dimension
     sigma_max_diag: Optional[Sequence[float]]  # Maximum diagonal values per dimension
+    amp_max: Optional[float]                 # Maximum amplitude (default: 1.0, prevents explosion)
     truncate: float                          # Gaussian truncation radius in standard deviations
 
     # Optimization parameters
@@ -96,7 +97,8 @@ class FitConfig:
 - `V.size > 0` (non-empty)
 - `seeds` shape matches `(N, V.ndim)` if array, `seeds > 0` if int, `0 < seeds <= 1.0` if float
 - `norm_percentile >= 0.0`
-- `init_sigma_vox > 0`, `sigma_min_vox > 0`, `sigma_max_vox > sigma_min_vox`
+- `init_sigma_vox > 0` if specified (None = use scale-informed init_L from seeding)
+- `amp_max > 0` if specified (default: 1.0 when None)
 - `n_iters >= 0`, `lr > 0`
 - `loss_type in ["mse", "poisson", "l1"]`
 - `asymmetric_penalty >= 1.0`
@@ -210,7 +212,7 @@ def prepare_fit_config(
     V: np.ndarray,
     seeds: Optional[np.ndarray | int | float] = None,  # Can be array, int count, OR float compression ratio
     norm_percentile: float = 0.0,
-    init_sigma_vox: float = 1.5,
+    init_sigma_vox: Optional[float] = None,  # None = use scale-informed init_L from seeding
     n_iters: int = 1000,
     lr: float = 0.01,
     loss_type: str = "l1",
@@ -273,9 +275,10 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     Steps:
     1. Normalize V to [0, 1] using percentile-based or full-range normalization
     2. Generate seed centers if not provided (auto-candidate generation)
-    3. Set L1 regularization defaults proportional to learning rate
-    4. Set convergence threshold default (1% of normalized range)
-    5. Create and return PreprocessedData
+    3. Rescale pre-initialized amplitudes to normalized [0, 1] scale
+    4. Set L1 regularization defaults proportional to learning rate
+    5. Set convergence threshold default (1% of normalized range)
+    6. Create and return PreprocessedData
     """
 ```
 
@@ -298,6 +301,24 @@ else:
     V_normalized = torch.tensor((V - V_min) / V_range, dtype=torch.float32, device=device)
     V_normalized = torch.clamp(V_normalized, 0.0, 1.0)
 ```
+
+**Amplitude Rescaling** (after normalization):
+
+Seeding methods extract amplitudes from the original (unnormalized) image, but optimization
+works on the normalized [0, 1] image. Pre-initialized amplitudes must be rescaled to match:
+
+```python
+# Rescale init_amps to normalized scale
+if config.init_amps is not None:
+    config.init_amps = np.clip(
+        (config.init_amps - image_min) / intensity_range, 0.0, 1.0
+    )
+```
+
+**Rationale**: Without this rescaling, `amp_max` constraints would be on the wrong scale.
+For example, if the original image has values in [0, 100] and seeding extracts amplitudes
+of ~50, but `amp_max=1.0` (appropriate for normalized [0, 1] scale), the amplitudes would
+be immediately clamped to 1.0, causing poor reconstruction.
 
 **Seed Generation**:
 - **If seeds is ndarray**: Validate shape and use directly
@@ -370,12 +391,23 @@ def initialize_optimization(
 
 **Model Initialization**:
 ```python
-# Initialize parameters
-L0 = np.zeros((N, d, d), dtype=np.float32)
-for i in range(d):
-    L0[:, i, i] = config.init_sigma_vox
+# Initialize Cholesky factors (L0)
+# Priority: 1. Pre-initialized init_L from seeding, 2. init_sigma_vox, 3. Auto-compute
+if config.init_L is not None:
+    # Use pre-computed Cholesky factors from seeding (scale-informed)
+    L0 = config.init_L.astype(np.float32)
+else:
+    init_sigma = config.init_sigma_vox
+    if init_sigma is None:
+        # Auto-compute sigma based on image size: ~5% of smallest dimension, min 1.5
+        min_dim = float(min(config.V.shape))
+        init_sigma = max(1.5, min_dim * 0.05)
 
-# Extract amplitudes from image at seed locations  
+    L0 = np.zeros((N, d, d), dtype=np.float32)
+    for i in range(d):
+        L0[:, i, i] = init_sigma
+
+# Extract amplitudes from image at seed locations
 idx = np.clip(
     np.round(preprocessed_data.seed_centers).astype(int),
     0,
@@ -1219,6 +1251,20 @@ Key extension points in `optimization.py`:
 - [GLOSSARY.md](../GLOSSARY.md) - Terminology and naming conventions
 
 ## Changelog
+
+- **v2.2.0** (January 2026): Scale-informed initialization preservation
+  - Changed `init_sigma_vox` default from `1.5` to `None`
+  - When `init_sigma_vox=None`, uses scale-informed `init_L` from seeding methods
+  - If no `init_L` available, auto-computes sigma as ~5% of smallest dimension (min 1.5)
+  - Grid fallback seeds now extend `init_L` arrays instead of discarding them
+  - Grid fallback uses σ = spacing/2 for added seeds (same as `seed_from_grid`)
+
+- **v2.1.0** (January 2026): Amplitude rescaling and amp_max constraint
+  - Added `amp_max` parameter to prevent amplitude explosion during optimization
+  - Default `amp_max=1.0` when None (matches normalized [0, 1] image scale)
+  - Added amplitude rescaling in preprocessing to normalize seeding amplitudes
+  - Seeding methods extract amplitudes from original image (scaled to 90%)
+  - Preprocessing rescales init_amps to [0, 1] to match normalized target
 
 - **v2.0.0** (January 2025): Standard PyTorch Adam optimizer
   - Replaced per-splat optimizer with standard `torch.optim.Adam` (50x+ faster)

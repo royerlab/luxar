@@ -288,6 +288,8 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         Minimum diagonal values for Cholesky factor.
     sigma_max_diag : Sequence[float], optional
         Maximum diagonal values for Cholesky factor.
+    amp_max : float, optional
+        Maximum amplitude value. Prevents amplitude explosion during optimization.
     truncate : float, default=3.0
         Truncation radius in standard deviations.
     intensity_floor : float, default=1e-5
@@ -318,6 +320,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         amps0: np.ndarray,
         sigma_min_diag: Sequence[float],
         sigma_max_diag: Optional[Sequence[float]] = None,
+        amp_max: Optional[float] = None,
         truncate: float = 3.0,
         intensity_floor: float = 1e-5,
         tile_size: Optional[int] = None,
@@ -353,6 +356,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             amps0=amps0,
             sigma_min_diag=sigma_min_diag,
             sigma_max_diag=sigma_max_diag,
+            amp_max=amp_max,
             truncate=truncate,
             device=device,
         )
@@ -503,6 +507,10 @@ class GaussianSplatModelCUDA(torch.nn.Module):
     @property
     def sigma_max_diag(self):
         return self._base.sigma_max_diag
+
+    @property
+    def amp_max(self):
+        return self._base.amp_max
 
     def __repr__(self):
         return (

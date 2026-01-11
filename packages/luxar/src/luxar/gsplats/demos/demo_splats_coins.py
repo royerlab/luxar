@@ -28,7 +28,7 @@ if NO_NAPARI:
     aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
-N_ITERS = 2000  # Same as mitosis/astronaut
+N_ITERS = 4000  # Same as mitosis/astronaut
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 45  # number of compression steps (<= #splats)
 # ==========================
@@ -79,9 +79,10 @@ with asection("Coins Gaussian Splatting Demo"):
 
     with asection(f"Fitting Gaussian splats ({N_ITERS} iterations)"):
         # Fit oriented (full-covariance) Gaussians with auto-candidate generation
+        # Note: For aggressive compression (seeds < 0.05), use amp_max=2.0 to prevent divergence
         result = fit_gaussian_splats(
             V,
-            seeds=0.05,
+            seeds=0.3,
             n_iters=N_ITERS,
             device=DEVICE,
             verbose=True,

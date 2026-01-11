@@ -80,7 +80,7 @@ class GaussianSplatFitter:
         V: np.ndarray,
         seeds: Optional[np.ndarray | int | float] = None,
         norm_percentile: float = 0.0,
-        init_sigma_vox: float = 0.5,
+        init_sigma_vox: Optional[float] = None,
         n_iters: int = 1000,
         lr: float = 0.01,
         loss_type: str = "l1",
@@ -90,6 +90,7 @@ class GaussianSplatFitter:
         l1_sharpness: Optional[float] = None,
         sigma_min_diag: Optional[Sequence[float]] = None,
         sigma_max_diag: Optional[Sequence[float]] = None,
+        amp_max: Optional[float] = None,  # Max amplitude (default auto: 1.0)
         truncate: float = 3.0,
         seed_method: str = "auto",
         verbose: bool = True,
@@ -154,6 +155,7 @@ class GaussianSplatFitter:
             l1_sharpness,
             sigma_min_diag,
             sigma_max_diag,
+            amp_max,
             truncate,
             verbose,
             max_abs_error,
@@ -203,7 +205,7 @@ def fit_gaussian_splats(
     V: np.ndarray,
     seeds: Optional[np.ndarray | int | float] = None,
     norm_percentile: float = 0.0,
-    init_sigma_vox: float = 0.5,
+    init_sigma_vox: Optional[float] = None,
     n_iters: int = 1000,
     lr: float = 0.05,
     loss_type: str = "l1",
@@ -213,6 +215,7 @@ def fit_gaussian_splats(
     l1_sharpness: Optional[float] = None,
     sigma_min_diag: Optional[Sequence[float]] = None,
     sigma_max_diag: Optional[Sequence[float]] = None,
+    amp_max: Optional[float] = None,
     truncate: float = 3.0,
     device: Optional[str] = None,
     seed_method: str = "auto",
@@ -273,8 +276,11 @@ def fit_gaussian_splats(
         - 0.0: Full min-max range (maximum dynamic range, sensitive to outliers)
         - >0: Percentile clipping (e.g., 1.0 uses 1%-99% range, robust to outliers)
         Higher values provide more outlier robustness but may clip important data.
-    init_sigma_vox : float, default=0.5
+    init_sigma_vox : float or None, default=None
         Initial isotropic standard deviation for Gaussian splats (in voxels).
+        If None, uses scale-informed initialization from seeding methods.
+        If no scale info available, auto-computes based on image size (~5% of
+        smallest dimension, min 1.5).
     n_iters : int, default=1000
         Maximum number of optimization iterations. Default is generous to allow
         max_abs_error convergence criterion to work effectively.
@@ -307,6 +313,13 @@ def fit_gaussian_splats(
         Defaults to [0.5]*d to prevent degenerate splats.
     sigma_max_diag : Sequence[float], optional
         Maximum diagonal values for Cholesky factor L along each axis.
+    amp_max : float or None, default=None (auto: 1.0)
+        Maximum amplitude constraint for splats. Prevents amplitude explosion
+        during optimization, especially with aggressive compression (few splats).
+        Since the image is normalized to [0, 1], a value of 1.0 matches the max
+        possible intensity. If None, automatically set to 1.0. Set to higher
+        values (e.g., 2.0) for more flexibility, or lower (e.g., 0.5) for tighter
+        control.
     truncate : float, default=3.0
         Truncation radius in standard deviations for rendering efficiency.
     device : str, optional
@@ -430,6 +443,7 @@ def fit_gaussian_splats(
             dynamic_ops_verbose=dynamic_ops_verbose,
             sigma_min_diag=sigma_min_diag,
             sigma_max_diag=sigma_max_diag,
+            amp_max=amp_max,
             truncate=truncate,
             seed_method=seed_method,
             verbose=verbose,

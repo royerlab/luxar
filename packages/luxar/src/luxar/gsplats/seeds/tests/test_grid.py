@@ -175,15 +175,21 @@ class TestJitter:
 
 
 class TestSigma:
-    """Test sigma parameter."""
+    """Test sigma parameter.
 
-    def test_custom_sigma(self, simple_2d_image) -> None:
-        """Test custom sigma."""
+    Grid seeding uses σ = spacing/2 by default so that splats cover the image
+    with ~60% overlap at midpoints between grid points. This ensures good
+    initial coverage while letting the optimizer refine shapes as needed.
+    """
+
+    def test_uses_specified_sigma(self, simple_2d_image) -> None:
+        """Test that custom sigma is used when specified."""
         result = seed_from_grid(simple_2d_image, sigma=3.0)
         validate_gsplatdata(result, 2)
 
         if len(result.centers) > 0:
-            # For isotropic 2D, diagonal elements should be sigma
+            # Custom sigma should be used
+            # For isotropic 2D, diagonal elements should be the sigma value
             # Packed format: [L00, L10, L11] -> L00 and L11 are diagonal
             assert np.allclose(result.cholesky_factors[:, 0], 3.0)
 
@@ -192,12 +198,13 @@ class TestSigma:
         with pytest.raises(ValueError, match="positive"):
             seed_from_grid(simple_2d_image, sigma=-1.0)
 
-    def test_auto_sigma(self, simple_2d_image) -> None:
-        """Test auto sigma is based on spacing."""
+    def test_auto_sigma_uses_half_spacing(self, simple_2d_image) -> None:
+        """Test that auto sigma uses spacing/2 for coverage."""
         spacing = 10.0
         result = seed_from_grid(simple_2d_image, spacing=spacing, sigma=None)
 
         if len(result.centers) > 0:
+            # Auto sigma = spacing / 2 for coverage
             expected_sigma = spacing / 2.0
             assert np.allclose(result.cholesky_factors[:, 0], expected_sigma)
 
@@ -301,7 +308,8 @@ class TestOutputFormat:
 
     def test_isotropic_cholesky(self, simple_2d_image) -> None:
         """Test that Cholesky factors are isotropic (diagonal)."""
-        result = seed_from_grid(simple_2d_image, sigma=5.0)
+        spacing = 10.0
+        result = seed_from_grid(simple_2d_image, spacing=spacing)
         if len(result.centers) > 0:
             # 2D packed format: [L00, L10, L11]
             # Off-diagonal L10 should be 0
@@ -310,6 +318,9 @@ class TestOutputFormat:
             assert np.allclose(
                 result.cholesky_factors[:, 0], result.cholesky_factors[:, 2]
             )
+            # Sigma should be spacing / 2 for coverage
+            expected_sigma = spacing / 2.0
+            assert np.allclose(result.cholesky_factors[:, 0], expected_sigma)
 
 
 class TestReproducibility:

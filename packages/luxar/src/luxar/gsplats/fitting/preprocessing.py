@@ -159,6 +159,20 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         V, config.norm_percentile, config.verbose
     )
 
+    # Rescale pre-initialized amplitudes to match normalized image scale
+    # The seeding methods extract amplitudes from the original image, but
+    # optimization works on the normalized [0, 1] image. Without this rescaling,
+    # amp_max constraints would be on the wrong scale.
+    if config.init_amps is not None:
+        config.init_amps = np.clip(
+            (config.init_amps - image_min) / intensity_range, 0.0, 1.0
+        )
+        if config.verbose:
+            aprint(
+                f"Rescaled init_amps to normalized range: "
+                f"[{config.init_amps.min():.4f}, {config.init_amps.max():.4f}]"
+            )
+
     # Set auto-convergence threshold
     max_abs_error = _set_convergence_threshold(config.max_abs_error, config.verbose)
 
@@ -328,33 +342,28 @@ def _generate_seeds(
                 )
 
         elif len(seed_centers) < target_count:
-            # Not enough seeds: regenerate with low threshold to reach target_count.
-            #
-            # IMPORTANT: Scale-informed initialization loss
-            # --------------------------------------------
-            # When regenerating seeds, the original GSplatData's scale-informed
-            # Cholesky factors (init_L), amplitudes (init_amps), and sharpness
-            # (init_sharpness) are discarded. The new seeds will use default
-            # isotropic initialization instead of scale-aware shapes.
-            #
-            # This tradeoff prioritizes reaching the requested seed count over
-            # preserving scale information. To avoid this, either:
-            # 1. Don't specify target_count (use automatic count)
-            # 2. Use seeding parameters that generate enough seeds initially
-            if config is not None:
-                had_scale_info = config.init_L is not None
-                config.init_L = None
-                config.init_amps = None
-                config.init_sharpness = None
-                if verbose and had_scale_info:
-                    aprint(
-                        "Note: Discarding scale-informed initialization to reach "
-                        f"target_count={target_count}. Seeds will use default "
-                        "isotropic initialization."
-                    )
-            seed_centers = _ensure_minimum_seeds(
+            # Not enough seeds: add grid-based fallback seeds to reach target_count.
+            # Preserve scale-informed initialization for original seeds and
+            # generate appropriate init_L for the new grid fallback seeds.
+            n_original = len(seed_centers)
+            seed_centers, grid_spacing = _ensure_minimum_seeds(
                 V, target_count, seed_centers, seed_method, verbose, **seed_kwargs
             )
+            n_added = len(seed_centers) - n_original
+
+            # Extend init_L/init_amps/init_sharpness for the new grid seeds
+            if config is not None and n_added > 0:
+                ndim = V.ndim
+                _extend_init_arrays_for_grid_seeds(
+                    config,
+                    n_added,
+                    ndim,
+                    grid_spacing,
+                    V,
+                    seed_centers,
+                    n_original,
+                    verbose,
+                )
 
     return seed_centers
 
@@ -482,7 +491,7 @@ def _ensure_minimum_seeds(
     seed_method: str,
     verbose: bool,
     **seed_kwargs,
-) -> np.ndarray:
+) -> tuple[np.ndarray, float]:
     """
     Ensure minimum seed count by adding grid-based seeds.
 
@@ -508,11 +517,12 @@ def _ensure_minimum_seeds(
 
     Returns
     -------
-    np.ndarray
-        Seed centers (exactly target_count)
+    tuple[np.ndarray, float]
+        Seed centers (exactly target_count) and the grid spacing used for fallback seeds
     """
     # Start with initial seeds - NEVER discard these!
     current_seeds = initial_seeds
+    grid_spacing = 0.0  # Will be updated if grid seeds are added
 
     if verbose:
         aprint(
@@ -527,7 +537,7 @@ def _ensure_minimum_seeds(
                 f"Still need {target_count - len(current_seeds)} seeds, "
                 "adding grid-based fallback"
             )
-        current_seeds = _add_grid_fallback_seeds(
+        current_seeds, grid_spacing = _add_grid_fallback_seeds(
             V, target_count, current_seeds, verbose
         )
 
@@ -548,7 +558,7 @@ def _ensure_minimum_seeds(
                 f"Subsampled to {target_count} seeds (spatial diversity + intensity)"
             )
 
-    return current_seeds
+    return current_seeds, grid_spacing
 
 
 def _add_grid_fallback_seeds(
@@ -556,7 +566,7 @@ def _add_grid_fallback_seeds(
     target_count: int,
     existing_seeds: np.ndarray,
     verbose: bool,
-) -> np.ndarray:
+) -> tuple[np.ndarray, float]:
     """
     Add grid-based seeds to reach target count.
 
@@ -575,12 +585,12 @@ def _add_grid_fallback_seeds(
 
     Returns
     -------
-    np.ndarray
-        Combined seeds (existing + grid-based)
+    tuple[np.ndarray, float]
+        Combined seeds (existing + grid-based) and the grid spacing used
     """
     needed = target_count - len(existing_seeds)
     if needed <= 0:
-        return existing_seeds
+        return existing_seeds, 0.0  # No grid added, spacing irrelevant
 
     ndim = V.ndim
     shape = np.array(V.shape)
@@ -615,6 +625,9 @@ def _add_grid_fallback_seeds(
         min_distance = max(1.0, spacing * 0.3)  # 30% of spacing, min 1 voxel
         grid_coords = grid_coords[distances > min_distance]
 
+    # Track the final spacing used (for init_L generation)
+    final_spacing = float(spacing)
+
     # If we still don't have enough grid points after filtering,
     # generate a denser grid without filtering
     if len(grid_coords) < needed:
@@ -625,6 +638,7 @@ def _add_grid_fallback_seeds(
             )
         # Dense grid without filtering
         spacing_dense = max(1, int((volume / (needed * 2)) ** (1.0 / ndim)))
+        final_spacing = float(spacing_dense)  # Update to denser spacing
         ranges_dense = [np.arange(0, s, spacing_dense) for s in shape]
         grid_coords_dense = []
         for coords in itertools.product(*ranges_dense):
@@ -645,11 +659,11 @@ def _add_grid_fallback_seeds(
             aprint(f"Added {len(grid_coords)} grid-based fallback seeds")
 
         # Combine with existing
-        return np.vstack([existing_seeds, grid_coords])
+        return np.vstack([existing_seeds, grid_coords]), final_spacing
     else:
         if verbose:
             aprint("Warning: Could not add grid seeds, using existing only")
-        return existing_seeds
+        return existing_seeds, 0.0
 
 
 def _normalize_data(
@@ -739,3 +753,97 @@ def _extract_gsplatdata_init(config: FitConfig, gsplat_data: "GSplatData") -> No
         config.init_sharpness = gsplat_data.sharpnesses
     else:
         config.init_sharpness = None
+
+
+def _extend_init_arrays_for_grid_seeds(
+    config: "FitConfig",
+    n_added: int,
+    ndim: int,
+    grid_spacing: float,
+    V: np.ndarray,
+    seed_centers: np.ndarray,
+    n_original: int,
+    verbose: bool,
+) -> None:
+    """
+    Extend init_L/init_amps/init_sharpness arrays for grid fallback seeds.
+
+    When we add grid-based fallback seeds, we need to generate appropriate
+    initialization arrays for them while preserving the original seeds' values.
+
+    Parameters
+    ----------
+    config : FitConfig
+        Configuration with init arrays to extend.
+    n_added : int
+        Number of grid seeds added.
+    ndim : int
+        Number of dimensions.
+    grid_spacing : float
+        Grid spacing used for fallback seeds.
+    V : np.ndarray
+        Input image/volume (for sampling amplitudes).
+    seed_centers : np.ndarray
+        All seed centers (original + added).
+    n_original : int
+        Number of original seeds (before adding grid fallback).
+    verbose : bool
+        Whether to print progress.
+    """
+    from scipy import ndimage as ndi
+
+    # Grid sigma = spacing/2 for coverage (same as seed_from_grid)
+    grid_sigma = max(1.0, grid_spacing / 2.0) if grid_spacing > 0 else 1.0
+
+    if verbose:
+        aprint(
+            f"Extending init arrays for {n_added} grid fallback seeds "
+            f"(σ={grid_sigma:.1f} from spacing={grid_spacing:.1f})"
+        )
+
+    # Extend init_L
+    if config.init_L is not None:
+        # Create isotropic L for grid seeds with σ = grid_sigma
+        grid_L = np.zeros((n_added, ndim, ndim), dtype=np.float32)
+        for i in range(ndim):
+            grid_L[:, i, i] = grid_sigma
+        config.init_L = np.concatenate([config.init_L, grid_L], axis=0)
+    else:
+        # No original init_L, create for all seeds
+        # Original seeds get σ=1.0 (no scale info), grid seeds get σ=grid_sigma
+        all_L = np.zeros((n_original + n_added, ndim, ndim), dtype=np.float32)
+        for i in range(ndim):
+            all_L[:n_original, i, i] = 1.0  # Original seeds: σ=1.0
+            all_L[n_original:, i, i] = grid_sigma  # Grid seeds: σ=grid_sigma
+        config.init_L = all_L
+
+    # Extend init_amps - sample from image at grid seed locations
+    grid_centers = seed_centers[n_original:]
+    coords_for_interp = grid_centers.T
+    grid_amps = (
+        ndi.map_coordinates(V, coords_for_interp, order=1, mode="nearest") * 0.9
+    ).astype(np.float32)
+
+    if config.init_amps is not None:
+        config.init_amps = np.concatenate([config.init_amps, grid_amps], axis=0)
+    else:
+        # No original init_amps, sample for all
+        original_centers = seed_centers[:n_original]
+        original_coords = original_centers.T
+        original_amps = (
+            ndi.map_coordinates(V, original_coords, order=1, mode="nearest") * 0.9
+        ).astype(np.float32)
+        config.init_amps = np.concatenate([original_amps, grid_amps], axis=0)
+
+    # Extend init_sharpness - grid seeds use standard Gaussian sharpness (2.0)
+    grid_sharpness = np.full(n_added, 2.0, dtype=np.float32)
+    if config.init_sharpness is not None:
+        config.init_sharpness = np.concatenate(
+            [config.init_sharpness, grid_sharpness], axis=0
+        )
+    else:
+        # No original init_sharpness, use 2.0 for all
+        original_sharpness = np.full(n_original, 2.0, dtype=np.float32)
+        config.init_sharpness = np.concatenate(
+            [original_sharpness, grid_sharpness], axis=0
+        )
