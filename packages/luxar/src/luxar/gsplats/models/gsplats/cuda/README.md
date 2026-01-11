@@ -201,11 +201,11 @@ Key implementations studied:
 - [x] Backward pass kernels
 - [x] nD extension (4D-8D)
 - [x] Standard Gaussian (s=2) fast path optimization
-- [ ] Global splat handling (large splats currently skipped)
+- [x] Global splat handling (large splats processed via dedicated kernel)
 - [ ] Additional performance optimizations (see OPTIMIZATION_ROADMAP.md)
 
 ## Known Limitations
 
-1. **Global splats**: Splats covering >10% of tiles are silently skipped. See OPTIMIZATION_ROADMAP.md section 3.6.
-2. **Dimension limit**: Maximum 8 dimensions supported (template instantiation limit).
-3. **Precision**: Uses float32 throughout; float16 not yet supported.
+1. **Dimension limit**: Maximum 8 dimensions supported (template instantiation limit).
+2. **Precision**: Uses float32 throughout; float16 not yet supported.
+3. **Global splat performance**: Very large splats (>10% of tiles) use a simpler kernel that processes all pixels, which is less efficient than tile-based rasterization.
