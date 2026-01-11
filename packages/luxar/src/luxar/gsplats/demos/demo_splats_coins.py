@@ -85,9 +85,6 @@ with asection("Coins Gaussian Splatting Demo"):
             n_iters=N_ITERS,
             device=DEVICE,
             verbose=True,
-            # Dynamic operations
-            enable_dynamic_ops=True,
-            dynamic_config=dynamic_config,
             max_abs_error=0.1,  # Same as mitosis/astronaut
             napari_movie=(not NO_NAPARI),
             movie_every=1,  # Same as mitosis/astronaut

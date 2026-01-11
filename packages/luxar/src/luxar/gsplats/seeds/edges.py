@@ -95,7 +95,9 @@ def seed_from_edges(
 
     # Validate parameters
     if edge_threshold_rel < 0 or edge_threshold_rel > 1:
-        raise ValueError(f"edge_threshold_rel must be in [0, 1], got {edge_threshold_rel}")
+        raise ValueError(
+            f"edge_threshold_rel must be in [0, 1], got {edge_threshold_rel}"
+        )
     if min_sigma <= 0:
         raise ValueError(f"min_sigma must be positive, got {min_sigma}")
     if max_sigma <= 0:
@@ -193,7 +195,7 @@ def _compute_nd_sobel_magnitude(V: np.ndarray) -> np.ndarray:
 
     for axis in range(ndim):
         grad = ndi.sobel(V, axis=axis, mode="nearest")
-        grad_sq_sum += grad ** 2
+        grad_sq_sum += grad**2
 
     return np.sqrt(grad_sq_sum)
 

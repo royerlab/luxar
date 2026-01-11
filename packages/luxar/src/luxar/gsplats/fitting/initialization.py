@@ -136,8 +136,8 @@ def initialize_optimization(
     if use_cuda:
         try:
             from luxar.gsplats.models.gsplats.cuda import (
-                GaussianSplatModelCUDA,
                 CUDA_BACKEND_AVAILABLE,
+                GaussianSplatModelCUDA,
             )
 
             if config.verbose:

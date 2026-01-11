@@ -365,7 +365,9 @@ def _relocate_splat(
     new_center = torch.tensor(new_center_coords, dtype=torch.float32, device=device)
 
     # Convert center to normalized [0,1] coordinates then to raw (logit) space
-    u = torch.clamp(new_center / torch.clamp(shape_arr - 1.0, min=1.0), 1e-6, 1.0 - 1e-6)
+    u = torch.clamp(
+        new_center / torch.clamp(shape_arr - 1.0, min=1.0), 1e-6, 1.0 - 1e-6
+    )
     raw_mu_new = torch.log(u) - torch.log(1.0 - u)
 
     # New amplitude from residual at new location
@@ -378,7 +380,9 @@ def _relocate_splat(
     # New isotropic covariance: L_diag = init_sigma_vox
     # raw_L_diag = inverse_softplus(init_sigma_vox - sigma_min_diag)
     # Since sigma_min_diag is applied in the model, we need to account for it
-    sigma_min = model.sigma_min_diag[0].item() if model.sigma_min_diag is not None else 0.0
+    sigma_min = (
+        model.sigma_min_diag[0].item() if model.sigma_min_diag is not None else 0.0
+    )
     effective_diag = max(cfg.init_sigma_vox - sigma_min, 1e-6)
     raw_L_diag_new = torch.tensor(
         stable_inverse_softplus(effective_diag), device=device, dtype=torch.float32

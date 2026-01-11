@@ -175,7 +175,6 @@ with asection("3D Gaussian Splatting Demo"):
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
-            # convergence movie:
             napari_movie=True,
         )
 
