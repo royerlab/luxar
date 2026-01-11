@@ -1,426 +1,140 @@
 # operations.py
-"""Main dynamic operations for adaptive Gaussian splatting."""
+"""Fixed-pool splat relocation for adaptive Gaussian splatting."""
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List, Set, Tuple
 
 import torch
 from arbol import aprint, asection
 
 from luxar.gsplats.fitting.dynamic_ops.config import DynamicOpsConfig
 from luxar.gsplats.fitting.dynamic_ops.peak_finding import _find_residual_peaks
-from luxar.gsplats.optim import ModelOptimizerCoordinator
+from luxar.gsplats.models.utils.inverse_softplus import stable_inverse_softplus
 
 
 def apply_dynamic_operations(
     model,
-    optimizer,
-    scheduler,
     V_target: torch.Tensor,
     V_pred: torch.Tensor,
     cfg: DynamicOpsConfig,
-    current_lr: float,
     max_abs_error_threshold: float,
-    device: torch.device,
     verbose: bool = False,
-) -> Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LRScheduler, bool]:
+) -> bool:
     """
-    Apply convergence-driven dynamic operations for adaptive Gaussian splatting.
+    Apply fixed-pool splat relocation for adaptive Gaussian splatting.
 
-    Implements the three-step algorithm with convergence-based detection:
-    1. Residual Peak Analysis: Find k strongest residual peaks with convergence guard
-    2. Convergence-Based Operations: Seed/split only where coverage is insufficient
-    3. Principled Pruning Analysis: Remove ineffective splats based on quality impact
+    Instead of adding/removing splats, this relocates weak splats to high-residual
+    regions. This preserves the total splat count and works with standard PyTorch
+    Adam optimizer (no per-splat optimizer needed).
 
-    Key Features:
-    - Convergence-based detection: only act where residual > convergence threshold
-    - Adaptive thresholds: amplitude validation scales with local residual magnitude
-    - Influence-based splitting: identify dominant splats for refinement
-    - Adaptive covariance: estimate splat size from local residual structure
+    Algorithm:
+    1. Find residual peaks (high-error locations needing coverage)
+    2. Identify weak splats (low importance = amplitude × volume)
+    3. Match weak splats to peaks (avoiding already-covered locations)
+    4. Relocate matched splats to their assigned peaks
 
     Args:
         model: GaussianSplatModel with current splat parameters
-        optimizer: PerSplatAdam optimizer with per-splat learning rates
-        scheduler: Per-splat scheduler for learning rate adaptation
         V_target: Target tensor to reconstruct
         V_pred: Current prediction tensor from model
-        cfg: Dynamic operations configuration with all algorithm parameters
-        current_lr: Current global learning rate for new splats
-        max_abs_error_threshold: Convergence threshold (inf if no convergence criterion)
-        device: PyTorch device for tensor operations
+        cfg: Dynamic operations configuration
+        max_abs_error_threshold: Convergence threshold
         verbose: Whether to print detailed progress information
 
     Returns:
-        tuple: (optimizer, scheduler, operations_occurred)
-               operations_occurred=True if any splats were added/removed
+        bool: True if any splats were relocated
     """
-    # Create coordinator for seamless optimizer state management
-    coordinator = ModelOptimizerCoordinator(model, optimizer, scheduler)
+    device = V_target.device
 
     with torch.no_grad():
         # Compute residual image
         residual = V_target - V_pred
 
-        # Track if we modified model topology
-        topology_changed = False
-        operations_performed = []
-
-        # === STEP 1: Residual Peak Analysis ===
-        # Find residual peaks (tiled for spatial fairness or global)
+        # === STEP 1: Find Residual Peaks ===
         peak_locations = _find_residual_peaks(
             residual,
             cfg.k_max_residuals,
             cfg.nms_radius_vox,
             enable_tiled=cfg.enable_tiled_seeding,
-            num_tiles_per_dim=cfg.num_tiles_per_dim,  # type: ignore[arg-type]
+            num_tiles_per_dim=cfg.num_tiles_per_dim,
         )
 
-        if verbose and len(peak_locations) > 0:
+        if len(peak_locations) == 0:
+            if verbose:
+                aprint("No residual peaks found - skipping relocation")
+            return False
+
+        if verbose:
             mode = "tiled" if cfg.enable_tiled_seeding else "global"
             aprint(f"Found {len(peak_locations)} residual peaks (mode: {mode})")
 
         # Convergence guard: skip if strongest residual below threshold
-        if len(peak_locations) > 0:
-            strongest_peak_coords = peak_locations[0]  # Sorted by strength
-            strongest_peak_residual = torch.abs(residual[strongest_peak_coords]).item()
+        strongest_peak_coords = peak_locations[0]  # Sorted by strength
+        strongest_peak_residual = torch.abs(residual[strongest_peak_coords]).item()
 
-            if strongest_peak_residual < max_abs_error_threshold:
-                if verbose:
-                    aprint(
-                        f"Convergence guard: strongest residual {strongest_peak_residual:.5f} < threshold {max_abs_error_threshold:.5f}"
-                    )
-                    aprint("  → Skipping all dynamic operations")
-                return optimizer, scheduler, False
-
-        # === STEP 2: Adaptive Splat Operations ===
-        for peak_coords in peak_locations:
-            peak_location = torch.tensor(
-                peak_coords, dtype=torch.float32, device=device
-            )
-            local_residual = torch.abs(residual[peak_coords]).item()
-
-            # CONVERGENCE-BASED DETECTION: Is coverage sufficient?
-            coverage_sufficient = _is_coverage_sufficient(
-                local_residual, max_abs_error_threshold
-            )
-
+        if strongest_peak_residual < max_abs_error_threshold:
             if verbose:
                 aprint(
-                    f"    Peak {peak_coords}: residual {local_residual:.5f} vs threshold {max_abs_error_threshold:.5f} → coverage {'sufficient' if coverage_sufficient else 'insufficient'}"
+                    f"Convergence guard: strongest residual {strongest_peak_residual:.5f} "
+                    f"< threshold {max_abs_error_threshold:.5f}"
                 )
+                aprint("  → Skipping all dynamic operations")
+            return False
 
-            if not coverage_sufficient:  # Coverage is insufficient - need action
-                # Check if existing splat has significant influence at this location
-                influential_splat_idx, influence_value = (
-                    _find_splat_with_significant_influence_at_location(
-                        model,
-                        peak_location,
-                        min_influence_threshold=cfg.min_contribution_threshold,
-                    )
-                )
+        # === STEP 2: Identify Weak Splats ===
+        importance = _calculate_splat_importance(model)
+        weak_splat_indices = _select_weak_splats(importance, cfg.relocation_percentile)
 
-                if verbose:
-                    if influential_splat_idx != -1:
-                        aprint(
-                            f"      → Existing influence: splat {influential_splat_idx} has {influence_value:.6f}"
-                        )
-                    else:
-                        aprint(
-                            f"      → No existing influence above {cfg.min_contribution_threshold}"
-                        )
+        if len(weak_splat_indices) == 0:
+            if verbose:
+                aprint("No weak splats found - skipping relocation")
+            return False
 
-                if influential_splat_idx != -1:
-                    # Existing splat covers this area - boost its LR instead of adding new splat
-                    # This prevents splat proliferation in already-covered regions
-                    if influence_value >= cfg.boost_influence_threshold:
-                        boosted_lr = _boost_splat_learning_rate(
-                            optimizer, influential_splat_idx, current_lr, cfg
-                        )
-                        if verbose:
-                            aprint(
-                                f"      → Boosted LR for splat {influential_splat_idx}: {boosted_lr:.6f} (factor: {cfg.lr_boost_factor})"
-                            )
-                            aprint(
-                                "      → Skipping seeding (existing splat will handle coverage)"
-                            )
-                    elif verbose:
-                        aprint(
-                            f"      → Existing splat influence {influence_value:.6f} below boost threshold {cfg.boost_influence_threshold}"
-                        )
-                        aprint("      → Skipping seeding (existing splat present)")
-                else:
-                    # No existing coverage - seed new splat
-                    # Use adaptive threshold based on local residual magnitude
-                    min_amp_threshold = (
-                        local_residual * cfg.relative_contribution_factor
-                    )
-                    if verbose:
-                        aprint(
-                            f"      → Attempting seeding (min amplitude threshold = {min_amp_threshold:.6f})..."
-                        )
-
-                    success = _seed_new_splat(
-                        coordinator,
-                        model.shape,
-                        peak_location,
-                        residual,
-                        cfg,
-                        current_lr,
-                        min_amplitude_threshold=min_amp_threshold,
-                    )
-                    if success:
-                        topology_changed = True
-                        operations_performed.append(f"Seeded splat at {peak_coords}")
-                        if verbose:
-                            aprint(
-                                f"      ✓ Successfully seeded splat at {peak_coords}"
-                            )
-                    else:
-                        if verbose:
-                            aprint(
-                                f"      ✗ Failed to seed splat at {peak_coords} - amplitude below threshold"
-                            )
-            elif verbose:
-                aprint("    → Coverage sufficient, no action needed")
-
-        # === STEP 3: Principled Splat Pruning Analysis ===
-        if model.n_splats() > cfg.min_splats_to_keep:
-            removable_splats = _principled_pruning_analysis(
-                model, V_target, V_pred, cfg, max_abs_error_threshold, verbose
+        if verbose:
+            aprint(
+                f"Identified {len(weak_splat_indices)} weak splats "
+                f"(bottom {cfg.relocation_percentile}% by importance)"
             )
 
-            if len(removable_splats) > 0:
-                # Ensure we don't remove too many splats
-                n_to_remove = min(
-                    len(removable_splats), model.n_splats() - cfg.min_splats_to_keep
-                )
-                if n_to_remove > 0:
-                    # Create keep mask (True for splats to keep)
-                    keep_mask = torch.ones(
-                        model.n_splats(), dtype=torch.bool, device=device
-                    )
-                    for splat_idx in removable_splats[:n_to_remove]:
-                        keep_mask[splat_idx] = False
-
-                    coordinator.prune_splats(keep_mask)
-                    topology_changed = True
-                    operations_performed.append(
-                        f"Pruned {n_to_remove} ineffective splats (importance-based)"
-                    )
-
-        # Report operations performed
-        if verbose and operations_performed:
-            if len(operations_performed) == 1:
-                aprint(f"Dynamic ops: {operations_performed[0]}")
-            else:
-                with asection("Dynamic Operations"):
-                    for op in operations_performed:
-                        aprint(f"• {op}")
-        elif verbose:
-            aprint("Dynamic ops: No operations performed")
-
-    return optimizer, scheduler, topology_changed
-
-
-def _boost_splat_learning_rate(
-    optimizer, splat_idx: int, current_lr: float, cfg: DynamicOpsConfig
-) -> float:
-    """
-    Boost learning rate for a splat covering a problematic region.
-
-    Args:
-        optimizer: PerSplatAdam optimizer
-        splat_idx: Index of splat to boost
-        current_lr: Current base learning rate
-        cfg: Dynamic operations configuration
-
-    Returns:
-        float: New boosted learning rate (capped at base rate)
-    """
-    # Get current learning rate for this splat
-    current_splat_lr = optimizer.get_effective_learning_rates()[splat_idx]
-
-    # Calculate boosted learning rate with safety cap
-    boosted_lr = min(current_splat_lr * cfg.lr_boost_factor, current_lr)
-
-    # Apply the boost
-    optimizer.set_learning_rate(splat_idx, boosted_lr)
-
-    return boosted_lr
-
-
-def _is_coverage_sufficient(
-    local_residual: float, max_abs_error_threshold: float
-) -> bool:
-    """
-    Determine if coverage at a location is sufficient based on convergence criteria.
-
-    Args:
-        local_residual: Absolute residual value at the location
-        max_abs_error_threshold: Convergence threshold (always finite with auto-threshold)
-
-    Returns:
-        bool: True if coverage is sufficient, False if more coverage is needed
-    """
-    # Coverage is sufficient if residual is below convergence threshold
-    return local_residual <= max_abs_error_threshold
-
-
-def _find_splat_with_significant_influence_at_location(
-    model, location: torch.Tensor, min_influence_threshold: float = 0.01
-) -> Tuple[int, float]:
-    """
-    Find splat with significant influence at the given location.
-
-    This replaces position-based detection with influence-based detection to avoid
-    the issue where splats migrate away from their seeded locations during optimization.
-
-    Uses vectorized operations for O(N) computation but with efficient tensor ops.
-    For very large N (>10000), could be further optimized with spatial indexing.
-
-    Args:
-        model: GaussianSplatModel
-        location: Location to check (d,)
-        min_influence_threshold: Minimum influence value to consider significant
-
-    Returns:
-        tuple: (splat_index, influence_value) where influence_value is the Gaussian value
-               Returns (-1, 0.0) if no splat has significant influence at location
-    """
-    if model.n_splats() == 0:
-        return -1, 0.0
-
-    centers, Ls, amps, sharpness = model.current_params()
-    n_splats = model.n_splats()
-
-    # Vectorized computation of influences for all splats
-    # location: (d,), centers: (N, d), Ls: (N, d, d), amps: (N,)
-
-    # Compute diff = location - centers for all splats: (N, d)
-    diff = location.unsqueeze(0) - centers  # (1, d) - (N, d) = (N, d)
-
-    # Early filtering: skip splats that are too far away (Euclidean distance)
-    # For a Gaussian with truncate=3, influence is negligible beyond 3σ
-    # Use max diagonal of L as conservative sigma estimate
-    max_sigma_per_splat = (
-        torch.diagonal(Ls, dim1=-2, dim2=-1).max(dim=-1).values
-    )  # (N,)
-    euclidean_dist = torch.norm(diff, dim=-1)  # (N,)
-    max_reach = 6.0 * max_sigma_per_splat  # Conservative: 6σ reach
-
-    # Mask for splats that could potentially have significant influence
-    candidate_mask = euclidean_dist <= max_reach  # (N,)
-    candidate_indices = torch.where(candidate_mask)[0]
-
-    if len(candidate_indices) == 0:
-        return -1, 0.0
-
-    # Compute full influence only for candidate splats
-    influences = torch.zeros(n_splats, device=location.device)
-
-    for idx in candidate_indices:
-        i = idx.item()
-        L = Ls[i]
-        amp = amps[i]
-
-        # Compute Gaussian value at location: amp * exp(-0.5 * (x-mu)^T * Sigma^-1 * (x-mu))
-        # Where Sigma^-1 = (L * L^T)^-1 = L^-T * L^-1
-        try:
-            y = torch.linalg.solve_triangular(L, diff[i], upper=False)
-            squared_distance = torch.sum(y * y)
-            influences[i] = amp * torch.exp(-0.5 * squared_distance)
-        except RuntimeError:
-            # Handle singular matrices gracefully
-            influences[i] = 0.0
-
-    # Find splat with maximum influence
-    max_influence, max_idx = torch.max(influences, dim=0)
-    max_influence_val = max_influence.item()
-    max_idx_val = max_idx.item()
-
-    # Check if influence is significant enough
-    if max_influence_val >= min_influence_threshold:
-        return max_idx_val, max_influence_val
-    else:
-        return -1, 0.0
-
-
-def _seed_new_splat(
-    coordinator,
-    shape: Tuple[int, ...],
-    center: torch.Tensor,
-    residual: torch.Tensor,
-    cfg: DynamicOpsConfig,
-    lr: float,
-    min_amplitude_threshold: float = 0.0,
-) -> bool:
-    """
-    Seed a new Gaussian splat with ultra-simple amplitude and shape estimation.
-
-    Uses direct residual value at center for amplitude and isotropic covariance.
-    Optimization will evolve optimal shapes during training.
-
-    Args:
-        coordinator: ModelOptimizerCoordinator for adding splats
-        shape: Image/volume shape
-        center: Center position for new splat
-        residual: Residual tensor (target - prediction)
-        cfg: Dynamic operations configuration
-        lr: Learning rate for new splat
-        min_amplitude_threshold: Minimum amplitude to seed (skips tiny splats)
-
-    Returns:
-        bool: True if seeding was successful
-    """
-    try:
-        # Ultra-simple amplitude: residual value at center
-        center_coords = torch.round(center).long()
-
-        # Clamp coordinates to valid range
-        for i in range(len(center_coords)):
-            center_coords[i] = torch.clamp(center_coords[i], 0, residual.shape[i] - 1)
-
-        amplitude = torch.abs(residual[tuple(center_coords)])
-
-        # Ultra-simple shape: isotropic splat
-        d = len(shape)
-        L = torch.eye(d, device=center.device) * cfg.init_sigma_vox
-
-        # Validate amplitude is significant enough to be worth adding
-        # Skip seeding if amplitude is below minimum threshold
-        amplitude_value = amplitude.item()
-        if amplitude_value < min_amplitude_threshold:
-            return False
-
-        # Also skip if amplitude is below absolute minimum contribution threshold
-        if amplitude_value < cfg.min_contribution_threshold:
-            return False
-
-        # Initial sharpness: 2.0 (standard Gaussian profile)
-        sharpness = torch.tensor([2.0], device=center.device)
-
-        # Add the new splat
-        coordinator.add_splats(
-            center.unsqueeze(0),  # (1, d)
-            L.unsqueeze(0),  # (1, d, d)
-            amplitude.unsqueeze(0),  # (1,)
-            sharpness,  # (1,)
-            lr_new=lr,
+        # === STEP 3: Match Weak Splats to Peaks ===
+        matches = _match_weak_splats_to_peaks(
+            model,
+            weak_splat_indices,
+            peak_locations,
+            residual,
+            cfg.min_contribution_threshold,
+            verbose,
         )
 
-        return True
+        if len(matches) == 0:
+            if verbose:
+                aprint("No valid relocation matches found")
+            return False
 
-    except (RuntimeError, IndexError, ValueError):
-        # Handle expected errors gracefully (device mismatches, invalid coordinates, etc.)
-        return False
-    except Exception as e:
-        # Log unexpected errors for debugging
-        aprint(f"⚠️ Unexpected seeding error: {type(e).__name__}: {e}")
-        return False
+        # Limit relocations per step to prevent destabilization
+        matches = matches[: cfg.max_relocations_per_step]
 
+        # === STEP 4: Relocate Splats ===
+        n_relocated = 0
+        if verbose:
+            with asection(f"Relocating {len(matches)} splats"):
+                for splat_idx, peak_coords in matches:
+                    _relocate_splat(model, splat_idx, peak_coords, residual, cfg)
+                    n_relocated += 1
+                    aprint(
+                        f"Splat {splat_idx} → {peak_coords} "
+                        f"(importance was {importance[splat_idx]:.6f})"
+                    )
+        else:
+            for splat_idx, peak_coords in matches:
+                _relocate_splat(model, splat_idx, peak_coords, residual, cfg)
+                n_relocated += 1
 
-# Note: Splat splitting functionality removed - rarely used and added unnecessary complexity
+        if verbose and n_relocated > 0:
+            aprint(f"Dynamic ops: Relocated {n_relocated} splats")
+
+        return n_relocated > 0
 
 
 def _calculate_splat_importance(model) -> torch.Tensor:
@@ -428,7 +142,7 @@ def _calculate_splat_importance(model) -> torch.Tensor:
     Calculate importance metric for all splats: amplitude × volume.
 
     Approximates splat "mass" using: importance = a_k × prod(diag(L_k))
-    This is computationally efficient approximation of ∫ f_k(x) dx.
+    This is a computationally efficient approximation of ∫ f_k(x) dx.
 
     Returns:
         torch.Tensor: Importance values for all splats, shape (N,)
@@ -445,21 +159,21 @@ def _calculate_splat_importance(model) -> torch.Tensor:
     return importance
 
 
-def _select_pruning_candidates(
-    importance: torch.Tensor, pruning_percentile: float
+def _select_weak_splats(
+    importance: torch.Tensor, relocation_percentile: float
 ) -> List[int]:
     """
-    Select least important splats as pruning candidates.
+    Select least important splats as relocation candidates.
 
     Args:
         importance: Importance values for all splats
-        pruning_percentile: Percentage of least important splats to consider
+        relocation_percentile: Percentage of least important splats to consider
 
     Returns:
         List of splat indices sorted by importance (least important first)
     """
     n_splats = len(importance)
-    n_candidates = max(1, int(n_splats * pruning_percentile / 100.0))
+    n_candidates = max(1, int(n_splats * relocation_percentile / 100.0))
 
     # Get indices sorted by importance (ascending order)
     sorted_indices = torch.argsort(importance).tolist()
@@ -468,212 +182,216 @@ def _select_pruning_candidates(
     return sorted_indices[:n_candidates]
 
 
-def _compute_splat_influence_region(
-    center: torch.Tensor, L: torch.Tensor, shape: Tuple[int, ...], radius: float = 3.0
-) -> torch.Tensor:
-    """
-    Compute boolean mask for splat's influence region (elliptical region within radius σ).
-
-    Args:
-        center: Splat center coordinates (d,)
-        L: Lower triangular covariance matrix (d, d)
-        shape: Image/volume shape
-        radius: Radius in standard deviations (default 3.0 for 3σ region)
-
-    Returns:
-        torch.Tensor: Boolean mask of shape `shape` indicating influence region
-    """
-    device = center.device
-    d = len(shape)
-
-    # Create coordinate grids
-    coords = []
-    for i in range(d):
-        coords.append(torch.arange(shape[i], dtype=torch.float32, device=device))
-
-    if d == 2:
-        y_coords, x_coords = torch.meshgrid(coords[0], coords[1], indexing="ij")
-        coord_stack = torch.stack([y_coords, x_coords], dim=-1)  # (H, W, 2)
-    elif d == 3:
-        z_coords, y_coords, x_coords = torch.meshgrid(
-            coords[0], coords[1], coords[2], indexing="ij"
-        )
-        coord_stack = torch.stack(
-            [z_coords, y_coords, x_coords], dim=-1
-        )  # (D, H, W, 3)
-    else:
-        # For higher dimensions, use approximate circular region
-        flat_coords = torch.stack(torch.meshgrid(*coords, indexing="ij"), dim=-1)
-        distances = torch.norm(flat_coords - center, dim=-1)
-        return distances <= radius * 2.0  # Approximate with circular region
-
-    # Compute Mahalanobis distance for each pixel: (x - μ)^T Σ^{-1} (x - μ)
-    # Where Σ^{-1} = (L L^T)^{-1} = L^{-T} L^{-1}
-    diff = coord_stack - center  # (..., d)
-    flat_diff = diff.reshape(-1, d)  # (N, d)
-
-    # Solve L @ y = diff for each point to get y = L^{-1} @ diff
-    try:
-        y = torch.linalg.solve_triangular(L, flat_diff.T, upper=False).T  # (N, d)
-        mahalanobis_squared = torch.sum(y * y, dim=-1)  # (N,)
-        influence_mask = mahalanobis_squared <= radius * radius  # (N,)
-        return influence_mask.reshape(shape)
-    except RuntimeError:
-        # Fallback to circular region if matrix is singular
-        distances = torch.norm(diff, dim=-1)
-        return distances <= radius * 2.0
-
-
-def _test_local_removal_impact(
+def _find_splat_with_influence_at_location(
     model,
-    splat_idx: int,
-    V_target: torch.Tensor,
-    max_abs_error_threshold: float,
-    V_pred: torch.Tensor | None = None,
-) -> bool:
+    location: torch.Tensor,
+    exclude_indices: Set[int],
+    min_influence_threshold: float = 0.01,
+) -> Tuple[int, float]:
     """
-    Test if removing a splat would cause local residual to exceed convergence threshold.
+    Find splat with significant influence at the given location.
 
-    Uses local convergence-based validation: tests impact only in splat's influence region
-    and ensures removal doesn't violate convergence criteria locally.
-
-    Optimized to avoid full re-renders by computing only the single splat's contribution
-    and subtracting it from the current prediction in the local region.
+    Uses Gaussian evaluation to detect if any splat (except those in exclude_indices)
+    already covers the location.
 
     Args:
         model: GaussianSplatModel
-        splat_idx: Index of splat to test for removal
-        V_target: Target tensor
-        max_abs_error_threshold: Convergence threshold (always finite with auto-threshold)
-        V_pred: Current full prediction (optional, for optimization)
+        location: Location to check (d,)
+        exclude_indices: Set of splat indices to exclude from search (weak splats)
+        min_influence_threshold: Minimum influence value to consider significant
 
     Returns:
-        bool: True if splat can be safely removed, False if it should be kept
+        tuple: (splat_index, influence_value)
+               Returns (-1, 0.0) if no splat has significant influence
     """
-    from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+    if model.n_splats() == 0:
+        return -1, 0.0
 
-    with torch.no_grad():
-        # Get current parameters
-        centers, Ls, amps, sharpness = model.current_params()
+    centers, Ls, amps, sharpness = model.current_params()
+    n_splats = model.n_splats()
 
-        if model.n_splats() <= 1:
-            return False  # Don't remove if it's the last splat
+    # Compute diff = location - centers for all splats: (N, d)
+    diff = location.unsqueeze(0) - centers  # (1, d) - (N, d) = (N, d)
 
-        # Define influence region for this splat (3σ ellipse)
-        splat_center = centers[splat_idx]
-        splat_L = Ls[splat_idx]
-        splat_amp = amps[splat_idx]
-        splat_sharpness = sharpness[splat_idx]
+    # Early filtering: skip splats that are too far away
+    max_sigma_per_splat = torch.diagonal(Ls, dim1=-2, dim2=-1).max(dim=-1).values
+    euclidean_dist = torch.norm(diff, dim=-1)
+    max_reach = 6.0 * max_sigma_per_splat  # Conservative: 6σ reach
 
-        influence_mask = _compute_splat_influence_region(
-            splat_center, splat_L, V_target.shape, radius=3.0
-        )
+    # Mask for candidate splats (within reach and not excluded)
+    candidate_mask = euclidean_dist <= max_reach
+    candidate_indices = torch.where(candidate_mask)[0]
 
-        # Skip if influence region is empty
-        if not torch.any(influence_mask):
-            return True  # Can safely remove if no influence
+    if len(candidate_indices) == 0:
+        return -1, 0.0
 
-        # Optimization: Instead of re-rendering without the splat,
-        # compute just this splat's contribution and subtract from V_pred
-        if V_pred is not None:
-            # Render only the single splat's contribution
-            single_splat_contribution = render_gaussians(
-                V_target.shape,
-                splat_center.unsqueeze(0),  # (1, d)
-                splat_L.unsqueeze(0),  # (1, d, d)
-                splat_amp.unsqueeze(0),  # (1,)
-                splat_sharpness.unsqueeze(0),  # (1,)
-                truncate=model.truncate,  # Use model's truncate for consistency
-            )
+    # Compute full influence only for candidate splats
+    influences = torch.zeros(n_splats, device=location.device)
 
-            # Subtract splat contribution from current prediction
-            pred_without_splat_local = (
-                V_pred[influence_mask] - single_splat_contribution[influence_mask]
-            )
-        else:
-            # Fallback: full re-render without this splat (slower but always correct)
-            keep_mask = torch.ones(
-                model.n_splats(), dtype=torch.bool, device=centers.device
-            )
-            keep_mask[splat_idx] = False
+    for idx in candidate_indices:
+        i = idx.item()
+        if i in exclude_indices:
+            continue  # Skip weak splats
 
-            temp_centers = centers[keep_mask]
-            temp_Ls = Ls[keep_mask]
-            temp_amps = amps[keep_mask]
-            temp_sharpness = sharpness[keep_mask]
+        L = Ls[i]
+        amp = amps[i]
 
-            pred_without_splat = render_gaussians(
-                V_target.shape,
-                temp_centers,
-                temp_Ls,
-                temp_amps,
-                temp_sharpness,
-                truncate=model.truncate,  # Use model's truncate for consistency
-            )
-            pred_without_splat_local = pred_without_splat[influence_mask]
+        # Compute Gaussian value at location
+        try:
+            y = torch.linalg.solve_triangular(L, diff[i], upper=False)
+            squared_distance = torch.sum(y * y)
+            influences[i] = amp * torch.exp(-0.5 * squared_distance)
+        except RuntimeError:
+            influences[i] = 0.0
 
-        # Extract target in local region
-        target_local = V_target[influence_mask]
+    # Find splat with maximum influence
+    max_influence, max_idx = torch.max(influences, dim=0)
+    max_influence_val = max_influence.item()
+    max_idx_val = max_idx.item()
 
-        # Compute local residual without the splat
-        local_residual = torch.abs(pred_without_splat_local - target_local)
-        max_local_residual = torch.max(local_residual).item()
-
-        # Local convergence-based decision: ensure local convergence is maintained
-        can_remove = max_local_residual <= max_abs_error_threshold
-
-        return can_remove
+    if max_influence_val >= min_influence_threshold:
+        return max_idx_val, max_influence_val
+    else:
+        return -1, 0.0
 
 
-def _principled_pruning_analysis(
+def _match_weak_splats_to_peaks(
     model,
-    V_target: torch.Tensor,
-    V_pred: torch.Tensor,
-    cfg: DynamicOpsConfig,
-    max_abs_error_threshold: float,
+    weak_splat_indices: List[int],
+    peak_locations: List[Tuple[int, ...]],
+    residual: torch.Tensor,
+    min_contribution_threshold: float,
     verbose: bool = False,
-) -> List[int]:
+) -> List[Tuple[int, Tuple[int, ...]]]:
     """
-    Perform principled pruning analysis using importance-based pre-filtering
-    and local convergence-based validation.
+    Match weak splats to residual peaks, avoiding crowding.
 
-    Uses local convergence testing: removes splats only if their removal doesn't
-    cause local residual to exceed convergence threshold in their influence region.
+    Algorithm:
+    1. Process peaks in order of residual magnitude (strongest first)
+    2. For each peak:
+       - Check if any non-weak splat already covers it
+       - If covered, skip this peak
+       - If not covered, assign closest unassigned weak splat
 
-    Optimized: passes V_pred to avoid full re-renders during removal impact testing.
+    Args:
+        model: GaussianSplatModel
+        weak_splat_indices: Indices of weak splats eligible for relocation
+        peak_locations: Peak coordinates sorted by residual magnitude (descending)
+        residual: Residual tensor
+        min_contribution_threshold: Minimum influence to consider a peak "covered"
+        verbose: Whether to print debug info
 
     Returns:
-        List of splat indices that can be safely removed without violating local convergence
+        List of (splat_idx, peak_coords) pairs
     """
-    if model.n_splats() <= cfg.min_splats_to_keep:
-        return []
+    device = residual.device
+    centers, _, _, _ = model.current_params()
 
-    # Step 1: Calculate importance for all splats
-    importance = _calculate_splat_importance(model)
+    # Track which weak splats are still available
+    available_weak = set(weak_splat_indices)
+    exclude_set = set(weak_splat_indices)  # Exclude weak splats from coverage check
 
-    # Step 2: Pre-filter to least important splats
-    candidates = _select_pruning_candidates(importance, cfg.pruning_percentile)
+    matches = []
 
-    if verbose and len(candidates) > 0:
-        aprint(
-            f"    Pruning analysis: testing {len(candidates)} least important splats ({cfg.pruning_percentile}% of {model.n_splats()})"
+    for peak_coords in peak_locations:
+        if not available_weak:
+            break  # No more weak splats to relocate
+
+        peak_location = torch.tensor(peak_coords, dtype=torch.float32, device=device)
+        local_residual = torch.abs(residual[peak_coords]).item()
+
+        # Check if any non-weak splat already covers this peak
+        covering_splat, influence = _find_splat_with_influence_at_location(
+            model, peak_location, exclude_set, min_contribution_threshold
         )
 
-    # Step 3: Test each candidate for local removal impact
-    # Pass V_pred to enable optimized single-splat subtraction instead of full re-render
-
-    removable_splats = []
-    for splat_idx in candidates:
-        can_remove = _test_local_removal_impact(
-            model, splat_idx, V_target, max_abs_error_threshold, V_pred=V_pred
-        )
-        if can_remove:
-            removable_splats.append(splat_idx)
+        if covering_splat != -1:
             if verbose:
                 aprint(
-                    f"      → Splat {splat_idx} marked for removal (importance={importance[splat_idx]:.6f})"
+                    f"  Peak {peak_coords}: already covered by splat {covering_splat} "
+                    f"(influence={influence:.4f})"
                 )
-        elif verbose:
-            aprint(f"      → Splat {splat_idx} kept (would degrade quality)")
+            continue  # Skip - already covered
 
-    return removable_splats
+        # Find closest available weak splat to this peak
+        min_dist = float("inf")
+        closest_weak = None
+        for splat_idx in available_weak:
+            dist = torch.norm(centers[splat_idx] - peak_location).item()
+            if dist < min_dist:
+                min_dist = dist
+                closest_weak = splat_idx
+
+        if closest_weak is not None:
+            matches.append((closest_weak, peak_coords))
+            available_weak.remove(closest_weak)
+            if verbose:
+                aprint(
+                    f"  Peak {peak_coords}: assigned to weak splat {closest_weak} "
+                    f"(residual={local_residual:.4f})"
+                )
+
+    return matches
+
+
+def _relocate_splat(
+    model,
+    splat_idx: int,
+    new_center_coords: Tuple[int, ...],
+    residual: torch.Tensor,
+    cfg: DynamicOpsConfig,
+) -> None:
+    """
+    Relocate a splat to a new location.
+
+    Resets the splat's parameters:
+    - Center: set to new location
+    - Covariance: reset to isotropic (init_sigma_vox)
+    - Amplitude: set to residual value at new location
+    - Sharpness: kept unchanged (optimizer will adjust)
+
+    Args:
+        model: GaussianSplatModel
+        splat_idx: Index of splat to relocate
+        new_center_coords: New center coordinates (voxel coordinates)
+        residual: Residual tensor (for amplitude initialization)
+        cfg: Dynamic operations configuration
+    """
+    device = model.raw_mu.device
+    d = len(model.shape)
+    shape_arr = torch.tensor(model.shape, device=device, dtype=torch.float32)
+
+    # New center in voxel coordinates
+    new_center = torch.tensor(new_center_coords, dtype=torch.float32, device=device)
+
+    # Convert center to normalized [0,1] coordinates then to raw (logit) space
+    u = torch.clamp(new_center / torch.clamp(shape_arr - 1.0, min=1.0), 1e-6, 1.0 - 1e-6)
+    raw_mu_new = torch.log(u) - torch.log(1.0 - u)
+
+    # New amplitude from residual at new location
+    new_amplitude = torch.abs(residual[new_center_coords]).item()
+    new_amplitude = max(new_amplitude, 1e-6)  # Avoid zero
+    raw_a_new = torch.tensor(
+        stable_inverse_softplus(new_amplitude), device=device, dtype=torch.float32
+    )
+
+    # New isotropic covariance: L_diag = init_sigma_vox
+    # raw_L_diag = inverse_softplus(init_sigma_vox - sigma_min_diag)
+    # Since sigma_min_diag is applied in the model, we need to account for it
+    sigma_min = model.sigma_min_diag[0].item() if model.sigma_min_diag is not None else 0.0
+    effective_diag = max(cfg.init_sigma_vox - sigma_min, 1e-6)
+    raw_L_diag_new = torch.tensor(
+        stable_inverse_softplus(effective_diag), device=device, dtype=torch.float32
+    )
+    raw_L_diag_new = raw_L_diag_new.expand(d)
+
+    # Zero off-diagonal elements (isotropic)
+    n_off_diag = d * (d - 1) // 2
+    L_off_new = torch.zeros(n_off_diag, device=device, dtype=torch.float32)
+
+    # Update model parameters in-place
+    model.raw_mu.data[splat_idx] = raw_mu_new
+    model.raw_L_diag.data[splat_idx] = raw_L_diag_new
+    model.L_off.data[splat_idx] = L_off_new
+    model.raw_a.data[splat_idx] = raw_a_new
+    # Keep sharpness unchanged - optimizer will adjust if needed

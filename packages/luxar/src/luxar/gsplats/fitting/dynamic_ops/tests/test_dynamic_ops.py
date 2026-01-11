@@ -1,5 +1,5 @@
 """
-Tests for dynamic Gaussian splat operations with residual-driven approach.
+Tests for dynamic Gaussian splat operations with fixed-pool relocation.
 """
 
 import numpy as np
@@ -9,7 +9,9 @@ import torch
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fitting.dynamic_ops import (
     DynamicOpsConfig,
+    _calculate_splat_importance,
     _find_residual_peaks,
+    _select_weak_splats,
     apply_dynamic_operations,
 )
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
@@ -25,24 +27,25 @@ class TestDynamicOpsConfig:
         assert cfg.step_every == 50
         assert cfg.k_max_residuals == 20
         assert cfg.nms_radius_vox == 2.0
-        assert cfg.min_contribution_threshold == 0.05
-        assert cfg.relative_contribution_factor == 0.1
-        assert cfg.lr_boost_factor == 1.5
-        assert cfg.boost_influence_threshold == 0.05
-        assert cfg.pruning_percentile == 5.0
-        assert cfg.min_splats_to_keep == 10
+        assert cfg.enable_tiled_seeding is True
+        assert cfg.relocation_percentile == 5.0
+        assert cfg.max_relocations_per_step == 10
         assert cfg.init_sigma_vox == 0.5
+        assert cfg.min_contribution_threshold == 0.01
+        assert cfg.min_splats_to_keep == 10
 
     def test_config_modification(self) -> None:
         """Test that config values can be modified."""
         cfg = DynamicOpsConfig()
         cfg.step_every = 25
         cfg.k_max_residuals = 5
-        cfg.min_contribution_threshold = 1e-4
+        cfg.relocation_percentile = 10.0
+        cfg.max_relocations_per_step = 5
 
         assert cfg.step_every == 25
         assert cfg.k_max_residuals == 5
-        assert cfg.min_contribution_threshold == 1e-4
+        assert cfg.relocation_percentile == 10.0
+        assert cfg.max_relocations_per_step == 5
 
 
 class TestResidualPeakFinding:
@@ -110,8 +113,6 @@ class TestSimplifiedSeeding:
 
     def test_isotropic_shape_generation(self) -> None:
         """Test isotropic covariance matrix generation."""
-        from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
-
         cfg = DynamicOpsConfig()
         center = torch.tensor([10.0, 10.0])
         d = len(center)
@@ -121,6 +122,71 @@ class TestSimplifiedSeeding:
 
         assert L.shape == (2, 2)
         assert torch.allclose(L, torch.eye(2) * 0.5)  # Should be identity scaled
+
+
+class TestSplatImportanceCalculation:
+    """Test splat importance (amplitude × volume) calculation."""
+
+    def test_calculate_importance(self) -> None:
+        """Test importance calculation for varying splats."""
+        # Create model with varying properties
+        centers = np.array([[5.0, 5.0], [10.0, 10.0], [15.0, 15.0]])
+        # Different sizes: small, medium, large
+        L0 = np.stack([
+            np.eye(2) * 0.5,  # Small
+            np.eye(2) * 1.0,  # Medium
+            np.eye(2) * 2.0,  # Large
+        ])
+        # Different amplitudes
+        amps0 = np.array([1.0, 0.1, 0.5])
+
+        model = GaussianSplatModel(
+            shape=(20, 20),
+            centers0=centers,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=[0.1, 0.1],
+        )
+
+        importance = _calculate_splat_importance(model)
+
+        assert importance.shape == (3,)
+        assert torch.all(importance >= 0)
+
+        # Verify relative ordering: importance = amplitude × volume
+        # Splat 0: 1.0 × (0.5 × 0.5) = 0.25
+        # Splat 1: 0.1 × (1.0 × 1.0) = 0.1
+        # Splat 2: 0.5 × (2.0 × 2.0) = 2.0
+        # So ordering should be: splat 1 < splat 0 < splat 2
+        sorted_indices = torch.argsort(importance)
+        assert sorted_indices[0].item() == 1  # Least important
+        assert sorted_indices[2].item() == 2  # Most important
+
+
+class TestWeakSplatSelection:
+    """Test weak splat selection for relocation."""
+
+    def test_select_weak_splats(self) -> None:
+        """Test that weak splats are correctly identified."""
+        # Create random importance values
+        importance = torch.tensor([0.5, 0.1, 0.9, 0.2, 0.8])
+
+        # Select bottom 40% (2 splats)
+        weak_indices = _select_weak_splats(importance, relocation_percentile=40.0)
+
+        assert len(weak_indices) == 2  # 40% of 5 = 2
+        # Should be splat 1 (0.1) and splat 3 (0.2) - the two lowest
+        assert 1 in weak_indices
+        assert 3 in weak_indices
+
+    def test_select_weak_splats_minimum_one(self) -> None:
+        """Test that at least one splat is always selected."""
+        importance = torch.tensor([0.5, 0.6, 0.7, 0.8, 0.9])
+
+        # Even with very low percentile, should get at least 1
+        weak_indices = _select_weak_splats(importance, relocation_percentile=1.0)
+
+        assert len(weak_indices) >= 1
 
 
 class TestGaussianSplatModel:
@@ -171,25 +237,22 @@ class TestDynamicOperationsIntegration:
         V_target = torch.zeros((16, 16))
         V_target[8, 8] = 1.0  # Single bright spot
 
-        # Create initial model with a few splats
-        centers = np.array([[7.0, 7.0], [9.0, 9.0]])
-        L0 = np.eye(2)[None, :, :] * 2.0  # (1, 2, 2)
-        L0 = np.repeat(L0, 2, axis=0)  # (2, 2, 2)
-        amps0 = np.array([1.0, 1.0])
+        # Create initial model with a few splats (one weak, one strong)
+        centers = np.array([[7.0, 7.0], [9.0, 9.0], [3.0, 3.0]])  # Third is far away
+        L0 = np.stack([
+            np.eye(2) * 2.0,  # Large
+            np.eye(2) * 2.0,  # Large
+            np.eye(2) * 0.3,  # Small (weak)
+        ])
+        amps0 = np.array([1.0, 1.0, 0.01])  # Third is weak amplitude
         model = GaussianSplatModel(
             shape=(16, 16),
             centers0=centers,
             L0=L0,
             amps0=amps0,
             sigma_min_diag=[0.5, 0.5],
-            device=torch.device("cpu"),  # Explicitly use CPU for test consistency
+            device=torch.device("cpu"),
         )
-
-        # Create dummy optimizer and scheduler
-        from luxar.gsplats.optim import PerSplatAdam, PerSplatReduceLROnPlateau
-
-        optimizer = PerSplatAdam(model, lr=0.1)
-        scheduler = PerSplatReduceLROnPlateau(optimizer, patience=5)
 
         # Get current prediction
         V_pred = model()
@@ -197,26 +260,21 @@ class TestDynamicOperationsIntegration:
         # Configure dynamic operations
         cfg = DynamicOpsConfig()
         cfg.k_max_residuals = 3
+        cfg.relocation_percentile = 50.0  # Allow up to 50% for relocation
         cfg.min_contribution_threshold = 1e-6
 
         # Apply dynamic operations
-        opt_new, sched_new, topology_changed = apply_dynamic_operations(
+        any_relocated = apply_dynamic_operations(
             model=model,
-            optimizer=optimizer,
-            scheduler=scheduler,
             V_target=V_target,
             V_pred=V_pred,
             cfg=cfg,
-            current_lr=0.1,
             max_abs_error_threshold=0.1,
-            device=torch.device("cpu"),
             verbose=False,
         )
 
-        # Check that we get valid returns
-        assert opt_new is not None
-        assert sched_new is not None
-        assert isinstance(topology_changed, bool)
+        # Check that we get valid return
+        assert isinstance(any_relocated, bool)
 
     def test_fit_with_dynamic_ops(self) -> None:
         """Test full fitting pipeline with dynamic operations enabled."""
@@ -284,19 +342,14 @@ class TestDynamicOperationsIntegration:
         assert result.amplitudes.shape[0] == result.centers.shape[0]
         assert "final_loss" in result.stats  # Check for stats that actually exist
 
-    def test_principled_pruning_functionality(self) -> None:
-        """Test the new principled pruning algorithm."""
-        from luxar.gsplats.fitting.dynamic_ops import (
-            _calculate_splat_importance,
-            _select_pruning_candidates,
-        )
-
+    def test_weak_splat_identification(self) -> None:
+        """Test the weak splat identification algorithm."""
         # Create test model with varying importance splats
         V = np.random.random((32, 32)).astype(np.float32)
         seeds = seed_from_grid(V, spacing=4.0)
         centers = seeds.centers
 
-        # Create model with many splats to trigger pruning
+        # Create model with many splats to test selection
         L0 = np.eye(2)[None, :, :] * 1.0
         L0 = np.repeat(L0, len(centers), axis=0)
         amps0 = np.random.uniform(0.01, 1.0, len(centers)).astype(
@@ -316,15 +369,15 @@ class TestDynamicOperationsIntegration:
         assert importance.shape == (len(centers),)
         assert torch.all(importance >= 0)
 
-        # Test candidate selection
-        candidates = _select_pruning_candidates(importance, 10.0)  # Top 10%
+        # Test weak splat selection
+        weak_indices = _select_weak_splats(importance, 10.0)  # Bottom 10%
         expected_candidates = max(1, int(len(centers) * 0.1))
-        assert len(candidates) == expected_candidates
+        assert len(weak_indices) == expected_candidates
 
         # Verify candidates are actually least important
         sorted_importance = torch.sort(importance)[0]
-        candidate_importance = importance[candidates]
-        assert torch.all(candidate_importance <= sorted_importance[expected_candidates])
+        for idx in weak_indices:
+            assert importance[idx] <= sorted_importance[expected_candidates]
 
     def test_asymmetric_penalty_with_all_loss_types(self) -> None:
         """Test asymmetric penalty works with all loss functions."""
@@ -350,17 +403,20 @@ class TestDynamicOperationsIntegration:
                 f"{loss_type} produced negative amplitudes"
             )
 
-    def test_local_convergence_based_pruning(self) -> None:
-        """Test the local convergence-based pruning algorithm."""
-        # Create test data where some splats should be removable
+    def test_relocation_behavior(self) -> None:
+        """Test the splat relocation algorithm."""
+        # Create test data where some splats should be relocatable
         V = np.ones((32, 32), dtype=np.float32) * 0.5  # Uniform background
-        centers = np.array([[10, 10], [15, 15], [20, 20]], dtype=np.float32)
+        V[25, 25] = 2.0  # Add a bright spot that needs coverage
 
-        # Create model with varying importance
-        L0 = np.stack(
-            [np.eye(2) * 2.0, np.eye(2) * 0.5, np.eye(2) * 1.0]
-        )  # Different sizes
-        amps0 = np.array([0.8, 0.001, 0.5])  # Very different amplitudes
+        # Create splats - one strong, two weak
+        centers = np.array([[10, 10], [15, 15], [3, 3]], dtype=np.float32)
+        L0 = np.stack([
+            np.eye(2) * 2.0,  # Large
+            np.eye(2) * 0.3,  # Small (weak)
+            np.eye(2) * 0.2,  # Very small (weak)
+        ])
+        amps0 = np.array([0.8, 0.01, 0.005])  # Strong, weak, very weak
 
         model = GaussianSplatModel(
             shape=(32, 32),
@@ -368,42 +424,28 @@ class TestDynamicOperationsIntegration:
             L0=L0,
             amps0=amps0,
             sigma_min_diag=[0.1, 0.1],
-            device=torch.device("cpu"),  # Explicitly use CPU for test consistency
+            device=torch.device("cpu"),
         )
-
-        from luxar.gsplats.fitting.dynamic_ops import (
-            DynamicOpsConfig,
-            apply_dynamic_operations,
-        )
-        from luxar.gsplats.optim import PerSplatAdam, PerSplatReduceLROnPlateau
-
-        optimizer = PerSplatAdam(model, lr=0.1)
-        scheduler = PerSplatReduceLROnPlateau(optimizer)
 
         V_target = torch.tensor(V, dtype=torch.float32, device=torch.device("cpu"))
         V_pred = model()
 
         cfg = DynamicOpsConfig()
-        cfg.min_splats_to_keep = 1  # Allow more aggressive pruning for test
+        cfg.relocation_percentile = 70.0  # Allow more aggressive relocation for test
+        cfg.max_relocations_per_step = 5
 
-        # Test pruning with verbose output
-        opt_new, sched_new, topology_changed = apply_dynamic_operations(
+        # Apply dynamic operations with verbose output
+        any_relocated = apply_dynamic_operations(
             model,
-            optimizer,
-            scheduler,
             V_target,
             V_pred,
             cfg,
-            current_lr=0.1,
             max_abs_error_threshold=0.01,
-            device=torch.device("cpu"),
             verbose=True,  # Test verbose output
         )
 
         # Verify function returned successfully
-        assert opt_new is not None
-        assert sched_new is not None
-        assert isinstance(topology_changed, bool)
+        assert isinstance(any_relocated, bool)
 
     def test_auto_convergence_threshold_behavior(self) -> None:
         """Test auto-convergence threshold integration with dynamic operations."""
@@ -454,43 +496,39 @@ class TestDynamicOperationsIntegration:
 
         assert compression_test_passed, "Compression analysis failed"
 
-    def test_adaptive_learning_rate_boosting(self) -> None:
-        """Test adaptive learning rate boosting for problematic regions."""
-        from luxar.gsplats.fitting.dynamic_ops import (
-            DynamicOpsConfig,
-            _boost_splat_learning_rate,
-        )
-        from luxar.gsplats.optim import PerSplatAdam
+    def test_convergence_guard_skips_when_converged(self) -> None:
+        """Test that dynamic ops are skipped when residual is below threshold."""
+        # Create a well-reconstructed image (low residual)
+        V_target = torch.ones((16, 16)) * 0.5
+        V_pred = V_target.clone()  # Perfect prediction
 
-        # Create test model
-        centers = np.array([[10, 10], [15, 15]], dtype=np.float32)
-        L0 = np.stack([np.eye(2) * 1.0, np.eye(2) * 1.0])
-        amps0 = np.array([0.5, 0.3])
+        centers = np.array([[8, 8]], dtype=np.float32)
+        L0 = np.eye(2)[None, :, :] * 1.0
+        amps0 = np.array([0.5])
 
         model = GaussianSplatModel(
-            shape=(32, 32),
+            shape=(16, 16),
             centers0=centers,
             L0=L0,
             amps0=amps0,
             sigma_min_diag=[0.1, 0.1],
         )
 
-        # Create optimizer
-        optimizer = PerSplatAdam(model, lr=0.1)
-
-        # Reduce learning rate for splat 0 to simulate scheduler effect
-        optimizer.set_learning_rate(0, 0.05)  # Reduced from base 0.1
-
-        # Get initial learning rates
-        initial_lrs = optimizer.get_effective_learning_rates()
-
-        # Test LR boosting
         cfg = DynamicOpsConfig()
-        base_lr = 0.1  # Original starting rate
-        boosted_lr = _boost_splat_learning_rate(optimizer, 0, base_lr, cfg)
+        cfg.relocation_percentile = 100.0  # Would relocate all if not for guard
 
-        # Verify boosting worked
-        new_lrs = optimizer.get_effective_learning_rates()
-        assert boosted_lr > initial_lrs[0]  # Should be boosted from 0.05
-        assert boosted_lr <= base_lr  # Should not exceed base rate (0.1)
-        assert new_lrs[0] == boosted_lr  # Should be applied to splat 0
+        # Should return False (no relocation) because residual is zero
+        any_relocated = apply_dynamic_operations(
+            model,
+            V_target,
+            V_pred,
+            cfg,
+            max_abs_error_threshold=0.01,
+            verbose=False,
+        )
+
+        assert any_relocated is False  # Should skip due to convergence guard
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

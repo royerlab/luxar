@@ -156,10 +156,9 @@ class ModelComponents:
     """
     Components needed during optimization.
 
-    Contains model, optimizer, scheduler, and coordinator.
+    Contains model, optimizer, and scheduler.
     """
 
     model: Any  # GaussianSplatModel
     optimizer: torch.optim.Optimizer
     scheduler: Any  # Learning rate scheduler
-    coordinator: Any  # ModelOptimizerCoordinator

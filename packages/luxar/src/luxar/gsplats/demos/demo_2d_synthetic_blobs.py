@@ -57,12 +57,11 @@ if NO_NAPARI:
 
 # ======= Demo knobs =======
 LOSS_TYPE = "l1"  # L1 loss for robust features
-N_ITERS = 1000
+N_ITERS = 4000
 DEVICE = None  # "mps:0"    # None -> auto; or "cuda"/"cpu"
 N_FRAMES = 40  # number of compression steps (<= #splats)
 TRUNCATE_SIG = 3.0  # rendering support truncation (≈ ±3σ)
 SPACING = (1.0, 1.0)  # (row, col); not needed for ranking here
-USE_DYNAMIC_OPS = True  # Enable dynamic operations (seeding, splitting, pruning) - set to False to disable
 # ==========================
 
 
@@ -96,24 +95,15 @@ blobs = data.binary_blobs(
 ).astype(float)
 V = filters.gaussian(blobs, sigma=3.25).astype(np.float32)
 
-# 2) Configure dynamic operations (if enabled)
-dynamic_config = None
-if USE_DYNAMIC_OPS:
-    dynamic_config = DynamicOpsConfig()
-    aprint(f"Dynamic operations enabled (step_every={dynamic_config.step_every})")
-
-# 3) Fit oriented (full-covariance) Gaussians with auto-candidate generation
+# 2) Fit oriented (full-covariance) Gaussians with auto-candidate generation
 result = fit_gaussian_splats(
     V,
-    # seeds auto-generated with intelligent defaults
+    seeds=500,
     n_iters=N_ITERS,
     loss_type=LOSS_TYPE,
     truncate=TRUNCATE_SIG,
     device=DEVICE,
     verbose=True,
-    # Dynamic operations
-    enable_dynamic_ops=USE_DYNAMIC_OPS,
-    dynamic_config=dynamic_config,
     napari_movie=(not NO_NAPARI),
     movie_every=1,
 )

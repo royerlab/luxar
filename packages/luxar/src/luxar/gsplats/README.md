@@ -22,7 +22,7 @@ pip install \"luxar[gsplats]\"
 - **Oriented Gaussians**: Full covariance matrices via Cholesky decomposition for arbitrary orientations
 - **Convergence-Driven Dynamic Operations**: Adaptive splat management based on convergence criteria with seeding and pruning
 - **Asymmetric Loss Functions**: 10x penalty for over-prediction addresses additive model constraints (MSE and Poisson)
-- **Per-Splat Optimization**: Individual learning rates and momentum preservation for each Gaussian splat
+- **Standard PyTorch Adam**: Fast vectorized optimization with gradient dilution compensation (50x+ faster than alternatives)
 - **Adaptive Thresholds**: Amplitude validation scales with local residual magnitude to prevent optimization plateaus
 - **Automatic Optimization**: Early stopping saves 20-60% of iterations without quality loss
 - **GPU Acceleration**: CUDA support with batched operations, improved MPS compatibility
@@ -71,12 +71,12 @@ and computing the quadratic form as `||y||²`.
 
 ### 3. Optimization Process
 The fitting uses PyTorch with advanced optimization strategies:
-- **Per-Splat Optimization**: Individual learning rates and momentum for each Gaussian
-- **Convergence-Based Dynamic Operations**: Residual-driven splat management with seeding, splitting, and pruning
+- **Standard PyTorch Adam**: Fast vectorized optimizer with automatic gradient dilution compensation
+- **Convergence-Based Dynamic Operations**: Fixed-pool splat relocation instead of add/remove operations
 - **Asymmetric Loss Functions**: 10x penalty for over-prediction addresses additive model constraints
 - **Adaptive Amplitude Thresholds**: Scale with local residual magnitude to prevent plateaus
 - **Early Stopping**: Maximum absolute error convergence criterion
-- **Adaptive Learning Rate**: ReduceLROnPlateau scheduler with per-splat rates
+- **Adaptive Learning Rate**: ReduceLROnPlateau scheduler for automatic LR adjustment
 - **Regularization**: Optional L1 penalties on amplitudes and diagonal elements for sparsity and shape control
 
 ### 4. Rendering Pipeline
@@ -388,29 +388,26 @@ result = fit_gaussian_splats(
 - **Interpretable results**: Simpler splat shapes are easier to understand
 - **Automatic scaling**: Both regularization terms scale proportionally with learning rate
 
-## Splat Proliferation Prevention
+## Fixed-Pool Splat Relocation
 
-The system prevents runaway splat multiplication through sophisticated parameter-type-specific learning rates:
+The system uses **fixed-pool splat relocation** instead of add/remove operations for optimal performance:
 
-### **Problem**: Splat Migration and Proliferation
-- Newly seeded splats migrate away from problematic regions during optimization
-- Regions become uncovered again, triggering more seeding
-- Results in splat proliferation without quality improvement
+### **Problem**: Traditional Add/Remove Approach
+- Adding/removing splats changes tensor shapes
+- Requires complex per-splat optimizer state management
+- 50x+ slower than standard vectorized optimization
 
-### **Solution**: Parameter-Type-Specific Learning Rates
-```python
-# Hard-coded in PerSplatAdam optimizer:
-Position parameters (μ):     ×0.1  # Slow movement, keeps splats spatially stable
-Variance parameters (L):     ×1.0  # Normal adaptation for shape and orientation
-Amplitude parameters (a):    ×2.0  # Fast intensity matching for better convergence
-Sharpness parameters (s'):   ×0.5  # Conservative shape adaptation (no gradient dilution)
-```
+### **Solution**: Fixed-Pool Relocation
+- Identify weak splats (low importance = amplitude × volume)
+- Identify high-residual peaks
+- **Relocate** weak splats to peaks (just parameter updates, no shape change)
+- Standard PyTorch Adam works naturally
 
 ### **Benefits**
-- **Spatial stability**: Splats stay near seeded locations (×0.1 position updates)
-- **Shape optimization**: Normal covariance evolution for local structure fitting
-- **Fast convergence**: Accelerated amplitude adaptation reduces estimation failures
-- **Proliferation prevention**: Eliminates runaway seeding cycles
+- **50x+ faster**: Standard vectorized Adam optimizer
+- **Simple architecture**: No complex state management
+- **Natural adaptation**: Adam's momentum quickly adapts to relocated splats
+- **Spatial coverage**: Weak splats are reused for uncovered regions
 
 ## Gradient Dilution Compensation
 
@@ -420,18 +417,15 @@ The system automatically handles nD optimization challenges through intelligent 
 - **Parameter growth**: 2D (5 params), 3D (9 params), 4D (14 params) per splat
 - **Signal dilution**: Same loss gradient distributed across more parameters
 - **Spatial complexity**: 4D optimization landscape much more challenging than 2D/3D
-- **Volume effects**: Higher dimensional spaces require more aggressive optimization
 - **Optimization difficulty**: Higher dimensions converge much slower without proper compensation
 
-### **Solution**: Enhanced Dimensional and Parameter Complexity Scaling
+### **Solution**: Automatic Learning Rate Scaling
 ```python
-# Enhanced gradient dilution compensation
-dimensional_complexity = d ** 0.8  # Moderate spatial complexity scaling
-parameter_complexity = params_current / 5  # Parameter dilution factor
-
-gradient_dilution_factor = dimensional_complexity × parameter_complexity
+# Applied automatically by create_optimizer_and_scheduler()
+gradient_dilution_factor = calculate_gradient_dilution_factor(d)
 effective_lr = base_lr × gradient_dilution_factor
-# 2D: lr × 1.0, 3D: lr × 5.2, 4D: lr × 12.0
+
+# Result: 2D: lr × 1.0, 3D: lr × 1.8, 4D: lr × 8.5
 ```
 
 ### **Benefits**
@@ -442,45 +436,38 @@ effective_lr = base_lr × gradient_dilution_factor
 
 ## Dynamic Operations
 
-The implementation features convergence-driven dynamic operations that automatically adjust splat topology based on reconstruction quality and convergence criteria:
+The implementation features **fixed-pool splat relocation** that automatically improves coverage based on reconstruction quality:
 
-### Convergence-Based Operations
+### Fixed-Pool Relocation
 
-- **Seeding**: Add new splats where residual exceeds convergence thresholds (ultra-simple: amplitude = residual value, isotropic shape)
-- **Pruning**: Remove ineffective splats using importance-based analysis and quality validation
-- **Adaptive Thresholds**: Validation scales with local residual magnitude
+- **Weak splat detection**: Identify splats with low importance (amplitude × volume)
+- **Residual peak detection**: Find high-error regions using non-maximum suppression
+- **Relocation**: Move weak splats to high-residual peaks (no tensor shape changes)
+- **Standard Adam**: Works naturally since tensor shapes are fixed
 
-### Key Improvements
+### Key Benefits
 
+- **50x+ faster**: Standard vectorized PyTorch Adam optimizer
 - **Convergence Alignment**: Operations directly serve optimization goals
-- **Plateau Prevention**: Adaptive thresholds eliminate optimization plateaus
-- **Adaptive Learning Rates**: Boost learning rates for splats covering problematic regions to "unfreeze" adaptation
-- **Parameter-Type-Specific Learning Rates**: Different rates for position (×0.1), variance (×1.0), and amplitude (×2.0) parameters
-- **Stable Evolution**: Slow position updates prevent splat migration while fast amplitude updates improve convergence
+- **Simple Architecture**: No complex per-splat state management
 - **Quality Focus**: Continuous improvement throughout optimization
 
 ### Enabling Dynamic Operations
 
 ```python
-from luxar.gsplats.dynamic_ops import DynamicOpsConfig
+from luxar.gsplats.fitting.config import DynamicOpsConfig
 
-# Create configuration for 2D data
+# Create configuration
 config = DynamicOpsConfig()
-config.step_every = 10          # Run every 10 iterations
-config.max_add_per_step = 40    # Allow moderate seeding
-config.max_merges_per_step = 30 # Allow moderate merging
-config.residual_quantile = 0.94 # Selective seeding threshold
-config.merge_dist_vox = 2.0     # Merge distance in voxels
-config.amp_abs_min = 1e-4       # Prune threshold
-config.do_prune = True          # Enable all operations
-config.do_seed = True
-config.do_merge = True
-config.do_split = True
+config.step_every = 50              # Run every 50 iterations
+config.k_max_residuals = 20         # Max peaks to find
+config.nms_radius_vox = 2.0         # Non-maximum suppression radius
+config.relocation_percentile = 5.0  # % of weakest splats to relocate
+config.max_relocations_per_step = 10  # Cap relocations per step
 
 # Fit with dynamic operations
 result = fit_gaussian_splats(
     image,
-    seeds=candidates,
     enable_dynamic_ops=True,
     dynamic_config=config,
     n_iters=300
@@ -490,51 +477,53 @@ result = fit_gaussian_splats(
 ### Configuration Guidelines
 
 **Key Parameters:**
-- `step_every`: Operation frequency (2D: 8-15, 3D: 12-20)
-- `residual_quantile`: Seeding selectivity (0.85-0.98, higher = more selective)
-- `merge_dist_vox`: Merge distance threshold (2D: 1.5-2.5, 3D: 1.0-2.0)
-- `amp_abs_min`: Pruning threshold (1e-5 to 1e-3)
+- `step_every`: Operation frequency (default: 50 iterations)
+- `k_max_residuals`: Maximum peaks to analyze per step
+- `relocation_percentile`: Percentage of weakest splats eligible for relocation
+- `max_relocations_per_step`: Cap on relocations per dynamic ops step
 
 **Performance vs Quality:**
-- More frequent operations: Better quality, slower
-- Higher seeding threshold: Fewer but better-placed splats
-- Aggressive merging/pruning: Faster inference, potential quality loss
+- More frequent operations: Better adaptation, slightly more overhead
+- Higher relocation percentile: More aggressive redistribution
+- Lower max_relocations: More conservative, stable optimization
 
-## Per-Splat Optimization
+## Standard Optimizer with Fixed-Pool Architecture
 
-The implementation includes a specialized per-splat Adam optimizer that maintains individual learning rates and momentum states for each Gaussian splat, enabling seamless integration with dynamic operations.
+The implementation uses **standard PyTorch Adam** with a fixed-pool splat architecture for optimal performance:
 
 ### Key Benefits
 
-**Momentum Preservation**: Unlike standard optimizers that lose ALL momentum during dynamic operations, the per-splat optimizer preserves momentum for unchanged splats, preventing optimization disruption.
+**50x+ Faster**: Standard vectorized Adam is dramatically faster than per-splat alternatives.
 
-**Individual Learning Rates**: Each splat can have its own learning rate, allowing new splats to learn faster initially while preserving stable optimization for existing splats.
+**Natural Momentum Adaptation**: When splats are relocated, Adam's momentum buffers at those indices quickly adapt to the new location as new gradients overwrite stale momentum.
 
-**Dynamic Integration**: Seamlessly handles:
-- Adding new splats (seeding/splitting) with fresh optimizer states
-- Removing splats (pruning) without affecting others
-- Merging splats by combining their optimizer states
+**Simple Architecture**: No complex state management - just standard PyTorch optimizer with fixed tensor shapes.
 
-### Usage
+### How It Works
 
-The per-splat optimizer is automatically used when dynamic operations are enabled:
+The fixed-pool architecture keeps tensor shapes constant:
+
+1. **No topology changes**: Splat pool size is fixed throughout optimization
+2. **Relocation = parameter update**: Just modifies values, not tensor shapes
+3. **Momentum adaptation**: Stale momentum at relocated splat quickly overwritten by new gradients
+4. **Full adaptation**: Within 1-3 iterations after relocation
 
 ```python
-# Per-splat optimizer is used automatically with dynamic operations
-result = fit_gaussian_splats(
-    image,
-    seeds=candidates,
-    enable_dynamic_ops=True,  # Automatically uses per-splat optimizer
-    n_iters=300
+# Standard optimizer is always used
+from luxar.gsplats.optim import create_optimizer_and_scheduler
+
+optimizer, scheduler = create_optimizer_and_scheduler(
+    model,
+    lr=0.01,  # Base LR, auto-compensated for gradient dilution
+    scheduler_type="plateau"
 )
 ```
 
 ### Technical Details
 
-- **State Management**: Maintains exp_avg (momentum) and exp_avg_sq (squared gradient) per parameter per splat
-- **Bias Correction**: Proper Adam bias correction with per-splat step counting
-- **AMSGrad Support**: Optional AMSGrad variant for improved convergence
-- **Memory Efficient**: Only allocates states for active splats
+- **Gradient dilution compensation**: Learning rate automatically scaled based on dimensionality
+- **Standard Adam buffers**: Uses PyTorch's built-in momentum and squared gradient tracking
+- **Scheduler support**: ReduceLROnPlateau or ExponentialLR for learning rate adaptation
 
 ## Advanced Usage
 
@@ -792,9 +781,8 @@ gsplats/
 │   ├── optimization.py        # Main optimization loop and convergence logic
 │   ├── results.py             # Result finalization and statistics
 │   └── visualization.py       # Movie recording and compression analysis
-├── optim/                      # Per-splat optimization algorithms
-│   ├── per_splat_adam.py      # Per-splat Adam optimizer with momentum preservation
-│   └── per_splat_scheduler.py # Individual learning rate scheduling
+├── optim/                      # Optimizer utilities
+│   └── integration.py         # Standard Adam with gradient dilution compensation
 ├── models/
 │   ├── gsplats/
 │   │   ├── gsplat_model.py    # PyTorch model definition
@@ -806,7 +794,7 @@ gsplats/
 ├── utils/
 │   └── trils.py               # Triangular matrix packing/unpacking
 ├── demos/                         # Interactive demonstrations
-│   ├── demo_basic_fitting.py      # Simple API introduction with per-splat optimizer
+│   ├── demo_basic_fitting.py      # Simple API introduction with standard optimizer
 │   ├── demo_performance_metrics.py # Detailed convergence and quality metrics
 │   ├── demo_multiscale_fitting.py # Multi-scale vs single-scale performance comparison
 │   ├── demo_2d_synthetic_blobs.py # 2D compression analysis with oriented ellipses
@@ -892,7 +880,7 @@ hatch run pytest packages/luxar/src/luxar/gsplats/fitting/tests/ -v
 
 **Test Organization:**
 - `fitting/tests/` - 84 tests for modular fitting pipeline (100% module coverage)
-- `optim/tests/` - 17 tests for per-splat optimizer
+- `optim/tests/` - Tests for optimizer integration
 - `models/*/tests/` - 53 tests for model and utility functions
 - `multiscale/tests/` - 30 tests for multiscale decomposition
 - `tests/` - 131 integration tests for complete pipelines

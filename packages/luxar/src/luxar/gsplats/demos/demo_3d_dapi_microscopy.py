@@ -294,13 +294,6 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             V = np.clip(V, 0, 100).astype(np.float32)
             aprint(f"Created synthetic DAPI-like volume: {V.shape}")
 
-    # Configure dynamic operations (residual-based seeding only)
-    dynamic_config = DynamicOpsConfig()
-
-    aprint("Dynamic operations enabled (residual-based seeding):")
-    aprint(f"  step_every={dynamic_config.step_every}")
-    aprint(f"  k_max_residuals={dynamic_config.k_max_residuals}")
-    aprint(f"  nms_radius_vox={dynamic_config.nms_radius_vox}")
 
     # Device auto-detection: fitter will automatically select best backend:
     # - Linux + NVIDIA GPU: CUDA with custom kernels (10-50x speedup)
@@ -325,19 +318,16 @@ with asection("3D DAPI Gaussian Splatting Demo"):
         # - Metal kernels on Apple Silicon (3-7x speedup)
         result = fit_gaussian_splats(
             V,
-            seeds=5000,  # initial seed count
+            seeds=8000,  # initial seed count
             n_iters=N_ITERS,
             device=DEVICE,
             use_metal=USE_METAL,  # Enable Metal acceleration (macOS)
             use_cuda=USE_CUDA,  # Enable CUDA acceleration (NVIDIA)
             verbose=True,
-            # Dynamic operations
-            enable_dynamic_ops=False,
-            dynamic_config=dynamic_config,
             max_abs_error=0.1,
             # convergence movie:
             napari_movie=(not NO_NAPARI),
-            movie_every=N_ITERS / 30,
+            movie_every= int(N_ITERS / 30),
         )
 
         aprint(f"🎉 Fitted {len(result.amplitudes)} splats successfully")

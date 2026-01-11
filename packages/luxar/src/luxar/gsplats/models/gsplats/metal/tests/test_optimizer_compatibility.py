@@ -86,12 +86,14 @@ class TestOptimizerCompatibility:
 
         assert True  # If we get here, it worked
 
-    def test_works_with_per_splat_adam(self, simple_model):
-        """Test that model works with Luxar's PerSplatAdam optimizer."""
-        from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
+    def test_works_with_luxar_optimizer(self, simple_model):
+        """Test that model works with Luxar's create_optimizer_and_scheduler."""
+        from luxar.gsplats.optim import create_optimizer_and_scheduler
 
-        # This is the critical test - PerSplatAdam needs internal parameter access
-        optimizer = PerSplatAdam(simple_model, lr=0.05)
+        # Create optimizer using Luxar's factory function
+        optimizer, scheduler = create_optimizer_and_scheduler(
+            simple_model, lr=0.05, scheduler_type=None
+        )
 
         # Training iteration
         output = simple_model()
@@ -104,9 +106,7 @@ class TestOptimizerCompatibility:
 
     def test_multiple_training_steps(self, simple_model):
         """Test multiple training iterations (ensures state is maintained)."""
-        from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
-
-        optimizer = PerSplatAdam(simple_model, lr=0.05)
+        optimizer = torch.optim.Adam(simple_model.parameters(), lr=0.05)
 
         losses = []
         for _ in range(5):

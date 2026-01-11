@@ -170,14 +170,11 @@ with asection("3D Gaussian Splatting Demo"):
         # Fit oriented (full-covariance) 3D Gaussians with auto-candidate generation
         result = fit_gaussian_splats(
             V,
-            # seeds auto-generated with intelligent defaults
+            seeds=1000,
             n_iters=N_ITERS,
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
-            # Dynamic operations
-            enable_dynamic_ops=True,
-            dynamic_config=dynamic_config,
             # convergence movie:
             napari_movie=True,
         )

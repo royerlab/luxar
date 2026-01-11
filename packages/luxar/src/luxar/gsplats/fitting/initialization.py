@@ -8,14 +8,14 @@ import numpy as np
 
 from luxar.gsplats.fitting.config import FitConfig, ModelComponents, PreprocessedData
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
-from luxar.gsplats.optim import create_per_splat_optimizer_setup
+from luxar.gsplats.optim import create_optimizer_and_scheduler
 
 
 def initialize_optimization(
     config: FitConfig, preprocessed_data: PreprocessedData
 ) -> ModelComponents:
     """
-    Initialize model, optimizer, scheduler, and coordinator.
+    Initialize model, optimizer, and scheduler.
 
     Parameters
     ----------
@@ -39,7 +39,6 @@ def initialize_optimization(
             model=None,
             optimizer=None,
             scheduler=None,
-            coordinator=None,
         )
 
     # Initialize parameters - use pre-initialized values if provided
@@ -119,7 +118,7 @@ def initialize_optimization(
                 )
                 if config.verbose:
                     aprint(
-                        f"✓ Model class: GaussianSplatModelMetal (3-7x faster on Apple Silicon)"
+                        "✓ Model class: GaussianSplatModelMetal (3-7x faster on Apple Silicon)"
                     )
         except ImportError:
             if config.verbose:
@@ -161,7 +160,7 @@ def initialize_optimization(
                 )
                 if config.verbose:
                     aprint(
-                        f"✓ Model class: GaussianSplatModelCUDA (10-50x faster on NVIDIA GPUs)"
+                        "✓ Model class: GaussianSplatModelCUDA (10-50x faster on NVIDIA GPUs)"
                     )
             else:
                 if config.verbose:
@@ -191,28 +190,20 @@ def initialize_optimization(
             device_type = config.device.type
             aprint(f"✓ Model class: GaussianSplatModel (PyTorch, device={device_type})")
 
-    # Setup optimizer
-    # Use fast standard PyTorch Adam when dynamic ops disabled (58x faster than per-splat)
-    # Use per-splat optimizer only when dynamic topology changes are needed
-    use_standard = not config.enable_dynamic_ops
+    # Setup optimizer - always use standard PyTorch Adam (fast, vectorized)
     if config.verbose:
-        if use_standard:
-            aprint("Using standard PyTorch Adam optimizer (fast, static topology)")
-        else:
-            aprint("Using per-splat Adam optimizer (supports dynamic topology changes)")
+        aprint("Using standard PyTorch Adam optimizer")
 
-    optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
+    optimizer, scheduler = create_optimizer_and_scheduler(
         model,
-        lr=config.lr,  # Base learning rate (optimizer handles gradient dilution internally)
+        lr=config.lr,
         scheduler_type=config.scheduler_type,
         patience=config.patience,
         factor=config.lr_reduction_factor,
-        use_standard_optimizer=use_standard,
     )
 
     return ModelComponents(
         model=model,
         optimizer=optimizer,
         scheduler=scheduler,
-        coordinator=coordinator,
     )
