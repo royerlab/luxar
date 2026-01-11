@@ -45,6 +45,7 @@ make viewer       # Start viewer dev server (port 5173)
 make build-viewer # Build viewer for production (requires Rust)
 make build-wasm   # Build WASM module only
 make test-wasm    # Run Rust unit tests
+make benchmark-wasm  # Run WASM vs TypeScript performance benchmarks
 
 # Data & Examples
 make run-examples # Generate example datasets

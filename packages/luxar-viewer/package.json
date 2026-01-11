@@ -9,6 +9,7 @@
     "build:wasm": "bash scripts/build-wasm.sh",
     "build:wasm:dev": "bash scripts/build-wasm.sh --dev",
     "test:wasm": "cd src/wasm/rust && cargo test",
+    "bench:wasm": "npx tsx src/tests/benchmarks/wasm-benchmark.ts",
     "preview": "vite preview",
     "test:generate-fixtures": "cd ../.. && hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py",
     "test": "vitest",
