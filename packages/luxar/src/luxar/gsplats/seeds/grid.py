@@ -178,10 +178,13 @@ def seed_from_grid(
         for dim in range(ndim):
             grid_coords[:, dim] = np.clip(grid_coords[:, dim], 0, shape[dim] - 1)
 
-    # Sample amplitudes from V using interpolation
+    # Sample amplitudes from V using interpolation, scaled to 90% to avoid overlap overshoot
+    # (over-prediction penalty causes divergence with overlapping splats)
     # map_coordinates expects (ndim, n_points) ordering
     coords_for_interp = grid_coords.T
-    amplitudes = ndi.map_coordinates(V, coords_for_interp, order=1, mode="nearest")
+    amplitudes = (
+        ndi.map_coordinates(V, coords_for_interp, order=1, mode="nearest") * 0.9
+    )
 
     # Apply intensity threshold
     if exclude_below is not None:
@@ -207,7 +210,8 @@ def seed_from_grid(
             sharpnesses=np.zeros(0, dtype=np.float32),
         )
 
-    # Build isotropic Cholesky factors
+    # Use spacing-based sigma so splats cover the image
+    # σ = spacing/2 ensures ~60% overlap at midpoints between grid points
     sigmas = np.full(n_final, sigma, dtype=np.float32)
     cholesky_factors = sigmas_to_cholesky_isotropic(sigmas, ndim)
 

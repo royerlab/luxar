@@ -78,7 +78,7 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
         # Fit oriented (full-covariance) Gaussians with auto-candidate generation
         result = fit_gaussian_splats(
             V,
-            # seeds auto-generated with intelligent defaults
+            seeds=0.05,
             n_iters=N_ITERS,
             truncate=TRUNCATE_SIG,
             device=DEVICE,

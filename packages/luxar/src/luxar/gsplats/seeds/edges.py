@@ -13,6 +13,7 @@ import numpy as np
 from scipy import ndimage as ndi
 
 from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.seeds.utils import sigmas_to_cholesky_isotropic
 
 
 def seed_from_edges(
@@ -141,18 +142,20 @@ def seed_from_edges(
     if len(centers) == 0:
         return _empty_gsplatdata(ndim)
 
-    # Step 5: Compute structure tensor and Cholesky factors
-    cholesky_factors = _compute_structure_tensor_cholesky(
-        V=V,
-        points=centers,
-        radius=structure_radius,
-        min_sigma=min_sigma,
-        max_sigma=max_sigma,
-    )
+    # Step 5: Use simple isotropic σ=1 initialization (ignore structure tensor estimates)
+    # The fancy anisotropic shapes from eigendecomposition don't help in practice
+    sigmas_one = np.ones(len(centers), dtype=np.float32)
+    cholesky_factors = sigmas_to_cholesky_isotropic(sigmas_one, ndim)
 
-    # Step 6: Sample amplitudes from V
+    # Step 6: Sample amplitudes from V, scaled to 90% to avoid overlap overshoot
+    # (over-prediction penalty causes divergence with overlapping splats)
     coords_for_interp = centers.T
-    amplitudes = ndi.map_coordinates(V, coords_for_interp, order=1, mode="nearest")
+    amplitudes = (
+        ndi.map_coordinates(V, coords_for_interp, order=1, mode="nearest").astype(
+            np.float32
+        )
+        * 0.9
+    )
 
     # Step 7: Standard Gaussian sharpness
     sharpnesses = np.full(len(centers), 2.0, dtype=np.float32)

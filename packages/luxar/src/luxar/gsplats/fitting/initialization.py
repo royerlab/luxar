@@ -50,10 +50,29 @@ def initialize_optimization(
         if config.verbose:
             aprint(f"Using pre-initialized Cholesky factors: {L0.shape}")
     else:
-        # Default: isotropic Gaussians with init_sigma_vox
+        # Fallback: isotropic Gaussians with init_sigma_vox or auto-computed sigma
+        init_sigma = config.init_sigma_vox
+        if init_sigma is None:
+            # Auto-compute sigma based on image size: ~5% of smallest dimension, min 1.5
+            min_dim = float(min(config.V.shape))
+            init_sigma = max(1.5, min_dim * 0.05)
+            if config.verbose:
+                aprint(
+                    f"Auto-computed init_sigma={init_sigma:.2f} (5% of min dim {min_dim})"
+                )
+
         L0 = np.zeros((N, d, d), dtype=np.float32)
         for i in range(d):
-            L0[:, i, i] = config.init_sigma_vox
+            L0[:, i, i] = init_sigma
+
+    # Ensure diagonal values are at least sigma_min_diag to prevent gradient death
+    # (inverse_softplus of values near 0 causes gradients to vanish)
+    if config.sigma_min_diag is not None:
+        sigma_min = np.asarray(config.sigma_min_diag, dtype=np.float32)
+        for i in range(d):
+            L0[:, i, i] = np.maximum(L0[:, i, i], sigma_min[i] + 0.1)
+        if config.verbose:
+            aprint("Clamped L0 diagonal to >= sigma_min_diag + 0.1")
 
     if config.init_amps is not None:
         # Use pre-computed amplitudes
@@ -79,6 +98,15 @@ def initialize_optimization(
             aprint(
                 f"Using pre-initialized sharpness: range [{sharpness0.min():.2f}, {sharpness0.max():.2f}]"
             )
+
+    # Auto-determine amp_max if not specified
+    # Default: 1.0 (matches max value in normalized [0, 1] image)
+    # This prevents amplitude explosion during optimization
+    amp_max = config.amp_max
+    if amp_max is None:
+        amp_max = 1.0
+        if config.verbose:
+            aprint(f"Using auto amp_max={amp_max} (prevents amplitude explosion)")
 
     # Build model - use hardware acceleration when available
     model = None
@@ -153,6 +181,7 @@ def initialize_optimization(
                     amps0=amps0,
                     sigma_min_diag=config.sigma_min_diag,
                     sigma_max_diag=config.sigma_max_diag,
+                    amp_max=amp_max,
                     truncate=config.truncate,
                     intensity_floor=config.cuda_intensity_floor,
                     tile_size=config.cuda_tile_size,  # None = auto-select
@@ -183,6 +212,7 @@ def initialize_optimization(
             amps0=amps0,
             sigma_min_diag=config.sigma_min_diag,
             sigma_max_diag=config.sigma_max_diag,
+            amp_max=amp_max,
             truncate=config.truncate,
             device=config.device,
         )

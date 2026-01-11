@@ -20,7 +20,7 @@ def prepare_fit_config(
     V: np.ndarray,
     seeds: Optional[np.ndarray | int | float] = None,
     norm_percentile: float = 0.0,
-    init_sigma_vox: float = 1.5,
+    init_sigma_vox: Optional[float] = None,
     n_iters: int = 1000,
     lr: float = 0.01,
     loss_type: str = "l1",
@@ -30,6 +30,7 @@ def prepare_fit_config(
     l1_sharpness: Optional[float] = None,  # L1 regularization on sharpness offsets
     sigma_min_diag: Optional[Sequence[float]] = None,
     sigma_max_diag: Optional[Sequence[float]] = None,
+    amp_max: Optional[float] = None,  # Maximum amplitude (prevents explosion)
     truncate: float = 3.0,
     verbose: bool = True,
     max_abs_error: Optional[float] = None,
@@ -118,8 +119,8 @@ def prepare_fit_config(
     # is calculated, to ensure they scale properly with effective learning rates
 
     # Validate hyperparameters
-    if init_sigma_vox <= 0:
-        raise ValueError("init_sigma_vox must be positive")
+    if init_sigma_vox is not None and init_sigma_vox <= 0:
+        raise ValueError("init_sigma_vox must be positive if specified")
     if n_iters <= 0:
         raise ValueError("n_iters must be positive")
     if lr <= 0:
@@ -175,6 +176,10 @@ def prepare_fit_config(
         if any(s_max <= s_min for s_max, s_min in zip(sigma_max_diag, sigma_min_diag)):
             raise ValueError("sigma_max_diag must be greater than sigma_min_diag")
 
+    # Validate amp_max
+    if amp_max is not None and amp_max <= 0:
+        raise ValueError("amp_max must be positive if specified")
+
     return FitConfig(
         V=V,
         seeds=seeds,
@@ -209,4 +214,6 @@ def prepare_fit_config(
         # Hardware acceleration flags from fitter
         use_metal=fitter.use_metal,
         use_cuda=fitter.use_cuda,
+        # Amplitude constraint
+        amp_max=amp_max,
     )

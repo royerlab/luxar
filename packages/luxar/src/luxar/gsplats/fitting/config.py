@@ -29,7 +29,7 @@ class FitConfig:
     norm_percentile: float
 
     # Model parameters
-    init_sigma_vox: float
+    init_sigma_vox: Optional[float]
     sigma_min_diag: Optional[Sequence[float]]
     sigma_max_diag: Optional[Sequence[float]]
     truncate: float
@@ -88,6 +88,9 @@ class FitConfig:
     init_L: Optional[np.ndarray] = None  # Shape (N, d, d) - Cholesky factors
     init_amps: Optional[np.ndarray] = None  # Shape (N,) - amplitudes
     init_sharpness: Optional[np.ndarray] = None  # Shape (N,) - sharpness values
+
+    # Amplitude constraint (prevents explosion with few splats)
+    amp_max: Optional[float] = None  # Maximum amplitude value if specified
 
 
 @dataclass
