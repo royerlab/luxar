@@ -220,11 +220,11 @@ class TestPrepareConfig:
             prepare_fit_config(fitter, V, seeds=-10)
 
     def test_seeds_as_float_valid(self) -> None:
-        """Test seeds parameter as valid float proportion."""
+        """Test seeds parameter as valid compression ratio."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
 
-        # Should accept proportions in (0, 1]
+        # Should accept compression ratios in (0, 1]
         config = prepare_fit_config(fitter, V, seeds=0.01)
         assert config.seeds == 0.01
 
@@ -235,18 +235,18 @@ class TestPrepareConfig:
         assert config.seeds == 0.5
 
     def test_seeds_as_float_invalid(self) -> None:
-        """Test seeds parameter as invalid float proportion."""
+        """Test seeds parameter as invalid compression ratio."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
 
         # Should reject values > 1.0
-        with pytest.raises(ValueError, match="seeds as float must be in range"):
+        with pytest.raises(ValueError, match="compression ratio"):
             prepare_fit_config(fitter, V, seeds=1.5)
 
         # Should reject zero
-        with pytest.raises(ValueError, match="seeds as float must be in range"):
+        with pytest.raises(ValueError, match="compression ratio"):
             prepare_fit_config(fitter, V, seeds=0.0)
 
         # Should reject negative
-        with pytest.raises(ValueError, match="seeds as float must be in range"):
+        with pytest.raises(ValueError, match="compression ratio"):
             prepare_fit_config(fitter, V, seeds=-0.1)
