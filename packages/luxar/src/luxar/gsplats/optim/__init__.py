@@ -1,15 +1,9 @@
 """
-Specialized optimizers for Gaussian splatting.
+Optimizer utilities for Gaussian splatting.
 """
 
-from .integration import ModelOptimizerCoordinator, create_per_splat_optimizer_setup
-from .per_splat_adam import PerSplatAdam
-from .per_splat_scheduler import PerSplatExponentialLR, PerSplatReduceLROnPlateau
+from .integration import create_optimizer_and_scheduler
 
 __all__ = [
-    "PerSplatAdam",
-    "PerSplatReduceLROnPlateau",
-    "PerSplatExponentialLR",
-    "ModelOptimizerCoordinator",
-    "create_per_splat_optimizer_setup",
+    "create_optimizer_and_scheduler",
 ]

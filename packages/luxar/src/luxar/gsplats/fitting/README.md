@@ -45,9 +45,8 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 │ ┌─────────────────────────────────────────────────────────────────┐ │
 │ │ initialization.py: initialize_optimization()                    │ │
 │ │ • Creates GaussianSplatModel with initial parameters            │ │
-│ │ • Initializes per-splat Adam optimizer                          │ │
+│ │ • Initializes standard PyTorch Adam optimizer                   │ │
 │ │ • Sets up learning rate scheduler (plateau/exponential)         │ │
-│ │ • Creates ModelOptimizerCoordinator for dynamic ops             │ │
 │ │ • Returns ModelComponents dataclass                             │ │
 │ └─────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────┘
@@ -113,7 +112,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 - `FitConfig`: All parameters needed for fitting
 - `PreprocessedData`: Normalized data and metadata
 - `OptimizationResults`: Results from optimization
-- `ModelComponents`: Model, optimizer, scheduler, coordinator
+- `ModelComponents`: Model, optimizer, scheduler
 
 **Design Pattern:** Immutable configuration objects with validation at boundaries.
 
@@ -150,11 +149,10 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 
 **Creates:**
 1. **GaussianSplatModel**: PyTorch model with initial parameters
-2. **PerSplatAdam**: Optimizer with per-splat state management
+2. **Standard Adam**: PyTorch Adam optimizer with gradient dilution compensation
 3. **Scheduler**: ReduceLROnPlateau or ExponentialLR
-4. **Coordinator**: Manages model-optimizer synchronization for dynamic ops
 
-**Design Choice:** Per-splat optimizer enables momentum preservation during topology changes.
+**Design Choice:** Standard PyTorch Adam with fixed-pool architecture enables 50x+ faster optimization compared to per-splat alternatives.
 
 ### `losses.py` - Loss Functions
 **Purpose:** Creates the loss function based on configuration.
@@ -290,7 +288,7 @@ Optimization always returns the best state encountered, not the final state. Thi
 ### Gradient Dilution Compensation
 **Problem:** Higher dimensions have more parameters per splat, diluting gradients.
 
-**Where Applied:** Optimizer (`per_splat_adam.py`) automatically applies gradient dilution compensation internally.
+**Where Applied:** Optimizer factory function (`create_optimizer_and_scheduler`) automatically applies gradient dilution compensation.
 
 **Solution:** Scale learning rate based on dimensional and parameter complexity:
 ```python
@@ -439,9 +437,9 @@ The refactoring preserved all functionality while improving:
 
 **Related Modules:**
 - `../models/gsplats/gsplat_model.py` - PyTorch model definition
-- `../optim/per_splat_adam.py` - Per-splat optimizer
-- `../dynamic_ops.py` - Adaptive topology operations
-- `../candidates.py` - Seed generation
+- `../optim/integration.py` - Optimizer factory with gradient dilution
+- `./dynamic_ops/` - Fixed-pool splat relocation operations
+- `../seeds/` - Seed generation
 
 **Documentation:**
 - `../README.md` - Main package documentation

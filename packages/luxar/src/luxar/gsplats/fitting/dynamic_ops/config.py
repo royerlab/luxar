@@ -4,18 +4,18 @@
 
 class DynamicOpsConfig:
     """
-    Configuration for convergence-driven dynamic Gaussian splat operations.
+    Configuration for fixed-pool splat relocation operations.
 
-    This class contains all parameters for the three-step dynamic operations algorithm:
+    This class contains all parameters for the splat relocation algorithm:
     1. Residual Peak Analysis: Find strongest error locations
-    2. Convergence-Based Operations: Seed based on convergence criteria
-    3. Global Pruning: Remove ineffective splats
+    2. Weak Splat Identification: Find splats with low importance (amplitude × volume)
+    3. Relocation: Move weak splats to high-residual peaks
 
     Key features:
-    - Convergence-based detection aligns operations with optimization goals
-    - Adaptive thresholds prevent plateau issues
-    - Asymmetric loss awareness for additive Gaussian models
-    - Residual-driven seeding targets reconstruction deficiencies
+    - Fixed splat pool (no topology changes) enables fast standard optimizer
+    - Relocation preserves total splat count while redistributing coverage
+    - NMS ensures relocated splats don't crowd each other
+    - Convergence-based guards prevent unnecessary operations
     """
 
     def __init__(self) -> None:
@@ -23,10 +23,10 @@ class DynamicOpsConfig:
         self.step_every: int = 50  # Run operations every N iterations
 
         # Step 1: Residual Peak Analysis
-        self.k_max_residuals: int = 20  # Expected number of seeds (controls both modes)
+        self.k_max_residuals: int = 20  # Max peaks to find per step
         self.nms_radius_vox: float = 2.0  # Minimum distance between detected peaks
 
-        # Tile-based seeding for spatial fairness (enabled by default)
+        # Tile-based peak finding for spatial fairness (enabled by default)
         # In tiled mode, k_per_tile is auto-calculated as k_max_residuals / num_tiles
         # If k_per_tile >= 1: deterministic (keep floor(k_per_tile) per tile)
         # If k_per_tile < 1: probabilistic (keep each peak with probability k_per_tile)
@@ -35,29 +35,23 @@ class DynamicOpsConfig:
             None  # Auto: 16 for 2D, 6 for 3D, 4 for 4D, 2 for 5D+
         )
 
-        # Step 2: Adaptive Operations
-        self.min_contribution_threshold: float = (
-            0.05  # Legacy fixed threshold for influence detection
+        # Step 2: Weak Splat Identification
+        self.relocation_percentile: float = (
+            5.0  # Percentage of least important splats eligible for relocation
         )
-        self.relative_contribution_factor: float = (
-            0.1  # Adaptive threshold: fraction of local residual
-        )
-
-        # Adaptive Learning Rate Boosting
-        self.lr_boost_factor: float = (
-            1.5  # Multiplication factor for problematic regions
-        )
-        self.boost_influence_threshold: float = 0.05  # Minimum influence to boost LR
-
-        # Step 3: Principled Pruning Parameters
-        self.pruning_percentile: float = (
-            5.0  # Percentage of least important splats to consider for removal
-        )
-        self.min_splats_to_keep: int = (
-            10  # Minimum number of splats to retain regardless of importance
+        self.max_relocations_per_step: int = (
+            10  # Maximum splats to relocate per step (prevents destabilization)
         )
 
-        # Seeding parameters
+        # Step 3: Relocation Parameters
         self.init_sigma_vox: float = (
-            0.5  # Initial sigma for new splats (single-voxel scale)
+            0.5  # Initial sigma for relocated splats (isotropic, single-voxel scale)
+        )
+        self.min_contribution_threshold: float = (
+            0.01  # Minimum influence to consider a peak "covered" by existing splat
+        )
+
+        # Safety parameters
+        self.min_splats_to_keep: int = (
+            10  # Minimum splats - never relocate below this count (backwards compat)
         )

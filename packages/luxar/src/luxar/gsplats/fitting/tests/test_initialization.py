@@ -76,8 +76,6 @@ def test_initialize_optimization_normal(basic_config, basic_preprocessed_data) -
     assert components.model is not None
     assert components.optimizer is not None
     assert components.scheduler is not None
-    # Coordinator is None when enable_dynamic_ops=False (uses fast standard optimizer)
-    assert components.coordinator is None  # basic_config has enable_dynamic_ops=False
 
     # Check model has correct number of splats
     assert components.model.n_splats() == basic_preprocessed_data.N
@@ -104,7 +102,6 @@ def test_initialize_optimization_zero_candidates(basic_config) -> None:
     assert components.model is None
     assert components.optimizer is None
     assert components.scheduler is None
-    assert components.coordinator is None
 
 
 def test_model_initialization_parameters(basic_config, basic_preprocessed_data) -> None:
@@ -120,13 +117,11 @@ def test_model_initialization_parameters(basic_config, basic_preprocessed_data) 
 
 
 def test_optimizer_setup(basic_config, basic_preprocessed_data) -> None:
-    """Test that optimizer is created correctly (standard Adam when dynamic ops disabled)."""
+    """Test that optimizer is created correctly (standard Adam)."""
     components = initialize_optimization(basic_config, basic_preprocessed_data)
 
     assert components.optimizer is not None
     assert components.scheduler is not None
-    # Coordinator is None when enable_dynamic_ops=False (uses fast standard optimizer)
-    assert components.coordinator is None  # basic_config has enable_dynamic_ops=False
 
     # Standard PyTorch Adam optimizer
     assert hasattr(components.optimizer, "step")
@@ -135,22 +130,19 @@ def test_optimizer_setup(basic_config, basic_preprocessed_data) -> None:
     assert isinstance(components.optimizer, torch.optim.Adam)
 
 
-def test_per_splat_optimizer_setup(basic_config, basic_preprocessed_data) -> None:
-    """Test that per-splat optimizer is created when dynamic ops enabled."""
-    # Enable dynamic ops to get per-splat optimizer
+def test_standard_optimizer_with_dynamic_ops(basic_config, basic_preprocessed_data) -> None:
+    """Test that standard optimizer is used even with dynamic ops enabled."""
+    # Enable dynamic ops - should still use standard optimizer (no per-splat)
     basic_config.enable_dynamic_ops = True
     components = initialize_optimization(basic_config, basic_preprocessed_data)
 
     assert components.optimizer is not None
     assert components.scheduler is not None
-    assert (
-        components.coordinator is not None
-    )  # Coordinator exists with per-splat optimizer
 
-    # PerSplatAdam has these methods
+    # Should be standard PyTorch Adam (per-splat optimizer removed)
+    assert isinstance(components.optimizer, torch.optim.Adam)
     assert hasattr(components.optimizer, "step")
     assert hasattr(components.optimizer, "zero_grad")
-    assert hasattr(components.optimizer, "get_effective_learning_rates")
 
 
 def test_amplitude_extraction(basic_config, basic_preprocessed_data) -> None:

@@ -53,7 +53,7 @@ def run_optimization_loop(
     Parameters
     ----------
     components : ModelComponents
-        Model, optimizer, scheduler, and coordinator
+        Model, optimizer, and scheduler
     loss_fn : Callable
         Loss function that takes prediction and returns loss
     config : FitConfig
@@ -206,18 +206,14 @@ def run_optimization_loop(
                         )
                     break
 
-        # Dynamic operations (seeding and pruning)
+        # Dynamic operations (splat relocation)
         if config.enable_dynamic_ops and it % config.dynamic_config.step_every == 0:
-            optimizer, scheduler, topology_changed = apply_dynamic_operations(
+            apply_dynamic_operations(
                 model,
-                optimizer,
-                scheduler,
                 V_t,  # target
                 pred,  # current prediction
                 config.dynamic_config,
-                config.lr,  # Base learning rate (optimizer applies gradient dilution internally)
-                max_abs_error_threshold=preprocessed_data.max_abs_error,  # Now always has a sensible value
-                device=config.device,
+                max_abs_error_threshold=preprocessed_data.max_abs_error,
                 verbose=config.dynamic_ops_verbose,
             )
 

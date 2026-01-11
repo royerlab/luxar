@@ -1,7 +1,7 @@
 # luxar.gsplats - Technical Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2025-11-27
+**Version**: 2.0.0
+**Last Updated**: 2025-01
 
 ## Documentation Structure
 
@@ -9,7 +9,7 @@ This specification serves as the **hub** for the entire gsplats package. For det
 
 - **Multi-Scale Decomposition**: [multiscale/SPECIFICATIONS.md](./multiscale/SPECIFICATIONS.md) - Image decomposition for efficient multi-scale fitting
 - **Fitting Pipeline**: [fitting/SPECIFICATIONS.md](./fitting/SPECIFICATIONS.md) - Modular 6-stage fitting pipeline architecture
-- **Optimizers**: [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) - Per-splat Adam optimizer and schedulers
+- **Optimizers**: [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) - Standard Adam with gradient dilution compensation
 - **Models**: [models/SPECIFICATIONS.md](./models/SPECIFICATIONS.md) - PyTorch model and rendering engine
 - **Utilities**: [utils/SPECIFICATIONS.md](./utils/SPECIFICATIONS.md) - Matrix operations and gradient dilution utilities
 - **Terminology Glossary**: [GLOSSARY.md](./GLOSSARY.md) - Standard terminology and naming conventions
@@ -84,8 +84,8 @@ Implement an n-dimensional Gaussian splatting system for image/volume reconstruc
 
 Key requirements:
 - Support arbitrary dimensions with optimized 2D/3D fast paths
-- Per-splat optimization with individual learning rates and momentum
-- Dynamic topology changes (add/remove splats) during optimization
+- Standard PyTorch Adam with gradient dilution compensation (50x+ faster)
+- Fixed-pool splat relocation during optimization (no topology changes)
 - Mathematically stable parameterizations avoiding singularities
 - GPU-accelerated rendering with memory management
 
@@ -322,89 +322,70 @@ For 1D profile at distance r from center:
 - Lower sharpness → smoother reconstruction, more robust to noise
 - L1 regularization balances these by encouraging standard Gaussian unless needed
 
-## 3. Per-Splat Optimization (`optim/`)
+## 3. Standard Optimizer Integration (`optim/`)
 
-### PerSplatAdam Class
+### Overview
 
-**State structure:** `{splat_idx: {"lr": float, "step": int, "exp_avg_mu": tensor, "exp_avg_sq_mu": tensor, ...}}`
+The optimizer module provides a factory function for creating standard PyTorch Adam optimizers with automatic gradient dilution compensation. This enables 50x+ faster optimization compared to per-splat alternatives.
 
-Maintain separate momentum buffers for each parameter type (�, L_diag, L_off, a) per splat.
+### create_optimizer_and_scheduler Function
 
-**Key methods:**
-- `step()`: Update all splats using individual learning rates and momentum
-- `add_splats(n_new, lr_new=None)`: Extend state for new splats
-- `remove_splats(keep_mask)`: Remove and reindex splat states
-- `set_learning_rate(splat_idx, lr)`: Individual learning rate control
-- `get_effective_learning_rates()`: Return per-splat learning rates
+```python
+def create_optimizer_and_scheduler(
+    model,
+    lr: float = 1e-3,
+    scheduler_type: Optional[str] = "plateau",
+    betas: Tuple[float, float] = (0.9, 0.999),
+    eps: float = 1e-8,
+    ...
+) -> Tuple[torch.optim.Optimizer, Optional[LRScheduler]]:
+```
 
-**Adam update per splat:**
-1. Extract gradients for all parameter types with bounds checking
-2. Update momentum: `exp_avg = �� * exp_avg + (1-��) * grad`
-3. Update second moment: `exp_avg_sq = �� * exp_avg_sq + (1-��) * grad�`
-4. Apply bias correction and compute step
-5. **Apply parameter-type-specific learning rates**: `effective_lr = base_lr × parameter_multiplier`
-6. Update parameters in-place with type-specific rates
+**Key Features:**
+- Automatic gradient dilution compensation based on dimensionality
+- Standard `torch.optim.Adam` for fast vectorized optimization
+- Flexible scheduler support: ReduceLROnPlateau, ExponentialLR, or None
 
-**Parameter-Type-Specific Learning Rate Multipliers:**
-- **Position parameters (μ)**: `×0.1` (hardcoded) - Prevents splat migration and proliferation
-- **Variance parameters (L_diag, L_off)**: `×1.0` (hardcoded, with gradient dilution compensation) - Normal covariance adaptation
-- **Amplitude parameters (a)**: `×2.0` (hardcoded) - Fast intensity convergence
-- **Sharpness parameters (s')**: `×0.5` (hardcoded, no gradient dilution) - Conservative shape parameter updates
+**Gradient Dilution Compensation:**
+- 2D: 1.0× (baseline)
+- 3D: 1.8×
+- 4D: 8.5×
 
-**Anti-Proliferation Rationale:**
-- **Root cause**: Splats migrating away from seeded locations causes runaway seeding cycles
-- **Solution**: Slow position updates (×0.1) keep splats spatially stable while accelerating intensity adaptation (×2.0)
-- **Result**: Eliminates splat proliferation while improving convergence quality
+**Why Standard Adam Works with Fixed-Pool Architecture:**
+1. **No tensor shape changes**: Splat pool size is fixed throughout optimization
+2. **Relocation = parameter update**: Just modifies values, not tensor shapes
+3. **Momentum adaptation**: Stale momentum at relocated splat quickly overwritten by new gradients
+4. **Full adaptation**: Within 1-3 iterations after relocation
 
-### Per-Splat Schedulers
-
-**PerSplatReduceLROnPlateau:**
-- Track loss per splat individually or use global metric
-- Reduce learning rate when plateau detected: `new_lr = max(lr * factor, min_lr)`
-- Support multiple input types: scalar (all splats), tensor (per-splat), dict (explicit)
-
-**PerSplatExponentialLR:**
-- Apply decay: `lr = lr * �`
-- Optional age-based decay: newer splats decay slower
-
-### ModelOptimizerCoordinator
-
-**Purpose:** Synchronize model topology changes with optimizer/scheduler state
-
-**Methods:**
-- `prune_splats(keep_mask)`: Update model, optimizer, and scheduler atomically
-- `add_splats(centers, Ls, amps, lr_new=None)`: Coordinated addition
-- Ensure state consistency across all components
-
-## 4. Dynamic Operations (`dynamic_ops.py`)
+## 4. Dynamic Operations (`fitting/dynamic_ops/`)
 
 ### Philosophy
-Dynamic operations address reconstruction deficiencies by analyzing the residual image (target - prediction) to identify where the current Gaussian splat representation fails. The approach focuses on two core operations: **seeding** new splats where coverage is missing and **pruning** splats that contribute minimally to reconstruction quality.
+Dynamic operations use **fixed-pool splat relocation** to address reconstruction deficiencies. Instead of adding/removing splats (which changes tensor shapes), weak splats are relocated to high-residual regions. This enables use of standard PyTorch Adam (50x+ faster).
 
 ### Configuration: `DynamicOpsConfig`
 - `step_every=50`: Run operations every N iterations during optimization
-- `k_max_residuals=10`: Number of strongest residual peaks to analyze per iteration
+- `k_max_residuals=20`: Number of strongest residual peaks to analyze per iteration
 - `nms_radius_vox=2.0`: Minimum distance between detected residual peaks (non-maximum suppression)
-- `min_contribution_threshold=0.05`: Fixed threshold for influence detection in seeding/LR boosting decisions
-- `relative_contribution_factor=0.1`: Adaptive threshold factor for amplitude validation (threshold = local_residual × factor)
+- `min_contribution_threshold=0.01`: Fixed threshold for influence detection
 
-**Adaptive Learning Rate Parameters**:
-- `lr_boost_factor=1.5`: Multiplication factor for problematic region learning rates
-- `boost_influence_threshold=0.05`: Minimum influence to consider splat as "covering" problematic region
+**Relocation Parameters**:
+- `relocation_percentile=5.0`: Percentage of least important splats eligible for relocation
+- `max_relocations_per_step=10`: Maximum relocations per dynamic ops step
+- `init_sigma_vox=0.5`: Initial sigma for relocated splats (isotropic)
 
-**Principled Pruning Parameters**:
-- `pruning_percentile=5.0`: Percentage of least important splats to consider for removal
-- `min_splats_to_keep=10`: Minimum number of splats to retain regardless of importance
+**Safety Parameters**:
+- `min_splats_to_keep=10`: Minimum number of splats to retain
 
-### Residual-Based Seeding Strategy
+### Fixed-Pool Relocation Strategy
 
-Dynamic operations use **residual-based seeding** to target reconstruction deficiencies:
+Dynamic operations use **fixed-pool splat relocation** instead of add/remove:
 
-- **Method**: Find peaks in residual image using non-maximum suppression
-- **Target**: Locations with highest reconstruction error
-- **Strength**: Directly addresses reconstruction deficiencies
+- **Identify weak splats**: Bottom N% by importance (amplitude × volume)
+- **Find residual peaks**: High-error regions via non-maximum suppression
+- **Relocate**: Move weak splats to peaks (parameter updates only, no shape changes)
+- **Standard Adam works**: Tensor shapes never change
 
-### Core Function: `apply_dynamic_operations(model, optimizer, scheduler, V_target, V_pred, cfg, current_lr, max_abs_error_threshold, device, verbose=False)`
+### Core Function: `apply_dynamic_operations(model, V_target, V_pred, cfg, max_abs_error_threshold, verbose=False)`
 
 The dynamic operations algorithm runs every `step_every` iterations:
 
@@ -416,101 +397,37 @@ The dynamic operations algorithm runs every `step_every` iterations:
 4. **Rank by magnitude**: Process peaks in descending order of residual magnitude
 5. **Convergence guard**: If strongest residual peak is below threshold, skip all dynamic operations
 
-### **Step 2: Adaptive Splat Operations**
+### **Step 2: Weak Splat Identification**
 
-For each detected residual peak location, determine if coverage is sufficient using convergence criteria, and adaptively boost learning rates for problematic regions:
+Identify splats that are candidates for relocation:
 
-**Case A: Missing Coverage (Seeding)**
-- **Detection criterion**: Residual magnitude > `max_abs_error_threshold` at peak location
-- **Action**: Create new Gaussian splat fitted to local residual
-- **Initialization**:
-  - Center: Peak location coordinates
-  - Covariance: Isotropic - `L = eye(d) × init_sigma_vox` (simple spherical/circular splats)
-  - Amplitude: Direct residual value - `amplitude = |residual[center_coordinates]|`
-  - Sharpness: Standard Gaussian - `s' = 0` (gives `s = 2`, standard Gaussian falloff)
-- **Validation**: Only add if `estimated_amplitude ≥ local_residual × relative_contribution_factor`
-
-**Case B: Existing Coverage with Inadequate Quality**
-- **Detection criterion**: Existing splat coverage present but residual still exceeds threshold
-- **Action**: Adaptive Learning Rate Boosting
-  - **Purpose**: "Unfreeze" splats covering problematic regions to help them adapt
-  - **Target identification**: Splat with highest influence at the residual peak location
-  - **Boost calculation**: `new_lr = min(current_lr × boost_factor, base_lr)`
-  - **Default boost factor**: 1.5 (50% increase)
-  - **Safety cap**: Never exceed original starting learning rate (`base_lr`)
-
-### **Step 3: Principled Splat Pruning Analysis**
-Independent of residual peaks, identify and remove splats that do not meaningfully contribute to reconstruction quality:
-
-**Importance-Based Pre-filtering**:
 1. **Calculate splat importance**: For each splat k, compute `importance_k = amplitude_k × volume_k`
    - `amplitude_k = a_k` (splat amplitude)
-   - `volume_k = prod(diag(L_k))` (approximates `sqrt(det(Σ_k))` for computational efficiency)
-   - This approximates splat "mass": `∫ f_k(x) dx ≈ a_k × (2π)^(d/2) × sqrt(det(Σ_k))`
+   - `volume_k = prod(diag(L_k))` (approximates volume)
+   - Low importance = small AND dim → not useful where it is
 
-2. **Select pruning candidates**: Identify the `p%` least important splats (default `p=5%`)
+2. **Select relocation candidates**: Identify the `p%` least important splats (default `p=5%`)
    - Rank all splats by importance in ascending order
-   - Select bottom `p% × N_splats` splats as removal candidates
-   - Pre-filtering reduces computational cost by ~20x (only test 5% of splats)
+   - Select bottom `p% × N_splats` splats as relocation candidates
 
-**Local Convergence-Based Removal Validation**:
-For each candidate splat k in the low-importance set:
+### **Step 3: Peak-Splat Matching and Relocation**
 
-1. **Define influence region**:
-   - Compute 3σ elliptical region around splat center: `region_k = {x : (x - μ_k)^T Σ_k^{-1} (x - μ_k) ≤ 9}`
-   - This defines the spatial area where splat k has significant contribution
+Match weak splats to residual peaks and relocate:
 
-2. **Local removal test**:
-   - Render prediction without splat k in influence region only: `pred_local_without_k`
-   - Extract local target values: `target_local = target[region_k]`
-   - Compute local residual: `local_residual = |pred_local_without_k - target_local|`
+**Matching Algorithm**:
+1. Process peaks in order of residual magnitude (strongest first)
+2. For each peak:
+   - Check if any non-weak splat already has significant influence there
+   - If yes, skip this peak (existing coverage)
+   - If no, assign closest available weak splat to this peak
+3. Cap relocations at `max_relocations_per_step`
 
-3. **Local convergence validation**:
-   - Find maximum local residual: `max_local_residual = max(local_residual)`
-   - **If convergence threshold set**: Compare with threshold directly
-   - **If no convergence threshold**: Use adaptive tolerance based on current local error
-
-4. **Local convergence decision**:
-   - **Remove** if: `max_local_residual ≤ max_abs_error_threshold`
-   - **Keep** if: `max_local_residual > max_abs_error_threshold`
-   - **Conservative**: Only remove if local convergence is guaranteed to be maintained
-
-**Pruning Configuration**:
-- `pruning_percentile = 5.0`: Percentage of least important splats to consider for removal
-- `min_splats_to_keep = 10`: Minimum number of splats to retain regardless of importance
-
-**Local Convergence-Based Pruning Algorithm**:
-```
-importance = [amplitude_k * prod(diag(L_k)) for all splats k]
-candidates = bottom_percentile(importance, pruning_percentile)
-removal_list = []
-
-for splat_k in candidates:
-    # Define local influence region (3σ ellipse)
-    influence_region = compute_elliptical_region(splat_k.center, splat_k.covariance, radius=3.0)
-
-    # Render locally without splat k
-    pred_local_without_k = render_region_without_splat(influence_region, model, exclude=splat_k)
-    target_local = target[influence_region]
-
-    # Check local convergence impact
-    local_residual = abs(pred_local_without_k - target_local)
-    max_local_residual = max(local_residual)
-
-    # Local convergence-based decision
-    if max_abs_error_threshold != inf:
-        can_remove = max_local_residual <= max_abs_error_threshold
-    else:
-        current_local_max = max(abs(pred_current[influence_region] - target_local))
-        tolerance = current_local_max * quality_tolerance_factor
-        can_remove = max_local_residual <= current_local_max + tolerance
-
-    if can_remove:
-        removal_list.append(splat_k)
-
-if len(removal_list) > 0 and (total_splats - len(removal_list)) >= min_splats_to_keep:
-    remove_splats(removal_list)
-```
+**Relocation**:
+For each matched (splat_idx, peak_coords) pair:
+1. **CENTER**: Convert coords to raw (logit) space and update `model.raw_mu[splat_idx]`
+2. **AMPLITUDE**: Set to residual value at new location via `model.raw_a[splat_idx]`
+3. **COVARIANCE**: Reset to isotropic (`init_sigma_vox`) via `model.raw_L_diag[splat_idx]`
+4. **SHARPNESS**: Keep unchanged (optimizer will adjust)
 
 ### **Mathematical Foundations**
 
@@ -519,24 +436,24 @@ if len(removal_list) > 0 and (total_splats - len(removal_list)) >= min_splats_to
 - Rank peaks by `|residual[i,j]|` in descending order
 - Apply 2D/3D non-maximum suppression to avoid clustering
 
-**Splat Contribution Analysis**:
-- For point (i,j), compute each splat's contribution: `contribution_k = a_k * exp(-0.5 * (x_ij - μ_k)^T * Σ_k^(-1) * (x_ij - μ_k))`
-- Identify dominant contributor: `argmax_k(contribution_k)`
+**Splat Importance Calculation**:
+- For splat k: `importance_k = amplitude_k × volume_k`
+- `volume_k = prod(diag(L_k))` (approximates Gaussian volume)
+- Low importance = small AND dim → candidate for relocation
 
-**Impact Estimation**:
-- Maximum gradient magnitude from optimizer state
-- Gaussian maximum value: `a_k` (at center μ_k)
-- Learning rate from per-splat optimizer state
+**Influence Detection**:
+- For point (i,j), compute each splat's contribution: `contribution_k = a_k * exp(-0.5 * (x_ij - μ_k)^T * Σ_k^(-1) * (x_ij - μ_k))`
+- Use early filtering with max reach: `candidates = splats where ||p - center|| ≤ 6 × max_sigma`
 
 ### **Operational Flow**
 1. **Every `step_every` iterations**:
    - Compute current residual image
-   - Execute Step 1: Peak detection
-   - Execute Step 2: Seeding/LR Boosting decisions
-   - Execute Step 3: Global pruning
-   - Update model, optimizer, and scheduler states atomically
+   - Execute Step 1: Peak detection with convergence guard
+   - Execute Step 2: Weak splat identification
+   - Execute Step 3: Peak-splat matching and relocation
+   - Model parameters modified in-place (no shape changes)
 
-This approach ensures that dynamic operations are directly driven by reconstruction quality, focusing computational resources on the most problematic regions while removing splats that no longer contribute meaningfully to the optimization process.
+This approach ensures dynamic operations are driven by reconstruction quality while maintaining fixed tensor shapes for standard PyTorch Adam optimization (50x+ faster).
 
 ## 5. Main Fitting Interface (`fit_gsplats.py`)
 
@@ -550,7 +467,7 @@ The main fitting interface provides both functional and object-oriented APIs:
 The implementation uses a **modular 6-stage pipeline** (see [fitting/SPECIFICATIONS.md](./fitting/SPECIFICATIONS.md)):
 1. **`prepare_fit_config()`**: Validate inputs and prepare configuration object
 2. **`preprocess_data()`**: Normalize data, generate/validate candidates
-3. **`initialize_optimization()`**: Create model, optimizer, scheduler, and coordinator
+3. **`initialize_optimization()`**: Create model, optimizer, and scheduler
 4. **`create_loss_function()`**: Build loss function with regularization
 5. **`run_optimization_loop()`**: Execute iterative optimization with dynamic operations
 6. **`finalize_results()`**: Extract parameters, rescale intensities, compute statistics
@@ -643,14 +560,11 @@ def fit_gaussian_splats(
 - **Reconstruction**: Resulting image may have different baseline than original, but preserves relative structure
 
 **Optimization loop:**
-1. Setup per-splat optimizer and scheduler
-   - **Gradient dilution compensation**: Optimizer internally applies gradient dilution compensation to learning rate
+1. Setup standard optimizer and scheduler via `create_optimizer_and_scheduler()`
+   - **Gradient dilution compensation**: Automatically applied at optimizer creation
      - **Problem**: Higher dimensions have more parameters per splat, diluting gradients
-     - **Parameter count**: 2D (5 params: 2 pos + 3 cov), 3D (9 params: 3 pos + 6 cov), 4D (14 params: 4 pos + 10 cov), nD (d + d(d+1)/2 params)
-     - **Compensation formula** (for d ≤ 3): `effective_lr = base_lr × (params_current / params_2d)`
-     - **Enhanced formula** (for d > 3): `effective_lr = base_lr × d^0.8 × (params_current / params_2d)`
+     - **Parameter count**: 2D (5 params: 2 pos + 3 cov), 3D (9 params: 3 pos + 6 cov), 4D (14 params: 4 pos + 10 cov)
      - **Result**: Learning rate scaling - 2D (×1.0), 3D (×1.8), 4D (×8.5)
-     - **Sharpness exception**: Sharpness always uses 0.5 × base_lr (no gradient dilution) since it's a single scalar regardless of dimension
 2. **Log convergence criteria**: Explicitly state convergence threshold (given or auto-calculated)
 3. **Initialize best state tracking**: Track best max absolute error and corresponding splat configuration
 4. For each iteration:
@@ -658,9 +572,9 @@ def fit_gaussian_splats(
    - Loss computation: MSE or Poisson + optional L1 regularization
    - Backward pass: compute gradients
    - Apply gradient clipping if specified
-   - Optimizer step with per-splat learning rates and parameter-type multipliers
+   - Optimizer step (standard PyTorch Adam)
    - Scheduler step for learning rate adaptation
-   - Dynamic operations if enabled and scheduled
+   - Dynamic operations (fixed-pool relocation) if enabled and scheduled
    - Convergence check: compute `max_abs_error = max(|pred - target|)` and stop if below threshold
    - **Best state tracking**: Save current state if `max_abs_error` is lowest seen so far
    - Display max abs error during training in addition to losses
@@ -1391,7 +1305,7 @@ When referencing other specifications, use this format:
 **Examples**:
 - Gradient dilution details: [utils/SPECIFICATIONS.md](./utils/SPECIFICATIONS.md) → Section 2
 - Fitting pipeline: [fitting/SPECIFICATIONS.md](./fitting/SPECIFICATIONS.md) → Pipeline Architecture
-- Per-splat optimizer: [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) → PerSplatAdam
+- Optimizer factory: [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) → create_optimizer_and_scheduler
 
 ## Conclusion
 
@@ -1402,6 +1316,12 @@ This specification provides complete implementation details for a mathematically
 ---
 
 ## Changelog
+
+- **v2.0.0** (January 2025): Standard PyTorch Adam optimizer
+  - Replaced per-splat optimizer with standard `torch.optim.Adam` (50x+ faster)
+  - Fixed-pool splat relocation instead of add/remove topology changes
+  - Simplified optimizer setup via `create_optimizer_and_scheduler()`
+  - Gradient dilution compensation applied at optimizer creation time
 
 - **v1.0.1** (2025-11-28): Sharpness bounds clarification
   - Added explicit clarification of official [0, 31] bounds vs fitting implementation [0.164, 24.47]
