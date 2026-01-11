@@ -256,10 +256,14 @@ def fit_gaussian_splats(
     V : np.ndarray
         Input n-dimensional image/volume to reconstruct. Will be normalized to [0,1].
     seeds : np.ndarray, shape (N, d) or int or float, optional
-        Initial seed center positions, count, or proportion.
+        Initial seed center positions, count, or compression ratio.
         - If np.ndarray: Explicit seed centers in voxel coordinates
         - If int: Exact number (keeps highest intensity if more detected)
-        - If float (0 < seeds <= 1.0): Proportion of voxels
+        - If float (0 < seeds <= 1.0): Compression ratio - the ratio of floats
+          used to represent Gaussian splats over total image floats. For example,
+          seeds=0.1 targets a representation using 10% of the original storage.
+          The number of splats is computed as: n = ratio × total_voxels / floats_per_splat
+          where floats_per_splat = d + d×(d+1)/2 + 2 (center + Cholesky + amp + sharpness).
         - If None: Auto-generated using dimension-aware intelligent defaults:
           * Universal scales: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) for comprehensive detection
           * Volume-proportional density: ~1% of voxels as seeds

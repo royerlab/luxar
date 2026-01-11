@@ -18,7 +18,11 @@ pytestmark = pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
 if HAS_TORCH:
     from luxar.gsplats.fitting.config import FitConfig
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
-    from luxar.gsplats.fitting.preprocessing import preprocess_data
+    from luxar.gsplats.fitting.preprocessing import (
+        _compression_ratio_to_target_count,
+        _compute_floats_per_splat,
+        preprocess_data,
+    )
 
 
 @pytest.fixture
@@ -200,17 +204,34 @@ class TestPreprocessData:
         else:
             assert result.N == 8
 
-    def test_seeds_as_float_proportion(self, mock_config_2d) -> None:
-        """Test seeds parameter as float proportion."""
-        mock_config_2d.seeds = 0.01  # 1% of voxels
-        mock_config_2d.seed_method = "grid"  # Use grid method
+    def test_seeds_as_compression_ratio(self, mock_config_2d) -> None:
+        """Test seeds parameter as compression ratio."""
+        # Create a 64x64 image (4096 voxels)
+        V = np.random.rand(64, 64).astype(np.float32) * 0.5
+        # Add some structure
+        for cx, cy in [(16, 16), (32, 32), (48, 48)]:
+            x, y = np.meshgrid(np.arange(64) - cx, np.arange(64) - cy, indexing="ij")
+            V += np.exp(-(x**2 + y**2) / (2 * 5**2))
+
+        mock_config_2d.V = V
+        mock_config_2d.seeds = 0.1  # 10% compression ratio
+        mock_config_2d.seed_method = "grid"
         mock_config_2d.seed_kwargs = {"spacing": 8.0}
 
         result = preprocess_data(mock_config_2d)
 
-        # Just verify it runs without error and generates seeds
+        # For 64x64 = 4096 voxels, 2D (7 floats/splat)
+        # Expected target: 0.1 * 4096 / 7 = 58.5 → 58 seeds
+        expected_target = int(0.1 * 4096 / 7)
+
+        # Verify we get approximately the expected number of seeds
+        # Allow some tolerance since seed generation may not hit exact target
         assert result.seed_centers is not None
-        assert result.N >= 0  # May be 0 if no peaks detected
+        assert result.N > 0
+        # The actual count should be within reasonable range of expected
+        assert abs(result.N - expected_target) <= max(10, expected_target * 0.5), (
+            f"Expected ~{expected_target} seeds, got {result.N}"
+        )
 
     def test_seeds_explicit_array(self, mock_config_2d) -> None:
         """Test seeds parameter as explicit array."""
@@ -318,3 +339,74 @@ class TestPreprocessData:
             assert mock_config_2d.init_sharpness is None, (
                 "init_sharpness should be cleared when more seeds are generated"
             )
+
+
+class TestCompressionRatio:
+    """Tests for compression ratio helper functions."""
+
+    def test_floats_per_splat_2d(self) -> None:
+        """Test floats per splat calculation for 2D."""
+        # 2D: center (2) + cholesky (2*3/2=3) + amp (1) + sharpness (1) = 7
+        assert _compute_floats_per_splat(2) == 7
+
+    def test_floats_per_splat_3d(self) -> None:
+        """Test floats per splat calculation for 3D."""
+        # 3D: center (3) + cholesky (3*4/2=6) + amp (1) + sharpness (1) = 11
+        assert _compute_floats_per_splat(3) == 11
+
+    def test_floats_per_splat_4d(self) -> None:
+        """Test floats per splat calculation for 4D."""
+        # 4D: center (4) + cholesky (4*5/2=10) + amp (1) + sharpness (1) = 16
+        assert _compute_floats_per_splat(4) == 16
+
+    def test_floats_per_splat_5d(self) -> None:
+        """Test floats per splat calculation for 5D."""
+        # 5D: center (5) + cholesky (5*6/2=15) + amp (1) + sharpness (1) = 22
+        assert _compute_floats_per_splat(5) == 22
+
+    def test_compression_ratio_to_target_count_2d(self) -> None:
+        """Test compression ratio calculation for 2D."""
+        # 2D: 7 floats per splat
+        # 100x100 image = 10,000 voxels
+        # ratio=0.1 → 0.1 * 10000 / 7 = 142.8 → 142
+        target = _compression_ratio_to_target_count(0.1, (100, 100))
+        assert target == 142
+
+    def test_compression_ratio_to_target_count_3d(self) -> None:
+        """Test compression ratio calculation for 3D."""
+        # 3D: 11 floats per splat
+        # 64³ = 262,144 voxels
+        # ratio=0.05 → 0.05 * 262144 / 11 = 1191.56 → 1191
+        target = _compression_ratio_to_target_count(0.05, (64, 64, 64))
+        assert target == 1191
+
+    def test_compression_ratio_to_target_count_3d_high_ratio(self) -> None:
+        """Test compression ratio calculation for 3D with high ratio."""
+        # 3D: 11 floats per splat
+        # 64³ = 262,144 voxels
+        # ratio=0.1 → 0.1 * 262144 / 11 = 2383.1 → 2383
+        target = _compression_ratio_to_target_count(0.1, (64, 64, 64))
+        assert target == 2383
+
+    def test_compression_ratio_minimum_one_seed(self) -> None:
+        """Test that compression ratio returns at least 1 seed."""
+        # Very small ratio on small image should clamp to 1
+        # 4x4 = 16 voxels, ratio=0.001, 2D (7 floats)
+        # 0.001 * 16 / 7 = 0.002 → 0, but should clamp to 1
+        target = _compression_ratio_to_target_count(0.001, (4, 4))
+        assert target == 1
+
+    def test_compression_ratio_large_volume(self) -> None:
+        """Test compression ratio calculation for large 3D volume."""
+        # 256³ = 16,777,216 voxels
+        # ratio=0.1 → 0.1 * 16777216 / 11 ≈ 152,520
+        target = _compression_ratio_to_target_count(0.1, (256, 256, 256))
+        assert target == 152520
+
+    def test_compression_ratio_4d(self) -> None:
+        """Test compression ratio calculation for 4D."""
+        # 4D: 16 floats per splat
+        # 32^4 = 1,048,576 voxels
+        # ratio=0.05 → 0.05 * 1048576 / 16 = 3276.8 → 3276
+        target = _compression_ratio_to_target_count(0.05, (32, 32, 32, 32))
+        assert target == 3276

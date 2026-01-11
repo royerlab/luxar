@@ -304,7 +304,9 @@ else:
 - **If seeds is int**: Auto-generate, then ensure exact count via:
   * If too many: subsample using farthest-first with intensity weighting (spatial diversity)
   * If too few: regenerate with low threshold (10%), or add grid-based fallback
-- **If seeds is float**: Auto-generate (proportion hint, not strictly enforced)
+- **If seeds is float**: Compression ratio (splat floats / image floats).
+  Target count computed as: `n = ratio × total_voxels / floats_per_splat`
+  where `floats_per_splat = d + d×(d+1)/2 + 2` (7 for 2D, 11 for 3D, 16 for 4D)
 - **If seeds is None**: Auto-generate using combined decomposition and multiscale approach:
   ```python
   # Generate seeds using both methods for comprehensive coverage
