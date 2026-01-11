@@ -185,7 +185,15 @@ def _generate_seeds(
     from luxar.gsplats.seeds import generate_seeds
 
     # Generate seeds using specified method (returns GSplatData)
-    seeds_result = generate_seeds(V, method=seed_method, **seed_kwargs)
+    # Pass target_count so intelligent seeding methods get proper budget allocation:
+    # - With target_seeds: 50% decomposition, 30% edges, 20% grid
+    # - Without: Auto estimates ~100 seeds, rest filled by grid fallback
+    if target_count is not None:
+        seeds_result = generate_seeds(
+            V, method=seed_method, target_seeds=target_count, **seed_kwargs
+        )
+    else:
+        seeds_result = generate_seeds(V, method=seed_method, **seed_kwargs)
 
     # Extract centers from GSplatData
     if isinstance(seeds_result, GSplatData):

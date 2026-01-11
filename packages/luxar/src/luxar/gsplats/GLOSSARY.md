@@ -214,26 +214,26 @@ This glossary defines standard terminology used throughout the gsplats package s
 
 ---
 
-### Per-Splat State
-**Definition**: Individual optimizer state (momentum, learning rate) maintained for each splat.
+### Standard Adam with Fixed-Pool Architecture
+**Definition**: Standard PyTorch Adam optimizer working with fixed tensor shapes.
 
-**Contents**:
-- Learning rate (can differ per splat)
-- First moment estimates (exp_avg)
-- Second moment estimates (exp_avg_sq)
-- Step counter
+**Key Insight**:
+- Fixed-pool architecture keeps tensor shapes constant
+- Splat relocation = parameter updates (no shape changes)
+- Adam's momentum naturally adapts to relocated splats
+- 50x+ faster than per-splat alternatives
 
 **Standard terms**:
-- ✅ **Per-splat state** (preferred)
-- ✅ **Individual state** (acceptable)
+- ✅ **Standard Adam** (preferred)
+- ✅ **Fixed-pool architecture**
 
 **Avoid**:
-- ❌ Splat-wise state
-- ❌ Per-Gaussian state
+- ❌ Per-splat optimizer (removed for performance)
+- ❌ Individual state management
 
-**Benefit**: Enables momentum preservation during topology changes
+**Benefit**: 50x+ faster optimization with simpler architecture
 
-**Related**: See [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) → PerSplatAdam
+**Related**: See [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) → create_optimizer_and_scheduler
 
 ---
 
@@ -256,24 +256,23 @@ This glossary defines standard terminology used throughout the gsplats package s
 
 ---
 
-### Parameter-Type-Specific Learning Rates
-**Definition**: Different learning rate multipliers applied to different parameter types.
+### Gradient Dilution Compensation
+**Definition**: Automatic learning rate scaling based on dimensionality to counteract gradient dilution.
 
-**Multipliers** (hard-coded in PerSplatAdam):
-- Position (μ): ×0.1 → slow movement, prevents migration
-- Variance (L): ×1.0 → normal adaptation
-- Amplitude (a): ×2.0 → fast intensity matching
-- Sharpness (s'): ×0.5 → conservative shape updates
+**Values** (applied by `create_optimizer_and_scheduler()`):
+- 2D: ×1.0 (baseline)
+- 3D: ×1.8
+- 4D: ×8.5
 
 **Standard terms**:
-- ✅ **Parameter-type-specific learning rates** (full)
-- ✅ **Parameter-type LR multipliers** (abbreviated)
+- ✅ **Gradient dilution compensation** (full)
+- ✅ **Dilution factor** (abbreviated)
 
 **Avoid**:
-- ❌ Differential learning rates (ambiguous)
-- ❌ Per-parameter-type LR (verbose)
+- ❌ Per-parameter-type LR (old architecture)
+- ❌ Manual LR scaling (automatic now)
 
-**Rationale**: Prevents splat proliferation and improves convergence.
+**Rationale**: Higher dimensions have more parameters per splat, diluting gradients.
 
 ---
 
@@ -678,7 +677,8 @@ When referencing package specifications:
 
 - **Main Specification**: [SPECIFICATIONS.md](./SPECIFICATIONS.md) - Complete technical specification
 - **Fitting Pipeline**: [fitting/SPECIFICATIONS.md](./fitting/SPECIFICATIONS.md) - Pipeline architecture
-- **Optimizers**: [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) - Per-splat optimization
+- **Optimizers**: [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) - Standard Adam with gradient dilution
+- **Dynamic Operations**: [fitting/dynamic_ops/SPECIFICATIONS.md](./fitting/dynamic_ops/SPECIFICATIONS.md) - Fixed-pool relocation
 - **Models**: [models/SPECIFICATIONS.md](./models/SPECIFICATIONS.md) - PyTorch models
 - **Utilities**: [utils/SPECIFICATIONS.md](./utils/SPECIFICATIONS.md) - Mathematical utilities
 - **Multi-Scale**: [multiscale/SPECIFICATIONS.md](./multiscale/SPECIFICATIONS.md) - Image decomposition

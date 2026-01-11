@@ -148,10 +148,10 @@ factor_4d = calculate_gradient_dilution_factor(4)
 # Use factor to scale variance/covariance learning rates
 ```
 
-**Integration**: Used by `PerSplatAdam` optimizer to automatically adjust learning rates for position and covariance parameters based on dimensionality.
+**Integration**: Used by `create_optimizer_and_scheduler()` to automatically scale learning rates based on dimensionality. The function multiplies the base learning rate by the dilution factor before creating the standard PyTorch Adam optimizer.
 
 **See Also**:
-- `../optim/SPECIFICATIONS.md` - PerSplatAdam implementation
+- `../optim/SPECIFICATIONS.md` - Optimizer factory and gradient dilution integration
 - `../SPECIFICATIONS.md` - Gradient dilution rationale
 
 ---

@@ -101,7 +101,8 @@ def calculate_gradient_dilution_factor(d: int) -> float:
         - Combined approach provides empirically validated compensation
 
     Usage:
-        Automatically applied by PerSplatAdam optimizer during initialization.
+        Automatically applied by create_optimizer_and_scheduler() when creating
+        the optimizer. The effective learning rate is lr * dilution_factor.
         Users don't need to call this directly.
     """
 ```
@@ -464,10 +465,13 @@ Ls_restored = unpack_tril(data["Ls"], d=3)  # Shape: (N, 3, 3)
 ```python
 from luxar.gsplats.utils import calculate_gradient_dilution_factor
 
-# In PerSplatAdam.__init__()
+# In create_optimizer_and_scheduler()
 d = len(model.shape)
 gradient_dilution_factor = calculate_gradient_dilution_factor(d)
-self.effective_lr = self.base_lr * gradient_dilution_factor
+effective_lr = base_lr * gradient_dilution_factor
+
+# Create standard Adam with compensated learning rate
+optimizer = torch.optim.Adam(model.parameters(), lr=effective_lr)
 
 # Result: 3D model gets 1.8× learning rate automatically
 ```
@@ -486,7 +490,7 @@ print(f"Parameters per splat: {params_per_splat}")  # Output: 4 + 10 + 1 + 1 = 1
 
 **Related Specifications**:
 - [Main SPECIFICATIONS.md](../SPECIFICATIONS.md) - Core Gaussian splatting concepts
-- [optim/SPECIFICATIONS.md](../optim/SPECIFICATIONS.md) - Gradient dilution usage in optimizer
+- [optim/SPECIFICATIONS.md](../optim/SPECIFICATIONS.md) - Optimizer factory with gradient dilution integration
 - [models/SPECIFICATIONS.md](../models/SPECIFICATIONS.md) - Cholesky parameterization
 - [GLOSSARY.md](../GLOSSARY.md) - Terminology and naming conventions
 

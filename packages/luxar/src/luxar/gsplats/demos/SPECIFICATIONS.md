@@ -34,7 +34,7 @@ DEVICE = None      # None -> auto; or "cuda"/"cpu"/"mps:0"
 - Structure major operations with clear section titles:
   - "Data Generation" / "Creating test data"
   - "Candidate Generation" / "Finding candidates"
-  - "Fitting with per-splat optimizer"
+  - "Fitting Gaussian splats"
   - "Visualization Preparation"
 
 ### Argument Parsing
@@ -95,12 +95,12 @@ These practices ensure consistency, maintainability, and usability across all de
 ### Available Demo Files
 
 1. **demo_basic_fitting.py**
-   - **Description**: Clean demonstration of the high-level `fit_gaussian_splats()` API with optional dynamic operations (pruning, seeding, merging, splitting). Uses synthetic blob data to showcase the recommended interface for Gaussian splat fitting with comprehensive structured logging and per-splat optimization features.
+   - **Description**: Clean demonstration of the high-level `fit_gaussian_splats()` API with optional dynamic operations (fixed-pool splat relocation). Uses synthetic blob data to showcase the recommended interface for Gaussian splat fitting with comprehensive structured logging.
    - **Usage**: `python demo_basic_fitting.py [--no-napari] [--n-iters N] [--disable-dynamic]`
-   - **Best for**: Learning the recommended API and understanding dynamic topology changes during optimization
+   - **Best for**: Learning the recommended API and understanding dynamic splat relocation during optimization
 
 2. **demo_performance_metrics.py**
-   - **Description**: Comprehensive performance benchmarking demo that demonstrates the per-splat optimizer with detailed timing metrics, convergence analysis, and quality assessments on synthetic 2D blob data. Shows convergence speed, final reconstruction quality (MSE, PSNR, relative L2 error), and active splat counting with early stopping capabilities.
+   - **Description**: Comprehensive performance benchmarking demo with detailed timing metrics, convergence analysis, and quality assessments on synthetic 2D blob data. Shows convergence speed, final reconstruction quality (MSE, PSNR, relative L2 error), and active splat counting with early stopping capabilities.
    - **Usage**: `python demo_performance_metrics.py [--no-napari] [--n-iters N]`
    - **Best for**: Understanding optimizer performance, convergence behavior, and quality metrics
 

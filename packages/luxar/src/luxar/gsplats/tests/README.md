@@ -29,8 +29,7 @@ gsplats/
 ├── optim/
 │   └── tests/                      # Optimizer tests
 │       ├── __init__.py
-│       ├── test_per_splat_adam.py       # Per-splat Adam optimizer
-│       └── test_per_splat_optimizer.py  # Optimizer factory
+│       └── test_integration.py          # Standard optimizer integration
 ├── utils/
 │   └── tests/                      # Utils-specific tests
 │       ├── __init__.py
@@ -194,8 +193,7 @@ models/utils/tests/ ................................................... [25 test
   - test_inverse_softplus.py ....................................... [15 tests]
   - test_lt_solver.py .............................................. [18 tests]
 optim/tests/ .......................................................... [17 tests]
-  - test_per_splat_adam.py ......................................... [2 tests]
-  - test_per_splat_optimizer.py .................................... [15 tests]
+  - test_integration.py ............................................ [17 tests]
 multiscale/tests/ ..................................................... [30 tests]
   - test_decomposition_basic.py .................................... [21 tests]
   - test_energy_distribution.py .................................... [9 tests]

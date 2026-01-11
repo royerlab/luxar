@@ -1,7 +1,7 @@
 # Gaussian Splat Fitting Pipeline Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2025-12-21
+**Version**: 2.0.0
+**Last Updated**: 2025-01
 
 ## Overview
 
@@ -146,7 +146,7 @@ class PreprocessedData:
 
 ### ModelComponents
 
-**Purpose**: Contains all optimization components (model, optimizer, scheduler, coordinator).
+**Purpose**: Contains all optimization components (model, optimizer, scheduler).
 
 **Fields**:
 ```python
@@ -154,13 +154,12 @@ class PreprocessedData:
 class ModelComponents:
     """
     Components needed during optimization.
-    
-    Contains model, optimizer, scheduler, and coordinator.
+
+    Contains model, optimizer, and scheduler.
     """
     model: Any  # GaussianSplatModel - PyTorch model with splat parameters
-    optimizer: torch.optim.Optimizer  # PerSplatAdam - Per-splat Adam optimizer
+    optimizer: torch.optim.Optimizer  # Standard PyTorch Adam optimizer
     scheduler: Any  # Learning rate scheduler (plateau or exponential)
-    coordinator: Any  # ModelOptimizerCoordinator - Coordinates dynamic operations
 ```
 
 **Note**: Type annotations use `Any` to avoid circular imports, but actual types are documented in comments.
@@ -357,14 +356,13 @@ def initialize_optimization(
     preprocessed_data: PreprocessedData
 ) -> ModelComponents:
     """
-    Initialize model, optimizer, scheduler, and coordinator.
+    Initialize model, optimizer, and scheduler.
 
     Steps:
     1. Create GaussianSplatModel with initial parameters
-    2. Initialize PerSplatAdam optimizer with parameter-type-specific learning rates
+    2. Initialize standard PyTorch Adam optimizer with gradient dilution compensation
     3. Create learning rate scheduler (plateau or exponential)
-    4. Create ModelOptimizerCoordinator for dynamic operations
-    5. Return ModelComponents
+    4. Return ModelComponents
     """
 ```
 
@@ -437,31 +435,26 @@ model = GaussianSplatModel(
 
 **Optimizer Setup**:
 ```python
-# Setup per-splat optimizer using helper function
-# Note: Gradient dilution compensation is handled internally by the optimizer
-optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
+# Setup standard optimizer using factory function
+# Note: Gradient dilution compensation is applied automatically based on dimension
+optimizer, scheduler = create_optimizer_and_scheduler(
     model,
-    lr=config.lr,  # Base learning rate
+    lr=config.lr,  # Base learning rate (auto-compensated)
     scheduler_type=config.scheduler_type,
     patience=config.patience,
-    lr_reduction_factor=config.lr_reduction_factor,
+    factor=config.lr_reduction_factor,
 )
 ```
 
-**What create_per_splat_optimizer_setup() does internally**:
-1. Creates PerSplatAdam optimizer with:
-   - Gradient dilution compensation based on dimensionality
-   - Parameter-type-specific learning rate multipliers:
-     - Position (μ): ×0.1 (slow position updates, prevent proliferation)
-     - Variance (L_diag, L_off): ×1.0 with gradient dilution compensation
-     - Amplitude (a): ×2.0 (fast intensity convergence)
-     - Sharpness (s'): ×0.5 (conservative, no gradient dilution since always 1 scalar)
+**What create_optimizer_and_scheduler() does internally**:
+1. Creates standard `torch.optim.Adam` with:
+   - Gradient dilution compensation: `effective_lr = lr * dilution_factor`
+   - Dilution factors: 2D=1.0×, 3D=1.8×, 4D=8.5× (see utils/trils.py)
 
 2. Creates scheduler based on scheduler_type:
-   - "plateau": PerSplatReduceLROnPlateau with patience and lr_reduction_factor
-   - "exponential": PerSplatExponentialLR with gamma
-
-3. Creates ModelOptimizerCoordinator to manage dynamic operations
+   - "plateau": `ReduceLROnPlateau` with patience and factor
+   - "exponential": `ExponentialLR` with gamma
+   - None: No scheduler
 
 ### Stage 4: Loss Function Creation (`losses.py`)
 
@@ -696,19 +689,15 @@ for iteration in range(n_iters):
             aprint(f"Converged at iteration {iteration}: max_abs_error = {max_abs_error:.6f} < {convergence_threshold:.6f}")
         break
 
-    # 9. Dynamic operations
+    # 9. Dynamic operations (fixed-pool splat relocation)
     if config.enable_dynamic_ops and iteration % config.dynamic_ops_config.step_every == 0:
         apply_dynamic_operations(
             model=components.model,
-            optimizer=components.optimizer,
-            scheduler=components.scheduler,
-            V_target=preprocessed_data.V_normalized,
+            V_target=preprocessed_data.V_tensor,
             V_pred=pred,
             cfg=config.dynamic_ops_config,
-            current_lr=config.lr,
-            max_abs_error_threshold=preprocessed_data.convergence_threshold,
-            device=config.device,
-            verbose=config.verbose
+            max_abs_error_threshold=preprocessed_data.max_abs_error,
+            verbose=config.dynamic_ops_verbose,
         )
 
     # 10. Movie frame recording
@@ -725,9 +714,7 @@ for iteration in range(n_iters):
         **loss_stats,
         "max_abs_error": max_abs_error,
         "n_splats": components.model.n_splats(),
-        "lr_mean": components.optimizer.get_mean_lr(),
-        "lr_min": components.optimizer.get_min_lr(),
-        "lr_max": components.optimizer.get_max_lr()
+        "lr": components.optimizer.param_groups[0]["lr"],
     })
 
 # Create results (best tensors already saved, no need to restore state_dict)
@@ -1030,36 +1017,7 @@ effective_lr = base_lr * gradient_dilution_factor
 - 3D: 9/5 = 1.8×
 - 4D: 4^0.8 × 14/5 = 3.03 × 2.8 ≈ 8.5×
 
-**Important**: Gradient dilution compensation is applied internally by the optimizer (`PerSplatAdam`), not by the fitting pipeline.
-
-**Sharpness Exception**: Sharpness parameters always use `base_lr` without gradient dilution since sharpness is always a single scalar regardless of dimension.
-
-### Parameter-Type-Specific Learning Rates
-
-**Problem**: Different parameter types have different optimization dynamics and convergence rates.
-
-**Solution**: Apply fixed multipliers to base learning rate for each parameter type.
-
-**Multipliers** (applied internally by `PerSplatAdam`):
-- **Position (μ)**: `×0.1` (hardcoded) - Slow position updates prevent splat migration and proliferation
-- **Variance (L_diag, L_off)**: `×1.0` (hardcoded, with gradient dilution) - Normal covariance adaptation
-- **Amplitude (a)**: `×2.0` (hardcoded) - Fast intensity convergence
-- **Sharpness (s')**: `×0.5` (hardcoded, no gradient dilution) - Conservative shape parameter updates
-
-**Effective Learning Rates**:
-```python
-# For 3D with base_lr = 0.01:
-lr_position = 0.01 × 0.1 = 0.001  # Slow position updates
-lr_variance = 0.01 × 1.0 × 2.0 = 0.02  # Normal adaptation with gradient dilution
-lr_amplitude = 0.01 × 2.0 = 0.02  # Fast intensity convergence
-lr_sharpness = 0.01 × 0.5 = 0.005  # Conservative shape updates
-```
-
-**Anti-Proliferation Rationale**:
-- **Root cause**: Splats migrating away from seeded locations triggers runaway seeding cycles
-- **Solution**: Slow position updates (×0.1) keep splats spatially stable
-- **Complementary**: Fast amplitude updates (×2.0) allow intensity adaptation without migration
-- **Result**: Eliminates splat proliferation while maintaining convergence quality
+**Important**: Gradient dilution compensation is applied by `create_optimizer_and_scheduler()` which multiplies the base learning rate by the dilution factor before creating the standard PyTorch Adam optimizer.
 
 ### Proportional L1 Regularization
 
@@ -1069,9 +1027,9 @@ lr_sharpness = 0.01 × 0.5 = 0.005  # Conservative shape updates
 
 **Default Values**:
 ```python
-l1_amp = 0.1 * lr      # 10% of base LR (5% of amplitude LR due to 2.0× multiplier)
+l1_amp = 0.1 * lr      # 10% of base LR
 l1_diag = 0.01 * lr    # 1% of base LR
-l1_sharpness = 0.01 * lr  # 1% of base LR (2% of sharpness LR due to 0.5× multiplier)
+l1_sharpness = 0.01 * lr  # 1% of base LR
 ```
 
 **Benefits**:
@@ -1249,9 +1207,9 @@ Key extension points in `optimization.py`:
 
 **Related Modules**:
 - `../models/gsplats/gsplat_model.py` - PyTorch model definition
-- `../optim/per_splat_adam.py` - Per-splat optimizer
-- `../dynamic_ops.py` - Adaptive topology operations
-- `../seeds.py` - Seed generation
+- `../optim/integration.py` - Optimizer factory with gradient dilution
+- `dynamic_ops/operations.py` - Fixed-pool splat relocation
+- `../seeds/` - Seed generation
 
 **Related Specifications**:
 - [Main SPECIFICATIONS.md](../SPECIFICATIONS.md) - Main Gaussian splatting specification
@@ -1260,12 +1218,18 @@ Key extension points in `optimization.py`:
 
 ## Changelog
 
+- **v2.0.0** (January 2025): Standard PyTorch Adam optimizer
+  - Replaced per-splat optimizer with standard `torch.optim.Adam` (50x+ faster)
+  - Fixed-pool splat relocation instead of add/remove topology changes
+  - Simplified optimizer setup via `create_optimizer_and_scheduler()`
+  - Removed `ModelOptimizerCoordinator` (no longer needed)
+  - Gradient dilution compensation applied at optimizer creation time
+
 - **v1.0.0** (2025-11-27): Initial modular pipeline with 6-stage architecture
   - Refactored from monolithic 480+ line method
   - Added type-safe dataclasses for configuration
   - Implemented best state tracking (quality guarantee)
   - Added comprehensive testing (84 tests, 100% module coverage)
   - Proportional L1 regularization defaults
-  - Parameter-type-specific learning rates
   - Gradient dilution compensation
   - Sharpness parameter support

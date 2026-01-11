@@ -1,16 +1,16 @@
 # dynamic_ops/__init__.py
 """
-Dynamic Gaussian Splat Operations
+Fixed-Pool Splat Relocation Operations
 
-This package implements convergence-driven dynamic operations for adaptive Gaussian splatting,
-including tile-based seeding for spatial fairness and principled pruning.
+This package implements fixed-pool splat relocation for adaptive Gaussian splatting.
+Instead of adding/removing splats, weak splats are relocated to high-residual regions.
+This enables use of standard PyTorch Adam optimizer for much faster optimization.
 """
 
 from luxar.gsplats.fitting.dynamic_ops.config import DynamicOpsConfig
 from luxar.gsplats.fitting.dynamic_ops.operations import (
-    _boost_splat_learning_rate,
     _calculate_splat_importance,
-    _select_pruning_candidates,
+    _select_weak_splats,
     apply_dynamic_operations,
 )
 from luxar.gsplats.fitting.dynamic_ops.peak_finding import _find_residual_peaks
@@ -20,7 +20,6 @@ __all__ = [
     "apply_dynamic_operations",
     # Exported for testing
     "_find_residual_peaks",
-    "_boost_splat_learning_rate",
     "_calculate_splat_importance",
-    "_select_pruning_candidates",
+    "_select_weak_splats",
 ]

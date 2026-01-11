@@ -140,11 +140,9 @@ class TestModelComponents:
             model=None,  # Would be GaussianSplatModel in real usage
             optimizer=None,  # Would be torch optimizer
             scheduler=None,  # Would be LR scheduler
-            coordinator=None,  # Would be ModelOptimizerCoordinator
         )
 
         # Test that structure is correct
         assert hasattr(components, "model")
         assert hasattr(components, "optimizer")
         assert hasattr(components, "scheduler")
-        assert hasattr(components, "coordinator")
