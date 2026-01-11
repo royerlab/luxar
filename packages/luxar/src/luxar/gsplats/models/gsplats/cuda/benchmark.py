@@ -73,10 +73,10 @@ def run_benchmark(verbose: bool = True) -> dict:
     Returns:
         Dictionary with benchmark results.
     """
-    from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
     from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
         GaussianSplatModelCUDA,
     )
+    from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is not available. Cannot run benchmark.")

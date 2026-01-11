@@ -427,6 +427,7 @@ class TestCUDAKernelActivation:
         If speedup is less than 2x, something is likely wrong.
         """
         import time
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             GaussianSplatModelCUDA,
         )
@@ -507,9 +508,12 @@ class TestCUDAKernelActivation:
         If they're similar, the wrong path is being taken.
         """
         import time
+
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            CUDA_BACKEND_AVAILABLE as MODULE_CUDA_AVAILABLE,
+        )
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             GaussianSplatModelCUDA,
-            CUDA_BACKEND_AVAILABLE as MODULE_CUDA_AVAILABLE,
         )
         from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
@@ -582,7 +586,7 @@ class TestCUDAKernelActivation:
         if custom_cuda_time > pytorch_cuda_time * 0.9:
             # This is a warning, not a hard failure, because PyTorch can be optimized
             print(
-                f"WARNING: Custom CUDA kernels not significantly faster than PyTorch CUDA"
+                "WARNING: Custom CUDA kernels not significantly faster than PyTorch CUDA"
             )
 
 
@@ -1581,11 +1585,12 @@ class TestCUDAVsPyTorchReference:
         This test uses the CUDA backend directly (not through the model class)
         to compare with the PyTorch rendering_core output.
         """
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         # Create test data
         np.random.seed(1234)
@@ -1650,7 +1655,7 @@ class TestCUDAVsPyTorchReference:
             max_rel_diff = rel_diff.max().item()
             mean_rel_diff = rel_diff.mean().item()
 
-            print(f"\n3D CUDA vs PyTorch comparison:")
+            print("\n3D CUDA vs PyTorch comparison:")
             print(f"  Max absolute diff: {max_abs_diff:.6f}")
             print(f"  Mean absolute diff: {mean_abs_diff:.6f}")
             print(f"  Max relative diff: {max_rel_diff:.4f}")
@@ -1673,11 +1678,12 @@ class TestCUDAVsPyTorchReference:
 
     def test_direct_cuda_vs_pytorch_2d(self):
         """Direct comparison of CUDA and PyTorch outputs for 2D image."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         # Create test data
         np.random.seed(5678)
@@ -1738,7 +1744,7 @@ class TestCUDAVsPyTorchReference:
             max_rel_diff = rel_diff.max().item()
             mean_rel_diff = rel_diff.mean().item()
 
-            print(f"\n2D CUDA vs PyTorch comparison:")
+            print("\n2D CUDA vs PyTorch comparison:")
             print(f"  Max relative diff: {max_rel_diff:.4f}")
             print(f"  Mean relative diff: {mean_rel_diff:.6f}")
 
@@ -1759,11 +1765,12 @@ class TestCUDAVsPyTorchReference:
 
     def test_single_centered_splat_matches(self):
         """Test single centered splat produces identical peak location and value."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         # Single splat at center
         N, d = 1, 3
@@ -1796,7 +1803,7 @@ class TestCUDAVsPyTorchReference:
         cuda_peak_coords = np.unravel_index(cuda_peak_idx.item(), shape)
         pytorch_peak_coords = np.unravel_index(pytorch_peak_idx.item(), shape)
 
-        print(f"\nSingle splat test:")
+        print("\nSingle splat test:")
         print(f"  CUDA peak at: {cuda_peak_coords}")
         print(f"  PyTorch peak at: {pytorch_peak_coords}")
         print(f"  CUDA peak value: {cuda_cpu.max().item():.6f}")
@@ -1838,11 +1845,12 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("dim", [2, 3])
     def test_forward_isotropic_splats(self, dim: int):
         """Test forward pass with isotropic (spherical) splats for 2D/3D."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         np.random.seed(42 + dim)
         N = 20
@@ -1904,11 +1912,12 @@ class TestCUDAVsPyTorchComprehensive:
 
     def test_forward_isotropic_splats_4d(self):
         """Test forward pass with isotropic splats for 4D (may have coordinate system issues)."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         np.random.seed(46)
         N = 20
@@ -1957,11 +1966,12 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("dim", [2, 3])
     def test_forward_anisotropic_splats(self, dim: int):
         """Test forward pass with anisotropic (ellipsoidal) splats."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         np.random.seed(123 + dim)
         N = 15
@@ -2016,11 +2026,12 @@ class TestCUDAVsPyTorchComprehensive:
 
     def test_forward_anisotropic_splats_4d(self):
         """Test 4D anisotropic splats (may have issues)."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         np.random.seed(127)
         N, dim = 15, 4
@@ -2065,11 +2076,12 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("dim", [2, 3])
     def test_forward_elongated_splats(self, dim: int):
         """Test forward pass with highly elongated splats (aspect ratio > 5:1)."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         np.random.seed(456 + dim)
         N = 10
@@ -2125,11 +2137,12 @@ class TestCUDAVsPyTorchComprehensive:
 
     def test_forward_elongated_splats_4d(self):
         """Test 4D elongated splats (may have issues)."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         np.random.seed(460)
         N, dim = 10, 4
@@ -2181,11 +2194,12 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("size_category", ["tiny", "small", "medium", "large"])
     def test_forward_various_sizes(self, dim: int, size_category: str):
         """Test forward pass with various splat sizes."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         np.random.seed(789 + dim + hash(size_category) % 100)
         N = 15
@@ -2266,11 +2280,12 @@ class TestCUDAVsPyTorchComprehensive:
         - s = 2: Standard Gaussian
         - s > 2: Super-gaussian (sharper, more compact)
         """
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         np.random.seed(321 + dim + int(sharpness_val * 10))
         N = 12
@@ -2330,11 +2345,12 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("dim", [2, 3])
     def test_forward_mixed_sharpness(self, dim: int):
         """Test forward pass with mixed sharpness values per splat."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         np.random.seed(654 + dim)
         N = 20
@@ -2643,11 +2659,12 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("dim", [2, 3])
     def test_single_splat_at_center(self, dim: int):
         """Test single splat at volume center matches between CUDA and PyTorch."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         if dim == 2:
             shape = (32, 32)
@@ -2691,11 +2708,12 @@ class TestCUDAVsPyTorchComprehensive:
 
     def test_single_splat_at_center_4d(self):
         """Test single splat at 4D volume center (may have issues)."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         dim = 4
         shape = (16, 16, 16, 16)
@@ -2733,11 +2751,12 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("dim", [2, 3])
     def test_many_overlapping_splats(self, dim: int):
         """Test many overlapping splats sum correctly."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         np.random.seed(444 + dim)
         N = 50  # Many splats
@@ -2791,11 +2810,12 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("dim", [2, 3])
     def test_splats_at_boundaries(self, dim: int):
         """Test splats positioned at volume boundaries."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         if dim == 2:
             shape = (32, 32)
@@ -2995,10 +3015,11 @@ class TestOptimizedVsGenericPath:
     @pytest.mark.parametrize("shape", [(32, 32), (48, 48), (24, 32)])
     def test_2d_optimized_vs_generic(self, shape: tuple):
         """Test 2D optimized path matches generic 4D path."""
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
 
         np.random.seed(42)
         N = 15
@@ -3065,10 +3086,11 @@ class TestOptimizedVsGenericPath:
     @pytest.mark.parametrize("shape", [(16, 16, 16), (24, 24, 24), (12, 16, 20)])
     def test_3d_optimized_vs_generic(self, shape: tuple):
         """Test 3D optimized path matches generic 4D path."""
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
 
         np.random.seed(123)
         N = 12
@@ -3134,10 +3156,11 @@ class TestOptimizedVsGenericPath:
 
     def test_2d_anisotropic_optimized_vs_generic(self):
         """Test 2D optimized path with anisotropic splats matches generic path."""
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
 
         np.random.seed(456)
         N = 10
@@ -3197,10 +3220,11 @@ class TestOptimizedVsGenericPath:
 
     def test_3d_anisotropic_optimized_vs_generic(self):
         """Test 3D optimized path with anisotropic splats matches generic path."""
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
 
         np.random.seed(789)
         N = 8
@@ -3263,10 +3287,11 @@ class TestOptimizedVsGenericPath:
     @pytest.mark.parametrize("sharpness_val", [1.5, 2.0, 3.0])
     def test_2d_various_sharpness_optimized_vs_generic(self, sharpness_val: float):
         """Test 2D optimized path with various sharpness values matches generic path."""
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
 
         np.random.seed(111 + int(sharpness_val * 10))
         N = 10
@@ -3392,11 +3417,12 @@ class Test4DDiagnostics:
 
     def test_single_centered_splat_4d(self):
         """Test a single isotropic splat centered in a 4D volume."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         dim = 4
         shape = (8, 8, 8, 8)
@@ -3539,10 +3565,11 @@ class Test4DDiagnostics:
 
     def test_binning_4d(self):
         """Verify splats are being binned to tiles correctly in 4D."""
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
 
         dim = 4
         shape = (8, 8, 8, 8)
@@ -3581,11 +3608,12 @@ class Test4DDiagnostics:
 
     def test_4d_multiple_splats_detailed(self):
         """Detailed test with multiple splats to identify pattern of discrepancy."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         np.random.seed(12345)
         N = 5
@@ -3661,10 +3689,11 @@ class Test4DDiagnostics:
 
     def test_4d_binning_individual_splats(self):
         """Test binning of individual splats at different positions."""
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
 
         dim = 4
         shape = (12, 12, 12, 12)
@@ -3703,11 +3732,12 @@ class Test4DDiagnostics:
 
     def test_4d_tile_boundary_positions(self):
         """Test splats specifically at tile boundaries."""
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+        import cuda_splatting_backend
+
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
-        import cuda_splatting_backend
+        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         dim = 4
         shape = (12, 12, 12, 12)

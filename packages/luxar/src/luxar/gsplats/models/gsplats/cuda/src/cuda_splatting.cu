@@ -369,12 +369,9 @@ __global__ void preprocess_kernel(
     global_flags[splat_idx] = is_global;
 
     if (is_global) {
-        // Global splats are currently not handled - they are skipped.
-        // This is a known limitation: very large splats covering >10% of tiles
-        // are silently excluded from rendering. A proper implementation would
-        // need a separate kernel that processes global splats for all pixels.
-        // See OPTIMIZATION_ROADMAP.md section 3.6 for implementation details.
-        // TODO: Add global splat kernel for correctness with large splats
+        // Global splats are handled separately by rasterize_global_forward_kernel.
+        // They are not binned into tiles but processed for all pixels directly.
+        // The global_flags array is used to identify them after preprocessing.
         return;
     }
 
@@ -569,6 +566,14 @@ __global__ void rasterize_forward_kernel(
     // OPTIMIZATION 1.2: Precompute effective truncation squared per splat
     __shared__ float s_truncate_sq[SPLAT_BATCH_SIZE];
 
+    // OPTIMIZATION: Hoist loop-invariant condition checks outside the pixel loop
+    // These are uniform across all threads in the block (no divergence)
+    // Hoisting ensures the compiler doesn't re-evaluate per iteration
+    const bool use_fast_path_3d = (DIM == 3) && (tile_size == 8) &&
+        (tile_extent[0] == 8) && (tile_extent[1] == 8) && (tile_extent[2] == 8);
+    const bool use_fast_path_2d = (DIM == 2) && (tile_size == 16) &&
+        (tile_extent[0] == 16) && (tile_extent[1] == 16);
+
     // Each thread processes one or more pixels
     for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels; local_px_idx += blockDim.x) {
         // Convert local pixel index to voxel coordinates
@@ -579,8 +584,7 @@ __global__ void rasterize_forward_kernel(
         if constexpr (DIM == 3) {
             // Fast path for 3D: requires tile_size=8 AND full tile (not edge)
             // Bitwise shifts are hardcoded for 8×8×8 = 512 pixels
-            if (tile_size == 8 &&
-                tile_extent[0] == 8 && tile_extent[1] == 8 && tile_extent[2] == 8) {
+            if (use_fast_path_3d) {
                 // Use bitwise operations: idx & 7, (idx >> 3) & 7, idx >> 6
                 int local_z = local_px_idx & 7;
                 int local_y = (local_px_idx >> 3) & 7;
@@ -600,8 +604,7 @@ __global__ void rasterize_forward_kernel(
         } else if constexpr (DIM == 2) {
             // Fast path for 2D: requires tile_size=16 AND full tile (not edge)
             // Bitwise shifts are hardcoded for 16×16 = 256 pixels
-            if (tile_size == 16 &&
-                tile_extent[0] == 16 && tile_extent[1] == 16) {
+            if (use_fast_path_2d) {
                 // Use bitwise operations: idx & 15, idx >> 4
                 int local_y = local_px_idx & 15;
                 int local_x = local_px_idx >> 4;
@@ -697,12 +700,10 @@ __global__ void rasterize_forward_kernel(
         }
 
         // Write accumulated intensity to output
-        // Note: atomicAdd is not needed here because:
+        // Note: We use direct assignment (not atomicAdd) because:
         // 1. Each pixel belongs to exactly one tile
         // 2. Each thread in this block processes distinct pixels (different local_px_idx)
-        // 3. Global splats are currently not handled (see TODO in preprocess_kernel)
-        // If global splat support is added, atomicAdd may be needed to combine
-        // contributions from both tile-local splats and the global splat kernel.
+        // The global splat kernel uses atomicAdd to add to these values.
         if (local_px_idx < tile_pixels) {
             int64_t global_px_idx = voxel_to_linear<DIM>(voxel_coords, shape);
             output[global_px_idx] = intensity_sum;
@@ -780,6 +781,13 @@ __global__ void rasterize_backward_kernel(
 
     // Note: Warp reduction uses __shfl_down_sync, no shared memory buffer needed
 
+    // OPTIMIZATION: Hoist loop-invariant condition checks outside all loops
+    // These are uniform across all threads in the block (no divergence)
+    const bool use_fast_path_3d = (DIM == 3) && (tile_size == 8) &&
+        (tile_extent[0] == 8) && (tile_extent[1] == 8) && (tile_extent[2] == 8);
+    const bool use_fast_path_2d = (DIM == 2) && (tile_size == 16) &&
+        (tile_extent[0] == 16) && (tile_extent[1] == 16);
+
     // Process splats in batches
     for (int batch_start = 0; batch_start < n_splats_in_tile; batch_start += SPLAT_BATCH_SIZE) {
         int batch_size = min(SPLAT_BATCH_SIZE, n_splats_in_tile - batch_start);
@@ -839,8 +847,7 @@ __global__ void rasterize_backward_kernel(
 
                 if constexpr (DIM == 3) {
                     // Fast path for 3D: requires tile_size=8 AND full tile (not edge)
-                    if (tile_size == 8 &&
-                        tile_extent[0] == 8 && tile_extent[1] == 8 && tile_extent[2] == 8) {
+                    if (use_fast_path_3d) {
                         int local_z = local_px_idx & 7;
                         int local_y = (local_px_idx >> 3) & 7;
                         int local_x = local_px_idx >> 6;
@@ -857,8 +864,7 @@ __global__ void rasterize_backward_kernel(
                     }
                 } else if constexpr (DIM == 2) {
                     // Fast path for 2D: requires tile_size=16 AND full tile (not edge)
-                    if (tile_size == 16 &&
-                        tile_extent[0] == 16 && tile_extent[1] == 16) {
+                    if (use_fast_path_2d) {
                         int local_y = local_px_idx & 15;
                         int local_x = local_px_idx >> 4;
                         voxel_coords[0] = tile_origin[0] + local_x;
@@ -1166,6 +1172,315 @@ void launch_rasterize_backward(
 }
 
 // =============================================================================
+// GLOBAL SPLAT KERNELS
+// =============================================================================
+// These kernels handle "global" splats that touch too many tiles (>10% of total).
+// Instead of tile-based binning, we process all pixels for each global splat.
+// This is less efficient but correct, and global splats are expected to be rare.
+
+/**
+ * Forward kernel for global splats.
+ *
+ * Each thread processes one pixel. For each pixel, we iterate over all global
+ * splats and accumulate their intensity contributions.
+ *
+ * Template parameter DIM: dimensionality (2-8)
+ */
+template <int DIM>
+__global__ void rasterize_global_forward_kernel(
+    const float* __restrict__ centers,
+    const float* __restrict__ conic,
+    const float* __restrict__ amps,
+    const float* __restrict__ sharpness,
+    const int* __restrict__ global_splat_ids,  // Array of global splat indices
+    int n_global_splats,                        // Number of global splats
+    const int* __restrict__ shape,
+    float truncate,
+    float* __restrict__ output,  // Output to add to (already has tile-based contributions)
+    int64_t num_pixels
+) {
+    int64_t pixel_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (pixel_idx >= num_pixels) return;
+
+    constexpr int CONIC_SIZE = conic_size<DIM>();
+
+    // Convert linear index to voxel coordinates
+    int voxel_coords[DIM];
+    {
+        int64_t remaining = pixel_idx;
+        #pragma unroll
+        for (int d = DIM - 1; d >= 0; d--) {
+            voxel_coords[d] = (int)(remaining % shape[d]);
+            remaining /= shape[d];
+        }
+    }
+
+    float px[DIM];
+    #pragma unroll
+    for (int d = 0; d < DIM; d++) {
+        px[d] = (float)voxel_coords[d];
+    }
+
+    float intensity_sum = 0.0f;
+
+    // Process all global splats
+    for (int i = 0; i < n_global_splats; i++) {
+        int splat_idx = global_splat_ids[i];
+
+        // Load splat data
+        float mu[DIM];
+        float c[CONIC_SIZE];
+
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            mu[d] = centers[splat_idx * DIM + d];
+        }
+        #pragma unroll
+        for (int ci = 0; ci < CONIC_SIZE; ci++) {
+            c[ci] = conic[splat_idx * CONIC_SIZE + ci];
+        }
+        float amp = amps[splat_idx];
+        float s = sharpness[splat_idx];
+
+        // Compute displacement
+        float d_vec[DIM];
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            d_vec[d] = px[d] - mu[d];
+        }
+
+        // Compute Mahalanobis distance squared
+        float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, c);
+
+        // Early culling based on effective truncation
+        float eff_trunc_sq = effective_truncate_sq(truncate, s);
+        if (dist_sq > eff_trunc_sq) continue;
+
+        // Compute intensity
+        float intensity = gaussian_intensity(dist_sq, amp, s);
+        intensity_sum += intensity;
+    }
+
+    // Add to output using atomicAdd (tile-based kernel may have already written)
+    if (intensity_sum > 0.0f) {
+        atomicAdd(&output[pixel_idx], intensity_sum);
+    }
+}
+
+/**
+ * Backward kernel for global splats.
+ *
+ * Each thread processes one pixel. Gradients are accumulated using atomicAdd.
+ */
+template <int DIM>
+__global__ void rasterize_global_backward_kernel(
+    const float* __restrict__ grad_output,
+    const float* __restrict__ centers,
+    const float* __restrict__ conic,
+    const float* __restrict__ amps,
+    const float* __restrict__ sharpness,
+    const int* __restrict__ global_splat_ids,
+    int n_global_splats,
+    const int* __restrict__ shape,
+    float truncate,
+    float* __restrict__ d_centers,
+    float* __restrict__ d_conic,
+    float* __restrict__ d_amps,
+    float* __restrict__ d_sharpness,
+    int64_t num_pixels
+) {
+    int64_t pixel_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (pixel_idx >= num_pixels) return;
+
+    constexpr int CONIC_SIZE = conic_size<DIM>();
+
+    float grad_out = grad_output[pixel_idx];
+    if (fabsf(grad_out) < 1e-10f) return;  // Skip if no gradient
+
+    // Convert linear index to voxel coordinates
+    int voxel_coords[DIM];
+    {
+        int64_t remaining = pixel_idx;
+        #pragma unroll
+        for (int d = DIM - 1; d >= 0; d--) {
+            voxel_coords[d] = (int)(remaining % shape[d]);
+            remaining /= shape[d];
+        }
+    }
+
+    float px[DIM];
+    #pragma unroll
+    for (int d = 0; d < DIM; d++) {
+        px[d] = (float)voxel_coords[d];
+    }
+
+    // Process all global splats
+    for (int i = 0; i < n_global_splats; i++) {
+        int splat_idx = global_splat_ids[i];
+
+        // Load splat data
+        float mu[DIM];
+        float c[CONIC_SIZE];
+
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            mu[d] = centers[splat_idx * DIM + d];
+        }
+        #pragma unroll
+        for (int ci = 0; ci < CONIC_SIZE; ci++) {
+            c[ci] = conic[splat_idx * CONIC_SIZE + ci];
+        }
+        float amp = amps[splat_idx];
+        float s = sharpness[splat_idx];
+
+        // Compute displacement
+        float d_vec[DIM];
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            d_vec[d] = px[d] - mu[d];
+        }
+
+        // Compute Mahalanobis distance squared
+        float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, c);
+
+        // Early culling
+        float eff_trunc_sq = effective_truncate_sq(truncate, s);
+        if (dist_sq > eff_trunc_sq) continue;
+
+        // Compute intensity and gradients
+        float intensity = gaussian_intensity(dist_sq, amp, s);
+        if (intensity < 1e-10f) continue;
+
+        // d_amp = grad_out * (I / a)
+        float local_d_amp = grad_out * (intensity / fmaxf(amp, 1e-10f));
+
+        // Gradient w.r.t. dist_sq: ∂I/∂D² = I × (-0.25 × s) × (D²)^(s/2 - 1)
+        // For s=2: ∂I/∂D² = -0.5 × I
+        float dist_sq_safe = fmaxf(dist_sq, 1e-12f);
+        float dI_dD_sq;
+        if (fabsf(s - 2.0f) < 1e-4f) {
+            // Standard Gaussian: dI/dD² = -0.5 * intensity
+            dI_dD_sq = -0.5f * intensity;
+        } else {
+            // Generalized Gaussian: dI/dD² = I × (-0.25 × s) × (D²)^(s/2 - 1)
+            float dist_pow_s_minus_1 = __powf(dist_sq_safe, s * 0.5f - 1.0f);
+            dI_dD_sq = intensity * (-0.25f * s) * dist_pow_s_minus_1;
+        }
+
+        float outer_grad = grad_out * dI_dD_sq;
+
+        // d_centers: ∂D²/∂μ = -∂D²/∂d = -2 × Σ⁻¹ @ d
+        // Note: No factor of 2 on off-diagonal conic elements when computing Σ⁻¹ @ d
+        float local_d_centers[DIM];
+        #pragma unroll
+        for (int di = 0; di < DIM; di++) {
+            float sum = 0.0f;
+            // Sum over conic contributions (symmetric matrix in packed upper triangle)
+            for (int dj = 0; dj < DIM; dj++) {
+                int ci = (di <= dj) ?
+                    (di * (2 * DIM - di - 1) / 2 + dj - di) :
+                    (dj * (2 * DIM - dj - 1) / 2 + di - dj);
+                sum += c[ci] * d_vec[dj];
+            }
+            // ∂L/∂center = grad_out × dI_dD_sq × (-2) × (Σ⁻¹ @ d)
+            local_d_centers[di] = outer_grad * (-2.0f) * sum;
+        }
+
+        // d_conic: ∂D²/∂c_ij = d_i × d_j (diagonal) or 2 × d_i × d_j (off-diagonal)
+        float local_d_conic[CONIC_SIZE];
+        int ci = 0;
+        #pragma unroll
+        for (int di = 0; di < DIM; di++) {
+            for (int dj = di; dj < DIM; dj++) {
+                float factor = (di == dj) ? 1.0f : 2.0f;
+                local_d_conic[ci] = outer_grad * factor * d_vec[di] * d_vec[dj];
+                ci++;
+            }
+        }
+
+        // d_sharpness: ∂I/∂s = I × (-0.25) × (D²)^(s/2) × ln(D²)
+        float local_d_sharpness = 0.0f;
+        if (dist_sq > 1e-6f) {
+            float dist_pow_s = __powf(dist_sq_safe, s * 0.5f);
+            float log_dist_sq = __logf(dist_sq_safe);
+            local_d_sharpness = grad_out * intensity * (-0.25f) * dist_pow_s * log_dist_sq;
+        }
+
+        // Accumulate gradients using atomicAdd
+        atomicAdd(&d_amps[splat_idx], local_d_amp);
+        atomicAdd(&d_sharpness[splat_idx], local_d_sharpness);
+
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            atomicAdd(&d_centers[splat_idx * DIM + d], local_d_centers[d]);
+        }
+        #pragma unroll
+        for (int ci_idx = 0; ci_idx < CONIC_SIZE; ci_idx++) {
+            atomicAdd(&d_conic[splat_idx * CONIC_SIZE + ci_idx], local_d_conic[ci_idx]);
+        }
+    }
+}
+
+// Launch wrapper for global splat forward
+template <int DIM>
+void launch_rasterize_global_forward(
+    const float* centers,
+    const float* conic,
+    const float* amps,
+    const float* sharpness,
+    const int* global_splat_ids,
+    int n_global_splats,
+    const int* shape,
+    float truncate,
+    float* output,
+    int64_t num_pixels,
+    cudaStream_t stream
+) {
+    if (n_global_splats == 0) return;
+
+    constexpr int BLOCK_SIZE = 256;
+    int num_blocks = (int)((num_pixels + BLOCK_SIZE - 1) / BLOCK_SIZE);
+
+    rasterize_global_forward_kernel<DIM><<<num_blocks, BLOCK_SIZE, 0, stream>>>(
+        centers, conic, amps, sharpness,
+        global_splat_ids, n_global_splats,
+        shape, truncate, output, num_pixels
+    );
+}
+
+// Launch wrapper for global splat backward
+template <int DIM>
+void launch_rasterize_global_backward(
+    const float* grad_output,
+    const float* centers,
+    const float* conic,
+    const float* amps,
+    const float* sharpness,
+    const int* global_splat_ids,
+    int n_global_splats,
+    const int* shape,
+    float truncate,
+    float* d_centers,
+    float* d_conic,
+    float* d_amps,
+    float* d_sharpness,
+    int64_t num_pixels,
+    cudaStream_t stream
+) {
+    if (n_global_splats == 0) return;
+
+    constexpr int BLOCK_SIZE = 256;
+    int num_blocks = (int)((num_pixels + BLOCK_SIZE - 1) / BLOCK_SIZE);
+
+    rasterize_global_backward_kernel<DIM><<<num_blocks, BLOCK_SIZE, 0, stream>>>(
+        grad_output, centers, conic, amps, sharpness,
+        global_splat_ids, n_global_splats,
+        shape, truncate,
+        d_centers, d_conic, d_amps, d_sharpness, num_pixels
+    );
+}
+
+// =============================================================================
 // EXPLICIT TEMPLATE INSTANTIATIONS
 // =============================================================================
 
@@ -1238,6 +1553,22 @@ template void launch_rasterize_forward<8>(const float*, const float*, const floa
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
 template void launch_rasterize_backward<8>(const float*, const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+
+// Global splat kernel instantiations
+template void launch_rasterize_global_forward<2>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<2>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<3>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<3>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<4>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<4>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<5>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<5>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<6>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<6>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<7>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<7>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<8>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<8>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float*, float*, float*, float*, int64_t, cudaStream_t);
 
 // =============================================================================
 // UTILITY FUNCTIONS
@@ -1485,6 +1816,58 @@ void dispatch_forward(
     #undef LAUNCH_RASTER
 
     CUDA_CHECK_LAST();
+
+    // ==========================================================================
+    // GLOBAL SPLAT HANDLING
+    // ==========================================================================
+    // Extract global splat IDs and process them with dedicated kernel.
+    // Global splats are those that touch too many tiles (>10% AND >1024 tiles).
+
+    // Extract global splat indices using torch::nonzero
+    auto global_indices = torch::nonzero(state.global_splat_flags);
+    state.num_global_splats = (int)global_indices.size(0);
+
+    if (state.num_global_splats > 0) {
+        // Flatten to 1D tensor of int32 indices
+        state.global_splat_ids = global_indices.squeeze(1).to(torch::kInt32).contiguous();
+
+        // Compute number of pixels
+        int64_t num_pixels = 1;
+        for (int d = 0; d < dim; d++) {
+            num_pixels *= shape[d];
+        }
+
+        // Launch global splat forward kernel
+        #define LAUNCH_GLOBAL_FWD(D) \
+            launch_rasterize_global_forward<D>( \
+                centers.data_ptr<float>(), \
+                conic.data_ptr<float>(), \
+                amps.data_ptr<float>(), \
+                sharpness.data_ptr<float>(), \
+                state.global_splat_ids.data_ptr<int>(), \
+                state.num_global_splats, \
+                shape_tensor.data_ptr<int>(), \
+                truncate, \
+                output.data_ptr<float>(), \
+                num_pixels, stream)
+
+        switch (dim) {
+            case 2: LAUNCH_GLOBAL_FWD(2); break;
+            case 3: LAUNCH_GLOBAL_FWD(3); break;
+            case 4: LAUNCH_GLOBAL_FWD(4); break;
+            case 5: LAUNCH_GLOBAL_FWD(5); break;
+            case 6: LAUNCH_GLOBAL_FWD(6); break;
+            case 7: LAUNCH_GLOBAL_FWD(7); break;
+            case 8: LAUNCH_GLOBAL_FWD(8); break;
+            default: TORCH_CHECK(false, "Unsupported dimension: ", dim);
+        }
+        #undef LAUNCH_GLOBAL_FWD
+
+        CUDA_CHECK_LAST();
+    } else {
+        // No global splats - create empty tensor
+        state.global_splat_ids = torch::empty({0}, torch::TensorOptions().dtype(torch::kInt32).device(device));
+    }
 }
 
 void dispatch_backward(
@@ -1497,6 +1880,7 @@ void dispatch_backward(
     const torch::Tensor& tile_offsets,
     const torch::Tensor& tile_counts,
     const torch::Tensor& tile_content,
+    const torch::Tensor& global_splat_ids,  // Global splat IDs from forward pass
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
@@ -1526,7 +1910,7 @@ void dispatch_backward(
     d_amps.zero_();
     d_sharpness.zero_();
 
-    // Launch backward kernel
+    // Launch backward kernel for tile-based splats
     // OPTIMIZATION: Pass host tile_dims for 3D grid launch (2D/3D volumes)
     #define LAUNCH_BACKWARD(D) \
         launch_rasterize_backward<D>( \
@@ -1561,13 +1945,57 @@ void dispatch_backward(
     #undef LAUNCH_BACKWARD
 
     CUDA_CHECK_LAST();
+
+    // ==========================================================================
+    // GLOBAL SPLAT BACKWARD PASS
+    // ==========================================================================
+    int n_global_splats = (int)global_splat_ids.size(0);
+    if (n_global_splats > 0) {
+        // Compute number of pixels
+        int64_t num_pixels = 1;
+        for (int d = 0; d < dim; d++) {
+            num_pixels *= shape[d];
+        }
+
+        // Launch global splat backward kernel
+        #define LAUNCH_GLOBAL_BWD(D) \
+            launch_rasterize_global_backward<D>( \
+                grad_output.data_ptr<float>(), \
+                centers.data_ptr<float>(), \
+                conic.data_ptr<float>(), \
+                amps.data_ptr<float>(), \
+                sharpness.data_ptr<float>(), \
+                global_splat_ids.data_ptr<int>(), \
+                n_global_splats, \
+                shape_tensor.data_ptr<int>(), \
+                truncate, \
+                d_centers.data_ptr<float>(), \
+                d_conic.data_ptr<float>(), \
+                d_amps.data_ptr<float>(), \
+                d_sharpness.data_ptr<float>(), \
+                num_pixels, stream)
+
+        switch (dim) {
+            case 2: LAUNCH_GLOBAL_BWD(2); break;
+            case 3: LAUNCH_GLOBAL_BWD(3); break;
+            case 4: LAUNCH_GLOBAL_BWD(4); break;
+            case 5: LAUNCH_GLOBAL_BWD(5); break;
+            case 6: LAUNCH_GLOBAL_BWD(6); break;
+            case 7: LAUNCH_GLOBAL_BWD(7); break;
+            case 8: LAUNCH_GLOBAL_BWD(8); break;
+            default: TORCH_CHECK(false, "Unsupported dimension: ", dim);
+        }
+        #undef LAUNCH_GLOBAL_BWD
+
+        CUDA_CHECK_LAST();
+    }
 }
 
 // =============================================================================
 // PUBLIC API
 // =============================================================================
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 forward(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
@@ -1597,11 +2025,13 @@ forward(
     dispatch_forward(dim, centers, conic, amps, sharpness, shape,
                     truncate, intensity_floor, tile_size, output, state);
 
+    // Return output + binning state + global splat IDs
     return std::make_tuple(
         output,
         state.tile_counts,
         state.tile_offsets,
-        state.tile_content
+        state.tile_content,
+        state.global_splat_ids  // New: global splat IDs for backward pass
     );
 }
 
@@ -1615,6 +2045,7 @@ backward(
     const torch::Tensor& tile_offsets,
     const torch::Tensor& tile_counts,
     const torch::Tensor& tile_content,
+    const torch::Tensor& global_splat_ids,  // New: global splat IDs from forward
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
@@ -1633,10 +2064,10 @@ backward(
     auto d_amps = torch::zeros({N}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
     auto d_sharpness = torch::zeros({N}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
 
-    // Run backward pass
+    // Run backward pass (includes global splat handling)
     dispatch_backward(dim, grad_output, centers, conic, amps, sharpness,
-                     tile_offsets, tile_counts, tile_content, shape,
-                     truncate, intensity_floor, tile_size,
+                     tile_offsets, tile_counts, tile_content, global_splat_ids,
+                     shape, truncate, intensity_floor, tile_size,
                      d_centers, d_conic, d_amps, d_sharpness);
 
     return std::make_tuple(d_centers, d_conic, d_amps, d_sharpness);
