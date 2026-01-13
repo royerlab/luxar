@@ -321,6 +321,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             device=DEVICE,
             use_metal=USE_METAL,  # Enable Metal acceleration (macOS)
             use_cuda=USE_CUDA,  # Enable CUDA acceleration (NVIDIA)
+            use_fp16=True,
             verbose=True,
             max_abs_error=0.1,
             # convergence movie:

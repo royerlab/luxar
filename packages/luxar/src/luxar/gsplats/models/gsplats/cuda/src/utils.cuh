@@ -15,8 +15,107 @@
 #define CUDA_SPLATTING_UTILS_CUH
 
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
 #include <cmath>
 #include <cstdint>
+
+// =============================================================================
+// FP16 (HALF PRECISION) SUPPORT
+// =============================================================================
+
+/**
+ * Type traits for dtype-agnostic kernel code.
+ *
+ * Enables writing kernels that work with both float32 and float16 inputs
+ * using a single code path. The load() function converts to float32 for
+ * computation while allowing FP16 storage for bandwidth savings.
+ *
+ * Usage:
+ *   float val = DTypeTraits<InputDType>::load(ptr, idx);
+ */
+template <typename T>
+struct DTypeTraits;
+
+/**
+ * Float32 type traits - direct load, no conversion needed.
+ */
+template <>
+struct DTypeTraits<float> {
+    static constexpr bool is_fp16 = false;
+
+    /**
+     * Load float32 value using texture cache hint.
+     */
+    __device__ __forceinline__ static float load(const float* ptr, int idx) {
+        return __ldg(&ptr[idx]);
+    }
+
+    /**
+     * Vectorized load of 2 consecutive float32 values.
+     */
+    __device__ __forceinline__ static void load2(const float* ptr, int idx, float& a, float& b) {
+        a = __ldg(&ptr[idx]);
+        b = __ldg(&ptr[idx + 1]);
+    }
+};
+
+/**
+ * Float16 type traits - load and convert to float32 for computation.
+ *
+ * The mixed precision strategy (store FP16, compute FP32) provides:
+ * - ~2x memory bandwidth improvement from FP16 storage
+ * - Full FP32 numerical precision for computation
+ * - No loss scaling needed for backward pass
+ */
+template <>
+struct DTypeTraits<__half> {
+    static constexpr bool is_fp16 = true;
+
+    /**
+     * Load FP16 value and convert to FP32 for computation.
+     * Uses texture cache hint for better memory throughput.
+     */
+    __device__ __forceinline__ static float load(const __half* ptr, int idx) {
+        return __half2float(__ldg(&ptr[idx]));
+    }
+
+    /**
+     * Vectorized load of 2 consecutive FP16 values as FP32.
+     * Uses __half2 for efficient 32-bit aligned load.
+     */
+    __device__ __forceinline__ static void load2(const __half* ptr, int idx, float& a, float& b) {
+        // Aligned load of 2 half values (4 bytes total)
+        __half2 h2 = *reinterpret_cast<const __half2*>(&ptr[idx]);
+        a = __low2float(h2);
+        b = __high2float(h2);
+    }
+};
+
+/**
+ * Helper to load a batch of values from FP16 or FP32 source to FP32 destination.
+ *
+ * @tparam InputDType Source data type (__half or float)
+ * @param src         Source pointer
+ * @param src_idx     Index in source array
+ * @param dst         Destination float pointer
+ * @param count       Number of values to load
+ */
+template <typename InputDType>
+__device__ __forceinline__ void load_batch_to_float(
+    const InputDType* __restrict__ src,
+    int src_idx,
+    float* __restrict__ dst,
+    int count
+) {
+    #pragma unroll
+    for (int i = 0; i < count; i++) {
+        dst[i] = DTypeTraits<InputDType>::load(src, src_idx + i);
+    }
+}
+
+// =============================================================================
+// CONFIGURATION CONSTANTS
+// =============================================================================
 
 // Maximum supported dimensions
 constexpr int MAX_DIM = 8;

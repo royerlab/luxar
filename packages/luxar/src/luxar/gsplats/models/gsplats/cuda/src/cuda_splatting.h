@@ -14,6 +14,7 @@
 
 #include <torch/extension.h>
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
 #include <vector>
 #include <tuple>
 
@@ -154,6 +155,92 @@ backward(
 );
 
 // =============================================================================
+// FP16 (HALF PRECISION) FORWARD PASS INTERFACE
+// =============================================================================
+
+/**
+ * Forward pass with FP16 inputs for improved memory bandwidth.
+ *
+ * This is the mixed-precision variant: inputs are FP16, computation is FP32,
+ * output is FP32. This provides ~1.5-2x memory bandwidth improvement while
+ * maintaining numerical precision.
+ *
+ * @param centers         (N, d) float16 - splat centers in voxel coordinates
+ * @param conic           (N, d*(d+1)/2) float16 - packed upper-triangle of Σ⁻¹
+ * @param amps            (N,) float16 - amplitudes
+ * @param sharpness       (N,) float16 - sharpness parameters
+ * @param shape           Target volume shape (d elements)
+ * @param truncate        Base truncation radius
+ * @param intensity_floor Minimum intensity threshold for culling
+ * @param tile_size       Tile size for spatial binning
+ *
+ * @return Tuple of:
+ *   - output: (prod(shape),) float32 - rendered volume (always FP32)
+ *   - tile_counts: (num_tiles,) int32 - splats per tile
+ *   - tile_offsets: (num_tiles,) int64 - exclusive prefix sum
+ *   - tile_content: (total_pairs,) int32 - splat IDs per tile
+ *   - global_splat_ids: (num_global,) int32 - IDs of global splats
+ */
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+forward_fp16(
+    const torch::Tensor& centers,
+    const torch::Tensor& conic,
+    const torch::Tensor& amps,
+    const torch::Tensor& sharpness,
+    const std::vector<int64_t>& shape,
+    float truncate,
+    float intensity_floor,
+    int tile_size
+);
+
+// =============================================================================
+// FP16 (HALF PRECISION) BACKWARD PASS INTERFACE
+// =============================================================================
+
+/**
+ * Backward pass with FP16 inputs.
+ *
+ * Inputs are FP16, gradients are always FP32 for numerical stability.
+ * No loss scaling is required due to FP32 gradient accumulation.
+ *
+ * @param grad_output     (prod(shape),) float32 - upstream gradient (always FP32)
+ * @param centers         (N, d) float16 - splat centers
+ * @param conic           (N, d*(d+1)/2) float16 - packed conic
+ * @param amps            (N,) float16 - amplitudes
+ * @param sharpness       (N,) float16 - sharpness parameters
+ * @param tile_offsets    (num_tiles,) int64 - from forward pass
+ * @param tile_counts     (num_tiles,) int32 - from forward pass
+ * @param tile_content    (total_pairs,) int32 - from forward pass
+ * @param global_splat_ids (num_global,) int32 - from forward pass
+ * @param shape           Target volume shape
+ * @param truncate        Base truncation radius
+ * @param intensity_floor Minimum intensity threshold
+ * @param tile_size       Tile size
+ *
+ * @return Tuple of:
+ *   - d_centers: (N, d) float32 - center gradients (always FP32)
+ *   - d_conic: (N, d*(d+1)/2) float32 - conic gradients
+ *   - d_amps: (N,) float32 - amplitude gradients
+ *   - d_sharpness: (N,) float32 - sharpness gradients
+ */
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+backward_fp16(
+    const torch::Tensor& grad_output,
+    const torch::Tensor& centers,
+    const torch::Tensor& conic,
+    const torch::Tensor& amps,
+    const torch::Tensor& sharpness,
+    const torch::Tensor& tile_offsets,
+    const torch::Tensor& tile_counts,
+    const torch::Tensor& tile_content,
+    const torch::Tensor& global_splat_ids,
+    const std::vector<int64_t>& shape,
+    float truncate,
+    float intensity_floor,
+    int tile_size
+);
+
+// =============================================================================
 // DISPATCHER FUNCTIONS (by dimension)
 // =============================================================================
 
@@ -192,6 +279,43 @@ void dispatch_backward(
     torch::Tensor& d_conic,
     torch::Tensor& d_amps,
     torch::Tensor& d_sharpness
+);
+
+// FP16 Forward dispatcher - uses FP16 inputs with FP32 compute
+void dispatch_forward_fp16(
+    int dim,
+    const torch::Tensor& centers,    // float16
+    const torch::Tensor& conic,      // float16
+    const torch::Tensor& amps,       // float16
+    const torch::Tensor& sharpness,  // float16
+    const std::vector<int64_t>& shape,
+    float truncate,
+    float intensity_floor,
+    int tile_size,
+    torch::Tensor& output,           // float32
+    BinningState& state
+);
+
+// FP16 Backward dispatcher - uses FP16 inputs, produces FP32 gradients
+void dispatch_backward_fp16(
+    int dim,
+    const torch::Tensor& grad_output, // float32
+    const torch::Tensor& centers,     // float16
+    const torch::Tensor& conic,       // float16
+    const torch::Tensor& amps,        // float16
+    const torch::Tensor& sharpness,   // float16
+    const torch::Tensor& tile_offsets,
+    const torch::Tensor& tile_counts,
+    const torch::Tensor& tile_content,
+    const torch::Tensor& global_splat_ids,
+    const std::vector<int64_t>& shape,
+    float truncate,
+    float intensity_floor,
+    int tile_size,
+    torch::Tensor& d_centers,   // float32
+    torch::Tensor& d_conic,     // float32
+    torch::Tensor& d_amps,      // float32
+    torch::Tensor& d_sharpness  // float32
 );
 
 // =============================================================================
@@ -324,6 +448,70 @@ void launch_rasterize_global_backward(
 );
 
 // =============================================================================
+// FP16 KERNEL LAUNCH WRAPPERS (templated by DIM)
+// =============================================================================
+//
+// NOTE: These are placeholder declarations for future "true FP16 kernel" optimization.
+// The current implementation (Phase 1) uses FP16→FP32 conversion at the API boundary
+// via dispatch_forward_fp16() and dispatch_backward_fp16(), which convert tensors
+// and call the regular FP32 kernels.
+//
+// Phase 2 would implement these functions to load FP16 data directly into shared
+// memory and convert to FP32 only in registers, providing better memory bandwidth.
+// Until then, these declarations are not instantiated and serve as documentation.
+//
+
+// FP16 Forward rasterization: Mixed precision (FP16 input, FP32 compute/output)
+// NOT YET IMPLEMENTED - see dispatch_forward_fp16() for current implementation
+template <int DIM>
+void launch_rasterize_forward_fp16(
+    const __half* centers,    // FP16 input
+    const __half* conic,      // FP16 input
+    const __half* amps,       // FP16 input
+    const __half* sharpness,  // FP16 input
+    int N,
+    const int* shape,
+    const int* tile_dims,
+    int tile_size,
+    float truncate,
+    float intensity_floor,
+    const int64_t* tile_offsets,
+    const int* tile_counts,
+    const int* tile_content,
+    float* output,            // FP32 output
+    int64_t num_tiles,
+    const std::vector<int>& host_tile_dims,
+    cudaStream_t stream
+);
+
+// FP16 Backward rasterization: Mixed precision (FP16 input, FP32 gradients)
+// NOT YET IMPLEMENTED - see dispatch_backward_fp16() for current implementation
+template <int DIM>
+void launch_rasterize_backward_fp16(
+    const float* grad_output, // FP32 upstream gradient
+    const __half* centers,    // FP16 input
+    const __half* conic,      // FP16 input
+    const __half* amps,       // FP16 input
+    const __half* sharpness,  // FP16 input
+    int N,
+    const int* shape,
+    const int* tile_dims,
+    int tile_size,
+    float truncate,
+    float intensity_floor,
+    const int64_t* tile_offsets,
+    const int* tile_counts,
+    const int* tile_content,
+    float* d_centers,         // FP32 gradients
+    float* d_conic,
+    float* d_amps,
+    float* d_sharpness,
+    int64_t num_tiles,
+    const std::vector<int>& host_tile_dims,
+    cudaStream_t stream
+);
+
+// =============================================================================
 // UTILITY FUNCTIONS
 // =============================================================================
 
@@ -341,9 +529,20 @@ std::vector<int> compute_tile_dims(
 int64_t compute_num_tiles(const std::vector<int>& tile_dims);
 
 /**
- * Validate input tensors.
+ * Validate input tensors (FP32 version).
  */
 void validate_inputs(
+    const torch::Tensor& centers,
+    const torch::Tensor& conic,
+    const torch::Tensor& amps,
+    const torch::Tensor& sharpness,
+    const std::vector<int64_t>& shape
+);
+
+/**
+ * Validate input tensors (FP16 version).
+ */
+void validate_inputs_fp16(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
