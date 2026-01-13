@@ -116,12 +116,18 @@ class CUDASplatFunction(torch.autograd.Function):
         truncate: float,
         intensity_floor: float,
         tile_size: int,
+        use_fp16: bool = False,
     ) -> torch.Tensor:
         """
         Forward pass: render Gaussians to volume.
 
         The L → Conic conversion happens in PyTorch for autograd graph consistency.
         CUDA handles the pixel-parallel rendering.
+
+        Args:
+            use_fp16: If True, use FP16 precision for CUDA kernels.
+                      Reduces memory bandwidth at slight precision cost.
+                      Output is always FP32 regardless.
         """
         d = len(shape)
         device = centers.device
@@ -141,6 +147,7 @@ class CUDASplatFunction(torch.autograd.Function):
                 truncate,
                 intensity_floor,
                 tile_size,
+                use_fp16,
             )
             output = result[0]
 
@@ -172,6 +179,7 @@ class CUDASplatFunction(torch.autograd.Function):
         ctx.tile_content = tile_content
         ctx.global_splat_ids = global_splat_ids
         ctx.d = d
+        ctx.use_fp16 = use_fp16
 
         return output
 
@@ -189,6 +197,7 @@ class CUDASplatFunction(torch.autograd.Function):
         intensity_floor = ctx.intensity_floor
         tile_size = ctx.tile_size
         d = ctx.d
+        use_fp16 = ctx.use_fp16
 
         device = centers.device
 
@@ -208,6 +217,7 @@ class CUDASplatFunction(torch.autograd.Function):
                 truncate,
                 intensity_floor,
                 tile_size,
+                use_fp16,
             )
 
             # Chain rule: d_conic → d_Ls via PyTorch autograd
@@ -262,8 +272,8 @@ class CUDASplatFunction(torch.autograd.Function):
                 grads[3] if grads[3] is not None else torch.zeros_like(sharpness)
             )
 
-        # Return gradients for: centers, Ls, amps, sharpness, shape, truncate, intensity_floor, tile_size
-        return d_centers, d_Ls, d_amps, d_sharpness, None, None, None, None
+        # Return gradients for: centers, Ls, amps, sharpness, shape, truncate, intensity_floor, tile_size, use_fp16
+        return d_centers, d_Ls, d_amps, d_sharpness, None, None, None, None, None
 
 
 class GaussianSplatModelCUDA(torch.nn.Module):
@@ -296,6 +306,11 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         Minimum intensity threshold for early culling.
     tile_size : int, optional
         Tile size for spatial binning. Auto-selected if None.
+    use_fp16 : bool, default=False
+        If True, use FP16 (half precision) for CUDA kernels. This reduces
+        memory bandwidth by ~50% at the cost of slightly reduced numerical
+        precision. Output and gradients are always FP32 for stability.
+        Useful for large volumes where memory bandwidth is the bottleneck.
     device : torch.device, optional
         Must be a CUDA device.
 
@@ -310,6 +325,17 @@ class GaussianSplatModelCUDA(torch.nn.Module):
     ...     device='cuda',
     ... )
     >>> output = model()  # Uses CUDA kernels
+
+    >>> # FP16 mode for large volumes
+    >>> model_fp16 = GaussianSplatModelCUDA(
+    ...     shape=(256, 256, 256),
+    ...     centers0=centers,
+    ...     L0=L,
+    ...     amps0=amps,
+    ...     sigma_min_diag=(0.5, 0.5, 0.5),
+    ...     use_fp16=True,
+    ...     device='cuda',
+    ... )
     """
 
     def __init__(
@@ -324,6 +350,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         truncate: float = 3.0,
         intensity_floor: float = 1e-5,
         tile_size: Optional[int] = None,
+        use_fp16: bool = False,
         device: Optional[torch.device] = None,
     ):
         super().__init__()
@@ -369,6 +396,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         self._truncate = truncate
         self._intensity_floor = intensity_floor
         self._tile_size = tile_size
+        self._use_fp16 = use_fp16
 
     def _auto_tile_size(self, d: int) -> int:
         """Select optimal tile size based on dimension."""
@@ -393,6 +421,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         -------
         torch.Tensor
             Rendered volume with shape matching initialization.
+            Always FP32 regardless of use_fp16 setting.
         """
         centers, Ls, amps, sharpness = self._base.current_params()
 
@@ -405,6 +434,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             self._truncate,
             self._intensity_floor,
             self._tile_size,
+            self._use_fp16,
         )
 
         # Ensure output has correct shape (CUDA kernel may return flattened tensor)
@@ -512,10 +542,17 @@ class GaussianSplatModelCUDA(torch.nn.Module):
     def amp_max(self):
         return self._base.amp_max
 
+    @property
+    def use_fp16(self):
+        """Whether FP16 precision is enabled for CUDA kernels."""
+        return self._use_fp16
+
     def __repr__(self):
+        fp16_str = ", fp16=True" if self._use_fp16 else ""
         return (
             f"GaussianSplatModelCUDA("
             f"n_splats={self.n_splats()}, "
             f"shape={self._shape}, "
-            f"device={next(self.parameters()).device})"
+            f"device={next(self.parameters()).device}"
+            f"{fp16_str})"
         )

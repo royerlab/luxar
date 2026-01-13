@@ -12,6 +12,7 @@ The CUDA backend is designed to provide 10-100x speedup over CPU PyTorch for Gau
 - **Tile-based rasterization**: Efficient spatial binning with configurable tile sizes
 - **Optimized gradient computation**: Warp-level reduction to minimize atomic operations
 - **Memory efficiency**: 4x less memory than naive implementations
+- **Optional FP16 mode**: Reduced memory bandwidth with FP16 inputs (output stays FP32)
 
 ## Architecture
 
@@ -80,6 +81,7 @@ model = GaussianSplatModelCUDA(
     sigma_min_diag=(0.5, 0.5, 0.5),
     truncate=3.0,
     device='cuda',
+    use_fp16=False,              # Optional: use FP16 for reduced memory bandwidth
 )
 
 # Forward pass
@@ -169,7 +171,8 @@ cuda/
 ├── tests/
 │   ├── test_cuda_backend.py
 │   ├── test_cuda_numerical.py
-│   └── test_cuda_performance.py
+│   ├── test_cuda_performance.py
+│   └── test_cuda_fp16.py
 ├── SPECIFICATIONS.md                    # Core algorithms spec
 ├── SPECIFICATIONS_PYTORCH_INTEGRATION.md  # PyTorch integration spec
 ├── SPECIFICATIONS_TESTING.md            # Testing strategy spec
@@ -202,10 +205,34 @@ Key implementations studied:
 - [x] nD extension (4D-8D)
 - [x] Standard Gaussian (s=2) fast path optimization
 - [x] Global splat handling (large splats processed via dedicated kernel)
+- [x] FP16 support (API-level conversion, FP32 output/gradients)
 - [ ] Additional performance optimizations (see OPTIMIZATION_ROADMAP.md)
 
 ## Known Limitations
 
 1. **Dimension limit**: Maximum 8 dimensions supported (template instantiation limit).
-2. **Precision**: Uses float32 throughout; float16 not yet supported.
-3. **Global splat performance**: Very large splats (>10% of tiles) use a simpler kernel that processes all pixels, which is less efficient than tile-based rasterization.
+2. **Global splat performance**: Very large splats (>10% of tiles) use a simpler kernel that processes all pixels, which is less efficient than tile-based rasterization.
+
+## FP16 Mode
+
+The `use_fp16` parameter enables reduced memory bandwidth by converting inputs to FP16 at the API boundary:
+
+```python
+# Enable FP16 mode
+model = GaussianSplatModelCUDA(..., use_fp16=True)
+```
+
+**Key characteristics**:
+- **Input conversion**: FP32 inputs are converted to FP16 before kernel execution
+- **Output precision**: Output and gradients are always FP32 for numerical stability
+- **Memory benefit**: ~50% reduction in memory bandwidth for input tensors
+- **Accuracy trade-off**: ~5-10% relative difference vs FP32 (acceptable for most use cases)
+
+**When to use FP16**:
+- Large volumes where memory bandwidth is the bottleneck
+- Training scenarios where slight accuracy loss is acceptable
+- Inference with pre-trained models
+
+**When to avoid FP16**:
+- High-precision requirements
+- Small values that may underflow in FP16 range

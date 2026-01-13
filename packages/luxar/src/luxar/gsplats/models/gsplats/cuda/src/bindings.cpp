@@ -19,6 +19,10 @@
  * Forward pass wrapper for Python.
  *
  * Converts Python types to C++ types and calls the CUDA forward function.
+ * Supports optional FP16 mode for reduced memory bandwidth.
+ *
+ * @param use_fp16 If true, converts inputs to FP16 and uses FP16-optimized kernels.
+ *                 Output is always FP32 for numerical stability.
  */
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 forward_wrapper(
@@ -29,8 +33,28 @@ forward_wrapper(
     const std::vector<int64_t>& shape,
     double truncate,
     double intensity_floor,
-    int64_t tile_size
+    int64_t tile_size,
+    bool use_fp16
 ) {
+    if (use_fp16) {
+        // Convert inputs to FP16 for reduced memory bandwidth
+        auto centers_fp16 = centers.to(torch::kFloat16);
+        auto conic_fp16 = conic.to(torch::kFloat16);
+        auto amps_fp16 = amps.to(torch::kFloat16);
+        auto sharpness_fp16 = sharpness.to(torch::kFloat16);
+
+        return forward_fp16(
+            centers_fp16,
+            conic_fp16,
+            amps_fp16,
+            sharpness_fp16,
+            shape,
+            (float)truncate,
+            (float)intensity_floor,
+            (int)tile_size
+        );
+    }
+
     return forward(
         centers,
         conic,
@@ -45,6 +69,12 @@ forward_wrapper(
 
 /**
  * Backward pass wrapper for Python.
+ *
+ * Supports optional FP16 mode matching the forward pass.
+ * Gradients are always returned as FP32 for numerical stability.
+ *
+ * @param use_fp16 If true, converts inputs to FP16 and uses FP16-optimized kernels.
+ *                 Gradients are always FP32 regardless of this setting.
  */
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 backward_wrapper(
@@ -60,8 +90,33 @@ backward_wrapper(
     const std::vector<int64_t>& shape,
     double truncate,
     double intensity_floor,
-    int64_t tile_size
+    int64_t tile_size,
+    bool use_fp16
 ) {
+    if (use_fp16) {
+        // Convert inputs to FP16 (grad_output stays FP32)
+        auto centers_fp16 = centers.to(torch::kFloat16);
+        auto conic_fp16 = conic.to(torch::kFloat16);
+        auto amps_fp16 = amps.to(torch::kFloat16);
+        auto sharpness_fp16 = sharpness.to(torch::kFloat16);
+
+        return backward_fp16(
+            grad_output,  // Always FP32
+            centers_fp16,
+            conic_fp16,
+            amps_fp16,
+            sharpness_fp16,
+            tile_offsets,
+            tile_counts,
+            tile_content,
+            global_splat_ids,
+            shape,
+            (float)truncate,
+            (float)intensity_floor,
+            (int)tile_size
+        );
+    }
+
     return backward(
         grad_output,
         centers,
@@ -124,6 +179,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                 Minimum intensity threshold for culling
             tile_size : int
                 Tile size for spatial binning
+            use_fp16 : bool
+                If True, use FP16 precision for inputs to reduce memory bandwidth.
+                Computation and output are still FP32 for numerical stability.
+                Default: False.
 
             Returns
             -------
@@ -141,7 +200,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("shape"),
         py::arg("truncate"),
         py::arg("intensity_floor"),
-        py::arg("tile_size")
+        py::arg("tile_size"),
+        py::arg("use_fp16") = false
     );
 
     m.def(
@@ -178,6 +238,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                 Minimum intensity threshold
             tile_size : int
                 Tile size
+            use_fp16 : bool
+                If True, use FP16 precision for inputs to reduce memory bandwidth.
+                Must match the setting used in forward pass.
+                Gradients are always FP32 regardless of this setting.
+                Default: False.
 
             Returns
             -------
@@ -199,7 +264,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("shape"),
         py::arg("truncate"),
         py::arg("intensity_floor"),
-        py::arg("tile_size")
+        py::arg("tile_size"),
+        py::arg("use_fp16") = false
     );
 
     // Version info

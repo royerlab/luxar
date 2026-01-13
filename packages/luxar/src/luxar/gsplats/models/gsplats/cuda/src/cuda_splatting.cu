@@ -2082,3 +2082,208 @@ backward(
 
     return std::make_tuple(d_centers, d_conic, d_amps, d_sharpness);
 }
+
+// =============================================================================
+// FP16 (HALF PRECISION) SUPPORT
+// =============================================================================
+
+/**
+ * Validate FP16 input tensors.
+ * Same checks as FP32 but expects kFloat16 dtype.
+ */
+void validate_inputs_fp16(
+    const torch::Tensor& centers,
+    const torch::Tensor& conic,
+    const torch::Tensor& amps,
+    const torch::Tensor& sharpness,
+    const std::vector<int64_t>& shape
+) {
+    // Check device
+    TORCH_CHECK(centers.is_cuda(), "centers must be on CUDA device");
+    TORCH_CHECK(conic.is_cuda(), "conic must be on CUDA device");
+    TORCH_CHECK(amps.is_cuda(), "amps must be on CUDA device");
+    TORCH_CHECK(sharpness.is_cuda(), "sharpness must be on CUDA device");
+
+    // Check dimensions
+    int dim = (int)shape.size();
+    TORCH_CHECK(dim >= MIN_DIM && dim <= MAX_SUPPORTED_DIM,
+        "Dimension must be between ", MIN_DIM, " and ", MAX_SUPPORTED_DIM, ", got ", dim);
+
+    int N = (int)centers.size(0);
+    TORCH_CHECK(centers.size(1) == dim, "centers must have shape (N, ", dim, ")");
+
+    int expected_conic_size = dim * (dim + 1) / 2;
+    TORCH_CHECK(conic.size(1) == expected_conic_size,
+        "conic must have shape (N, ", expected_conic_size, ")");
+
+    TORCH_CHECK(amps.size(0) == N, "amps must have shape (", N, ",)");
+    TORCH_CHECK(sharpness.size(0) == N, "sharpness must have shape (", N, ",)");
+
+    // Check dtypes - expect FP16
+    TORCH_CHECK(centers.dtype() == torch::kFloat16, "centers must be float16 for FP16 mode");
+    TORCH_CHECK(conic.dtype() == torch::kFloat16, "conic must be float16 for FP16 mode");
+    TORCH_CHECK(amps.dtype() == torch::kFloat16, "amps must be float16 for FP16 mode");
+    TORCH_CHECK(sharpness.dtype() == torch::kFloat16, "sharpness must be float16 for FP16 mode");
+
+    // Check contiguous
+    TORCH_CHECK(centers.is_contiguous(), "centers must be contiguous");
+    TORCH_CHECK(conic.is_contiguous(), "conic must be contiguous");
+    TORCH_CHECK(amps.is_contiguous(), "amps must be contiguous");
+    TORCH_CHECK(sharpness.is_contiguous(), "sharpness must be contiguous");
+}
+
+/**
+ * FP16 Forward dispatcher.
+ *
+ * Mixed precision implementation: converts FP16 inputs to FP32 for computation.
+ * This provides memory bandwidth benefit during tensor storage/transfer while
+ * maintaining numerical precision during computation.
+ *
+ * Future optimization: Replace with true FP16 kernels that load FP16 directly
+ * into shared memory and convert to FP32 only in registers.
+ */
+void dispatch_forward_fp16(
+    int dim,
+    const torch::Tensor& centers_fp16,
+    const torch::Tensor& conic_fp16,
+    const torch::Tensor& amps_fp16,
+    const torch::Tensor& sharpness_fp16,
+    const std::vector<int64_t>& shape,
+    float truncate,
+    float intensity_floor,
+    int tile_size,
+    torch::Tensor& output,
+    BinningState& state
+) {
+    // Convert FP16 inputs to FP32 for computation
+    // This is the "store FP16, compute FP32" strategy
+    auto centers = centers_fp16.to(torch::kFloat32);
+    auto conic = conic_fp16.to(torch::kFloat32);
+    auto amps = amps_fp16.to(torch::kFloat32);
+    auto sharpness = sharpness_fp16.to(torch::kFloat32);
+
+    // Dispatch to FP32 implementation
+    dispatch_forward(dim, centers, conic, amps, sharpness, shape,
+                    truncate, intensity_floor, tile_size, output, state);
+}
+
+/**
+ * FP16 Backward dispatcher.
+ *
+ * Mixed precision implementation: converts FP16 inputs to FP32 for computation.
+ * Gradients are always FP32 for numerical stability.
+ */
+void dispatch_backward_fp16(
+    int dim,
+    const torch::Tensor& grad_output,
+    const torch::Tensor& centers_fp16,
+    const torch::Tensor& conic_fp16,
+    const torch::Tensor& amps_fp16,
+    const torch::Tensor& sharpness_fp16,
+    const torch::Tensor& tile_offsets,
+    const torch::Tensor& tile_counts,
+    const torch::Tensor& tile_content,
+    const torch::Tensor& global_splat_ids,
+    const std::vector<int64_t>& shape,
+    float truncate,
+    float intensity_floor,
+    int tile_size,
+    torch::Tensor& d_centers,
+    torch::Tensor& d_conic,
+    torch::Tensor& d_amps,
+    torch::Tensor& d_sharpness
+) {
+    // Convert FP16 inputs to FP32 for computation
+    auto centers = centers_fp16.to(torch::kFloat32);
+    auto conic = conic_fp16.to(torch::kFloat32);
+    auto amps = amps_fp16.to(torch::kFloat32);
+    auto sharpness = sharpness_fp16.to(torch::kFloat32);
+
+    // Dispatch to FP32 implementation - gradients are already FP32
+    dispatch_backward(dim, grad_output, centers, conic, amps, sharpness,
+                     tile_offsets, tile_counts, tile_content, global_splat_ids,
+                     shape, truncate, intensity_floor, tile_size,
+                     d_centers, d_conic, d_amps, d_sharpness);
+}
+
+// =============================================================================
+// FP16 PUBLIC API
+// =============================================================================
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+forward_fp16(
+    const torch::Tensor& centers,
+    const torch::Tensor& conic,
+    const torch::Tensor& amps,
+    const torch::Tensor& sharpness,
+    const std::vector<int64_t>& shape,
+    float truncate,
+    float intensity_floor,
+    int tile_size
+) {
+    validate_inputs_fp16(centers, conic, amps, sharpness, shape);
+
+    int dim = (int)shape.size();
+    auto device = centers.device();
+
+    // Compute output size
+    int64_t num_pixels = 1;
+    for (int64_t s : shape) {
+        num_pixels *= s;
+    }
+
+    // Allocate output (always FP32)
+    auto output = torch::zeros({num_pixels}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
+
+    // Run forward pass with FP16 inputs
+    BinningState state;
+    dispatch_forward_fp16(dim, centers, conic, amps, sharpness, shape,
+                         truncate, intensity_floor, tile_size, output, state);
+
+    // Return output + binning state + global splat IDs
+    return std::make_tuple(
+        output,
+        state.tile_counts,
+        state.tile_offsets,
+        state.tile_content,
+        state.global_splat_ids
+    );
+}
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+backward_fp16(
+    const torch::Tensor& grad_output,
+    const torch::Tensor& centers,
+    const torch::Tensor& conic,
+    const torch::Tensor& amps,
+    const torch::Tensor& sharpness,
+    const torch::Tensor& tile_offsets,
+    const torch::Tensor& tile_counts,
+    const torch::Tensor& tile_content,
+    const torch::Tensor& global_splat_ids,
+    const std::vector<int64_t>& shape,
+    float truncate,
+    float intensity_floor,
+    int tile_size
+) {
+    validate_inputs_fp16(centers, conic, amps, sharpness, shape);
+
+    int dim = (int)shape.size();
+    int N = (int)centers.size(0);
+    int conic_size = dim * (dim + 1) / 2;
+    auto device = centers.device();
+
+    // Allocate gradient buffers (always FP32)
+    auto d_centers = torch::zeros({N, dim}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
+    auto d_conic = torch::zeros({N, conic_size}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
+    auto d_amps = torch::zeros({N}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
+    auto d_sharpness = torch::zeros({N}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
+
+    // Run backward pass with FP16 inputs
+    dispatch_backward_fp16(dim, grad_output, centers, conic, amps, sharpness,
+                          tile_offsets, tile_counts, tile_content, global_splat_ids,
+                          shape, truncate, intensity_floor, tile_size,
+                          d_centers, d_conic, d_amps, d_sharpness);
+
+    return std::make_tuple(d_centers, d_conic, d_amps, d_sharpness);
+}
