@@ -6,7 +6,7 @@ Uses existing fit_gaussian_splats() as a building block.
 """
 
 import time
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import numpy as np
 from arbol import aprint, asection
@@ -19,9 +19,179 @@ from luxar.gsplats.multiscale import decompose_image
 # Minimum dimension size for a scale to be meaningful
 _MIN_SCALE_DIM = 8  # Minimum 8 pixels per dimension after downsampling
 
+# Minimum seeds per scale as fraction of voxels (1% = quite low but non-zero)
+_MIN_SEEDS_VOXEL_FRACTION = 0.01
+
+
+def _compute_floats_per_splat(ndim: int) -> int:
+    """Compute number of floats needed to represent one Gaussian splat."""
+    # center (d) + cholesky (d*(d+1)/2) + amplitude (1) + sharpness (1)
+    return ndim + ndim * (ndim + 1) // 2 + 2
+
+
+def _compression_ratio_to_total_seeds(
+    compression_ratio: float,
+    total_voxels: int,
+    ndim: int,
+) -> int:
+    """Convert compression ratio to total target seed count."""
+    floats_per_splat = _compute_floats_per_splat(ndim)
+    target = int(compression_ratio * total_voxels / floats_per_splat)
+    return max(1, target)
+
+
+def _distribute_seeds_by_maxima(
+    seeds: Union[int, float],
+    maxima_per_scale: List[int],
+    scales_list: List[np.ndarray],
+    scale_factors: List[int],
+    ndim: int,
+    verbose: bool = False,
+) -> List[int]:
+    """
+    Distribute seeds across scales using sqrt-weighted local maxima counts.
+
+    Uses sqrt() to flatten the distribution, giving coarse scales a fairer share
+    while still allocating more seeds to fine scales with more structure.
+
+    Supports both absolute seed count (int) and compression ratio (float).
+
+    Parameters
+    ----------
+    seeds : int or float
+        Total number of seeds (int) or compression ratio (float 0-1).
+        For compression ratio, the denominator is the sum of all scale voxels.
+    maxima_per_scale : List[int]
+        Number of local maxima detected at each scale.
+    scales_list : List[np.ndarray]
+        Decomposed scale images.
+    scale_factors : List[int]
+        Scale factors (1, 2, 4, etc.).
+    ndim : int
+        Number of dimensions.
+    verbose : bool
+        Print distribution information.
+
+    Returns
+    -------
+    List[int]
+        Number of seeds allocated to each scale.
+    """
+    from arbol import aprint
+
+    n_scales = len(scales_list)
+
+    # Compute total voxels across all scales
+    total_voxels = sum(s.size for s in scales_list)
+
+    # Handle compression ratio (float)
+    if isinstance(seeds, float):
+        if not (0 < seeds <= 1.0):
+            raise ValueError(f"Compression ratio must be in (0, 1.0], got {seeds}")
+        compression_ratio = seeds
+        total_seeds = _compression_ratio_to_total_seeds(
+            compression_ratio, total_voxels, ndim
+        )
+        if verbose:
+            floats_per_splat = _compute_floats_per_splat(ndim)
+            aprint(f"Ratio {compression_ratio:.1%} → {total_seeds} seeds "
+                   f"({floats_per_splat} floats/splat in {ndim}D)")
+    else:
+        total_seeds = seeds
+
+    # Handle edge cases
+    if not maxima_per_scale or len(maxima_per_scale) != n_scales:
+        # Fallback: distribute equally
+        per_scale = max(1, total_seeds // n_scales)
+        return [per_scale] * n_scales
+
+    # Calculate minimum seeds per scale (based on voxel count)
+    min_seeds_per_scale = []
+    for scale_img in scales_list:
+        min_seeds = max(5, int(scale_img.size * _MIN_SEEDS_VOXEL_FRACTION))
+        min_seeds_per_scale.append(min_seeds)
+
+    # Apply sqrt() to flatten the distribution - this makes seed allocation more uniform
+    # while still giving more seeds to scales with more structure (maxima).
+    # sqrt() is a moderate compression; log1p() would be more aggressive.
+    weights = [np.sqrt(max(1, n)) for n in maxima_per_scale]
+    total_weight = sum(weights)
+
+    # Distribute seeds proportionally to flattened weights, respecting minimums
+    seeds_per_scale = []
+
+    for i, weight in enumerate(weights):
+        # Proportional allocation based on sqrt-compressed weights
+        proportion = weight / total_weight if total_weight > 0 else 1 / n_scales
+        allocated = int(round(total_seeds * proportion))
+
+        # Enforce minimum
+        allocated = max(allocated, min_seeds_per_scale[i])
+
+        seeds_per_scale.append(allocated)
+
+    # Adjust for rounding: add/remove from largest allocation
+    total_allocated = sum(seeds_per_scale)
+    if total_allocated != total_seeds:
+        diff = total_seeds - total_allocated
+        # Find scale with most seeds and adjust
+        max_idx = seeds_per_scale.index(max(seeds_per_scale))
+        seeds_per_scale[max_idx] = max(
+            min_seeds_per_scale[max_idx], seeds_per_scale[max_idx] + diff
+        )
+
+    # Print nice distribution table
+    if verbose:
+        _print_distribution_table(
+            maxima_per_scale,
+            seeds_per_scale,
+            scale_factors,
+            scales_list,
+            total_seeds,
+        )
+
+    return seeds_per_scale
+
+
+def _print_distribution_table(
+    maxima_per_scale: List[int],
+    seeds_per_scale: List[int],
+    scale_factors: List[int],
+    scales_list: List[np.ndarray],
+    total_seeds: int,
+) -> None:
+    """Print a visual table of maxima and seed distribution."""
+    from arbol import aprint
+
+    total_maxima = sum(maxima_per_scale)
+
+    aprint("=" * 70)
+    aprint("Seed Distribution (sqrt-weighted by maxima, fine → coarse):")
+    aprint("=" * 70)
+
+    for i, (scale, n_maxima, n_seeds) in enumerate(
+        zip(scale_factors, maxima_per_scale, seeds_per_scale)
+    ):
+        maxima_pct = n_maxima / total_maxima * 100 if total_maxima > 0 else 0
+        seeds_pct = n_seeds / total_seeds * 100 if total_seeds > 0 else 0
+        bar_length = int(seeds_pct / 2)  # Bar shows seed allocation
+        bar = "█" * bar_length
+
+        shape_str = "x".join(str(s) for s in scales_list[i].shape)
+        aprint(
+            f"Scale {scale:2d}x: {n_maxima:5d} maxima ({maxima_pct:4.1f}%) "
+            f"→ {bar:<20} {n_seeds:4d} seeds ({seeds_pct:4.1f}%) [{shape_str}]"
+        )
+
+    aprint(
+        f"Total: {total_maxima} maxima → {sum(seeds_per_scale)} seeds (sqrt-weighted)"
+    )
+    aprint("=" * 70)
+
 
 def fit_multiscale_gaussian_splats(
     V: np.ndarray,
+    seeds: Optional[Union[int, float]] = None,
     scales: Optional[List[int]] = None,
     base_init_sigma: float = 1.5,
     n_iters_decomp: int = 1000,
@@ -32,6 +202,7 @@ def fit_multiscale_gaussian_splats(
     movie_every: int = 1,
     movie_max_frames: Optional[int] = None,
     visualize_per_scale: bool = False,
+    return_intermediate: bool = False,
     **fit_kwargs,
 ) -> GSplatData:
     """
@@ -45,12 +216,21 @@ def fit_multiscale_gaussian_splats(
     ----------
     V : np.ndarray
         Input image of shape (d1, d2, ..., dn). Must be non-empty and finite.
+    seeds : int or float, optional
+        Controls the number of splats to fit:
+        - **int**: Total target number of seeds across all scales.
+        - **float** (0 < seeds <= 1.0): Compression ratio. Specifies the fraction
+          of data size to use for splat storage (e.g., 0.1 = 10% compression).
+        - **None**: Auto-seeding is used for each scale independently.
+
+        Seeds are distributed across scales using sqrt-weighted local maxima counts.
+        This flattens the distribution so coarse scales get a fairer share while
+        fine scales (with more maxima) still receive more seeds.
     scales : List[int], optional
         Scale factors for decomposition, e.g., [1, 2, 4, 8].
         Larger values = coarser scales with fewer voxels.
         Default: [1, 2, 4, 8] for most applications.
     base_init_sigma : float, default=1.5
-
         Base initial sigma in voxels. Will be multiplied by scale_factor
         for each scale to create scale-appropriate Gaussians.
     n_iters_decomp : int, default=1000
@@ -63,14 +243,25 @@ def fit_multiscale_gaussian_splats(
     verbose : bool, default=False
         Enable verbose logging of decomposition and fitting progress.
     napari_movie : bool, default=False
-        Enable recording of decomposition optimization progress for animation.
+        Enable recording and display of optimization progress for animation.
+        When True, shows napari movie viewer for both decomposition AND each
+        per-scale Gaussian fitting (close each viewer to continue to next).
     movie_every : int, default=1
-        Record a movie frame every N iterations during decomposition.
+        Record a movie frame every N iterations.
     movie_max_frames : Optional[int], default=None
         Maximum number of frames to store. If None, no limit (can use lots of memory).
     visualize_per_scale : bool, default=False
         Enable per-scale visualization showing splat locations and reconstructions.
         If True, returns per-scale visualizations in stats['per_scale_visualizations'].
+    return_intermediate : bool, default=False
+        Return intermediate per-scale results for detailed analysis and visualization.
+        If True, stats['intermediate'] contains a list of dicts, one per scale:
+        - 'scale_factor': The scale factor (1, 2, 4, etc.)
+        - 'target': The decomposed scale target image (V_scale)
+        - 'splats': GSplatData fitted to this scale (in downsampled coordinates)
+        - 'splats_full_res': GSplatData scaled to full resolution
+        - 'reconstruction': Reconstruction of V_scale using fitted splats
+        - 'residual': Residual (target - reconstruction) at this scale
     **fit_kwargs
         Additional arguments passed to fit_gaussian_splats() for each scale.
         Supports all parameters: loss_type, asymmetric_penalty, l1_amp,
@@ -81,9 +272,9 @@ def fit_multiscale_gaussian_splats(
     GSplatData
         Dataclass containing combined results from all scales:
         - centers: np.ndarray, shape (N_total, d) - Center positions at full resolution
-        - amplitudes: np.ndarray, shape (N_total,) - Combined amplitudes from all scales
-        - cholesky_factors: np.ndarray, shape (N_total, d*(d+1)//2) - Cholesky factors at full resolution
-        - sharpnesses: np.ndarray, shape (N_total,) - Per-splat sharpness values (not scaled)
+        - amplitudes: np.ndarray, shape (N_total,) - Combined amplitudes
+        - cholesky_factors: np.ndarray, shape (N_total, d*(d+1)//2) - At full res
+        - sharpnesses: np.ndarray, shape (N_total,) - Per-splat sharpness
         - stats: Dict[str, Any] - Combined statistics including:
           * decomposition_stats: Stats from decompose_image()
           * per_scale_stats: List of stats from each scale's fitting
@@ -93,9 +284,11 @@ def fit_multiscale_gaussian_splats(
           * total_time_seconds: Total wall-clock time
           * decomposition_time_seconds: Time for decomposition
           * fitting_time_seconds: Time for per-scale fitting
-          * per_scale_visualizations: Visualization data (only if visualize_per_scale=True)
+          * per_scale_visualizations: Viz data (only if visualize_per_scale)
+          * intermediate: Per-scale GSplatData (only if return_intermediate)
+          * scale_images: Decomposed images (only if return_intermediate)
 
-        All geometric parameters (centers, Cholesky factors) are scaled to full resolution.
+        Geometric params (centers, Cholesky) are scaled to full resolution.
         Sharpness values are dimensionless and not scaled.
 
     Notes
@@ -111,14 +304,15 @@ def fit_multiscale_gaussian_splats(
     Examples
     --------
     >>> # Simple 2D example
-    >>> params, amps, stats = fit_multiscale_gaussian_splats(
+    >>> result = fit_multiscale_gaussian_splats(
     ...     image_2d,
     ...     scales=[1, 2, 4],
     ...     n_iters_per_scale=300
     ... )
+    >>> print(f"Fitted {len(result.amplitudes)} splats")
 
     >>> # 3D volume with custom parameters
-    >>> params, amps, stats = fit_multiscale_gaussian_splats(
+    >>> result = fit_multiscale_gaussian_splats(
     ...     volume_3d,
     ...     scales=[1, 2, 4, 8, 16],
     ...     base_init_sigma=2.0,
@@ -129,6 +323,7 @@ def fit_multiscale_gaussian_splats(
     ...     max_abs_error=0.01,
     ...     verbose=True
     ... )
+    >>> print(f"Centers shape: {result.centers.shape}")
     """
     # Default scales
     if scales is None:
@@ -154,9 +349,8 @@ def fit_multiscale_gaussian_splats(
         downsampled_shape = tuple(max(1, s // scale) for s in V.shape)
         if any(dim < _MIN_SCALE_DIM for dim in downsampled_shape):
             raise ValueError(
-                f"Scale {scale} results in too small dimensions {downsampled_shape} "
-                f"for image shape {V.shape}. Minimum dimension is {_MIN_SCALE_DIM} pixels. "
-                f"Consider using smaller scale factors."
+                f"Scale {scale} → dims {downsampled_shape} too small. "
+                f"Min is {_MIN_SCALE_DIM}px. Use smaller scale factors."
             )
 
     if base_init_sigma <= 0:
@@ -192,18 +386,30 @@ def fit_multiscale_gaussian_splats(
 
     if verbose:
         decomp_time = decomp_stats.get("time_seconds", 0)
-        aprint(
-            f"Decomposition complete in {decomp_time:.2f}s, final error: {decomp_stats.get('final_error', 0):.6e}"
-        )
+        err = decomp_stats.get("final_error", 0)
+        aprint(f"Decomposition: {decomp_time:.2f}s, error: {err:.6e}")
         energy_dist = decomp_stats.get("energy_distribution", [])
         aprint(f"Energy distribution: {' → '.join([f'{e:.1%}' for e in energy_dist])}")
+
+    # Compute seeds per scale if total seeds specified
+    seeds_per_scale: Optional[List[int]] = None
+    if seeds is not None:
+        seeds_per_scale = _distribute_seeds_by_maxima(
+            seeds=seeds,
+            maxima_per_scale=decomp_stats.get("maxima_per_scale", []),
+            scales_list=scales_list,
+            scale_factors=scales,
+            ndim=d,
+            verbose=verbose,
+        )
 
     # Step 2: Independent Fitting Per Scale
     all_params = []
     all_amps = []
     all_sharpness = []
     per_scale_stats = []
-    per_scale_visualizations: list | None = [] if visualize_per_scale else None
+    per_scale_visualizations: Optional[list] = [] if visualize_per_scale else None
+    intermediate_results: Optional[list] = [] if return_intermediate else None
 
     if verbose:
         with asection("Fitting Gaussian Splats Per Scale"):
@@ -214,7 +420,9 @@ def fit_multiscale_gaussian_splats(
             aprint(f"Learning rate: {lr}")
 
     for scale_idx, (scale_factor, V_scale) in enumerate(zip(scales, scales_list)):
-        # Adjust init_sigma for scale
+        # Adjust init_sigma for scale. Scale init_sigma by scale_factor so
+        # when splats are scaled back to full resolution, they have appropriate
+        # coverage. This ensures consistent physical coverage after upscaling.
         init_sigma_scaled = base_init_sigma * scale_factor
 
         if verbose:
@@ -227,13 +435,21 @@ def fit_multiscale_gaussian_splats(
 
         # Fit Gaussians on this scale with error handling (Issue #13)
         scale_start = time.time()
+
+        # Get per-scale seed count if specified
+        scale_seeds = seeds_per_scale[scale_idx] if seeds_per_scale else None
+
         try:
             result = fit_gaussian_splats(
                 V_scale,
+                seeds=scale_seeds,
                 init_sigma_vox=init_sigma_scaled,
                 n_iters=n_iters_per_scale,
                 lr=lr,
                 verbose=verbose,
+                napari_movie=napari_movie,
+                movie_every=movie_every,
+                movie_max_frames=movie_max_frames,
                 **fit_kwargs,
             )
         except Exception as e:
@@ -261,11 +477,24 @@ def fit_multiscale_gaussian_splats(
 
         # Scale geometric parameters back to full resolution
         if scale_factor > 1:
-            # Scale centers (first d columns)
-            params_geom[:, :d] *= scale_factor
-            # Scale Cholesky factors (columns d to end)
+            # Scale centers: downsampled → full res. Downsampled pixel (i,j)
+            # covers [i*s:(i+1)*s], centered at i*s + (s-1)/2.
+            offset = (scale_factor - 1) / 2.0
+            params_geom[:, :d] = params_geom[:, :d] * scale_factor + offset
+
+            # Scale Cholesky: L_full = scale * L_down. Since Σ = L @ L.T,
+            # this gives Σ_full = k² * Σ_down, so σ_full = k * σ_down.
             params_geom[:, d:] *= scale_factor
-            # Sharpness does NOT get scaled - it's dimensionless
+
+            # Amplitudes do NOT get scaled. Rationale:
+            # The decomposition uses area-averaging for downsampling, which preserves
+            # average intensity (not total energy). Fitted amplitudes in downsampled
+            # coordinates represent the same intensity levels as in full resolution.
+            # When we scale the Gaussian's sigma (coverage), the amplitude represents
+            # the same peak intensity, which is correct for reconstruction.
+
+            # Sharpness does NOT get scaled - it's a dimensionless exponent that
+            # controls the Gaussian profile shape, not its spatial extent.
 
         all_params.append(params_geom)
         all_amps.append(amps)
@@ -282,6 +511,47 @@ def fit_multiscale_gaussian_splats(
                 "time_seconds": float(scale_time),
             }
         )
+
+        # Store intermediate results if requested
+        if return_intermediate and intermediate_results is not None:
+            truncate = fit_kwargs.get("truncate", 3.0)
+
+            # GSplatData in downsampled (scale) coordinates
+            splats_scale = GSplatData(
+                centers=centers_scale.copy(),
+                amplitudes=amps.copy(),
+                cholesky_factors=chol_scale.copy(),
+                sharpnesses=sharpness_scale.copy(),
+                stats=stats_scale,
+            )
+
+            # GSplatData scaled to full resolution
+            centers_full_res = params_geom[:, :d].copy()
+            chol_full_res = params_geom[:, d:].copy()
+            splats_full_res = GSplatData(
+                centers=centers_full_res,
+                amplitudes=amps.copy(),
+                cholesky_factors=chol_full_res,
+                sharpnesses=sharpness_scale.copy(),
+                stats={},
+            )
+
+            # Render reconstruction at scale resolution (in downsampled space)
+            recon_scale = render_gaussians_numpy(
+                V_scale.shape, splats_scale, truncate=truncate
+            )
+            residual_scale = V_scale - recon_scale
+
+            intermediate_results.append(
+                {
+                    "scale_factor": int(scale_factor),
+                    "target": V_scale.copy(),
+                    "splats": splats_scale,
+                    "splats_full_res": splats_full_res,
+                    "reconstruction": recon_scale,
+                    "residual": residual_scale,
+                }
+            )
 
         # Store per-scale visualization data if requested
         if visualize_per_scale:
@@ -313,10 +583,10 @@ def fit_multiscale_gaussian_splats(
                     "scale_factor": int(scale_factor),
                     "scale_shape": tuple(V_scale.shape),
                     "n_splats": int(len(amps)),
-                    "original_scale": V_scale.copy(),  # Original downsampled image
-                    "centers": centers_full_res.copy(),  # Splat centers at full resolution
-                    "reconstruction": recon_full_res.copy(),  # Reconstruction at full resolution
-                    "residual": residual_full_res.copy(),  # Residual at full resolution
+                    "original_scale": V_scale.copy(),  # Downsampled image
+                    "centers": centers_full_res.copy(),  # Centers at full res
+                    "reconstruction": recon_full_res.copy(),  # Full res recon
+                    "residual": residual_full_res.copy(),  # Full res residual
                     "error_mse": float(np.mean(residual_full_res**2)),
                     "error_max_abs": float(np.abs(residual_full_res).max()),
                 }
@@ -325,9 +595,7 @@ def fit_multiscale_gaussian_splats(
             if verbose:
                 error_mse = np.mean(residual_full_res**2)
                 error_max_abs = np.abs(residual_full_res).max()
-                aprint(
-                    f"Scale reconstruction: MSE={error_mse:.6e}, Max abs error={error_max_abs:.6f}"
-                )
+                aprint(f"Scale recon: MSE={error_mse:.6e}, Max={error_max_abs:.6f}")
 
     # Step 3: Combination
     if verbose:
@@ -389,6 +657,12 @@ def fit_multiscale_gaussian_splats(
     # Add per-scale visualizations if requested
     if visualize_per_scale and per_scale_visualizations is not None:
         stats["per_scale_visualizations"] = per_scale_visualizations
+
+    # Add intermediate results if requested
+    if return_intermediate and intermediate_results is not None:
+        stats["intermediate"] = intermediate_results
+        # Also include the decomposed scale images for reference
+        stats["scale_images"] = [s.copy() for s in scales_list]
 
     if verbose:
         aprint(f"\nMulti-scale fitting complete in {total_time:.2f}s")
