@@ -291,12 +291,12 @@ __device__ __forceinline__ void estimate_L_row_norms_from_conic(
     }
 }
 
-template <int DIM>
+template <int DIM, typename InputDType = float>
 __global__ void preprocess_kernel(
-    const float* __restrict__ centers,
-    const float* __restrict__ conic,
-    const float* __restrict__ amps,
-    const float* __restrict__ sharpness,
+    const InputDType* __restrict__ centers,
+    const InputDType* __restrict__ conic,
+    const InputDType* __restrict__ amps,
+    const InputDType* __restrict__ sharpness,
     int N,
     const int* __restrict__ shape,
     const int* __restrict__ tile_dims,
@@ -310,22 +310,22 @@ __global__ void preprocess_kernel(
     int splat_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (splat_idx >= N) return;
 
-    // Load splat data
+    // Load splat data with dtype-aware conversion (FP16->FP32 if needed)
     float mu[DIM];
     #pragma unroll
     for (int d = 0; d < DIM; d++) {
-        mu[d] = centers[splat_idx * DIM + d];
+        mu[d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
     }
 
     constexpr int CONIC_SIZE = conic_size<DIM>();
     float conic_local[CONIC_SIZE];
     #pragma unroll
     for (int i = 0; i < CONIC_SIZE; i++) {
-        conic_local[i] = conic[splat_idx * CONIC_SIZE + i];
+        conic_local[i] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + i);
     }
 
-    float amp = amps[splat_idx];
-    float s = sharpness[splat_idx];
+    float amp = DTypeTraits<InputDType>::load(amps, splat_idx);
+    float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
 
     // Estimate L_row_norms from conic
     float L_row_norms[DIM];
@@ -405,12 +405,12 @@ __global__ void preprocess_kernel(
 // BINNING KERNEL
 // =============================================================================
 
-template <int DIM>
+template <int DIM, typename InputDType = float>
 __global__ void bin_kernel(
-    const float* __restrict__ centers,
-    const float* __restrict__ conic,
-    const float* __restrict__ amps,
-    const float* __restrict__ sharpness,
+    const InputDType* __restrict__ centers,
+    const InputDType* __restrict__ conic,
+    const InputDType* __restrict__ amps,
+    const InputDType* __restrict__ sharpness,
     int N,
     const int* __restrict__ shape,
     const int* __restrict__ tile_dims,
@@ -425,22 +425,22 @@ __global__ void bin_kernel(
     int splat_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (splat_idx >= N) return;
 
-    // Load splat data (same as preprocess)
+    // Load splat data with dtype-aware conversion (FP16->FP32 if needed)
     float mu[DIM];
     #pragma unroll
     for (int d = 0; d < DIM; d++) {
-        mu[d] = centers[splat_idx * DIM + d];
+        mu[d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
     }
 
     constexpr int CONIC_SIZE = conic_size<DIM>();
     float conic_local[CONIC_SIZE];
     #pragma unroll
     for (int i = 0; i < CONIC_SIZE; i++) {
-        conic_local[i] = conic[splat_idx * CONIC_SIZE + i];
+        conic_local[i] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + i);
     }
 
-    float amp = amps[splat_idx];
-    float s = sharpness[splat_idx];
+    float amp = DTypeTraits<InputDType>::load(amps, splat_idx);
+    float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
 
     float L_row_norms[DIM];
     estimate_L_row_norms_from_conic<DIM>(conic_local, L_row_norms);
@@ -501,12 +501,12 @@ __global__ void bin_kernel(
 // FORWARD RASTERIZATION KERNEL
 // =============================================================================
 
-template <int DIM>
+template <int DIM, typename InputDType = float>
 __global__ void rasterize_forward_kernel(
-    const float* __restrict__ centers,
-    const float* __restrict__ conic,
-    const float* __restrict__ amps,
-    const float* __restrict__ sharpness,
+    const InputDType* __restrict__ centers,
+    const InputDType* __restrict__ conic,
+    const InputDType* __restrict__ amps,
+    const InputDType* __restrict__ sharpness,
     int N,
     const int* __restrict__ shape,
     const int* __restrict__ tile_dims,
@@ -644,27 +644,27 @@ __global__ void rasterize_forward_kernel(
             int batch_size = min(SPLAT_BATCH_SIZE, n_splats_in_tile - batch_start);
 
             // Cooperative load of splat batch into shared memory
-            // OPTIMIZATION: Use __ldg() for read-only global memory loads through texture cache
+            // OPTIMIZATION: Use DTypeTraits for dtype-aware loading (supports FP16->FP32 conversion)
             // This improves memory throughput for scattered reads by ~15-20%
             __syncthreads();
             for (int i = threadIdx.x; i < batch_size; i += blockDim.x) {
                 int splat_idx = __ldg(&tile_content[tile_offset + batch_start + i]);
 
-                // Load centers via texture cache (using padded stride for 3D)
+                // Load centers with dtype conversion (using padded stride for 3D)
                 #pragma unroll
                 for (int d = 0; d < DIM; d++) {
-                    s_centers[i * CENTER_STRIDE + d] = __ldg(&centers[splat_idx * DIM + d]);
+                    s_centers[i * CENTER_STRIDE + d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
                 }
 
-                // Load conic via texture cache
+                // Load conic with dtype conversion
                 #pragma unroll
                 for (int c = 0; c < CONIC_SIZE; c++) {
-                    s_conic[i * CONIC_SIZE + c] = __ldg(&conic[splat_idx * CONIC_SIZE + c]);
+                    s_conic[i * CONIC_SIZE + c] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + c);
                 }
 
-                // Load scalars via texture cache
-                float s = __ldg(&sharpness[splat_idx]);
-                s_amps[i] = __ldg(&amps[splat_idx]);
+                // Load scalars with dtype conversion
+                float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
+                s_amps[i] = DTypeTraits<InputDType>::load(amps, splat_idx);
                 s_sharpness[i] = s;
 
                 // OPTIMIZATION 1.2: Precompute effective truncation squared
@@ -715,13 +715,13 @@ __global__ void rasterize_forward_kernel(
 // BACKWARD RASTERIZATION KERNEL
 // =============================================================================
 
-template <int DIM>
+template <int DIM, typename InputDType = float>
 __global__ void rasterize_backward_kernel(
     const float* __restrict__ grad_output,
-    const float* __restrict__ centers,
-    const float* __restrict__ conic,
-    const float* __restrict__ amps,
-    const float* __restrict__ sharpness,
+    const InputDType* __restrict__ centers,
+    const InputDType* __restrict__ conic,
+    const InputDType* __restrict__ amps,
+    const InputDType* __restrict__ sharpness,
     int N,
     const int* __restrict__ shape,
     const int* __restrict__ tile_dims,
@@ -793,7 +793,7 @@ __global__ void rasterize_backward_kernel(
         int batch_size = min(SPLAT_BATCH_SIZE, n_splats_in_tile - batch_start);
 
         // Load splat batch
-        // OPTIMIZATION: Use __ldg() for read-only global memory loads through texture cache
+        // OPTIMIZATION: Use DTypeTraits for dtype-aware loading (supports FP16->FP32 conversion)
         __syncthreads();
         for (int i = threadIdx.x; i < batch_size; i += blockDim.x) {
             int splat_idx = __ldg(&tile_content[tile_offset + batch_start + i]);
@@ -801,14 +801,14 @@ __global__ void rasterize_backward_kernel(
 
             #pragma unroll
             for (int d = 0; d < DIM; d++) {
-                s_centers[i * CENTER_STRIDE + d] = __ldg(&centers[splat_idx * DIM + d]);
+                s_centers[i * CENTER_STRIDE + d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
             }
             #pragma unroll
             for (int c = 0; c < CONIC_SIZE; c++) {
-                s_conic[i * CONIC_SIZE + c] = __ldg(&conic[splat_idx * CONIC_SIZE + c]);
+                s_conic[i * CONIC_SIZE + c] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + c);
             }
-            float s = __ldg(&sharpness[splat_idx]);
-            s_amps[i] = __ldg(&amps[splat_idx]);
+            float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
+            s_amps[i] = DTypeTraits<InputDType>::load(amps, splat_idx);
             s_sharpness[i] = s;
 
             // OPTIMIZATION 1.2: Precompute effective truncation squared
@@ -968,12 +968,12 @@ __global__ void rasterize_backward_kernel(
 // KERNEL LAUNCH WRAPPERS
 // =============================================================================
 
-template <int DIM>
+template <int DIM, typename InputDType = float>
 void launch_preprocess(
-    const float* centers,
-    const float* conic,
-    const float* amps,
-    const float* sharpness,
+    const InputDType* centers,
+    const InputDType* conic,
+    const InputDType* amps,
+    const InputDType* sharpness,
     int N,
     const int* shape,
     const int* tile_dims,
@@ -988,19 +988,19 @@ void launch_preprocess(
     int block_size = PREPROCESS_BLOCK_SIZE;
     int num_blocks = (N + block_size - 1) / block_size;
 
-    preprocess_kernel<DIM><<<num_blocks, block_size, 0, stream>>>(
+    preprocess_kernel<DIM, InputDType><<<num_blocks, block_size, 0, stream>>>(
         centers, conic, amps, sharpness, N,
         shape, tile_dims, tile_size, truncate, intensity_floor,
         tile_counts, global_flags, num_tiles
     );
 }
 
-template <int DIM>
+template <int DIM, typename InputDType = float>
 void launch_bin(
-    const float* centers,
-    const float* conic,
-    const float* amps,
-    const float* sharpness,
+    const InputDType* centers,
+    const InputDType* conic,
+    const InputDType* amps,
+    const InputDType* sharpness,
     int N,
     const int* shape,
     const int* tile_dims,
@@ -1016,19 +1016,19 @@ void launch_bin(
     int block_size = BIN_BLOCK_SIZE;
     int num_blocks = (N + block_size - 1) / block_size;
 
-    bin_kernel<DIM><<<num_blocks, block_size, 0, stream>>>(
+    bin_kernel<DIM, InputDType><<<num_blocks, block_size, 0, stream>>>(
         centers, conic, amps, sharpness, N,
         shape, tile_dims, tile_size, truncate, intensity_floor,
         tile_offsets, tile_write_heads, tile_content, num_tiles
     );
 }
 
-template <int DIM>
+template <int DIM, typename InputDType = float>
 void launch_rasterize_forward(
-    const float* centers,
-    const float* conic,
-    const float* amps,
-    const float* sharpness,
+    const InputDType* centers,
+    const InputDType* conic,
+    const InputDType* amps,
+    const InputDType* sharpness,
     int N,
     const int* shape,
     const int* tile_dims,
@@ -1069,7 +1069,7 @@ void launch_rasterize_forward(
     if constexpr (DIM == 3) {
         // Grid: (z, y, x) so blockIdx.x=z, blockIdx.y=y, blockIdx.z=x
         dim3 grid(host_tile_dims[2], host_tile_dims[1], host_tile_dims[0]);
-        rasterize_forward_kernel<DIM><<<grid, block_size, smem_size, stream>>>(
+        rasterize_forward_kernel<DIM, InputDType><<<grid, block_size, smem_size, stream>>>(
             centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content, output, 0
@@ -1077,7 +1077,7 @@ void launch_rasterize_forward(
     } else if constexpr (DIM == 2) {
         // Grid: (y, x, 1) so blockIdx.x=y, blockIdx.y=x
         dim3 grid(host_tile_dims[1], host_tile_dims[0], 1);
-        rasterize_forward_kernel<DIM><<<grid, block_size, smem_size, stream>>>(
+        rasterize_forward_kernel<DIM, InputDType><<<grid, block_size, smem_size, stream>>>(
             centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content, output, 0
@@ -1085,7 +1085,7 @@ void launch_rasterize_forward(
     } else {
         // For DIM > 3, use 1D grid
         int num_blocks = (int)num_tiles;
-        rasterize_forward_kernel<DIM><<<num_blocks, block_size, smem_size, stream>>>(
+        rasterize_forward_kernel<DIM, InputDType><<<num_blocks, block_size, smem_size, stream>>>(
             centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content, output, 0
@@ -1093,13 +1093,13 @@ void launch_rasterize_forward(
     }
 }
 
-template <int DIM>
+template <int DIM, typename InputDType = float>
 void launch_rasterize_backward(
     const float* grad_output,
-    const float* centers,
-    const float* conic,
-    const float* amps,
-    const float* sharpness,
+    const InputDType* centers,
+    const InputDType* conic,
+    const InputDType* amps,
+    const InputDType* sharpness,
     int N,
     const int* shape,
     const int* tile_dims,
@@ -1144,7 +1144,7 @@ void launch_rasterize_backward(
     if constexpr (DIM == 3) {
         // Grid: (z, y, x) so blockIdx.x=z, blockIdx.y=y, blockIdx.z=x
         dim3 grid(host_tile_dims[2], host_tile_dims[1], host_tile_dims[0]);
-        rasterize_backward_kernel<DIM><<<grid, block_size, smem_size, stream>>>(
+        rasterize_backward_kernel<DIM, InputDType><<<grid, block_size, smem_size, stream>>>(
             grad_output, centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content,
@@ -1153,7 +1153,7 @@ void launch_rasterize_backward(
     } else if constexpr (DIM == 2) {
         // Grid: (y, x, 1) so blockIdx.x=y, blockIdx.y=x
         dim3 grid(host_tile_dims[1], host_tile_dims[0], 1);
-        rasterize_backward_kernel<DIM><<<grid, block_size, smem_size, stream>>>(
+        rasterize_backward_kernel<DIM, InputDType><<<grid, block_size, smem_size, stream>>>(
             grad_output, centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content,
@@ -1162,7 +1162,7 @@ void launch_rasterize_backward(
     } else {
         // For DIM > 3, use 1D grid
         int num_blocks = (int)num_tiles;
-        rasterize_backward_kernel<DIM><<<num_blocks, block_size, smem_size, stream>>>(
+        rasterize_backward_kernel<DIM, InputDType><<<num_blocks, block_size, smem_size, stream>>>(
             grad_output, centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content,
@@ -1186,12 +1186,12 @@ void launch_rasterize_backward(
  *
  * Template parameter DIM: dimensionality (2-8)
  */
-template <int DIM>
+template <int DIM, typename InputDType = float>
 __global__ void rasterize_global_forward_kernel(
-    const float* __restrict__ centers,
-    const float* __restrict__ conic,
-    const float* __restrict__ amps,
-    const float* __restrict__ sharpness,
+    const InputDType* __restrict__ centers,
+    const InputDType* __restrict__ conic,
+    const InputDType* __restrict__ amps,
+    const InputDType* __restrict__ sharpness,
     const int* __restrict__ global_splat_ids,  // Array of global splat indices
     int n_global_splats,                        // Number of global splats
     const int* __restrict__ shape,
@@ -1228,20 +1228,20 @@ __global__ void rasterize_global_forward_kernel(
     for (int i = 0; i < n_global_splats; i++) {
         int splat_idx = global_splat_ids[i];
 
-        // Load splat data
+        // Load splat data with dtype-aware conversion
         float mu[DIM];
         float c[CONIC_SIZE];
 
         #pragma unroll
         for (int d = 0; d < DIM; d++) {
-            mu[d] = centers[splat_idx * DIM + d];
+            mu[d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
         }
         #pragma unroll
         for (int ci = 0; ci < CONIC_SIZE; ci++) {
-            c[ci] = conic[splat_idx * CONIC_SIZE + ci];
+            c[ci] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + ci);
         }
-        float amp = amps[splat_idx];
-        float s = sharpness[splat_idx];
+        float amp = DTypeTraits<InputDType>::load(amps, splat_idx);
+        float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
 
         // Compute displacement
         float d_vec[DIM];
@@ -1277,13 +1277,13 @@ __global__ void rasterize_global_forward_kernel(
  *
  * Each thread processes one pixel. Gradients are accumulated using atomicAdd.
  */
-template <int DIM>
+template <int DIM, typename InputDType = float>
 __global__ void rasterize_global_backward_kernel(
     const float* __restrict__ grad_output,
-    const float* __restrict__ centers,
-    const float* __restrict__ conic,
-    const float* __restrict__ amps,
-    const float* __restrict__ sharpness,
+    const InputDType* __restrict__ centers,
+    const InputDType* __restrict__ conic,
+    const InputDType* __restrict__ amps,
+    const InputDType* __restrict__ sharpness,
     const int* __restrict__ global_splat_ids,
     int n_global_splats,
     const int* __restrict__ shape,
@@ -1324,20 +1324,20 @@ __global__ void rasterize_global_backward_kernel(
     for (int i = 0; i < n_global_splats; i++) {
         int splat_idx = global_splat_ids[i];
 
-        // Load splat data
+        // Load splat data with dtype-aware conversion
         float mu[DIM];
         float c[CONIC_SIZE];
 
         #pragma unroll
         for (int d = 0; d < DIM; d++) {
-            mu[d] = centers[splat_idx * DIM + d];
+            mu[d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
         }
         #pragma unroll
         for (int ci = 0; ci < CONIC_SIZE; ci++) {
-            c[ci] = conic[splat_idx * CONIC_SIZE + ci];
+            c[ci] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + ci);
         }
-        float amp = amps[splat_idx];
-        float s = sharpness[splat_idx];
+        float amp = DTypeTraits<InputDType>::load(amps, splat_idx);
+        float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
 
         // Compute displacement
         float d_vec[DIM];
@@ -1428,12 +1428,12 @@ __global__ void rasterize_global_backward_kernel(
 }
 
 // Launch wrapper for global splat forward
-template <int DIM>
+template <int DIM, typename InputDType = float>
 void launch_rasterize_global_forward(
-    const float* centers,
-    const float* conic,
-    const float* amps,
-    const float* sharpness,
+    const InputDType* centers,
+    const InputDType* conic,
+    const InputDType* amps,
+    const InputDType* sharpness,
     const int* global_splat_ids,
     int n_global_splats,
     const int* shape,
@@ -1448,7 +1448,7 @@ void launch_rasterize_global_forward(
     constexpr int BLOCK_SIZE = 256;
     int num_blocks = (int)((num_pixels + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
-    rasterize_global_forward_kernel<DIM><<<num_blocks, BLOCK_SIZE, 0, stream>>>(
+    rasterize_global_forward_kernel<DIM, InputDType><<<num_blocks, BLOCK_SIZE, 0, stream>>>(
         centers, conic, amps, sharpness,
         global_splat_ids, n_global_splats,
         shape, truncate, intensity_floor, output, num_pixels
@@ -1456,13 +1456,13 @@ void launch_rasterize_global_forward(
 }
 
 // Launch wrapper for global splat backward
-template <int DIM>
+template <int DIM, typename InputDType = float>
 void launch_rasterize_global_backward(
     const float* grad_output,
-    const float* centers,
-    const float* conic,
-    const float* amps,
-    const float* sharpness,
+    const InputDType* centers,
+    const InputDType* conic,
+    const InputDType* amps,
+    const InputDType* sharpness,
     const int* global_splat_ids,
     int n_global_splats,
     const int* shape,
@@ -1480,7 +1480,7 @@ void launch_rasterize_global_backward(
     constexpr int BLOCK_SIZE = 256;
     int num_blocks = (int)((num_pixels + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
-    rasterize_global_backward_kernel<DIM><<<num_blocks, BLOCK_SIZE, 0, stream>>>(
+    rasterize_global_backward_kernel<DIM, InputDType><<<num_blocks, BLOCK_SIZE, 0, stream>>>(
         grad_output, centers, conic, amps, sharpness,
         global_splat_ids, n_global_splats,
         shape, truncate, intensity_floor,
@@ -1489,94 +1489,186 @@ void launch_rasterize_global_backward(
 }
 
 // =============================================================================
-// EXPLICIT TEMPLATE INSTANTIATIONS
+// EXPLICIT TEMPLATE INSTANTIATIONS (FP32)
 // =============================================================================
 
 // 2D - fully optimized with 3D grid launch
-template void launch_preprocess<2>(const float*, const float*, const float*, const float*,
+template void launch_preprocess<2, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<2>(const float*, const float*, const float*, const float*,
+template void launch_bin<2, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<2>(const float*, const float*, const float*, const float*,
+template void launch_rasterize_forward<2, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<2>(const float*, const float*, const float*, const float*, const float*,
+template void launch_rasterize_backward<2, float>(const float*, const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
 
 // 3D - fully optimized with 3D grid launch
-template void launch_preprocess<3>(const float*, const float*, const float*, const float*,
+template void launch_preprocess<3, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<3>(const float*, const float*, const float*, const float*,
+template void launch_bin<3, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<3>(const float*, const float*, const float*, const float*,
+template void launch_rasterize_forward<3, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<3>(const float*, const float*, const float*, const float*, const float*,
+template void launch_rasterize_backward<3, float>(const float*, const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
 
 // 4D - uses 1D grid
-template void launch_preprocess<4>(const float*, const float*, const float*, const float*,
+template void launch_preprocess<4, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<4>(const float*, const float*, const float*, const float*,
+template void launch_bin<4, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<4>(const float*, const float*, const float*, const float*,
+template void launch_rasterize_forward<4, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<4>(const float*, const float*, const float*, const float*, const float*,
+template void launch_rasterize_backward<4, float>(const float*, const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
 
 // 5D - uses 1D grid
-template void launch_preprocess<5>(const float*, const float*, const float*, const float*,
+template void launch_preprocess<5, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<5>(const float*, const float*, const float*, const float*,
+template void launch_bin<5, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<5>(const float*, const float*, const float*, const float*,
+template void launch_rasterize_forward<5, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<5>(const float*, const float*, const float*, const float*, const float*,
+template void launch_rasterize_backward<5, float>(const float*, const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
 
 // 6D - uses 1D grid
-template void launch_preprocess<6>(const float*, const float*, const float*, const float*,
+template void launch_preprocess<6, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<6>(const float*, const float*, const float*, const float*,
+template void launch_bin<6, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<6>(const float*, const float*, const float*, const float*,
+template void launch_rasterize_forward<6, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<6>(const float*, const float*, const float*, const float*, const float*,
+template void launch_rasterize_backward<6, float>(const float*, const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
 
 // 7D - uses 1D grid
-template void launch_preprocess<7>(const float*, const float*, const float*, const float*,
+template void launch_preprocess<7, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<7>(const float*, const float*, const float*, const float*,
+template void launch_bin<7, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<7>(const float*, const float*, const float*, const float*,
+template void launch_rasterize_forward<7, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<7>(const float*, const float*, const float*, const float*, const float*,
+template void launch_rasterize_backward<7, float>(const float*, const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
 
 // 8D - uses 1D grid
-template void launch_preprocess<8>(const float*, const float*, const float*, const float*,
+template void launch_preprocess<8, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<8>(const float*, const float*, const float*, const float*,
+template void launch_bin<8, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<8>(const float*, const float*, const float*, const float*,
+template void launch_rasterize_forward<8, float>(const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<8>(const float*, const float*, const float*, const float*, const float*,
+template void launch_rasterize_backward<8, float>(const float*, const float*, const float*, const float*, const float*,
     int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
 
 // Global splat kernel instantiations (with intensity_floor parameter)
-template void launch_rasterize_global_forward<2>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<2>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_forward<3>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<3>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_forward<4>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<4>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_forward<5>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<5>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_forward<6>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<6>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_forward<7>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<7>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_forward<8>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<8>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<2, float>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<2, float>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<3, float>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<3, float>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<4, float>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<4, float>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<5, float>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<5, float>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<6, float>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<6, float>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<7, float>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<7, float>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_forward<8, float>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<8, float>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+
+// =============================================================================
+// FP16 (__half) EXPLICIT TEMPLATE INSTANTIATIONS
+// =============================================================================
+// These instantiate the FP16 versions of all kernels for Phase 2 mixed precision:
+// - Inputs are loaded as FP16 from global memory
+// - Computation uses FP32 in shared memory and registers
+// - Outputs and gradients remain FP32
+
+// 2D FP16
+template void launch_preprocess<2, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
+template void launch_bin<2, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
+template void launch_rasterize_forward<2, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+template void launch_rasterize_backward<2, __half>(const float*, const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+template void launch_rasterize_global_forward<2, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<2, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+
+// 3D FP16
+template void launch_preprocess<3, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
+template void launch_bin<3, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
+template void launch_rasterize_forward<3, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+template void launch_rasterize_backward<3, __half>(const float*, const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+template void launch_rasterize_global_forward<3, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<3, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+
+// 4D FP16
+template void launch_preprocess<4, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
+template void launch_bin<4, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
+template void launch_rasterize_forward<4, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+template void launch_rasterize_backward<4, __half>(const float*, const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+template void launch_rasterize_global_forward<4, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<4, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+
+// 5D FP16
+template void launch_preprocess<5, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
+template void launch_bin<5, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
+template void launch_rasterize_forward<5, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+template void launch_rasterize_backward<5, __half>(const float*, const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+template void launch_rasterize_global_forward<5, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<5, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+
+// 6D FP16
+template void launch_preprocess<6, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
+template void launch_bin<6, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
+template void launch_rasterize_forward<6, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+template void launch_rasterize_backward<6, __half>(const float*, const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+template void launch_rasterize_global_forward<6, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<6, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+
+// 7D FP16
+template void launch_preprocess<7, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
+template void launch_bin<7, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
+template void launch_rasterize_forward<7, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+template void launch_rasterize_backward<7, __half>(const float*, const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+template void launch_rasterize_global_forward<7, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<7, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+
+// 8D FP16
+template void launch_preprocess<8, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
+template void launch_bin<8, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
+template void launch_rasterize_forward<8, __half>(const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+template void launch_rasterize_backward<8, __half>(const float*, const __half*, const __half*, const __half*, const __half*,
+    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+template void launch_rasterize_global_forward<8, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
+template void launch_rasterize_global_backward<8, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
 
 // =============================================================================
 // UTILITY FUNCTIONS
@@ -1690,7 +1782,7 @@ void dispatch_forward(
 
     // Launch preprocess kernel
     #define LAUNCH_PREPROCESS(D) \
-        launch_preprocess<D>( \
+        launch_preprocess<D, float>( \
             centers.data_ptr<float>(), \
             conic.data_ptr<float>(), \
             amps.data_ptr<float>(), \
@@ -1762,7 +1854,7 @@ void dispatch_forward(
 
     // Launch binning kernel
     #define LAUNCH_BIN(D) \
-        launch_bin<D>( \
+        launch_bin<D, float>( \
             centers.data_ptr<float>(), \
             conic.data_ptr<float>(), \
             amps.data_ptr<float>(), \
@@ -1796,7 +1888,7 @@ void dispatch_forward(
     // Launch rasterization kernel
     // OPTIMIZATION: Pass host tile_dims for 3D grid launch (2D/3D volumes)
     #define LAUNCH_RASTER(D) \
-        launch_rasterize_forward<D>( \
+        launch_rasterize_forward<D, float>( \
             centers.data_ptr<float>(), \
             conic.data_ptr<float>(), \
             amps.data_ptr<float>(), \
@@ -1847,7 +1939,7 @@ void dispatch_forward(
 
         // Launch global splat forward kernel
         #define LAUNCH_GLOBAL_FWD(D) \
-            launch_rasterize_global_forward<D>( \
+            launch_rasterize_global_forward<D, float>( \
                 centers.data_ptr<float>(), \
                 conic.data_ptr<float>(), \
                 amps.data_ptr<float>(), \
@@ -1922,7 +2014,7 @@ void dispatch_backward(
     // Launch backward kernel for tile-based splats
     // OPTIMIZATION: Pass host tile_dims for 3D grid launch (2D/3D volumes)
     #define LAUNCH_BACKWARD(D) \
-        launch_rasterize_backward<D>( \
+        launch_rasterize_backward<D, float>( \
             grad_output.data_ptr<float>(), \
             centers.data_ptr<float>(), \
             conic.data_ptr<float>(), \
@@ -1968,7 +2060,7 @@ void dispatch_backward(
 
         // Launch global splat backward kernel
         #define LAUNCH_GLOBAL_BWD(D) \
-            launch_rasterize_global_backward<D>( \
+            launch_rasterize_global_backward<D, float>( \
                 grad_output.data_ptr<float>(), \
                 centers.data_ptr<float>(), \
                 conic.data_ptr<float>(), \
@@ -2133,14 +2225,18 @@ void validate_inputs_fp16(
 }
 
 /**
- * FP16 Forward dispatcher.
+ * FP16 Forward dispatcher (Phase 2 - True FP16 kernels).
  *
- * Mixed precision implementation: converts FP16 inputs to FP32 for computation.
- * This provides memory bandwidth benefit during tensor storage/transfer while
- * maintaining numerical precision during computation.
+ * Mixed precision implementation: loads FP16 directly from global memory,
+ * converts to FP32 during shared memory load, computes in FP32, outputs FP32.
  *
- * Future optimization: Replace with true FP16 kernels that load FP16 directly
- * into shared memory and convert to FP32 only in registers.
+ * This provides true 2x memory bandwidth improvement vs Phase 1 which converted
+ * FP16→FP32 at the API boundary (before kernel launch).
+ *
+ * Key difference from FP32 dispatch:
+ * - Uses .data_ptr<at::Half>() and casts to __half*
+ * - Calls launch_*<D, __half>() instead of launch_*<D>()
+ * - Kernels use DTypeTraits<__half>::load() to convert during shared mem load
  */
 void dispatch_forward_fp16(
     int dim,
@@ -2155,23 +2251,212 @@ void dispatch_forward_fp16(
     torch::Tensor& output,
     BinningState& state
 ) {
-    // Convert FP16 inputs to FP32 for computation
-    // This is the "store FP16, compute FP32" strategy
-    auto centers = centers_fp16.to(torch::kFloat32);
-    auto conic = conic_fp16.to(torch::kFloat32);
-    auto amps = amps_fp16.to(torch::kFloat32);
-    auto sharpness = sharpness_fp16.to(torch::kFloat32);
+    cudaStream_t stream = c10::cuda::getCurrentCUDAStream().stream();
 
-    // Dispatch to FP32 implementation
-    dispatch_forward(dim, centers, conic, amps, sharpness, shape,
-                    truncate, intensity_floor, tile_size, output, state);
+    int N = (int)centers_fp16.size(0);
+    auto tile_dims = compute_tile_dims(shape, tile_size);
+    int64_t num_tiles = compute_num_tiles(tile_dims);
+
+    TORCH_CHECK(num_tiles <= MAX_TILES,
+        "Too many tiles (", num_tiles, "). Maximum is ", MAX_TILES,
+        ". Increase tile_size or reduce volume size.");
+
+    auto device = centers_fp16.device();
+
+    // Allocate binning state
+    state.tile_counts = torch::zeros({num_tiles}, torch::TensorOptions().dtype(torch::kInt32).device(device));
+    state.global_splat_flags = torch::zeros({N}, torch::TensorOptions().dtype(torch::kBool).device(device));
+    state.num_tiles = num_tiles;
+
+    // Copy shape and tile_dims to device
+    state.shape_tensor = torch::tensor(std::vector<int>(shape.begin(), shape.end()),
+        torch::TensorOptions().dtype(torch::kInt32).device(device));
+    state.tile_dims_tensor = torch::tensor(tile_dims,
+        torch::TensorOptions().dtype(torch::kInt32).device(device));
+    state.tile_size = tile_size;
+
+    auto& shape_tensor = state.shape_tensor;
+    auto& tile_dims_tensor = state.tile_dims_tensor;
+
+    // Get FP16 data pointers (cast at::Half* to __half* - they are binary compatible)
+    const __half* centers_ptr = reinterpret_cast<const __half*>(centers_fp16.data_ptr<at::Half>());
+    const __half* conic_ptr = reinterpret_cast<const __half*>(conic_fp16.data_ptr<at::Half>());
+    const __half* amps_ptr = reinterpret_cast<const __half*>(amps_fp16.data_ptr<at::Half>());
+    const __half* sharpness_ptr = reinterpret_cast<const __half*>(sharpness_fp16.data_ptr<at::Half>());
+
+    // Launch preprocess kernel with FP16 inputs
+    #define LAUNCH_PREPROCESS_FP16(D) \
+        launch_preprocess<D, __half>( \
+            centers_ptr, conic_ptr, amps_ptr, sharpness_ptr, \
+            N, \
+            shape_tensor.data_ptr<int>(), \
+            tile_dims_tensor.data_ptr<int>(), \
+            tile_size, truncate, intensity_floor, \
+            state.tile_counts.data_ptr<int>(), \
+            state.global_splat_flags.data_ptr<bool>(), \
+            num_tiles, stream)
+
+    switch (dim) {
+        case 2: LAUNCH_PREPROCESS_FP16(2); break;
+        case 3: LAUNCH_PREPROCESS_FP16(3); break;
+        case 4: LAUNCH_PREPROCESS_FP16(4); break;
+        case 5: LAUNCH_PREPROCESS_FP16(5); break;
+        case 6: LAUNCH_PREPROCESS_FP16(6); break;
+        case 7: LAUNCH_PREPROCESS_FP16(7); break;
+        case 8: LAUNCH_PREPROCESS_FP16(8); break;
+        default: TORCH_CHECK(false, "Unsupported dimension: ", dim);
+    }
+    #undef LAUNCH_PREPROCESS_FP16
+
+    CUDA_CHECK_LAST();
+
+    // Compute prefix sum for tile offsets
+    state.tile_offsets = torch::empty({num_tiles}, torch::TensorOptions().dtype(torch::kInt64).device(device));
+
+    size_t temp_bytes = 0;
+    cub::DeviceScan::ExclusiveSum(
+        nullptr, temp_bytes,
+        state.tile_counts.data_ptr<int>(),
+        state.tile_offsets.data_ptr<int64_t>(),
+        (int)num_tiles, stream
+    );
+
+    state.scan_temp_storage = torch::empty({(int64_t)temp_bytes},
+        torch::TensorOptions().dtype(torch::kUInt8).device(device));
+    state.scan_temp_bytes = temp_bytes;
+
+    cub::DeviceScan::ExclusiveSum(
+        state.scan_temp_storage.data_ptr<uint8_t>(), temp_bytes,
+        state.tile_counts.data_ptr<int>(),
+        state.tile_offsets.data_ptr<int64_t>(),
+        (int)num_tiles, stream
+    );
+
+    CUDA_CHECK_LAST();
+
+    // Compute total pairs
+    int64_t last_offset = 0;
+    int last_count = 0;
+    cudaMemcpyAsync(&last_offset, state.tile_offsets.data_ptr<int64_t>() + num_tiles - 1,
+        sizeof(int64_t), cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(&last_count, state.tile_counts.data_ptr<int>() + num_tiles - 1,
+        sizeof(int), cudaMemcpyDeviceToHost, stream);
+    cudaStreamSynchronize(stream);
+
+    state.total_pairs = last_offset + last_count;
+
+    // Allocate tile content
+    state.tile_content = torch::empty({state.total_pairs},
+        torch::TensorOptions().dtype(torch::kInt32).device(device));
+    state.tile_write_heads = torch::zeros({num_tiles},
+        torch::TensorOptions().dtype(torch::kInt32).device(device));
+
+    // Launch binning kernel with FP16 inputs
+    #define LAUNCH_BIN_FP16(D) \
+        launch_bin<D, __half>( \
+            centers_ptr, conic_ptr, amps_ptr, sharpness_ptr, \
+            N, \
+            shape_tensor.data_ptr<int>(), \
+            tile_dims_tensor.data_ptr<int>(), \
+            tile_size, truncate, intensity_floor, \
+            state.tile_offsets.data_ptr<int64_t>(), \
+            state.tile_write_heads.data_ptr<int>(), \
+            state.tile_content.data_ptr<int>(), \
+            num_tiles, stream)
+
+    switch (dim) {
+        case 2: LAUNCH_BIN_FP16(2); break;
+        case 3: LAUNCH_BIN_FP16(3); break;
+        case 4: LAUNCH_BIN_FP16(4); break;
+        case 5: LAUNCH_BIN_FP16(5); break;
+        case 6: LAUNCH_BIN_FP16(6); break;
+        case 7: LAUNCH_BIN_FP16(7); break;
+        case 8: LAUNCH_BIN_FP16(8); break;
+        default: TORCH_CHECK(false, "Unsupported dimension: ", dim);
+    }
+    #undef LAUNCH_BIN_FP16
+
+    CUDA_CHECK_LAST();
+
+    // Initialize output to zero
+    output.zero_();
+
+    // Launch rasterization kernel with FP16 inputs
+    #define LAUNCH_RASTER_FP16(D) \
+        launch_rasterize_forward<D, __half>( \
+            centers_ptr, conic_ptr, amps_ptr, sharpness_ptr, \
+            N, \
+            shape_tensor.data_ptr<int>(), \
+            tile_dims_tensor.data_ptr<int>(), \
+            tile_size, truncate, intensity_floor, \
+            state.tile_offsets.data_ptr<int64_t>(), \
+            state.tile_counts.data_ptr<int>(), \
+            state.tile_content.data_ptr<int>(), \
+            output.data_ptr<float>(), \
+            num_tiles, tile_dims, stream)
+
+    switch (dim) {
+        case 2: LAUNCH_RASTER_FP16(2); break;
+        case 3: LAUNCH_RASTER_FP16(3); break;
+        case 4: LAUNCH_RASTER_FP16(4); break;
+        case 5: LAUNCH_RASTER_FP16(5); break;
+        case 6: LAUNCH_RASTER_FP16(6); break;
+        case 7: LAUNCH_RASTER_FP16(7); break;
+        case 8: LAUNCH_RASTER_FP16(8); break;
+        default: TORCH_CHECK(false, "Unsupported dimension: ", dim);
+    }
+    #undef LAUNCH_RASTER_FP16
+
+    CUDA_CHECK_LAST();
+
+    // Handle global splats
+    auto global_indices = torch::nonzero(state.global_splat_flags);
+    state.num_global_splats = (int)global_indices.size(0);
+
+    if (state.num_global_splats > 0) {
+        state.global_splat_ids = global_indices.squeeze(1).to(torch::kInt32).contiguous();
+
+        int64_t num_pixels = 1;
+        for (int d = 0; d < dim; d++) {
+            num_pixels *= shape[d];
+        }
+
+        #define LAUNCH_GLOBAL_FWD_FP16(D) \
+            launch_rasterize_global_forward<D, __half>( \
+                centers_ptr, conic_ptr, amps_ptr, sharpness_ptr, \
+                state.global_splat_ids.data_ptr<int>(), \
+                state.num_global_splats, \
+                shape_tensor.data_ptr<int>(), \
+                truncate, intensity_floor, \
+                output.data_ptr<float>(), \
+                num_pixels, stream)
+
+        switch (dim) {
+            case 2: LAUNCH_GLOBAL_FWD_FP16(2); break;
+            case 3: LAUNCH_GLOBAL_FWD_FP16(3); break;
+            case 4: LAUNCH_GLOBAL_FWD_FP16(4); break;
+            case 5: LAUNCH_GLOBAL_FWD_FP16(5); break;
+            case 6: LAUNCH_GLOBAL_FWD_FP16(6); break;
+            case 7: LAUNCH_GLOBAL_FWD_FP16(7); break;
+            case 8: LAUNCH_GLOBAL_FWD_FP16(8); break;
+            default: TORCH_CHECK(false, "Unsupported dimension: ", dim);
+        }
+        #undef LAUNCH_GLOBAL_FWD_FP16
+
+        CUDA_CHECK_LAST();
+    } else {
+        state.global_splat_ids = torch::empty({0}, torch::TensorOptions().dtype(torch::kInt32).device(device));
+    }
 }
 
 /**
- * FP16 Backward dispatcher.
+ * FP16 Backward dispatcher (Phase 2 - True FP16 kernels).
  *
- * Mixed precision implementation: converts FP16 inputs to FP32 for computation.
+ * Mixed precision implementation: loads FP16 directly from global memory,
+ * converts to FP32 during shared memory load, computes in FP32.
  * Gradients are always FP32 for numerical stability.
+ *
+ * This provides true 2x memory bandwidth improvement for inputs.
  */
 void dispatch_backward_fp16(
     int dim,
@@ -2193,17 +2478,100 @@ void dispatch_backward_fp16(
     torch::Tensor& d_amps,
     torch::Tensor& d_sharpness
 ) {
-    // Convert FP16 inputs to FP32 for computation
-    auto centers = centers_fp16.to(torch::kFloat32);
-    auto conic = conic_fp16.to(torch::kFloat32);
-    auto amps = amps_fp16.to(torch::kFloat32);
-    auto sharpness = sharpness_fp16.to(torch::kFloat32);
+    cudaStream_t stream = c10::cuda::getCurrentCUDAStream().stream();
 
-    // Dispatch to FP32 implementation - gradients are already FP32
-    dispatch_backward(dim, grad_output, centers, conic, amps, sharpness,
-                     tile_offsets, tile_counts, tile_content, global_splat_ids,
-                     shape, truncate, intensity_floor, tile_size,
-                     d_centers, d_conic, d_amps, d_sharpness);
+    int N = (int)centers_fp16.size(0);
+    auto tile_dims = compute_tile_dims(shape, tile_size);
+    int64_t num_tiles = compute_num_tiles(tile_dims);
+
+    auto device = centers_fp16.device();
+
+    // Copy shape and tile_dims to device
+    auto shape_tensor = torch::tensor(std::vector<int>(shape.begin(), shape.end()),
+        torch::TensorOptions().dtype(torch::kInt32).device(device));
+    auto tile_dims_tensor = torch::tensor(tile_dims,
+        torch::TensorOptions().dtype(torch::kInt32).device(device));
+
+    // Zero gradient buffers
+    d_centers.zero_();
+    d_conic.zero_();
+    d_amps.zero_();
+    d_sharpness.zero_();
+
+    // Get FP16 data pointers (cast at::Half* to __half* - binary compatible)
+    const __half* centers_ptr = reinterpret_cast<const __half*>(centers_fp16.data_ptr<at::Half>());
+    const __half* conic_ptr = reinterpret_cast<const __half*>(conic_fp16.data_ptr<at::Half>());
+    const __half* amps_ptr = reinterpret_cast<const __half*>(amps_fp16.data_ptr<at::Half>());
+    const __half* sharpness_ptr = reinterpret_cast<const __half*>(sharpness_fp16.data_ptr<at::Half>());
+
+    // Launch backward kernel for tile-based splats with FP16 inputs
+    #define LAUNCH_BACKWARD_FP16(D) \
+        launch_rasterize_backward<D, __half>( \
+            grad_output.data_ptr<float>(), \
+            centers_ptr, conic_ptr, amps_ptr, sharpness_ptr, \
+            N, \
+            shape_tensor.data_ptr<int>(), \
+            tile_dims_tensor.data_ptr<int>(), \
+            tile_size, truncate, intensity_floor, \
+            tile_offsets.data_ptr<int64_t>(), \
+            tile_counts.data_ptr<int>(), \
+            tile_content.data_ptr<int>(), \
+            d_centers.data_ptr<float>(), \
+            d_conic.data_ptr<float>(), \
+            d_amps.data_ptr<float>(), \
+            d_sharpness.data_ptr<float>(), \
+            num_tiles, tile_dims, stream)
+
+    switch (dim) {
+        case 2: LAUNCH_BACKWARD_FP16(2); break;
+        case 3: LAUNCH_BACKWARD_FP16(3); break;
+        case 4: LAUNCH_BACKWARD_FP16(4); break;
+        case 5: LAUNCH_BACKWARD_FP16(5); break;
+        case 6: LAUNCH_BACKWARD_FP16(6); break;
+        case 7: LAUNCH_BACKWARD_FP16(7); break;
+        case 8: LAUNCH_BACKWARD_FP16(8); break;
+        default: TORCH_CHECK(false, "Unsupported dimension: ", dim);
+    }
+    #undef LAUNCH_BACKWARD_FP16
+
+    CUDA_CHECK_LAST();
+
+    // Global splat backward pass
+    int n_global_splats = (int)global_splat_ids.size(0);
+    if (n_global_splats > 0) {
+        int64_t num_pixels = 1;
+        for (int d = 0; d < dim; d++) {
+            num_pixels *= shape[d];
+        }
+
+        #define LAUNCH_GLOBAL_BWD_FP16(D) \
+            launch_rasterize_global_backward<D, __half>( \
+                grad_output.data_ptr<float>(), \
+                centers_ptr, conic_ptr, amps_ptr, sharpness_ptr, \
+                global_splat_ids.data_ptr<int>(), \
+                n_global_splats, \
+                shape_tensor.data_ptr<int>(), \
+                truncate, intensity_floor, \
+                d_centers.data_ptr<float>(), \
+                d_conic.data_ptr<float>(), \
+                d_amps.data_ptr<float>(), \
+                d_sharpness.data_ptr<float>(), \
+                num_pixels, stream)
+
+        switch (dim) {
+            case 2: LAUNCH_GLOBAL_BWD_FP16(2); break;
+            case 3: LAUNCH_GLOBAL_BWD_FP16(3); break;
+            case 4: LAUNCH_GLOBAL_BWD_FP16(4); break;
+            case 5: LAUNCH_GLOBAL_BWD_FP16(5); break;
+            case 6: LAUNCH_GLOBAL_BWD_FP16(6); break;
+            case 7: LAUNCH_GLOBAL_BWD_FP16(7); break;
+            case 8: LAUNCH_GLOBAL_BWD_FP16(8); break;
+            default: TORCH_CHECK(false, "Unsupported dimension: ", dim);
+        }
+        #undef LAUNCH_GLOBAL_BWD_FP16
+
+        CUDA_CHECK_LAST();
+    }
 }
 
 // =============================================================================

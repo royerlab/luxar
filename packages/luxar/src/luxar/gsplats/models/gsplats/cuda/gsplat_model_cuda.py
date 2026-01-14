@@ -126,28 +126,46 @@ class CUDASplatFunction(torch.autograd.Function):
 
         Args:
             use_fp16: If True, use FP16 precision for CUDA kernels.
-                      Reduces memory bandwidth at slight precision cost.
+                      When False, automatically detects torch.autocast() context
+                      and uses FP16 kernels if autocast is enabled (AMP support).
                       Output is always FP32 regardless.
         """
         d = len(shape)
         device = centers.device
 
-        # Compute conic (Σ⁻¹) from Cholesky factors
+        # Determine if we should use FP16 kernels:
+        # 1. Explicit use_fp16=True (inference mode with FP16 params)
+        # 2. Inside torch.autocast() context (AMP training mode)
+        use_fp16_kernel = use_fp16 or torch.is_autocast_enabled()
+
+        # Compute conic (Σ⁻¹) from Cholesky factors (preserves dtype)
         Ls_for_conic = Ls.detach().clone().requires_grad_(True)
         conic = cholesky_to_conic(Ls_for_conic)
 
+        # Convert to FP16 for kernel if needed (AMP mode converts FP32 params to FP16)
+        if use_fp16_kernel and centers.dtype != torch.float16:
+            centers_kernel = centers.half().contiguous()
+            conic_kernel = conic.half().contiguous()
+            amps_kernel = amps.half().contiguous()
+            sharpness_kernel = sharpness.half().contiguous()
+        else:
+            centers_kernel = centers.contiguous()
+            conic_kernel = conic.contiguous()
+            amps_kernel = amps.contiguous()
+            sharpness_kernel = sharpness.contiguous()
+
         if CUDA_BACKEND_AVAILABLE:
-            # Dispatch to CUDA kernels
+            # Dispatch to CUDA kernels (use FP16 kernel if autocast or explicit)
             result = cuda_splatting_backend.forward(
-                centers.contiguous(),
-                conic.contiguous(),
-                amps.contiguous(),
-                sharpness.contiguous(),
+                centers_kernel,
+                conic_kernel,
+                amps_kernel,
+                sharpness_kernel,
                 list(shape),
                 truncate,
                 intensity_floor,
                 tile_size,
-                use_fp16,
+                use_fp16_kernel,
             )
             output = result[0]
 
@@ -168,8 +186,13 @@ class CUDASplatFunction(torch.autograd.Function):
             tile_content = None
             global_splat_ids = None
 
-        # Save for backward
+        # Save for backward (keep FP16 tensors for backward pass if enabled)
         ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps, sharpness)
+        # Cache FP16 tensors for backward to avoid re-conversion
+        ctx.centers_kernel = centers_kernel
+        ctx.conic_kernel = conic_kernel
+        ctx.amps_kernel = amps_kernel
+        ctx.sharpness_kernel = sharpness_kernel
         ctx.shape = shape
         ctx.truncate = truncate
         ctx.intensity_floor = intensity_floor
@@ -179,7 +202,8 @@ class CUDASplatFunction(torch.autograd.Function):
         ctx.tile_content = tile_content
         ctx.global_splat_ids = global_splat_ids
         ctx.d = d
-        ctx.use_fp16 = use_fp16
+        ctx.use_fp16 = use_fp16_kernel  # Actual kernel mode
+        ctx.explicit_fp16 = use_fp16  # Original flag (FP16 params, unsafe for train)
 
         return output
 
@@ -191,6 +215,23 @@ class CUDASplatFunction(torch.autograd.Function):
         CUDA computes: d_centers, d_conic, d_amps, d_sharpness
         PyTorch handles: d_conic → d_Ls (chain rule)
         """
+        # Block training with FP16 params (use_fp16=True) - causes numerical overflow
+        if ctx.explicit_fp16:
+            raise RuntimeError(
+                "Cannot train with use_fp16=True - FP16 params overflow.\n"
+                "\n"
+                "For training, use PyTorch AMP:\n"
+                "  model = GaussianSplatModelCUDA(..., use_fp16=False)  # FP32 params\n"
+                "  scaler = torch.amp.GradScaler('cuda')\n"
+                "  with torch.amp.autocast('cuda'):\n"
+                "      output = model()  # Auto-uses FP16 kernels\n"
+                "      loss = criterion(output, target)\n"
+                "  scaler.scale(loss).backward()\n"
+                "  scaler.step(optimizer)\n"
+                "\n"
+                "use_fp16=True is only for inference with pre-trained models."
+            )
+
         centers, Ls, Ls_for_conic, conic, amps, sharpness = ctx.saved_tensors
         shape = ctx.shape
         truncate = ctx.truncate
@@ -202,13 +243,14 @@ class CUDASplatFunction(torch.autograd.Function):
         device = centers.device
 
         if CUDA_BACKEND_AVAILABLE and ctx.tile_counts is not None:
-            # Use CUDA backward kernels
+            # Use CUDA backward kernels with cached FP16 tensors if enabled
+            # This avoids re-conversion overhead in the backward pass
             d_centers, d_conic, d_amps, d_sharpness = cuda_splatting_backend.backward(
                 grad_output.contiguous(),
-                centers,
-                conic,
-                amps,
-                sharpness,
+                ctx.centers_kernel,  # Use cached FP16 or FP32 tensor
+                ctx.conic_kernel,
+                ctx.amps_kernel,
+                ctx.sharpness_kernel,
                 ctx.tile_offsets,
                 ctx.tile_counts,
                 ctx.tile_content,
@@ -272,7 +314,7 @@ class CUDASplatFunction(torch.autograd.Function):
                 grads[3] if grads[3] is not None else torch.zeros_like(sharpness)
             )
 
-        # Return gradients for: centers, Ls, amps, sharpness, shape, truncate, intensity_floor, tile_size, use_fp16
+        # Return grads for: centers, Ls, amps, sharpness + non-diff params
         return d_centers, d_Ls, d_amps, d_sharpness, None, None, None, None, None
 
 
@@ -307,15 +349,17 @@ class GaussianSplatModelCUDA(torch.nn.Module):
     tile_size : int, optional
         Tile size for spatial binning. Auto-selected if None.
     use_fp16 : bool, default=False
-        If True, use FP16 (half precision) for CUDA kernels. This reduces
-        memory bandwidth by ~50% at the cost of slightly reduced numerical
-        precision. Output and gradients are always FP32 for stability.
-        Useful for large volumes where memory bandwidth is the bottleneck.
+        If True, store parameters in FP16 for inference bandwidth optimization.
+        For training, leave this False and use PyTorch AMP instead (see examples).
+
+        The model automatically detects torch.autocast() context and uses FP16
+        kernels when AMP is enabled, regardless of this flag.
     device : torch.device, optional
         Must be a CUDA device.
 
     Examples
     --------
+    >>> # Standard FP32 training
     >>> model = GaussianSplatModelCUDA(
     ...     shape=(128, 128, 128),
     ...     centers0=centers,
@@ -324,18 +368,20 @@ class GaussianSplatModelCUDA(torch.nn.Module):
     ...     sigma_min_diag=(0.5, 0.5, 0.5),
     ...     device='cuda',
     ... )
-    >>> output = model()  # Uses CUDA kernels
+    >>> output = model()
 
-    >>> # FP16 mode for large volumes
-    >>> model_fp16 = GaussianSplatModelCUDA(
-    ...     shape=(256, 256, 256),
-    ...     centers0=centers,
-    ...     L0=L,
-    ...     amps0=amps,
-    ...     sigma_min_diag=(0.5, 0.5, 0.5),
-    ...     use_fp16=True,
-    ...     device='cuda',
-    ... )
+    >>> # Mixed-precision training with AMP (RECOMMENDED for training)
+    >>> model = GaussianSplatModelCUDA(..., use_fp16=False)  # FP32 params
+    >>> scaler = torch.amp.GradScaler('cuda')
+    >>> with torch.amp.autocast('cuda'):
+    ...     output = model()  # Auto-uses FP16 kernels
+    ...     loss = criterion(output, target)
+    >>> scaler.scale(loss).backward()
+    >>> scaler.step(optimizer)
+    >>> scaler.update()
+
+    >>> # FP16 inference mode (for pre-trained models)
+    >>> model_fp16 = GaussianSplatModelCUDA(..., use_fp16=True)  # FP16 params
     """
 
     def __init__(
@@ -398,6 +444,22 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         self._tile_size = tile_size
         self._use_fp16 = use_fp16
 
+        # Convert base params to FP16 if enabled (no conversion overhead)
+        if use_fp16:
+            self._convert_base_to_fp16()
+
+    def _convert_base_to_fp16(self):
+        """Convert all base model parameters to FP16 for bandwidth optimization."""
+        for param in self._base.parameters():
+            param.data = param.data.half()
+
+        # Also convert buffer tensors if any
+        base = self._base
+        if hasattr(base, 'sigma_min_diag') and base.sigma_min_diag is not None:
+            base.sigma_min_diag = base.sigma_min_diag.half()
+        if hasattr(base, 'sigma_max_diag') and base.sigma_max_diag is not None:
+            base.sigma_max_diag = base.sigma_max_diag.half()
+
     def _auto_tile_size(self, d: int) -> int:
         """Select optimal tile size based on dimension."""
         # Target ~256-512 voxels per tile for good occupancy
@@ -423,7 +485,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             Rendered volume with shape matching initialization.
             Always FP32 regardless of use_fp16 setting.
         """
-        centers, Ls, amps, sharpness = self._base.current_params()
+        centers, Ls, amps, sharpness = self.current_params()
 
         output = CUDASplatFunction.apply(
             centers,
@@ -445,12 +507,29 @@ class GaussianSplatModelCUDA(torch.nn.Module):
 
     # Delegate all other methods to base model
     def current_params(self):
-        """Get current parameter values."""
-        return self._base.current_params()
+        """
+        Get current parameter values.
+
+        When use_fp16=True, ensures all outputs are FP16. The base model's
+        current_params() may return FP32 due to type promotion with hardcoded
+        constants, so we convert here.
+        """
+        centers, Ls, amps, sharpness = self._base.current_params()
+        if self._use_fp16:
+            # Ensure all outputs are FP16 for kernel input
+            # Note: .half() on already-FP16 tensors is fast (~5x faster than FP32->FP16)
+            centers = centers.half()
+            Ls = Ls.half()
+            amps = amps.half()
+            sharpness = sharpness.half()
+        return centers, Ls, amps, sharpness
 
     def prune_(self, mask: torch.Tensor):
         """Remove splats according to boolean mask."""
         self._base.prune_(mask)
+        # Re-convert to FP16 if enabled (pruning may reset dtypes)
+        if self._use_fp16:
+            self._convert_base_to_fp16()
 
     def append_(
         self,
@@ -461,6 +540,9 @@ class GaussianSplatModelCUDA(torch.nn.Module):
     ):
         """Add new splats to the model."""
         self._base.append_(centers, Ls, amps, sharpness)
+        # Re-convert to FP16 if enabled (new params from append are FP32)
+        if self._use_fp16:
+            self._convert_base_to_fp16()
 
     def replace_with(
         self,
@@ -471,6 +553,9 @@ class GaussianSplatModelCUDA(torch.nn.Module):
     ):
         """Replace all splats with new values."""
         self._base.replace_with(centers, Ls, amps, sharpness)
+        # Re-convert to FP16 if enabled (new params from replace_with are FP32)
+        if self._use_fp16:
+            self._convert_base_to_fp16()
 
     def n_splats(self) -> int:
         """Return number of splats."""
@@ -490,7 +575,11 @@ class GaussianSplatModelCUDA(torch.nn.Module):
 
     def load_state_dict(self, state_dict, *args, **kwargs):
         """Load state dict from serialization."""
-        return self._base.load_state_dict(state_dict, *args, **kwargs)
+        result = self._base.load_state_dict(state_dict, *args, **kwargs)
+        # Re-convert to FP16 if enabled (loaded params are FP32)
+        if self._use_fp16:
+            self._convert_base_to_fp16()
+        return result
 
     def to(self, device):
         """Move model to device."""

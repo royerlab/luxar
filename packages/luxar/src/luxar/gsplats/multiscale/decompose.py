@@ -73,7 +73,7 @@ def _cubic_upsample_2x_1d(img: torch.Tensor, axis: int) -> torch.Tensor:
     # Result shape: (batch, size_in, 4)
     windows = img_padded.unfold(-1, 4, 1)
 
-    # Apply cubic kernel via broadcasting: (batch, size_in, 4) * (4,) -> (batch, size_in)
+    # Apply cubic kernel: (batch, size_in, 4) * (4,) -> (batch, size_in)
     interpolated = (windows * kernel).sum(dim=-1)
 
     # Place interpolated values at odd positions
@@ -186,7 +186,7 @@ def _get_interpolation_mode(ndim: int, interpolation: str = "cubic") -> str:
     Returns
     -------
     str
-        Interpolation mode: 'nearest', 'bilinear', 'trilinear', 'bicubic', or 'cubic_keys'
+        Mode: 'nearest', 'bilinear', 'trilinear', 'bicubic', or 'cubic_keys'
 
     Notes
     -----
@@ -243,8 +243,8 @@ def _upsample_to_shape(
     target_shape : Tuple[int, ...]
         Target shape (s0, s1, ..., sn)
     mode : str
-        Interpolation mode: 'nearest', 'bilinear', 'trilinear', 'bicubic', or 'cubic_keys'
-        - 'cubic_keys' uses fast vectorized Keys cubic convolution for nD data
+        Mode: 'nearest', 'bilinear', 'trilinear', 'bicubic', or 'cubic_keys'.
+        'cubic_keys' uses fast vectorized Keys cubic convolution for nD data.
 
     Returns
     -------
@@ -747,10 +747,8 @@ def _compute_mse_loss(
     """
     squared_error = (pred - target) ** 2
     if asymmetric_penalty is not None:
-        # Asymmetric MSE: heavily penalize over-prediction (pred > target)
-        # This addresses the fundamental asymmetry in additive decomposition models:
-        # - Under-prediction (pred < target): Easy to fix by adding more energy to scales
-        # - Over-prediction (pred > target): Hard to fix, requires reducing energy in scales
+        # Asymmetric MSE: penalize over-prediction more heavily.
+        # Under-prediction is easy to fix (add energy), over-prediction is hard.
         over_prediction_mask = pred > target
         data = torch.mean(
             torch.where(
@@ -930,9 +928,9 @@ def decompose_image(
     V : np.ndarray
         Input n-dimensional image to decompose
     scales : List[int], default=[1, 2, 4, 8]
-        Scale factors. Scale 1 = full resolution, scale 2 = half resolution, etc.
-        Note: Scales larger than the minimum image dimension are automatically
-        filtered out with a warning. The actual scales used are returned in stats['scales'].
+        Scale factors. Scale 1 = full res, scale 2 = half res, etc.
+        Scales larger than min image dim are filtered with a warning.
+        The actual scales used are returned in stats['scales'].
     n_iters : int, default=500
         Number of optimization iterations
     lr : float, default=0.01
@@ -948,17 +946,12 @@ def decompose_image(
         Over-prediction penalty factor. Multiplies reconstruction loss for regions
         where pred > target by this factor. Set to None to disable asymmetric loss.
     init_method : str, default="coarse"
-        Initialization method: "coarse" (energy weighted toward coarse scales proportional to
-        scale factor - **RECOMMENDED**), "pyramid" (Gaussian pyramid, energy distributed across
-        scales), "uniform" (energy split equally across all scales), or "finest" (all energy
-        starts in finest scale). Coarse initialization empirically provides the best convergence
-        and final quality by aligning strongly with the optimization objective. Other methods are
-        available for experimentation but generally perform worse.
+        Initialization: "coarse" (energy toward coarse - BEST), "pyramid"
+        (Gaussian pyramid), "uniform" (equal split), or "finest" (all in
+        finest). Coarse gives best convergence and quality.
     max_abs_error_threshold : float, optional
-        Convergence threshold for maximum absolute error. If specified, optimization stops
-        early when max|reconstruction - target| < threshold. If None (default), uses 1% of
-        the image value range (adaptive threshold). Set to a specific value for custom
-        convergence criteria.
+        Convergence threshold for max absolute error. Stops early when
+        max|reconstruction - target| < threshold. None uses 1% of image range.
     interpolation : str, default='cubic'
         Interpolation method for upsampling scale components.
         Three modes available:
@@ -999,7 +992,7 @@ def decompose_image(
         - 'best_max_abs_error': Best maximum absolute error achieved
         - 'converged': Boolean indicating if convergence criterion was met
         - 'best_iteration': Iteration where best result was achieved
-        - 'actual_iters': Actual number of iterations run (may be less than n_iters if converged)
+        - 'actual_iters': Number of iterations run (less if converged early)
         - 'energy_distribution': Fraction of total energy per scale
         - 'scales': Scale factors used
         - 'time_seconds': Total optimization time
@@ -1077,8 +1070,8 @@ def decompose_image(
             import warnings
 
             warnings.warn(
-                f"All scales {original_scales} are too large for image shape {V.shape}. "
-                f"Using scale=[1] instead."
+                f"Scales {original_scales} too large for shape {V.shape}. "
+                "Using scale=[1]."
             )
     elif len(scales) < len(original_scales):
         removed_scales = [s for s in original_scales if s not in scales]
@@ -1170,9 +1163,7 @@ def decompose_image(
 
         if verbose:
             aprint(f"Optimizing decomposition ({n_iters} iterations)...")
-            aprint(
-                f"Convergence criterion: max absolute error < {max_abs_error_threshold:.6f}"
-            )
+            aprint(f"Convergence: max err < {max_abs_error_threshold:.6f}")
 
         for it in range(1, n_iters + 1):
             optimizer.zero_grad()
@@ -1342,6 +1333,20 @@ def decompose_image(
             scales_np = [s.cpu().numpy() for s in scales_list]
             final_recon_error = F.mse_loss(reconstruction, V_tensor).item()
 
+        # Count local maxima per scale for seed distribution
+        from luxar.gsplats.seeds.utils import count_local_maxima
+
+        maxima_per_scale = []
+        for scale_img in scales_np:
+            n_maxima = count_local_maxima(
+                scale_img, radius=1, threshold_rel=0.1, blur=True
+            )
+            # Ensure at least 1 maximum per scale to avoid division issues
+            maxima_per_scale.append(max(1, n_maxima))
+
+        if verbose:
+            aprint(f"Local maxima per scale: {maxima_per_scale}")
+
         # Final statistics
         final_energy_dist = [
             history[-1].get(f"energy_scale_{k}", 0.0) for k in range(len(scales))
@@ -1371,6 +1376,7 @@ def decompose_image(
         "best_iteration": best_iteration,
         "actual_iters": actual_iters,
         "energy_distribution": final_energy_dist,
+        "maxima_per_scale": maxima_per_scale,  # For seed distribution
         "scales": scales,
         "time_seconds": elapsed,
         "movie_frames": movie_frames,
@@ -1426,7 +1432,8 @@ def show_optimization_movie(
     movie_frames: Dict[str, Any], shape: Tuple[int, ...], interpolation: str = "cubic"
 ) -> None:
     """
-    Display napari viewer with optimization movie showing target, reconstruction, residual, and all scales over time.
+    Display napari viewer with optimization movie (target, reconstruction,
+    residual, and all scales over time).
 
     Parameters
     ----------
@@ -1440,8 +1447,8 @@ def show_optimization_movie(
     shape : tuple
         Shape of the original data
     interpolation : str, default='cubic'
-        Interpolation method for upsampling scale components: 'nearest', 'linear', or 'cubic'.
-        Should match the interpolation used during optimization for accurate visualization.
+        Upsampling method: 'nearest', 'linear', or 'cubic'. Should match
+        the interpolation used during optimization.
     """
     try:
         import napari
@@ -1461,15 +1468,15 @@ def show_optimization_movie(
 
         aprint(f"  Processing {n_scales} scale components across {n_frames} frames...")
 
-        # Upsample all scale components to target shape and create stacks
-        # scales_stacks will be a list of n_scales arrays, each of shape (time, spatial_dims...)
+        # Upsample all scale components to target shape and create stacks.
+        # scales_stacks: list of n_scales arrays, shape (time, *spatial_dims)
         scales_stacks = []
         for scale_idx in range(n_scales):
             # Collect this scale across all frames
             scale_frames = []
             for frame_idx in range(n_frames):
                 scale_component = movie_frames["scales"][frame_idx][scale_idx]
-                # Upsample to target shape if needed using same interpolation as optimization
+                # Upsample if needed using same interpolation as optimization
                 if scale_component.shape != shape:
                     scale_upsampled = upsample_for_visualization(
                         scale_component, shape, interpolation
@@ -1542,9 +1549,8 @@ def show_optimization_movie(
         viewer.text_overlay.text = info_text
         viewer.text_overlay.visible = True
 
-        aprint(
-            f"🎬 Movie ready: {len(iterations)} frames from iterations {iterations[0]} to {iterations[-1]}"
-        )
+        aprint(f"🎬 Movie: {len(iterations)} frames, iters {iterations[0]}-"
+               f"{iterations[-1]}")
         aprint(f"   {n_scales} scale components included (all visible)")
         aprint("Use the time slider to scrub through optimization progress!")
         aprint(

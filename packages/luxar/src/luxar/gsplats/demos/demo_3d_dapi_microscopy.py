@@ -40,7 +40,7 @@
 
 **Related demos:**
 - demo_3d_synthetic_phantom.py - Controlled 3D synthetic data
-- multiscale/demos/demo_decompose_3d_dapi_nuclei.py - Multi-scale version at FULL resolution
+- multiscale/demos/demo_decompose_3d_dapi_nuclei.py - Multi-scale at FULL res
 """
 
 import sys
@@ -164,14 +164,13 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             # OME-ZARR typically uses (T, C, Z, Y, X) format
             if len(full_shape) == 5:
                 n_time, n_channels, z_size, y_size, x_size = full_shape
-                aprint(
-                    f"Detected OME-ZARR 5D: T={n_time}, C={n_channels}, Z={z_size}, Y={y_size}, X={x_size}"
-                )
+                aprint(f"OME-ZARR 5D: T={n_time} C={n_channels} Z={z_size}"
+                       f" Y={y_size} X={x_size}")
 
                 # Extract DAPI channel
                 if DAPI_CHANNEL >= n_channels:
                     aprint(
-                        f"⚠ Warning: Requested channel {DAPI_CHANNEL} but only {n_channels} available"
+                        f"⚠ Channel {DAPI_CHANNEL} requested but {n_channels} available"
                     )
                     aprint("Using channel 0 instead")
                     DAPI_CHANNEL = 0
@@ -193,10 +192,9 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                     TARGET_SIZE / y_size,
                     TARGET_SIZE / x_size,
                 ]
-                aprint(
-                    f"Downscaling with zoom factors: Z={zoom_factors[0]:.3f}, Y={zoom_factors[1]:.3f}, X={zoom_factors[2]:.3f}"
-                )
-                V = zoom(V, zoom_factors, order=1)  # order=1 for linear interpolation
+                aprint(f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
+                       f" X={zoom_factors[2]:.3f}")
+                V = zoom(V, zoom_factors, order=1)
                 aprint(f"Downscaled to: {V.shape}")
 
             elif len(full_shape) == 4:
@@ -225,9 +223,8 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                     TARGET_SIZE / y_size,
                     TARGET_SIZE / x_size,
                 ]
-                aprint(
-                    f"Downscaling with zoom factors: Z={zoom_factors[0]:.3f}, Y={zoom_factors[1]:.3f}, X={zoom_factors[2]:.3f}"
-                )
+                aprint(f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
+                       f" X={zoom_factors[2]:.3f}")
                 V = zoom(V, zoom_factors, order=1)
                 aprint(f"Downscaled to: {V.shape}")
 
@@ -249,14 +246,13 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                     TARGET_SIZE / y_size,
                     TARGET_SIZE / x_size,
                 ]
-                aprint(
-                    f"Downscaling with zoom factors: Z={zoom_factors[0]:.3f}, Y={zoom_factors[1]:.3f}, X={zoom_factors[2]:.3f}"
-                )
+                aprint(f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
+                       f" X={zoom_factors[2]:.3f}")
                 V = zoom(V, zoom_factors, order=1)
                 aprint(f"Downscaled to: {V.shape}")
             else:
                 raise ValueError(
-                    f"Unexpected data shape: {full_shape}. Expected 3D, 4D, or 5D (OME-ZARR)."
+                    f"Unexpected shape: {full_shape}. Expected 3D/4D/5D."
                 )
 
             # Normalize to [0, 100] range for consistency with other demos
@@ -333,7 +329,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
 
         if len(result.amplitudes) == 0:
             raise RuntimeError(
-                "No splats were fitted; try lowering thresholds or increasing iterations."
+                "No splats fitted; lower thresholds or increase iterations."
             )
 
 # ----- Compression ranking by approximate L2 energy -----
@@ -414,9 +410,8 @@ with asection("Computing 3D reconstruction quality at different compression leve
         centers_frames.append(Ck)
 
         if (i + 1) % 5 == 0:
-            aprint(
-                f"Frame {i + 1:02d}/{len(keep_counts)}: {K} splats, {bit_compression_pct[i]:.1f}% compression"
-            )
+            aprint(f"Frame {i+1:02d}/{len(keep_counts)}: {K} splats, "
+                   f"{bit_compression_pct[i]:.1f}% compression")
 
 # Console summary
 aprint("📈 3D Compression Analysis Results:")
@@ -424,11 +419,12 @@ aprint(f"Raw volume bits (float32): {IMAGE_BITS:,}  |  raw bpv = 32.000")
 for i, K in enumerate(keep_counts[::5]):  # Show every 5th frame
     idx = i * 5
     if idx < len(keep_counts):
-        aprint(
-            f"Frame {idx:02d} | keep {K:4d} | model_bits={int(model_bits_frames[idx]):>10,d} "
-            f"| compression={bit_compression_pct[idx]:6.1f}% | bpv={bpp_frames[idx]:6.3f} "
-            f"| relL2={rel_err_frames[idx]:.4f}"
-        )
+        mb = int(model_bits_frames[idx])
+        cp = bit_compression_pct[idx]
+        bp = bpp_frames[idx]
+        re = rel_err_frames[idx]
+        aprint(f"Fr{idx:02d} K={K:4d} bits={mb:>10,} comp={cp:5.1f}% "
+               f"bpv={bp:.3f} L2={re:.4f}")
 
 if not NO_NAPARI:
     # ----- Napari viewer with "compression" slider -----
@@ -464,26 +460,8 @@ if not NO_NAPARI:
         opacity=0.5,
     )
 
-    # Dynamic wireframe and points layers
     def _update_3d_layers(t_index: int) -> None:
         """Update wireframes and centers for current compression level."""
-        # Clear existing wireframe and point layers
-        for layer in list(viewer.layers):
-            if "wireframe" in layer.name.lower() or "centers" in layer.name.lower():
-                viewer.layers.remove(layer)
-
-        # Get current frame data
-        centers = centers_frames[t_index]
-
-        # Add splat centers
-        viewer.add_points(
-            centers,
-            name="splat centers (kept)",
-            size=2.0,
-            face_color="lime",
-            border_color="lime",
-            opacity=0.8,
-        )
 
         # Update text overlay
         K = int(keep_counts[t_index])

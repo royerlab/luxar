@@ -205,7 +205,7 @@ Key implementations studied:
 - [x] nD extension (4D-8D)
 - [x] Standard Gaussian (s=2) fast path optimization
 - [x] Global splat handling (large splats processed via dedicated kernel)
-- [x] FP16 support (API-level conversion, FP32 output/gradients)
+- [x] FP16 support (Phase 2: true FP16 kernels with direct global memory load)
 - [ ] Additional performance optimizations (see OPTIMIZATION_ROADMAP.md)
 
 ## Known Limitations
@@ -213,26 +213,62 @@ Key implementations studied:
 1. **Dimension limit**: Maximum 8 dimensions supported (template instantiation limit).
 2. **Global splat performance**: Very large splats (>10% of tiles) use a simpler kernel that processes all pixels, which is less efficient than tile-based rasterization.
 
-## FP16 Mode
+## Mixed-Precision Training with AMP (Recommended)
 
-The `use_fp16` parameter enables reduced memory bandwidth by converting inputs to FP16 at the API boundary:
+The model automatically detects `torch.autocast()` context and uses FP16 kernels
+for optimal training performance while maintaining FP32 master weights:
 
 ```python
-# Enable FP16 mode
-model = GaussianSplatModelCUDA(..., use_fp16=True)
+# Mixed-precision training (RECOMMENDED)
+model = GaussianSplatModelCUDA(..., use_fp16=False)  # FP32 params
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+scaler = torch.amp.GradScaler('cuda')
+
+for batch in dataloader:
+    optimizer.zero_grad()
+    with torch.amp.autocast('cuda'):
+        output = model()  # Auto-uses FP16 kernels!
+        loss = criterion(output, target)
+    scaler.scale(loss).backward()
+    scaler.step(optimizer)
+    scaler.update()
 ```
 
-**Key characteristics**:
-- **Input conversion**: FP32 inputs are converted to FP16 before kernel execution
-- **Output precision**: Output and gradients are always FP32 for numerical stability
-- **Memory benefit**: ~50% reduction in memory bandwidth for input tensors
-- **Accuracy trade-off**: ~5-10% relative difference vs FP32 (acceptable for most use cases)
+**How it works**:
+- Parameters stay FP32 (master weights) for stable gradient updates
+- Forward/backward use FP16 kernels (2x memory bandwidth)
+- GradScaler prevents gradient underflow
+- Output and gradients are FP32
 
-**When to use FP16**:
-- Large volumes where memory bandwidth is the bottleneck
-- Training scenarios where slight accuracy loss is acceptable
+**Performance**: ~1.0-1.5x speedup with full training stability.
+
+## FP16 Inference Mode
+
+For inference with pre-trained models, `use_fp16=True` stores parameters
+directly in FP16 for maximum bandwidth optimization:
+
+```python
+# FP16 inference mode (inference only!)
+model = GaussianSplatModelCUDA(..., use_fp16=True)
+output = model()  # Fast inference with FP16 params
+```
+
+**When to use `use_fp16=True`**:
 - Inference with pre-trained models
+- Evaluation/visualization (single forward passes)
+- Memory-constrained deployments
 
-**When to avoid FP16**:
-- High-precision requirements
-- Small values that may underflow in FP16 range
+**Do NOT use `use_fp16=True` for training** - parameters will overflow to inf/nan.
+
+## FP16 Technical Details
+
+**Architecture**:
+- **Direct FP16 loading**: FP16 data loaded from global memory (2x bandwidth)
+- **Fused conversion**: FP16→FP32 in shared memory via `DTypeTraits::load()`
+- **FP32 computation**: All math uses FP32 for numerical stability
+- **FP32 output**: Output and gradients always FP32
+
+**Performance characteristics**:
+- Speedups are workload-dependent (1.0-1.5x when memory-bound)
+- Best for medium-to-large volumes (1M+ voxels)
+- ~0.04% relative error vs FP32 (typical)

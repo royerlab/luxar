@@ -488,16 +488,14 @@ class TestCUDAKernelActivation:
         cuda_time = (time.time() - start) / n_runs
 
         speedup = cpu_time / cuda_time
-        print(
-            f"\nCPU time: {cpu_time * 1000:.2f}ms, CUDA time: {cuda_time * 1000:.2f}ms, Speedup: {speedup:.1f}x"
-        )
+        cpu_ms = cpu_time * 1000
+        cuda_ms = cuda_time * 1000
+        print(f"\nCPU: {cpu_ms:.2f}ms, CUDA: {cuda_ms:.2f}ms, Speedup: {speedup:.1f}x")
 
         # CUDA should be at least 2x faster
-        # If not, either the kernels aren't being used or there's a problem
         assert speedup > 2.0, (
-            f"CUDA speedup ({speedup:.1f}x) is too low! "
-            f"Expected at least 2x. CPU={cpu_time * 1000:.1f}ms, CUDA={cuda_time * 1000:.1f}ms. "
-            f"This might indicate CUDA kernels are not being used."
+            f"CUDA speedup ({speedup:.1f}x) too low! "
+            f"CPU={cpu_ms:.1f}ms, CUDA={cuda_ms:.1f}ms."
         )
 
     @pytest.mark.skipif(not CUDA_BACKEND_AVAILABLE, reason="CUDA backend not compiled")
@@ -585,9 +583,7 @@ class TestCUDAKernelActivation:
         # Note: Allow some margin because PyTorch CUDA can be fast too
         if custom_cuda_time > pytorch_cuda_time * 0.9:
             # This is a warning, not a hard failure, because PyTorch can be optimized
-            print(
-                "WARNING: Custom CUDA kernels not significantly faster than PyTorch CUDA"
-            )
+            print("WARNING: Custom CUDA not significantly faster than PyTorch")
 
 
 class TestGaussianSplatModelCUDA:
@@ -1099,11 +1095,10 @@ class TestSpecializedVsGenericImplementations:
     """
 
     def test_3d_forward_matches_4d_slice(self):
-        """Verify 3D specialized kernel produces same results as nD for equivalent setup.
+        """Verify 3D specialized kernel matches nD for equivalent setup.
 
-        Test strategy: Create equivalent 3D and 4D configurations where the 4D
-        has size 1 in the 4th dimension, effectively being a 3D problem.
-        The 4D version uses the generic code path while 3D uses specialized path.
+        Test: Create equivalent 3D and 4D configs where 4D has size=1 in dim 4.
+        4D uses generic path, 3D uses specialized path.
         """
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             GaussianSplatModelCUDA,
@@ -1179,7 +1174,7 @@ class TestSpecializedVsGenericImplementations:
             assert corr > 0.95, f"3D vs 4D correlation {corr:.4f} too low"
 
     def test_2d_forward_matches_3d_slice(self):
-        """Verify 2D specialized kernel produces same results as nD for equivalent setup."""
+        """Verify 2D specialized kernel matches nD for equivalent setup."""
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             GaussianSplatModelCUDA,
         )
@@ -1827,15 +1822,10 @@ class TestCUDAVsPyTorchReference:
 
 @pytest.mark.skipif(not CUDA_BACKEND_AVAILABLE, reason="CUDA backend not compiled")
 class TestCUDAVsPyTorchComprehensive:
-    """Comprehensive comparison tests for CUDA vs PyTorch across dimensions and parameters.
+    """Comprehensive CUDA vs PyTorch comparison tests.
 
-    These tests ensure numerical correctness of the CUDA optimized implementation
-    against the authoritative PyTorch reference for:
-    - Dimensions: 2D, 3D, 4D
-    - Various splat shapes (isotropic, anisotropic, elongated)
-    - Various sizes (small, medium, large covariances)
-    - Various sharpness values (sub-gaussian, standard, super-gaussian)
-    - Both forward and backward passes
+    Tests ensure numerical correctness against PyTorch reference for:
+    2D/3D/4D, various splat shapes/sizes/sharpness, forward & backward.
     """
 
     # =========================================================================
@@ -1911,7 +1901,7 @@ class TestCUDAVsPyTorchComprehensive:
         self._assert_outputs_match(cuda_output, pytorch_output, f"{dim}D isotropic")
 
     def test_forward_isotropic_splats_4d(self):
-        """Test forward pass with isotropic splats for 4D (may have coordinate system issues)."""
+        """Test 4D forward pass with isotropic splats."""
         import cuda_splatting_backend
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
@@ -3924,7 +3914,9 @@ class TestGlobalSplatHandling:
         # Focus on comparing the non-zero output values
         max_val = max(cuda_cpu.abs().max().item(), pytorch_cpu.abs().max().item())
         print(f"\nIntensity floor test (floor={intensity_floor}):")
-        print(f"  CUDA max: {cuda_cpu.max().item():.4f}, PyTorch max: {pytorch_cpu.max().item():.4f}")
+        print(
+            f"  CUDA max: {cuda_cpu.max().item():.4f}, PyTorch max: {pytorch_cpu.max().item():.4f}"
+        )
 
         if max_val > 1e-6:
             abs_diff = (cuda_cpu - pytorch_cpu).abs()
@@ -4013,7 +4005,7 @@ class TestGlobalSplatHandling:
             amps.detach().contiguous(),
             sharpness.detach().contiguous(),
             tile_offsets,  # Note: tile_offsets first
-            tile_counts,   # tile_counts second
+            tile_counts,  # tile_counts second
             tile_content,
             global_splat_ids,
             list(shape),
@@ -4023,10 +4015,14 @@ class TestGlobalSplatHandling:
         )
 
         print(f"\nGlobal splat backward pass:")
-        print(f"  d_centers shape: {d_centers.shape}, sum: {d_centers.sum().item():.4f}")
+        print(
+            f"  d_centers shape: {d_centers.shape}, sum: {d_centers.sum().item():.4f}"
+        )
         print(f"  d_conic shape: {d_conic.shape}, sum: {d_conic.sum().item():.4f}")
         print(f"  d_amps shape: {d_amps.shape}, sum: {d_amps.sum().item():.4f}")
-        print(f"  d_sharpness shape: {d_sharpness.shape}, sum: {d_sharpness.sum().item():.4f}")
+        print(
+            f"  d_sharpness shape: {d_sharpness.shape}, sum: {d_sharpness.sum().item():.4f}"
+        )
 
         # Gradients should be non-zero for a splat contributing to output
         assert d_amps.abs().sum().item() > 0, "Expected non-zero amplitude gradient"
@@ -4135,11 +4131,14 @@ class TestGlobalSplatHandling:
                 f"Mixed splat mean relative diff {mean_rel_diff:.6f} too large"
             )
 
-    @pytest.mark.parametrize("dim,shape,tile_size,L_scale", [
-        (2, (256, 256), 4, 30.0),    # 2D: 64x64 = 4096 tiles, need big splat
-        (3, (128, 128, 128), 8, 20.0),  # 3D: 16^3 = 4096 tiles
-        (4, (32, 32, 32, 32), 4, 8.0),  # 4D: 8^4 = 4096 tiles
-    ])
+    @pytest.mark.parametrize(
+        "dim,shape,tile_size,L_scale",
+        [
+            (2, (256, 256), 4, 30.0),  # 2D: 64x64 = 4096 tiles, need big splat
+            (3, (128, 128, 128), 8, 20.0),  # 3D: 16^3 = 4096 tiles
+            (4, (32, 32, 32, 32), 4, 8.0),  # 4D: 8^4 = 4096 tiles
+        ],
+    )
     def test_global_splat_multi_dimension(self, dim, shape, tile_size, L_scale):
         """
         Test global splat handling across 2D, 3D, and 4D volumes.
@@ -4212,12 +4211,17 @@ class TestGlobalSplatHandling:
                 f"{dim}D global splat max relative diff {max_rel_diff:.4f} too large"
             )
 
-    @pytest.mark.parametrize("dim,shape,tile_size,L_scale", [
-        (2, (256, 256), 4, 30.0),
-        (3, (128, 128, 128), 8, 20.0),
-        (4, (32, 32, 32, 32), 4, 8.0),
-    ])
-    def test_global_splat_backward_multi_dimension(self, dim, shape, tile_size, L_scale):
+    @pytest.mark.parametrize(
+        "dim,shape,tile_size,L_scale",
+        [
+            (2, (256, 256), 4, 30.0),
+            (3, (128, 128, 128), 8, 20.0),
+            (4, (32, 32, 32, 32), 4, 8.0),
+        ],
+    )
+    def test_global_splat_backward_multi_dimension(
+        self, dim, shape, tile_size, L_scale
+    ):
         """
         Test global splat backward pass across 2D, 3D, and 4D volumes.
 
@@ -4256,7 +4260,9 @@ class TestGlobalSplatHandling:
         global_splat_ids = cuda_result[4]
 
         # Verify global splat was detected
-        assert len(global_splat_ids) > 0, f"Expected global splat in {dim}D backward test"
+        assert len(global_splat_ids) > 0, (
+            f"Expected global splat in {dim}D backward test"
+        )
 
         # Backward pass
         grad_output = torch.ones_like(output)
@@ -4288,3 +4294,359 @@ class TestGlobalSplatHandling:
         assert d_amps.item() > 0, f"Expected positive amplitude gradient in {dim}D"
         assert torch.isfinite(d_centers).all(), f"Non-finite center gradients in {dim}D"
         assert torch.isfinite(d_conic).all(), f"Non-finite conic gradients in {dim}D"
+
+
+@pytest.mark.skipif(not CUDA_BACKEND_AVAILABLE, reason="CUDA backend not compiled")
+class Test5DAnd6DDimensions:
+    """Test CUDA backend with 5D and 6D volumes."""
+
+    def test_5d_forward_matches_reference(self):
+        """Test 5D forward pass produces correct output."""
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            GaussianSplatModelCUDA,
+        )
+        from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+
+        np.random.seed(42)
+        N, d = 20, 5
+        shape = (8, 8, 8, 8, 8)  # 32K voxels
+
+        centers0 = np.random.rand(N, d).astype(np.float32) * 6 + 1
+        L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0)
+        for i in range(N):
+            L0[i] *= np.random.uniform(0.5, 1.5)
+        amps0 = np.random.rand(N).astype(np.float32) * 0.5 + 0.5
+
+        # CPU reference
+        cpu_model = GaussianSplatModel(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.5,) * d,
+            device="cpu",
+        )
+
+        # CUDA model
+        cuda_model = GaussianSplatModelCUDA(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.5,) * d,
+            device="cuda",
+        )
+
+        with torch.no_grad():
+            cpu_output = cpu_model()
+            cuda_output = cuda_model().cpu()
+
+        if cuda_output.shape != cpu_output.shape:
+            cuda_output = cuda_output.reshape(cpu_output.shape)
+
+        # Compare with tolerance
+        max_val = max(cpu_output.abs().max().item(), cuda_output.abs().max().item())
+        if max_val > 0:
+            rel_diff = (cpu_output - cuda_output).abs() / (max_val + 1e-8)
+            max_rel_diff = rel_diff.max().item()
+            mean_rel_diff = rel_diff.mean().item()
+
+            print(
+                f"\n5D forward: max_rel_diff={max_rel_diff:.4f}, mean={mean_rel_diff:.6f}"
+            )
+
+            assert max_rel_diff < 0.15, (
+                f"5D max relative diff {max_rel_diff:.4f} too large"
+            )
+            assert mean_rel_diff < 0.02, (
+                f"5D mean relative diff {mean_rel_diff:.6f} too large"
+            )
+
+    def test_5d_backward_gradients_finite(self):
+        """Test 5D backward pass produces finite gradients."""
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            GaussianSplatModelCUDA,
+        )
+
+        np.random.seed(42)
+        N, d = 15, 5
+        shape = (6, 6, 6, 6, 6)
+
+        centers0 = np.random.rand(N, d).astype(np.float32) * 4 + 1
+        L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0)
+        amps0 = np.random.rand(N).astype(np.float32) + 0.5
+
+        model = GaussianSplatModelCUDA(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.5,) * d,
+            device="cuda",
+        )
+
+        target = torch.rand(shape, device="cuda")
+        output = model()
+        loss = ((output - target) ** 2).mean()
+        loss.backward()
+
+        # Check gradients are finite
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                assert torch.isfinite(param.grad).all(), (
+                    f"5D gradient {name} has non-finite values"
+                )
+
+    def test_6d_forward_matches_reference(self):
+        """Test 6D forward pass produces correct output."""
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            GaussianSplatModelCUDA,
+        )
+        from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+
+        np.random.seed(42)
+        N, d = 15, 6
+        shape = (4, 4, 4, 4, 4, 4)  # 4K voxels
+
+        centers0 = np.random.rand(N, d).astype(np.float32) * 2 + 1
+        L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0)
+        for i in range(N):
+            L0[i] *= np.random.uniform(0.3, 0.8)
+        amps0 = np.random.rand(N).astype(np.float32) * 0.5 + 0.5
+
+        # CPU reference
+        cpu_model = GaussianSplatModel(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.3,) * d,
+            device="cpu",
+        )
+
+        # CUDA model
+        cuda_model = GaussianSplatModelCUDA(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.3,) * d,
+            device="cuda",
+        )
+
+        with torch.no_grad():
+            cpu_output = cpu_model()
+            cuda_output = cuda_model().cpu()
+
+        if cuda_output.shape != cpu_output.shape:
+            cuda_output = cuda_output.reshape(cpu_output.shape)
+
+        # Compare
+        max_val = max(cpu_output.abs().max().item(), cuda_output.abs().max().item())
+        if max_val > 0:
+            rel_diff = (cpu_output - cuda_output).abs() / (max_val + 1e-8)
+            max_rel_diff = rel_diff.max().item()
+
+            print(f"\n6D forward: max_rel_diff={max_rel_diff:.4f}")
+
+            assert max_rel_diff < 0.15, (
+                f"6D max relative diff {max_rel_diff:.4f} too large"
+            )
+
+    def test_6d_backward_gradients_finite(self):
+        """Test 6D backward pass produces finite gradients."""
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            GaussianSplatModelCUDA,
+        )
+
+        np.random.seed(42)
+        N, d = 10, 6
+        shape = (4, 4, 4, 4, 4, 4)
+
+        centers0 = np.random.rand(N, d).astype(np.float32) * 2 + 1
+        L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0) * 0.5
+        amps0 = np.random.rand(N).astype(np.float32) + 0.5
+
+        model = GaussianSplatModelCUDA(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.3,) * d,
+            device="cuda",
+        )
+
+        target = torch.rand(shape, device="cuda")
+        output = model()
+        loss = ((output - target) ** 2).mean()
+        loss.backward()
+
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                assert torch.isfinite(param.grad).all(), (
+                    f"6D gradient {name} has non-finite values"
+                )
+
+
+@pytest.mark.skipif(not CUDA_BACKEND_AVAILABLE, reason="CUDA backend not compiled")
+class TestLargeSplatCounts:
+    """Test CUDA backend with large numbers of splats (10K+)."""
+
+    def test_10k_splats_forward(self):
+        """Test forward pass with 10,000 splats."""
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            GaussianSplatModelCUDA,
+        )
+
+        np.random.seed(42)
+        N = 10000
+        d = 3
+        shape = (128, 128, 128)
+
+        centers0 = np.random.rand(N, d).astype(np.float32) * (np.array(shape) - 4) + 2
+        L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0)
+        for i in range(N):
+            L0[i] *= np.random.uniform(0.5, 2.0)
+        amps0 = np.random.rand(N).astype(np.float32) * 0.3 + 0.1
+
+        model = GaussianSplatModelCUDA(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.5,) * d,
+            device="cuda",
+        )
+
+        assert model.n_splats() == 10000
+
+        # Forward pass should work
+        output = model()
+
+        assert output.shape == shape
+        assert not torch.isnan(output).any(), "10K splats output has NaN"
+        assert not torch.isinf(output).any(), "10K splats output has Inf"
+        assert output.sum() > 0, "10K splats output is all zeros"
+
+        print(f"\n10K splats forward: output sum={output.sum().item():.2f}")
+
+    def test_10k_splats_backward(self):
+        """Test backward pass with 10,000 splats produces finite gradients."""
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            GaussianSplatModelCUDA,
+        )
+
+        np.random.seed(42)
+        N = 10000
+        d = 3
+        shape = (64, 64, 64)  # Smaller for faster backward
+
+        centers0 = np.random.rand(N, d).astype(np.float32) * (np.array(shape) - 4) + 2
+        L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0)
+        for i in range(N):
+            L0[i] *= np.random.uniform(0.5, 1.5)
+        amps0 = np.random.rand(N).astype(np.float32) * 0.2 + 0.1
+
+        model = GaussianSplatModelCUDA(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.5,) * d,
+            device="cuda",
+        )
+
+        target = torch.rand(shape, device="cuda")
+        output = model()
+        loss = ((output - target) ** 2).mean()
+        loss.backward()
+
+        # Check gradients
+        grad_count = 0
+        nan_count = 0
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                grad_count += 1
+                if torch.isnan(param.grad).any():
+                    nan_count += 1
+                    print(f"  {name}: has NaN")
+
+        print(
+            f"\n10K splats backward: {grad_count} params with gradients, {nan_count} with NaN"
+        )
+        assert nan_count == 0, "10K splats backward has NaN gradients"
+
+    def test_20k_splats_forward_2d(self):
+        """Test forward pass with 20,000 splats in 2D (larger volume)."""
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            GaussianSplatModelCUDA,
+        )
+
+        np.random.seed(42)
+        N = 20000
+        d = 2
+        shape = (1024, 1024)
+
+        centers0 = np.random.rand(N, d).astype(np.float32) * (np.array(shape) - 4) + 2
+        L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0)
+        for i in range(N):
+            L0[i] *= np.random.uniform(0.5, 3.0)
+        amps0 = np.random.rand(N).astype(np.float32) * 0.2 + 0.1
+
+        model = GaussianSplatModelCUDA(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.5,) * d,
+            device="cuda",
+        )
+
+        output = model()
+
+        assert output.shape == shape
+        assert not torch.isnan(output).any(), "20K splats output has NaN"
+        assert not torch.isinf(output).any(), "20K splats output has Inf"
+
+        print(f"\n20K splats 2D forward: output sum={output.sum().item():.2f}")
+
+    def test_large_splat_memory_does_not_explode(self):
+        """Test that memory usage with 10K splats is reasonable."""
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            GaussianSplatModelCUDA,
+        )
+
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.empty_cache()
+        baseline = torch.cuda.memory_allocated()
+
+        np.random.seed(42)
+        N = 10000
+        d = 3
+        shape = (128, 128, 128)
+
+        centers0 = np.random.rand(N, d).astype(np.float32) * (np.array(shape) - 4) + 2
+        L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0)
+        amps0 = np.random.rand(N).astype(np.float32) + 0.1
+
+        model = GaussianSplatModelCUDA(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.5,) * d,
+            device="cuda",
+        )
+
+        _ = model()
+        peak = torch.cuda.max_memory_allocated() - baseline
+
+        # Expected: ~130M params + ~8M output + tile buffers
+        # Should be under 1GB for 10K splats on 128³ volume
+        peak_mb = peak / (1024 * 1024)
+        print(f"\n10K splats memory: {peak_mb:.1f} MB")
+
+        assert peak_mb < 1000, f"Memory usage {peak_mb:.1f} MB exceeds 1GB limit"
+
+        del model
+        torch.cuda.empty_cache()

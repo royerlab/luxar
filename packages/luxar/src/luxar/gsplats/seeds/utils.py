@@ -69,6 +69,78 @@ def sigmas_to_cholesky_isotropic(
     return cholesky
 
 
+def soft_blur_nd(img: np.ndarray) -> np.ndarray:
+    """
+    Apply a soft separable blur to reduce noise before peak detection.
+
+    Uses a 3-point kernel [0.25, 0.5, 0.25] applied separably along each axis.
+    This is equivalent to a tent filter that smooths high-frequency noise
+    while preserving peak locations.
+
+    Parameters
+    ----------
+    img : np.ndarray
+        Input n-dimensional image array.
+
+    Returns
+    -------
+    np.ndarray
+        Blurred image with same shape as input.
+
+    Notes
+    -----
+    The kernel [0.25, 0.5, 0.25] corresponds to [0.5, 1.0, 0.5] normalized.
+    Separable application is O(3*ndim*N) instead of O(3^ndim * N) for direct.
+    """
+    # Tent kernel: [0.5, 1.0, 0.5] normalized → [0.25, 0.5, 0.25]
+    kernel_1d = np.array([0.25, 0.5, 0.25], dtype=np.float32)
+
+    result = img.astype(np.float32)
+    for axis in range(img.ndim):
+        result = ndi.convolve1d(result, kernel_1d, axis=axis, mode="nearest")
+
+    return result
+
+
+def count_local_maxima(
+    img: np.ndarray,
+    radius: int = 1,
+    threshold_rel: float = 0.1,
+    blur: bool = True,
+) -> int:
+    """
+    Count local maxima in an n-dimensional image.
+
+    Optionally applies soft blur to reduce noise-induced false peaks.
+
+    Parameters
+    ----------
+    img : np.ndarray
+        Input n-dimensional image array.
+    radius : int, default=1
+        Half-width of the L∞ neighborhood (hypercube).
+    threshold_rel : float, default=0.1
+        Relative threshold (fraction of image max) for peak detection.
+    blur : bool, default=True
+        Apply soft blur before counting to reduce noise.
+
+    Returns
+    -------
+    int
+        Number of local maxima detected.
+    """
+    if blur:
+        img = soft_blur_nd(img)
+
+    max_val = img.max()
+    if max_val <= 0:
+        return 0
+
+    thresh = threshold_rel * max_val
+    peaks = local_maxima(img, radius=radius, thresh=thresh, top_k=None)
+    return len(peaks)
+
+
 def local_maxima(
     img: np.ndarray, radius: int, thresh: float, top_k: Optional[int]
 ) -> np.ndarray:
@@ -312,7 +384,8 @@ def combine_seeds(
     >>>
     >>> # Combine centers with deduplication
     >>> combined = combine_seeds(result1.centers, result2.centers, min_distance=3.0)
-    >>> aprint(f"Combined: {len(result1.centers)} + {len(result2.centers)} → {len(combined)} seeds")
+    >>> n1, n2, nc = len(result1.centers), len(result2.centers), len(combined)
+    >>> aprint(f"Combined: {n1} + {n2} → {nc} seeds")
 
     Notes
     -----
