@@ -37,11 +37,12 @@ forward_wrapper(
     bool use_fp16
 ) {
     if (use_fp16) {
-        // Convert inputs to FP16 for reduced memory bandwidth
-        auto centers_fp16 = centers.to(torch::kFloat16);
-        auto conic_fp16 = conic.to(torch::kFloat16);
-        auto amps_fp16 = amps.to(torch::kFloat16);
-        auto sharpness_fp16 = sharpness.to(torch::kFloat16);
+        // Use FP16 inputs directly if already converted, else convert
+        // Pre-conversion in Python avoids per-call overhead
+        auto centers_fp16 = centers.dtype() == torch::kFloat16 ? centers : centers.to(torch::kFloat16);
+        auto conic_fp16 = conic.dtype() == torch::kFloat16 ? conic : conic.to(torch::kFloat16);
+        auto amps_fp16 = amps.dtype() == torch::kFloat16 ? amps : amps.to(torch::kFloat16);
+        auto sharpness_fp16 = sharpness.dtype() == torch::kFloat16 ? sharpness : sharpness.to(torch::kFloat16);
 
         return forward_fp16(
             centers_fp16,
@@ -94,11 +95,12 @@ backward_wrapper(
     bool use_fp16
 ) {
     if (use_fp16) {
-        // Convert inputs to FP16 (grad_output stays FP32)
-        auto centers_fp16 = centers.to(torch::kFloat16);
-        auto conic_fp16 = conic.to(torch::kFloat16);
-        auto amps_fp16 = amps.to(torch::kFloat16);
-        auto sharpness_fp16 = sharpness.to(torch::kFloat16);
+        // Use FP16 inputs directly if already converted, else convert
+        // Pre-conversion in Python avoids per-call overhead
+        auto centers_fp16 = centers.dtype() == torch::kFloat16 ? centers : centers.to(torch::kFloat16);
+        auto conic_fp16 = conic.dtype() == torch::kFloat16 ? conic : conic.to(torch::kFloat16);
+        auto amps_fp16 = amps.dtype() == torch::kFloat16 ? amps : amps.to(torch::kFloat16);
+        auto sharpness_fp16 = sharpness.dtype() == torch::kFloat16 ? sharpness : sharpness.to(torch::kFloat16);
 
         return backward_fp16(
             grad_output,  // Always FP32

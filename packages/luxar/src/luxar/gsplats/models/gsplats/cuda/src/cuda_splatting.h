@@ -448,68 +448,24 @@ void launch_rasterize_global_backward(
 );
 
 // =============================================================================
-// FP16 KERNEL LAUNCH WRAPPERS (templated by DIM)
+// FP16 KERNEL LAUNCH WRAPPERS (Phase 2 - True FP16 kernels)
 // =============================================================================
 //
-// NOTE: These are placeholder declarations for future "true FP16 kernel" optimization.
-// The current implementation (Phase 1) uses FP16→FP32 conversion at the API boundary
-// via dispatch_forward_fp16() and dispatch_backward_fp16(), which convert tensors
-// and call the regular FP32 kernels.
+// FP16 support is implemented via templated kernels with InputDType parameter.
+// The same launch_* functions work for both FP32 (default) and FP16 (__half).
 //
-// Phase 2 would implement these functions to load FP16 data directly into shared
-// memory and convert to FP32 only in registers, providing better memory bandwidth.
-// Until then, these declarations are not instantiated and serve as documentation.
+// Example usage:
+//   launch_preprocess<3, __half>(...)      // FP16 3D
+//   launch_preprocess<3>(...)               // FP32 3D (default InputDType=float)
+//   launch_rasterize_forward<2, __half>(...) // FP16 2D forward
 //
-
-// FP16 Forward rasterization: Mixed precision (FP16 input, FP32 compute/output)
-// NOT YET IMPLEMENTED - see dispatch_forward_fp16() for current implementation
-template <int DIM>
-void launch_rasterize_forward_fp16(
-    const __half* centers,    // FP16 input
-    const __half* conic,      // FP16 input
-    const __half* amps,       // FP16 input
-    const __half* sharpness,  // FP16 input
-    int N,
-    const int* shape,
-    const int* tile_dims,
-    int tile_size,
-    float truncate,
-    float intensity_floor,
-    const int64_t* tile_offsets,
-    const int* tile_counts,
-    const int* tile_content,
-    float* output,            // FP32 output
-    int64_t num_tiles,
-    const std::vector<int>& host_tile_dims,
-    cudaStream_t stream
-);
-
-// FP16 Backward rasterization: Mixed precision (FP16 input, FP32 gradients)
-// NOT YET IMPLEMENTED - see dispatch_backward_fp16() for current implementation
-template <int DIM>
-void launch_rasterize_backward_fp16(
-    const float* grad_output, // FP32 upstream gradient
-    const __half* centers,    // FP16 input
-    const __half* conic,      // FP16 input
-    const __half* amps,       // FP16 input
-    const __half* sharpness,  // FP16 input
-    int N,
-    const int* shape,
-    const int* tile_dims,
-    int tile_size,
-    float truncate,
-    float intensity_floor,
-    const int64_t* tile_offsets,
-    const int* tile_counts,
-    const int* tile_content,
-    float* d_centers,         // FP32 gradients
-    float* d_conic,
-    float* d_amps,
-    float* d_sharpness,
-    int64_t num_tiles,
-    const std::vector<int>& host_tile_dims,
-    cudaStream_t stream
-);
+// Key characteristics:
+// - FP16 inputs are loaded directly from global memory (2x bandwidth savings)
+// - Conversion to FP32 happens during shared memory load (DTypeTraits::load())
+// - All computation is done in FP32 for numerical stability
+// - Output and gradients are always FP32
+//
+// Explicit instantiations for all DIM × InputDType combinations are in cuda_splatting.cu
 
 // =============================================================================
 // UTILITY FUNCTIONS

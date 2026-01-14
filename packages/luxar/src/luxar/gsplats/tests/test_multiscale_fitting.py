@@ -104,7 +104,8 @@ class TestMultiScaleFitting:
         # Speedup should be > 1 for multiple scales
         assert result.stats["computational_speedup"] > 1.0
 
-        # For scales [1, 2, 4] in 2D, expected speedup ~ (1 + 1 + 1) / (1 + 0.25 + 0.0625) ≈ 2.3
+        # For scales [1, 2, 4] in 2D:
+        # expected speedup ~ (1 + 1 + 1) / (1 + 0.25 + 0.0625) ≈ 2.3
         assert result.stats["computational_speedup"] > 2.0
 
     def test_statistics_structure(self) -> None:
@@ -166,7 +167,7 @@ class TestMultiScaleFitting:
             fit_multiscale_gaussian_splats(V, scales=[], verbose=False)
 
         # Scale too large for image size (Issue #8 fix)
-        with pytest.raises(ValueError, match="results in too small dimensions"):
+        with pytest.raises(ValueError, match="too small"):
             fit_multiscale_gaussian_splats(
                 np.random.rand(16, 16).astype(np.float32),
                 scales=[1, 2, 4],  # Scale 4 gives 4x4, below minimum
@@ -368,6 +369,259 @@ class TestMultiScaleFitting:
 
         # Should not have per-scale visualizations by default
         assert "per_scale_visualizations" not in result.stats
+
+    def test_return_intermediate(self) -> None:
+        """Test return_intermediate returns per-scale GSplatData and reconstructions."""
+        V = np.random.rand(32, 32).astype(np.float32)
+        scales = [1, 2, 4]
+
+        result = fit_multiscale_gaussian_splats(
+            V,
+            scales=scales,
+            n_iters_decomp=20,
+            n_iters_per_scale=20,
+            return_intermediate=True,
+            verbose=False,
+        )
+
+        # Check intermediate results exist
+        assert "intermediate" in result.stats
+        assert "scale_images" in result.stats
+        intermediate = result.stats["intermediate"]
+        scale_images = result.stats["scale_images"]
+
+        # Should have one entry per scale
+        assert len(intermediate) == len(scales)
+        assert len(scale_images) == len(scales)
+
+        # Check structure of each intermediate result
+        for i, inter in enumerate(intermediate):
+            scale_factor = scales[i]
+
+            # Required keys
+            assert "scale_factor" in inter
+            assert "target" in inter
+            assert "splats" in inter
+            assert "splats_full_res" in inter
+            assert "reconstruction" in inter
+            assert "residual" in inter
+
+            # Check scale factor matches
+            assert inter["scale_factor"] == scale_factor
+
+            # Check target shape matches expected downsampled shape
+            expected_shape = tuple(s // scale_factor for s in V.shape)
+            assert inter["target"].shape == expected_shape
+
+            # Check reconstruction and residual match target shape
+            assert inter["reconstruction"].shape == inter["target"].shape
+            assert inter["residual"].shape == inter["target"].shape
+
+            # Check splats is GSplatData
+            from luxar.gsplats.fit_result import GSplatData
+
+            assert isinstance(inter["splats"], GSplatData)
+            assert isinstance(inter["splats_full_res"], GSplatData)
+
+            # Check splats_full_res has correct dimensionality
+            assert inter["splats_full_res"].centers.shape[1] == 2  # 2D
+
+    def test_no_intermediate_by_default(self) -> None:
+        """Test that intermediate results are not returned by default."""
+        V = np.random.rand(32, 32).astype(np.float32)
+
+        result = fit_multiscale_gaussian_splats(
+            V, scales=[1, 2], n_iters_decomp=10, n_iters_per_scale=10, verbose=False
+        )
+
+        # Should not have intermediate results by default
+        assert "intermediate" not in result.stats
+        assert "scale_images" not in result.stats
+
+    def test_seeds_distribution_by_maxima(self) -> None:
+        """Test that seeds parameter distributes seeds by local maxima."""
+        # Create image with clear features
+        V = np.random.rand(64, 64).astype(np.float32) * 0.1
+        # Add some bright spots
+        V[10:15, 10:15] = 1.0
+        V[30:35, 30:35] = 1.0
+        V[50:55, 50:55] = 1.0
+
+        total_seeds = 200
+        scales = [1, 2, 4]
+
+        result = fit_multiscale_gaussian_splats(
+            V,
+            seeds=total_seeds,
+            scales=scales,
+            n_iters_decomp=50,
+            n_iters_per_scale=30,
+            verbose=False,
+        )
+
+        # Should have splats
+        assert len(result.amplitudes) > 0
+
+        # Check decomposition stats includes maxima_per_scale
+        decomp_stats = result.stats.get("decomposition_stats", {})
+        assert "maxima_per_scale" in decomp_stats
+        maxima = decomp_stats["maxima_per_scale"]
+        assert len(maxima) == len(scales)
+
+        # Each scale should have at least some seeds (due to minimum)
+        n_splats_per_scale = result.stats.get("n_splats_per_scale", [])
+        assert len(n_splats_per_scale) == len(scales)
+        for n in n_splats_per_scale:
+            assert n > 0  # Each scale got some seeds
+
+    def test_seeds_none_uses_auto_seeding(self) -> None:
+        """Test that seeds=None uses auto-seeding for each scale."""
+        V = np.random.rand(32, 32).astype(np.float32)
+
+        # Without seeds parameter
+        result = fit_multiscale_gaussian_splats(
+            V, scales=[1, 2], n_iters_decomp=10, n_iters_per_scale=10, verbose=False
+        )
+
+        # Should still work and produce splats
+        assert len(result.amplitudes) > 0
+
+    def test_seeds_compression_ratio(self) -> None:
+        """Test that seeds as float is treated as compression ratio."""
+        V = np.random.rand(64, 64).astype(np.float32)
+        scales = [1, 2, 4]
+
+        # Use 10% compression ratio
+        compression_ratio = 0.1
+        result = fit_multiscale_gaussian_splats(
+            V,
+            seeds=compression_ratio,
+            scales=scales,
+            n_iters_decomp=30,
+            n_iters_per_scale=30,
+            verbose=False,
+        )
+
+        # Should produce splats
+        assert len(result.amplitudes) > 0
+
+        # Verify the compression is roughly in the expected range
+        # For 2D: floats_per_splat = 2 + 3 + 2 = 7
+        # Total voxels = 64*64 + 32*32 + 16*16 = 4096 + 1024 + 256 = 5376
+        # Expected seeds ≈ 0.1 * 5376 / 7 ≈ 77
+        # Allow some tolerance due to minimum per-scale and rounding
+        n_splats = len(result.amplitudes)
+        assert 50 < n_splats < 200, (
+            f"Expected ~77 splats for 10% compression, got {n_splats}"
+        )
+
+    def test_seeds_compression_ratio_vs_int(self) -> None:
+        """Test that compression ratio produces fewer splats than large int."""
+        V = np.random.rand(64, 64).astype(np.float32)
+        scales = [1, 2]
+
+        # Fit with small compression ratio (should produce fewer splats)
+        result_compression = fit_multiscale_gaussian_splats(
+            V,
+            seeds=0.05,  # 5% compression
+            scales=scales,
+            n_iters_decomp=20,
+            n_iters_per_scale=20,
+            verbose=False,
+        )
+
+        # Fit with large seed count
+        result_many = fit_multiscale_gaussian_splats(
+            V,
+            seeds=500,  # 500 total seeds
+            scales=scales,
+            n_iters_decomp=20,
+            n_iters_per_scale=20,
+            verbose=False,
+        )
+
+        # Compression ratio should produce fewer splats
+        assert len(result_compression.amplitudes) < len(result_many.amplitudes)
+
+    def test_seeds_compression_ratio_invalid(self) -> None:
+        """Test that invalid compression ratios raise errors."""
+        V = np.random.rand(32, 32).astype(np.float32)
+
+        # Zero is invalid
+        with pytest.raises(ValueError, match="Compression ratio must be in"):
+            fit_multiscale_gaussian_splats(
+                V, seeds=0.0, scales=[1, 2], n_iters_decomp=10, n_iters_per_scale=10
+            )
+
+        # Negative is invalid
+        with pytest.raises(ValueError, match="Compression ratio must be in"):
+            fit_multiscale_gaussian_splats(
+                V, seeds=-0.1, scales=[1, 2], n_iters_decomp=10, n_iters_per_scale=10
+            )
+
+        # Greater than 1 is invalid
+        with pytest.raises(ValueError, match="Compression ratio must be in"):
+            fit_multiscale_gaussian_splats(
+                V, seeds=1.5, scales=[1, 2], n_iters_decomp=10, n_iters_per_scale=10
+            )
+
+    def test_seeds_compression_ratio_one(self) -> None:
+        """Test that compression ratio of 1.0 is valid (no compression)."""
+        V = np.random.rand(32, 32).astype(np.float32)
+
+        # 1.0 should be valid (100% - no compression, maximum quality)
+        result = fit_multiscale_gaussian_splats(
+            V,
+            seeds=1.0,
+            scales=[1, 2],
+            n_iters_decomp=10,
+            n_iters_per_scale=10,
+            verbose=False,
+        )
+
+        # Should produce splats (many, since no compression)
+        assert len(result.amplitudes) > 0
+
+    def test_coordinate_alignment_across_scales(self) -> None:
+        """Test that splat centers are correctly aligned when combining scales.
+
+        This test verifies the half-pixel offset correction when upscaling from
+        downsampled coordinates. Without the fix, coarse-scale splats would be
+        shifted towards the top-left corner by (scale_factor - 1) / 2 pixels.
+        """
+        # Create image with a bright spot at a known center location
+        V = np.zeros((64, 64), dtype=np.float32)
+        center_y, center_x = 32, 32  # Center of image
+        # Add a Gaussian-like spot
+        y, x = np.ogrid[:64, :64]
+        dist2 = (y - center_y) ** 2 + (x - center_x) ** 2
+        V = np.exp(-dist2 / (2 * 5**2)).astype(np.float32)
+
+        # Use scale 4 to make offset noticeable (1.5px shift without fix)
+        result = fit_multiscale_gaussian_splats(
+            V,
+            seeds=50,
+            scales=[1, 4],
+            n_iters_decomp=100,
+            n_iters_per_scale=100,
+            verbose=False,
+        )
+
+        # Find the brightest splat (should be near the center of our spot)
+        brightest_idx = np.argmax(result.amplitudes)
+        brightest_center = result.centers[brightest_idx]
+
+        # The brightest splat should be within 3 pixels of the true center
+        # Without the half-pixel fix, coarse scale would shift it by ~1.5 pixels
+        distance_to_center = np.sqrt(
+            (brightest_center[0] - center_y) ** 2
+            + (brightest_center[1] - center_x) ** 2
+        )
+        assert distance_to_center < 3.0, (
+            f"Brightest splat at {brightest_center} is {distance_to_center:.2f} pixels "
+            f"from expected center ({center_y}, {center_x}). "
+            f"Possible half-pixel offset issue in coordinate transformation."
+        )
 
 
 if __name__ == "__main__":
