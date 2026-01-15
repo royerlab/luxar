@@ -150,7 +150,9 @@ class TestSplatImportanceCalculation:
             sigma_min_diag=[0.1, 0.1],
         )
 
-        importance = _calculate_splat_importance(model)
+        # Get cached params and pass to importance function
+        _, Ls, amps, _ = model.current_params()
+        importance = _calculate_splat_importance(Ls, amps)
 
         assert importance.shape == (3,)
         assert torch.all(importance >= 0)
@@ -368,8 +370,9 @@ class TestDynamicOperationsIntegration:
             sigma_min_diag=[0.5, 0.5],
         )
 
-        # Test importance calculation
-        importance = _calculate_splat_importance(model)
+        # Test importance calculation - get cached params first
+        _, Ls, amps_t, _ = model.current_params()
+        importance = _calculate_splat_importance(Ls, amps_t)
         assert importance.shape == (len(centers),)
         assert torch.all(importance >= 0)
 
