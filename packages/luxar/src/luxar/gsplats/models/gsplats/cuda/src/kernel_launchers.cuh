@@ -103,7 +103,7 @@ void launch_bin(
 // FORWARD RASTERIZATION KERNEL LAUNCHER
 // =============================================================================
 
-template <int DIM, typename InputDType = float>
+template <int DIM, int BATCH_SIZE = DEFAULT_BATCH_SIZE, typename InputDType = float>
 void launch_rasterize_forward(
     const InputDType* centers,
     const InputDType* conic,
@@ -133,15 +133,10 @@ void launch_rasterize_forward(
         block_size = RASTER_BLOCK_SIZE_DEFAULT;
     }
 
-    // Compute shared memory size
-    // s_centers: SPLAT_BATCH_SIZE * CENTER_STRIDE (padded for 3D)
-    // s_conic: SPLAT_BATCH_SIZE * CONIC_SIZE
-    // s_amps: SPLAT_BATCH_SIZE
-    // s_sharpness: SPLAT_BATCH_SIZE
-    // s_truncate_sq: SPLAT_BATCH_SIZE
-    constexpr int CONIC_SIZE = conic_size<DIM>();
-    constexpr int CENTER_STRIDE = (DIM == 3) ? 4 : DIM;
-    size_t smem_size = SPLAT_BATCH_SIZE * (CENTER_STRIDE + CONIC_SIZE + 3) * sizeof(float);
+    // Shared memory is statically allocated in the kernel using __shared__ arrays.
+    // No dynamic shared memory needed (smem_size = 0).
+    // Static allocation allows compile-time optimization and bank conflict avoidance.
+    constexpr size_t smem_size = 0;
 
     // OPTIMIZATION: Use 3D grid for 2D/3D volumes
     // This improves L2 cache locality and eliminates division/modulo in tile coordinate extraction
@@ -149,7 +144,7 @@ void launch_rasterize_forward(
     if constexpr (DIM == 3) {
         // Grid: (z, y, x) so blockIdx.x=z, blockIdx.y=y, blockIdx.z=x
         dim3 grid(host_tile_dims[2], host_tile_dims[1], host_tile_dims[0]);
-        rasterize_forward_kernel<DIM, InputDType><<<grid, block_size, smem_size, stream>>>(
+        rasterize_forward_kernel<DIM, BATCH_SIZE, InputDType><<<grid, block_size, smem_size, stream>>>(
             centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content, output, 0
@@ -157,7 +152,7 @@ void launch_rasterize_forward(
     } else if constexpr (DIM == 2) {
         // Grid: (y, x, 1) so blockIdx.x=y, blockIdx.y=x
         dim3 grid(host_tile_dims[1], host_tile_dims[0], 1);
-        rasterize_forward_kernel<DIM, InputDType><<<grid, block_size, smem_size, stream>>>(
+        rasterize_forward_kernel<DIM, BATCH_SIZE, InputDType><<<grid, block_size, smem_size, stream>>>(
             centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content, output, 0
@@ -165,7 +160,7 @@ void launch_rasterize_forward(
     } else {
         // For DIM > 3, use 1D grid
         int num_blocks = (int)num_tiles;
-        rasterize_forward_kernel<DIM, InputDType><<<num_blocks, block_size, smem_size, stream>>>(
+        rasterize_forward_kernel<DIM, BATCH_SIZE, InputDType><<<num_blocks, block_size, smem_size, stream>>>(
             centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content, output, 0
@@ -177,7 +172,7 @@ void launch_rasterize_forward(
 // BACKWARD RASTERIZATION KERNEL LAUNCHER
 // =============================================================================
 
-template <int DIM, typename InputDType = float>
+template <int DIM, int BATCH_SIZE = DEFAULT_BATCH_SIZE, typename InputDType = float>
 void launch_rasterize_backward(
     const float* grad_output,
     const InputDType* centers,
@@ -210,25 +205,19 @@ void launch_rasterize_backward(
         block_size = RASTER_BLOCK_SIZE_DEFAULT;
     }
 
-    // Compute shared memory size
-    // s_centers: SPLAT_BATCH_SIZE * CENTER_STRIDE (padded for 3D)
-    // s_conic: SPLAT_BATCH_SIZE * CONIC_SIZE
-    // s_amps: SPLAT_BATCH_SIZE
-    // s_sharpness: SPLAT_BATCH_SIZE
-    // s_truncate_sq: SPLAT_BATCH_SIZE
-    // s_splat_ids: SPLAT_BATCH_SIZE (int, not float)
-    // Note: Warp reduction uses __shfl_down_sync intrinsics, no shared memory needed
-    constexpr int CONIC_SIZE = conic_size<DIM>();
-    constexpr int CENTER_STRIDE = (DIM == 3) ? 4 : DIM;
-    size_t smem_size = SPLAT_BATCH_SIZE * (CENTER_STRIDE + CONIC_SIZE + 3) * sizeof(float)
-                       + SPLAT_BATCH_SIZE * sizeof(int);  // splat_ids
+    // Shared memory is statically allocated in the kernel using __shared__ arrays.
+    // No dynamic shared memory needed (smem_size = 0).
+    // Static allocation allows compile-time optimization and bank conflict avoidance.
+    // Note: The backward kernel uses significantly more shared memory than forward
+    // due to per-tile gradient accumulators and s_grad_output cache.
+    constexpr size_t smem_size = 0;
 
     // OPTIMIZATION: Use 3D grid for 2D/3D volumes
     // Grid order: last dimension varies fastest to match linear index formula
     if constexpr (DIM == 3) {
         // Grid: (z, y, x) so blockIdx.x=z, blockIdx.y=y, blockIdx.z=x
         dim3 grid(host_tile_dims[2], host_tile_dims[1], host_tile_dims[0]);
-        rasterize_backward_kernel<DIM, InputDType><<<grid, block_size, smem_size, stream>>>(
+        rasterize_backward_kernel<DIM, BATCH_SIZE, InputDType><<<grid, block_size, smem_size, stream>>>(
             grad_output, centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content,
@@ -237,7 +226,7 @@ void launch_rasterize_backward(
     } else if constexpr (DIM == 2) {
         // Grid: (y, x, 1) so blockIdx.x=y, blockIdx.y=x
         dim3 grid(host_tile_dims[1], host_tile_dims[0], 1);
-        rasterize_backward_kernel<DIM, InputDType><<<grid, block_size, smem_size, stream>>>(
+        rasterize_backward_kernel<DIM, BATCH_SIZE, InputDType><<<grid, block_size, smem_size, stream>>>(
             grad_output, centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content,
@@ -246,7 +235,7 @@ void launch_rasterize_backward(
     } else {
         // For DIM > 3, use 1D grid
         int num_blocks = (int)num_tiles;
-        rasterize_backward_kernel<DIM, InputDType><<<num_blocks, block_size, smem_size, stream>>>(
+        rasterize_backward_kernel<DIM, BATCH_SIZE, InputDType><<<num_blocks, block_size, smem_size, stream>>>(
             grad_output, centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content,

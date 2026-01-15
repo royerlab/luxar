@@ -23,6 +23,8 @@
  *
  * @param use_fp16 If true, converts inputs to FP16 and uses FP16-optimized kernels.
  *                 Output is always FP32 for numerical stability.
+ * @param batch_size Number of splats to process per batch in shared memory (32, 128, or 256).
+ *                   Larger batches reduce global memory round-trips but use more shared memory.
  */
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 forward_wrapper(
@@ -34,6 +36,7 @@ forward_wrapper(
     double truncate,
     double intensity_floor,
     int64_t tile_size,
+    int64_t batch_size,
     bool use_fp16
 ) {
     if (use_fp16) {
@@ -52,7 +55,8 @@ forward_wrapper(
             shape,
             (float)truncate,
             (float)intensity_floor,
-            (int)tile_size
+            (int)tile_size,
+            (int)batch_size
         );
     }
 
@@ -64,7 +68,8 @@ forward_wrapper(
         shape,
         (float)truncate,
         (float)intensity_floor,
-        (int)tile_size
+        (int)tile_size,
+        (int)batch_size
     );
 }
 
@@ -76,6 +81,8 @@ forward_wrapper(
  *
  * @param use_fp16 If true, converts inputs to FP16 and uses FP16-optimized kernels.
  *                 Gradients are always FP32 regardless of this setting.
+ * @param batch_size Number of splats to process per batch in shared memory (32, 128, or 256).
+ *                   Must match the batch_size used in forward pass.
  */
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 backward_wrapper(
@@ -92,6 +99,7 @@ backward_wrapper(
     double truncate,
     double intensity_floor,
     int64_t tile_size,
+    int64_t batch_size,
     bool use_fp16
 ) {
     if (use_fp16) {
@@ -115,7 +123,8 @@ backward_wrapper(
             shape,
             (float)truncate,
             (float)intensity_floor,
-            (int)tile_size
+            (int)tile_size,
+            (int)batch_size
         );
     }
 
@@ -132,7 +141,8 @@ backward_wrapper(
         shape,
         (float)truncate,
         (float)intensity_floor,
-        (int)tile_size
+        (int)tile_size,
+        (int)batch_size
     );
 }
 
@@ -181,6 +191,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                 Minimum intensity threshold for culling
             tile_size : int
                 Tile size for spatial binning
+            batch_size : int
+                Number of splats to process per batch in shared memory.
+                Must be 32, 128, or 256. Larger batches reduce global memory
+                round-trips but use more shared memory. Default: 128.
             use_fp16 : bool
                 If True, use FP16 precision for inputs to reduce memory bandwidth.
                 Computation and output are still FP32 for numerical stability.
@@ -203,6 +217,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("truncate"),
         py::arg("intensity_floor"),
         py::arg("tile_size"),
+        py::arg("batch_size") = 128,
         py::arg("use_fp16") = false
     );
 
@@ -240,6 +255,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                 Minimum intensity threshold
             tile_size : int
                 Tile size
+            batch_size : int
+                Number of splats to process per batch in shared memory.
+                Must be 32, 128, or 256. Must match the batch_size used in forward.
+                Default: 128.
             use_fp16 : bool
                 If True, use FP16 precision for inputs to reduce memory bandwidth.
                 Must match the setting used in forward pass.
@@ -267,6 +286,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("truncate"),
         py::arg("intensity_floor"),
         py::arg("tile_size"),
+        py::arg("batch_size") = 128,
         py::arg("use_fp16") = false
     );
 
