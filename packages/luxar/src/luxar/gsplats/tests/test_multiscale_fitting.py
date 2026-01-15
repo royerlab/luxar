@@ -5,6 +5,8 @@ Validates the thin wrapper architecture, parameter scaling, and integration
 with decompose_image() and fit_gaussian_splats().
 """
 
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pytest
 
@@ -257,8 +259,11 @@ class TestMultiScaleFitting:
             "Multi-Scale Decomposition" in captured.out or "Decomposing" in captured.out
         )
 
+    @patch.dict("sys.modules", {"napari": MagicMock()})
     def test_movie_recording(self) -> None:
         """Test that movie recording works when enabled."""
+        # Mock napari module globally to prevent windows from opening
+
         V = np.random.rand(32, 32).astype(np.float32)
 
         result = fit_multiscale_gaussian_splats(

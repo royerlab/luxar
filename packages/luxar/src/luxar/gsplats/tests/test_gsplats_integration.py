@@ -316,7 +316,7 @@ class TestGaussianSplatsIntegration:
         assert mse_poisson < 0.1
 
     def test_regularization(self) -> None:
-        """Test L1 regularization on amplitudes."""
+        """Test L1 regularization on amplitudes reduces total amplitude magnitude."""
         image = self.create_test_image((32, 32), n_blobs=5)
         seeds = seed_from_grid(image, spacing=4.0)
 
@@ -324,7 +324,7 @@ class TestGaussianSplatsIntegration:
         result_no_reg = fit_gaussian_splats(
             image,
             seeds=seeds,
-            n_iters=50,
+            n_iters=100,
             l1_amp=0.0,
             verbose=False,
             enable_dynamic_ops=False,
@@ -334,18 +334,18 @@ class TestGaussianSplatsIntegration:
         result_reg = fit_gaussian_splats(
             image,
             seeds=seeds,
-            n_iters=50,
-            l1_amp=0.1,
+            n_iters=100,
+            l1_amp=1.0,
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
         )
 
-        # Regularization should produce sparser solution
-        n_active_no_reg: int = int(np.sum(result_no_reg.amplitudes > 0.01))
-        n_active_reg: int = int(np.sum(result_reg.amplitudes > 0.01))
+        # L1 regularization should reduce total amplitude magnitude (sparser solution)
+        amp_sum_no_reg = float(np.sum(np.abs(result_no_reg.amplitudes)))
+        amp_sum_reg = float(np.sum(np.abs(result_reg.amplitudes)))
 
-        assert n_active_reg <= n_active_no_reg
+        assert amp_sum_reg < amp_sum_no_reg
 
     def test_sigma_constraints(self) -> None:
         """Test that sigma constraints are respected."""

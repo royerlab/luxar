@@ -1,9 +1,12 @@
 # operations.py
-"""Fixed-pool splat relocation for adaptive Gaussian splatting."""
+"""Fixed-pool splat relocation for adaptive Gaussian splatting.
+
+Performance-optimized implementation using batched tensor operations.
+"""
 
 from __future__ import annotations
 
-from typing import List, Set, Tuple
+from typing import List, Tuple
 
 import torch
 from arbol import aprint, asection
@@ -45,9 +48,10 @@ def apply_dynamic_operations(
     Returns:
         bool: True if any splats were relocated
     """
-    device = V_target.device
-
     with torch.no_grad():
+        # === Cache model parameters once (avoid repeated current_params() calls) ===
+        centers, Ls, amps, _ = model.current_params()
+
         # Compute residual image
         residual = V_target - V_pred
 
@@ -70,8 +74,10 @@ def apply_dynamic_operations(
             aprint(f"Found {len(peak_locations)} residual peaks (mode: {mode})")
 
         # Convergence guard: skip if strongest residual below threshold
+        # Note: peak_locations only contains positive residual locations (undershoot),
+        # so residual value is already positive
         strongest_peak_coords = peak_locations[0]  # Sorted by strength
-        strongest_peak_residual = torch.abs(residual[strongest_peak_coords]).item()
+        strongest_peak_residual = residual[strongest_peak_coords].item()
 
         if strongest_peak_residual < max_abs_error_threshold:
             if verbose:
@@ -83,7 +89,7 @@ def apply_dynamic_operations(
             return False
 
         # === STEP 2: Identify Weak Splats ===
-        importance = _calculate_splat_importance(model)
+        importance = _calculate_splat_importance(Ls, amps)
         weak_splat_indices = _select_weak_splats(importance, cfg.relocation_percentile)
 
         if len(weak_splat_indices) == 0:
@@ -97,13 +103,15 @@ def apply_dynamic_operations(
                 f"(bottom {cfg.relocation_percentile}% by importance)"
             )
 
-        # === STEP 3: Match Weak Splats to Peaks ===
-        matches = _match_weak_splats_to_peaks(
-            model,
+        # === STEP 3: Match Weak Splats to Peaks (vectorized) ===
+        matches = _match_weak_splats_to_peaks_batch(
+            centers,
+            Ls,
+            amps,
             weak_splat_indices,
             peak_locations,
-            residual,
             cfg.min_contribution_threshold,
+            cfg.max_relocations_per_step,
             verbose,
         )
 
@@ -111,9 +119,6 @@ def apply_dynamic_operations(
             if verbose:
                 aprint("No valid relocation matches found")
             return False
-
-        # Limit relocations per step to prevent destabilization
-        matches = matches[: cfg.max_relocations_per_step]
 
         # === STEP 4: Relocate Splats ===
         n_relocated = 0
@@ -137,18 +142,20 @@ def apply_dynamic_operations(
         return n_relocated > 0
 
 
-def _calculate_splat_importance(model) -> torch.Tensor:
+def _calculate_splat_importance(Ls: torch.Tensor, amps: torch.Tensor) -> torch.Tensor:
     """
     Calculate importance metric for all splats: amplitude × volume.
 
     Approximates splat "mass" using: importance = a_k × prod(diag(L_k))
     This is a computationally efficient approximation of ∫ f_k(x) dx.
 
+    Args:
+        Ls: Cholesky factors, shape (N, d, d)
+        amps: Amplitudes, shape (N,)
+
     Returns:
         torch.Tensor: Importance values for all splats, shape (N,)
     """
-    centers, Ls, amps, sharpness = model.current_params()
-
     # Compute volume approximation: prod(diag(L_k)) for each splat
     # This approximates sqrt(det(Σ)) where Σ = L @ L^T
     diag_products = torch.prod(torch.diagonal(Ls, dim1=-2, dim2=-1), dim=-1)
@@ -182,156 +189,229 @@ def _select_weak_splats(
     return sorted_indices[:n_candidates]
 
 
-def _find_splat_with_influence_at_location(
-    model,
-    location: torch.Tensor,
-    exclude_indices: Set[int],
-    min_influence_threshold: float = 0.01,
-) -> Tuple[int, float]:
+def _compute_peak_coverage_batch(
+    peak_locations: torch.Tensor,
+    centers: torch.Tensor,
+    Ls: torch.Tensor,
+    amps: torch.Tensor,
+    exclude_mask: torch.Tensor,
+) -> torch.Tensor:
     """
-    Find splat with significant influence at the given location.
+    Compute max influence at each peak from non-excluded splats (vectorized).
 
-    Uses Gaussian evaluation to detect if any splat (except those in exclude_indices)
-    already covers the location.
+    This replaces the old per-peak _find_splat_with_influence_at_location function
+    with a single batched operation that processes all peaks at once.
 
     Args:
-        model: GaussianSplatModel
-        location: Location to check (d,)
-        exclude_indices: Set of splat indices to exclude from search (weak splats)
-        min_influence_threshold: Minimum influence value to consider significant
+        peak_locations: Peak coordinates, shape (P, d)
+        centers: Splat centers, shape (N, d)
+        Ls: Cholesky factors, shape (N, d, d)
+        amps: Amplitudes, shape (N,)
+        exclude_mask: Boolean mask, True for splats to exclude (weak splats), shape (N,)
 
     Returns:
-        tuple: (splat_index, influence_value)
-               Returns (-1, 0.0) if no splat has significant influence
+        torch.Tensor: Max influence at each peak from non-excluded splats, shape (P,)
     """
-    if model.n_splats() == 0:
-        return -1, 0.0
+    P = peak_locations.shape[0]
+    N, d, _ = Ls.shape
+    device = peak_locations.device
 
-    centers, Ls, amps, sharpness = model.current_params()
-    n_splats = model.n_splats()
+    if P == 0 or N == 0:
+        return torch.zeros(P, device=device)
 
-    # Compute diff = location - centers for all splats: (N, d)
-    diff = location.unsqueeze(0) - centers  # (1, d) - (N, d) = (N, d)
+    # Compute all pairwise differences: (P, N, d)
+    # peak_locations: (P, d) -> (P, 1, d)
+    # centers: (N, d) -> (1, N, d)
+    diff = peak_locations[:, None, :] - centers[None, :, :]  # (P, N, d)
 
-    # Early filtering: skip splats that are too far away
-    max_sigma_per_splat = torch.diagonal(Ls, dim1=-2, dim2=-1).max(dim=-1).values
-    euclidean_dist = torch.norm(diff, dim=-1)
-    max_reach = 6.0 * max_sigma_per_splat  # Conservative: 6σ reach
+    # Early distance filtering to save memory/compute for distant splats
+    # Compute max sigma per splat for reach estimation
+    max_sigma_per_splat = (
+        torch.diagonal(Ls, dim1=-2, dim2=-1).max(dim=-1).values
+    )  # (N,)
+    max_reach = 6.0 * max_sigma_per_splat  # (N,)
 
-    # Mask for candidate splats (within reach and not excluded)
-    candidate_mask = euclidean_dist <= max_reach
-    candidate_indices = torch.where(candidate_mask)[0]
+    # Euclidean distance from each peak to each splat center
+    euclidean_dist = torch.norm(diff, dim=-1)  # (P, N)
 
-    if len(candidate_indices) == 0:
-        return -1, 0.0
+    # Mask for splats within reach of each peak
+    within_reach = euclidean_dist <= max_reach[None, :]  # (P, N)
 
-    # Compute full influence only for candidate splats
-    influences = torch.zeros(n_splats, device=location.device)
+    # Combined mask: within reach AND not excluded
+    active_mask = within_reach & ~exclude_mask[None, :]  # (P, N)
 
-    for idx in candidate_indices:
-        i = idx.item()
-        if i in exclude_indices:
-            continue  # Skip weak splats
+    # If no active splats for any peak, return zeros
+    if not active_mask.any():
+        return torch.zeros(P, device=device)
 
-        L = Ls[i]
-        amp = amps[i]
+    # For efficiency, we'll compute influences for all (P, N) pairs but mask later
+    # Batched solve: For each (p, n) pair, solve L[n] @ y = diff[p, n]
+    # Reshape for batched solve_triangular:
+    # Ls: (N, d, d) -> expand to (P, N, d, d) -> reshape to (P*N, d, d)
+    # diff: (P, N, d) -> reshape to (P*N, d, 1)
 
-        # Compute Gaussian value at location
-        try:
-            y = torch.linalg.solve_triangular(L, diff[i], upper=False)
-            squared_distance = torch.sum(y * y)
-            influences[i] = amp * torch.exp(-0.5 * squared_distance)
-        except RuntimeError:
-            influences[i] = 0.0
+    Ls_expanded = Ls[None, :, :, :].expand(P, -1, -1, -1).reshape(P * N, d, d)
+    diff_flat = diff.reshape(P * N, d, 1)
 
-    # Find splat with maximum influence
-    max_influence, max_idx = torch.max(influences, dim=0)
-    max_influence_val = max_influence.item()
-    max_idx_val = max_idx.item()
+    # Batched triangular solve
+    # y shape: (P*N, d, 1)
+    y = torch.linalg.solve_triangular(Ls_expanded, diff_flat, upper=False)
 
-    if max_influence_val >= min_influence_threshold:
-        return max_idx_val, max_influence_val
-    else:
-        return -1, 0.0
+    # Squared Mahalanobis distance: ||y||^2 for each (p, n) pair
+    squared_dist = (y.squeeze(-1) ** 2).sum(dim=-1).reshape(P, N)  # (P, N)
+
+    # Compute influences: a * exp(-0.5 * ||y||^2)
+    influences = amps[None, :] * torch.exp(-0.5 * squared_dist)  # (P, N)
+
+    # Zero out excluded splats and out-of-reach splats
+    influences = influences * active_mask.float()
+
+    # Max influence per peak
+    max_influences, _ = influences.max(dim=1)  # (P,)
+
+    return max_influences
 
 
-def _match_weak_splats_to_peaks(
-    model,
+def _find_closest_weak_splats_batch(
+    peak_locations: torch.Tensor,
+    centers: torch.Tensor,
+    weak_indices: torch.Tensor,
+    uncovered_mask: torch.Tensor,
+) -> List[Tuple[int, int]]:
+    """
+    For each uncovered peak, find closest available weak splat (vectorized).
+
+    Uses greedy matching: process peaks in order, assign closest available weak splat.
+
+    Args:
+        peak_locations: All peak coordinates, shape (P, d)
+        centers: All splat centers, shape (N, d)
+        weak_indices: Indices of weak splats, shape (W,)
+        uncovered_mask: Boolean mask for uncovered peaks, shape (P,)
+
+    Returns:
+        List of (weak_splat_idx, peak_idx) pairs
+    """
+    device = peak_locations.device
+
+    # Get uncovered peak indices
+    uncovered_peak_indices = torch.where(uncovered_mask)[0]  # (U,)
+    U = len(uncovered_peak_indices)
+
+    if U == 0 or len(weak_indices) == 0:
+        return []
+
+    # Get weak splat centers
+    weak_centers = centers[weak_indices]  # (W, d)
+
+    # Get uncovered peak locations
+    uncovered_peaks = peak_locations[uncovered_peak_indices]  # (U, d)
+
+    # Compute pairwise distances: (U, W)
+    dists = torch.cdist(uncovered_peaks, weak_centers)
+
+    # Greedy matching: process peaks in order (they're already sorted by residual strength)
+    matches = []
+    available_mask = torch.ones(len(weak_indices), dtype=torch.bool, device=device)
+
+    for i in range(U):
+        if not available_mask.any():
+            break
+
+        # Get distances for this peak, mask unavailable weak splats
+        peak_dists = dists[i].clone()
+        peak_dists[~available_mask] = float("inf")
+
+        # Find closest available weak splat
+        closest_weak_local = peak_dists.argmin()
+
+        # Check if any available (inf means none available)
+        if peak_dists[closest_weak_local] == float("inf"):
+            break
+
+        # Record match (global indices)
+        closest_weak_global = weak_indices[closest_weak_local].item()
+        peak_global = uncovered_peak_indices[i].item()
+
+        matches.append((closest_weak_global, peak_global))
+        available_mask[closest_weak_local] = False
+
+    return matches
+
+
+def _match_weak_splats_to_peaks_batch(
+    centers: torch.Tensor,
+    Ls: torch.Tensor,
+    amps: torch.Tensor,
     weak_splat_indices: List[int],
     peak_locations: List[Tuple[int, ...]],
-    residual: torch.Tensor,
     min_contribution_threshold: float,
+    max_relocations: int,
     verbose: bool = False,
 ) -> List[Tuple[int, Tuple[int, ...]]]:
     """
-    Match weak splats to residual peaks, avoiding crowding.
+    Match weak splats to residual peaks using vectorized operations.
 
     Algorithm:
-    1. Process peaks in order of residual magnitude (strongest first)
-    2. For each peak:
-       - Check if any non-weak splat already covers it
-       - If covered, skip this peak
-       - If not covered, assign closest unassigned weak splat
+    1. Batch compute coverage for all peaks at once
+    2. Identify uncovered peaks (influence < threshold)
+    3. Batch match uncovered peaks to closest weak splats
 
     Args:
-        model: GaussianSplatModel
+        centers: Splat centers, shape (N, d)
+        Ls: Cholesky factors, shape (N, d, d)
+        amps: Amplitudes, shape (N,)
         weak_splat_indices: Indices of weak splats eligible for relocation
         peak_locations: Peak coordinates sorted by residual magnitude (descending)
-        residual: Residual tensor
         min_contribution_threshold: Minimum influence to consider a peak "covered"
+        max_relocations: Maximum number of relocations to return
         verbose: Whether to print debug info
 
     Returns:
         List of (splat_idx, peak_coords) pairs
     """
-    device = residual.device
-    centers, _, _, _ = model.current_params()
+    device = centers.device
+    N = centers.shape[0]
+    P = len(peak_locations)
 
-    # Track which weak splats are still available
-    available_weak = set(weak_splat_indices)
-    exclude_set = set(weak_splat_indices)  # Exclude weak splats from coverage check
+    if P == 0 or len(weak_splat_indices) == 0:
+        return []
 
-    matches = []
+    # Convert peaks to tensor
+    peak_tensor = torch.tensor(peak_locations, dtype=torch.float32, device=device)
 
-    for peak_coords in peak_locations:
-        if not available_weak:
-            break  # No more weak splats to relocate
+    # Convert weak indices to tensor
+    weak_tensor = torch.tensor(weak_splat_indices, dtype=torch.long, device=device)
 
-        peak_location = torch.tensor(peak_coords, dtype=torch.float32, device=device)
-        local_residual = torch.abs(residual[peak_coords]).item()
+    # Create exclusion mask (True = weak splat, exclude from coverage check)
+    exclude_mask = torch.zeros(N, dtype=torch.bool, device=device)
+    exclude_mask[weak_tensor] = True
 
-        # Check if any non-weak splat already covers this peak
-        covering_splat, influence = _find_splat_with_influence_at_location(
-            model, peak_location, exclude_set, min_contribution_threshold
-        )
+    # Step 1: Batch compute coverage for all peaks
+    max_influences = _compute_peak_coverage_batch(
+        peak_tensor, centers, Ls, amps, exclude_mask
+    )
 
-        if covering_splat != -1:
-            if verbose:
-                aprint(
-                    f"  Peak {peak_coords}: already covered by splat {covering_splat} "
-                    f"(influence={influence:.4f})"
-                )
-            continue  # Skip - already covered
+    # Step 2: Identify uncovered peaks
+    uncovered_mask = max_influences < min_contribution_threshold
 
-        # Find closest available weak splat to this peak
-        min_dist = float("inf")
-        closest_weak = None
-        for splat_idx in available_weak:
-            dist = torch.norm(centers[splat_idx] - peak_location).item()
-            if dist < min_dist:
-                min_dist = dist
-                closest_weak = splat_idx
+    if verbose:
+        n_covered = (~uncovered_mask).sum().item()
+        if n_covered > 0:
+            aprint(f"  {n_covered} peaks already covered by existing splats")
 
-        if closest_weak is not None:
-            matches.append((closest_weak, peak_coords))
-            available_weak.remove(closest_weak)
-            if verbose:
-                aprint(
-                    f"  Peak {peak_coords}: assigned to weak splat {closest_weak} "
-                    f"(residual={local_residual:.4f})"
-                )
+    # Step 3: Match uncovered peaks to closest weak splats
+    matches_indices = _find_closest_weak_splats_batch(
+        peak_tensor, centers, weak_tensor, uncovered_mask
+    )
 
-    return matches
+    # Limit relocations
+    matches_indices = matches_indices[:max_relocations]
+
+    # Convert back to expected format: (weak_idx, peak_coords_tuple)
+    return [
+        (weak_idx, peak_locations[peak_idx]) for weak_idx, peak_idx in matches_indices
+    ]
 
 
 def _relocate_splat(
@@ -371,8 +451,10 @@ def _relocate_splat(
     raw_mu_new = torch.log(u) - torch.log(1.0 - u)
 
     # New amplitude from residual at new location
-    new_amplitude = torch.abs(residual[new_center_coords]).item()
-    new_amplitude = max(new_amplitude, 1e-6)  # Avoid zero
+    # Note: We only relocate to positive residual locations (undershoot),
+    # so residual value is already positive (target > prediction)
+    new_amplitude = residual[new_center_coords].item()
+    new_amplitude = max(new_amplitude, 1e-6)  # Defensive: avoid zero/negative
     raw_a_new = torch.tensor(
         stable_inverse_softplus(new_amplitude), device=device, dtype=torch.float32
     )
