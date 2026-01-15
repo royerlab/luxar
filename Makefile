@@ -520,47 +520,114 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 	@echo "⚠️  DEEP CLEAN - This will remove all development tools!"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo ""
+	@echo "⚠️  WARNING: Some tools removed by this target may be used by other projects!"
+	@echo ""
 	@echo "This target will remove:"
-	@echo "  • node_modules/           (project-local)"
-	@echo "  • Hatch virtual envs      (in ~/.local/share/hatch/)"
-	@echo "  • WASM build artifacts    (public/wasm/, rust/target/)"
-	@echo "  • CUDA build artifacts    (*.so, build/)"
-	@echo "  • wasm-pack               (Rust tool)"
-	@echo "  • Rust toolchain          (rustup, cargo, rustc)"
-	@echo "  • Hatch                   (Python tool)"
-	@echo "  • nvm + Node.js           (~/.nvm directory)"
-	@echo "  • pnpm cache              (~/.local/share/pnpm)"
+	@echo ""
+	@echo "PROJECT-SPECIFIC (safe to remove):"
+	@echo "  • Build artifacts         - .pyc, .egg-info, dist/, build/, __pycache__"
+	@echo "  • node_modules/           - TypeScript dependencies (this project only)"
+	@echo "  • Hatch virtual envs      - Python environments (luxar project only)"
+	@echo "  • pre-commit hooks        - Git hooks (this repository only)"
+	@echo "  • WASM build artifacts    - Compiled WASM files (this project only)"
+	@echo "  • CUDA build artifacts    - CUDA extension .so files (this project only)"
+	@echo ""
+	@echo "SYSTEM-WIDE TOOLS (⚠️  may affect other projects):"
+	@echo "  • python3-dev             - Python development headers (system package)"
+	@echo "  • pnpm                    - Package manager (may be used by other projects)"
+	@echo "  • Hatch                   - Python environment tool (may be used by other projects)"
+	@echo "  • Rust toolchain          - rustup, cargo, rustc (may be used by other projects)"
+	@echo "  • wasm-pack               - WASM build tool (may be used by other projects)"
+	@echo "  • nvm + Node.js           - Node.js version manager (may be used by other projects)"
+	@echo "  • pnpm cache              - Global package cache (~/.local/share/pnpm)"
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@read -p "Are you sure you want to continue? [y/N] " confirm; \
+	@echo ""
+	@echo "💡 To reinstall after cleaning:"
+	@echo "   make setup-dev      - Reinstall Node.js, pnpm, Hatch, and project deps"
+	@echo "   make setup-rust     - Reinstall Rust and wasm-pack"
+	@echo "   make setup-cuda     - Reinstall python3-dev, PyTorch CUDA, and build extension"
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@read -p "⚠️  Remove SYSTEM-WIDE tools (may affect other projects)? [y/N] " confirm; \
 	if [ "$$confirm" != "y" ] && [ "$$confirm" != "Y" ]; then \
-		echo "Aborted."; \
+		echo ""; \
+		echo "Aborted. To remove only project-specific artifacts, use:"; \
+		echo "  make clean-all      - Clean project artifacts only"; \
+		echo "  make clean-python   - Clean Python artifacts"; \
+		echo "  make clean-viewer   - Clean TypeScript artifacts"; \
+		echo "  make clean-cuda     - Clean CUDA artifacts"; \
+		echo "  make clean-wasm     - Clean WASM artifacts"; \
 		exit 1; \
 	fi
 	@echo ""
-	@echo "🧹 [1/9] Removing node_modules..."
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "🧹 Starting deep clean..."
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@echo "🧹 [Step 0] Cleaning all build artifacts first..."
+	@echo ""
+	@$(MAKE) clean-python 2>/dev/null || true
+	@$(MAKE) clean-viewer 2>/dev/null || true
+	@$(MAKE) clean-wasm 2>/dev/null || true
+	@$(MAKE) clean-cuda 2>/dev/null || true
+	@echo ""
+	@echo "🧹 [1/12] Removing node_modules..."
 	@rm -rf packages/luxar-viewer/node_modules
 	@echo "   ✓ Done"
 	@echo ""
-	@echo "🧹 [2/9] Removing Hatch environments..."
+	@echo "🧹 [2/12] Removing Hatch environments (includes PyTorch with CUDA)..."
 	@if command -v hatch >/dev/null 2>&1; then \
 		hatch env prune -y 2>/dev/null || true; \
 	fi
 	@rm -rf ~/.local/share/hatch/env/virtual/luxar* 2>/dev/null || true
 	@echo "   ✓ Done"
 	@echo ""
-	@echo "🧹 [3/9] Removing WASM build artifacts..."
+	@echo "🧹 [3/12] Removing pre-commit hooks..."
+	@if [ -d ".git/hooks" ]; then \
+		if command -v hatch >/dev/null 2>&1; then \
+			hatch run pre-commit uninstall 2>/dev/null || true; \
+			echo "   ✓ pre-commit hooks uninstalled"; \
+		elif [ -f ".git/hooks/pre-commit" ] && grep -q "pre-commit" ".git/hooks/pre-commit" 2>/dev/null; then \
+			rm -f .git/hooks/pre-commit .git/hooks/commit-msg .git/hooks/pre-push 2>/dev/null || true; \
+			echo "   ✓ pre-commit hook files removed"; \
+		else \
+			echo "   ⚪ No pre-commit hooks found"; \
+		fi; \
+	else \
+		echo "   ⚪ Not a git repository, skipping"; \
+	fi
+	@echo ""
+	@echo "🧹 [4/12] Removing WASM build artifacts..."
 	@rm -rf packages/luxar-viewer/public/wasm
 	@rm -rf packages/luxar-viewer/src/wasm/rust/target
 	@echo "   ✓ Done"
 	@echo ""
-	@echo "🧹 [4/9] Removing CUDA build artifacts..."
+	@echo "🧹 [5/12] Removing CUDA build artifacts..."
 	@rm -rf $(CUDA_EXT_DIR)/build/
 	@rm -rf $(CUDA_EXT_DIR)/*.egg-info/
 	@rm -f $(CUDA_EXT_DIR)/cuda_splatting_backend*.so
 	@echo "   ✓ Done"
 	@echo ""
-	@echo "🧹 [5/9] Removing wasm-pack..."
+	@echo "🧹 [6/12] Removing python3-dev (system package)..."
+	@if [ "$(PKG_MANAGER)" = "apt" ]; then \
+		if dpkg -l | grep -q python3-dev; then \
+			echo "   Found python3-dev, removing with sudo..."; \
+			if sudo apt remove -y python3-dev; then \
+				echo "   ✓ python3-dev removed"; \
+			else \
+				echo "   ⚠️  Failed to remove python3-dev (may require manual removal)"; \
+			fi; \
+		else \
+			echo "   ⚪ python3-dev not installed, skipping"; \
+		fi; \
+	elif [ "$(OS)" = "macos" ]; then \
+		echo "   ⚪ On macOS, Python dev headers are part of Python (skipping)"; \
+	else \
+		echo "   ⚪ Unsupported OS, skipping"; \
+	fi
+	@echo ""
+	@echo "🧹 [7/12] Removing wasm-pack..."
 	@if [ -f "$(HOME)/.cargo/env" ]; then \
 		. "$(HOME)/.cargo/env"; \
 	fi; \
@@ -571,7 +638,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 		echo "   ⚪ Not installed, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [6/9] Removing Rust toolchain..."
+	@echo "🧹 [8/12] Removing Rust toolchain..."
 	@if command -v rustup >/dev/null 2>&1; then \
 		rustup self uninstall -y 2>/dev/null || true; \
 		echo "   ✓ Done"; \
@@ -579,7 +646,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 		echo "   ⚪ Not installed, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [7/9] Removing Hatch..."
+	@echo "🧹 [9/12] Removing Hatch..."
 	@if command -v pipx >/dev/null 2>&1 && pipx list 2>/dev/null | grep -q hatch; then \
 		pipx uninstall hatch 2>/dev/null || true; \
 		echo "   ✓ Removed via pipx"; \
@@ -599,7 +666,20 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 		echo "   ⚪ Not installed, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [8/9] Removing nvm and Node.js..."
+	@echo "🧹 [10/12] Removing pnpm (global package)..."
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	if command -v pnpm >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then \
+		echo "   Uninstalling pnpm..."; \
+		npm uninstall -g pnpm 2>/dev/null || true; \
+		echo "   ✓ pnpm uninstalled"; \
+	else \
+		echo "   ⚪ pnpm not installed, skipping"; \
+	fi
+	@echo ""
+	@echo "🧹 [11/12] Removing nvm and Node.js..."
 	@NVM_REMOVED=0; \
 	HOMEBREW_NODE=0; \
 	if [ -d "$(HOME)/.nvm" ]; then \
@@ -620,7 +700,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 		echo "   ⚪ nvm not installed, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [9/9] Removing pnpm cache..."
+	@echo "🧹 [12/12] Removing pnpm cache..."
 	@if [ -d "$(HOME)/.local/share/pnpm" ]; then \
 		rm -rf "$(HOME)/.local/share/pnpm"; \
 		echo "   ✓ Removed ~/.local/share/pnpm"; \
@@ -632,9 +712,41 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 	@echo "✅ Deep clean complete!"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo ""
+	@echo "📋 What was removed:"
+	@echo "  ✅ All development tools (Hatch, Rust, Node.js, pnpm)"
+	@echo "  ✅ All build artifacts (.pyc, .egg-info, dist/, node_modules/, etc.)"
+	@echo "  ✅ Python development headers (python3-dev)"
+	@echo ""
+	@echo "⚠️  System packages NOT removed (may be used by other projects):"
+	@if command -v nvidia-smi >/dev/null 2>&1; then \
+		echo "  • NVIDIA driver: $$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)"; \
+	fi; \
+	if command -v nvcc >/dev/null 2>&1; then \
+		echo "  • nvidia-cuda-toolkit: $$(nvcc --version | grep release | sed 's/.*release //' | sed 's/,.*//')"; \
+	fi; \
+	if [ "$(PKG_MANAGER)" = "apt" ]; then \
+		if dpkg -l | grep -q "^ii  build-essential"; then \
+			echo "  • build-essential (C++ compiler, make, etc.)"; \
+		fi; \
+	fi; \
+	if ! command -v nvidia-smi >/dev/null 2>&1 && ! command -v nvcc >/dev/null 2>&1; then \
+		echo "  (No CUDA-related packages found)"; \
+	fi
+	@echo ""
+	@echo "To remove these system packages manually (⚠️  only if not needed elsewhere):"
+	@if command -v nvcc >/dev/null 2>&1 || dpkg -l 2>/dev/null | grep -q "^ii  build-essential"; then \
+		if [ "$(PKG_MANAGER)" = "apt" ]; then \
+			echo "  sudo apt remove nvidia-cuda-toolkit build-essential"; \
+		fi; \
+	fi
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
 	@echo "Next steps:"
 	@echo "  1. Run 'make check-deps' to verify the cleanup"
 	@echo "  2. Run 'make setup-dev' to reinstall everything"
+	@echo "  3. Run 'make setup-rust' to reinstall Rust/WASM (optional)"
+	@echo "  4. Run 'make setup-cuda' to reinstall CUDA support (optional)"
 	@echo ""
 
 # Development setup
@@ -1243,6 +1355,7 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 		NEED_SUDO=1; \
 	else \
 		echo "✅ NVIDIA driver already installed"; \
+		nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | xargs -I {} echo "   Driver version: {}"; \
 	fi; \
 	if ! command -v nvcc >/dev/null 2>&1; then \
 		MISSING="$$MISSING cuda-toolkit"; \
@@ -1256,28 +1369,94 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 	else \
 		echo "✅ C++ compiler already installed"; \
 	fi; \
+	PYTHON_INCLUDE=$$(hatch run python -c "import sysconfig; print(sysconfig.get_path('include'))" 2>/dev/null || echo ""); \
+	if [ -n "$$PYTHON_INCLUDE" ] && [ -f "$$PYTHON_INCLUDE/Python.h" ]; then \
+		echo "✅ Python development headers already installed"; \
+	else \
+		echo "❌ Python development headers not found"; \
+		MISSING="$$MISSING python-dev"; \
+		NEED_SUDO=1; \
+	fi; \
 	if [ "$$NEED_SUDO" = "1" ]; then \
 		echo ""; \
 		echo "⚠️  Some system packages need to be installed (requires sudo):"; \
 		echo ""; \
 		if [ "$(PKG_MANAGER)" = "apt" ]; then \
-			CMD="sudo apt update && sudo apt install -y"; \
+			CMD=""; \
+			NEEDS_DRIVER=0; \
+			NEEDS_CUDA=0; \
+			NEEDS_BUILD=0; \
+			NEEDS_PYTHONDEV=0; \
 			for pkg in $$MISSING; do \
 				case $$pkg in \
-					nvidia-driver) CMD="$$CMD nvidia-driver-535";; \
-					cuda-toolkit) CMD="$$CMD nvidia-cuda-toolkit";; \
-					build-essential) CMD="$$CMD build-essential";; \
+					nvidia-driver) NEEDS_DRIVER=1;; \
+					cuda-toolkit) NEEDS_CUDA=1;; \
+					build-essential) NEEDS_BUILD=1;; \
+					python-dev) NEEDS_PYTHONDEV=1;; \
 				esac; \
 			done; \
-			echo "   $$CMD"; \
-			echo ""; \
-			read -p "Run this command now? [y/N] " confirm; \
-			if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
-				eval $$CMD; \
-			else \
+			if [ "$$NEEDS_DRIVER" = "1" ]; then \
+				echo "   NVIDIA Driver:"; \
+				echo "     sudo ubuntu-drivers autoinstall   # Recommended - auto-selects best driver"; \
+				echo "     # OR manually: sudo apt install nvidia-driver-535"; \
+			fi; \
+			if [ "$$NEEDS_PYTHONDEV" = "1" ]; then \
+				if [ "$(PKG_MANAGER)" = "apt" ]; then \
+					echo "   Python development headers (auto-installing):"; \
+					echo "     sudo apt update && sudo apt install -y python3-dev"; \
+					echo ""; \
+					echo "📥 Installing python3-dev..."; \
+					if sudo apt update && sudo apt install -y python3-dev; then \
+						echo "✅ python3-dev installed successfully"; \
+					else \
+						echo ""; \
+						echo "❌ Failed to install python3-dev. Please run manually:"; \
+						echo "   sudo apt install python3-dev"; \
+						echo ""; \
+						echo "Then re-run 'make setup-cuda'"; \
+						exit 1; \
+					fi; \
+				elif [ "$(OS)" = "macos" ]; then \
+					echo ""; \
+					echo "⚠️  On macOS, Python dev headers are typically included with Python."; \
+					echo "   If you installed Python via Homebrew:"; \
+					echo "     brew reinstall python@3.12"; \
+					echo "   Or install Xcode Command Line Tools:"; \
+					echo "     xcode-select --install"; \
+					read -p "Try reinstalling Python? [y/N] " confirm; \
+					if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+						brew reinstall python@3.12 || true; \
+					fi; \
+				else \
+					echo ""; \
+					echo "⚠️  Unsupported package manager. Please install Python development headers manually."; \
+					exit 1; \
+				fi; \
+			fi; \
+			if [ "$$NEEDS_CUDA" = "1" ] || [ "$$NEEDS_BUILD" = "1" ]; then \
+				CMD="sudo apt update && sudo apt install -y"; \
+				if [ "$$NEEDS_CUDA" = "1" ]; then CMD="$$CMD nvidia-cuda-toolkit"; fi; \
+				if [ "$$NEEDS_BUILD" = "1" ]; then CMD="$$CMD build-essential"; fi; \
+				echo "   Other packages:"; \
+				echo "     $$CMD"; \
+			fi; \
+			if [ "$$NEEDS_DRIVER" = "1" ] || [ "$$NEEDS_CUDA" = "1" ] || [ "$$NEEDS_BUILD" = "1" ]; then \
 				echo ""; \
-				echo "Skipped. Please install manually and re-run 'make setup-cuda'."; \
-				exit 1; \
+				read -p "Run these commands now? [y/N] " confirm; \
+				if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+					if [ "$$NEEDS_DRIVER" = "1" ]; then \
+						echo "Installing NVIDIA driver..."; \
+						sudo ubuntu-drivers autoinstall; \
+					fi; \
+					if [ -n "$$CMD" ]; then \
+						echo "Installing other packages..."; \
+						eval $$CMD; \
+					fi; \
+				else \
+					echo ""; \
+					echo "Skipped. Please install manually and re-run 'make setup-cuda'."; \
+					exit 1; \
+				fi; \
 			fi; \
 		else \
 			echo "   Please install the following packages manually:"; \
@@ -1372,41 +1551,37 @@ check-cuda-deps:  ## Check CUDA development dependencies
 		echo ""; \
 		echo "   Install NVIDIA drivers:"; \
 		if [ "$(PKG_MANAGER)" = "apt" ]; then \
-			echo "     sudo apt install nvidia-driver-535  # or latest version"; \
+			echo "     sudo ubuntu-drivers autoinstall   # Recommended - auto-selects best driver"; \
+			echo "     # OR manually: sudo apt install nvidia-driver-535"; \
 		else \
 			echo "     https://www.nvidia.com/drivers"; \
 		fi; \
 	fi
 	@echo ""
 	@echo "=== 3. PyTorch with CUDA ==="
-	@hatch run python -c "\
-import sys; \
-try: \
-    import torch; \
-    print('✅ PyTorch:', torch.__version__); \
-    if torch.cuda.is_available(): \
-        print('✅ PyTorch CUDA:', torch.version.cuda); \
-        print('   GPU:', torch.cuda.get_device_name(0)); \
-        cap = torch.cuda.get_device_capability(); \
-        print('   Compute capability:', f'{cap[0]}.{cap[1]}'); \
-    else: \
-        print('❌ PyTorch CUDA not available'); \
-        print(''); \
-        print('   Current PyTorch was built without CUDA support.'); \
-        print('   Install PyTorch with CUDA (in hatch environment):'); \
-        print(''); \
-        print('     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu121'); \
-        print(''); \
-        print('   Or for CUDA 12.4:'); \
-        print('     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu124'); \
-except ImportError: \
-    print('❌ PyTorch not installed'); \
-    print(''); \
-    print('   Install PyTorch with CUDA:'); \
-    print('     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu121'); \
-" 2>/dev/null || echo "❌ Could not check PyTorch (hatch environment issue)"
+	@hatch run python -c "import sys; import torch; print('✅ PyTorch:', torch.__version__); cuda_available = torch.cuda.is_available(); print('✅ PyTorch CUDA:', torch.version.cuda if cuda_available else 'not available'); (print('   GPU:', torch.cuda.get_device_name(0)) if cuda_available else None); (print('   Compute capability:', str(torch.cuda.get_device_capability()[0]) + '.' + str(torch.cuda.get_device_capability()[1])) if cuda_available else None)" 2>/dev/null || \
+	hatch run python -c "print('❌ PyTorch not installed'); print(''); print('   Install PyTorch with CUDA:'); print('     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu121')" 2>/dev/null || \
+	echo "❌ Could not check PyTorch (hatch environment issue)"
 	@echo ""
-	@echo "=== 4. C++ Compiler ==="
+	@echo "=== 4. Python Development Headers ==="
+	@PYTHON_INCLUDE=$$(hatch run python -c "import sysconfig; print(sysconfig.get_path('include'))" 2>/dev/null || echo ""); \
+	if [ -n "$$PYTHON_INCLUDE" ] && [ -f "$$PYTHON_INCLUDE/Python.h" ]; then \
+		PYTHON_VERSION=$$(hatch run python -c "import sys; print(str(sys.version_info.major) + '.' + str(sys.version_info.minor))" 2>/dev/null); \
+		echo "✅ Python development headers: $$PYTHON_VERSION"; \
+		echo "   Location: $$PYTHON_INCLUDE"; \
+	else \
+		echo "❌ Python development headers not found"; \
+		echo ""; \
+		echo "   Install development headers:"; \
+		if [ "$(PKG_MANAGER)" = "apt" ]; then \
+			echo "     sudo apt install python3-dev"; \
+		elif [ "$(OS)" = "macos" ]; then \
+			echo "     brew reinstall python@3.12"; \
+			echo "     # or: xcode-select --install"; \
+		fi; \
+	fi
+	@echo ""
+	@echo "=== 5. C++ Compiler ==="
 	@if command -v g++ >/dev/null 2>&1; then \
 		echo "✅ g++: $$(g++ --version | head -1)"; \
 	elif command -v clang++ >/dev/null 2>&1; then \
@@ -1422,7 +1597,7 @@ except ImportError: \
 		fi; \
 	fi
 	@echo ""
-	@echo "=== 5. CUDA Extension Status ==="
+	@echo "=== 6. CUDA Extension Status ==="
 	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
 		SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1); \
 		echo "✅ CUDA extension built: $$(basename $$SO_FILE)"; \
