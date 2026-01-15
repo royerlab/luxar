@@ -228,8 +228,12 @@ class TestGaussianSplatsIntegration:
         # With σ=1.0 initialization, early stopping may exit before splats fully grow,
         # so we just check both achieve reasonable quality rather than comparing them
         max_reasonable_mse = 0.01  # 1% MSE is reasonable for this simple blob
-        assert mse_early < max_reasonable_mse, f"Early stopping MSE too high: {mse_early}"
-        assert mse_full < max_reasonable_mse, f"Full optimization MSE too high: {mse_full}"
+        assert mse_early < max_reasonable_mse, (
+            f"Early stopping MSE too high: {mse_early}"
+        )
+        assert mse_full < max_reasonable_mse, (
+            f"Full optimization MSE too high: {mse_full}"
+        )
 
     def test_batched_renderer_equivalence(self) -> None:
         """Test that batched renderer produces same results as numpy version."""
