@@ -576,6 +576,7 @@ class TestFP16LowLevelBackend:
             3.0,  # truncate
             1e-5,  # intensity_floor
             8,  # tile_size
+            128,  # batch_size
             False,  # use_fp16
         )
 
@@ -613,6 +614,7 @@ class TestFP16LowLevelBackend:
             3.0,  # truncate
             1e-5,  # intensity_floor
             8,  # tile_size
+            128,  # batch_size
             True,  # use_fp16
         )
 

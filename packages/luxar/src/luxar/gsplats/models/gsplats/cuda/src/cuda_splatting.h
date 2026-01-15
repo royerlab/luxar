@@ -90,6 +90,7 @@ struct BinningState {
  * @param truncate        Base truncation radius
  * @param intensity_floor Minimum intensity threshold for culling
  * @param tile_size       Tile size for spatial binning
+ * @param batch_size      Splat batch size for shared memory loading (32, 128, or 256)
  *
  * @return Tuple of:
  *   - output: (prod(shape),) float32 - rendered volume (flattened)
@@ -107,7 +108,8 @@ forward(
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size
+    int tile_size,
+    int batch_size
 );
 
 // =============================================================================
@@ -130,6 +132,7 @@ forward(
  * @param truncate        Base truncation radius
  * @param intensity_floor Minimum intensity threshold
  * @param tile_size       Tile size
+ * @param batch_size      Splat batch size for shared memory loading (32, 128, or 256)
  *
  * @return Tuple of:
  *   - d_centers: (N, d) float32 - center gradients
@@ -151,7 +154,8 @@ backward(
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size
+    int tile_size,
+    int batch_size
 );
 
 // =============================================================================
@@ -173,6 +177,7 @@ backward(
  * @param truncate        Base truncation radius
  * @param intensity_floor Minimum intensity threshold for culling
  * @param tile_size       Tile size for spatial binning
+ * @param batch_size      Splat batch size for shared memory loading (32, 128, or 256)
  *
  * @return Tuple of:
  *   - output: (prod(shape),) float32 - rendered volume (always FP32)
@@ -190,7 +195,8 @@ forward_fp16(
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size
+    int tile_size,
+    int batch_size
 );
 
 // =============================================================================
@@ -216,6 +222,7 @@ forward_fp16(
  * @param truncate        Base truncation radius
  * @param intensity_floor Minimum intensity threshold
  * @param tile_size       Tile size
+ * @param batch_size      Splat batch size for shared memory loading (32, 128, or 256)
  *
  * @return Tuple of:
  *   - d_centers: (N, d) float32 - center gradients (always FP32)
@@ -237,7 +244,8 @@ backward_fp16(
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size
+    int tile_size,
+    int batch_size
 );
 
 // =============================================================================
