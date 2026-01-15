@@ -131,7 +131,6 @@ class CUDASplatFunction(torch.autograd.Function):
                       Output is always FP32 regardless.
         """
         d = len(shape)
-        device = centers.device
 
         # Determine if we should use FP16 kernels:
         # 1. Explicit use_fp16=True (inference mode with FP16 params)
@@ -237,10 +236,8 @@ class CUDASplatFunction(torch.autograd.Function):
         truncate = ctx.truncate
         intensity_floor = ctx.intensity_floor
         tile_size = ctx.tile_size
-        d = ctx.d
         use_fp16 = ctx.use_fp16
 
-        device = centers.device
 
         if CUDA_BACKEND_AVAILABLE and ctx.tile_counts is not None:
             # Use CUDA backward kernels with cached FP16 tensors if enabled
@@ -455,9 +452,9 @@ class GaussianSplatModelCUDA(torch.nn.Module):
 
         # Also convert buffer tensors if any
         base = self._base
-        if hasattr(base, 'sigma_min_diag') and base.sigma_min_diag is not None:
+        if hasattr(base, "sigma_min_diag") and base.sigma_min_diag is not None:
             base.sigma_min_diag = base.sigma_min_diag.half()
-        if hasattr(base, 'sigma_max_diag') and base.sigma_max_diag is not None:
+        if hasattr(base, "sigma_max_diag") and base.sigma_max_diag is not None:
             base.sigma_max_diag = base.sigma_max_diag.half()
 
     def _auto_tile_size(self, d: int) -> int:

@@ -7,10 +7,11 @@ These tests compare FP32 and FP16 implementations in terms of:
 3. Performance (FP16 should be faster due to reduced memory bandwidth)
 """
 
+import time
+
 import numpy as np
 import pytest
 import torch
-import time
 
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
@@ -715,7 +716,7 @@ class TestAMPSupport:
                 assert not torch.isinf(param.data).any(), "Parameter has Inf"
 
         # Loss should be finite
-        assert all(np.isfinite(l) for l in losses), (
+        assert all(np.isfinite(loss_val) for loss_val in losses), (
             f"Loss contains non-finite values: {losses}"
         )
 
@@ -860,7 +861,7 @@ class TestModelMutationMethods:
         )
 
         # Initial forward
-        output_before = model().clone()
+        model().clone()
         n_before = model.n_splats()
         assert n_before == 50
 

@@ -1,11 +1,20 @@
 """
-Multi-Scale Gaussian Splat Fitting
+Multi-Scale Gaussian Splat Fitting (Experimental)
 
-Fits Gaussian splats using multi-scale decomposition for computational efficiency.
-Uses existing fit_gaussian_splats() as a building block.
+Fits Gaussian splats using multi-scale decomposition. This approach decomposes an
+image into multiple frequency bands and fits splats independently on each band.
+
+WARNING: Testing has shown that this approach does NOT provide speed or quality
+benefits over direct fitting with `fit_gaussian_splats()`. The decomposition
+overhead and the need to fit multiple scales often results in slower total time
+and comparable or worse reconstruction quality. Use `fit_gaussian_splats()` for
+production workloads.
+
+This module is preserved for research/experimentation purposes.
 """
 
 import time
+import warnings
 from typing import List, Optional, Union
 
 import numpy as np
@@ -94,8 +103,10 @@ def _distribute_seeds_by_maxima(
         )
         if verbose:
             floats_per_splat = _compute_floats_per_splat(ndim)
-            aprint(f"Ratio {compression_ratio:.1%} → {total_seeds} seeds "
-                   f"({floats_per_splat} floats/splat in {ndim}D)")
+            aprint(
+                f"Ratio {compression_ratio:.1%} → {total_seeds} seeds "
+                f"({floats_per_splat} floats/splat in {ndim}D)"
+            )
     else:
         total_seeds = seeds
 
@@ -206,11 +217,16 @@ def fit_multiscale_gaussian_splats(
     **fit_kwargs,
 ) -> GSplatData:
     """
-    Fit Gaussian splats using multi-scale decomposition for computational efficiency.
+    Fit Gaussian splats using multi-scale decomposition (EXPERIMENTAL).
+
+    .. warning::
+        Testing has shown this approach does NOT provide speed or quality benefits
+        over direct fitting. Use ``fit_gaussian_splats()`` instead for production.
 
     This function decomposes the input image into multiple scales, fits Gaussian splats
-    independently on each scale (coarse scales have fewer voxels → faster), scales
-    parameters back to full resolution, and combines all splats together.
+    independently on each scale, scales parameters back to full resolution, and combines
+    all splats together. The decomposition overhead typically negates any theoretical
+    speedup from fitting on smaller images.
 
     Parameters
     ----------
@@ -237,7 +253,6 @@ def fit_multiscale_gaussian_splats(
         Number of iterations for multi-scale decomposition.
     n_iters_per_scale : int, default=500
         Number of iterations for fitting Gaussians on each scale.
-        Fewer iterations needed per scale due to fewer voxels.
     lr : float, default=0.01
         Learning rate passed to fit_gaussian_splats().
     verbose : bool, default=False
@@ -280,7 +295,7 @@ def fit_multiscale_gaussian_splats(
           * per_scale_stats: List of stats from each scale's fitting
           * n_splats_per_scale: Number of splats fitted per scale
           * total_splats: Total number of splats across all scales
-          * computational_speedup: Theoretical voxel-based speedup
+          * computational_speedup: Theoretical voxel-based speedup (often not realized)
           * total_time_seconds: Total wall-clock time
           * decomposition_time_seconds: Time for decomposition
           * fitting_time_seconds: Time for per-scale fitting
@@ -293,13 +308,13 @@ def fit_multiscale_gaussian_splats(
 
     Notes
     -----
-    - Computational speedup: Scale factor r reduces voxel count by (1/r)^d
-      * 2D with scale 8: 64× fewer pixels
-      * 3D with scale 8: 512× fewer voxels
-    - Coarse scales capture large structures efficiently
-    - Fine scales capture details at full resolution
+    - **Performance**: Despite theoretical voxel reduction at coarse scales,
+      the decomposition overhead and need to fit multiple scales typically
+      results in slower overall time than direct fitting. Benchmark before
+      assuming speedup.
+    - Coarse scales capture large structures, fine scales capture details
     - Amplitudes and sharpness values do not scale (see Parameter Scaling Rules)
-    - Uses existing fit_gaussian_splats() as building block (thin wrapper)
+    - Uses existing fit_gaussian_splats() as building block
 
     Examples
     --------
@@ -325,6 +340,15 @@ def fit_multiscale_gaussian_splats(
     ... )
     >>> print(f"Centers shape: {result.centers.shape}")
     """
+    # Warn users that this approach doesn't provide expected benefits
+    warnings.warn(
+        "fit_multiscale_gaussian_splats() is experimental and does NOT provide "
+        "speed or quality benefits over fit_gaussian_splats(). "
+        "Consider using fit_gaussian_splats() instead.",
+        UserWarning,
+        stacklevel=2,
+    )
+
     # Default scales
     if scales is None:
         scales = [1, 2, 4, 8]

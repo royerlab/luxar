@@ -72,7 +72,7 @@ def build():
     # Build using torch's JIT compilation
     # This compiles and loads the module, placing .so in a cache dir
     # We'll then copy it to the cuda/ directory
-    module = load(
+    load(
         name="cuda_splatting_backend",
         sources=[str(s) for s in sources],
         extra_cflags=extra_cflags,

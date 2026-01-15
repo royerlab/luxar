@@ -20,13 +20,14 @@ return GSplatData with scale-informed Gaussian shapes.
 **Unified Entry Point:**
 
 Use `generate_seeds()` for a unified interface to all methods. The default
-method is "auto" which combines all methods with principled deduplication.
+method is "auto" which uses fast edges + grid combination (decomposition
+excluded for speed). Use method="decomposition,edges,grid" to include all.
 
 Examples
 --------
 >>> from luxar.gsplats.seeds import generate_seeds
 >>>
->>> # Automatic method selection (recommended) - combines all methods
+>>> # Automatic method selection (recommended) - fast edges + grid
 >>> seeds = generate_seeds(image)
 >>>
 >>> # Single method

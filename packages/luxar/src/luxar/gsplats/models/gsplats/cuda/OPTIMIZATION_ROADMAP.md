@@ -679,51 +679,23 @@ May need a different data structure (e.g., global list with tile tags).
 
 ---
 
-### 3.6 Implement Global Splat Rendering
+### 3.6 Implement Global Splat Rendering ✅ COMPLETE
 
 | Metric | Rating |
 |--------|--------|
 | Impact | ⭐⭐⭐⭐⭐ (correctness fix) |
 | Simplicity | ⭐⭐ (new kernel) |
-| Certainty | ⭐⭐⭐⭐⭐ (currently broken) |
+| Certainty | ⭐⭐⭐⭐⭐ (implemented) |
 | Risk | ⭐⭐ (must integrate properly) |
 
-**Current bug**: Global splats (covering >10% of tiles) are detected but **silently dropped**.
+**Status**: ✅ IMPLEMENTED in `dispatch_forward` lines 1920-1971 and dedicated kernels
+`rasterize_forward_global_kernel` (lines 1189-1341) and `rasterize_backward_global_kernel`
+(lines 1347-1489).
 
-**Fix**: Add a separate kernel for global splats:
-
-```cuda
-__global__ void rasterize_global_splats(
-    const float* centers,
-    const float* conic,
-    const float* amps,
-    const float* sharpness,
-    const bool* global_flags,  // From preprocess
-    float* output,
-    int N, const int* shape, ...
-) {
-    // Each thread handles one pixel
-    int pixel_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (pixel_idx >= num_pixels) return;
-
-    float px[3];
-    unravel_index(pixel_idx, shape, px);
-
-    float intensity_sum = 0.0f;
-
-    // Check ALL global splats (broadcast pattern)
-    for (int i = 0; i < N; i++) {
-        if (!global_flags[i]) continue;
-
-        // Compute contribution from global splat
-        float d[3] = { px[0] - centers[i*3], ... };
-        float dist_sq = mahalanobis_3d(d, &conic[i*6]);
-        // ... add contribution
-    }
-
-    atomicAdd(&output[pixel_idx], intensity_sum);
-}
-```
+**Implementation**: Separate forward and backward kernels handle global splats:
+- `rasterize_forward_global_kernel` (lines 1189-1341): Processes all global splats per pixel
+- `rasterize_backward_global_kernel` (lines 1347-1489): Gradient computation for global splats
+- `dispatch_forward` (lines 1920-1971): Detects global splats and routes to appropriate kernel
 
 ---
 
@@ -950,8 +922,10 @@ __global__ void rasterize(...) {
 
 ### Phase 3: Advanced (1-2 weeks, additional ~30% speedup)
 12. 🔧 Double-buffered prefetch (3.1) - Ampere+
-13. 🔧 Per-tile gradient accumulation (3.2)
-14. 🔧 Global splat rendering fix (3.6) - **Correctness!**
+13. 🔧 Per-tile gradient accumulation (3.2) - In progress
+14. ✅ Global splat rendering fix (3.6) - **DONE** (dispatch_forward lines 1920-1971)
+15. 🔧 Fuse preprocess+bin kernels (3.5) - In progress
+16. 🔧 Vectorized FP16 loads - In progress
 
 ### Phase 4: Architecture-Specific (ongoing)
 15. 🚀 Hopper optimizations (4.1, 4.2)

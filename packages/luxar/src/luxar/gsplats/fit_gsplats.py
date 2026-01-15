@@ -117,17 +117,17 @@ class GaussianSplatFitter:
         seed_method : str, default="auto" (RECOMMENDED)
             Method for generating seeds when seeds=None:
 
-            - **"auto"** (DEFAULT, RECOMMENDED): Principled combination of decomposition,
-              edges, and grid methods. Provides best convergence by capturing global
-              structure (decomposition), boundaries (edges), and coverage (grid).
+            - **"auto"** (DEFAULT, RECOMMENDED): Fast edges + grid combination.
+              Provides good convergence by capturing boundaries (edges) and
+              spatial coverage (grid). Decomposition excluded for speed.
 
-            - "decomposition": Multi-scale decomposition for blob-like features.
+            - "decomposition": Multi-scale decomposition for blob-like features (slow).
 
             - "grid": Uniform grid seeding for spatial coverage.
 
             - "edges": Edge-based seeding with anisotropic shapes.
 
-            - Comma-separated combinations (e.g., "decomposition,edges").
+            - Comma-separated combinations (e.g., "decomposition,edges,grid").
 
             This parameter is only used when seeds=None.
         **seed_kwargs
@@ -327,12 +327,12 @@ def fit_gaussian_splats(
     seed_method : str, default="auto" (RECOMMENDED)
         Method for generating seeds when seeds=None:
 
-        - **"auto"** (DEFAULT, RECOMMENDED): Principled combination of decomposition,
-          edges, and grid methods. Provides best convergence by capturing global
-          structure (decomposition), boundaries (edges), and spatial coverage (grid).
-          Budget allocation: ~50% decomposition, ~30% edges, ~20% grid.
+        - **"auto"** (DEFAULT, RECOMMENDED): Fast edges + grid combination.
+          Provides good convergence by capturing boundaries (edges) and spatial
+          coverage (grid). Decomposition is excluded by default for speed.
+          Budget allocation: ~60% edges, ~40% grid.
 
-        - "decomposition": Multi-scale decomposition for blob-like features.
+        - "decomposition": Multi-scale decomposition for blob-like features (slow).
           Captures global structure but may miss boundaries and fine details.
 
         - "grid": Uniform grid seeding for spatial coverage.
@@ -341,7 +341,7 @@ def fit_gaussian_splats(
         - "edges": Edge-based seeding with anisotropic shapes.
           Good for images with clear boundaries and structure.
 
-        - Comma-separated combinations (e.g., "decomposition,edges").
+        - Comma-separated combinations (e.g., "decomposition,edges,grid").
 
         This parameter is only used when seeds=None. If seeds are provided explicitly,
         this parameter is ignored.

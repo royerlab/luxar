@@ -243,10 +243,16 @@ def main() -> None:
             movie_frames = decomp_stats.get("movie_frames")
             if movie_frames and movie_frames.get("iterations"):
                 interpolation = decomp_stats.get("interpolation", "cubic")
-                aprint(f"Showing decomposition optimization movie ({len(movie_frames['iterations'])} frames)...")
-                show_optimization_movie(movie_frames, V.shape, interpolation=interpolation)
+                aprint(
+                    f"Showing decomposition optimization movie ({len(movie_frames['iterations'])} frames)..."
+                )
+                show_optimization_movie(
+                    movie_frames, V.shape, interpolation=interpolation
+                )
             else:
-                aprint("No movie frames recorded (napari_movie may not have been enabled)")
+                aprint(
+                    "No movie frames recorded (napari_movie may not have been enabled)"
+                )
 
         # Step 3: Display decomposition
         with asection("Step 2: Viewing Decomposition"):

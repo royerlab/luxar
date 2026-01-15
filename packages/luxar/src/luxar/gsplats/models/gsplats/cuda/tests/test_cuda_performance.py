@@ -15,7 +15,7 @@ CUDA_AVAILABLE = torch.cuda.is_available()
 
 # Check if CUDA backend is compiled
 try:
-    import cuda_splatting_backend
+    import cuda_splatting_backend  # noqa: F401
 
     CUDA_BACKEND_AVAILABLE = True
 except ImportError:

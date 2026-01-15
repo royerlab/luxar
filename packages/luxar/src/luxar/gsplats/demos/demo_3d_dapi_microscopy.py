@@ -76,7 +76,7 @@ USE_CUDA = True  # Enable CUDA acceleration on NVIDIA GPUs (10-50x faster!)
 # ==========================
 
 # Setup Arbol
-Arbol.max_depth = 4
+Arbol.max_depth = 5
 
 
 # --- Helper: oriented 3D ellipsoid wireframe from covariance ---
@@ -164,8 +164,10 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             # OME-ZARR typically uses (T, C, Z, Y, X) format
             if len(full_shape) == 5:
                 n_time, n_channels, z_size, y_size, x_size = full_shape
-                aprint(f"OME-ZARR 5D: T={n_time} C={n_channels} Z={z_size}"
-                       f" Y={y_size} X={x_size}")
+                aprint(
+                    f"OME-ZARR 5D: T={n_time} C={n_channels} Z={z_size}"
+                    f" Y={y_size} X={x_size}"
+                )
 
                 # Extract DAPI channel
                 if DAPI_CHANNEL >= n_channels:
@@ -192,8 +194,10 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                     TARGET_SIZE / y_size,
                     TARGET_SIZE / x_size,
                 ]
-                aprint(f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
-                       f" X={zoom_factors[2]:.3f}")
+                aprint(
+                    f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
+                    f" X={zoom_factors[2]:.3f}"
+                )
                 V = zoom(V, zoom_factors, order=1)
                 aprint(f"Downscaled to: {V.shape}")
 
@@ -223,8 +227,10 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                     TARGET_SIZE / y_size,
                     TARGET_SIZE / x_size,
                 ]
-                aprint(f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
-                       f" X={zoom_factors[2]:.3f}")
+                aprint(
+                    f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
+                    f" X={zoom_factors[2]:.3f}"
+                )
                 V = zoom(V, zoom_factors, order=1)
                 aprint(f"Downscaled to: {V.shape}")
 
@@ -246,14 +252,14 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                     TARGET_SIZE / y_size,
                     TARGET_SIZE / x_size,
                 ]
-                aprint(f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
-                       f" X={zoom_factors[2]:.3f}")
+                aprint(
+                    f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
+                    f" X={zoom_factors[2]:.3f}"
+                )
                 V = zoom(V, zoom_factors, order=1)
                 aprint(f"Downscaled to: {V.shape}")
             else:
-                raise ValueError(
-                    f"Unexpected shape: {full_shape}. Expected 3D/4D/5D."
-                )
+                raise ValueError(f"Unexpected shape: {full_shape}. Expected 3D/4D/5D.")
 
             # Normalize to [0, 100] range for consistency with other demos
             V_min, V_max = V.min(), V.max()
@@ -410,8 +416,10 @@ with asection("Computing 3D reconstruction quality at different compression leve
         centers_frames.append(Ck)
 
         if (i + 1) % 5 == 0:
-            aprint(f"Frame {i+1:02d}/{len(keep_counts)}: {K} splats, "
-                   f"{bit_compression_pct[i]:.1f}% compression")
+            aprint(
+                f"Frame {i + 1:02d}/{len(keep_counts)}: {K} splats, "
+                f"{bit_compression_pct[i]:.1f}% compression"
+            )
 
 # Console summary
 aprint("📈 3D Compression Analysis Results:")
@@ -423,8 +431,10 @@ for i, K in enumerate(keep_counts[::5]):  # Show every 5th frame
         cp = bit_compression_pct[idx]
         bp = bpp_frames[idx]
         re = rel_err_frames[idx]
-        aprint(f"Fr{idx:02d} K={K:4d} bits={mb:>10,} comp={cp:5.1f}% "
-               f"bpv={bp:.3f} L2={re:.4f}")
+        aprint(
+            f"Fr{idx:02d} K={K:4d} bits={mb:>10,} comp={cp:5.1f}% "
+            f"bpv={bp:.3f} L2={re:.4f}"
+        )
 
 if not NO_NAPARI:
     # ----- Napari viewer with "compression" slider -----
