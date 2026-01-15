@@ -5,11 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Luxar Project Statistics Report</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             line-height: 1.6;
@@ -19,7 +15,7 @@
             padding: 2rem;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
             background: white;
             border-radius: 12px;
@@ -32,430 +28,602 @@
             padding: 3rem 2rem;
             text-align: center;
         }
-        header h1 {
-            font-size: 2.5rem;
-            margin-bottom: 0.5rem;
-            font-weight: 700;
-        }
-        header p {
-            font-size: 1.1rem;
-            opacity: 0.9;
-        }
-        .content {
-            padding: 2rem;
-        }
+        header h1 { font-size: 2.5rem; margin-bottom: 0.5rem; font-weight: 700; }
+        header p { font-size: 1.1rem; opacity: 0.9; }
+        .content { padding: 2rem; }
+
         .summary {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1.25rem;
             margin-bottom: 2rem;
         }
         .stat-card {
             background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-            padding: 1.5rem;
+            padding: 1.25rem;
             border-radius: 8px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             transition: transform 0.2s;
         }
-        .stat-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 8px 12px rgba(0,0,0,0.15);
-        }
+        .stat-card:hover { transform: translateY(-4px); box-shadow: 0 8px 12px rgba(0,0,0,0.15); }
         .stat-card h3 {
-            font-size: 0.9rem;
+            font-size: 0.8rem;
             text-transform: uppercase;
             letter-spacing: 0.05em;
             color: #667eea;
             margin-bottom: 0.5rem;
             font-weight: 600;
         }
-        .stat-card .value {
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: #333;
-        }
-        .stat-card .label {
-            font-size: 0.85rem;
-            color: #666;
-            margin-top: 0.25rem;
-        }
-        section {
-            margin-bottom: 2.5rem;
-        }
+        .stat-card .value { font-size: 2rem; font-weight: 700; color: #333; }
+        .stat-card .label { font-size: 0.8rem; color: #666; margin-top: 0.25rem; }
+
+        section { margin-bottom: 2.5rem; }
         section h2 {
-            font-size: 1.8rem;
+            font-size: 1.6rem;
             color: #667eea;
             margin-bottom: 1rem;
             padding-bottom: 0.5rem;
             border-bottom: 3px solid #667eea;
         }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 1rem;
-            font-size: 0.95rem;
+        section h3 {
+            font-size: 1.2rem;
+            color: #444;
+            margin: 1.5rem 0 1rem 0;
         }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.9rem; }
         th {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 1rem;
+            padding: 0.75rem;
             text-align: left;
             font-weight: 600;
             text-transform: uppercase;
-            font-size: 0.85rem;
+            font-size: 0.75rem;
             letter-spacing: 0.05em;
         }
-        td {
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid #e0e0e0;
+        td { padding: 0.6rem 0.75rem; border-bottom: 1px solid #e0e0e0; }
+        tr:hover { background: #f8f9fa; }
+        .number { text-align: right; font-family: 'Monaco', 'Courier New', monospace; font-weight: 500; }
+
+        .lang-badge {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: white;
         }
-        tr:hover {
-            background: #f8f9fa;
-        }
-        .number {
-            text-align: right;
-            font-family: 'Monaco', 'Courier New', monospace;
-            font-weight: 500;
-        }
+
         .progress-bar {
-            height: 20px;
+            height: 16px;
             background: #e0e0e0;
-            border-radius: 10px;
+            border-radius: 8px;
             overflow: hidden;
             margin-top: 0.5rem;
         }
         .progress-fill {
             height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
             transition: width 0.3s ease;
         }
+
+        .lang-breakdown {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+        .lang-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1.25rem;
+            border-left: 4px solid;
+        }
+        .lang-card h4 {
+            font-size: 1rem;
+            margin-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .lang-stats { font-size: 0.85rem; color: #555; }
+        .lang-stats div { margin-bottom: 0.25rem; }
+
+        .two-column {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 2rem;
+        }
+
+        .insight {
+            margin-bottom: 1rem;
+            padding: 1rem;
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            border-radius: 4px;
+        }
+        .insight strong { color: #667eea; }
+
         footer {
             text-align: center;
             padding: 2rem;
             color: #666;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             border-top: 1px solid #e0e0e0;
         }
-        .highlight {
-            background: #fff3cd;
-            padding: 0.2em 0.4em;
+
+        .health-indicator {
+            display: inline-block;
+            padding: 0.15rem 0.4rem;
             border-radius: 3px;
+            font-size: 0.75rem;
+            font-weight: 500;
         }
+        .health-good { background: #d4edda; color: #155724; }
+        .health-warning { background: #fff3cd; color: #856404; }
+        .health-danger { background: #f8d7da; color: #721c24; }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>📊 Luxar Project Statistics</h1>
-            <p>Comprehensive codebase analysis • Generated November 23, 2025 at 17:11</p>
+            <h1>Luxar Project Statistics</h1>
+            <p>Comprehensive codebase analysis | Generated January 15, 2026 at 00:36</p>
         </header>
 
         <div class="content">
+            <!-- Executive Summary -->
             <div class="summary">
                 <div class="stat-card">
                     <h3>Total Files</h3>
-                    <div class="value">309</div>
-                    <div class="label">Python + TypeScript</div>
+                    <div class="value">842</div>
+                    <div class="label">All languages</div>
                 </div>
                 <div class="stat-card">
                     <h3>Lines of Code</h3>
-                    <div class="value">63,042</div>
+                    <div class="value">229,935</div>
                     <div class="label">Executable code</div>
                 </div>
                 <div class="stat-card">
                     <h3>Total Lines</h3>
-                    <div class="value">89,513</div>
-                    <div class="label">Including comments & blanks</div>
+                    <div class="value">326,989</div>
+                    <div class="label">Including comments</div>
                 </div>
                 <div class="stat-card">
-                    <h3>Classes</h3>
-                    <div class="value">286</div>
-                    <div class="label">Python + TypeScript</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Functions</h3>
-                    <div class="value">578</div>
-                    <div class="label">Top-level functions</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Methods</h3>
-                    <div class="value">1,187</div>
-                    <div class="label">Class methods</div>
+                    <h3>Languages</h3>
+                    <div class="value">13</div>
+                    <div class="label">Active in codebase</div>
                 </div>
                 <div class="stat-card">
                     <h3>Test Files</h3>
-                    <div class="value">97</div>
-                    <div class="label">Python + TypeScript</div>
+                    <div class="value">205</div>
+                    <div class="label">Py + TS + E2E</div>
                 </div>
                 <div class="stat-card">
                     <h3>Tests</h3>
-                    <div class="value">1,614</div>
+                    <div class="value">3,608</div>
                     <div class="label">Total test cases</div>
                 </div>
                 <div class="stat-card">
                     <h3>Coverage</h3>
-                    <div class="value">26.0%</div>
-                    <div class="label">Avg (Py: 52%, TS: 0%)</div>
+                    <div class="value">49.1%</div>
+                    <div class="label">Weighted average</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Commits</h3>
+                    <div class="value">482</div>
+                    <div class="label">127 in last 30d</div>
                 </div>
             </div>
 
+            <!-- Language Breakdown -->
+            <section>
+                <h2>Language Breakdown</h2>
+                <table>
+                    <tr>
+                        <th>Language</th>
+                        <th class="number">Files</th>
+                        <th class="number">Code Lines</th>
+                        <th class="number">Total Lines</th>
+                        <th class="number">Comments</th>
+                        <th class="number">% of Codebase</th>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #3572A5">PYTHON</span></td>
+                        <td class="number">300</td>
+                        <td class="number">65,567</td>
+                        <td class="number">95,449</td>
+                        <td class="number">12,491</td>
+                        <td class="number">28.5%</td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #3178C6">TYPESCRIPT</span></td>
+                        <td class="number">265</td>
+                        <td class="number">67,309</td>
+                        <td class="number">104,090</td>
+                        <td class="number">22,202</td>
+                        <td class="number">29.3%</td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #DEA584">RUST</span></td>
+                        <td class="number">10</td>
+                        <td class="number">1,647</td>
+                        <td class="number">2,641</td>
+                        <td class="number">673</td>
+                        <td class="number">0.7%</td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #76B900">CUDA</span></td>
+                        <td class="number">9</td>
+                        <td class="number">2,768</td>
+                        <td class="number">4,462</td>
+                        <td class="number">1,179</td>
+                        <td class="number">1.2%</td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #563D7C">CSS</span></td>
+                        <td class="number">17</td>
+                        <td class="number">3,150</td>
+                        <td class="number">4,374</td>
+                        <td class="number">503</td>
+                        <td class="number">1.4%</td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #F7DF1E">JAVASCRIPT</span></td>
+                        <td class="number">2</td>
+                        <td class="number">602</td>
+                        <td class="number">1,343</td>
+                        <td class="number">663</td>
+                        <td class="number">0.3%</td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #89E051">SHELL</span></td>
+                        <td class="number">1</td>
+                        <td class="number">45</td>
+                        <td class="number">73</td>
+                        <td class="number">17</td>
+                        <td class="number">0.0%</td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #292929">JSON</span></td>
+                        <td class="number">8</td>
+                        <td class="number">250</td>
+                        <td class="number">250</td>
+                        <td class="number">0</td>
+                        <td class="number">0.1%</td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #9C4121">TOML</span></td>
+                        <td class="number">3</td>
+                        <td class="number">329</td>
+                        <td class="number">414</td>
+                        <td class="number">38</td>
+                        <td class="number">0.1%</td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #CB171E">YAML</span></td>
+                        <td class="number">2</td>
+                        <td class="number">2,337</td>
+                        <td class="number">3,028</td>
+                        <td class="number">0</td>
+                        <td class="number">1.0%</td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #083FA1">MARKDOWN</span></td>
+                        <td class="number">221</td>
+                        <td class="number">83,162</td>
+                        <td class="number">107,889</td>
+                        <td class="number">0</td>
+                        <td class="number">36.2%</td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #E34C26">HTML</span></td>
+                        <td class="number">3</td>
+                        <td class="number">1,048</td>
+                        <td class="number">1,136</td>
+                        <td class="number">5</td>
+                        <td class="number">0.5%</td>
+                    </tr>
+                </table>
+
+                <h3>Code Distribution</h3>
+                <div class="progress-bar" style="height: 24px; display: flex;">
+                    <div class="progress-fill" style="width: 28.515450018483484%; background: #3572A5;" title="Python: 28.5%"></div>
+                    <div class="progress-fill" style="width: 29.273055428708112%; background: #3178C6;" title="Typescript: 29.3%"></div>
+                    <div class="progress-fill" style="width: 0.716289386130863%; background: #DEA584;" title="Rust: 0.7%"></div>
+                    <div class="progress-fill" style="width: 1.2038184704372976%; background: #76B900;" title="Cuda: 1.2%"></div>
+                    <div class="progress-fill" style="width: 1.369952377845913%; background: #563D7C;" title="Css: 1.4%"></div>
+                </div>
+                <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.75rem; font-size: 0.85rem;">
+                    <span><span style="display:inline-block;width:12px;height:12px;background:#3572A5;border-radius:2px;margin-right:4px;"></span>Python</span>
+                    <span><span style="display:inline-block;width:12px;height:12px;background:#3178C6;border-radius:2px;margin-right:4px;"></span>Typescript</span>
+                    <span><span style="display:inline-block;width:12px;height:12px;background:#DEA584;border-radius:2px;margin-right:4px;"></span>Rust</span>
+                    <span><span style="display:inline-block;width:12px;height:12px;background:#76B900;border-radius:2px;margin-right:4px;"></span>Cuda</span>
+                    <span><span style="display:inline-block;width:12px;height:12px;background:#563D7C;border-radius:2px;margin-right:4px;"></span>Css</span>
+                    <span><span style="display:inline-block;width:12px;height:12px;background:#F7DF1E;border-radius:2px;margin-right:4px;"></span>Javascript</span>
+                    <span><span style="display:inline-block;width:12px;height:12px;background:#89E051;border-radius:2px;margin-right:4px;"></span>Shell</span>
+                </div>
+            </section>
+
+            <!-- Primary Languages Detail -->
+            <section>
+                <h2>Primary Languages</h2>
+                <div class="lang-breakdown">
+                    <div class="lang-card" style="border-color: #3572A5">
+                        <h4><span class="lang-badge" style="background: #3572A5">PYTHON</span> Core Backend</h4>
+                        <div class="lang-stats">
+                            <div><strong>300</strong> files | <strong>65,567</strong> lines of code</div>
+                            <div>Classes: 422 | Functions: 697 | Methods: 1,904</div>
+                            <div>Coverage: <strong>38.0%</strong> | Tests: 1,759</div>
+                        </div>
+                    </div>
+                    <div class="lang-card" style="border-color: #3178C6">
+                        <h4><span class="lang-badge" style="background: #3178C6">TYPESCRIPT</span> Viewer Frontend</h4>
+                        <div class="lang-stats">
+                            <div><strong>265</strong> files | <strong>67,309</strong> lines of code</div>
+                            <div>Classes: 89 | Functions: 388 | Interfaces: 248 | Types: 31</div>
+                            <div>Coverage: <strong>59.9%</strong> | Tests: 1,808</div>
+                        </div>
+                    </div>
+                    <div class="lang-card" style="border-color: #DEA584">
+                        <h4><span class="lang-badge" style="background: #DEA584">RUST</span> WASM Module</h4>
+                        <div class="lang-stats">
+                            <div><strong>10</strong> files | <strong>1,647</strong> lines of code</div>
+                            <div>Structs: 0 | Functions: 80 | Traits: 0 | Impls: 0</div>
+                            <div>Tests: 41 passed</div>
+                        </div>
+                    </div>
+                    <div class="lang-card" style="border-color: #76B900">
+                        <h4><span class="lang-badge" style="background: #76B900">CUDA</span> GPU Acceleration</h4>
+                        <div class="lang-stats">
+                            <div><strong>9</strong> files | <strong>2,768</strong> lines of code</div>
+                            <div>Kernels: 6 | Device Functions: 49 | Host Functions: 2</div>
+                        </div>
+                    </div>
+                    <div class="lang-card" style="border-color: #563D7C">
+                        <h4><span class="lang-badge" style="background: #563D7C">CSS</span> Styling</h4>
+                        <div class="lang-stats">
+                            <div><strong>17</strong> files | <strong>3,150</strong> lines of code</div>
+                            <div>Rules: 651 | Variables: 11 | Media Queries: 0</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Test & Quality Metrics -->
             <section>
                 <h2>Test & Quality Metrics</h2>
                 <table>
                     <tr>
                         <th>Metric</th>
-                        <th>Python</th>
-                        <th>TypeScript</th>
-                        <th>Total</th>
+                        <th class="number">Python</th>
+                        <th class="number">TypeScript</th>
+                        <th class="number">Rust</th>
+                        <th class="number">E2E</th>
+                        <th class="number">Total</th>
                         <th>Status</th>
                     </tr>
                     <tr>
                         <td>Test Files</td>
-                        <td class="number">63</td>
-                        <td class="number">34</td>
-                        <td class="number">97</td>
-                        <td>✅ Excellent</td>
+                        <td class="number">94</td>
+                        <td class="number">80</td>
+                        <td class="number">-</td>
+                        <td class="number">31</td>
+                        <td class="number">205</td>
+                        <td><span class="health-indicator health-good">Good</span></td>
                     </tr>
                     <tr>
-                        <td>Total Tests</td>
-                        <td class="number">1,086</td>
-                        <td class="number">528</td>
-                        <td class="number">1,614</td>
-                        <td>✅ Excellent</td>
+                        <td>Test Count</td>
+                        <td class="number">1,759</td>
+                        <td class="number">1,808</td>
+                        <td class="number">41</td>
+                        <td class="number">-</td>
+                        <td class="number">3,608</td>
+                        <td><span class="health-indicator health-good">Comprehensive</span></td>
                     </tr>
                     <tr>
-                        <td>Tests Passing</td>
-                        <td class="number">1,086</td>
-                        <td class="number">503</td>
-                        <td class="number">1,589</td>
-                        <td>✅ 98%</td>
-                    </tr>
-                    <tr>
-                        <td>Tests Failing</td>
-                        <td class="number">0</td>
-                        <td class="number">25</td>
-                        <td class="number">25</td>
-                        <td>⚠️ Has failures</td>
+                        <td>Tests Passed</td>
+                        <td class="number">1,703</td>
+                        <td class="number">1,794</td>
+                        <td class="number">41</td>
+                        <td class="number">-</td>
+                        <td class="number">3,538</td>
+                        <td><span class="health-indicator health-warning">Some Failures</span></td>
                     </tr>
                     <tr>
                         <td>Code Coverage</td>
-                        <td class="number">52.0%</td>
-                        <td class="number">0.0%</td>
-                        <td class="number">26.0%</td>
-                        <td>⚠️ Below 70%</td>
+                        <td class="number">38.0%</td>
+                        <td class="number">59.9%</td>
+                        <td class="number">-</td>
+                        <td class="number">-</td>
+                        <td class="number">49.1%</td>
+                        <td><span class="health-indicator health-danger">Needs Work</span></td>
                     </tr>
                     <tr>
-                        <td>Tests per 1000 LOC</td>
-                        <td class="number">28.1</td>
-                        <td class="number">21.7</td>
-                        <td class="number">25.6</td>
-                        <td>✅ Well tested</td>
+                        <td>Tests per 1K LOC</td>
+                        <td class="number">26.8</td>
+                        <td class="number">26.9</td>
+                        <td class="number">-</td>
+                        <td class="number">-</td>
+                        <td class="number">15.7</td>
+                        <td><span class="health-indicator health-good">Well Tested</span></td>
                     </tr>
                 </table>
             </section>
 
             <section>
-                <h2>Python Codebase</h2>
-                <table>
-                    <tr>
-                        <th>Metric</th>
-                        <th class="number">Count</th>
-                        <th class="number">Percentage</th>
-                    </tr>
-                    <tr>
-                        <td>Python Files</td>
-                        <td class="number">216</td>
-                        <td class="number">69.9%</td>
-                    </tr>
-                    <tr>
-                        <td>Lines of Code</td>
-                        <td class="number">38,679</td>
-                        <td class="number">61.4%</td>
-                    </tr>
-                    <tr>
-                        <td>Total Lines</td>
-                        <td class="number">53,444</td>
-                        <td class="number">-</td>
-                    </tr>
-                    <tr>
-                        <td>Comment Lines</td>
-                        <td class="number">4,803</td>
-                        <td class="number">9.0%</td>
-                    </tr>
-                    <tr>
-                        <td>Blank Lines</td>
-                        <td class="number">9,962</td>
-                        <td class="number">18.6%</td>
-                    </tr>
-                    <tr>
-                        <td>Classes</td>
-                        <td class="number">249</td>
-                        <td class="number">-</td>
-                    </tr>
-                    <tr>
-                        <td>Functions (top-level)</td>
-                        <td class="number">447</td>
-                        <td class="number">-</td>
-                    </tr>
-                    <tr>
-                        <td>Methods</td>
-                        <td class="number">1,187</td>
-                        <td class="number">-</td>
-                    </tr>
-                </table>
-
-                <h3 style="margin-top: 2rem; margin-bottom: 1rem; color: #667eea;">Python Modules Breakdown</h3>
-                <table>
-                    <tr>
-                        <th>Module</th>
-                        <th class="number">Files</th>
-                        <th class="number">Code Lines</th>
-                    </tr>
-                    <tr>
-                        <td>packages</td>
-                        <td class="number">179</td>
-                        <td class="number">32,767</td>
-                    </tr>
-                    <tr>
-                        <td>examples</td>
-                        <td class="number">35</td>
-                        <td class="number">4,798</td>
-                    </tr>
-                    <tr>
-                        <td>stats</td>
-                        <td class="number">1</td>
-                        <td class="number">773</td>
-                    </tr>
-                    <tr>
-                        <td>scripts</td>
-                        <td class="number">1</td>
-                        <td class="number">341</td>
-                    </tr>
-                </table>
-            </section>
-
-            <section>
-                <h2>TypeScript Codebase</h2>
-                <table>
-                    <tr>
-                        <th>Metric</th>
-                        <th class="number">Count</th>
-                        <th class="number">Percentage</th>
-                    </tr>
-                    <tr>
-                        <td>TypeScript Files</td>
-                        <td class="number">93</td>
-                        <td class="number">30.1%</td>
-                    </tr>
-                    <tr>
-                        <td>Lines of Code</td>
-                        <td class="number">24,363</td>
-                        <td class="number">38.6%</td>
-                    </tr>
-                    <tr>
-                        <td>Total Lines</td>
-                        <td class="number">36,069</td>
-                        <td class="number">-</td>
-                    </tr>
-                    <tr>
-                        <td>Comment Lines</td>
-                        <td class="number">6,531</td>
-                        <td class="number">18.1%</td>
-                    </tr>
-                    <tr>
-                        <td>Blank Lines</td>
-                        <td class="number">5,175</td>
-                        <td class="number">14.3%</td>
-                    </tr>
-                    <tr>
-                        <td>Classes</td>
-                        <td class="number">37</td>
-                        <td class="number">-</td>
-                    </tr>
-                    <tr>
-                        <td>Functions</td>
-                        <td class="number">131</td>
-                        <td class="number">-</td>
-                    </tr>
-                    <tr>
-                        <td>Interfaces</td>
-                        <td class="number">109</td>
-                        <td class="number">-</td>
-                    </tr>
-                    <tr>
-                        <td>Type Aliases</td>
-                        <td class="number">15</td>
-                        <td class="number">-</td>
-                    </tr>
-                </table>
-
-                <h3 style="margin-top: 2rem; margin-bottom: 1rem; color: #667eea;">TypeScript Packages Breakdown</h3>
-                <table>
-                    <tr>
-                        <th>Package</th>
-                        <th class="number">Files</th>
-                        <th class="number">Code Lines</th>
-                    </tr>
-                    <tr>
-                        <td>packages</td>
-                        <td class="number">93</td>
-                        <td class="number">24,363</td>
-                    </tr>
-                </table>
-            </section>
-
-            <section>
-                <h2>Code Composition</h2>
-                <p style="margin-bottom: 1rem;">Distribution of code vs comments vs blank lines</p>
-                <div style="margin-bottom: 1rem;">
-                    <strong>Python</strong>
-                    <div class="progress-bar">
-                        <div class="progress-fill" style="width: 72.4%;"></div>
+                <h2>Git Statistics</h2>
+                <div class="two-column">
+                    <div>
+                        <table>
+                            <tr>
+                                <th>Metric</th>
+                                <th class="number">Value</th>
+                            </tr>
+                            <tr>
+                                <td>Total Commits</td>
+                                <td class="number">482</td>
+                            </tr>
+                            <tr>
+                                <td>Contributors</td>
+                                <td class="number">4</td>
+                            </tr>
+                            <tr>
+                                <td>Branches</td>
+                                <td class="number">22</td>
+                            </tr>
+                            <tr>
+                                <td>Tags</td>
+                                <td class="number">0</td>
+                            </tr>
+                            <tr>
+                                <td>Commits (Last 30 Days)</td>
+                                <td class="number">127</td>
+                            </tr>
+                            <tr>
+                                <td>First Commit</td>
+                                <td class="number">2025-08-04</td>
+                            </tr>
+                            <tr>
+                                <td>Last Commit</td>
+                                <td class="number">2026-01-14</td>
+                            </tr>
+                        </table>
                     </div>
-                    <div style="margin-top: 0.5rem; display: flex; justify-content: space-between; font-size: 0.9rem; color: #666;">
-                        <span>Code: 72.4%</span>
-                        <span>Comments: 9.0%</span>
-                        <span>Blank: 18.6%</span>
+                    <div>
+                        <h3>Top Contributors</h3>
+                        <table>
+                            <tr>
+                                <th>Name</th>
+                                <th class="number">Commits</th>
+                            </tr>
+                            <tr>
+                                <td>royer</td>
+                                <td class="number">464</td>
+                            </tr>
+                            <tr>
+                                <td>Loic A. Royer</td>
+                                <td class="number">19</td>
+                            </tr>
+                            <tr>
+                                <td>Jordao Bragantini</td>
+                                <td class="number">3</td>
+                            </tr>
+                            <tr>
+                                <td>Loic A. Royer (obsidian)</td>
+                                <td class="number">1</td>
+                            </tr>
+                        </table>
                     </div>
                 </div>
-                <div>
-                    <strong>TypeScript</strong>
-                    <div class="progress-bar">
-                        <div class="progress-fill" style="width: 67.5%;"></div>
+            </section>
+
+            <section>
+                <h2>Dependencies</h2>
+                <table>
+                    <tr>
+                        <th>Ecosystem</th>
+                        <th class="number">Production</th>
+                        <th class="number">Development</th>
+                        <th class="number">Total</th>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #3572A5">Python</span></td>
+                        <td class="number">31</td>
+                        <td class="number">21</td>
+                        <td class="number">52</td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #3178C6">Node.js</span></td>
+                        <td class="number">4</td>
+                        <td class="number">19</td>
+                        <td class="number">23</td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-badge" style="background: #DEA584">Rust</span></td>
+                        <td class="number">1</td>
+                        <td class="number">1</td>
+                        <td class="number">2</td>
+                    </tr>
+                </table>
+            </section>
+
+            <section>
+                <h2>Documentation & Configuration</h2>
+                <div class="two-column">
+                    <div>
+                        <h3>Documentation</h3>
+                        <table>
+                            <tr>
+                                <th>Type</th>
+                                <th class="number">Files</th>
+                                <th class="number">Lines</th>
+                            </tr>
+                            <tr>
+                                <td>Markdown (.md)</td>
+                                <td class="number">221</td>
+                                <td class="number">107,889</td>
+                            </tr>
+                            <tr>
+                                <td>HTML</td>
+                                <td class="number">3</td>
+                                <td class="number">1,136</td>
+                            </tr>
+                        </table>
                     </div>
-                    <div style="margin-top: 0.5rem; display: flex; justify-content: space-between; font-size: 0.9rem; color: #666;">
-                        <span>Code: 67.5%</span>
-                        <span>Comments: 18.1%</span>
-                        <span>Blank: 14.3%</span>
+                    <div>
+                        <h3>Configuration</h3>
+                        <table>
+                            <tr>
+                                <th>Type</th>
+                                <th class="number">Files</th>
+                                <th class="number">Lines</th>
+                            </tr>
+                            <tr>
+                                <td>JSON</td>
+                                <td class="number">8</td>
+                                <td class="number">250</td>
+                            </tr>
+                            <tr>
+                                <td>YAML</td>
+                                <td class="number">2</td>
+                                <td class="number">3,028</td>
+                            </tr>
+                            <tr>
+                                <td>TOML</td>
+                                <td class="number">3</td>
+                                <td class="number">414</td>
+                            </tr>
+                        </table>
                     </div>
                 </div>
             </section>
 
             <section>
                 <h2>Key Insights</h2>
-                <ul style="list-style: none; padding-left: 0;">
-                    <li style="margin-bottom: 1rem; padding: 1rem; background: #f8f9fa; border-left: 4px solid #667eea; border-radius: 4px;">
-                        <strong>📝 Code Density:</strong> 70.4% of all lines are executable code
-                    </li>
-                    <li style="margin-bottom: 1rem; padding: 1rem; background: #f8f9fa; border-left: 4px solid #667eea; border-radius: 4px;">
-                        <strong>🐍 Python Dominance:</strong> 61.4% of codebase is Python
-                    </li>
-                    <li style="margin-bottom: 1rem; padding: 1rem; background: #f8f9fa; border-left: 4px solid #667eea; border-radius: 4px;">
-                        <strong>💻 TypeScript Frontend:</strong> 38.6% of codebase is TypeScript
-                    </li>
-                    <li style="margin-bottom: 1rem; padding: 1rem; background: #f8f9fa; border-left: 4px solid #667eea; border-radius: 4px;">
-                        <strong>🏗️ Architecture:</strong> 249 Python classes and 109 TypeScript interfaces provide strong type safety
-                    </li>
-                    <li style="margin-bottom: 1rem; padding: 1rem; background: #f8f9fa; border-left: 4px solid #667eea; border-radius: 4px;">
-                        <strong>📚 Documentation:</strong> 11,334 comment lines (12.7% of total)
-                    </li>
-                </ul>
+                <div class="insight">
+                    <strong>Code Density:</strong> 70.3% of all lines are executable code (excluding blanks and comments)
+                </div>
+                <div class="insight">
+                    <strong>Language Mix:</strong> Python 46.5% | TypeScript 47.7% | Rust 1.2% | CUDA 2.0%
+                </div>
+                <div class="insight">
+                    <strong>Architecture:</strong> 422 Python classes, 248 TypeScript interfaces, 0 Rust structs
+                </div>
+                <div class="insight">
+                    <strong>Test Health:</strong> 3,608 tests across 205 files with 49.1% weighted coverage
+                </div>
+                <div class="insight">
+                    <strong>Project Activity:</strong> 127 commits in the last 30 days by 4 contributor(s)
+                </div>
+                <div class="insight">
+                    <strong>Documentation:</strong> 221 markdown files with 107,889 lines of documentation
+                </div>
             </section>
         </div>
 
         <footer>
-            Generated by Luxar Project Analyzer • 2025 •
-            Excluding: node_modules, __pycache__, coverage, dist, build
+            Generated by Luxar Project Analyzer | 2026 |
+            Excluding: node_modules, __pycache__, coverage, dist, build, target
         </footer>
     </div>
 </body>
