@@ -406,82 +406,90 @@ class TestRegularization:
     """Test L1 regularization effects."""
 
     def test_l1_regularization(self, multi_blob_2d, simple_candidates_2d) -> None:
-        """Test that L1 regularization affects results."""
+        """Test that L1 amplitude regularization promotes sparsity."""
 
         # Fit without regularization
         result_no_reg = fit_gaussian_splats(
             V=multi_blob_2d,
             seeds=simple_candidates_2d,
             l1_amp=0.0,
-            n_iters=30,
+            n_iters=100,  # More iterations to let optimization settle
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
         )
 
-        # Fit with L1 regularization
+        # Fit with strong L1 regularization to promote amplitude sparsity
         result_reg = fit_gaussian_splats(
             V=multi_blob_2d,
             seeds=simple_candidates_2d,
-            l1_amp=0.01,  # Small regularization
-            n_iters=30,
+            l1_amp=1.0,  # Strong regularization to push amplitudes toward zero
+            n_iters=100,
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
         )
 
-        # Results should be different
-        assert not np.allclose(
-            result_no_reg.amplitudes, result_reg.amplitudes, atol=1e-3
+        # L1 regularization penalizes sum of |amplitudes|, so it should reduce them
+        # The total amplitude magnitude should be smaller with regularization
+        amp_sum_no_reg = np.sum(np.abs(result_no_reg.amplitudes))
+        amp_sum_reg = np.sum(np.abs(result_reg.amplitudes))
+        assert amp_sum_reg < amp_sum_no_reg, (
+            f"L1 regularization should reduce total amplitude magnitude: "
+            f"got {amp_sum_reg:.4f} >= {amp_sum_no_reg:.4f}"
         )
 
-        # Regularized amplitudes should generally be smaller or more sparse
-        # (though this isn't guaranteed for all cases)
+        # Both should produce valid non-negative amplitudes
         assert np.all(result_reg.amplitudes >= 0)
         assert np.all(result_no_reg.amplitudes >= 0)
 
     def test_l1_diag_regularization(self, multi_blob_2d, simple_candidates_2d) -> None:
-        """Test that L1 diagonal regularization affects results."""
+        """Test that L1 diagonal regularization promotes smaller splat widths."""
+        from luxar.gsplats.utils.trils import unpack_tril
+
         # Fit without diagonal regularization
         result_no_reg = fit_gaussian_splats(
             V=multi_blob_2d,
             seeds=simple_candidates_2d,
             l1_amp=0.0,
             l1_diag=0.0,
-            n_iters=30,
+            n_iters=100,
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
         )
 
-        # Fit with L1 diagonal regularization
+        # Fit with strong L1 diagonal regularization to promote smaller sigmas
         result_reg = fit_gaussian_splats(
             V=multi_blob_2d,
             seeds=simple_candidates_2d,
             l1_amp=0.0,  # Only diagonal regularization
-            l1_diag=0.01,  # Small diagonal regularization
-            n_iters=30,
+            l1_diag=1.0,  # Strong diagonal regularization
+            n_iters=100,
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
         )
 
-        # Reconstruct params_full for comparison
-        params_no_reg = np.column_stack(
-            [
-                result_no_reg.centers,
-                result_no_reg.cholesky_factors,
-                result_no_reg.sharpnesses,
-            ]
-        )
-        params_reg = np.column_stack(
-            [result_reg.centers, result_reg.cholesky_factors, result_reg.sharpnesses]
+        # Extract Cholesky diagonal elements (which determine splat widths)
+        d = 2
+        L_no_reg = unpack_tril(result_no_reg.cholesky_factors, d)
+        L_reg = unpack_tril(result_reg.cholesky_factors, d)
+
+        # Get diagonal elements (sigmas in each dimension)
+        diag_no_reg = np.array([np.diag(L) for L in L_no_reg])
+        diag_reg = np.array([np.diag(L) for L in L_reg])
+
+        # L1 diagonal regularization penalizes sum of |diagonals|, should reduce them
+        diag_sum_no_reg = np.sum(np.abs(diag_no_reg))
+        diag_sum_reg = np.sum(np.abs(diag_reg))
+        assert diag_sum_reg < diag_sum_no_reg, (
+            f"L1 diagonal regularization should reduce total sigma magnitude: "
+            f"got {diag_sum_reg:.4f} >= {diag_sum_no_reg:.4f}"
         )
 
-        # Results should be different due to diagonal regularization
-        assert not np.allclose(params_no_reg, params_reg, atol=1e-3)
         # Both should still have valid shapes
-        assert params_no_reg.shape == params_reg.shape
+        assert result_no_reg.cholesky_factors.shape == result_reg.cholesky_factors.shape
         assert result_no_reg.amplitudes.shape == result_reg.amplitudes.shape
 
 
