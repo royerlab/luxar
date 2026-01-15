@@ -483,9 +483,19 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             - name: GPU name string
         """
         props = torch.cuda.get_device_properties(self._device)
+        sm_version = props.major * 10 + props.minor
+
+        # PyTorch doesn't expose shared_memory_per_block, so we use architecture defaults
+        # Base shared memory per block for different architectures:
+        # - SM 7.x (Volta/Turing): 48 KB (49152 bytes)
+        # - SM 8.x (Ampere): 48 KB base (49152 bytes)
+        # - SM 9.x (Hopper): 48 KB base (49152 bytes)
+        # Note: Ampere+ can use up to 164KB with cudaFuncSetAttribute, but we use base
+        shared_memory_per_block = 49152  # 48 KB default for all architectures
+
         return {
-            "sm_version": props.major * 10 + props.minor,
-            "shared_memory_per_block": props.shared_memory_per_block,
+            "sm_version": sm_version,
+            "shared_memory_per_block": shared_memory_per_block,
             # This is the key variable that enables automatic scaling:
             # - Turing: 1024 -> 2 blocks/SM with 512 threads/block
             # - Hopper: 2048 -> 4 blocks/SM with 512 threads/block (2x speedup!)
