@@ -116,6 +116,7 @@ class CUDASplatFunction(torch.autograd.Function):
         truncate: float,
         intensity_floor: float,
         tile_size: int,
+        batch_size: int,
         use_fp16: bool = False,
     ) -> torch.Tensor:
         """
@@ -164,6 +165,7 @@ class CUDASplatFunction(torch.autograd.Function):
                 truncate,
                 intensity_floor,
                 tile_size,
+                batch_size,
                 use_fp16_kernel,
             )
             output = result[0]
@@ -196,6 +198,7 @@ class CUDASplatFunction(torch.autograd.Function):
         ctx.truncate = truncate
         ctx.intensity_floor = intensity_floor
         ctx.tile_size = tile_size
+        ctx.batch_size = batch_size
         ctx.tile_counts = tile_counts
         ctx.tile_offsets = tile_offsets
         ctx.tile_content = tile_content
@@ -236,6 +239,7 @@ class CUDASplatFunction(torch.autograd.Function):
         truncate = ctx.truncate
         intensity_floor = ctx.intensity_floor
         tile_size = ctx.tile_size
+        batch_size = ctx.batch_size
         use_fp16 = ctx.use_fp16
 
         if CUDA_BACKEND_AVAILABLE and ctx.tile_counts is not None:
@@ -255,6 +259,7 @@ class CUDASplatFunction(torch.autograd.Function):
                 truncate,
                 intensity_floor,
                 tile_size,
+                batch_size,
                 use_fp16,
             )
 
@@ -311,7 +316,8 @@ class CUDASplatFunction(torch.autograd.Function):
             )
 
         # Return grads for: centers, Ls, amps, sharpness + non-diff params
-        return d_centers, d_Ls, d_amps, d_sharpness, None, None, None, None, None
+        # Order: centers, Ls, amps, sharpness, shape, truncate, intensity_floor, tile_size, batch_size, use_fp16
+        return d_centers, d_Ls, d_amps, d_sharpness, None, None, None, None, None, None
 
 
 class GaussianSplatModelCUDA(torch.nn.Module):
@@ -470,7 +476,9 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             Dictionary containing:
             - sm_version: Compute capability (e.g., 89 for SM 8.9)
             - shared_memory_per_block: Available shared memory in bytes
-            - max_threads_per_block: Maximum threads per block (1024 for all modern GPUs)
+            - max_threads_per_multi_processor: Max concurrent threads per SM
+              (1024 for Turing, 2048 for Ampere/Hopper - this is what enables
+              automatic scaling on newer GPUs)
             - multiprocessor_count: Number of SMs
             - name: GPU name string
         """
@@ -478,75 +486,27 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         return {
             "sm_version": props.major * 10 + props.minor,
             "shared_memory_per_block": props.shared_memory_per_block,
-            # max_threads_per_block is 1024 for all GPUs since SM 2.0 (Fermi, 2010)
-            # This is a hardware constant, not exposed in PyTorch device properties
-            "max_threads_per_block": 1024,
+            # This is the key variable that enables automatic scaling:
+            # - Turing: 1024 -> 2 blocks/SM with 512 threads/block
+            # - Hopper: 2048 -> 4 blocks/SM with 512 threads/block (2x speedup!)
+            "max_threads_per_multi_processor": props.max_threads_per_multi_processor,
             "multiprocessor_count": props.multi_processor_count,
             "name": props.name,
         }
-
-    # Maximum tile pixels supported by CUDA kernel (must match kernels_core.cuh)
-    _KERNEL_MAX_TILE_PIXELS = 1024
-
-    def _compute_optimal_tile_size(self, d: int, shared_mem_available: int) -> int:
-        """
-        Compute optimal tile size for dimension d given available shared memory.
-
-        The tile size is constrained by:
-        1. Shared memory: tile_size^d * 4 bytes for grad_output cache
-        2. Thread block limit: tile_size^d <= max_threads_per_block
-        3. Occupancy: target 256-512 threads for good utilization
-        4. Kernel limit: tile_size^d <= _KERNEL_MAX_TILE_PIXELS (static buffer)
-
-        Parameters
-        ----------
-        d : int
-            Number of dimensions
-        shared_mem_available : int
-            Available shared memory per block in bytes
-
-        Returns
-        -------
-        int
-            Optimal tile size (minimum 2)
-        """
-        # Reserve margin for other shared arrays (splat data, gradient accumulators)
-        usable_mem = int(shared_mem_available * 0.7)
-
-        # Maximum tile_pixels from memory constraint
-        max_from_memory = usable_mem // 4  # 4 bytes per float
-
-        # Maximum tile_pixels from thread block limit
-        max_threads = self._gpu_caps.get("max_threads_per_block", 1024)
-
-        # Target tile_pixels for good occupancy (256-512 threads)
-        target_for_occupancy = 512
-
-        # Use minimum of all constraints, including kernel static buffer limit
-        max_tile_pixels = min(
-            max_from_memory,
-            max_threads,
-            target_for_occupancy * 2,
-            self._KERNEL_MAX_TILE_PIXELS,
-        )
-
-        # Find largest tile_size where tile_size^d <= max_tile_pixels
-        tile_size = 1
-        while (tile_size + 1) ** d <= max_tile_pixels:
-            tile_size += 1
-
-        # Sanity check: at least 2 to avoid degenerate cases
-        return max(2, tile_size)
 
     def _compute_optimal_batch_size(self, shared_mem_available: int, d: int) -> int:
         """
         Compute optimal SPLAT_BATCH_SIZE given available shared memory.
 
-        Per-splat shared memory usage (backward kernel):
-        - centers: d * 4 bytes
-        - conic: d*(d+1)/2 * 4 bytes
-        - amplitude, sharpness, splat_id, truncate_sq: 4 * 4 bytes
-        - gradient accumulators: same as forward
+        The batch size controls how many splats are loaded into shared memory
+        per iteration. Trade-offs:
+        - Larger batches: Fewer global memory round-trips, but lower GPU occupancy
+        - Smaller batches: Higher occupancy, but more memory round-trips
+
+        Benchmarks show batch=128 provides a good balance:
+        - Much better than batch=32 for high-splat workloads (100K+ splats)
+        - Only slightly slower than batch=32 for sparse workloads
+        - batch=256 can hurt performance for sparse workloads due to occupancy
 
         Parameters
         ----------
@@ -558,42 +518,59 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         Returns
         -------
         int
-            Optimal batch size from supported values [64, 128, 256, 512]
+            Optimal batch size from supported values [32, 128, 256]
         """
-        # Per-splat memory in forward + backward
+        # Per-splat memory layout (matches CUDA kernel shared memory)
+        # Note: This is a simplified estimate - actual usage includes gradient
+        # accumulators and grad_output cache, which roughly doubles the memory.
+        center_stride = ((d + 3) // 4) * 4  # Padded for bank conflicts
+        conic_size = d * (d + 1) // 2
         bytes_per_splat = (
-            d * 4  # centers
-            + (d * (d + 1) // 2) * 4  # conic
-            + 4 * 4  # amp, sharp, id, truncate
-            + d * 4  # d_centers
-            + (d * (d + 1) // 2) * 4  # d_conic
-            + 4 * 2  # d_amp, d_sharp
+            center_stride * 4  # centers (padded)
+            + conic_size * 4  # conic
+            + 3 * 4  # amp, sharp, truncate_sq
+            + 4  # splat_id (int)
         )
+        # Account for gradient accumulators (roughly 2x the input arrays)
+        bytes_per_splat_total = bytes_per_splat * 2
 
-        # Reserve memory for grad_output cache and other buffers
-        reserved_for_pixels = 32 * 1024  # Reserve 32KB for pixel buffers
-        available_for_splats = shared_mem_available - reserved_for_pixels
+        # Use 70% of available shared memory for splat batch
+        # (reserve rest for s_grad_output and other runtime allocations)
+        usable_mem = int(shared_mem_available * 0.7)
+        max_batch = usable_mem // bytes_per_splat_total
 
-        max_batch = available_for_splats // bytes_per_splat
-
-        # Round down to power of 2 for efficiency, clamp to supported variants
-        supported_batches = [64, 128, 256, 512]
-        for batch in reversed(supported_batches):
-            if batch <= max_batch:
-                return batch
-
-        return 64  # Minimum fallback
+        # Default to batch=128 for best balance of throughput and occupancy.
+        # batch=256 is available for future GPUs with more shared memory or
+        # for workloads known to benefit from larger batches.
+        # Supported values must match CUDA template instantiations: 32, 128, 256
+        if max_batch >= 128:
+            return 128
+        elif max_batch >= 32:
+            return 32
+        else:
+            return 32  # Minimum
 
     def _auto_tile_size(self, d: int) -> int:
         """
-        Select optimal tile size based on dimension and GPU capabilities.
+        Select optimal tile size based on dimension.
 
-        Dynamically computes tile size from actual GPU shared memory and
-        thread block limits, ensuring optimal performance across different
-        GPU architectures.
+        These values are empirically tuned for good occupancy (~256-512 threads).
+        Newer GPUs (Hopper with 2048 threads/SM vs Turing's 1024) automatically
+        benefit from more concurrent blocks without code changes.
+
+        The GPU scheduler runs more blocks concurrently on GPUs with higher
+        max_threads_per_multi_processor, providing automatic scaling.
         """
-        shared_mem = self._gpu_caps["shared_memory_per_block"]
-        return self._compute_optimal_tile_size(d, shared_mem)
+        tile_sizes = {
+            2: 16,  # 16² = 256 threads
+            3: 8,  # 8³ = 512 threads
+            4: 4,  # 4⁴ = 256 threads
+            5: 3,  # 3⁵ = 243 threads
+            6: 3,  # 3⁶ = 729 threads
+            7: 2,  # 2⁷ = 128 threads
+            8: 2,  # 2⁸ = 256 threads
+        }
+        return tile_sizes.get(d, 4)
 
     def _get_splat_batch_size(self, d: int) -> int:
         """
@@ -617,6 +594,9 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         """
         centers, Ls, amps, sharpness = self.current_params()
 
+        # Get optimal batch size based on GPU capabilities
+        batch_size = self._get_splat_batch_size(len(self._shape))
+
         output = CUDASplatFunction.apply(
             centers,
             Ls,
@@ -626,6 +606,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             self._truncate,
             self._intensity_floor,
             self._tile_size,
+            batch_size,
             self._use_fp16,
         )
 

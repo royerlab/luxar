@@ -177,8 +177,10 @@ __device__ __forceinline__ void estimate_L_row_norms_from_conic(
     }
 }
 
-// Shared memory batch size for splat loading
-constexpr int SPLAT_BATCH_SIZE = 32;
+// Default batch size for splat loading (can be overridden via template parameter)
+// Supported batch sizes: 32, 128, 256
+// Larger batches = fewer global memory round-trips, better for memory-bound workloads
+constexpr int DEFAULT_BATCH_SIZE = 128;
 
 // Threshold for global splat handling (fraction of tiles)
 constexpr float GLOBAL_SPLAT_THRESHOLD = 0.1f;
@@ -395,7 +397,7 @@ __global__ void bin_kernel(
 // FORWARD RASTERIZATION KERNEL
 // =============================================================================
 
-template <int DIM, typename InputDType = float>
+template <int DIM, int BATCH_SIZE = DEFAULT_BATCH_SIZE, typename InputDType = float>
 __global__ void rasterize_forward_kernel(
     const InputDType* __restrict__ centers,
     const InputDType* __restrict__ conic,
@@ -453,12 +455,12 @@ __global__ void rasterize_forward_kernel(
     // For 3D: use stride-4 instead of stride-3, wastes 25% but eliminates conflicts
     constexpr int CONIC_SIZE = conic_size<DIM>();
     constexpr int CENTER_STRIDE = (DIM == 3) ? 4 : DIM;  // Pad 3D to 4
-    __shared__ float s_centers[SPLAT_BATCH_SIZE * CENTER_STRIDE];
-    __shared__ float s_conic[SPLAT_BATCH_SIZE * CONIC_SIZE];
-    __shared__ float s_amps[SPLAT_BATCH_SIZE];
-    __shared__ float s_sharpness[SPLAT_BATCH_SIZE];
+    __shared__ float s_centers[BATCH_SIZE * CENTER_STRIDE];
+    __shared__ float s_conic[BATCH_SIZE * CONIC_SIZE];
+    __shared__ float s_amps[BATCH_SIZE];
+    __shared__ float s_sharpness[BATCH_SIZE];
     // OPTIMIZATION 1.2: Precompute effective truncation squared per splat
-    __shared__ float s_truncate_sq[SPLAT_BATCH_SIZE];
+    __shared__ float s_truncate_sq[BATCH_SIZE];
 
     // OPTIMIZATION: Hoist loop-invariant condition checks outside the pixel loop
     // These are uniform across all threads in the block (no divergence)
@@ -534,8 +536,8 @@ __global__ void rasterize_forward_kernel(
         float intensity_sum = 0.0f;
 
         // Process splats in batches
-        for (int batch_start = 0; batch_start < n_splats_in_tile; batch_start += SPLAT_BATCH_SIZE) {
-            int batch_size = min(SPLAT_BATCH_SIZE, n_splats_in_tile - batch_start);
+        for (int batch_start = 0; batch_start < n_splats_in_tile; batch_start += BATCH_SIZE) {
+            int batch_size = min(BATCH_SIZE, n_splats_in_tile - batch_start);
 
             // Cooperative load of splat batch into shared memory
             // OPTIMIZATION: Use DTypeTraits for dtype-aware loading (supports FP16->FP32 conversion)
@@ -639,7 +641,7 @@ __global__ void rasterize_forward_kernel(
 // BACKWARD RASTERIZATION KERNEL
 // =============================================================================
 
-template <int DIM, typename InputDType = float>
+template <int DIM, int BATCH_SIZE = DEFAULT_BATCH_SIZE, typename InputDType = float>
 __global__ void rasterize_backward_kernel(
     const float* __restrict__ grad_output,
     const InputDType* __restrict__ centers,
@@ -695,20 +697,20 @@ __global__ void rasterize_backward_kernel(
     // OPTIMIZATION 2.3: Pad DIM to avoid bank conflicts
     constexpr int CONIC_SIZE = conic_size<DIM>();
     constexpr int CENTER_STRIDE = (DIM == 3) ? 4 : DIM;
-    __shared__ float s_centers[SPLAT_BATCH_SIZE * CENTER_STRIDE];
-    __shared__ float s_conic[SPLAT_BATCH_SIZE * CONIC_SIZE];
-    __shared__ float s_amps[SPLAT_BATCH_SIZE];
-    __shared__ float s_sharpness[SPLAT_BATCH_SIZE];
-    __shared__ int s_splat_ids[SPLAT_BATCH_SIZE];
+    __shared__ float s_centers[BATCH_SIZE * CENTER_STRIDE];
+    __shared__ float s_conic[BATCH_SIZE * CONIC_SIZE];
+    __shared__ float s_amps[BATCH_SIZE];
+    __shared__ float s_sharpness[BATCH_SIZE];
+    __shared__ int s_splat_ids[BATCH_SIZE];
     // OPTIMIZATION 1.2: Precompute effective truncation squared per splat
-    __shared__ float s_truncate_sq[SPLAT_BATCH_SIZE];
+    __shared__ float s_truncate_sq[BATCH_SIZE];
 
     // OPTIMIZATION 3.2: Per-tile gradient accumulators for shared memory reduction
     // This reduces atomicAdd operations from 176 to 11 per splat per tile (3D case)
-    __shared__ float s_d_centers_tile[SPLAT_BATCH_SIZE * CENTER_STRIDE];
-    __shared__ float s_d_conic_tile[SPLAT_BATCH_SIZE * CONIC_SIZE];
-    __shared__ float s_d_amps_tile[SPLAT_BATCH_SIZE];
-    __shared__ float s_d_sharpness_tile[SPLAT_BATCH_SIZE];
+    __shared__ float s_d_centers_tile[BATCH_SIZE * CENTER_STRIDE];
+    __shared__ float s_d_conic_tile[BATCH_SIZE * CONIC_SIZE];
+    __shared__ float s_d_amps_tile[BATCH_SIZE];
+    __shared__ float s_d_sharpness_tile[BATCH_SIZE];
 
     // OPTIMIZATION 3.3: Cache grad_output in shared memory
     // This eliminates redundant global memory loads (each pixel loaded once per splat → once per tile)
@@ -775,8 +777,8 @@ __global__ void rasterize_backward_kernel(
     __syncthreads();
 
     // Process splats in batches
-    for (int batch_start = 0; batch_start < n_splats_in_tile; batch_start += SPLAT_BATCH_SIZE) {
-        int batch_size = min(SPLAT_BATCH_SIZE, n_splats_in_tile - batch_start);
+    for (int batch_start = 0; batch_start < n_splats_in_tile; batch_start += BATCH_SIZE) {
+        int batch_size = min(BATCH_SIZE, n_splats_in_tile - batch_start);
 
         // Load splat batch
         // OPTIMIZATION: Use DTypeTraits for dtype-aware loading (supports FP16->FP32 conversion)

@@ -38,76 +38,79 @@
 // =============================================================================
 // EXPLICIT TEMPLATE INSTANTIATIONS (FP32)
 // =============================================================================
+// Preprocess and bin kernels don't use BATCH_SIZE (they run once per splat).
+// Forward and backward kernels are instantiated for batch sizes 32, 128, 256.
 
-// 2D - fully optimized with 3D grid launch
-template void launch_preprocess<2, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<2, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<2, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<2, float>(const float*, const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+// Preprocess and binning kernels (no BATCH_SIZE dependency)
+#define INSTANTIATE_PREPROCESS_BIN(D) \
+    template void launch_preprocess<D, float>(const float*, const float*, const float*, const float*, \
+        int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t); \
+    template void launch_bin<D, float>(const float*, const float*, const float*, const float*, \
+        int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
 
-// 3D - fully optimized with 3D grid launch
-template void launch_preprocess<3, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<3, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<3, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<3, float>(const float*, const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+INSTANTIATE_PREPROCESS_BIN(2)
+INSTANTIATE_PREPROCESS_BIN(3)
+INSTANTIATE_PREPROCESS_BIN(4)
+INSTANTIATE_PREPROCESS_BIN(5)
+INSTANTIATE_PREPROCESS_BIN(6)
+INSTANTIATE_PREPROCESS_BIN(7)
+INSTANTIATE_PREPROCESS_BIN(8)
 
-// 4D - uses 1D grid
-template void launch_preprocess<4, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<4, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<4, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<4, float>(const float*, const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+#undef INSTANTIATE_PREPROCESS_BIN
 
-// 5D - uses 1D grid
-template void launch_preprocess<5, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<5, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<5, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<5, float>(const float*, const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+// Forward and backward kernels with BATCH_SIZE template parameter
+// Instantiate only valid batch size / dimension combinations that fit in shared memory.
+// Shared memory limit: 48KB (0xc000) on most GPUs
+//
+// Per-splat shared memory (backward kernel, float32):
+// - centers: center_stride * 4 (center_stride = ((d+3)//4)*4 for bank alignment)
+// - conic: d*(d+1)/2 * 4
+// - amps, sharpness, truncate_sq: 3 * 4
+// - splat_id: 4 (int)
+//
+// Approximate usage per batch:
+// - DIM=2, BATCH=256: ~8KB (OK)
+// - DIM=3, BATCH=256: ~14KB (OK)
+// - DIM=4, BATCH=256: ~22KB (OK)
+// - DIM=4, BATCH=128: ~11KB (OK)
+// - DIM=5, BATCH=256: ~51KB (EXCEEDS!)
+// - DIM=5, BATCH=128: ~25KB (OK)
+// - DIM=6, BATCH=128: ~35KB (OK)
+// - DIM=7, BATCH=128: ~47KB (BORDERLINE)
+// - DIM=8, BATCH=128: ~52KB (EXCEEDS!)
+//
+// Strategy: Use batch=256 for low dims, batch=128 for medium, batch=32 for high dims
 
-// 6D - uses 1D grid
-template void launch_preprocess<6, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<6, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<6, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<6, float>(const float*, const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+#define INSTANTIATE_RASTERIZE(D, BATCH) \
+    template void launch_rasterize_forward<D, BATCH, float>(const float*, const float*, const float*, const float*, \
+        int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t); \
+    template void launch_rasterize_backward<D, BATCH, float>(const float*, const float*, const float*, const float*, const float*, \
+        int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
 
-// 7D - uses 1D grid
-template void launch_preprocess<7, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<7, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<7, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<7, float>(const float*, const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+// Batch size 32 (all dimensions - minimum safe batch size)
+INSTANTIATE_RASTERIZE(2, 32)
+INSTANTIATE_RASTERIZE(3, 32)
+INSTANTIATE_RASTERIZE(4, 32)
+INSTANTIATE_RASTERIZE(5, 32)
+INSTANTIATE_RASTERIZE(6, 32)
+INSTANTIATE_RASTERIZE(7, 32)
+INSTANTIATE_RASTERIZE(8, 32)
 
-// 8D - uses 1D grid
-template void launch_preprocess<8, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<8, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<8, float>(const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<8, float>(const float*, const float*, const float*, const float*, const float*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+// Batch size 128 (dimensions 2-6 - fits in 48KB shared memory)
+INSTANTIATE_RASTERIZE(2, 128)
+INSTANTIATE_RASTERIZE(3, 128)
+INSTANTIATE_RASTERIZE(4, 128)
+INSTANTIATE_RASTERIZE(5, 128)
+INSTANTIATE_RASTERIZE(6, 128)
+// DIM=7,8 with BATCH=128 exceed 48KB shared memory, skipped
+
+// Batch size 256 (dimensions 2-4 - fits in 48KB shared memory)
+INSTANTIATE_RASTERIZE(2, 256)
+INSTANTIATE_RASTERIZE(3, 256)
+INSTANTIATE_RASTERIZE(4, 256)
+// DIM>=5 with BATCH=256 exceed 48KB shared memory, skipped
+
+#undef INSTANTIATE_RASTERIZE
 
 // Global splat kernel instantiations (with intensity_floor parameter)
 template void launch_rasterize_global_forward<2, float>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
@@ -133,89 +136,70 @@ template void launch_rasterize_global_backward<8, float>(const float*, const flo
 // - Computation uses FP32 in shared memory and registers
 // - Outputs and gradients remain FP32
 
-// 2D FP16
-template void launch_preprocess<2, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<2, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<2, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<2, __half>(const float*, const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_global_forward<2, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<2, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+// Preprocess and binning kernels (no BATCH_SIZE dependency)
+#define INSTANTIATE_PREPROCESS_BIN_FP16(D) \
+    template void launch_preprocess<D, __half>(const __half*, const __half*, const __half*, const __half*, \
+        int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t); \
+    template void launch_bin<D, __half>(const __half*, const __half*, const __half*, const __half*, \
+        int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
 
-// 3D FP16
-template void launch_preprocess<3, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<3, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<3, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<3, __half>(const float*, const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_global_forward<3, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<3, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+INSTANTIATE_PREPROCESS_BIN_FP16(2)
+INSTANTIATE_PREPROCESS_BIN_FP16(3)
+INSTANTIATE_PREPROCESS_BIN_FP16(4)
+INSTANTIATE_PREPROCESS_BIN_FP16(5)
+INSTANTIATE_PREPROCESS_BIN_FP16(6)
+INSTANTIATE_PREPROCESS_BIN_FP16(7)
+INSTANTIATE_PREPROCESS_BIN_FP16(8)
 
-// 4D FP16
-template void launch_preprocess<4, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<4, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<4, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<4, __half>(const float*, const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_global_forward<4, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<4, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+#undef INSTANTIATE_PREPROCESS_BIN_FP16
 
-// 5D FP16
-template void launch_preprocess<5, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<5, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<5, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<5, __half>(const float*, const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_global_forward<5, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<5, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+// Forward and backward kernels with BATCH_SIZE template parameter
+// Same shared memory constraints as FP32 (FP16 inputs are converted to FP32 in shared memory)
+#define INSTANTIATE_RASTERIZE_FP16(D, BATCH) \
+    template void launch_rasterize_forward<D, BATCH, __half>(const __half*, const __half*, const __half*, const __half*, \
+        int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t); \
+    template void launch_rasterize_backward<D, BATCH, __half>(const float*, const __half*, const __half*, const __half*, const __half*, \
+        int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
 
-// 6D FP16
-template void launch_preprocess<6, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<6, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<6, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<6, __half>(const float*, const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_global_forward<6, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<6, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+// Batch size 32 (all dimensions)
+INSTANTIATE_RASTERIZE_FP16(2, 32)
+INSTANTIATE_RASTERIZE_FP16(3, 32)
+INSTANTIATE_RASTERIZE_FP16(4, 32)
+INSTANTIATE_RASTERIZE_FP16(5, 32)
+INSTANTIATE_RASTERIZE_FP16(6, 32)
+INSTANTIATE_RASTERIZE_FP16(7, 32)
+INSTANTIATE_RASTERIZE_FP16(8, 32)
 
-// 7D FP16
-template void launch_preprocess<7, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<7, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<7, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<7, __half>(const float*, const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_global_forward<7, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<7, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+// Batch size 128 (dimensions 2-6)
+INSTANTIATE_RASTERIZE_FP16(2, 128)
+INSTANTIATE_RASTERIZE_FP16(3, 128)
+INSTANTIATE_RASTERIZE_FP16(4, 128)
+INSTANTIATE_RASTERIZE_FP16(5, 128)
+INSTANTIATE_RASTERIZE_FP16(6, 128)
+// DIM=7,8 with BATCH=128 exceed 48KB shared memory, skipped
 
-// 8D FP16
-template void launch_preprocess<8, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t);
-template void launch_bin<8, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
-template void launch_rasterize_forward<8, __half>(const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_backward<8, __half>(const float*, const __half*, const __half*, const __half*, const __half*,
-    int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
-template void launch_rasterize_global_forward<8, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t);
-template void launch_rasterize_global_backward<8, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+// Batch size 256 (dimensions 2-4)
+INSTANTIATE_RASTERIZE_FP16(2, 256)
+INSTANTIATE_RASTERIZE_FP16(3, 256)
+INSTANTIATE_RASTERIZE_FP16(4, 256)
+// DIM>=5 with BATCH=256 exceed 48KB shared memory, skipped
+
+#undef INSTANTIATE_RASTERIZE_FP16
+
+// Global splat kernels (no BATCH_SIZE dependency)
+#define INSTANTIATE_GLOBAL_FP16(D) \
+    template void launch_rasterize_global_forward<D, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t); \
+    template void launch_rasterize_global_backward<D, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+
+INSTANTIATE_GLOBAL_FP16(2)
+INSTANTIATE_GLOBAL_FP16(3)
+INSTANTIATE_GLOBAL_FP16(4)
+INSTANTIATE_GLOBAL_FP16(5)
+INSTANTIATE_GLOBAL_FP16(6)
+INSTANTIATE_GLOBAL_FP16(7)
+INSTANTIATE_GLOBAL_FP16(8)
+
+#undef INSTANTIATE_GLOBAL_FP16
 
 // =============================================================================
 // UTILITY FUNCTIONS
@@ -295,6 +279,7 @@ void dispatch_forward(
     float truncate,
     float intensity_floor,
     int tile_size,
+    int batch_size,
     torch::Tensor& output,
     BinningState& state
 ) {
@@ -434,8 +419,13 @@ void dispatch_forward(
 
     // Launch rasterization kernel
     // OPTIMIZATION: Pass host tile_dims for 3D grid launch (2D/3D volumes)
-    #define LAUNCH_RASTER(D) \
-        launch_rasterize_forward<D, float>( \
+    // Dispatch based on batch_size and dimension
+    // Note: Not all batch_size/dim combinations are instantiated due to shared memory limits
+    //       - Batch 256: dims 2-4 only
+    //       - Batch 128: dims 2-6 only
+    //       - Batch 32: all dims
+    #define LAUNCH_RASTER(D, BATCH) \
+        launch_rasterize_forward<D, BATCH, float>( \
             centers.data_ptr<float>(), \
             conic.data_ptr<float>(), \
             amps.data_ptr<float>(), \
@@ -450,16 +440,50 @@ void dispatch_forward(
             output.data_ptr<float>(), \
             num_tiles, tile_dims, stream)
 
-    switch (dim) {
-        case 2: LAUNCH_RASTER(2); break;
-        case 3: LAUNCH_RASTER(3); break;
-        case 4: LAUNCH_RASTER(4); break;
-        case 5: LAUNCH_RASTER(5); break;
-        case 6: LAUNCH_RASTER(6); break;
-        case 7: LAUNCH_RASTER(7); break;
-        case 8: LAUNCH_RASTER(8); break;
-        default: TORCH_CHECK(false, "Unsupported dimension: ", dim);
+    // Clamp batch_size based on dimension due to shared memory constraints
+    int effective_batch = batch_size;
+    if (dim >= 7 && effective_batch > 32) effective_batch = 32;
+    else if (dim >= 5 && effective_batch > 128) effective_batch = 128;
+
+    #define DISPATCH_RASTER_BY_DIM_32 \
+        switch (dim) { \
+            case 2: LAUNCH_RASTER(2, 32); break; \
+            case 3: LAUNCH_RASTER(3, 32); break; \
+            case 4: LAUNCH_RASTER(4, 32); break; \
+            case 5: LAUNCH_RASTER(5, 32); break; \
+            case 6: LAUNCH_RASTER(6, 32); break; \
+            case 7: LAUNCH_RASTER(7, 32); break; \
+            case 8: LAUNCH_RASTER(8, 32); break; \
+            default: TORCH_CHECK(false, "Unsupported dimension: ", dim); \
+        }
+
+    #define DISPATCH_RASTER_BY_DIM_128 \
+        switch (dim) { \
+            case 2: LAUNCH_RASTER(2, 128); break; \
+            case 3: LAUNCH_RASTER(3, 128); break; \
+            case 4: LAUNCH_RASTER(4, 128); break; \
+            case 5: LAUNCH_RASTER(5, 128); break; \
+            case 6: LAUNCH_RASTER(6, 128); break; \
+            default: TORCH_CHECK(false, "Unsupported dimension for batch_size 128: ", dim); \
+        }
+
+    #define DISPATCH_RASTER_BY_DIM_256 \
+        switch (dim) { \
+            case 2: LAUNCH_RASTER(2, 256); break; \
+            case 3: LAUNCH_RASTER(3, 256); break; \
+            case 4: LAUNCH_RASTER(4, 256); break; \
+            default: TORCH_CHECK(false, "Unsupported dimension for batch_size 256: ", dim); \
+        }
+
+    switch (effective_batch) {
+        case 32: DISPATCH_RASTER_BY_DIM_32; break;
+        case 128: DISPATCH_RASTER_BY_DIM_128; break;
+        case 256: DISPATCH_RASTER_BY_DIM_256; break;
+        default: TORCH_CHECK(false, "Unsupported batch_size: ", effective_batch, ". Must be 32, 128, or 256.");
     }
+    #undef DISPATCH_RASTER_BY_DIM_32
+    #undef DISPATCH_RASTER_BY_DIM_128
+    #undef DISPATCH_RASTER_BY_DIM_256
     #undef LAUNCH_RASTER
 
     CUDA_CHECK_LAST();
@@ -533,6 +557,7 @@ void dispatch_backward(
     float truncate,
     float intensity_floor,
     int tile_size,
+    int batch_size,
     torch::Tensor& d_centers,
     torch::Tensor& d_conic,
     torch::Tensor& d_amps,
@@ -560,8 +585,10 @@ void dispatch_backward(
 
     // Launch backward kernel for tile-based splats
     // OPTIMIZATION: Pass host tile_dims for 3D grid launch (2D/3D volumes)
-    #define LAUNCH_BACKWARD(D) \
-        launch_rasterize_backward<D, float>( \
+    // Dispatch based on batch_size and dimension
+    // Note: Not all batch_size/dim combinations are instantiated due to shared memory limits
+    #define LAUNCH_BACKWARD(D, BATCH) \
+        launch_rasterize_backward<D, BATCH, float>( \
             grad_output.data_ptr<float>(), \
             centers.data_ptr<float>(), \
             conic.data_ptr<float>(), \
@@ -580,16 +607,50 @@ void dispatch_backward(
             d_sharpness.data_ptr<float>(), \
             num_tiles, tile_dims, stream)
 
-    switch (dim) {
-        case 2: LAUNCH_BACKWARD(2); break;
-        case 3: LAUNCH_BACKWARD(3); break;
-        case 4: LAUNCH_BACKWARD(4); break;
-        case 5: LAUNCH_BACKWARD(5); break;
-        case 6: LAUNCH_BACKWARD(6); break;
-        case 7: LAUNCH_BACKWARD(7); break;
-        case 8: LAUNCH_BACKWARD(8); break;
-        default: TORCH_CHECK(false, "Unsupported dimension: ", dim);
+    // Clamp batch_size based on dimension due to shared memory constraints
+    int effective_batch = batch_size;
+    if (dim >= 7 && effective_batch > 32) effective_batch = 32;
+    else if (dim >= 5 && effective_batch > 128) effective_batch = 128;
+
+    #define DISPATCH_BACKWARD_BY_DIM_32 \
+        switch (dim) { \
+            case 2: LAUNCH_BACKWARD(2, 32); break; \
+            case 3: LAUNCH_BACKWARD(3, 32); break; \
+            case 4: LAUNCH_BACKWARD(4, 32); break; \
+            case 5: LAUNCH_BACKWARD(5, 32); break; \
+            case 6: LAUNCH_BACKWARD(6, 32); break; \
+            case 7: LAUNCH_BACKWARD(7, 32); break; \
+            case 8: LAUNCH_BACKWARD(8, 32); break; \
+            default: TORCH_CHECK(false, "Unsupported dimension: ", dim); \
+        }
+
+    #define DISPATCH_BACKWARD_BY_DIM_128 \
+        switch (dim) { \
+            case 2: LAUNCH_BACKWARD(2, 128); break; \
+            case 3: LAUNCH_BACKWARD(3, 128); break; \
+            case 4: LAUNCH_BACKWARD(4, 128); break; \
+            case 5: LAUNCH_BACKWARD(5, 128); break; \
+            case 6: LAUNCH_BACKWARD(6, 128); break; \
+            default: TORCH_CHECK(false, "Unsupported dimension for batch_size 128: ", dim); \
+        }
+
+    #define DISPATCH_BACKWARD_BY_DIM_256 \
+        switch (dim) { \
+            case 2: LAUNCH_BACKWARD(2, 256); break; \
+            case 3: LAUNCH_BACKWARD(3, 256); break; \
+            case 4: LAUNCH_BACKWARD(4, 256); break; \
+            default: TORCH_CHECK(false, "Unsupported dimension for batch_size 256: ", dim); \
+        }
+
+    switch (effective_batch) {
+        case 32: DISPATCH_BACKWARD_BY_DIM_32; break;
+        case 128: DISPATCH_BACKWARD_BY_DIM_128; break;
+        case 256: DISPATCH_BACKWARD_BY_DIM_256; break;
+        default: TORCH_CHECK(false, "Unsupported batch_size: ", effective_batch, ". Must be 32, 128, or 256.");
     }
+    #undef DISPATCH_BACKWARD_BY_DIM_32
+    #undef DISPATCH_BACKWARD_BY_DIM_128
+    #undef DISPATCH_BACKWARD_BY_DIM_256
     #undef LAUNCH_BACKWARD
 
     CUDA_CHECK_LAST();
@@ -653,9 +714,14 @@ forward(
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size
+    int tile_size,
+    int batch_size
 ) {
     validate_inputs(centers, conic, amps, sharpness, shape);
+
+    // Validate batch_size
+    TORCH_CHECK(batch_size == 32 || batch_size == 128 || batch_size == 256,
+        "batch_size must be 32, 128, or 256, got ", batch_size);
 
     int dim = (int)shape.size();
     auto device = centers.device();
@@ -672,7 +738,7 @@ forward(
     // Run forward pass
     BinningState state;
     dispatch_forward(dim, centers, conic, amps, sharpness, shape,
-                    truncate, intensity_floor, tile_size, output, state);
+                    truncate, intensity_floor, tile_size, batch_size, output, state);
 
     // Return output + binning state + global splat IDs
     return std::make_tuple(
@@ -698,9 +764,14 @@ backward(
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size
+    int tile_size,
+    int batch_size
 ) {
     validate_inputs(centers, conic, amps, sharpness, shape);
+
+    // Validate batch_size
+    TORCH_CHECK(batch_size == 32 || batch_size == 128 || batch_size == 256,
+        "batch_size must be 32, 128, or 256, got ", batch_size);
 
     int dim = (int)shape.size();
     int N = (int)centers.size(0);
@@ -716,7 +787,7 @@ backward(
     // Run backward pass (includes global splat handling)
     dispatch_backward(dim, grad_output, centers, conic, amps, sharpness,
                      tile_offsets, tile_counts, tile_content, global_splat_ids,
-                     shape, truncate, intensity_floor, tile_size,
+                     shape, truncate, intensity_floor, tile_size, batch_size,
                      d_centers, d_conic, d_amps, d_sharpness);
 
     return std::make_tuple(d_centers, d_conic, d_amps, d_sharpness);
@@ -795,6 +866,7 @@ void dispatch_forward_fp16(
     float truncate,
     float intensity_floor,
     int tile_size,
+    int batch_size,
     torch::Tensor& output,
     BinningState& state
 ) {
@@ -929,8 +1001,10 @@ void dispatch_forward_fp16(
     output.zero_();
 
     // Launch rasterization kernel with FP16 inputs
-    #define LAUNCH_RASTER_FP16(D) \
-        launch_rasterize_forward<D, __half>( \
+    // Dispatch based on batch_size and dimension
+    // Note: batch_size must be pre-validated by Python layer based on GPU capabilities
+    #define LAUNCH_RASTER_FP16(D, BATCH) \
+        launch_rasterize_forward<D, BATCH, __half>( \
             centers_ptr, conic_ptr, amps_ptr, sharpness_ptr, \
             N, \
             shape_tensor.data_ptr<int>(), \
@@ -942,16 +1016,51 @@ void dispatch_forward_fp16(
             output.data_ptr<float>(), \
             num_tiles, tile_dims, stream)
 
-    switch (dim) {
-        case 2: LAUNCH_RASTER_FP16(2); break;
-        case 3: LAUNCH_RASTER_FP16(3); break;
-        case 4: LAUNCH_RASTER_FP16(4); break;
-        case 5: LAUNCH_RASTER_FP16(5); break;
-        case 6: LAUNCH_RASTER_FP16(6); break;
-        case 7: LAUNCH_RASTER_FP16(7); break;
-        case 8: LAUNCH_RASTER_FP16(8); break;
-        default: TORCH_CHECK(false, "Unsupported dimension: ", dim);
+    // Clamp batch_size based on dimension (shared memory constraints for 48KB GPUs)
+    // Future GPUs with more shared memory can use larger batches - Python layer selects
+    int effective_batch = batch_size;
+    if (dim >= 7 && effective_batch > 32) effective_batch = 32;
+    else if (dim >= 5 && effective_batch > 128) effective_batch = 128;
+
+    #define DISPATCH_RASTER_FP16_BY_DIM_32 \
+        switch (dim) { \
+            case 2: LAUNCH_RASTER_FP16(2, 32); break; \
+            case 3: LAUNCH_RASTER_FP16(3, 32); break; \
+            case 4: LAUNCH_RASTER_FP16(4, 32); break; \
+            case 5: LAUNCH_RASTER_FP16(5, 32); break; \
+            case 6: LAUNCH_RASTER_FP16(6, 32); break; \
+            case 7: LAUNCH_RASTER_FP16(7, 32); break; \
+            case 8: LAUNCH_RASTER_FP16(8, 32); break; \
+            default: TORCH_CHECK(false, "Unsupported dimension: ", dim); \
+        }
+
+    #define DISPATCH_RASTER_FP16_BY_DIM_128 \
+        switch (dim) { \
+            case 2: LAUNCH_RASTER_FP16(2, 128); break; \
+            case 3: LAUNCH_RASTER_FP16(3, 128); break; \
+            case 4: LAUNCH_RASTER_FP16(4, 128); break; \
+            case 5: LAUNCH_RASTER_FP16(5, 128); break; \
+            case 6: LAUNCH_RASTER_FP16(6, 128); break; \
+            default: TORCH_CHECK(false, "Unsupported dimension for batch_size 128: ", dim); \
+        }
+
+    #define DISPATCH_RASTER_FP16_BY_DIM_256 \
+        switch (dim) { \
+            case 2: LAUNCH_RASTER_FP16(2, 256); break; \
+            case 3: LAUNCH_RASTER_FP16(3, 256); break; \
+            case 4: LAUNCH_RASTER_FP16(4, 256); break; \
+            default: TORCH_CHECK(false, "Unsupported dimension for batch_size 256: ", dim); \
+        }
+
+    switch (effective_batch) {
+        case 32: DISPATCH_RASTER_FP16_BY_DIM_32; break;
+        case 128: DISPATCH_RASTER_FP16_BY_DIM_128; break;
+        case 256: DISPATCH_RASTER_FP16_BY_DIM_256; break;
+        default: TORCH_CHECK(false, "Unsupported batch_size: ", effective_batch, ". Must be 32, 128, or 256.");
     }
+    #undef DISPATCH_RASTER_FP16_BY_DIM_32
+    #undef DISPATCH_RASTER_FP16_BY_DIM_128
+    #undef DISPATCH_RASTER_FP16_BY_DIM_256
     #undef LAUNCH_RASTER_FP16
 
     CUDA_CHECK_LAST();
@@ -1020,6 +1129,7 @@ void dispatch_backward_fp16(
     float truncate,
     float intensity_floor,
     int tile_size,
+    int batch_size,
     torch::Tensor& d_centers,
     torch::Tensor& d_conic,
     torch::Tensor& d_amps,
@@ -1052,8 +1162,9 @@ void dispatch_backward_fp16(
     const __half* sharpness_ptr = reinterpret_cast<const __half*>(sharpness_fp16.data_ptr<at::Half>());
 
     // Launch backward kernel for tile-based splats with FP16 inputs
-    #define LAUNCH_BACKWARD_FP16(D) \
-        launch_rasterize_backward<D, __half>( \
+    // Dispatch based on batch_size and dimension
+    #define LAUNCH_BACKWARD_FP16(D, BATCH) \
+        launch_rasterize_backward<D, BATCH, __half>( \
             grad_output.data_ptr<float>(), \
             centers_ptr, conic_ptr, amps_ptr, sharpness_ptr, \
             N, \
@@ -1069,16 +1180,50 @@ void dispatch_backward_fp16(
             d_sharpness.data_ptr<float>(), \
             num_tiles, tile_dims, stream)
 
-    switch (dim) {
-        case 2: LAUNCH_BACKWARD_FP16(2); break;
-        case 3: LAUNCH_BACKWARD_FP16(3); break;
-        case 4: LAUNCH_BACKWARD_FP16(4); break;
-        case 5: LAUNCH_BACKWARD_FP16(5); break;
-        case 6: LAUNCH_BACKWARD_FP16(6); break;
-        case 7: LAUNCH_BACKWARD_FP16(7); break;
-        case 8: LAUNCH_BACKWARD_FP16(8); break;
-        default: TORCH_CHECK(false, "Unsupported dimension: ", dim);
+    // Clamp batch_size based on dimension (shared memory constraints for 48KB GPUs)
+    int effective_batch = batch_size;
+    if (dim >= 7 && effective_batch > 32) effective_batch = 32;
+    else if (dim >= 5 && effective_batch > 128) effective_batch = 128;
+
+    #define DISPATCH_BACKWARD_FP16_BY_DIM_32 \
+        switch (dim) { \
+            case 2: LAUNCH_BACKWARD_FP16(2, 32); break; \
+            case 3: LAUNCH_BACKWARD_FP16(3, 32); break; \
+            case 4: LAUNCH_BACKWARD_FP16(4, 32); break; \
+            case 5: LAUNCH_BACKWARD_FP16(5, 32); break; \
+            case 6: LAUNCH_BACKWARD_FP16(6, 32); break; \
+            case 7: LAUNCH_BACKWARD_FP16(7, 32); break; \
+            case 8: LAUNCH_BACKWARD_FP16(8, 32); break; \
+            default: TORCH_CHECK(false, "Unsupported dimension: ", dim); \
+        }
+
+    #define DISPATCH_BACKWARD_FP16_BY_DIM_128 \
+        switch (dim) { \
+            case 2: LAUNCH_BACKWARD_FP16(2, 128); break; \
+            case 3: LAUNCH_BACKWARD_FP16(3, 128); break; \
+            case 4: LAUNCH_BACKWARD_FP16(4, 128); break; \
+            case 5: LAUNCH_BACKWARD_FP16(5, 128); break; \
+            case 6: LAUNCH_BACKWARD_FP16(6, 128); break; \
+            default: TORCH_CHECK(false, "Unsupported dimension for batch_size 128: ", dim); \
+        }
+
+    #define DISPATCH_BACKWARD_FP16_BY_DIM_256 \
+        switch (dim) { \
+            case 2: LAUNCH_BACKWARD_FP16(2, 256); break; \
+            case 3: LAUNCH_BACKWARD_FP16(3, 256); break; \
+            case 4: LAUNCH_BACKWARD_FP16(4, 256); break; \
+            default: TORCH_CHECK(false, "Unsupported dimension for batch_size 256: ", dim); \
+        }
+
+    switch (effective_batch) {
+        case 32: DISPATCH_BACKWARD_FP16_BY_DIM_32; break;
+        case 128: DISPATCH_BACKWARD_FP16_BY_DIM_128; break;
+        case 256: DISPATCH_BACKWARD_FP16_BY_DIM_256; break;
+        default: TORCH_CHECK(false, "Unsupported batch_size: ", effective_batch, ". Must be 32, 128, or 256.");
     }
+    #undef DISPATCH_BACKWARD_FP16_BY_DIM_32
+    #undef DISPATCH_BACKWARD_FP16_BY_DIM_128
+    #undef DISPATCH_BACKWARD_FP16_BY_DIM_256
     #undef LAUNCH_BACKWARD_FP16
 
     CUDA_CHECK_LAST();
@@ -1134,9 +1279,14 @@ forward_fp16(
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size
+    int tile_size,
+    int batch_size
 ) {
     validate_inputs_fp16(centers, conic, amps, sharpness, shape);
+
+    // Validate batch_size
+    TORCH_CHECK(batch_size == 32 || batch_size == 128 || batch_size == 256,
+        "batch_size must be 32, 128, or 256, got ", batch_size);
 
     int dim = (int)shape.size();
     auto device = centers.device();
@@ -1153,7 +1303,7 @@ forward_fp16(
     // Run forward pass with FP16 inputs
     BinningState state;
     dispatch_forward_fp16(dim, centers, conic, amps, sharpness, shape,
-                         truncate, intensity_floor, tile_size, output, state);
+                         truncate, intensity_floor, tile_size, batch_size, output, state);
 
     // Return output + binning state + global splat IDs
     return std::make_tuple(
@@ -1179,9 +1329,14 @@ backward_fp16(
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size
+    int tile_size,
+    int batch_size
 ) {
     validate_inputs_fp16(centers, conic, amps, sharpness, shape);
+
+    // Validate batch_size
+    TORCH_CHECK(batch_size == 32 || batch_size == 128 || batch_size == 256,
+        "batch_size must be 32, 128, or 256, got ", batch_size);
 
     int dim = (int)shape.size();
     int N = (int)centers.size(0);
@@ -1197,7 +1352,7 @@ backward_fp16(
     // Run backward pass with FP16 inputs
     dispatch_backward_fp16(dim, grad_output, centers, conic, amps, sharpness,
                           tile_offsets, tile_counts, tile_content, global_splat_ids,
-                          shape, truncate, intensity_floor, tile_size,
+                          shape, truncate, intensity_floor, tile_size, batch_size,
                           d_centers, d_conic, d_amps, d_sharpness);
 
     return std::make_tuple(d_centers, d_conic, d_amps, d_sharpness);
