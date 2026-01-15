@@ -276,8 +276,12 @@ def test_decomposition_uses_scale_based_sigma() -> None:
             f"Large blob sigma ({sigma_large}) should be > small blob sigma ({sigma_small})"
         )
         # Decomposition uses the scale factor as σ, so expect σ >= 1.0
-        assert sigma_large >= 1.0, f"Large blob sigma should be >= 1.0, got {sigma_large}"
-        assert sigma_small >= 1.0, f"Small blob sigma should be >= 1.0, got {sigma_small}"
+        assert sigma_large >= 1.0, (
+            f"Large blob sigma should be >= 1.0, got {sigma_large}"
+        )
+        assert sigma_small >= 1.0, (
+            f"Small blob sigma should be >= 1.0, got {sigma_small}"
+        )
 
 
 def test_edges_produces_isotropic_shapes() -> None:
@@ -334,7 +338,9 @@ def test_grid_produces_isotropic_shapes() -> None:
 
     # Sigma should be spacing / 2 for coverage
     expected_sigma = spacing / 2.0
-    assert np.allclose(L00, expected_sigma), f"Expected σ={expected_sigma}, got {L00[0]}"
+    assert np.allclose(L00, expected_sigma), (
+        f"Expected σ={expected_sigma}, got {L00[0]}"
+    )
 
 
 if __name__ == "__main__":

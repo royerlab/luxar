@@ -82,6 +82,11 @@ def _find_residual_peaks(
     """
     Find k strongest residual peaks with spatial exclusion (non-maximum suppression).
 
+    IMPORTANT: Only considers POSITIVE residuals (undershoot locations where
+    target > prediction). Negative residuals (overshoot) are ignored because
+    Gaussian splats can only add to the prediction, not subtract. Relocating
+    a splat to an overshoot location would make the error worse.
+
     Supports two modes:
     - Global mode (enable_tiled=False): Find top k_max_residuals peaks globally
     - Tiled mode (enable_tiled=True): Divide into tiles, use probabilistic/deterministic
@@ -95,7 +100,7 @@ def _find_residual_peaks(
         num_tiles_per_dim: Number of tiles per dimension (e.g., 8 → 8×8=64 tiles for 2D, 8³=512 for 3D)
 
     Returns:
-        List of peak coordinates as tuples
+        List of peak coordinates as tuples (only where residual > 0)
 
     Notes:
         In tiled mode, k_per_tile = k_max_residuals / num_tiles is auto-calculated:
@@ -120,6 +125,11 @@ def _find_residual_peaks_global(
     This is the original global peak finding - all regions compete for top k spots.
     Bright/high-residual regions tend to dominate.
 
+    IMPORTANT: Only considers POSITIVE residuals (undershoot locations where
+    target > prediction). Negative residuals (overshoot) are ignored because
+    Gaussian splats can only add to the prediction, not subtract. Relocating
+    a splat to an overshoot location would make the error worse.
+
     Args:
         residual: Residual image (target - prediction)
         k_max_residuals: Number of peaks to find globally
@@ -128,7 +138,9 @@ def _find_residual_peaks_global(
     Returns:
         List of peak coordinates as tuples (sorted by residual magnitude, descending)
     """
-    residual_abs = torch.abs(residual)
+    # Only consider positive residuals (undershoot: target > prediction)
+    # Negative residuals mean overshoot - adding more splats would make it worse
+    residual_positive = torch.clamp(residual, min=0)
     d = residual.ndim
 
     # Create kernel for non-maximum suppression
@@ -138,27 +150,27 @@ def _find_residual_peaks_global(
 
     # Apply max pooling for NMS
     # Note: max_pool3d is not implemented for MPS, so we use CPU fallback
-    original_device = residual_abs.device
+    original_device = residual_positive.device
     if d == 2:
         max_pooled = torch.nn.functional.max_pool2d(
-            residual_abs[None, None],
+            residual_positive[None, None],
             kernel_size=kernel_size,
             stride=1,
             padding=kernel_size // 2,
         )[0, 0]
     elif d == 3:
         # MPS doesn't support max_pool3d, so fall back to CPU
-        if residual_abs.device.type == "mps":
-            residual_abs_cpu = residual_abs.cpu()
+        if residual_positive.device.type == "mps":
+            residual_positive_cpu = residual_positive.cpu()
             max_pooled = torch.nn.functional.max_pool3d(
-                residual_abs_cpu[None, None],
+                residual_positive_cpu[None, None],
                 kernel_size=kernel_size,
                 stride=1,
                 padding=kernel_size // 2,
             )[0, 0].to(original_device)
         else:
             max_pooled = torch.nn.functional.max_pool3d(
-                residual_abs[None, None],
+                residual_positive[None, None],
                 kernel_size=kernel_size,
                 stride=1,
                 padding=kernel_size // 2,
@@ -166,17 +178,17 @@ def _find_residual_peaks_global(
     else:
         # nD NMS using separable 1D max pooling along each dimension
         # This is efficient and works for any dimensionality
-        max_pooled = _separable_nd_max_pool(residual_abs, kernel_size)
+        max_pooled = _separable_nd_max_pool(residual_positive, kernel_size)
 
     # Find local maxima
-    is_peak = (residual_abs >= max_pooled) & (residual_abs > 0)
+    is_peak = (residual_positive >= max_pooled) & (residual_positive > 0)
     peak_indices = torch.nonzero(is_peak, as_tuple=False)
 
     if len(peak_indices) == 0:
         return []
 
     # Get values and sort by magnitude
-    peak_values = residual_abs[tuple(peak_indices.T)]
+    peak_values = residual_positive[tuple(peak_indices.T)]
     sorted_indices = torch.argsort(peak_values, descending=True)
 
     # Take top k
@@ -197,6 +209,11 @@ def _find_residual_peaks_tiled(
 
     Divides image into tiles and uses probabilistic/deterministic selection to
     maintain expected count of k_max_residuals peaks while ensuring spatial fairness.
+
+    IMPORTANT: Only considers POSITIVE residuals (undershoot locations where
+    target > prediction). Negative residuals (overshoot) are ignored because
+    Gaussian splats can only add to the prediction, not subtract. Relocating
+    a splat to an overshoot location would make the error worse.
 
     Args:
         residual: Residual image (target - prediction)
@@ -220,7 +237,9 @@ def _find_residual_peaks_tiled(
         - Randomness ensures fairness (no bias toward bright regions)
         - Each tile processed independently (spatial fairness guaranteed)
     """
-    residual_abs = torch.abs(residual)
+    # Only consider positive residuals (undershoot: target > prediction)
+    # Negative residuals mean overshoot - adding more splats would make it worse
+    residual_positive = torch.clamp(residual, min=0)
     shape = residual.shape
     d = residual.ndim
 
@@ -246,10 +265,15 @@ def _find_residual_peaks_tiled(
         keep_probability = k_per_tile_float
         k_deterministic = None
         # Calculate threshold for "strong" peaks that should always be kept
-        # Use 75th percentile of absolute residual as threshold
-        strong_peak_threshold = torch.quantile(
-            residual_abs.float().flatten(), 0.75
-        ).item()
+        # Use 75th percentile of positive residual as threshold
+        # Only consider non-zero values for percentile calculation
+        positive_values = residual_positive[residual_positive > 0]
+        if len(positive_values) > 0:
+            strong_peak_threshold = torch.quantile(
+                positive_values.float().flatten(), 0.75
+            ).item()
+        else:
+            strong_peak_threshold = float("inf")  # No positive residuals
     else:
         # Deterministic: keep floor(k_per_tile) peaks per tile
         k_deterministic = int(k_per_tile_float)
@@ -286,7 +310,7 @@ def _find_residual_peaks_tiled(
             tile_origin.append(start)
 
         # Extract tile
-        tile = residual_abs[tuple(slices)]
+        tile = residual_positive[tuple(slices)]
 
         # Skip very small tiles
         if tile.numel() < 4:
@@ -324,7 +348,7 @@ def _find_residual_peaks_tiled(
     # Sort peaks by residual magnitude (descending) to match global mode
     # This ensures convergence guard checks the actual strongest peak
     if len(all_peaks) > 0:
-        peak_residuals = [residual_abs[peak].item() for peak in all_peaks]
+        peak_residuals = [residual_positive[peak].item() for peak in all_peaks]
         sorted_indices = sorted(
             range(len(all_peaks)), key=lambda i: peak_residuals[i], reverse=True
         )
@@ -340,7 +364,7 @@ def _find_peaks_in_tile(
     Find up to k_max peaks within a single tile using NMS.
 
     Args:
-        tile: Tile region (absolute residual values)
+        tile: Tile region (positive residual values only, zeros where target <= prediction)
         k_max: Maximum number of peaks to find. If None, return all peaks.
         nms_radius_vox: NMS radius for spatial exclusion
 

@@ -33,11 +33,11 @@ def generate_seeds(
 **Parameters**:
 - `V` (np.ndarray): Input n-dimensional image/volume
 - `method` (str): Seed generation method
-  - `"auto"`: Principled combination of all methods - **DEFAULT, RECOMMENDED**
-  - `"decomposition"`: Hierarchical scale decomposition-based detection
+  - `"auto"`: Fast edges + grid combination - **DEFAULT, RECOMMENDED**
+  - `"decomposition"`: Hierarchical scale decomposition-based detection (slow)
   - `"grid"`: Uniform grid seeding for spatial coverage
   - `"edges"`: Edge-based seeding with anisotropic shapes
-  - Comma-separated: e.g., `"decomposition,edges"` for specific combination
+  - Comma-separated: e.g., `"decomposition,edges,grid"` for specific combination
 - `**kwargs`: Method-specific parameters passed to underlying functions
 
 **Returns**:
@@ -67,16 +67,17 @@ seeds = generate_seeds(image, method="edges", edge_threshold_rel=0.15)
 ```
 
 **Method Selection Guide**:
-- **"auto"** (default): Principled combination of all methods - recommended for most use cases
-- **"decomposition"**: Best for blob-like features with principled scale separation
+- **"auto"** (default): Fast edges + grid combination - recommended for most use cases
+- **"decomposition"**: Best for blob-like features with principled scale separation (slow)
 - **"grid"**: Fast uniform coverage, good for textures or as baseline
 - **"edges"**: Best for images with clear boundaries
 
 **Auto Mode Budget Allocation**:
-The "auto" method combines all three methods with priority-based allocation:
-- Decomposition: 50% (global structure, blob-like features)
-- Edges: 30% (boundaries with anisotropic shapes)
-- Grid: 20% (coverage for gaps)
+The "auto" method combines edges + grid (decomposition excluded for speed):
+- Edges: 60% (boundaries with anisotropic shapes)
+- Grid: 40% (coverage for gaps)
+
+Use `method="decomposition,edges,grid"` to include all methods explicitly.
 
 **Integration with fit_gaussian_splats()**:
 ```python
@@ -264,12 +265,12 @@ print(f"Final splats: {len(result.amplitudes)}")
 
 ### Combining Methods
 
-Use `generate_seeds(method="auto")` to combine all methods automatically:
+Use `generate_seeds(method="auto")` to combine edges + grid automatically:
 
 ```python
 from luxar.gsplats.seeds import generate_seeds
 
-# Automatic combination of all methods with deduplication
+# Fast combination of edges + grid (default)
 seeds = generate_seeds(image, method="auto", min_distance=3.0)
 
 # Or combine specific methods
@@ -385,12 +386,16 @@ hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_generate_seed
 
 ## Version History
 
+- **v2.1 (2025-01)**: Speed optimization
+  - Changed "auto" default from all methods to edges + grid only
+  - Decomposition excluded by default for speed (use explicitly if needed)
+  - Budget allocation: 60% edges, 40% grid
+
 - **v2.0 (2025-01)**: Major refactor
   - Removed `seed_from_gaussian()` and `seed_from_moments()` methods
   - Added `seed_from_grid()` for uniform coverage
   - Added `seed_from_edges()` for anisotropic edge seeding
   - Changed default method from "decomposition" to "auto"
-  - "auto" now combines decomposition (50%), edges (30%), grid (20%)
 
 - **v0.1 (2025-01)**: Initial implementation
   - Added `seed_from_decomposition()` function

@@ -24,8 +24,8 @@ except ImportError:
 
 # Import CUDA extension when available
 # The extension may be built in-place in this directory
-import sys
-from pathlib import Path
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 _cuda_dir = Path(__file__).parent
 if str(_cuda_dir) not in sys.path:
@@ -39,7 +39,7 @@ except ImportError:
     pass
 
 # Import public API
-from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (  # noqa: E402
     CUDASplatFunction,
     GaussianSplatModelCUDA,
     cholesky_to_conic,

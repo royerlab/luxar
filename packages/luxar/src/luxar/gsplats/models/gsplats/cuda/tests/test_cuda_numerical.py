@@ -117,7 +117,7 @@ class TestGradientFormulas:
         s = 2.0
 
         inner = -0.5 * dist_sq ** (s / 2)
-        I = a * np.exp(inner)
+        a * np.exp(inner)
 
         # ∂I/∂a = exp(inner)
         dI_da = np.exp(inner)
@@ -137,10 +137,10 @@ class TestGradientFormulas:
         s = 2.0
 
         inner = -0.5 * dist_sq ** (s / 2)
-        I = a * np.exp(inner)
+        intensity = a * np.exp(inner)
 
         # ∂I/∂s = I × inner × 0.5 × ln(D²)
-        dI_ds = I * inner * 0.5 * np.log(dist_sq)
+        dI_ds = intensity * inner * 0.5 * np.log(dist_sq)
 
         # Numerical verification
         eps = 1e-5
@@ -159,10 +159,10 @@ class TestGradientFormulas:
         s = 2.0
 
         inner = -0.5 * dist_sq ** (s / 2)
-        I = a * np.exp(inner)
+        intensity = a * np.exp(inner)
 
         # ∂I/∂D² = I × (-0.25 × s) × D²^(s/2 - 1)
-        dI_dD2 = I * (-0.25 * s) * dist_sq ** (s / 2 - 1)
+        dI_dD2 = intensity * (-0.25 * s) * dist_sq ** (s / 2 - 1)
 
         # Numerical verification
         eps = 1e-5
@@ -193,10 +193,10 @@ class TestGradientFormulas:
 
         dist_sq = d**2
         inner = -0.5 * dist_sq ** (s / 2)
-        I = a * np.exp(inner)
+        intensity = a * np.exp(inner)
 
         # grad_dist = ∂I/∂D² = I × (-0.25 × s) × D²^(s/2 - 1)
-        grad_dist = I * (-0.25 * s) * dist_sq ** (s / 2 - 1)
+        grad_dist = intensity * (-0.25 * s) * dist_sq ** (s / 2 - 1)
 
         # ∂D²/∂d = 2 × Σ⁻¹ × d = 2d (for Σ⁻¹ = I)
         dD2_dd = 2 * d
@@ -228,7 +228,7 @@ class TestConicGradient:
     def test_diagonal_conic_gradient(self):
         """Test gradient w.r.t. diagonal conic elements."""
         d = np.array([2.0, 1.0])
-        conic = np.array([1.0, 0.0, 1.0])  # 2D: [c_00, c_01, c_11]
+        np.array([1.0, 0.0, 1.0])  # 2D: [c_00, c_01, c_11]
 
         # D² = d[0]² × c_00 + 2 × d[0] × d[1] × c_01 + d[1]² × c_11
         # ∂D²/∂c_00 = d[0]²

@@ -33,11 +33,11 @@ def generate_seeds(
         Input n-dimensional image/volume to analyze.
     method : str, default="auto"
         Seed generation method(s) to use. Options:
-        - "auto": Principled combination of all methods (default, recommended)
-        - "decomposition": Multi-scale decomposition for blob-like features
+        - "auto": Fast edges + grid combination (default, recommended)
+        - "decomposition": Multi-scale decomposition for blob-like features (slow)
         - "grid": Uniform grid for spatial coverage
         - "edges": Edge-based with anisotropic shapes (for boundaries)
-        - "decomposition,grid": Combine specific methods (comma-separated)
+        - "decomposition,edges,grid": Include all methods (comma-separated)
     **kwargs
         Method-specific parameters. Common parameters are routed to all applicable
         methods, while method-specific parameters are routed only to their respective
@@ -130,10 +130,11 @@ def generate_seeds(
 
     Notes
     -----
-    - Default method is "auto" (principled combination)
-    - "decomposition" is best for blob-like features
+    - Default method is "auto" (fast edges + grid combination)
+    - "decomposition" is best for blob-like features but slow
     - "grid" provides uniform spatial coverage
     - "edges" captures boundaries with anisotropic shapes
+    - Use "decomposition,edges,grid" to include all methods
     - The fitter will refine all parameters during optimization
     """
     # Input validation
@@ -157,8 +158,8 @@ def generate_seeds(
                     f"Combined methods must be one of: {single_methods}"
                 )
     elif method == "auto":
-        # Principled combination of all methods
-        methods = ["decomposition", "edges", "grid"]
+        # Fast combination: edges + grid (decomposition is slow)
+        methods = ["edges", "grid"]
     elif method in single_methods:
         methods = [method]
     else:
@@ -302,14 +303,15 @@ def _auto_combine(
     edges_kwargs: Dict[str, Any],
 ) -> GSplatData:
     """
-    Principled combination of all seeding methods.
+    Fast combination of edges + grid seeding methods.
 
     Budget allocation:
-    - Decomposition: 50% (blob-like features)
-    - Edges: 30% (boundaries)
-    - Grid: 20% (coverage)
+    - Edges: 60% (boundaries and structure)
+    - Grid: 40% (coverage)
 
-    Seeds are added in priority order with Mahalanobis-aware deduplication.
+    Seeds are added in priority order with deduplication.
+    Note: Decomposition (multiscale) is excluded by default for speed.
+    Use method="decomposition,edges,grid" to include it explicitly.
     """
     ndim = V.ndim
 
@@ -320,26 +322,13 @@ def _auto_combine(
         target_seeds = max(100, int(total_voxels ** (1.0 / ndim) / 2))
         target_seeds = min(target_seeds, 10000)  # Cap at 10k
 
-    # Budget allocation
-    budget_decomp = int(target_seeds * 0.50)
-    budget_edges = int(target_seeds * 0.30)
-    budget_grid = target_seeds - budget_decomp - budget_edges
+    # Budget allocation (edges + grid only)
+    budget_edges = int(target_seeds * 0.60)
+    budget_grid = target_seeds - budget_edges
 
     results: List[GSplatData] = []
 
-    # Phase 1: Decomposition seeds (highest priority)
-    try:
-        # Limit peaks based on budget
-        n_scales = len(decomposition_kwargs.get("scales", [1, 2, 4, 8, 16, 32, 64]))
-        peaks_per_scale = max(10, budget_decomp // n_scales)
-        decomp_kwargs = {**decomposition_kwargs, "peaks_per_scale": peaks_per_scale}
-        seeds_decomp = seed_from_decomposition(V, **decomp_kwargs)
-        if len(seeds_decomp.centers) > 0:
-            results.append(seeds_decomp)
-    except Exception:
-        pass  # Continue if decomposition fails
-
-    # Phase 2: Edge seeds (second priority)
+    # Phase 1: Edge seeds (highest priority - captures structure)
     try:
         from luxar.gsplats.seeds.edges import seed_from_edges
 
@@ -352,7 +341,7 @@ def _auto_combine(
     except Exception:
         pass  # Continue if edges fails
 
-    # Phase 3: Grid seeds (fill gaps)
+    # Phase 2: Grid seeds (fill gaps for coverage)
     try:
         # Auto-compute spacing based on budget
         total_voxels = float(np.prod(V.shape))

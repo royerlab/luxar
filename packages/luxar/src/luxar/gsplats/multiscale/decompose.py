@@ -1549,8 +1549,10 @@ def show_optimization_movie(
         viewer.text_overlay.text = info_text
         viewer.text_overlay.visible = True
 
-        aprint(f"🎬 Movie: {len(iterations)} frames, iters {iterations[0]}-"
-               f"{iterations[-1]}")
+        aprint(
+            f"🎬 Movie: {len(iterations)} frames, iters {iterations[0]}-"
+            f"{iterations[-1]}"
+        )
         aprint(f"   {n_scales} scale components included (all visible)")
         aprint("Use the time slider to scrub through optimization progress!")
         aprint(

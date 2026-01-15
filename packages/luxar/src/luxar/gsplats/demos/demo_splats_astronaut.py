@@ -17,7 +17,6 @@ from skimage import color, data, img_as_float32
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fit_result import GSplatData
-from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
@@ -77,7 +76,6 @@ with asection("Astronaut Gaussian Splatting Demo"):
         aprint(f"Preprocessed astronaut image: {V.shape}")
         aprint(f"Data range: [{V.min():.4f}, {V.max():.4f}]")
         aprint("🎯 Focused on astronaut face and helmet for detailed reconstruction")
-
 
     with asection(f"Fitting Gaussian splats ({N_ITERS} iterations)"):
         # Fit oriented (full-covariance) Gaussians with auto-candidate generation
