@@ -13,14 +13,11 @@ import numpy as np
 from arbol import aprint
 
 from luxar.gsplats.fit_result import GSplatData
-from luxar.gsplats.seeds.utils import local_maxima, sigmas_to_cholesky_isotropic
-
-# Amplitude scaling factor for seed initialization.
-# Multiplying by 0.9 (90%) helps avoid initial over-prediction when splats overlap,
-# which can trigger the asymmetric over-prediction penalty and cause divergence.
-# Starting slightly below the target intensity allows the optimizer to increase
-# amplitudes as needed rather than fighting against penalty gradients.
-_SEED_AMPLITUDE_SCALE = 0.9
+from luxar.gsplats.seeds.utils import (
+    SEED_AMPLITUDE_SCALE,
+    local_maxima,
+    sigmas_to_cholesky_isotropic,
+)
 
 
 def seed_from_decomposition(
@@ -219,7 +216,7 @@ def seed_from_decomposition(
 
     # Get amplitudes from original image, scaled down to avoid initial over-prediction
     seeds_int = np.clip(np.round(seeds).astype(int), 0, np.array(V.shape) - 1)
-    amplitudes = V[tuple(seeds_int.T)].astype(np.float32) * _SEED_AMPLITUDE_SCALE
+    amplitudes = V[tuple(seeds_int.T)].astype(np.float32) * SEED_AMPLITUDE_SCALE
 
     # Build Cholesky factors from scales (sigma = scale_factor)
     cholesky_factors = sigmas_to_cholesky_isotropic(
