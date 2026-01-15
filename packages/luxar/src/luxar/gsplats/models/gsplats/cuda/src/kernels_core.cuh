@@ -714,10 +714,15 @@ __global__ void rasterize_backward_kernel(
 
     // OPTIMIZATION 3.3: Cache grad_output in shared memory
     // This eliminates redundant global memory loads (each pixel loaded once per splat → once per tile)
-    // Use uniform MAX_TILE_PIXELS=1024 to support larger tiles on modern GPUs with more shared memory.
-    // Python's _compute_optimal_tile_size() ensures tile_size^d <= 1024.
-    // This uses 4KB shared memory (out of 48-228KB available, well within budget).
-    constexpr int MAX_TILE_PIXELS = 1024;
+    // Dimension-specific sizing to minimize shared memory waste while matching tile sizes:
+    // 2D: 16x16=256, 3D: 8x8x8=512, 4D: 4^4=256, 6D: 3^6=729
+    constexpr int MAX_TILE_PIXELS = (DIM == 2) ? 256 :
+                                    (DIM == 3) ? 512 :
+                                    (DIM == 4) ? 256 :
+                                    (DIM == 5) ? 243 :
+                                    (DIM == 6) ? 729 :
+                                    (DIM == 7) ? 128 :
+                                    (DIM == 8) ? 256 : 512;
     __shared__ float s_grad_output[MAX_TILE_PIXELS];
 
     // OPTIMIZATION: Hoist loop-invariant condition checks outside all loops
@@ -875,12 +880,11 @@ __global__ void rasterize_backward_kernel(
 
             // Each thread processes pixels
             for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels; local_px_idx += blockDim.x) {
-                // Compute voxel coordinates
-                // OPTIMIZATION 1.4: For 3D with power-of-2 tile sizes, use bitwise ops
+                // Compute pixel coordinates (fast path for 2D/3D)
+                float px[DIM];
                 int voxel_coords[DIM];
 
                 if constexpr (DIM == 3) {
-                    // Fast path for 3D: requires tile_size=8 AND full tile (not edge)
                     if (use_fast_path_3d) {
                         int local_z = local_px_idx & 7;
                         int local_y = (local_px_idx >> 3) & 7;
@@ -897,7 +901,6 @@ __global__ void rasterize_backward_kernel(
                         }
                     }
                 } else if constexpr (DIM == 2) {
-                    // Fast path for 2D: requires tile_size=16 AND full tile (not edge)
                     if (use_fast_path_2d) {
                         int local_y = local_px_idx & 15;
                         int local_x = local_px_idx >> 4;
@@ -920,8 +923,6 @@ __global__ void rasterize_backward_kernel(
                     }
                 }
 
-                // Use integer coordinates to match PyTorch reference
-                float px[DIM];
                 #pragma unroll
                 for (int d = 0; d < DIM; d++) {
                     px[d] = (float)voxel_coords[d];

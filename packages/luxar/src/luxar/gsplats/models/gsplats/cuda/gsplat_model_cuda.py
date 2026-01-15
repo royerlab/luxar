@@ -496,17 +496,16 @@ class GaussianSplatModelCUDA(torch.nn.Module):
 
     def _compute_optimal_batch_size(self, shared_mem_available: int, d: int) -> int:
         """
-        Compute optimal SPLAT_BATCH_SIZE given available shared memory.
+        Compute optimal SPLAT_BATCH_SIZE based on GPU architecture and dimension.
 
-        The batch size controls how many splats are loaded into shared memory
-        per iteration. Trade-offs:
-        - Larger batches: Fewer global memory round-trips, but lower GPU occupancy
-        - Smaller batches: Higher occupancy, but more memory round-trips
+        Strategy:
+        - Turing (SM 7.5): Use BATCH=32 for high occupancy (48KB limit)
+        - Ampere+ (SM 8.0+): Use BATCH=128 for balanced throughput
 
-        Benchmarks show batch=128 provides a good balance:
-        - Much better than batch=32 for high-splat workloads (100K+ splats)
-        - Only slightly slower than batch=32 for sparse workloads
-        - batch=256 can hurt performance for sparse workloads due to occupancy
+        The key insight is that Turing has only 1024 max threads/SM, while
+        Ampere+ has 2048. Turing needs higher occupancy per block to achieve
+        good overall SM utilization, which means smaller batch sizes to allow
+        more concurrent blocks.
 
         Parameters
         ----------
@@ -520,35 +519,66 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         int
             Optimal batch size from supported values [32, 128, 256]
         """
-        # Per-splat memory layout (matches CUDA kernel shared memory)
-        # Note: This is a simplified estimate - actual usage includes gradient
-        # accumulators and grad_output cache, which roughly doubles the memory.
-        center_stride = ((d + 3) // 4) * 4  # Padded for bank conflicts
-        conic_size = d * (d + 1) // 2
-        bytes_per_splat = (
-            center_stride * 4  # centers (padded)
-            + conic_size * 4  # conic
-            + 3 * 4  # amp, sharp, truncate_sq
-            + 4  # splat_id (int)
-        )
-        # Account for gradient accumulators (roughly 2x the input arrays)
-        bytes_per_splat_total = bytes_per_splat * 2
+        sm_version = self._gpu_caps["sm_version"]
 
-        # Use 70% of available shared memory for splat batch
-        # (reserve rest for s_grad_output and other runtime allocations)
-        usable_mem = int(shared_mem_available * 0.7)
-        max_batch = usable_mem // bytes_per_splat_total
+        def calc_backward_smem(batch: int, dim: int) -> int:
+            """Calculate accurate shared memory usage for backward kernel."""
+            center_stride = 4 if dim == 3 else dim
+            conic_size = dim * (dim + 1) // 2
 
-        # Default to batch=128 for best balance of throughput and occupancy.
-        # batch=256 is available for future GPUs with more shared memory or
-        # for workloads known to benefit from larger batches.
-        # Supported values must match CUDA template instantiations: 32, 128, 256
-        if max_batch >= 128:
-            return 128
-        elif max_batch >= 32:
-            return 32
+            # Tile pixels (dimension-specific, matches CUDA MAX_TILE_PIXELS)
+            tile_pixels = {
+                2: 256,
+                3: 512,
+                4: 256,
+                5: 243,
+                6: 729,
+                7: 128,
+                8: 256,
+            }.get(dim, 512)
+
+            # Splat data arrays (floats = 4 bytes)
+            splat_data = batch * (
+                center_stride * 4  # s_centers
+                + conic_size * 4  # s_conic
+                + 4  # s_amps
+                + 4  # s_sharpness
+                + 4  # s_splat_ids (int)
+                + 4  # s_truncate_sq
+            )
+
+            # Gradient accumulator arrays
+            grad_accum = batch * (
+                center_stride * 4  # s_d_centers_tile
+                + conic_size * 4  # s_d_conic_tile
+                + 4  # s_d_amps_tile
+                + 4  # s_d_sharpness_tile
+            )
+
+            # grad_output cache
+            grad_output_cache = tile_pixels * 4
+
+            return splat_data + grad_accum + grad_output_cache
+
+        # Architecture-specific selection
+        if sm_version < 80:
+            # Turing and older: prioritize occupancy
+            # With 1024 threads/SM and 512 threads/block, we want >= 2 blocks
+            target_occupancy_blocks = 2
+            for batch in [32, 128]:  # Prefer smaller batch for occupancy
+                smem = calc_backward_smem(batch, d)
+                blocks_possible = shared_mem_available // smem
+                if blocks_possible >= target_occupancy_blocks:
+                    return batch
+            return 32  # Fallback to minimum
         else:
-            return 32  # Minimum
+            # Ampere+: can use larger batches with good occupancy
+            # With 2048 threads/SM, even 1 block at 512 threads gives 25% occupancy
+            for batch in [128, 256]:
+                smem = calc_backward_smem(batch, d)
+                if smem <= shared_mem_available * 0.8:  # Keep 20% headroom
+                    return batch
+            return 128  # Default for Ampere+
 
     def _auto_tile_size(self, d: int) -> int:
         """
