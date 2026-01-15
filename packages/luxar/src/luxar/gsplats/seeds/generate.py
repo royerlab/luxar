@@ -86,12 +86,6 @@ def generate_seeds(
             Target number of edge seeds.
         edge_threshold_rel : float, default=0.1
             Relative edge threshold.
-        structure_radius : float, default=3.0
-            Radius for structure tensor computation.
-        min_sigma : float, default=0.5
-            Minimum sigma from structure tensor.
-        max_sigma : float, default=16.0
-            Maximum sigma from structure tensor.
 
     Returns
     -------
@@ -199,9 +193,6 @@ def generate_seeds(
     edges_params = {
         "n_seeds",
         "edge_threshold_rel",
-        "structure_radius",
-        "min_sigma",
-        "max_sigma",
     }
 
     # Passthrough params from higher-level APIs
@@ -332,14 +323,16 @@ def _auto_combine(
     try:
         from luxar.gsplats.seeds.edges import seed_from_edges
 
-        edge_kwargs = {**edges_kwargs, "n_seeds": budget_edges * 2}  # Over-sample
+        edge_kwargs = {**edges_kwargs, "n_seeds": budget_edges}
         seeds_edges = seed_from_edges(V, **edge_kwargs)
         if len(seeds_edges.centers) > 0:
             results.append(seeds_edges)
     except ImportError:
         pass  # Edges not available yet
-    except Exception:
-        pass  # Continue if edges fails
+    except (ValueError, RuntimeError) as e:
+        import warnings
+
+        warnings.warn(f"Edge seeding failed: {e}", UserWarning, stacklevel=2)
 
     # Phase 2: Grid seeds (fill gaps for coverage)
     try:
@@ -351,8 +344,10 @@ def _auto_combine(
         seeds_grid = seed_from_grid(V, **grid_kwargs_auto)
         if len(seeds_grid.centers) > 0:
             results.append(seeds_grid)
-    except Exception:
-        pass  # Continue if grid fails
+    except (ValueError, RuntimeError) as e:
+        import warnings
+
+        warnings.warn(f"Grid seeding failed: {e}", UserWarning, stacklevel=2)
 
     # Combine with deduplication
     if len(results) == 0:
@@ -388,28 +383,35 @@ def _combine_gsplatdata(
         ndim = results[0].centers.shape[1]
         return _empty_gsplatdata(ndim)
 
-    # Deduplicate using amplitude priority
-    sort_idx = np.argsort(all_amplitudes)[::-1]
-    centers_sorted = all_centers[sort_idx]
-    amplitudes_sorted = all_amplitudes[sort_idx]
-    cholesky_sorted = all_cholesky[sort_idx]
-    sharpnesses_sorted = all_sharpnesses[sort_idx]
+    # Deduplicate using KD-tree acceleration (O(N log N) instead of O(N²))
+    # Use existing dedupe_farthest_first which provides amplitude-priority ordering
+    from luxar.gsplats.seeds.utils import dedupe_farthest_first
 
-    # Greedy deduplication
-    kept_mask = np.ones(len(centers_sorted), dtype=bool)
+    # dedupe_farthest_first already handles sorting by intensities internally,
+    # so we can pass unsorted arrays directly
+    deduped_centers = dedupe_farthest_first(
+        all_centers, min_distance=min_distance, intensities=all_amplitudes
+    )
 
-    for i in range(len(centers_sorted)):
-        if not kept_mask[i]:
-            continue
+    # Find which indices were kept by matching coordinates
+    # Use distance-based matching with small tolerance for floating point comparison
+    if len(deduped_centers) < len(all_centers):
+        kept_indices = []
+        for deduped_coord in deduped_centers:
+            # Find first matching coordinate (distance < 1e-6)
+            dists = np.sqrt(np.sum((all_centers - deduped_coord) ** 2, axis=1))
+            matching_idx = np.argmin(dists)
+            if dists[matching_idx] < 1e-6:  # Floating point tolerance
+                kept_indices.append(matching_idx)
 
-        diffs = centers_sorted[i + 1 :] - centers_sorted[i]
-        distances = np.sqrt(np.sum(diffs**2, axis=1))
-        nearby = distances < min_distance
-        kept_mask[i + 1 :][nearby] = False
+        kept_indices = np.array(kept_indices)
+    else:
+        # No deduplication occurred - keep all indices
+        kept_indices = np.arange(len(all_centers))
 
     return GSplatData(
-        centers=centers_sorted[kept_mask].astype(np.float32),
-        amplitudes=amplitudes_sorted[kept_mask].astype(np.float32),
-        cholesky_factors=cholesky_sorted[kept_mask].astype(np.float32),
-        sharpnesses=sharpnesses_sorted[kept_mask].astype(np.float32),
+        centers=all_centers[kept_indices].astype(np.float32),
+        amplitudes=all_amplitudes[kept_indices].astype(np.float32),
+        cholesky_factors=all_cholesky[kept_indices].astype(np.float32),
+        sharpnesses=all_sharpnesses[kept_indices].astype(np.float32),
     )
