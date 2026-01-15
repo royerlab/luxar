@@ -712,11 +712,10 @@ __global__ void rasterize_backward_kernel(
 
     // OPTIMIZATION 3.3: Cache grad_output in shared memory
     // This eliminates redundant global memory loads (each pixel loaded once per splat → once per tile)
-    // Max tile pixels per dimension (based on tile_size^DIM from _auto_tile_size):
-    // DIM=2: 16²=256, DIM=3: 8³=512, DIM=4: 4⁴=256, DIM=5: 3⁵=243,
-    // DIM=6: 3⁶=729, DIM=7: 2⁷=128, DIM=8: 2⁸=256
-    // 6D needs 729, we use 768 for alignment (divisible by warp size)
-    constexpr int MAX_TILE_PIXELS = (DIM == 3) ? 512 : ((DIM == 6) ? 768 : 256);
+    // Use uniform MAX_TILE_PIXELS=1024 to support larger tiles on modern GPUs with more shared memory.
+    // Python's _compute_optimal_tile_size() ensures tile_size^d <= 1024.
+    // This uses 4KB shared memory (out of 48-228KB available, well within budget).
+    constexpr int MAX_TILE_PIXELS = 1024;
     __shared__ float s_grad_output[MAX_TILE_PIXELS];
 
     // OPTIMIZATION: Hoist loop-invariant condition checks outside all loops
