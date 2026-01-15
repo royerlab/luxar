@@ -91,14 +91,23 @@ class TestGaussianSplatModelCUDA:
             )
 
     def test_auto_tile_size(self):
-        """Test automatic tile size selection."""
+        """Test automatic tile size selection based on GPU capabilities.
+
+        The tile size is computed algorithmically based on:
+        1. GPU shared memory
+        2. Max threads per block (1024)
+        3. Occupancy targets (256-512 threads)
+        4. Kernel limit (MAX_TILE_PIXELS=1024)
+
+        Higher dimensions should produce smaller tile sizes due to exponential growth.
+        """
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             GaussianSplatModelCUDA,
         )
 
         N = 5
 
-        # 2D should use tile_size=16
+        # 2D: tile_size^2 should fit within limits
         model_2d = GaussianSplatModelCUDA(
             shape=(64, 64),
             centers0=np.random.rand(N, 2).astype(np.float32) * 60,
@@ -107,9 +116,11 @@ class TestGaussianSplatModelCUDA:
             sigma_min_diag=(0.5, 0.5),
             device="cuda",
         )
-        assert model_2d._tile_size == 16
+        tile_2d = model_2d._tile_size
+        assert tile_2d >= 2, "Tile size should be at least 2"
+        assert tile_2d**2 <= 1024, "tile_pixels should fit in kernel limit"
 
-        # 3D should use tile_size=8
+        # 3D: tile_size^3 should fit within limits
         model_3d = GaussianSplatModelCUDA(
             shape=(32, 32, 32),
             centers0=np.random.rand(N, 3).astype(np.float32) * 30,
@@ -118,9 +129,11 @@ class TestGaussianSplatModelCUDA:
             sigma_min_diag=(0.5, 0.5, 0.5),
             device="cuda",
         )
-        assert model_3d._tile_size == 8
+        tile_3d = model_3d._tile_size
+        assert tile_3d >= 2, "Tile size should be at least 2"
+        assert tile_3d**3 <= 1024, "tile_pixels should fit in kernel limit"
 
-        # 4D should use tile_size=4
+        # 4D: tile_size^4 should fit within limits
         model_4d = GaussianSplatModelCUDA(
             shape=(16, 16, 16, 16),
             centers0=np.random.rand(N, 4).astype(np.float32) * 14,
@@ -129,7 +142,13 @@ class TestGaussianSplatModelCUDA:
             sigma_min_diag=(0.5, 0.5, 0.5, 0.5),
             device="cuda",
         )
-        assert model_4d._tile_size == 4
+        tile_4d = model_4d._tile_size
+        assert tile_4d >= 2, "Tile size should be at least 2"
+        assert tile_4d**4 <= 1024, "tile_pixels should fit in kernel limit"
+
+        # Higher dimensions should produce smaller or equal tile sizes
+        assert tile_3d <= tile_2d, "3D should have smaller or equal tile than 2D"
+        assert tile_4d <= tile_3d, "4D should have smaller or equal tile than 3D"
 
     def test_output_shape_matches_initialization(self):
         """Test that model forward() returns tensor with correct shape.
