@@ -152,55 +152,40 @@ class TestParameters:
         with pytest.raises(ValueError, match="edge_threshold_rel"):
             seed_from_edges(image_with_edges, edge_threshold_rel=1.5)
 
-    def test_sigma_clamping(self, image_with_edges) -> None:
-        """Test min_sigma and max_sigma clamping."""
-        result = seed_from_edges(image_with_edges, min_sigma=2.0, max_sigma=5.0)
-        validate_gsplatdata(result, 2)
-
-    def test_sigma_validation(self, image_with_edges) -> None:
-        """Test sigma parameter validation."""
-        with pytest.raises(ValueError, match="min_sigma"):
-            seed_from_edges(image_with_edges, min_sigma=-1.0)
-        with pytest.raises(ValueError, match="max_sigma"):
-            seed_from_edges(image_with_edges, max_sigma=-1.0)
-        with pytest.raises(ValueError, match="min_sigma"):
-            seed_from_edges(image_with_edges, min_sigma=10.0, max_sigma=5.0)
+    # NOTE: Removed test_sigma_clamping and test_sigma_validation
+    # These tested structure tensor parameters (min_sigma, max_sigma, structure_radius)
+    # which were removed because isotropic σ=1.0 initialization proved more effective
+    # in practice than anisotropic initialization from structure tensor eigenvalues.
 
 
-class TestAnisotropicShapes:
-    """Test anisotropic Gaussian shape estimation."""
+class TestIsotropicShapes:
+    """Test isotropic Gaussian shape initialization (σ=1.0)."""
 
     def test_cholesky_valid(self, image_with_edges) -> None:
         """Test that Cholesky factors are valid."""
         result = seed_from_edges(image_with_edges)
         if len(result.centers) > 0:
-            # Diagonal elements should be positive
+            # Diagonal elements should be positive (σ=1.0 for isotropic)
             # 2D packed: [L00, L10, L11]
             assert np.all(result.cholesky_factors[:, 0] > 0), "L00 should be positive"
             assert np.all(result.cholesky_factors[:, 2] > 0), "L11 should be positive"
 
-    def test_some_anisotropy(self, image_with_edges) -> None:
-        """Test that edge seeds have some anisotropy."""
+    def test_isotropic_initialization(self, image_with_edges) -> None:
+        """Test that edge seeds use isotropic σ=1.0 initialization."""
         result = seed_from_edges(image_with_edges)
         if len(result.centers) > 0:
-            # For anisotropic shapes, off-diagonal or unequal diagonals
             # 2D packed: [L00, L10, L11]
-            # This test verifies the code runs and produces valid output
-            # The actual anisotropy depends on edge orientation
+            # For isotropic σ=1: L00=1, L10=0, L11=1
             assert result.cholesky_factors.shape[1] == 3
+            # Check diagonals are close to 1.0
+            assert np.allclose(result.cholesky_factors[:, 0], 1.0, atol=1e-5)
+            assert np.allclose(result.cholesky_factors[:, 2], 1.0, atol=1e-5)
+            # Check off-diagonal is close to 0
+            assert np.allclose(result.cholesky_factors[:, 1], 0.0, atol=1e-5)
 
-    def test_structure_radius_effect(self, image_with_edges) -> None:
-        """Test that structure_radius affects results."""
-        result_small = seed_from_edges(image_with_edges, structure_radius=1.0)
-        result_large = seed_from_edges(image_with_edges, structure_radius=10.0)
-
-        validate_gsplatdata(result_small, 2)
-        validate_gsplatdata(result_large, 2)
-
-        # Results should differ (different smoothing)
-        if len(result_small.centers) > 0 and len(result_large.centers) > 0:
-            # Cholesky factors should be different due to different integration
-            pass  # Just check it doesn't crash
+    # NOTE: Removed test_structure_radius_effect
+    # This tested structure_radius parameter which was removed along with
+    # the structure tensor anisotropic initialization code (unused in practice).
 
 
 class TestEdgeCases:

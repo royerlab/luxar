@@ -186,20 +186,21 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                 V = data[TIME_POINT, DAPI_CHANNEL, :, :, :]
                 V = np.array(V, dtype=np.float32)
 
-                # Downscale to target size using zoom
-                from scipy.ndimage import zoom
+                if TARGET_SIZE:
+                    # Downscale to target size using zoom
+                    from scipy.ndimage import zoom
 
-                zoom_factors = [
-                    TARGET_SIZE / z_size,
-                    TARGET_SIZE / y_size,
-                    TARGET_SIZE / x_size,
-                ]
-                aprint(
-                    f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
-                    f" X={zoom_factors[2]:.3f}"
-                )
-                V = zoom(V, zoom_factors, order=1)
-                aprint(f"Downscaled to: {V.shape}")
+                    zoom_factors = [
+                        TARGET_SIZE / z_size,
+                        TARGET_SIZE / y_size,
+                        TARGET_SIZE / x_size,
+                    ]
+                    aprint(
+                        f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
+                        f" X={zoom_factors[2]:.3f}"
+                    )
+                    V = zoom(V, zoom_factors, order=1)
+                    aprint(f"Downscaled to: {V.shape}")
 
             elif len(full_shape) == 4:
                 # (C, Z, Y, X) format

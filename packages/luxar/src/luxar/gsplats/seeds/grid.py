@@ -13,7 +13,10 @@ import numpy as np
 from scipy import ndimage as ndi
 
 from luxar.gsplats.fit_result import GSplatData
-from luxar.gsplats.seeds.utils import sigmas_to_cholesky_isotropic
+from luxar.gsplats.seeds.utils import (
+    SEED_AMPLITUDE_SCALE,
+    sigmas_to_cholesky_isotropic,
+)
 
 
 def seed_from_grid(
@@ -178,12 +181,13 @@ def seed_from_grid(
         for dim in range(ndim):
             grid_coords[:, dim] = np.clip(grid_coords[:, dim], 0, shape[dim] - 1)
 
-    # Sample amplitudes from V using interpolation, scaled to 90% to avoid overlap overshoot
+    # Sample amplitudes from V using interpolation, scaled to avoid overlap overshoot
     # (over-prediction penalty causes divergence with overlapping splats)
     # map_coordinates expects (ndim, n_points) ordering
     coords_for_interp = grid_coords.T
     amplitudes = (
-        ndi.map_coordinates(V, coords_for_interp, order=1, mode="nearest") * 0.9
+        ndi.map_coordinates(V, coords_for_interp, order=1, mode="nearest")
+        * SEED_AMPLITUDE_SCALE
     )
 
     # Apply intensity threshold

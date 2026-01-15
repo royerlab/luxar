@@ -13,6 +13,13 @@ import numpy as np
 from scipy import ndimage as ndi
 from scipy.spatial import cKDTree
 
+# Amplitude scaling factor for seed initialization.
+# Multiplying by 0.9 (90%) helps avoid initial over-prediction when splats overlap,
+# which can trigger the asymmetric over-prediction penalty and cause divergence.
+# Starting slightly below the target intensity allows the optimizer to increase
+# amplitudes as needed rather than fighting against penalty gradients.
+SEED_AMPLITUDE_SCALE = 0.9
+
 
 def sigmas_to_cholesky_isotropic(
     sigmas: np.ndarray,
