@@ -238,7 +238,6 @@ class CUDASplatFunction(torch.autograd.Function):
         tile_size = ctx.tile_size
         use_fp16 = ctx.use_fp16
 
-
         if CUDA_BACKEND_AVAILABLE and ctx.tile_counts is not None:
             # Use CUDA backward kernels with cached FP16 tensors if enabled
             # This avoids re-conversion overhead in the backward pass
@@ -431,7 +430,11 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             device=device,
         )
 
-        # Auto-select tile size based on dimension
+        # Cache GPU capabilities for dynamic parameter computation
+        self._device = device
+        self._gpu_caps = self._get_gpu_capabilities()
+
+        # Auto-select tile size based on dimension and GPU capabilities
         if tile_size is None:
             tile_size = self._auto_tile_size(d)
 
@@ -457,20 +460,150 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         if hasattr(base, "sigma_max_diag") and base.sigma_max_diag is not None:
             base.sigma_max_diag = base.sigma_max_diag.half()
 
-    def _auto_tile_size(self, d: int) -> int:
-        """Select optimal tile size based on dimension."""
-        # Target ~256-512 voxels per tile for good occupancy
-        # tile_size^d ≈ 256-512
-        tile_sizes = {
-            2: 16,  # 16² = 256
-            3: 8,  # 8³ = 512
-            4: 4,  # 4⁴ = 256
-            5: 3,  # 3⁵ = 243
-            6: 3,  # 3⁶ = 729
-            7: 2,  # 2⁷ = 128
-            8: 2,  # 2⁸ = 256
+    def _get_gpu_capabilities(self) -> dict:
+        """
+        Query actual GPU capabilities at runtime.
+
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - sm_version: Compute capability (e.g., 89 for SM 8.9)
+            - shared_memory_per_block: Available shared memory in bytes
+            - max_threads_per_block: Maximum threads per block (1024 for all modern GPUs)
+            - multiprocessor_count: Number of SMs
+            - name: GPU name string
+        """
+        props = torch.cuda.get_device_properties(self._device)
+        return {
+            "sm_version": props.major * 10 + props.minor,
+            "shared_memory_per_block": props.shared_memory_per_block,
+            # max_threads_per_block is 1024 for all GPUs since SM 2.0 (Fermi, 2010)
+            # This is a hardware constant, not exposed in PyTorch device properties
+            "max_threads_per_block": 1024,
+            "multiprocessor_count": props.multi_processor_count,
+            "name": props.name,
         }
-        return tile_sizes.get(d, 4)
+
+    # Maximum tile pixels supported by CUDA kernel (must match kernels_core.cuh)
+    _KERNEL_MAX_TILE_PIXELS = 1024
+
+    def _compute_optimal_tile_size(self, d: int, shared_mem_available: int) -> int:
+        """
+        Compute optimal tile size for dimension d given available shared memory.
+
+        The tile size is constrained by:
+        1. Shared memory: tile_size^d * 4 bytes for grad_output cache
+        2. Thread block limit: tile_size^d <= max_threads_per_block
+        3. Occupancy: target 256-512 threads for good utilization
+        4. Kernel limit: tile_size^d <= _KERNEL_MAX_TILE_PIXELS (static buffer)
+
+        Parameters
+        ----------
+        d : int
+            Number of dimensions
+        shared_mem_available : int
+            Available shared memory per block in bytes
+
+        Returns
+        -------
+        int
+            Optimal tile size (minimum 2)
+        """
+        # Reserve margin for other shared arrays (splat data, gradient accumulators)
+        usable_mem = int(shared_mem_available * 0.7)
+
+        # Maximum tile_pixels from memory constraint
+        max_from_memory = usable_mem // 4  # 4 bytes per float
+
+        # Maximum tile_pixels from thread block limit
+        max_threads = self._gpu_caps.get("max_threads_per_block", 1024)
+
+        # Target tile_pixels for good occupancy (256-512 threads)
+        target_for_occupancy = 512
+
+        # Use minimum of all constraints, including kernel static buffer limit
+        max_tile_pixels = min(
+            max_from_memory,
+            max_threads,
+            target_for_occupancy * 2,
+            self._KERNEL_MAX_TILE_PIXELS,
+        )
+
+        # Find largest tile_size where tile_size^d <= max_tile_pixels
+        tile_size = 1
+        while (tile_size + 1) ** d <= max_tile_pixels:
+            tile_size += 1
+
+        # Sanity check: at least 2 to avoid degenerate cases
+        return max(2, tile_size)
+
+    def _compute_optimal_batch_size(self, shared_mem_available: int, d: int) -> int:
+        """
+        Compute optimal SPLAT_BATCH_SIZE given available shared memory.
+
+        Per-splat shared memory usage (backward kernel):
+        - centers: d * 4 bytes
+        - conic: d*(d+1)/2 * 4 bytes
+        - amplitude, sharpness, splat_id, truncate_sq: 4 * 4 bytes
+        - gradient accumulators: same as forward
+
+        Parameters
+        ----------
+        shared_mem_available : int
+            Available shared memory per block in bytes
+        d : int
+            Number of dimensions
+
+        Returns
+        -------
+        int
+            Optimal batch size from supported values [64, 128, 256, 512]
+        """
+        # Per-splat memory in forward + backward
+        bytes_per_splat = (
+            d * 4  # centers
+            + (d * (d + 1) // 2) * 4  # conic
+            + 4 * 4  # amp, sharp, id, truncate
+            + d * 4  # d_centers
+            + (d * (d + 1) // 2) * 4  # d_conic
+            + 4 * 2  # d_amp, d_sharp
+        )
+
+        # Reserve memory for grad_output cache and other buffers
+        reserved_for_pixels = 32 * 1024  # Reserve 32KB for pixel buffers
+        available_for_splats = shared_mem_available - reserved_for_pixels
+
+        max_batch = available_for_splats // bytes_per_splat
+
+        # Round down to power of 2 for efficiency, clamp to supported variants
+        supported_batches = [64, 128, 256, 512]
+        for batch in reversed(supported_batches):
+            if batch <= max_batch:
+                return batch
+
+        return 64  # Minimum fallback
+
+    def _auto_tile_size(self, d: int) -> int:
+        """
+        Select optimal tile size based on dimension and GPU capabilities.
+
+        Dynamically computes tile size from actual GPU shared memory and
+        thread block limits, ensuring optimal performance across different
+        GPU architectures.
+        """
+        shared_mem = self._gpu_caps["shared_memory_per_block"]
+        return self._compute_optimal_tile_size(d, shared_mem)
+
+    def _get_splat_batch_size(self, d: int) -> int:
+        """
+        Get optimal SPLAT_BATCH_SIZE based on GPU capabilities.
+
+        Dynamically computes batch size from actual GPU shared memory,
+        ensuring optimal performance across different GPU architectures.
+        """
+        shared_mem = self._gpu_caps["shared_memory_per_block"]
+        return self._compute_optimal_batch_size(shared_mem, d)
 
     def forward(self) -> torch.Tensor:
         """
