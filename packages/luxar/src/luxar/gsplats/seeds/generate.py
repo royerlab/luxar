@@ -383,31 +383,15 @@ def _combine_gsplatdata(
         ndim = results[0].centers.shape[1]
         return _empty_gsplatdata(ndim)
 
-    # Deduplicate using KD-tree acceleration (O(N log N) instead of O(N²))
-    # Use existing dedupe_farthest_first which provides amplitude-priority ordering
+    # Deduplicate using KD-tree acceleration with O(1) index tracking
+    # This avoids O(M×N) coordinate matching that was a major bottleneck
     from luxar.gsplats.seeds.utils import dedupe_farthest_first
 
-    # dedupe_farthest_first already handles sorting by intensities internally,
-    # so we can pass unsorted arrays directly
-    deduped_centers = dedupe_farthest_first(
+    # dedupe_farthest_first now returns (coords, indices) tuple
+    # Indices provide direct O(1) lookup into original arrays
+    deduped_centers, kept_indices = dedupe_farthest_first(
         all_centers, min_distance=min_distance, intensities=all_amplitudes
     )
-
-    # Find which indices were kept by matching coordinates
-    # Use distance-based matching with small tolerance for floating point comparison
-    if len(deduped_centers) < len(all_centers):
-        kept_indices = []
-        for deduped_coord in deduped_centers:
-            # Find first matching coordinate (distance < 1e-6)
-            dists = np.sqrt(np.sum((all_centers - deduped_coord) ** 2, axis=1))
-            matching_idx = np.argmin(dists)
-            if dists[matching_idx] < 1e-6:  # Floating point tolerance
-                kept_indices.append(matching_idx)
-
-        kept_indices = np.array(kept_indices)
-    else:
-        # No deduplication occurred - keep all indices
-        kept_indices = np.arange(len(all_centers))
 
     return GSplatData(
         centers=all_centers[kept_indices].astype(np.float32),

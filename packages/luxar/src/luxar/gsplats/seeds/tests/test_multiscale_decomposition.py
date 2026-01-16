@@ -57,10 +57,10 @@ class TestInputValidation:
     def test_dedupe_farthest_first_edge_cases(self) -> None:
         """Test edge cases for dedupe_farthest_first."""
         coords = np.array([[0, 0], [10, 10]], dtype=float)
-        deduped = dedupe_farthest_first(coords, min_distance=1e-10)
+        deduped, _ = dedupe_farthest_first(coords, min_distance=1e-10)
         assert len(deduped) == 2
 
-        deduped = dedupe_farthest_first(coords, min_distance=1000.0)
+        deduped, _ = dedupe_farthest_first(coords, min_distance=1000.0)
         assert len(deduped) == 1
 
 
