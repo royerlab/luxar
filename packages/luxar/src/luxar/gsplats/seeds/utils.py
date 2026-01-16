@@ -293,24 +293,33 @@ def dedupe_farthest_first(
 
         # Early termination optimization: for last few candidates, use simple O(N²) check
         # This avoids tree rebuild overhead when very few candidates remain
+        # IMPORTANT: Must still maintain farthest-first property!
         if len(remaining_indices) <= 5:
-            found_valid = False
+            # Check ALL remaining candidates and find farthest valid one
+            candidate_distances = []
             for idx in remaining_indices:
                 coord = coords_sorted[idx]
-                # Check distance to all selected seeds
                 diffs = selected_array[:n_selected] - coord
                 min_dist_sq = np.min(np.sum(diffs**2, axis=1))
-                if min_dist_sq >= min_distance**2:
-                    # Found valid seed, add it
-                    selected_array[n_selected] = coord
-                    selected_sorted_indices_array[n_selected] = idx
-                    n_selected += 1
-                    remaining_mask[idx] = False
-                    found_valid = True
-                    break
-            if not found_valid:
-                break
-            continue
+                candidate_distances.append(np.sqrt(min_dist_sq))
+
+            candidate_distances = np.array(candidate_distances)
+            valid_mask = candidate_distances >= min_distance
+
+            if not np.any(valid_mask):
+                break  # No valid candidates remain
+
+            # Among valid candidates, pick the FARTHEST one (maintain farthest-first)
+            valid_distances = candidate_distances[valid_mask]
+            farthest_local_idx = np.argmax(valid_distances)
+            farthest_global_idx = remaining_indices[valid_mask][farthest_local_idx]
+
+            # Add the farthest valid seed
+            selected_array[n_selected] = coords_sorted[farthest_global_idx]
+            selected_sorted_indices_array[n_selected] = farthest_global_idx
+            n_selected += 1
+            remaining_mask[farthest_global_idx] = False
+            continue  # Skip tree rebuild, go to next iteration
 
         # Query KD-tree for all remaining seeds at once (vectorized)
         remaining_coords = coords_sorted[remaining_indices]
