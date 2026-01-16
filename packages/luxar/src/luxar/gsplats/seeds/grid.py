@@ -42,7 +42,9 @@ def seed_from_grid(
         Grid spacing in voxels. Can be:
         - float: Same spacing for all dimensions
         - Sequence[float]: Per-dimension spacing
-        - None: Auto-compute as ~5% of smallest dimension (default)
+        - None: Auto-compute with aspect-ratio-aware spacing (default).
+          Spacing is proportional to each dimension's size, respecting anisotropy.
+          Example: 1000×1000×10 image → [136, 136, 1.4] spacing (not [29, 29, 29])
     jitter : float, default=0.0
         Jitter fraction (0.0 to 0.5). Random offset applied to each grid point
         as a fraction of spacing. 0.0 = no jitter, 0.5 = up to half spacing.
@@ -68,6 +70,8 @@ def seed_from_grid(
     Notes
     -----
     - Grid seeding provides uniform spatial coverage
+    - Default spacing is **aspect-ratio-aware**: respects image anisotropy
+      (e.g., thin Z slices in microscopy get denser Z spacing)
     - Jitter helps avoid aliasing artifacts
     - Intensity filtering removes seeds in low-signal regions
     - This method is fast and produces many seeds; combine with
@@ -112,10 +116,26 @@ def seed_from_grid(
 
     # Compute spacing if not provided
     if spacing is None:
-        # Default: ~5% of smallest dimension, minimum 2.0
+        # Aspect-ratio-aware default: spacing proportional to image shape
+        # This respects anisotropy (e.g., 1000×1000×10 thin slices)
+        #
+        # Strategy: Match old isotropic seed density but distribute proportionally
+        # Old: spacing = 5% of smallest dim (same for all dims)
+        # New: spacing[i] = shape[i] / k, where k chosen to match old density
         min_dim = float(np.min(shape))
-        spacing_scalar = max(2.0, min_dim * 0.05)
-        spacing_arr = np.full(ndim, spacing_scalar)
+        s_old = max(2.0, min_dim * 0.05)  # Old isotropic spacing
+
+        # Geometric mean of shape (characteristic length scale)
+        geom_mean = float(np.prod(shape) ** (1.0 / ndim))
+
+        # Scale factor: distribute old spacing across dimensions proportionally
+        k = geom_mean / s_old
+
+        # Spacing proportional to shape (respects aspect ratio)
+        spacing_arr = shape.astype(float) / k
+
+        # Ensure minimum 2.0 voxels in each dimension
+        spacing_arr = np.maximum(spacing_arr, 2.0)
     elif isinstance(spacing, (int, float)):
         spacing_arr = np.full(ndim, float(spacing))
     else:
