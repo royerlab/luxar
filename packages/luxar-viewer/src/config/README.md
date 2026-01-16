@@ -119,6 +119,31 @@ ui: {
 }
 ```
 
+### Adaptive DPR (Device Pixel Ratio)
+
+Dynamic resolution scaling to maintain smooth frame rates:
+
+```typescript
+adaptiveDPR: {
+  enabled: true,               // Enable adaptive DPR system
+  targetFPS: 55,               // Target FPS (slightly below 60 to prevent toggling)
+  minFPS: 50,                  // FPS threshold for scaling down resolution
+  maxFPS: 58,                  // FPS threshold for scaling up resolution
+  minDPR: 0.5,                 // Minimum allowed DPR (quality floor)
+  scaleDownFactor: 0.9,        // Factor when scaling down (10% reduction)
+  scaleUpFactor: 1.05,         // Factor when scaling up (5% increase)
+  hysteresisSeconds: 3,        // Seconds FPS must stay above maxFPS before scaling up
+  evaluationIntervalMs: 500    // How often to evaluate FPS (ms)
+}
+```
+
+**How It Works**:
+- When FPS drops below `minFPS`, DPR is reduced by `scaleDownFactor`
+- When FPS stays above `maxFPS` for `hysteresisSeconds`, DPR increases by `scaleUpFactor`
+- Asymmetric scaling (slower up, faster down) prevents quality oscillation
+- Hysteresis prevents rapid toggling between quality levels
+- `minDPR` prevents image from becoming too pixelated
+
 ### Rendering Controls
 
 User-adjustable settings with persistence:

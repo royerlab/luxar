@@ -31,10 +31,33 @@ open stats/project_stats.html
 
 The statistics analyzer examines the entire Luxar codebase and provides:
 
+### Supported Languages
+
+The analyzer supports **13 programming and configuration languages**:
+
+**Primary Languages (code):**
+- **Python** (.py) - Backend, data processing, API
+- **TypeScript** (.ts, .tsx) - Viewer frontend, WebGL rendering
+- **Rust** (.rs) - WASM module for high-performance computations
+- **CUDA** (.cu, .cuh) - GPU acceleration kernels
+- **JavaScript** (.js, .jsx, .mjs) - Scripts and configurations
+- **CSS** (.css, .scss) - Styling
+
+**Configuration:**
+- **JSON** (.json) - Package manifests, configs
+- **TOML** (.toml) - Rust and Python configs (pyproject.toml, Cargo.toml)
+- **YAML** (.yaml, .yml) - CI/CD workflows, configs
+- **Shell** (.sh, .bash) - Build and utility scripts
+- **Makefile** (Makefile, .mk) - Build automation
+
+**Documentation:**
+- **Markdown** (.md) - READMEs, specifications, guides
+- **HTML** (.html, .htm) - Generated reports
+
 ### Code Metrics
 - **Lines of code** (executable code only)
 - **Total lines** (including comments and blanks)
-- **File counts** (Python and TypeScript)
+- **File counts** (all supported languages)
 - **Code composition** (percentages of code, comments, blank lines)
 
 ### Structure Analysis
@@ -76,11 +99,18 @@ The analyzer excludes:
 ### Analysis Method
 
 The analyzer:
-1. **Recursively scans** Python (`.py`) and TypeScript (`.ts`, `.tsx`) files
-2. **Counts lines** by category (code, comments, blank)
-3. **Parses definitions** using regex patterns for classes, functions, interfaces
-4. **Categorizes by module** for detailed breakdowns
-5. **Generates HTML** with embedded CSS for portable viewing
+1. **Recursively scans** files for all 13 supported languages
+2. **Counts lines** by category (code, comments, blank) with language-specific comment detection
+3. **Parses definitions** using regex patterns:
+   - **Python**: classes, functions, methods
+   - **TypeScript**: classes, functions, interfaces, type aliases
+   - **Rust**: structs, functions, traits, impls, enums
+   - **CUDA**: kernels, device functions, host functions
+   - **CSS**: rules, variables, media queries
+4. **Runs tests** with coverage for Python, TypeScript, and Rust
+5. **Gathers Git statistics** (commits, contributors, activity)
+6. **Analyzes dependencies** from package manifests (pyproject.toml, package.json, Cargo.toml)
+7. **Generates HTML** with embedded CSS for portable viewing
 
 ### Line Counting
 
@@ -130,11 +160,12 @@ Use it to:
 
 ## Example Output
 
-Typical statistics for Luxar:
-- **~290 files** (Python + TypeScript)
-- **~58,000 lines of code**
-- **~73% Python**, ~27% TypeScript
-- **~288 classes** total
-- **~535 functions** total
+Typical statistics for Luxar (run `make stats` for current values):
+- **~350+ files** across all supported languages
+- **~65,000+ lines of code** (executable)
+- **Primary code mix**: Python (~60%), TypeScript (~30%), Rust (~5%), CUDA (~2%)
+- **~300+ classes/structs** total
+- **~600+ functions** total
+- **Comprehensive test coverage** with Python/TypeScript/Rust tests
 
-See `project_stats.html` for the full interactive report!
+See `project_stats.html` for the full interactive report with charts and detailed breakdowns!
