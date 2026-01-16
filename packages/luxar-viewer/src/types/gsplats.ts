@@ -93,7 +93,11 @@ export interface GSplatsMetadata {
   /**
    * List of dimension names to extend visibility across.
    * GSplats with extend_to_all will be visible regardless of slice position
-   * in the specified dimensions.
+   * in the specified dimensions. Allows splats to appear at all values of
+   * non-displayed dimensions (e.g., all times, all channels).
+   *
+   * Example: ["Time", "Channel"] makes splats visible at all time points
+   * and all channels regardless of the current slice position.
    */
   extend_to_all?: string[];
 }

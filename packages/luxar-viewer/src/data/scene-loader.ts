@@ -634,12 +634,26 @@ export class SceneLoader {
                 }
               }
 
-              const gsplatsViewState: GSplatsViewState = {
+              // Build viewState with tolerance override for extend_to_all dimensions
+              let gsplatsViewState: GSplatsViewState = {
                 displayDims: this.viewState.displayDims,
                 slicePosition: this.viewState.slicePosition,
                 tolerance: this.viewState.tolerance,
                 dimensions: this.viewState.dimensions?.metadata,
               };
+              if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
+                // Create modified tolerance array with infinite tolerance for extended dims
+                const tolerance = [...this.viewState.tolerance];
+                for (const dimName of extendDims) {
+                  const dimIndex = this.viewState.dimensions.metadata.findIndex(
+                    (d: { name?: string }) => d.name === dimName
+                  );
+                  if (dimIndex >= 0 && dimIndex < tolerance.length) {
+                    tolerance[dimIndex] = 1e10; // Effectively infinite tolerance
+                  }
+                }
+                gsplatsViewState = { ...gsplatsViewState, tolerance };
+              }
 
               const data = await loader.updateView(gsplatsViewState, session);
               if (data) {

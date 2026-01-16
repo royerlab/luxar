@@ -422,7 +422,7 @@ pnpm test:e2e      # E2E tests (Playwright)
 The viewer works without WASM, but Rust acceleration improves performance:
 
 ```bash
-make setup-rust    # Install Rust + wasm-pack
+make install-rust  # Install Rust + wasm-pack
 make build-wasm    # Build WASM module
 ```
 
