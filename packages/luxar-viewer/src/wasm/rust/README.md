@@ -90,7 +90,7 @@ Or visit: https://rustwasm.github.io/wasm-pack/installer/
 
 ```bash
 # From project root - installs Rust + wasm-pack automatically
-make setup-rust
+make install-rust
 ```
 
 ## Building

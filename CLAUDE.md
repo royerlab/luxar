@@ -29,7 +29,7 @@ pnpm format       # Format
 # Development Setup
 make setup-dev    # Complete development environment setup (auto-installs dependencies)
 make check-deps   # Check what dependencies are installed/missing
-make setup-rust   # Install Rust + wasm-pack for viewer builds
+make install-rust # Install Rust + wasm-pack for viewer builds
 make clean-setup  # Remove ALL dev tools to simulate fresh machine
 
 # Quality & Testing
@@ -87,7 +87,7 @@ The build system is designed to work on **fresh Linux/macOS machines** with mini
 | Node.js | Via nvm | `~/.nvm/versions/node/` |
 | Hatch | Via pipx | `~/.local/bin/hatch` |
 | pnpm | Via npm | Global npm package |
-| Rust/wasm-pack | `make setup-rust` | `~/.cargo/` |
+| Rust/wasm-pack | `make install-rust` | `~/.cargo/` |
 | CUDA toolkit | Manual install | `/usr/local/cuda/` (typical) |
 | CUDA extension | `make build-cuda` | `packages/luxar/.../cuda/*.so` |
 
@@ -119,6 +119,31 @@ luxar serve <data.zarr> --viewer # Serve with viewer
 luxar info <data.zarr> --stats   # Dataset info
 luxar profiles                   # Network simulation profiles
 ```
+
+### Make Command Nomenclature
+
+The Makefile follows consistent naming conventions with **action-first** pattern:
+
+| Pattern | Purpose | Examples |
+|---------|---------|----------|
+| `install-<tool>` | Install external tool on system | `install-node`, `install-rust`, `install-hatch` |
+| `install-<component>-deps` | Install dependencies from manifest | `install-viewer-deps` (node_modules) |
+| `install-dev` | Install Luxar package in editable mode | `install-dev` (pip install -e .) |
+| `setup-<component>` | Orchestrated multi-step setup | `setup-dev`, `setup-cuda` |
+| `enable-<feature>` | Activate/enable a feature | `enable-pre-commit` (activate hooks) |
+| `build-<component>` | Compile/build artifacts | `build-viewer`, `build-wasm`, `build-cuda` |
+| `test-<scope>` | Run tests | `test-all`, `test-python`, `test-e2e` |
+| `check-<aspect>` | Verify/check something | `check-deps`, `check-all`, `check-cuda-deps` |
+| `clean-<scope>` | Clean build artifacts | `clean-all`, `clean-viewer`, `clean-cuda` |
+| `format-<language>` | Format code | `format-python`, `format-typescript` |
+| `run-<script>` | Run scripts/examples | `run-examples`, `run-demos` |
+| `serve-<target>` | Start a server | `serve-docs`, `serve-dataset` |
+
+**Key distinctions:**
+- `install-<tool>` vs `install-<component>-deps`: Tools are executables (node, rust); deps are project dependencies (node_modules)
+- `install-*` vs `setup-*`: Install is for single components; setup orchestrates multiple steps
+- `install-dev` vs `install-<tool>`: install-dev is for Luxar package itself; install-<tool> is for external tools
+- `enable-*` vs `install-*`: Enable activates already-installed features; install adds new software
 
 ---
 
