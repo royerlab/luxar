@@ -400,7 +400,17 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     // Check if this node has extend_to_all dimensions
     const extendDims: string[] = attrs.extend_to_all || [];
 
-    if (extendDims.length > 0 && viewState.dimensions) {
+    if (extendDims.length > 0) {
+      // DEFENSIVE CHECK: Warn if dimensions not available for extend_to_all
+      if (!viewState.dimensions || viewState.dimensions.length === 0) {
+        log.warning(
+          Modules.SPATIAL_INDEX_LOADER,
+          `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
+            'viewState.dimensions is undefined. extend_to_all will not work. ' +
+            'Ensure scene dimensions are initialized before loading nodes.'
+        );
+      }
+
       // Check if we're navigating through an extended dimension
       const currentNonDisplayedDims: string[] =
         viewState.dimensions

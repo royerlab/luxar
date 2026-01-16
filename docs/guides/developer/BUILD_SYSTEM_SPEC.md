@@ -109,14 +109,14 @@ The setup process has 5 steps:
 #### Step 5: Optional WASM Support
 
 1. Checks for Rust/wasm-pack
-2. Displays instructions for `make setup-rust` if not installed
+2. Displays instructions for `make install-rust` if not installed
 3. WASM is optional - viewer works without it (uses TypeScript fallback)
 
 ### Rust/WASM Setup Details
 
 The Rust/WASM toolchain enables high-performance WebAssembly computations in the viewer (e.g., nD filtering, distance calculations). It's optional but recommended for best performance - without it, the viewer falls back to TypeScript implementations.
 
-**What `make setup-rust` does:**
+**What `make install-rust` does:**
 1. Installs Rust via rustup (if not present)
 2. Loads the cargo environment automatically
 3. Installs wasm-pack for WASM packaging
@@ -130,7 +130,7 @@ The Rust/WASM toolchain enables high-performance WebAssembly computations in the
 ```
 make build-viewer
   ├─ Checks for wasm-pack
-  ├─ If missing: runs make setup-rust
+  ├─ If missing: runs make install-rust
   └─ Runs pnpm build
        └─ pnpm build:wasm (scripts/build-wasm.sh)
             ├─ Sources ~/.cargo/env
@@ -169,7 +169,7 @@ MIN_NODE_MINOR := 19
 | `make install-node` | Install/upgrade Node.js via nvm (Linux) or brew (macOS) |
 | `make install-pnpm` | Install pnpm package manager |
 | `make install-hatch` | Install Hatch via pipx |
-| `make setup-rust` | Install Rust toolchain and wasm-pack |
+| `make install-rust` | Install Rust toolchain and wasm-pack |
 | `make clean-setup` | Remove ALL dev tools to simulate fresh machine |
 
 ### Quality & Testing
@@ -351,7 +351,7 @@ pipx reinstall hatch
 WASM support is optional but enables high-performance WebAssembly computations. Install if needed:
 
 ```bash
-make setup-rust
+make install-rust
 ```
 
 This command:

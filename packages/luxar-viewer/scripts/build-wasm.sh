@@ -33,7 +33,7 @@ if ! command -v wasm-pack &> /dev/null; then
     echo "❌ Error: wasm-pack is not installed"
     echo ""
     echo "To install Rust and wasm-pack, run from the project root:"
-    echo "  make setup-rust"
+    echo "  make install-rust"
     echo ""
     echo "Or install manually:"
     echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
@@ -47,7 +47,7 @@ if ! command -v rustc &> /dev/null; then
     echo "❌ Error: Rust is not installed"
     echo ""
     echo "To install Rust, run from the project root:"
-    echo "  make setup-rust"
+    echo "  make install-rust"
     echo ""
     echo "Or install manually from: https://rustup.rs/"
     exit 1

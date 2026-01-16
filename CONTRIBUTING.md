@@ -77,7 +77,7 @@ For detailed build system documentation, see [BUILD_SYSTEM_SPEC.md](docs/guides/
 | **Setup** | |
 | `make setup-dev` | Complete development environment setup (auto-installs dependencies) |
 | `make check-deps` | Check what dependencies are installed/missing |
-| `make setup-rust` | Install Rust + wasm-pack for viewer builds |
+| `make install-rust` | Install Rust + wasm-pack for viewer builds |
 | `make clean-setup` | Remove ALL dev tools (for testing fresh setup) |
 | **Quality** | |
 | `make format-python` | Format Python code with ruff |

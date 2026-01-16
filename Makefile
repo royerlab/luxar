@@ -4,14 +4,14 @@
 # This Makefile is designed to work on fresh Linux/macOS machines with minimal
 # pre-installed tools. Run 'make setup-dev' to automatically install all dependencies.
 #
-.PHONY: help install-python format-python format-typescript format-rust format-cuda format-all \
+.PHONY: help install-dev format-python format-typescript format-rust format-cuda format-all \
         lint-python lint-typescript type-check-python type-check-typescript security \
         test-all test-python test-cov-python test-cov-typescript test-fixtures test-wasm test-viewer test-viewer-fixtures test-e2e \
-        clean-all clean-python clean-viewer clean-examples clean-setup install-pre-commit run-pre-commit \
+        clean-all clean-python clean-viewer clean-examples clean-setup enable-pre-commit run-pre-commit \
         check-all check-typescript check-rust check-wasm-deps setup-dev \
         check-docs check-docs-verbose clean-docs build-docs serve-docs \
-        demo run-demos run-examples serve-examples serve-dataset install-viewer viewer build-viewer rebuild-viewer \
-        setup-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-readme-videos \
+        demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer rebuild-viewer \
+        install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-readme-videos \
         stats show-env prune-env shell build publish-test publish \
         check-deps install-node install-pnpm install-hatch \
         setup-cuda check-cuda-deps build-cuda clean-cuda test-cuda benchmark-cuda \
@@ -166,7 +166,7 @@ check-deps:  ## Check all development dependencies and their versions
 	elif command -v rustup >/dev/null 2>&1; then \
 		echo "⚠️  Rust: rustup installed but no toolchain (run: rustup default stable)"; \
 	else \
-		echo "⚪ Rust not installed (run 'make setup-rust' if needed)"; \
+		echo "⚪ Rust not installed (run 'make install-rust' if needed)"; \
 	fi
 	@# wasm-pack
 	@if [ -f "$(HOME)/.cargo/env" ]; then \
@@ -175,7 +175,7 @@ check-deps:  ## Check all development dependencies and their versions
 	if command -v wasm-pack >/dev/null 2>&1; then \
 		echo "✅ wasm-pack: $$(wasm-pack --version)"; \
 	else \
-		echo "⚪ wasm-pack not installed (run 'make setup-rust' if needed)"; \
+		echo "⚪ wasm-pack not installed (run 'make install-rust' if needed)"; \
 	fi
 	@echo ""
 	@echo "=== Optional Dependencies (for CUDA builds) ==="
@@ -306,14 +306,14 @@ help:  ## Show this help message
 	@echo "  luxar demo          - Generate demo + serve + open browser"
 	@echo ""
 	@echo "Optional accelerators:"
-	@echo "  make setup-rust     - Install Rust/WASM for viewer builds"
+	@echo "  make install-rust     - Install Rust/WASM for viewer builds"
 	@echo "  make setup-cuda     - Install CUDA dependencies + build extension"
 	@echo ""
 	@echo "System: $(OS) (package manager: $(PKG_MANAGER))"
 	@echo "Node.js requirement: $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"
 
 # Installation
-install-python:  ## Install the Python package in editable mode
+install-dev:  ## Install Luxar Python package in editable mode for development
 	pip install -e .
 
 # Code formatting (using Hatch)
@@ -333,7 +333,7 @@ format-rust:  ## Format Rust code with cargo fmt
 	fi; \
 	if ! command -v cargo >/dev/null 2>&1; then \
 		echo "⚠️  cargo not found - skipping Rust formatting"; \
-		echo "   Run 'make setup-rust' to install Rust"; \
+		echo "   Run 'make install-rust' to install Rust"; \
 	else \
 		echo "🦀 Formatting Rust code..."; \
 		cd packages/luxar-viewer/src/wasm/rust && cargo fmt; \
@@ -406,11 +406,11 @@ test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtur
 			cd packages/luxar-viewer && pnpm build:wasm; \
 		else \
 			echo "⚠️  wasm-pack not found - WASM comparison tests will be skipped"; \
-			echo "   Run 'make setup-rust' to enable full WASM testing"; \
+			echo "   Run 'make install-rust' to enable full WASM testing"; \
 		fi; \
 	else \
 		echo "⚠️  cargo not found - Rust/WASM tests will be skipped"; \
-		echo "   Run 'make setup-rust' to enable full WASM testing"; \
+		echo "   Run 'make install-rust' to enable full WASM testing"; \
 	fi
 	@echo ""
 	@echo "🔬 Generating TypeScript test fixtures..."
@@ -429,7 +429,7 @@ test-cov-python:  ## Run Python tests with coverage report
 	hatch run test-cov
 
 # Pre-commit
-install-pre-commit:  ## Install pre-commit hooks
+enable-pre-commit:  ## Enable and activate pre-commit hooks
 	hatch run pre-commit install
 
 run-pre-commit:  ## Run pre-commit on all files
@@ -545,7 +545,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 	@echo ""
 	@echo "💡 To reinstall after cleaning:"
 	@echo "   make setup-dev      - Reinstall Node.js, pnpm, Hatch, and project deps"
-	@echo "   make setup-rust     - Reinstall Rust and wasm-pack"
+	@echo "   make install-rust     - Reinstall Rust and wasm-pack"
 	@echo "   make setup-cuda     - Reinstall python3-dev, PyTorch CUDA, and build extension"
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -745,7 +745,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 	@echo "Next steps:"
 	@echo "  1. Run 'make check-deps' to verify the cleanup"
 	@echo "  2. Run 'make setup-dev' to reinstall everything"
-	@echo "  3. Run 'make setup-rust' to reinstall Rust/WASM (optional)"
+	@echo "  3. Run 'make install-rust' to reinstall Rust/WASM (optional)"
 	@echo "  4. Run 'make setup-cuda' to reinstall CUDA support (optional)"
 	@echo ""
 
@@ -901,7 +901,7 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	if command -v wasm-pack >/dev/null 2>&1; then \
 		echo "  ✅ Rust/WASM already configured"; \
 	else \
-		echo "  ⚪ Not installed (run 'make setup-rust' to enable)"; \
+		echo "  ⚪ Not installed (run 'make install-rust' to enable)"; \
 	fi
 	@echo ""
 	@echo "CUDA (Gaussian splatting GPU acceleration):"
@@ -927,7 +927,7 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	@echo "  make demo         - Generate a demo dataset"
 	@echo ""
 	@echo "Optional accelerators:"
-	@echo "  make setup-rust   - Enable WASM acceleration (viewer)"
+	@echo "  make install-rust   - Enable WASM acceleration (viewer)"
 	@echo "  make setup-cuda   - Install CUDA dependencies + build extension"
 	@echo ""
 	@echo "💡 Use 'hatch shell' to activate the Python environment"
@@ -1095,7 +1095,7 @@ serve-dataset:  ## Serve a dataset (default: datasets/demos/demo.zarr, port: 800
 	hatch run luxar serve $(DATASET) -p $(PORT)
 
 # Web viewer
-install-viewer:  ## Install viewer dependencies
+install-viewer-deps:  ## Install viewer dependencies (node_modules)
 	cd packages/luxar-viewer && pnpm install
 
 viewer:  ## Start the web viewer development server
@@ -1155,7 +1155,7 @@ build-viewer:  ## Build the viewer for production (auto-installs Rust/wasm-pack 
 	if ! command -v wasm-pack >/dev/null 2>&1; then \
 		echo "⚠️  wasm-pack not found. Installing Rust/WASM toolchain..."; \
 		echo ""; \
-		$(MAKE) setup-rust; \
+		$(MAKE) install-rust; \
 	fi
 	@# Build viewer (source nvm for pnpm; build-wasm.sh sources cargo env itself)
 	@export NVM_DIR="$$HOME/.nvm"; \
@@ -1197,7 +1197,7 @@ rebuild-viewer:  ## Complete clean rebuild of viewer (auto-installs dependencies
 	if ! command -v wasm-pack >/dev/null 2>&1; then \
 		echo "⚠️  wasm-pack not found. Installing Rust/WASM toolchain..."; \
 		echo ""; \
-		$(MAKE) setup-rust; \
+		$(MAKE) install-rust; \
 	fi
 	@# Reinstall dependencies and build (source nvm for pnpm)
 	@export NVM_DIR="$$HOME/.nvm"; \
@@ -1211,7 +1211,7 @@ rebuild-viewer:  ## Complete clean rebuild of viewer (auto-installs dependencies
 	echo "✅ Viewer rebuild complete!"
 
 # WASM/Rust setup and build (Phase 3)
-setup-rust:  ## Install/update Rust and wasm-pack for WASM development
+install-rust:  ## Install Rust and wasm-pack for WASM development
 	@# This must be a SINGLE shell command so PATH updates persist after Rust install
 	@echo "🦀 Setting up Rust/WASM development environment..."; \
 	echo ""; \
@@ -1266,7 +1266,7 @@ build-wasm:  ## Build the WASM module (requires Rust + wasm-pack)
 	if ! command -v wasm-pack >/dev/null 2>&1; then \
 		echo "❌ wasm-pack not found."; \
 		echo ""; \
-		echo "Run 'make setup-rust' to install Rust and wasm-pack."; \
+		echo "Run 'make install-rust' to install Rust and wasm-pack."; \
 		echo ""; \
 		exit 1; \
 	fi; \
@@ -1293,7 +1293,7 @@ test-wasm:  ## Run Rust unit tests for WASM module
 	if ! command -v cargo >/dev/null 2>&1; then \
 		echo "❌ cargo not found."; \
 		echo ""; \
-		echo "Run 'make setup-rust' to install Rust."; \
+		echo "Run 'make install-rust' to install Rust."; \
 		echo ""; \
 		exit 1; \
 	fi; \
@@ -1758,7 +1758,7 @@ check-rust:  ## Run Rust type/lint checks (cargo check + clippy)
 	fi; \
 	if ! command -v cargo >/dev/null 2>&1; then \
 		echo "❌ cargo not found."; \
-		echo "   Run 'make setup-rust' to install Rust."; \
+		echo "   Run 'make install-rust' to install Rust."; \
 		exit 1; \
 	fi; \
 	echo "🦀 Running Rust checks..."; \
@@ -1777,7 +1777,7 @@ check-wasm-deps:  ## Check WASM development dependencies (Rust, wasm-pack)
 	elif command -v rustup >/dev/null 2>&1; then \
 		echo "⚠️  rustup installed but no toolchain (run: rustup default stable)"; \
 	else \
-		echo "❌ Rust not installed (run 'make setup-rust')"; \
+		echo "❌ Rust not installed (run 'make install-rust')"; \
 	fi
 	@if [ -f "$(HOME)/.cargo/env" ]; then \
 		. "$(HOME)/.cargo/env"; \
@@ -1793,7 +1793,7 @@ check-wasm-deps:  ## Check WASM development dependencies (Rust, wasm-pack)
 	if command -v wasm-pack >/dev/null 2>&1; then \
 		echo "✅ wasm-pack: $$(wasm-pack --version)"; \
 	else \
-		echo "❌ wasm-pack not installed (run 'make setup-rust')"; \
+		echo "❌ wasm-pack not installed (run 'make install-rust')"; \
 	fi
 	@echo ""
 	@echo "=== WASM Build Status ==="

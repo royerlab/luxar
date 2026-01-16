@@ -468,9 +468,25 @@ class Scene(Node):
             Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float]
         ] = None,
         parent: Optional[Node] = None,
+        extend_to_all: Optional[Union[List[str], str]] = None,
         **attrs: Any,
     ) -> GSplats:
         """Add a Gaussian splats node to the scene.
+
+        Important: Center arrays must ALWAYS include ALL scene dimensions, even when
+        using extend_to_all. Extension means "show these splats at all values of
+        specified dimensions", not "skip these dimensions from the center array".
+
+        Example:
+            For a 5D scene (X, Y, Z, Time, Channel), if you want splats to appear
+            at all times and channels:
+
+            CORRECT:
+                centers = [[x, y, z, 0, 0]]  # Include Time=0, Channel=0
+                scene.add_gsplats("splats", centers, ..., extend_to_all=["Time", "Channel"])
+
+            INCORRECT:
+                centers = [[x, y, z]]  # Missing Time and Channel dimensions!
 
         Args:
             name: Name of the gsplats node
@@ -480,6 +496,16 @@ class Scene(Node):
             colors: Optional array of shape (N, 3) for splat colors
             sharpness: Optional array of shape (N,) for generalized Gaussian exponent
             parent: Parent node, defaults to scene root
+            extend_to_all: Controls visibility across non-displayed dimensions.
+
+              - None (default): Splats only visible at their defined dimension values.
+                If candidates for extension are detected, a warning will suggest
+                setting this parameter explicitly.
+              - List of dimension names: Extend visibility to all values of specified
+                dimensions, e.g., ["Time", "Channel"] makes splats visible at all
+                times and channels regardless of the current slice position.
+              - "all": Extend to all non-displayed dimensions (splats always visible).
+              - []: Explicitly no extension (silences the warning).
             **attrs: Additional attributes for the node
 
         Returns:
@@ -504,6 +530,58 @@ class Scene(Node):
 
             # Validate data dimensions against scene dimensions
             self._validate_data_dimensions(centers, name, data_type="centers")
+
+            # Handle extend_to_all based on user specification
+            final_extend_dims: List[str] = []
+
+            if extend_to_all is None:
+                # Default: No extension, but warn if candidates detected
+                if self._dimensions is not None:
+                    candidates = self._analyze_extend_candidates(centers)
+                    if candidates:
+                        warnings.warn(
+                            f"Dimension(s) {candidates} have single values but defined ranges.\n"
+                            f"If these splats should be visible at ALL values of these dimensions, use:\n"
+                            f"    extend_to_all={candidates}\n"
+                            f"If intentional (splats only at these specific values), use:\n"
+                            f"    extend_to_all=[]  # Explicit: no extension\n"
+                            f"Set extend_to_all explicitly to silence this warning.",
+                            UserWarning,
+                            stacklevel=2,
+                        )
+                final_extend_dims = []
+            elif extend_to_all == "all":
+                # Extend to all non-displayed dimensions
+                if self._dimensions is not None:
+                    final_extend_dims = [
+                        dim.name
+                        for dim in self._dimensions.dimensions
+                        if not dim.display and dim.name
+                    ]
+            elif isinstance(extend_to_all, list):
+                # Use explicit list (including empty list to silence warning)
+                if self._dimensions is not None:
+                    unknown_dims = [
+                        dim_name
+                        for dim_name in extend_to_all
+                        if dim_name not in self._dimensions.names
+                    ]
+                    if unknown_dims:
+                        raise ValueError(
+                            f"Unknown dimension(s) in extend_to_all: {unknown_dims}. "
+                            f"Valid dimensions: {self._dimensions.names}"
+                        )
+                final_extend_dims = extend_to_all
+            else:
+                raise ValueError(
+                    f"Invalid extend_to_all value: {extend_to_all}. "
+                    f"Expected None, list of dimension names, 'all', or []."
+                )
+
+            # Add extend_to_all to attributes if we have any
+            if final_extend_dims:
+                attrs["extend_to_all"] = final_extend_dims
+                aprint(f"  📡 Extending visibility across: {final_extend_dims}")
 
             # Pass data directly - ArrayEncoder handles scalar/array conversion
             parent_node = parent or self
@@ -537,6 +615,7 @@ class Scene(Node):
         name: str,
         result: "GSplatData",  # noqa: F821
         parent: Optional[Node] = None,
+        extend_to_all: Optional[Union[List[str], str]] = None,
         **attrs: Any,
     ) -> GSplats:
         """Add Gaussian splats from a GSplatData object.
@@ -549,6 +628,8 @@ class Scene(Node):
             name: Name of the gsplats node
             result: GSplatData from fit_gaussian_splats()
             parent: Parent node, defaults to scene root
+            extend_to_all: Optional visibility extension across non-displayed dimensions.
+                See add_gsplats() for details.
             **attrs: Additional attributes for the node
 
         Returns:
@@ -578,6 +659,7 @@ class Scene(Node):
             colors=result.colors,
             sharpness=result.sharpnesses,
             parent=parent,
+            extend_to_all=extend_to_all,
             **attrs,
         )
 
@@ -586,6 +668,7 @@ class Scene(Node):
         name: str,
         path: Union[str, "Path"],  # noqa: F821
         parent: Optional[Node] = None,
+        extend_to_all: Optional[Union[List[str], str]] = None,
         **attrs: Any,
     ) -> GSplats:
         """Add Gaussian splats by loading from a .gsplats.zarr file.
@@ -597,6 +680,8 @@ class Scene(Node):
             name: Name of the gsplats node
             path: Path to .gsplats.zarr file
             parent: Parent node, defaults to scene root
+            extend_to_all: Optional visibility extension across non-displayed dimensions.
+                See add_gsplats() for details.
             **attrs: Additional attributes for the node
 
         Returns:
@@ -628,6 +713,7 @@ class Scene(Node):
             name=name,
             result=result,
             parent=parent,
+            extend_to_all=extend_to_all,
             **attrs,
         )
 
