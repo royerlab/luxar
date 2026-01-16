@@ -262,16 +262,22 @@ def dedupe_farthest_first(
     # Sort by intensity if provided (highest first), otherwise keep original order
     if intensities is not None:
         sort_indices = np.argsort(intensities)[::-1]  # Descending order
-        coords_sorted = coords[sort_indices].astype(float)
+        coords_sorted = coords[sort_indices].astype(np.float32)
     else:
         sort_indices = None
-        coords_sorted = coords.astype(float)
+        coords_sorted = coords.astype(np.float32)
+
+    # Pre-allocate arrays for selected seeds (avoids repeated list→array conversions)
+    max_selections = len(coords_sorted)
+    selected_array = np.empty((max_selections, coords_sorted.shape[1]), dtype=np.float32)
+    selected_sorted_indices_array = np.empty(max_selections, dtype=np.intp)
 
     # Start with first (strongest) seed
-    selected = [coords_sorted[0]]
-    selected_sorted_indices = [0]  # Track indices into coords_sorted
-    selected_array = np.array(selected)
-    tree = cKDTree(selected_array)
+    selected_array[0] = coords_sorted[0]
+    selected_sorted_indices_array[0] = 0
+    n_selected = 1
+
+    tree = cKDTree(selected_array[:1])
 
     # Track which seeds have been used
     remaining_mask = np.ones(len(coords_sorted), dtype=bool)
@@ -284,6 +290,27 @@ def dedupe_farthest_first(
 
         if len(remaining_indices) == 0:
             break  # No more seeds
+
+        # Early termination optimization: for last few candidates, use simple O(N²) check
+        # This avoids tree rebuild overhead when very few candidates remain
+        if len(remaining_indices) <= 5:
+            found_valid = False
+            for idx in remaining_indices:
+                coord = coords_sorted[idx]
+                # Check distance to all selected seeds
+                diffs = selected_array[:n_selected] - coord
+                min_dist_sq = np.min(np.sum(diffs**2, axis=1))
+                if min_dist_sq >= min_distance**2:
+                    # Found valid seed, add it
+                    selected_array[n_selected] = coord
+                    selected_sorted_indices_array[n_selected] = idx
+                    n_selected += 1
+                    remaining_mask[idx] = False
+                    found_valid = True
+                    break
+            if not found_valid:
+                break
+            continue
 
         # Query KD-tree for all remaining seeds at once (vectorized)
         remaining_coords = coords_sorted[remaining_indices]
@@ -303,18 +330,18 @@ def dedupe_farthest_first(
         farthest_idx_in_remaining = valid_indices_in_remaining[farthest_idx_in_valid]
         farthest_idx_global = remaining_indices[farthest_idx_in_remaining]
 
-        # Add the farthest seed
-        selected.append(coords_sorted[farthest_idx_global])
-        selected_sorted_indices.append(farthest_idx_global)
+        # Add the farthest seed to pre-allocated array
+        selected_array[n_selected] = coords_sorted[farthest_idx_global]
+        selected_sorted_indices_array[n_selected] = farthest_idx_global
+        n_selected += 1
         remaining_mask[farthest_idx_global] = False
 
-        # Rebuild KD-tree with all selected points
-        selected_array = np.array(selected)
-        tree = cKDTree(selected_array)
+        # Rebuild KD-tree with array slice (no list→array conversion overhead)
+        tree = cKDTree(selected_array[:n_selected])
 
-    # Convert to arrays
-    deduped_coords = np.array(selected, dtype=float)
-    selected_sorted_indices = np.array(selected_sorted_indices, dtype=np.intp)
+    # Trim to actual size and convert back to float64 for consistency
+    deduped_coords = selected_array[:n_selected].astype(float)
+    selected_sorted_indices = selected_sorted_indices_array[:n_selected]
 
     # Map back to original indices if we sorted by intensity
     if sort_indices is not None:
