@@ -195,8 +195,8 @@ def generate_seeds(
         "edge_threshold_rel",
     }
 
-    # Passthrough params from higher-level APIs
-    passthrough_params = {"use_metal"}
+    # Passthrough params from higher-level APIs (used by fitter, not seeding)
+    passthrough_params = {"use_metal", "use_fp16", "n_iterations", "lr", "verbose"}
 
     # Route parameters
     for key, value in kwargs.items():
