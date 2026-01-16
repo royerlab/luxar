@@ -111,26 +111,28 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
             )
     elif seeds is None:
         # Auto-generate using specified method
-        seed_centers = _generate_seeds(
-            V,
-            None,
-            None,
-            config.seed_method,
-            config.verbose,
-            config=config,
-            **seed_kwargs,
-        )
+        with asection(f"Generating seeds using '{config.seed_method}' method"):
+            seed_centers = _generate_seeds(
+                V,
+                None,
+                None,
+                config.seed_method,
+                config.verbose,
+                config=config,
+                **seed_kwargs,
+            )
     elif isinstance(seeds, int):
         # User-specified exact count (seed_method still applies)
-        seed_centers = _generate_seeds(
-            V,
-            None,
-            seeds,
-            config.seed_method,
-            config.verbose,
-            config=config,
-            **seed_kwargs,
-        )
+        with asection(f"Generating seeds using '{config.seed_method}' method"):
+            seed_centers = _generate_seeds(
+                V,
+                None,
+                seeds,
+                config.seed_method,
+                config.verbose,
+                config=config,
+                **seed_kwargs,
+            )
     elif isinstance(seeds, float):
         # User-specified compression ratio → compute target seed count
         # Compression ratio = (n_splats * floats_per_splat) / total_voxels
@@ -141,15 +143,16 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
                 f"Compression ratio {seeds:.3f} → target {target_count} seeds "
                 f"({floats_per_splat} floats/splat in {V.ndim}D)"
             )
-        seed_centers = _generate_seeds(
-            V,
-            None,  # proportion no longer used
-            target_count,
-            config.seed_method,
-            config.verbose,
-            config=config,
-            **seed_kwargs,
-        )
+        with asection(f"Generating seeds using '{config.seed_method}' method"):
+            seed_centers = _generate_seeds(
+                V,
+                None,  # proportion no longer used
+                target_count,
+                config.seed_method,
+                config.verbose,
+                config=config,
+                **seed_kwargs,
+            )
     else:
         # User-provided array of seed centers
         seed_centers = seeds
@@ -274,13 +277,12 @@ def _generate_seeds(
     # Pass target_count so intelligent seeding methods get proper budget allocation:
     # - With target_seeds: 50% decomposition, 30% edges, 20% grid
     # - Without: Auto estimates ~100 seeds, rest filled by grid fallback
-    with asection(f"Generating seeds using '{seed_method}' method"):
-        if target_count is not None:
-            seeds_result = generate_seeds(
-                V, method=seed_method, target_seeds=target_count, **seed_kwargs
-            )
-        else:
-            seeds_result = generate_seeds(V, method=seed_method, **seed_kwargs)
+    if target_count is not None:
+        seeds_result = generate_seeds(
+            V, method=seed_method, target_seeds=target_count, verbose=verbose, **seed_kwargs
+        )
+    else:
+        seeds_result = generate_seeds(V, method=seed_method, verbose=verbose, **seed_kwargs)
 
     # Extract centers from GSplatData
     if isinstance(seeds_result, GSplatData):
