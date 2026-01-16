@@ -136,6 +136,73 @@ class TestSpacing:
         assert 10 < len(result.centers) < 5000
 
 
+class TestAnisotropicSpacing:
+    """Test aspect-ratio-aware spacing (respects anisotropy)."""
+
+    def test_anisotropic_spacing_thin_volume(self) -> None:
+        """Test that thin volumes get appropriate spacing in thin dimension."""
+        # Create thin volume: 100×100×10 (Z is thin)
+        V = np.random.rand(100, 100, 10)
+
+        result = seed_from_grid(V, spacing=None)
+        validate_gsplatdata(result, 3)
+
+        # Check that seeds span the full Z range
+        z_coords = result.centers[:, 2]
+        assert z_coords.min() < 2.0, "Seeds should be near Z=0"
+        assert z_coords.max() > 8.0, "Seeds should be near Z=10"
+
+        # Should have multiple Z levels (not all in one plane)
+        unique_z_levels = len(np.unique(np.round(z_coords)))
+        assert unique_z_levels >= 5, f"Should have >=5 Z levels, got {unique_z_levels}"
+
+    def test_anisotropic_spacing_very_thin(self) -> None:
+        """Test extreme anisotropy: 1000×1000×10."""
+        V = np.random.rand(1000, 1000, 10)
+
+        result = seed_from_grid(V, spacing=None)
+        validate_gsplatdata(result, 3)
+
+        # Z spacing should be much smaller than XY spacing
+        # We can infer this from seed distribution
+        z_coords = result.centers[:, 2]
+        x_coords = result.centers[:, 0]
+
+        # Should have seeds across Z range
+        z_span = z_coords.max() - z_coords.min()
+        assert z_span > 7.0, "Seeds should span most of Z dimension"
+
+        # Should have seeds across X range
+        x_span = x_coords.max() - x_coords.min()
+        assert x_span > 900.0, "Seeds should span most of X dimension"
+
+    def test_isotropic_image_unchanged(self) -> None:
+        """Test that isotropic images still work correctly."""
+        # Square/cube images should behave similarly to before
+        V = np.random.rand(50, 50)
+
+        result = seed_from_grid(V, spacing=None)
+        validate_gsplatdata(result, 2)
+
+        # Should produce reasonable seed count
+        assert 10 < len(result.centers) < 1000
+
+    def test_anisotropic_2d(self) -> None:
+        """Test anisotropic spacing in 2D (wide image)."""
+        # 200×20 image (wide and short)
+        V = np.random.rand(200, 20)
+
+        result = seed_from_grid(V, spacing=None)
+        validate_gsplatdata(result, 2)
+
+        # Seeds should span both dimensions
+        y_coords = result.centers[:, 0]
+        x_coords = result.centers[:, 1]
+
+        assert y_coords.max() - y_coords.min() > 180, "Seeds should span height"
+        assert x_coords.max() - x_coords.min() > 15, "Seeds should span width"
+
+
 class TestJitter:
     """Test jitter parameter."""
 
