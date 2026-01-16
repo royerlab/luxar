@@ -236,7 +236,10 @@ def _poisson_disk_sample_weighted(
     # Use weighted sampling with rejection for min_distance
     # KD-tree acceleration provides O(N log M) instead of O(N×M) complexity
     rng = np.random.default_rng(seed=42)
-    selected = []
+
+    # Pre-allocate array for selected seeds (avoids repeated list→array conversions)
+    selected_array = np.empty((n_samples, ndim), dtype=np.float32)
+    n_selected = 0
 
     # Number of candidates to try (oversample)
     n_candidates = min(len(valid_coords), n_samples * 10)
@@ -253,27 +256,41 @@ def _poisson_disk_sample_weighted(
     tree = None
 
     for idx in candidate_indices:
-        coord = valid_coords[idx].astype(float)
+        coord = valid_coords[idx].astype(np.float32)
 
-        # Check distance to existing selected points using KD-tree
-        if tree is not None:
-            dist, _ = tree.query(coord, k=1)
-            if dist < min_distance:
-                continue  # Too close, reject
+        # Check distance to existing selected points
+        if n_selected > 0:
+            # Early termination optimization: for last few candidates, use simple check
+            # This avoids tree rebuild overhead when very few slots remain
+            if n_samples - n_selected <= 3:
+                # Simple distance check for last few slots
+                diffs = selected_array[:n_selected] - coord
+                min_dist_sq = np.min(np.sum(diffs**2, axis=1))
+                if min_dist_sq < min_distance**2:
+                    continue  # Too close, reject
+            else:
+                # Use KD-tree for larger selection sets
+                if tree is None:
+                    tree = cKDTree(selected_array[:n_selected])
+                dist, _ = tree.query(coord, k=1)
+                if dist < min_distance:
+                    continue  # Too close, reject
 
-        selected.append(coord)
+        # Add to pre-allocated array
+        selected_array[n_selected] = coord
+        n_selected += 1
 
-        # Rebuild KD-tree with all selected points
-        # This is O(M log M) but only happens M times, so overall O(M² log M)
-        # which is better than O(N×M) when N >> M (typical case: N=100K, M=1K)
-        if len(selected) > 0:
-            tree = cKDTree(np.array(selected))
+        # Rebuild KD-tree with array slice (no list→array conversion overhead)
+        # Still O(M log M) per rebuild, but with lower constant factors
+        if n_selected > 0 and n_samples - n_selected > 3:
+            tree = cKDTree(selected_array[:n_selected])
 
-        if len(selected) >= n_samples:
+        if n_selected >= n_samples:
             break
 
-    if len(selected) == 0:
+    if n_selected == 0:
         return np.zeros((0, ndim), dtype=float)
 
-    return np.array(selected, dtype=float)
+    # Trim to actual size and convert back to float64 for consistency
+    return selected_array[:n_selected].astype(float)
 
