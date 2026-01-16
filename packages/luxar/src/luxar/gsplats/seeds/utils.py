@@ -209,7 +209,7 @@ def local_maxima(
 
 def dedupe_farthest_first(
     coords: np.ndarray, min_distance: float, intensities: Optional[np.ndarray] = None
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Remove duplicate seeds using farthest-first selection for maximum spatial diversity.
 
@@ -237,9 +237,11 @@ def dedupe_farthest_first(
 
     Returns
     -------
-    np.ndarray
-        Array of deduplicated coordinates with maximum spatial diversity.
-        Returns float coordinates for consistency with downstream processing.
+    tuple[np.ndarray, np.ndarray]
+        (deduped_coords, kept_indices) where:
+        - deduped_coords: Array of deduplicated coordinates (M, ndim)
+        - kept_indices: Indices into original coords array (M,)
+        This allows O(1) indexing into other arrays instead of O(M×N) coordinate matching.
 
     Notes
     -----
@@ -251,7 +253,7 @@ def dedupe_farthest_first(
     """
     # Handle empty input case
     if len(coords) == 0:
-        return coords.astype(float)
+        return coords.astype(float), np.array([], dtype=np.intp)
 
     # For very small inputs, use simple greedy (overhead not worth it)
     if len(coords) < 50:
@@ -262,10 +264,12 @@ def dedupe_farthest_first(
         sort_indices = np.argsort(intensities)[::-1]  # Descending order
         coords_sorted = coords[sort_indices].astype(float)
     else:
+        sort_indices = None
         coords_sorted = coords.astype(float)
 
     # Start with first (strongest) seed
     selected = [coords_sorted[0]]
+    selected_sorted_indices = [0]  # Track indices into coords_sorted
     selected_array = np.array(selected)
     tree = cKDTree(selected_array)
 
@@ -301,36 +305,51 @@ def dedupe_farthest_first(
 
         # Add the farthest seed
         selected.append(coords_sorted[farthest_idx_global])
+        selected_sorted_indices.append(farthest_idx_global)
         remaining_mask[farthest_idx_global] = False
 
         # Rebuild KD-tree with all selected points
         selected_array = np.array(selected)
         tree = cKDTree(selected_array)
 
-    return np.array(selected, dtype=float)
+    # Convert to arrays
+    deduped_coords = np.array(selected, dtype=float)
+    selected_sorted_indices = np.array(selected_sorted_indices, dtype=np.intp)
+
+    # Map back to original indices if we sorted by intensity
+    if sort_indices is not None:
+        kept_indices = sort_indices[selected_sorted_indices]
+    else:
+        kept_indices = selected_sorted_indices
+
+    return deduped_coords, kept_indices
 
 
 def _dedupe_simple(
     coords: np.ndarray, min_distance: float, intensities: Optional[np.ndarray] = None
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Simple greedy deduplication for small datasets.
 
     O(N²) algorithm used for <50 seeds where KD-tree overhead isn't worth it.
+
+    Returns (deduped_coords, kept_indices) tuple.
     """
     if len(coords) == 0:
-        return coords.astype(float)
+        return coords.astype(float), np.array([], dtype=np.intp)
 
     # Sort by intensity if provided
     if intensities is not None:
         sort_indices = np.argsort(intensities)[::-1]
         coords_sorted = coords[sort_indices]
     else:
+        sort_indices = None
         coords_sorted = coords
 
     # Greedy selection
     used = np.zeros(len(coords_sorted), dtype=bool)
     selected = []
+    selected_sorted_indices = []
 
     for i in range(len(coords_sorted)):
         if used[i]:
@@ -338,13 +357,24 @@ def _dedupe_simple(
 
         c = coords_sorted[i]
         selected.append(c)
+        selected_sorted_indices.append(i)
 
         # Mark nearby seeds as used
         diffs = coords_sorted - c
         dist2 = np.sum(diffs**2, axis=1) if coords_sorted.ndim > 1 else diffs**2
         used |= dist2 < (min_distance**2)
 
-    return np.array(selected, dtype=float)
+    # Convert to arrays
+    deduped_coords = np.array(selected, dtype=float)
+    selected_sorted_indices = np.array(selected_sorted_indices, dtype=np.intp)
+
+    # Map back to original indices if we sorted by intensity
+    if sort_indices is not None:
+        kept_indices = sort_indices[selected_sorted_indices]
+    else:
+        kept_indices = selected_sorted_indices
+
+    return deduped_coords, kept_indices
 
 
 def combine_seeds(
@@ -422,6 +452,6 @@ def combine_seeds(
 
     # Optionally deduplicate
     if min_distance is not None:
-        combined = dedupe_farthest_first(combined, min_distance=min_distance)
+        combined, _ = dedupe_farthest_first(combined, min_distance=min_distance)
 
     return combined

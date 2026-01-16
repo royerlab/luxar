@@ -147,7 +147,7 @@ class TestDedupe:
             dtype=float,
         )  # Far from others
 
-        deduped = dedupe_farthest_first(coords, min_distance=1.0)
+        deduped, _ = dedupe_farthest_first(coords, min_distance=1.0)
 
         # Should keep first and last points
         assert len(deduped) == 2
@@ -161,7 +161,7 @@ class TestDedupe:
         """Test deduplication when points are already well separated."""
         coords = np.array([[0, 0], [5, 5], [10, 10]], dtype=float)
 
-        deduped = dedupe_farthest_first(coords, min_distance=2.0)
+        deduped, _ = dedupe_farthest_first(coords, min_distance=2.0)
 
         # Should keep all points
         assert len(deduped) == 3
@@ -170,7 +170,7 @@ class TestDedupe:
         """Test when all points are too close together."""
         coords = np.array([[0, 0], [0.1, 0.1], [0.2, 0.2]], dtype=float)
 
-        deduped = dedupe_farthest_first(coords, min_distance=1.0)
+        deduped, _ = dedupe_farthest_first(coords, min_distance=1.0)
 
         # Should keep only one point
         assert len(deduped) == 1
@@ -186,7 +186,7 @@ class TestDedupe:
             dtype=float,
         )
 
-        deduped = dedupe_farthest_first(coords, min_distance=1.0)
+        deduped, _ = dedupe_farthest_first(coords, min_distance=1.0)
 
         # Should keep first and last
         assert len(deduped) == 2
@@ -203,7 +203,7 @@ class TestDedupe:
         )
 
         min_dist = 1.0
-        deduped = dedupe_farthest_first(coords, min_distance=min_dist)
+        deduped, _ = dedupe_farthest_first(coords, min_distance=min_dist)
 
         # Should remove middle point
         assert len(deduped) == 2
@@ -218,7 +218,7 @@ class TestDedupe:
         """Test deduplication with empty input."""
         coords = np.zeros((0, 2))
 
-        deduped = dedupe_farthest_first(coords, min_distance=1.0)
+        deduped, _ = dedupe_farthest_first(coords, min_distance=1.0)
 
         assert len(deduped) == 0
         assert deduped.shape == (0, 2)
@@ -227,7 +227,7 @@ class TestDedupe:
         """Test deduplication with single point."""
         coords = np.array([[1, 2]], dtype=float)
 
-        deduped = dedupe_farthest_first(coords, min_distance=1.0)
+        deduped, _ = dedupe_farthest_first(coords, min_distance=1.0)
 
         np.testing.assert_array_equal(deduped, coords)
 
@@ -235,7 +235,7 @@ class TestDedupe:
         """Test that deduplication returns float coordinates."""
         coords = np.array([[0, 0], [5, 5]], dtype=int)
 
-        deduped = dedupe_farthest_first(coords, min_distance=1.0)
+        deduped, _ = dedupe_farthest_first(coords, min_distance=1.0)
 
         assert deduped.dtype == float
 
