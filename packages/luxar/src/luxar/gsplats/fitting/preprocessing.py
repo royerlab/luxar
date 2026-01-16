@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 import torch
-from arbol import aprint
+from arbol import aprint, asection
 
 from luxar.gsplats.fitting.config import FitConfig, PreprocessedData
 
@@ -274,12 +274,13 @@ def _generate_seeds(
     # Pass target_count so intelligent seeding methods get proper budget allocation:
     # - With target_seeds: 50% decomposition, 30% edges, 20% grid
     # - Without: Auto estimates ~100 seeds, rest filled by grid fallback
-    if target_count is not None:
-        seeds_result = generate_seeds(
-            V, method=seed_method, target_seeds=target_count, **seed_kwargs
-        )
-    else:
-        seeds_result = generate_seeds(V, method=seed_method, **seed_kwargs)
+    with asection(f"Generating seeds using '{seed_method}' method"):
+        if target_count is not None:
+            seeds_result = generate_seeds(
+                V, method=seed_method, target_seeds=target_count, **seed_kwargs
+            )
+        else:
+            seeds_result = generate_seeds(V, method=seed_method, **seed_kwargs)
 
     # Extract centers from GSplatData
     if isinstance(seeds_result, GSplatData):
