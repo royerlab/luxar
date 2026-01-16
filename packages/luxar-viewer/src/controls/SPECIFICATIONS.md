@@ -1,7 +1,7 @@
 # luxar-viewer.controls - Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2025-12-09
+**Version**: 2.1.0
+**Last Updated**: 2026-01-16
 
 ## Purpose
 
@@ -588,7 +588,11 @@ function update(delta: number): boolean {
 
 ## Changelog
 
-- **v1.1.0** (2025-12-09): Arcball mode switching fix
+- **v2.1.0** (2026-01-16): Version alignment with README
+  - Aligned specification version with README v2.x scheme
+  - No functional changes
+
+- **v2.0.1** (2025-12-09): Arcball mode switching fix
   - **ADDED**: Section 4.3 documenting critical up vector reset fix
   - Documents why camera.up.set(0,1,0) is required before arcball initialization
   - Explains \_up0 and \_upState synchronization to prevent camera jumps
@@ -597,7 +601,7 @@ function update(delta: number): boolean {
   - Fixes camera "snap" bug when entering arcball mode
   - No functional changes - documentation only
 
-- **v1.0.0** (2025-01-30): Initial specification
+- **v2.0.0** (2025-01-30): Initial specification (aligns with README v2.0.0)
   - Three control types: Orbit, Arcball, Fly
   - Fly controls physics with quaternion-based rotation
   - World-space angular velocity (prevents gimbal artifacts)
