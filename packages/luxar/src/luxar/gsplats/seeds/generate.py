@@ -10,6 +10,7 @@ GSplatData with scale-informed Gaussian shapes.
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from arbol import aprint
 
 from luxar.gsplats.fit_result import GSplatData
 from luxar.gsplats.seeds.grid import seed_from_grid
@@ -166,6 +167,7 @@ def generate_seeds(
     # Extract common parameters
     min_distance = kwargs.pop("min_distance", 2.0)
     target_seeds = kwargs.pop("target_seeds", None)
+    verbose = kwargs.get("verbose", False)  # Don't pop - methods may use it
 
     # Route parameters to appropriate methods
     decomposition_kwargs: Dict[str, Any] = {}
@@ -237,6 +239,7 @@ def generate_seeds(
             decomposition_kwargs=decomposition_kwargs,
             grid_kwargs=grid_kwargs,
             edges_kwargs=edges_kwargs,
+            verbose=verbose,
         )
 
     # Generate seeds using specified method(s)
@@ -292,6 +295,7 @@ def _auto_combine(
     decomposition_kwargs: Dict[str, Any],
     grid_kwargs: Dict[str, Any],
     edges_kwargs: Dict[str, Any],
+    verbose: bool = False,
 ) -> GSplatData:
     """
     Fast combination of edges + grid seeding methods.
@@ -317,16 +321,23 @@ def _auto_combine(
     budget_edges = int(target_seeds * 0.60)
     budget_grid = target_seeds - budget_edges
 
+    if verbose:
+        aprint(f"Target: {target_seeds} seeds (edges: {budget_edges}, grid: {budget_grid})")
+
     results: List[GSplatData] = []
 
     # Phase 1: Edge seeds (highest priority - captures structure)
     try:
         from luxar.gsplats.seeds.edges import seed_from_edges
 
+        if verbose:
+            aprint(f"Detecting edges and sampling {budget_edges} seeds...")
         edge_kwargs = {**edges_kwargs, "n_seeds": budget_edges}
         seeds_edges = seed_from_edges(V, **edge_kwargs)
         if len(seeds_edges.centers) > 0:
             results.append(seeds_edges)
+            if verbose:
+                aprint(f"✓ Edge method generated {len(seeds_edges.centers)} seeds")
     except ImportError:
         pass  # Edges not available yet
     except (ValueError, RuntimeError) as e:
@@ -340,10 +351,14 @@ def _auto_combine(
         total_voxels = float(np.prod(V.shape))
         target_grid_density = budget_grid / total_voxels
         spacing = max(2.0, (1.0 / target_grid_density) ** (1.0 / ndim))
+        if verbose:
+            aprint(f"Generating grid seeds (spacing={spacing:.1f})...")
         grid_kwargs_auto = {**grid_kwargs, "spacing": spacing}
         seeds_grid = seed_from_grid(V, **grid_kwargs_auto)
         if len(seeds_grid.centers) > 0:
             results.append(seeds_grid)
+            if verbose:
+                aprint(f"✓ Grid method generated {len(seeds_grid.centers)} seeds")
     except (ValueError, RuntimeError) as e:
         import warnings
 
@@ -355,7 +370,13 @@ def _auto_combine(
     elif len(results) == 1:
         return results[0]
     else:
-        return _combine_gsplatdata(results, min_distance)
+        if verbose:
+            total_before = sum(len(r.centers) for r in results)
+            aprint(f"Combining and deduplicating {total_before} seeds (min_distance={min_distance:.1f})...")
+        result = _combine_gsplatdata(results, min_distance)
+        if verbose:
+            aprint(f"✓ Final: {len(result.centers)} seeds after deduplication")
+        return result
 
 
 def _combine_gsplatdata(
