@@ -39,7 +39,7 @@ print("✓ Demo scene created at lorenz_demo.zarr")
 
 This package contains helper functions that simplify common tasks and provide convenient demo data generators for testing and examples.
 
-**Note**: As of Luxar v1.4.0, scalar broadcasting (e.g., `colors=(1,0,0)`, `radii=0.5`) is handled by `ArrayEncoder` in `luxar.encoding`. The previous `broadcast_*_to_points()` functions have been removed.
+**Note**: As of Luxar v1.1.0, scalar broadcasting (e.g., `colors=(1,0,0)`, `radii=0.5`) is handled by `ArrayEncoder` in `luxar.encoding`. The previous `broadcast_*_to_points()` functions have been removed.
 
 ## Modules
 

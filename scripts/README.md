@@ -1,6 +1,41 @@
 # Luxar Scripts
 
-This directory contains standalone scripts for generating Gaia galaxy datasets.
+This directory contains standalone scripts for generating data and validating project documentation.
+
+## Documentation Quality Checker
+
+### `check_documentation.py`
+
+Validates documentation completeness and quality across the Luxar project. Run this before commits or in CI/CD to ensure documentation standards.
+
+**Purpose:**
+- Ensure all Python packages have README.md and SPECIFICATIONS.md files
+- Check TypeScript packages for consistent documentation
+- Validate Markdown syntax
+- Maintain documentation standards across the project
+
+**Usage:**
+
+```bash
+# Check all documentation
+hatch run python scripts/check_documentation.py
+
+# With verbose output
+hatch run python scripts/check_documentation.py --verbose
+
+# Auto-fix issues (if supported)
+hatch run python scripts/check_documentation.py --fix
+```
+
+**What it checks:**
+- Python packages have README.md with key classes and usage examples
+- Python packages have SPECIFICATIONS.md with algorithms and data structures
+- TypeScript packages have README.md in src/{package}/
+- Documentation is syntactically valid Markdown
+
+---
+
+## Gaia DR3 Data Generator
 
 ## Gaia DR3 Data Generator
 

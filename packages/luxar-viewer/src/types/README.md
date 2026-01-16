@@ -24,6 +24,7 @@ The types package defines the foundational type system for Luxar's nD visualizat
 
 - **nD Data Structures**: Complete type definitions for high-dimensional points and lines
 - **Lines Types**: Type definitions for line segments with nD clipping support
+- **GSplats Types**: Type definitions for Gaussian splats with anisotropic covariance
 - **Dimension Metadata**: Rich semantic information for dataset dimensions
 - **Navigation State**: Type-safe dimension slicing and display configuration
 - **Initialization Utilities**: Functions for creating properly structured dimension objects
@@ -285,6 +286,65 @@ const ranges = getDimensionRanges(positions, 5, 100000);
 // Result: [[0, 10], [0, 5.2], [0, 2], [-50, 50], [-30, 30]]
 //         Time    Z      Chan   Y        X
 ```
+
+## GSplats Types
+
+The package includes complete type definitions for Gaussian Splats visualization in `gsplats.ts`:
+
+### GSplatsMetadata
+
+Metadata for gsplats nodes from zarr `.zattrs`:
+
+```typescript
+interface GSplatsMetadata {
+  type: 'gsplats';
+  n_splats: number;              // Total splat count
+  ndim: number;                  // Position dimensionality
+  has_colors: boolean;           // Whether colors array is present
+  has_sharpness: boolean;        // Whether sharpness array is present
+  chunk_size: number;            // Elements per chunk
+  amplitude_range: ValueRange;   // Amplitude value range
+  sharpness_bounds: ValueRange;  // Sharpness value bounds
+  center_bounds: CoordinateBounds; // Center coordinate bounds
+  ordering: 'morton' | 'hilbert' | 'none'; // Spatial ordering method
+  extend_to_all?: string[];      // Dimensions to extend visibility across
+  // ... additional properties
+}
+```
+
+### LoadedGSplatsData
+
+Raw gsplats data loaded from zarr before nD projection:
+
+```typescript
+interface LoadedGSplatsData {
+  positions: Float32Array;       // Splat positions (N * ndim)
+  amplitudes: Float32Array;      // Splat amplitudes (N,)
+  choleskyFactors: Float32Array; // Packed Cholesky (N * k) where k = ndim*(ndim+1)/2
+  colors: Float32Array | Uint8Array | Uint16Array | null; // RGB colors
+  sharpness: Float32Array | null; // Sharpness values (defaults to 2.0)
+  splatCount: number;
+  ndim: number;
+}
+```
+
+### Type Guards
+
+```typescript
+import { isGSplatsMetadata, isGSplatsUserData } from '../types/gsplats';
+
+// Check if zarr attrs is for gsplats
+if (isGSplatsMetadata(attrs)) {
+  console.log(`Found ${attrs.n_splats} splats`);
+}
+
+// Check if THREE.Object3D is gsplats
+if (isGSplatsUserData(mesh.userData)) {
+  console.log(`Visible: ${mesh.userData.visibleSplatCount}`);
+}
+```
+
+See `gsplats.ts` for complete interface definitions including `GSplatsChunkSpatialIndex`, `ProcessedGSplatsData`, `GSplatsViewState`, and `GSplatsUserData`.
 
 ## Usage Examples
 

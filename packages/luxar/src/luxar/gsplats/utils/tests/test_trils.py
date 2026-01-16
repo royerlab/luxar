@@ -4,7 +4,90 @@ Tests for triangular matrix packing/unpacking utilities.
 
 import numpy as np
 
-from luxar.gsplats.utils.trils import pack_tril, tril_size, unpack_tril
+from luxar.gsplats.utils.trils import (
+    calculate_gradient_dilution_factor,
+    pack_tril,
+    tril_size,
+    unpack_tril,
+)
+
+
+class TestCalculateGradientDilutionFactor:
+    """Test calculate_gradient_dilution_factor function."""
+
+    def test_gradient_dilution_2d_baseline(self) -> None:
+        """Test that 2D returns 1.0 (baseline)."""
+        # 2D: params = 2 + tril_size(2) = 2 + 3 = 5
+        # baseline params_2d = 5
+        # factor = 5 / 5 = 1.0
+        factor = calculate_gradient_dilution_factor(2)
+        assert factor == 1.0, f"Expected 1.0 for 2D baseline, got {factor}"
+
+    def test_gradient_dilution_3d(self) -> None:
+        """Test 3D uses conservative scaling."""
+        # 3D: params = 3 + tril_size(3) = 3 + 6 = 9
+        # params_2d = 5
+        # factor = 9 / 5 = 1.8
+        factor = calculate_gradient_dilution_factor(3)
+        expected = 9 / 5  # 1.8
+        assert abs(factor - expected) < 1e-10, f"Expected {expected}, got {factor}"
+
+    def test_gradient_dilution_4d_aggressive(self) -> None:
+        """Test 4D uses aggressive scaling formula."""
+        # 4D: params = 4 + tril_size(4) = 4 + 10 = 14
+        # params_2d = 5
+        # dimensional_complexity = 4^0.8 ≈ 3.031
+        # parameter_complexity = 14 / 5 = 2.8
+        # factor = 3.031 * 2.8 ≈ 8.49
+        factor = calculate_gradient_dilution_factor(4)
+        expected = (4**0.8) * (14 / 5)
+        assert abs(factor - expected) < 1e-10, f"Expected {expected}, got {factor}"
+
+    def test_gradient_dilution_5d(self) -> None:
+        """Test 5D uses aggressive scaling formula."""
+        # 5D: params = 5 + tril_size(5) = 5 + 15 = 20
+        # params_2d = 5
+        # dimensional_complexity = 5^0.8 ≈ 3.624
+        # parameter_complexity = 20 / 5 = 4.0
+        # factor = 3.624 * 4.0 ≈ 14.49
+        factor = calculate_gradient_dilution_factor(5)
+        expected = (5**0.8) * (20 / 5)
+        assert abs(factor - expected) < 1e-10, f"Expected {expected}, got {factor}"
+
+    def test_gradient_dilution_monotonic_increase(self) -> None:
+        """Test that factor increases with dimension."""
+        factors = [calculate_gradient_dilution_factor(d) for d in range(2, 8)]
+        for i in range(1, len(factors)):
+            assert factors[i] > factors[i - 1], (
+                f"Factor should increase: {factors[i - 1]} (d={i + 1}) "
+                f"< {factors[i]} (d={i + 2})"
+            )
+
+    def test_gradient_dilution_1d(self) -> None:
+        """Test edge case of 1D (uses conservative formula)."""
+        # 1D: params = 1 + tril_size(1) = 1 + 1 = 2
+        # params_2d = 5
+        # factor = 2 / 5 = 0.4
+        factor = calculate_gradient_dilution_factor(1)
+        expected = 2 / 5  # 0.4
+        assert abs(factor - expected) < 1e-10, f"Expected {expected}, got {factor}"
+
+    def test_gradient_dilution_high_dimension(self) -> None:
+        """Test higher dimension (8D) for aggressive scaling."""
+        # 8D: params = 8 + tril_size(8) = 8 + 36 = 44
+        # params_2d = 5
+        # dimensional_complexity = 8^0.8 ≈ 5.278
+        # parameter_complexity = 44 / 5 = 8.8
+        # factor = 5.278 * 8.8 ≈ 46.45
+        factor = calculate_gradient_dilution_factor(8)
+        expected = (8**0.8) * (44 / 5)
+        assert abs(factor - expected) < 1e-10, f"Expected {expected}, got {factor}"
+
+    def test_gradient_dilution_returns_float(self) -> None:
+        """Test that function returns float type."""
+        for d in [1, 2, 3, 4, 5]:
+            factor = calculate_gradient_dilution_factor(d)
+            assert isinstance(factor, float), f"Expected float, got {type(factor)}"
 
 
 class TestTrilSize:

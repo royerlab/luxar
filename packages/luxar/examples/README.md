@@ -102,7 +102,29 @@ luxar serve transform_example.zarr
 ```
 
 #### 7. **hierarchy_example.py** - Scene Hierarchy
-Demonstrates parent-child relationships and property inheritance (note: file not found but referenced in original README)
+Demonstrates parent-child relationships and property inheritance:
+- Hierarchical node structures and nesting
+- Property inheritance from parent to child nodes
+- Transform composition in hierarchies
+- Rendering attribute inheritance
+
+```bash
+python hierarchy_example.py
+luxar serve hierarchy_example.zarr
+```
+
+#### 7b. **lines_basic_example.py** - Line Rendering
+Creates 3D scenes with line primitives:
+- Basic line creation with segments
+- Polylines (connected vertices)
+- Per-vertex colors and widths
+- Varying sharpness values for line edges
+- Grid and spiral demonstrations
+
+```bash
+python lines_basic_example.py
+luxar serve lines_basic_example.zarr
+```
 
 ### nD & Dimensions
 
