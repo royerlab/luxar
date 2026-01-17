@@ -9,7 +9,7 @@ from typing import Any, Dict
 import numpy as np
 from arbol import aprint, asection
 
-from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.gsplat_data import GSplatData
 
 
 def display_compression_analysis(V: np.ndarray, result: GSplatData) -> None:

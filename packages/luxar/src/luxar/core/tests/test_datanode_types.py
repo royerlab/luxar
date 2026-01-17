@@ -270,7 +270,7 @@ class TestGSplatsNode:
 
     def test_add_gsplats_from_data(self, tmp_path) -> None:
         """Test adding gsplats from GSplatData."""
-        from luxar.gsplats.fit_result import GSplatData
+        from luxar.gsplats.gsplat_data import GSplatData
 
         # Create a result object
         centers = np.array([[0, 0], [1, 1]], dtype=np.float32)
@@ -299,7 +299,7 @@ class TestGSplatsNode:
 
     def test_add_gsplats_from_file(self, tmp_path) -> None:
         """Test adding gsplats from .gsplats.zarr file."""
-        from luxar.gsplats.fit_result import GSplatData
+        from luxar.gsplats.gsplat_data import GSplatData
 
         # Create and save a result
         centers = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Optional, Sequence
 
 import numpy as np
 
-from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.fitting.config import FitConfig
 
 if TYPE_CHECKING:

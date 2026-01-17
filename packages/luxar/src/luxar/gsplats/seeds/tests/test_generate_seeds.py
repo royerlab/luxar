@@ -10,7 +10,7 @@ import warnings
 import numpy as np
 import pytest
 
-from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds import generate_seeds
 
 HAS_SCIPY = importlib.util.find_spec("scipy") is not None
