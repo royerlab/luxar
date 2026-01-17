@@ -99,7 +99,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.demos import launch_viewer
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.utils.paths import get_demos_output_dir
@@ -114,7 +114,7 @@ TARGET_SIZE = 128  # Downscale to manageable size
 TIME_POINT = 0  # First time point
 
 # Fitting parameters
-N_ITERS = 1500  # Good balance of quality vs speed
+N_ITERS = 6000  # Good balance of quality vs speed
 DEVICE = None  # Auto-detect (cuda/mps/cpu)
 
 # Cache paths (use user cache directory for intermediate fit results)
@@ -254,16 +254,13 @@ def fit_or_load_gsplats(volume):
         # Fit gsplats
         aprint(f"Fitting Gaussian Splats ({N_ITERS} iterations)...")
 
-        dynamic_config = DynamicOpsConfig()
 
         result = fit_gaussian_splats(
             volume,
-            seeds=5000,
+            seeds=8000,
             n_iters=N_ITERS,
             device=DEVICE,
             verbose=True,
-            enable_dynamic_ops=True,
-            dynamic_config=dynamic_config,
             napari_movie=False,  # No visualization during fitting
         )
 
@@ -395,40 +392,36 @@ def view_with_napari(volume, gsplats_data):
         return
 
     with asection("Opening in napari"):
-        aprint("Launching napari for comparison...")
+        aprint("Preparing napari visualization...")
         aprint("  Layer 1: Original DAPI volume (green)")
         aprint("  Layer 2: GSplats reconstruction (magenta)")
         aprint("  Both in original voxel coordinates - should align perfectly!")
 
+        # Render gsplats to volume for comparison BEFORE opening napari
+        # Using GPU-accelerated renderer (100-1000x faster than old NumPy implementation)
+        aprint("Rendering gsplats to volume (GPU-accelerated)...")
+        rendered = gsplats_data.render_to_volume(shape=volume.shape)
+        aprint("✓ Rendering complete")
+
+        # NOW create the napari viewer with all data ready
+        aprint("Launching napari...")
         viewer = napari.Viewer(title="GSplats vs Original - DAPI Nuclei")
 
         # Add original volume
         viewer.add_image(
             volume,
             name="Original DAPI",
-            colormap="green",
-            opacity=0.7,
+            colormap="gray",
+            opacity=1.0,
             blending="additive",
-        )
-
-        # Render gsplats to volume for comparison
-        aprint("Rendering gsplats to volume...")
-        from luxar.gsplats.io.inspect_gsplats import render_gsplats_to_volume
-
-        rendered = render_gsplats_to_volume(
-            gsplats_data.centers,
-            gsplats_data.cholesky_factors,
-            gsplats_data.amplitudes,
-            volume_shape=volume.shape,
-            sharpness=gsplats_data.sharpnesses,
         )
 
         # Add rendered gsplats
         viewer.add_image(
             rendered,
             name="GSplats Reconstruction",
-            colormap="magenta",
-            opacity=0.7,
+            colormap="gray",
+            opacity=1.0,
             blending="additive",
         )
 

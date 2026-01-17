@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from arbol import asection
 
-from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.fitting import (
     create_loss_function,
     finalize_results,

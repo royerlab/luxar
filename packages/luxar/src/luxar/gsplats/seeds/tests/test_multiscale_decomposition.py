@@ -7,7 +7,7 @@ import importlib.util
 import numpy as np
 import pytest
 
-from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds import (
     dedupe_farthest_first,
     local_maxima,
