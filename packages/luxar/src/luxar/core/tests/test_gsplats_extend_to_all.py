@@ -332,7 +332,7 @@ class TestGSplatsExtendToAll:
 
     def test_add_gsplats_from_data_with_extend_to_all(self, tmp_path) -> None:
         """Test add_gsplats_from_data supports extend_to_all parameter."""
-        from luxar.gsplats.fit_result import GSplatData
+        from luxar.gsplats.gsplat_data import GSplatData
 
         dims = Dimensions(
             [

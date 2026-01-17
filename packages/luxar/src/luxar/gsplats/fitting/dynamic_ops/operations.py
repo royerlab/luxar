@@ -244,30 +244,35 @@ def _compute_peak_coverage_batch(
     if not active_mask.any():
         return torch.zeros(P, device=device)
 
-    # For efficiency, we'll compute influences for all (P, N) pairs but mask later
-    # Batched solve: For each (p, n) pair, solve L[n] @ y = diff[p, n]
-    # Reshape for batched solve_triangular:
-    # Ls: (N, d, d) -> expand to (P, N, d, d) -> reshape to (P*N, d, d)
-    # diff: (P, N, d) -> reshape to (P*N, d, 1)
+    # MEMORY OPTIMIZATION: Only process active (peak, splat) pairs
+    # This avoids creating huge (P×N×d×d) tensors for distant splats
+    # For P=100 peaks, N=10K splats, d=3: reduces ~100MB to ~10MB
+    active_pairs = torch.nonzero(active_mask, as_tuple=False)  # (M, 2) where M << P*N
+    peak_indices = active_pairs[:, 0]  # (M,)
+    splat_indices = active_pairs[:, 1]  # (M,)
+    M = len(active_pairs)
 
-    Ls_expanded = Ls[None, :, :, :].expand(P, -1, -1, -1).reshape(P * N, d, d)
-    diff_flat = diff.reshape(P * N, d, 1)
+    # Gather only active pairs' data
+    active_centers = centers[splat_indices]  # (M, d)
+    active_Ls = Ls[splat_indices]  # (M, d, d)
+    active_amps = amps[splat_indices]  # (M,)
+    active_peaks = peak_locations[peak_indices]  # (M, d)
 
-    # Batched triangular solve
-    # y shape: (P*N, d, 1)
-    y = torch.linalg.solve_triangular(Ls_expanded, diff_flat, upper=False)
+    # Compute for M pairs instead of P*N pairs
+    diff_active = active_peaks - active_centers  # (M, d)
+    y = torch.linalg.solve_triangular(
+        active_Ls, diff_active.unsqueeze(-1), upper=False
+    )  # (M, d, 1)
+    squared_dist = (y.squeeze(-1) ** 2).sum(dim=-1)  # (M,)
+    influences_active = active_amps * torch.exp(-0.5 * squared_dist)  # (M,)
 
-    # Squared Mahalanobis distance: ||y||^2 for each (p, n) pair
-    squared_dist = (y.squeeze(-1) ** 2).sum(dim=-1).reshape(P, N)  # (P, N)
-
-    # Compute influences: a * exp(-0.5 * ||y||^2)
-    influences = amps[None, :] * torch.exp(-0.5 * squared_dist)  # (P, N)
-
-    # Zero out excluded splats and out-of-reach splats
-    influences = influences * active_mask.float()
-
-    # Max influence per peak
-    max_influences, _ = influences.max(dim=1)  # (P,)
+    # Scatter max influences back to peaks
+    # For each peak, take the maximum influence from all its active splats
+    max_influences = torch.zeros(P, device=device)
+    for p in range(P):
+        peak_mask = peak_indices == p
+        if peak_mask.any():
+            max_influences[p] = influences_active[peak_mask].max()
 
     return max_influences
 

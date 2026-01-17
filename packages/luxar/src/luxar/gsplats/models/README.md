@@ -169,7 +169,7 @@ output = render_gaussians(
 
 ```python
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
-from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.gsplat_data import GSplatData
 import numpy as np
 
 # Create a GSplatData (typically from fit_gaussian_splats())

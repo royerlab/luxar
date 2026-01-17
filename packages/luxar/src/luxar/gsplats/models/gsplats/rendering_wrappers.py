@@ -17,7 +17,7 @@ from typing import Optional, Sequence
 import numpy as np
 import torch
 
-from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 from luxar.gsplats.utils.trils import unpack_tril
 

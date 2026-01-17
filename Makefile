@@ -1207,7 +1207,7 @@ rebuild-viewer:  ## Complete clean rebuild of viewer (auto-installs dependencies
 	echo "📦 Reinstalling dependencies..."; \
 	cd packages/luxar-viewer && pnpm install; \
 	echo "🦀 Building viewer with Rust/WASM support..."; \
-	cd packages/luxar-viewer && pnpm build; \
+	cd $(CURDIR) && cd packages/luxar-viewer && pnpm build; \
 	echo "✅ Viewer rebuild complete!"
 
 # WASM/Rust setup and build (Phase 3)

@@ -206,8 +206,14 @@ def render_gsplats_to_volume(
 ) -> np.ndarray:
     """Render Gaussian splats into a 3D volume for visualization.
 
-    This function evaluates each Gaussian splat on a 3D grid and accumulates
-    the contributions to create a volumetric representation.
+    .. deprecated:: 0.2.0
+        This function is deprecated and will be removed in a future version.
+        Use :func:`luxar.gsplats.rendering.render_to_volume` or the
+        :meth:`GSplatData.render_to_volume` method instead for 100-1000x
+        faster GPU-accelerated rendering.
+
+    This is a legacy NumPy implementation that is very slow (O(N_splats × N_voxels))
+    and runs on CPU only. The new GPU-accelerated renderer is much faster.
 
     Args:
         centers: Splat centers (N, 3) in voxel coordinates
@@ -218,67 +224,37 @@ def render_gsplats_to_volume(
 
     Returns:
         3D volume (Z, Y, X) with accumulated splat contributions
+
+    See Also:
+        :func:`luxar.gsplats.rendering.render_to_volume`: Fast GPU-accelerated rendering
+        :meth:`GSplatData.render_to_volume`: Convenience method on GSplatData
     """
-    n_splats = centers.shape[0]
-    volume = np.zeros(volume_shape, dtype=np.float32)
+    import warnings
+
+    warnings.warn(
+        "render_gsplats_to_volume() is deprecated and will be removed in a future version. "
+        "Use luxar.gsplats.rendering.render_to_volume() or GSplatData.render_to_volume() "
+        "instead for 100-1000x faster GPU-accelerated rendering.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+    # Import the new fast renderer
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.rendering.volume_rendering import render_to_volume
 
     # Default sharpness to 2.0 (standard Gaussian)
     if sharpness is None:
-        sharpness = np.full(n_splats, 2.0, dtype=np.float32)
+        sharpness = np.full(len(centers), 2.0, dtype=np.float32)
 
-    # Create coordinate grid
-    Z, Y, X = volume_shape
-    z_grid, y_grid, x_grid = np.meshgrid(
-        np.arange(Z, dtype=np.float32),
-        np.arange(Y, dtype=np.float32),
-        np.arange(X, dtype=np.float32),
-        indexing="ij",
+    # Wrap in GSplatData and use new renderer
+    gsplat_data = GSplatData(
+        centers=centers,
+        amplitudes=amplitudes,
+        cholesky_factors=cholesky_factors,
+        sharpnesses=sharpness,
+        colors=None,
+        stats={},
     )
 
-    # Stack into (Z*Y*X, 3) coordinate array
-    coords = np.stack([z_grid.ravel(), y_grid.ravel(), x_grid.ravel()], axis=1)
-
-    # Render each splat
-    for i in range(n_splats):
-        center = centers[i]
-        amplitude = amplitudes[i]
-        s = sharpness[i]
-
-        # Unpack Cholesky factor (lower triangular)
-        L = np.array(
-            [
-                [cholesky_factors[i, 0], 0, 0],
-                [cholesky_factors[i, 1], cholesky_factors[i, 2], 0],
-                [
-                    cholesky_factors[i, 3],
-                    cholesky_factors[i, 4],
-                    cholesky_factors[i, 5],
-                ],
-            ]
-        )
-
-        # Compute difference from center
-        diff = coords - center  # (Z*Y*X, 3)
-
-        # Solve L @ y = diff using forward substitution (vectorized)
-        y = np.zeros_like(diff)
-        y[:, 0] = diff[:, 0] / L[0, 0]
-        y[:, 1] = (diff[:, 1] - L[1, 0] * y[:, 0]) / L[1, 1]
-        y[:, 2] = (diff[:, 2] - L[2, 0] * y[:, 0] - L[2, 1] * y[:, 1]) / L[2, 2]
-
-        # Mahalanobis distance: ||y||
-        mahal_sq = np.sum(y * y, axis=1)
-
-        # Generalized Gaussian: exp(-0.5 * ||y||^s)
-        # For s=2 (standard Gaussian), this is exp(-0.5 * mahal_sq)
-        # For s≠2, we use ||y||^s = (mahal_sq)^(s/2)
-        if s == 2.0:
-            density = amplitude * np.exp(-0.5 * mahal_sq)
-        else:
-            mahal_dist = np.sqrt(mahal_sq)
-            density = amplitude * np.exp(-0.5 * np.power(mahal_dist, s))
-
-        # Accumulate into volume
-        volume += density.reshape(volume_shape)
-
-    return volume
+    return render_to_volume(gsplat_data, shape=volume_shape)

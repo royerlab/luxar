@@ -548,7 +548,7 @@ def create_storm_scene(
 
             # Create BOTH views as gsplats with different PSF sizes
             with asection("Adding both microscopy views as gsplats"):
-                from luxar.gsplats.fit_result import GSplatData
+                from luxar.gsplats.gsplat_data import GSplatData
 
                 # Center at center-of-mass (amplitude-weighted)
                 total_amplitude = amplitudes.sum()
