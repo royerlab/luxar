@@ -232,6 +232,94 @@ def _group_by_box(
 # ---- Specialized renderers --------------------------------------------------
 
 
+def _compute_aabb_with_intensity_floor(
+    centers: torch.Tensor,
+    Ls: torch.Tensor,
+    amps: torch.Tensor,
+    sharpness: torch.Tensor,
+    shape: Sequence[int],
+    truncate: float,
+    intensity_floor: float | None,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Compute AABB bounds with optional intensity-aware shrinking.
+
+    This helper deduplicates the AABB computation logic used across 2D, 3D, and nD renderers.
+
+    Parameters
+    ----------
+    centers : torch.Tensor, shape (N, d)
+        Splat center positions.
+    Ls : torch.Tensor, shape (N, d, d)
+        Lower-triangular Cholesky factors.
+    amps : torch.Tensor, shape (N,)
+        Splat amplitudes.
+    sharpness : torch.Tensor, shape (N,)
+        Per-splat sharpness values.
+    shape : Sequence[int]
+        Output volume shape.
+    truncate : float
+        Truncation radius in standard deviations.
+    intensity_floor : float | None
+        Minimum intensity threshold for amplitude-aware culling.
+    device : torch.device
+        Device for tensor operations.
+
+    Returns
+    -------
+    lo : torch.Tensor, shape (N, d)
+        Lower bounds of AABBs.
+    hi : torch.Tensor, shape (N, d)
+        Upper bounds of AABBs.
+    valid : torch.Tensor, shape (N,)
+        Boolean mask indicating valid (non-empty) AABBs.
+    """
+    d = centers.shape[1]
+
+    # Compute sigma diagonal: Σ_ii = row-wise sum(L^2)
+    sigma_diag = torch.sum(Ls * Ls, dim=2)  # (N, d)
+
+    # Sharpness-adjusted truncation for generalized Gaussian exp(-0.5 * r^s)
+    effective_truncate = truncate ** (2.0 / sharpness)  # (N,)
+    radii = torch.clamp(
+        (effective_truncate[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
+        .ceil()
+        .to(torch.long),
+        min=1,
+    )
+
+    # Initial AABB bounds
+    lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)
+    hi = torch.minimum(
+        (centers + radii).ceil().to(torch.long) + 1,
+        torch.tensor(shape, device=device, dtype=torch.long),
+    )
+
+    # Optional amplitude-aware shrinking
+    if intensity_floor is not None and intensity_floor > 0:
+        eps = torch.tensor(intensity_floor, device=device, dtype=torch.float32)
+        a = torch.clamp(amps, min=1e-12)
+        log_ratio = torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
+        tmax = torch.pow(log_ratio, 1.0 / sharpness)  # (N,) - sharpness-adjusted threshold
+
+        shrink = torch.clamp(
+            (tmax[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
+            .ceil()
+            .to(torch.long),
+            min=1,
+        )
+        radii = torch.minimum(radii, shrink)
+        lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)
+        hi = torch.minimum(
+            (centers + radii).ceil().to(torch.long) + 1,
+            torch.tensor(shape, device=device, dtype=torch.long),
+        )
+
+    # Validate non-empty boxes
+    valid = (hi > lo).all(1)
+    return lo, hi, valid
+
+
 def _render_gaussians_2d(
     shape: Sequence[int],
     centers: torch.Tensor,  # (N,2)
@@ -248,44 +336,12 @@ def _render_gaussians_2d(
     out_flat = out.view(-1)
     strides = _linear_strides(shape, device)  # (2,)
 
-    # AABB per splat (sharpness-adjusted for generalized Gaussian exp(-0.5 * r^s))
-    sigma_diag = torch.sum(Ls * Ls, dim=2)  # (N,2)
-    effective_truncate = truncate ** (
-        2.0 / sharpness
-    )  # (N,) - sharpness-adjusted radius
-    radii = torch.clamp(
-        (effective_truncate[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
-        .ceil()
-        .to(torch.long),
-        min=1,
-    )
-    lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)
-    hi = torch.minimum(
-        (centers + radii).ceil().to(torch.long) + 1,
-        torch.tensor(shape, device=device, dtype=torch.long),
+    # Compute AABB bounds using helper
+    lo, hi, valid = _compute_aabb_with_intensity_floor(
+        centers, Ls, amps, sharpness, shape, truncate, intensity_floor, device
     )
 
-    if intensity_floor is not None and intensity_floor > 0:
-        eps = torch.tensor(intensity_floor, device=device, dtype=torch.float32)
-        a = torch.clamp(amps, min=1e-12)
-        log_ratio = torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
-        tmax = torch.pow(
-            log_ratio, 1.0 / sharpness
-        )  # (N,) - sharpness-adjusted threshold
-        shrink = torch.clamp(
-            (tmax[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
-            .ceil()
-            .to(torch.long),
-            min=1,
-        )
-        radii = torch.minimum(radii, shrink)
-        lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)
-        hi = torch.minimum(
-            (centers + radii).ceil().to(torch.long) + 1,
-            torch.tensor(shape, device=device, dtype=torch.long),
-        )
-
-    valid = (hi > lo).all(1)
+    # Filter invalid boxes
     if not torch.all(valid):
         centers, Ls, amps, sharpness = (
             centers[valid],
@@ -357,44 +413,12 @@ def _render_gaussians_3d(
     out_flat = out.view(-1)
     strides = _linear_strides(shape, device)  # (3,)
 
-    # AABB per splat (sharpness-adjusted for generalized Gaussian exp(-0.5 * r^s))
-    sigma_diag = torch.sum(Ls * Ls, dim=2)  # (N,3)
-    effective_truncate = truncate ** (
-        2.0 / sharpness
-    )  # (N,) - sharpness-adjusted radius
-    radii = torch.clamp(
-        (effective_truncate[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
-        .ceil()
-        .to(torch.long),
-        min=1,
-    )
-    lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)
-    hi = torch.minimum(
-        (centers + radii).ceil().to(torch.long) + 1,
-        torch.tensor(shape, device=device, dtype=torch.long),
+    # Compute AABB bounds using helper
+    lo, hi, valid = _compute_aabb_with_intensity_floor(
+        centers, Ls, amps, sharpness, shape, truncate, intensity_floor, device
     )
 
-    if intensity_floor is not None and intensity_floor > 0:
-        eps = torch.tensor(intensity_floor, device=device, dtype=torch.float32)
-        a = torch.clamp(amps, min=1e-12)
-        log_ratio = torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
-        tmax = torch.pow(
-            log_ratio, 1.0 / sharpness
-        )  # (N,) - sharpness-adjusted threshold
-        shrink = torch.clamp(
-            (tmax[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
-            .ceil()
-            .to(torch.long),
-            min=1,
-        )
-        radii = torch.minimum(radii, shrink)
-        lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)
-        hi = torch.minimum(
-            (centers + radii).ceil().to(torch.long) + 1,
-            torch.tensor(shape, device=device, dtype=torch.long),
-        )
-
-    valid = (hi > lo).all(1)
+    # Filter invalid boxes
     if not torch.all(valid):
         centers, Ls, amps, sharpness = (
             centers[valid],
@@ -510,52 +534,12 @@ def render_gaussians(
     out_flat = out.view(-1)
     strides = _linear_strides(shape, device)  # (d,)
 
-    # --- AABB per splat ---
-    # Σ_ii = row-wise sum(L^2); r_i = ceil(truncate * sqrt(Σ_ii))
-    # Adjust truncate for sharpness: for generalized Gaussian exp(-0.5 * r^s),
-    # to reach same threshold as truncate*σ for s=2, we need: r = (truncate^2)^(1/s) * σ
-    sigma_diag = torch.sum(Ls * Ls, dim=2)  # (N, d)
-    effective_truncate = truncate ** (
-        2.0 / sharpness
-    )  # (N,) - sharpness-adjusted radius
-    radii = torch.clamp(
-        (effective_truncate[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
-        .ceil()
-        .to(torch.long),
-        min=1,
+    # Compute AABB bounds using helper
+    lo, hi, valid = _compute_aabb_with_intensity_floor(
+        centers, Ls, amps, sharpness, shape, truncate, intensity_floor, device
     )
-    lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)  # (N, d)
-    hi = torch.minimum(
-        (centers + radii).ceil().to(torch.long) + 1,
-        torch.tensor(shape, device=device).to(torch.long),
-    )  # (N, d)
 
-    # (Optional) **amplitude-aware shrinking** – avoids giant boxes for tiny a
-    if intensity_floor is not None and intensity_floor > 0:
-        # t_max per splat solves: a * exp(-0.5 * t^s) >= intensity_floor  ->  t <= (2 log(a/eps))^(1/s)
-        # For s=2: t <= sqrt(2 log(a/eps)) (original formula)
-        eps = torch.tensor(intensity_floor, device=device, dtype=torch.float32)
-        a = torch.clamp(amps, min=1e-12)
-        log_ratio = torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
-        tmax = torch.pow(
-            log_ratio, 1.0 / sharpness
-        )  # (N,) - sharpness-adjusted threshold
-        # shrink radii = min(current, ceil(tmax * sqrt(Σ_ii)))
-        shrink = torch.clamp(
-            (tmax[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
-            .ceil()
-            .to(torch.long),
-            min=1,
-        )
-        radii = torch.minimum(radii, shrink)
-        lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)
-        hi = torch.minimum(
-            (centers + radii).ceil().to(torch.long) + 1,
-            torch.tensor(shape, device=device).to(torch.long),
-        )
-
-    # Drop empty boxes (rare but safe)
-    valid = (hi > lo).all(1)
+    # Filter invalid boxes
     if not torch.all(valid):
         centers = centers[valid]
         Ls = Ls[valid]
@@ -563,7 +547,6 @@ def render_gaussians(
         sharpness = sharpness[valid]
         lo = lo[valid]
         hi = hi[valid]
-        sigma_diag = sigma_diag[valid]
 
     if centers.numel() == 0:
         return out

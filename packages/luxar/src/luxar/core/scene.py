@@ -645,7 +645,7 @@ class Scene(Node):
             ...     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             ...     gsplats = scene.add_gsplats_from_data("fitted", result)
         """
-        from luxar.gsplats.fit_result import GSplatData
+        from luxar.gsplats.gsplat_data import GSplatData
 
         if not isinstance(result, GSplatData):
             raise TypeError(f"Expected GSplatData, got {type(result).__name__}")

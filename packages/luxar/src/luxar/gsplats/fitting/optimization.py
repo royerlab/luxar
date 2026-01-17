@@ -224,7 +224,7 @@ def run_optimization_loop(
                 rel = torch.linalg.norm((pred - V_t).reshape(-1)) / (
                     torch.linalg.norm(V_t.reshape(-1)) + 1e-12
                 )
-            # Reuse current_max_abs_error computed earlier (line 142) - no redundant computation
+            # Reuse current_max_abs_error computed earlier (line 149) - no redundant computation
             aprint(
                 f"[{it:4d}/{config.n_iters}] loss={current_loss:.5g}  "
                 f"relL2={float(rel):.4f}  maxAbsErr={current_max_abs_error:.5g}  N={N}"

@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 from arbol import aprint
 
-from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds.grid import seed_from_grid
 from luxar.gsplats.seeds.multiscale_decomposition import seed_from_decomposition
 
