@@ -423,7 +423,7 @@ class TestMultiScaleFitting:
             assert inter["residual"].shape == inter["target"].shape
 
             # Check splats is GSplatData
-            from luxar.gsplats.fit_result import GSplatData
+            from luxar.gsplats.gsplat_data import GSplatData
 
             assert isinstance(inter["splats"], GSplatData)
             assert isinstance(inter["splats_full_res"], GSplatData)

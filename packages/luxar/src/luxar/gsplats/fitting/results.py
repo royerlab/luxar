@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 from arbol import aprint
 
-from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.fitting.config import (
     FitConfig,
     OptimizationResults,

@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 from arbol import aprint, asection
+from scipy.spatial import distance
 
 from luxar.gsplats.fitting.config import FitConfig, PreprocessedData
 
@@ -94,7 +95,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     PreprocessedData
         Preprocessed data ready for optimization
     """
-    from luxar.gsplats.fit_result import GSplatData
+    from luxar.gsplats.gsplat_data import GSplatData
 
     V = config.V.copy()  # Work with a copy
     seeds = config.seeds
@@ -270,7 +271,7 @@ def _generate_seeds(
     np.ndarray
         Generated seed centers (N, ndim)
     """
-    from luxar.gsplats.fit_result import GSplatData
+    from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.seeds import generate_seeds
 
     # Generate seeds using specified method (returns GSplatData)
@@ -446,21 +447,26 @@ def _subsample_seeds_spatially_diverse(
     selected = [valid_seeds[selected_indices[0]]]
 
     # Build remaining candidates
-    remaining_indices = set(range(len(valid_seeds))) - {selected_indices[0]}
+    remaining_indices = list(range(len(valid_seeds)))
+    remaining_indices.remove(selected_indices[0])
 
-    # Iteratively select farthest seed
+    # Iteratively select farthest seed using batch distance computation
+    # This is much faster than rebuilding KD-tree on every iteration
+    # Complexity: O(n² d) instead of O(n² log n)
     while len(selected) < target_count and remaining_indices:
-        # Build KD-tree of selected seeds for fast distance queries
-        tree = cKDTree(np.array(selected))
+        # Compute pairwise distances between remaining and selected seeds
+        remaining_coords = valid_seeds[remaining_indices]
+        selected_coords = np.array(selected)
 
-        # Find distances to nearest selected seed for all remaining candidates
-        remaining_list = list(remaining_indices)
-        remaining_coords = valid_seeds[remaining_list]
-        distances, _ = tree.query(remaining_coords, k=1)
+        # cdist computes all pairwise distances at once: (n_remaining, n_selected)
+        pairwise_dists = distance.cdist(remaining_coords, selected_coords)
 
-        # Select the farthest one (maximum distance to nearest selected seed)
-        farthest_idx_in_remaining = np.argmax(distances)
-        farthest_idx_global = remaining_list[farthest_idx_in_remaining]
+        # For each remaining point, find distance to nearest selected point
+        min_dists_to_selected = pairwise_dists.min(axis=1)
+
+        # Select point with maximum minimum distance (farthest from any selected)
+        farthest_idx_in_remaining = np.argmax(min_dists_to_selected)
+        farthest_idx_global = remaining_indices[farthest_idx_in_remaining]
 
         # Add to selection
         selected.append(valid_seeds[farthest_idx_global])
