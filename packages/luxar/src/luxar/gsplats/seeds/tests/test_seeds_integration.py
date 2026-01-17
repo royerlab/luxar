@@ -9,7 +9,7 @@ and 90% amplitude scaling (to avoid overlap and divergence during optimization).
 import numpy as np
 import pytest
 
-from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds import (
     combine_seeds,
     seed_from_decomposition,

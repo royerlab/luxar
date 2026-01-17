@@ -16,7 +16,7 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
 
 if HAS_TORCH:
-    from luxar.gsplats.fit_result import GSplatData
+    from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.models.gsplats import (
         render_gaussians,
         render_gaussians_batched,
