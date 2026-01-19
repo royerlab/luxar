@@ -145,7 +145,8 @@ class TestMergeWithChannelColors:
             for i in range(3)
         ]
 
-        colors = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
+        # Use float tuples for consistency with [0, 1] range documented in docstring
+        colors = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]
 
         merged = GSplatData.merge_with_channel_colors(gs_list, channel_colors=colors)
 
@@ -227,3 +228,48 @@ class TestMergeWithChannelColors:
         assert merged.centers.shape == (2, 3)
         assert np.allclose(merged.colors[0], [0.5, 0.5, 0.5])
         assert np.allclose(merged.colors[1], [0.5, 0.5, 0.5])
+
+    def test_one_empty_channel(self):
+        """Test merging when one channel has 0 splats (edge case)."""
+        gs_empty = GSplatData(
+            centers=np.zeros((0, 3), dtype=np.float32),
+            amplitudes=np.zeros((0,), dtype=np.float32),
+            cholesky_factors=np.zeros((0, 6), dtype=np.float32),
+            sharpnesses=np.zeros((0,), dtype=np.float32),
+        )
+
+        gs_nonempty = GSplatData(
+            centers=np.array([[1, 2, 3]], dtype=np.float32),
+            amplitudes=np.array([1.0], dtype=np.float32),
+            cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
+            sharpnesses=np.array([2.0], dtype=np.float32),
+        )
+
+        merged = GSplatData.merge_with_channel_colors(
+            [gs_empty, gs_nonempty],
+            channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        )
+
+        # Result should only have 1 splat (from nonempty channel)
+        assert merged.centers.shape == (1, 3)
+        assert merged.amplitudes.shape == (1,)
+        # The splat should be green (from channel 1)
+        assert np.allclose(merged.colors[0], [0.0, 1.0, 0.0])
+        assert merged.stats["splats_per_channel"] == [0, 1]
+
+    def test_existing_colors_ignored(self):
+        """Test that existing colors in input GSplatData are ignored."""
+        gs1 = GSplatData(
+            centers=np.array([[0, 0, 0]], dtype=np.float32),
+            amplitudes=np.array([1.0], dtype=np.float32),
+            cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
+            sharpnesses=np.array([2.0], dtype=np.float32),
+            colors=np.array([[0.0, 0.0, 0.0]], dtype=np.float32),  # Black - should be ignored
+        )
+
+        merged = GSplatData.merge_with_channel_colors(
+            [gs1], channel_colors=[(1.0, 1.0, 1.0)]  # White
+        )
+
+        # Output should be white, not black
+        assert np.allclose(merged.colors[0], [1.0, 1.0, 1.0])
