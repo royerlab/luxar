@@ -46,8 +46,6 @@ Options:
 # Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
 
-from luxar.utils.demos import launch_viewer
-
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import sys
@@ -63,6 +61,7 @@ from luxar.encoding import EncodingMode
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.metal import is_metal_available
+from luxar.utils.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -123,7 +122,7 @@ def load_multichannel_data():
                 raise ValueError(f"Expected 5D data (T×C×Z×Y×X), got shape {full_shape}")
 
             n_time, n_channels, z_size, y_size, x_size = full_shape
-            aprint(f"Format: OME-ZARR 5D (T×C×Z×Y×X)")
+            aprint("Format: OME-ZARR 5D (T×C×Z×Y×X)")
             aprint(f"  Time points: {n_time}")
             aprint(f"  Channels: {n_channels}")
             aprint(f"  Spatial: {z_size}×{y_size}×{x_size}")
