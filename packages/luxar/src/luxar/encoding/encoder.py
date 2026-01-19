@@ -254,6 +254,46 @@ class ArrayEncoder:
                 )
             )
 
+    def _compute_quantization_bits(self, data: np.ndarray) -> int:
+        """Compute optimal quantization bits based on dynamic range.
+
+        Analyzes the ratio between maximum and minimum non-zero values
+        to determine if 8-bit, 16-bit, or floating-point encoding is needed.
+
+        Args:
+            data: Input array (must be non-negative for meaningful results)
+
+        Returns:
+            8: if dynamic range <= 256 (uint8 sufficient)
+            16: if dynamic range <= 65536 (uint16 sufficient)
+            0: if float should be used (very wide dynamic range)
+
+        Note:
+            For data with all zeros, returns 8 (any precision is fine).
+            For data with only one unique non-zero value, returns 8.
+        """
+        max_val = float(np.max(data))
+        if max_val == 0:
+            return 8  # All zeros, any precision is fine
+
+        # Find minimum non-zero value
+        nonzero_mask = data > 0
+        if not np.any(nonzero_mask):
+            return 8  # All zeros
+
+        min_nonzero = float(np.min(data[nonzero_mask]))
+        if min_nonzero == 0:
+            return 8  # Should not happen, but be safe
+
+        dynamic_range = max_val / min_nonzero
+
+        if dynamic_range <= 256:
+            return 8  # uint8 sufficient
+        elif dynamic_range <= 65536:
+            return 16  # uint16 sufficient
+        else:
+            return 0  # Use float (dynamic range too wide for integer quantization)
+
     def _validate_input(
         self,
         data: np.ndarray,
@@ -833,24 +873,61 @@ class ArrayEncoder:
             encoder_name = "float32"
             metadata = {"name": encoder_name, "original_dtype": original_dtype}
         elif mode == EncodingMode.MEMORY or mode == EncodingMode.AUTO:
-            # Quantize to uint8
-            bits = 8
             span = max_val - min_val
             if span == 0:
-                # Degenerate case: all values equal
+                # Degenerate case: all values equal - use uint8
                 encoded_data = np.zeros_like(data, dtype=np.uint8)
+                encoder_name = "bounded_scalar_uint8"
+                metadata = {
+                    "name": encoder_name,
+                    "min": min_val,
+                    "max": max_val,
+                    "bits": 8,
+                    "original_dtype": original_dtype,
+                }
             else:
-                normalized = (data - min_val) / span
-                encoded_data = np.clip(normalized * 255, 0, 255).astype(np.uint8)
+                # Choose quantization based on dynamic range
+                bits = self._compute_quantization_bits(data)
 
-            encoder_name = "bounded_scalar_uint8"
-            metadata = {
-                "name": encoder_name,
-                "min": min_val,
-                "max": max_val,
-                "bits": bits,
-                "original_dtype": original_dtype,
-            }
+                if bits == 8:
+                    # Dynamic range <= 256, uint8 is sufficient
+                    normalized = (data - min_val) / span
+                    # Use rounding for better accuracy (not truncation)
+                    encoded_data = np.clip(np.round(normalized * 255), 0, 255).astype(
+                        np.uint8
+                    )
+                    encoder_name = "bounded_scalar_uint8"
+                    metadata = {
+                        "name": encoder_name,
+                        "min": min_val,
+                        "max": max_val,
+                        "bits": 8,
+                        "original_dtype": original_dtype,
+                    }
+                elif bits == 16:
+                    # Dynamic range <= 65536, uint16 is sufficient
+                    normalized = (data - min_val) / span
+                    # Use rounding for better accuracy (not truncation)
+                    encoded_data = np.clip(
+                        np.round(normalized * 65535), 0, 65535
+                    ).astype(np.uint16)
+                    encoder_name = "bounded_scalar_uint16"
+                    metadata = {
+                        "name": encoder_name,
+                        "min": min_val,
+                        "max": max_val,
+                        "bits": 16,
+                        "original_dtype": original_dtype,
+                    }
+                else:
+                    # Dynamic range > 65536, use float
+                    if self._float16_allowed:
+                        encoded_data = data.astype(np.float16)
+                        encoder_name = "float16"
+                    else:
+                        encoded_data = data.astype(np.float32)
+                        encoder_name = "float32"
+                    metadata = {"name": encoder_name, "original_dtype": original_dtype}
         else:
             raise ValueError(f"Unexpected mode for BOUNDED_SCALAR: {mode}")
 
@@ -912,31 +989,58 @@ class ArrayEncoder:
                     "original_dtype": original_dtype,
                 }
             else:
-                # Linear encoding
-                if max_val <= 1.0:
-                    # Normalize to uint8
-                    encoded_data = np.clip(data * 255, 0, 255).astype(np.uint8)
+                # Linear encoding - choose dtype based on dynamic range
+                bits = self._compute_quantization_bits(data)
+
+                if max_val == 0:
+                    # All zeros - use uint8
+                    encoded_data = np.zeros_like(data, dtype=np.uint8)
                     encoder_name = "bounded_scalar_uint8"
                     metadata = {
                         "name": encoder_name,
                         "min": 0.0,
-                        "max": 1.0,
+                        "max": 0.0,
                         "bits": 8,
                         "original_dtype": original_dtype,
                     }
-                elif max_val < 1000:
-                    # Use float16 if allowed, else float32
+                elif bits == 8:
+                    # Dynamic range <= 256, uint8 is sufficient
+                    normalized = data / max_val
+                    # Use rounding for better accuracy (not truncation)
+                    encoded_data = np.clip(np.round(normalized * 255), 0, 255).astype(
+                        np.uint8
+                    )
+                    encoder_name = "bounded_scalar_uint8"
+                    metadata = {
+                        "name": encoder_name,
+                        "min": 0.0,
+                        "max": max_val,
+                        "bits": 8,
+                        "original_dtype": original_dtype,
+                    }
+                elif bits == 16:
+                    # Dynamic range <= 65536, uint16 is sufficient
+                    normalized = data / max_val
+                    # Use rounding for better accuracy (not truncation)
+                    encoded_data = np.clip(
+                        np.round(normalized * 65535), 0, 65535
+                    ).astype(np.uint16)
+                    encoder_name = "bounded_scalar_uint16"
+                    metadata = {
+                        "name": encoder_name,
+                        "min": 0.0,
+                        "max": max_val,
+                        "bits": 16,
+                        "original_dtype": original_dtype,
+                    }
+                else:
+                    # Dynamic range > 65536, use float
                     if self._float16_allowed:
                         encoded_data = data.astype(np.float16)
                         encoder_name = "float16"
                     else:
                         encoded_data = data.astype(np.float32)
                         encoder_name = "float32"
-                    metadata = {"name": encoder_name, "original_dtype": original_dtype}
-                else:
-                    # Use float32
-                    encoded_data = data.astype(np.float32)
-                    encoder_name = "float32"
                     metadata = {"name": encoder_name, "original_dtype": original_dtype}
         else:
             raise ValueError(f"Unexpected mode for POSITIVE_SCALAR: {mode}")

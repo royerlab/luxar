@@ -589,6 +589,71 @@ def generate_4d_scalar_lut_test():
         aprint("  CRITICAL: Tests scalar LUT + 4D + partial range extraction")
 
 
+def generate_uint16_quantization_test():
+    """Test dataset with uint16 quantization (wide dynamic range).
+
+    CRITICAL: This test verifies that uint16 bounded_scalar encoding is correctly
+    handled by the TypeScript decoder. The bug was that attrs.dtype defaults to
+    'uint8' when undefined, causing 256x amplitude error for uint16 data!
+
+    Scenario:
+    - Python encoder detects dynamic range > 256:1 → uses uint16
+    - zarr array.dtype = uint16
+    - attrs.encoding.original_dtype = float32 (input dtype, NOT storage dtype)
+    - attrs.dtype = undefined (Python encoder doesn't write this!)
+
+    The fix: Use zarr array.dtype for max_int calculation (65535 for uint16),
+    NOT attrs.dtype which defaults to uint8.
+    """
+    with asection("Generating uint16 Quantization Test"):
+        output = FIXTURES_DIR / "test_uint16_quantization.zarr"
+
+        # Create data with WIDE dynamic range (> 256:1) to trigger uint16 encoding
+        # This mimics gsplat amplitudes: small values with ~6000:1 dynamic range
+        num_points = 1000
+        positions = np.random.randn(num_points, 3).astype(np.float32) * 10
+
+        # Radii with wide dynamic range: 0.001 to 1.0 (1000:1 ratio)
+        # This MUST trigger uint16 encoding (> 256:1 range)
+        # Using linspace ensures exact 1000:1 ratio for reliable uint16 triggering
+        radii = np.linspace(0.001, 1.0, num_points).astype(np.float32)
+        dynamic_range = radii.max() / radii.min()
+        assert dynamic_range > 256, f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
+
+        # Simple colors (use uint8 encoding as comparison)
+        colors = np.random.rand(num_points, 3).astype(np.float32)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        # Use MEMORY mode which uses dynamic range-based dtype selection
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_points(
+                "uint16_test",
+                positions,
+                colors=colors,
+                radii=radii,  # Will be encoded as uint16 (range > 256:1)
+            )
+
+        aprint(f"✓ Created {output}")
+        aprint(f"  Positions: {positions.shape}")
+        aprint(f"  Radii range: [{radii.min():.4f}, {radii.max():.4f}]")
+        aprint(f"  Dynamic range: {dynamic_range:.1f}:1 (triggers uint16)")
+        aprint("  CRITICAL: Verifies uint16 bounded_scalar decoding uses max_int=65535")
+
+
 def generate_sharpness_range_test():
     """Test dataset with full sharpness range [0, 31] to verify decoding.
 
@@ -688,6 +753,9 @@ def main():
         generate_4d_scalar_lut_test()
         aprint("")
 
+        generate_uint16_quantization_test()
+        aprint("")
+
         aprint("=" * 70)
         aprint("✓ ALL TEST DATASETS GENERATED")
         aprint("=" * 70)
@@ -704,6 +772,7 @@ def main():
         aprint(f"  {FIXTURES_DIR}/test_sharpness_range.zarr")
         aprint(f"  {FIXTURES_DIR}/test_log_scalar.zarr")
         aprint(f"  {FIXTURES_DIR}/test_4d_scalar_lut.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_uint16_quantization.zarr")
         aprint("")
         aprint("Run TypeScript tests with:")
         aprint("  cd packages/luxar-viewer && pnpm test array-decoder")

@@ -7,11 +7,11 @@ import sys
 import numpy as np
 import pytest
 
-from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.fitting.visualization import (
     display_compression_analysis,
     show_optimization_movie,
 )
+from luxar.gsplats.gsplat_data import GSplatData
 
 
 class _MockNapari:

@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Optional, Sequence
 
 import numpy as np
 
-from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.fitting.config import FitConfig
+from luxar.gsplats.gsplat_data import GSplatData
 
 if TYPE_CHECKING:
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter
@@ -31,6 +31,8 @@ def prepare_fit_config(
     sigma_min_diag: Optional[Sequence[float]] = None,
     sigma_max_diag: Optional[Sequence[float]] = None,
     amp_max: Optional[float] = None,  # Maximum amplitude (prevents explosion)
+    max_eccentricity: Optional[float] = None,
+    sharpness_range: Optional[tuple[float, float] | float] = None,
     truncate: float = 3.0,
     verbose: bool = True,
     max_abs_error: Optional[float] = None,
@@ -44,6 +46,7 @@ def prepare_fit_config(
     early_stop_patience: Optional[int] = None,
     dynamic_ops_verbose: bool = False,
     seed_method: str = "auto",
+    voxel_footprint_correction: bool | float = False,
     **seed_kwargs,
 ) -> FitConfig:
     """
@@ -180,6 +183,38 @@ def prepare_fit_config(
     if amp_max is not None and amp_max <= 0:
         raise ValueError("amp_max must be positive if specified")
 
+    # Validate max_eccentricity
+    if max_eccentricity is not None and max_eccentricity < 1.0:
+        raise ValueError(
+            "max_eccentricity must be >= 1.0 (ratio of longest to shortest axis)"
+        )
+
+    # Validate sharpness_range
+    if sharpness_range is not None:
+        if isinstance(sharpness_range, (int, float)):
+            if sharpness_range <= 0:
+                raise ValueError("sharpness_range (fixed value) must be positive")
+        elif isinstance(sharpness_range, tuple):
+            if len(sharpness_range) != 2:
+                raise ValueError(
+                    "sharpness_range tuple must have exactly 2 elements (min, max)"
+                )
+            if sharpness_range[0] <= 0 or sharpness_range[1] <= 0:
+                raise ValueError("sharpness_range values must be positive")
+            if sharpness_range[0] >= sharpness_range[1]:
+                raise ValueError("sharpness_range[0] must be < sharpness_range[1]")
+        else:
+            raise ValueError("sharpness_range must be a float or tuple[float, float]")
+
+    # Validate voxel_footprint_correction
+    # Check for numeric types (int/float) but exclude bool (which is a subclass of int)
+    if (
+        isinstance(voxel_footprint_correction, (int, float))
+        and not isinstance(voxel_footprint_correction, bool)
+        and voxel_footprint_correction <= 0
+    ):
+        raise ValueError("voxel_footprint_correction sigma must be positive")
+
     return FitConfig(
         V=V,
         seeds=seeds,
@@ -216,4 +251,9 @@ def prepare_fit_config(
         use_cuda=fitter.use_cuda,
         # Amplitude constraint
         amp_max=amp_max,
+        # Constraint parameters
+        max_eccentricity=max_eccentricity,
+        sharpness_range=sharpness_range,
+        # Post-processing
+        voxel_footprint_correction=voxel_footprint_correction,
     )

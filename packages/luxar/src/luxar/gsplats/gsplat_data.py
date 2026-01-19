@@ -267,7 +267,7 @@ class GSplatData:
 
         return render_to_volume(
             self,
-            shape=shape,
+            shape=tuple(shape),
             device=device,
             truncate=truncate,
             intensity_floor=intensity_floor,
@@ -296,3 +296,106 @@ class GSplatData:
         from luxar.gsplats.io.load_gsplats import load_gsplats
 
         return load_gsplats(path, include_stats=include_stats)
+
+    @classmethod
+    def merge_with_channel_colors(
+        cls,
+        gsplats_per_channel: list["GSplatData"],
+        channel_colors: list[tuple[float, float, float]],
+    ) -> "GSplatData":
+        """Merge multiple GSplatData objects, assigning a fixed color per channel.
+
+        This is useful for multi-channel visualization where each channel was
+        fitted separately and should be displayed with a distinct color.
+
+        Args:
+            gsplats_per_channel: List of GSplatData objects, one per channel.
+                All must have the same dimensionality.
+            channel_colors: List of RGB color tuples (one per channel).
+                Each tuple should have values in [0, 1] range, e.g., (1.0, 0.0, 0.5).
+
+        Returns:
+            New GSplatData with all splats merged and colors assigned.
+
+        Raises:
+            ValueError: If lists have different lengths or dimensionalities don't match.
+
+        Example:
+            >>> # Fit each channel separately
+            >>> gsplats_ch0 = fit_gaussian_splats(volume_ch0, ...)
+            >>> gsplats_ch1 = fit_gaussian_splats(volume_ch1, ...)
+            >>>
+            >>> # Merge with magenta for ch0, cyan for ch1
+            >>> merged = GSplatData.merge_with_channel_colors(
+            ...     [gsplats_ch0, gsplats_ch1],
+            ...     channel_colors=[(1.0, 0.0, 0.5), (0.0, 1.0, 0.5)],
+            ... )
+            >>>
+            >>> # Add to scene
+            >>> scene.add_gsplats_from_data("multichannel", merged)
+        """
+        if len(gsplats_per_channel) != len(channel_colors):
+            raise ValueError(
+                f"Number of GSplatData objects ({len(gsplats_per_channel)}) must match "
+                f"number of colors ({len(channel_colors)})"
+            )
+
+        if len(gsplats_per_channel) == 0:
+            raise ValueError("At least one GSplatData object is required")
+
+        # Validate all have same dimensionality
+        ndim = gsplats_per_channel[0].centers.shape[1]
+        for i, gsplat in enumerate(gsplats_per_channel[1:], start=1):
+            if gsplat.centers.shape[1] != ndim:
+                raise ValueError(
+                    f"Dimensionality mismatch: channel 0 has {ndim}D, "
+                    f"channel {i} has {gsplat.centers.shape[1]}D"
+                )
+
+        # Concatenate all arrays
+        all_centers = np.concatenate(
+            [g.centers for g in gsplats_per_channel], axis=0
+        )
+        all_amplitudes = np.concatenate(
+            [g.amplitudes for g in gsplats_per_channel], axis=0
+        )
+        all_cholesky = np.concatenate(
+            [g.cholesky_factors for g in gsplats_per_channel], axis=0
+        )
+        all_sharpnesses = np.concatenate(
+            [g.sharpnesses for g in gsplats_per_channel], axis=0
+        )
+
+        # Build colors array: each splat gets the color of its source channel
+        color_arrays = []
+        for gsplat, color in zip(gsplats_per_channel, channel_colors):
+            n_splats = len(gsplat.amplitudes)
+            # Create (N, 3) array filled with channel color
+            channel_color_array = np.tile(
+                np.array(color, dtype=np.float32), (n_splats, 1)
+            )
+            color_arrays.append(channel_color_array)
+
+        all_colors = np.concatenate(color_arrays, axis=0)
+
+        # Merge stats (basic aggregation)
+        merged_stats: Dict[str, Any] = {
+            "merged_from_channels": len(gsplats_per_channel),
+            "splats_per_channel": [len(g.amplitudes) for g in gsplats_per_channel],
+        }
+
+        # Sum time if available
+        total_time = sum(
+            g.stats.get("time_seconds", 0) for g in gsplats_per_channel
+        )
+        if total_time > 0:
+            merged_stats["time_seconds"] = total_time
+
+        return cls(
+            centers=all_centers,
+            amplitudes=all_amplitudes,
+            cholesky_factors=all_cholesky,
+            sharpnesses=all_sharpnesses,
+            colors=all_colors,
+            stats=merged_stats,
+        )

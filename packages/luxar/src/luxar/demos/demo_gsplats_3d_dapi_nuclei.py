@@ -86,6 +86,8 @@ Controls:
 # Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
 
+from luxar.utils.demos import launch_viewer
+
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import sys
@@ -97,10 +99,9 @@ import zarr
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.encoding import EncodingMode
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.utils.paths import get_demos_output_dir
 
@@ -254,7 +255,6 @@ def fit_or_load_gsplats(volume):
         # Fit gsplats
         aprint(f"Fitting Gaussian Splats ({N_ITERS} iterations)...")
 
-
         result = fit_gaussian_splats(
             volume,
             seeds=8000,
@@ -262,6 +262,10 @@ def fit_or_load_gsplats(volume):
             device=DEVICE,
             verbose=True,
             napari_movie=False,  # No visualization during fitting
+            # sigma_min_diag=(0.5,0.5,0.5),
+            max_eccentricity=8.0,
+            # sharpness_range=2.0,  # Enforce standard Gaussian (no sharpness learning)
+            # voxel_footprint_correction=True,
         )
 
         n_splats = len(result.amplitudes)
@@ -295,7 +299,11 @@ def create_luxar_scene(gsplats_data, output_path: Path | None = None):
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
 
-        with LuxarZarrCompiler(output_path) as compiler:
+        # Use PRECISION mode for maximum quality (float32 for all data)
+        # This prioritizes accuracy over space savings
+        with LuxarZarrCompiler(
+            output_path, encoding_mode=EncodingMode.PRECISION
+        ) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Add scene metadata
@@ -326,7 +334,7 @@ Controls:
             scene.add_gsplats_from_data(
                 name="dapi_nuclei_gsplats",
                 result=gsplats_data,
-                opacity=0.8,
+                opacity=1.0,
                 blending_mode="additive",
             )
 
@@ -400,7 +408,7 @@ def view_with_napari(volume, gsplats_data):
         # Render gsplats to volume for comparison BEFORE opening napari
         # Using GPU-accelerated renderer (100-1000x faster than old NumPy implementation)
         aprint("Rendering gsplats to volume (GPU-accelerated)...")
-        rendered = gsplats_data.render_to_volume(shape=volume.shape)
+        rendered = gsplats_data.render_to_volume(shape=(dim_len * 2 for dim_len in volume.shape))
         aprint("✓ Rendering complete")
 
         # NOW create the napari viewer with all data ready

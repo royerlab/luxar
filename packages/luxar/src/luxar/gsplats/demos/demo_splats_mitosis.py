@@ -15,8 +15,8 @@ from arbol import Arbol, aprint, asection
 from skimage import color, data, img_as_float32
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
@@ -78,13 +78,14 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
         # Fit oriented (full-covariance) Gaussians with auto-candidate generation
         result = fit_gaussian_splats(
             V,
-            seeds=0.05,
+            seeds=0.1,
             n_iters=N_ITERS,
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
             lr_reduction_factor=0.95,
             # Dynamic operations
+            max_eccentricity=4.0,
             enable_dynamic_ops=True,
             dynamic_config=dynamic_config,
             napari_movie=(not NO_NAPARI),
