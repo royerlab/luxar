@@ -57,8 +57,9 @@ describe('GSplatMaterial', () => {
       expect(material.transparent).toBe(true);
       expect(material.depthWrite).toBe(false);
       expect(material.toneMapped).toBe(false);
-      // Default 'additive' mode uses classic THREE.AdditiveBlending (SrcAlpha, One)
-      expect(material.blending).toBe('AdditiveBlending');
+      // Default 'additive' mode uses CustomBlending with OneFactor for correct linear sum
+      // (AdditiveBlending uses SrcAlpha which would incorrectly square the intensity)
+      expect(material.blending).toBe('CustomBlending');
       expect(material.side).toBe('DoubleSide');
       expect(material.uniforms.uProjectionMode.value).toBe(0); // Default additive uses sum projection
       // 'additive' ignores depth (depthTest=false)
@@ -206,9 +207,14 @@ describe('GSplatMaterial', () => {
       // Check for early discard at 3σ
       expect(material.fragmentShader).toContain('if (mahalSq > 9.0) discard');
 
-      // Check for generalized Gaussian falloff (in else branch for non-standard sharpness)
-      expect(material.fragmentShader).toContain('pow(max(mahalSq, 1e-8), vSharpness * 0.5)');
-      expect(material.fragmentShader).toContain('exp(-0.5 * rToTheS)');
+      // Check for generalized Gaussian falloff with projection correction
+      // The correction factor handles non-separability of 3D→2D projection for s≠2
+      expect(material.fragmentShader).toContain('float correctionFactor(float r, float s, float alpha)');
+      expect(material.fragmentShader).toContain('float gauss_2d = exp(-0.5 * mahalSq)');
+      expect(material.fragmentShader).toContain(
+        'float correction = correctionFactor(r_2D, vSharpness, vAspectRatio)'
+      );
+      expect(material.fragmentShader).toContain('intensity = vAmplitude2D * gauss_2d * correction');
 
       // Check for sharpness=2.0 optimization (standard Gaussian fast path)
       expect(material.fragmentShader).toContain('if (abs(vSharpness - 2.0) < 0.001)');
@@ -290,7 +296,8 @@ describe('GSplatMaterial', () => {
 
       // 'additive' ignores depth entirely (renders on top of everything)
       expect(material.userData.depthTest).toBe(false);
-      expect(material.blending).toBe('AdditiveBlending');
+      // Uses CustomBlending with OneFactor for correct linear sum (not AdditiveBlending)
+      expect(material.blending).toBe('CustomBlending');
     });
 
     it('should have depthTest true for luminous mode (respects depth occlusion)', () => {
@@ -298,7 +305,8 @@ describe('GSplatMaterial', () => {
 
       // 'luminous' respects depth occlusion but uses same visual output as additive
       expect(material.userData.depthTest).toBe(true);
-      expect(material.blending).toBe('AdditiveBlending'); // Same as additive
+      // Uses CustomBlending with OneFactor for correct linear sum (same as additive)
+      expect(material.blending).toBe('CustomBlending');
     });
 
     it('should have depthTest true for normal mode', () => {
@@ -308,17 +316,19 @@ describe('GSplatMaterial', () => {
       expect(material.blending).toBe('NormalBlending');
     });
 
-    it('should use simple alpha output in fragment shader', () => {
+    it('should apply opacity directly to RGB for linear additive blending', () => {
       const material = new GSplatMaterial();
 
       // No uLuminous uniform - shader always uses same output pattern
       expect(material.fragmentShader).not.toContain('uniform bool uLuminous');
       expect(material.fragmentShader).not.toContain('if (uLuminous)');
 
-      // Check for alpha output for AdditiveBlending (SrcAlpha, One)
+      // With OneFactor blending, opacity is applied directly to RGB (alpha is ignored)
+      // This ensures correct linear sum projection without squaring intensity
       expect(material.fragmentShader).toContain(
-        'fragColor = vec4(finalColor, intensity * uOpacity)'
+        'vec3 finalColor = vColor * intensity * uHDRMultiplier * uOpacity'
       );
+      expect(material.fragmentShader).toContain('fragColor = vec4(finalColor, 1.0)');
     });
 
     it('should configure opaque mode correctly', () => {
