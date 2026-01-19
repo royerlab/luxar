@@ -1,7 +1,7 @@
 # luxar.encoding - Technical Specification
 
-**Version**: 0.6.0
-**Last Updated**: 2025-11-29
+**Version**: 0.7.0
+**Last Updated**: 2026-01-17
 
 **Related Specifications**:
 - `luxar.core` - Data structures that use encoding (see `core/SPECIFICATIONS.md`)
@@ -727,16 +727,23 @@ Users can specify encoding preference through modes:
 
 ### 9.2 AUTO Mode Details
 
-AUTO mode analyzes data to select encoding:
+AUTO mode analyzes data to select encoding based on **dynamic range** (max/min_nonzero):
 
 | Semantic Type | Selection Logic |
 |---------------|-----------------|
 | Coordinate | Always float32 (precision critical) |
 | Color | uint8 if all values in [0,1] (maps to [0,255]), else float32 for HDR |
-| Bounded Scalar | uint8 if range well-defined |
-| Positive Scalar | uint8 if max ≤ 1, float16 if max < 1000, else float32 |
+| Bounded Scalar | uint8 if dynamic range ≤ 256, uint16 if ≤ 65536, else float |
+| Positive Scalar | uint8 if dynamic range ≤ 256, uint16 if ≤ 65536, else float |
 | Cholesky | float32 (conservative, could use float16) |
 | Index | Smallest uint type for max value |
+
+**Dynamic Range-Based Dtype Selection**: The encoder computes `dynamic_range = max_val / min_nonzero_val` and selects:
+- **uint8** (256 levels): if dynamic range ≤ 256
+- **uint16** (65,536 levels): if dynamic range ≤ 65,536
+- **float16/float32**: if dynamic range > 65,536
+
+This ensures data with wide dynamic range (e.g., gsplat amplitudes ranging from 0.00001 to 0.05) uses sufficient precision. Previously, using only max value led to 75%+ data loss when small values were quantized to zero.
 
 ### 9.3 MEMORY Mode Trade-offs
 
@@ -1296,6 +1303,15 @@ These are not in scope for v1.0 but the architecture should not preclude them.
 ---
 
 ## Changelog
+
+- **v0.7.0** (2026-01-17): Dynamic range-based dtype selection
+  - **BUG FIX**: POSITIVE_SCALAR and BOUNDED_SCALAR now use dynamic range to select dtype
+  - Added `_compute_quantization_bits()` helper that computes `max_val / min_nonzero_val`
+  - Dtype selection: uint8 if range ≤ 256, uint16 if ≤ 65536, else float
+  - Previously, dtype was based only on max value, causing data loss for wide dynamic range
+  - Example: gsplat amplitudes with 6000:1 dynamic range now use uint16 (0% loss vs 75% with uint8)
+  - Updated Section 9.2 to document dynamic range-based selection
+  - TypeScript decoder already supported uint16 via `bounded_scalar_uint16` pattern
 
 - **v0.6.0** (2025-11-29): Scalar input support - eliminate intermediate arrays
   - **NEW FEATURE**: `ArrayEncoder.encode()` now accepts scalar inputs directly (float, int, tuple, list)

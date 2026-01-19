@@ -7,13 +7,44 @@ from __future__ import annotations
 import numpy as np
 from arbol import aprint
 
-from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.fitting.config import (
     FitConfig,
     OptimizationResults,
     PreprocessedData,
 )
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.utils.trils import pack_tril
+
+
+def _apply_voxel_footprint_correction(
+    Ls: np.ndarray,
+    sigma: float,
+) -> np.ndarray:
+    """
+    Inflate covariances: Sigma_new = L @ L^T + sigma^2 * I_d
+
+    Works for any dimension d:
+    - np.eye(d) creates d-dimensional identity
+    - Batch matmul handles any (N, d, d) shape
+    - np.linalg.cholesky works for any dimension
+
+    Parameters
+    ----------
+    Ls : np.ndarray, shape (N, d, d)
+        Cholesky factors (lower triangular matrices)
+    sigma : float
+        Standard deviation in voxel units to add (internally squared to get variance)
+
+    Returns
+    -------
+    np.ndarray, shape (N, d, d)
+        New Cholesky factors L_new where L_new @ L_new^T = Sigma_new
+    """
+    N, d, _ = Ls.shape  # d detected automatically from input
+    variance = sigma * sigma  # Convert sigma to variance
+    Sigma = Ls @ Ls.transpose(0, 2, 1)  # (N, d, d) batch matmul
+    Sigma_corrected = Sigma + variance * np.eye(d, dtype=Ls.dtype)  # d-dim identity
+    return np.linalg.cholesky(Sigma_corrected)  # Works for any d
 
 
 def finalize_results(
@@ -50,6 +81,20 @@ def finalize_results(
         aprint(
             f"Rescaled amplitudes to original intensity range (factor: {preprocessed_data.intensity_range:.4f})"
         )
+
+    # Apply voxel footprint correction if enabled
+    if config.voxel_footprint_correction:
+        # Check for numeric types (int/float) but exclude bool (which is a subclass of int)
+        if isinstance(
+            config.voxel_footprint_correction, (int, float)
+        ) and not isinstance(config.voxel_footprint_correction, bool):
+            sigma = float(config.voxel_footprint_correction)
+        else:
+            # Default: 1-voxel box footprint has sigma = sqrt(1/12) ≈ 0.289 voxels
+            sigma = np.sqrt(1.0 / 12.0)
+        Ls_np = _apply_voxel_footprint_correction(Ls_np, sigma)
+        if config.verbose:
+            aprint(f"Applied voxel footprint correction (sigma={sigma:.4f} voxels)")
 
     # Pack Cholesky factors (without sharpness)
     cholesky_packed = pack_tril(Ls_np)

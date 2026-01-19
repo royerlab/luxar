@@ -322,7 +322,9 @@ def _auto_combine(
     budget_grid = target_seeds - budget_edges
 
     if verbose:
-        aprint(f"Target: {target_seeds} seeds (edges: {budget_edges}, grid: {budget_grid})")
+        aprint(
+            f"Target: {target_seeds} seeds (edges: {budget_edges}, grid: {budget_grid})"
+        )
 
     results: List[GSplatData] = []
 
@@ -372,7 +374,9 @@ def _auto_combine(
     else:
         if verbose:
             total_before = sum(len(r.centers) for r in results)
-            aprint(f"Combining and deduplicating {total_before} seeds (min_distance={min_distance:.1f})...")
+            aprint(
+                f"Combining and deduplicating {total_before} seeds (min_distance={min_distance:.1f})..."
+            )
         result = _combine_gsplatdata(results, min_distance)
         if verbose:
             aprint(f"✓ Final: {len(result.centers)} seeds after deduplication")

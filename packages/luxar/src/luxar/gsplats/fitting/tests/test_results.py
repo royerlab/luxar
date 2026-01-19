@@ -359,3 +359,383 @@ def test_time_seconds_calculation(
     )
 
     assert abs(result.stats["time_seconds"] - expected_time) < 1e-6
+
+
+# =============================================================================
+# Voxel Footprint Correction Tests
+# =============================================================================
+
+
+class TestVoxelFootprintCorrection:
+    """Tests for voxel footprint correction feature."""
+
+    def test_correction_disabled_by_default(
+        self, basic_optimization_results, basic_config, basic_preprocessed_data
+    ) -> None:
+        """Test that correction is disabled by default and Cholesky is unchanged."""
+        # Default is False
+        assert basic_config.voxel_footprint_correction is False
+
+        # Get original Ls
+        original_Ls = basic_optimization_results.Ls.cpu().numpy().copy()
+
+        result = finalize_results(
+            basic_optimization_results, basic_config, basic_preprocessed_data
+        )
+
+        # Unpack the result and verify it matches the original
+        from luxar.gsplats.utils.trils import pack_tril
+
+        expected_packed = pack_tril(original_Ls)
+        assert np.allclose(result.cholesky_factors, expected_packed, rtol=1e-5)
+
+    def test_correction_enabled_with_true(
+        self, basic_optimization_results, basic_config, basic_preprocessed_data
+    ) -> None:
+        """Test correction with True uses 1-voxel box footprint (sigma = sqrt(1/12))."""
+        basic_config.voxel_footprint_correction = True
+        d = 2  # dimension from fixture
+        sigma = np.sqrt(1.0 / 12.0)  # ~0.289 voxels
+        variance = sigma * sigma  # = 1/12
+
+        # Get original Ls and compute expected correction
+        original_Ls = basic_optimization_results.Ls.cpu().numpy()
+        Sigma_original = original_Ls @ original_Ls.transpose(0, 2, 1)
+        Sigma_corrected = Sigma_original + variance * np.eye(d, dtype=original_Ls.dtype)
+        L_expected = np.linalg.cholesky(Sigma_corrected)
+
+        result = finalize_results(
+            basic_optimization_results, basic_config, basic_preprocessed_data
+        )
+
+        # Unpack and verify
+        from luxar.gsplats.utils.trils import pack_tril
+
+        expected_packed = pack_tril(L_expected)
+        assert np.allclose(result.cholesky_factors, expected_packed, rtol=1e-5)
+
+    def test_correction_enabled_with_custom_sigma(
+        self, basic_optimization_results, basic_config, basic_preprocessed_data
+    ) -> None:
+        """Test correction with custom sigma in voxel units."""
+        custom_sigma = 0.5  # Half-voxel blur
+        basic_config.voxel_footprint_correction = custom_sigma
+        d = 2  # dimension from fixture
+        variance = custom_sigma * custom_sigma  # = 0.25
+
+        # Get original Ls and compute expected correction
+        original_Ls = basic_optimization_results.Ls.cpu().numpy()
+        Sigma_original = original_Ls @ original_Ls.transpose(0, 2, 1)
+        Sigma_corrected = Sigma_original + variance * np.eye(d, dtype=original_Ls.dtype)
+        L_expected = np.linalg.cholesky(Sigma_corrected)
+
+        result = finalize_results(
+            basic_optimization_results, basic_config, basic_preprocessed_data
+        )
+
+        # Unpack and verify
+        from luxar.gsplats.utils.trils import pack_tril
+
+        expected_packed = pack_tril(L_expected)
+        assert np.allclose(result.cholesky_factors, expected_packed, rtol=1e-5)
+
+    def test_correction_enabled_with_integer_sigma(
+        self, basic_optimization_results, basic_config, basic_preprocessed_data
+    ) -> None:
+        """Test correction with integer sigma value (should work like float)."""
+        int_sigma = 1  # Integer, not float - means 1 voxel sigma
+        basic_config.voxel_footprint_correction = int_sigma
+        d = 2  # dimension from fixture
+        variance = float(int_sigma) * float(int_sigma)  # = 1.0
+
+        # Get original Ls and compute expected correction
+        original_Ls = basic_optimization_results.Ls.cpu().numpy()
+        Sigma_original = original_Ls @ original_Ls.transpose(0, 2, 1)
+        # Integer sigma should be used as-is (converted to float, then squared)
+        Sigma_corrected = Sigma_original + variance * np.eye(d, dtype=original_Ls.dtype)
+        L_expected = np.linalg.cholesky(Sigma_corrected)
+
+        result = finalize_results(
+            basic_optimization_results, basic_config, basic_preprocessed_data
+        )
+
+        # Unpack and verify
+        from luxar.gsplats.utils.trils import pack_tril
+
+        expected_packed = pack_tril(L_expected)
+        assert np.allclose(result.cholesky_factors, expected_packed, rtol=1e-5)
+
+    def test_correction_inflates_covariances(
+        self, basic_optimization_results, basic_config, basic_preprocessed_data
+    ) -> None:
+        """Test that correction actually inflates covariances (increases diagonal)."""
+        basic_config.voxel_footprint_correction = True
+        # True means sigma = sqrt(1/12), so variance = 1/12
+
+        # Get original Ls and compute original covariance diagonals
+        original_Ls = basic_optimization_results.Ls.cpu().numpy()
+        Sigma_original = original_Ls @ original_Ls.transpose(0, 2, 1)
+        original_diag = Sigma_original[:, range(2), range(2)]  # (N, d) diagonal
+
+        result = finalize_results(
+            basic_optimization_results, basic_config, basic_preprocessed_data
+        )
+
+        # Unpack result and compute new covariance diagonals
+        from luxar.gsplats.utils.trils import unpack_tril
+
+        L_new = unpack_tril(result.cholesky_factors, 2)
+        Sigma_new = L_new @ L_new.transpose(0, 2, 1)
+        new_diag = Sigma_new[:, range(2), range(2)]
+
+        # All diagonal elements should be inflated by at least 1/12 (sigma^2 for default)
+        assert np.all(new_diag >= original_diag + 1.0 / 12.0 - 1e-6)
+
+    def test_correction_3d_data(self, basic_config, basic_preprocessed_data) -> None:
+        """Test correction works correctly for 3D data."""
+        N = 4
+        d = 3
+        sigma = np.sqrt(1.0 / 12.0)  # Default for True
+        variance = sigma * sigma  # = 1/12
+
+        # Create 3D optimization results
+        centers = torch.rand(N, d, dtype=torch.float32)
+        Ls = torch.rand(N, d, d, dtype=torch.float32)
+        # Make Ls lower triangular and positive definite
+        Ls = torch.tril(Ls)
+        Ls[:, range(d), range(d)] = torch.abs(Ls[:, range(d), range(d)]) + 0.5
+        amps = torch.rand(N, dtype=torch.float32)
+        sharpness = torch.rand(N, dtype=torch.float32) * 2.0 + 1.0
+
+        optimization_results = OptimizationResults(
+            centers=centers,
+            Ls=Ls,
+            amps=amps,
+            sharpness=sharpness,
+            converged_early=True,
+            actual_iters=30,
+            best_iteration=25,
+            best_loss=0.002,
+            best_max_abs_error=0.008,
+            movie_frames=None,
+            start_time=time.time(),
+            end_time=time.time() + 5,
+        )
+
+        # Update config and preprocessed data for 3D
+        basic_config.voxel_footprint_correction = True
+        basic_preprocessed_data.d = d
+        basic_preprocessed_data.N = N
+
+        # Compute expected
+        Ls_np = Ls.numpy()
+        Sigma_original = Ls_np @ Ls_np.transpose(0, 2, 1)
+        Sigma_corrected = Sigma_original + variance * np.eye(d, dtype=Ls_np.dtype)
+        L_expected = np.linalg.cholesky(Sigma_corrected)
+
+        result = finalize_results(
+            optimization_results, basic_config, basic_preprocessed_data
+        )
+
+        # Verify shape and values
+        from luxar.gsplats.utils.trils import pack_tril
+
+        tril_size = d * (d + 1) // 2
+        assert result.cholesky_factors.shape == (N, tril_size)
+
+        expected_packed = pack_tril(L_expected)
+        assert np.allclose(result.cholesky_factors, expected_packed, rtol=1e-5)
+
+    def test_correction_5d_data(self, basic_config, basic_preprocessed_data) -> None:
+        """Test correction works correctly for 5D data (n-dimensional support)."""
+        N = 3
+        d = 5
+        sigma = np.sqrt(1.0 / 12.0)  # Default for True
+        variance = sigma * sigma  # = 1/12
+
+        # Create 5D optimization results
+        centers = torch.rand(N, d, dtype=torch.float32)
+        Ls = torch.rand(N, d, d, dtype=torch.float32)
+        # Make Ls lower triangular and positive definite
+        Ls = torch.tril(Ls)
+        Ls[:, range(d), range(d)] = torch.abs(Ls[:, range(d), range(d)]) + 0.5
+        amps = torch.rand(N, dtype=torch.float32)
+        sharpness = torch.rand(N, dtype=torch.float32) * 2.0 + 1.0
+
+        optimization_results = OptimizationResults(
+            centers=centers,
+            Ls=Ls,
+            amps=amps,
+            sharpness=sharpness,
+            converged_early=True,
+            actual_iters=30,
+            best_iteration=25,
+            best_loss=0.002,
+            best_max_abs_error=0.008,
+            movie_frames=None,
+            start_time=time.time(),
+            end_time=time.time() + 5,
+        )
+
+        # Update config and preprocessed data for 5D
+        basic_config.voxel_footprint_correction = True
+        basic_preprocessed_data.d = d
+        basic_preprocessed_data.N = N
+
+        # Compute expected
+        Ls_np = Ls.numpy()
+        Sigma_original = Ls_np @ Ls_np.transpose(0, 2, 1)
+        Sigma_corrected = Sigma_original + variance * np.eye(d, dtype=Ls_np.dtype)
+        L_expected = np.linalg.cholesky(Sigma_corrected)
+
+        result = finalize_results(
+            optimization_results, basic_config, basic_preprocessed_data
+        )
+
+        # Verify shape and values
+        from luxar.gsplats.utils.trils import pack_tril
+
+        tril_size = d * (d + 1) // 2
+        assert result.cholesky_factors.shape == (N, tril_size)
+
+        expected_packed = pack_tril(L_expected)
+        assert np.allclose(result.cholesky_factors, expected_packed, rtol=1e-5)
+
+    def test_correction_preserves_positive_definiteness(
+        self, basic_optimization_results, basic_config, basic_preprocessed_data
+    ) -> None:
+        """Test that correction maintains positive definite covariances."""
+        basic_config.voxel_footprint_correction = True
+
+        result = finalize_results(
+            basic_optimization_results, basic_config, basic_preprocessed_data
+        )
+
+        # Unpack and verify eigenvalues are positive
+        from luxar.gsplats.utils.trils import unpack_tril
+
+        L_new = unpack_tril(result.cholesky_factors, 2)
+        Sigma_new = L_new @ L_new.transpose(0, 2, 1)
+
+        for i in range(len(L_new)):
+            eigenvalues = np.linalg.eigvalsh(Sigma_new[i])
+            assert np.all(eigenvalues > 0), f"Non-positive eigenvalue in covariance {i}"
+
+
+class TestVoxelFootprintCorrectionValidation:
+    """Tests for voxel footprint correction validation."""
+
+    def test_negative_sigma_raises_error(self) -> None:
+        """Test that negative sigma raises ValueError."""
+        from luxar.gsplats.fit_gsplats import GaussianSplatFitter
+        from luxar.gsplats.fitting.validation import prepare_fit_config
+
+        fitter = GaussianSplatFitter(device="cpu")
+        V = np.random.rand(32, 32).astype(np.float32)
+
+        with pytest.raises(
+            ValueError, match="voxel_footprint_correction sigma must be positive"
+        ):
+            prepare_fit_config(
+                fitter,
+                V,
+                voxel_footprint_correction=-0.1,
+            )
+
+    def test_zero_sigma_raises_error(self) -> None:
+        """Test that zero sigma raises ValueError."""
+        from luxar.gsplats.fit_gsplats import GaussianSplatFitter
+        from luxar.gsplats.fitting.validation import prepare_fit_config
+
+        fitter = GaussianSplatFitter(device="cpu")
+        V = np.random.rand(32, 32).astype(np.float32)
+
+        with pytest.raises(
+            ValueError, match="voxel_footprint_correction sigma must be positive"
+        ):
+            prepare_fit_config(
+                fitter,
+                V,
+                voxel_footprint_correction=0.0,
+            )
+
+    def test_false_disabled_no_error(self) -> None:
+        """Test that False (disabled) is accepted without error."""
+        from luxar.gsplats.fit_gsplats import GaussianSplatFitter
+        from luxar.gsplats.fitting.validation import prepare_fit_config
+
+        fitter = GaussianSplatFitter(device="cpu")
+        V = np.random.rand(32, 32).astype(np.float32)
+
+        # Should not raise
+        config = prepare_fit_config(
+            fitter,
+            V,
+            voxel_footprint_correction=False,
+        )
+        assert config.voxel_footprint_correction is False
+
+    def test_true_enabled_no_error(self) -> None:
+        """Test that True is accepted without error."""
+        from luxar.gsplats.fit_gsplats import GaussianSplatFitter
+        from luxar.gsplats.fitting.validation import prepare_fit_config
+
+        fitter = GaussianSplatFitter(device="cpu")
+        V = np.random.rand(32, 32).astype(np.float32)
+
+        # Should not raise
+        config = prepare_fit_config(
+            fitter,
+            V,
+            voxel_footprint_correction=True,
+        )
+        assert config.voxel_footprint_correction is True
+
+    def test_positive_float_no_error(self) -> None:
+        """Test that positive float is accepted without error."""
+        from luxar.gsplats.fit_gsplats import GaussianSplatFitter
+        from luxar.gsplats.fitting.validation import prepare_fit_config
+
+        fitter = GaussianSplatFitter(device="cpu")
+        V = np.random.rand(32, 32).astype(np.float32)
+
+        # Should not raise
+        config = prepare_fit_config(
+            fitter,
+            V,
+            voxel_footprint_correction=0.25,
+        )
+        assert config.voxel_footprint_correction == 0.25
+
+    def test_positive_int_no_error(self) -> None:
+        """Test that positive int is accepted without error."""
+        from luxar.gsplats.fit_gsplats import GaussianSplatFitter
+        from luxar.gsplats.fitting.validation import prepare_fit_config
+
+        fitter = GaussianSplatFitter(device="cpu")
+        V = np.random.rand(32, 32).astype(np.float32)
+
+        # Should not raise - integer should be accepted
+        config = prepare_fit_config(
+            fitter,
+            V,
+            voxel_footprint_correction=1,  # integer, not float
+        )
+        assert config.voxel_footprint_correction == 1
+
+    def test_negative_int_raises_error(self) -> None:
+        """Test that negative int raises ValueError."""
+        from luxar.gsplats.fit_gsplats import GaussianSplatFitter
+        from luxar.gsplats.fitting.validation import prepare_fit_config
+
+        fitter = GaussianSplatFitter(device="cpu")
+        V = np.random.rand(32, 32).astype(np.float32)
+
+        with pytest.raises(
+            ValueError, match="voxel_footprint_correction sigma must be positive"
+        ):
+            prepare_fit_config(
+                fitter,
+                V,
+                voxel_footprint_correction=-1,  # negative integer
+            )

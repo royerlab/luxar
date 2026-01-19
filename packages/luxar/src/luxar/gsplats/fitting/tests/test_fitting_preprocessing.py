@@ -278,22 +278,30 @@ class TestPreprocessData:
         mock_config_2d.seed_method = "grid"  # Use grid method
         mock_config_2d.seed_kwargs = {"spacing": 5.0}  # Dense grid
 
+        # Store original config values to verify they aren't mutated
+        original_init_L_shape = mock_config_2d.init_L.shape[0]
+
         result = preprocess_data(mock_config_2d)
 
-        # After preprocessing, init arrays should match the subsampled seed count
+        # Verify config is NOT mutated (new behavior)
+        assert mock_config_2d.init_L.shape[0] == original_init_L_shape, (
+            "Config should not be mutated by preprocess_data"
+        )
+
+        # After preprocessing, init arrays in PreprocessedData should match seed count
         if result.N < n_original:
-            # Subsampling occurred
-            if mock_config_2d.init_L is not None:
-                assert mock_config_2d.init_L.shape[0] == result.N, (
-                    f"init_L not sliced: got {mock_config_2d.init_L.shape[0]}, expected {result.N}"
+            # Subsampling occurred - check PreprocessedData has correctly sliced arrays
+            if result.init_L is not None:
+                assert result.init_L.shape[0] == result.N, (
+                    f"result.init_L not sliced: got {result.init_L.shape[0]}, expected {result.N}"
                 )
-            if mock_config_2d.init_amps is not None:
-                assert mock_config_2d.init_amps.shape[0] == result.N, (
-                    f"init_amps not sliced: got {mock_config_2d.init_amps.shape[0]}, expected {result.N}"
+            if result.init_amps is not None:
+                assert result.init_amps.shape[0] == result.N, (
+                    f"result.init_amps not sliced: got {result.init_amps.shape[0]}, expected {result.N}"
                 )
-            if mock_config_2d.init_sharpness is not None:
-                assert mock_config_2d.init_sharpness.shape[0] == result.N, (
-                    f"init_sharpness not sliced: got {mock_config_2d.init_sharpness.shape[0]}, expected {result.N}"
+            if result.init_sharpness is not None:
+                assert result.init_sharpness.shape[0] == result.N, (
+                    f"result.init_sharpness not sliced: got {result.init_sharpness.shape[0]}, expected {result.N}"
                 )
 
     def test_init_arrays_extended_when_more_seeds_needed(self, mock_config_2d) -> None:
@@ -316,7 +324,12 @@ class TestPreprocessData:
         mock_config_2d.V = V
         mock_config_2d.seeds = 10  # Request more seeds than detectable peaks
         mock_config_2d.seed_method = "decomposition"  # Use decomposition method
-        mock_config_2d.seed_kwargs = {"scales": [2, 4], "percentile_thresh": 95}
+        # Force CPU to avoid CUDA availability issues in tests
+        mock_config_2d.seed_kwargs = {
+            "scales": [2, 4],
+            "percentile_thresh": 95,
+            "device": "cpu",
+        }
 
         # Set init arrays - these should be preserved and extended
         mock_config_2d.init_L = np.eye(2, dtype=np.float32)[None, :, :].repeat(
@@ -325,28 +338,36 @@ class TestPreprocessData:
         mock_config_2d.init_amps = np.array([1.0, 1.0], dtype=np.float32)
         mock_config_2d.init_sharpness = np.array([2.0, 2.0], dtype=np.float32)
 
+        # Store original config values to verify they aren't mutated
+        original_init_L_shape = mock_config_2d.init_L.shape[0]
+
         result = preprocess_data(mock_config_2d)
 
-        # When more seeds are added, init arrays should be EXTENDED (not cleared)
-        # to include values for the new grid fallback seeds
+        # Verify config is NOT mutated (new behavior)
+        assert mock_config_2d.init_L.shape[0] == original_init_L_shape, (
+            "Config should not be mutated by preprocess_data"
+        )
+
+        # When more seeds are added, init arrays in PreprocessedData should be
+        # EXTENDED (not cleared) to include values for the new grid fallback seeds
         if result.N > 2:  # More seeds were generated
-            assert mock_config_2d.init_L is not None, (
-                "init_L should be extended (not cleared) when more seeds are generated"
+            assert result.init_L is not None, (
+                "result.init_L should be extended when more seeds are generated"
             )
-            assert mock_config_2d.init_L.shape[0] == result.N, (
-                f"init_L should have {result.N} entries, got {mock_config_2d.init_L.shape[0]}"
+            assert result.init_L.shape[0] == result.N, (
+                f"result.init_L should have {result.N} entries, got {result.init_L.shape[0]}"
             )
-            assert mock_config_2d.init_amps is not None, (
-                "init_amps should be extended (not cleared) when more seeds are generated"
+            assert result.init_amps is not None, (
+                "result.init_amps should be extended when more seeds are generated"
             )
-            assert len(mock_config_2d.init_amps) == result.N, (
-                f"init_amps should have {result.N} entries, got {len(mock_config_2d.init_amps)}"
+            assert len(result.init_amps) == result.N, (
+                f"result.init_amps should have {result.N} entries, got {len(result.init_amps)}"
             )
-            assert mock_config_2d.init_sharpness is not None, (
-                "init_sharpness should be extended (not cleared)"
+            assert result.init_sharpness is not None, (
+                "result.init_sharpness should be extended"
             )
-            assert len(mock_config_2d.init_sharpness) == result.N, (
-                f"init_sharpness should have {result.N} entries"
+            assert len(result.init_sharpness) == result.N, (
+                f"result.init_sharpness should have {result.N} entries"
             )
 
 

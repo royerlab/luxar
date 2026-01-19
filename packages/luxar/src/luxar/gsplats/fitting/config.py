@@ -92,6 +92,18 @@ class FitConfig:
     # Amplitude constraint (prevents explosion with few splats)
     amp_max: Optional[float] = None  # Maximum amplitude value if specified
 
+    # Constraint parameters
+    max_eccentricity: Optional[float] = None  # Limit ratio of longest to shortest axis
+    sharpness_range: Optional[tuple[float, float] | float] = (
+        None  # (min, max) tuple or fixed value
+    )
+
+    # Voxel footprint correction (post-processing)
+    # - False: Disabled (default)
+    # - True: Enable with 1-voxel box footprint (sigma ≈ 0.289 voxels)
+    # - float: Custom sigma in voxel units (e.g., 0.5 for half-voxel blur)
+    voxel_footprint_correction: bool | float = False
+
 
 @dataclass
 class PreprocessedData:
@@ -125,6 +137,12 @@ class PreprocessedData:
     l1_amp: Optional[float] = None
     l1_diag: Optional[float] = None
     l1_sharpness: Optional[float] = None
+
+    # Pre-initialized model parameters (set during preprocessing)
+    # These are processed copies - FitConfig is not mutated
+    init_L: Optional[np.ndarray] = None  # Shape (N, d, d) - Cholesky factors
+    init_amps: Optional[np.ndarray] = None  # Shape (N,) - amplitudes
+    init_sharpness: Optional[np.ndarray] = None  # Shape (N,) - sharpness values
 
 
 @dataclass

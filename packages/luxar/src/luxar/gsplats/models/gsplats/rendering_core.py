@@ -274,8 +274,6 @@ def _compute_aabb_with_intensity_floor(
     valid : torch.Tensor, shape (N,)
         Boolean mask indicating valid (non-empty) AABBs.
     """
-    d = centers.shape[1]
-
     # Compute sigma diagonal: Σ_ii = row-wise sum(L^2)
     sigma_diag = torch.sum(Ls * Ls, dim=2)  # (N, d)
 
@@ -300,7 +298,9 @@ def _compute_aabb_with_intensity_floor(
         eps = torch.tensor(intensity_floor, device=device, dtype=torch.float32)
         a = torch.clamp(amps, min=1e-12)
         log_ratio = torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
-        tmax = torch.pow(log_ratio, 1.0 / sharpness)  # (N,) - sharpness-adjusted threshold
+        tmax = torch.pow(
+            log_ratio, 1.0 / sharpness
+        )  # (N,) - sharpness-adjusted threshold
 
         shrink = torch.clamp(
             (tmax[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
@@ -482,7 +482,7 @@ def render_gaussians(
     centers: torch.Tensor,  # (N, d) voxel coords
     Ls: torch.Tensor,  # (N, d, d) lower-tri
     amps: torch.Tensor,  # (N,)
-    sharpness: torch.Tensor,  # (N,) sharpness values (s = 2 * exp(s'))
+    sharpness: torch.Tensor,  # (N) sharpness values (s = 2 * exp(s'))
     truncate: float = 3.0,
     intensity_floor: float = 1e-5,  # for amplitude-aware culling
     chunk_size: Optional[int] = None,  # P-dimension chunk size for memory control
@@ -600,8 +600,9 @@ def render_gaussians(
             # - MPS Note: Both functions have identical 10× CPU overhead on Apple Silicon
             try:
                 y = torch.linalg.solve_triangular(L, delta, upper=False)
-            except Exception:
+            except AttributeError:
                 # Legacy PyTorch 1.12-1.13 fallback (deprecated API, removed in 2.0+)
+                # AttributeError: torch.linalg has no attribute 'solve_triangular'
                 # Note: triangular_solve returns (solution, cloned_matrix) tuple
                 y, _ = torch.triangular_solve(delta, L, upper=False)
 

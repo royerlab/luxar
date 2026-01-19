@@ -193,7 +193,9 @@ export class RangeLoader {
     ranges: LoadRange[],
     output: Float32Array
   ): Promise<number> {
-    const quantMetadata = ArrayDecoder.getQuantizationMetadata(attrs);
+    // Pass actual zarr dtype to avoid attrs.dtype bug (Python encoder doesn't write it)
+    const zarrDtype = String(array.dtype);
+    const quantMetadata = ArrayDecoder.getQuantizationMetadata(attrs, zarrDtype);
     if (!quantMetadata) {
       throw new Error('Quantization metadata missing');
     }
@@ -203,7 +205,7 @@ export class RangeLoader {
 
     log.info(
       this.config.logModule,
-      `Quantized: ${totalPoints} values (${ArrayDecoder.getEncodingMode(attrs)}, worker=${useWorkers})`
+      `Quantized: ${totalPoints} values (${ArrayDecoder.getEncodingMode(attrs)}, dtype=${quantMetadata.dtype}, worker=${useWorkers})`
     );
 
     let destOffset = 0;
@@ -229,13 +231,13 @@ export class RangeLoader {
             dequantized = await worker.decodeLogScalar({
               data: quantizedData,
               maxLog: quantMetadata.bounds[1],
-              dtype: this.normalizeDtype(quantMetadata.dtype),
+              dtype: quantMetadata.dtype, // Already normalized by getQuantizationMetadata
             });
           } else {
             dequantized = await worker.decodeQuantized({
               data: quantizedData,
               bounds: quantMetadata.bounds,
-              dtype: this.normalizeDtype(quantMetadata.dtype),
+              dtype: quantMetadata.dtype, // Already normalized by getQuantizationMetadata
             });
           }
         } catch (error) {
@@ -390,20 +392,6 @@ export class RangeLoader {
     }
 
     return destOffset;
-  }
-
-  /**
-   * Normalize dtype string to worker-compatible format
-   *
-   * Handles all NumPy dtype string variants:
-   * - 'uint8', '|u1', '<u1', '>u1' → 'uint8'
-   * - 'uint16', '|u2', '<u2', '>u2' → 'uint16'
-   */
-  private normalizeDtype(dtype: string): 'uint8' | 'uint16' {
-    if (dtype === 'uint8' || dtype === '|u1' || dtype === '<u1' || dtype === '>u1') return 'uint8';
-    if (dtype === 'uint16' || dtype === '|u2' || dtype === '<u2' || dtype === '>u2')
-      return 'uint16';
-    return 'uint8';
   }
 
   /**

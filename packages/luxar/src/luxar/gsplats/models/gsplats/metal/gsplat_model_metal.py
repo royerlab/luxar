@@ -427,6 +427,9 @@ class GaussianSplatModelMetal(torch.nn.Module):
         amps0: np.ndarray,
         sigma_min_diag: Sequence[float],
         sigma_max_diag: Optional[Sequence[float]] = None,
+        amp_max: Optional[float] = None,
+        max_eccentricity: Optional[float] = None,
+        sharpness_range: Optional[tuple[float, float] | float] = None,
         truncate: float = 3.0,
         intensity_floor: float = 1e-5,
         tile_size: int = 4,  # Tile size for 3D binning (4 is optimal)
@@ -459,7 +462,7 @@ class GaussianSplatModelMetal(torch.nn.Module):
         import inspect
 
         base_params = inspect.signature(GaussianSplatModel.__init__).parameters
-        if len(base_params) > 10:  # Expected: ~8-10 parameters
+        if len(base_params) > 13:  # Expected: ~12 parameters (self + 11 init params)
             import warnings
 
             warnings.warn(
@@ -478,6 +481,9 @@ class GaussianSplatModelMetal(torch.nn.Module):
             amps0=amps0,
             sigma_min_diag=sigma_min_diag,
             sigma_max_diag=sigma_max_diag,
+            amp_max=amp_max,
+            max_eccentricity=max_eccentricity,
+            sharpness_range=sharpness_range,
             truncate=truncate,
             device=base_device,
         )

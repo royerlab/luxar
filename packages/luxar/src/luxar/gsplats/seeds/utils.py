@@ -269,7 +269,9 @@ def dedupe_farthest_first(
 
     # Pre-allocate arrays for selected seeds (avoids repeated list→array conversions)
     max_selections = len(coords_sorted)
-    selected_array = np.empty((max_selections, coords_sorted.shape[1]), dtype=np.float32)
+    selected_array = np.empty(
+        (max_selections, coords_sorted.shape[1]), dtype=np.float32
+    )
     selected_sorted_indices_array = np.empty(max_selections, dtype=np.intp)
 
     # Start with first (strongest) seed

@@ -192,7 +192,8 @@ class TestArrayRefDecoding:
             assert decoded.shape == (4,)
             # Dtype may be different due to encoding (e.g., float16 in AUTO mode)
             # What matters is the values are correct
-            assert np.allclose(decoded, data1, rtol=1e-3)
+            # With rounding, uint8 quantization error is < 0.5% (0.5/255)
+            assert np.allclose(decoded, data1, rtol=0.005)
 
     def test_decode_array_ref_recursive(self):
         """Test that array_ref decoding is recursive (target may also be encoded)."""

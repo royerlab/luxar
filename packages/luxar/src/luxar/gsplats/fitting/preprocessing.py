@@ -6,6 +6,9 @@ Handles normalization, seed generation, and gradient dilution compensation.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Optional
+
 import numpy as np
 import torch
 from arbol import aprint, asection
@@ -79,6 +82,18 @@ def _compression_ratio_to_target_count(
     return max(1, target)  # At least 1 seed
 
 
+@dataclass
+class _InitContext:
+    """Mutable context for tracking pre-initialized parameters during seed generation.
+
+    This avoids mutating the input FitConfig object.
+    """
+
+    init_L: Optional[np.ndarray] = None
+    init_amps: Optional[np.ndarray] = None
+    init_sharpness: Optional[np.ndarray] = None
+
+
 def preprocess_data(config: FitConfig) -> PreprocessedData:
     """
     Preprocess input data for optimization.
@@ -88,7 +103,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     Parameters
     ----------
     config : FitConfig
-        Configuration containing input data and parameters
+        Configuration containing input data and parameters (not mutated)
 
     Returns
     -------
@@ -101,11 +116,20 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     seeds = config.seeds
     seed_kwargs = config.seed_kwargs or {}  # Default to empty dict if None
 
+    # Create mutable context for init parameters (avoids mutating config)
+    init_ctx = _InitContext(
+        init_L=config.init_L.copy() if config.init_L is not None else None,
+        init_amps=config.init_amps.copy() if config.init_amps is not None else None,
+        init_sharpness=config.init_sharpness.copy()
+        if config.init_sharpness is not None
+        else None,
+    )
+
     # Handle GSplatData seeds specially
     if isinstance(seeds, GSplatData):
         seed_centers = seeds.centers
         # Extract pre-initialized parameters from GSplatData
-        _extract_gsplatdata_init(config, seeds)
+        _extract_gsplatdata_init(init_ctx, seeds)
         if config.verbose:
             aprint(
                 f"Using GSplatData seeds: {len(seed_centers)} splats with pre-initialized parameters"
@@ -119,7 +143,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
                 None,
                 config.seed_method,
                 config.verbose,
-                config=config,
+                init_ctx=init_ctx,
                 **seed_kwargs,
             )
     elif isinstance(seeds, int):
@@ -131,7 +155,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
                 seeds,
                 config.seed_method,
                 config.verbose,
-                config=config,
+                init_ctx=init_ctx,
                 **seed_kwargs,
             )
     elif isinstance(seeds, float):
@@ -151,7 +175,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
                 target_count,
                 config.seed_method,
                 config.verbose,
-                config=config,
+                init_ctx=init_ctx,
                 **seed_kwargs,
             )
     else:
@@ -167,14 +191,14 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     # The seeding methods extract amplitudes from the original image, but
     # optimization works on the normalized [0, 1] image. Without this rescaling,
     # amp_max constraints would be on the wrong scale.
-    if config.init_amps is not None:
-        config.init_amps = np.clip(
-            (config.init_amps - image_min) / intensity_range, 0.0, 1.0
+    if init_ctx.init_amps is not None:
+        init_ctx.init_amps = np.clip(
+            (init_ctx.init_amps - image_min) / intensity_range, 0.0, 1.0
         )
         if config.verbose:
             aprint(
                 f"Rescaled init_amps to normalized range: "
-                f"[{config.init_amps.min():.4f}, {config.init_amps.max():.4f}]"
+                f"[{init_ctx.init_amps.min():.4f}, {init_ctx.init_amps.max():.4f}]"
             )
 
     # Set auto-convergence threshold
@@ -184,36 +208,30 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     d = V.ndim
     N = int(seed_centers.shape[0])
 
-    # Compute L1 regularization values based on parameter type learning rate multipliers
-    # These scale with the learning rates used by the optimizer for each parameter type
+    # Compute L1 regularization values as fractions of the learning rate
+    # This ensures regularization pressure scales proportionally with optimization strength
     # Use config values if provided, otherwise calculate defaults
     l1_amp = config.l1_amp
     if l1_amp is None:
-        # Amplitude learns at 2.0× base lr, so L1 should be ~5% of that
-        l1_amp = 0.1 * config.lr  # 10% of base LR = 5% of amplitude LR (2.0×)
+        l1_amp = 0.1 * config.lr  # 10% of LR for amplitude sparsity
 
     l1_diag = config.l1_diag
     if l1_diag is None:
-        # Diagonal learns at 1.0× base lr (with dilution), L1 ~1%
-        l1_diag = 0.01 * config.lr  # 1% of base LR
+        l1_diag = 0.01 * config.lr  # 1% of LR for mild shape regularization
 
     l1_sharpness = config.l1_sharpness
     if l1_sharpness is None:
-        # Sharpness learns at 0.5× base lr (no dilution), L1 ~2%
-        l1_sharpness = 0.01 * config.lr  # 1% of base LR = 2% of sharpness LR (0.5×)
+        l1_sharpness = 0.01 * config.lr  # 1% of LR to encourage standard Gaussian
 
     # Move to device
     V_tensor = torch.tensor(V_normalized, dtype=torch.float32, device=config.device)
 
     # Log L1 regularization settings
     if config.verbose:
-        aprint("L1 regularization (as % of parameter type LR):")
-        aprint(f"  Amplitude: {l1_amp:.4f} (5% of amp LR: {config.lr:.3f} × 2.0)")
-        aprint(f"  Diagonal: {l1_diag:.5f} (1% of diag LR: {config.lr:.3f} × 1.0)")
-        aprint(
-            f"  Sharpness: {l1_sharpness:.5f} "
-            f"(2% of sharpness LR: {config.lr:.3f} × 0.5)"
-        )
+        aprint("L1 regularization (as % of base LR):")
+        aprint(f"  Amplitude: {l1_amp:.4f} (10% of LR {config.lr:.3f})")
+        aprint(f"  Diagonal: {l1_diag:.5f} (1% of LR {config.lr:.3f})")
+        aprint(f"  Sharpness: {l1_sharpness:.5f} (1% of LR {config.lr:.3f})")
 
     return PreprocessedData(
         V_normalized=V_normalized,
@@ -228,6 +246,9 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         l1_amp=l1_amp,
         l1_diag=l1_diag,
         l1_sharpness=l1_sharpness,
+        init_L=init_ctx.init_L,
+        init_amps=init_ctx.init_amps,
+        init_sharpness=init_ctx.init_sharpness,
     )
 
 
@@ -237,7 +258,7 @@ def _generate_seeds(
     target_count: int | None,
     seed_method: str,
     verbose: bool,
-    config: "FitConfig | None" = None,
+    init_ctx: "_InitContext | None" = None,
     **seed_kwargs,
 ) -> np.ndarray:
     """
@@ -261,8 +282,8 @@ def _generate_seeds(
         or comma-separated combinations (e.g., "decomposition,edges")
     verbose : bool
         Whether to print progress
-    config : FitConfig | None
-        Optional config to populate with GSplatData initialization parameters
+    init_ctx : _InitContext | None
+        Optional context to populate with GSplatData initialization parameters
     **seed_kwargs
         Additional parameters routed to seed generation methods
 
@@ -280,17 +301,23 @@ def _generate_seeds(
     # - Without: Auto estimates ~100 seeds, rest filled by grid fallback
     if target_count is not None:
         seeds_result = generate_seeds(
-            V, method=seed_method, target_seeds=target_count, verbose=verbose, **seed_kwargs
+            V,
+            method=seed_method,
+            target_seeds=target_count,
+            verbose=verbose,
+            **seed_kwargs,
         )
     else:
-        seeds_result = generate_seeds(V, method=seed_method, verbose=verbose, **seed_kwargs)
+        seeds_result = generate_seeds(
+            V, method=seed_method, verbose=verbose, **seed_kwargs
+        )
 
     # Extract centers from GSplatData
     if isinstance(seeds_result, GSplatData):
         seed_centers = seeds_result.centers
-        # If config provided, extract pre-initialized parameters
-        if config is not None:
-            _extract_gsplatdata_init(config, seeds_result)
+        # If init_ctx provided, extract pre-initialized parameters
+        if init_ctx is not None:
+            _extract_gsplatdata_init(init_ctx, seeds_result)
             if verbose:
                 aprint("Using scale-informed initialization from seeding method")
     else:
@@ -317,7 +344,7 @@ def _generate_seeds(
             intensities = V[tuple(idx.T)]
 
             # Need indices when we have pre-initialized arrays to slice
-            has_init_arrays = config is not None and config.init_L is not None
+            has_init_arrays = init_ctx is not None and init_ctx.init_L is not None
 
             if has_init_arrays:
                 seed_centers, selected_indices = _subsample_seeds_spatially_diverse(
@@ -328,11 +355,11 @@ def _generate_seeds(
                     return_indices=True,
                 )
                 # Slice the pre-initialized arrays to match subsampled seeds
-                config.init_L = config.init_L[selected_indices]
-                if config.init_amps is not None:
-                    config.init_amps = config.init_amps[selected_indices]
-                if config.init_sharpness is not None:
-                    config.init_sharpness = config.init_sharpness[selected_indices]
+                init_ctx.init_L = init_ctx.init_L[selected_indices]
+                if init_ctx.init_amps is not None:
+                    init_ctx.init_amps = init_ctx.init_amps[selected_indices]
+                if init_ctx.init_sharpness is not None:
+                    init_ctx.init_sharpness = init_ctx.init_sharpness[selected_indices]
             else:
                 seed_centers = _subsample_seeds_spatially_diverse(
                     seed_centers, intensities, target_count, verbose
@@ -356,10 +383,10 @@ def _generate_seeds(
             n_added = len(seed_centers) - n_original
 
             # Extend init_L/init_amps/init_sharpness for the new grid seeds
-            if config is not None and n_added > 0:
+            if init_ctx is not None and n_added > 0:
                 ndim = V.ndim
                 _extend_init_arrays_for_grid_seeds(
-                    config,
+                    init_ctx,
                     n_added,
                     ndim,
                     grid_spacing,
@@ -726,18 +753,18 @@ def _set_convergence_threshold(max_abs_error: float | None, verbose: bool) -> fl
     return max_abs_error
 
 
-def _extract_gsplatdata_init(config: FitConfig, gsplat_data: "GSplatData") -> None:  # noqa: F821
+def _extract_gsplatdata_init(init_ctx: _InitContext, gsplat_data: "GSplatData") -> None:  # noqa: F821
     """
     Extract pre-initialized parameters from GSplatData.
 
-    Populates config.init_L, config.init_amps, and config.init_sharpness
+    Populates init_ctx.init_L, init_ctx.init_amps, and init_ctx.init_sharpness
     from a GSplatData object. This enables using moment pursuit results
     or loaded splats as initialization for gradient descent refinement.
 
     Parameters
     ----------
-    config : FitConfig
-        Configuration to update with pre-initialized parameters.
+    init_ctx : _InitContext
+        Context to update with pre-initialized parameters.
     gsplat_data : GSplatData
         Source of initialization data.
     """
@@ -747,25 +774,25 @@ def _extract_gsplatdata_init(config: FitConfig, gsplat_data: "GSplatData") -> No
 
     # Extract Cholesky factors (convert from packed to matrix form)
     if gsplat_data.cholesky_factors is not None:
-        config.init_L = unpack_tril(gsplat_data.cholesky_factors, ndim)
+        init_ctx.init_L = unpack_tril(gsplat_data.cholesky_factors, ndim)
     else:
-        config.init_L = None
+        init_ctx.init_L = None
 
     # Extract amplitudes
     if gsplat_data.amplitudes is not None:
-        config.init_amps = gsplat_data.amplitudes
+        init_ctx.init_amps = gsplat_data.amplitudes.copy()
     else:
-        config.init_amps = None
+        init_ctx.init_amps = None
 
     # Extract sharpness
     if gsplat_data.sharpnesses is not None:
-        config.init_sharpness = gsplat_data.sharpnesses
+        init_ctx.init_sharpness = gsplat_data.sharpnesses.copy()
     else:
-        config.init_sharpness = None
+        init_ctx.init_sharpness = None
 
 
 def _extend_init_arrays_for_grid_seeds(
-    config: "FitConfig",
+    init_ctx: _InitContext,
     n_added: int,
     ndim: int,
     grid_spacing: float,
@@ -782,8 +809,8 @@ def _extend_init_arrays_for_grid_seeds(
 
     Parameters
     ----------
-    config : FitConfig
-        Configuration with init arrays to extend.
+    init_ctx : _InitContext
+        Context with init arrays to extend.
     n_added : int
         Number of grid seeds added.
     ndim : int
@@ -811,12 +838,12 @@ def _extend_init_arrays_for_grid_seeds(
         )
 
     # Extend init_L
-    if config.init_L is not None:
+    if init_ctx.init_L is not None:
         # Create isotropic L for grid seeds with σ = grid_sigma
         grid_L = np.zeros((n_added, ndim, ndim), dtype=np.float32)
         for i in range(ndim):
             grid_L[:, i, i] = grid_sigma
-        config.init_L = np.concatenate([config.init_L, grid_L], axis=0)
+        init_ctx.init_L = np.concatenate([init_ctx.init_L, grid_L], axis=0)
     else:
         # No original init_L, create for all seeds
         # Original seeds get σ=1.0 (no scale info), grid seeds get σ=grid_sigma
@@ -824,7 +851,7 @@ def _extend_init_arrays_for_grid_seeds(
         for i in range(ndim):
             all_L[:n_original, i, i] = 1.0  # Original seeds: σ=1.0
             all_L[n_original:, i, i] = grid_sigma  # Grid seeds: σ=grid_sigma
-        config.init_L = all_L
+        init_ctx.init_L = all_L
 
     # Extend init_amps - sample from image at grid seed locations
     grid_centers = seed_centers[n_original:]
@@ -833,8 +860,8 @@ def _extend_init_arrays_for_grid_seeds(
         ndi.map_coordinates(V, coords_for_interp, order=1, mode="nearest") * 0.9
     ).astype(np.float32)
 
-    if config.init_amps is not None:
-        config.init_amps = np.concatenate([config.init_amps, grid_amps], axis=0)
+    if init_ctx.init_amps is not None:
+        init_ctx.init_amps = np.concatenate([init_ctx.init_amps, grid_amps], axis=0)
     else:
         # No original init_amps, sample for all
         original_centers = seed_centers[:n_original]
@@ -842,17 +869,17 @@ def _extend_init_arrays_for_grid_seeds(
         original_amps = (
             ndi.map_coordinates(V, original_coords, order=1, mode="nearest") * 0.9
         ).astype(np.float32)
-        config.init_amps = np.concatenate([original_amps, grid_amps], axis=0)
+        init_ctx.init_amps = np.concatenate([original_amps, grid_amps], axis=0)
 
     # Extend init_sharpness - grid seeds use standard Gaussian sharpness (2.0)
     grid_sharpness = np.full(n_added, 2.0, dtype=np.float32)
-    if config.init_sharpness is not None:
-        config.init_sharpness = np.concatenate(
-            [config.init_sharpness, grid_sharpness], axis=0
+    if init_ctx.init_sharpness is not None:
+        init_ctx.init_sharpness = np.concatenate(
+            [init_ctx.init_sharpness, grid_sharpness], axis=0
         )
     else:
         # No original init_sharpness, use 2.0 for all
         original_sharpness = np.full(n_original, 2.0, dtype=np.float32)
-        config.init_sharpness = np.concatenate(
+        init_ctx.init_sharpness = np.concatenate(
             [original_sharpness, grid_sharpness], axis=0
         )

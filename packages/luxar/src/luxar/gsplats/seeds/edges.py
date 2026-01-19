@@ -293,4 +293,3 @@ def _poisson_disk_sample_weighted(
 
     # Trim to actual size and convert back to float64 for consistency
     return selected_array[:n_selected].astype(float)
-

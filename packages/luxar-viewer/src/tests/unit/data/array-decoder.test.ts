@@ -221,14 +221,15 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(uniqueValues.size).toBeGreaterThan(10); // Should have many distinct values
     });
 
-    it('should load radii in float32 (not quantized)', async () => {
-      // Now works with float32 (float16_allowed=False for TypeScript compatibility)
-      // Python generates: {"encoding": {"name": "float32"}} for radii
+    it('should load radii correctly (may be quantized based on dynamic range)', async () => {
+      // Radii encoding depends on dynamic range:
+      // - Low dynamic range (max/min < 256): uses bounded_scalar_uint8
+      // - Medium dynamic range (< 65536): uses bounded_scalar_uint16
+      // - High dynamic range or precision needs: uses float32
       const { array, attrs } = await loadArrayWithAttrs('test_quantization.zarr', 'points/radii');
 
-      // Verify metadata (nested under "encoding")
-      expect(attrs.encoding?.name).toBe('float32');
-      expect(ArrayDecoder.isEncoded(attrs)).toBe(false); // float32 is direct storage
+      // Verify metadata exists (encoding name may be float32 or bounded_scalar_uint8/16)
+      expect(attrs.encoding?.name).toBeDefined();
 
       // Decode
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
@@ -584,6 +585,60 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       // Verify minimum sharpness
       const minSharpness = Math.min(...Array.from(decoded));
       expect(minSharpness).toBeCloseTo(1.0, 1);
+    });
+
+    it('should decode uint16 bounded_scalar with correct max_int=65535 (not 255)', async () => {
+      // CRITICAL: This test verifies the fix for the uint16 dequantization bug
+      //
+      // Bug history:
+      // - attrs.dtype is undefined (Python encoder doesn't write it)
+      // - getQuantizationMetadata defaulted to 'uint8', using max_int=255
+      // - For uint16 data, this caused 256x error: decoded = raw/255 * max (WRONG!)
+      // - Correct: decoded = raw/65535 * max
+      //
+      // Fix: Use actual zarr array.dtype (which IS set correctly) instead of attrs.dtype
+
+      const { array, attrs } = await loadArrayWithAttrs(
+        'test_uint16_quantization.zarr',
+        'uint16_test/radii'
+      );
+
+      // Verify metadata indicates uint16 quantization
+      expect(attrs.encoding?.name).toBe('bounded_scalar_uint16');
+      expect(attrs.encoding?.bits).toBe(16);
+      expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
+
+      // Verify the zarr array dtype IS uint16
+      // zarrita may return 'uint16', '<u2', or '|u2' depending on version
+      const dtype = String(array.dtype);
+      expect(dtype.includes('u2') || dtype.includes('uint16')).toBe(true);
+
+      // Verify attrs.dtype is NOT set (this is the bug trigger!)
+      expect((attrs as any).dtype).toBeUndefined();
+
+      // Decode
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const decoded = await decoder.decode(array, attrs, 1000);
+
+      // Verify shape
+      expect(decoded.length).toBe(1000);
+
+      // Verify decoded range matches expected [0.001, 1.0]
+      const encMin = (attrs.encoding as any)?.min ?? 0;
+      const encMax = (attrs.encoding as any)?.max ?? 1;
+      const minDecoded = Math.min(...Array.from(decoded));
+      const maxDecoded = Math.max(...Array.from(decoded));
+
+      // CRITICAL: With correct uint16 decoding (max_int=65535):
+      // - minDecoded should be close to encMin (within quantization error)
+      // - maxDecoded should be close to encMax
+      expect(maxDecoded).toBeCloseTo(encMax, 2);
+      expect(minDecoded).toBeCloseTo(encMin, 2);
+
+      // BUG CHECK: With WRONG uint8 decoding (max_int=255):
+      // - maxDecoded would be ~256x too large (e.g., 256.0 instead of 1.0)
+      // This assertion catches the bug if it regresses
+      expect(maxDecoded).toBeLessThan(encMax * 2); // Should never be > 2x expected
     });
   });
 

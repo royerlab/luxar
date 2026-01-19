@@ -33,7 +33,8 @@ make install-rust # Install Rust + wasm-pack for viewer builds
 make clean-setup  # Remove ALL dev tools to simulate fresh machine
 
 # Quality & Testing
-make test-all     # All tests (Python + TypeScript + WASM)
+make test-all     # All tests (Python + TypeScript + WASM + CUDA if available)
+make test-cov-all # All tests with coverage (Python + TypeScript)
 make test-python  # Python tests only
 make test-e2e     # Playwright E2E tests
 make check-all    # All quality checks
