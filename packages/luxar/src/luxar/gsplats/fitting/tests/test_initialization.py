@@ -237,6 +237,8 @@ def test_initialization_3d(basic_config) -> None:
 
 def test_initialization_different_devices() -> None:
     """Test initialization on different devices if available."""
+    import pytest
+
     devices = ["cpu"]
     if torch.cuda.is_available():
         devices.append("cuda")
@@ -245,7 +247,21 @@ def test_initialization_different_devices() -> None:
 
     for device_str in devices:
         V = np.random.rand(16, 16).astype(np.float32)
-        device = torch.device(device_str)
+        try:
+            device = torch.device(device_str)
+            # Test device is actually usable (not just reported as available)
+            if device_str == "cuda":
+                torch.zeros(1, device=device)  # Will fail if CUDA is busy/unavailable
+        except (RuntimeError, torch.cuda.CudaError) as e:
+            pytest.skip(
+                f"Device {device_str} reported available but is not usable: {e}"
+            )
+        except Exception as e:
+            # Catch torch.AcceleratorError and similar
+            if "CUDA" in str(e) or "cuda" in str(e).lower():
+                pytest.skip(f"Device {device_str} is not usable: {e}")
+            raise
+
         config = FitConfig(
             V=V,
             seeds=None,

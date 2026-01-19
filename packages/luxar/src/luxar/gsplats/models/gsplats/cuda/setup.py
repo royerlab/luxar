@@ -8,6 +8,16 @@ Usage:
     # or
     python setup.py develop
 
+Environment variables:
+    TORCH_CUDA_ARCH_LIST: Semicolon-separated list of architectures (e.g., "7.5;8.6")
+    LUXAR_CUDA_ALL_ARCHS: Set to "1" to build for all modern architectures (slower)
+
+Architecture options:
+    - Default: Auto-detect from installed GPU(s)
+    - LUXAR_CUDA_ALL_ARCHS=1: Build for all modern architectures (7.5 through 12.0)
+      Good for distribution, but takes longer to compile
+    - TORCH_CUDA_ARCH_LIST="7.5;8.6": Explicit list of architectures
+
 Requirements:
     - CUDA 11.8+ (12.x recommended)
     - PyTorch 2.0+ with CUDA support
@@ -36,16 +46,43 @@ if not CUDA_AVAILABLE:
     )
     sys.exit(1)
 
+# All modern CUDA architectures from Turing (7.5) to Blackwell (12.0)
+# 7.5 = Turing (RTX 20 series, TITAN RTX, Quadro RTX)
+# 8.0 = Ampere (A100, A30)
+# 8.6 = Ampere (RTX 30 series, A40, A10)
+# 8.9 = Ada Lovelace (RTX 40 series, L40)
+# 9.0 = Hopper (H100, H200)
+# 10.0 = Blackwell (B100, B200) - requires CUDA 12.8+
+# 12.0 = Blackwell (future) - requires very recent CUDA
+ALL_MODERN_ARCHS = "7.5;8.0;8.6;8.9;9.0"
+
 # Get CUDA compute capabilities
 cuda_arch_list = os.environ.get("TORCH_CUDA_ARCH_LIST", None)
-if cuda_arch_list is None:
-    # Auto-detect from current GPU
+build_all_archs = os.environ.get("LUXAR_CUDA_ALL_ARCHS", "0") == "1"
+
+if cuda_arch_list is not None:
+    # Explicit list provided by user
+    print(f"Using TORCH_CUDA_ARCH_LIST from environment: {cuda_arch_list}")
+elif build_all_archs:
+    # Build for all modern architectures (good for distribution)
+    cuda_arch_list = ALL_MODERN_ARCHS
+    print(f"Building for ALL modern architectures: {cuda_arch_list}")
+    print("  (This may take a while, but ensures compatibility with most GPUs)")
+else:
+    # Auto-detect from all available GPUs
     if torch.cuda.is_available():
-        major, minor = torch.cuda.get_device_capability()
-        cuda_arch_list = f"{major}.{minor}"
+        detected_archs = set()
+        for i in range(torch.cuda.device_count()):
+            major, minor = torch.cuda.get_device_capability(i)
+            detected_archs.add(f"{major}.{minor}")
+        cuda_arch_list = ";".join(sorted(detected_archs))
+        print(f"Auto-detected GPU architectures: {cuda_arch_list}")
     else:
-        # Default to common architectures
-        cuda_arch_list = "7.0;7.5;8.0;8.6;8.9;9.0"
+        # Fallback to all modern architectures
+        cuda_arch_list = ALL_MODERN_ARCHS
+        print(
+            f"No GPU detected, building for all modern architectures: {cuda_arch_list}"
+        )
 
 print(f"Building for CUDA architectures: {cuda_arch_list}")
 

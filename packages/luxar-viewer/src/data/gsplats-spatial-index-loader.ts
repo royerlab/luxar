@@ -160,15 +160,20 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     }
 
     try {
-      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
+      // GSplats format uses "sharpnesses" (plural) - see SPECIFICATIONS.md
+      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
         kind: 'array',
       });
       if (this.l0Cache) {
-        sharpnessArray = wrapWithCache(sharpnessArray, this.l0Cache, `${this.node.path}/sharpness`);
+        sharpnessArray = wrapWithCache(
+          sharpnessArray,
+          this.l0Cache,
+          `${this.node.path}/sharpnesses`
+        );
       }
       this.arrays.sharpness = sharpnessArray;
     } catch {
-      log.info(Modules.SPATIAL_INDEX_LOADER, 'No sharpness array found (using default 2.0)');
+      log.info(Modules.SPATIAL_INDEX_LOADER, 'No sharpnesses array found (using default 2.0)');
     }
 
     // Initialize data accumulator for object pooling (Phase 1 optimization)

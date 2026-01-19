@@ -236,7 +236,9 @@ export class ArrayDecoder {
     // Check for LOG-SPACE scalar encoding (log_scalar_uint8, log_scalar_uint16)
     // MUST be checked BEFORE generic quantization since both contain 'uint'/'scalar'
     if (enc?.name?.startsWith('log_scalar') && enc?.max_log !== undefined) {
-      const actualDtype = attrs.dtype || 'uint8';
+      // CRITICAL: Use zarrArray.dtype, NOT attrs.dtype (which may be undefined)
+      // Python encoder writes uint8/uint16 data but attrs.dtype may not be set.
+      const actualDtype = (zarrArray.dtype as string) || 'uint8';
       return this.decodeLogScalar(data, enc.max_log, actualDtype);
     }
 
@@ -678,17 +680,27 @@ export class ArrayDecoder {
    *
    * Extracts the bounds needed to dequantize a subset of quantized data.
    * Returns null if not quantized.
+   *
+   * @param attrs - Array metadata from .zattrs
+   * @param zarrDtype - Optional actual zarr array dtype (e.g., 'uint16', '<u2').
+   *                    IMPORTANT: Pass this to avoid the attrs.dtype bug where Python
+   *                    encoder doesn't write attrs.dtype, causing wrong max_int (256x error).
    */
   static getQuantizationMetadata(
-    attrs: ArrayMetadata
-  ): { bounds: [number, number]; dtype: string; isLogSpace: boolean } | null {
+    attrs: ArrayMetadata,
+    zarrDtype?: string
+  ): { bounds: [number, number]; dtype: 'uint8' | 'uint16'; isLogSpace: boolean } | null {
     if (!attrs) return null;
     const enc = attrs.encoding;
     if (!enc || !enc.name) return null;
 
+    // Determine dtype: prefer zarrDtype (actual storage), fall back to attrs.dtype
+    // CRITICAL: Python encoder writes dtype to zarr array, NOT to attrs.dtype!
+    const rawDtype = zarrDtype || attrs.dtype || 'uint8';
+    const dtype = ArrayDecoder.normalizeDtype(rawDtype);
+
     // Check for log-space encoding first (special case)
     if (enc.name?.startsWith('log_scalar') && enc.max_log !== undefined) {
-      const dtype = attrs.dtype || 'uint8';
       return {
         bounds: [0, enc.max_log], // Log space uses [0, max_log]
         dtype,
@@ -720,12 +732,25 @@ export class ArrayDecoder {
       }
 
       if (bounds) {
-        const dtype = attrs.dtype || 'uint8';
         return { bounds, dtype, isLogSpace: false };
       }
     }
 
     return null;
+  }
+
+  /**
+   * Normalize dtype string to canonical format
+   *
+   * Handles all NumPy dtype string variants:
+   * - 'uint8', '|u1', '<u1', '>u1' → 'uint8'
+   * - 'uint16', '|u2', '<u2', '>u2' → 'uint16'
+   */
+  private static normalizeDtype(dtype: string): 'uint8' | 'uint16' {
+    if (dtype === 'uint8' || dtype === '|u1' || dtype === '<u1' || dtype === '>u1') return 'uint8';
+    if (dtype === 'uint16' || dtype === '|u2' || dtype === '<u2' || dtype === '>u2')
+      return 'uint16';
+    return 'uint8';
   }
 
   /**

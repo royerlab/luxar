@@ -41,12 +41,12 @@ def initialize_optimization(
             scheduler=None,
         )
 
-    # Initialize parameters - use pre-initialized values if provided
+    # Initialize parameters - use pre-initialized values from preprocessed_data if provided
     from arbol import aprint
 
-    if config.init_L is not None:
+    if preprocessed_data.init_L is not None:
         # Use pre-computed Cholesky factors (from GSplatData or moment pursuit)
-        L0 = config.init_L.astype(np.float32)
+        L0 = preprocessed_data.init_L.astype(np.float32)
         if config.verbose:
             aprint(f"Using pre-initialized Cholesky factors: {L0.shape}")
     else:
@@ -74,9 +74,9 @@ def initialize_optimization(
         if config.verbose:
             aprint("Clamped L0 diagonal to >= sigma_min_diag + 0.1")
 
-    if config.init_amps is not None:
-        # Use pre-computed amplitudes
-        amps0 = config.init_amps.astype(np.float32)
+    if preprocessed_data.init_amps is not None:
+        # Use pre-computed amplitudes (already normalized to [0,1] in preprocessing)
+        amps0 = preprocessed_data.init_amps.astype(np.float32)
         if config.verbose:
             aprint(
                 f"Using pre-initialized amplitudes: range [{amps0.min():.4f}, {amps0.max():.4f}]"
@@ -92,8 +92,8 @@ def initialize_optimization(
 
     # Sharpness initialization (used if model supports it)
     sharpness0 = None
-    if config.init_sharpness is not None:
-        sharpness0 = config.init_sharpness.astype(np.float32)
+    if preprocessed_data.init_sharpness is not None:
+        sharpness0 = preprocessed_data.init_sharpness.astype(np.float32)
         if config.verbose:
             aprint(
                 f"Using pre-initialized sharpness: range [{sharpness0.min():.2f}, {sharpness0.max():.2f}]"
@@ -139,6 +139,9 @@ def initialize_optimization(
                     amps0=amps0,
                     sigma_min_diag=config.sigma_min_diag,
                     sigma_max_diag=config.sigma_max_diag,
+                    amp_max=amp_max,
+                    max_eccentricity=config.max_eccentricity,
+                    sharpness_range=config.sharpness_range,
                     truncate=config.truncate,
                     intensity_floor=config.metal_intensity_floor,
                     tile_size=config.metal_tile_size,
@@ -182,6 +185,8 @@ def initialize_optimization(
                     sigma_min_diag=config.sigma_min_diag,
                     sigma_max_diag=config.sigma_max_diag,
                     amp_max=amp_max,
+                    max_eccentricity=config.max_eccentricity,
+                    sharpness_range=config.sharpness_range,
                     truncate=config.truncate,
                     intensity_floor=config.cuda_intensity_floor,
                     tile_size=config.cuda_tile_size,  # None = auto-select
@@ -213,6 +218,8 @@ def initialize_optimization(
             sigma_min_diag=config.sigma_min_diag,
             sigma_max_diag=config.sigma_max_diag,
             amp_max=amp_max,
+            max_eccentricity=config.max_eccentricity,
+            sharpness_range=config.sharpness_range,
             truncate=config.truncate,
             device=config.device,
         )

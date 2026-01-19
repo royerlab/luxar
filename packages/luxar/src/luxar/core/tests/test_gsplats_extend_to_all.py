@@ -361,9 +361,7 @@ class TestGSplatsExtendToAll:
                 stats={},
             )
 
-            scene.add_gsplats_from_data(
-                "from_data", result, extend_to_all=["Time"]
-            )
+            scene.add_gsplats_from_data("from_data", result, extend_to_all=["Time"])
 
         # Check that extend_to_all was applied
         store = zarr.open_group(tmp_path / "test.zarr", mode="r")

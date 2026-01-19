@@ -57,6 +57,16 @@ class GaussianSplatModel(nn.Module):
         Maximum amplitude value. Prevents amplitude explosion during optimization,
         especially with aggressive compression (few splats). Since images are
         normalized to [0, 1], a value of 1.0 matches the max possible intensity.
+    max_eccentricity : float, optional
+        Maximum allowed eccentricity (ratio of largest to smallest eigenvalue
+        of the covariance matrix Σ = L @ L^T). This bounds the actual shape
+        elongation of the Gaussian splats. For example, max_eccentricity=4.0
+        means the longest axis can be at most 2x the shortest (since
+        eccentricity is the variance ratio, axis ratio = sqrt(eccentricity)).
+    sharpness_range : tuple[float, float] | float, optional
+        Range for sharpness values. If a tuple (min, max), sharpness is clamped
+        to this range. If a single float, sharpness is fixed to that value.
+        Sharpness of 2.0 is standard Gaussian; higher values give sharper edges.
     truncate : float, default=3.0
         Truncation radius in standard deviations for computational efficiency.
     device : torch.device, optional
@@ -72,6 +82,10 @@ class GaussianSplatModel(nn.Module):
         sigma_min_diag: Sequence[float],  # per-axis minimal diag(L) (≈ σ floor)
         sigma_max_diag: Optional[Sequence[float]] = None,
         amp_max: Optional[float] = None,  # Maximum amplitude (prevents explosion)
+        max_eccentricity: Optional[float] = None,  # Max ratio of longest/shortest axis
+        sharpness_range: Optional[
+            tuple[float, float] | float
+        ] = None,  # Sharpness constraints
         truncate: float = 3.0,
         device: Optional[torch.device] = None,
     ) -> None:
@@ -103,6 +117,13 @@ class GaussianSplatModel(nn.Module):
 
         # Store amplitude maximum constraint (prevents amplitude explosion during optimization)
         self.amp_max: float | None = amp_max
+
+        # Store eccentricity constraint (limits ratio of longest to shortest axis)
+        self.max_eccentricity: float | None = max_eccentricity
+
+        # Store sharpness range constraint
+        # Can be tuple (min, max) or fixed float value
+        self.sharpness_range: tuple[float, float] | float | None = sharpness_range
 
         # ---- Cholesky factor parameterization: ensure positive definiteness ----
         self.sigma_max_diag: torch.Tensor | None
@@ -190,6 +211,16 @@ class GaussianSplatModel(nn.Module):
         if self.sigma_max_diag is not None:
             diag = torch.minimum(diag, self.sigma_max_diag)
 
+        # Apply eccentricity constraint if specified
+        # Two-part constraint for efficiency:
+        # 1. Constrain diagonal ratio: max(diag)/min(diag) <= sqrt(max_eccentricity)
+        # 2. Constrain off-diagonal magnitude relative to diagonal (see below)
+        if self.max_eccentricity is not None:
+            max_ratio = float(self.max_eccentricity) ** 0.5
+            min_diag = diag.min(dim=1, keepdim=True).values  # (N, 1)
+            max_allowed_diag = min_diag * max_ratio
+            diag = torch.minimum(diag, max_allowed_diag)
+
         # Initialize lower-triangular matrices (zeros above diagonal)
         L = torch.zeros((N, d, d), dtype=torch.float32, device=diag.device)
 
@@ -197,13 +228,41 @@ class GaussianSplatModel(nn.Module):
         for i in range(d):
             L[:, i, i] = diag[:, i]
 
-        # Fill off-diagonal elements below diagonal (unconstrained)
-        # Unpack from row-major storage order
+        # Fill off-diagonal elements below diagonal
+        # Apply eccentricity constraint on off-diagonals to prevent elongation
         k = 0
+
+        # Precompute gamma for eccentricity constraint if needed
+        # For 2D, the exact relationship between gamma and eccentricity E is:
+        #   E = ((2 + γ²) + γ√(γ² + 4)) / ((2 + γ²) - γ√(γ² + 4))
+        # Solving for γ gives: γ ≈ sqrt(E-1) / k where k varies with E
+        # k values: E=2 → k=2.87, E=4 → k=2.45, E→∞ → k=2.41
+        # Tight approximation: k = 2.4 + 0.5/sqrt(E-1)
+        # For d dimensions, scale by (d-1)^0.7 to account for multiple off-diagonals
+        # (power 0.7 empirically gives tightest bounds across dimensions)
+        off_gamma = None
+        if self.max_eccentricity is not None and d > 1:
+            E = float(self.max_eccentricity)
+            sqrt_E_minus_1 = (E - 1.0) ** 0.5
+            # k varies with E: tighter for small E, looser for large E
+            k_2d = 2.4 + 0.5 / sqrt_E_minus_1 if sqrt_E_minus_1 > 0 else 3.0
+            # Scale for dimension with power 0.7
+            off_gamma = sqrt_E_minus_1 / (k_2d * (d - 1) ** 0.7)
+
         for i in range(d):
             for j in range(i):  # j < i (below diagonal)
-                L[:, i, j] = self.L_off[:, k]
+                off_val = self.L_off[:, k]
+
+                # Constrain off-diagonal elements to limit eccentricity
+                # |L[i,j]| <= γ * min(L[i,i], L[j,j])
+                if off_gamma is not None:
+                    min_diag_ij = torch.minimum(diag[:, i], diag[:, j])
+                    max_off = off_gamma * min_diag_ij
+                    off_val = torch.clamp(off_val, min=-max_off, max=max_off)
+
+                L[:, i, j] = off_val
                 k += 1
+
         return L
 
     def current_params(
@@ -251,6 +310,19 @@ class GaussianSplatModel(nn.Module):
         # This provides wide sharpness variation while preventing numerical overflow
         sharpness_clamped = torch.clamp(self.sharpness_offsets_raw, min=-2.5, max=2.5)
         sharpness = 2.0 * torch.exp(sharpness_clamped)
+
+        # Apply sharpness range constraint if specified
+        if self.sharpness_range is not None:
+            if isinstance(self.sharpness_range, (int, float)):
+                # Fixed sharpness value
+                sharpness = torch.full_like(sharpness, float(self.sharpness_range))
+            else:
+                # Tuple (min, max) - clamp to range
+                sharpness = torch.clamp(
+                    sharpness,
+                    min=float(self.sharpness_range[0]),
+                    max=float(self.sharpness_range[1]),
+                )
 
         return centers, L, amps, sharpness
 

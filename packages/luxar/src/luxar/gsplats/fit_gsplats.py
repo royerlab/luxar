@@ -8,7 +8,6 @@ import numpy as np
 import torch
 from arbol import asection
 
-from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.fitting import (
     create_loss_function,
     finalize_results,
@@ -18,6 +17,7 @@ from luxar.gsplats.fitting import (
     run_optimization_loop,
 )
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.utils.trils import tril_size
 
 
@@ -82,7 +82,7 @@ class GaussianSplatFitter:
         norm_percentile: float = 0.0,
         init_sigma_vox: Optional[float] = None,
         n_iters: int = 1000,
-        lr: float = 0.01,
+        lr: float = 0.05,
         loss_type: str = "l1",
         asymmetric_penalty: Optional[float] = 10.0,
         l1_amp: Optional[float] = None,
@@ -91,6 +91,8 @@ class GaussianSplatFitter:
         sigma_min_diag: Optional[Sequence[float]] = None,
         sigma_max_diag: Optional[Sequence[float]] = None,
         amp_max: Optional[float] = None,  # Max amplitude (default auto: 1.0)
+        max_eccentricity: Optional[float] = None,
+        sharpness_range: Optional[tuple[float, float] | float] = None,
         truncate: float = 3.0,
         seed_method: str = "auto",
         verbose: bool = True,
@@ -104,6 +106,7 @@ class GaussianSplatFitter:
         lr_reduction_factor: float = 0.95,
         early_stop_patience: Optional[int] = None,
         dynamic_ops_verbose: bool = False,
+        voxel_footprint_correction: bool | float = False,
         **seed_kwargs,
     ) -> GSplatData:
         """
@@ -156,6 +159,8 @@ class GaussianSplatFitter:
             sigma_min_diag,
             sigma_max_diag,
             amp_max,
+            max_eccentricity,
+            sharpness_range,
             truncate,
             verbose,
             max_abs_error,
@@ -169,6 +174,7 @@ class GaussianSplatFitter:
             early_stop_patience,
             dynamic_ops_verbose,
             seed_method=seed_method,
+            voxel_footprint_correction=voxel_footprint_correction,
             **seed_kwargs,
         )
 
@@ -216,6 +222,8 @@ def fit_gaussian_splats(
     sigma_min_diag: Optional[Sequence[float]] = None,
     sigma_max_diag: Optional[Sequence[float]] = None,
     amp_max: Optional[float] = None,
+    max_eccentricity: Optional[float] = None,
+    sharpness_range: Optional[tuple[float, float] | float] = None,
     truncate: float = 3.0,
     device: Optional[str] = None,
     seed_method: str = "auto",
@@ -238,6 +246,8 @@ def fit_gaussian_splats(
     # Hardware acceleration
     use_metal: bool = True,
     use_cuda: bool = True,
+    # Post-processing
+    voxel_footprint_correction: bool | float = False,
     **seed_kwargs,
 ) -> GSplatData:
     """
@@ -284,7 +294,7 @@ def fit_gaussian_splats(
     n_iters : int, default=1000
         Maximum number of optimization iterations. Default is generous to allow
         max_abs_error convergence criterion to work effectively.
-    lr : float, default=0.01
+    lr : float, default=0.05
         Learning rate for Adam optimizer.
     loss_type : str, default="l1"
         Loss function: "mse", "poisson" (better for count/photon data), or "l1" (robust to outliers, preserves sharp features, default).
@@ -304,10 +314,8 @@ def fit_gaussian_splats(
     l1_sharpness : float, default=None (auto: 0.01 * lr)
         L1 regularization coefficient on sharpness offset parameters (s').
         Encourages splats to remain at standard Gaussian (s' = 0, s = 2) unless
-        beneficial to deviate. If None, automatically set to 1% of base learning rate
-        (which equals 2% of the sharpness learning rate due to the 0.5× multiplier).
-        Higher values promote standard Gaussians, lower values allow more sharpness learning.
-        Note: Sharpness learning rate is hard-coded to 0.5× the base effective learning rate.
+        beneficial to deviate. If None, automatically set to 1% of learning rate.
+        Higher values promote standard Gaussians, lower values allow more sharpness variation.
     sigma_min_diag : Sequence[float], optional
         Minimum diagonal values for Cholesky factor L along each axis.
         Defaults to [0.5]*d to prevent degenerate splats.
@@ -320,6 +328,17 @@ def fit_gaussian_splats(
         possible intensity. If None, automatically set to 1.0. Set to higher
         values (e.g., 2.0) for more flexibility, or lower (e.g., 0.5) for tighter
         control.
+    max_eccentricity : float or None, default=None
+        Maximum ratio of longest to shortest axis for splat covariance. Limits
+        anisotropy by constraining diagonal elements of Cholesky factor L so that
+        max(diag)/min(diag) <= sqrt(max_eccentricity). For example, 2.0 means the
+        longest axis can be at most sqrt(2) ≈ 1.41x the shortest axis.
+    sharpness_range : tuple[float, float] | float | None, default=None
+        Controls sharpness values during optimization:
+        - If tuple (min, max): Clamp sharpness to this range
+        - If float: Fix sharpness to this exact value (no optimization)
+        - If None: Use default behavior (sharpness in range [0.16, 24.5])
+        Note: s=2.0 is standard Gaussian, s>2 is sharper, s<2 is softer.
     truncate : float, default=3.0
         Truncation radius in standard deviations for rendering efficiency.
     device : str, optional
@@ -390,6 +409,15 @@ def fit_gaussian_splats(
     use_cuda : bool, default=True
         Enable custom CUDA kernels on NVIDIA GPUs.
         Provides 10-50x speedup for 2D-8D volumes. Automatically disabled if not available.
+    voxel_footprint_correction : bool | float, default=False
+        Post-fit correction to inflate splat covariances by the voxel footprint.
+        This ensures that upsampling doesn't invent detail beyond what the original
+        discrete data can represent. The correction adds sigma^2 to covariance diagonals:
+        Sigma_new = Sigma_original + sigma^2 * I_d
+        - False: Disabled (default)
+        - True: Enable with 1-voxel box footprint (sigma ≈ 0.289 voxels)
+        - float: Custom sigma in voxel units (e.g., 0.5 for half-voxel blur, 1.0 for 1-voxel blur)
+        Works for any dimension d.
 
     Returns
     -------
@@ -444,6 +472,8 @@ def fit_gaussian_splats(
             sigma_min_diag=sigma_min_diag,
             sigma_max_diag=sigma_max_diag,
             amp_max=amp_max,
+            max_eccentricity=max_eccentricity,
+            sharpness_range=sharpness_range,
             truncate=truncate,
             seed_method=seed_method,
             verbose=verbose,
@@ -456,6 +486,7 @@ def fit_gaussian_splats(
             patience=patience,
             lr_reduction_factor=lr_reduction_factor,
             early_stop_patience=early_stop_patience,
+            voxel_footprint_correction=voxel_footprint_correction,
             **seed_kwargs,
         )
 

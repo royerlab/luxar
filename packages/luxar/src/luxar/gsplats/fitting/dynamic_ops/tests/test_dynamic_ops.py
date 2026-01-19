@@ -479,8 +479,8 @@ class TestDynamicOperationsIntegration:
 
     def test_compression_analysis_functionality(self) -> None:
         """Test compression ratio analysis functionality."""
-        from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.fitting.visualization import display_compression_analysis
+        from luxar.gsplats.gsplat_data import GSplatData
 
         # Create simple test data
         V = np.random.random((16, 16)).astype(np.float32)

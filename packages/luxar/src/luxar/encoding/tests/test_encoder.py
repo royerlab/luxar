@@ -280,9 +280,11 @@ class TestColorEncoding:
 class TestBoundedScalarEncoding:
     """Test BOUNDED_SCALAR semantic type encoding."""
 
-    def test_bounded_scalar_auto_mode(self):
-        """Test bounded scalar quantized to uint8 in AUTO mode."""
-        data = np.random.rand(1000).astype(np.float32) * 31  # [0, 31] range
+    def test_bounded_scalar_auto_mode_narrow_range(self):
+        """Test bounded scalar with narrow dynamic range uses uint8."""
+        # Create data with narrow dynamic range (< 256:1) by adding offset
+        # Range [10, 41] has dynamic range of 4.1:1 - definitely uint8
+        data = np.random.rand(1000).astype(np.float32) * 31 + 10
 
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(str(tmpdir), mode="w")
@@ -293,6 +295,24 @@ class TestBoundedScalarEncoding:
             assert arr.dtype == np.uint8
             enc = arr.attrs["encoding"]
             assert enc["name"] == "bounded_scalar_uint8"
+            assert "min" in enc
+            assert "max" in enc
+
+    def test_bounded_scalar_auto_mode_wide_range(self):
+        """Test bounded scalar with wide dynamic range uses uint16."""
+        # Create data with wide dynamic range (> 256:1)
+        # Range [0.001, 1.0] has dynamic range of 1000:1 - needs uint16
+        data = np.linspace(0.001, 1.0, 1000).astype(np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.BOUNDED_SCALAR)
+
+            arr = group["test"]
+            assert arr.dtype == np.uint16
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "bounded_scalar_uint16"
             assert "min" in enc
             assert "max" in enc
 
@@ -320,9 +340,11 @@ class TestBoundedScalarEncoding:
 class TestPositiveScalarEncoding:
     """Test POSITIVE_SCALAR semantic type encoding."""
 
-    def test_positive_scalar_small_range(self):
-        """Test positive scalar with small range uses uint8."""
-        data = np.random.rand(1000).astype(np.float32) * 0.5  # [0, 0.5]
+    def test_positive_scalar_narrow_dynamic_range(self):
+        """Test positive scalar with narrow dynamic range uses uint8."""
+        # Create data with narrow dynamic range (< 256:1)
+        # Range [0.1, 0.5] has dynamic range of 5:1 - definitely uint8
+        data = np.random.rand(1000).astype(np.float32) * 0.4 + 0.1
 
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(str(tmpdir), mode="w")
@@ -331,6 +353,24 @@ class TestPositiveScalarEncoding:
 
             arr = group["test"]
             assert arr.dtype == np.uint8
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "bounded_scalar_uint8"
+
+    def test_positive_scalar_wide_dynamic_range(self):
+        """Test positive scalar with wide dynamic range uses uint16."""
+        # Create data with wide dynamic range (> 256:1)
+        # Range [0.0001, 0.5] has dynamic range of 5000:1 - needs uint16
+        data = np.linspace(0.0001, 0.5, 1000).astype(np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
+
+            arr = group["test"]
+            assert arr.dtype == np.uint16
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "bounded_scalar_uint16"
 
     def test_positive_scalar_log_encoding(self):
         """Test positive scalar with log encoding."""

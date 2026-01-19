@@ -250,7 +250,6 @@ def _compute_peak_coverage_batch(
     active_pairs = torch.nonzero(active_mask, as_tuple=False)  # (M, 2) where M << P*N
     peak_indices = active_pairs[:, 0]  # (M,)
     splat_indices = active_pairs[:, 1]  # (M,)
-    M = len(active_pairs)
 
     # Gather only active pairs' data
     active_centers = centers[splat_indices]  # (M, d)
@@ -480,9 +479,14 @@ def _relocate_splat(
     n_off_diag = d * (d - 1) // 2
     L_off_new = torch.zeros(n_off_diag, device=device, dtype=torch.float32)
 
+    # Reset sharpness to standard Gaussian (s=2.0, meaning s'=0)
+    # When relocating a splat, all parameters should be reset to sensible defaults
+    # to avoid carrying over learned sharpness from the old location
+    sharpness_offset_new = torch.tensor(0.0, device=device, dtype=torch.float32)
+
     # Update model parameters in-place
     model.raw_mu.data[splat_idx] = raw_mu_new
     model.raw_L_diag.data[splat_idx] = raw_L_diag_new
     model.L_off.data[splat_idx] = L_off_new
     model.raw_a.data[splat_idx] = raw_a_new
-    # Keep sharpness unchanged - optimizer will adjust if needed
+    model.sharpness_offsets_raw.data[splat_idx] = sharpness_offset_new

@@ -6,7 +6,7 @@
 #
 .PHONY: help install-dev format-python format-typescript format-rust format-cuda format-all \
         lint-python lint-typescript type-check-python type-check-typescript security \
-        test-all test-python test-cov-python test-cov-typescript test-fixtures test-wasm test-viewer test-viewer-fixtures test-e2e \
+        test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures test-wasm test-viewer test-viewer-fixtures test-e2e \
         clean-all clean-python clean-viewer clean-examples clean-setup enable-pre-commit run-pre-commit \
         check-all check-typescript check-rust check-wasm-deps setup-dev \
         check-docs check-docs-verbose clean-docs build-docs serve-docs \
@@ -421,12 +421,43 @@ test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtur
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm test --run
+	@echo ""
+	@echo "🎮 Checking CUDA tests..."
+	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
+		if hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
+			echo "Running CUDA extension tests..."; \
+			hatch run pytest $(CUDA_EXT_DIR)/tests/ -v; \
+		else \
+			echo "⚠️  PyTorch CUDA not available - CUDA tests skipped"; \
+			echo "   Run 'make check-cuda-deps' for details"; \
+		fi; \
+	else \
+		echo "⚠️  CUDA extension not built - CUDA tests skipped"; \
+		echo "   Run 'make setup-cuda' to enable CUDA testing"; \
+	fi
 
 test-python:  ## Run Python tests only
 	hatch run test
 
 test-cov-python:  ## Run Python tests with coverage report
 	hatch run test-cov
+
+test-cov-all:  ## Run all tests with coverage (Python + TypeScript)
+	@echo "🐍 Running Python tests with coverage..."
+	hatch run test-cov
+	@echo ""
+	@echo "📘 Running TypeScript tests with coverage..."
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm run test:coverage
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "✅ Coverage reports generated!"
+	@echo ""
+	@echo "📊 Python coverage: See terminal output above or run 'hatch run coverage html'"
+	@echo "📊 TypeScript coverage: packages/luxar-viewer/coverage/"
 
 # Pre-commit
 enable-pre-commit:  ## Enable and activate pre-commit hooks

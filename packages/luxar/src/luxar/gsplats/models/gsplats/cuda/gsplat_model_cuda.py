@@ -395,6 +395,8 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         sigma_min_diag: Sequence[float],
         sigma_max_diag: Optional[Sequence[float]] = None,
         amp_max: Optional[float] = None,
+        max_eccentricity: Optional[float] = None,
+        sharpness_range: Optional[tuple[float, float] | float] = None,
         truncate: float = 3.0,
         intensity_floor: float = 1e-5,
         tile_size: Optional[int] = None,
@@ -432,6 +434,8 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             sigma_min_diag=sigma_min_diag,
             sigma_max_diag=sigma_max_diag,
             amp_max=amp_max,
+            max_eccentricity=max_eccentricity,
+            sharpness_range=sharpness_range,
             truncate=truncate,
             device=device,
         )
