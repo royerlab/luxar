@@ -212,6 +212,24 @@
   background: rgba(255, 255, 255, 0.15);
 }
 
+/**
+ * Select Option Elements
+ * Explicit styling for dropdown options to ensure contrast on all platforms.
+ * Linux/Ubuntu GTK themes often use system colors that conflict with our UI.
+ */
+.luxar-dimension-dropdown__select option {
+  background-color: #1e1e1e;
+  color: #e0e0e0;
+  padding: 4px 8px;
+}
+
+.luxar-dimension-dropdown__select option:hover,
+.luxar-dimension-dropdown__select option:focus,
+.luxar-dimension-dropdown__select option:checked {
+  background-color: #2a2a2a;
+  color: #ffffff;
+}
+
 /* ========== Empty State ========== */
 
 .luxar-dimension-sliders__empty {
@@ -245,6 +263,18 @@
 
 [data-theme='light'] .luxar-dimension-dropdown__select:focus {
   background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme='light'] .luxar-dimension-dropdown__select option {
+  background-color: #ffffff;
+  color: #1e1e1e;
+}
+
+[data-theme='light'] .luxar-dimension-dropdown__select option:hover,
+[data-theme='light'] .luxar-dimension-dropdown__select option:focus,
+[data-theme='light'] .luxar-dimension-dropdown__select option:checked {
+  background-color: #f0f0f0;
+  color: #000000;
 }
 
 /* ========== Animation Controls (Compact Layout) ========== */

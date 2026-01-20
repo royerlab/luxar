@@ -157,6 +157,11 @@ export class DataLoadingMonitor {
   // Track expanded nodes in scene graph tree (by path)
   private expandedNodes = new Set<string>(['/']);
 
+  // Interaction lock to prevent DOM replacement during user interaction
+  // This prevents click events from being lost when innerHTML is replaced
+  private monitorInteractionLock = false;
+  private monitorInteractionLockTimeout: ReturnType<typeof setTimeout> | null = null;
+
   constructor(container: HTMLElement, config?: Partial<MonitorConfig>) {
     this.container = container;
     this.config = {
@@ -401,6 +406,26 @@ export class DataLoadingMonitor {
    */
   public isNodeExpanded(path: string): boolean {
     return this.expandedNodes.has(path);
+  }
+
+  /**
+   * Set the monitor interaction lock to prevent DOM replacement during user interaction.
+   * This prevents click events from being lost when innerHTML is replaced during polling updates.
+   * @param locked - Whether to lock (true) or unlock (false) interactions
+   */
+  private setMonitorInteractionLock(locked: boolean): void {
+    this.monitorInteractionLock = locked;
+    if (this.monitorInteractionLockTimeout) {
+      clearTimeout(this.monitorInteractionLockTimeout);
+      this.monitorInteractionLockTimeout = null;
+    }
+    if (locked) {
+      // Auto-release after 2 seconds to prevent stuck locks
+      this.monitorInteractionLockTimeout = setTimeout(() => {
+        this.monitorInteractionLock = false;
+        this.monitorInteractionLockTimeout = null;
+      }, 2000);
+    }
   }
 
   /**
@@ -736,10 +761,56 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Try to update just the compact view values without replacing innerHTML.
+   * This preserves event handlers and prevents interaction loss during polling updates.
+   * @returns true if incremental update succeeded, false if full rebuild is needed
+   */
+  private updateCompactViewValues(): boolean {
+    const pointsEl = this.panel?.querySelector('.luxar-monitor-compact .points');
+    const memoryEl = this.panel?.querySelector('.luxar-monitor-compact .memory');
+    const qpsEl = this.panel?.querySelector('.luxar-monitor-compact .qps');
+
+    // If structure doesn't exist yet, need full rebuild
+    if (!pointsEl || !memoryEl || !qpsEl) return false;
+
+    // Update metrics from all loaders
+    for (const [path, loader] of this.loaders) {
+      const metrics = loader.getMetrics();
+      this.metrics.set(path, metrics);
+    }
+
+    const stats = this.getGlobalStats();
+    pointsEl.textContent = this.formatNumber(stats.visiblePoints);
+    memoryEl.textContent = this.formatBytes(stats.totalMemory);
+    qpsEl.textContent = `${stats.queriesPerSecond.toFixed(1)}/s`;
+    return true;
+  }
+
+  /**
+   * Attach interaction handlers to compact view elements.
+   * Sets the interaction lock when hovering over the expand button.
+   */
+  private attachCompactViewInteractionHandlers(): void {
+    const expandBtn = this.panel?.querySelector('.luxar-monitor-compact .expand-btn');
+    if (!expandBtn) return;
+
+    expandBtn.addEventListener('mouseenter', () => this.setMonitorInteractionLock(true));
+    expandBtn.addEventListener('mouseleave', () => {
+      // Delay unlock slightly to ensure click events are processed
+      setTimeout(() => this.setMonitorInteractionLock(false), 500);
+    });
+  }
+
+  /**
    * Update compact view
    */
   private updateCompactView(): void {
     if (!this.panel) return;
+
+    // If interaction locked and structure exists, just update values
+    if (this.monitorInteractionLock && this.updateCompactViewValues()) {
+      return;
+    }
 
     // Update metrics from all loaders first
     for (const [path, loader] of this.loaders) {
@@ -780,6 +851,9 @@ export class DataLoadingMonitor {
         </button>
       </div>
     `;
+
+    // Attach interaction handlers after building the structure
+    this.attachCompactViewInteractionHandlers();
   }
 
   /**
@@ -820,8 +894,32 @@ export class DataLoadingMonitor {
       attachTimingPanelHandlers(this.contentContainer, () => this.updateUI());
     }
 
+    // Attach scene graph interaction handlers if on overview tab
+    if (this.uiState.activeTab === 'overview') {
+      this.attachSceneGraphInteractionHandlers();
+    }
+
     // Add hover effects to header buttons (only once)
     this.addHeaderButtonHoverEffects();
+  }
+
+  /**
+   * Attach interaction handlers to scene graph tree toggle buttons.
+   * Sets the interaction lock when hovering over toggle buttons.
+   */
+  private attachSceneGraphInteractionHandlers(): void {
+    if (!this.contentContainer) return;
+
+    const toggleBtns = this.contentContainer.querySelectorAll(
+      '.luxar-scene-graph__toggle--clickable'
+    );
+    toggleBtns.forEach((btn) => {
+      btn.addEventListener('mouseenter', () => this.setMonitorInteractionLock(true));
+      btn.addEventListener('mouseleave', () => {
+        // Delay unlock slightly to ensure click events are processed
+        setTimeout(() => this.setMonitorInteractionLock(false), 500);
+      });
+    });
   }
 
   /**
@@ -839,6 +937,12 @@ export class DataLoadingMonitor {
           updateTimingPanelValues(this.contentContainer, timingData);
         }
       }
+      return;
+    }
+
+    // Skip full updates if user is interacting with the scene graph tree
+    if (this.uiState.activeTab === 'overview' && this.monitorInteractionLock) {
+      // Skip full re-render when user is interacting with scene graph tree
       return;
     }
 
@@ -880,6 +984,11 @@ export class DataLoadingMonitor {
     // Attach timing panel handlers if on performance tab
     if (this.uiState.activeTab === 'performance') {
       attachTimingPanelHandlers(this.contentContainer, () => this.updateUI());
+    }
+
+    // Attach scene graph interaction handlers if on overview tab
+    if (this.uiState.activeTab === 'overview') {
+      this.attachSceneGraphInteractionHandlers();
     }
   }
 

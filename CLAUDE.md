@@ -121,6 +121,34 @@ luxar info <data.zarr> --stats   # Dataset info
 luxar profiles                   # Network simulation profiles
 ```
 
+### GPU Acceleration (Seeding & Fitting)
+```python
+from luxar.gsplats.seeds import generate_seeds
+from luxar.gsplats import fit_gaussian_splats
+
+# GPU-accelerated seeding (10-50x faster for large volumes)
+seeds = generate_seeds(volume, device='auto')   # Auto-detect GPU
+seeds = generate_seeds(volume, device='cuda')   # Explicit NVIDIA GPU
+seeds = generate_seeds(volume, device='mps')    # Apple Metal GPU
+
+# GPU-accelerated fitting with automatic seed generation
+result = fit_gaussian_splats(
+    volume,
+    device='cuda',  # Propagates to seeding automatically
+    seed_method='edges',
+)
+
+# Benchmark GPU performance
+hatch run python scripts/benchmarks/benchmark_seeding_gpu.py
+```
+
+**GPU Support**:
+- Sobel gradients: All dimensions (1D-nD)
+- Peak detection: 2D/3D only (auto-fallback for others)
+- Interpolation: 2D/3D only (auto-fallback for others)
+- Deduplication: All dimensions
+- Expected speedup: 10-50x for large volumes (>100³)
+
 ### Make Command Nomenclature
 
 The Makefile follows consistent naming conventions with **action-first** pattern:

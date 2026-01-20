@@ -239,6 +239,24 @@
 }
 
 /**
+ * Select Option Elements
+ * Explicit styling for dropdown options to ensure contrast on all platforms.
+ * Linux/Ubuntu GTK themes often use system colors that conflict with our UI.
+ */
+.luxar-gui__select option {
+  background-color: #1e1e1e;
+  color: #e0e0e0;
+  padding: 4px 8px;
+}
+
+.luxar-gui__select option:hover,
+.luxar-gui__select option:focus,
+.luxar-gui__select option:checked {
+  background-color: #2a2a2a;
+  color: #ffffff;
+}
+
+/**
  * Button
  */
 .luxar-gui__button {
@@ -282,6 +300,18 @@
 
 [data-theme='light'] .luxar-gui__select {
   background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme='light'] .luxar-gui__select option {
+  background-color: #ffffff;
+  color: #1e1e1e;
+}
+
+[data-theme='light'] .luxar-gui__select option:hover,
+[data-theme='light'] .luxar-gui__select option:focus,
+[data-theme='light'] .luxar-gui__select option:checked {
+  background-color: #f0f0f0;
+  color: #000000;
 }
 
 [data-theme='light'] .luxar-gui__button {
