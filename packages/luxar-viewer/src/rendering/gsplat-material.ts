@@ -166,8 +166,9 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         vec4 centerCam4 = modelViewMatrix * vec4(aCenter, 1.0);
         vec3 centerCam = centerCam4.xyz;
 
-        // Near-plane guard: reject splats too close to camera
-        if (-centerCam.z < 0.1) {
+        // Reject splats behind the camera (camera looks down -Z axis)
+        // centerCam.z >= 0 means the splat is on the +Z side (behind camera)
+        if (centerCam.z >= 0.0) {
             gl_Position = vec4(0.0, 0.0, -2.0, 1.0);  // Behind camera
             return;
         }
@@ -177,6 +178,24 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         mat3 L3D = unpackCholesky3D();
         mat3 L_cam = R * L3D;
         mat3 Sigma_cam = L_cam * transpose(L_cam);
+
+        // Two-stage near-plane culling for performance
+        // Stage 1: Fixed threshold catches most cases (fast path: 1 cycle)
+        if (-centerCam.z < 0.1) {
+            gl_Position = vec4(0.0, 0.0, -2.0, 1.0);  // Too close to camera
+            return;
+        }
+
+        // Stage 2: Adaptive threshold for large splats only (slow path: ~6 cycles)
+        // Only execute for splats with sigma > 0.1 (rare cases)
+        float sigmaTraceSq = Sigma_cam[0][0] + Sigma_cam[1][1] + Sigma_cam[2][2];
+        if (sigmaTraceSq > 0.01) {  // sigma > 0.1
+            float sigmaTrace = sqrt(sigmaTraceSq);
+            if (-centerCam.z < sigmaTrace * uTruncate) {
+                gl_Position = vec4(0.0, 0.0, -2.0, 1.0);  // Large splat too close
+                return;
+            }
+        }
 
         // Perspective projection Jacobian at splat center
         float z = -centerCam.z;  // Positive depth (camera looks down -Z)
