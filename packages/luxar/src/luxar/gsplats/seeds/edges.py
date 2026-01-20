@@ -25,6 +25,7 @@ def seed_from_edges(
     n_seeds: Optional[int] = None,
     min_distance: float = 2.0,
     edge_threshold_rel: float = 0.1,
+    device: Optional[str] = None,
 ) -> GSplatData:
     """
     Generate seed Gaussian splats along edges with isotropic shapes.
@@ -43,6 +44,16 @@ def seed_from_edges(
         Minimum distance between seeds in voxels.
     edge_threshold_rel : float, default=0.1
         Relative edge threshold (0.0-1.0). Fraction of max edge response.
+    device : str, optional
+        PyTorch device for GPU acceleration. Options:
+        - None (default): CPU using scipy.ndimage
+        - 'cpu': Force CPU
+        - 'cuda': NVIDIA GPU (if available)
+        - 'mps': Apple Metal (if available)
+        - 'auto': Auto-detect best device
+
+        GPU acceleration provides 10-50x speedup for large volumes (>100³).
+        Small volumes (<50³) automatically use CPU due to overhead.
 
     Returns
     -------
@@ -70,14 +81,18 @@ def seed_from_edges(
     >>> image = np.zeros((100, 100))
     >>> image[40:60, 40:60] = 1.0  # Square
     >>>
-    >>> # Edge-based seeding
+    >>> # Edge-based seeding (CPU)
     >>> seeds = generate_seeds(image, method="edges")
+    >>>
+    >>> # Edge-based seeding with GPU acceleration
+    >>> seeds = generate_seeds(image, method="edges", device="cuda")
     >>>
     >>> # Custom parameters
     >>> seeds = generate_seeds(
     ...     image, method="edges",
     ...     edge_threshold_rel=0.2,  # Higher threshold
     ...     n_seeds=1000,            # Target seed count
+    ...     device="auto",           # Auto-detect GPU
     ... )
     """
     # Input validation
@@ -103,7 +118,7 @@ def seed_from_edges(
         n_seeds = min(n_seeds, 5000)
 
     # Step 1: Compute nD Sobel gradient magnitude
-    edge_response = _compute_nd_sobel_magnitude(V)
+    edge_response = _compute_nd_sobel_magnitude(V, device=device)
 
     # Step 2: Normalize to [0, 1]
     edge_max = edge_response.max()
@@ -139,13 +154,7 @@ def seed_from_edges(
 
     # Step 6: Sample amplitudes from V, scaled to avoid overlap overshoot
     # (over-prediction penalty causes divergence with overlapping splats)
-    coords_for_interp = centers.T
-    amplitudes = (
-        ndi.map_coordinates(V, coords_for_interp, order=1, mode="nearest").astype(
-            np.float32
-        )
-        * SEED_AMPLITUDE_SCALE
-    )
+    amplitudes = _sample_amplitudes(V, centers, device=device) * SEED_AMPLITUDE_SCALE
 
     # Step 7: Standard Gaussian sharpness
     sharpnesses = np.full(len(centers), 2.0, dtype=np.float32)
@@ -169,7 +178,7 @@ def _empty_gsplatdata(ndim: int) -> GSplatData:
     )
 
 
-def _compute_nd_sobel_magnitude(V: np.ndarray) -> np.ndarray:
+def _compute_nd_sobel_magnitude(V: np.ndarray, device: Optional[str] = None) -> np.ndarray:
     """
     Compute nD Sobel gradient magnitude.
 
@@ -177,12 +186,32 @@ def _compute_nd_sobel_magnitude(V: np.ndarray) -> np.ndarray:
     ----------
     V : np.ndarray
         Input n-dimensional image.
+    device : str, optional
+        PyTorch device for GPU acceleration. If None or 'cpu', uses scipy.
 
     Returns
     -------
     np.ndarray
         Gradient magnitude (same shape as V).
     """
+    # Dispatch to GPU if requested and appropriate
+    if device is not None and device != "cpu":
+        from luxar.gsplats.seeds.gpu_ops import (
+            _compute_nd_sobel_magnitude_gpu,
+            _get_device,
+            should_use_gpu,
+        )
+        import torch
+
+        resolved_device = _get_device(device)
+
+        if resolved_device != "cpu" and should_use_gpu(V, resolved_device):
+            # GPU path (works for arbitrary dimensions)
+            V_tensor = torch.tensor(V, device=resolved_device, dtype=torch.float32)
+            result_tensor = _compute_nd_sobel_magnitude_gpu(V_tensor)
+            return result_tensor.cpu().numpy()
+
+    # CPU path (default)
     ndim = V.ndim
     grad_sq_sum = np.zeros_like(V)
 
@@ -191,6 +220,58 @@ def _compute_nd_sobel_magnitude(V: np.ndarray) -> np.ndarray:
         grad_sq_sum += grad**2
 
     return np.sqrt(grad_sq_sum)
+
+
+def _sample_amplitudes(V: np.ndarray, coords: np.ndarray, device: Optional[str] = None) -> np.ndarray:
+    """
+    Sample amplitudes from volume at given coordinates.
+
+    Parameters
+    ----------
+    V : np.ndarray
+        Input n-dimensional volume.
+    coords : np.ndarray
+        Coordinates to sample at, shape (N, ndim).
+    device : str, optional
+        PyTorch device for GPU acceleration. If None or 'cpu', uses scipy.
+
+    Returns
+    -------
+    np.ndarray
+        Sampled amplitudes, shape (N,).
+    """
+    # Dispatch to GPU if requested and appropriate
+    if device is not None and device != "cpu":
+        from luxar.gsplats.seeds.gpu_ops import (
+            _get_device,
+            sample_amplitudes_gpu,
+            should_use_gpu,
+        )
+        import torch
+
+        resolved_device = _get_device(device)
+
+        if resolved_device != "cpu" and should_use_gpu(V, resolved_device):
+            # GPU path with fallback for unsupported dimensions
+            try:
+                V_tensor = torch.tensor(V, device=resolved_device, dtype=torch.float32)
+                coords_tensor = torch.tensor(coords, device=resolved_device, dtype=torch.float32)
+                result_tensor = sample_amplitudes_gpu(V_tensor, coords_tensor, mode="bilinear")
+                return result_tensor.cpu().numpy().astype(np.float32)
+            except NotImplementedError:
+                # GPU not supported for this dimensionality, fallback to CPU
+                import warnings
+                warnings.warn(
+                    f"GPU interpolation not supported for {V.ndim}D volumes. Using CPU.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+    # CPU path (default)
+    coords_for_interp = coords.T
+    return ndi.map_coordinates(V, coords_for_interp, order=1, mode="nearest").astype(
+        np.float32
+    )
 
 
 def _poisson_disk_sample_weighted(

@@ -70,15 +70,12 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
         aprint(f"Preprocessed human mitosis image: {V.shape}")
         aprint(f"Data range: [{V.min():.4f}, {V.max():.4f}]")
 
-    # Configure dynamic operations
-    dynamic_config = DynamicOpsConfig()
-    aprint(f"Dynamic operations enabled (step_every={dynamic_config.step_every})")
 
     with asection(f"Fitting Gaussian splats ({N_ITERS} iterations)"):
         # Fit oriented (full-covariance) Gaussians with auto-candidate generation
         result = fit_gaussian_splats(
             V,
-            seeds=0.1,
+            seeds=1500,
             n_iters=N_ITERS,
             truncate=TRUNCATE_SIG,
             device=DEVICE,
@@ -86,8 +83,7 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
             lr_reduction_factor=0.95,
             # Dynamic operations
             max_eccentricity=4.0,
-            enable_dynamic_ops=True,
-            dynamic_config=dynamic_config,
+            sharpness_range=2.0,
             napari_movie=(not NO_NAPARI),
             movie_every=1,
             movie_max_frames=None,

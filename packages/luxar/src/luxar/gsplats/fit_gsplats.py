@@ -222,8 +222,8 @@ def fit_gaussian_splats(
     sigma_min_diag: Optional[Sequence[float]] = None,
     sigma_max_diag: Optional[Sequence[float]] = None,
     amp_max: Optional[float] = None,
-    max_eccentricity: Optional[float] = None,
-    sharpness_range: Optional[tuple[float, float] | float] = None,
+    max_eccentricity: Optional[float] = 10.0,
+    sharpness_range: Optional[tuple[float, float] | float] = 2.0,
     truncate: float = 3.0,
     device: Optional[str] = None,
     seed_method: str = "auto",
@@ -328,12 +328,12 @@ def fit_gaussian_splats(
         possible intensity. If None, automatically set to 1.0. Set to higher
         values (e.g., 2.0) for more flexibility, or lower (e.g., 0.5) for tighter
         control.
-    max_eccentricity : float or None, default=None
+    max_eccentricity : float or None, default=10.0
         Maximum ratio of longest to shortest axis for splat covariance. Limits
         anisotropy by constraining diagonal elements of Cholesky factor L so that
         max(diag)/min(diag) <= sqrt(max_eccentricity). For example, 2.0 means the
         longest axis can be at most sqrt(2) ≈ 1.41x the shortest axis.
-    sharpness_range : tuple[float, float] | float | None, default=None
+    sharpness_range : tuple[float, float] | float | None, default=2.0
         Controls sharpness values during optimization:
         - If tuple (min, max): Clamp sharpness to this range
         - If float: Fix sharpness to this exact value (no optimization)
