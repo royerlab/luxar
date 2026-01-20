@@ -116,6 +116,11 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     seeds = config.seeds
     seed_kwargs = config.seed_kwargs or {}  # Default to empty dict if None
 
+    # Add device to seed_kwargs if not already present (for GPU acceleration)
+    if "device" not in seed_kwargs:
+        # Convert torch.device to string for seed generation
+        seed_kwargs["device"] = str(config.device)
+
     # Create mutable context for init parameters (avoids mutating config)
     init_ctx = _InitContext(
         init_L=config.init_L.copy() if config.init_L is not None else None,

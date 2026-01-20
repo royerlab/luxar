@@ -69,7 +69,7 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 
 ZARR_URL = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.2/6001240.zarr"
-TARGET_SIZE = 128  # Downscale to manageable size
+TARGET_SIZE = 256  # Downscale to manageable size
 TIME_POINT = 0  # First time point
 
 # Channel configuration with colors
@@ -80,6 +80,7 @@ CHANNELS = [
 
 # Fitting parameters
 N_ITERS = 6000  # Good balance of quality vs speed
+N_SEEDS = 16000
 DEVICE = None  # Auto-detect (cuda/mps/cpu)
 
 # Cache paths
@@ -91,7 +92,7 @@ NO_SERVE = "--no-serve" in sys.argv
 SERVE_ONLY = "--serve-only" in sys.argv
 
 # Setup
-Arbol.max_depth = 3
+Arbol.max_depth = 5
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -227,7 +228,7 @@ def fit_channel(volume, channel_name, cache_file):
 
     result = fit_gaussian_splats(
         volume,
-        seeds=8000,
+        seeds=N_SEEDS,
         n_iters=N_ITERS,
         device=DEVICE,
         verbose=True,
