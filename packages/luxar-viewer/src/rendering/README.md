@@ -24,6 +24,7 @@ rendering/
 ├── post-processing-manager.ts # Post-processing pipeline using pmndrs
 ├── point-material.ts          # Custom points shaders
 ├── line-material.ts           # Instanced line rendering with semicircle kernel
+├── gsplat-material.ts         # Gaussian splatting with volumetric rendering
 ├── material-manager.ts        # Material creation and caching (points + lines)
 ├── robust-vignette-effect.ts  # Custom vignette for additive blending
 ├── detector-noise-effect.ts   # Physics-based detector noise
@@ -170,7 +171,29 @@ Specialized shader material for thick lines using instanced quad geometry.
 
 **Architecture Note:** Lines use `THREE.Mesh` with `InstancedBufferGeometry` (not `THREE.InstancedMesh`) to avoid exceeding WebGL's 16 attribute location limit.
 
-### 4. Material Manager
+### 4. GSplat Material
+
+Specialized shader material for volumetric Gaussian splatting with nD slicing support.
+
+**Key Features:**
+
+- **Oriented Anisotropic Gaussian**: Full 3D covariance via Cholesky factors
+- **Perspective Projection**: Projects 3D covariance to 2D screen space using Jacobian
+- **Generalized Gaussian Falloff**: `exp(-½ · r^sharpness)` for artistic control
+- **Sum/Max Projection Modes**: Ray integration for additive, peak value for max blending
+- **Two-Stage Near-Plane Culling**: Fixed threshold (1 cycle) + adaptive threshold (6 cycles) for large splats
+- **GPU Optimizations**: Flat interpolation, reciprocal precomputation, early discard at 3σ
+
+**Culling Strategy:**
+- **Behind-camera rejection**: Prevents rendering splats behind the viewer
+- **Near-plane culling**: Two-stage approach prevents overdraw from splats very close to camera
+  - Stage 1: Fixed threshold (z < 0.1) culls most splats instantly
+  - Stage 2: Adaptive threshold (z < sigma × truncate) only for large splats (sigma > 0.1)
+  - Prevents white-screen artifacts when navigating inside datasets
+
+**Architecture Note:** GSplats use `THREE.Mesh` with `InstancedBufferGeometry` for instanced quad rendering, similar to line material approach.
+
+### 5. Material Manager
 
 Singleton manager for efficient material creation and caching (supports both points and lines).
 

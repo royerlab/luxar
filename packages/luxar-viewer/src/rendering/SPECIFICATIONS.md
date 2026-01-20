@@ -24,7 +24,8 @@ The `luxar-viewer.rendering` package provides advanced WebGL rendering capabilit
 5. [Material Management](#material-management)
 6. [Anti-Aliasing](#anti-aliasing)
 7. [Line Material System](#line-material-system)
-8. [Adaptive Resolution System](#adaptive-resolution-system)
+8. [GSplat Material System](#gsplat-material-system)
+9. [Adaptive Resolution System](#adaptive-resolution-system)
 
 ---
 
@@ -1469,13 +1470,284 @@ interface LineMaterialUniforms {
 
 ---
 
-## 8. Adaptive Resolution System
+## 8. GSplat Material System
 
-### 8.1 Purpose
+### 8.1 Overview
+
+The GSplat Material implements volumetric Gaussian splatting for rendering oriented, anisotropic 3D Gaussian density functions with nD slicing support.
+
+**Key Features:**
+- Full 3D covariance representation via packed Cholesky factors
+- Perspective-correct projection of 3D covariance to 2D screen space
+- Generalized Gaussian falloff: `exp(-½ · r^sharpness)`
+- Sum and max projection modes with proper ray integration
+- Two-stage near-plane culling for performance
+
+### 8.2 Mathematical Foundation
+
+**GSplat Density Function:**
+
+```
+G(x) = a · exp(-½ · ‖L⁻¹(x - μ)‖^s)
+```
+
+Where:
+- `a` = amplitude (intensity, attenuated by hidden nD dimensions)
+- `μ` = center position (3D after nD slicing)
+- `L` = Cholesky factor of covariance (Σ = L·Lᵀ)
+- `s` = sharpness (2.0 = standard Gaussian)
+- `‖L⁻¹(x - μ)‖` = Mahalanobis distance
+
+**Covariance Representation:**
+
+Covariance stored as packed Cholesky factors (lower triangular):
+```
+3D Cholesky: [L00, L10, L11, L20, L21, L22] → 6 elements
+Packed into three vec2 attributes for GPU efficiency
+```
+
+### 8.3 Vertex Shader Algorithm
+
+**Purpose**: Transform splat center and covariance to screen space, expand oriented quad.
+
+**Key Steps:**
+
+1. **Transform to Camera Space**
+   ```glsl
+   vec4 centerCam4 = modelViewMatrix * vec4(aCenter, 1.0);
+   mat3 R = mat3(modelViewMatrix);
+   mat3 L_cam = R * L3D;  // Rotate Cholesky to camera space
+   mat3 Sigma_cam = L_cam * transpose(L_cam);
+   ```
+
+2. **Two-Stage Near-Plane Culling**
+   ```glsl
+   // Stage 1: Fixed threshold (fast path: 1 cycle)
+   if (-centerCam.z < 0.1) {
+       gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+       return;
+   }
+
+   // Stage 2: Adaptive threshold for large splats (slow path: ~6 cycles)
+   float sigmaTraceSq = Sigma_cam[0][0] + Sigma_cam[1][1] + Sigma_cam[2][2];
+   if (sigmaTraceSq > 0.01) {  // Only if sigma > 0.1
+       float sigmaTrace = sqrt(sigmaTraceSq);
+       if (-centerCam.z < sigmaTrace * uTruncate) {
+           gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+           return;
+       }
+   }
+   ```
+
+3. **Perspective Jacobian Projection**
+   ```glsl
+   // Jacobian J = ∂(screen)/∂(camera)
+   mat3x2 J;
+   J[0] = vec2(uFx * invZ, 0.0);
+   J[1] = vec2(0.0, uFy * invZ);
+   J[2] = vec2(uFx * centerCam.x * invZ2, uFy * centerCam.y * invZ2);
+
+   // Project: Σ_2D = J · Σ_cam · Jᵀ
+   ```
+
+4. **Eigenvalue Decomposition & Quad Expansion**
+   ```glsl
+   // Compute eigenvalues for extent
+   float trace = Sigma2D[0][0] + Sigma2D[1][1];
+   float det = Sigma2D[0][0] * Sigma2D[1][1] - Sigma2D[0][1] * Sigma2D[1][0];
+   float lambda1 = 0.5 * (trace + sqrt(trace² - 4*det));
+   float lambda2 = 0.5 * (trace - sqrt(trace² - 4*det));
+
+   // Eigenvector for orientation
+   vec2 majorAxis = normalize(vec2(lambda1 - Sigma2D[1][1], Sigma2D[0][1]));
+
+   // Quad extents
+   float extent1 = uTruncate * sqrt(lambda1);
+   float extent2 = uTruncate * sqrt(lambda2);
+   ```
+
+5. **Amplitude Calculation (Mode-Dependent)**
+   ```glsl
+   // Sum projection: integrate Gaussian along ray
+   if (uProjectionMode == 0) {
+       vec3 rayDir = normalize(centerCam);
+       float sigmaRay = sqrt(dot(rayDir, Sigma_cam * rayDir));
+       float c_s = sharpnessIntegralFactor(aSharpness);
+       vAmplitude2D = aAmplitude * sigmaRay * c_s;
+   }
+   // Max projection: peak value (no integration)
+   else {
+       vAmplitude2D = aAmplitude;
+   }
+   ```
+
+### 8.4 Fragment Shader Algorithm
+
+**Purpose**: Evaluate generalized Gaussian falloff using Mahalanobis distance.
+
+**Key Steps:**
+
+1. **Mahalanobis Distance via Forward Substitution**
+   ```glsl
+   vec2 d = gl_FragCoord.xy - vCenterScreen;
+   float y0 = d.x * vL2D.x;  // d.x * invL00
+   float y1 = (d.y - vL2D.y * y0) * vL2D.z;  // (d.y - L10*y0) * invL11
+   float mahalSq = y0*y0 + y1*y1;
+   ```
+
+2. **Early Discard at 3σ**
+   ```glsl
+   if (mahalSq > 9.0) discard;  // exp(-4.5) ≈ 0.011 (negligible)
+   ```
+
+3. **Generalized Gaussian Falloff**
+   ```glsl
+   // Standard Gaussian (s=2.0)
+   intensity = vAmplitude2D * exp(-0.5 * mahalSq);
+
+   // Sum projection with s≠2 (non-separable correction)
+   float gauss_2d = exp(-0.5 * mahalSq);
+   float correction = correctionFactor(r_2D, vSharpness, vAspectRatio);
+   intensity = vAmplitude2D * gauss_2d * correction;
+
+   // Max projection with s≠2
+   float rToTheS = pow(mahalSq, vSharpness * 0.5);
+   intensity = vAmplitude2D * exp(-0.5 * rToTheS);
+   ```
+
+### 8.5 Near-Plane Culling Strategy
+
+**Problem**: When camera is very close to splats or inside datasets:
+- Splats behind camera still render (if not culled)
+- Large splats project to thousands of pixels (overdraw)
+- Result: White screen, performance degradation
+
+**Solution**: Two-stage culling with performance-cost tradeoff
+
+**Stage 1 - Fixed Threshold (1 cycle cost)**:
+- Cull if `z < 0.1`
+- Catches ~95% of normal-sized splats
+- Single comparison, very fast
+
+**Stage 2 - Adaptive Threshold (~6 cycles cost)**:
+- Only runs if `sigma > 0.1` (trace of covariance > 0.01)
+- Computes splat extent: `sigmaTrace = sqrt(Σ_cam[0][0] + Σ_cam[1][1] + Σ_cam[2][2])`
+- Cull if `z < sigmaTrace * uTruncate`
+- Prevents large splats from projecting beyond screen bounds
+
+**Performance Benefit**: Early exit before expensive covariance projection and quad expansion saves thousands of fragment shader invocations.
+
+### 8.6 Blending Configuration
+
+```typescript
+// For additive/luminous modes
+this.blendEquation = THREE.AddEquation;
+this.blendSrc = THREE.OneFactor;  // NOT SrcAlpha!
+this.blendDst = THREE.OneFactor;
+
+// For max mode
+this.blendEquation = THREE.MaxEquation;
+```
+
+**Critical**: Using `SrcAlpha` would square intensities (incorrect). `OneFactor` gives correct linear sum: `final = src + dst`.
+
+### 8.7 GPU Optimizations
+
+| Optimization | Implementation | Benefit |
+|--------------|----------------|---------|
+| `flat` interpolation | All per-instance varyings | Skips GPU interpolator hardware |
+| Reciprocal precomputation | `vL2D = [1/L00, L10, 1/L11]` | DIV→MUL in fragment shader |
+| Early discard at 3σ | Before `pow()/exp()` | Avoids expensive math for edges |
+| Sharpness=2.0 specialization | Skip `pow()` in both shaders | Common case fast path |
+| Two-stage culling | Fixed + adaptive thresholds | Minimal cost for common case |
+| `mediump` for colors | Fragment shader precision | Reduces register pressure |
+
+### 8.8 Data Structures
+
+**GSplatMaterialConfig**:
+```typescript
+interface GSplatMaterialConfig {
+  opacity?: number;               // 0.0 to 1.0
+  hdrMultiplier?: number;         // Typically 16.0
+  truncationRadius?: number;      // In sigmas (default 3.0)
+  blendingMode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
+  transparent?: boolean;
+  depthTest?: boolean;
+}
+```
+
+**GSplatMaterialUniforms**:
+```typescript
+interface GSplatMaterialUniforms {
+  uResolution: { value: THREE.Vector2 };     // [width, height]
+  uFx: { value: number };                    // Focal length X (pixels)
+  uFy: { value: number };                    // Focal length Y (pixels)
+  uTruncate: { value: number };              // Truncation radius (sigmas)
+  uHDRMultiplier: { value: number };         // HDR intensity boost
+  uOpacity: { value: number };               // Global opacity
+  uProjectionMode: { value: number };        // 0=sum, 1=max
+}
+```
+
+**Per-Instance Attributes**:
+```typescript
+- aCenter: vec3           // 3D center (after nD slicing)
+- aCholesky01: vec2       // [L00, L10]
+- aCholesky23: vec2       // [L11, L20]
+- aCholesky45: vec2       // [L21, L22]
+- aAmplitude: float       // Attenuated by hidden dims
+- aSharpness: float       // Generalized Gaussian exponent
+- aColor: vec3            // RGB color
+```
+
+### 8.9 Instanced Geometry Setup
+
+GSplats use `THREE.Mesh` with `InstancedBufferGeometry` (same pattern as lines):
+
+```typescript
+const geometry = new THREE.InstancedBufferGeometry();
+geometry.setAttribute('aQuadCorner', baseGeometry.getAttribute('aQuadCorner'));
+geometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(centers, 3));
+geometry.setAttribute('aCholesky01', new THREE.InstancedBufferAttribute(cholesky01, 2));
+geometry.setAttribute('aCholesky23', new THREE.InstancedBufferAttribute(cholesky23, 2));
+geometry.setAttribute('aCholesky45', new THREE.InstancedBufferAttribute(cholesky45, 2));
+geometry.setAttribute('aAmplitude', new THREE.InstancedBufferAttribute(amplitudes, 1));
+geometry.setAttribute('aSharpness', new THREE.InstancedBufferAttribute(sharpness, 1));
+geometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(colors, 3));
+geometry.instanceCount = splatCount;
+
+const mesh = new THREE.Mesh(geometry, gsplatMaterial);
+mesh.frustumCulled = true;
+```
+
+**Note**: Uses `THREE.Mesh` (not `THREE.InstancedMesh`) to avoid the 16 attribute location limit.
+
+### 8.10 Performance Considerations
+
+**Splat Count Limits**:
+
+| Splats | Performance          |
+|--------|----------------------|
+| < 100K | Smooth (60 fps)      |
+| 100K-1M | Good (30-60 fps)    |
+| 1M-10M | Moderate (10-30 fps) |
+| > 10M  | May require LOD      |
+
+**Optimizations**:
+1. **Two-stage culling**: Prevents rendering splats too close to camera
+2. **Spatial chunking**: Load only visible splat chunks
+3. **Frustum culling**: Bounding box-based visibility
+4. **Instance buffer updates**: Only update GPU buffers when visible splats change
+
+---
+
+## 9. Adaptive Resolution System
+
+### 9.1 Purpose
 
 The AdaptiveDPRManager dynamically adjusts the device pixel ratio (DPR) based on real-time FPS to maintain smooth rendering performance. When frame rates drop below threshold, resolution is reduced; when performance improves, resolution is restored.
 
-### 8.2 Algorithm
+### 9.2 Algorithm
 
 **Core Loop** (evaluated every 500ms):
 
@@ -1495,7 +1767,7 @@ Notify callback (for UI indicators)
 
 **Hysteresis**: Scale up requires sustained high FPS (configurable, default 2 seconds) to prevent rapid toggling.
 
-### 8.3 Public API
+### 9.3 Public API
 
 ```typescript
 class AdaptiveDPRManager {
@@ -1536,7 +1808,7 @@ interface AdaptiveDPRState {
 type DPRChangeCallback = (dpr: number, isReducedResolution: boolean) => void;
 ```
 
-### 8.4 Configuration
+### 9.4 Configuration
 
 ```typescript
 interface AdaptiveDPRConfig {
@@ -1551,7 +1823,7 @@ interface AdaptiveDPRConfig {
 }
 ```
 
-### 8.5 Manual DPR Control
+### 9.5 Manual DPR Control
 
 When adaptive mode is disabled, users can manually set the DPR:
 
@@ -1565,7 +1837,7 @@ manager.setManualDPR(0.75); // Set 75% of native resolution
 
 **Use Case**: Testing performance at specific resolutions, or deliberately reducing quality for presentations.
 
-### 8.6 Integration with Scene Manager
+### 9.6 Integration with Scene Manager
 
 ```typescript
 // In SceneManager
@@ -1585,7 +1857,7 @@ setAdaptivePixelRatio(dpr: number): void {
 }
 ```
 
-### 8.7 Reduced Resolution Mode Detection
+### 9.7 Reduced Resolution Mode Detection
 
 Resolution is considered "reduced" when DPR is below 95% of native:
 
