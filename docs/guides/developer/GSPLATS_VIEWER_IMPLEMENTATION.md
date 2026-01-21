@@ -1184,7 +1184,7 @@ From `array-decoder.ts`:
 - [x] Total: 7 Python tests + 1,335 TypeScript tests = **ALL PASSING** ✅
 
 #### Demo and Test Data:
-- [x] **Production demo**: `demo_gsplats_3d_dapi_nuclei.py`
+- [x] **Production demo**: `demo_gsplats_3d_organoid_dapi_nuclei_from_idr.py`
   - Downloads real DAPI microscopy from IDR (128³ voxels)
   - Fits 1,082 oriented 3D Gaussians
   - Caches results for instant reuse
