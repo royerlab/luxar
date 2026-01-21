@@ -73,6 +73,7 @@ The build system is designed to work on **fresh Linux/macOS machines** with mini
 **Prerequisites:**
 - Python 3.9+ (usually pre-installed)
 - Git and curl
+- **Git LFS** (optional, required for demo data files): `brew install git-lfs` (macOS) or `sudo apt-get install git-lfs` (Ubuntu)
 - **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
 
 **What `make setup-dev` installs (no sudo needed):**
@@ -110,6 +111,28 @@ source ~/.nvm/nvm.sh
 make clean-setup
 make setup-dev
 ```
+
+**Git LFS (Large File Storage):**
+
+Some demo data files (`.npz`, `.zip`) are stored using Git LFS to keep the repository size manageable.
+
+```bash
+# Install Git LFS (one-time)
+brew install git-lfs        # macOS
+sudo apt-get install git-lfs  # Ubuntu/Debian
+
+# Initialize Git LFS (one-time)
+git lfs install
+
+# Pull LFS files (when needed)
+git lfs pull
+
+# Verify LFS files (should show actual sizes, not ~100 bytes)
+ls -lh packages/luxar/src/luxar/demos/data/*.npz
+```
+
+If demos fail with "file not found" errors, you likely need to pull LFS files.
+See `packages/luxar/src/luxar/demos/data/README.md` for details.
 
 See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 

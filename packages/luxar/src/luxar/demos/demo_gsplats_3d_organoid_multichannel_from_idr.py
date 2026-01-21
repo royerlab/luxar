@@ -1,16 +1,58 @@
 #!/usr/bin/env python3
-"""GSplats Demo: Multi-Channel 3D Microscopy Visualization
+"""GSplats Demo: Multi-Channel 3D Organoid Microscopy - Full Compute Pipeline from IDR
 
-Demonstrates Gaussian Splatting with per-channel colors for multi-channel
-microscopy data visualization.
+FULL COMPUTE VERSION - Fetches data from IDR and fits Gaussian splats from scratch.
+This is the complete workflow but takes time to run (network download + GPU fitting).
+
+For a QUICK START demo using precomputed gsplats, use:
+    python demo_gsplats_3d_organoid_multichannel_precomputed.py
 
 ================================================================================
-MULTI-CHANNEL GAUSSIAN SPLATTING
+MULTI-CHANNEL GAUSSIAN SPLATTING - FULL PIPELINE
 ================================================================================
 
-This demo shows how to fit Gaussian splats to each channel of a multi-channel
-microscopy volume separately, then merge them with distinct colors for
-visualization.
+This demo shows the complete workflow for multi-channel Gaussian splatting:
+- Fetching real microscopy data from Image Data Resource (IDR)
+- Fitting Gaussian splats to each channel independently
+- Merging channels with distinct colors for visualization
+
+DATA SOURCE & CITATIONS:
+========================
+
+Dataset:
+--------
+Image ID: 6001240 (idr6001240)
+Source: Image Data Resource (IDR) - https://idr.openmicroscopy.org/
+Study: idr0062 - Intestinal organoid development and nuclear segmentation
+Format: OME-ZARR 5D (Time × Channel × Z × Y × X)
+Data Type: High-resolution 3D light microscopy of mouse intestinal organoid
+
+Original Authors & Study:
+--------------------------
+Principal Investigator: Prisca Liberali
+Institution: Friedrich Miescher Institute for Biomedical Research (FMI)
+
+This data is part of research on intestinal organoid development, nuclear
+segmentation, and symmetry breaking in organoids.
+
+How to Cite:
+------------
+If you use this dataset, please cite:
+
+1. Original Research:
+   Blin, G., et al. (2019). "A conserved role for β-catenin in
+   organ-specific branching morphogenesis."
+   (Or related publications from Liberali lab associated with IDR study idr0062)
+
+2. Image Data Resource (IDR):
+   Williams, E. et al. (2017). "The Image Data Resource: a bioimage data
+   integration and publication platform."
+   Nature Methods, 14(8), 775-781.
+   DOI: 10.1038/nmeth.4326
+
+3. Data Accession:
+   IDR study idr0062, Image 6001240
+   URL: https://idr.openmicroscopy.org/webclient/?show=image-6001240
 
 WORKFLOW:
 =========
@@ -34,12 +76,16 @@ WORKFLOW:
 
 USAGE:
 ======
-    python demo_gsplats_3d_multichannel.py [--no-cache] [--no-serve]
+    python demo_gsplats_3d_organoid_multichannel_from_idr.py [--no-cache] [--no-serve]
 
 Options:
     --no-cache: Force re-fitting even if cached results exist
     --no-serve: Don't auto-launch viewer after scene creation
     --serve-only: Skip fitting, just serve existing scene
+
+Note: This demo fetches data from IDR and performs full GSplat fitting (slow).
+For a quick demo with precomputed gsplats, use:
+    python demo_gsplats_3d_organoid_multichannel_precomputed.py
 
 """
 
@@ -79,7 +125,7 @@ CHANNELS = [
 ]
 
 # Fitting parameters
-N_ITERS = 6000  # Good balance of quality vs speed
+N_ITERS = 2000  # Good balance of quality vs speed
 N_SEEDS = 16000
 DEVICE = None  # Auto-detect (cuda/mps/cpu)
 
@@ -102,9 +148,15 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_multichannel_data():
-    """Load and preprocess multi-channel microscopy data from IDR."""
+    """Load and preprocess multi-channel microscopy data from IDR.
+
+    Data Source: Image Data Resource (IDR) study idr0062, Image 6001240
+    Original Authors: Prisca Liberali lab, FMI
+    Citation: Blin et al. (2019) + Williams et al. (2017) Nature Methods 14(8):775-781
+    """
     with asection("Loading multi-channel microscopy data"):
         aprint(f"Source: {ZARR_URL}")
+        aprint("Dataset: IDR idr0062, Image 6001240 (Liberali lab, FMI)")
         aprint(f"Target size: {TARGET_SIZE}³ voxels per channel")
 
         try:
@@ -276,7 +328,7 @@ def fit_all_channels(volumes):
 def create_luxar_scene(merged_gsplats, output_path: Path | None = None):
     """Create Luxar scene with merged multi-channel gsplats."""
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_3d_multichannel.zarr"
+        output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel_from_idr.zarr"
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -287,13 +339,19 @@ def create_luxar_scene(merged_gsplats, output_path: Path | None = None):
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Add scene metadata
-            scene.attrs["title"] = "GSplats: Multi-Channel 3D Microscopy"
+            scene.attrs["title"] = "GSplats: Multi-Channel 3D Organoids"
             scene.attrs["description"] = """
-Multi-Channel Gaussian Splatting Demo
-======================================
+Multi-Channel Gaussian Splatting - Organoid Microscopy
+=======================================================
 
 This scene demonstrates multi-channel microscopy visualization using
 Gaussian splats with per-channel colors.
+
+Data Source:
+  - Image Data Resource (IDR) study idr0062, Image 6001240
+  - High-resolution 3D microscopy of mouse intestinal organoid
+  - Original research: Prisca Liberali lab, FMI
+  - Citation: Blin et al. (2019) + Williams et al. (2017) Nat Methods 14(8):775-781
 
 Each channel was fitted independently then merged:
 - Magenta: Channel 0
@@ -329,13 +387,13 @@ Controls:
 def main():
     """Main demo execution."""
     aprint("=" * 70)
-    aprint("GSplats Demo: Multi-Channel 3D Microscopy")
+    aprint("GSplats Demo: Multi-Channel 3D Organoid Microscopy")
     aprint("=" * 70)
     aprint("Per-channel fitting + color-coded merge + Web visualization")
     aprint("")
 
     # Determine output path
-    output_path = get_demos_output_dir() / "gsplats_3d_multichannel.zarr"
+    output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel_from_idr.zarr"
 
     # Serve only mode
     if SERVE_ONLY:
