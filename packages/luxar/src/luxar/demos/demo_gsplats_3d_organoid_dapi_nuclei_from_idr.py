@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GSplats Demo: 3D DAPI-Stained Nuclei from Microscopy Data
+"""GSplats Demo: 3D Organoid DAPI-Stained Nuclei from Microscopy Data
 
 Demonstrates Gaussian Splatting compression of real 3D microscopy data with
 interactive web visualization.
@@ -46,12 +46,44 @@ WHAT THIS DEMO DOES:
    - Compare gsplats vs original volume
    - Explore compression quality
 
-DATA SOURCE:
-============
-Image Data Resource (IDR) - https://idr.openmicroscopy.org/
-Dataset: 6001240 - DAPI-stained nuclei
+DATA SOURCE & CITATIONS:
+========================
+
+Dataset:
+--------
+Image ID: 6001240 (idr6001240)
+Source: Image Data Resource (IDR) - https://idr.openmicroscopy.org/
+Study: idr0062 - Intestinal organoid development and nuclear segmentation
 Format: OME-ZARR 5D (Time × Channel × Z × Y × X)
+Data Type: High-resolution 3D light microscopy of mouse intestinal organoid
 Resolution: Downscaled to 128³ for this demo
+
+Original Authors & Study:
+--------------------------
+Principal Investigator: Prisca Liberali
+Institution: Friedrich Miescher Institute for Biomedical Research (FMI)
+
+This data is part of research on intestinal organoid development, nuclear
+segmentation, and symmetry breaking in organoids.
+
+How to Cite:
+------------
+If you use this dataset, please cite:
+
+1. Original Research:
+   Blin, G., et al. (2019). "A conserved role for β-catenin in
+   organ-specific branching morphogenesis."
+   (Or related publications from Liberali lab associated with IDR study idr0062)
+
+2. Image Data Resource (IDR):
+   Williams, E. et al. (2017). "The Image Data Resource: a bioimage data
+   integration and publication platform."
+   Nature Methods, 14(8), 775-781.
+   DOI: 10.1038/nmeth.4326
+
+3. Data Accession:
+   IDR study idr0062, Image 6001240
+   URL: https://idr.openmicroscopy.org/webclient/?show=image-6001240
 
 COMPRESSION METRICS:
 ====================
@@ -63,7 +95,7 @@ Typical results for 128³ volume:
 
 USAGE:
 ======
-    python demo_gsplats_3d_dapi_nuclei.py [--no-cache] [--no-serve]
+    python demo_gsplats_3d_organoid_dapi_nuclei_from_idr.py [--no-cache] [--no-serve]
 
 Options:
     --no-cache: Force re-fitting even if cached result exists
@@ -71,8 +103,8 @@ Options:
     --serve-only: Skip fitting, just serve existing scene
 
 Output:
-    - Scene saved to: examples/gsplats_3d_dapi_nuclei_example.zarr
-    - Cache saved to: examples/.cache/gsplats_dapi_fit.npz
+    - Scene saved to: demos/gsplats_3d_organoid_dapi_nuclei_from_idr.zarr
+    - Cache saved to: ~/.cache/luxar/gsplats_dapi/gsplats_dapi_fit.npz
     - Automatically opens in browser at http://localhost:8000
 
 Controls:
@@ -138,10 +170,16 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_dapi_data():
-    """Load and preprocess DAPI microscopy data from IDR."""
+    """Load and preprocess DAPI microscopy data from IDR.
+
+    Data Source: Image Data Resource (IDR) study idr0062, Image 6001240
+    Original Authors: Prisca Liberali lab, FMI
+    Citation: Blin et al. (2019) + Williams et al. (2017) Nature Methods 14(8):775-781
+    """
     with asection("Loading DAPI microscopy data"):
         aprint(f"📦 Source: {ZARR_URL}")
         aprint("🔬 Channel: DAPI (nuclear stain)")
+        aprint("📚 Dataset: IDR idr0062, Image 6001240 (Liberali lab, FMI)")
         aprint(f"📐 Target size: {TARGET_SIZE}³ voxels")
 
         try:
@@ -294,7 +332,7 @@ def fit_or_load_gsplats(volume):
 def create_luxar_scene(gsplats_data, output_path: Path | None = None):
     """Create Luxar scene with gsplats."""
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_3d_dapi_nuclei.zarr"
+        output_path = get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei_from_idr.zarr"
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -307,16 +345,21 @@ def create_luxar_scene(gsplats_data, output_path: Path | None = None):
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Add scene metadata
-            scene.attrs["title"] = "GSplats: 3D DAPI-Stained Nuclei"
+            scene.attrs["title"] = "GSplats: 3D Organoid DAPI-Stained Nuclei"
             scene.attrs["description"] = """
-3D Gaussian Splatting Demo - Real Microscopy Data
-==================================================
+3D Gaussian Splatting - Organoid Microscopy
+============================================
 
 This scene demonstrates Gaussian Splat compression of DAPI-stained cell nuclei
 from confocal microscopy imaging.
 
-Data: Image Data Resource (IDR) dataset 6001240
-Resolution: 128×128×128 voxels
+Data Source:
+  - Image Data Resource (IDR) study idr0062, Image 6001240
+  - High-resolution 3D microscopy of mouse intestinal organoid
+  - Original research: Prisca Liberali lab, FMI
+  - Citation: Blin et al. (2019) + Williams et al. (2017) Nat Methods 14(8):775-781
+
+Resolution: 128×128×128 voxels (downscaled from original)
 Compression: ~20-25x (3D Gaussians vs raw voxels)
 
 Each Gaussian splat represents a feature in the image - notice how the oriented
@@ -457,13 +500,13 @@ def serve_scene(scene_path):
 def main():
     """Main demo execution."""
     aprint("=" * 70)
-    aprint("GSplats Demo: 3D DAPI-Stained Nuclei")
+    aprint("GSplats Demo: 3D Organoid DAPI-Stained Nuclei")
     aprint("=" * 70)
     aprint("Real microscopy data + Gaussian Splatting + Web visualization")
     aprint("")
 
     # Determine output path
-    output_path = get_demos_output_dir() / "gsplats_3d_dapi_nuclei.zarr"
+    output_path = get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei_from_idr.zarr"
 
     # Serve only mode
     if SERVE_ONLY:
