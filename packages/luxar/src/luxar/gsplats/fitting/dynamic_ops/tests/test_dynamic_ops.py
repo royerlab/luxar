@@ -14,6 +14,7 @@ from luxar.gsplats.fitting.dynamic_ops import (
     _select_weak_splats,
     apply_dynamic_operations,
 )
+from luxar.gsplats.fitting.dynamic_ops.operations import _relocate_splats_batch
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.seeds import seed_from_grid
 
@@ -28,10 +29,11 @@ class TestDynamicOpsConfig:
         assert cfg.k_max_residuals == 20
         assert cfg.nms_radius_vox == 2.0
         assert cfg.enable_tiled_seeding is True
-        assert cfg.relocation_percentile == 5.0
-        assert cfg.max_relocations_per_step == 10
+        assert cfg.relocation_percentile == 1.0
+        assert cfg.max_relocations_per_step == 32
         assert cfg.init_sigma_vox == 0.5
         assert cfg.min_contribution_threshold == 0.01
+        assert cfg.enable_coverage_check is False
         assert cfg.min_splats_to_keep == 10
 
     def test_config_modification(self) -> None:
@@ -174,23 +176,33 @@ class TestWeakSplatSelection:
         """Test that weak splats are correctly identified."""
         # Create random importance values
         importance = torch.tensor([0.5, 0.1, 0.9, 0.2, 0.8])
+        centers = torch.tensor(
+            [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 3.0], [4.0, 4.0]]
+        )
+        residual = torch.zeros((5, 5))
 
         # Select bottom 40% (2 splats)
-        weak_indices = _select_weak_splats(importance, relocation_percentile=40.0)
+        weak_indices = _select_weak_splats(
+            importance, centers, residual, relocation_percentile=40.0
+        )
 
         assert len(weak_indices) == 2  # 40% of 5 = 2
-        # Should be splat 1 (0.1) and splat 3 (0.2) - the two lowest
-        assert 1 in weak_indices
-        assert 3 in weak_indices
+        assert weak_indices == [1, 3]
 
     def test_select_weak_splats_minimum_one(self) -> None:
         """Test that at least one splat is always selected."""
         importance = torch.tensor([0.5, 0.6, 0.7, 0.8, 0.9])
+        centers = torch.tensor(
+            [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 3.0], [4.0, 4.0]]
+        )
+        residual = torch.zeros((5, 5))
 
         # Even with very low percentile, should get at least 1
-        weak_indices = _select_weak_splats(importance, relocation_percentile=1.0)
+        weak_indices = _select_weak_splats(
+            importance, centers, residual, relocation_percentile=1.0
+        )
 
-        assert len(weak_indices) >= 1
+        assert weak_indices == [0]
 
 
 class TestGaussianSplatModel:
@@ -371,20 +383,59 @@ class TestDynamicOperationsIntegration:
         )
 
         # Test importance calculation - get cached params first
-        _, Ls, amps_t, _ = model.current_params()
+        centers_t, Ls, amps_t, _ = model.current_params()
         importance = _calculate_splat_importance(Ls, amps_t)
         assert importance.shape == (len(centers),)
         assert torch.all(importance >= 0)
 
         # Test weak splat selection
-        weak_indices = _select_weak_splats(importance, 10.0)  # Bottom 10%
+        residual = torch.full((32, 32), 0.5, device=centers_t.device)
+        weak_indices = _select_weak_splats(
+            importance, centers_t, residual, 10.0
+        )  # Bottom 10%
         expected_candidates = max(1, int(len(centers) * 0.1))
         assert len(weak_indices) == expected_candidates
 
-        # Verify candidates are actually least important
-        sorted_importance = torch.sort(importance)[0]
-        for idx in weak_indices:
-            assert importance[idx] <= sorted_importance[expected_candidates]
+        sorted_indices = torch.argsort(importance).tolist()
+        assert weak_indices == sorted_indices[:expected_candidates]
+
+
+class TestRelocationParameters:
+    """Test parameter resets during relocation."""
+
+    def test_relocation_respects_per_axis_sigma_min(self) -> None:
+        """Ensure init sigma reset respects per-axis sigma_min_diag."""
+        centers = np.array([[1.0, 1.0]], dtype=np.float32)
+        L0 = np.eye(2, dtype=np.float32)[None, :, :] * 0.2
+        amps0 = np.array([0.1], dtype=np.float32)
+
+        model = GaussianSplatModel(
+            shape=(8, 8),
+            centers0=centers,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=[0.1, 0.5],
+            device=torch.device("cpu"),
+        )
+
+        residual = torch.zeros((8, 8), dtype=torch.float32)
+        residual[3, 4] = 1.0
+
+        cfg = DynamicOpsConfig()
+        cfg.init_sigma_vox = 0.6
+
+        # Use batched version with single splat
+        splat_indices = torch.tensor([0], dtype=torch.long, device=torch.device("cpu"))
+        peak_coords = torch.tensor(
+            [[3.0, 4.0]], dtype=torch.float32, device=torch.device("cpu")
+        )
+        _relocate_splats_batch(model, splat_indices, peak_coords, residual, cfg)
+
+        _, Ls, _, _ = model.current_params()
+        diag = torch.diagonal(Ls[0], dim1=-2, dim2=-1)
+        assert torch.allclose(
+            diag, torch.tensor([0.6, 0.6], dtype=diag.dtype), atol=1e-6
+        )
 
     def test_asymmetric_penalty_with_all_loss_types(self) -> None:
         """Test asymmetric penalty works with all loss functions."""

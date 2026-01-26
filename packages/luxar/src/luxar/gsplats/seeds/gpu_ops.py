@@ -15,7 +15,7 @@ Expected speedups: 10-50x for large 3D/4D volumes on CUDA GPUs.
 """
 
 import warnings
-from typing import Optional, Union
+from typing import Optional
 
 import numpy as np
 import torch
@@ -68,7 +68,7 @@ def _get_device(device: Optional[str] = None) -> str:
     if device.startswith("cuda"):
         if not torch.cuda.is_available():
             warnings.warn(
-                f"CUDA requested but not available. Falling back to CPU.",
+                "CUDA requested but not available. Falling back to CPU.",
                 RuntimeWarning,
                 stacklevel=2,
             )
@@ -78,7 +78,7 @@ def _get_device(device: Optional[str] = None) -> str:
     if device == "mps":
         if not torch.backends.mps.is_available():
             warnings.warn(
-                f"MPS requested but not available. Falling back to CPU.",
+                "MPS requested but not available. Falling back to CPU.",
                 RuntimeWarning,
                 stacklevel=2,
             )

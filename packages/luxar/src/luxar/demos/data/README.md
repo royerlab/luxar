@@ -6,17 +6,19 @@ This directory contains precomputed data files for Luxar demos. Some files are s
 
 ### Precomputed Gaussian Splats (Git LFS)
 
-These `.npz` files contain pre-fitted Gaussian splats from real microscopy data:
+These `.gsplats.zarr.zip` files contain pre-fitted Gaussian splats from real microscopy data in compressed zarr format:
 
-- **organoids_gsplats_ch0.npz** (~689 KB)
+- **organoids_gsplats_ch0.gsplats.zarr.zip** (~609 KB)
   - Channel 0 from IDR dataset 6001240 (intestinal organoid)
   - Fluorescent marker channel (magenta in demo)
   - Pre-fitted using full compute pipeline
+  - ~20,000 splats compressed with Hilbert ordering
 
-- **organoids_gsplats_ch1.npz** (~689 KB)
+- **organoids_gsplats_ch1.gsplats.zarr.zip** (~630 KB)
   - Channel 1 from IDR dataset 6001240 (intestinal organoid)
   - DAPI nuclear stain channel (cyan in demo)
   - Pre-fitted using full compute pipeline
+  - ~20,000 splats compressed with Hilbert ordering
 
 **Data Source:** Image Data Resource (IDR) study idr0062, Image 6001240
 **Original Authors:** Prisca Liberali lab, FMI
@@ -67,7 +69,7 @@ After installing Git LFS, pull the actual data files:
 git lfs pull
 
 # Or pull specific files only
-git lfs pull --include="packages/luxar/src/luxar/demos/data/*.npz"
+git lfs pull --include="packages/luxar/src/luxar/demos/data/*.gsplats.zarr.zip"
 ```
 
 ### Verifying LFS Files
@@ -75,8 +77,8 @@ git lfs pull --include="packages/luxar/src/luxar/demos/data/*.npz"
 Check if you have the actual files (not pointers):
 
 ```bash
-# Should show ~689KB for .npz files
-ls -lh packages/luxar/src/luxar/demos/data/*.npz
+# Should show ~609-630 KB for .gsplats.zarr.zip files
+ls -lh packages/luxar/src/luxar/demos/data/*.gsplats.zarr.zip
 
 # Check LFS status
 git lfs ls-files
@@ -96,7 +98,7 @@ python demo_gsplats_3d_organoid_multichannel_precomputed.py
 ```
 
 This demo:
-- Loads precomputed gsplats from `.npz` files
+- Loads precomputed gsplats from `.gsplats.zarr.zip` files
 - No network required (after Git LFS pull)
 - No GPU computation required
 - Fast visualization (~2-3 seconds)
@@ -147,7 +149,7 @@ GIT_LFS_SKIP_SMUDGE=1 git clone <repo>
 
 # Later, pull only what you need
 cd luxar
-git lfs pull --include="packages/luxar/src/luxar/demos/data/*.npz"
+git lfs pull --include="packages/luxar/src/luxar/demos/data/*.gsplats.zarr.zip"
 ```
 
 ## Adding New LFS Files
@@ -172,23 +174,40 @@ If you're adding new large data files to this directory:
 
 ## File Format Details
 
-### `.npz` Files (NumPy Archive)
+### `.gsplats.zarr.zip` Files
 
-Precomputed Gaussian splat files contain:
+Compressed Gaussian splat datasets in Luxar's native zarr format. Contains:
 
-- `centers`: (N, 3) float32 array - Splat centers in 3D space
-- `cholesky_factors`: (N, 6) float32 array - Cholesky decomposition of covariance
-- `amplitudes`: (N,) float32 array - Splat intensities
-- `sharpnesses`: (N,) float32 array - Sharpness parameters
+- Splat centers, amplitudes, covariance matrices (Cholesky factors), sharpness
+- Spatially ordered for efficient streaming (Hilbert curve ordering)
+- Quantized encoding for compact storage
+- Metadata including fitting statistics and provenance
 
-Load with:
+**Load programmatically:**
 ```python
-import numpy as np
-data = np.load("organoids_gsplats_ch0.npz")
-centers = data["centers"]
+from luxar.gsplats.gsplat_data import GSplatData
+
+# Automatically extracts and loads compressed archive
+data = GSplatData.load("organoids_gsplats_ch0.gsplats.zarr.zip")
+
+print(f"Loaded {len(data.amplitudes):,} splats")
+print(f"Dimensions: {data.centers.shape[1]}D")
 ```
 
-### `.zarr.zip` Files
+**Quick view with CLI:**
+```bash
+# View in Luxar web viewer
+luxar gsplat view organoids_gsplats_ch0.gsplats.zarr.zip
+
+# Inspect in napari
+luxar gsplat napari organoids_gsplats_ch0.gsplats.zarr.zip
+
+# Prune to reduce size
+luxar gsplat prune input.gsplats.zarr.zip output.gsplats.zarr.zip \
+    --method cumulative --retention 0.95
+```
+
+### `.zarr.zip` Files (Point Clouds)
 
 Compressed Zarr stores for large point cloud datasets. Extract and serve with:
 

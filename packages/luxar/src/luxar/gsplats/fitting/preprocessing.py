@@ -188,9 +188,10 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         seed_centers = seeds
 
     # Normalize input data
-    V_normalized, image_min, image_max, intensity_range = _normalize_data(
-        V, config.norm_percentile, config.verbose
-    )
+    with asection("Normalizing input data"):
+        V_normalized, image_min, image_max, intensity_range = _normalize_data(
+            V, config.norm_percentile, config.verbose
+        )
 
     # Rescale pre-initialized amplitudes to match normalized image scale
     # The seeding methods extract amplitudes from the original image, but
@@ -339,7 +340,9 @@ def _generate_seeds(
 
     # Handle target count if specified
     if target_count is not None:
-        if len(seed_centers) > target_count:
+        # Skip subsampling if within 5% of target (expensive farthest-first selection)
+        tolerance = 0.05
+        if len(seed_centers) > target_count * (1 + tolerance):
             # More than needed: subsample with spatial diversity + intensity weighting
             idx = np.clip(
                 np.round(seed_centers).astype(int),
@@ -410,12 +413,15 @@ def _subsample_seeds_spatially_diverse(
     target_count: int,
     verbose: bool,
     return_indices: bool = False,
+    smart_subsample_threshold: int = 10000,
 ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """
     Subsample seeds to exact count with spatial diversity and intensity weighting.
 
     Uses farthest-first selection among high-quality candidates to ensure
     both good spatial coverage and high-intensity seeds.
+
+    For large target_counts (>10k), uses fast random subsampling to avoid O(n²) slowness.
 
     Algorithm:
     1. Filter to keep only seeds above intensity threshold (50th percentile)
@@ -473,7 +479,36 @@ def _subsample_seeds_spatially_diverse(
         valid_intensities = intensities
         valid_indices = np.arange(len(seeds))  # All original indices
 
-    # Farthest-first selection with intensity priority
+    # For very large target counts, use fast random sampling instead of farthest-first
+    # Farthest-first is O(n²) and only matters for small selections
+    if target_count >= smart_subsample_threshold:
+        # Fast path: random weighted sampling for large selections
+        # Sort by intensity and take top candidates with some randomness
+        sort_idx = np.argsort(valid_intensities)[::-1]  # Descending
+
+        # Take top 120% of target, then randomly select exact target from those
+        n_candidates = min(len(valid_seeds), int(target_count * 1.2))
+        top_candidates = sort_idx[:n_candidates]
+
+        # Random selection from top candidates
+        rng = np.random.default_rng(seed=42)
+        selected_from_candidates = rng.choice(
+            top_candidates, size=target_count, replace=False
+        )
+
+        result = valid_seeds[selected_from_candidates]
+        original_indices = valid_indices[selected_from_candidates]
+
+        if verbose:
+            aprint(
+                f"Used fast random subsampling for large target_count={target_count}"
+            )
+
+        if return_indices:
+            return result, original_indices
+        return result
+
+    # Farthest-first selection with intensity priority (for smaller selections)
     # Start with highest intensity seed
     selected_indices = [np.argmax(valid_intensities)]
     selected = [valid_seeds[selected_indices[0]]]
@@ -483,31 +518,76 @@ def _subsample_seeds_spatially_diverse(
     remaining_indices.remove(selected_indices[0])
 
     # Iteratively select farthest seed using batch distance computation
-    # This is much faster than rebuilding KD-tree on every iteration
-    # Complexity: O(n² d) instead of O(n² log n)
-    while len(selected) < target_count and remaining_indices:
-        # Compute pairwise distances between remaining and selected seeds
-        remaining_coords = valid_seeds[remaining_indices]
-        selected_coords = np.array(selected)
+    # For medium selections (1000-10000), use GPU if available for 10-100x speedup
+    use_gpu = target_count > 1000
 
-        # cdist computes all pairwise distances at once: (n_remaining, n_selected)
-        pairwise_dists = distance.cdist(remaining_coords, selected_coords)
+    if use_gpu:
+        try:
+            import torch
 
-        # For each remaining point, find distance to nearest selected point
-        min_dists_to_selected = pairwise_dists.min(axis=1)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            use_gpu = device.type == "cuda"
+        except ImportError:
+            use_gpu = False
 
-        # Select point with maximum minimum distance (farthest from any selected)
-        farthest_idx_in_remaining = np.argmax(min_dists_to_selected)
-        farthest_idx_global = remaining_indices[farthest_idx_in_remaining]
+    if use_gpu:
+        # GPU-accelerated farthest-first selection
+        valid_seeds_gpu = torch.tensor(valid_seeds, device=device, dtype=torch.float32)
+        selected_mask = torch.zeros(len(valid_seeds), dtype=torch.bool, device=device)
+        selected_mask[selected_indices[0]] = True
 
-        # Add to selection
-        selected.append(valid_seeds[farthest_idx_global])
-        selected_indices.append(farthest_idx_global)
-        remaining_indices.remove(farthest_idx_global)
+        for _ in range(target_count - 1):
+            # Get remaining and selected coordinates
+            remaining_mask = ~selected_mask
+            remaining_coords = valid_seeds_gpu[remaining_mask]
+            selected_coords = valid_seeds_gpu[selected_mask]
+
+            # Compute pairwise distances on GPU
+            pairwise_dists = torch.cdist(remaining_coords, selected_coords)
+
+            # Find farthest point
+            min_dists = pairwise_dists.min(dim=1).values
+            farthest_in_remaining = min_dists.argmax()
+
+            # Map back to global index
+            remaining_indices_gpu = torch.where(remaining_mask)[0]
+            farthest_global = remaining_indices_gpu[farthest_in_remaining]
+
+            # Update selection
+            selected_mask[farthest_global] = True
+
+        # Extract final selection
+        selected_indices_final = torch.where(selected_mask)[0].cpu().numpy()
+        selected = valid_seeds[selected_indices_final]
+    else:
+        # CPU fallback: original algorithm
+        # Complexity: O(n² d) - slow for large selections
+        while len(selected) < target_count and remaining_indices:
+            # Compute pairwise distances between remaining and selected seeds
+            remaining_coords = valid_seeds[remaining_indices]
+            selected_coords = np.array(selected)
+
+            # cdist computes all pairwise distances at once: (n_remaining, n_selected)
+            pairwise_dists = distance.cdist(remaining_coords, selected_coords)
+
+            # For each remaining point, find distance to nearest selected point
+            min_dists_to_selected = pairwise_dists.min(axis=1)
+
+            # Select point with maximum minimum distance (farthest from any selected)
+            farthest_idx_in_remaining = np.argmax(min_dists_to_selected)
+            farthest_idx_global = remaining_indices[farthest_idx_in_remaining]
+
+            # Add to selection
+            selected.append(valid_seeds[farthest_idx_global])
+            selected_indices.append(farthest_idx_global)
+            remaining_indices.remove(farthest_idx_global)
+
+        selected_indices_final = selected_indices
+        selected = valid_seeds[selected_indices_final]
 
     result = np.array(selected)
     # Map selected_indices (within valid_seeds) back to original indices
-    original_indices = valid_indices[selected_indices]
+    original_indices = valid_indices[selected_indices_final]
 
     if verbose and len(result) == target_count:
         # Calculate spatial distribution metric (average nearest-neighbor distance)

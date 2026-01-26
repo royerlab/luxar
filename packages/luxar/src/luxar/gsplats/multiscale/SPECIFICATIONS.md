@@ -834,7 +834,7 @@ The optimization tracks and restores the **best** result seen during optimizatio
 **Implementation**:
 ```python
 # During optimization
-best_max_abs_error = infinity
+best_loss = infinity
 best_state = None
 
 for iteration in range(n_iters):
@@ -842,9 +842,9 @@ for iteration in range(n_iters):
     reconstruction = model()
     current_max_abs_error = max|reconstruction - target|
 
-    # Track best state based on max absolute error
-    if current_max_abs_error < best_max_abs_error:
-        best_max_abs_error = current_max_abs_error
+    # Track best state based on loss
+    if reconstruction_loss < best_loss:
+        best_loss = reconstruction_loss
         best_iteration = iteration
 
         # Save state (deep copy)
@@ -853,7 +853,6 @@ for iteration in range(n_iters):
             "scales_list": [s.detach().clone() for s in scales_list],
             "reconstruction": reconstruction.detach().clone(),
             "iteration": iteration,
-            "max_abs_error": current_max_abs_error,
             "recon_loss": reconstruction_loss
         }
 

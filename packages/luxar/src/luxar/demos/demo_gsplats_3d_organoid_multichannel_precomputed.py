@@ -53,10 +53,11 @@ If you use this dataset, please cite:
 WORKFLOW:
 =========
 
-1. **Load precomputed gsplats** from included .npz files
+1. **Load precomputed gsplats** from included .gsplats.zarr.zip files
    - Channel 0: First fluorescent marker
    - Channel 1: DAPI (DNA stain showing cell nuclei)
    - Pre-fitted using the full IDR dataset
+   - Compressed zarr format for efficient storage
 
 2. **Merge with channel colors**
    - Channel 0: Magenta (1.0, 0.0, 0.5)
@@ -70,9 +71,9 @@ WORKFLOW:
 PRECOMPUTED DATA:
 =================
 
-The included .npz files contain pre-fitted Gaussian splats:
-- organoids_gsplats_ch0.npz: Channel 0 (magenta marker)
-- organoids_gsplats_ch1.npz: Channel 1 (DAPI nuclei)
+The included .gsplats.zarr.zip files contain pre-fitted Gaussian splats:
+- organoids_gsplats_ch0.gsplats.zarr.zip: Channel 0 (magenta marker, ~609 KB)
+- organoids_gsplats_ch1.gsplats.zarr.zip: Channel 1 (DAPI nuclei, ~630 KB)
 
 These files are stored in Git LFS. Make sure you have pulled LFS files:
     git lfs pull
@@ -98,7 +99,6 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -114,8 +114,8 @@ from luxar.utils.paths import get_demos_output_dir
 # Precomputed data paths
 DATA_DIR = Path(__file__).parent / "data"
 GSPLATS_FILES = [
-    DATA_DIR / "organoids_gsplats_ch0.npz",
-    DATA_DIR / "organoids_gsplats_ch1.npz",
+    DATA_DIR / "organoids_gsplats_ch0.gsplats.zarr.zip",
+    DATA_DIR / "organoids_gsplats_ch1.gsplats.zarr.zip",
 ]
 
 # Channel configuration with colors
@@ -138,7 +138,7 @@ Arbol.max_depth = 5
 
 
 def load_precomputed_gsplats():
-    """Load precomputed Gaussian splats from .npz files.
+    """Load precomputed Gaussian splats from .gsplats.zarr.zip files.
 
     Data Source: Image Data Resource (IDR) study idr0062, Image 6001240
     Original Authors: Prisca Liberali lab, FMI
@@ -150,7 +150,7 @@ def load_precomputed_gsplats():
     with asection("Loading precomputed gsplats"):
         aprint("Source: Precomputed from IDR dataset 6001240")
         aprint("Dataset: IDR idr0062, Image 6001240 (Liberali lab, FMI)")
-        aprint(f"Loading {len(GSPLATS_FILES)} channels from .npz files")
+        aprint(f"Loading {len(GSPLATS_FILES)} channels from .gsplats.zarr.zip files")
 
         gsplats_list = []
 
@@ -170,19 +170,11 @@ def load_precomputed_gsplats():
                 aprint(f"Loading: {gsplat_file.name}")
 
                 try:
-                    cache = np.load(gsplat_file)
-
-                    # Reconstruct GSplatData from cached arrays
-                    gsplat_data = GSplatData(
-                        centers=cache["centers"],
-                        cholesky_factors=cache["cholesky_factors"],
-                        amplitudes=cache["amplitudes"],
-                        sharpnesses=cache["sharpnesses"],
-                        stats={},
-                    )
+                    # Load from .gsplats.zarr.zip format
+                    gsplat_data = GSplatData.load(gsplat_file, include_stats=True)
 
                     n_splats = len(gsplat_data.amplitudes)
-                    aprint(f"✓ Loaded {n_splats} splats")
+                    aprint(f"✓ Loaded {n_splats:,} splats")
                     aprint(f"  Centers shape: {gsplat_data.centers.shape}")
                     aprint(f"  Cholesky shape: {gsplat_data.cholesky_factors.shape}")
 
@@ -203,7 +195,9 @@ def load_precomputed_gsplats():
 def create_luxar_scene(merged_gsplats, output_path: Path | None = None):
     """Create Luxar scene with merged multi-channel gsplats."""
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel_precomputed.zarr"
+        output_path = (
+            get_demos_output_dir() / "gsplats_3d_organoid_multichannel_precomputed.zarr"
+        )
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -268,7 +262,9 @@ def main():
     aprint("")
 
     # Determine output path
-    output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel_precomputed.zarr"
+    output_path = (
+        get_demos_output_dir() / "gsplats_3d_organoid_multichannel_precomputed.zarr"
+    )
 
     # Serve only mode
     if SERVE_ONLY:
@@ -318,7 +314,7 @@ def main():
     aprint("=" * 70)
     aprint(f"Channels: {len(gsplats_list)}")
     aprint(f"Total splats: {total_splats:,}")
-    aprint(f"Data source: IDR study idr0062, Image 6001240")
+    aprint("Data source: IDR study idr0062, Image 6001240")
     aprint(f"Scene file: {scene_path.name}")
     aprint("=" * 70)
 

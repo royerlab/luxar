@@ -65,9 +65,16 @@ config.enable_tiled_seeding = True        # Use spatial fairness
 config.num_tiles_per_dim = None           # Auto: 16 for 2D, 6 for 3D, 4 for 4D
 
 # Relocation parameters
-config.relocation_percentile = 5.0        # % of weakest splats eligible
-config.max_relocations_per_step = 10      # Cap relocations per step
+config.relocation_percentile = 1.0        # % of weakest splats eligible
+config.max_relocations_per_step = 32      # Cap relocations per step (None = no limit)
 config.init_sigma_vox = 0.5               # Initial sigma for relocated splats
+config.enable_coverage_check = False      # Skip peaks already covered by non-weak splats
+
+# Coverage check behavior:
+# - False (DEFAULT): Relocate to all high-residual peaks regardless of coverage
+#   Rationale: If residual is high, existing coverage is clearly insufficient
+# - True: Conservative mode - skip peaks where non-weak splats have influence
+#   May leave persistent high-error regions unaddressed
 
 # Safety
 config.min_splats_to_keep = 10            # Minimum to retain
@@ -107,7 +114,16 @@ importance = amplitude × volume
 volume = prod(diag(L))  # Approximates Gaussian volume
 ```
 
-Low importance = small AND dim → candidate for relocation.
+Low importance = small AND dim. However, not all low-importance splats
+should be relocated.
+
+**Smart Selection**: Only relocates splats that are:
+- Low importance (amplitude × volume)
+- At locations with LOW residual (not fighting errors)
+
+**Key insight**: A splat at a high-error location is doing useful work
+(fighting the error), even if it has low importance. We only want to relocate
+splats that are truly useless - weak AND at low-residual locations.
 
 ### Peak-Splat Matching
 
@@ -115,8 +131,34 @@ Low importance = small AND dim → candidate for relocation.
 2. For each peak:
    - Check if any non-weak splat already has significant influence there
    - If yes, skip this peak (existing coverage)
-   - If no, assign closest available weak splat to this peak
-3. Cap relocations at `max_relocations_per_step`
+   - If no, add to uncovered peaks list
+3. Direct pairing: weakest splat → highest-error peak, 2nd weakest → 2nd highest, etc.
+4. Cap relocations at `max_relocations_per_step`
+
+**Why direct pairing?** Distance-based matching is unnecessary since relocated
+splats are completely reset anyway. The weakest splat should target the worst
+error, aligning priorities correctly.
+
+### Coverage Check Control (Experimental)
+
+The `enable_coverage_check` flag controls whether to skip peaks already "covered"
+by existing non-weak splats:
+
+**When `True` (default)**:
+- Skips peaks where existing splats already have significant influence
+- Original behavior - conservative approach
+- May leave high-error peaks unaddressed if they have *some* coverage
+
+**When `False`**:
+- Relocates to ALL high-residual peaks regardless of existing coverage
+- More aggressive - assumes if residual is high, coverage is insufficient
+- Can help when existing splats have influence but error remains high
+
+**Trade-off**: The issue is that "has influence" ≠ "error is resolved".
+A peak with residual=0.8 and existing influence=0.3 clearly needs more coverage,
+but the default behavior would skip it. Disabling coverage check addresses this.
+
+**Recommendation**: Try both settings and compare convergence behavior for your data.
 
 ### Relocation
 

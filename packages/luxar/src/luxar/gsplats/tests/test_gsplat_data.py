@@ -166,7 +166,8 @@ class TestMergeWithChannelColors:
 
         with pytest.raises(ValueError, match="must match"):
             GSplatData.merge_with_channel_colors(
-                [gs1], channel_colors=[(1, 0, 0), (0, 1, 0)]  # 1 gsplat, 2 colors
+                [gs1],
+                channel_colors=[(1, 0, 0), (0, 1, 0)],  # 1 gsplat, 2 colors
             )
 
     def test_error_on_empty_list(self):
@@ -264,11 +265,14 @@ class TestMergeWithChannelColors:
             amplitudes=np.array([1.0], dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
             sharpnesses=np.array([2.0], dtype=np.float32),
-            colors=np.array([[0.0, 0.0, 0.0]], dtype=np.float32),  # Black - should be ignored
+            colors=np.array(
+                [[0.0, 0.0, 0.0]], dtype=np.float32
+            ),  # Black - should be ignored
         )
 
         merged = GSplatData.merge_with_channel_colors(
-            [gs1], channel_colors=[(1.0, 1.0, 1.0)]  # White
+            [gs1],
+            channel_colors=[(1.0, 1.0, 1.0)],  # White
         )
 
         # Output should be white, not black

@@ -294,20 +294,20 @@ Auto-generating candidates: 131 peaks/scale for 65,536 pixels
 Generated [0-9]* seed centers
 
 [   1/1000] loss=0.078185  relL2=0.7969  maxAbsErr=1.1798  N=212
-    ★ New best state: iteration 1, max_abs_error=0.978093
+    ★ New best state: iteration 1, loss=0.078185  max_abs_error=0.978093
 [  10/1000] loss=0.056279  relL2=0.7099  maxAbsErr=0.99667  N=212
-    ★ New best state: iteration 8, max_abs_error=0.045821
+    ★ New best state: iteration 8, loss=0.056279  max_abs_error=0.045821
 ...
 ✓ CONVERGENCE ACHIEVED at iteration 127
   Max absolute error: 0.009854 < threshold: 0.010000
 
-★ Restored best state from iteration 125 (improved from 0.010123 to 0.009854)
+★ Restored best state from iteration 125 (loss=0.056279  max_abs_error=0.009854)
 Rescaled amplitudes to original intensity range (factor: 0.9075)
 ```
 
 ### Quality Guarantee Features
 
-- **Best state tracking**: Always returns the splat configuration with lowest max absolute error
+- **Best state tracking**: Always returns the splat configuration with lowest loss
 - **Smart logging**: Reports significant improvements and early progress
 - **State restoration**: Uses best quality achieved, not potentially suboptimal final state
 - **Non-monotonic protection**: Handles optimization fluctuations and dynamic operations gracefully
@@ -540,15 +540,15 @@ fitter = GaussianSplatFitter(
 )
 
 # Fit with detailed statistics
-result = fitter.fit(
-    image,
-    seeds=candidates,
-    n_iters=500,
-    early_stopping=True,
-    early_stop_patience=20,
-    sigma_min_diag=[0.5, 0.5],  # Minimum splat size
-    sigma_max_diag=[10.0, 10.0], # Maximum splat size
-)
+    result = fitter.fit(
+        image,
+        seeds=candidates,
+        n_iters=500,
+        early_stopping=True,
+        early_stop_patience=200,
+        sigma_min_diag=[0.5, 0.5],  # Minimum splat size
+        sigma_max_diag=[10.0, 10.0], # Maximum splat size
+    )
 
 # Access optimization statistics from result.stats
 print(f"Time: {result.stats['time_seconds']:.2f}s")

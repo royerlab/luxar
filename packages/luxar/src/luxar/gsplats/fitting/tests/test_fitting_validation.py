@@ -138,6 +138,14 @@ class TestPrepareConfig:
         ):
             prepare_fit_config(fitter, V, sigma_min_diag=[0.1, -0.1])
 
+    def test_sigma_min_diag_float_broadcast(self) -> None:
+        """Test that sigma_min_diag accepts a float and broadcasts it."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, sigma_min_diag=0.2)
+        assert config.sigma_min_diag == [0.2, 0.2]
+
     def test_sigma_max_less_than_min(self) -> None:
         """Test validation when sigma_max is less than sigma_min."""
         fitter = MockGaussianSplatFitter()

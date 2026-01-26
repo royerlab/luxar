@@ -332,7 +332,9 @@ def fit_or_load_gsplats(volume):
 def create_luxar_scene(gsplats_data, output_path: Path | None = None):
     """Create Luxar scene with gsplats."""
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei_from_idr.zarr"
+        output_path = (
+            get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei_from_idr.zarr"
+        )
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -451,7 +453,9 @@ def view_with_napari(volume, gsplats_data):
         # Render gsplats to volume for comparison BEFORE opening napari
         # Using GPU-accelerated renderer (100-1000x faster than old NumPy implementation)
         aprint("Rendering gsplats to volume (GPU-accelerated)...")
-        rendered = gsplats_data.render_to_volume(shape=(dim_len * 2 for dim_len in volume.shape))
+        rendered = gsplats_data.render_to_volume(
+            shape=(dim_len * 2 for dim_len in volume.shape)
+        )
         aprint("✓ Rendering complete")
 
         # NOW create the napari viewer with all data ready
@@ -506,7 +510,9 @@ def main():
     aprint("")
 
     # Determine output path
-    output_path = get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei_from_idr.zarr"
+    output_path = (
+        get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei_from_idr.zarr"
+    )
 
     # Serve only mode
     if SERVE_ONLY:

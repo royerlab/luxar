@@ -114,6 +114,7 @@ class TestOptimizationResults:
             amps=amps,
             sharpness=sharpness,
             converged_early=True,
+            early_stopped=False,
             actual_iters=50,
             best_iteration=45,
             best_loss=0.1,
