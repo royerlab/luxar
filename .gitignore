@@ -172,3 +172,6 @@ packages/luxar-viewer/debug-screenshots/
 *.metallib
 packages/luxar/src/luxar/gsplats/models/gsplats/metal/packages/
 /.playwright-mcp/
+
+# Generated demo legends
+packages/luxar/src/luxar/demos/legends/
