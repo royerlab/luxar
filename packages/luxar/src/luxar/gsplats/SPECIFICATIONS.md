@@ -566,7 +566,7 @@ def fit_gaussian_splats(
      - **Parameter count**: 2D (5 params: 2 pos + 3 cov), 3D (9 params: 3 pos + 6 cov), 4D (14 params: 4 pos + 10 cov)
      - **Result**: Learning rate scaling - 2D (×1.0), 3D (×1.8), 4D (×8.5)
 2. **Log convergence criteria**: Explicitly state convergence threshold (given or auto-calculated)
-3. **Initialize best state tracking**: Track best max absolute error and corresponding splat configuration
+3. **Initialize best state tracking**: Track best loss and corresponding splat configuration
 4. For each iteration:
    - Forward pass: `pred = model()`
    - Loss computation: MSE or Poisson + optional L1 regularization
@@ -576,15 +576,15 @@ def fit_gaussian_splats(
    - Scheduler step for learning rate adaptation
    - Dynamic operations (fixed-pool relocation) if enabled and scheduled
    - Convergence check: compute `max_abs_error = max(|pred - target|)` and stop if below threshold
-   - **Best state tracking**: Save current state if `max_abs_error` is lowest seen so far
+   - **Best state tracking**: Save current state if loss is lowest seen so far
    - Display max abs error during training in addition to losses
-5. **Restore best state**: Return splat configuration that achieved lowest max absolute error during optimization
+5. **Restore best state**: Return splat configuration that achieved lowest loss during optimization
 6. **Log termination reason**: Explicitly state why optimization ended and which iteration's state was restored
 
 **Best State Tracking:**
-- **Quality guarantee**: Always return the splat configuration that achieved the lowest max absolute error
+- **Quality guarantee**: Always return the splat configuration that achieved the lowest loss
 - **Non-monotonic optimization**: Max absolute error fluctuates during optimization due to dynamic operations
-- **Best state preservation**: Save splat parameters whenever max absolute error improves
+- **Best state preservation**: Save splat parameters whenever loss improves
 - **State restoration**: Return best configuration instead of potentially suboptimal final state
 - **Statistics alignment**: Report statistics from best iteration, not final iteration
 
@@ -606,7 +606,7 @@ The `stats` dictionary returned by `fit_gaussian_splats()` includes:
 - **Logging requirements**:
   - State convergence threshold at optimization start
   - Report current max absolute error during training
-  - Log new best states when encountered
+  - Log new best states when encountered (based on loss)
   - Explicitly state termination reason and which iteration's state was restored
 
 
@@ -1203,7 +1203,7 @@ This section provides a quick reference for the most important terms. For compre
 - NOT: splat-wise state, individual state
 
 **Best State Tracking**
-- Saving the parameter configuration that achieved the lowest max absolute error
+- Saving the parameter configuration that achieved the lowest loss
 - Provides quality guarantee even with non-monotonic optimization
 - Also called: quality guarantee
 - NOT: optimal state, peak performance (less precise)
@@ -1270,7 +1270,7 @@ This section provides a quick reference for the most important terms. For compre
 - `sharpness` or `s`: Actual sharpness values (s = 2 * exp(s'))
 
 **Configuration Parameters**:
-- `sigma_min_diag`: Minimum diagonal values (per-dimension sequence)
+- `sigma_min_diag`: Minimum diagonal values (per-dimension sequence or float, broadcast across dimensions)
 - `sigma_max_diag`: Maximum diagonal values (per-dimension sequence)
 - `truncate`: Gaussian truncation radius in standard deviations
 - `init_sigma_vox`: Initial sigma for isotropic covariances
@@ -1332,4 +1332,3 @@ This specification provides complete implementation details for a mathematically
   - Specified core mathematical formulations
   - Defined multi-scale decomposition approach
   - Established cross-package reference format
-

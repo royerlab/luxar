@@ -53,7 +53,7 @@ class FitConfig:
 
     # Model parameters
     init_sigma_vox: Optional[float]          # Initial sigma in voxels (None = use scale-informed init_L from seeding)
-    sigma_min_diag: Optional[Sequence[float]]  # Minimum diagonal values per dimension
+    sigma_min_diag: Optional[Sequence[float] | float]  # Minimum diagonal values per dimension (float is broadcast)
     sigma_max_diag: Optional[Sequence[float]]  # Maximum diagonal values per dimension
     amp_max: Optional[float]                 # Maximum amplitude (default: 1.0, prevents explosion)
     truncate: float                          # Gaussian truncation radius in standard deviations
@@ -75,7 +75,7 @@ class FitConfig:
     scheduler_type: str                      # "plateau" or "exponential"
     patience: int                            # Iters without loss improvement before LR reduction
     lr_reduction_factor: float               # LR multiplier (0.5=halve, 0.1=reduce to 10%)
-    early_stop_patience: Optional[int]       # Stop if no better state for N iters (None=off)
+    early_stop_patience: Optional[int]       # Stop if no better state for N iters (None=off, default=200)
 
     # Dynamic operations
     enable_dynamic_ops: bool                 # Enable adaptive seeding/pruning
@@ -220,7 +220,7 @@ def prepare_fit_config(
     l1_amp: Optional[float] = None,
     l1_diag: Optional[float] = None,
     l1_sharpness: Optional[float] = None,
-    sigma_min_diag: Optional[Sequence[float]] = None,  # Per-dimension
+    sigma_min_diag: Optional[Sequence[float] | float] = None,  # Per-dimension (float is broadcast)
     sigma_max_diag: Optional[Sequence[float]] = None,  # Per-dimension
     truncate: float = 3.0,
     verbose: bool = True,
@@ -232,7 +232,7 @@ def prepare_fit_config(
     scheduler_type: str = "plateau",
     patience: int = 10,
     lr_reduction_factor: float = 0.5,
-    early_stop_patience: Optional[int] = None,
+    early_stop_patience: Optional[int] = 200,
     dynamic_ops_verbose: bool = False,
 ) -> FitConfig:
     """
@@ -697,16 +697,19 @@ for iteration in range(n_iters):
     components.scheduler.step(loss.detach())  # Detached to avoid graph retention
 
     # 7. Best state tracking (save tensors directly, not state_dict)
-    if max_abs_error < best_max_abs_error:
-        improvement_ratio = (best_max_abs_error - max_abs_error) / best_max_abs_error
+    if loss.item() < best_loss:
+        improvement_ratio = (best_loss - loss.item()) / best_loss
 
         # Only log significant improvements (> 5% reduction)
         if improvement_ratio > 0.05 or iteration == 0:
             if verbose:
-                aprint(f"New best: max_abs_error = {max_abs_error:.6f} (iteration {iteration})")
+                aprint(
+                    f"New best: loss = {loss.item():.6f} "
+                    f"(iteration {iteration}, max_abs_error = {max_abs_error:.6f})"
+                )
 
-        best_max_abs_error = max_abs_error
         best_loss = loss.item()
+        best_max_abs_error = max_abs_error
         best_iteration = iteration
 
         # Save current parameters (deep copy of tensors directly)
@@ -758,6 +761,7 @@ return OptimizationResults(
     amps=best_amps,
     sharpness=best_sharpness,
     converged_early=converged_early,
+    early_stopped=early_stopped,
     actual_iters=iteration + 1,
     best_iteration=best_iteration,
     best_loss=best_loss,
@@ -769,8 +773,8 @@ return OptimizationResults(
 ```
 
 **Best State Tracking Logic**:
-- **Metric**: Maximum absolute error (not mean error) ensures all regions meet quality
-- **Trigger**: Save state whenever current error is better than best seen so far
+- **Metric**: Loss (smoother signal for optimization progress)
+- **Trigger**: Save state whenever loss improves compared to the best seen so far
 - **Smart Logging**: Only log improvements > 5% to reduce noise
 - **Deep Copy**: Use `.detach().clone()` to avoid interfering with gradients
 - **Restoration**: Always restore best state at end, not final state
@@ -780,7 +784,8 @@ return OptimizationResults(
 converged = max_abs_error < convergence_threshold
 ```
 
-**Rationale**: Max absolute error ensures worst-case quality, not just average quality.
+**Rationale**: Max absolute error enforces a worst-case quality threshold, while loss
+drives best-state selection and early stopping for stable progress tracking.
 
 ### Stage 6: Result Finalization (`results.py`)
 
@@ -1171,7 +1176,7 @@ if device is None:
 
 **Mathematical Invariants**:
 - Normalized data in [0, 1]
-- Best state has lowest max absolute error
+- Best state has lowest loss
 - Gradient dilution formula correctness
 - Amplitude rescaling preserves relative magnitudes
 - Parameter packing/unpacking is lossless

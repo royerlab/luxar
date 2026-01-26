@@ -170,6 +170,11 @@ def create_server_app(path: str, serve_viewer: bool = False) -> FastAPI:
 
 app = typer.Typer(help="luxar – build and serve Zarr-backed 3-D scenes")
 
+# Add gsplat subcommands
+from .gsplat_commands import app_gsplat  # noqa: E402
+
+app.add_typer(app_gsplat, name="gsplat")
+
 
 # ────────────────────────────── serve ────────────────────────────────────────
 @app.command()

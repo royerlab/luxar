@@ -69,11 +69,12 @@ def save_gsplats(
     provenance_info: Optional[Dict[str, Any]] = None,
     description: Optional[str] = None,
     float16_allowed: bool = False,
+    compress: Optional[Literal["zip", "tar.gz"]] = None,
 ) -> None:
     """Save Gaussian splats to .gsplats.zarr format.
 
     Args:
-        path: Output path (should end with .gsplats.zarr)
+        path: Output path (should end with .gsplats.zarr or .gsplats.zarr.zip/.tar.gz if compress is used)
         centers: Splat centers, shape (N, d), float32
         amplitudes: Splat amplitudes, shape (N,), float32
         cholesky_factors: Packed Cholesky factors, shape (N, d*(d+1)//2), float32
@@ -88,11 +89,30 @@ def save_gsplats(
         provenance_info: Optional image provenance metadata
         description: Optional user description
         float16_allowed: Enable float16 encoding (default: False for compatibility)
+        compress: Optional compression format ("zip" or "tar.gz"). Creates compressed archive.
 
     Raises:
         ValueError: If arrays have incompatible shapes or invalid parameters
     """
+    import shutil
+    import tempfile
+
     path = Path(path)
+
+    # Determine zarr directory path (may be temporary if compressing)
+    if compress:
+        # Create zarr in temp, then compress
+        temp_dir = Path(tempfile.mkdtemp(prefix="luxar_gsplat_save_"))
+        # Extract base name without compression suffix
+        zarr_name = path.name
+        for suffix in [".zip", ".tar.gz", ".gz"]:
+            if zarr_name.endswith(suffix):
+                zarr_name = zarr_name[: -len(suffix)]
+        if not zarr_name.endswith(".gsplats.zarr"):
+            zarr_name = zarr_name + ".gsplats.zarr"
+        zarr_path = temp_dir / zarr_name
+    else:
+        zarr_path = path
 
     # Validation
     n_splats, ndim = centers.shape
@@ -146,7 +166,7 @@ def save_gsplats(
     chunk_bounds = compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size)
 
     # Create zarr store
-    store = DirectoryStore(str(path))
+    store = DirectoryStore(str(zarr_path))
     root = zarr.group(store=store, overwrite=True)
 
     # Write root attributes
@@ -296,3 +316,27 @@ def save_gsplats(
 
     # Consolidate metadata for fast loading
     zarr.consolidate_metadata(store)
+
+    # Compress if requested
+    if compress:
+        try:
+            import tarfile
+            import zipfile
+
+            if compress == "zip":
+                # Create zip archive
+                with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                    for file_path in zarr_path.rglob("*"):
+                        if file_path.is_file():
+                            arcname = file_path.relative_to(zarr_path.parent)
+                            zipf.write(file_path, arcname)
+
+            elif compress == "tar.gz":
+                # Create tar.gz archive
+                with tarfile.open(path, "w:gz") as tarf:
+                    tarf.add(zarr_path, arcname=zarr_path.name)
+
+        finally:
+            # Cleanup temp directory
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)

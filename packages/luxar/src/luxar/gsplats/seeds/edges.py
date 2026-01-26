@@ -2,9 +2,8 @@
 """
 Edge-based seeding for Gaussian splatting.
 
-This module provides edge-based seed generation using Sobel gradients and
-structure tensor analysis. Seeds are placed along edges with anisotropic
-Gaussian shapes oriented along the edge direction.
+This module provides edge-based seed generation using Sobel gradients.
+Seeds are placed along edges with isotropic Gaussian shapes (sigma=1.0).
 """
 
 from typing import Optional
@@ -178,7 +177,9 @@ def _empty_gsplatdata(ndim: int) -> GSplatData:
     )
 
 
-def _compute_nd_sobel_magnitude(V: np.ndarray, device: Optional[str] = None) -> np.ndarray:
+def _compute_nd_sobel_magnitude(
+    V: np.ndarray, device: Optional[str] = None
+) -> np.ndarray:
     """
     Compute nD Sobel gradient magnitude.
 
@@ -196,12 +197,13 @@ def _compute_nd_sobel_magnitude(V: np.ndarray, device: Optional[str] = None) -> 
     """
     # Dispatch to GPU if requested and appropriate
     if device is not None and device != "cpu":
+        import torch
+
         from luxar.gsplats.seeds.gpu_ops import (
             _compute_nd_sobel_magnitude_gpu,
             _get_device,
             should_use_gpu,
         )
-        import torch
 
         resolved_device = _get_device(device)
 
@@ -222,7 +224,9 @@ def _compute_nd_sobel_magnitude(V: np.ndarray, device: Optional[str] = None) -> 
     return np.sqrt(grad_sq_sum)
 
 
-def _sample_amplitudes(V: np.ndarray, coords: np.ndarray, device: Optional[str] = None) -> np.ndarray:
+def _sample_amplitudes(
+    V: np.ndarray, coords: np.ndarray, device: Optional[str] = None
+) -> np.ndarray:
     """
     Sample amplitudes from volume at given coordinates.
 
@@ -242,12 +246,13 @@ def _sample_amplitudes(V: np.ndarray, coords: np.ndarray, device: Optional[str] 
     """
     # Dispatch to GPU if requested and appropriate
     if device is not None and device != "cpu":
+        import torch
+
         from luxar.gsplats.seeds.gpu_ops import (
             _get_device,
             sample_amplitudes_gpu,
             should_use_gpu,
         )
-        import torch
 
         resolved_device = _get_device(device)
 
@@ -255,12 +260,17 @@ def _sample_amplitudes(V: np.ndarray, coords: np.ndarray, device: Optional[str] 
             # GPU path with fallback for unsupported dimensions
             try:
                 V_tensor = torch.tensor(V, device=resolved_device, dtype=torch.float32)
-                coords_tensor = torch.tensor(coords, device=resolved_device, dtype=torch.float32)
-                result_tensor = sample_amplitudes_gpu(V_tensor, coords_tensor, mode="bilinear")
+                coords_tensor = torch.tensor(
+                    coords, device=resolved_device, dtype=torch.float32
+                )
+                result_tensor = sample_amplitudes_gpu(
+                    V_tensor, coords_tensor, mode="bilinear"
+                )
                 return result_tensor.cpu().numpy().astype(np.float32)
             except NotImplementedError:
                 # GPU not supported for this dimensionality, fallback to CPU
                 import warnings
+
                 warnings.warn(
                     f"GPU interpolation not supported for {V.ndim}D volumes. Using CPU.",
                     RuntimeWarning,

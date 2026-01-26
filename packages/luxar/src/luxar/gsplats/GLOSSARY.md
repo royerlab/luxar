@@ -238,7 +238,7 @@ This glossary defines standard terminology used throughout the gsplats package s
 ---
 
 ### Best State Tracking
-**Definition**: Saving the parameter configuration that achieved the lowest max absolute error during optimization.
+**Definition**: Saving the parameter configuration that achieved the lowest loss during optimization.
 
 **Purpose**: Quality guarantee even with non-monotonic optimization (e.g., due to dynamic operations)
 

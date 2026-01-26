@@ -37,6 +37,7 @@ def basic_optimization_results():
         amps=amps,
         sharpness=sharpness,
         converged_early=True,
+        early_stopped=False,
         actual_iters=50,
         best_iteration=45,
         best_loss=0.001,
@@ -196,6 +197,7 @@ def test_stats_dictionary_structure(
         "final_loss",
         "final_max_abs_error",
         "converged",
+        "early_stopped",
         "n_splats",
         "sharpness_min",
         "sharpness_max",
@@ -220,8 +222,7 @@ def test_convergence_flag(
 ) -> None:
     """Test convergence flag in result.stats."""
     # Test converged case
-    basic_optimization_results.actual_iters = 50
-    basic_config.n_iters = 100
+    basic_optimization_results.converged_early = True
 
     result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
@@ -230,8 +231,7 @@ def test_convergence_flag(
     assert result.stats["converged"] is True
 
     # Test non-converged case
-    basic_optimization_results.actual_iters = 100
-    basic_config.n_iters = 100
+    basic_optimization_results.converged_early = False
 
     result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
@@ -308,6 +308,7 @@ def test_3d_data(basic_config, basic_preprocessed_data) -> None:
         amps=amps,
         sharpness=sharpness,
         converged_early=True,
+        early_stopped=False,
         actual_iters=30,
         best_iteration=25,
         best_loss=0.002,
@@ -513,6 +514,7 @@ class TestVoxelFootprintCorrection:
             amps=amps,
             sharpness=sharpness,
             converged_early=True,
+            early_stopped=False,
             actual_iters=30,
             best_iteration=25,
             best_loss=0.002,
@@ -568,6 +570,7 @@ class TestVoxelFootprintCorrection:
             amps=amps,
             sharpness=sharpness,
             converged_early=True,
+            early_stopped=False,
             actual_iters=30,
             best_iteration=25,
             best_loss=0.002,

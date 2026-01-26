@@ -125,7 +125,7 @@ CHANNELS = [
 ]
 
 # Fitting parameters
-N_ITERS = 2000  # Good balance of quality vs speed
+N_ITERS = 6000  # Good balance of quality vs speed
 N_SEEDS = 16000
 DEVICE = None  # Auto-detect (cuda/mps/cpu)
 
@@ -138,7 +138,7 @@ NO_SERVE = "--no-serve" in sys.argv
 SERVE_ONLY = "--serve-only" in sys.argv
 
 # Setup
-Arbol.max_depth = 5
+Arbol.max_depth = 10
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -172,7 +172,9 @@ def load_multichannel_data():
             aprint(f"Full data shape: {full_shape}")
 
             if len(full_shape) != 5:
-                raise ValueError(f"Expected 5D data (T×C×Z×Y×X), got shape {full_shape}")
+                raise ValueError(
+                    f"Expected 5D data (T×C×Z×Y×X), got shape {full_shape}"
+                )
 
             n_time, n_channels, z_size, y_size, x_size = full_shape
             aprint("Format: OME-ZARR 5D (T×C×Z×Y×X)")
@@ -187,7 +189,9 @@ def load_multichannel_data():
                 ch_name = ch_config["name"]
 
                 if ch_idx >= n_channels:
-                    aprint(f"Warning: Channel {ch_idx} not available (only {n_channels} channels)")
+                    aprint(
+                        f"Warning: Channel {ch_idx} not available (only {n_channels} channels)"
+                    )
                     continue
 
                 aprint(f"Loading T={TIME_POINT}, C={ch_idx} ({ch_name})...")
@@ -247,14 +251,8 @@ def fit_channel(volume, channel_name, cache_file):
     if cache_file.exists() and not NO_CACHE:
         aprint(f"Loading cached fit for {channel_name}")
         try:
-            cache = np.load(cache_file)
-            result = GSplatData(
-                centers=cache["centers"],
-                cholesky_factors=cache["cholesky_factors"],
-                amplitudes=cache["amplitudes"],
-                sharpnesses=cache["sharpnesses"],
-                stats={},
-            )
+            # Load from zarr.zip format
+            result = GSplatData.load(cache_file, include_stats=False)
             aprint(f"  Loaded {len(result.amplitudes)} cached splats")
             return result
         except Exception as e:
@@ -284,21 +282,23 @@ def fit_channel(volume, channel_name, cache_file):
         n_iters=N_ITERS,
         device=DEVICE,
         verbose=True,
-        napari_movie=False,
-        max_eccentricity=8.0,
+        napari_movie=False,  # Show convergence animation
+        movie_every=50,  # Record frame every 50 iterations (not every iteration!)
+        movie_max_frames=200,  # Limit to 200 frames max (~40 GB → ~0.4 GB)
+        enable_dynamic_ops=True,
+        dynamic_ops_verbose=False,  # Show when splats are relocated
     )
 
     n_splats = len(result.amplitudes)
     aprint(f"  Fitted {n_splats} splats")
 
-    # Cache result
+    # Cache result in compressed zarr format
     aprint(f"  Caching to {cache_file.name}")
-    np.savez(
+    result.save(
         cache_file,
-        centers=result.centers,
-        cholesky_factors=result.cholesky_factors,
-        amplitudes=result.amplitudes,
-        sharpnesses=result.sharpnesses,
+        encoding_mode=EncodingMode.MEMORY,
+        include_fitting_info=True,
+        compress="zip",
     )
 
     return result
@@ -311,13 +311,76 @@ def fit_all_channels(volumes):
 
         for i, (volume, ch_config) in enumerate(zip(volumes, CHANNELS)):
             ch_name = ch_config["name"]
-            cache_file = CACHE_DIR / f"gsplats_ch{i}_{ch_name.lower().replace(' ', '_')}.npz"
+            cache_file = CACHE_DIR / f"organoids_gsplats_ch{i}.gsplats.zarr.zip"
 
             with asection(f"Channel {i}: {ch_name}"):
                 gsplats = fit_channel(volume, ch_name, cache_file)
                 gsplats_list.append(gsplats)
 
         return gsplats_list
+
+
+# =============================================================================
+# Napari Viewing
+# =============================================================================
+
+
+def view_with_napari(volumes, gsplats_list, channel_configs):
+    """Open original volumes and gsplat renderings in napari for comparison."""
+    try:
+        import napari
+    except ImportError:
+        aprint("napari not installed, skipping napari view")
+        aprint("Install with: pip install napari[all]")
+        return
+
+    def _colormap_for_channel(idx, name):
+        if idx == 0:
+            return "magenta"
+        if idx == 1:
+            return "cyan"
+        return "gray"
+
+    with asection("Opening in napari"):
+        aprint("Preparing napari visualization...")
+
+        rendered_volumes = []
+        for idx, (volume, gsplats, ch_config) in enumerate(
+            zip(volumes, gsplats_list, channel_configs)
+        ):
+            ch_name = ch_config["name"]
+            aprint(f"Rendering gsplats for {ch_name}...")
+            rendered = gsplats.render_to_volume(
+                shape=(dim_len * 2 for dim_len in volume.shape)
+            )
+            rendered_volumes.append(rendered)
+
+        aprint("Launching napari...")
+        viewer = napari.Viewer(title="GSplats vs Original - Organoid Channels")
+
+        for idx, (volume, rendered, ch_config) in enumerate(
+            zip(volumes, rendered_volumes, channel_configs)
+        ):
+            ch_name = ch_config["name"]
+            cmap = _colormap_for_channel(idx, ch_name)
+
+            viewer.add_image(
+                volume,
+                name=f"Original {ch_name}",
+                colormap=cmap,
+                opacity=1.0,
+                blending="additive",
+            )
+            viewer.add_image(
+                rendered,
+                name=f"GSplats {ch_name}",
+                colormap=cmap,
+                opacity=1.0,
+                blending="additive",
+            )
+
+        aprint("Napari opened - toggle layers to compare channels")
+        napari.run()
 
 
 # =============================================================================
@@ -328,7 +391,9 @@ def fit_all_channels(volumes):
 def create_luxar_scene(merged_gsplats, output_path: Path | None = None):
     """Create Luxar scene with merged multi-channel gsplats."""
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel_from_idr.zarr"
+        output_path = (
+            get_demos_output_dir() / "gsplats_3d_organoid_multichannel_from_idr.zarr"
+        )
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -393,7 +458,9 @@ def main():
     aprint("")
 
     # Determine output path
-    output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel_from_idr.zarr"
+    output_path = (
+        get_demos_output_dir() / "gsplats_3d_organoid_multichannel_from_idr.zarr"
+    )
 
     # Serve only mode
     if SERVE_ONLY:
@@ -415,6 +482,9 @@ def main():
 
     # Fit each channel
     gsplats_list = fit_all_channels(volumes)
+
+    # Open in napari before merging/transforming for proper alignment
+    view_with_napari(volumes, gsplats_list, CHANNELS[: len(gsplats_list)])
 
     # Merge with channel colors
     with asection("Merging channels with colors"):

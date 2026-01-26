@@ -161,6 +161,7 @@ class OptimizationResults:
 
     # Optimization metadata
     converged_early: bool
+    early_stopped: bool
     actual_iters: int
     best_iteration: int
     best_loss: float

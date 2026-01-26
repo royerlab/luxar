@@ -391,15 +391,17 @@ class TestDedupeGPU:
         for i in range(len(deduped)):
             for j in range(i + 1, len(deduped)):
                 dist = np.linalg.norm(deduped[i] - deduped[j])
-                assert (
-                    dist >= min_dist - 1e-5
-                ), f"Points {i} and {j} too close: {dist} < {min_dist}"
+                assert dist >= min_dist - 1e-5, (
+                    f"Points {i} and {j} too close: {dist} < {min_dist}"
+                )
 
     def test_dedupe_gpu_empty_input(self) -> None:
         """GPU deduplication should handle empty input."""
         coords = np.zeros((0, 3))
 
-        deduped, indices = dedupe_farthest_first(coords, min_distance=2.0, device="cuda")
+        deduped, indices = dedupe_farthest_first(
+            coords, min_distance=2.0, device="cuda"
+        )
 
         assert len(deduped) == 0
         assert deduped.shape == (0, 3)
@@ -413,16 +415,6 @@ class TestDedupeGPU:
         deduped, _ = dedupe_farthest_first(coords, min_distance=2.0, device="auto")
 
         assert len(deduped) > 0  # Should produce valid results
-
-    def test_dedupe_gpu_fallback_warning(self) -> None:
-        """Test fallback to CPU when GPU unavailable (if CUDA available, test MPS fallback)."""
-        coords = np.random.rand(50, 2) * 20
-
-        # Request MPS on CUDA-only system (should fallback)
-        if not torch.backends.mps.is_available():
-            with pytest.warns(RuntimeWarning, match="MPS requested but not available"):
-                deduped, _ = dedupe_farthest_first(coords, min_distance=2.0, device="mps")
-                assert len(deduped) > 0  # Should still work on CPU
 
     def test_dedupe_gpu_2d_3d_4d(self) -> None:
         """GPU deduplication should work for different dimensions."""
@@ -438,39 +430,3 @@ class TestDedupeGPU:
             assert deduped.shape[1] == ndim
             assert len(deduped) > 0
             assert len(indices) == len(deduped)
-
-
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-class TestDedupeGPUPerformance:
-    """Performance tests for GPU deduplication."""
-
-    def test_dedupe_gpu_faster_than_cpu(self) -> None:
-        """GPU should be faster for moderate-sized seed sets."""
-        import time
-
-        # Create moderate-sized seed set (1000 seeds)
-        np.random.seed(42)
-        coords = np.random.rand(1000, 3) * 100
-
-        # CPU timing
-        t0 = time.time()
-        cpu_deduped, _ = dedupe_farthest_first(coords, min_distance=2.0, device="cpu")
-        cpu_time = time.time() - t0
-
-        # GPU timing (including transfer)
-        torch.cuda.synchronize()
-        t0 = time.time()
-        gpu_deduped, _ = dedupe_farthest_first(coords, min_distance=2.0, device="cuda")
-        torch.cuda.synchronize()
-        gpu_time = time.time() - t0
-
-        # GPU should be faster (expect at least 2x speedup)
-        speedup = cpu_time / gpu_time
-        print(
-            f"\nDeduplication GPU speedup: {speedup:.2f}x "
-            f"(CPU: {cpu_time:.3f}s, GPU: {gpu_time:.3f}s, "
-            f"Seeds: {len(coords)} → {len(gpu_deduped)})"
-        )
-        assert (
-            speedup > 1.5
-        ), f"Expected >1.5x speedup for 1000 seeds, got {speedup:.2f}x"

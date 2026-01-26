@@ -65,11 +65,12 @@ class GSplatData:
         include_fitting_info: bool = True,
         include_provenance: bool = False,
         description: Optional[str] = None,
+        compress: Optional[Literal["zip", "tar.gz"]] = None,
     ) -> None:
         """Save splats to .gsplats.zarr format.
 
         Args:
-            path: Output path (should end with .gsplats.zarr)
+            path: Output path (should end with .gsplats.zarr or .gsplats.zarr.zip/.tar.gz if compress is used)
             ordering: Spatial ordering method ("morton", "hilbert", or "none")
             encoding_mode: Encoding mode (AUTO, PRECISION, or MEMORY), defaults to AUTO
             positive_scalar_encoding: Encoding for amplitudes ("linear" or "log")
@@ -77,12 +78,15 @@ class GSplatData:
             include_fitting_info: Whether to include fitting statistics
             include_provenance: Whether to include provenance info from stats
             description: Optional user description
+            compress: Optional compression format ("zip" or "tar.gz"). Creates compressed archive.
 
         Example:
             >>> result = fit_gaussian_splats(image, n_iters=1000)
             >>> result.save("fitted.gsplats.zarr", encoding_mode=EncodingMode.MEMORY)
             >>> # With colors
             >>> result_with_colors.save("colored.gsplats.zarr", color_mode="sdr")
+            >>> # With compression for storage/git-lfs
+            >>> result.save("fitted.gsplats.zarr.zip", compress="zip")
         """
         from luxar.encoding import EncodingMode
         from luxar.gsplats.io.save_gsplats import save_gsplats
@@ -97,7 +101,7 @@ class GSplatData:
         provenance_info = None
 
         if include_fitting_info and self.stats:
-            # Extract common fitting fields
+            # Extract common fitting fields (including pruning stats)
             fitting_info = {
                 k: v
                 for k, v in self.stats.items()
@@ -109,6 +113,11 @@ class GSplatData:
                     "fitter_name",
                     "fitter_version",
                     "timestamp",
+                    "pruned",
+                    "pruning_method",
+                    "n_original",
+                    "n_removed",
+                    "amplitude_retention",
                 ]
             }
 
@@ -136,6 +145,7 @@ class GSplatData:
             fitting_config=fitting_config,
             provenance_info=provenance_info,
             description=description,
+            compress=compress,
         )
 
     def translate(self, offset: np.ndarray) -> "GSplatData":
@@ -209,6 +219,131 @@ class GSplatData:
             sharpnesses=self.sharpnesses,  # REFERENCE
             colors=self.colors,  # REFERENCE (None-safe)
             stats=self.stats.copy() if self.stats else {},
+        )
+
+    def prune(
+        self,
+        method: Literal[
+            "cumulative", "amplitude_percentile", "combined"
+        ] = "cumulative",
+        target_retention: float = 0.95,
+        amplitude_percentile: float = 5.0,
+        volume_percentile: float = 95.0,
+    ) -> "GSplatData":
+        """Prune low-impact splats to reduce file size while preserving quality.
+
+        Removes splats that contribute minimally to the reconstruction. This is
+        useful for reducing file size, memory usage, and rendering cost.
+
+        Args:
+            method: Pruning strategy:
+                - "cumulative": Keep top splats that contribute target_retention of total amplitude
+                - "amplitude_percentile": Remove bottom amplitude_percentile by amplitude
+                - "combined": Remove splats with (low amplitude OR large volume outliers)
+            target_retention: For "cumulative": fraction of amplitude to retain (0.0-1.0)
+            amplitude_percentile: For "amplitude_percentile"/"combined": bottom percentile to remove (0-100)
+            volume_percentile: For "combined": remove splats above this volume percentile (0-100)
+
+        Returns:
+            New GSplatData with pruned splats
+
+        Examples:
+            >>> # Recommended: Keep 95% of amplitude (removes ~80-90% of splats)
+            >>> pruned = data.prune(method="cumulative", target_retention=0.95)
+            >>>
+            >>> # More aggressive: Keep 90% of amplitude
+            >>> pruned = data.prune(method="cumulative", target_retention=0.90)
+            >>>
+            >>> # Remove bottom 10% by amplitude
+            >>> pruned = data.prune(method="amplitude_percentile", amplitude_percentile=10)
+            >>>
+            >>> # Remove artifacts (low amp OR large volume)
+            >>> pruned = data.prune(method="combined", amplitude_percentile=5, volume_percentile=95)
+
+        Notes:
+            The "cumulative" method is recommended as it provides a quality guarantee
+            (e.g., "retain 95% of signal") and automatically determines the optimal threshold.
+        """
+        N_original = len(self.amplitudes)
+
+        # Compute volumes for combined method
+        if method == "combined":
+            # Unpack diagonal elements from Cholesky factors
+            # For 3D: cholesky is (N, 6) packed as [L00, L10, L11, L20, L21, L22]
+            ndim = self.centers.shape[1]
+            chol_size = self.cholesky_factors.shape[1]
+            expected_size = ndim * (ndim + 1) // 2
+
+            if chol_size != expected_size:
+                raise ValueError(
+                    f"Cholesky factors have unexpected shape: {self.cholesky_factors.shape}"
+                )
+
+            # Extract diagonal elements for volume computation
+            # For nD: positions are at [0, 2, 5, 9, 14, ...] = cumsum([1,2,3,4,5,...])
+            diag_indices = np.cumsum(np.arange(1, ndim + 1)) - 1
+            diag_elements = self.cholesky_factors[:, diag_indices]
+
+            # Volume ∝ det(Σ)^(1/2) = |det(L)| = |product of diagonal elements|
+            det_L = np.prod(diag_elements, axis=1)
+            det_Sigma = det_L**2
+            volumes = np.abs(det_Sigma) ** (1 / ndim)  # Take nth root for nD
+
+        # Select pruning strategy
+        if method == "cumulative":
+            # Sort by amplitude (descending) and find cutoff
+            sorted_indices = np.argsort(self.amplitudes)[::-1]
+            sorted_amps = self.amplitudes[sorted_indices]
+            cumsum_amps = np.cumsum(sorted_amps)
+            cumsum_norm = cumsum_amps / cumsum_amps[-1]
+
+            # Find where we reach target retention
+            n_keep = np.searchsorted(cumsum_norm, target_retention) + 1
+            n_keep = min(n_keep, N_original)  # Safety check
+
+            # Create mask for splats to keep
+            keep_indices = sorted_indices[:n_keep]
+            mask = np.zeros(N_original, dtype=bool)
+            mask[keep_indices] = True
+
+        elif method == "amplitude_percentile":
+            # Remove bottom percentile
+            threshold = np.percentile(self.amplitudes, amplitude_percentile)
+            mask = self.amplitudes >= threshold
+
+        elif method == "combined":
+            # Remove if (low amplitude OR large volume)
+            amp_threshold = np.percentile(self.amplitudes, amplitude_percentile)
+            vol_threshold = np.percentile(volumes, volume_percentile)
+            mask = (self.amplitudes >= amp_threshold) & (volumes <= vol_threshold)
+
+        else:
+            raise ValueError(f"Unknown pruning method: {method}")
+
+        # Apply mask
+        pruned_centers = self.centers[mask]
+        pruned_cholesky = self.cholesky_factors[mask]
+        pruned_amplitudes = self.amplitudes[mask]
+        pruned_sharpnesses = self.sharpnesses[mask]
+        pruned_colors = self.colors[mask] if self.colors is not None else None
+
+        # Update stats
+        pruned_stats = self.stats.copy() if self.stats else {}
+        pruned_stats["pruned"] = True
+        pruned_stats["pruning_method"] = method
+        pruned_stats["n_original"] = N_original
+        pruned_stats["n_removed"] = N_original - len(pruned_amplitudes)
+        pruned_stats["amplitude_retention"] = float(
+            np.sum(pruned_amplitudes) / np.sum(self.amplitudes)
+        )
+
+        return GSplatData(
+            centers=pruned_centers,
+            amplitudes=pruned_amplitudes,
+            cholesky_factors=pruned_cholesky,
+            sharpnesses=pruned_sharpnesses,
+            colors=pruned_colors,
+            stats=pruned_stats,
         )
 
     def render_to_volume(
@@ -353,9 +488,7 @@ class GSplatData:
                 )
 
         # Concatenate all arrays
-        all_centers = np.concatenate(
-            [g.centers for g in gsplats_per_channel], axis=0
-        )
+        all_centers = np.concatenate([g.centers for g in gsplats_per_channel], axis=0)
         all_amplitudes = np.concatenate(
             [g.amplitudes for g in gsplats_per_channel], axis=0
         )
@@ -385,9 +518,7 @@ class GSplatData:
         }
 
         # Sum time if available
-        total_time = sum(
-            g.stats.get("time_seconds", 0) for g in gsplats_per_channel
-        )
+        total_time = sum(g.stats.get("time_seconds", 0) for g in gsplats_per_channel)
         if total_time > 0:
             merged_stats["time_seconds"] = total_time
 
