@@ -37,10 +37,10 @@ class DynamicOpsConfig:
 
         # Step 2: Weak Splat Identification
         self.relocation_percentile: float = (
-            5.0  # Percentage of least important splats eligible for relocation
+            1.0  # Percentage of least important splats eligible for relocation
         )
-        self.max_relocations_per_step: int = (
-            10  # Maximum splats to relocate per step (prevents destabilization)
+        self.max_relocations_per_step: int | None = (
+            32  # Maximum splats to relocate per step (None = no limit, relocate all matches)
         )
 
         # Step 3: Relocation Parameters
@@ -50,6 +50,23 @@ class DynamicOpsConfig:
         self.min_contribution_threshold: float = (
             0.01  # Minimum influence to consider a peak "covered" by existing splat
         )
+        self.enable_coverage_check: bool = (
+            False  # If True, skip peaks already covered by non-weak splats
+        )
+        # Default False: Relocate to ALL high-residual peaks regardless of coverage
+        # Rationale: If a peak has high residual, existing coverage is clearly insufficient
+        # The issue: "has influence" ≠ "error is resolved"
+        #
+        # Set to True for conservative behavior (original): only relocate to uncovered peaks
+        # This may leave persistent high-error regions unaddressed
+
+        # Cooldown mechanism (prevents immediate re-relocation)
+        self.relocation_cooldown_steps: int = (
+            3  # Number of dynamic ops steps to wait before allowing re-relocation
+        )
+        # After a splat is relocated, it cannot be relocated again for N dynamic ops steps.
+        # This ensures diverse splat coverage instead of repeatedly relocating the same splats.
+        # Increase for more conservative relocation, decrease for more aggressive adaptation.
 
         # Safety parameters
         self.min_splats_to_keep: int = (

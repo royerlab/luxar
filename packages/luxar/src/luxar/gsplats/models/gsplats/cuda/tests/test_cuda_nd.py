@@ -23,6 +23,30 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 
 
+@pytest.fixture(autouse=True)
+def cleanup_cuda_state():
+    """Clean up CUDA state before and after each test to prevent state pollution."""
+    # Clean up before test
+    if CUDA_AVAILABLE:
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        # Reset random seed for CUDA
+        torch.cuda.manual_seed_all(42)
+        # Clear any lingering CUDA errors
+        torch.cuda.get_device_properties(0)
+
+    yield
+
+    # Clean up after test
+    if CUDA_AVAILABLE:
+        # Delete any CUDA tensors that might still be referenced
+        import gc
+
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
+
 @pytest.mark.skipif(not CUDA_BACKEND_AVAILABLE, reason="CUDA backend not compiled")
 class Test4DDiagnostics:
     """Detailed diagnostic tests for investigating 4D CUDA vs PyTorch discrepancies."""

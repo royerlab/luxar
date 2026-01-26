@@ -9,6 +9,7 @@ All tests gracefully skip when CUDA/MPS is unavailable.
 import numpy as np
 import pytest
 import torch
+from scipy import ndimage as ndi
 
 from luxar.gsplats.seeds.gpu_ops import (
     _compute_nd_sobel_magnitude_gpu,
@@ -21,7 +22,6 @@ from luxar.gsplats.seeds.gpu_ops import (
     soft_blur_nd_gpu,
 )
 from luxar.gsplats.seeds.utils import local_maxima, soft_blur_nd
-from scipy import ndimage as ndi
 
 
 class TestDeviceHelpers:
@@ -311,9 +311,9 @@ class TestSampleAmplitudesGPU:
         y = np.linspace(0, 1, 50)
         z = np.linspace(0, 1, 50)
         xx, yy, zz = np.meshgrid(x, y, z, indexing="ij")
-        img_np = (np.sin(2 * np.pi * xx) * np.cos(2 * np.pi * yy) * np.sin(2 * np.pi * zz)).astype(
-            np.float32
-        )
+        img_np = (
+            np.sin(2 * np.pi * xx) * np.cos(2 * np.pi * yy) * np.sin(2 * np.pi * zz)
+        ).astype(np.float32)
 
         # Create sample coordinates
         coords_np = np.array(
@@ -364,7 +364,7 @@ class TestGPUPerformance:
 
         # CPU timing
         t0 = time.time()
-        cpu_result = np.sqrt(
+        _cpu_result = np.sqrt(
             sum(ndi.sobel(img_np, axis=i, mode="nearest") ** 2 for i in range(3))
         )
         cpu_time = time.time() - t0
@@ -373,13 +373,15 @@ class TestGPUPerformance:
         img_gpu = torch.tensor(img_np, device="cuda")
         torch.cuda.synchronize()
         t0 = time.time()
-        gpu_result = _compute_nd_sobel_magnitude_gpu(img_gpu)
+        _gpu_result = _compute_nd_sobel_magnitude_gpu(img_gpu)
         torch.cuda.synchronize()
         gpu_time = time.time() - t0
 
         # GPU should be faster (at least 2x speedup expected)
         speedup = cpu_time / gpu_time
-        print(f"\nSobel GPU speedup: {speedup:.2f}x (CPU: {cpu_time:.3f}s, GPU: {gpu_time:.3f}s)")
+        print(
+            f"\nSobel GPU speedup: {speedup:.2f}x (CPU: {cpu_time:.3f}s, GPU: {gpu_time:.3f}s)"
+        )
         assert speedup > 2.0, f"Expected >2x speedup, got {speedup:.2f}x"
 
     def test_peak_detection_gpu_faster_than_cpu(self):
@@ -391,18 +393,20 @@ class TestGPUPerformance:
 
         # CPU timing
         t0 = time.time()
-        cpu_peaks = local_maxima(img_np, radius=2, thresh=0.9, top_k=None)
+        _cpu_peaks = local_maxima(img_np, radius=2, thresh=0.9, top_k=None)
         cpu_time = time.time() - t0
 
         # GPU timing
         img_gpu = torch.tensor(img_np, device="cuda")
         torch.cuda.synchronize()
         t0 = time.time()
-        gpu_peaks = local_maxima_gpu(img_gpu, radius=2, thresh=0.9, top_k=None)
+        _gpu_peaks = local_maxima_gpu(img_gpu, radius=2, thresh=0.9, top_k=None)
         torch.cuda.synchronize()
         gpu_time = time.time() - t0
 
         # GPU should be faster
         speedup = cpu_time / gpu_time
-        print(f"\nPeak detection GPU speedup: {speedup:.2f}x (CPU: {cpu_time:.3f}s, GPU: {gpu_time:.3f}s)")
+        print(
+            f"\nPeak detection GPU speedup: {speedup:.2f}x (CPU: {cpu_time:.3f}s, GPU: {gpu_time:.3f}s)"
+        )
         assert speedup > 2.0, f"Expected >2x speedup, got {speedup:.2f}x"

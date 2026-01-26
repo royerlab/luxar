@@ -15,6 +15,9 @@ if TYPE_CHECKING:
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter
 
 
+DEFAULT_SIGMA_MIN_DIAG = float(np.sqrt(1.0 / 12.0))
+
+
 def prepare_fit_config(
     fitter: "GaussianSplatFitter",  # GaussianSplatFitter instance
     V: np.ndarray,
@@ -28,7 +31,7 @@ def prepare_fit_config(
     l1_amp: Optional[float] = None,
     l1_diag: Optional[float] = None,
     l1_sharpness: Optional[float] = None,  # L1 regularization on sharpness offsets
-    sigma_min_diag: Optional[Sequence[float]] = None,
+    sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
     sigma_max_diag: Optional[Sequence[float]] = None,
     amp_max: Optional[float] = None,  # Maximum amplitude (prevents explosion)
     max_eccentricity: Optional[float] = None,
@@ -43,7 +46,7 @@ def prepare_fit_config(
     scheduler_type: str = "plateau",
     patience: int = 10,
     lr_reduction_factor: float = 0.5,
-    early_stop_patience: Optional[int] = None,
+    early_stop_patience: Optional[int] = 200,
     dynamic_ops_verbose: bool = False,
     seed_method: str = "auto",
     voxel_footprint_correction: bool | float = False,
@@ -164,7 +167,11 @@ def prepare_fit_config(
     # Validate sigma constraints
     d = V.ndim
     if sigma_min_diag is None:
-        sigma_min_diag = [0.01] * d
+        sigma_min_diag = [DEFAULT_SIGMA_MIN_DIAG] * d
+    elif isinstance(sigma_min_diag, (int, float)):
+        if sigma_min_diag <= 0:
+            raise ValueError("sigma_min_diag must be positive if specified")
+        sigma_min_diag = [float(sigma_min_diag)] * d
     else:
         if len(sigma_min_diag) != d:
             raise ValueError(f"sigma_min_diag must have length {d}")

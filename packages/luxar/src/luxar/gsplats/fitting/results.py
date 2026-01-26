@@ -115,7 +115,8 @@ def finalize_results(
         "best_iteration": optimization_results.best_iteration,  # Iteration that achieved best quality
         "final_loss": optimization_results.best_loss,
         "final_max_abs_error": optimization_results.best_max_abs_error,
-        "converged": optimization_results.actual_iters < config.n_iters,
+        "converged": optimization_results.converged_early,
+        "early_stopped": optimization_results.early_stopped,
         "n_splats": len(amps_np),  # Final splat count from best state
         **sharpness_stats,  # Include sharpness statistics
     }

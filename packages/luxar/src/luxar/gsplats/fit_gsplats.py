@@ -17,6 +17,7 @@ from luxar.gsplats.fitting import (
     run_optimization_loop,
 )
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
+from luxar.gsplats.fitting.validation import DEFAULT_SIGMA_MIN_DIAG
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.utils.trils import tril_size
 
@@ -88,7 +89,7 @@ class GaussianSplatFitter:
         l1_amp: Optional[float] = None,
         l1_diag: Optional[float] = None,
         l1_sharpness: Optional[float] = None,
-        sigma_min_diag: Optional[Sequence[float]] = None,
+        sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
         sigma_max_diag: Optional[Sequence[float]] = None,
         amp_max: Optional[float] = None,  # Max amplitude (default auto: 1.0)
         max_eccentricity: Optional[float] = None,
@@ -104,7 +105,7 @@ class GaussianSplatFitter:
         scheduler_type: str = "plateau",
         patience: int = 25,
         lr_reduction_factor: float = 0.95,
-        early_stop_patience: Optional[int] = None,
+        early_stop_patience: Optional[int] = 200,
         dynamic_ops_verbose: bool = False,
         voxel_footprint_correction: bool | float = False,
         **seed_kwargs,
@@ -219,7 +220,7 @@ def fit_gaussian_splats(
     l1_amp: Optional[float] = None,
     l1_diag: Optional[float] = None,
     l1_sharpness: Optional[float] = None,
-    sigma_min_diag: Optional[Sequence[float]] = None,
+    sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
     sigma_max_diag: Optional[Sequence[float]] = None,
     amp_max: Optional[float] = None,
     max_eccentricity: Optional[float] = 10.0,
@@ -234,8 +235,8 @@ def fit_gaussian_splats(
     # Per-splat optimizer parameters
     scheduler_type: str = "plateau",
     patience: int = 25,
-    lr_reduction_factor: float = 0.95,
-    early_stop_patience: Optional[int] = None,
+    lr_reduction_factor: float = 0.98,
+    early_stop_patience: Optional[int] = 300,
     # Dynamic operations parameters
     enable_dynamic_ops: bool = True,
     dynamic_config: Optional[DynamicOpsConfig] = None,
@@ -316,9 +317,11 @@ def fit_gaussian_splats(
         Encourages splats to remain at standard Gaussian (s' = 0, s = 2) unless
         beneficial to deviate. If None, automatically set to 1% of learning rate.
         Higher values promote standard Gaussians, lower values allow more sharpness variation.
-    sigma_min_diag : Sequence[float], optional
-        Minimum diagonal values for Cholesky factor L along each axis.
-        Defaults to [0.5]*d to prevent degenerate splats.
+    sigma_min_diag : Sequence[float] | float, optional
+        Minimum diagonal values for Cholesky factor L along each axis. A single
+        float is broadcast across all dimensions.
+        Defaults to sqrt(1/12) ≈ 0.289 (1-voxel box footprint) to allow
+        single-voxel splats while preventing degeneracy.
     sigma_max_diag : Sequence[float], optional
         Maximum diagonal values for Cholesky factor L along each axis.
     amp_max : float or None, default=None (auto: 1.0)
@@ -384,10 +387,10 @@ def fit_gaussian_splats(
     lr_reduction_factor : float, default=0.95
         LR multiplier on plateau (new_lr = lr × lr_reduction_factor).
         Examples: 0.5=halve LR, 0.1=reduce to 10%, 0.95=gentle reduction.
-    early_stop_patience : Optional[int], default=None
-        Early stopping: stop if no better state found for N iterations.
+    early_stop_patience : Optional[int], default=200
+        Early stopping: stop if no loss improvement for N iterations.
         None disables early stopping (runs until convergence or iteration limit).
-        Example: 100 stops if no improvement for 100 consecutive iterations.
+        Example: 200 stops if no improvement for 200 consecutive iterations.
     enable_dynamic_ops : bool, default=True
         Enable dynamic operations (seeding and pruning).
     dynamic_config : DynamicOpsConfig, optional
@@ -429,7 +432,7 @@ def fit_gaussian_splats(
         - sharpnesses: np.ndarray, shape (N,) - Per-splat sharpness values (s=2.0 is standard Gaussian)
         - stats: Dict[str, Any] - Optimization statistics (time, iterations, convergence, etc.)
 
-        All arrays represent the BEST state encountered during optimization (lowest max_abs_error).
+        All arrays represent the BEST state encountered during optimization (lowest loss).
         Note: Gaussian splatting cannot represent uniform DC components - only variations.
 
     Notes

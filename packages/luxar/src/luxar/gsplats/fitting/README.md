@@ -71,7 +71,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 │ ┌─────────────────────────────────────────────────────────────────┐ │
 │ │ optimization.py: run_optimization_loop()                        │ │
 │ │ • Runs main training loop (forward/backward/step)               │ │
-│ │ • Tracks best state based on max absolute error                 │ │
+│ │ • Tracks best state based on loss                               │ │
 │ │ • Checks convergence criteria                                   │ │
 │ │ • Applies dynamic operations (seeding/pruning)                  │ │
 │ │ • Records movie frames (optional)                               │ │
@@ -310,10 +310,10 @@ effective_lr = base_lr * gradient_dilution_factor
 ### Best State Tracking
 **Problem:** Optimization may not be monotonic, especially with dynamic operations.
 
-**Solution:** Track best state based on max absolute error:
+**Solution:** Track best state based on loss:
 ```python
-if current_max_abs_error < best_max_abs_error:
-    best_max_abs_error = current_max_abs_error
+if current_loss < best_loss:
+    best_loss = current_loss
     best_state = save_current_state()
 
 # At end, restore best state

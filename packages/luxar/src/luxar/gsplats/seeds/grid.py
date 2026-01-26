@@ -10,7 +10,6 @@ with isotropic Gaussian shapes.
 from typing import Optional, Sequence, Union
 
 import numpy as np
-from scipy import ndimage as ndi
 
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds.utils import (
@@ -219,7 +218,9 @@ def seed_from_grid(
     # (over-prediction penalty causes divergence with overlapping splats)
     from luxar.gsplats.seeds.edges import _sample_amplitudes
 
-    amplitudes = _sample_amplitudes(V, grid_coords, device=device) * SEED_AMPLITUDE_SCALE
+    amplitudes = (
+        _sample_amplitudes(V, grid_coords, device=device) * SEED_AMPLITUDE_SCALE
+    )
 
     # Apply intensity threshold
     if exclude_below is not None:
