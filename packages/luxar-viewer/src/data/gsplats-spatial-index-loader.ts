@@ -724,7 +724,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     ranges: SplatRange[],
     output: Float32Array | Uint8Array | Uint16Array
   ): Promise<void> {
-    const { get, slice } = await import('zarrita');
     let destOffset = 0;
     const shape = array.shape;
 
