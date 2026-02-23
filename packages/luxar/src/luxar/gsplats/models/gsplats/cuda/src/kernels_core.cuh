@@ -722,66 +722,6 @@ __global__ void rasterize_backward_kernel(
     }
     __syncthreads();
 
-    // =========================================================================
-    // PRECOMPUTE pixel coordinates ONCE (reused across all batches and splats)
-    // =========================================================================
-    // Each thread handles ceil(tile_pixels / blockDim.x) pixels.
-    // For common cases (3D: 512px/512threads, 2D: 256px/256threads) = 1 pixel/thread.
-    // We precompute coordinates for the first pixel (covers the common case).
-    // For multi-pixel threads, additional pixels recompute coords in the inner loop.
-    constexpr int MAX_PIXELS_PER_THREAD = 4;  // Covers all DIM cases
-    int n_my_pixels = 0;
-    float precomp_px[MAX_PIXELS_PER_THREAD][DIM];
-    float precomp_grad[MAX_PIXELS_PER_THREAD];
-    int precomp_local_idx[MAX_PIXELS_PER_THREAD];
-
-    for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels && n_my_pixels < MAX_PIXELS_PER_THREAD;
-         local_px_idx += blockDim.x) {
-        precomp_local_idx[n_my_pixels] = local_px_idx;
-
-        int voxel_coords[DIM];
-        if constexpr (DIM == 3) {
-            if (use_fast_path_3d) {
-                voxel_coords[2] = tile_origin[2] + (local_px_idx & 7);
-                voxel_coords[1] = tile_origin[1] + ((local_px_idx >> 3) & 7);
-                voxel_coords[0] = tile_origin[0] + (local_px_idx >> 6);
-            } else {
-                int remaining = local_px_idx;
-                #pragma unroll
-                for (int d = DIM - 1; d >= 0; d--) {
-                    voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
-                    remaining /= tile_extent[d];
-                }
-            }
-        } else if constexpr (DIM == 2) {
-            if (use_fast_path_2d) {
-                voxel_coords[1] = tile_origin[1] + (local_px_idx & 15);
-                voxel_coords[0] = tile_origin[0] + (local_px_idx >> 4);
-            } else {
-                int remaining = local_px_idx;
-                #pragma unroll
-                for (int d = DIM - 1; d >= 0; d--) {
-                    voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
-                    remaining /= tile_extent[d];
-                }
-            }
-        } else {
-            int remaining = local_px_idx;
-            #pragma unroll
-            for (int d = DIM - 1; d >= 0; d--) {
-                voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
-                remaining /= tile_extent[d];
-            }
-        }
-
-        #pragma unroll
-        for (int d = 0; d < DIM; d++) {
-            precomp_px[n_my_pixels][d] = (float)voxel_coords[d];
-        }
-        precomp_grad[n_my_pixels] = s_grad_output[local_px_idx];
-        n_my_pixels++;
-    }
-
     // Process splats in batches
     for (int batch_start = 0; batch_start < n_splats_in_tile; batch_start += BATCH_SIZE) {
         int batch_size = min(BATCH_SIZE, n_splats_in_tile - batch_start);
@@ -877,11 +817,47 @@ __global__ void rasterize_backward_kernel(
             float s = s_sharpness[si];
             float truncate_sq = s_truncate_sq[si];
 
-            // Each thread processes its precomputed pixels (no redundant coord recomputation)
-            for (int pi = 0; pi < n_my_pixels; pi++) {
-                // OPTIMIZATION: Use precomputed pixel coordinates and gradients
-                // This eliminates BATCH_SIZE-1 redundant coordinate computations per thread
-                float dL_dI = precomp_grad[pi];
+            // Each thread processes pixels
+            for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels; local_px_idx += blockDim.x) {
+                // Compute pixel coordinates (fast path for 2D/3D)
+                float px[DIM];
+
+                if constexpr (DIM == 3) {
+                    if (use_fast_path_3d) {
+                        px[2] = (float)(tile_origin[2] + (local_px_idx & 7));
+                        px[1] = (float)(tile_origin[1] + ((local_px_idx >> 3) & 7));
+                        px[0] = (float)(tile_origin[0] + (local_px_idx >> 6));
+                    } else {
+                        int remaining = local_px_idx;
+                        #pragma unroll
+                        for (int d = DIM - 1; d >= 0; d--) {
+                            px[d] = (float)(tile_origin[d] + (remaining % tile_extent[d]));
+                            remaining /= tile_extent[d];
+                        }
+                    }
+                } else if constexpr (DIM == 2) {
+                    if (use_fast_path_2d) {
+                        px[1] = (float)(tile_origin[1] + (local_px_idx & 15));
+                        px[0] = (float)(tile_origin[0] + (local_px_idx >> 4));
+                    } else {
+                        int remaining = local_px_idx;
+                        #pragma unroll
+                        for (int d = DIM - 1; d >= 0; d--) {
+                            px[d] = (float)(tile_origin[d] + (remaining % tile_extent[d]));
+                            remaining /= tile_extent[d];
+                        }
+                    }
+                } else {
+                    int remaining = local_px_idx;
+                    #pragma unroll
+                    for (int d = DIM - 1; d >= 0; d--) {
+                        px[d] = (float)(tile_origin[d] + (remaining % tile_extent[d]));
+                        remaining /= tile_extent[d];
+                    }
+                }
+
+                // Get upstream gradient from cached shared memory
+                float dL_dI = s_grad_output[local_px_idx];
 
                 if (dL_dI == 0.0f) continue;
 
@@ -889,7 +865,7 @@ __global__ void rasterize_backward_kernel(
                 float d_vec[DIM];
                 #pragma unroll
                 for (int d = 0; d < DIM; d++) {
-                    d_vec[d] = precomp_px[pi][d] - s_centers[si * CENTER_STRIDE + d];
+                    d_vec[d] = px[d] - s_centers[si * CENTER_STRIDE + d];
                 }
 
                 // Compute Mahalanobis distance
@@ -904,8 +880,6 @@ __global__ void rasterize_backward_kernel(
                 if (intensity < intensity_floor) continue;
 
                 // Use optimized gradient computation (template specialized for 2D/3D)
-                // This provides 25-35% speedup for 2D/3D by using explicit formulas
-                // instead of loop-based computation
                 compute_pixel_gradients<DIM>(
                     dL_dI, intensity, dist_sq, amp, s, d_vec,
                     &s_conic[si * CONIC_SIZE],
