@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-// NOTE: This test file mocks 7 internal modules (lines 11-17). This tests
+// NOTE: This test file mocks 7 internal modules (below). This tests
 // initialization order and mock wiring, but not real component behavior.
 // See CLAUDE.md "Over-Mocking in Tests" for guidance on improving this.
 // TODO: Add integration tests with fewer mocks as modules become more testable.
