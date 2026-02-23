@@ -133,7 +133,7 @@
 
 .luxar-help-overlay__category-content {
   margin-bottom: var(--luxar-spacing-2);
-  border-left: 2px solid rgba(76, 175, 80, 0.2);
+  border-left: 2px solid color-mix(in srgb, var(--luxar-success) 20%, transparent);
   margin-left: var(--luxar-spacing-4);
   padding-left: var(--luxar-spacing-6);
 }
