@@ -180,17 +180,23 @@ describe('AnimationController', () => {
       expect(mockDPRManager.recordFrame).toHaveBeenCalledWith(expect.any(Number));
     });
 
-    it('should handle null adaptive DPR manager', () => {
+    it('should stop calling recordFrame after setting manager to null', () => {
       const mockDPRManager = {
         recordFrame: vi.fn(),
       };
 
+      // Set manager and verify it's called during animation
       controller.setAdaptiveDPRManager(mockDPRManager as any);
-      controller.setAdaptiveDPRManager(null);
+      controller.startAnimation();
+      expect(mockDPRManager.recordFrame).toHaveBeenCalled();
 
+      // Clear the call history, set to null, then restart animation
+      mockDPRManager.recordFrame.mockClear();
+      controller.stopAnimation();
+      controller.setAdaptiveDPRManager(null);
       controller.startAnimation();
 
-      // Should not crash and should not call recordFrame after null
+      // Should not call recordFrame after null
       expect(mockDPRManager.recordFrame).not.toHaveBeenCalled();
     });
   });

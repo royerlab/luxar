@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-from .conftest import compute_L_row_norms
+from .conftest import Tolerances, compute_L_row_norms
 
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
@@ -128,8 +128,8 @@ class Test4DDiagnostics:
             0, 1
         ].item()
 
-        assert correlation > 0.99, (
-            f"Correlation {correlation:.4f} should be > 0.99 for single centered splat"
+        assert correlation > Tolerances.COMPARISON_MIN_CORRELATION, (
+            f"Correlation {correlation:.4f} too low for single centered splat"
         )
 
     def test_conic_computation_4d(self):
@@ -825,10 +825,11 @@ class TestGlobalSplatHandling:
             print(f"  Max relative diff: {max_rel_diff:.4f}")
             print(f"  Mean relative diff: {mean_rel_diff:.6f}")
 
+            # Tighter than COMPARISON_MAX_REL_DIFF for mixed splat test
             assert max_rel_diff < 0.1, (
                 f"Mixed splat max relative diff {max_rel_diff:.4f} too large"
             )
-            assert mean_rel_diff < 0.01, (
+            assert mean_rel_diff < Tolerances.COMPARISON_MEAN_REL_DIFF, (
                 f"Mixed splat mean relative diff {mean_rel_diff:.6f} too large"
             )
 
@@ -1060,10 +1061,10 @@ class Test5DAnd6DDimensions:
                 f"\n5D forward: max_rel_diff={max_rel_diff:.4f}, mean={mean_rel_diff:.6f}"
             )
 
-            assert max_rel_diff < 0.15, (
+            assert max_rel_diff < Tolerances.COMPARISON_MAX_REL_DIFF, (
                 f"5D max relative diff {max_rel_diff:.4f} too large"
             )
-            assert mean_rel_diff < 0.02, (
+            assert mean_rel_diff < Tolerances.COMPARISON_MEAN_REL_DIFF * 2, (
                 f"5D mean relative diff {mean_rel_diff:.6f} too large"
             )
 
