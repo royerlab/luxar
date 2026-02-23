@@ -6,7 +6,7 @@
  * config is imported and deep-cloned for mutation in each test.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { config } from '../../../config';
 import type { AppConfig } from '../../../config/types';
 import { validateConfig, logValidationResults, validateAndLog } from '../../../config/validation';
@@ -795,6 +795,10 @@ describe('logValidationResults', () => {
     };
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('should log success when validation passes', () => {
     const result: ValidationResult = {
       valid: true,
@@ -861,6 +865,10 @@ describe('validateAndLog', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('should return true for valid config', () => {
