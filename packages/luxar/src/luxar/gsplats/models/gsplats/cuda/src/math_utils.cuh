@@ -252,14 +252,14 @@ __device__ __forceinline__ float effective_truncation(
     float amplitude,
     float intensity_floor
 ) {
-    // Sharpness-adjusted base truncation
-    float t_base = powf(truncate * truncate, 1.0f / sharpness);
+    // Sharpness-adjusted base truncation (fast intrinsic — only used for AABB, not inner loop)
+    float t_base = __powf(truncate * truncate, 1.0f / sharpness);
 
     // Amplitude-based truncation (where intensity drops below floor)
     float ratio = amplitude / fmaxf(intensity_floor, 1e-10f);
     float t_amp = 1e6f;  // Large default if amplitude check not needed
     if (ratio > 1.0f) {
-        t_amp = powf(2.0f * logf(ratio), 1.0f / sharpness);
+        t_amp = __powf(2.0f * __logf(ratio), 1.0f / sharpness);
     }
 
     // Use minimum of both truncations
