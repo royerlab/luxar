@@ -47,42 +47,31 @@ __device__ __forceinline__ void compute_pixel_gradients(
     // Gradient w.r.t. dist_sq
     float grad_dist = grad_intensity_wrt_dist_sq(intensity, dist_sq, s);
 
+    // Pre-compute the common factor (CSE: used DIM + CONIC_SIZE times below)
+    float outer = dL_dI * grad_dist;
+
     // Chain rule: dL/dcenter and dL/dconic via dD^2/dcenter and dD^2/dconic
     constexpr int CONIC_SIZE = conic_size<DIM>();
 
     // Compute dD^2/dd = 2 * Sigma^-1 @ d
+    // Uses tri_index for O(1) packed index lookup (replaces O(DIM) row_start loop)
     float dD2_dd[DIM];
     #pragma unroll
     for (int i = 0; i < DIM; i++) {
         float sum = 0.0f;
-        int row_start = 0;
-        for (int k = 0; k < i; k++) {
-            row_start += DIM - k;
-        }
-        // Diagonal contribution
-        sum += conic[row_start] * d_vec[i];
-        // Off-diagonal contributions (symmetric)
-        int idx = row_start + 1;
-        for (int j = i + 1; j < DIM; j++) {
-            sum += conic[idx] * d_vec[j];
-            idx++;
-        }
-        // Contributions from lower triangle (by symmetry)
-        for (int k = 0; k < i; k++) {
-            int k_row_start = 0;
-            for (int m = 0; m < k; m++) {
-                k_row_start += DIM - m;
-            }
-            int elem_idx = k_row_start + (i - k);
-            sum += conic[elem_idx] * d_vec[k];
+        #pragma unroll
+        for (int j = 0; j < DIM; j++) {
+            // Access symmetric conic: for i<=j use tri_index(i,j), else tri_index(j,i)
+            int ci = (i <= j) ? tri_index<DIM>(i, j) : tri_index<DIM>(j, i);
+            sum += conic[ci] * d_vec[j];
         }
         dD2_dd[i] = 2.0f * sum;
     }
 
-    // dL/dcenter = dL_dI * grad_dist * dD^2/dd * (-1)
+    // dL/dcenter = outer * dD^2/dd * (-1)
     #pragma unroll
     for (int i = 0; i < DIM; i++) {
-        local_d_centers[i] += dL_dI * grad_dist * dD2_dd[i] * (-1.0f);
+        local_d_centers[i] -= outer * dD2_dd[i];
     }
 
     // dD^2/dconic - gradient w.r.t. packed upper triangle
@@ -90,15 +79,13 @@ __device__ __forceinline__ void compute_pixel_gradients(
     #pragma unroll
     for (int i = 0; i < DIM; i++) {
         // Diagonal
-        float grad = d_vec[i] * d_vec[i];
-        local_d_conic[conic_idx] += dL_dI * grad_dist * grad;
+        local_d_conic[conic_idx] += outer * d_vec[i] * d_vec[i];
         conic_idx++;
 
         // Off-diagonals
         #pragma unroll
         for (int j = i + 1; j < DIM; j++) {
-            grad = 2.0f * d_vec[i] * d_vec[j];
-            local_d_conic[conic_idx] += dL_dI * grad_dist * grad;
+            local_d_conic[conic_idx] += outer * 2.0f * d_vec[i] * d_vec[j];
             conic_idx++;
         }
     }
@@ -151,32 +138,6 @@ __device__ __forceinline__ void compute_pixel_gradients<2>(
 // PREPROCESS KERNEL
 // =============================================================================
 
-/**
- * Compute L_row_norms from conic (Sigma^-1) matrix.
- *
- * Since Sigma = L @ L^T and Sigma^-1 = L^{-T} @ L^{-1}, we approximate
- * L_row_norms from the diagonal of Sigma: L_row_norm_i ~ sqrt(1/Sigma^-1_ii)
- */
-template <int DIM>
-__device__ __forceinline__ void estimate_L_row_norms_from_conic(
-    const float* __restrict__ conic,
-    float* __restrict__ L_row_norms
-) {
-    // The diagonal elements of Sigma^-1 are at indices: 0, DIM, DIM+(DIM-1), ...
-    // For 3D: indices 0 (c_00), 3 (c_11), 5 (c_22)
-    int idx = 0;
-    #pragma unroll
-    for (int i = 0; i < DIM; i++) {
-        // Diagonal element c_ii is at position sum(DIM-j for j=0..i-1) + 0
-        float c_ii = conic[idx];
-        // sigma_i^2 ~ 1/c_ii (approximation, exact only for diagonal covariance)
-        // L_row_norm ~ sqrt(sigma_i^2) = 1/sqrt(c_ii)
-        L_row_norms[i] = rsqrtf(fmaxf(c_ii, 1e-6f));
-        // Move to next diagonal: skip i elements (the off-diagonals)
-        idx += DIM - i;
-    }
-}
-
 // Default batch size for splat loading (can be overridden via template parameter)
 // Supported batch sizes: 32, 128, 256
 // Larger batches = fewer global memory round-trips, better for memory-bound workloads
@@ -188,9 +149,9 @@ constexpr float GLOBAL_SPLAT_THRESHOLD = 0.1f;
 template <int DIM, typename InputDType = float>
 __global__ void preprocess_kernel(
     const InputDType* __restrict__ centers,
-    const InputDType* __restrict__ conic,
     const InputDType* __restrict__ amps,
     const InputDType* __restrict__ sharpness,
+    const InputDType* __restrict__ L_row_norms,
     int N,
     const int* __restrict__ shape,
     const int* __restrict__ tile_dims,
@@ -199,6 +160,8 @@ __global__ void preprocess_kernel(
     float intensity_floor,
     int* __restrict__ tile_counts,
     bool* __restrict__ global_flags,
+    int* __restrict__ aabb_lo_cache,
+    int* __restrict__ aabb_hi_cache,
     int64_t num_tiles
 ) {
     int splat_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -211,19 +174,16 @@ __global__ void preprocess_kernel(
         mu[d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
     }
 
-    constexpr int CONIC_SIZE = conic_size<DIM>();
-    float conic_local[CONIC_SIZE];
-    #pragma unroll
-    for (int i = 0; i < CONIC_SIZE; i++) {
-        conic_local[i] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + i);
-    }
-
     float amp = DTypeTraits<InputDType>::load(amps, splat_idx);
     float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
 
-    // Estimate L_row_norms from conic
-    float L_row_norms[DIM];
-    estimate_L_row_norms_from_conic<DIM>(conic_local, L_row_norms);
+    // Load exact L_row_norms (precomputed in Python from Cholesky factors)
+    // L_row_norms[i] = sqrt(sum_j L[i,j]^2) = sqrt(Sigma[i,i])
+    float L_row_norms_local[DIM];
+    #pragma unroll
+    for (int d = 0; d < DIM; d++) {
+        L_row_norms_local[d] = DTypeTraits<InputDType>::load(L_row_norms, splat_idx * DIM + d);
+    }
 
     // Load shape and tile_dims to local memory
     int shape_local[DIM];
@@ -236,15 +196,21 @@ __global__ void preprocess_kernel(
         tile_size_arr[d] = tile_size;
     }
 
-    // Compute AABB
+    // Compute AABB using exact L_row_norms
     AABB<DIM> aabb = compute_splat_aabb<DIM>(
-        mu, L_row_norms, s, amp, truncate, intensity_floor,
+        mu, L_row_norms_local, s, amp, truncate, intensity_floor,
         tile_size_arr, tile_dims_local, shape_local
     );
 
     // Check if AABB is empty (splat outside volume or culled)
     if (aabb.is_empty()) {
         global_flags[splat_idx] = false;
+        // Write sentinel AABB (lo > hi signals empty to bin_kernel)
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            aabb_lo_cache[splat_idx * DIM + d] = 1;
+            aabb_hi_cache[splat_idx * DIM + d] = 0;
+        }
         return;
     }
 
@@ -261,6 +227,13 @@ __global__ void preprocess_kernel(
     constexpr int MIN_GLOBAL_TILES = 1024;
     bool is_global = (n_tiles > (int)global_threshold) && (n_tiles > MIN_GLOBAL_TILES);
     global_flags[splat_idx] = is_global;
+
+    // Cache AABB for bin_kernel (avoids recomputation)
+    #pragma unroll
+    for (int d = 0; d < DIM; d++) {
+        aabb_lo_cache[splat_idx * DIM + d] = aabb.lo[d];
+        aabb_hi_cache[splat_idx * DIM + d] = aabb.hi[d];
+    }
 
     if (is_global) {
         // Global splats are handled separately by rasterize_global_forward_kernel.
@@ -299,18 +272,13 @@ __global__ void preprocess_kernel(
 // BINNING KERNEL
 // =============================================================================
 
-template <int DIM, typename InputDType = float>
+template <int DIM>
 __global__ void bin_kernel(
-    const InputDType* __restrict__ centers,
-    const InputDType* __restrict__ conic,
-    const InputDType* __restrict__ amps,
-    const InputDType* __restrict__ sharpness,
+    const int* __restrict__ aabb_lo_cache,
+    const int* __restrict__ aabb_hi_cache,
+    const bool* __restrict__ global_flags,
     int N,
-    const int* __restrict__ shape,
     const int* __restrict__ tile_dims,
-    int tile_size,
-    float truncate,
-    float intensity_floor,
     const int64_t* __restrict__ tile_offsets,
     int* __restrict__ tile_write_heads,
     int* __restrict__ tile_content,
@@ -319,52 +287,27 @@ __global__ void bin_kernel(
     int splat_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (splat_idx >= N) return;
 
-    // Load splat data (same as preprocess_kernel)
-    float mu[DIM];
+    // Skip global splats (already flagged by preprocess_kernel)
+    if (global_flags[splat_idx]) return;
+
+    // Read cached AABB (computed by preprocess_kernel)
+    AABB<DIM> aabb;
     #pragma unroll
     for (int d = 0; d < DIM; d++) {
-        mu[d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
+        aabb.lo[d] = aabb_lo_cache[splat_idx * DIM + d];
+        aabb.hi[d] = aabb_hi_cache[splat_idx * DIM + d];
     }
-
-    constexpr int CONIC_SIZE = conic_size<DIM>();
-    float conic_local[CONIC_SIZE];
-    #pragma unroll
-    for (int i = 0; i < CONIC_SIZE; i++) {
-        conic_local[i] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + i);
-    }
-
-    float amp = DTypeTraits<InputDType>::load(amps, splat_idx);
-    float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
-
-    // Estimate L_row_norms from conic
-    float L_row_norms[DIM];
-    estimate_L_row_norms_from_conic<DIM>(conic_local, L_row_norms);
-
-    // Load shape and tile_dims to local memory
-    int shape_local[DIM];
-    int tile_dims_local[DIM];
-    int tile_size_arr[DIM];
-    #pragma unroll
-    for (int d = 0; d < DIM; d++) {
-        shape_local[d] = shape[d];
-        tile_dims_local[d] = tile_dims[d];
-        tile_size_arr[d] = tile_size;
-    }
-
-    // Compute AABB (same as preprocess_kernel)
-    AABB<DIM> aabb = compute_splat_aabb<DIM>(
-        mu, L_row_norms, s, amp, truncate, intensity_floor,
-        tile_size_arr, tile_dims_local, shape_local
-    );
 
     if (aabb.is_empty()) return;
 
     int n_tiles = aabb.num_tiles();
 
-    // Skip global splats (must match logic in preprocess_kernel)
-    float global_threshold = GLOBAL_SPLAT_THRESHOLD * (float)num_tiles;
-    constexpr int MIN_GLOBAL_TILES = 1024;
-    if ((n_tiles > (int)global_threshold) && (n_tiles > MIN_GLOBAL_TILES)) return;
+    // Load tile_dims to local memory
+    int tile_dims_local[DIM];
+    #pragma unroll
+    for (int d = 0; d < DIM; d++) {
+        tile_dims_local[d] = tile_dims[d];
+    }
 
     // Iterate and write splat ID to each tile
     int tile_coords[DIM];
@@ -412,8 +355,7 @@ __global__ void rasterize_forward_kernel(
     const int64_t* __restrict__ tile_offsets,
     const int* __restrict__ tile_counts,
     const int* __restrict__ tile_content,
-    float* __restrict__ output,
-    int64_t num_pixels
+    float* __restrict__ output
 ) {
     // Each block handles one tile
     // OPTIMIZATION: For 2D/3D, use dim3 grid and extract tile coords directly from blockIdx
@@ -660,8 +602,7 @@ __global__ void rasterize_backward_kernel(
     float* __restrict__ d_centers,
     float* __restrict__ d_conic,
     float* __restrict__ d_amps,
-    float* __restrict__ d_sharpness,
-    int64_t num_pixels
+    float* __restrict__ d_sharpness
 ) {
     // Each block handles one tile
     // OPTIMIZATION: For 2D/3D, use dim3 grid and extract tile coords directly from blockIdx
@@ -781,6 +722,66 @@ __global__ void rasterize_backward_kernel(
     }
     __syncthreads();
 
+    // =========================================================================
+    // PRECOMPUTE pixel coordinates ONCE (reused across all batches and splats)
+    // =========================================================================
+    // Each thread handles ceil(tile_pixels / blockDim.x) pixels.
+    // For common cases (3D: 512px/512threads, 2D: 256px/256threads) = 1 pixel/thread.
+    // We precompute coordinates for the first pixel (covers the common case).
+    // For multi-pixel threads, additional pixels recompute coords in the inner loop.
+    constexpr int MAX_PIXELS_PER_THREAD = 4;  // Covers all DIM cases
+    int n_my_pixels = 0;
+    float precomp_px[MAX_PIXELS_PER_THREAD][DIM];
+    float precomp_grad[MAX_PIXELS_PER_THREAD];
+    int precomp_local_idx[MAX_PIXELS_PER_THREAD];
+
+    for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels && n_my_pixels < MAX_PIXELS_PER_THREAD;
+         local_px_idx += blockDim.x) {
+        precomp_local_idx[n_my_pixels] = local_px_idx;
+
+        int voxel_coords[DIM];
+        if constexpr (DIM == 3) {
+            if (use_fast_path_3d) {
+                voxel_coords[2] = tile_origin[2] + (local_px_idx & 7);
+                voxel_coords[1] = tile_origin[1] + ((local_px_idx >> 3) & 7);
+                voxel_coords[0] = tile_origin[0] + (local_px_idx >> 6);
+            } else {
+                int remaining = local_px_idx;
+                #pragma unroll
+                for (int d = DIM - 1; d >= 0; d--) {
+                    voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
+                    remaining /= tile_extent[d];
+                }
+            }
+        } else if constexpr (DIM == 2) {
+            if (use_fast_path_2d) {
+                voxel_coords[1] = tile_origin[1] + (local_px_idx & 15);
+                voxel_coords[0] = tile_origin[0] + (local_px_idx >> 4);
+            } else {
+                int remaining = local_px_idx;
+                #pragma unroll
+                for (int d = DIM - 1; d >= 0; d--) {
+                    voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
+                    remaining /= tile_extent[d];
+                }
+            }
+        } else {
+            int remaining = local_px_idx;
+            #pragma unroll
+            for (int d = DIM - 1; d >= 0; d--) {
+                voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
+                remaining /= tile_extent[d];
+            }
+        }
+
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            precomp_px[n_my_pixels][d] = (float)voxel_coords[d];
+        }
+        precomp_grad[n_my_pixels] = s_grad_output[local_px_idx];
+        n_my_pixels++;
+    }
+
     // Process splats in batches
     for (int batch_start = 0; batch_start < n_splats_in_tile; batch_start += BATCH_SIZE) {
         int batch_size = min(BATCH_SIZE, n_splats_in_tile - batch_start);
@@ -856,8 +857,6 @@ __global__ void rasterize_backward_kernel(
 
         // Process each splat in batch
         for (int si = 0; si < batch_size; si++) {
-            // Note: splat_idx is accessed via s_splat_ids[i] in the write-back loop
-            // No need to load it here since we accumulate to shared memory by batch index
 
             // Per-thread gradient accumulators
             float local_d_centers[DIM];
@@ -878,59 +877,11 @@ __global__ void rasterize_backward_kernel(
             float s = s_sharpness[si];
             float truncate_sq = s_truncate_sq[si];
 
-            // Each thread processes pixels
-            for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels; local_px_idx += blockDim.x) {
-                // Compute pixel coordinates (fast path for 2D/3D)
-                float px[DIM];
-                int voxel_coords[DIM];
-
-                if constexpr (DIM == 3) {
-                    if (use_fast_path_3d) {
-                        int local_z = local_px_idx & 7;
-                        int local_y = (local_px_idx >> 3) & 7;
-                        int local_x = local_px_idx >> 6;
-                        voxel_coords[0] = tile_origin[0] + local_x;
-                        voxel_coords[1] = tile_origin[1] + local_y;
-                        voxel_coords[2] = tile_origin[2] + local_z;
-                    } else {
-                        int remaining = local_px_idx;
-                        #pragma unroll
-                        for (int d = DIM - 1; d >= 0; d--) {
-                            voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
-                            remaining /= tile_extent[d];
-                        }
-                    }
-                } else if constexpr (DIM == 2) {
-                    if (use_fast_path_2d) {
-                        int local_y = local_px_idx & 15;
-                        int local_x = local_px_idx >> 4;
-                        voxel_coords[0] = tile_origin[0] + local_x;
-                        voxel_coords[1] = tile_origin[1] + local_y;
-                    } else {
-                        int remaining = local_px_idx;
-                        #pragma unroll
-                        for (int d = DIM - 1; d >= 0; d--) {
-                            voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
-                            remaining /= tile_extent[d];
-                        }
-                    }
-                } else {
-                    int remaining = local_px_idx;
-                    #pragma unroll
-                    for (int d = DIM - 1; d >= 0; d--) {
-                        voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
-                        remaining /= tile_extent[d];
-                    }
-                }
-
-                #pragma unroll
-                for (int d = 0; d < DIM; d++) {
-                    px[d] = (float)voxel_coords[d];
-                }
-
-                // OPTIMIZATION 3.3: Get upstream gradient from cached shared memory
-                // This eliminates redundant global loads (was: one load per pixel per splat)
-                float dL_dI = s_grad_output[local_px_idx];
+            // Each thread processes its precomputed pixels (no redundant coord recomputation)
+            for (int pi = 0; pi < n_my_pixels; pi++) {
+                // OPTIMIZATION: Use precomputed pixel coordinates and gradients
+                // This eliminates BATCH_SIZE-1 redundant coordinate computations per thread
+                float dL_dI = precomp_grad[pi];
 
                 if (dL_dI == 0.0f) continue;
 
@@ -938,7 +889,7 @@ __global__ void rasterize_backward_kernel(
                 float d_vec[DIM];
                 #pragma unroll
                 for (int d = 0; d < DIM; d++) {
-                    d_vec[d] = px[d] - s_centers[si * CENTER_STRIDE + d];
+                    d_vec[d] = precomp_px[pi][d] - s_centers[si * CENTER_STRIDE + d];
                 }
 
                 // Compute Mahalanobis distance

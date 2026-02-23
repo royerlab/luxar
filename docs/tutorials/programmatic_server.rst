@@ -26,10 +26,10 @@ Creating a Simple Server
 
    from luxar.cli.main import create_server_app
    import uvicorn
-   
+
    # Create FastAPI app
    app = create_server_app("/path/to/data.zarr", serve_viewer=False)
-   
+
    # Run with uvicorn
    uvicorn.run(app, host="127.0.0.1", port=8000)
 
@@ -43,10 +43,10 @@ The function is designed for integration testing without mocking internal server
 Example::
 
    from luxar.cli.main import create_server_app
-   
+
    # Create test server
    app = create_server_app(str(sample_scene_path), serve_viewer=False)
-   
+
    # Use in tests with uvicorn
 
 See ``packages/luxar/src/luxar/cli/tests/test_cli_integration.py`` for complete examples.

@@ -41,22 +41,38 @@
 // Preprocess and bin kernels don't use BATCH_SIZE (they run once per splat).
 // Forward and backward kernels are instantiated for batch sizes 32, 128, 256.
 
-// Preprocess and binning kernels (no BATCH_SIZE dependency)
-#define INSTANTIATE_PREPROCESS_BIN(D) \
+// Preprocess kernel (no BATCH_SIZE dependency)
+// Signature: (centers, amps, sharpness, L_row_norms, N, shape, tile_dims, tile_size,
+//             truncate, intensity_floor, tile_counts, global_flags, aabb_lo, aabb_hi, num_tiles, stream)
+#define INSTANTIATE_PREPROCESS(D) \
     template void launch_preprocess<D, float>(const float*, const float*, const float*, const float*, \
-        int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t); \
-    template void launch_bin<D, float>(const float*, const float*, const float*, const float*, \
-        int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
+        int, const int*, const int*, int, float, float, int*, bool*, int*, int*, int64_t, cudaStream_t);
 
-INSTANTIATE_PREPROCESS_BIN(2)
-INSTANTIATE_PREPROCESS_BIN(3)
-INSTANTIATE_PREPROCESS_BIN(4)
-INSTANTIATE_PREPROCESS_BIN(5)
-INSTANTIATE_PREPROCESS_BIN(6)
-INSTANTIATE_PREPROCESS_BIN(7)
-INSTANTIATE_PREPROCESS_BIN(8)
+INSTANTIATE_PREPROCESS(2)
+INSTANTIATE_PREPROCESS(3)
+INSTANTIATE_PREPROCESS(4)
+INSTANTIATE_PREPROCESS(5)
+INSTANTIATE_PREPROCESS(6)
+INSTANTIATE_PREPROCESS(7)
+INSTANTIATE_PREPROCESS(8)
 
-#undef INSTANTIATE_PREPROCESS_BIN
+#undef INSTANTIATE_PREPROCESS
+
+// Binning kernel (no BATCH_SIZE or InputDType dependency - uses cached AABBs)
+// Signature: (aabb_lo, aabb_hi, global_flags, N, tile_dims, tile_offsets, tile_write_heads, tile_content, num_tiles, stream)
+#define INSTANTIATE_BIN(D) \
+    template void launch_bin<D>(const int*, const int*, const bool*, int, const int*, \
+        const int64_t*, int*, int*, int64_t, cudaStream_t);
+
+INSTANTIATE_BIN(2)
+INSTANTIATE_BIN(3)
+INSTANTIATE_BIN(4)
+INSTANTIATE_BIN(5)
+INSTANTIATE_BIN(6)
+INSTANTIATE_BIN(7)
+INSTANTIATE_BIN(8)
+
+#undef INSTANTIATE_BIN
 
 // Forward and backward kernels with BATCH_SIZE template parameter
 // Instantiate only valid batch size / dimension combinations that fit in shared memory.
@@ -136,22 +152,25 @@ template void launch_rasterize_global_backward<8, float>(const float*, const flo
 // - Computation uses FP32 in shared memory and registers
 // - Outputs and gradients remain FP32
 
-// Preprocess and binning kernels (no BATCH_SIZE dependency)
-#define INSTANTIATE_PREPROCESS_BIN_FP16(D) \
+// Preprocess kernel FP16 (no BATCH_SIZE dependency)
+// Signature: (centers, amps, sharpness, L_row_norms, N, shape, tile_dims, tile_size,
+//             truncate, intensity_floor, tile_counts, global_flags, aabb_lo, aabb_hi, num_tiles, stream)
+#define INSTANTIATE_PREPROCESS_FP16(D) \
     template void launch_preprocess<D, __half>(const __half*, const __half*, const __half*, const __half*, \
-        int, const int*, const int*, int, float, float, int*, bool*, int64_t, cudaStream_t); \
-    template void launch_bin<D, __half>(const __half*, const __half*, const __half*, const __half*, \
-        int, const int*, const int*, int, float, float, const int64_t*, int*, int*, int64_t, cudaStream_t);
+        int, const int*, const int*, int, float, float, int*, bool*, int*, int*, int64_t, cudaStream_t);
 
-INSTANTIATE_PREPROCESS_BIN_FP16(2)
-INSTANTIATE_PREPROCESS_BIN_FP16(3)
-INSTANTIATE_PREPROCESS_BIN_FP16(4)
-INSTANTIATE_PREPROCESS_BIN_FP16(5)
-INSTANTIATE_PREPROCESS_BIN_FP16(6)
-INSTANTIATE_PREPROCESS_BIN_FP16(7)
-INSTANTIATE_PREPROCESS_BIN_FP16(8)
+INSTANTIATE_PREPROCESS_FP16(2)
+INSTANTIATE_PREPROCESS_FP16(3)
+INSTANTIATE_PREPROCESS_FP16(4)
+INSTANTIATE_PREPROCESS_FP16(5)
+INSTANTIATE_PREPROCESS_FP16(6)
+INSTANTIATE_PREPROCESS_FP16(7)
+INSTANTIATE_PREPROCESS_FP16(8)
 
-#undef INSTANTIATE_PREPROCESS_BIN_FP16
+#undef INSTANTIATE_PREPROCESS_FP16
+
+// Note: launch_bin<D> is NOT templated on InputDType (uses cached int AABBs),
+// so it only needs the FP32 instantiation above. No FP16 instantiation needed.
 
 // Forward and backward kernels with BATCH_SIZE template parameter
 // Same shared memory constraints as FP32 (FP16 inputs are converted to FP32 in shared memory)
@@ -275,6 +294,7 @@ void dispatch_forward(
     const torch::Tensor& conic,
     const torch::Tensor& amps,
     const torch::Tensor& sharpness,
+    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
@@ -300,6 +320,10 @@ void dispatch_forward(
     state.global_splat_flags = torch::zeros({N}, torch::TensorOptions().dtype(torch::kBool).device(device));
     state.num_tiles = num_tiles;
 
+    // Allocate AABB cache (written by preprocess, read by bin)
+    state.aabb_lo = torch::empty({N, dim}, torch::TensorOptions().dtype(torch::kInt32).device(device));
+    state.aabb_hi = torch::empty({N, dim}, torch::TensorOptions().dtype(torch::kInt32).device(device));
+
     // Copy shape and tile_dims to device
     // OPTIMIZATION: Store in BinningState for potential reuse in backward pass
     state.shape_tensor = torch::tensor(std::vector<int>(shape.begin(), shape.end()),
@@ -316,15 +340,17 @@ void dispatch_forward(
     #define LAUNCH_PREPROCESS(D) \
         launch_preprocess<D, float>( \
             centers.data_ptr<float>(), \
-            conic.data_ptr<float>(), \
             amps.data_ptr<float>(), \
             sharpness.data_ptr<float>(), \
+            L_row_norms.data_ptr<float>(), \
             N, \
             shape_tensor.data_ptr<int>(), \
             tile_dims_tensor.data_ptr<int>(), \
             tile_size, truncate, intensity_floor, \
             state.tile_counts.data_ptr<int>(), \
             state.global_splat_flags.data_ptr<bool>(), \
+            state.aabb_lo.data_ptr<int>(), \
+            state.aabb_hi.data_ptr<int>(), \
             num_tiles, stream)
 
     switch (dim) {
@@ -386,15 +412,12 @@ void dispatch_forward(
 
     // Launch binning kernel
     #define LAUNCH_BIN(D) \
-        launch_bin<D, float>( \
-            centers.data_ptr<float>(), \
-            conic.data_ptr<float>(), \
-            amps.data_ptr<float>(), \
-            sharpness.data_ptr<float>(), \
+        launch_bin<D>( \
+            state.aabb_lo.data_ptr<int>(), \
+            state.aabb_hi.data_ptr<int>(), \
+            state.global_splat_flags.data_ptr<bool>(), \
             N, \
-            shape_tensor.data_ptr<int>(), \
             tile_dims_tensor.data_ptr<int>(), \
-            tile_size, truncate, intensity_floor, \
             state.tile_offsets.data_ptr<int64_t>(), \
             state.tile_write_heads.data_ptr<int>(), \
             state.tile_content.data_ptr<int>(), \
@@ -711,6 +734,7 @@ forward(
     const torch::Tensor& conic,
     const torch::Tensor& amps,
     const torch::Tensor& sharpness,
+    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
@@ -719,11 +743,19 @@ forward(
 ) {
     validate_inputs(centers, conic, amps, sharpness, shape);
 
+    // Validate L_row_norms
+    int dim = (int)shape.size();
+    int N = (int)centers.size(0);
+    TORCH_CHECK(L_row_norms.is_cuda(), "L_row_norms must be on CUDA device");
+    TORCH_CHECK(L_row_norms.is_contiguous(), "L_row_norms must be contiguous");
+    TORCH_CHECK(L_row_norms.size(0) == N && L_row_norms.size(1) == dim,
+        "L_row_norms must have shape (", N, ", ", dim, ")");
+    TORCH_CHECK(L_row_norms.dtype() == torch::kFloat32, "L_row_norms must be float32");
+
     // Validate batch_size
     TORCH_CHECK(batch_size == 32 || batch_size == 128 || batch_size == 256,
         "batch_size must be 32, 128, or 256, got ", batch_size);
 
-    int dim = (int)shape.size();
     auto device = centers.device();
 
     // Compute output size
@@ -737,7 +769,7 @@ forward(
 
     // Run forward pass
     BinningState state;
-    dispatch_forward(dim, centers, conic, amps, sharpness, shape,
+    dispatch_forward(dim, centers, conic, amps, sharpness, L_row_norms, shape,
                     truncate, intensity_floor, tile_size, batch_size, output, state);
 
     // Return output + binning state + global splat IDs
@@ -862,6 +894,7 @@ void dispatch_forward_fp16(
     const torch::Tensor& conic_fp16,
     const torch::Tensor& amps_fp16,
     const torch::Tensor& sharpness_fp16,
+    const torch::Tensor& L_row_norms_fp16,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
@@ -887,6 +920,10 @@ void dispatch_forward_fp16(
     state.global_splat_flags = torch::zeros({N}, torch::TensorOptions().dtype(torch::kBool).device(device));
     state.num_tiles = num_tiles;
 
+    // Allocate AABB cache (written by preprocess, read by bin)
+    state.aabb_lo = torch::empty({N, dim}, torch::TensorOptions().dtype(torch::kInt32).device(device));
+    state.aabb_hi = torch::empty({N, dim}, torch::TensorOptions().dtype(torch::kInt32).device(device));
+
     // Copy shape and tile_dims to device
     state.shape_tensor = torch::tensor(std::vector<int>(shape.begin(), shape.end()),
         torch::TensorOptions().dtype(torch::kInt32).device(device));
@@ -902,17 +939,20 @@ void dispatch_forward_fp16(
     const __half* conic_ptr = reinterpret_cast<const __half*>(conic_fp16.data_ptr<at::Half>());
     const __half* amps_ptr = reinterpret_cast<const __half*>(amps_fp16.data_ptr<at::Half>());
     const __half* sharpness_ptr = reinterpret_cast<const __half*>(sharpness_fp16.data_ptr<at::Half>());
+    const __half* L_row_norms_ptr = reinterpret_cast<const __half*>(L_row_norms_fp16.data_ptr<at::Half>());
 
     // Launch preprocess kernel with FP16 inputs
     #define LAUNCH_PREPROCESS_FP16(D) \
         launch_preprocess<D, __half>( \
-            centers_ptr, conic_ptr, amps_ptr, sharpness_ptr, \
+            centers_ptr, amps_ptr, sharpness_ptr, L_row_norms_ptr, \
             N, \
             shape_tensor.data_ptr<int>(), \
             tile_dims_tensor.data_ptr<int>(), \
             tile_size, truncate, intensity_floor, \
             state.tile_counts.data_ptr<int>(), \
             state.global_splat_flags.data_ptr<bool>(), \
+            state.aabb_lo.data_ptr<int>(), \
+            state.aabb_hi.data_ptr<int>(), \
             num_tiles, stream)
 
     switch (dim) {
@@ -972,12 +1012,12 @@ void dispatch_forward_fp16(
 
     // Launch binning kernel with FP16 inputs
     #define LAUNCH_BIN_FP16(D) \
-        launch_bin<D, __half>( \
-            centers_ptr, conic_ptr, amps_ptr, sharpness_ptr, \
+        launch_bin<D>( \
+            state.aabb_lo.data_ptr<int>(), \
+            state.aabb_hi.data_ptr<int>(), \
+            state.global_splat_flags.data_ptr<bool>(), \
             N, \
-            shape_tensor.data_ptr<int>(), \
             tile_dims_tensor.data_ptr<int>(), \
-            tile_size, truncate, intensity_floor, \
             state.tile_offsets.data_ptr<int64_t>(), \
             state.tile_write_heads.data_ptr<int>(), \
             state.tile_content.data_ptr<int>(), \
@@ -1276,6 +1316,7 @@ forward_fp16(
     const torch::Tensor& conic,
     const torch::Tensor& amps,
     const torch::Tensor& sharpness,
+    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
@@ -1284,11 +1325,19 @@ forward_fp16(
 ) {
     validate_inputs_fp16(centers, conic, amps, sharpness, shape);
 
+    // Validate L_row_norms
+    int dim = (int)shape.size();
+    int N = (int)centers.size(0);
+    TORCH_CHECK(L_row_norms.is_cuda(), "L_row_norms must be on CUDA device");
+    TORCH_CHECK(L_row_norms.is_contiguous(), "L_row_norms must be contiguous");
+    TORCH_CHECK(L_row_norms.size(0) == N && L_row_norms.size(1) == dim,
+        "L_row_norms must have shape (", N, ", ", dim, ")");
+    TORCH_CHECK(L_row_norms.dtype() == torch::kFloat16, "L_row_norms must be float16 for FP16 mode");
+
     // Validate batch_size
     TORCH_CHECK(batch_size == 32 || batch_size == 128 || batch_size == 256,
         "batch_size must be 32, 128, or 256, got ", batch_size);
 
-    int dim = (int)shape.size();
     auto device = centers.device();
 
     // Compute output size
@@ -1302,7 +1351,7 @@ forward_fp16(
 
     // Run forward pass with FP16 inputs
     BinningState state;
-    dispatch_forward_fp16(dim, centers, conic, amps, sharpness, shape,
+    dispatch_forward_fp16(dim, centers, conic, amps, sharpness, L_row_norms, shape,
                          truncate, intensity_floor, tile_size, batch_size, output, state);
 
     // Return output + binning state + global splat IDs

@@ -9,6 +9,12 @@
  * - Batch attenuation computation for visibility filtering
  */
 
+/** Maximum supported dimensions (must match Rust MAX_SUPPORTED_DIMS). */
+const MAX_SUPPORTED_DIMS = 16;
+
+/** Epsilon for degenerate diagonal detection during Cholesky factorization. */
+const CHOLESKY_EPSILON = 1e-10;
+
 /**
  * Compute the packed index for a Cholesky element L[row, col].
  * Packed lower-triangular: [L00, L10, L11, L20, L21, L22, ...]
@@ -16,6 +22,75 @@
  */
 function packedIndex(row: number, col: number): number {
   return (row * (row + 1)) / 2 + col;
+}
+
+/**
+ * Compute the correct marginal Cholesky factor for a subset of dimensions.
+ *
+ * For Σ = L·Lᵀ, the marginal covariance for dimensions S is:
+ *   Σ_S[i,j] = Σ_k L[s_i,k]·L[s_j,k]
+ *
+ * This function reconstructs Σ_S and then Cholesky-factorizes it.
+ * Simply extracting L elements (as extract_cholesky_submatrix does)
+ * is INCORRECT when there are cross-dimension correlations.
+ *
+ * @param fullPackedL - Full packed Cholesky factor array
+ * @param fullPackedOffset - Offset into fullPackedL for this splat
+ * @param keepDims - Dimension indices to keep (sorted ascending)
+ * @param subNdim - Number of dimensions to keep
+ * @param output - Output packed marginal Cholesky [subNdim*(subNdim+1)/2]
+ * @param outputOffset - Start offset in output array
+ */
+export function computeMarginalCholesky(
+  fullPackedL: Float32Array,
+  fullPackedOffset: number,
+  keepDims: Uint32Array | number[],
+  subNdim: number,
+  output: Float32Array,
+  outputOffset: number
+): void {
+  // Step 1: Reconstruct marginal covariance Σ_S[i,j] = Σ_k L[s_i,k]·L[s_j,k]
+  const sigma = new Float32Array(MAX_SUPPORTED_DIMS * MAX_SUPPORTED_DIMS);
+
+  for (let i = 0; i < subNdim; i++) {
+    const si = keepDims[i];
+    for (let j = 0; j <= i; j++) {
+      const sj = keepDims[j];
+      const kMax = Math.min(si, sj);
+      let sum = 0;
+      for (let k = 0; k <= kMax; k++) {
+        const lSiK = fullPackedL[fullPackedOffset + packedIndex(si, k)];
+        const lSjK = fullPackedL[fullPackedOffset + packedIndex(sj, k)];
+        sum += lSiK * lSjK;
+      }
+      sigma[i * MAX_SUPPORTED_DIMS + j] = sum;
+      sigma[j * MAX_SUPPORTED_DIMS + i] = sum;
+    }
+  }
+
+  // Step 2: Cholesky-Crout factorization of Σ_S → L_S
+  const subPackedSize = (subNdim * (subNdim + 1)) / 2;
+  const lSub = new Float32Array(subPackedSize);
+
+  for (let i = 0; i < subNdim; i++) {
+    for (let j = 0; j <= i; j++) {
+      let sum = sigma[i * MAX_SUPPORTED_DIMS + j];
+      for (let k = 0; k < j; k++) {
+        sum -= lSub[packedIndex(i, k)] * lSub[packedIndex(j, k)];
+      }
+      if (i === j) {
+        lSub[packedIndex(i, i)] = sum > CHOLESKY_EPSILON ? Math.sqrt(sum) : Math.sqrt(CHOLESKY_EPSILON);
+      } else {
+        const diag = lSub[packedIndex(j, j)];
+        lSub[packedIndex(i, j)] = diag > CHOLESKY_EPSILON ? sum / diag : 0;
+      }
+    }
+  }
+
+  // Copy to output
+  for (let k = 0; k < subPackedSize; k++) {
+    output[outputOffset + k] = lSub[k];
+  }
 }
 
 /**
@@ -58,6 +133,11 @@ export function mahalanobis_distance(
 
 /**
  * Extract a Cholesky submatrix for specified dimensions.
+ *
+ * **WARNING**: This extracts raw L elements, NOT the correct marginal Cholesky factor.
+ * For Σ = L·Lᵀ, the Cholesky of marginal covariance Σ_S ≠ submatrix of L when there
+ * are cross-dimension correlations. Use `computeMarginalCholesky()` instead for
+ * correct results with correlated covariances.
  *
  * @param packed - Full packed Cholesky [packedSize]
  * @param keepDims - Indices of dimensions to keep (must be sorted ascending) [subNdim]
@@ -120,9 +200,10 @@ export function compute_gsplats_attenuation(
   const fullPackedSize = (ndim * (ndim + 1)) / 2;
   const hiddenPackedSize = (numHidden * (numHidden + 1)) / 2;
 
-  // Temporary buffers
+  // Temporary buffers (pre-allocated, reused across all splats)
   const diff = new Float32Array(numHidden);
   const hiddenCholesky = new Float32Array(hiddenPackedSize);
+  const y = new Float32Array(numHidden); // Forward substitution buffer
 
   let visibleCount = 0;
 
@@ -143,18 +224,11 @@ export function compute_gsplats_attenuation(
         diff[hIdx] = slicePosition[d] - positions[centerOffset + d];
       }
 
-      // Extract hidden Cholesky submatrix
-      let outIdx = 0;
-      for (let subRow = 0; subRow < numHidden; subRow++) {
-        const origRow = hiddenDims[subRow];
-        for (let subCol = 0; subCol <= subRow; subCol++) {
-          const origCol = hiddenDims[subCol];
-          hiddenCholesky[outIdx++] = cholesky[choleskyOffset + packedIndex(origRow, origCol)];
-        }
-      }
+      // Compute marginal Cholesky for hidden dimensions
+      computeMarginalCholesky(cholesky, choleskyOffset, hiddenDims, numHidden, hiddenCholesky, 0);
 
-      // Compute Mahalanobis distance
-      const mahalDist = mahalanobisDistanceInternal(diff, hiddenCholesky, numHidden);
+      // Compute Mahalanobis distance (reuses pre-allocated y buffer)
+      const mahalDist = mahalanobisDistanceInternal(diff, hiddenCholesky, numHidden, y);
 
       // Attenuation = exp(-0.5 * mahal^sharpness)
       attenuation = Math.exp(-0.5 * Math.pow(mahalDist, splatSharpness));
@@ -174,14 +248,16 @@ export function compute_gsplats_attenuation(
 }
 
 /**
- * Internal Mahalanobis distance (matches Rust internal function)
+ * Internal Mahalanobis distance (matches Rust internal function).
+ * Accepts an optional pre-allocated buffer to avoid per-call allocation.
  */
 function mahalanobisDistanceInternal(
   diff: Float32Array,
   packedL: Float32Array,
-  ndim: number
+  ndim: number,
+  yBuffer?: Float32Array
 ): number {
-  const y = new Float32Array(ndim);
+  const y = yBuffer ?? new Float32Array(ndim);
 
   for (let i = 0; i < ndim; i++) {
     let val = diff[i];
@@ -229,16 +305,8 @@ export function extract_visible_cholesky_3d(
     const srcOffset = i * fullPackedSize;
     const dstOffset = outSplat * 6;
 
-    // Extract 3x3 Cholesky submatrix (6 elements)
-    let outIdx = 0;
-    for (let subRow = 0; subRow < 3; subRow++) {
-      const origRow = displayDims[subRow];
-      for (let subCol = 0; subCol <= subRow; subCol++) {
-        const origCol = displayDims[subCol];
-        output[dstOffset + outIdx] = cholesky[srcOffset + packedIndex(origRow, origCol)];
-        outIdx++;
-      }
-    }
+    // Compute marginal Cholesky for display dimensions (3D)
+    computeMarginalCholesky(cholesky, srcOffset, displayDims, 3, output, dstOffset);
 
     outSplat++;
   }

@@ -1,5 +1,7 @@
 # Playwright Testing & AI-Assisted Debugging Guide
 
+> For a quick-reference E2E testing cheat sheet, see [`E2E_TESTING_GUIDE.md`](../user/E2E_TESTING_GUIDE.md).
+
 This guide explains how to use Playwright for testing and AI-assisted development with the Luxar viewer.
 
 ## Table of Contents

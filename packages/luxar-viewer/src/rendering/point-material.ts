@@ -153,7 +153,7 @@ export class PointMaterial extends THREE.ShaderMaterial {
     super({
       uniforms: {
         // HDR and color uniforms
-        hdrMultiplier: { value: config.shader.points.hdrMultiplier },
+        hdrMultiplier: { value: config.renderingControls.defaults.hdrMultiplier },
         baseAlpha: { value: config.shader.points.baseAlpha },
         opacity: { value: materialConfig.opacity ?? 1.0 },
         invGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance

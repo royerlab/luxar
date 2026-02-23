@@ -14,7 +14,9 @@ from arbol import aprint, asection
 app_gsplat = typer.Typer(help="Gaussian splat tools")
 
 
-def _ascii_histogram(data: "np.ndarray", bins: int = 40, width: int = 60, title: str = "Distribution") -> str:
+def _ascii_histogram(
+    data: "np.ndarray", bins: int = 40, width: int = 60, title: str = "Distribution"
+) -> str:
     """Create ASCII histogram from data array."""
     import numpy as np
 

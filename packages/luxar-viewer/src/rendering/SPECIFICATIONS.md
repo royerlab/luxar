@@ -826,7 +826,7 @@ When HDR multiplier is updated via `updateHDRMultiplier()`, the MaterialManager 
 
 ```typescript
 // MaterialManager stores current HDR value
-private currentHDRMultiplier: number = config.shader.points.hdrMultiplier;
+private currentHDRMultiplier: number = config.renderingControls.defaults.hdrMultiplier;
 
 updateHDRMultiplier(value: number): void {
   this.currentHDRMultiplier = value;

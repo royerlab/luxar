@@ -1083,7 +1083,7 @@ With proper iteration distribution (more iterations on coarse scales):
 - Handle device-specific limitations (e.g., MPS doesn't support torch.unique with dim)
 - Provide fallbacks for missing functionality
 
-### Memory Management  
+### Memory Management
 - Implement adaptive chunking based on available memory
 - Use grid caching with process-wide cache keyed by (device, dtype, strides, shape)
 - Monitor and report memory usage for debugging

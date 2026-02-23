@@ -766,9 +766,9 @@ export class DataLoadingMonitor {
    * @returns true if incremental update succeeded, false if full rebuild is needed
    */
   private updateCompactViewValues(): boolean {
-    const pointsEl = this.panel?.querySelector('.luxar-monitor-compact .points');
-    const memoryEl = this.panel?.querySelector('.luxar-monitor-compact .memory');
-    const qpsEl = this.panel?.querySelector('.luxar-monitor-compact .qps');
+    const pointsEl = this.panel?.querySelector('.luxar-monitor-compact .luxar-monitor-compact__points');
+    const memoryEl = this.panel?.querySelector('.luxar-monitor-compact .luxar-monitor-compact__memory');
+    const qpsEl = this.panel?.querySelector('.luxar-monitor-compact .luxar-monitor-compact__qps');
 
     // If structure doesn't exist yet, need full rebuild
     if (!pointsEl || !memoryEl || !qpsEl) return false;
@@ -791,7 +791,7 @@ export class DataLoadingMonitor {
    * Sets the interaction lock when hovering over the expand button.
    */
   private attachCompactViewInteractionHandlers(): void {
-    const expandBtn = this.panel?.querySelector('.luxar-monitor-compact .expand-btn');
+    const expandBtn = this.panel?.querySelector('.luxar-monitor-compact .luxar-data-monitor__expand-btn');
     if (!expandBtn) return;
 
     expandBtn.addEventListener('mouseenter', () => this.setMonitorInteractionLock(true));
@@ -827,26 +827,26 @@ export class DataLoadingMonitor {
     this.panel.innerHTML = `
       <div class="luxar-glass-refraction" aria-hidden="true"></div>
       <div class="luxar-monitor-compact">
-        <span class="loader-type" title="Loading mode">
+        <span class="luxar-monitor-compact__type" title="Loading mode">
           ${hasSpatialIndex ? '🔍' : '📦'}
         </span>
 
-        <span class="points" title="Visible points">
+        <span class="luxar-monitor-compact__points" title="Visible points">
           ${this.formatNumber(stats.visiblePoints)}
         </span>
 
-        <span class="memory" title="Memory usage">
+        <span class="luxar-monitor-compact__memory" title="Memory usage">
           ${this.formatBytes(stats.totalMemory)}
         </span>
 
-        <span class="qps" title="Queries per second">
+        <span class="luxar-monitor-compact__qps" title="Queries per second">
           ${stats.queriesPerSecond.toFixed(1)}/s
         </span>
 
-        ${hasErrors ? '<span class="alert" title="Errors detected">🔴</span>' : ''}
-        ${hasWarnings ? '<span class="alert" title="Warnings">🟡</span>' : ''}
+        ${hasErrors ? '<span class="luxar-monitor-compact__alert" title="Errors detected">🔴</span>' : ''}
+        ${hasWarnings ? '<span class="luxar-monitor-compact__alert" title="Warnings">🟡</span>' : ''}
 
-        <button class="expand-btn" data-action="expand" title="Show details">
+        <button class="luxar-data-monitor__expand-btn" data-action="expand" title="Show details">
           ⊞
         </button>
       </div>
@@ -1115,8 +1115,8 @@ export class DataLoadingMonitor {
     if (!timingData) {
       return `
         <div class="luxar-performance-content">
-          <div class="timing-panel timing-empty">
-            <div class="timing-empty-message">
+          <div class="luxar-timing-panel luxar-timing-panel--empty">
+            <div class="luxar-timing-panel__empty-msg">
               Profiler not connected. Timing data will appear here once the scene is loaded.
             </div>
           </div>

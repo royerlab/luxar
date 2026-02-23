@@ -118,9 +118,7 @@ pub fn decode_lut_row_u8(indices: &[u8], lut: &[f32], k: usize, output: &mut [f3
     for i in 0..indices.len() {
         let lut_offset = (indices[i] as usize) * k;
         let out_offset = i * k;
-        for j in 0..k {
-            output[out_offset + j] = lut[lut_offset + j];
-        }
+        output[out_offset..out_offset + k].copy_from_slice(&lut[lut_offset..lut_offset + k]);
     }
 }
 
@@ -130,9 +128,7 @@ pub fn decode_lut_row_u16(indices: &[u16], lut: &[f32], k: usize, output: &mut [
     for i in 0..indices.len() {
         let lut_offset = (indices[i] as usize) * k;
         let out_offset = i * k;
-        for j in 0..k {
-            output[out_offset + j] = lut[lut_offset + j];
-        }
+        output[out_offset..out_offset + k].copy_from_slice(&lut[lut_offset..lut_offset + k]);
     }
 }
 
@@ -154,9 +150,8 @@ pub fn decode_broadcasted(
     if value.len() >= elements_per_point {
         for i in 0..num_points {
             let out_offset = i * elements_per_point;
-            for j in 0..elements_per_point {
-                output[out_offset + j] = value[j];
-            }
+            output[out_offset..out_offset + elements_per_point]
+                .copy_from_slice(&value[..elements_per_point]);
         }
     } else {
         // Fallback: pad with value[0] if value is shorter
@@ -242,6 +237,40 @@ mod tests {
         assert_eq!(output[3], 0.0); // green.r
         assert_eq!(output[4], 1.0); // green.g
         assert_eq!(output[5], 0.0); // green.b
+    }
+
+    #[test]
+    fn test_decode_lut_row_u16() {
+        let indices = vec![0u16, 2, 1];
+        // LUT with 3 entries, each with 2 values (xy)
+        let lut = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0]; // (1,2), (3,4), (5,6)
+        let mut output = vec![0.0f32; 6];
+
+        decode_lut_row_u16(&indices, &lut, 2, &mut output);
+
+        // Index 0 → (1, 2)
+        assert_eq!(output[0], 1.0);
+        assert_eq!(output[1], 2.0);
+        // Index 2 → (5, 6)
+        assert_eq!(output[2], 5.0);
+        assert_eq!(output[3], 6.0);
+        // Index 1 → (3, 4)
+        assert_eq!(output[4], 3.0);
+        assert_eq!(output[5], 4.0);
+    }
+
+    #[test]
+    fn test_decode_broadcasted_short_value() {
+        // Edge case: value has fewer elements than elements_per_point
+        let value = vec![0.5f32]; // Only 1 element, but we need 3 per point
+        let mut output = vec![0.0f32; 6]; // 2 points * 3 elements
+
+        decode_broadcasted(&value, 2, 3, &mut output);
+
+        // Should pad with value[0] = 0.5
+        for i in 0..6 {
+            assert_eq!(output[i], 0.5, "output[{}] should be 0.5", i);
+        }
     }
 
     #[test]

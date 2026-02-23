@@ -19,6 +19,9 @@ import { config } from '../config';
 // UI Configuration constants
 const UI_CONFIG = config.ui;
 
+/** Module-level reference to the active help overlay click handler, for cleanup */
+let activeHelpClickHandler: ((event: MouseEvent) => void) | null = null;
+
 /**
  * Create and show animated loading indicator.
  *
@@ -468,6 +471,7 @@ export function showHelpOverlay() {
     if (help) {
       // Remove global click listener first
       document.removeEventListener('click', handleDocumentClick);
+      activeHelpClickHandler = null;
       // Then remove the panel
       help.remove();
     }
@@ -480,6 +484,8 @@ export function showHelpOverlay() {
       closeHelp();
     }
   };
+
+  activeHelpClickHandler = handleDocumentClick;
 
   // Wire up close button to use the proper cleanup function
   closeBtn.onclick = () => closeHelp();
@@ -522,6 +528,10 @@ export function showHelpOverlay() {
 export function hideHelpOverlay() {
   const helpDiv = document.getElementById('help-overlay');
   if (helpDiv) {
+    if (activeHelpClickHandler) {
+      document.removeEventListener('click', activeHelpClickHandler);
+      activeHelpClickHandler = null;
+    }
     helpDiv.remove();
   }
 }

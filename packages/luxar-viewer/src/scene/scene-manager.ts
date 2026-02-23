@@ -90,8 +90,8 @@ export class SceneManager extends THREE.EventDispatcher<{
   private dynamicClippingEnabled: boolean =
     config.renderingControls.defaults.dynamicClippingEnabled;
   private clippingAdaptSpeed: number = config.renderingControls.defaults.clippingAdaptSpeed;
-  private smoothedNear: number = config.camera.near;
-  private smoothedFar: number = config.camera.far;
+  private smoothedNear: number = config.renderingControls.defaults.near;
+  private smoothedFar: number = config.renderingControls.defaults.far;
 
   /**
    * Create a new scene manager instance.
@@ -332,10 +332,10 @@ export class SceneManager extends THREE.EventDispatcher<{
     // Create perspective camera with realistic 3D projection
     // FOV of 60° provides natural human-like viewing angle
     this.camera = new THREE.PerspectiveCamera(
-      config.camera.fov, // Field of view (60 degrees)
+      config.renderingControls.defaults.fov, // Field of view (60 degrees)
       width / height, // Aspect ratio (canvas width/height)
-      config.camera.near, // Near clipping plane (0.1 units)
-      config.camera.far // Far clipping plane (1000 units)
+      config.renderingControls.defaults.near, // Near clipping plane (0.1 units)
+      config.renderingControls.defaults.far // Far clipping plane (1000 units)
     );
 
     // Position camera at initial viewing location
@@ -1005,7 +1005,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     if (box.isEmpty()) {
       log.warning(Modules.SCENE_MANAGER, 'No scene content for clipping plane calculation');
-      return { near: config.camera.near, far: config.camera.far };
+      return { near: config.renderingControls.defaults.near, far: config.renderingControls.defaults.far };
     }
 
     // Use unified utility function with camera position

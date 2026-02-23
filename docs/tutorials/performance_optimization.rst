@@ -349,10 +349,12 @@ Profiling Tools
 .. code-block:: python
 
    import time
+   from luxar import LuxarZarrCompiler, Dimensions
 
+   dims = Dimensions.default_3d()
    start = time.time()
    with LuxarZarrCompiler('scene.zarr') as compiler:
-       scene = compiler.create_scene()
+       scene = compiler.create_scene(dimensions=dims)
        scene.add_points("data", positions, colors)
    elapsed = time.time() - start
 

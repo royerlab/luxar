@@ -197,5 +197,10 @@ export class PerformanceMonitor {
     if (this.stats.dom.parentNode) {
       this.stats.dom.parentNode.removeChild(this.stats.dom);
     }
+    // Clean up the injected style element
+    const styleEl = document.getElementById('stats-custom-styles');
+    if (styleEl) {
+      styleEl.remove();
+    }
   }
 }

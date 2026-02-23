@@ -621,18 +621,19 @@ There are two ways to store Gaussian splats, serving different purposes:
 Once `.gsplats.zarr` format is stable, integrate with Luxar visualization:
 
 ```python
-from luxar import LuxarZarrCompiler
+from luxar import LuxarZarrCompiler, Dimensions
 from luxar.gsplats import GSplatData
 
 # Option 1: From in-memory result
 result = fit_gaussian_splats(image)
+dims = Dimensions.default_3d()
 with LuxarZarrCompiler("scene.zarr") as compiler:
-    scene = compiler.create_scene()
+    scene = compiler.create_scene(dimensions=dims)
     scene.add_gsplats("nuclei", result)
 
 # Option 2: From saved .gsplats.zarr file
 with LuxarZarrCompiler("scene.zarr") as compiler:
-    scene = compiler.create_scene()
+    scene = compiler.create_scene(dimensions=dims)
     scene.add_gsplats("nuclei", "fitted.gsplats.zarr")  # Path
 ```
 

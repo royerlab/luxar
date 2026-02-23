@@ -17,7 +17,6 @@ from pathlib import Path
 
 from arbol import aprint, asection
 
-
 # Language configurations
 LANGUAGE_CONFIG = {
     "python": {
@@ -419,8 +418,12 @@ def get_test_statistics(project_root):
             try:
                 result = subprocess.run(
                     [
-                        "npx", "vitest", "--run", "--coverage",
-                        "--exclude", "**/wasm-performance.test.ts",
+                        "npx",
+                        "vitest",
+                        "--run",
+                        "--coverage",
+                        "--exclude",
+                        "**/wasm-performance.test.ts",
                     ],
                     capture_output=True,
                     text=True,
@@ -665,7 +668,10 @@ def get_dependency_statistics(project_root):
                 if "[project.dependencies]" in line or "dependencies = [" in line:
                     in_deps = True
                     in_dev_deps = False
-                elif "[project.optional-dependencies]" in line or "dev-dependencies" in line:
+                elif (
+                    "[project.optional-dependencies]" in line
+                    or "dev-dependencies" in line
+                ):
                     in_dev_deps = True
                     in_deps = False
                 elif line.strip().startswith("[") and not line.strip().startswith("[["):
@@ -691,7 +697,9 @@ def get_dependency_statistics(project_root):
             pass
 
     # Rust dependencies from Cargo.toml
-    cargo_toml = root_path / "packages" / "luxar-viewer" / "src" / "wasm" / "rust" / "Cargo.toml"
+    cargo_toml = (
+        root_path / "packages" / "luxar-viewer" / "src" / "wasm" / "rust" / "Cargo.toml"
+    )
     if cargo_toml.exists():
         try:
             content = cargo_toml.read_text()
@@ -742,12 +750,16 @@ def analyze_directory(root_dir, language_name):
             for filepath in root_path.rglob(ext):
                 if any(part in filepath.parts for part in SKIP_DIRS):
                     continue
-                process_file(filepath, root_path, stats, lang_config, language_name, file_sizes)
+                process_file(
+                    filepath, root_path, stats, lang_config, language_name, file_sizes
+                )
         else:
             for filepath in root_path.rglob(f"*{ext}"):
                 if any(part in filepath.parts for part in SKIP_DIRS):
                     continue
-                process_file(filepath, root_path, stats, lang_config, language_name, file_sizes)
+                process_file(
+                    filepath, root_path, stats, lang_config, language_name, file_sizes
+                )
 
     # Get top 5 largest files
     file_sizes.sort(key=lambda x: x[1], reverse=True)
@@ -828,7 +840,15 @@ def generate_html_report(stats, output_file):
     )
 
     # Primary languages (code files)
-    primary_langs = ["python", "typescript", "rust", "cuda", "css", "javascript", "shell"]
+    primary_langs = [
+        "python",
+        "typescript",
+        "rust",
+        "cuda",
+        "css",
+        "javascript",
+        "shell",
+    ]
     config_langs = ["json", "toml", "yaml"]
     doc_langs = ["markdown", "html"]
 
@@ -857,7 +877,9 @@ def generate_html_report(stats, output_file):
     ts_loc = stats["languages"]["typescript"]["code_lines"]
 
     if py_loc + ts_loc > 0:
-        weighted_coverage = (py_coverage * py_loc + ts_coverage * ts_loc) / (py_loc + ts_loc)
+        weighted_coverage = (py_coverage * py_loc + ts_coverage * ts_loc) / (
+            py_loc + ts_loc
+        )
     else:
         weighted_coverage = 0
 
@@ -1053,7 +1075,7 @@ def generate_html_report(stats, output_file):
                 </div>
                 <div class="stat-card">
                     <h3>Languages</h3>
-                    <div class="value">{len([l for l in stats['languages'] if stats['languages'][l]['files'] > 0])}</div>
+                    <div class="value">{len([l for l in stats["languages"] if stats["languages"][l]["files"] > 0])}</div>
                     <div class="label">Active in codebase</div>
                 </div>
                 <div class="stat-card">
@@ -1073,8 +1095,8 @@ def generate_html_report(stats, output_file):
                 </div>
                 <div class="stat-card">
                     <h3>Commits</h3>
-                    <div class="value">{stats['git']['total_commits']:,}</div>
-                    <div class="label">{stats['git']['commits_last_30_days']} in last 30d</div>
+                    <div class="value">{stats["git"]["total_commits"]:,}</div>
+                    <div class="label">{stats["git"]["commits_last_30_days"]} in last 30d</div>
                 </div>
             </div>
 
@@ -1098,15 +1120,19 @@ def generate_html_report(stats, output_file):
         if lang_stats.get("files", 0) == 0:
             continue
 
-        pct = (lang_stats["code_lines"] / total_code_lines * 100) if total_code_lines > 0 else 0
+        pct = (
+            (lang_stats["code_lines"] / total_code_lines * 100)
+            if total_code_lines > 0
+            else 0
+        )
         color = LANGUAGE_CONFIG[lang]["color"]
 
         report_html += f"""                    <tr>
                         <td><span class="lang-badge" style="background: {color}">{lang.upper()}</span></td>
-                        <td class="number">{lang_stats['files']:,}</td>
-                        <td class="number">{lang_stats['code_lines']:,}</td>
-                        <td class="number">{lang_stats['total_lines']:,}</td>
-                        <td class="number">{lang_stats['comment_lines']:,}</td>
+                        <td class="number">{lang_stats["files"]:,}</td>
+                        <td class="number">{lang_stats["code_lines"]:,}</td>
+                        <td class="number">{lang_stats["total_lines"]:,}</td>
+                        <td class="number">{lang_stats["comment_lines"]:,}</td>
                         <td class="number">{pct:.1f}%</td>
                     </tr>
 """
@@ -1122,7 +1148,11 @@ def generate_html_report(stats, output_file):
         lang_stats = stats["languages"].get(lang, {})
         if lang_stats.get("code_lines", 0) == 0:
             continue
-        pct = (lang_stats["code_lines"] / total_code_lines * 100) if total_code_lines > 0 else 0
+        pct = (
+            (lang_stats["code_lines"] / total_code_lines * 100)
+            if total_code_lines > 0
+            else 0
+        )
         if pct > 0.5:  # Only show if significant
             color = LANGUAGE_CONFIG[lang]["color"]
             report_html += f'                    <div class="progress-fill" style="width: {pct}%; background: {color};" title="{lang.title()}: {pct:.1f}%"></div>\n'
@@ -1150,12 +1180,12 @@ def generate_html_report(stats, output_file):
     # Python details
     py = stats["languages"]["python"]
     if py["files"] > 0:
-        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG['python']['color']}">
-                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG['python']['color']}">PYTHON</span> Core Backend</h4>
+        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG["python"]["color"]}">
+                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG["python"]["color"]}">PYTHON</span> Core Backend</h4>
                         <div class="lang-stats">
-                            <div><strong>{py['files']:,}</strong> files | <strong>{py['code_lines']:,}</strong> lines of code</div>
-                            <div>Classes: {py['definitions'].get('classes', 0):,} | Functions: {py['definitions'].get('functions', 0):,} | Methods: {py['definitions'].get('methods', 0):,}</div>
-                            <div>Coverage: <strong>{test_stats['python']['coverage_percent']:.1f}%</strong> | Tests: {test_stats['python']['test_count']:,}</div>
+                            <div><strong>{py["files"]:,}</strong> files | <strong>{py["code_lines"]:,}</strong> lines of code</div>
+                            <div>Classes: {py["definitions"].get("classes", 0):,} | Functions: {py["definitions"].get("functions", 0):,} | Methods: {py["definitions"].get("methods", 0):,}</div>
+                            <div>Coverage: <strong>{test_stats["python"]["coverage_percent"]:.1f}%</strong> | Tests: {test_stats["python"]["test_count"]:,}</div>
                         </div>
                     </div>
 """
@@ -1163,12 +1193,12 @@ def generate_html_report(stats, output_file):
     # TypeScript details
     ts = stats["languages"]["typescript"]
     if ts["files"] > 0:
-        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG['typescript']['color']}">
-                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG['typescript']['color']}">TYPESCRIPT</span> Viewer Frontend</h4>
+        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG["typescript"]["color"]}">
+                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG["typescript"]["color"]}">TYPESCRIPT</span> Viewer Frontend</h4>
                         <div class="lang-stats">
-                            <div><strong>{ts['files']:,}</strong> files | <strong>{ts['code_lines']:,}</strong> lines of code</div>
-                            <div>Classes: {ts['definitions'].get('classes', 0):,} | Functions: {ts['definitions'].get('functions', 0):,} | Interfaces: {ts['definitions'].get('interfaces', 0):,} | Types: {ts['definitions'].get('types', 0):,}</div>
-                            <div>Coverage: <strong>{test_stats['typescript']['coverage_percent']:.1f}%</strong> | Tests: {test_stats['typescript']['test_count']:,}</div>
+                            <div><strong>{ts["files"]:,}</strong> files | <strong>{ts["code_lines"]:,}</strong> lines of code</div>
+                            <div>Classes: {ts["definitions"].get("classes", 0):,} | Functions: {ts["definitions"].get("functions", 0):,} | Interfaces: {ts["definitions"].get("interfaces", 0):,} | Types: {ts["definitions"].get("types", 0):,}</div>
+                            <div>Coverage: <strong>{test_stats["typescript"]["coverage_percent"]:.1f}%</strong> | Tests: {test_stats["typescript"]["test_count"]:,}</div>
                         </div>
                     </div>
 """
@@ -1176,12 +1206,12 @@ def generate_html_report(stats, output_file):
     # Rust details
     rust = stats["languages"]["rust"]
     if rust["files"] > 0:
-        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG['rust']['color']}">
-                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG['rust']['color']}">RUST</span> WASM Module</h4>
+        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG["rust"]["color"]}">
+                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG["rust"]["color"]}">RUST</span> WASM Module</h4>
                         <div class="lang-stats">
-                            <div><strong>{rust['files']:,}</strong> files | <strong>{rust['code_lines']:,}</strong> lines of code</div>
-                            <div>Structs: {rust['definitions'].get('structs', 0):,} | Functions: {rust['definitions'].get('functions', 0):,} | Traits: {rust['definitions'].get('traits', 0):,} | Impls: {rust['definitions'].get('impls', 0):,}</div>
-                            <div>Tests: {test_stats['rust']['test_count']:,} passed</div>
+                            <div><strong>{rust["files"]:,}</strong> files | <strong>{rust["code_lines"]:,}</strong> lines of code</div>
+                            <div>Structs: {rust["definitions"].get("structs", 0):,} | Functions: {rust["definitions"].get("functions", 0):,} | Traits: {rust["definitions"].get("traits", 0):,} | Impls: {rust["definitions"].get("impls", 0):,}</div>
+                            <div>Tests: {test_stats["rust"]["test_count"]:,} passed</div>
                         </div>
                     </div>
 """
@@ -1189,11 +1219,11 @@ def generate_html_report(stats, output_file):
     # CUDA details
     cuda = stats["languages"]["cuda"]
     if cuda["files"] > 0:
-        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG['cuda']['color']}">
-                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG['cuda']['color']}">CUDA</span> GPU Acceleration</h4>
+        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG["cuda"]["color"]}">
+                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG["cuda"]["color"]}">CUDA</span> GPU Acceleration</h4>
                         <div class="lang-stats">
-                            <div><strong>{cuda['files']:,}</strong> files | <strong>{cuda['code_lines']:,}</strong> lines of code</div>
-                            <div>Kernels: {cuda['definitions'].get('kernels', 0):,} | Device Functions: {cuda['definitions'].get('device_functions', 0):,} | Host Functions: {cuda['definitions'].get('host_functions', 0):,}</div>
+                            <div><strong>{cuda["files"]:,}</strong> files | <strong>{cuda["code_lines"]:,}</strong> lines of code</div>
+                            <div>Kernels: {cuda["definitions"].get("kernels", 0):,} | Device Functions: {cuda["definitions"].get("device_functions", 0):,} | Host Functions: {cuda["definitions"].get("host_functions", 0):,}</div>
                         </div>
                     </div>
 """
@@ -1201,11 +1231,11 @@ def generate_html_report(stats, output_file):
     # CSS details
     css = stats["languages"]["css"]
     if css["files"] > 0:
-        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG['css']['color']}">
-                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG['css']['color']}">CSS</span> Styling</h4>
+        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG["css"]["color"]}">
+                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG["css"]["color"]}">CSS</span> Styling</h4>
                         <div class="lang-stats">
-                            <div><strong>{css['files']:,}</strong> files | <strong>{css['code_lines']:,}</strong> lines of code</div>
-                            <div>Rules: {css['definitions'].get('rules', 0):,} | Variables: {css['definitions'].get('variables', 0):,} | Media Queries: {css['definitions'].get('media_queries', 0):,}</div>
+                            <div><strong>{css["files"]:,}</strong> files | <strong>{css["code_lines"]:,}</strong> lines of code</div>
+                            <div>Rules: {css["definitions"].get("rules", 0):,} | Variables: {css["definitions"].get("variables", 0):,} | Media Queries: {css["definitions"].get("media_queries", 0):,}</div>
                         </div>
                     </div>
 """
@@ -1286,15 +1316,33 @@ def generate_html_report(stats, output_file):
         ts_passed=test_stats["typescript"]["test_passed"],
         rust_passed=test_stats["rust"]["test_passed"],
         total_passed=total_passed,
-        pass_status='<span class="health-indicator health-good">All Passing</span>' if total_passed == total_tests else '<span class="health-indicator health-warning">Some Failures</span>',
+        pass_status='<span class="health-indicator health-good">All Passing</span>'
+        if total_passed == total_tests
+        else '<span class="health-indicator health-warning">Some Failures</span>',
         py_coverage=test_stats["python"]["coverage_percent"],
         ts_coverage=test_stats["typescript"]["coverage_percent"],
         weighted_coverage=weighted_coverage,
-        coverage_status='<span class="health-indicator health-good">Excellent</span>' if weighted_coverage >= 80 else '<span class="health-indicator health-warning">Good</span>' if weighted_coverage >= 60 else '<span class="health-indicator health-danger">Needs Work</span>',
-        py_tests_per_kloc=(test_stats["python"]["test_count"] / (py["code_lines"] / 1000)) if py["code_lines"] > 0 else 0,
-        ts_tests_per_kloc=(test_stats["typescript"]["test_count"] / (ts["code_lines"] / 1000)) if ts["code_lines"] > 0 else 0,
-        total_tests_per_kloc=(total_tests / (total_code_lines / 1000)) if total_code_lines > 0 else 0,
-        tests_per_kloc_status='<span class="health-indicator health-good">Well Tested</span>' if total_tests / max(1, total_code_lines / 1000) > 15 else '<span class="health-indicator health-warning">Adequate</span>',
+        coverage_status='<span class="health-indicator health-good">Excellent</span>'
+        if weighted_coverage >= 80
+        else '<span class="health-indicator health-warning">Good</span>'
+        if weighted_coverage >= 60
+        else '<span class="health-indicator health-danger">Needs Work</span>',
+        py_tests_per_kloc=(
+            test_stats["python"]["test_count"] / (py["code_lines"] / 1000)
+        )
+        if py["code_lines"] > 0
+        else 0,
+        ts_tests_per_kloc=(
+            test_stats["typescript"]["test_count"] / (ts["code_lines"] / 1000)
+        )
+        if ts["code_lines"] > 0
+        else 0,
+        total_tests_per_kloc=(total_tests / (total_code_lines / 1000))
+        if total_code_lines > 0
+        else 0,
+        tests_per_kloc_status='<span class="health-indicator health-good">Well Tested</span>'
+        if total_tests / max(1, total_code_lines / 1000) > 15
+        else '<span class="health-indicator health-warning">Adequate</span>',
     )
 
     # Git Statistics
@@ -1311,31 +1359,31 @@ def generate_html_report(stats, output_file):
                             </tr>
                             <tr>
                                 <td>Total Commits</td>
-                                <td class="number">{git['total_commits']:,}</td>
+                                <td class="number">{git["total_commits"]:,}</td>
                             </tr>
                             <tr>
                                 <td>Contributors</td>
-                                <td class="number">{git['contributors']}</td>
+                                <td class="number">{git["contributors"]}</td>
                             </tr>
                             <tr>
                                 <td>Branches</td>
-                                <td class="number">{git['branches']}</td>
+                                <td class="number">{git["branches"]}</td>
                             </tr>
                             <tr>
                                 <td>Tags</td>
-                                <td class="number">{git['tags']}</td>
+                                <td class="number">{git["tags"]}</td>
                             </tr>
                             <tr>
                                 <td>Commits (Last 30 Days)</td>
-                                <td class="number">{git['commits_last_30_days']}</td>
+                                <td class="number">{git["commits_last_30_days"]}</td>
                             </tr>
                             <tr>
                                 <td>First Commit</td>
-                                <td class="number">{git['first_commit_date'] or 'N/A'}</td>
+                                <td class="number">{git["first_commit_date"] or "N/A"}</td>
                             </tr>
                             <tr>
                                 <td>Last Commit</td>
-                                <td class="number">{git['last_commit_date'] or 'N/A'}</td>
+                                <td class="number">{git["last_commit_date"] or "N/A"}</td>
                             </tr>
                         </table>
                     </div>
@@ -1350,10 +1398,10 @@ def generate_html_report(stats, output_file):
 
     for contributor in git.get("top_contributors", [])[:5]:
         # Escape contributor name to prevent XSS
-        safe_name = html.escape(contributor['name'])
+        safe_name = html.escape(contributor["name"])
         report_html += f"""                            <tr>
                                 <td>{safe_name}</td>
-                                <td class="number">{contributor['commits']:,}</td>
+                                <td class="number">{contributor["commits"]:,}</td>
                             </tr>
 """
 
@@ -1376,22 +1424,22 @@ def generate_html_report(stats, output_file):
                         <th class="number">Total</th>
                     </tr>
                     <tr>
-                        <td><span class="lang-badge" style="background: {LANGUAGE_CONFIG['python']['color']}">Python</span></td>
-                        <td class="number">{deps['python']['production']}</td>
-                        <td class="number">{deps['python']['dev']}</td>
-                        <td class="number">{deps['python']['production'] + deps['python']['dev']}</td>
+                        <td><span class="lang-badge" style="background: {LANGUAGE_CONFIG["python"]["color"]}">Python</span></td>
+                        <td class="number">{deps["python"]["production"]}</td>
+                        <td class="number">{deps["python"]["dev"]}</td>
+                        <td class="number">{deps["python"]["production"] + deps["python"]["dev"]}</td>
                     </tr>
                     <tr>
-                        <td><span class="lang-badge" style="background: {LANGUAGE_CONFIG['typescript']['color']}">Node.js</span></td>
-                        <td class="number">{deps['node']['production']}</td>
-                        <td class="number">{deps['node']['dev']}</td>
-                        <td class="number">{deps['node']['production'] + deps['node']['dev']}</td>
+                        <td><span class="lang-badge" style="background: {LANGUAGE_CONFIG["typescript"]["color"]}">Node.js</span></td>
+                        <td class="number">{deps["node"]["production"]}</td>
+                        <td class="number">{deps["node"]["dev"]}</td>
+                        <td class="number">{deps["node"]["production"] + deps["node"]["dev"]}</td>
                     </tr>
                     <tr>
-                        <td><span class="lang-badge" style="background: {LANGUAGE_CONFIG['rust']['color']}">Rust</span></td>
-                        <td class="number">{deps['rust']['production']}</td>
-                        <td class="number">{deps['rust']['dev']}</td>
-                        <td class="number">{deps['rust']['production'] + deps['rust']['dev']}</td>
+                        <td><span class="lang-badge" style="background: {LANGUAGE_CONFIG["rust"]["color"]}">Rust</span></td>
+                        <td class="number">{deps["rust"]["production"]}</td>
+                        <td class="number">{deps["rust"]["dev"]}</td>
+                        <td class="number">{deps["rust"]["production"] + deps["rust"]["dev"]}</td>
                     </tr>
                 </table>
             </section>
@@ -1417,13 +1465,13 @@ def generate_html_report(stats, output_file):
                             </tr>
                             <tr>
                                 <td>Markdown (.md)</td>
-                                <td class="number">{md['files']}</td>
-                                <td class="number">{md['total_lines']:,}</td>
+                                <td class="number">{md["files"]}</td>
+                                <td class="number">{md["total_lines"]:,}</td>
                             </tr>
                             <tr>
                                 <td>HTML</td>
-                                <td class="number">{stats['languages']['html']['files']}</td>
-                                <td class="number">{stats['languages']['html']['total_lines']:,}</td>
+                                <td class="number">{stats["languages"]["html"]["files"]}</td>
+                                <td class="number">{stats["languages"]["html"]["total_lines"]:,}</td>
                             </tr>
                         </table>
                     </div>
@@ -1437,18 +1485,18 @@ def generate_html_report(stats, output_file):
                             </tr>
                             <tr>
                                 <td>JSON</td>
-                                <td class="number">{json_stats['files']}</td>
-                                <td class="number">{json_stats['total_lines']:,}</td>
+                                <td class="number">{json_stats["files"]}</td>
+                                <td class="number">{json_stats["total_lines"]:,}</td>
                             </tr>
                             <tr>
                                 <td>YAML</td>
-                                <td class="number">{yaml_stats['files']}</td>
-                                <td class="number">{yaml_stats['total_lines']:,}</td>
+                                <td class="number">{yaml_stats["files"]}</td>
+                                <td class="number">{yaml_stats["total_lines"]:,}</td>
                             </tr>
                             <tr>
                                 <td>TOML</td>
-                                <td class="number">{toml_stats['files']}</td>
-                                <td class="number">{toml_stats['total_lines']:,}</td>
+                                <td class="number">{toml_stats["files"]}</td>
+                                <td class="number">{toml_stats["total_lines"]:,}</td>
                             </tr>
                         </table>
                     </div>
@@ -1463,10 +1511,18 @@ def generate_html_report(stats, output_file):
         for l in primary_langs
         if stats["languages"].get(l, {}).get("code_lines", 0) > 0
     )
-    py_pct = (py["code_lines"] / primary_code_lines * 100) if primary_code_lines > 0 else 0
-    ts_pct = (ts["code_lines"] / primary_code_lines * 100) if primary_code_lines > 0 else 0
-    rust_pct = (rust["code_lines"] / primary_code_lines * 100) if primary_code_lines > 0 else 0
-    cuda_pct = (cuda["code_lines"] / primary_code_lines * 100) if primary_code_lines > 0 else 0
+    py_pct = (
+        (py["code_lines"] / primary_code_lines * 100) if primary_code_lines > 0 else 0
+    )
+    ts_pct = (
+        (ts["code_lines"] / primary_code_lines * 100) if primary_code_lines > 0 else 0
+    )
+    rust_pct = (
+        (rust["code_lines"] / primary_code_lines * 100) if primary_code_lines > 0 else 0
+    )
+    cuda_pct = (
+        (cuda["code_lines"] / primary_code_lines * 100) if primary_code_lines > 0 else 0
+    )
 
     report_html += f"""
             <section>
@@ -1478,16 +1534,16 @@ def generate_html_report(stats, output_file):
                     <strong>Language Mix:</strong> Python {py_pct:.1f}% | TypeScript {ts_pct:.1f}% | Rust {rust_pct:.1f}% | CUDA {cuda_pct:.1f}%
                 </div>
                 <div class="insight">
-                    <strong>Architecture:</strong> {py['definitions'].get('classes', 0)} Python classes, {ts['definitions'].get('interfaces', 0)} TypeScript interfaces, {rust['definitions'].get('structs', 0)} Rust structs
+                    <strong>Architecture:</strong> {py["definitions"].get("classes", 0)} Python classes, {ts["definitions"].get("interfaces", 0)} TypeScript interfaces, {rust["definitions"].get("structs", 0)} Rust structs
                 </div>
                 <div class="insight">
                     <strong>Test Health:</strong> {total_tests:,} tests across {total_test_files} files with {weighted_coverage:.1f}% weighted coverage
                 </div>
                 <div class="insight">
-                    <strong>Project Activity:</strong> {git['commits_last_30_days']} commits in the last 30 days by {git['contributors']} contributor(s)
+                    <strong>Project Activity:</strong> {git["commits_last_30_days"]} commits in the last 30 days by {git["contributors"]} contributor(s)
                 </div>
                 <div class="insight">
-                    <strong>Documentation:</strong> {md['files']} markdown files with {md['total_lines']:,} lines of documentation
+                    <strong>Documentation:</strong> {md["files"]} markdown files with {md["total_lines"]:,} lines of documentation
                 </div>
             </section>
         </div>
@@ -1571,7 +1627,9 @@ def main():
     for lang in primary_langs:
         stats = all_stats["languages"][lang]
         if stats["files"] > 0:
-            aprint(f"{lang.title():12} {stats['files']:>4} files, {stats['code_lines']:>6,} LOC")
+            aprint(
+                f"{lang.title():12} {stats['files']:>4} files, {stats['code_lines']:>6,} LOC"
+            )
 
     aprint("")
 

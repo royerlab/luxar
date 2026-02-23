@@ -42,6 +42,11 @@ class Node:
             writer: Writer interface for progressive data writing
             **attrs: Additional attributes to set on the node
         """
+        if name and "/" in name:
+            raise ValueError(
+                f"Node name cannot contain '/': got '{name}'. "
+                f"Use add_group() to create hierarchical structure instead."
+            )
         self.name: str = name
         self._writer = writer
         self.parent: Optional[Node] = parent
@@ -51,6 +56,11 @@ class Node:
 
         # Determine path in hierarchy
         if parent is not None:
+            for existing_child in parent.children:
+                if existing_child.name == name:
+                    raise ValueError(
+                        f"Duplicate child name '{name}' under parent '{parent.name}'."
+                    )
             parent.children.append(self)
             parent_path = getattr(parent, "path", None)
             self.path = f"{parent_path}/{name}" if parent_path else name
@@ -67,8 +77,7 @@ class Node:
                     # Use centralized function for consistent handling
                     attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
                 except Exception as e:
-                    aprint(f"Invalid transform for node '{name}': {e}")
-                    raise ValueError(f"Invalid transform: {e}") from e
+                    raise ValueError(f"Invalid transform for node '{name}': {e}") from e
 
             # Validate rendering attributes if present
             if "opacity" in attrs:
@@ -121,6 +130,13 @@ class Node:
         """
         try:
             aprint(f"Adding child group '{name}' to node '{self.name}'.")
+
+            # Check for duplicate before writing to storage
+            for existing_child in self.children:
+                if existing_child.name == name:
+                    raise ValueError(
+                        f"Duplicate child name '{name}' under parent '{self.name}'."
+                    )
 
             # Process transform if present to convert to storage format
             if "transform" in attrs:
@@ -344,6 +360,17 @@ class Node:
         """
         self.blending_mode = value
         return self
+
+    # --------------------------------------------------------------- equality
+    def __eq__(self, other: object) -> bool:
+        """Equality based on path in the scene graph."""
+        if not isinstance(other, Node):
+            return NotImplemented
+        return self.path == other.path
+
+    def __hash__(self) -> int:
+        """Hash based on path in the scene graph."""
+        return hash(self.path)
 
     # --------------------------------------------------------------- repr
     def __repr__(self) -> str:  # pragma: no cover

@@ -47,7 +47,7 @@ describe('GSplatMaterial', () => {
     it('should create a material with default values', () => {
       const material = new GSplatMaterial();
 
-      expect(material.uniforms.uHDRMultiplier.value).toBe(config.shader.points.hdrMultiplier);
+      expect(material.uniforms.uHDRMultiplier.value).toBe(config.renderingControls.defaults.hdrMultiplier);
       expect(material.uniforms.uOpacity.value).toBe(1.0);
       expect(material.uniforms.uTruncate.value).toBe(3.0);
       expect(material.uniforms.uResolution.value).toBeInstanceOf(THREE.Vector2);

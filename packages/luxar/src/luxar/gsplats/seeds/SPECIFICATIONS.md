@@ -113,7 +113,7 @@ Steps:
      c. Set neighborhood radius: radius = max(1, round(1.5 × σ))
      d. Find local maxima: peaks = local_maxima(img, radius, thr, peaks_per_scale)
      e. Collect peak coordinates
-   
+
 3. Combine all candidates from all detection methods
    - Stack coordinate arrays vertically
    - Filter out empty arrays
@@ -153,10 +153,10 @@ Output:
 if apply_clahe:
     import torch
     from luxar.gsplats.clahe import apply_clahe as apply_clahe_torch
-    
+
     # Convert to torch
     V_torch = torch.tensor(V, dtype=torch.float32)
-    
+
     # Apply CLAHE
     V_clahe_torch = apply_clahe_torch(
         V_torch,
@@ -164,7 +164,7 @@ if apply_clahe:
         clip_limit=clahe_clip_limit,
         nbins=clahe_nbins,
     )
-    
+
     # Convert back to numpy
     V_work = V_clahe_torch.cpu().numpy()
 else:
@@ -182,17 +182,17 @@ V_percentile_thresh = np.percentile(V_work, percentile_thresh)
 for s in reversed(scales):  # Coarsest to finest
     # Apply Gaussian smoothing
     img = ndi.gaussian_filter(V_work, sigma=s, mode='nearest')
-    
+
     # Adaptive threshold selection
     if s <= min(scales) * 2.0:  # Fine scales: use base threshold
         thr = V_percentile_thresh
     else:  # Coarse scales: compute specific threshold
         thr = np.percentile(img, percentile_thresh)
-    
+
     # Neighborhood radius scales with filter size
     # Factor 1.5 ensures peaks are well-separated relative to blob size
     radius = int(max(1, round(1.5 * s)))
-    
+
     # Find local maxima
     coords = local_maxima(img, radius=radius, thresh=thr, top_k=peaks_per_scale)
     all_coords.append(coords)
@@ -227,17 +227,17 @@ for c in coords:
         lo = max(0, int(c[ax] - 1))
         hi = min(V_work.shape[ax], int(c[ax] + 2))
         slices.append(slice(lo, hi))
-    
+
     # Extract intensity patch
     patch = V_work[tuple(slices)]
-    
+
     # Create coordinate grids
     grids = np.meshgrid(*[np.arange(s.start, s.stop) for s in slices], indexing='ij')
-    
+
     # Compute intensity-weighted centroid
     w = patch - patch.min()  # Relative intensities (non-negative)
     W = w.sum() + 1e-12      # Avoid division by zero
-    
+
     # Weighted average across all axes
     mu = np.array([float((w * grids[ax]).sum() / W) for ax in range(d)], dtype=float)
     centers.append(mu)
@@ -504,30 +504,30 @@ scales_to_process = list(range(ignore_finest_k, len(scales)))
 for scale_idx in reversed(scales_to_process):
     scale_factor = scales[scale_idx]
     scale_img = scale_images[scale_idx]
-    
+
     # Compute threshold for this scale
     max_intensity = scale_img.max()
     if max_intensity <= 0:
         continue  # Skip empty scales
-    
+
     threshold = threshold_rel * max_intensity
-    
+
     # Find local maxima in scale image
     # Use radius=1 for finest resolution in scale image (3×3×...×3 neighborhood)
     radius = 1
     peaks = local_maxima(scale_img, radius=radius, thresh=threshold, top_k=peaks_per_scale)
-    
+
     if len(peaks) == 0:
         continue  # No peaks in this scale
-    
+
     # Map peak coordinates to full resolution
     # Peak at position (i, j, ...) in scale image corresponds to
     # position (i×scale_factor + scale_factor/2, ...) in full resolution
     candidates_full_res = peaks.astype(float) * scale_factor + scale_factor / 2.0
-    
+
     # Get energy (intensity) at each peak location
     energies = scale_img[tuple(peaks.T)]
-    
+
     all_candidates.append(candidates_full_res)
     all_energies.append(energies)
 ```
@@ -554,8 +554,8 @@ energies = np.concatenate(all_energies)
 # Deduplicate spatially close candidates
 # Use farthest-first selection with energy priority
 candidates_dedup = dedupe_farthest_first(
-    candidates, 
-    min_distance=min_distance, 
+    candidates,
+    min_distance=min_distance,
     intensities=energies
 )
 
@@ -691,34 +691,34 @@ def local_maxima(
 ) -> np.ndarray:
     """
     Find local maxima in n-dimensional image.
-    
+
     Returns: np.ndarray of shape (N, ndim) with integer coordinates
     """
     # Ensure minimum radius
     if radius < 1:
         radius = 1
-    
+
     # Define kernel size (avoid creating large footprint arrays)
     kernel_size = [2 * radius + 1] * img.ndim
-    
+
     # Apply maximum filter
     max_f = ndi.maximum_filter(img, size=kernel_size, mode='nearest')
-    
+
     # Peak criteria: equals neighborhood maximum AND exceeds threshold
     peaks_mask = (img == max_f) & (img >= thresh)
-    
+
     # Extract coordinates
     coords = np.argwhere(peaks_mask)
-    
+
     if coords.size == 0:
         return coords
-    
+
     # Optionally limit to top_k strongest peaks
     if top_k is not None and len(coords) > top_k:
         vals = img[tuple(coords.T)]
         keep = np.argsort(vals)[-top_k:]  # Indices of top k
         coords = coords[keep]
-    
+
     return coords
 ```
 
@@ -792,11 +792,11 @@ Steps:
 4. For each remaining candidate in order:
    a. Query KD-tree for nearest distance to selected set
       dist = tree.query(candidate, k=1)
-   
+
    b. If dist >= min_distance:
       - Candidate satisfies constraint
       - Add to candidate pool
-   
+
 5. Among valid candidates, select FARTHEST one
    - candidate* = argmax(distances)
    - Add to selected set: S = S ∪ {candidate*}
@@ -838,9 +838,9 @@ while candidates_remain:
 ```
 Greedy Sequential:        Farthest-First:
     ×  ×  ×  ×                 ×     ×
-    ×  ×  ×  ×                 
+    ×  ×  ×  ×
                                ×     ×
-    ×  ×  ×  ×                 
+    ×  ×  ×  ×
                                ×     ×
 (clustered)                (well-distributed)
 ```
@@ -882,65 +882,65 @@ def dedupe_farthest_first(
 ) -> np.ndarray:
     """
     Remove duplicate candidates using farthest-first selection.
-    
+
     Returns: np.ndarray of shape (M, ndim) with M ≤ N (float coordinates)
     """
     # Handle empty input
     if len(coords) == 0:
         return coords.astype(float)
-    
+
     # Small dataset: use simple O(N²) greedy
     if len(coords) < 50:
         return _dedupe_simple(coords, min_distance, intensities)
-    
+
     # Sort by intensity if provided (highest first)
     if intensities is not None:
         sort_indices = np.argsort(intensities)[::-1]
         coords_sorted = coords[sort_indices].astype(float)
     else:
         coords_sorted = coords.astype(float)
-    
+
     # Initialize with first (strongest) candidate
     selected = [coords_sorted[0]]
     selected_array = np.array(selected)
     tree = cKDTree(selected_array)
-    
+
     # Track remaining candidates
     remaining_mask = np.ones(len(coords_sorted), dtype=bool)
     remaining_mask[0] = False
-    
+
     # Farthest-first selection loop
     while True:
         remaining_indices = np.where(remaining_mask)[0]
-        
+
         if len(remaining_indices) == 0:
             break  # No more candidates
-        
+
         # Query KD-tree for all remaining candidates (vectorized)
         remaining_coords = coords_sorted[remaining_indices]
         distances, _ = tree.query(remaining_coords, k=1)
-        
+
         # Find candidates satisfying min_distance
         valid_mask = distances >= min_distance
-        
+
         if not np.any(valid_mask):
             break  # No more valid candidates
-        
+
         # Among valid candidates, pick the FARTHEST one
         valid_distances = distances[valid_mask]
         valid_indices_in_remaining = np.where(valid_mask)[0]
         farthest_idx_in_valid = np.argmax(valid_distances)
         farthest_idx_in_remaining = valid_indices_in_remaining[farthest_idx_in_valid]
         farthest_idx_global = remaining_indices[farthest_idx_in_remaining]
-        
+
         # Add farthest candidate to selected set
         selected.append(coords_sorted[farthest_idx_global])
         remaining_mask[farthest_idx_global] = False
-        
+
         # Rebuild KD-tree with all selected points
         selected_array = np.array(selected)
         tree = cKDTree(selected_array)
-    
+
     return np.array(selected, dtype=float)
 ```
 
@@ -981,29 +981,29 @@ def combine_seeds(
 ) -> np.ndarray:
     """
     Combine candidates from multiple detection methods.
-    
+
     Returns: np.ndarray of shape (M, ndim)
     """
     if method != "union":
         raise ValueError(f"Unknown method: {method}")
-    
+
     # Filter out empty arrays
     non_empty = [arr for arr in candidate_arrays if len(arr) > 0]
-    
+
     if len(non_empty) == 0:
         # Return empty array with correct shape
         for arr in candidate_arrays:
             if arr is not None:
                 return np.zeros((0, arr.shape[1]), dtype=float)
         return np.zeros((0, 2), dtype=float)  # Default to 2D
-    
+
     # Concatenate all non-empty arrays
     combined = np.vstack(non_empty)
-    
+
     # Optionally deduplicate
     if min_distance is not None:
         combined = dedupe_farthest_first(combined, min_distance=min_distance)
-    
+
     return combined
 ```
 
@@ -1163,15 +1163,15 @@ def test_multiscale_gaussian_2d():
 def test_multiscale_gaussian_parameter_validation():
     """Test parameter validation."""
     image = np.random.rand(64, 64)
-    
+
     # Empty scales
     with pytest.raises(ValueError, match="scales must be a non-empty"):
         seed_from_gaussian(image, scales=[])
-    
+
     # Negative scale
     with pytest.raises(ValueError, match="All scale values must be positive"):
         seed_from_gaussian(image, scales=[1.0, -2.0])
-    
+
     # Invalid percentile
     with pytest.raises(ValueError, match="percentile_thresh must be between 0 and 100"):
         seed_from_gaussian(image, percentile_thresh=150.0)
@@ -1241,7 +1241,7 @@ def test_decomposition_ignore_finest_k():
     # More filtering → fewer or equal seeds
     assert len(seeds_skip1.centers) <= len(seeds_all.centers)
     assert len(seeds_skip2.centers) <= len(seeds_skip1.centers)
-    
+
     # Validate warning for ignore_finest_k >= len(scales)
     with pytest.warns(UserWarning):
         seed_from_decomposition(image, scales=[1, 2], ignore_finest_k=3)
@@ -1258,13 +1258,13 @@ def test_local_maxima_basic():
     peaks_true = [(8, 8), (8, 24), (24, 8), (24, 24)]
     for y, x in peaks_true:
         img[y, x] = 1.0
-    
+
     # Detect peaks
     peaks = local_maxima(img, radius=1, thresh=0.5, top_k=None)
-    
+
     # Should find all 4 peaks
     assert len(peaks) == 4
-    
+
     # Should match known locations (order may vary)
     peaks_set = set(map(tuple, peaks))
     assert peaks_set == set(peaks_true)
@@ -1273,13 +1273,13 @@ def test_local_maxima_top_k():
     """Test top-k limiting."""
     # Create image with intensity gradient
     img = np.random.rand(32, 32)
-    
+
     peaks_all = local_maxima(img, radius=1, thresh=0.0, top_k=None)
     peaks_10 = local_maxima(img, radius=1, thresh=0.0, top_k=10)
-    
+
     assert len(peaks_10) == 10
     assert len(peaks_10) <= len(peaks_all)
-    
+
     # Top 10 should be strongest peaks
     vals_10 = img[tuple(peaks_10.T)]
     vals_all = img[tuple(peaks_all.T)]
@@ -1296,10 +1296,10 @@ def test_dedupe_farthest_first_basic():
         [1, 0],  # Close to first (distance 1)
         [10, 0], # Far from first (distance 10)
     ], dtype=float)
-    
+
     # min_distance = 5.0 should keep only [0,0] and [10,0]
     deduped = dedupe_farthest_first(coords, min_distance=5.0)
-    
+
     assert len(deduped) == 2
     assert np.allclose(deduped[0], [0, 0])
     assert np.allclose(deduped[1], [10, 0])
@@ -1311,11 +1311,11 @@ def test_dedupe_with_intensities():
         [1, 0],
         [10, 0],
     ], dtype=float)
-    
+
     intensities = np.array([0.5, 1.0, 0.3])  # Middle one is strongest
-    
+
     deduped = dedupe_farthest_first(coords, min_distance=5.0, intensities=intensities)
-    
+
     # Strongest candidate [1,0] should be selected first
     # Then [10,0] is far enough away
     assert len(deduped) == 2
@@ -1328,11 +1328,11 @@ def test_combine_seeds_basic():
     """Test basic candidate combination."""
     cand1 = np.array([[0, 0], [10, 10]], dtype=float)
     cand2 = np.array([[5, 5], [15, 15]], dtype=float)
-    
+
     # No deduplication
     combined = combine_seeds(cand1, cand2, min_distance=None)
     assert len(combined) == 4
-    
+
     # With deduplication
     combined = combine_seeds(cand1, cand2, min_distance=8.0)
     # [0,0], [10,10], [5,5], [15,15] → pairwise distances vary
@@ -1571,21 +1571,21 @@ def seed_adaptive(V, **kwargs):
 def auto_ignore_finest_k(scale_images, scales):
     """
     Determine optimal ignore_finest_k based on energy distribution.
-    
+
     Idea: Skip scales where energy is dominated by noise (high frequency, low structure).
     """
     energies = [scale_img.sum() for scale_img in scale_images]
-    
+
     # Compute normalized gradient of energy distribution
     energy_gradient = np.diff(energies) / energies[:-1]
-    
+
     # Find first scale where gradient stabilizes
     # (transition from noise-dominated to structure-dominated)
     threshold_gradient = 0.1
     for k, grad in enumerate(energy_gradient):
         if abs(grad) < threshold_gradient:
             return k
-    
+
     return 1  # Default
 ```
 
@@ -1594,19 +1594,19 @@ def auto_ignore_finest_k(scale_images, scales):
 def auto_min_distance(V, target_density=0.001):
     """
     Determine min_distance to achieve target candidate density.
-    
+
     target_density: candidates per voxel (e.g., 0.001 → 1 candidate per 1000 voxels)
     """
     n_voxels = V.size
     n_candidates_target = int(n_voxels * target_density)
-    
+
     # Estimate required min_distance via binary search
     # (requires iterative candidate generation - expensive)
     # Simplified: use heuristic based on image size
     ndim = V.ndim
     voxels_per_candidate = 1 / target_density
     min_distance = (voxels_per_candidate) ** (1 / ndim)
-    
+
     return float(min_distance)
 ```
 
@@ -1660,20 +1660,20 @@ def seed_with_confidence(V, **kwargs):
     for c in centers:
         # Factor 1: Peak intensity
         intensity = V[tuple(c.astype(int))]
-        
+
         # Factor 2: Local contrast (peak vs neighborhood mean)
         neighborhood = extract_neighborhood(V, c, radius=5)
         contrast = intensity / (neighborhood.mean() + 1e-6)
-        
+
         # Factor 3: Peak sharpness (second derivative magnitude)
         sharpness = compute_laplacian_magnitude(V, c)
-        
+
         # Combine factors (weighted)
         confidence = 0.5 * intensity + 0.3 * contrast + 0.2 * sharpness
         confidences.append(confidence)
-    
+
     confidences = np.array(confidences)
-    
+
     return candidates, confidences
 ```
 
@@ -1694,22 +1694,22 @@ def seed_from_gaussian_gpu(V, **kwargs):
     """
     import cupy as cp
     from cupyx.scipy.ndimage import gaussian_filter as gpu_gaussian_filter
-    
+
     # Transfer to GPU
     V_gpu = cp.asarray(V)
-    
+
     all_coords = []
     for s in kwargs['scales']:
         # GPU Gaussian filtering
         img_gpu = gpu_gaussian_filter(V_gpu, sigma=s)
-        
+
         # GPU peak detection (custom kernel)
         peaks_gpu = gpu_local_maxima(img_gpu, ...)
-        
+
         # Transfer back to CPU
         peaks = cp.asnumpy(peaks_gpu)
         all_coords.append(peaks)
-    
+
     # Rest of processing on CPU (deduplication, refinement)
     ...
 ```
@@ -1729,14 +1729,14 @@ def seed_from_gaussian_gpu(V, **kwargs):
 class CandidateNetworkModel(nn.Module):
     """
     U-Net style network that predicts candidate probability maps.
-    
+
     Input: Image/volume
     Output: Probability map (same size as input)
     """
     def __init__(self, ndim):
         # ... define U-Net architecture for ndim dimensions
         pass
-    
+
     def forward(self, x):
         # ... forward pass producing probability map
         pass

@@ -200,7 +200,7 @@ def _calculate_optimal_chunk_size(K, d, device, dtype) -> int:
 def _linear_strides(shape: Sequence[int], device) -> torch.Tensor:
     """
     Compute row-major linear strides for nD tensor.
-    
+
     Returns: (d,) long tensor where stride[i] = product(shape[i+1:])
     Example: shape (10, 20, 30) → strides [600, 30, 1]
     """
@@ -208,7 +208,7 @@ def _linear_strides(shape: Sequence[int], device) -> torch.Tensor:
 def _group_by_box(lo: torch.Tensor, hi: torch.Tensor) -> Dict[Tuple[int, ...], torch.Tensor]:
     """
     Group splats by AABB shape using torch.unique on GPU.
-    
+
     Returns: Dict mapping box_shape tuple → tensor of splat indices
     Minimizes GPU-CPU synchronization by doing grouping on GPU
     Only transfers small unique array to CPU for dict keys
@@ -217,7 +217,7 @@ def _group_by_box(lo: torch.Tensor, hi: torch.Tensor) -> Dict[Tuple[int, ...], t
 def _group_by_box_gpu(lo: torch.Tensor, hi: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     GPU-friendly grouping by AABB size (returns uniq_sizes, inv).
-    
+
     MPS Compatibility: Falls back to CPU for torch.unique since MPS
     doesn't support unique with dim argument. Returns tensors on original device.
     """
@@ -433,21 +433,21 @@ render_gaussians_numpy(shape, result)
 def stable_inverse_softplus(y: np.ndarray, beta: float = 1.0) -> np.ndarray:
     """
     Compute inverse softplus: x such that softplus(x) = y.
-    
+
     Mathematical relationship:
         softplus(x) = (1/beta) * log(1 + exp(beta*x))
         inverse_softplus(y) = (1/beta) * log(exp(beta*y) - 1)
                             = (1/beta) * log(expm1(beta*y))  # stable form
-    
+
     Algorithm:
     1. For large beta*y (>= 50): use asymptotic approximation y
     2. For normal values: use expm1 to avoid catastrophic cancellation
     3. Preserves input dtype (float32/float64)
-    
+
     Warnings:
     - Issues RuntimeWarning if input contains non-positive values
     - Handles edge cases gracefully
-    
+
     Returns: Same dtype as input
     """
 ```
@@ -457,16 +457,16 @@ def stable_inverse_softplus(y: np.ndarray, beta: float = 1.0) -> np.ndarray:
 def solve_lower_triangular(L: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     """
     Cross-version compatibility wrapper for PyTorch triangular solve.
-    
+
     Modern PyTorch (>= 2.0): Uses torch.linalg.solve_triangular
     Legacy PyTorch (1.x): Uses torch.triangular_solve (returns tuple)
-    
+
     Parameters:
     - L: (d, d) or (N, d, d) lower triangular matrices
     - B: (d, P) or (N, d, P) right-hand side
-    
+
     Returns: Solution X such that L @ X = B
-    
+
     Note: This solver is primarily for reference/testing.
     The main rendering code uses explicit forward substitution
     for better performance.
@@ -537,18 +537,18 @@ for box_shape, indices in groups.items():
     base, lin_offsets = _cached_base_and_offsets(box_shape, strides, device)
     # base: (d, P) coordinates in [0, h_i-1]
     # lin_offsets: (P,) flat indices for output accumulation
-    
+
     # Step 3: Compute base flat indices for each splat in group
     base_idx = (lo[indices] * strides).sum(dim=1)  # (K,)
-    
+
     # Step 4: Process in memory chunks
     for p0 in range(0, P, P_chunk):
         p1 = min(P, p0 + P_chunk)
         base_chunk = base[:, p0:p1]  # (d, Pc)
-        
+
         # Step 5: Compute deltas: x - μ (broadcast to all splats in group)
         delta = base_chunk[None, :, :] + lo_f[:, :, None] - mu[:, :, None]  # (K, d, Pc)
-        
+
         # Step 6: Solve L*y = delta (batched)
         if d == 2:
             expo = _fwd_norm2_2d(L, delta[0], delta[1])
@@ -557,11 +557,11 @@ for box_shape, indices in groups.items():
         else:
             y = torch.linalg.solve_triangular(L, delta, upper=False)
             expo = torch.sum(y * y, dim=1)  # (K, Pc)
-        
+
         # Step 7: Apply generalized Gaussian with sharpness
         expo_safe = torch.clamp(expo, min=1e-10)
         vals = torch.exp(-0.5 * torch.pow(expo_safe, s[:, None] / 2.0)) * a[:, None]
-        
+
         # Step 8: Accumulate into output
         idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
         out_flat.index_add_(0, idx_flat, vals.reshape(-1))
@@ -801,15 +801,15 @@ def _render_gaussians_custom(shape, centers, Ls, amps, sharpness, ...):
     """
     device = centers.device
     out = torch.zeros(tuple(shape), dtype=torch.float32, device=device)
-    
+
     # Custom AABB calculation
     # ...
-    
+
     # Custom accumulation (e.g., max instead of sum)
     for each_splat:
         vals = compute_gaussian_values(...)
         out = torch.maximum(out, vals)  # Max accumulation
-    
+
     return out
 ```
 
@@ -831,7 +831,7 @@ Replace softplus/sigmoid with custom activations in parameterization:
 def current_params(self):
     # Original: amps = F.softplus(self.raw_a)
     # New: amps = F.elu(self.raw_a) + 1.0  # Ensures non-negativity
-    
+
     # Corresponding initialization needs inverse:
     # raw_a0 = inverse_elu_plus_one(amps0)
 ```

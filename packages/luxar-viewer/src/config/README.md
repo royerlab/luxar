@@ -253,10 +253,10 @@ const bloomSettings = config.renderingControls.defaults;
 ```typescript
 // In SceneManager
 const camera = new THREE.PerspectiveCamera(
-  config.camera.fov,
+  config.renderingControls.defaults.fov,
   aspectRatio,
-  config.camera.near,
-  config.camera.far
+  config.renderingControls.defaults.near,
+  config.renderingControls.defaults.far
 );
 
 // In PostProcessing
@@ -357,7 +357,7 @@ const { fov, near, far } = config.camera;
 import type { CameraConfig } from '../config';
 
 // ❌ Avoid: Don't modify configuration at runtime
-// config.camera.fov = 90; // This would break immutability
+// config.renderingControls.defaults.fov = 90; // This would break immutability
 ```
 
 ### Adding New Configuration

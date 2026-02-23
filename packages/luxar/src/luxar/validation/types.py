@@ -172,6 +172,11 @@ def validate_transform(transform: Any) -> TransformMatrix:
     if transform.shape != (4, 4):
         raise ValueError("Transform must be a 4x4 matrix")
 
+    if np.any(np.isnan(transform)):
+        raise ValueError("Transform contains NaN values")
+    if np.any(np.isinf(transform)):
+        raise ValueError("Transform contains Inf values")
+
     return transform.astype(np.float32, copy=False)
 
 
@@ -344,56 +349,6 @@ def is_transform_matrix(obj: Any) -> bool:
         return True
     except (ValueError, TypeError):
         return False
-
-
-def validate_categories(categories: Any) -> Optional[List[str]]:
-    """Validate category list for categorical dimensions.
-
-    Args:
-        categories: List of category labels, or None for non-categorical dimensions
-
-    Returns:
-        Validated categories list, or None
-
-    Raises:
-        TypeError: If categories is not a list or None
-        ValueError: If categories are invalid (empty, duplicates, etc.)
-    """
-    if categories is None:
-        return None
-
-    if not isinstance(categories, list):
-        raise TypeError(
-            f"categories must be a list or None, got {type(categories).__name__}"
-        )
-
-    if len(categories) == 0:
-        raise ValueError("categories must have at least 1 element")
-
-    max_category_length = 1024
-    seen: dict[str, int] = {}
-
-    for i, cat in enumerate(categories):
-        if not isinstance(cat, str):
-            raise TypeError(
-                f"category at index {i} must be a string, got {type(cat).__name__}"
-            )
-
-        if cat == "":
-            raise ValueError(f"category at index {i} is empty string")
-
-        if len(cat) > max_category_length:
-            raise ValueError(
-                f"category at index {i} exceeds maximum length ({len(cat)} > {max_category_length})"
-            )
-
-        if cat in seen:
-            raise ValueError(
-                f"duplicate category name '{cat}' at indices {seen[cat]} and {i}"
-            )
-        seen[cat] = i
-
-    return categories
 
 
 def validate_category_indices(

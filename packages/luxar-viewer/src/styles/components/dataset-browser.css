@@ -80,8 +80,8 @@
 /* Welcome Banner */
 .luxar-dataset-browser__banner {
   padding: var(--luxar-spacing-5) var(--luxar-spacing-10);
-  background: rgba(76, 175, 80, 0.08);
-  border-bottom: 1px solid rgba(76, 175, 80, 0.2);
+  background: color-mix(in srgb, var(--luxar-success) 8%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--luxar-success) 20%, transparent);
   font-size: var(--luxar-text-md);
   line-height: var(--luxar-line-normal);
   color: var(--luxar-text-secondary);
@@ -112,7 +112,7 @@
 }
 
 .luxar-dataset-browser__banner-kbd {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--luxar-interactive-default);
   padding: 1px 4px;
   border-radius: 2px;
   font-family: var(--luxar-font-mono);
@@ -126,7 +126,7 @@
 /* Breadcrumb Navigation */
 .luxar-dataset-browser__breadcrumb {
   padding: var(--luxar-spacing-2) var(--luxar-spacing-10);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--luxar-bg-tertiary);
   border-bottom: 1px solid var(--luxar-border-subtle);
   font-size: var(--luxar-text-sm);
   display: flex;
@@ -188,7 +188,7 @@
 
 .luxar-dataset-browser__file-item {
   padding: var(--luxar-spacing-5) var(--luxar-spacing-6);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--luxar-bg-tertiary);
   border-radius: var(--luxar-radius-sm);
   cursor: pointer;
   transition: var(--luxar-transition-normal);
@@ -198,16 +198,16 @@
 }
 
 .luxar-dataset-browser__file-item:hover {
-  background: rgba(76, 175, 80, 0.2);
+  background: color-mix(in srgb, var(--luxar-success) 20%, transparent);
 }
 
 .luxar-dataset-browser__file-item--current {
-  background: rgba(76, 175, 80, 0.15);
-  border: 1px solid rgba(76, 175, 80, 0.4);
+  background: color-mix(in srgb, var(--luxar-success) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--luxar-success) 40%, transparent);
 }
 
 .luxar-dataset-browser__file-item--current:hover {
-  background: rgba(76, 175, 80, 0.2);
+  background: color-mix(in srgb, var(--luxar-success) 20%, transparent);
 }
 
 .luxar-dataset-browser__file-icon {
@@ -263,7 +263,7 @@
   width: 100%;
   max-width: 400px;
   padding: var(--luxar-spacing-5);
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--luxar-interactive-default);
   border: 1px solid var(--luxar-border-default);
   border-radius: var(--luxar-radius-sm);
   color: var(--luxar-text-primary);
@@ -296,13 +296,13 @@
 }
 
 .luxar-dataset-browser__manual-entry-btn--cancel {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--luxar-interactive-default);
   border: 1px solid var(--luxar-border-default);
   color: var(--luxar-text-primary);
 }
 
 .luxar-dataset-browser__manual-entry-btn--cancel:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--luxar-interactive-hover);
 }
 
 .luxar-dataset-browser__manual-entry-tip {

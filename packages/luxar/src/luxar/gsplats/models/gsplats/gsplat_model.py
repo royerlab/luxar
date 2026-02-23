@@ -14,6 +14,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from arbol import aprint
 
 from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 from luxar.gsplats.models.utils.inverse_softplus import stable_inverse_softplus
@@ -103,6 +104,8 @@ class GaussianSplatModel(nn.Module):
                 device = torch.device("cuda")
             else:
                 device = torch.device("cpu")
+
+        aprint(f"GaussianSplatModel: using device '{device}'")
 
         # ---- Center parameterization: sigmoid ensures centers stay within image bounds ----
         # Transform initial centers to sigmoid parameter space

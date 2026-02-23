@@ -51,7 +51,7 @@ result.save("output.gsplats.zarr")
 ### 1. Seed Generation
 The system starts by finding initial seed positions using multiscale seed generation:
 - **Gaussian filtering** at multiple scales to detect blob-like structures
-- **Difference of Gaussians (DoG)** for edge and boundary detection  
+- **Difference of Gaussians (DoG)** for edge and boundary detection
 - **Intensity-weighted grid sampling** for spatial coverage
 - **Spatial deduplication of seeds** to remove redundant seeds
 
@@ -66,7 +66,7 @@ Each Gaussian splat is parameterized using covariance matrix representation:
 
 Mathematical form: `f(x) = a * exp(-0.5 * ||y||^s)` where `y = Σ^(-1/2) @ (x-μ)` and s controls edge sharpness
 
-The implementation avoids explicit matrix inversion by solving the triangular system `L @ y = (x-μ)` 
+The implementation avoids explicit matrix inversion by solving the triangular system `L @ y = (x-μ)`
 and computing the quadratic form as `||y||²`.
 
 ### 3. Optimization Process
@@ -83,7 +83,7 @@ The fitting uses PyTorch with advanced optimization strategies:
 Efficient rendering using batched operations with two computational approaches:
 
 **Efficient Rendering Pipeline:**
-- **AABB Truncation**: Each splat rendered only within `truncate * σ` radius  
+- **AABB Truncation**: Each splat rendered only within `truncate * σ` radius
 - **Batched Triangular Solve**: Avoids explicit matrix inversion via `L @ y = (x-μ)`
 - **Specialized 2D/3D Paths**: Optimized renderers with explicit forward-substitution
 - **Amplitude-aware Culling**: Reduces computation for weak splats
@@ -95,10 +95,10 @@ The implementation includes several key optimizations that provide significant s
 
 1. **2D/3D Specialized Paths**: Optimized renderers with explicit forward-substitution for common cases
 2. **Convergence Detection**: Automatically stops when loss plateaus (saves 20-60% iterations)
-3. **Adaptive Learning**: Reduces learning rate on plateaus for better convergence  
+3. **Adaptive Learning**: Reduces learning rate on plateaus for better convergence
 4. **Device-Aware Selection**: Automatic selection of best available device (CUDA > CPU > MPS)
 5. **Cached Computations**: Reuses grids and strides for repeated operations
-6. **Optional Enhancements**: 
+6. **Optional Enhancements**:
    - Model compilation with `torch.compile` (PyTorch 2.0+, CUDA only)
    - Mixed precision training (FP16 on CUDA)
    - Pre-allocated buffers for memory efficiency

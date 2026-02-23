@@ -91,12 +91,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
     Examples:
         Basic usage with context manager:
+        >>> dims = Dimensions.default_3d()
         >>> with LuxarZarrCompiler('output.zarr') as compiler:
-        ...     scene = compiler.create_scene()
+        ...     scene = compiler.create_scene(dimensions=dims)
         ...     positions = np.random.randn(10000, 3).astype(np.float32)
         ...     scene.add_points('points', positions)
 
-        With HDR colors and dimensions:
+        With HDR colors and custom dimensions:
         >>> dims = Dimensions([
         ...     Dimension('x', unit='um'),
         ...     Dimension('y', unit='um'),
@@ -109,8 +110,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         ...     scene.add_points('bright_points', positions, colors=colors)
 
         Large datasets (split into multiple nodes):
+        >>> dims = Dimensions.default_3d()
         >>> with LuxarZarrCompiler('huge.zarr', ordering_method="hilbert") as compiler:
-        ...     scene = compiler.create_scene()
+        ...     scene = compiler.create_scene(dimensions=dims)
         ...     # Process chunks one at a time, each becomes a separate node
         ...     for i in range(100):
         ...         chunk_positions, chunk_colors = load_chunk(i)  # 10M points

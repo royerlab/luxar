@@ -103,7 +103,8 @@ export class GUI extends Folder {
       const closeBtn = document.createElement('button');
       closeBtn.className = 'luxar-gui__close-btn';
       closeBtn.textContent = '×';
-      closeBtn.addEventListener('click', () => {
+      closeBtn.setAttribute('aria-label', 'Close');
+      this.eventManager.add(closeBtn, 'click', () => {
         this.guiOptions.onClose?.();
       });
       header.appendChild(closeBtn);

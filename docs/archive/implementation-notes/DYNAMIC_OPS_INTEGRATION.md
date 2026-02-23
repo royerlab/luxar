@@ -62,7 +62,7 @@ When enabled, dynamic operations provide detailed console feedback:
 ```
 ├╗ Dynamic Operations
 │├ • Pruned 3 splats (weak:3)
-│├ • Merged 1 pairs (2→1) [27 KL-rejected]  
+│├ • Merged 1 pairs (2→1) [27 KL-rejected]
 │├ • Split 6 splats (6→12) [large:45, high-err:13]
 │├ • Seeded 20 splats [3 too-weak]
 │┴

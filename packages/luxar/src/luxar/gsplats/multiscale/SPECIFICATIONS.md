@@ -391,7 +391,7 @@ Initialize all scales to zero (or near-zero values):
 def initialize_zero(target: Tensor) -> None:
     """
     Initialize all scales to zero (or near-zero).
-    
+
     This creates a "worst case" starting point where all scales start at
     effectively zero and must be learned from scratch. Useful for understanding
     the importance of initialization and as a baseline comparison.

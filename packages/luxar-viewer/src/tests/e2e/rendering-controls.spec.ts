@@ -12,7 +12,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, getLuxarState } from './helpers';
+import { waitForLuxarReady, getLuxarState, waitForNextRender } from './helpers';
 
 test.describe('Rendering Controls Panel', () => {
   test('should toggle rendering controls panel with R key', async ({ page }) => {
@@ -21,7 +21,7 @@ test.describe('Rendering Controls Panel', () => {
 
     // Click on body to dismiss any modal and ensure no input has focus
     await page.click('body', { position: { x: 10, y: 10 } });
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Initially panel should be hidden
     const initiallyVisible = await page.evaluate(() => {
@@ -32,7 +32,7 @@ test.describe('Rendering Controls Panel', () => {
 
     // Press R to show panel
     await page.keyboard.press('r');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Panel should now be visible
     const visibleAfterR = await page.evaluate(() => {
@@ -43,7 +43,7 @@ test.describe('Rendering Controls Panel', () => {
 
     // Press R again to hide
     await page.keyboard.press('r');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Panel should be hidden again
     const hiddenAfterSecondR = await page.evaluate(() => {
@@ -59,11 +59,11 @@ test.describe('Rendering Controls Panel', () => {
 
     // Click on body to dismiss any modal and ensure no input has focus
     await page.click('body', { position: { x: 10, y: 10 } });
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Show panel
     await page.keyboard.press('r');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Check for panel title
     const hasRenderingControlsTitle = await page.evaluate(() => {
@@ -100,7 +100,7 @@ test.describe('Camera and Navigation Settings', () => {
       debug.app.components.sceneManager.updateFOV(5); // Increase FOV
     });
 
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Get new FOV
     const newState = await getLuxarState(page);
@@ -132,7 +132,7 @@ test.describe('Camera and Navigation Settings', () => {
       debug.app.components.sceneManager.setControlType('fly');
     });
 
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Verify fly controls are active
     const controlType = await page.evaluate(() => {
@@ -191,7 +191,7 @@ test.describe('Dynamic Clipping', () => {
       debug.app.components.sceneManager.setDynamicClipping(!currentState, 0.1);
     });
 
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Get new state
     const newState = await page.evaluate(() => {

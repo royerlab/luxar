@@ -402,10 +402,4 @@
   border-color: rgba(255, 255, 255, 0.15) !important;
 }
 
-[data-theme='liquid-glass'] .luxar-error-dialog__content {
-  background: rgba(255, 255, 255, 0.04) !important;
-}
-
-[data-theme='liquid-glass'] .luxar-error-dialog__footer {
-  border-color: rgba(255, 255, 255, 0.1) !important;
-}
+/* Note: .luxar-error-dialog__content and __footer selectors removed - these classes don't exist in the error dialog DOM */

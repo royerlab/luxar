@@ -207,54 +207,10 @@ class Scene(Node):
             # Validate data dimensions against scene dimensions
             self._validate_data_dimensions(positions, name, data_type="positions")
 
-            # Handle extend_to_all based on user specification
-            final_extend_dims: List[str] = []
-
-            if extend_to_all is None:
-                # Default: No extension, but warn if candidates detected
-                if self._dimensions is not None:
-                    candidates = self._analyze_extend_candidates(positions)
-                    if candidates:
-                        warnings.warn(
-                            f"Dimension(s) {candidates} have single values but defined ranges.\n"
-                            f"If these points should be visible at ALL values of these dimensions, use:\n"
-                            f"    extend_to_all={candidates}\n"
-                            f"If intentional (points only at these specific values), use:\n"
-                            f"    extend_to_all=[]  # Explicit: no extension\n"
-                            f"Set extend_to_all explicitly to silence this warning.",
-                            UserWarning,
-                            stacklevel=2,
-                        )
-                final_extend_dims = []
-            elif extend_to_all == "all":
-                # Extend to all non-displayed dimensions
-                if self._dimensions is not None:
-                    final_extend_dims = [
-                        dim.name
-                        for dim in self._dimensions.dimensions
-                        if not dim.display and dim.name
-                    ]
-            elif isinstance(extend_to_all, list):
-                # Use explicit list (including empty list to silence warning)
-                if self._dimensions is not None:
-                    unknown_dims = [
-                        dim_name
-                        for dim_name in extend_to_all
-                        if dim_name not in self._dimensions.names
-                    ]
-                    if unknown_dims:
-                        raise ValueError(
-                            f"Unknown dimension(s) in extend_to_all: {unknown_dims}. "
-                            f"Valid dimensions: {self._dimensions.names}"
-                        )
-                final_extend_dims = extend_to_all
-            else:
-                raise ValueError(
-                    f"Invalid extend_to_all value: {extend_to_all}. "
-                    f"Expected None, list of dimension names, 'all', or []."
-                )
-
-            # Add extend_to_all to attributes if we have any
+            # Handle extend_to_all
+            final_extend_dims = self._resolve_extend_to_all(
+                extend_to_all, positions, "points"
+            )
             if final_extend_dims:
                 attrs["extend_to_all"] = final_extend_dims
                 aprint(f"  📡 Extending visibility across: {final_extend_dims}")
@@ -371,54 +327,10 @@ class Scene(Node):
             # Validate data dimensions against scene dimensions
             self._validate_data_dimensions(vertices, name, data_type="vertices")
 
-            # Handle extend_to_all based on user specification
-            final_extend_dims: List[str] = []
-
-            if extend_to_all is None:
-                # Default: No extension, but warn if candidates detected
-                if self._dimensions is not None:
-                    candidates = self._analyze_extend_candidates(vertices)
-                    if candidates:
-                        warnings.warn(
-                            f"Dimension(s) {candidates} have single values but defined ranges.\n"
-                            f"If these lines should be visible at ALL values of these dimensions, use:\n"
-                            f"    extend_to_all={candidates}\n"
-                            f"If intentional (lines only at these specific values), use:\n"
-                            f"    extend_to_all=[]  # Explicit: no extension\n"
-                            f"Set extend_to_all explicitly to silence this warning.",
-                            UserWarning,
-                            stacklevel=2,
-                        )
-                final_extend_dims = []
-            elif extend_to_all == "all":
-                # Extend to all non-displayed dimensions
-                if self._dimensions is not None:
-                    final_extend_dims = [
-                        dim.name
-                        for dim in self._dimensions.dimensions
-                        if not dim.display and dim.name
-                    ]
-            elif isinstance(extend_to_all, list):
-                # Use explicit list (including empty list to silence warning)
-                if self._dimensions is not None:
-                    unknown_dims = [
-                        dim_name
-                        for dim_name in extend_to_all
-                        if dim_name not in self._dimensions.names
-                    ]
-                    if unknown_dims:
-                        raise ValueError(
-                            f"Unknown dimension(s) in extend_to_all: {unknown_dims}. "
-                            f"Valid dimensions: {self._dimensions.names}"
-                        )
-                final_extend_dims = extend_to_all
-            else:
-                raise ValueError(
-                    f"Invalid extend_to_all value: {extend_to_all}. "
-                    f"Expected None, list of dimension names, 'all', or []."
-                )
-
-            # Add extend_to_all to attributes if we have any
+            # Handle extend_to_all
+            final_extend_dims = self._resolve_extend_to_all(
+                extend_to_all, vertices, "lines"
+            )
             if final_extend_dims:
                 attrs["extend_to_all"] = final_extend_dims
                 aprint(f"  📡 Extending visibility across: {final_extend_dims}")
@@ -531,54 +443,10 @@ class Scene(Node):
             # Validate data dimensions against scene dimensions
             self._validate_data_dimensions(centers, name, data_type="centers")
 
-            # Handle extend_to_all based on user specification
-            final_extend_dims: List[str] = []
-
-            if extend_to_all is None:
-                # Default: No extension, but warn if candidates detected
-                if self._dimensions is not None:
-                    candidates = self._analyze_extend_candidates(centers)
-                    if candidates:
-                        warnings.warn(
-                            f"Dimension(s) {candidates} have single values but defined ranges.\n"
-                            f"If these splats should be visible at ALL values of these dimensions, use:\n"
-                            f"    extend_to_all={candidates}\n"
-                            f"If intentional (splats only at these specific values), use:\n"
-                            f"    extend_to_all=[]  # Explicit: no extension\n"
-                            f"Set extend_to_all explicitly to silence this warning.",
-                            UserWarning,
-                            stacklevel=2,
-                        )
-                final_extend_dims = []
-            elif extend_to_all == "all":
-                # Extend to all non-displayed dimensions
-                if self._dimensions is not None:
-                    final_extend_dims = [
-                        dim.name
-                        for dim in self._dimensions.dimensions
-                        if not dim.display and dim.name
-                    ]
-            elif isinstance(extend_to_all, list):
-                # Use explicit list (including empty list to silence warning)
-                if self._dimensions is not None:
-                    unknown_dims = [
-                        dim_name
-                        for dim_name in extend_to_all
-                        if dim_name not in self._dimensions.names
-                    ]
-                    if unknown_dims:
-                        raise ValueError(
-                            f"Unknown dimension(s) in extend_to_all: {unknown_dims}. "
-                            f"Valid dimensions: {self._dimensions.names}"
-                        )
-                final_extend_dims = extend_to_all
-            else:
-                raise ValueError(
-                    f"Invalid extend_to_all value: {extend_to_all}. "
-                    f"Expected None, list of dimension names, 'all', or []."
-                )
-
-            # Add extend_to_all to attributes if we have any
+            # Handle extend_to_all
+            final_extend_dims = self._resolve_extend_to_all(
+                extend_to_all, centers, "splats"
+            )
             if final_extend_dims:
                 attrs["extend_to_all"] = final_extend_dims
                 aprint(f"  📡 Extending visibility across: {final_extend_dims}")
@@ -716,6 +584,77 @@ class Scene(Node):
             extend_to_all=extend_to_all,
             **attrs,
         )
+
+    def _resolve_extend_to_all(
+        self,
+        extend_to_all: Optional[Union[List[str], str]],
+        positions: np.ndarray,
+        data_type: str,
+    ) -> List[str]:
+        """Resolve extend_to_all parameter into a final list of dimension names.
+
+        Handles all extend_to_all modes:
+        - None: No extension, but warn if candidates detected
+        - "all": Extend to all non-displayed dimensions
+        - List of names: Validate and use explicit list
+        - []: Explicitly no extension (silences warning)
+
+        Args:
+            extend_to_all: User-specified extend_to_all value
+            positions: Position/vertex/center array for candidate analysis
+            data_type: Human-readable data type for warning messages
+                ("points", "lines", "splats")
+
+        Returns:
+            List of dimension names to extend visibility across
+
+        Raises:
+            ValueError: If extend_to_all contains unknown dimensions or invalid value
+        """
+        if extend_to_all is None:
+            # Default: No extension, but warn if candidates detected
+            if self._dimensions is not None:
+                candidates = self._analyze_extend_candidates(positions)
+                if candidates:
+                    warnings.warn(
+                        f"Dimension(s) {candidates} have single values but defined ranges.\n"
+                        f"If these {data_type} should be visible at ALL values of these dimensions, use:\n"
+                        f"    extend_to_all={candidates}\n"
+                        f"If intentional ({data_type} only at these specific values), use:\n"
+                        f"    extend_to_all=[]  # Explicit: no extension\n"
+                        f"Set extend_to_all explicitly to silence this warning.",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+            return []
+        elif extend_to_all == "all":
+            # Extend to all non-displayed dimensions
+            if self._dimensions is not None:
+                return [
+                    dim.name
+                    for dim in self._dimensions.dimensions
+                    if not dim.display and dim.name
+                ]
+            return []
+        elif isinstance(extend_to_all, list):
+            # Use explicit list (including empty list to silence warning)
+            if self._dimensions is not None:
+                unknown_dims = [
+                    dim_name
+                    for dim_name in extend_to_all
+                    if dim_name not in self._dimensions.names
+                ]
+                if unknown_dims:
+                    raise ValueError(
+                        f"Unknown dimension(s) in extend_to_all: {unknown_dims}. "
+                        f"Valid dimensions: {self._dimensions.names}"
+                    )
+            return extend_to_all
+        else:
+            raise ValueError(
+                f"Invalid extend_to_all value: {extend_to_all}. "
+                f"Expected None, list of dimension names, 'all', or []."
+            )
 
     def _analyze_extend_candidates(self, positions: np.ndarray) -> List[str]:
         """Analyze which dimensions might be candidates for extend_to_all.

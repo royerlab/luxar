@@ -76,10 +76,13 @@ export class Folder {
     const folder = document.createElement('div');
     folder.className = 'luxar-gui__folder';
 
-    // Title bar (clickable)
+    // Title bar (clickable, keyboard-accessible)
     const title = document.createElement('div');
     title.className = 'luxar-gui__folder-title';
     title.textContent = this.name;
+    title.setAttribute('role', 'button');
+    title.setAttribute('tabindex', '0');
+    title.setAttribute('aria-expanded', String(this.isOpen));
 
     // Caret icon
     const caret = document.createElement('span');
@@ -87,12 +90,23 @@ export class Folder {
     caret.textContent = this.isOpen ? '▼' : '▶';
     title.prepend(caret);
 
-    // Toggle on click (tracked by EventManager for cleanup)
-    this.eventManager.add(title, 'click', () => {
+    const toggleFolder = () => {
       if (this.isOpen) {
         this.close();
       } else {
         this.open();
+      }
+    };
+
+    // Toggle on click (tracked by EventManager for cleanup)
+    this.eventManager.add(title, 'click', toggleFolder);
+
+    // Toggle on Enter/Space for keyboard accessibility
+    this.eventManager.add(title, 'keydown', (e: Event) => {
+      const keyEvent = e as KeyboardEvent;
+      if (keyEvent.key === 'Enter' || keyEvent.key === ' ') {
+        keyEvent.preventDefault();
+        toggleFolder();
       }
     });
 
@@ -112,6 +126,11 @@ export class Folder {
     const caret = element.querySelector('.luxar-gui__folder-caret');
     if (caret) {
       caret.textContent = this.isOpen ? '▼' : '▶';
+    }
+
+    const title = element.querySelector('.luxar-gui__folder-title');
+    if (title) {
+      title.setAttribute('aria-expanded', String(this.isOpen));
     }
 
     this.childrenContainer.style.display = this.isOpen ? '' : 'none';
