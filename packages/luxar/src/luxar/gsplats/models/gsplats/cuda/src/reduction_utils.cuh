@@ -254,30 +254,29 @@ __device__ __forceinline__ void backward_pixel_splat_3d(
     // Gradient w.r.t sharpness
     local_d_sharpness += dL_dI * grad_intensity_wrt_sharpness(intensity, dist_sq, s);
 
-    // Gradient w.r.t dist_sq
+    // Gradient w.r.t dist_sq - pre-compute common factor (eliminates 8 redundant multiplies)
     float grad_dist = grad_intensity_wrt_dist_sq(intensity, dist_sq, s);
+    float outer = dL_dI * grad_dist;
 
     // Compute ∂D²/∂d (3D explicit)
     float dD2_dd[3];
     compute_dD2_dd_3d(d_vec, conic, dD2_dd);
 
-    // ∂L/∂center = dL_dI * grad_dist * ∂D²/∂d * (-1)
+    // ∂L/∂center = outer * ∂D²/∂d * (-1)
     // (negative because d = px - center, so ∂d/∂center = -1)
-    local_d_centers[0] += dL_dI * grad_dist * dD2_dd[0] * (-1.0f);
-    local_d_centers[1] += dL_dI * grad_dist * dD2_dd[1] * (-1.0f);
-    local_d_centers[2] += dL_dI * grad_dist * dD2_dd[2] * (-1.0f);
+    float outer_neg = -outer;
+    local_d_centers[0] += outer_neg * dD2_dd[0];
+    local_d_centers[1] += outer_neg * dD2_dd[1];
+    local_d_centers[2] += outer_neg * dD2_dd[2];
 
-    // Compute ∂D²/∂conic (3D explicit)
-    float dD2_dconic[6];
-    compute_dD2_dconic_3d(d_vec, dD2_dconic);
-
-    // ∂L/∂conic = dL_dI * grad_dist * ∂D²/∂conic
-    local_d_conic[0] += dL_dI * grad_dist * dD2_dconic[0];
-    local_d_conic[1] += dL_dI * grad_dist * dD2_dconic[1];
-    local_d_conic[2] += dL_dI * grad_dist * dD2_dconic[2];
-    local_d_conic[3] += dL_dI * grad_dist * dD2_dconic[3];
-    local_d_conic[4] += dL_dI * grad_dist * dD2_dconic[4];
-    local_d_conic[5] += dL_dI * grad_dist * dD2_dconic[5];
+    // ∂L/∂conic = outer * ∂D²/∂conic (inline computation, no intermediate array)
+    float d0 = d_vec[0], d1 = d_vec[1], d2 = d_vec[2];
+    local_d_conic[0] += outer * d0 * d0;          // ∂D²/∂c00 = d0²
+    local_d_conic[1] += outer * 2.0f * d0 * d1;   // ∂D²/∂c01 = 2*d0*d1
+    local_d_conic[2] += outer * 2.0f * d0 * d2;   // ∂D²/∂c02 = 2*d0*d2
+    local_d_conic[3] += outer * d1 * d1;           // ∂D²/∂c11 = d1²
+    local_d_conic[4] += outer * 2.0f * d1 * d2;    // ∂D²/∂c12 = 2*d1*d2
+    local_d_conic[5] += outer * d2 * d2;           // ∂D²/∂c22 = d2²
 }
 
 /**
@@ -302,8 +301,9 @@ __device__ __forceinline__ void backward_pixel_splat_2d(
     // Gradient w.r.t sharpness
     local_d_sharpness += dL_dI * grad_intensity_wrt_sharpness(intensity, dist_sq, s);
 
-    // Gradient w.r.t dist_sq
+    // Gradient w.r.t dist_sq - pre-compute common factor
     float grad_dist = grad_intensity_wrt_dist_sq(intensity, dist_sq, s);
+    float outer = dL_dI * grad_dist;
 
     // For 2D, conic layout: [c00, c01, c11]
     float c00 = conic[0], c01 = conic[1], c11 = conic[2];
@@ -313,15 +313,15 @@ __device__ __forceinline__ void backward_pixel_splat_2d(
     float dD2_dd0 = 2.0f * (c00 * d0 + c01 * d1);
     float dD2_dd1 = 2.0f * (c01 * d0 + c11 * d1);
 
-    // ∂L/∂center = dL_dI * grad_dist * ∂D²/∂d * (-1)
-    local_d_centers[0] += dL_dI * grad_dist * dD2_dd0 * (-1.0f);
-    local_d_centers[1] += dL_dI * grad_dist * dD2_dd1 * (-1.0f);
+    // ∂L/∂center = outer * ∂D²/∂d * (-1)
+    float outer_neg = -outer;
+    local_d_centers[0] += outer_neg * dD2_dd0;
+    local_d_centers[1] += outer_neg * dD2_dd1;
 
-    // ∂D²/∂conic
-    // c00: d0², c01: 2*d0*d1, c11: d1²
-    local_d_conic[0] += dL_dI * grad_dist * d0 * d0;
-    local_d_conic[1] += dL_dI * grad_dist * 2.0f * d0 * d1;
-    local_d_conic[2] += dL_dI * grad_dist * d1 * d1;
+    // ∂D²/∂conic (inlined)
+    local_d_conic[0] += outer * d0 * d0;
+    local_d_conic[1] += outer * 2.0f * d0 * d1;
+    local_d_conic[2] += outer * d1 * d1;
 }
 
 // =============================================================================

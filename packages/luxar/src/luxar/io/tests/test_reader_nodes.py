@@ -9,14 +9,17 @@ when used properly (see test_writer_parent_parameter.py).
 This test suite guards against future regressions in node collection.
 """
 
+import warnings
 from pathlib import Path
 
 import numpy as np
+import zarr
 from arbol import aprint
 
 from luxar.core.dimensions import Dimensions
 from luxar.io.compiler import LuxarZarrCompiler
 from luxar.io.reader import LuxarScene
+from luxar.typing_utils.constants import LUXAR_VERSION_CURRENT
 
 
 class TestReaderNodeCollection:
@@ -142,3 +145,39 @@ class TestReaderNodeCollection:
         assert len(scene.list_points()) == 2
         assert len(scene.list_lines()) == 1
         assert len(scene.list_groups()) == 1
+
+
+class TestReaderVersionCheck:
+    """Test that LuxarScene.load() warns on version mismatch."""
+
+    def _create_scene_with_version(self, path: Path, version: str) -> None:
+        """Helper: create a minimal valid scene zarr with a specific version."""
+        store = zarr.open_group(path, mode="w")
+        store.attrs["type"] = "scene"
+        store.attrs["luxar_version"] = version
+
+    def test_version_mismatch_warns(self, tmp_path: Path) -> None:
+        """Loading a scene with a different version should emit a UserWarning."""
+        scene_path = tmp_path / "old.zarr"
+        self._create_scene_with_version(scene_path, "99.99")
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            LuxarScene.load(scene_path)
+
+        version_warnings = [x for x in w if "Version mismatch" in str(x.message)]
+        assert len(version_warnings) == 1
+        assert "99.99" in str(version_warnings[0].message)
+        assert LUXAR_VERSION_CURRENT in str(version_warnings[0].message)
+
+    def test_matching_version_no_warning(self, tmp_path: Path) -> None:
+        """Loading a scene with the current version should not warn."""
+        scene_path = tmp_path / "current.zarr"
+        self._create_scene_with_version(scene_path, LUXAR_VERSION_CURRENT)
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            LuxarScene.load(scene_path)
+
+        version_warnings = [x for x in w if "Version mismatch" in str(x.message)]
+        assert len(version_warnings) == 0

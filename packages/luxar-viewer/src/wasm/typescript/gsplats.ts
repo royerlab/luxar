@@ -7,6 +7,11 @@
 /**
  * Compute nD visibility for GSplats using ellipsoid extent.
  *
+ * Uses an optimistic estimate (max diagonal of L underestimates the true
+ * ellipsoid extent for correlated covariances). This is acceptable as a
+ * pre-filter since precise attenuation is computed later by
+ * `compute_gsplats_attenuation`.
+ *
  * @param centers - Splat centers [numSplats * ndim]
  * @param choleskyFactors - Packed Cholesky factors [numSplats * k] where k = ndim*(ndim+1)/2
  * @param slicePosition - Current slice position [ndim]

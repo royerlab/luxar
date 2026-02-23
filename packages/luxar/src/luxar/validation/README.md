@@ -81,7 +81,8 @@ Provides basic validation functions used for type guards, property validation, a
 
 **Usage Example:**
 ```python
-from luxar.validation.types import validate_positions, validate_categories
+from luxar.validation.types import validate_positions
+from luxar.validation import validate_categories
 
 # Basic validation
 positions = np.random.randn(1000, 3)
@@ -343,7 +344,7 @@ if np.any(data < 0):
 
 ### Clear Problem Description
 ```python
-ValidationError: "Positions shape (100,) is not 2D. 
+ValidationError: "Positions shape (100,) is not 2D.
 Expected shape (N, D) where N is number of points and D is dimensionality.
 Got 1D array - perhaps you meant to reshape it?"
 ```
@@ -386,7 +387,7 @@ from luxar.validation import validate_positions_for_writing
 # Validate before writing
 positions = np.random.randn(1000, 3)
 validated = validate_positions_for_writing(
-    positions, 
+    positions,
     expected_shape=(1000, 3),
     name="trajectory"
 )
@@ -404,7 +405,7 @@ def validate_time_series(data, timestamps):
             f"timestamp length {len(timestamps)}. "
             "Each data point needs a corresponding timestamp."
         )
-    
+
     if not np.all(np.diff(timestamps) > 0):
         raise ValidationError(
             "Timestamps must be strictly increasing. "
@@ -419,7 +420,7 @@ from luxar.validation import validate_dimensional_coverage
 # Ensure all point groups cover same dimensions
 groups = {
     "neurons": positions_3d,      # (N, 3)
-    "synapses": positions_4d,      # (M, 4) 
+    "synapses": positions_4d,      # (M, 4)
 }
 
 validate_dimensional_coverage(groups, dimensions)

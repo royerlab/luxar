@@ -23,7 +23,10 @@ use wasm_bindgen::prelude::*;
 /// For each splat:
 /// 1. Extract maximum ellipsoid extent from Cholesky diagonal elements
 /// 2. Check if center +/- max extent intersects the slice
-/// 3. Uses conservative estimate (faster than full Mahalanobis distance)
+/// 3. Uses an optimistic estimate (max diagonal of L underestimates the true
+///    ellipsoid extent for correlated covariances). This is acceptable as a
+///    pre-filter since precise attenuation is computed later by
+///    `compute_gsplats_attenuation`.
 #[wasm_bindgen]
 pub fn compute_nd_visibility_gsplats(
     centers: &[f32],
@@ -71,10 +74,8 @@ pub fn compute_nd_visibility_gsplats(
         }
 
         let visible = dist_sq <= 1.0;
-        output_mask[splat_idx] = if visible { 1 } else { 0 };
-        if visible {
-            visible_count += 1;
-        }
+        output_mask[splat_idx] = visible as u8;
+        visible_count += visible as u32;
     }
 
     visible_count

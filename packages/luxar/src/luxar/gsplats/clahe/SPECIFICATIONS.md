@@ -101,20 +101,20 @@ def apply_clahe(V, tile_size, clip_limit, nbins):
     shape = V.shape
     device = V.device
     dtype = V.dtype
-    
+
     # Calculate tile grid dimensions
     n_tiles = tuple((s + tile_size - 1) // tile_size for s in shape)
-    
+
     # Initialize output
     V_clahe = torch.zeros_like(V)
-    
+
     # Get global min/max for consistent binning across all tiles
     V_min, V_max = V.min().item(), V.max().item()
-    
+
     # Early exit: uniform image (tolerance: 1e-12)
     if V_max - V_min < 1e-12:
         return V.clone()
-    
+
     # Iterate over all tiles using itertools.product
     for tile_idx in itertools.product(*[range(n) for n in n_tiles]):
         # Compute tile boundaries (handle edge tiles that may be smaller)
@@ -122,51 +122,51 @@ def apply_clahe(V, tile_size, clip_limit, nbins):
             slice(t * tile_size, min((t + 1) * tile_size, s))
             for t, s in zip(tile_idx, shape)
         )
-        
+
         # Extract tile and flatten
         tile_data = V[tile_slice]
         tile_flat = tile_data.reshape(-1)
-        
+
         # Compute histogram over [V_min, V_max]
         hist = torch.histc(tile_flat, bins=nbins, min=V_min, max=V_max)
-        
+
         # Apply contrast limiting
         uniform_height = tile_flat.numel() / nbins
         clip_height = clip_limit * uniform_height
         excess = torch.clamp(hist - clip_height, min=0).sum()
         hist = torch.clamp(hist, max=clip_height)
         hist += excess / nbins  # Redistribute excess uniformly
-        
+
         # Compute CDF
         cdf = torch.cumsum(hist, dim=0)
-        
+
         # Normalize CDF (robust to edge cases)
         cdf_min = cdf[cdf > 0].min() if (cdf > 0).any() else 0
         cdf_range = cdf[-1] - cdf_min
-        
+
         if cdf_range > 0:
             cdf_normalized = (cdf - cdf_min) / cdf_range
         else:
             cdf_normalized = cdf  # Degenerate case: no normalization
-        
+
         # Map intensities through CDF
         # Create bin edges for searchsorted
         bin_edges = torch.linspace(V_min, V_max, nbins + 1, device=device)
-        
+
         # Digitize tile values (find which bin each value falls into)
         # Uses searchsorted on bin_edges[1:] (right edges of bins)
         bin_indices = torch.searchsorted(bin_edges[1:], tile_flat.contiguous())
         bin_indices = torch.clamp(bin_indices, 0, nbins - 1)
-        
+
         # Apply CDF mapping
         tile_equalized = cdf_normalized[bin_indices]
-        
+
         # Reshape and store in output
         V_clahe[tile_slice] = tile_equalized.reshape(tile_data.shape)
-    
+
     # Rescale to original intensity range
     V_clahe = V_clahe * (V_max - V_min) + V_min
-    
+
     # Preserve dtype
     return V_clahe.to(dtype=dtype)
 ```
@@ -195,26 +195,26 @@ def apply_clahe(V, tile_size, clip_limit, nbins):
 def compute_clahe_sampling_probabilities(V, tile_size, clip_limit, nbins):
     # Apply CLAHE
     V_clahe = apply_clahe(V, tile_size=tile_size, clip_limit=clip_limit, nbins=nbins)
-    
+
     # Normalize to [0, 1] for probability distribution
     V_min, V_max = V_clahe.min(), V_clahe.max()
-    
+
     if V_max - V_min < 1e-12:
         # Uniform case: use uniform probabilities
         V_norm = torch.ones_like(V_clahe)
     else:
         V_norm = (V_clahe - V_min) / (V_max - V_min)
-    
+
     # Flatten and normalize to valid probability distribution
     V_flat = V_norm.reshape(-1)
     prob_sum = V_flat.sum()
-    
+
     if prob_sum < 1e-12:
         # Degenerate case: uniform probabilities
         probabilities = torch.ones_like(V_flat) / V_flat.numel()
     else:
         probabilities = V_flat / prob_sum
-    
+
     return probabilities, V_clahe
 ```
 
@@ -401,9 +401,9 @@ def test_heterogeneous_image_balancing():
     V = torch.zeros(256, 256)
     V[0:128, :] = torch.randn(128, 256) * 0.05 + 0.1  # Dark region
     V[128:256, :] = torch.randn(128, 256) * 0.05 + 0.9  # Bright region
-    
+
     V_clahe = apply_clahe(V, tile_size=16, clip_limit=2.0)
-    
+
     # Both regions should have similar local contrast
     dark_std = V_clahe[0:128, :].std()
     bright_std = V_clahe[128:256, :].std()
@@ -416,10 +416,10 @@ def test_heterogeneous_image_balancing():
 def test_device_preservation():
     V_cpu = torch.randn(256, 256)
     V_gpu = V_cpu.cuda()
-    
+
     result_cpu = apply_clahe(V_cpu, tile_size=16)
     result_gpu = apply_clahe(V_gpu, tile_size=16)
-    
+
     assert result_cpu.device.type == "cpu"
     assert result_gpu.device.type == "cuda"
 ```
@@ -429,7 +429,7 @@ def test_device_preservation():
 def test_probability_properties():
     V = torch.randn(256, 256)
     probs, V_clahe = compute_clahe_sampling_probabilities(V, tile_size=16)
-    
+
     assert probs.shape == (256 * 256,)
     assert torch.allclose(probs.sum(), torch.tensor(1.0), atol=1e-6)
     assert torch.all(probs >= 0)

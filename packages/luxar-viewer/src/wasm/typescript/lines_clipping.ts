@@ -32,10 +32,13 @@ export function clip_segment_single(
   let t1 = 0.0;
   let t2 = 1.0;
 
-  const displaySet = new Set(displayDims);
+  const displaySet = new Uint8Array(ndim);
+  for (let i = 0; i < displayDims.length; i++) {
+    displaySet[displayDims[i]] = 1;
+  }
 
   for (let dim = 0; dim < ndim; dim++) {
-    if (displaySet.has(dim)) {
+    if (displaySet[dim]) {
       continue; // Skip displayed dimensions
     }
 
@@ -116,7 +119,10 @@ export function clip_segments_batch(
   outputT1: Float32Array,
   outputT2: Float32Array
 ): number {
-  const displaySet = new Set(displayDims);
+  const displaySetBatch = new Uint8Array(ndim);
+  for (let i = 0; i < displayDims.length; i++) {
+    displaySetBatch[displayDims[i]] = 1;
+  }
   let visibleCount = 0;
 
   for (let segIdx = 0; segIdx < numSegments; segIdx++) {
@@ -131,7 +137,7 @@ export function clip_segments_batch(
     let visible = true;
 
     for (let dim = 0; dim < ndim; dim++) {
-      if (displaySet.has(dim)) {
+      if (displaySetBatch[dim]) {
         continue;
       }
 

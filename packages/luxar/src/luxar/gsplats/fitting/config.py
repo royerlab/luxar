@@ -13,6 +13,63 @@ import torch
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 
 
+@dataclass(frozen=True)
+class OptimConfig:
+    """Optimization hyperparameters for fit_gaussian_splats().
+
+    Example::
+
+        from luxar.gsplats.fitting.config import OptimConfig
+        cfg = OptimConfig(n_iters=2000, lr=0.01, early_stop_patience=500)
+        result = fit_gaussian_splats(volume, optim=cfg)
+    """
+
+    n_iters: int = 1000
+    lr: float = 0.05
+    gradient_clip: Optional[float] = 1.0
+    scheduler_type: str = "plateau"
+    patience: int = 25
+    lr_reduction_factor: float = 0.98
+    early_stop_patience: Optional[int] = 300
+
+
+@dataclass(frozen=True)
+class LossConfig:
+    """Loss function configuration for fit_gaussian_splats().
+
+    Example::
+
+        from luxar.gsplats.fitting.config import LossConfig
+        cfg = LossConfig(loss_type="mse", asymmetric_penalty=5.0)
+        result = fit_gaussian_splats(volume, loss=cfg)
+    """
+
+    loss_type: str = "l1"
+    asymmetric_penalty: Optional[float] = 10.0
+    l1_amp: Optional[float] = None
+    l1_diag: Optional[float] = None
+    l1_sharpness: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class ConstraintConfig:
+    """Constraint configuration for fit_gaussian_splats().
+
+    Example::
+
+        from luxar.gsplats.fitting.config import ConstraintConfig
+        cfg = ConstraintConfig(amp_max=2.0, max_eccentricity=5.0)
+        result = fit_gaussian_splats(volume, constraints=cfg)
+    """
+
+    sigma_min_diag: Optional[Sequence[float] | float] = None
+    sigma_max_diag: Optional[Sequence[float]] = None
+    amp_max: Optional[float] = None
+    max_eccentricity: Optional[float] = 10.0
+    sharpness_range: Optional[tuple[float, float] | float] = 2.0
+    truncate: float = 3.0
+
+
 @dataclass
 class FitConfig:
     """

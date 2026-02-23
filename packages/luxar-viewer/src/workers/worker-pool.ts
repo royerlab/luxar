@@ -19,7 +19,6 @@ interface WorkerInstance {
 class WorkerPool {
   private workers: WorkerInstance[] = [];
   private initPromise: Promise<void> | null = null;
-  private initLock = false;
 
   /**
    * Get the configured worker count, capped by hardware concurrency
@@ -48,71 +47,57 @@ class WorkerPool {
    * Initialize worker pool (lazy initialization)
    */
   async initialize(): Promise<void> {
-    // Atomic check-and-set to prevent race conditions
+    // Return existing promise if initialization already started or completed
     if (this.initPromise) return this.initPromise;
 
-    if (this.initLock) {
-      // Another initialization in progress, wait for it
-      while (this.initLock) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      return this.initPromise!;
-    }
-
-    this.initLock = true;
-
     this.initPromise = (async () => {
-      try {
-        const workerCount = this.getConfiguredWorkerCount();
-        log.info(Modules.WORKER_POOL, `Creating ${workerCount} data worker(s)...`);
+      const workerCount = this.getConfiguredWorkerCount();
+      log.info(Modules.WORKER_POOL, `Creating ${workerCount} data worker(s)...`);
 
-        // Create all workers in parallel
-        const workerPromises = Array.from({ length: workerCount }, async (_, index) => {
-          const worker = new Worker(new URL('./data-worker.ts', import.meta.url), {
-            type: 'module',
-          });
-
-          const api = wrap<DataWorkerAPI>(worker);
-
-          try {
-            await api.initialize();
-            log.info(Modules.WORKER_POOL, `Worker ${index + 1}/${workerCount} ready`);
-            return { worker, api, activeQueries: 0 };
-          } catch (error) {
-            log.error(Modules.WORKER_POOL, `Worker ${index + 1} initialization failed`, error);
-            worker.terminate();
-            throw error;
-          }
+      // Create all workers in parallel
+      const workerPromises = Array.from({ length: workerCount }, async (_, index) => {
+        const worker = new Worker(new URL('./data-worker.ts', import.meta.url), {
+          type: 'module',
         });
 
-        // Wait for all workers to initialize
-        const results = await Promise.allSettled(workerPromises);
+        const api = wrap<DataWorkerAPI>(worker);
 
-        // Collect successful workers
-        for (const result of results) {
-          if (result.status === 'fulfilled') {
-            this.workers.push(result.value);
-          }
+        try {
+          await api.initialize();
+          log.info(Modules.WORKER_POOL, `Worker ${index + 1}/${workerCount} ready`);
+          return { worker, api, activeQueries: 0 };
+        } catch (error) {
+          log.error(Modules.WORKER_POOL, `Worker ${index + 1} initialization failed`, error);
+          worker.terminate();
+          throw error;
         }
+      });
 
-        if (this.workers.length === 0) {
-          throw new Error(
-            'Failed to initialize any data workers. ' +
-              'Luxar requires WebAssembly and Web Workers support.'
-          );
+      // Wait for all workers to initialize
+      const results = await Promise.allSettled(workerPromises);
+
+      // Collect successful workers
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          this.workers.push(result.value);
         }
-
-        if (this.workers.length < workerCount) {
-          log.warning(
-            Modules.WORKER_POOL,
-            `Only ${this.workers.length}/${workerCount} workers initialized successfully`
-          );
-        }
-
-        log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
-      } finally {
-        this.initLock = false;
       }
+
+      if (this.workers.length === 0) {
+        throw new Error(
+          'Failed to initialize any data workers. ' +
+            'Luxar requires WebAssembly and Web Workers support.'
+        );
+      }
+
+      if (this.workers.length < workerCount) {
+        log.warning(
+          Modules.WORKER_POOL,
+          `Only ${this.workers.length}/${workerCount} workers initialized successfully`
+        );
+      }
+
+      log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
     })();
 
     return this.initPromise;
@@ -225,7 +210,6 @@ class WorkerPool {
       }
       this.workers = [];
       this.initPromise = null;
-      this.initLock = false;
     }
   }
 }

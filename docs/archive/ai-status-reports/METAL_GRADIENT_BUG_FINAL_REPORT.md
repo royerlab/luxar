@@ -246,4 +246,3 @@ After 8+ hours of investigation:
 4. Consider consulting Metal documentation or 3D Gaussian Splatting reference code
 
 **Key insight:** Z works, Y and X don't. The formulas are identical in structure. Something about the coordinate system or matrix element access must be subtly different for Y/X vs Z.
-

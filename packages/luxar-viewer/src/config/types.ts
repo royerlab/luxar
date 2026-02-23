@@ -13,9 +13,7 @@ import type {
  * Camera configuration for 3D perspective and navigation
  */
 export interface CameraConfig {
-  fov: number;
-  near: number;
-  far: number;
+  // Note: fov, near, far live in RenderingSettings (renderingControls.defaults) as the single source of truth
   initialPosition: { x: number; y: number; z: number };
   fovMin: number;
   fovMax: number;
@@ -86,7 +84,7 @@ export interface SceneConfig {
  */
 export interface ShaderConfig {
   points: {
-    hdrMultiplier: number;
+    // Note: hdrMultiplier lives in RenderingSettings (renderingControls.defaults) as the single source of truth
     baseAlpha: number;
   };
 }

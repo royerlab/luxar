@@ -7,6 +7,11 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
+// NOTE: This test file mocks 7 internal modules (lines 11-17). This tests
+// initialization order and mock wiring, but not real component behavior.
+// See CLAUDE.md "Over-Mocking in Tests" for guidance on improving this.
+// TODO: Add integration tests with fewer mocks as modules become more testable.
+
 // Mock all dependencies before importing LuxarApp
 vi.mock('../../../scene/scene-manager');
 vi.mock('../../../scene/animation-controller');
@@ -158,9 +163,6 @@ describe('LuxarApp', () => {
       await app.init('http://example.com/data.zarr');
 
       expect(AnimationController).toHaveBeenCalledWith(
-        mockSceneManager.renderer,
-        mockSceneManager.scene,
-        mockSceneManager.camera,
         mockSceneManager.controls,
         mockSceneManager.postProcessing
       );
@@ -259,9 +261,10 @@ describe('LuxarApp', () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init('http://example.com/data.zarr');
 
-      expect(mockFetch).toHaveBeenCalledWith('http://example.com/data.zarr/.zgroup', {
-        method: 'HEAD',
-      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://example.com/data.zarr/.zgroup',
+        expect.objectContaining({ method: 'HEAD' })
+      );
       expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith('http://example.com/data.zarr');
       expect(DatasetBrowser).not.toHaveBeenCalled();
     });

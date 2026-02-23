@@ -16,6 +16,7 @@ from luxar.gsplats.fitting import (
     preprocess_data,
     run_optimization_loop,
 )
+from luxar.gsplats.fitting.config import ConstraintConfig, LossConfig, OptimConfig
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fitting.validation import DEFAULT_SIGMA_MIN_DIAG
 from luxar.gsplats.gsplat_data import GSplatData
@@ -249,6 +250,10 @@ def fit_gaussian_splats(
     use_cuda: bool = True,
     # Post-processing
     voxel_footprint_correction: bool | float = False,
+    # Grouped config overrides (values override flat parameters above)
+    optim: Optional[OptimConfig] = None,
+    loss: Optional[LossConfig] = None,
+    constraints: Optional[ConstraintConfig] = None,
     **seed_kwargs,
 ) -> GSplatData:
     """
@@ -421,6 +426,17 @@ def fit_gaussian_splats(
         - True: Enable with 1-voxel box footprint (sigma ≈ 0.289 voxels)
         - float: Custom sigma in voxel units (e.g., 0.5 for half-voxel blur, 1.0 for 1-voxel blur)
         Works for any dimension d.
+    optim : OptimConfig, optional
+        Grouped optimization parameters. When provided, overrides the
+        corresponding flat parameters (n_iters, lr, gradient_clip, etc.).
+    loss : LossConfig, optional
+        Grouped loss function parameters. When provided, overrides the
+        corresponding flat parameters (loss_type, asymmetric_penalty, etc.).
+    constraints : ConstraintConfig, optional
+        Grouped constraint parameters. When provided, overrides the
+        corresponding flat parameters (sigma_min_diag, amp_max, etc.).
+        Note: sigma_min_diag/sigma_max_diag are only overridden if
+        explicitly set (not None) in the config.
 
     Returns
     -------
@@ -447,6 +463,37 @@ def fit_gaussian_splats(
     This approach is particularly beneficial when dynamic operations
     (prune, seed, merge, split) are enabled.
     """
+
+    # Apply grouped config overrides (values take precedence over flat params)
+    if optim is not None:
+        n_iters = optim.n_iters
+        lr = optim.lr
+        gradient_clip = optim.gradient_clip
+        scheduler_type = optim.scheduler_type
+        patience = optim.patience
+        lr_reduction_factor = optim.lr_reduction_factor
+        early_stop_patience = optim.early_stop_patience
+    if loss is not None:
+        loss_type = loss.loss_type
+        asymmetric_penalty = loss.asymmetric_penalty
+        l1_amp = loss.l1_amp
+        l1_diag = loss.l1_diag
+        l1_sharpness = loss.l1_sharpness
+    if constraints is not None:
+        sigma_min_diag = (
+            constraints.sigma_min_diag
+            if constraints.sigma_min_diag is not None
+            else sigma_min_diag
+        )
+        sigma_max_diag = (
+            constraints.sigma_max_diag
+            if constraints.sigma_max_diag is not None
+            else sigma_max_diag
+        )
+        amp_max = constraints.amp_max
+        max_eccentricity = constraints.max_eccentricity
+        sharpness_range = constraints.sharpness_range
+        truncate = constraints.truncate
 
     with asection("Fitting Gaussian Splats"):
         # Use per-splat optimizer

@@ -86,7 +86,13 @@ export class NumberController extends Controller<number> {
     // Update on change (when user commits value)
     this.eventManager.add(this.input, 'change', () => {
       if (!this.input) return; // Safety check
-      const value = this.constrainValue(parseFloat(this.input.value));
+      const parsed = parseFloat(this.input.value);
+      if (isNaN(parsed)) {
+        // Revert to current value on invalid input
+        this.updateDisplay();
+        return;
+      }
+      const value = this.constrainValue(parsed);
       this.object[this.property] = value;
       this.updateDisplay();
       this.triggerChange();

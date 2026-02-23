@@ -6,12 +6,15 @@ This script measures the impact of removing the O(M×N) index matching bottlenec
 in _combine_gsplatdata().
 """
 
-import time
-import numpy as np
 import sys
-sys.path.insert(0, 'packages/luxar/src')
+import time
+
+import numpy as np
+
+sys.path.insert(0, "packages/luxar/src")
 
 from luxar.gsplats.seeds import generate_seeds
+
 
 def benchmark_auto_mode():
     """Benchmark auto mode (edges + grid combination)."""
@@ -59,6 +62,7 @@ def benchmark_auto_mode():
     print()
     print("Expected speedup: 10-100x for auto mode")
     print()
+
 
 if __name__ == "__main__":
     benchmark_auto_mode()

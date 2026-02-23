@@ -14,7 +14,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, getLuxarState } from './helpers';
+import { waitForLuxarReady, getLuxarState, waitForNextRender } from './helpers';
 
 // Test datasets
 const DATASETS = {
@@ -29,7 +29,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
     // Switch to fly mode
     await page.keyboard.press('v');
     await page.keyboard.press('v'); // orbit → arcball → fly
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Get initial camera position
     const initialState = await getLuxarState(page);
@@ -55,7 +55,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
     // Switch to fly mode
     await page.keyboard.press('v');
     await page.keyboard.press('v');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Test 1: Normal W speed
     const initial1 = await getLuxarState(page);
@@ -64,7 +64,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
     await page.keyboard.down('w');
     await page.waitForTimeout(200);
     await page.keyboard.up('w');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     const final1 = await getLuxarState(page);
     const normalDistance = Math.abs(final1.camera.position.z - startZ1);
@@ -82,7 +82,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
     await page.waitForTimeout(200);
     await page.keyboard.up('w');
     await page.keyboard.up('Shift');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     const final2 = await getLuxarState(page);
     const boostDistance = Math.abs(final2.camera.position.z - startZ2);
@@ -109,11 +109,11 @@ test.describe('Keyboard Input System - Fly Controls', () => {
     // Switch to fly mode with inertia OFF (immediate stop)
     await page.keyboard.press('v');
     await page.keyboard.press('v');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Disable inertia for predictable stop behavior
     await page.keyboard.press('i');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Press W to start movement
     await page.keyboard.down('w');
@@ -121,7 +121,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
 
     // Release W
     await page.keyboard.up('w');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Get position after release
     const pos1 = await getLuxarState(page);
@@ -145,7 +145,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
     // Switch to fly mode
     await page.keyboard.press('v');
     await page.keyboard.press('v');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Get initial X position
     const initialState = await getLuxarState(page);
@@ -155,7 +155,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
     await page.keyboard.down('a');
     await page.waitForTimeout(200);
     await page.keyboard.up('a');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     const afterLeftState = await getLuxarState(page);
     const afterLeftX = afterLeftState.camera.position.x;
@@ -178,7 +178,7 @@ test.describe('Keyboard Input System - keyupHandler Feature', () => {
 
     // Press C to toggle cinematic mode ON
     await page.keyboard.down('c');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Check state while key is held
     const whilePressedCinematic = await page.evaluate(() => {
@@ -188,7 +188,7 @@ test.describe('Keyboard Input System - keyupHandler Feature', () => {
 
     // Release C
     await page.keyboard.up('c');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Check state after release
     const afterReleaseCinematic = await page.evaluate(() => {
@@ -218,9 +218,9 @@ test.describe('Keyboard Input System - keyupHandler Feature', () => {
 
     // Press and release Shift
     await page.keyboard.down('Shift');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
     await page.keyboard.up('Shift');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Get panel states after
     const statesAfter = await page.evaluate(() => {
@@ -245,7 +245,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
 
     // Press C to toggle ON
     await page.keyboard.press('c');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     const afterFirstPress = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
@@ -257,7 +257,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
     // Should have toggled ON (or at least changed state)
     // Press C again to toggle OFF
     await page.keyboard.press('c');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     const afterSecondPress = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
@@ -283,7 +283,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
 
     // Toggle stats
     await page.keyboard.press('p');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     const afterToggle = await page.evaluate(() => {
       const stats = document.querySelector(
@@ -297,7 +297,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
 
     // Toggle back
     await page.keyboard.press('p');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     const afterSecondToggle = await page.evaluate(() => {
       const stats = document.querySelector(
@@ -317,7 +317,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
     // Switch to fly mode
     await page.keyboard.press('v');
     await page.keyboard.press('v');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Get initial inertial mode state
     const initialInertial = await page.evaluate(() => {
@@ -331,7 +331,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
 
     // Toggle inertial mode
     await page.keyboard.press('i');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     const afterToggle = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
@@ -353,7 +353,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
     // Switch to fly mode for predictable behavior
     await page.keyboard.press('v');
     await page.keyboard.press('v');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Wait for debug object to be available
     await page.waitForFunction(() => (window as any).__luxarDebug?.camera?.quaternion, {
@@ -366,7 +366,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
       debug.camera.position.set(100, 100, 100);
       debug.camera.lookAt(200, 200, 200); // Looking away from scene
     });
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Verify camera is now pointing away (quaternion changed)
     const awayQ = await page.evaluate(() => {
@@ -417,7 +417,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
 
     // Toggle sliders (hide)
     await page.keyboard.press('n');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     const afterHide = await page.evaluate(() => {
       const container = document.querySelector('.luxar-dimension-sliders');
@@ -431,7 +431,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
 
     // Toggle again (show)
     await page.keyboard.press('n');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     const afterShow = await page.evaluate(() => {
       const container = document.querySelector('.luxar-dimension-sliders');
@@ -453,7 +453,7 @@ test.describe('Keyboard Input System - Context Passthrough', () => {
     // Switch to fly mode
     await page.keyboard.press('v');
     await page.keyboard.press('v');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Verify we're in fly mode
     const controlType = await page.evaluate(() => {
@@ -464,7 +464,7 @@ test.describe('Keyboard Input System - Context Passthrough', () => {
 
     // Press H to show help (should work via passthrough to NAVIGATION context)
     await page.keyboard.press('h');
-    await page.waitForTimeout(500);
+    await waitForNextRender(page, 3);
 
     // Check if help is visible
     const helpVisible = await page.evaluate(() => {
@@ -489,7 +489,7 @@ test.describe('Keyboard Input System - Context Passthrough', () => {
     if (controlType === 'fly') {
       // Switch back to orbit
       await page.keyboard.press('v');
-      await page.waitForTimeout(300);
+      await waitForNextRender(page);
     }
 
     // Get camera position
@@ -500,7 +500,7 @@ test.describe('Keyboard Input System - Context Passthrough', () => {
     await page.keyboard.down('w');
     await page.waitForTimeout(200);
     await page.keyboard.up('w');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     const finalState = await getLuxarState(page);
     const finalPos = finalState.camera.position;
@@ -560,7 +560,7 @@ test.describe('Keyboard Input System - Browser Shortcuts Protection', () => {
 
     // Press Ctrl+1 (browser tab switch, should NOT select dimension)
     await page.keyboard.press('Control+1');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     const afterCtrl1 = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
@@ -579,7 +579,7 @@ test.describe('Keyboard Input System - Escape Key', () => {
 
     // Show help
     await page.keyboard.press('h');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Verify help is visible
     const helpVisible = await page.evaluate(() => {
@@ -589,7 +589,7 @@ test.describe('Keyboard Input System - Escape Key', () => {
 
     // Press Escape to close
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Verify help is closed
     const helpClosed = await page.evaluate(() => {
@@ -607,7 +607,7 @@ test.describe('Keyboard Input System - Modifier Combinations', () => {
     // Switch to fly mode
     await page.keyboard.press('v');
     await page.keyboard.press('v');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Note: Don't disable inertia - it significantly reduces movement speed
     // Follow the same pattern as the passing test at line 51
@@ -621,7 +621,7 @@ test.describe('Keyboard Input System - Modifier Combinations', () => {
     await page.waitForTimeout(400);
     await page.keyboard.up('w');
     await page.keyboard.up('Shift');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     const state2 = await getLuxarState(page);
     const z2 = state2.camera.position.z;
@@ -641,11 +641,11 @@ test.describe('Keyboard Input System - Modifier Combinations', () => {
     // Switch to fly mode
     await page.keyboard.press('v');
     await page.keyboard.press('v');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Disable inertia for predictable rotation
     await page.keyboard.press('i');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Get initial camera quaternion (more precise than Euler angles)
     const initialQ = await page.evaluate(() => {
@@ -658,7 +658,7 @@ test.describe('Keyboard Input System - Modifier Combinations', () => {
     await page.keyboard.down('ArrowUp');
     await page.waitForTimeout(400);
     await page.keyboard.up('ArrowUp');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Get final camera quaternion
     const finalQ = await page.evaluate(() => {
@@ -685,7 +685,7 @@ test.describe('Keyboard Input System - Case Sensitivity', () => {
 
     // Press uppercase H (Shift+h)
     await page.keyboard.press('H');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Help should appear (case-insensitive)
     const helpVisible = await page.evaluate(() => {

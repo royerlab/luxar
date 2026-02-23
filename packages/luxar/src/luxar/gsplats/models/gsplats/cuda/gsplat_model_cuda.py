@@ -92,10 +92,12 @@ def cholesky_to_conic(L: torch.Tensor) -> torch.Tensor:
         return torch.stack([c_00, c_01, c_02, c_11, c_12, c_22], dim=1)
 
     else:
-        # Generic nD: use PyTorch linalg
-        # Note: This is slower but works for any dimension
-        Sigma = L @ L.transpose(-2, -1)
-        Sigma_inv = torch.linalg.inv(Sigma)
+        # Generic nD: use triangular solve for numerical stability
+        # Compute L⁻¹ via forward substitution (exploits triangular structure)
+        # Σ⁻¹ = L⁻ᵀ @ L⁻¹ = (L⁻¹)ᵀ @ L⁻¹
+        eye = torch.eye(d, device=device, dtype=L.dtype).unsqueeze(0).expand(N, -1, -1)
+        L_inv = torch.linalg.solve_triangular(L, eye, upper=False)
+        Sigma_inv = L_inv.transpose(-2, -1) @ L_inv
 
         # Extract upper triangle in row-major order
         indices = torch.triu_indices(d, d, device=device)
@@ -142,17 +144,24 @@ class CUDASplatFunction(torch.autograd.Function):
         Ls_for_conic = Ls.detach().clone().requires_grad_(True)
         conic = cholesky_to_conic(Ls_for_conic)
 
+        # Compute exact L_row_norms from Cholesky factors for AABB computation
+        # L_row_norms[i] = sqrt(sum_j L[i,j]^2) = sqrt(Sigma[i,i])
+        # This is exact (unlike the old conic-diagonal approximation)
+        L_row_norms = torch.sqrt(torch.sum(Ls * Ls, dim=2))  # (N, d)
+
         # Convert to FP16 for kernel if needed (AMP mode converts FP32 params to FP16)
         if use_fp16_kernel and centers.dtype != torch.float16:
             centers_kernel = centers.half().contiguous()
             conic_kernel = conic.half().contiguous()
             amps_kernel = amps.half().contiguous()
             sharpness_kernel = sharpness.half().contiguous()
+            L_row_norms_kernel = L_row_norms.half().contiguous()
         else:
             centers_kernel = centers.contiguous()
             conic_kernel = conic.contiguous()
             amps_kernel = amps.contiguous()
             sharpness_kernel = sharpness.contiguous()
+            L_row_norms_kernel = L_row_norms.float().contiguous()
 
         if CUDA_BACKEND_AVAILABLE:
             # Dispatch to CUDA kernels (use FP16 kernel if autocast or explicit)
@@ -161,6 +170,7 @@ class CUDASplatFunction(torch.autograd.Function):
                 conic_kernel,
                 amps_kernel,
                 sharpness_kernel,
+                L_row_norms_kernel,
                 list(shape),
                 truncate,
                 intensity_floor,

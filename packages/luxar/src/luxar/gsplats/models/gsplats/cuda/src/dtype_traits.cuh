@@ -15,6 +15,7 @@
 
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
+#include <cassert>
 
 // =============================================================================
 // FP16 (HALF PRECISION) SUPPORT
@@ -79,9 +80,15 @@ struct DTypeTraits<__half> {
     /**
      * Vectorized load of 2 consecutive FP16 values as FP32.
      * Uses __half2 for efficient 32-bit aligned load.
+     *
+     * IMPORTANT: idx must be even (4-byte aligned for __half2).
+     * Callers must verify alignment before calling this function.
+     * Unaligned access causes undefined behavior on CUDA.
      */
     __device__ __forceinline__ static void load2(const __half* ptr, int idx, float& a, float& b) {
         // Aligned load of 2 half values (4 bytes total)
+        // Assert alignment in debug builds
+        assert((idx & 1) == 0 && "load2 requires even index for __half2 alignment");
         __half2 h2 = *reinterpret_cast<const __half2*>(&ptr[idx]);
         a = __low2float(h2);
         b = __high2float(h2);

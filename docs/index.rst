@@ -28,11 +28,18 @@ Welcome to Luxar's documentation! Luxar is a high-performance system for compili
    :maxdepth: 2
    :caption: Developer Guides:
 
+   guides/developer/BUILD_SYSTEM_SPEC
    guides/developer/JSDOC_STYLE_GUIDE
    guides/developer/CONSOLE_OUTPUT_STYLE
    guides/developer/NETWORK_SIMULATION_SPEC
    guides/developer/PLAYWRIGHT_GUIDE
    guides/developer/TESTING_GUIDELINES
+   guides/developer/ERROR_HANDLING_GUIDE
+   guides/developer/PERFORMANCE_OPTIMIZATION_SPEC
+   guides/developer/SCENE_UPDATE_OPTIMIZATION
+   guides/developer/GSPLATS_VIEWER_IMPLEMENTATION
+   guides/developer/METAL_SPLATTING_IMPLEMENTATION_SPEC
+   guides/developer/SPLAT_MODEL_METAL
 
 .. toctree::
    :maxdepth: 2
@@ -41,6 +48,7 @@ Welcome to Luxar's documentation! Luxar is a high-performance system for compili
    guides/specs/CACHE_PREFETCHING_SPEC
    guides/specs/DIMENSION_INITIALIZATION_FIX
    guides/specs/LINES_SEGMENT_CHUNKING_BUG_FIX
+   specs/GSPLATS_DIMENSION_MAPPING
 
 .. toctree::
    :maxdepth: 3
@@ -72,7 +80,7 @@ Installation
 
    pip install luxar
    # or for development:
-   git clone https://github.com/your-org/luxar.git
+   git clone https://github.com/royerlab/luxar.git
    cd luxar
    hatch shell
 
@@ -83,17 +91,18 @@ Create and visualize a scene with points:
 
 .. code-block:: python
 
-   from luxar.core import Scene, Points, Dimensions
+   from luxar.core import Dimensions
    from luxar.io import LuxarZarrCompiler
    import numpy as np
 
    # Create data
    positions = np.random.randn(1000, 3).astype(np.float32)
    colors = np.random.rand(1000, 3).astype(np.float32)
+   dims = Dimensions.default_3d()
 
    # Write to zarr
    with LuxarZarrCompiler('scene.zarr') as compiler:
-       scene = compiler.create_scene()
+       scene = compiler.create_scene(dimensions=dims)
        scene.add_points('cloud', positions, colors, radii=0.1)
 
    # Serve with viewer

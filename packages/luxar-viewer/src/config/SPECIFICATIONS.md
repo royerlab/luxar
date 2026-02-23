@@ -137,10 +137,10 @@ import { config } from '../config';
 
 // Initialize camera with defaults
 const camera = new PerspectiveCamera(
-  config.camera.fov,
+  config.renderingControls.defaults.fov,
   aspectRatio,
-  config.camera.near,
-  config.camera.far
+  config.renderingControls.defaults.near,
+  config.renderingControls.defaults.far
 );
 camera.position.set(
   config.camera.initialPosition.x,
@@ -404,13 +404,13 @@ import { config } from '../config';
 
 const pointsMaterial = new THREE.ShaderMaterial({
   uniforms: {
-    uHdrMultiplier: { value: config.shader.points.hdrMultiplier },
+    uHdrMultiplier: { value: config.renderingControls.defaults.hdrMultiplier },
     uBaseAlpha: { value: config.shader.points.baseAlpha },
   },
   vertexShader: `...`,
   fragmentShader: `
     void main() {
-      vec3 hdrColor = color * ${config.shader.points.hdrMultiplier};
+      vec3 hdrColor = color * ${config.renderingControls.defaults.hdrMultiplier};
       gl_FragColor = vec4(hdrColor, ${config.shader.points.baseAlpha});
     }
   `,

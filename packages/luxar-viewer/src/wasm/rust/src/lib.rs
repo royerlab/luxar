@@ -31,6 +31,9 @@
 //! - `decode` - Data decoding (quantized, LUT, log-space)
 //! - `projection` - nD to 3D projection and bounds
 
+// Shared constants and utilities
+pub mod common;
+
 // Declare modules
 mod decode;
 mod effective_radii;

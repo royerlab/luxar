@@ -913,9 +913,9 @@ def display_compression_analysis(
 ) -> None:
     """
     Calculate and display compression ratio analysis.
-    
+
     Compares storage requirements of original image vs Gaussian splat representation.
-    
+
     Parameters
     ----------
     V : np.ndarray
@@ -974,24 +974,24 @@ def show_optimization_movie(
 ) -> None:
     """
     Display napari viewer with optimization movie showing target, reconstruction, and residual over time.
-    
+
     Parameters
     ----------
     movie_frames : dict
         Dictionary containing movie frame data
     shape : tuple
         Shape of the original data
-    
+
     Requires:
         - napari installed
         - movie_frames from optimization results
-    
+
     Layers:
         - Target (constant)
         - Reconstruction (changing)
         - Residual (abs difference, changing)
         - Splat Centers (optional, commented out in implementation)
-    
+
     Time Slider:
         - Scrub through optimization iterations
     """

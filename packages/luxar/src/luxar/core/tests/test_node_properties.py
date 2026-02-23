@@ -322,6 +322,82 @@ class TestNodeMethodChaining:
             assert group.attrs["blending_mode"] == "additive"  # New
 
 
+class TestNodeEqualityAndHashing:
+    """Test Node __eq__ and __hash__."""
+
+    def test_same_path_equal(self, tmp_path: Path) -> None:
+        """Nodes with the same path should be equal."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("alpha")
+            # Same object is equal to itself
+            assert group == group
+
+    def test_different_path_not_equal(self, tmp_path: Path) -> None:
+        """Nodes with different paths should not be equal."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            g1 = scene.add_group("alpha")
+            g2 = scene.add_group("beta")
+            assert g1 != g2
+
+    def test_node_in_set(self, tmp_path: Path) -> None:
+        """Nodes should be usable in sets."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            g1 = scene.add_group("a")
+            g2 = scene.add_group("b")
+            node_set = {g1, g2, g1}  # duplicate g1
+            assert len(node_set) == 2
+
+    def test_not_equal_to_non_node(self, tmp_path: Path) -> None:
+        """Node should not be equal to non-Node objects."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            assert scene != "Scene"
+            assert scene != 42
+
+
+class TestDuplicateChildNames:
+    """Test that duplicate child names are rejected."""
+
+    def test_duplicate_child_name_raises(self, tmp_path: Path) -> None:
+        """Adding two children with the same name should raise ValueError."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_group("alpha")
+
+            with pytest.raises(ValueError, match="Duplicate child name 'alpha'"):
+                scene.add_group("alpha")
+
+    def test_same_name_under_different_parents_ok(self, tmp_path: Path) -> None:
+        """Same name under different parents should be allowed."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group_a = scene.add_group("A")
+            group_b = scene.add_group("B")
+
+            # Both parents can have a child named "data"
+            child_a = group_a.add_group("data")
+            child_b = group_b.add_group("data")
+
+            assert child_a.name == "data"
+            assert child_b.name == "data"
+            assert child_a.path != child_b.path
+
+
 class TestNodeWalkDirect:
     """Test Node.walk() method directly."""
 

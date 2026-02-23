@@ -89,6 +89,21 @@ def set_random_seed():
 
 
 # =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+
+def compute_L_row_norms(L: torch.Tensor) -> torch.Tensor:
+    """Compute per-axis std dev from Cholesky row norms for AABB computation.
+
+    L_row_norms[i] = sqrt(sum_j L[i,j]^2) = sqrt(Sigma[i,i])
+
+    This must be passed to cuda_splatting_backend.forward() as the 5th argument.
+    """
+    return torch.sqrt(torch.sum(L * L, dim=2))
+
+
+# =============================================================================
 # TEST DATA FIXTURES
 # =============================================================================
 
@@ -254,15 +269,28 @@ def cuda_model_factory(cuda_device, require_cuda_backend):
 
 
 class Tolerances:
-    """Tolerance levels for numerical comparisons."""
+    """Tolerance levels for numerical comparisons.
 
-    # Forward pass comparison
+    All tolerance values are centralized here. Tests should reference these
+    constants rather than hardcoding values, so that tolerances can be
+    tightened incrementally as the implementation improves.
+    """
+
+    # Forward pass element-wise comparison
     FORWARD_RTOL = 1e-4
     FORWARD_ATOL = 1e-6
 
-    # Backward pass comparison (looser due to atomics)
+    # Forward pass CUDA vs PyTorch aggregate comparison
+    COMPARISON_MAX_REL_DIFF = 0.15  # Max relative difference
+    COMPARISON_MEAN_REL_DIFF = 0.01  # Mean relative difference
+    COMPARISON_MIN_CORRELATION = 0.99  # Minimum correlation coefficient
+    COMPARISON_BOUNDARY_REL_DIFF = 0.30  # Boundary/cross-path comparisons (3D vs 4D)
+
+    # Backward pass comparison (looser due to atomic accumulation)
     BACKWARD_RTOL = 1e-3
     BACKWARD_ATOL = 1e-5
+    BACKWARD_SIGN_MATCH = 0.70  # Minimum fraction of gradient signs matching
+    BACKWARD_MAG_RATIO = 10  # Maximum gradient magnitude ratio
 
     # FP16 comparison
     FP16_RTOL = 1e-2

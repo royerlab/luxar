@@ -4,8 +4,10 @@ This module provides the LuxarScene class for reading Luxar zarr format files.
 It supports automatic decoding of encoded arrays via ArrayDecoder.
 """
 
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Union
 
 import numpy as np
 import zarr
@@ -14,9 +16,71 @@ from numcodecs import Blosc
 from ..core.dimensions import Dimensions
 from ..core.transforms import read_transform_from_zarr
 from ..encoding.decoder import ArrayDecoder
+from ..typing_utils.constants import LUXAR_VERSION_CURRENT
 
 # Default compressor: fast, bit‑shuffle‑friendly
 DEFAULT_COMP = Blosc(cname="zstd", clevel=3, shuffle=Blosc.BITSHUFFLE)
+
+
+_SENTINEL = object()
+
+
+class _DictCompatMixin:
+    """Mixin that provides dict-style access for backward compatibility."""
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key) from None
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Dict-compatible .get() with default."""
+        val = getattr(self, key, _SENTINEL)
+        return default if val is _SENTINEL else val
+
+    def keys(self) -> Iterator[str]:
+        return iter(f.name for f in self.__dataclass_fields__.values())  # type: ignore[attr-defined]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.__dataclass_fields__  # type: ignore[attr-defined]
+
+
+@dataclass(frozen=True)
+class PointsData(_DictCompatMixin):
+    """Structured result from get_points()."""
+
+    positions: np.ndarray
+    colors: Optional[np.ndarray]
+    radii: Optional[np.ndarray]
+    sharpness: Optional[np.ndarray]
+    chunk_bounds: Optional[np.ndarray]
+    metadata: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class LinesData(_DictCompatMixin):
+    """Structured result from get_lines()."""
+
+    vertices: np.ndarray
+    widths: np.ndarray
+    colors: Optional[np.ndarray]
+    sharpness: Optional[np.ndarray]
+    indices: Optional[np.ndarray]
+    metadata: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class GSplatsData(_DictCompatMixin):
+    """Structured result from get_gsplats()."""
+
+    centers: np.ndarray
+    amplitudes: np.ndarray
+    cholesky_factors: np.ndarray
+    colors: Optional[np.ndarray]
+    sharpness: Optional[np.ndarray]
+    chunk_bounds: Optional[np.ndarray]
+    metadata: Dict[str, Any]
 
 
 class LuxarScene:
@@ -72,6 +136,16 @@ class LuxarScene:
         if node_type != "scene":
             raise ValueError(
                 f"Not a valid Luxar scene: expected type='scene', got '{node_type}'"
+            )
+
+        # Warn on version mismatch (non-fatal: older files should still load)
+        file_version = root.attrs.get("luxar_version")
+        if file_version is not None and str(file_version) != LUXAR_VERSION_CURRENT:
+            warnings.warn(
+                f"Version mismatch: file='{file_version}', "
+                f"library='{LUXAR_VERSION_CURRENT}'.",
+                UserWarning,
+                stacklevel=2,
             )
 
         return cls(root, path)
@@ -184,20 +258,16 @@ class LuxarScene:
             raise KeyError(f"Node not found: {name}")
         return dict(self._root[name].attrs)
 
-    def get_points(self, name: str) -> Dict[str, Any]:
+    def get_points(self, name: str) -> PointsData:
         """Load points node data with automatic decoding.
 
         Args:
             name: Name of the points node
 
         Returns:
-            Dict with:
-            - positions: (N, D) float32 array
-            - colors: (N, 3) float32 array or None
-            - radii: (N,) float32 array or None
-            - sharpness: (N,) float32 array or None
-            - chunk_bounds: (num_chunks, D, 2) array or None
-            - metadata: dict with node attributes
+            PointsData with fields: positions, colors, radii, sharpness,
+            chunk_bounds, metadata.  Supports dict-style access for
+            backward compatibility (e.g. ``data["positions"]``).
 
         Raises:
             KeyError: If node doesn't exist
@@ -228,30 +298,25 @@ class LuxarScene:
         if "transform" in metadata:
             metadata["transform"] = read_transform_from_zarr(metadata["transform"])
 
-        return {
-            "positions": positions,
-            "colors": colors,
-            "radii": radii,
-            "sharpness": sharpness,
-            "chunk_bounds": chunk_bounds,
-            "metadata": metadata,
-        }
+        return PointsData(
+            positions=positions,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness,
+            chunk_bounds=chunk_bounds,
+            metadata=metadata,
+        )
 
-    def get_gsplats(self, name: str) -> Dict[str, Any]:
+    def get_gsplats(self, name: str) -> GSplatsData:
         """Load gsplats node data with automatic decoding.
 
         Args:
             name: Name of the gsplats node
 
         Returns:
-            Dict with:
-            - centers: (N, D) float32 array
-            - amplitudes: (N,) float32 array
-            - cholesky_factors: (N, k) float32 array
-            - colors: (N, 3) float32 array or None
-            - sharpness: (N,) float32 array or None
-            - chunk_bounds: (num_chunks, D, 2) array or None
-            - metadata: dict with node attributes
+            GSplatsData with fields: centers, amplitudes, cholesky_factors,
+            colors, sharpness, chunk_bounds, metadata.  Supports dict-style
+            access for backward compatibility.
 
         Raises:
             KeyError: If node doesn't exist
@@ -283,30 +348,26 @@ class LuxarScene:
         if "transform" in metadata:
             metadata["transform"] = read_transform_from_zarr(metadata["transform"])
 
-        return {
-            "centers": centers,
-            "amplitudes": amplitudes,
-            "cholesky_factors": cholesky_factors,
-            "colors": colors,
-            "sharpness": sharpness,
-            "chunk_bounds": chunk_bounds,
-            "metadata": metadata,
-        }
+        return GSplatsData(
+            centers=centers,
+            amplitudes=amplitudes,
+            cholesky_factors=cholesky_factors,
+            colors=colors,
+            sharpness=sharpness,
+            chunk_bounds=chunk_bounds,
+            metadata=metadata,
+        )
 
-    def get_lines(self, name: str) -> Dict[str, Any]:
+    def get_lines(self, name: str) -> LinesData:
         """Load lines node data with automatic decoding.
 
         Args:
             name: Name of the lines node
 
         Returns:
-            Dict with:
-            - vertices: (N, D) float32 array
-            - widths: (N,) float32 array
-            - colors: (N, 3) float32 array or None
-            - sharpness: (N,) float32 array or None
-            - indices: (M,) uint32 array or None
-            - metadata: dict with node attributes
+            LinesData with fields: vertices, widths, colors, sharpness,
+            indices, metadata.  Supports dict-style access for backward
+            compatibility.
 
         Raises:
             KeyError: If node doesn't exist
@@ -333,14 +394,14 @@ class LuxarScene:
         if "transform" in metadata:
             metadata["transform"] = read_transform_from_zarr(metadata["transform"])
 
-        return {
-            "vertices": vertices,
-            "widths": widths,
-            "colors": colors,
-            "sharpness": sharpness,
-            "indices": indices,
-            "metadata": metadata,
-        }
+        return LinesData(
+            vertices=vertices,
+            widths=widths,
+            colors=colors,
+            sharpness=sharpness,
+            indices=indices,
+            metadata=metadata,
+        )
 
     def _decode_array(self, group: zarr.Group, array_name: str) -> Optional[np.ndarray]:
         """Decode an array from a group if it exists.

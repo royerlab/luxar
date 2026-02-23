@@ -198,8 +198,9 @@ Progressive Writing
 
 .. code-block:: python
 
+   dims = Dimensions.default_3d()
    with LuxarZarrCompiler('scene.zarr') as compiler:
-       scene = compiler.create_scene()
+       scene = compiler.create_scene(dimensions=dims)
 
        # This writes to disk NOW, not at context exit
        scene.add_points("batch1", positions[:1000], colors[:1000])

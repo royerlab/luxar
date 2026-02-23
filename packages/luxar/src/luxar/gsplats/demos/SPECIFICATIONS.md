@@ -198,4 +198,3 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_basic_fitting.py --
 - `demo_splats_mitosis_intgrad.py` - CLAHE seeding validation
 
 All demos follow the standardized best practices outlined in this specification, ensuring consistent code quality, documentation, and user experience across the entire demo collection.
-

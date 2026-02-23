@@ -133,14 +133,16 @@ The project enforces quality standards automatically through pre-commit hooks an
 def test_new_feature(tmp_path):
     """Test description following Google style."""
     # Arrange
-    scene = Scene(tmp_path / "test.zarr")
-    
-    # Act
-    result = scene.your_new_method()
-    
+    dims = Dimensions.default_3d()
+    with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+
+        # Act
+        scene.add_points("test_points", positions, colors)
+
     # Assert
-    assert result.is_valid()
-    assert result.count == expected_count
+    loaded = LuxarScene.load(tmp_path / "test.zarr")
+    assert "test_points" in loaded.list_points()
 ```
 
 ### Test Requirements

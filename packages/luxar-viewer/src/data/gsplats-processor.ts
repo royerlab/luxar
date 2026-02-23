@@ -21,36 +21,77 @@ function packedIndex(row: number, col: number): number {
   return (row * (row + 1)) / 2 + col;
 }
 
+/** Maximum supported dimensions (must match WASM MAX_SUPPORTED_DIMS). */
+const MAX_SUPPORTED_DIMS = 16;
+
+/** Epsilon for degenerate diagonal detection during Cholesky factorization. */
+const CHOLESKY_EPSILON = 1e-10;
+
 /**
- * Extract a submatrix from packed lower-triangular Cholesky factors.
+ * Compute the correct marginal Cholesky factor for a subset of dimensions.
  *
- * @param packed - Full packed Cholesky (k = ndim*(ndim+1)/2 elements per splat)
- * @param offset - Start offset in the packed array for this splat
- * @param ndim - Original dimensionality
- * @param keepDims - Indices of dimensions to keep (sorted ascending)
+ * For Σ = L·Lᵀ, the marginal covariance for dimensions S is:
+ *   Σ_S[i,j] = Σ_k L[s_i,k]·L[s_j,k]
+ *
+ * This function reconstructs Σ_S and then Cholesky-factorizes it.
+ * Simply extracting L elements is INCORRECT when there are cross-dimension correlations.
+ *
+ * @param packed - Full packed Cholesky factor array
+ * @param offset - Start offset in packed for this splat
+ * @param keepDims - Dimension indices to keep (sorted ascending)
  * @param output - Output array to write to
  * @param outputOffset - Start offset in output array
  */
-function extractCholeskySubmatrix(
+function computeMarginalCholesky(
   packed: Float32Array,
   offset: number,
-  ndim: number,
   keepDims: number[],
   output: Float32Array,
   outputOffset: number
 ): void {
-  // Silence the unused parameter warning - ndim is kept for clarity and future use
-  void ndim;
-
   const subNdim = keepDims.length;
-  let outIdx = outputOffset;
 
-  for (let subRow = 0; subRow < subNdim; subRow++) {
-    const origRow = keepDims[subRow];
-    for (let subCol = 0; subCol <= subRow; subCol++) {
-      const origCol = keepDims[subCol];
-      output[outIdx++] = packed[offset + packedIndex(origRow, origCol)];
+  // Step 1: Reconstruct marginal covariance Σ_S[i,j] = Σ_k L[s_i,k]·L[s_j,k]
+  const sigma = new Float32Array(MAX_SUPPORTED_DIMS * MAX_SUPPORTED_DIMS);
+
+  for (let i = 0; i < subNdim; i++) {
+    const si = keepDims[i];
+    for (let j = 0; j <= i; j++) {
+      const sj = keepDims[j];
+      const kMax = Math.min(si, sj);
+      let sum = 0;
+      for (let k = 0; k <= kMax; k++) {
+        const lSiK = packed[offset + packedIndex(si, k)];
+        const lSjK = packed[offset + packedIndex(sj, k)];
+        sum += lSiK * lSjK;
+      }
+      sigma[i * MAX_SUPPORTED_DIMS + j] = sum;
+      sigma[j * MAX_SUPPORTED_DIMS + i] = sum;
     }
+  }
+
+  // Step 2: Cholesky-Crout factorization of Σ_S → L_S
+  const subPackedSize = (subNdim * (subNdim + 1)) / 2;
+  const lSub = new Float32Array(subPackedSize);
+
+  for (let i = 0; i < subNdim; i++) {
+    for (let j = 0; j <= i; j++) {
+      let sum = sigma[i * MAX_SUPPORTED_DIMS + j];
+      for (let k = 0; k < j; k++) {
+        sum -= lSub[packedIndex(i, k)] * lSub[packedIndex(j, k)];
+      }
+      if (i === j) {
+        lSub[packedIndex(i, i)] = sum > CHOLESKY_EPSILON ? Math.sqrt(sum) : Math.sqrt(CHOLESKY_EPSILON);
+      } else {
+        const diag = lSub[packedIndex(j, j)];
+        lSub[packedIndex(i, j)] = diag > CHOLESKY_EPSILON ? sum / diag : 0;
+      }
+    }
+  }
+
+  // Copy to output
+  for (let k = 0; k < subPackedSize; k++) {
+    output[outputOffset + k] = lSub[k];
   }
 }
 
@@ -151,12 +192,11 @@ export function processGSplatsTo3D(
         (d) => slicePosition[d] - loaded.positions[centerOffset + d]
       );
 
-      // Extract hidden Cholesky submatrix
+      // Compute marginal Cholesky for hidden dimensions
       const hiddenCholesky = new Float32Array(hiddenPackedSize);
-      extractCholeskySubmatrix(
+      computeMarginalCholesky(
         loaded.choleskyFactors,
         i * fullPackedSize,
-        ndim,
         sortedHiddenDims,
         hiddenCholesky,
         0
@@ -196,11 +236,10 @@ export function processGSplatsTo3D(
       centers3D[dstCenterOffset + d] = loaded.positions[srcCenterOffset + sortedDisplayDims[d]];
     }
 
-    // Extract 3D Cholesky submatrix
-    extractCholeskySubmatrix(
+    // Compute marginal Cholesky for display dimensions (3D)
+    computeMarginalCholesky(
       loaded.choleskyFactors,
       srcCholeskyOffset,
-      ndim,
       sortedDisplayDims,
       choleskyFactors3D,
       outIdx * display3DPackedSize
@@ -216,10 +255,9 @@ export function processGSplatsTo3D(
         (d) => slicePosition[d] - loaded.positions[srcCenterOffset + d]
       );
       const hiddenCholesky = new Float32Array(hiddenPackedSize);
-      extractCholeskySubmatrix(
+      computeMarginalCholesky(
         loaded.choleskyFactors,
         srcCholeskyOffset,
-        ndim,
         sortedHiddenDims,
         hiddenCholesky,
         0

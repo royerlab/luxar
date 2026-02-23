@@ -6,7 +6,6 @@
 // - Performance monitoring integration for real-time metrics
 // - Proper cleanup and resource management
 
-import * as THREE from 'three';
 import { ControlsManager } from '../controls/controls-manager';
 import { config } from '../config';
 import { PerformanceMonitor } from '../ui/performance-monitor';
@@ -54,18 +53,12 @@ export class AnimationController {
    * Sets up performance monitoring and prepares animation loop. Does not
    * start animation - call startAnimation() to begin rendering.
    *
-   * @param _renderer - THREE.js WebGL renderer (unused, kept for API compatibility)
-   * @param _scene - THREE.js scene (unused, kept for API compatibility)
-   * @param _camera - THREE.js camera (unused, kept for API compatibility)
    * @param controls - Controls manager for camera updates each frame
    * @param postProcessing - Post-processing manager for HDR rendering
    *
    * @example
    * ```typescript
    * const animController = new AnimationController(
-   *   renderer,
-   *   scene,
-   *   camera,
    *   controlsManager,
    *   postProcessingManager
    * );
@@ -73,9 +66,6 @@ export class AnimationController {
    * ```
    */
   constructor(
-    _renderer: THREE.WebGLRenderer,
-    _scene: THREE.Scene,
-    _camera: THREE.PerspectiveCamera,
     private controls: ControlsManager,
     private postProcessing: PostProcessingManager
   ) {

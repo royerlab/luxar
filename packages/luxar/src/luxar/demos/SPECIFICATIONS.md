@@ -177,8 +177,7 @@ Features showcased:
 Output: <Description of visualization>
 """
 
-from luxar import Scene, Points
-from luxar.io import LuxarZarrCompiler
+from luxar import LuxarZarrCompiler, Dimensions
 from luxar.demos import launch_viewer
 import numpy as np
 import tempfile
@@ -198,13 +197,12 @@ def main():
 
     positions, colors = generate_data(n_points, seed)
 
-    scene = Scene(name="Demo Scene")
-    scene.add_points("demo_points", positions=positions, colors=colors)
-
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / "demo.zarr"
+        dims = Dimensions.default_3d()
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.write_scene(scene)
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points("demo_points", positions=positions, colors=colors)
 
         launch_viewer(output_path)
 

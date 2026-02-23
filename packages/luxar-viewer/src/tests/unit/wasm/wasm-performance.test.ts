@@ -8,7 +8,11 @@
  * assert correctness (that's covered by wasm-vs-typescript.test.ts).
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
+
+// Increase timeout for all benchmarks in this file - coverage instrumentation
+// adds significant overhead to the tight loops used by performance benchmarks.
+vi.setConfig({ testTimeout: 30_000 });
 import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
