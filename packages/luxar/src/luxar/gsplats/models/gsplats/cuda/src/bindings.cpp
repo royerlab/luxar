@@ -32,6 +32,7 @@ forward_wrapper(
     const torch::Tensor& conic,
     const torch::Tensor& amps,
     const torch::Tensor& sharpness,
+    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     double truncate,
     double intensity_floor,
@@ -46,12 +47,14 @@ forward_wrapper(
         auto conic_fp16 = conic.dtype() == torch::kFloat16 ? conic : conic.to(torch::kFloat16);
         auto amps_fp16 = amps.dtype() == torch::kFloat16 ? amps : amps.to(torch::kFloat16);
         auto sharpness_fp16 = sharpness.dtype() == torch::kFloat16 ? sharpness : sharpness.to(torch::kFloat16);
+        auto L_row_norms_fp16 = L_row_norms.dtype() == torch::kFloat16 ? L_row_norms : L_row_norms.to(torch::kFloat16);
 
         return forward_fp16(
             centers_fp16,
             conic_fp16,
             amps_fp16,
             sharpness_fp16,
+            L_row_norms_fp16,
             shape,
             (float)truncate,
             (float)intensity_floor,
@@ -65,6 +68,7 @@ forward_wrapper(
         conic,
         amps,
         sharpness,
+        L_row_norms,
         shape,
         (float)truncate,
         (float)intensity_floor,
@@ -183,6 +187,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                 (N,) float32 - Amplitudes
             sharpness : torch.Tensor
                 (N,) float32 - Sharpness parameters (s=2 for standard Gaussian)
+            L_row_norms : torch.Tensor
+                (N, d) float32 - Per-axis standard deviations from Cholesky row norms.
+                L_row_norms[i] = sqrt(sum_j L[i,j]^2) for exact AABB computation.
             shape : List[int]
                 Target volume shape (d elements)
             truncate : float
@@ -213,6 +220,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("conic"),
         py::arg("amps"),
         py::arg("sharpness"),
+        py::arg("L_row_norms"),
         py::arg("shape"),
         py::arg("truncate"),
         py::arg("intensity_floor"),

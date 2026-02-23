@@ -13,7 +13,13 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, getLuxarState, waitForDataLoaded } from './helpers';
+import {
+  waitForLuxarReady,
+  getLuxarState,
+  waitForDataLoaded,
+  waitForNextRender,
+  waitForAnimationStep,
+} from './helpers';
 
 // Test dataset with multiple dimensions for animation
 const DATASET = 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.zarr';
@@ -158,11 +164,11 @@ test.describe('Dimension Animation - UI Controls', () => {
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
-    await page.waitForTimeout(50);
+    await waitForNextRender(page, 1);
 
     // Select a dimension
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Wait for play button to be visible
     const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
@@ -178,7 +184,7 @@ test.describe('Dimension Animation - UI Controls', () => {
 
     // Click play button
     await page.click('.luxar-dimension-slider__play-btn');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Check button text changed to pause
     const pauseText = await page.evaluate(() => {
@@ -190,7 +196,7 @@ test.describe('Dimension Animation - UI Controls', () => {
 
     // Click again to pause
     await page.click('.luxar-dimension-slider__play-btn');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Check button text changed back to play
     const playText = await page.evaluate(() => {
@@ -208,11 +214,11 @@ test.describe('Dimension Animation - UI Controls', () => {
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
-    await page.waitForTimeout(50);
+    await waitForNextRender(page, 1);
 
     // Select a dimension
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Wait for play button to be visible, then right-click to open context menu
     const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
@@ -226,7 +232,7 @@ test.describe('Dimension Animation - UI Controls', () => {
 
     // Start animation
     await page.click('.luxar-dimension-slider__play-btn');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Check animation state has correct FPS
     const state = await getAnimationState(page, 3); // 4th dimension = index 3
@@ -241,11 +247,11 @@ test.describe('Dimension Animation - UI Controls', () => {
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
-    await page.waitForTimeout(50);
+    await waitForNextRender(page, 1);
 
     // Select a dimension
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Wait for play button to be visible, then right-click to open context menu
     const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
@@ -259,7 +265,7 @@ test.describe('Dimension Animation - UI Controls', () => {
 
     // Start animation
     await page.click('.luxar-dimension-slider__play-btn');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Check animation state has correct loop mode
     const state = await getAnimationState(page, 3);
@@ -276,15 +282,15 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
 
     // Click canvas to ensure it has focus (sliders shouldn't capture keyboard)
     await page.click('canvas');
-    await page.waitForTimeout(50);
+    await waitForNextRender(page, 1);
 
     // Select a dimension
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Press K to start animation
     await page.keyboard.press('k');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Check animation is playing
     const isPlaying = await isAnimating(page, 3);
@@ -292,7 +298,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
 
     // Press K again to pause
     await page.keyboard.press('k');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Check animation is paused
     const isPaused = await isAnimating(page, 3);
@@ -306,17 +312,17 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
-    await page.waitForTimeout(50);
+    await waitForNextRender(page, 1);
 
     // Select a dimension
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Navigate forward a few steps
     await page.keyboard.press(']');
-    await page.waitForTimeout(200);
+    await waitForAnimationStep(page, 3);
     await page.keyboard.press(']');
-    await page.waitForTimeout(200);
+    await waitForAnimationStep(page, 3);
 
     // Get current value (should not be at start)
     const beforeValue = await getDimensionValue(page, 3);
@@ -324,7 +330,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
 
     // Press Home to jump to start
     await page.keyboard.press('Home');
-    await page.waitForTimeout(200);
+    await waitForAnimationStep(page, 3);
 
     // Check dimension is at start (value 0)
     const afterValue = await getDimensionValue(page, 3);
@@ -338,11 +344,11 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
-    await page.waitForTimeout(50);
+    await waitForNextRender(page, 1);
 
     // Select a dimension
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Get the max value for this dimension
     const maxValue = await page.evaluate(() => {
@@ -356,7 +362,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
 
     // Press End to jump to end
     await page.keyboard.press('End');
-    await page.waitForTimeout(200);
+    await waitForAnimationStep(page, 3);
 
     // Check dimension is at end
     const value = await getDimensionValue(page, 3);
@@ -370,13 +376,13 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
-    await page.waitForTimeout(50);
+    await waitForNextRender(page, 1);
 
     // Select a dimension and start animation
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
     await page.keyboard.press('k');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Get initial FPS
     const initialState = await getAnimationState(page, 3);
@@ -391,7 +397,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
         animManager.increaseSpeed(3);
       }
     });
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Check FPS increased
     const newState = await getAnimationState(page, 3);
@@ -406,11 +412,11 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
-    await page.waitForTimeout(50);
+    await waitForNextRender(page, 1);
 
     // Select a dimension and start animation at high FPS
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Set FPS to 30 first via UI
 
@@ -424,7 +430,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
 
     // Start animation
     await page.keyboard.press('k');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Get initial FPS (should be 30)
     const initialState = await getAnimationState(page, 3);
@@ -439,7 +445,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
         animManager.decreaseSpeed(3);
       }
     });
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Check FPS decreased
     const newState = await getAnimationState(page, 3);
@@ -456,11 +462,11 @@ test.describe('Dimension Animation - Animation Behavior', () => {
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
-    await page.waitForTimeout(50);
+    await waitForNextRender(page, 1);
 
     // Select a dimension
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Get initial value
     const initialValue = await getDimensionValue(page, 3);
@@ -476,7 +482,7 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.waitForTimeout(200);
 
     await page.keyboard.press('k'); // Start animation
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Wait for value to change (animation progressing)
     await waitForDimensionValueChange(page, 3, initialValue, 3000);
@@ -497,11 +503,11 @@ test.describe('Dimension Animation - Animation Behavior', () => {
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
-    await page.waitForTimeout(50);
+    await waitForNextRender(page, 1);
 
     // Select a dimension
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Set loop mode to loop and high FPS
 
@@ -523,13 +529,13 @@ test.describe('Dimension Animation - Animation Behavior', () => {
 
     // Jump to near end
     await page.keyboard.press('End');
-    await page.waitForTimeout(200);
+    await waitForAnimationStep(page, 3);
 
     const nearEndValue = await getDimensionValue(page, 3);
 
     // Start animation
     await page.keyboard.press('k');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Wait long enough to pass end and wrap (should take < 1 second at 30 FPS)
     await page.waitForTimeout(1500);
@@ -550,11 +556,11 @@ test.describe('Dimension Animation - Animation Behavior', () => {
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
-    await page.waitForTimeout(50);
+    await waitForNextRender(page, 1);
 
     // Select a dimension
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Set loop mode to once and high FPS using direct API calls (more reliable than UI)
     await page.evaluate(() => {
@@ -565,7 +571,7 @@ test.describe('Dimension Animation - Animation Behavior', () => {
         animManager.setTargetFPS(3, 60);
       }
     });
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Get max value and jump to near end (not quite at end)
     const maxValue = await page.evaluate(() => {
@@ -581,11 +587,11 @@ test.describe('Dimension Animation - Animation Behavior', () => {
       const sceneDimsManager = debug?.sceneDimsManager;
       sceneDimsManager?.setDimensionValue(3, Math.max(0, max - 2));
     }, maxValue);
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Start animation
     await page.keyboard.press('k');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Verify animation started
     const startedPlaying = await isAnimating(page, 3);
@@ -623,11 +629,11 @@ test.describe('Dimension Animation - Animation Behavior', () => {
           isAnimating: mgr?.isAnimating(3),
           state: state
             ? {
-              isPlaying: state.isPlaying,
-              loopMode: state.loopMode,
-              direction: state.direction,
-              targetFPS: state.targetFPS,
-            }
+                isPlaying: state.isPlaying,
+                loopMode: state.loopMode,
+                direction: state.direction,
+                targetFPS: state.targetFPS,
+              }
             : null,
           currentValue: dims?.currentStep?.[3],
           ranges: sceneDims?.getDimensionRanges(),
@@ -652,11 +658,11 @@ test.describe('Dimension Animation - Animation Behavior', () => {
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
-    await page.waitForTimeout(50);
+    await waitForNextRender(page, 1);
 
     // Select a dimension
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
 
     // Set loop mode to bounce and high FPS
 
@@ -679,13 +685,13 @@ test.describe('Dimension Animation - Animation Behavior', () => {
 
     // Jump to near end
     await page.keyboard.press('End');
-    await page.waitForTimeout(200);
+    await waitForAnimationStep(page, 3);
 
     const nearEndValue = await getDimensionValue(page, 3);
 
     // Start animation
     await page.keyboard.press('k');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Wait for bounce (should reverse and move backward)
     await page.waitForTimeout(1000);
@@ -710,20 +716,20 @@ test.describe('Dimension Animation - Animation Behavior', () => {
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
-    await page.waitForTimeout(50);
+    await waitForNextRender(page, 1);
 
     // Select a dimension and start animation
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
     await page.keyboard.press('k');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Get current value
     const playingValue = await getDimensionValue(page, 3);
 
     // Pause animation
     await page.keyboard.press('k');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Value should stay roughly constant while paused (allow for frames in flight during pause)
     await page.waitForTimeout(1000);
@@ -733,7 +739,7 @@ test.describe('Dimension Animation - Animation Behavior', () => {
 
     // Resume animation
     await page.keyboard.press('k');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Wait for value to change
     await waitForDimensionValueChange(page, 3, pausedValue, 2000);
@@ -752,13 +758,13 @@ test.describe('Dimension Animation - Multiple Dimensions', () => {
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
-    await page.waitForTimeout(50);
+    await waitForNextRender(page, 1);
 
     // Start animation on dimension 4 (index 3)
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
     await page.keyboard.press('k');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Check dimension 4 is animating
     const dim4Playing = await isAnimating(page, 3);
@@ -766,9 +772,9 @@ test.describe('Dimension Animation - Multiple Dimensions', () => {
 
     // Start animation on dimension 5 (index 4)
     await page.keyboard.press('5');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
     await page.keyboard.press('k');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Check both dimensions are animating
     const dim4StillPlaying = await isAnimating(page, 3);
@@ -778,9 +784,9 @@ test.describe('Dimension Animation - Multiple Dimensions', () => {
 
     // Pause dimension 4
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page, 1);
     await page.keyboard.press('k');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Check dimension 4 paused but dimension 5 still playing
     const dim4Paused = await isAnimating(page, 3);

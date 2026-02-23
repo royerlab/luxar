@@ -262,7 +262,7 @@ export class LineMaterial extends THREE.ShaderMaterial {
         uFOV: { value: (60 * Math.PI) / 180 }, // Default 60° FOV
         uResolution: { value: new THREE.Vector2(1, 1) },
         uHDRMultiplier: {
-          value: materialConfig.hdrMultiplier ?? config.shader.points.hdrMultiplier,
+          value: materialConfig.hdrMultiplier ?? config.renderingControls.defaults.hdrMultiplier,
         },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
       },

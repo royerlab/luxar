@@ -9,9 +9,9 @@ sys.path.insert(0, os.path.abspath("../packages/luxar/src"))
 
 # -- Project information -----------------------------------------------------
 project = "Luxar"
-copyright = "2025, Luxar Development Team"
+copyright = "2025-2026, Luxar Development Team"
 author = "Luxar Development Team"
-release = "0.12.0"
+release = "2025.08.03"
 
 # -- General configuration ---------------------------------------------------
 extensions = [

@@ -64,6 +64,10 @@ struct BinningState {
     torch::Tensor global_splat_ids;   // (num_global,) int32 - global splat IDs
     int num_global_splats;
 
+    // AABB cache: avoids recomputing AABBs in bin_kernel
+    torch::Tensor aabb_lo;          // (N, DIM) int32 - AABB lower bounds (tile coords)
+    torch::Tensor aabb_hi;          // (N, DIM) int32 - AABB upper bounds (tile coords)
+
     // Metadata
     int64_t num_tiles;
     int64_t total_pairs;  // Total (tile, splat) pairs
@@ -86,6 +90,7 @@ struct BinningState {
  * @param conic           (N, d*(d+1)/2) float32 - packed upper-triangle of Σ⁻¹
  * @param amps            (N,) float32 - amplitudes
  * @param sharpness       (N,) float32 - sharpness parameters
+ * @param L_row_norms     (N, d) float32 - per-axis std dev from Cholesky row norms
  * @param shape           Target volume shape (d elements)
  * @param truncate        Base truncation radius
  * @param intensity_floor Minimum intensity threshold for culling
@@ -105,6 +110,7 @@ forward(
     const torch::Tensor& conic,
     const torch::Tensor& amps,
     const torch::Tensor& sharpness,
+    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
@@ -173,6 +179,7 @@ backward(
  * @param conic           (N, d*(d+1)/2) float16 - packed upper-triangle of Σ⁻¹
  * @param amps            (N,) float16 - amplitudes
  * @param sharpness       (N,) float16 - sharpness parameters
+ * @param L_row_norms     (N, d) float16 - per-axis std dev from Cholesky row norms
  * @param shape           Target volume shape (d elements)
  * @param truncate        Base truncation radius
  * @param intensity_floor Minimum intensity threshold for culling
@@ -192,6 +199,7 @@ forward_fp16(
     const torch::Tensor& conic,
     const torch::Tensor& amps,
     const torch::Tensor& sharpness,
+    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
@@ -259,10 +267,12 @@ void dispatch_forward(
     const torch::Tensor& conic,
     const torch::Tensor& amps,
     const torch::Tensor& sharpness,
+    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
     int tile_size,
+    int batch_size,
     torch::Tensor& output,
     BinningState& state
 );
@@ -283,6 +293,7 @@ void dispatch_backward(
     float truncate,
     float intensity_floor,
     int tile_size,
+    int batch_size,
     torch::Tensor& d_centers,
     torch::Tensor& d_conic,
     torch::Tensor& d_amps,
@@ -292,15 +303,17 @@ void dispatch_backward(
 // FP16 Forward dispatcher - uses FP16 inputs with FP32 compute
 void dispatch_forward_fp16(
     int dim,
-    const torch::Tensor& centers,    // float16
-    const torch::Tensor& conic,      // float16
-    const torch::Tensor& amps,       // float16
-    const torch::Tensor& sharpness,  // float16
+    const torch::Tensor& centers,      // float16
+    const torch::Tensor& conic,        // float16
+    const torch::Tensor& amps,         // float16
+    const torch::Tensor& sharpness,    // float16
+    const torch::Tensor& L_row_norms,  // float16
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
     int tile_size,
-    torch::Tensor& output,           // float32
+    int batch_size,
+    torch::Tensor& output,             // float32
     BinningState& state
 );
 
@@ -320,6 +333,7 @@ void dispatch_backward_fp16(
     float truncate,
     float intensity_floor,
     int tile_size,
+    int batch_size,
     torch::Tensor& d_centers,   // float32
     torch::Tensor& d_conic,     // float32
     torch::Tensor& d_amps,      // float32
@@ -334,9 +348,9 @@ void dispatch_backward_fp16(
 template <int DIM>
 void launch_preprocess(
     const float* centers,
-    const float* conic,
     const float* amps,
     const float* sharpness,
+    const float* L_row_norms,
     int N,
     const int* shape,
     const int* tile_dims,
@@ -345,23 +359,20 @@ void launch_preprocess(
     float intensity_floor,
     int* tile_counts,
     bool* global_flags,
+    int* aabb_lo,
+    int* aabb_hi,
     int64_t num_tiles,
     cudaStream_t stream
 );
 
-// Binning: Assign splats to tiles
+// Binning: Assign splats to tiles using cached AABBs from preprocess
 template <int DIM>
 void launch_bin(
-    const float* centers,
-    const float* conic,
-    const float* amps,
-    const float* sharpness,
+    const int* aabb_lo,
+    const int* aabb_hi,
+    const bool* global_flags,
     int N,
-    const int* shape,
     const int* tile_dims,
-    int tile_size,
-    float truncate,
-    float intensity_floor,
     const int64_t* tile_offsets,
     int* tile_write_heads,
     int* tile_content,
@@ -430,6 +441,7 @@ void launch_rasterize_global_forward(
     int n_global_splats,
     const int* shape,
     float truncate,
+    float intensity_floor,
     float* output,
     int64_t num_pixels,
     cudaStream_t stream
@@ -447,6 +459,7 @@ void launch_rasterize_global_backward(
     int n_global_splats,
     const int* shape,
     float truncate,
+    float intensity_floor,
     float* d_centers,
     float* d_conic,
     float* d_amps,

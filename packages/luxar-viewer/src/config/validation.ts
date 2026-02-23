@@ -63,18 +63,19 @@ export function validateConfig(config: AppConfig): ValidationResult {
  */
 function validateCamera(config: AppConfig, errors: string[], warnings: string[]): void {
   const { camera } = config;
+  const defaults = config.renderingControls.defaults;
 
-  // FOV validation
-  if (camera.fov < 1 || camera.fov > 180) {
-    errors.push(`Invalid camera FOV: ${camera.fov} (must be between 1 and 180)`);
+  // FOV validation (lives in renderingControls.defaults)
+  if (defaults.fov < 1 || defaults.fov > 180) {
+    errors.push(`Invalid camera FOV: ${defaults.fov} (must be between 1 and 180)`);
   }
 
-  // Near/far plane validation
-  if (camera.near <= 0) {
-    errors.push(`Invalid camera near plane: ${camera.near} (must be > 0)`);
+  // Near/far plane validation (lives in renderingControls.defaults)
+  if (defaults.near <= 0) {
+    errors.push(`Invalid camera near plane: ${defaults.near} (must be > 0)`);
   }
-  if (camera.far <= camera.near) {
-    errors.push(`Invalid camera far plane: ${camera.far} (must be > near plane ${camera.near})`);
+  if (defaults.far <= defaults.near) {
+    errors.push(`Invalid camera far plane: ${defaults.far} (must be > near plane ${defaults.near})`);
   }
 
   // FOV min/max validation
@@ -93,10 +94,11 @@ function validateCamera(config: AppConfig, errors: string[], warnings: string[])
  */
 function validateRendering(config: AppConfig, errors: string[], _warnings: string[]): void {
   const { shader } = config;
+  const defaults = config.renderingControls.defaults;
 
-  // Shader points validation
-  if (shader.points.hdrMultiplier < 0) {
-    errors.push(`Invalid HDR multiplier: ${shader.points.hdrMultiplier} (must be >= 0)`);
+  // HDR multiplier validation (lives in renderingControls.defaults)
+  if (defaults.hdrMultiplier < 0) {
+    errors.push(`Invalid HDR multiplier: ${defaults.hdrMultiplier} (must be >= 0)`);
   }
   if (shader.points.baseAlpha < 0 || shader.points.baseAlpha > 1) {
     errors.push(`Invalid base alpha: ${shader.points.baseAlpha} (must be between 0 and 1)`);

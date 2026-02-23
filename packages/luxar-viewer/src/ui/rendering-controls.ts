@@ -151,10 +151,6 @@ export class RenderingControls {
     // Custom styling now in src/styles/components/rendering-controls.css
 
     this.setupControls();
-
-    // Add keyboard event listener to the GUI container to handle 'R' key
-    // This ensures the panel can be closed even when a control has focus
-    this.setupKeyboardHandling();
   }
 
   /**
@@ -1230,29 +1226,6 @@ export class RenderingControls {
     // No additional setup needed here
   }
 
-  /**
-   * Setup keyboard handling for the GUI panel
-   */
-  private setupKeyboardHandling(): void {
-    // Add keydown listener to the GUI's DOM element
-    // Note: We don't stopPropagation() for toggle keys so they can be handled globally
-    this.gui.domElement.addEventListener('keydown', (event: KeyboardEvent) => {
-      // For toggle keys (R), don't stopPropagation so main handler can process it
-      if (
-        (event.key === 'r' || event.key === 'R') &&
-        !event.metaKey &&
-        !event.ctrlKey &&
-        !event.shiftKey
-      ) {
-        // Don't prevent the event from bubbling up
-        // The main input handler will toggle the panel properly
-      }
-      // For Escape, also let it bubble up for proper priority handling
-      else if (event.key === 'Escape') {
-        // Don't prevent the event from bubbling up
-      }
-    });
-  }
 
   /**
    * Add click outside handler to blur inputs

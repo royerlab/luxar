@@ -362,8 +362,9 @@ Use progressive writing to avoid memory issues:
 # DON'T load all data at once if very large
 # DO generate and write in chunks
 
+dims = Dimensions.default_3d()
 with LuxarZarrCompiler(output) as compiler:
-    scene = compiler.create_scene()
+    scene = compiler.create_scene(dimensions=dims)
 
     # Write in batches
     for i in range(num_batches):

@@ -39,7 +39,7 @@ describe('PointMaterial', () => {
     it('should create a material with default values', () => {
       const material = new PointMaterial();
 
-      expect(material.uniforms.hdrMultiplier.value).toBe(config.shader.points.hdrMultiplier);
+      expect(material.uniforms.hdrMultiplier.value).toBe(config.renderingControls.defaults.hdrMultiplier);
       expect(material.uniforms.baseAlpha.value).toBe(config.shader.points.baseAlpha);
       expect(material.uniforms.opacity.value).toBe(1.0);
       expect(material.uniforms.invGamma.value).toBe(1.0);

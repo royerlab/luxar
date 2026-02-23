@@ -142,10 +142,6 @@
   display: none;
 }
 
-.luxar-help-overlay__category-content--collapsed {
-  display: none;
-}
-
 /* Items */
 .luxar-help-overlay__item {
   margin-bottom: var(--luxar-spacing-3);

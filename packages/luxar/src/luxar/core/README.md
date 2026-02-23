@@ -82,11 +82,11 @@ with LuxarZarrCompiler('output.zarr') as compiler:
     # Add different data types
     positions = np.random.randn(10000, 4).astype(np.float32)
     scene.add_points('my_points', positions)
-    
+
     # Add lines
     vertices = np.random.randn(100, 4).astype(np.float32)
     scene.add_lines('my_lines', vertices, widths=0.1)
-    
+
     # Add Gaussian splats
     centers = np.random.randn(500, 4).astype(np.float32)
     amplitudes = np.ones(500)

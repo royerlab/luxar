@@ -11,6 +11,7 @@
  */
 
 import * as zarr from 'zarrita';
+import { get, slice } from 'zarrita';
 import { log, Modules, LogEmoji } from '../utils/log';
 import {
   loadGSplatsChunkSpatialIndex,

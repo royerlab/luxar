@@ -1,11 +1,112 @@
 # luxar-viewer/src/themes
 
-Package documentation placeholder.
+Runtime theming system with CSS custom property injection, persistent user preferences, and advanced glass-effect themes.
 
-## Purpose
+## Architecture
 
-Provides the themes subsystem for the Luxar viewer.
+```
+ThemeManager (singleton)
+├── Theme Registry — stores registered themes by ID
+├── CSS Variable Injector — applies theme as --luxar-* properties on :root
+├── LocalStorage Persistence — remembers user's chosen theme
+└── Observer Pattern — notifies listeners on theme change
+```
 
-## Notes
+## Built-in Themes
 
-- Last updated: 2026-01-02
+| Theme | ID | Description |
+|-------|----|-------------|
+| Dark | `dark` | Classic dark theme (`#111111` background) |
+| Light | `light` | Light theme with bright backgrounds |
+| Frosted Glass | `frosted-glass` | Backdrop blur and glass morphism |
+| Liquid Glass | `liquid-glass` | Geometry-aware refraction with SVG filters |
+
+**Default**: `frosted-glass`
+
+## Usage
+
+```typescript
+import { ThemeManager } from './themes';
+
+const tm = ThemeManager.getInstance();
+
+// Switch theme
+tm.setTheme('dark');
+
+// Listen for changes (returns unsubscribe function)
+const unsubscribe = tm.onChange((theme) => {
+  console.log('Theme changed to:', theme.name);
+});
+
+// Get a specific theme by ID
+const dark = tm.getTheme('dark');
+
+// Later: stop listening
+unsubscribe();
+```
+
+## Theme Structure
+
+Each theme implements the `Theme` interface with these sections:
+
+### Colors
+- **Background**: primary, secondary, tertiary, overlay
+- **Text**: primary, secondary, muted, disabled, inverse
+- **Semantic**: success, warning, error, info, highlight
+- **Interactive**: default, hover, active, focus, disabled
+- **Border**: default, subtle, strong, focus
+- **Visualization**: hot, warm, cold, neutral
+
+### Typography
+- **Font families**: base, mono, display
+- **Font sizes**: xs through 3xl
+- **Font weights**: normal, medium, semibold, bold
+- **Line heights**: tight, normal, relaxed
+
+### Spacing
+Scale keys `[0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20]` mapping to `[0, 2, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40]` px
+
+### Effects
+- **Border radius**: none, sm, md, lg, full (pill)
+- **Shadows**: sm, md, lg, xl
+- **Backdrop blur**: none, sm, md, lg
+- **Opacity**: disabled, secondary, hover, full
+- **Transitions**: fast (0.1s), normal (0.2s), slow (0.3s)
+
+### Z-Index Layers
+| Layer | Value |
+|-------|-------|
+| base | 100 |
+| dropdown | 1000 |
+| modal | 2000 |
+| popover | 3000 |
+| tooltip | 4000 |
+
+## Glass Filter System
+
+The liquid glass theme uses an advanced SVG filter pipeline:
+1. **Geometry-aware refraction** — elements act as convex lenses
+2. **Sobel edge detection** — computes gradient for distortion direction
+3. **Chromatic aberration** — subtle RGB channel separation
+4. **Specular highlights** — simulated light reflections
+
+Filter parameters are configurable: `blurRadius`, `refractionScale`, `chromaticStrength`, `specularIntensity`.
+
+## Persistence
+
+User theme preference is stored in `localStorage` under the key `luxar-theme`. Gracefully degrades in private/incognito mode (logs a warning, continues without persistence).
+
+## File Structure
+
+```
+themes/
+├── index.ts              — Public exports
+├── types.ts              — Theme, ThemeColors, ThemeTypography, etc.
+├── theme-manager.ts      — Singleton manager
+├── glass-filters.ts      — SVG filter pipeline for glass themes
+└── themes/
+    ├── dark.theme.ts
+    ├── light.theme.ts
+    ├── frosted-glass.theme.ts
+    └── liquid-glass.theme.ts
+```

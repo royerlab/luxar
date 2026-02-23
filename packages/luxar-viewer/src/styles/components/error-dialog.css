@@ -119,7 +119,7 @@
   padding: var(--luxar-spacing-6);
   background: rgba(255, 255, 255, 0.05);
   border-radius: var(--luxar-radius-sm);
-  border-left: 3px solid rgba(76, 175, 80, 0.5);
+  border-left: 3px solid color-mix(in srgb, var(--luxar-success) 50%, transparent);
 }
 
 .luxar-error-dialog__guidance-title {
@@ -199,4 +199,10 @@
 
 [data-theme='light'] .luxar-error-dialog__guidance-content {
   color: var(--luxar-text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luxar-loading-indicator__spinner {
+    animation: none !important;
+  }
 }

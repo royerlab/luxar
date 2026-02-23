@@ -23,6 +23,9 @@ export class LuxarApp {
   private datasetBrowser?: DatasetBrowser;
   private isInitialized = false;
   private boundCleanup: (() => void) | null = null;
+  private boundFocusHandler: (() => void) | null = null;
+  private boundVisibilityHandler: (() => void) | null = null;
+  private boundDatasetBrowserHandler: (() => void) | null = null;
 
   /**
    * Initialize the complete Luxar application.
@@ -86,6 +89,11 @@ export class LuxarApp {
    * @see {@link README.md#initialization-sequence} for detailed init flow
    */
   async init(src?: string): Promise<void> {
+    if (this.isInitialized) {
+      log.info(Modules.APP, 'Re-initializing app (cleaning up previous state)');
+      this.cleanup();
+    }
+
     try {
       // Inform users about expected console messages
       log.info(
@@ -106,9 +114,6 @@ export class LuxarApp {
 
       // Initialize animation controller with HDR post-processing
       this.animationController = new AnimationController(
-        this.sceneManager.renderer,
-        this.sceneManager.scene,
-        this.sceneManager.camera,
         this.sceneManager.controls,
         this.sceneManager.postProcessing
       );
@@ -215,10 +220,13 @@ export class LuxarApp {
 
     // Check if it's a Zarr dataset by looking for zarr metadata files
     // Try both v2 (.zgroup) and v3 (zarr.json) formats
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
     const zarrChecks = [
-      fetch(src + '/.zgroup', { method: 'HEAD' }),
-      fetch(src + '/.zattrs', { method: 'HEAD' }),
-      fetch(src + '/zarr.json', { method: 'HEAD' }),
+      fetch(src + '/.zgroup', { method: 'HEAD', signal: controller.signal }),
+      fetch(src + '/.zattrs', { method: 'HEAD', signal: controller.signal }),
+      fetch(src + '/zarr.json', { method: 'HEAD', signal: controller.signal }),
     ];
 
     try {
@@ -229,6 +237,8 @@ export class LuxarApp {
       }
     } catch {
       // Ignore errors, proceed with directory assumption
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     // If none of the zarr metadata files exist, it's likely a directory
@@ -305,11 +315,12 @@ export class LuxarApp {
    * Setup keyboard shortcut for opening dataset browser
    */
   private setupDatasetBrowserShortcut(): void {
-    window.addEventListener('open-dataset-browser', () => {
+    this.boundDatasetBrowserHandler = () => {
       if (!this.datasetBrowser) {
         this.showDatasetBrowser();
       }
-    });
+    };
+    window.addEventListener('open-dataset-browser', this.boundDatasetBrowserHandler);
   }
 
   /**
@@ -317,27 +328,21 @@ export class LuxarApp {
    * This prevents stale renders when switching between windows/tabs
    */
   private setupFocusHandling(): void {
-    // Trigger a render when window gains focus
-    window.addEventListener('focus', () => {
-      // Start animation briefly to ensure fresh render
+    this.boundFocusHandler = () => {
       this.animationController.startAnimation();
       log.info(Modules.LUXAR, 'Window focused - triggering render refresh');
-    });
-
-    // Handle visibility change (tab switching) to save resources
-    document.addEventListener('visibilitychange', () => {
+    };
+    this.boundVisibilityHandler = () => {
       if (document.hidden) {
-        // Document hidden - stop animation to save CPU/GPU resources
-        // This ensures zero resource usage when tab is not visible,
-        // regardless of continuous effects (noise, auto-rotate)
         this.animationController.stopAnimation();
         log.info(Modules.LUXAR, 'Document hidden - stopping animation to save resources');
       } else {
-        // Document became visible, resume rendering
         this.animationController.startAnimation();
         log.info(Modules.LUXAR, 'Document became visible - resuming animation');
       }
-    });
+    };
+    window.addEventListener('focus', this.boundFocusHandler);
+    document.addEventListener('visibilitychange', this.boundVisibilityHandler);
   }
 
   /**
@@ -631,6 +636,20 @@ export class LuxarApp {
 
       // Clean up UI resources
       cleanupUI();
+
+      // Remove focus and visibility listeners
+      if (this.boundFocusHandler) {
+        window.removeEventListener('focus', this.boundFocusHandler);
+        this.boundFocusHandler = null;
+      }
+      if (this.boundVisibilityHandler) {
+        document.removeEventListener('visibilitychange', this.boundVisibilityHandler);
+        this.boundVisibilityHandler = null;
+      }
+      if (this.boundDatasetBrowserHandler) {
+        window.removeEventListener('open-dataset-browser', this.boundDatasetBrowserHandler);
+        this.boundDatasetBrowserHandler = null;
+      }
 
       // Remove beforeunload listener with stored reference
       if (this.boundCleanup) {

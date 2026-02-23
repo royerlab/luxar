@@ -479,7 +479,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         uFy: { value: 500 },
         uTruncate: { value: materialConfig.truncationRadius ?? 3.0 },
         uHDRMultiplier: {
-          value: materialConfig.hdrMultiplier ?? config.shader.points.hdrMultiplier,
+          value: materialConfig.hdrMultiplier ?? config.renderingControls.defaults.hdrMultiplier,
         },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
         uProjectionMode: { value: blendingMode === 'max' ? 1 : 0 }, // 0=sum, 1=max

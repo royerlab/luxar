@@ -11,7 +11,14 @@ This package contains the refactored components of the Gaussian splat fitting pi
 - Visualization helpers
 """
 
-from .config import FitConfig, OptimizationResults, PreprocessedData
+from .config import (
+    ConstraintConfig,
+    FitConfig,
+    LossConfig,
+    OptimConfig,
+    OptimizationResults,
+    PreprocessedData,
+)
 from .initialization import initialize_optimization
 from .losses import create_loss_function
 from .optimization import run_optimization_loop
@@ -22,6 +29,9 @@ from .visualization import display_compression_analysis, show_optimization_movie
 
 __all__ = [
     "FitConfig",
+    "OptimConfig",
+    "LossConfig",
+    "ConstraintConfig",
     "PreprocessedData",
     "OptimizationResults",
     "prepare_fit_config",

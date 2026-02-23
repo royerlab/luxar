@@ -169,10 +169,6 @@ def create_lorenz_attractor(
     # Add match value to get final RGB (adjust for brightness)
     colors = np.column_stack([r + m, g + m, b + m]).astype(np.float32)
 
-    # Generate radii based on position in the trajectory (growing over time)
-    # This creates a visual effect of the attractor "growing" as it evolves
-    np.linspace(0.01, 0.02, n_points).astype(np.float32)
-
     # Create scene with new API
     with LuxarZarrCompiler(store_path) as compiler:
         # Define 3D dimensions

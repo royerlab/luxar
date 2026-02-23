@@ -14,21 +14,7 @@
 
 use wasm_bindgen::prelude::*;
 
-/// Maximum number of dimensions supported by WASM functions.
-pub const MAX_SUPPORTED_DIMS: usize = 16;
-
-/// Validate that the number of dimensions is within the supported limit.
-#[inline]
-fn validate_ndim(ndim: usize, function_name: &str) {
-    if ndim > MAX_SUPPORTED_DIMS {
-        panic!(
-            "[WASM] {}: ndim={} exceeds maximum supported dimensions ({}). \
-             Luxar WASM functions support up to {} dimensions. \
-             For higher dimensions, use TypeScript fallback or reduce dataset dimensionality.",
-            function_name, ndim, MAX_SUPPORTED_DIMS, MAX_SUPPORTED_DIMS
-        );
-    }
-}
+use crate::common::{validate_ndim, MAX_SUPPORTED_DIMS};
 
 /// Calculate effective radii for nD points when sliced.
 ///

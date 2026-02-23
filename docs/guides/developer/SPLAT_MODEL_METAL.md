@@ -31,7 +31,7 @@ using namespace metal;
 inline void atomic_add_float(device atomic_float* addr, float val) {
     float old = atomic_load_explicit(addr, memory_order_relaxed);
     float desired;
-    do { desired = old + val; } 
+    do { desired = old + val; }
     while (!atomic_compare_exchange_weak_explicit(addr, &old, desired, memory_order_success, memory_order_relaxed));
 }
 
@@ -90,7 +90,7 @@ kernel void preprocess_3d(
     float sigma_xx = L00*L00;
     float sigma_yy = L10*L10 + L11*L11;
     float sigma_zz = L20*L20 + L21*L21 + L22*L22;
-    
+
     float trunc = *truncate;
     float3 r = trunc * float3(sqrt(sigma_xx), sqrt(sigma_yy), sqrt(sigma_zz));
 
@@ -128,11 +128,11 @@ kernel void bin_3d(
     float L00 = Ls[base + 0];
     float L10 = Ls[base + 3]; float L11 = Ls[base + 4];
     float L20 = Ls[base + 6]; float L21 = Ls[base + 7]; float L22 = Ls[base + 8];
-    
+
     float sigma_xx = L00*L00;
     float sigma_yy = L10*L10 + L11*L11;
     float sigma_zz = L20*L20 + L21*L21 + L22*L22;
-    
+
     float trunc = *truncate;
     float3 r = trunc * float3(sqrt(sigma_xx), sqrt(sigma_yy), sqrt(sigma_zz));
     float3 c = float3(centers[id*3], centers[id*3+1], centers[id*3+2]);
@@ -173,14 +173,14 @@ kernel void rasterize_fwd_3d(
     uint tile_idx = group_id.z*(grid_dims.x*grid_dims.y) + group_id.y*grid_dims.x + group_id.x;
     int count = tile_counts[tile_idx];
     int start = tile_offsets[tile_idx];
-    
+
     float accum = 0.0;
     float trunc_sq = truncate_val * truncate_val;
     float3 px = float3(gid);
 
     for (int i = 0; i < count; i++) {
         int id = tile_content[start + i];
-        
+
         float3 c = { centers[id*3], centers[id*3+1], centers[id*3+2] };
         float3 d = px - c;
         int cb = id * 6;
@@ -194,7 +194,7 @@ kernel void rasterize_fwd_3d(
             accum += val;
         }
     }
-    
+
     output[gid.z*(img_size.x*img_size.y) + gid.y*img_size.x + gid.x] = accum;
 }
 
@@ -218,7 +218,7 @@ kernel void rasterize_bwd_3d(
     uint3 group_id [[threadgroup_position_in_grid]]
 ) {
     if (gid.x >= img_size.x || gid.y >= img_size.y || gid.z >= img_size.z) return;
-    
+
     int pix_idx = gid.z*(img_size.x*img_size.y) + gid.y*img_size.x + gid.x;
     float d_L_d_I = grad_output[pix_idx];
     if (abs(d_L_d_I) < 1e-9) return;
@@ -231,7 +231,7 @@ kernel void rasterize_bwd_3d(
 
     for (int i = 0; i < count; i++) {
         int id = tile_content[start + i];
-        
+
         float3 c = { centers[id*3], centers[id*3+1], centers[id*3+2] };
         float3 d = px - c;
         int cb = id * 6;
@@ -242,7 +242,7 @@ kernel void rasterize_bwd_3d(
         if (dist_sq <= trunc_sq) {
             float s = sharpness[id];
             float a = amps[id];
-            
+
             // Standard: I = a * exp(inner)
             // inner = -0.5 * dist_sq^(s/2)
             float half_s = s * 0.5f;
@@ -263,7 +263,7 @@ kernel void rasterize_bwd_3d(
             atomic_add_float(&d_sharpness[id], d_s);
 
             // 3. Distance Gradients
-            // dI/d(D2) = I * d(inner)/d(D2) 
+            // dI/d(D2) = I * d(inner)/d(D2)
             //          = I * (-0.5 * s/2 * D2^(s/2 - 1))
             //          = I * (-0.25 * s * D2^(half_s - 1))
             float d_inner_d_D2 = -0.25f * s * pow(dist_sq, half_s - 1.0f);
@@ -271,13 +271,13 @@ kernel void rasterize_bwd_3d(
 
             // d(D2)/d(center) = -2 * Sigma^-1 * d
             // d(D2)/d(conic)  = d * d^T (elements)
-            
+
             // Center
             float3 d_D2_d_d; // d(D2)/d(delta)
             d_D2_d_d.x = 2.0f*(d.x*conic[cb+0] + d.y*conic[cb+1] + d.z*conic[cb+2]);
             d_D2_d_d.y = 2.0f*(d.x*conic[cb+1] + d.y*conic[cb+3] + d.z*conic[cb+4]);
             d_D2_d_d.z = 2.0f*(d.x*conic[cb+2] + d.y*conic[cb+4] + d.z*conic[cb+5]);
-            
+
             atomic_add_float(&d_centers[id*3+0], grad_dist * d_D2_d_d.x * -1.0f);
             atomic_add_float(&d_centers[id*3+1], grad_dist * d_D2_d_d.y * -1.0f);
             atomic_add_float(&d_centers[id*3+2], grad_dist * d_D2_d_d.z * -1.0f);
@@ -316,7 +316,7 @@ kernel void rasterize_fwd_nd(
         coords[d] = (float)(temp % shape[d]);
         temp /= shape[d];
     }
-    if (temp > 0) return; 
+    if (temp > 0) return;
 
     float accum = 0.0;
     float trunc_sq = truncate * truncate;
@@ -325,32 +325,32 @@ kernel void rasterize_fwd_nd(
         // Compute Distance on the fly
         float dist_sq = 0.0;
         bool possible = true;
-        
+
         // nD AABB Check using Diagonal Sigma
         // Sigma_ii = sum_k L_ik^2
         for (uint d = 0; d < dim; d++) {
             float c = centers[i * dim + d];
             float diff = coords[d] - c;
-            
+
             // Calculate Sigma_ii
             float sigma_ii = 0.0;
             for(uint k=0; k<=d; k++) { // L is lower triangular
                 float val = Ls[i * dim * dim + d * dim + k];
                 sigma_ii += val * val;
             }
-            
+
             // Exact AABB Check
             if (abs(diff) > truncate * sqrt(sigma_ii)) {
                 possible = false;
                 break;
             }
         }
-        
+
         if (!possible) continue;
 
         // Full Mahalanobis (Requires solving L*y = diff)
         // Forward Substitution y = L^-1 * diff
-        float y[8]; 
+        float y[8];
         for(uint r=0; r<dim; ++r) {
             float sum = 0.0;
             for(uint c=0; c<r; ++c) {
@@ -360,7 +360,7 @@ kernel void rasterize_fwd_nd(
             float L_rr = Ls[i*dim*dim + r*dim + r];
             y[r] = (diff - sum) / (L_rr + 1e-9f);
         }
-        
+
         // dist_sq = ||y||^2
         for(uint d=0; d<dim; ++d) dist_sq += y[d]*y[d];
 
@@ -374,7 +374,7 @@ kernel void rasterize_fwd_nd(
 // nD Backward (Atomic Accumulation)
 kernel void rasterize_bwd_nd(
     device const float* grad_output [[buffer(0)]],
-    device const float* centers [[buffer(1)]], 
+    device const float* centers [[buffer(1)]],
     device const float* Ls [[buffer(2)]],
     device const float* amps [[buffer(3)]],
     device const float* sharpness [[buffer(4)]],
@@ -392,7 +392,7 @@ kernel void rasterize_bwd_nd(
     if (abs(d_L_d_I) < 1e-9) return;
 
     // Unpack Coords
-    float coords[8]; 
+    float coords[8];
     int temp = gid;
     for (int d = dim - 1; d >= 0; d--) {
         coords[d] = (float)(temp % shape[d]);
@@ -406,7 +406,7 @@ kernel void rasterize_bwd_nd(
         // 1. Recompute Distance (Same as fwd)
         float dist_sq = 0.0;
         float y[8];
-        
+
         // AABB Check
         bool possible = true;
         for (uint d = 0; d < dim; d++) {
@@ -439,7 +439,7 @@ kernel void rasterize_bwd_nd(
 
             // Gradients
             atomic_add_float(&d_amps[i], exp(inner) * d_L_d_I);
-            
+
             float d_s = d_common * inner * 0.5f * log(dist_sq + 1e-9f);
             atomic_add_float(&d_sharpness[i], d_s);
 
@@ -457,10 +457,10 @@ kernel void rasterize_bwd_nd(
             // d(x-c)_r = (L^-T * d_y)_r
             // But we do it manually loop by loop
             float d_diff[8]; // Gradient w.r.t (coords - center)
-            
+
             // Initialize d_diff
             for(int k=0; k<dim; ++k) d_diff[k] = 0.0;
-            
+
             // Inverse Transpose Solve (Backwards)
             for(int r = dim - 1; r >= 0; r--) {
                 float L_rr = Ls[i*dim*dim + r*dim + r];
@@ -501,19 +501,19 @@ This handles the robust dispatch, including initializing the atomic counters for
     def forward(ctx, centers, Ls, amps, sharpness, shape, truncate):
         # ... (Setup) ...
         dim = len(shape)
-        
+
         if dim == 3:
             # 1. Preprocess (Compute Conic & Counts)
             # 2. Allocate & Zero Tile Heads (Fixes "bug hiding")
             num_tiles = ...
             tile_write_heads = torch.zeros(num_tiles, dtype=torch.int32, device='mps')
-            
+
             # 3. Bin (Pass tile_write_heads)
             # 4. Rasterize Fwd
-            
+
             # Save for backward: Conic is needed!
             ctx.save_for_backward(centers, conic, amps, sharpness, offsets, counts, content)
-            
+
         else:
             # 4D+ Path
             # Call rasterize_fwd_nd
@@ -524,15 +524,15 @@ This handles the robust dispatch, including initializing the atomic counters for
         if ctx.dim == 3:
             # 1. Rasterize Bwd (Metal)
             # Returns d_conic, d_centers, d_amps...
-            
+
             # 2. Chain Rule: d_conic -> d_L (PyTorch)
             # (As discussed previously)
             pass
-            
+
         else:
             # 4D+ Path
             # Call rasterize_bwd_nd (Metal)
-            # This kernel computes d_Ls directly! No chain rule needed 
+            # This kernel computes d_Ls directly! No chain rule needed
             # because nD kernel uses L directly, not conic.
             pass
 
@@ -596,7 +596,7 @@ inline TileRange get_tile_range_3d(
 kernel void preprocess_3d(...) {
     // ... calculate center and r ...
     TileRange tr = get_tile_range_3d(center, r, grid_dims);
-    
+
     for (int z = tr.min_t.z; z <= tr.max_t.z; z++) {
         for (int y = tr.min_t.y; y <= tr.max_t.y; y++) {
             for (int x = tr.min_t.x; x <= tr.max_t.x; x++) {
@@ -611,7 +611,7 @@ kernel void bin_3d(...) {
     // ... calculate center and r (MUST MATCH PREPROCESS EXACTLY) ...
     // Note: We still duplicate the math to compute 'r', but the tiling logic is shared.
     TileRange tr = get_tile_range_3d(center, r, grid_dims);
-    
+
     for (int z = tr.min_t.z; z <= tr.max_t.z; z++) {
         // ... (Same loop structure guaranteed) ...
     }
@@ -632,16 +632,16 @@ def safe_conic_backward(d_conic, Ls):
     """
     # 1. Detach Ls so we can start a new graph
     Ls_leaf = Ls.detach().clone().requires_grad_(True)
-    
+
     # 2. Re-run the EXACT same math as the Metal kernel
     # (Must verify this matches compute_conic_3d in Metal line-for-line)
     # Forward subst: K = L^-1
     # Metal uses 1e-9f epsilon. We must too.
     eps = 1e-9
-    
+
     # ... (Implementation of L -> SigmaInv in PyTorch) ...
     # This acts as the "Forward" for this mini-graph
-    
+
     # 3. Backward
     conic_leaf.backward(d_conic)
     return Ls_leaf.grad
@@ -652,27 +652,27 @@ class MetalSplatFunction(torch.autograd.Function):
         # ... Run Metal Forward ...
         # IMPORTANT: Metal must return the 'conic' buffer it computed!
         # Do not discard it.
-        results = metal_backend.forward(...) 
+        results = metal_backend.forward(...)
         output, conic_metal = results[0], results[1]
-        
+
         ctx.save_for_backward(centers, Ls, conic_metal, amps, sharpness)
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
         centers, Ls, conic_metal, amps, sharpness = ctx.saved_tensors
-        
+
         # 1. Run Metal Backward
-        # We pass 'conic_metal' so the backward pass uses the EXACT values 
+        # We pass 'conic_metal' so the backward pass uses the EXACT values
         # that generated the image.
         d_centers, d_conic, d_amps, d_s = metal_backend.backward(
             grad_output, centers, conic_metal, ...
         )
-        
+
         # 2. Chain Rule (d_conic -> d_Ls)
         # We use the Python helper to propagate d_conic to d_Ls
         d_Ls = safe_conic_backward(d_conic, Ls)
-        
+
         return d_centers, d_Ls, d_amps, d_s, None, None
 
 ```
@@ -749,11 +749,11 @@ kernel void rasterize_bwd_3d(
     device atomic_float* d_conic   [[buffer(9)]],
     device atomic_float* d_amps    [[buffer(10)]],
     device atomic_float* d_sharpness [[buffer(11)]],
-    
+
     constant uint3& img_size [[buffer(12)]],
     constant uint3& grid_dims [[buffer(13)]],
     constant float& truncate_val [[buffer(14)]],
-    
+
     uint3 gid [[thread_position_in_grid]],
     uint3 group_id [[threadgroup_position_in_grid]],
     uint simd_lane_id [[thread_index_in_simdgroup]] // 0..31
@@ -774,20 +774,20 @@ kernel void rasterize_bwd_3d(
     // Loop over splats in tile (Uniform control flow for the whole simdgroup)
     for (int i = 0; i < count; i++) {
         int id = tile_content[start + i];
-        
+
         // --- A. Compute Local Gradients (Per Thread) ---
         // Initialize local gradients to 0
         float val_amps = 0.0f;
         float val_sharpness = 0.0f;
         float3 val_centers = 0.0f;
         float val_conic[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-        
+
         // Only do math if pixel is valid AND gradient is non-zero
         if (active && abs(d_L_d_I) > 1e-9f) {
              float3 c = { centers[id*3], centers[id*3+1], centers[id*3+2] };
              float3 d = px - c;
              int cb = id * 6;
-             
+
              // Pre-load conic to registers (shared by all threads ideally, but L1 handles it)
              float c0=conic[cb+0]; float c1=conic[cb+1]; float c2=conic[cb+2];
              float c3=conic[cb+3]; float c4=conic[cb+4]; float c5=conic[cb+5];
@@ -815,11 +815,11 @@ kernel void rasterize_bwd_3d(
                  float d_inner_d_D2 = -0.25f * s * pow(max(dist_sq, 1e-9f), half_s - 1.0f);
                  float grad_dist = d_common * d_inner_d_D2; // scalar
 
-                 float3 d_D2_d_d; 
+                 float3 d_D2_d_d;
                  d_D2_d_d.x = 2.0f*(d.x*c0 + d.y*c1 + d.z*c2);
                  d_D2_d_d.y = 2.0f*(d.x*c1 + d.y*c3 + d.z*c4);
                  d_D2_d_d.z = 2.0f*(d.x*c2 + d.y*c4 + d.z*c5);
-                 
+
                  val_centers = grad_dist * d_D2_d_d * -1.0f;
 
                  // 4. Conic
@@ -834,14 +834,14 @@ kernel void rasterize_bwd_3d(
 
         // --- B. SIMD Reduction (The Optimization) ---
         // Sum values across all 32 threads in the warp
-        
+
         float sum_amps = simd_sum(val_amps);
         float sum_sharp = simd_sum(val_sharpness);
         float3 sum_centers;
         sum_centers.x = simd_sum(val_centers.x);
         sum_centers.y = simd_sum(val_centers.y);
         sum_centers.z = simd_sum(val_centers.z);
-        
+
         // Reduce Conic array
         float sum_conic[6];
         for(int k=0; k<6; ++k) sum_conic[k] = simd_sum(val_conic[k]);
@@ -852,11 +852,11 @@ kernel void rasterize_bwd_3d(
             // Note: If you have 64 threads per threadgroup (4x4x4 tile),
             // there are 2 simdgroups. This atomic_add happens TWICE per tile,
             // which is still a 32x improvement over 64 writes.
-            
+
             // Check for non-zero contribution to avoid useless locks
             if (abs(sum_amps) > 1e-12f) atomic_add_float(&d_amps[id], sum_amps);
             if (abs(sum_sharp) > 1e-12f) atomic_add_float(&d_sharpness[id], sum_sharp);
-            
+
             atomic_add_float(&d_centers[id*3+0], sum_centers.x);
             atomic_add_float(&d_centers[id*3+1], sum_centers.y);
             atomic_add_float(&d_centers[id*3+2], sum_centers.z);

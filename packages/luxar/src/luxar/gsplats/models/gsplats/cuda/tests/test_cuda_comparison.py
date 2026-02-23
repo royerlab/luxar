@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 import torch
 
+from .conftest import Tolerances, compute_L_row_norms
+
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
 
@@ -74,6 +76,7 @@ class TestCUDAVsPyTorchReference:
 
         # Compute conic for CUDA backend
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
 
         # Run CUDA backend
         cuda_result = cuda_splatting_backend.forward(
@@ -81,6 +84,7 @@ class TestCUDAVsPyTorchReference:
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -121,13 +125,15 @@ class TestCUDAVsPyTorchReference:
             print(f"  Correlation: {corr:.6f}")
 
             # Assertions
-            assert max_rel_diff < 0.15, (
+            assert max_rel_diff < Tolerances.COMPARISON_MAX_REL_DIFF, (
                 f"Max relative diff {max_rel_diff:.4f} too large"
             )
-            assert mean_rel_diff < 0.01, (
+            assert mean_rel_diff < Tolerances.COMPARISON_MEAN_REL_DIFF, (
                 f"Mean relative diff {mean_rel_diff:.6f} too large"
             )
-            assert corr > 0.99, f"Correlation {corr:.4f} too low"
+            assert corr > Tolerances.COMPARISON_MIN_CORRELATION, (
+                f"Correlation {corr:.4f} too low"
+            )
 
     def test_direct_cuda_vs_pytorch_2d(self):
         """Direct comparison of CUDA and PyTorch outputs for 2D image."""
@@ -165,6 +171,7 @@ class TestCUDAVsPyTorchReference:
 
         # Compute conic for CUDA backend
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
 
         # Run CUDA backend
         cuda_result = cuda_splatting_backend.forward(
@@ -172,6 +179,7 @@ class TestCUDAVsPyTorchReference:
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -208,13 +216,15 @@ class TestCUDAVsPyTorchReference:
             print(f"  Correlation: {corr:.6f}")
 
             # Assertions
-            assert max_rel_diff < 0.15, (
+            assert max_rel_diff < Tolerances.COMPARISON_MAX_REL_DIFF, (
                 f"Max relative diff {max_rel_diff:.4f} too large"
             )
-            assert mean_rel_diff < 0.01, (
+            assert mean_rel_diff < Tolerances.COMPARISON_MEAN_REL_DIFF, (
                 f"Mean relative diff {mean_rel_diff:.6f} too large"
             )
-            assert corr > 0.99, f"Correlation {corr:.4f} too low"
+            assert corr > Tolerances.COMPARISON_MIN_CORRELATION, (
+                f"Correlation {corr:.4f} too low"
+            )
 
     def test_single_centered_splat_matches(self):
         """Test single centered splat produces identical peak location and value."""
@@ -236,10 +246,19 @@ class TestCUDAVsPyTorchReference:
         sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
 
         # CUDA output
         cuda_result = cuda_splatting_backend.forward(
-            centers, conic, amps, sharpness, list(shape), 3.0, 1e-5, 8
+            centers,
+            conic,
+            amps,
+            sharpness,
+            L_row_norms.contiguous(),
+            list(shape),
+            3.0,
+            1e-5,
+            8,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -338,11 +357,13 @@ class TestCUDAVsPyTorchComprehensive:
 
         # CUDA forward
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -394,11 +415,13 @@ class TestCUDAVsPyTorchComprehensive:
         sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
@@ -454,11 +477,13 @@ class TestCUDAVsPyTorchComprehensive:
         intensity_floor = 1e-5
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -505,11 +530,13 @@ class TestCUDAVsPyTorchComprehensive:
         sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
@@ -565,11 +592,13 @@ class TestCUDAVsPyTorchComprehensive:
         intensity_floor = 1e-5
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -618,11 +647,13 @@ class TestCUDAVsPyTorchComprehensive:
         sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
@@ -694,11 +725,13 @@ class TestCUDAVsPyTorchComprehensive:
         intensity_floor = 1e-5
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -768,11 +801,13 @@ class TestCUDAVsPyTorchComprehensive:
         intensity_floor = 1e-5
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -835,11 +870,13 @@ class TestCUDAVsPyTorchComprehensive:
         intensity_floor = 1e-5
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -967,7 +1004,7 @@ class TestCUDAVsPyTorchComprehensive:
                     .float()
                     .mean()
                 )
-                assert sign_match > 0.6, (
+                assert sign_match > Tolerances.BACKWARD_SIGN_MATCH, (
                     f"{dim}D: Amplitude gradient sign match {sign_match:.2f} too low"
                 )
 
@@ -976,7 +1013,7 @@ class TestCUDAVsPyTorchComprehensive:
             cuda_mag = cuda_amp_grad.abs().mean()
             if cpu_mag > 1e-8 and cuda_mag > 1e-8:
                 mag_ratio = max(cpu_mag / cuda_mag, cuda_mag / cpu_mag)
-                assert mag_ratio < 20, (
+                assert mag_ratio < Tolerances.BACKWARD_MAG_RATIO, (
                     f"{dim}D: Gradient magnitude ratio {mag_ratio:.2f} too large"
                 )
 
@@ -1128,8 +1165,17 @@ class TestCUDAVsPyTorchComprehensive:
         sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
-            center, conic, amps, sharpness, list(shape), 3.0, 1e-5, tile_size
+            center,
+            conic,
+            amps,
+            sharpness,
+            L_row_norms.contiguous(),
+            list(shape),
+            3.0,
+            1e-5,
+            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -1174,8 +1220,17 @@ class TestCUDAVsPyTorchComprehensive:
         sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
-            center, conic, amps, sharpness, list(shape), 3.0, 1e-5, tile_size
+            center,
+            conic,
+            amps,
+            sharpness,
+            L_row_norms.contiguous(),
+            list(shape),
+            3.0,
+            1e-5,
+            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -1238,11 +1293,13 @@ class TestCUDAVsPyTorchComprehensive:
         sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
@@ -1292,11 +1349,13 @@ class TestCUDAVsPyTorchComprehensive:
         sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
@@ -1319,9 +1378,9 @@ class TestCUDAVsPyTorchComprehensive:
         cuda_output: torch.Tensor,
         pytorch_output: torch.Tensor,
         test_name: str,
-        rtol: float = 0.15,
-        atol: float = 0.01,
-        min_correlation: float = 0.98,
+        rtol: float = Tolerances.COMPARISON_MAX_REL_DIFF,
+        atol: float = Tolerances.COMPARISON_MEAN_REL_DIFF,
+        min_correlation: float = Tolerances.COMPARISON_MIN_CORRELATION,
     ):
         """Assert that CUDA and PyTorch outputs match within tolerance.
 

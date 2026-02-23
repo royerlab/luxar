@@ -17,6 +17,7 @@ import type {
   SceneGraphNode,
   SceneGraphState,
 } from './data-monitor-types';
+import { escapeHtml } from '../utils/escape-html';
 
 /**
  * Semantic color names mapped to CSS class modifiers.
@@ -115,8 +116,8 @@ export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
   return `
     <div class="luxar-loader-item">
       <div class="luxar-loader-item__header">
-        <span class="luxar-loader-item__path ${statusColorClass}">${path}</span>
-        <span class="luxar-loader-item__status">${metrics.type}</span>
+        <span class="luxar-loader-item__path ${statusColorClass}">${escapeHtml(path)}</span>
+        <span class="luxar-loader-item__status">${escapeHtml(metrics.type)}</span>
       </div>
       <div class="luxar-loader-item__metrics">
         <span>${metrics.visiblePoints.toLocaleString()} pts</span>
@@ -316,7 +317,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
   }
 
   return `
-    <div class="overview-content">
+    <div class="luxar-tab-content--overview">
       <!-- Primary metrics -->
       ${primaryMetrics}
 
@@ -328,7 +329,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
   )}
 
       <!-- Scene graph or loader list (injected by monitor) -->
-      <div class="scene-or-loaders">
+      <div class="luxar-overview__scene-loaders">
         <div id="loader-list-content"></div>
       </div>
     </div>
@@ -392,7 +393,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
   // Check if caching is disabled
   if (cacheMetrics.enabled === false) {
     return `
-      <div class="cache-content">
+      <div class="luxar-tab-content--cache">
         <div class="luxar-cache-disabled">
           <div class="luxar-cache-disabled__icon">🚫</div>
           <div class="luxar-cache-disabled__message">Caching is disabled</div>
@@ -410,7 +411,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
   if (!hasL1L2) {
     // Fallback to basic view if no cache stats provider connected
     return `
-      <div class="cache-content">
+      <div class="luxar-tab-content--cache">
         <div class="luxar-grid-2">
           ${renderMetricCard(
     'CACHE MEMORY',
@@ -457,7 +458,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
         : getColorClass('error');
 
   return `
-    <div class="cache-content">
+    <div class="luxar-tab-content--cache">
       <!-- L0 Decompressed Chunk Cache Section (fastest layer - avoids Blosc decompression) -->
       ${
   cacheMetrics.l0
@@ -578,16 +579,16 @@ export function renderRecommendation(rec: Recommendation): string {
     <div class="luxar-recommendation luxar-recommendation--${rec.severity}">
       <div class="luxar-recommendation__header">
         <span class="luxar-recommendation__icon">${severityIcons[rec.severity]}</span>
-        <strong class="luxar-recommendation__title">${rec.title}</strong>
+        <strong class="luxar-recommendation__title">${escapeHtml(rec.title)}</strong>
       </div>
       <div class="luxar-recommendation__message">
-        ${rec.message}
+        ${escapeHtml(rec.message)}
       </div>
       ${
   rec.suggestion
     ? `
         <div class="luxar-recommendation__message luxar-suggestion">
-          💡 ${rec.suggestion}
+          💡 ${escapeHtml(rec.suggestion)}
         </div>
       `
     : ''
@@ -609,7 +610,7 @@ export function renderInsightsContent(recommendations: Recommendation[]): string
   }
 
   return `
-    <div class="insights-content">
+    <div class="luxar-tab-content--insights">
       ${recommendations.map((rec) => renderRecommendation(rec)).join('')}
     </div>
   `;
@@ -716,7 +717,7 @@ export function renderMemoryContent(metrics: MemoryMetrics): string {
   const overallReuseRate = calculateReuseRate(totalAllocations, totalReuses);
 
   return `
-    <div class="memory-content">
+    <div class="luxar-tab-content--memory">
       ${gpuPoolSection}
       ${accumulatorsSection}
       <div class="luxar-memory-total">
@@ -986,24 +987,24 @@ function renderSceneGraphNode(
 
   return `
     <div class="luxar-scene-graph__node">
-      <div class="luxar-scene-graph__node-row" ${indentStyle} title="${nodeTooltip}">
+      <div class="luxar-scene-graph__node-row" ${indentStyle} title="${escapeHtml(nodeTooltip)}">
         <!-- Toggle -->
         <span
           class="luxar-scene-graph__toggle ${toggleClass}"
-          ${hasChildren ? `data-action="toggleNode" data-node-path="${node.path}"` : ''}
-          ${hasChildren ? `title="${isExpanded ? 'Collapse' : 'Expand'} ${node.name}"` : ''}
+          ${hasChildren ? `data-action="toggleNode" data-node-path="${escapeHtml(node.path)}"` : ''}
+          ${hasChildren ? `title="${isExpanded ? 'Collapse' : 'Expand'} ${escapeHtml(node.name)}"` : ''}
         >${toggleIcon}</span>
 
         <!-- Icon & Name -->
         <span class="luxar-scene-graph__icon">${getNodeTypeIcon(node.type)}</span>
         <span class="luxar-scene-graph__name ${getNodeTypeColorClass(node.type)}">
-          ${node.name}
+          ${escapeHtml(node.name)}
         </span>
 
         <!-- Stats badge -->
         ${
   statsText
-    ? `<span class="luxar-scene-graph__badge" title="${statsTooltip}">${statsText}</span>`
+    ? `<span class="luxar-scene-graph__badge" title="${escapeHtml(statsTooltip)}">${statsText}</span>`
     : ''
 }
 

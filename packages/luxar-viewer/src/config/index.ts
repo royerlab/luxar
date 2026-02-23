@@ -14,10 +14,8 @@ import type { AppConfig } from './types';
  */
 export const config: AppConfig = {
   // Camera configuration for 3D perspective and navigation
+  // Note: fov, near, far live in renderingControls.defaults as the single source of truth
   camera: {
-    fov: 47, // Field of view in degrees - 47° equivalent to 50mm Normal lens (natural human vision)
-    near: 0.1, // Near clipping plane distance - objects closer than this are not rendered
-    far: 1000, // Far clipping plane distance - objects further than this are not rendered
     initialPosition: { x: 0, y: 0, z: 8 }, // Initial camera position in 3D space (world coordinates)
     fovMin: 10, // Minimum field of view for zoom limits - prevents excessive zoom-in
     fovMax: 170, // Maximum field of view for zoom limits - must be <180° (fish-eye territory)
@@ -114,12 +112,10 @@ export const config: AppConfig = {
     defaultFitRatio: 0.75, // How much of view to fill when fitting to bounds (0-1)
   },
 
-  // Note: Rendering configuration moved to renderingControls.defaults for centralization
-
   // Shader configuration for point rendering
+  // Note: hdrMultiplier lives in renderingControls.defaults as the single source of truth
   shader: {
     points: {
-      hdrMultiplier: 1.0, // HDR color multiplier for bloom effects (default: neutral 1.0)
       baseAlpha: 0.01, // Base alpha intensity
     },
   },

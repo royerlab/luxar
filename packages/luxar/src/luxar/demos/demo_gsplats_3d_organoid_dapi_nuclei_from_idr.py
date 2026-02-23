@@ -454,7 +454,7 @@ def view_with_napari(volume, gsplats_data):
         # Using GPU-accelerated renderer (100-1000x faster than old NumPy implementation)
         aprint("Rendering gsplats to volume (GPU-accelerated)...")
         rendered = gsplats_data.render_to_volume(
-            shape=(dim_len * 2 for dim_len in volume.shape)
+            shape=tuple(dim_len * 2 for dim_len in volume.shape)
         )
         aprint("✓ Rendering complete")
 
