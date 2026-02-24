@@ -57,6 +57,7 @@ void launch_preprocess(
     int* aabb_lo,
     int* aabb_hi,
     int64_t num_tiles,
+    int* global_count,
     cudaStream_t stream
 ) {
     int block_size = PREPROCESS_BLOCK_SIZE;
@@ -65,7 +66,7 @@ void launch_preprocess(
     preprocess_kernel<DIM, InputDType><<<num_blocks, block_size, 0, stream>>>(
         centers, amps, sharpness, L_row_norms, N,
         shape, tile_dims, tile_size, truncate, intensity_floor,
-        tile_counts, global_flags, aabb_lo, aabb_hi, num_tiles
+        tile_counts, global_flags, aabb_lo, aabb_hi, num_tiles, global_count
     );
 }
 
