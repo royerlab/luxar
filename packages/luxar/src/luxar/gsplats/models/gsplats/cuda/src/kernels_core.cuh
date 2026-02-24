@@ -146,6 +146,11 @@ constexpr int DEFAULT_BATCH_SIZE = 128;
 // Threshold for global splat handling (fraction of tiles)
 constexpr float GLOBAL_SPLAT_THRESHOLD = 0.1f;
 
+// Minimum splats in a tile before grad_output is cached in shared memory.
+// For sparse tiles (few splats), the cache loading overhead exceeds the benefit
+// of avoiding redundant global memory reads. Empirically, the crossover is ~4 splats.
+constexpr int GRAD_CACHE_THRESHOLD = 4;
+
 template <int DIM, typename InputDType = float>
 __global__ void preprocess_kernel(
     const InputDType* __restrict__ centers,
@@ -162,7 +167,8 @@ __global__ void preprocess_kernel(
     bool* __restrict__ global_flags,
     int* __restrict__ aabb_lo_cache,
     int* __restrict__ aabb_hi_cache,
-    int64_t num_tiles
+    int64_t num_tiles,
+    int* __restrict__ global_count  // Atomic counter for global splats
 ) {
     int splat_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (splat_idx >= N) return;
@@ -227,6 +233,11 @@ __global__ void preprocess_kernel(
     constexpr int MIN_GLOBAL_TILES = 1024;
     bool is_global = (n_tiles > (int)global_threshold) && (n_tiles > MIN_GLOBAL_TILES);
     global_flags[splat_idx] = is_global;
+
+    // Increment atomic counter so host can skip torch::nonzero when 0 global splats
+    if (is_global) {
+        atomicAdd(global_count, 1);
+    }
 
     // Cache AABB for bin_kernel (avoids recomputation)
     #pragma unroll
@@ -674,7 +685,11 @@ __global__ void rasterize_backward_kernel(
         (tile_extent[0] == 16) && (tile_extent[1] == 16);
 
     // OPTIMIZATION 3.3: Load grad_output into shared memory ONCE per tile
-    // This eliminates ~50x redundant global memory loads (one load per pixel per splat → one per pixel)
+    // This eliminates redundant global memory loads when tiles have many splats.
+    // For sparse tiles (few splats), skip the cache to avoid loading overhead.
+    const bool use_grad_cache = (n_splats_in_tile > GRAD_CACHE_THRESHOLD);
+
+    if (use_grad_cache) {
     for (int px = threadIdx.x; px < tile_pixels; px += blockDim.x) {
         int voxel_coords[DIM];
 
@@ -721,6 +736,7 @@ __global__ void rasterize_backward_kernel(
         s_grad_output[px] = grad_output[global_px_idx];
     }
     __syncthreads();
+    } // end if (use_grad_cache)
 
     // Process splats in batches
     for (int batch_start = 0; batch_start < n_splats_in_tile; batch_start += BATCH_SIZE) {
@@ -856,8 +872,18 @@ __global__ void rasterize_backward_kernel(
                     }
                 }
 
-                // Get upstream gradient from cached shared memory
-                float dL_dI = s_grad_output[local_px_idx];
+                // Get upstream gradient: from cache if available, else from global memory
+                float dL_dI;
+                if (use_grad_cache) {
+                    dL_dI = s_grad_output[local_px_idx];
+                } else {
+                    // Compute global pixel index from float coords
+                    int voxel_int[DIM];
+                    #pragma unroll
+                    for (int d = 0; d < DIM; d++) voxel_int[d] = (int)px[d];
+                    int64_t global_px_idx = voxel_to_linear<DIM>(voxel_int, shape);
+                    dL_dI = grad_output[global_px_idx];
+                }
 
                 if (dL_dI == 0.0f) continue;
 
