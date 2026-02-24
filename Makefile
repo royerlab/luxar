@@ -1719,9 +1719,13 @@ clean-cuda:  ## Clean CUDA build artifacts
 test-cuda:  ## Run CUDA extension tests
 	@echo "🧪 Running CUDA extension tests..."
 	@echo ""
-	@# Check if extension is built
+	@# Check if extension is built and up-to-date
 	@if ! ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
 		echo "⚠️  CUDA extension not built. Building first..."; \
+		$(MAKE) build-cuda; \
+		echo ""; \
+	elif [ -n "$$(find $(CUDA_EXT_DIR)/src/ \( -name '*.cu' -o -name '*.cuh' -o -name '*.cpp' -o -name '*.h' \) -newer $$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1) 2>/dev/null)" ]; then \
+		echo "⚠️  CUDA source files changed since last build. Rebuilding..."; \
 		$(MAKE) build-cuda; \
 		echo ""; \
 	fi
@@ -1733,9 +1737,13 @@ test-cuda:  ## Run CUDA extension tests
 benchmark-cuda:  ## Run CUDA performance benchmarks
 	@echo "🚀 Running CUDA performance benchmarks..."
 	@echo ""
-	@# Check if extension is built
+	@# Check if extension is built and up-to-date
 	@if ! ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
 		echo "⚠️  CUDA extension not built. Building first..."; \
+		$(MAKE) build-cuda; \
+		echo ""; \
+	elif [ -n "$$(find $(CUDA_EXT_DIR)/src/ \( -name '*.cu' -o -name '*.cuh' -o -name '*.cpp' -o -name '*.h' \) -newer $$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1) 2>/dev/null)" ]; then \
+		echo "⚠️  CUDA source files changed since last build. Rebuilding..."; \
 		$(MAKE) build-cuda; \
 		echo ""; \
 	fi
