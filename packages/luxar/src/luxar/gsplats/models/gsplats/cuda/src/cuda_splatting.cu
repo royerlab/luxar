@@ -43,10 +43,10 @@
 
 // Preprocess kernel (no BATCH_SIZE dependency)
 // Signature: (centers, amps, sharpness, L_row_norms, N, shape, tile_dims, tile_size,
-//             truncate, intensity_floor, tile_counts, global_flags, aabb_lo, aabb_hi, num_tiles, stream)
+//             truncate, intensity_floor, tile_counts, global_flags, aabb_lo, aabb_hi, num_tiles, global_count, stream)
 #define INSTANTIATE_PREPROCESS(D) \
     template void launch_preprocess<D, float>(const float*, const float*, const float*, const float*, \
-        int, const int*, const int*, int, float, float, int*, bool*, int*, int*, int64_t, cudaStream_t);
+        int, const int*, const int*, int, float, float, int*, bool*, int*, int*, int64_t, int*, cudaStream_t);
 
 INSTANTIATE_PREPROCESS(2)
 INSTANTIATE_PREPROCESS(3)
@@ -154,10 +154,10 @@ template void launch_rasterize_global_backward<8, float>(const float*, const flo
 
 // Preprocess kernel FP16 (no BATCH_SIZE dependency)
 // Signature: (centers, amps, sharpness, L_row_norms, N, shape, tile_dims, tile_size,
-//             truncate, intensity_floor, tile_counts, global_flags, aabb_lo, aabb_hi, num_tiles, stream)
+//             truncate, intensity_floor, tile_counts, global_flags, aabb_lo, aabb_hi, num_tiles, global_count, stream)
 #define INSTANTIATE_PREPROCESS_FP16(D) \
     template void launch_preprocess<D, __half>(const __half*, const __half*, const __half*, const __half*, \
-        int, const int*, const int*, int, float, float, int*, bool*, int*, int*, int64_t, cudaStream_t);
+        int, const int*, const int*, int, float, float, int*, bool*, int*, int*, int64_t, int*, cudaStream_t);
 
 INSTANTIATE_PREPROCESS_FP16(2)
 INSTANTIATE_PREPROCESS_FP16(3)
@@ -324,6 +324,9 @@ void dispatch_forward(
     state.aabb_lo = torch::empty({N, dim}, torch::TensorOptions().dtype(torch::kInt32).device(device));
     state.aabb_hi = torch::empty({N, dim}, torch::TensorOptions().dtype(torch::kInt32).device(device));
 
+    // Atomic counter for global splats (avoids expensive torch::nonzero when 0)
+    auto global_count_tensor = torch::zeros({1}, torch::TensorOptions().dtype(torch::kInt32).device(device));
+
     // Copy shape and tile_dims to device
     // OPTIMIZATION: Store in BinningState for potential reuse in backward pass
     state.shape_tensor = torch::tensor(std::vector<int>(shape.begin(), shape.end()),
@@ -351,7 +354,9 @@ void dispatch_forward(
             state.global_splat_flags.data_ptr<bool>(), \
             state.aabb_lo.data_ptr<int>(), \
             state.aabb_hi.data_ptr<int>(), \
-            num_tiles, stream)
+            num_tiles, \
+            global_count_tensor.data_ptr<int>(), \
+            stream)
 
     switch (dim) {
         case 2: LAUNCH_PREPROCESS(2); break;
@@ -517,13 +522,22 @@ void dispatch_forward(
     // Extract global splat IDs and process them with dedicated kernel.
     // Global splats are those that touch too many tiles (>10% AND >1024 tiles).
 
-    // Extract global splat indices using torch::nonzero
-    auto global_indices = torch::nonzero(state.global_splat_flags);
-    state.num_global_splats = (int)global_indices.size(0);
+    // OPTIMIZATION: Check atomic counter before expensive torch::nonzero
+    // This avoids a GPU kernel launch + sync when there are 0 global splats (common case)
+    int h_global_count = 0;
+    cudaMemcpyAsync(&h_global_count, global_count_tensor.data_ptr<int>(),
+        sizeof(int), cudaMemcpyDeviceToHost, stream);
+    cudaStreamSynchronize(stream);
 
-    if (state.num_global_splats > 0) {
+    state.num_global_splats = h_global_count;
+
+    if (h_global_count > 0) {
+        // Only run torch::nonzero when we know there are global splats
+        auto global_indices = torch::nonzero(state.global_splat_flags);
         // Flatten to 1D tensor of int32 indices
         state.global_splat_ids = global_indices.squeeze(1).to(torch::kInt32).contiguous();
+        // Use actual count from nonzero (authoritative) rather than atomic counter
+        state.num_global_splats = (int)global_indices.size(0);
 
         // Compute number of pixels
         int64_t num_pixels = 1;
@@ -924,6 +938,9 @@ void dispatch_forward_fp16(
     state.aabb_lo = torch::empty({N, dim}, torch::TensorOptions().dtype(torch::kInt32).device(device));
     state.aabb_hi = torch::empty({N, dim}, torch::TensorOptions().dtype(torch::kInt32).device(device));
 
+    // Atomic counter for global splats (avoids expensive torch::nonzero when 0)
+    auto global_count_tensor = torch::zeros({1}, torch::TensorOptions().dtype(torch::kInt32).device(device));
+
     // Copy shape and tile_dims to device
     state.shape_tensor = torch::tensor(std::vector<int>(shape.begin(), shape.end()),
         torch::TensorOptions().dtype(torch::kInt32).device(device));
@@ -953,7 +970,9 @@ void dispatch_forward_fp16(
             state.global_splat_flags.data_ptr<bool>(), \
             state.aabb_lo.data_ptr<int>(), \
             state.aabb_hi.data_ptr<int>(), \
-            num_tiles, stream)
+            num_tiles, \
+            global_count_tensor.data_ptr<int>(), \
+            stream)
 
     switch (dim) {
         case 2: LAUNCH_PREPROCESS_FP16(2); break;
@@ -1105,12 +1124,19 @@ void dispatch_forward_fp16(
 
     CUDA_CHECK_LAST();
 
-    // Handle global splats
-    auto global_indices = torch::nonzero(state.global_splat_flags);
-    state.num_global_splats = (int)global_indices.size(0);
+    // Handle global splats - check atomic counter first to avoid expensive torch::nonzero
+    int h_global_count = 0;
+    cudaMemcpyAsync(&h_global_count, global_count_tensor.data_ptr<int>(),
+        sizeof(int), cudaMemcpyDeviceToHost, stream);
+    cudaStreamSynchronize(stream);
 
-    if (state.num_global_splats > 0) {
+    state.num_global_splats = h_global_count;
+
+    if (h_global_count > 0) {
+        auto global_indices = torch::nonzero(state.global_splat_flags);
         state.global_splat_ids = global_indices.squeeze(1).to(torch::kInt32).contiguous();
+        // Use actual count from nonzero (authoritative) rather than atomic counter
+        state.num_global_splats = (int)global_indices.size(0);
 
         int64_t num_pixels = 1;
         for (int d = 0; d < dim; d++) {

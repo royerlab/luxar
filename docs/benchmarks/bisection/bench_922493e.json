@@ -1,0 +1,106 @@
+{
+  "commit": "922493e",
+  "gpu": "NVIDIA GeForce RTX 3090",
+  "cuda_version": "12.8",
+  "pytorch_version": "2.10.0+cu128",
+  "configs": {
+    "3D_128_1K": {
+      "N": 1000,
+      "shape": [
+        128,
+        128,
+        128
+      ],
+      "voxels": 2097152,
+      "fp32_inference_ms": 0.798,
+      "fp32_train_fwd_ms": 0.795,
+      "fp32_train_bwd_ms": 2.173,
+      "fp32_train_total_ms": 2.968,
+      "amp_inference_ms": 0.803,
+      "amp_train_fwd_ms": 0.804,
+      "amp_train_bwd_ms": 2.204,
+      "amp_train_total_ms": 3.008,
+      "fp16_inference_ms": 0.806,
+      "throughput_gvs_fp32": 2.63,
+      "throughput_gvs_amp": 2.61
+    },
+    "3D_256_10K": {
+      "N": 10000,
+      "shape": [
+        256,
+        256,
+        256
+      ],
+      "voxels": 16777216,
+      "fp32_inference_ms": 1.219,
+      "fp32_train_fwd_ms": 1.187,
+      "fp32_train_bwd_ms": 2.21,
+      "fp32_train_total_ms": 3.397,
+      "amp_inference_ms": 1.239,
+      "amp_train_fwd_ms": 1.172,
+      "amp_train_bwd_ms": 2.256,
+      "amp_train_total_ms": 3.429,
+      "fp16_inference_ms": 1.221,
+      "throughput_gvs_fp32": 13.76,
+      "throughput_gvs_amp": 13.54
+    },
+    "3D_512_50K": {
+      "N": 50000,
+      "shape": [
+        512,
+        512,
+        512
+      ],
+      "voxels": 134217728,
+      "fp32_inference_ms": 4.243,
+      "fp32_train_fwd_ms": 4.162,
+      "fp32_train_bwd_ms": 9.514,
+      "fp32_train_total_ms": 13.676,
+      "amp_inference_ms": 4.25,
+      "amp_train_fwd_ms": 4.302,
+      "amp_train_bwd_ms": 9.668,
+      "amp_train_total_ms": 13.97,
+      "fp16_inference_ms": 4.298,
+      "throughput_gvs_fp32": 31.63,
+      "throughput_gvs_amp": 31.58
+    },
+    "2D_1024_5K": {
+      "N": 5000,
+      "shape": [
+        1024,
+        1024
+      ],
+      "voxels": 1048576,
+      "fp32_inference_ms": 0.582,
+      "fp32_train_fwd_ms": 0.571,
+      "fp32_train_bwd_ms": 1.31,
+      "fp32_train_total_ms": 1.881,
+      "amp_inference_ms": 0.613,
+      "amp_train_fwd_ms": 0.606,
+      "amp_train_bwd_ms": 1.306,
+      "amp_train_total_ms": 1.912,
+      "fp16_inference_ms": 0.585,
+      "throughput_gvs_fp32": 1.8,
+      "throughput_gvs_amp": 1.71
+    },
+    "2D_4096_50K": {
+      "N": 50000,
+      "shape": [
+        4096,
+        4096
+      ],
+      "voxels": 16777216,
+      "fp32_inference_ms": 0.912,
+      "fp32_train_fwd_ms": 0.859,
+      "fp32_train_bwd_ms": 1.36,
+      "fp32_train_total_ms": 2.219,
+      "amp_inference_ms": 0.944,
+      "amp_train_fwd_ms": 0.891,
+      "amp_train_bwd_ms": 1.338,
+      "amp_train_total_ms": 2.229,
+      "fp16_inference_ms": 0.925,
+      "throughput_gvs_fp32": 18.4,
+      "throughput_gvs_amp": 17.77
+    }
+  }
+}

@@ -362,6 +362,7 @@ void launch_preprocess(
     int* aabb_lo,
     int* aabb_hi,
     int64_t num_tiles,
+    int* global_count,
     cudaStream_t stream
 );
 
