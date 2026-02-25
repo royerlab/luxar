@@ -266,6 +266,26 @@ class GSplatData:
         """
         N_original = len(self.amplitudes)
 
+        # Validate method
+        valid_methods = ("cumulative", "amplitude_percentile", "combined")
+        if method not in valid_methods:
+            raise ValueError(f"Unknown pruning method: {method}")
+
+        # Short-circuit for empty data
+        if N_original == 0:
+            pruned_stats = self.stats.copy() if self.stats else {}
+            pruned_stats.update(
+                {"pruned": True, "pruning_method": method, "n_original": 0, "n_removed": 0}
+            )
+            return GSplatData(
+                centers=self.centers.copy(),
+                amplitudes=self.amplitudes.copy(),
+                cholesky_factors=self.cholesky_factors.copy(),
+                sharpnesses=self.sharpnesses.copy(),
+                colors=self.colors.copy() if self.colors is not None else None,
+                stats=pruned_stats,
+            )
+
         # Compute volumes for combined method
         if method == "combined":
             # Unpack diagonal elements from Cholesky factors
@@ -295,16 +315,25 @@ class GSplatData:
             sorted_indices = np.argsort(self.amplitudes)[::-1]
             sorted_amps = self.amplitudes[sorted_indices]
             cumsum_amps = np.cumsum(sorted_amps)
-            cumsum_norm = cumsum_amps / cumsum_amps[-1]
+            total_amp = cumsum_amps[-1]
+            if total_amp == 0:
+                # All amplitudes are zero - keep all if any retention requested
+                mask = (
+                    np.ones(N_original, dtype=bool)
+                    if target_retention > 0
+                    else np.zeros(N_original, dtype=bool)
+                )
+            else:
+                cumsum_norm = cumsum_amps / total_amp
 
-            # Find where we reach target retention
-            n_keep = np.searchsorted(cumsum_norm, target_retention) + 1
-            n_keep = min(n_keep, N_original)  # Safety check
+                # Find where we reach target retention
+                n_keep = np.searchsorted(cumsum_norm, target_retention) + 1
+                n_keep = min(n_keep, N_original)  # Safety check
 
-            # Create mask for splats to keep
-            keep_indices = sorted_indices[:n_keep]
-            mask = np.zeros(N_original, dtype=bool)
-            mask[keep_indices] = True
+                # Create mask for splats to keep
+                keep_indices = sorted_indices[:n_keep]
+                mask = np.zeros(N_original, dtype=bool)
+                mask[keep_indices] = True
 
         elif method == "amplitude_percentile":
             # Remove bottom percentile
@@ -333,8 +362,9 @@ class GSplatData:
         pruned_stats["pruning_method"] = method
         pruned_stats["n_original"] = N_original
         pruned_stats["n_removed"] = N_original - len(pruned_amplitudes)
-        pruned_stats["amplitude_retention"] = float(
-            np.sum(pruned_amplitudes) / np.sum(self.amplitudes)
+        total_amp = np.sum(self.amplitudes)
+        pruned_stats["amplitude_retention"] = (
+            float(np.sum(pruned_amplitudes) / total_amp) if total_amp > 0 else 1.0
         )
 
         return GSplatData(

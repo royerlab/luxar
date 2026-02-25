@@ -138,7 +138,7 @@ class FitConfig:
     seed_method: str = (
         "auto"  # "decomposition", "grid", "edges", "auto", or comma-separated
     )
-    seed_kwargs: Dict[str, Any] = None  # Additional parameters for seed generation
+    seed_kwargs: Optional[Dict[str, Any]] = None  # Additional parameters for seed generation
 
     # Pre-initialized parameters (for GSplatData seeds or moment pursuit)
     # If set, these override the default initialization

@@ -157,8 +157,14 @@ def prepare_fit_config(
         raise ValueError("truncate must be positive")
     if max_abs_error is not None and max_abs_error <= 0:
         raise ValueError("max_abs_error must be positive if specified")
-    elif movie_max_frames is not None and movie_max_frames <= 0:
+    if movie_max_frames is not None and movie_max_frames <= 0:
         raise ValueError("movie_max_frames must be positive or None")
+    if movie_every < 1:
+        raise ValueError("movie_every must be >= 1")
+    if not 0.0 <= norm_percentile < 50.0:
+        raise ValueError(
+            f"norm_percentile must be in range [0.0, 50.0), got {norm_percentile}"
+        )
 
     # Movie frame limit
     if movie_max_frames is None:
