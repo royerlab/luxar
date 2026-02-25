@@ -4,6 +4,8 @@ Model and optimizer initialization for Gaussian splat fitting.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
 from luxar.gsplats.fitting.config import FitConfig, ModelComponents, PreprocessedData
@@ -197,10 +199,18 @@ def initialize_optimization(
                         "✓ Model class: GaussianSplatModelCUDA (10-50x faster on NVIDIA GPUs)"
                     )
             else:
-                if config.verbose:
-                    aprint(
-                        "  → Will use PyTorch-based GaussianSplatModel on CUDA device"
-                    )
+                aprint(
+                    "WARNING: CUDA device detected but custom CUDA kernels are NOT compiled! "
+                    "Fitting will use PyTorch fallback (significantly slower). "
+                    "Build CUDA kernels with: make build-cuda"
+                )
+                warnings.warn(
+                    "CUDA device detected but custom CUDA kernels are NOT compiled. "
+                    "Fitting will use PyTorch fallback (significantly slower). "
+                    "Build CUDA kernels with: make build-cuda",
+                    UserWarning,
+                    stacklevel=2,
+                )
         except ImportError:
             if config.verbose:
                 aprint(
@@ -223,9 +233,21 @@ def initialize_optimization(
             truncate=config.truncate,
             device=config.device,
         )
+        device_type = config.device.type
+        if device_type == "cpu":
+            aprint(
+                "WARNING: Gaussian splat fitting running on CPU — "
+                "this is 10-50x SLOWER than GPU! "
+                "For serious work, use device='cuda' or device='mps'."
+            )
+            warnings.warn(
+                "Gaussian splat fitting running on CPU — this is 10-50x SLOWER than GPU. "
+                "For production use, install GPU support.",
+                UserWarning,
+                stacklevel=2,
+            )
         if config.verbose:
-            device_type = config.device.type
-            aprint(f"✓ Model class: GaussianSplatModel (PyTorch, device={device_type})")
+            aprint(f"Model class: GaussianSplatModel (PyTorch, device={device_type})")
 
     # Setup optimizer - always use standard PyTorch Adam (fast, vectorized)
     if config.verbose:
