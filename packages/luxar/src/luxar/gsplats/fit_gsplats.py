@@ -270,7 +270,7 @@ def fit_gaussian_splats(
     use_metal: bool = True,
     use_cuda: bool = True,
     # Post-processing
-    cull_ratio: float = 0.1,
+    cull_ratio: float = 0.01,
     voxel_footprint_correction: bool | float = False,
     # Grouped config overrides (values override flat parameters above)
     optim: Optional[OptimConfig] = None,
@@ -439,13 +439,13 @@ def fit_gaussian_splats(
     use_cuda : bool, default=True
         Enable custom CUDA kernels on NVIDIA GPUs.
         Provides 10-50x speedup for 2D-8D volumes. Automatically disabled if not available.
-    cull_ratio : float, default=0.1
+    cull_ratio : float, default=0.01
         Post-fit culling threshold as a fraction of max_abs_error. Splats with
         amplitude below ``cull_ratio * max_abs_error`` are removed after fitting.
         This completes the work L1 regularization started by removing near-zero
         splats that the softplus parameterization prevented from reaching exactly zero.
         - 0.0: Disable culling (keep all splats)
-        - 0.1 (default): Cull splats below 10% of the convergence threshold
+        - 0.01 (default): Cull splats below 1% of the convergence threshold
         - 1.0: Cull at the full convergence threshold (aggressive)
     voxel_footprint_correction : bool | float, default=False
         Post-fit correction to inflate splat covariances by the voxel footprint.
