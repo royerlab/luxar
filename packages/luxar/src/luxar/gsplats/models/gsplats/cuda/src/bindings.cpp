@@ -21,12 +21,17 @@
  * Converts Python types to C++ types and calls the CUDA forward function.
  * Supports optional FP16 mode for reduced memory bandwidth.
  *
+ * Returns a 7-tuple: (output, tile_counts, tile_offsets, tile_content,
+ *                      global_splat_ids, shape_tensor, tile_dims_tensor)
+ * The last two are cached device tensors for backward pass reuse.
+ *
  * @param use_fp16 If true, converts inputs to FP16 and uses FP16-optimized kernels.
  *                 Output is always FP32 for numerical stability.
  * @param batch_size Number of splats to process per batch in shared memory (32, 128, or 256).
  *                   Larger batches reduce global memory round-trips but use more shared memory.
  */
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+           torch::Tensor, torch::Tensor>
 forward_wrapper(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
@@ -87,6 +92,8 @@ forward_wrapper(
  *                 Gradients are always FP32 regardless of this setting.
  * @param batch_size Number of splats to process per batch in shared memory (32, 128, or 256).
  *                   Must match the batch_size used in forward pass.
+ * @param shape_tensor_cached Optional device tensor from forward pass (avoids H2D copy).
+ * @param tile_dims_tensor_cached Optional device tensor from forward pass (avoids H2D copy).
  */
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 backward_wrapper(
@@ -104,8 +111,14 @@ backward_wrapper(
     double intensity_floor,
     int64_t tile_size,
     int64_t batch_size,
-    bool use_fp16
+    bool use_fp16,
+    const c10::optional<torch::Tensor>& shape_tensor_cached,
+    const c10::optional<torch::Tensor>& tile_dims_tensor_cached
 ) {
+    // Convert optional tensors to regular tensors (undefined if not provided)
+    torch::Tensor shape_cached = shape_tensor_cached.value_or(torch::Tensor());
+    torch::Tensor tile_dims_cached = tile_dims_tensor_cached.value_or(torch::Tensor());
+
     if (use_fp16) {
         // Use FP16 inputs directly if already converted, else convert
         // Pre-conversion in Python avoids per-call overhead
@@ -128,7 +141,9 @@ backward_wrapper(
             (float)truncate,
             (float)intensity_floor,
             (int)tile_size,
-            (int)batch_size
+            (int)batch_size,
+            shape_cached,
+            tile_dims_cached
         );
     }
 
@@ -146,7 +161,9 @@ backward_wrapper(
         (float)truncate,
         (float)intensity_floor,
         (int)tile_size,
-        (int)batch_size
+        (int)batch_size,
+        shape_cached,
+        tile_dims_cached
     );
 }
 
@@ -209,12 +226,14 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
             Returns
             -------
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+            Tuple of 7 tensors:
                 - output: (prod(shape),) float32 - Rendered volume (flattened)
                 - tile_counts: (num_tiles,) int32 - Splats per tile
                 - tile_offsets: (num_tiles,) int64 - Exclusive prefix sum
                 - tile_content: (total_pairs,) int32 - Splat IDs per tile
                 - global_splat_ids: (num_global,) int32 - Global splat IDs (for backward)
+                - shape_tensor: (d,) int32 - Volume shape on device (for backward reuse)
+                - tile_dims_tensor: (d,) int32 - Tile dims on device (for backward reuse)
         )doc",
         py::arg("centers"),
         py::arg("conic"),
@@ -272,6 +291,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                 Must match the setting used in forward pass.
                 Gradients are always FP32 regardless of this setting.
                 Default: False.
+            shape_tensor_cached : torch.Tensor, optional
+                Cached device tensor from forward pass. Avoids redundant H2D copy.
+            tile_dims_tensor_cached : torch.Tensor, optional
+                Cached device tensor from forward pass. Avoids redundant H2D copy.
 
             Returns
             -------
@@ -295,7 +318,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("intensity_floor"),
         py::arg("tile_size"),
         py::arg("batch_size") = 128,
-        py::arg("use_fp16") = false
+        py::arg("use_fp16") = false,
+        py::arg("shape_tensor_cached") = py::none(),
+        py::arg("tile_dims_tensor_cached") = py::none()
     );
 
     // Version info

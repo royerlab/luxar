@@ -103,8 +103,11 @@ struct BinningState {
  *   - tile_offsets: (num_tiles,) int64 - exclusive prefix sum
  *   - tile_content: (total_pairs,) int32 - splat IDs per tile
  *   - global_splat_ids: (num_global,) int32 - IDs of global splats (for backward)
+ *   - shape_tensor: (d,) int32 - volume shape on device (cached for backward reuse)
+ *   - tile_dims_tensor: (d,) int32 - tile dimensions on device (cached for backward reuse)
  */
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+           torch::Tensor, torch::Tensor>
 forward(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
@@ -139,6 +142,8 @@ forward(
  * @param intensity_floor Minimum intensity threshold
  * @param tile_size       Tile size
  * @param batch_size      Splat batch size for shared memory loading (32, 128, or 256)
+ * @param shape_tensor_cached    Optional (d,) int32 device tensor from forward (avoids H2D copy)
+ * @param tile_dims_tensor_cached Optional (d,) int32 device tensor from forward (avoids H2D copy)
  *
  * @return Tuple of:
  *   - d_centers: (N, d) float32 - center gradients
@@ -161,7 +166,9 @@ backward(
     float truncate,
     float intensity_floor,
     int tile_size,
-    int batch_size
+    int batch_size,
+    const torch::Tensor& shape_tensor_cached = torch::Tensor(),
+    const torch::Tensor& tile_dims_tensor_cached = torch::Tensor()
 );
 
 // =============================================================================
@@ -192,8 +199,11 @@ backward(
  *   - tile_offsets: (num_tiles,) int64 - exclusive prefix sum
  *   - tile_content: (total_pairs,) int32 - splat IDs per tile
  *   - global_splat_ids: (num_global,) int32 - IDs of global splats
+ *   - shape_tensor: (d,) int32 - volume shape on device (cached for backward reuse)
+ *   - tile_dims_tensor: (d,) int32 - tile dimensions on device (cached for backward reuse)
  */
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+           torch::Tensor, torch::Tensor>
 forward_fp16(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
@@ -253,7 +263,9 @@ backward_fp16(
     float truncate,
     float intensity_floor,
     int tile_size,
-    int batch_size
+    int batch_size,
+    const torch::Tensor& shape_tensor_cached = torch::Tensor(),
+    const torch::Tensor& tile_dims_tensor_cached = torch::Tensor()
 );
 
 // =============================================================================

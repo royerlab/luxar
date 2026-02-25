@@ -185,6 +185,9 @@ class CUDASplatFunction(torch.autograd.Function):
             tile_offsets = result[2] if len(result) > 2 else None
             tile_content = result[3] if len(result) > 3 else None
             global_splat_ids = result[4] if len(result) > 4 else None
+            # Cached device tensors from forward (avoids H2D copy in backward)
+            shape_tensor_cached = result[5] if len(result) > 5 else None
+            tile_dims_tensor_cached = result[6] if len(result) > 6 else None
         else:
             # Fallback to PyTorch rendering
             from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
@@ -196,6 +199,8 @@ class CUDASplatFunction(torch.autograd.Function):
             tile_offsets = None
             tile_content = None
             global_splat_ids = None
+            shape_tensor_cached = None
+            tile_dims_tensor_cached = None
 
         # Save for backward (keep FP16 tensors for backward pass if enabled)
         ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps, sharpness)
@@ -213,6 +218,8 @@ class CUDASplatFunction(torch.autograd.Function):
         ctx.tile_offsets = tile_offsets
         ctx.tile_content = tile_content
         ctx.global_splat_ids = global_splat_ids
+        ctx.shape_tensor_cached = shape_tensor_cached
+        ctx.tile_dims_tensor_cached = tile_dims_tensor_cached
         ctx.d = d
         ctx.use_fp16 = use_fp16_kernel  # Actual kernel mode
         ctx.explicit_fp16 = use_fp16  # Original flag (FP16 params, unsafe for train)
@@ -255,6 +262,13 @@ class CUDASplatFunction(torch.autograd.Function):
         if CUDA_BACKEND_AVAILABLE and ctx.tile_counts is not None:
             # Use CUDA backward kernels with cached FP16 tensors if enabled
             # This avoids re-conversion overhead in the backward pass
+            # Build optional kwargs for cached device tensors (backward compat)
+            cached_kwargs = {}
+            if ctx.shape_tensor_cached is not None:
+                cached_kwargs["shape_tensor_cached"] = ctx.shape_tensor_cached
+            if ctx.tile_dims_tensor_cached is not None:
+                cached_kwargs["tile_dims_tensor_cached"] = ctx.tile_dims_tensor_cached
+
             d_centers, d_conic, d_amps, d_sharpness = cuda_splatting_backend.backward(
                 grad_output.contiguous(),
                 ctx.centers_kernel,  # Use cached FP16 or FP32 tensor
@@ -271,6 +285,7 @@ class CUDASplatFunction(torch.autograd.Function):
                 tile_size,
                 batch_size,
                 use_fp16,
+                **cached_kwargs,
             )
 
             # Chain rule: d_conic → d_Ls via PyTorch autograd

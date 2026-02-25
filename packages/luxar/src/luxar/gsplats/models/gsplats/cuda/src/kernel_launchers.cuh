@@ -35,6 +35,19 @@ constexpr int BIN_BLOCK_SIZE = 256;
 constexpr int RASTER_BLOCK_SIZE_2D = 256;  // 16x16 tile
 constexpr int RASTER_BLOCK_SIZE_3D = 512;  // 8x8x8 tile
 constexpr int RASTER_BLOCK_SIZE_DEFAULT = 256;
+constexpr int GLOBAL_BLOCK_SIZE = 256;
+
+/**
+ * Compile-time block size for rasterization kernels based on dimension.
+ * Used by __launch_bounds__ to inform the compiler of the actual max threads,
+ * allowing better register allocation (avoid spills from assuming 1024 threads).
+ */
+template <int DIM>
+constexpr int raster_block_size() {
+    if constexpr (DIM == 3) return RASTER_BLOCK_SIZE_3D;
+    else if constexpr (DIM == 2) return RASTER_BLOCK_SIZE_2D;
+    else return RASTER_BLOCK_SIZE_DEFAULT;
+}
 
 // =============================================================================
 // PREPROCESS KERNEL LAUNCHER
