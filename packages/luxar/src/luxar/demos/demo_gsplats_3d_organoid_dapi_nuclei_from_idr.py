@@ -147,6 +147,7 @@ TARGET_SIZE = 128  # Downscale to manageable size
 TIME_POINT = 0  # First time point
 
 # Fitting parameters
+NUM_SPLATS = 8000
 N_ITERS = 6000  # Good balance of quality vs speed
 DEVICE = None  # Auto-detect (cuda/mps/cpu)
 
@@ -295,7 +296,7 @@ def fit_or_load_gsplats(volume):
 
         result = fit_gaussian_splats(
             volume,
-            seeds=8000,
+            seeds=NUM_SPLATS,
             n_iters=N_ITERS,
             device=DEVICE,
             verbose=True,
