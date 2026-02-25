@@ -49,6 +49,7 @@ def prepare_fit_config(
     early_stop_patience: Optional[int] = 200,
     dynamic_ops_verbose: bool = False,
     seed_method: str = "auto",
+    cull_ratio: float = 0.1,
     voxel_footprint_correction: bool | float = False,
     **seed_kwargs,
 ) -> FitConfig:
@@ -268,5 +269,6 @@ def prepare_fit_config(
         max_eccentricity=max_eccentricity,
         sharpness_range=sharpness_range,
         # Post-processing
+        cull_ratio=cull_ratio,
         voxel_footprint_correction=voxel_footprint_correction,
     )

@@ -327,7 +327,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             use_cuda=USE_CUDA,  # Enable CUDA acceleration (NVIDIA)
             use_fp16=True,
             verbose=True,
-            max_abs_error=0.01,
+            max_abs_error=0.1,
             # convergence movie:
             napari_movie=(not NO_NAPARI),
             movie_every=int(N_ITERS / 30),
