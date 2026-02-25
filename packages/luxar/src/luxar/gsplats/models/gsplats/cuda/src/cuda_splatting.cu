@@ -320,6 +320,12 @@ void dispatch_forward_impl(
 
     CUDA_CHECK_LAST();
 
+    // OPTIMIZATION: Issue global_count memcpy early (right after preprocess kernel writes it).
+    // This will be read after the single sync below, eliminating a second sync later.
+    int h_global_count = 0;
+    cudaMemcpyAsync(&h_global_count, global_count_tensor.data_ptr<int>(),
+        sizeof(int), cudaMemcpyDeviceToHost, stream);
+
     // Compute prefix sum for tile offsets
     state.tile_offsets = torch::empty({num_tiles}, torch::TensorOptions().dtype(torch::kInt64).device(device));
 
@@ -345,6 +351,7 @@ void dispatch_forward_impl(
     CUDA_CHECK_LAST();
 
     // Compute total pairs from last offset + last count
+    // Note: h_global_count memcpy was issued above — all three memcpys complete at this sync
     int64_t last_offset = 0;
     int last_count = 0;
     cudaMemcpyAsync(&last_offset, state.tile_offsets.data_ptr<int64_t>() + num_tiles - 1,
@@ -434,11 +441,7 @@ void dispatch_forward_impl(
     // GLOBAL SPLAT HANDLING
     // ==========================================================================
     // Global splats touch too many tiles (>10% AND >1024 tiles).
-    // OPTIMIZATION: Check atomic counter before expensive torch::nonzero
-    int h_global_count = 0;
-    cudaMemcpyAsync(&h_global_count, global_count_tensor.data_ptr<int>(),
-        sizeof(int), cudaMemcpyDeviceToHost, stream);
-    cudaStreamSynchronize(stream);
+    // h_global_count was already read via early memcpy + sync above (no second sync needed).
 
     state.num_global_splats = h_global_count;
 
