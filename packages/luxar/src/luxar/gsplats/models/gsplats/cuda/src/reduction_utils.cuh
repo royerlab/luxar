@@ -2,10 +2,9 @@
  * Reduction and Gradient Utilities for Gaussian Splatting
  *
  * This header provides parallel reduction operations and backward pass helpers:
- * - Warp-level and block-level sum reduction
- * - Gradient computation for Gaussian intensity
+ * - Warp-level sum reduction and aggregated atomic adds
+ * - Gradient computation for Gaussian intensity (amplitude, sharpness, dist_sq)
  * - Explicit 2D/3D backward pass implementations
- * - Pixel coordinate iteration within tiles
  */
 
 #ifndef CUDA_SPLATTING_REDUCTION_UTILS_CUH
@@ -31,36 +30,6 @@ __device__ __forceinline__ float warp_reduce_sum(float val) {
     for (int offset = 16; offset > 0; offset >>= 1) {
         val += __shfl_down_sync(0xFFFFFFFF, val, offset);
     }
-    return val;
-}
-
-/**
- * Block-level sum reduction using shared memory.
- *
- * @param val       Per-thread value to reduce
- * @param shared    Shared memory buffer (must have at least blockDim.x/32 elements)
- * @return          Sum of all values (valid only in thread 0)
- */
-__device__ __forceinline__ float block_reduce_sum(float val, float* shared) {
-    int lane = threadIdx.x % 32;
-    int warp_id = threadIdx.x / 32;
-
-    // Warp-level reduction
-    val = warp_reduce_sum(val);
-
-    // Write warp results to shared memory
-    if (lane == 0) {
-        shared[warp_id] = val;
-    }
-    __syncthreads();
-
-    // First warp reduces all warp results
-    int num_warps = (blockDim.x + 31) / 32;
-    if (warp_id == 0) {
-        val = (lane < num_warps) ? shared[lane] : 0.0f;
-        val = warp_reduce_sum(val);
-    }
-
     return val;
 }
 
@@ -183,41 +152,6 @@ __device__ __forceinline__ void compute_dD2_dd_3d(
 }
 
 /**
- * Compute ∂D²/∂conic for 3D case (explicit formula).
- *
- * For symmetric matrix, ∂D²/∂C_ij:
- *   Diagonal (i=j):     ∂D²/∂c_ii = d_i²
- *   Off-diagonal (i<j): ∂D²/∂c_ij = 2 * d_i * d_j
- *
- * For 3D with conic layout [c00, c01, c02, c11, c12, c22]:
- *   ∂D²/∂c00 = d0²
- *   ∂D²/∂c01 = 2 * d0 * d1
- *   ∂D²/∂c02 = 2 * d0 * d2
- *   ∂D²/∂c11 = d1²
- *   ∂D²/∂c12 = 2 * d1 * d2
- *   ∂D²/∂c22 = d2²
- *
- * @param d          Displacement vector (px - center), length 3
- * @param dD2_dconic Output: gradient ∂D²/∂conic, length 6
- */
-__device__ __forceinline__ void compute_dD2_dconic_3d(
-    const float* __restrict__ d,
-    float* __restrict__ dD2_dconic
-) {
-    float d0 = d[0], d1 = d[1], d2 = d[2];
-
-    // Diagonal elements
-    dD2_dconic[0] = d0 * d0;        // ∂D²/∂c00
-    dD2_dconic[3] = d1 * d1;        // ∂D²/∂c11
-    dD2_dconic[5] = d2 * d2;        // ∂D²/∂c22
-
-    // Off-diagonal elements (factor of 2)
-    dD2_dconic[1] = 2.0f * d0 * d1; // ∂D²/∂c01
-    dD2_dconic[2] = 2.0f * d0 * d2; // ∂D²/∂c02
-    dD2_dconic[4] = 2.0f * d1 * d2; // ∂D²/∂c12
-}
-
-/**
  * Compute all backward gradients for 3D (explicit, fully unrolled).
  *
  * This is the complete backward computation for a single pixel-splat pair
@@ -323,54 +257,5 @@ __device__ __forceinline__ void backward_pixel_splat_2d(
     local_d_conic[1] += outer * 2.0f * d0 * d1;
     local_d_conic[2] += outer * d1 * d1;
 }
-
-// =============================================================================
-// PIXEL COORDINATE ITERATION
-// =============================================================================
-
-/**
- * Iterator for pixels within a tile.
- *
- * Provides efficient iteration over all pixels in a tile, computing
- * voxel coordinates from thread index.
- */
-template <int DIM>
-struct TilePixelIterator {
-    int tile_origin[DIM];  // Starting voxel of tile
-    int tile_size[DIM];    // Size of tile in each dimension
-    int shape[DIM];        // Volume shape for bounds checking
-    int total_pixels;      // Total pixels in this tile
-
-    __device__ void init(
-        const int* __restrict__ tile_coords,
-        const int* __restrict__ tile_size_in,
-        const int* __restrict__ shape_in
-    ) {
-        total_pixels = 1;
-        #pragma unroll
-        for (int d = 0; d < DIM; d++) {
-            tile_origin[d] = tile_coords[d] * tile_size_in[d];
-            // Clip tile extent to volume bounds
-            int tile_end = min(tile_origin[d] + tile_size_in[d], shape_in[d]);
-            tile_size[d] = tile_end - tile_origin[d];
-            shape[d] = shape_in[d];
-            total_pixels *= tile_size[d];
-        }
-    }
-
-    __device__ bool get_voxel_coords(int local_idx, int* __restrict__ voxel_coords) const {
-        if (local_idx >= total_pixels) return false;
-
-        // Convert local index to tile-relative coordinates
-        int remaining = local_idx;
-        #pragma unroll
-        for (int d = DIM - 1; d >= 0; d--) {
-            voxel_coords[d] = tile_origin[d] + (remaining % tile_size[d]);
-            remaining /= tile_size[d];
-        }
-
-        return true;
-    }
-};
 
 #endif // CUDA_SPLATTING_REDUCTION_UTILS_CUH

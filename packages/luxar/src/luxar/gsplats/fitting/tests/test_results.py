@@ -25,7 +25,8 @@ def basic_optimization_results():
 
     centers = torch.rand(N, d, dtype=torch.float32)
     Ls = torch.rand(N, d, d, dtype=torch.float32)
-    amps = torch.rand(N, dtype=torch.float32) * 0.5
+    # Amplitudes well above default max_abs_error (0.01) to avoid culling in basic tests
+    amps = torch.rand(N, dtype=torch.float32) * 0.5 + 0.05
     sharpness = torch.rand(N, dtype=torch.float32) * 2.0 + 1.0
 
     start_time = time.time()
@@ -199,6 +200,8 @@ def test_stats_dictionary_structure(
         "converged",
         "early_stopped",
         "n_splats",
+        "n_splats_before_culling",
+        "n_culled",
         "sharpness_min",
         "sharpness_max",
         "sharpness_mean",
@@ -299,7 +302,8 @@ def test_3d_data(basic_config, basic_preprocessed_data) -> None:
 
     centers = torch.rand(N, d, dtype=torch.float32)
     Ls = torch.rand(N, d, d, dtype=torch.float32)
-    amps = torch.rand(N, dtype=torch.float32)
+    # Amplitudes well above max_abs_error to avoid culling in this test
+    amps = torch.rand(N, dtype=torch.float32) + 0.05
     sharpness = torch.rand(N, dtype=torch.float32) * 2.0 + 1.0
 
     optimization_results = OptimizationResults(
@@ -505,7 +509,7 @@ class TestVoxelFootprintCorrection:
         # Make Ls lower triangular and positive definite
         Ls = torch.tril(Ls)
         Ls[:, range(d), range(d)] = torch.abs(Ls[:, range(d), range(d)]) + 0.5
-        amps = torch.rand(N, dtype=torch.float32)
+        amps = torch.rand(N, dtype=torch.float32) + 0.05
         sharpness = torch.rand(N, dtype=torch.float32) * 2.0 + 1.0
 
         optimization_results = OptimizationResults(
@@ -561,7 +565,7 @@ class TestVoxelFootprintCorrection:
         # Make Ls lower triangular and positive definite
         Ls = torch.tril(Ls)
         Ls[:, range(d), range(d)] = torch.abs(Ls[:, range(d), range(d)]) + 0.5
-        amps = torch.rand(N, dtype=torch.float32)
+        amps = torch.rand(N, dtype=torch.float32) + 0.05
         sharpness = torch.rand(N, dtype=torch.float32) * 2.0 + 1.0
 
         optimization_results = OptimizationResults(
@@ -742,3 +746,158 @@ class TestVoxelFootprintCorrectionValidation:
                 V,
                 voxel_footprint_correction=-1,  # negative integer
             )
+
+
+# =============================================================================
+# Post-Fit Culling Tests
+# =============================================================================
+
+
+class TestPostFitCulling:
+    """Tests for noise-floor culling in finalize_results."""
+
+    def _make_results(self, amps_list, d=2):
+        """Helper: build OptimizationResults from a list of amplitudes."""
+        N = len(amps_list)
+        amps = torch.tensor(amps_list, dtype=torch.float32)
+        centers = torch.rand(N, d, dtype=torch.float32)
+        Ls = torch.eye(d, dtype=torch.float32).unsqueeze(0).expand(N, -1, -1).clone()
+        sharpness = torch.full((N,), 2.0, dtype=torch.float32)
+        return OptimizationResults(
+            centers=centers,
+            Ls=Ls,
+            amps=amps,
+            sharpness=sharpness,
+            converged_early=True,
+            early_stopped=False,
+            actual_iters=100,
+            best_iteration=90,
+            best_loss=0.001,
+            best_max_abs_error=0.005,
+            movie_frames=None,
+            start_time=0.0,
+            end_time=1.0,
+        )
+
+    def _make_config(self):
+        """Helper: minimal FitConfig."""
+        V = np.random.rand(16, 16).astype(np.float32)
+        return FitConfig(
+            V=V,
+            seeds=None,
+            norm_percentile=0.0,
+            init_sigma_vox=2.0,
+            sigma_min_diag=[0.5, 0.5],
+            sigma_max_diag=[10.0, 10.0],
+            truncate=3.0,
+            n_iters=100,
+            lr=0.01,
+            max_abs_error=0.01,
+            gradient_clip=None,
+            loss_type="mse",
+            asymmetric_penalty=None,
+            l1_amp=None,
+            l1_diag=None,
+            l1_sharpness=None,
+            scheduler_type="plateau",
+            patience=10,
+            lr_reduction_factor=0.5,
+            early_stop_patience=None,
+            enable_dynamic_ops=False,
+            dynamic_config=DynamicOpsConfig(),
+            dynamic_ops_verbose=False,
+            napari_movie=False,
+            movie_every=1,
+            movie_max_frames=100,
+            device=torch.device("cpu"),
+            verbose=False,
+        )
+
+    def _make_preprocessed(self, N, max_abs_error=0.01):
+        """Helper: minimal PreprocessedData."""
+        return PreprocessedData(
+            d=2,
+            N=N,
+            seed_centers=np.random.rand(N, 2).astype(np.float32),
+            V_normalized=np.random.rand(16, 16).astype(np.float32),
+            V_tensor=torch.rand(16, 16),
+            image_min=0.0,
+            image_max=1.0,
+            intensity_range=1.0,
+            max_abs_error=max_abs_error,
+        )
+
+    def test_culls_below_threshold(self) -> None:
+        """Splats with amplitude < max_abs_error are removed."""
+        # 3 above, 2 below the 0.01 threshold
+        opt = self._make_results([0.5, 0.005, 0.3, 0.001, 0.1])
+        result = finalize_results(opt, self._make_config(), self._make_preprocessed(5))
+
+        assert len(result.amplitudes) == 3
+        assert result.stats["n_culled"] == 2
+        assert result.stats["n_splats_before_culling"] == 5
+        assert result.stats["n_splats"] == 3
+
+    def test_keeps_all_when_above_threshold(self) -> None:
+        """No culling when all amplitudes are above max_abs_error."""
+        opt = self._make_results([0.5, 0.1, 0.3, 0.02, 0.8])
+        result = finalize_results(opt, self._make_config(), self._make_preprocessed(5))
+
+        assert len(result.amplitudes) == 5
+        assert result.stats["n_culled"] == 0
+        assert result.stats["n_splats_before_culling"] == 5
+
+    def test_keeps_splat_at_exact_threshold(self) -> None:
+        """A splat with amplitude == max_abs_error is kept (>= comparison)."""
+        opt = self._make_results([0.01, 0.5])  # 0.01 == max_abs_error
+        result = finalize_results(opt, self._make_config(), self._make_preprocessed(2))
+
+        assert len(result.amplitudes) == 2
+        assert result.stats["n_culled"] == 0
+
+    def test_culling_preserves_correct_splats(self) -> None:
+        """Verify the surviving splats are the right ones (not scrambled)."""
+        amps = [0.5, 0.001, 0.3]
+        opt = self._make_results(amps)
+        ppd = self._make_preprocessed(3)
+        ppd.intensity_range = 1.0  # No rescaling
+        result = finalize_results(opt, self._make_config(), ppd)
+
+        # Should keep indices 0 and 2 (amplitudes 0.5, 0.3)
+        assert len(result.amplitudes) == 2
+        np.testing.assert_allclose(result.amplitudes, [0.5, 0.3], rtol=1e-5)
+
+    def test_culling_before_amplitude_rescaling(self) -> None:
+        """Culling uses normalized amplitudes, rescaling happens after."""
+        # amplitude 0.005 is below threshold 0.01 in normalized space
+        opt = self._make_results([0.5, 0.005])
+        ppd = self._make_preprocessed(2)
+        ppd.intensity_range = 100.0  # Large rescaling factor
+
+        result = finalize_results(opt, self._make_config(), ppd)
+
+        # 0.005 < 0.01 → culled, even though rescaled it would be 0.5
+        assert len(result.amplitudes) == 1
+        # Surviving amplitude should be rescaled: 0.5 * 100.0 = 50.0
+        np.testing.assert_allclose(result.amplitudes, [50.0], rtol=1e-5)
+
+    def test_culling_respects_custom_max_abs_error(self) -> None:
+        """Culling threshold adapts to the user's max_abs_error."""
+        opt = self._make_results([0.5, 0.05, 0.005])
+        # Use a higher threshold: 0.1
+        ppd = self._make_preprocessed(3, max_abs_error=0.1)
+
+        result = finalize_results(opt, self._make_config(), ppd)
+
+        # 0.05 and 0.005 are both below 0.1 → culled
+        assert len(result.amplitudes) == 1
+        assert result.stats["n_culled"] == 2
+
+    def test_culling_all_splats(self) -> None:
+        """Edge case: all splats below threshold."""
+        opt = self._make_results([0.001, 0.002, 0.003])
+        result = finalize_results(opt, self._make_config(), self._make_preprocessed(3))
+
+        assert len(result.amplitudes) == 0
+        assert result.stats["n_culled"] == 3
+        assert result.stats["n_splats"] == 0

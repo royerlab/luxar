@@ -261,33 +261,4 @@ __device__ __forceinline__ void load_conic_2d(
     }
 }
 
-/**
- * Load amplitude and sharpness using vectorized load.
- *
- * For FP16: Uses load2() for both values (single 32-bit aligned read).
- * For FP32: Falls back to individual loads.
- *
- * Note: Assumes amps and sharpness are stored contiguously per-splat.
- * If stored separately, use individual load() calls instead.
- *
- * @tparam InputDType Source data type (__half or float)
- * @param amps        Amplitude array
- * @param sharpness   Sharpness array
- * @param splat_idx   Index of splat (0-based)
- * @param out_amp     Output amplitude
- * @param out_sharp   Output sharpness
- */
-template <typename InputDType>
-__device__ __forceinline__ void load_amp_sharpness(
-    const InputDType* __restrict__ amps,
-    const InputDType* __restrict__ sharpness,
-    int splat_idx,
-    float& out_amp,
-    float& out_sharp
-) {
-    // Amps and sharpness are separate arrays, so load individually
-    out_amp = DTypeTraits<InputDType>::load(amps, splat_idx);
-    out_sharp = DTypeTraits<InputDType>::load(sharpness, splat_idx);
-}
-
 #endif // CUDA_SPLATTING_DTYPE_TRAITS_CUH

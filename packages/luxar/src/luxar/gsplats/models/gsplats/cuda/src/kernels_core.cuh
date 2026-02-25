@@ -426,57 +426,9 @@ __global__ void rasterize_forward_kernel(
     // Each thread processes one or more pixels
     for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels; local_px_idx += blockDim.x) {
         // Convert local pixel index to voxel coordinates
-        // OPTIMIZATION 1.4: For 3D with power-of-2 tile sizes, use bitwise ops
-        // Bitwise AND/shift are 1 cycle; integer division is 20-40 cycles
         int voxel_coords[DIM];
-
-        if constexpr (DIM == 3) {
-            // Fast path for 3D: requires tile_size=8 AND full tile (not edge)
-            // Bitwise shifts are hardcoded for 8x8x8 = 512 pixels
-            if (use_fast_path_3d) {
-                // Use bitwise operations: idx & 7, (idx >> 3) & 7, idx >> 6
-                int local_z = local_px_idx & 7;
-                int local_y = (local_px_idx >> 3) & 7;
-                int local_x = local_px_idx >> 6;
-                voxel_coords[0] = tile_origin[0] + local_x;
-                voxel_coords[1] = tile_origin[1] + local_y;
-                voxel_coords[2] = tile_origin[2] + local_z;
-            } else {
-                // Edge tile or non-standard tile_size: use generic path
-                int remaining = local_px_idx;
-                #pragma unroll
-                for (int d = DIM - 1; d >= 0; d--) {
-                    voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
-                    remaining /= tile_extent[d];
-                }
-            }
-        } else if constexpr (DIM == 2) {
-            // Fast path for 2D: requires tile_size=16 AND full tile (not edge)
-            // Bitwise shifts are hardcoded for 16x16 = 256 pixels
-            if (use_fast_path_2d) {
-                // Use bitwise operations: idx & 15, idx >> 4
-                int local_y = local_px_idx & 15;
-                int local_x = local_px_idx >> 4;
-                voxel_coords[0] = tile_origin[0] + local_x;
-                voxel_coords[1] = tile_origin[1] + local_y;
-            } else {
-                // Edge tile or non-standard tile_size: use generic path
-                int remaining = local_px_idx;
-                #pragma unroll
-                for (int d = DIM - 1; d >= 0; d--) {
-                    voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
-                    remaining /= tile_extent[d];
-                }
-            }
-        } else {
-            // Generic path for DIM > 3
-            int remaining = local_px_idx;
-            #pragma unroll
-            for (int d = DIM - 1; d >= 0; d--) {
-                voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
-                remaining /= tile_extent[d];
-            }
-        }
+        compute_voxel_coords<DIM>(local_px_idx, tile_origin, tile_extent,
+                                  use_fast_path_3d, use_fast_path_2d, voxel_coords);
 
         // Convert to float for computation - use integer coordinates to match PyTorch reference
         float px[DIM];
@@ -693,45 +645,8 @@ __global__ void rasterize_backward_kernel(
     if (use_grad_cache) {
     for (int px = threadIdx.x; px < tile_pixels; px += blockDim.x) {
         int voxel_coords[DIM];
-
-        if constexpr (DIM == 3) {
-            if (use_fast_path_3d) {
-                int local_z = px & 7;
-                int local_y = (px >> 3) & 7;
-                int local_x = px >> 6;
-                voxel_coords[0] = tile_origin[0] + local_x;
-                voxel_coords[1] = tile_origin[1] + local_y;
-                voxel_coords[2] = tile_origin[2] + local_z;
-            } else {
-                int remaining = px;
-                #pragma unroll
-                for (int d = DIM - 1; d >= 0; d--) {
-                    voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
-                    remaining /= tile_extent[d];
-                }
-            }
-        } else if constexpr (DIM == 2) {
-            if (use_fast_path_2d) {
-                int local_y = px & 15;
-                int local_x = px >> 4;
-                voxel_coords[0] = tile_origin[0] + local_x;
-                voxel_coords[1] = tile_origin[1] + local_y;
-            } else {
-                int remaining = px;
-                #pragma unroll
-                for (int d = DIM - 1; d >= 0; d--) {
-                    voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
-                    remaining /= tile_extent[d];
-                }
-            }
-        } else {
-            int remaining = px;
-            #pragma unroll
-            for (int d = DIM - 1; d >= 0; d--) {
-                voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
-                remaining /= tile_extent[d];
-            }
-        }
+        compute_voxel_coords<DIM>(px, tile_origin, tile_extent,
+                                  use_fast_path_3d, use_fast_path_2d, voxel_coords);
 
         int64_t global_px_idx = voxel_to_linear<DIM>(voxel_coords, shape);
         s_grad_output[px] = grad_output[global_px_idx];
@@ -836,42 +751,10 @@ __global__ void rasterize_backward_kernel(
 
             // Each thread processes pixels
             for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels; local_px_idx += blockDim.x) {
-                // Compute pixel coordinates (fast path for 2D/3D)
+                // Compute pixel coordinates
                 float px[DIM];
-
-                if constexpr (DIM == 3) {
-                    if (use_fast_path_3d) {
-                        px[2] = (float)(tile_origin[2] + (local_px_idx & 7));
-                        px[1] = (float)(tile_origin[1] + ((local_px_idx >> 3) & 7));
-                        px[0] = (float)(tile_origin[0] + (local_px_idx >> 6));
-                    } else {
-                        int remaining = local_px_idx;
-                        #pragma unroll
-                        for (int d = DIM - 1; d >= 0; d--) {
-                            px[d] = (float)(tile_origin[d] + (remaining % tile_extent[d]));
-                            remaining /= tile_extent[d];
-                        }
-                    }
-                } else if constexpr (DIM == 2) {
-                    if (use_fast_path_2d) {
-                        px[1] = (float)(tile_origin[1] + (local_px_idx & 15));
-                        px[0] = (float)(tile_origin[0] + (local_px_idx >> 4));
-                    } else {
-                        int remaining = local_px_idx;
-                        #pragma unroll
-                        for (int d = DIM - 1; d >= 0; d--) {
-                            px[d] = (float)(tile_origin[d] + (remaining % tile_extent[d]));
-                            remaining /= tile_extent[d];
-                        }
-                    }
-                } else {
-                    int remaining = local_px_idx;
-                    #pragma unroll
-                    for (int d = DIM - 1; d >= 0; d--) {
-                        px[d] = (float)(tile_origin[d] + (remaining % tile_extent[d]));
-                        remaining /= tile_extent[d];
-                    }
-                }
+                compute_pixel_coords_float<DIM>(local_px_idx, tile_origin, tile_extent,
+                                                use_fast_path_3d, use_fast_path_2d, px);
 
                 // Get upstream gradient: from cache if available, else from global memory
                 float dL_dI;

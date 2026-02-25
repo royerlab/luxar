@@ -5,7 +5,7 @@ Result finalization for Gaussian splat fitting.
 from __future__ import annotations
 
 import numpy as np
-from arbol import aprint
+from arbol import aprint, asection
 
 from luxar.gsplats.fitting.config import (
     FitConfig,
@@ -69,11 +69,53 @@ def finalize_results(
     GSplatData
         Dataclass containing centers, amplitudes, cholesky_factors, sharpnesses, and stats
     """
-    # Extract parameters from optimization results
-    centers_np = optimization_results.centers.cpu().numpy()
-    Ls_np = optimization_results.Ls.cpu().numpy()
-    amps_np = optimization_results.amps.cpu().numpy()
-    sharpness_np = optimization_results.sharpness.cpu().numpy()
+    # --- Post-fit culling: remove splats below the noise floor ---
+    # The convergence criterion max_abs_error defines the acceptable per-voxel
+    # error. A splat's peak contribution to any voxel equals its amplitude (at
+    # the center). If amplitude < max_abs_error, removing it changes no voxel
+    # by more than the tolerance — completing the job L1 regularization started.
+    noise_floor = preprocessed_data.max_abs_error
+    amps_dev = optimization_results.amps  # still on device, normalized scale
+    keep_mask = amps_dev >= noise_floor  # GPU-accelerated boolean comparison
+
+    n_before = amps_dev.shape[0]
+    n_keep = int(keep_mask.sum().item())
+    n_culled = n_before - n_keep
+
+    if n_culled > 0:
+        # Apply mask on-device before CPU transfer (fast GPU index_select)
+        keep_indices = keep_mask.nonzero(as_tuple=True)[0]
+        centers_dev = optimization_results.centers[keep_indices]
+        Ls_dev = optimization_results.Ls[keep_indices]
+        amps_dev = amps_dev[keep_indices]
+        sharpness_dev = optimization_results.sharpness[keep_indices]
+
+        culled_amps = optimization_results.amps[~keep_mask]
+        with asection("Post-fit culling"):
+            aprint(
+                f"Removed {n_culled}/{n_before} splats "
+                f"({100 * n_culled / n_before:.1f}%) below noise floor"
+            )
+            aprint(f"  Threshold: amplitude < {noise_floor:.4f} (= max_abs_error)")
+            aprint(f"  Remaining: {n_keep} splats")
+            aprint(
+                f"  Culled amplitude range: "
+                f"[{culled_amps.min().item():.6f}, {culled_amps.max().item():.6f}]"
+            )
+    else:
+        centers_dev = optimization_results.centers
+        Ls_dev = optimization_results.Ls
+        sharpness_dev = optimization_results.sharpness
+        aprint(
+            f"Post-fit culling: 0/{n_before} splats below noise floor "
+            f"(threshold: {noise_floor:.4f})"
+        )
+
+    # Transfer to CPU + numpy
+    centers_np = centers_dev.cpu().numpy()
+    Ls_np = Ls_dev.cpu().numpy()
+    amps_np = amps_dev.cpu().numpy()
+    sharpness_np = sharpness_dev.cpu().numpy()
 
     # Rescale amplitudes to original intensity range
     amps_np = amps_np * preprocessed_data.intensity_range
@@ -99,14 +141,23 @@ def finalize_results(
     # Pack Cholesky factors (without sharpness)
     cholesky_packed = pack_tril(Ls_np)
 
-    # Compute sharpness statistics
-    sharpness_stats = {
-        "sharpness_min": float(np.min(sharpness_np)),
-        "sharpness_max": float(np.max(sharpness_np)),
-        "sharpness_mean": float(np.mean(sharpness_np)),
-        "sharpness_std": float(np.std(sharpness_np)),
-        "sharpness_median": float(np.median(sharpness_np)),
-    }
+    # Compute sharpness statistics (handle empty array after culling)
+    if len(sharpness_np) > 0:
+        sharpness_stats = {
+            "sharpness_min": float(np.min(sharpness_np)),
+            "sharpness_max": float(np.max(sharpness_np)),
+            "sharpness_mean": float(np.mean(sharpness_np)),
+            "sharpness_std": float(np.std(sharpness_np)),
+            "sharpness_median": float(np.median(sharpness_np)),
+        }
+    else:
+        sharpness_stats = {
+            "sharpness_min": float("nan"),
+            "sharpness_max": float("nan"),
+            "sharpness_mean": float("nan"),
+            "sharpness_std": float("nan"),
+            "sharpness_median": float("nan"),
+        }
 
     # Compute statistics reflecting best state (not final state)
     stats = {
@@ -117,7 +168,9 @@ def finalize_results(
         "final_max_abs_error": optimization_results.best_max_abs_error,
         "converged": optimization_results.converged_early,
         "early_stopped": optimization_results.early_stopped,
-        "n_splats": len(amps_np),  # Final splat count from best state
+        "n_splats": len(amps_np),  # Final splat count (after culling)
+        "n_splats_before_culling": n_before,
+        "n_culled": n_culled,
         **sharpness_stats,  # Include sharpness statistics
     }
 

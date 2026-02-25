@@ -46,13 +46,6 @@ __device__ __forceinline__ constexpr int tri_index(int row, int col) {
     return row * (2 * DIM - row - 1) / 2 + col;
 }
 
-/**
- * Alternative: Compute tri_index for any dimension at runtime.
- */
-__device__ __forceinline__ int tri_index_runtime(int row, int col, int dim) {
-    return row * (2 * dim - row - 1) / 2 + col;
-}
-
 // =============================================================================
 // MAHALANOBIS DISTANCE
 // =============================================================================
@@ -87,28 +80,6 @@ __device__ __forceinline__ float mahalanobis_distance_sq(
         // Off-diagonals: 2 * c_ij * d_i * d_j for j > i
         #pragma unroll
         for (int j = i + 1; j < DIM; j++) {
-            result += 2.0f * d[i] * d[j] * conic[idx++];
-        }
-    }
-
-    return result;
-}
-
-/**
- * Runtime-dimension version for high-D cases (5D-8D).
- * Uses no unrolling to avoid register pressure.
- */
-__device__ __forceinline__ float mahalanobis_distance_sq_runtime(
-    const float* __restrict__ d,
-    const float* __restrict__ conic,
-    int dim
-) {
-    float result = 0.0f;
-    int idx = 0;
-
-    for (int i = 0; i < dim; i++) {
-        result += d[i] * d[i] * conic[idx++];
-        for (int j = i + 1; j < dim; j++) {
             result += 2.0f * d[i] * d[j] * conic[idx++];
         }
     }
@@ -290,50 +261,6 @@ __device__ __forceinline__ float effective_truncate_sq(
     // Since we compare D² against this threshold, we need:
     // D^s <= truncate^2  =>  D² <= (truncate^2)^(2/s) = truncate^(4/s)
     return __powf(truncate, 4.0f / sharpness);
-}
-
-/**
- * Compute effective truncation squared with amplitude-based early rejection.
- *
- * Same as effective_truncate_sq but also considers amplitude-based culling.
- * If amplitude is very low, splats may be culled at smaller distances.
- *
- * OPTIMIZATION: Uses __logf() and __powf() fast math intrinsics.
- *
- * @param truncate        Base truncation radius
- * @param sharpness       Sharpness parameter
- * @param amplitude       Amplitude (for amplitude-based culling)
- * @param intensity_floor Minimum intensity threshold
- * @return                Squared effective truncation distance
- */
-__device__ __forceinline__ float effective_truncate_sq_with_amplitude(
-    float truncate,
-    float sharpness,
-    float amplitude,
-    float intensity_floor
-) {
-    // Base truncation squared
-    float t_sq_base = effective_truncate_sq(truncate, sharpness);
-
-    // Amplitude-based truncation: find D² where I drops below floor
-    // I = a * exp(-0.5 * D^s) = floor
-    // D^s = 2 * ln(a/floor)
-    // D² = (2 * ln(a/floor))^(2/s)
-    float ratio = amplitude / fmaxf(intensity_floor, 1e-10f);
-    if (ratio <= 1.0f) {
-        return 0.0f;  // Amplitude already below floor
-    }
-
-    float t_sq_amp;
-    if (fabsf(sharpness - 2.0f) < 1e-4f) {
-        // s=2: D² = 2 * ln(ratio)
-        t_sq_amp = 2.0f * __logf(ratio);
-    } else {
-        // General: D² = (2 * ln(ratio))^(2/s)
-        t_sq_amp = __powf(2.0f * __logf(ratio), 2.0f / sharpness);
-    }
-
-    return fminf(t_sq_base, t_sq_amp);
 }
 
 #endif // CUDA_SPLATTING_MATH_UTILS_CUH
