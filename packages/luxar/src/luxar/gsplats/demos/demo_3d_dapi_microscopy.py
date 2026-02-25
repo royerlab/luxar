@@ -63,7 +63,7 @@ if NO_NAPARI:
     aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
-NUM_SPLATS = 4500
+NUM_SPLATS = 6000
 N_ITERS = 6000
 DEVICE = None  # None -> auto: CUDA on Linux with NVIDIA, MPS on macOS, CPU fallback
 N_FRAMES = 30  # number of compression steps (<= #splats)

@@ -15,6 +15,89 @@ from luxar.gsplats.fitting.config import (
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.utils.trils import pack_tril
 
+# ANSI 256-color codes: red → yellow → green → cyan gradient
+_GRADIENT_CODES = [
+    196, 196, 202, 208, 214, 220, 226, 190,
+    154, 118, 82, 46, 48, 50, 51, 45,
+]
+_RESET = "\033[0m"
+_DIM = "\033[2m"
+
+
+def _print_amplitude_histogram(
+    amps,
+    noise_floor: float | None = None,
+    n_bins: int = 16,
+) -> None:
+    """Print a colorful ASCII histogram of amplitude distribution.
+
+    Parameters
+    ----------
+    amps : torch.Tensor or np.ndarray
+        Amplitude values (normalized scale).
+    noise_floor : float, optional
+        Culling threshold to mark on the histogram.
+    n_bins : int
+        Number of histogram bins.
+    """
+    # Convert to numpy
+    if hasattr(amps, "cpu"):
+        amps_np = amps.detach().cpu().numpy().ravel()
+    else:
+        amps_np = np.asarray(amps).ravel()
+
+    if len(amps_np) == 0:
+        aprint("No amplitudes to display")
+        return
+
+    total = len(amps_np)
+    min_val = float(amps_np.min())
+    max_val = float(amps_np.max())
+    median_val = float(np.median(amps_np))
+    mean_val = float(np.mean(amps_np))
+
+    # Build histogram bins (nudge upper edge so max value falls inside last bin)
+    eps = max(abs(max_val) * 1e-8, 1e-15)
+    bin_edges = np.linspace(min_val, max_val + eps, n_bins + 1)
+    counts, _ = np.histogram(amps_np, bins=bin_edges)
+    max_count = int(counts.max()) if counts.max() > 0 else 1
+    count_width = len(str(max_count))
+    bar_width = 30
+
+    with asection("📊 Amplitude Distribution (normalized scale)"):
+        aprint(
+            f"n={total}  "
+            f"range: [{min_val:.6f}, {max_val:.6f}]  "
+            f"median: {median_val:.6f}  "
+            f"mean: {mean_val:.6f}"
+        )
+        if noise_floor is not None:
+            aprint(f"culling threshold: {noise_floor:.6f}")
+
+        for i in range(n_bins):
+            lo, hi = bin_edges[i], bin_edges[i + 1]
+            count = int(counts[i])
+            pct = 100.0 * count / total
+
+            # Bar with color gradient
+            bar_len = round(bar_width * count / max_count) if max_count > 0 else 0
+            cidx = min(i * len(_GRADIENT_CODES) // n_bins, len(_GRADIENT_CODES) - 1)
+            color = f"\033[38;5;{_GRADIENT_CODES[cidx]}m"
+            bar = color + "█" * bar_len + _RESET
+            pad = " " * (bar_width - bar_len)
+
+            # Mark the bin containing the culling threshold
+            marker = ""
+            if noise_floor is not None and lo <= noise_floor < hi:
+                marker = f" {_DIM}◄ cull{_RESET}"
+
+            aprint(
+                f"  {lo:9.6f} ┤{bar}{pad} "
+                f"{count:>{count_width}} ({pct:5.1f}%){marker}"
+            )
+
+        aprint(f"  {max_val:9.6f} ┘")
+
 
 def _apply_voxel_footprint_correction(
     Ls: np.ndarray,
@@ -76,6 +159,14 @@ def finalize_results(
     # the job L1 regularization started.
     amps_dev = optimization_results.amps  # still on device, normalized scale
     n_before = amps_dev.shape[0]
+
+    # Show amplitude distribution before culling
+    noise_floor_val = (
+        config.cull_ratio * preprocessed_data.max_abs_error
+        if config.cull_ratio > 0
+        else None
+    )
+    _print_amplitude_histogram(amps_dev, noise_floor=noise_floor_val)
 
     if config.cull_ratio > 0:
         noise_floor = config.cull_ratio * preprocessed_data.max_abs_error
