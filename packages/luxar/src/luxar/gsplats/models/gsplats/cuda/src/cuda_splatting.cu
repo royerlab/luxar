@@ -598,7 +598,9 @@ void dispatch_backward(
     torch::Tensor& d_centers,
     torch::Tensor& d_conic,
     torch::Tensor& d_amps,
-    torch::Tensor& d_sharpness
+    torch::Tensor& d_sharpness,
+    const torch::Tensor& shape_tensor_cached = torch::Tensor(),
+    const torch::Tensor& tile_dims_tensor_cached = torch::Tensor()
 ) {
     cudaStream_t stream = c10::cuda::getCurrentCUDAStream().stream();
 
@@ -608,11 +610,12 @@ void dispatch_backward(
 
     auto device = centers.device();
 
-    // Copy shape and tile_dims to device
-    auto shape_tensor = torch::tensor(std::vector<int>(shape.begin(), shape.end()),
-        torch::TensorOptions().dtype(torch::kInt32).device(device));
-    auto tile_dims_tensor = torch::tensor(tile_dims,
-        torch::TensorOptions().dtype(torch::kInt32).device(device));
+    // Copy shape and tile_dims to device (use cached if available)
+    auto shape_tensor = shape_tensor_cached.defined() ? shape_tensor_cached :
+        torch::tensor(std::vector<int>(shape.begin(), shape.end()),
+            torch::TensorOptions().dtype(torch::kInt32).device(device));
+    auto tile_dims_tensor = tile_dims_tensor_cached.defined() ? tile_dims_tensor_cached :
+        torch::tensor(tile_dims, torch::TensorOptions().dtype(torch::kInt32).device(device));
 
     // Zero gradient buffers
     d_centers.zero_();
@@ -742,7 +745,7 @@ void dispatch_backward(
 // PUBLIC API
 // =============================================================================
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 forward(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
@@ -786,13 +789,15 @@ forward(
     dispatch_forward(dim, centers, conic, amps, sharpness, L_row_norms, shape,
                     truncate, intensity_floor, tile_size, batch_size, output, state);
 
-    // Return output + binning state + global splat IDs
+    // Return output + binning state + global splat IDs + cached tensors
     return std::make_tuple(
         output,
         state.tile_counts,
         state.tile_offsets,
         state.tile_content,
-        state.global_splat_ids  // New: global splat IDs for backward pass
+        state.global_splat_ids,  // New: global splat IDs for backward pass
+        state.shape_tensor,
+        state.tile_dims_tensor
     );
 }
 
@@ -811,7 +816,9 @@ backward(
     float truncate,
     float intensity_floor,
     int tile_size,
-    int batch_size
+    int batch_size,
+    const torch::Tensor& shape_tensor_cached,
+    const torch::Tensor& tile_dims_tensor_cached
 ) {
     validate_inputs(centers, conic, amps, sharpness, shape);
 
@@ -834,7 +841,8 @@ backward(
     dispatch_backward(dim, grad_output, centers, conic, amps, sharpness,
                      tile_offsets, tile_counts, tile_content, global_splat_ids,
                      shape, truncate, intensity_floor, tile_size, batch_size,
-                     d_centers, d_conic, d_amps, d_sharpness);
+                     d_centers, d_conic, d_amps, d_sharpness,
+                     shape_tensor_cached, tile_dims_tensor_cached);
 
     return std::make_tuple(d_centers, d_conic, d_amps, d_sharpness);
 }
@@ -1199,7 +1207,9 @@ void dispatch_backward_fp16(
     torch::Tensor& d_centers,
     torch::Tensor& d_conic,
     torch::Tensor& d_amps,
-    torch::Tensor& d_sharpness
+    torch::Tensor& d_sharpness,
+    const torch::Tensor& shape_tensor_cached = torch::Tensor(),
+    const torch::Tensor& tile_dims_tensor_cached = torch::Tensor()
 ) {
     cudaStream_t stream = c10::cuda::getCurrentCUDAStream().stream();
 
@@ -1209,11 +1219,12 @@ void dispatch_backward_fp16(
 
     auto device = centers_fp16.device();
 
-    // Copy shape and tile_dims to device
-    auto shape_tensor = torch::tensor(std::vector<int>(shape.begin(), shape.end()),
-        torch::TensorOptions().dtype(torch::kInt32).device(device));
-    auto tile_dims_tensor = torch::tensor(tile_dims,
-        torch::TensorOptions().dtype(torch::kInt32).device(device));
+    // Copy shape and tile_dims to device (use cached if available)
+    auto shape_tensor = shape_tensor_cached.defined() ? shape_tensor_cached :
+        torch::tensor(std::vector<int>(shape.begin(), shape.end()),
+            torch::TensorOptions().dtype(torch::kInt32).device(device));
+    auto tile_dims_tensor = tile_dims_tensor_cached.defined() ? tile_dims_tensor_cached :
+        torch::tensor(tile_dims, torch::TensorOptions().dtype(torch::kInt32).device(device));
 
     // Zero gradient buffers
     d_centers.zero_();
@@ -1336,7 +1347,7 @@ void dispatch_backward_fp16(
 // FP16 PUBLIC API
 // =============================================================================
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 forward_fp16(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
@@ -1380,13 +1391,15 @@ forward_fp16(
     dispatch_forward_fp16(dim, centers, conic, amps, sharpness, L_row_norms, shape,
                          truncate, intensity_floor, tile_size, batch_size, output, state);
 
-    // Return output + binning state + global splat IDs
+    // Return output + binning state + global splat IDs + cached tensors
     return std::make_tuple(
         output,
         state.tile_counts,
         state.tile_offsets,
         state.tile_content,
-        state.global_splat_ids
+        state.global_splat_ids,
+        state.shape_tensor,
+        state.tile_dims_tensor
     );
 }
 
@@ -1405,7 +1418,9 @@ backward_fp16(
     float truncate,
     float intensity_floor,
     int tile_size,
-    int batch_size
+    int batch_size,
+    const torch::Tensor& shape_tensor_cached,
+    const torch::Tensor& tile_dims_tensor_cached
 ) {
     validate_inputs_fp16(centers, conic, amps, sharpness, shape);
 
@@ -1428,7 +1443,8 @@ backward_fp16(
     dispatch_backward_fp16(dim, grad_output, centers, conic, amps, sharpness,
                           tile_offsets, tile_counts, tile_content, global_splat_ids,
                           shape, truncate, intensity_floor, tile_size, batch_size,
-                          d_centers, d_conic, d_amps, d_sharpness);
+                          d_centers, d_conic, d_amps, d_sharpness,
+                          shape_tensor_cached, tile_dims_tensor_cached);
 
     return std::make_tuple(d_centers, d_conic, d_amps, d_sharpness);
 }
