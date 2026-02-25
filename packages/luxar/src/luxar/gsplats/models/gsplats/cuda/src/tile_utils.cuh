@@ -4,8 +4,7 @@
  * This header provides tile/voxel management functions:
  * - AABB computation for spatial binning
  * - Tile index conversion (linear <-> coordinates)
- * - 3D grid launch optimization for CUDA
- * - Optimized bitwise indexing for power-of-2 tiles
+ * - 3D grid launch optimization for CUDA (get_tile_info_2d/3d)
  */
 
 #ifndef CUDA_SPLATTING_TILE_UTILS_CUH
@@ -107,30 +106,6 @@ __device__ AABB<DIM> compute_splat_aabb(
     }
 
     return aabb;
-}
-
-/**
- * Compute L_row_norms from full Cholesky factor L.
- *
- * L_row_norm[i] = sqrt(sum_j L[i,j]²) ≈ sqrt(σ²_i)
- *
- * This approximates the standard deviation along each axis for AABB computation.
- */
-template <int DIM>
-__device__ __forceinline__ void compute_L_row_norms(
-    const float* __restrict__ L,  // (DIM, DIM) in row-major
-    float* __restrict__ L_row_norms
-) {
-    #pragma unroll
-    for (int i = 0; i < DIM; i++) {
-        float norm_sq = 0.0f;
-        #pragma unroll
-        for (int j = 0; j <= i; j++) {  // L is lower-triangular
-            float val = L[i * DIM + j];
-            norm_sq += val * val;
-        }
-        L_row_norms[i] = sqrtf(norm_sq);
-    }
 }
 
 // =============================================================================
@@ -278,133 +253,94 @@ __device__ __forceinline__ int64_t voxel_to_linear(
 }
 
 // =============================================================================
-// OPTIMIZED BITWISE INDEXING FOR POWER-OF-2 TILES
+// PIXEL COORDINATE EXTRACTION HELPERS
 // =============================================================================
 
 /**
- * Tile size constants for bitwise operations.
+ * Convert local pixel index to integer voxel coordinates within a tile.
  *
- * For power-of-2 tile sizes, we can replace expensive integer division
- * and modulo with fast bitwise AND and shift operations:
- *   x % tile_size  =>  x & (tile_size - 1)
- *   x / tile_size  =>  x >> log2(tile_size)
+ * For 2D/3D with standard tile sizes (16x16, 8x8x8), uses bitwise operations
+ * for fast coordinate extraction when the tile is full (not an edge tile).
+ * Falls back to generic division/modulo for edge tiles or higher dimensions.
  *
- * This provides ~10-15% speedup in the inner loop.
- */
-constexpr int TILE_SIZE_2D = 16;   // 16×16 = 256 pixels
-constexpr int TILE_SIZE_3D = 8;    // 8×8×8 = 512 pixels
-constexpr int TILE_SIZE_4D = 4;    // 4×4×4×4 = 256 pixels
-
-constexpr int TILE_BITS_2D = 4;    // log2(16)
-constexpr int TILE_BITS_3D = 3;    // log2(8)
-constexpr int TILE_BITS_4D = 2;    // log2(4)
-
-constexpr int TILE_MASK_2D = 15;   // 16 - 1
-constexpr int TILE_MASK_3D = 7;    // 8 - 1
-constexpr int TILE_MASK_4D = 3;    // 4 - 1
-
-/**
- * Optimized 3D: Convert local pixel index to tile-relative coordinates.
+ * OPTIMIZATION: Bitwise ops are 1 cycle vs 20-40 cycles for integer division.
+ * The `if constexpr` branches are resolved at compile time — no runtime cost.
  *
- * For 8×8×8 tiles (512 pixels), local_idx in [0, 511]:
- *   local_z = local_idx & 0x7          (% 8)
- *   local_y = (local_idx >> 3) & 0x7   (/ 8 % 8)
- *   local_x = local_idx >> 6           (/ 64)
- *
- * Integer division is 20-40 cycles on GPU; bitwise ops are 1 cycle.
+ * @param local_px_idx    Thread-local pixel index within the tile
+ * @param tile_origin     Starting voxel coordinate of the tile
+ * @param tile_extent     Tile extent in each dimension (may be clipped at volume edges)
+ * @param use_fast_path_3d Whether 3D bitwise fast path is valid (full 8x8x8 tile)
+ * @param use_fast_path_2d Whether 2D bitwise fast path is valid (full 16x16 tile)
+ * @param voxel_coords    Output: integer voxel coordinates
  */
-__device__ __forceinline__ void local_idx_to_coords_3d_fast(
-    int local_idx,
-    int& local_x,
-    int& local_y,
-    int& local_z
-) {
-    local_z = local_idx & TILE_MASK_3D;
-    local_y = (local_idx >> TILE_BITS_3D) & TILE_MASK_3D;
-    local_x = local_idx >> (2 * TILE_BITS_3D);
-}
-
-/**
- * Optimized 3D: Convert tile-relative coordinates to local pixel index.
- */
-__device__ __forceinline__ int coords_to_local_idx_3d_fast(
-    int local_x,
-    int local_y,
-    int local_z
-) {
-    return (local_x << (2 * TILE_BITS_3D)) | (local_y << TILE_BITS_3D) | local_z;
-}
-
-/**
- * Optimized 2D: Convert local pixel index to tile-relative coordinates.
- *
- * For 16×16 tiles (256 pixels), local_idx in [0, 255]:
- *   local_y = local_idx & 0xF          (% 16)
- *   local_x = local_idx >> 4           (/ 16)
- */
-__device__ __forceinline__ void local_idx_to_coords_2d_fast(
-    int local_idx,
-    int& local_x,
-    int& local_y
-) {
-    local_y = local_idx & TILE_MASK_2D;
-    local_x = local_idx >> TILE_BITS_2D;
-}
-
-/**
- * Optimized 2D: Convert tile-relative coordinates to local pixel index.
- */
-__device__ __forceinline__ int coords_to_local_idx_2d_fast(
-    int local_x,
-    int local_y
-) {
-    return (local_x << TILE_BITS_2D) | local_y;
-}
-
-/**
- * Optimized 4D: Convert local pixel index to tile-relative coordinates.
- *
- * For 4×4×4×4 tiles (256 pixels), local_idx in [0, 255]:
- *   local_w = local_idx & 0x3               (% 4)
- *   local_z = (local_idx >> 2) & 0x3        (/ 4 % 4)
- *   local_y = (local_idx >> 4) & 0x3        (/ 16 % 4)
- *   local_x = local_idx >> 6                (/ 64)
- */
-__device__ __forceinline__ void local_idx_to_coords_4d_fast(
-    int local_idx,
-    int& local_x,
-    int& local_y,
-    int& local_z,
-    int& local_w
-) {
-    local_w = local_idx & TILE_MASK_4D;
-    local_z = (local_idx >> TILE_BITS_4D) & TILE_MASK_4D;
-    local_y = (local_idx >> (2 * TILE_BITS_4D)) & TILE_MASK_4D;
-    local_x = local_idx >> (3 * TILE_BITS_4D);
-}
-
-/**
- * Optimized 3D: Get voxel coordinates from tile origin and local index.
- *
- * Combines tile origin lookup with fast bitwise local coordinate extraction.
- */
-__device__ __forceinline__ void get_voxel_coords_3d_fast(
-    int local_idx,
+template <int DIM>
+__device__ __forceinline__ void compute_voxel_coords(
+    int local_px_idx,
     const int* __restrict__ tile_origin,
+    const int* __restrict__ tile_extent,
+    bool use_fast_path_3d,
+    bool use_fast_path_2d,
     int* __restrict__ voxel_coords
 ) {
-    int local_x, local_y, local_z;
-    local_idx_to_coords_3d_fast(local_idx, local_x, local_y, local_z);
-    voxel_coords[0] = tile_origin[0] + local_x;
-    voxel_coords[1] = tile_origin[1] + local_y;
-    voxel_coords[2] = tile_origin[2] + local_z;
+    if constexpr (DIM == 3) {
+        if (use_fast_path_3d) {
+            // Bitwise ops for 8x8x8 tiles: idx & 7, (idx >> 3) & 7, idx >> 6
+            voxel_coords[2] = tile_origin[2] + (local_px_idx & 7);
+            voxel_coords[1] = tile_origin[1] + ((local_px_idx >> 3) & 7);
+            voxel_coords[0] = tile_origin[0] + (local_px_idx >> 6);
+        } else {
+            int remaining = local_px_idx;
+            #pragma unroll
+            for (int d = DIM - 1; d >= 0; d--) {
+                voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
+                remaining /= tile_extent[d];
+            }
+        }
+    } else if constexpr (DIM == 2) {
+        if (use_fast_path_2d) {
+            // Bitwise ops for 16x16 tiles: idx & 15, idx >> 4
+            voxel_coords[1] = tile_origin[1] + (local_px_idx & 15);
+            voxel_coords[0] = tile_origin[0] + (local_px_idx >> 4);
+        } else {
+            int remaining = local_px_idx;
+            #pragma unroll
+            for (int d = DIM - 1; d >= 0; d--) {
+                voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
+                remaining /= tile_extent[d];
+            }
+        }
+    } else {
+        // Generic path for DIM > 3
+        int remaining = local_px_idx;
+        #pragma unroll
+        for (int d = DIM - 1; d >= 0; d--) {
+            voxel_coords[d] = tile_origin[d] + (remaining % tile_extent[d]);
+            remaining /= tile_extent[d];
+        }
+    }
 }
 
 /**
- * Check if tile size is a power of 2 for optimization eligibility.
+ * Convert local pixel index to float pixel coordinates within a tile.
+ * Calls compute_voxel_coords then converts to float.
+ * Used by backward kernel where float coordinates are needed for displacement computation.
  */
-__host__ __device__ __forceinline__ constexpr bool is_power_of_2(int x) {
-    return x > 0 && (x & (x - 1)) == 0;
+template <int DIM>
+__device__ __forceinline__ void compute_pixel_coords_float(
+    int local_px_idx,
+    const int* __restrict__ tile_origin,
+    const int* __restrict__ tile_extent,
+    bool use_fast_path_3d,
+    bool use_fast_path_2d,
+    float* __restrict__ px
+) {
+    int voxel_coords[DIM];
+    compute_voxel_coords<DIM>(local_px_idx, tile_origin, tile_extent,
+                              use_fast_path_3d, use_fast_path_2d, voxel_coords);
+    #pragma unroll
+    for (int d = 0; d < DIM; d++) {
+        px[d] = (float)voxel_coords[d];
+    }
 }
 
 #endif // CUDA_SPLATTING_TILE_UTILS_CUH

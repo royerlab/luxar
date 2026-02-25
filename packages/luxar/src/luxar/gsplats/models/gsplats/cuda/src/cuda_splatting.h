@@ -2,11 +2,18 @@
  * CUDA Gaussian Splatting - Header Declarations
  *
  * This header declares the public interface for the CUDA splatting backend.
- * It is used by both the CUDA kernels and the PyTorch C++ bindings.
+ * It is used by both the CUDA dispatch layer (cuda_splatting.cu) and the
+ * PyTorch C++ bindings (bindings.cpp).
  *
  * Architecture:
- *   Forward:  preprocess → prefix_sum → bin → rasterize_fwd
- *   Backward: rasterize_bwd
+ *   Forward:  preprocess → prefix_sum → bin → rasterize_fwd [→ global_fwd]
+ *   Backward: rasterize_bwd [→ global_bwd]
+ *
+ * FP16 support: All kernels and launch wrappers are templated on InputDType
+ * (float or __half). The dispatch layer in cuda_splatting.cu uses unified
+ * template functions (dispatch_forward_impl<InputDType>, etc.) to avoid
+ * FP32/FP16 code duplication. See kernel_launchers.cuh for the templated
+ * launch wrappers.
  */
 
 #ifndef CUDA_SPLATTING_H
@@ -84,10 +91,10 @@ struct BinningState {
 // =============================================================================
 
 /**
- * Forward pass: Render Gaussians to volume.
+ * Forward pass: Render Gaussians to volume (FP32 inputs).
  *
  * @param centers         (N, d) float32 - splat centers in voxel coordinates
- * @param conic           (N, d*(d+1)/2) float32 - packed upper-triangle of Σ⁻¹
+ * @param conic           (N, d*(d+1)/2) float32 - packed upper-triangle of Sigma^-1
  * @param amps            (N,) float32 - amplitudes
  * @param sharpness       (N,) float32 - sharpness parameters
  * @param L_row_norms     (N, d) float32 - per-axis std dev from Cholesky row norms
@@ -97,14 +104,7 @@ struct BinningState {
  * @param tile_size       Tile size for spatial binning
  * @param batch_size      Splat batch size for shared memory loading (32, 128, or 256)
  *
- * @return Tuple of:
- *   - output: (prod(shape),) float32 - rendered volume (flattened)
- *   - tile_counts: (num_tiles,) int32 - splats per tile
- *   - tile_offsets: (num_tiles,) int64 - exclusive prefix sum
- *   - tile_content: (total_pairs,) int32 - splat IDs per tile
- *   - global_splat_ids: (num_global,) int32 - IDs of global splats (for backward)
- *   - shape_tensor: (d,) int32 - volume shape on device (cached for backward reuse)
- *   - tile_dims_tensor: (d,) int32 - tile dimensions on device (cached for backward reuse)
+ * @return Tuple of 7 tensors (see cuda_splatting.cu for details)
  */
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
            torch::Tensor, torch::Tensor>
@@ -126,30 +126,9 @@ forward(
 // =============================================================================
 
 /**
- * Backward pass: Compute gradients.
+ * Backward pass: Compute gradients (FP32 inputs).
  *
- * @param grad_output     (prod(shape),) float32 - upstream gradient
- * @param centers         (N, d) float32 - splat centers
- * @param conic           (N, d*(d+1)/2) float32 - packed conic
- * @param amps            (N,) float32 - amplitudes
- * @param sharpness       (N,) float32 - sharpness parameters
- * @param tile_offsets    (num_tiles,) int64 - from forward pass
- * @param tile_counts     (num_tiles,) int32 - from forward pass
- * @param tile_content    (total_pairs,) int32 - from forward pass
- * @param global_splat_ids (num_global,) int32 - from forward pass
- * @param shape           Target volume shape
- * @param truncate        Base truncation radius
- * @param intensity_floor Minimum intensity threshold
- * @param tile_size       Tile size
- * @param batch_size      Splat batch size for shared memory loading (32, 128, or 256)
- * @param shape_tensor_cached    Optional (d,) int32 device tensor from forward (avoids H2D copy)
- * @param tile_dims_tensor_cached Optional (d,) int32 device tensor from forward (avoids H2D copy)
- *
- * @return Tuple of:
- *   - d_centers: (N, d) float32 - center gradients
- *   - d_conic: (N, d*(d+1)/2) float32 - conic gradients
- *   - d_amps: (N,) float32 - amplitude gradients
- *   - d_sharpness: (N,) float32 - sharpness gradients
+ * @return Tuple of 4 gradient tensors: d_centers, d_conic, d_amps, d_sharpness
  */
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 backward(
@@ -172,35 +151,24 @@ backward(
 );
 
 // =============================================================================
-// FP16 (HALF PRECISION) FORWARD PASS INTERFACE
+// FP16 (HALF PRECISION) INTERFACE
 // =============================================================================
+//
+// Mixed-precision variants: inputs are FP16, computation is FP32, output is FP32.
+// This provides ~1.5-2x memory bandwidth improvement while maintaining precision.
+//
+// FP16 inputs are loaded directly from global memory and converted to FP32 during
+// shared memory load (DTypeTraits::load()). All computation and gradients are FP32.
+//
+// The FP32 and FP16 implementations share a single templated dispatch layer
+// (dispatch_forward_impl<InputDType>, dispatch_backward_impl<InputDType>)
+// in cuda_splatting.cu. These thin wrappers provide a non-templated API for
+// bindings.cpp.
 
 /**
- * Forward pass with FP16 inputs for improved memory bandwidth.
- *
- * This is the mixed-precision variant: inputs are FP16, computation is FP32,
- * output is FP32. This provides ~1.5-2x memory bandwidth improvement while
- * maintaining numerical precision.
- *
- * @param centers         (N, d) float16 - splat centers in voxel coordinates
- * @param conic           (N, d*(d+1)/2) float16 - packed upper-triangle of Σ⁻¹
- * @param amps            (N,) float16 - amplitudes
- * @param sharpness       (N,) float16 - sharpness parameters
- * @param L_row_norms     (N, d) float16 - per-axis std dev from Cholesky row norms
- * @param shape           Target volume shape (d elements)
- * @param truncate        Base truncation radius
- * @param intensity_floor Minimum intensity threshold for culling
- * @param tile_size       Tile size for spatial binning
- * @param batch_size      Splat batch size for shared memory loading (32, 128, or 256)
- *
- * @return Tuple of:
- *   - output: (prod(shape),) float32 - rendered volume (always FP32)
- *   - tile_counts: (num_tiles,) int32 - splats per tile
- *   - tile_offsets: (num_tiles,) int64 - exclusive prefix sum
- *   - tile_content: (total_pairs,) int32 - splat IDs per tile
- *   - global_splat_ids: (num_global,) int32 - IDs of global splats
- *   - shape_tensor: (d,) int32 - volume shape on device (cached for backward reuse)
- *   - tile_dims_tensor: (d,) int32 - tile dimensions on device (cached for backward reuse)
+ * Forward pass with FP16 inputs.
+ * Same signature as forward() but expects float16 input tensors.
+ * Output is always FP32.
  */
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
            torch::Tensor, torch::Tensor>
@@ -217,36 +185,9 @@ forward_fp16(
     int batch_size
 );
 
-// =============================================================================
-// FP16 (HALF PRECISION) BACKWARD PASS INTERFACE
-// =============================================================================
-
 /**
  * Backward pass with FP16 inputs.
- *
- * Inputs are FP16, gradients are always FP32 for numerical stability.
- * No loss scaling is required due to FP32 gradient accumulation.
- *
- * @param grad_output     (prod(shape),) float32 - upstream gradient (always FP32)
- * @param centers         (N, d) float16 - splat centers
- * @param conic           (N, d*(d+1)/2) float16 - packed conic
- * @param amps            (N,) float16 - amplitudes
- * @param sharpness       (N,) float16 - sharpness parameters
- * @param tile_offsets    (num_tiles,) int64 - from forward pass
- * @param tile_counts     (num_tiles,) int32 - from forward pass
- * @param tile_content    (total_pairs,) int32 - from forward pass
- * @param global_splat_ids (num_global,) int32 - from forward pass
- * @param shape           Target volume shape
- * @param truncate        Base truncation radius
- * @param intensity_floor Minimum intensity threshold
- * @param tile_size       Tile size
- * @param batch_size      Splat batch size for shared memory loading (32, 128, or 256)
- *
- * @return Tuple of:
- *   - d_centers: (N, d) float32 - center gradients (always FP32)
- *   - d_conic: (N, d*(d+1)/2) float32 - conic gradients
- *   - d_amps: (N,) float32 - amplitude gradients
- *   - d_sharpness: (N,) float32 - sharpness gradients
+ * Gradients are always FP32 for numerical stability.
  */
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 backward_fp16(
@@ -269,239 +210,6 @@ backward_fp16(
 );
 
 // =============================================================================
-// DISPATCHER FUNCTIONS (by dimension)
-// =============================================================================
-
-// Forward dispatcher - selects optimized kernel based on dimension
-void dispatch_forward(
-    int dim,
-    const torch::Tensor& centers,
-    const torch::Tensor& conic,
-    const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
-    const torch::Tensor& L_row_norms,
-    const std::vector<int64_t>& shape,
-    float truncate,
-    float intensity_floor,
-    int tile_size,
-    int batch_size,
-    torch::Tensor& output,
-    BinningState& state
-);
-
-// Backward dispatcher
-void dispatch_backward(
-    int dim,
-    const torch::Tensor& grad_output,
-    const torch::Tensor& centers,
-    const torch::Tensor& conic,
-    const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
-    const torch::Tensor& tile_offsets,
-    const torch::Tensor& tile_counts,
-    const torch::Tensor& tile_content,
-    const torch::Tensor& global_splat_ids,
-    const std::vector<int64_t>& shape,
-    float truncate,
-    float intensity_floor,
-    int tile_size,
-    int batch_size,
-    torch::Tensor& d_centers,
-    torch::Tensor& d_conic,
-    torch::Tensor& d_amps,
-    torch::Tensor& d_sharpness
-);
-
-// FP16 Forward dispatcher - uses FP16 inputs with FP32 compute
-void dispatch_forward_fp16(
-    int dim,
-    const torch::Tensor& centers,      // float16
-    const torch::Tensor& conic,        // float16
-    const torch::Tensor& amps,         // float16
-    const torch::Tensor& sharpness,    // float16
-    const torch::Tensor& L_row_norms,  // float16
-    const std::vector<int64_t>& shape,
-    float truncate,
-    float intensity_floor,
-    int tile_size,
-    int batch_size,
-    torch::Tensor& output,             // float32
-    BinningState& state
-);
-
-// FP16 Backward dispatcher - uses FP16 inputs, produces FP32 gradients
-void dispatch_backward_fp16(
-    int dim,
-    const torch::Tensor& grad_output, // float32
-    const torch::Tensor& centers,     // float16
-    const torch::Tensor& conic,       // float16
-    const torch::Tensor& amps,        // float16
-    const torch::Tensor& sharpness,   // float16
-    const torch::Tensor& tile_offsets,
-    const torch::Tensor& tile_counts,
-    const torch::Tensor& tile_content,
-    const torch::Tensor& global_splat_ids,
-    const std::vector<int64_t>& shape,
-    float truncate,
-    float intensity_floor,
-    int tile_size,
-    int batch_size,
-    torch::Tensor& d_centers,   // float32
-    torch::Tensor& d_conic,     // float32
-    torch::Tensor& d_amps,      // float32
-    torch::Tensor& d_sharpness  // float32
-);
-
-// =============================================================================
-// KERNEL LAUNCH WRAPPERS (templated by DIM)
-// =============================================================================
-
-// Preprocess: Compute AABBs and tile counts
-template <int DIM>
-void launch_preprocess(
-    const float* centers,
-    const float* amps,
-    const float* sharpness,
-    const float* L_row_norms,
-    int N,
-    const int* shape,
-    const int* tile_dims,
-    int tile_size,
-    float truncate,
-    float intensity_floor,
-    int* tile_counts,
-    bool* global_flags,
-    int* aabb_lo,
-    int* aabb_hi,
-    int64_t num_tiles,
-    int* global_count,
-    cudaStream_t stream
-);
-
-// Binning: Assign splats to tiles using cached AABBs from preprocess
-template <int DIM>
-void launch_bin(
-    const int* aabb_lo,
-    const int* aabb_hi,
-    const bool* global_flags,
-    int N,
-    const int* tile_dims,
-    const int64_t* tile_offsets,
-    int* tile_write_heads,
-    int* tile_content,
-    int64_t num_tiles,
-    cudaStream_t stream
-);
-
-// Forward rasterization: Render splats to pixels
-// OPTIMIZATION: For 2D/3D, uses dim3 grid for better cache locality
-template <int DIM>
-void launch_rasterize_forward(
-    const float* centers,
-    const float* conic,
-    const float* amps,
-    const float* sharpness,
-    int N,
-    const int* shape,
-    const int* tile_dims,
-    int tile_size,
-    float truncate,
-    float intensity_floor,
-    const int64_t* tile_offsets,
-    const int* tile_counts,
-    const int* tile_content,
-    float* output,
-    int64_t num_tiles,
-    const std::vector<int>& host_tile_dims,
-    cudaStream_t stream
-);
-
-// Backward rasterization: Compute gradients
-// OPTIMIZATION: For 2D/3D, uses dim3 grid for better cache locality
-template <int DIM>
-void launch_rasterize_backward(
-    const float* grad_output,
-    const float* centers,
-    const float* conic,
-    const float* amps,
-    const float* sharpness,
-    int N,
-    const int* shape,
-    const int* tile_dims,
-    int tile_size,
-    float truncate,
-    float intensity_floor,
-    const int64_t* tile_offsets,
-    const int* tile_counts,
-    const int* tile_content,
-    float* d_centers,
-    float* d_conic,
-    float* d_amps,
-    float* d_sharpness,
-    int64_t num_tiles,
-    const std::vector<int>& host_tile_dims,
-    cudaStream_t stream
-);
-
-// Global splat forward: Render global splats to all pixels
-template <int DIM>
-void launch_rasterize_global_forward(
-    const float* centers,
-    const float* conic,
-    const float* amps,
-    const float* sharpness,
-    const int* global_splat_ids,
-    int n_global_splats,
-    const int* shape,
-    float truncate,
-    float intensity_floor,
-    float* output,
-    int64_t num_pixels,
-    cudaStream_t stream
-);
-
-// Global splat backward: Compute gradients for global splats
-template <int DIM>
-void launch_rasterize_global_backward(
-    const float* grad_output,
-    const float* centers,
-    const float* conic,
-    const float* amps,
-    const float* sharpness,
-    const int* global_splat_ids,
-    int n_global_splats,
-    const int* shape,
-    float truncate,
-    float intensity_floor,
-    float* d_centers,
-    float* d_conic,
-    float* d_amps,
-    float* d_sharpness,
-    int64_t num_pixels,
-    cudaStream_t stream
-);
-
-// =============================================================================
-// FP16 KERNEL LAUNCH WRAPPERS (Phase 2 - True FP16 kernels)
-// =============================================================================
-//
-// FP16 support is implemented via templated kernels with InputDType parameter.
-// The same launch_* functions work for both FP32 (default) and FP16 (__half).
-//
-// Example usage:
-//   launch_preprocess<3, __half>(...)      // FP16 3D
-//   launch_preprocess<3>(...)               // FP32 3D (default InputDType=float)
-//   launch_rasterize_forward<2, __half>(...) // FP16 2D forward
-//
-// Key characteristics:
-// - FP16 inputs are loaded directly from global memory (2x bandwidth savings)
-// - Conversion to FP32 happens during shared memory load (DTypeTraits::load())
-// - All computation is done in FP32 for numerical stability
-// - Output and gradients are always FP32
-//
-// Explicit instantiations for all DIM × InputDType combinations are in cuda_splatting.cu
-
-// =============================================================================
 // UTILITY FUNCTIONS
 // =============================================================================
 
@@ -519,25 +227,17 @@ std::vector<int> compute_tile_dims(
 int64_t compute_num_tiles(const std::vector<int>& tile_dims);
 
 /**
- * Validate input tensors (FP32 version).
+ * Validate input tensors.
+ *
+ * @param expected_dtype Expected dtype (torch::kFloat32 or torch::kFloat16)
  */
 void validate_inputs(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
     const torch::Tensor& sharpness,
-    const std::vector<int64_t>& shape
-);
-
-/**
- * Validate input tensors (FP16 version).
- */
-void validate_inputs_fp16(
-    const torch::Tensor& centers,
-    const torch::Tensor& conic,
-    const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
-    const std::vector<int64_t>& shape
+    const std::vector<int64_t>& shape,
+    torch::ScalarType expected_dtype = torch::kFloat32
 );
 
 #endif // CUDA_SPLATTING_H
