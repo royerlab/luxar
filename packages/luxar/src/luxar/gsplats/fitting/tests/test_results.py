@@ -828,9 +828,10 @@ class TestPostFitCulling:
         )
 
     def test_culls_below_threshold(self) -> None:
-        """Splats with amplitude < max_abs_error are removed."""
-        # 3 above, 2 below the 0.01 threshold
-        opt = self._make_results([0.5, 0.005, 0.3, 0.001, 0.1])
+        """Splats with amplitude < cull_ratio * max_abs_error are removed."""
+        # Default: cull_ratio=0.1, max_abs_error=0.01 → threshold=0.001
+        # 3 above, 2 below the 0.001 threshold
+        opt = self._make_results([0.5, 0.0005, 0.3, 0.0001, 0.1])
         result = finalize_results(opt, self._make_config(), self._make_preprocessed(5))
 
         assert len(result.amplitudes) == 3
@@ -839,7 +840,7 @@ class TestPostFitCulling:
         assert result.stats["n_splats"] == 3
 
     def test_keeps_all_when_above_threshold(self) -> None:
-        """No culling when all amplitudes are above max_abs_error."""
+        """No culling when all amplitudes are above threshold."""
         opt = self._make_results([0.5, 0.1, 0.3, 0.02, 0.8])
         result = finalize_results(opt, self._make_config(), self._make_preprocessed(5))
 
@@ -848,8 +849,9 @@ class TestPostFitCulling:
         assert result.stats["n_splats_before_culling"] == 5
 
     def test_keeps_splat_at_exact_threshold(self) -> None:
-        """A splat with amplitude == max_abs_error is kept (>= comparison)."""
-        opt = self._make_results([0.01, 0.5])  # 0.01 == max_abs_error
+        """A splat with amplitude == threshold is kept (>= comparison)."""
+        # threshold = 0.1 * 0.01 = 0.001
+        opt = self._make_results([0.001, 0.5])
         result = finalize_results(opt, self._make_config(), self._make_preprocessed(2))
 
         assert len(result.amplitudes) == 2
@@ -857,7 +859,8 @@ class TestPostFitCulling:
 
     def test_culling_preserves_correct_splats(self) -> None:
         """Verify the surviving splats are the right ones (not scrambled)."""
-        amps = [0.5, 0.001, 0.3]
+        # threshold = 0.001; middle splat (0.0005) is below
+        amps = [0.5, 0.0005, 0.3]
         opt = self._make_results(amps)
         ppd = self._make_preprocessed(3)
         ppd.intensity_range = 1.0  # No rescaling
@@ -869,35 +872,62 @@ class TestPostFitCulling:
 
     def test_culling_before_amplitude_rescaling(self) -> None:
         """Culling uses normalized amplitudes, rescaling happens after."""
-        # amplitude 0.005 is below threshold 0.01 in normalized space
-        opt = self._make_results([0.5, 0.005])
+        # threshold = 0.001; amplitude 0.0005 is below in normalized space
+        opt = self._make_results([0.5, 0.0005])
         ppd = self._make_preprocessed(2)
         ppd.intensity_range = 100.0  # Large rescaling factor
 
         result = finalize_results(opt, self._make_config(), ppd)
 
-        # 0.005 < 0.01 → culled, even though rescaled it would be 0.5
+        # 0.0005 < 0.001 → culled, even though rescaled it would be 0.05
         assert len(result.amplitudes) == 1
         # Surviving amplitude should be rescaled: 0.5 * 100.0 = 50.0
         np.testing.assert_allclose(result.amplitudes, [50.0], rtol=1e-5)
 
     def test_culling_respects_custom_max_abs_error(self) -> None:
         """Culling threshold adapts to the user's max_abs_error."""
-        opt = self._make_results([0.5, 0.05, 0.005])
-        # Use a higher threshold: 0.1
+        # cull_ratio=0.1, max_abs_error=0.1 → threshold=0.01
+        opt = self._make_results([0.5, 0.005, 0.0005])
         ppd = self._make_preprocessed(3, max_abs_error=0.1)
 
         result = finalize_results(opt, self._make_config(), ppd)
 
-        # 0.05 and 0.005 are both below 0.1 → culled
+        # 0.005 and 0.0005 are both below 0.01 → culled
         assert len(result.amplitudes) == 1
         assert result.stats["n_culled"] == 2
 
     def test_culling_all_splats(self) -> None:
         """Edge case: all splats below threshold."""
-        opt = self._make_results([0.001, 0.002, 0.003])
+        # threshold = 0.001
+        opt = self._make_results([0.0001, 0.0002, 0.0003])
         result = finalize_results(opt, self._make_config(), self._make_preprocessed(3))
 
         assert len(result.amplitudes) == 0
         assert result.stats["n_culled"] == 3
         assert result.stats["n_splats"] == 0
+
+    def test_cull_ratio_controls_threshold(self) -> None:
+        """Higher cull_ratio culls more aggressively."""
+        opt = self._make_results([0.5, 0.005, 0.0005])
+        config = self._make_config()
+        ppd = self._make_preprocessed(3)
+
+        # cull_ratio=0.1 → threshold=0.001 → culls 0.0005 only
+        config.cull_ratio = 0.1
+        result = finalize_results(opt, config, ppd)
+        assert result.stats["n_culled"] == 1
+
+        # cull_ratio=1.0 → threshold=0.01 → culls 0.005 and 0.0005
+        config.cull_ratio = 1.0
+        result = finalize_results(opt, config, ppd)
+        assert result.stats["n_culled"] == 2
+
+    def test_cull_ratio_zero_disables_culling(self) -> None:
+        """cull_ratio=0 keeps all splats regardless of amplitude."""
+        opt = self._make_results([0.5, 0.0001, 0.00001])
+        config = self._make_config()
+        config.cull_ratio = 0.0
+        result = finalize_results(opt, config, self._make_preprocessed(3))
+
+        assert len(result.amplitudes) == 3
+        assert result.stats["n_culled"] == 0
