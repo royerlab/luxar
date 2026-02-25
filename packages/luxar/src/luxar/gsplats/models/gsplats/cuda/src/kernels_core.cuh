@@ -583,7 +583,8 @@ __global__ void rasterize_forward_kernel(
         // 1. Each pixel belongs to exactly one tile
         // 2. Each thread in this block processes distinct pixels (different local_px_idx)
         // The global splat kernel uses atomicAdd to add to these values.
-        if (local_px_idx < tile_pixels) {
+        // OPTIMIZATION: Skip write for zero-intensity pixels (output is zero-initialized)
+        if (local_px_idx < tile_pixels && intensity_sum != 0.0f) {
             int64_t global_px_idx = voxel_to_linear<DIM>(voxel_coords, shape);
             output[global_px_idx] = intensity_sum;
         }

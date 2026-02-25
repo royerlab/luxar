@@ -244,8 +244,8 @@ __global__ void rasterize_global_backward_kernel(
                         float sum = 0.0f;
                         for (int dj = 0; dj < DIM; dj++) {
                             int ci_idx = (di <= dj) ?
-                                (di * (2 * DIM - di - 1) / 2 + dj - di) :
-                                (dj * (2 * DIM - dj - 1) / 2 + di - dj);
+                                tri_index<DIM>(di, dj) :
+                                tri_index<DIM>(dj, di);
                             sum += c[ci_idx] * d_vec[dj];
                         }
                         local_d_centers[di] = outer_grad * (-2.0f) * sum;

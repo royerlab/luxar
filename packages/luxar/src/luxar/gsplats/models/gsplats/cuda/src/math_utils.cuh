@@ -36,28 +36,21 @@ __host__ __device__ __forceinline__ constexpr int conic_size() {
  *   (0,0)->0, (0,1)->1, (0,2)->2, (1,1)->3, (1,2)->4, (2,2)->5
  */
 template <int DIM>
-__device__ __forceinline__ int tri_index(int row, int col) {
-    // For upper triangle in row-major order:
-    // index = row * DIM - row*(row+1)/2 + col
-    // But since row <= col, we use:
-    // index = row * (2*DIM - row - 1) / 2 + col - row
-    // Simplified: sum of (DIM-i) for i=0..row-1, plus (col-row)
-    int idx = 0;
-    for (int i = 0; i < row; i++) {
-        idx += DIM - i;
-    }
-    return idx + (col - row);
+__device__ __forceinline__ constexpr int tri_index(int row, int col) {
+    // Closed-form index into packed upper triangle (row-major order).
+    // For DIM=3: [c00, c01, c02, c11, c12, c22]
+    //   (0,0)->0, (0,1)->1, (0,2)->2, (1,1)->3, (1,2)->4, (2,2)->5
+    //
+    // Formula: row * DIM - row*(row+1)/2 + col
+    // Equivalent: row * (2*DIM - row - 1) / 2 + col
+    return row * (2 * DIM - row - 1) / 2 + col;
 }
 
 /**
  * Alternative: Compute tri_index for any dimension at runtime.
  */
 __device__ __forceinline__ int tri_index_runtime(int row, int col, int dim) {
-    int idx = 0;
-    for (int i = 0; i < row; i++) {
-        idx += dim - i;
-    }
-    return idx + (col - row);
+    return row * (2 * dim - row - 1) / 2 + col;
 }
 
 // =============================================================================
