@@ -1,14 +1,20 @@
 # config.py
 """Configuration for dynamic Gaussian splat operations."""
 
+from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass
 class DynamicOpsConfig:
     """
     Configuration for fixed-pool splat relocation operations.
 
     This class contains all parameters for the splat relocation algorithm:
     1. Residual Peak Analysis: Find strongest error locations
-    2. Weak Splat Identification: Find splats with low importance (amplitude × volume)
+    2. Weak Splat Identification: Find splats with low importance (amplitude x volume)
     3. Relocation: Move weak splats to high-residual peaks
 
     Key features:
@@ -18,57 +24,56 @@ class DynamicOpsConfig:
     - Convergence-based guards prevent unnecessary operations
     """
 
-    def __init__(self) -> None:
-        # Scheduling
-        self.step_every: int = 50  # Run operations every N iterations
+    # Scheduling
+    step_every: int = 50  # Run operations every N iterations
 
-        # Step 1: Residual Peak Analysis
-        self.k_max_residuals: int = 20  # Max peaks to find per step
-        self.nms_radius_vox: float = 2.0  # Minimum distance between detected peaks
+    # Step 1: Residual Peak Analysis
+    k_max_residuals: int = 20  # Max peaks to find per step
+    nms_radius_vox: float = 2.0  # Minimum distance between detected peaks
 
-        # Tile-based peak finding for spatial fairness (enabled by default)
-        # In tiled mode, k_per_tile is auto-calculated as k_max_residuals / num_tiles
-        # If k_per_tile >= 1: deterministic (keep floor(k_per_tile) per tile)
-        # If k_per_tile < 1: probabilistic (keep each peak with probability k_per_tile)
-        self.enable_tiled_seeding: bool = True  # Use tiled seeding for spatial fairness
-        self.num_tiles_per_dim: int | None = (
-            None  # Auto: 16 for 2D, 6 for 3D, 4 for 4D, 2 for 5D+
-        )
+    # Tile-based peak finding for spatial fairness (enabled by default)
+    # In tiled mode, k_per_tile is auto-calculated as k_max_residuals / num_tiles
+    # If k_per_tile >= 1: deterministic (keep floor(k_per_tile) per tile)
+    # If k_per_tile < 1: probabilistic (keep each peak with probability k_per_tile)
+    enable_tiled_seeding: bool = True  # Use tiled seeding for spatial fairness
+    num_tiles_per_dim: Optional[int] = (
+        None  # Auto: 16 for 2D, 6 for 3D, 4 for 4D, 2 for 5D+
+    )
 
-        # Step 2: Weak Splat Identification
-        self.relocation_percentile: float = (
-            1.0  # Percentage of least important splats eligible for relocation
-        )
-        self.max_relocations_per_step: int | None = (
-            32  # Maximum splats to relocate per step (None = no limit, relocate all matches)
-        )
+    # Step 2: Weak Splat Identification
+    relocation_percentile: float = (
+        1.0  # Percentage of least important splats eligible for relocation
+    )
+    max_relocations_per_step: Optional[int] = (
+        32  # Maximum splats to relocate per step (None = no limit, relocate all matches)
+    )
 
-        # Step 3: Relocation Parameters
-        self.init_sigma_vox: float = (
-            0.5  # Initial sigma for relocated splats (isotropic, single-voxel scale)
-        )
-        self.min_contribution_threshold: float = (
-            0.01  # Minimum influence to consider a peak "covered" by existing splat
-        )
-        self.enable_coverage_check: bool = (
-            False  # If True, skip peaks already covered by non-weak splats
-        )
-        # Default False: Relocate to ALL high-residual peaks regardless of coverage
-        # Rationale: If a peak has high residual, existing coverage is clearly insufficient
-        # The issue: "has influence" ≠ "error is resolved"
-        #
-        # Set to True for conservative behavior (original): only relocate to uncovered peaks
-        # This may leave persistent high-error regions unaddressed
+    # Step 3: Relocation Parameters
+    init_sigma_vox: float = (
+        0.5  # Initial sigma for relocated splats (isotropic, single-voxel scale)
+    )
+    min_contribution_threshold: float = (
+        0.01  # Minimum influence to consider a peak "covered" by existing splat
+    )
+    enable_coverage_check: bool = (
+        False  # If True, skip peaks already covered by non-weak splats
+    )
+    # Default False: Relocate to ALL high-residual peaks regardless of coverage
+    # Rationale: If a peak has high residual, existing coverage is clearly insufficient
+    # The issue: "has influence" != "error is resolved"
+    #
+    # Set to True for conservative behavior (original): only relocate to uncovered peaks
+    # This may leave persistent high-error regions unaddressed
 
-        # Cooldown mechanism (prevents immediate re-relocation)
-        self.relocation_cooldown_steps: int = (
-            3  # Number of dynamic ops steps to wait before allowing re-relocation
-        )
-        # After a splat is relocated, it cannot be relocated again for N dynamic ops steps.
-        # This ensures diverse splat coverage instead of repeatedly relocating the same splats.
-        # Increase for more conservative relocation, decrease for more aggressive adaptation.
+    # Cooldown mechanism (prevents immediate re-relocation)
+    relocation_cooldown_steps: int = (
+        3  # Number of dynamic ops steps to wait before allowing re-relocation
+    )
+    # After a splat is relocated, it cannot be relocated again for N dynamic ops steps.
+    # This ensures diverse splat coverage instead of repeatedly relocating the same splats.
+    # Increase for more conservative relocation, decrease for more aggressive adaptation.
 
-        # Safety parameters
-        self.min_splats_to_keep: int = (
-            10  # Minimum splats - never relocate below this count (backwards compat)
-        )
+    # Safety parameters
+    min_splats_to_keep: int = (
+        10  # Minimum splats - never relocate below this count (backwards compat)
+    )

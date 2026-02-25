@@ -449,7 +449,8 @@ def sample_amplitudes_gpu(
     )
 
     # Extract results: (1, 1, N, 1, ...) → (N,)
-    return sampled.squeeze()
+    # Use reshape(-1) instead of squeeze() to handle N=1 correctly
+    return sampled.reshape(-1)
 
 
 def estimate_gpu_memory_needed(V: np.ndarray, operation: str = "sobel") -> int:
