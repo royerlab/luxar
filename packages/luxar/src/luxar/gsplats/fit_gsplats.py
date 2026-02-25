@@ -576,22 +576,23 @@ def fit_gaussian_splats(
 
         display_compression_analysis(V, result)
 
-        # Display sharpness statistics
-        with asection("Sharpness Statistics"):
-            aprint(
-                f"Range: [{result.stats['sharpness_min']:.2f}, {result.stats['sharpness_max']:.2f}]  "
-                f"Mean: {result.stats['sharpness_mean']:.2f} ± {result.stats['sharpness_std']:.2f}  "
-                f"Median: {result.stats['sharpness_median']:.2f}"
-            )
-            # Provide interpretation
-            if result.stats["sharpness_mean"] < 1.5:
-                aprint("→ Soft falloff (s < 2): Heavy-tailed Gaussians")
-            elif result.stats["sharpness_mean"] < 2.5:
-                aprint("→ Standard Gaussians (s ≈ 2): Classic Gaussian profiles")
-            elif result.stats["sharpness_mean"] < 4.0:
-                aprint("→ Sharp edges (2 < s < 4): Compact splats with faster decay")
-            else:
-                aprint("→ Very sharp (s ≥ 4): Near box-like splats with abrupt cutoff")
+        # Display sharpness statistics (skip if all splats were culled)
+        if len(result.amplitudes) > 0:
+            with asection("Sharpness Statistics"):
+                aprint(
+                    f"Range: [{result.stats['sharpness_min']:.2f}, {result.stats['sharpness_max']:.2f}]  "
+                    f"Mean: {result.stats['sharpness_mean']:.2f} ± {result.stats['sharpness_std']:.2f}  "
+                    f"Median: {result.stats['sharpness_median']:.2f}"
+                )
+                # Provide interpretation
+                if result.stats["sharpness_mean"] < 1.5:
+                    aprint("→ Soft falloff (s < 2): Heavy-tailed Gaussians")
+                elif result.stats["sharpness_mean"] < 2.5:
+                    aprint("→ Standard Gaussians (s ≈ 2): Classic Gaussian profiles")
+                elif result.stats["sharpness_mean"] < 4.0:
+                    aprint("→ Sharp edges (2 < s < 4): Compact splats with faster decay")
+                else:
+                    aprint("→ Very sharp (s ≥ 4): Near box-like splats with abrupt cutoff")
 
     # Show napari movie OUTSIDE the fitting section (so it doesn't affect timing)
     if result.stats.get("movie_frames") is not None:

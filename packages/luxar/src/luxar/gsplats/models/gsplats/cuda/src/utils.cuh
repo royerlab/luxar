@@ -1,17 +1,14 @@
 /**
- * CUDA Device Utilities for Gaussian Splatting
- *
- * This header contains device functions used by the splatting kernels:
- * - AABB computation for spatial binning
- * - Mahalanobis distance calculation
- * - Triangular matrix indexing
- * - Warp-level reduction operations
- * - Generalized Gaussian intensity computation
- *
- * All functions are templated on DIM for compile-time optimization of 2D/3D cases.
+ * CUDA Device Utilities for Gaussian Splatting - Umbrella Header
  *
  * This is the main header that includes all sub-headers. Include this file
  * to get access to all utility functions.
+ *
+ * Sub-headers:
+ * - dtype_traits.cuh: FP16 support and vectorized load helpers (DTypeTraits)
+ * - math_utils.cuh: Triangular matrix indexing, Mahalanobis distance, Gaussian intensity
+ * - tile_utils.cuh: AABB computation, tile indexing, grid optimization
+ * - reduction_utils.cuh: Warp-level reduction, gradient helpers, backward pass implementations
  */
 
 #ifndef CUDA_SPLATTING_UTILS_CUH
