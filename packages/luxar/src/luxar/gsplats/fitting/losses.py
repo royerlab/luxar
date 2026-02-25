@@ -98,7 +98,8 @@ def _compute_poisson_loss(
     eps = 1e-8
     Vc = torch.clamp(target, min=0.0)
     Pc = torch.clamp(pred, min=eps)
-    dev = 2.0 * torch.sum(Pc - Vc + Vc * torch.log(torch.clamp(Vc / Pc, min=eps)))
+    # Use xlogy to safely handle Vc=0 (0 * log(0) = 0, with correct gradients)
+    dev = 2.0 * torch.sum(Pc - Vc + torch.xlogy(Vc, torch.clamp(Vc / Pc, min=eps)))
     data = dev / target.numel()
 
     # Apply asymmetric penalty if specified
@@ -108,7 +109,7 @@ def _compute_poisson_loss(
         # This penalizes regions where we predict more intensity than target
         over_prediction_dev = 2.0 * torch.sum(
             over_prediction_mask
-            * (Pc - Vc + Vc * torch.log(torch.clamp(Vc / Pc, min=eps)))
+            * (Pc - Vc + torch.xlogy(Vc, torch.clamp(Vc / Pc, min=eps)))
         )
         # Add (F-1) times the over-prediction loss to get total F times penalty
         data = data + (asymmetric_penalty - 1.0) * over_prediction_dev / target.numel()

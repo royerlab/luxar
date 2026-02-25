@@ -297,7 +297,7 @@ def generate_seeds(
         return results[0]
     else:
         # Combine GSplatData from multiple methods
-        return _combine_gsplatdata(results, min_distance, device=device)
+        return _combine_gsplatdata(results, min_distance, device=device, ndim=V.ndim)
 
 
 def _empty_gsplatdata(ndim: int) -> GSplatData:
@@ -397,7 +397,7 @@ def _auto_combine(
     else:
         total_before = sum(len(r.centers) for r in results)
         with asection(f"Deduplication ({total_before} → target)"):
-            result = _combine_gsplatdata(results, min_distance, device=device)
+            result = _combine_gsplatdata(results, min_distance, device=device, ndim=ndim)
             if verbose:
                 aprint(f"✓ Final: {len(result.centers)} seeds after deduplication")
             return result
@@ -407,6 +407,7 @@ def _combine_gsplatdata(
     results: List[GSplatData],
     min_distance: float,
     device: Optional[str] = None,
+    ndim: int = 2,
 ) -> GSplatData:
     """
     Combine GSplatData from multiple seeding methods with deduplication.
@@ -417,7 +418,7 @@ def _combine_gsplatdata(
     results = [r for r in results if len(r.centers) > 0]
 
     if len(results) == 0:
-        return _empty_gsplatdata(2)  # Default to 2D
+        return _empty_gsplatdata(ndim)
 
     # Concatenate all arrays
     all_centers = np.vstack([r.centers for r in results])
