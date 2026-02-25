@@ -36,7 +36,23 @@ try:
 
     CUDA_BACKEND_AVAILABLE = True
 except ImportError:
-    pass
+    if CUDA_AVAILABLE:
+        import warnings
+
+        from arbol import aprint
+
+        aprint(
+            "WARNING: CUDA GPU detected but splatting backend is not compiled. "
+            "Custom CUDA kernels unavailable — GPU fitting will use slower PyTorch fallback. "
+            "Build with: make build-cuda"
+        )
+        warnings.warn(
+            "CUDA splatting backend not compiled. Custom CUDA kernels unavailable. "
+            "GPU fitting will use slower PyTorch fallback. "
+            "Build with: make build-cuda",
+            UserWarning,
+            stacklevel=2,
+        )
 
 # Import public API
 from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (  # noqa: E402

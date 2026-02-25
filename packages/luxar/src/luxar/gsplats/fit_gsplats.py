@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Optional, Sequence
 
 import numpy as np
@@ -72,6 +73,24 @@ class GaussianSplatFitter:
                 self.device = torch.device("mps")
             else:
                 self.device = torch.device("cpu")
+
+        if self.device.type == "cpu":
+            from arbol import aprint
+
+            aprint(
+                "WARNING: Gaussian splat fitting will run on CPU — "
+                "this is 10-50x SLOWER than GPU! "
+                "For serious work, use device='cuda' (NVIDIA) or device='mps' (Apple Silicon). "
+                "To install CUDA support: make setup-cuda && make build-cuda"
+            )
+            warnings.warn(
+                "Gaussian splat fitting will run on CPU. "
+                "This is 10-50x SLOWER than GPU. "
+                "For serious work, use device='cuda' (NVIDIA) or device='mps' (Apple Silicon). "
+                "To install CUDA support: make setup-cuda && make build-cuda",
+                UserWarning,
+                stacklevel=2,
+            )
 
         # Dynamic operations configuration
         self.enable_dynamic_ops = enable_dynamic_ops
