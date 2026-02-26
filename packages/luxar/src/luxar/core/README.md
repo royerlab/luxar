@@ -94,18 +94,46 @@ with LuxarZarrCompiler('output.zarr') as compiler:
     scene.add_gsplats('my_splats', centers, amplitudes, cholesky)
 ```
 
-**Key Methods:**
+**Key Methods** (inherited from Group):
 - `add_group(name, **attrs)` - Create child group node
-- `add_points(name, positions, ...)` - Add points with attributes (radii defaults to 0.5 if not provided)
-- `add_lines(name, vertices, widths, ...)` - Add lines/curves
-- `add_gsplats(name, centers, amplitudes, ...)` - Add Gaussian splats from arrays
-- `add_gsplats_from_data(name, result, ...)` - Add Gaussian splats from GSplatData object
-- `add_gsplats_from_file(name, path, ...)` - Add Gaussian splats by loading from .gsplats.zarr file
+- `add_points(name, positions, ..., dim_order=..., fill=...)` - Add points
+- `add_lines(name, vertices, widths, ..., dim_order=..., fill=...)` - Add lines
+- `add_gsplats(name, centers, amplitudes, ..., dim_order=..., fill=..., fill_sigma=...)` - Add Gaussian splats
+- `add_gsplats_from_data(name, result, ..., dim_order=..., fill=..., fill_sigma=...)` - Add from GSplatData
+- `add_gsplats_from_file(name, path, ...)` - Add from .gsplats.zarr file
 - `dimensions` (property) - Get/set scene-level dimensions
 
-### 2. Node (`node.py`)
+### 2. Group (`group.py`)
 
-Base class for all scene graph nodes. Represents groups in the hierarchy.
+Container node with data-adding methods. Groups walk up the parent chain to
+find the root Scene for dimension validation and writer access. Scene inherits
+from Group, so all these methods work on both.
+
+**Key Features:**
+- `add_points()`, `add_lines()`, `add_gsplats()` add data children directly
+- `dim_order` parameter maps lower-dimensional data columns to scene dimensions by name
+- `fill` parameter provides fixed values for unmapped dimensions
+- `fill_sigma` parameter (gsplats only) controls Cholesky embedding for unmapped dims
+- Automatically infers `extend_to_all` for unmapped dimensions
+
+**Usage Example:**
+```python
+# Groups can add data directly (preferred over parent= pattern)
+group = scene.add_group('my_group',
+                        opacity=0.8,
+                        blending_mode='additive')
+group.add_points('pts', positions)  # written under my_group/pts
+
+# dim_order: map 3D data into a 4D scene
+scene.add_gsplats_from_data('splats', result_3d,
+    dim_order=['Z', 'Y', 'X'],       # data cols → scene dims
+    fill={'Time': 0.0},               # fixed value for unmapped dim
+    fill_sigma={'Time': 0.5})          # Cholesky sigma for unmapped dim
+```
+
+### 3. Node (`node.py`)
+
+Base class for all scene graph nodes.
 
 **Key Features:**
 - Hierarchical parent-child relationships
@@ -115,7 +143,7 @@ Base class for all scene graph nodes. Represents groups in the hierarchy.
 
 **Usage Example:**
 ```python
-# Nodes are typically created via Scene.add_group()
+# Groups created via add_group() have full data-adding methods
 group = scene.add_group('my_group',
                         opacity=0.8,
                         gamma=1.2,

@@ -249,6 +249,8 @@ from luxar.gsplats.utils import (
     unpack_tril,
     calculate_gradient_dilution_factor,
     validate_cholesky_shape,
+    permute_cholesky_packed,    # Reorder dimensions of packed Cholesky factors
+    embed_cholesky_packed,      # Embed lower-dim Cholesky into higher-dim space
 )
 ```
 

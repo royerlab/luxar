@@ -127,13 +127,16 @@ This discriminator enables the viewer to determine how to render each node.
 
 ### 3. Group (Container Node)
 
-**Implementation Note**: Groups are implemented as `Node` instances with `type="group"` attribute, not as a separate `Group` class. The term "Group" in this documentation refers to this logical concept rather than a distinct Python class.
+**Implementation**: `Group` is a Python class (`core/group.py`) that extends `Node` with
+data-adding methods (`add_points`, `add_lines`, `add_gsplats`, etc.). `Scene` extends `Group`.
 
 **Specification**:
 - Container node for organizing data nodes hierarchically
 - Does NOT hold array data (only metadata and children)
 - Can have transforms and rendering attributes
-- Created via `Scene.add_group()` or `Node.add_group()` (both return `Node` instances)
+- Created via `Scene.add_group()` or `Node.add_group()` (both return `Group` instances)
+- `Group.add_points()`, `add_lines()`, `add_gsplats()` add data children directly
+- `dim_order` parameter enables mapping lower-dimensional data into higher-dimensional scenes
 
 **Key Properties**:
 - `name`: Group identifier

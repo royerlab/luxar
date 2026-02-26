@@ -206,7 +206,7 @@ class TestGSplatsNode:
             assert gsplats.n_elements == 3  # n_elements == n_splats
             assert gsplats.ndim == 2
             assert gsplats.has_colors is False
-            assert gsplats.has_sharpness is False
+            assert gsplats.has_sharpness is True  # Default sharpness=2.0 always written
             assert gsplats.amplitude_range["min"] == 1.0
             assert gsplats.amplitude_range["max"] == 2.0
 

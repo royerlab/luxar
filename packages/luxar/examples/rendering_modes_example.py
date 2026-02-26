@@ -7,6 +7,12 @@ This educational example demonstrates:
 - Gamma correction for brightness control
 - Parent-child inheritance of rendering properties
 - Creating educational visualizations comparing rendering techniques
+
+Educational value:
+- Learn how blending modes affect visual appearance
+- Understand opacity and gamma correction parameters
+- See side-by-side comparison of rendering property combinations
+- Know when to use additive vs normal blending
 """
 
 import numpy as np

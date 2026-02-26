@@ -78,7 +78,7 @@ def create_rainbow_colors(n_points: int) -> np.ndarray:
     g = np.sin(2 * np.pi * t + 2 * np.pi / 3) * 0.5 + 0.5
     b = np.sin(2 * np.pi * t + 4 * np.pi / 3) * 0.5 + 0.5
 
-    colors = np.column_stack([r, g, b])
+    colors = np.column_stack([r, g, b]).astype(np.float32)
 
     return colors
 
