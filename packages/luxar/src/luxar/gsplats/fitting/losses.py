@@ -43,6 +43,7 @@ def create_loss_function(
     l1_amp = preprocessed_data.l1_amp
     l1_diag = preprocessed_data.l1_diag
     l1_sharpness = preprocessed_data.l1_sharpness
+    boundary_penalty = config.boundary_penalty
 
     def loss_fn(pred: torch.Tensor) -> torch.Tensor:
         """
@@ -85,6 +86,34 @@ def create_loss_function(
             data = data + l1_sharpness * torch.mean(
                 torch.abs(model.sharpness_offsets_raw)
             )
+
+        # Add boundary containment penalty if specified
+        # Penalizes splats whose effective support extends beyond the volume bounds
+        if boundary_penalty is not None and boundary_penalty > 0:
+            centers, L, _, sharpness_vals = model.current_params()
+            # Diagonal of covariance: Sigma_ii = sum_j(L[i,j]^2)
+            sigma_diag = torch.sum(L * L, dim=2)  # (N, d)
+            # Sharpness-adjusted truncation (matches rendering_core.py AABB logic)
+            # For generalized Gaussian exp(-0.5 * ||y||^s), effective radius scales
+            # as truncate^(2/s) where s is sharpness (s=2 → truncate^1 = truncate)
+            effective_truncate = model.truncate ** (
+                2.0 / sharpness_vals
+            )  # (N,)
+            # Effective radius per dimension per splat
+            radii = effective_truncate[:, None] * torch.sqrt(
+                torch.clamp(sigma_diag, min=1e-8)
+            )  # (N, d)
+            shape_t = torch.tensor(
+                model.shape, dtype=torch.float32, device=centers.device
+            )
+            # Overflow past lower bound (center too close to 0)
+            overflow_lo = torch.relu(radii - centers)  # (N, d)
+            # Overflow past upper bound (center too close to shape-1)
+            overflow_hi = torch.relu(
+                radii - (shape_t - 1.0 - centers)
+            )  # (N, d)
+            boundary_loss = torch.mean(overflow_lo**2 + overflow_hi**2)
+            data = data + boundary_penalty * boundary_loss
 
         return data
 

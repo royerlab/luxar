@@ -1,0 +1,471 @@
+#!/usr/bin/env python3
+"""GSplats Demo: 3D Tribolium castaneum Embryo (Zenodo / Cell Tracking Challenge)
+
+Visualises a large, isotropic 3D light-sheet microscopy volume of a developing
+beetle embryo using Gaussian splatting.
+
+================================================================================
+REAL MICROSCOPY — LIGHT-SHEET IMAGING OF A TRIBOLIUM EMBRYO
+================================================================================
+
+The dataset is a single time-point from a long-term light-sheet fluorescence
+microscopy recording of *Tribolium castaneum* (red flour beetle) embryonic
+development.  The volume is near-isotropic at 0.381 µm per voxel and covers
+965 × 1871 × 991 voxels — roughly 368 × 713 × 378 µm.
+
+DATA SOURCE & CITATIONS:
+========================
+
+Dataset:
+--------
+Source:  Cell Tracking Challenge (celltrackingchallenge.net)
+Zenodo:  https://zenodo.org/records/5270323
+Record:  GIANI Paper — Supplemental File 2
+Size:    2.6 GB download  /  3.3 GB uncompressed
+Volume:  965 × 1871 × 991 voxels, isotropic 0.381 µm
+
+Imaging:
+--------
+Microscope:  Zeiss LightSheet Z.1
+Organism:    Tribolium castaneum (red flour beetle)
+Label:       Fluorescent reporter (nuclear / histone)
+Resolution:  0.381 × 0.381 × 0.381 µm (isotropic)
+
+How to Cite:
+------------
+Yin, Z. et al. (2022).  GIANI — open-source software for automated analysis
+of 3D microscopy images.  *Journal of Cell Science*, 135(5), jcs259022.
+DOI: 10.1242/jcs.259022
+
+Cell Tracking Challenge — Maska, M. et al. (2023).  The Cell Tracking
+Challenge: 10 years of objective benchmarking.  *Nature Methods*, 20, 1010–1020.
+
+WORKFLOW:
+=========
+
+1. **Download** ZIP from Zenodo (2.6 GB, with resume support)
+2. **Extract** multi-page TIFF stack from archive
+3. **Load** as 3D volume, normalise to [0, 1], optionally downsample
+4. **Fit** Gaussian splats with GPU acceleration + caching
+5. **Create 3D scene** in voxel coordinates
+6. **Visualise** — rotate, zoom, explore the embryo
+
+USAGE:
+======
+    python demo_gsplats_3d_tribolium_embryo.py [--no-cache] [--no-serve] [--serve-only] [--downsample=N]
+
+Options:
+    --no-cache:      Force re-fitting (ignore cached GSplats)
+    --no-serve:      Generate scene without launching viewer
+    --serve-only:    Just serve a previously generated scene
+    --downsample=N:  Downsample factor for fitting (default: 2)
+
+Output:
+    - Scene saved to:  datasets/demos/gsplats_3d_tribolium_embryo.zarr
+    - Automatically opens in browser
+"""
+
+import sys
+import zipfile
+from pathlib import Path
+
+import numpy as np
+from arbol import Arbol, aprint, asection
+
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.encoding import EncodingMode
+from luxar.gsplats.gsplat_data import GSplatData
+from luxar.utils.demos import launch_viewer
+from luxar.utils.paths import get_demos_output_dir
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+# Data source
+ZENODO_URL = (
+    "https://zenodo.org/api/records/5270323/files/"
+    "Supplemental_File_2.zip/content"
+)
+
+# Volume specs
+VOXEL_SIZE_UM = 0.381  # Isotropic voxel size in micrometres
+
+# Fitting parameters
+N_SEEDS = 30_000
+N_ITERS = 8000
+
+# Cache location
+CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_tribolium"
+
+# Parse command-line flags
+NO_CACHE = "--no-cache" in sys.argv
+NO_SERVE = "--no-serve" in sys.argv
+SERVE_ONLY = "--serve-only" in sys.argv
+
+DOWNSAMPLE_FACTOR = 2
+for _arg in sys.argv:
+    if _arg.startswith("--downsample="):
+        DOWNSAMPLE_FACTOR = int(_arg.split("=")[1])
+
+# Arbol logging depth
+Arbol.max_depth = 5
+
+# Auto-detected on first fit
+DEVICE = None
+
+
+# =============================================================================
+# Data Loading
+# =============================================================================
+
+
+def download_tribolium_data() -> Path:
+    """Download the Tribolium embryo ZIP from Zenodo (2.6 GB).
+
+    Returns:
+        Path to downloaded ZIP file.
+    """
+    zip_path = CACHE_DIR / "Supplemental_File_2.zip"
+
+    if zip_path.exists():
+        size_gb = zip_path.stat().st_size / (1024**3)
+        aprint(f"Using cached download ({size_gb:.2f} GB)")
+        return zip_path
+
+    with asection("Downloading Tribolium embryo dataset from Zenodo"):
+        aprint("Source: https://zenodo.org/records/5270323")
+        aprint("Size:   ~2.6 GB")
+        aprint("")
+
+        from luxar.utils.download import robust_download
+
+        robust_download(ZENODO_URL, zip_path, max_retries=5, timeout=600)
+
+    return zip_path
+
+
+def extract_and_load_volume(zip_path: Path) -> np.ndarray:
+    """Extract TIFF from ZIP and load as 3D volume.
+
+    Args:
+        zip_path: Path to downloaded ZIP archive.
+
+    Returns:
+        3D float32 volume normalised to [0, 1], shape (Z, Y, X).
+    """
+    try:
+        import tifffile
+    except ImportError:
+        raise ImportError(
+            "tifffile is required for this demo.\n"
+            "Install with: pip install tifffile"
+        )
+
+    extract_dir = CACHE_DIR / "extracted"
+
+    with asection("Extracting TIFF from ZIP"):
+        if not extract_dir.exists():
+            extract_dir.mkdir(parents=True, exist_ok=True)
+            aprint(f"Extracting to {extract_dir}")
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                # Only extract TIFF files
+                tiff_members = [
+                    m for m in zf.namelist()
+                    if m.lower().endswith((".tif", ".tiff"))
+                ]
+                if not tiff_members:
+                    # Extract everything if no TIFFs found at top level
+                    zf.extractall(extract_dir)
+                else:
+                    for member in tiff_members:
+                        zf.extract(member, extract_dir)
+                    aprint(f"  Extracted {len(tiff_members)} TIFF file(s)")
+        else:
+            aprint("Using cached extraction")
+
+    with asection("Loading 3D volume"):
+        # Find all TIFF files recursively
+        tiff_files = sorted(extract_dir.rglob("*.tif")) + sorted(
+            extract_dir.rglob("*.tiff")
+        )
+
+        if not tiff_files:
+            raise FileNotFoundError(
+                f"No TIFF files found in {extract_dir}. "
+                "Check the ZIP contents."
+            )
+
+        aprint(f"Found {len(tiff_files)} TIFF file(s)")
+
+        if len(tiff_files) == 1:
+            # Single multi-page TIFF
+            volume = tifffile.imread(str(tiff_files[0]))
+        else:
+            # Multiple TIFF slices — stack as Z slices
+            volume = tifffile.imread([str(f) for f in tiff_files])
+
+        aprint(f"Raw volume: shape={volume.shape}, dtype={volume.dtype}")
+
+        # Handle multi-channel: if 4D with small second axis, pick channel 0
+        if volume.ndim == 4 and volume.shape[1] <= 4:
+            aprint(f"  Multi-channel detected ({volume.shape[1]} ch), using channel 0")
+            volume = volume[:, 0, :, :]
+        elif volume.ndim == 4 and volume.shape[0] <= 4:
+            aprint(f"  Multi-channel detected ({volume.shape[0]} ch), using channel 0")
+            volume = volume[0, :, :, :]
+
+        if volume.ndim != 3:
+            raise ValueError(
+                f"Expected 3D volume, got {volume.ndim}D with shape {volume.shape}"
+            )
+
+        # Normalise to float32 [0, 1]
+        volume = volume.astype(np.float32)
+        vmin, vmax = volume.min(), volume.max()
+        volume = (volume - vmin) / (vmax - vmin + 1e-8)
+        aprint(
+            f"Normalised: shape={volume.shape}, "
+            f"range=[{volume.min():.3f}, {volume.max():.3f}], "
+            f"size={volume.nbytes / (1024**3):.1f} GB"
+        )
+
+    return volume
+
+
+def load_tribolium_volume() -> np.ndarray:
+    """Full pipeline: download, extract, load, downsample.
+
+    Note: The full volume is ~7 GB as float32 (965 x 1871 x 991).
+    Downsampling reduces this to ~0.9 GB at 2x.  Ensure sufficient RAM.
+
+    Returns:
+        3D float32 volume ready for GSplat fitting.
+    """
+    zip_path = download_tribolium_data()
+    volume = extract_and_load_volume(zip_path)
+
+    if DOWNSAMPLE_FACTOR > 1:
+        with asection(f"Downsampling by {DOWNSAMPLE_FACTOR}x"):
+            from scipy.ndimage import zoom
+
+            factor = 1.0 / DOWNSAMPLE_FACTOR
+            original_shape = volume.shape
+            volume = zoom(volume, factor, order=1)
+            aprint(f"  {original_shape} -> {volume.shape}")
+
+    return volume
+
+
+# =============================================================================
+# GSplats Fitting
+# =============================================================================
+
+
+def fit_tribolium(volume: np.ndarray) -> GSplatData:
+    """Fit Gaussian splats to the Tribolium volume with caching.
+
+    Args:
+        volume: 3D float32 volume (Z, Y, X), normalised to [0, 1].
+
+    Returns:
+        Fitted GSplatData.
+    """
+    cache_file = CACHE_DIR / "tribolium_gsplats.gsplats.zarr.zip"
+
+    # Check cache
+    if cache_file.exists() and not NO_CACHE:
+        with asection("Loading cached GSplats"):
+            try:
+                result = GSplatData.load(cache_file, include_stats=False)
+                aprint(f"Loaded {len(result.amplitudes):,} cached splats")
+                return result
+            except Exception as e:
+                aprint(f"Cache load failed: {e}, re-fitting...")
+
+    # Auto-detect device
+    global DEVICE
+    if DEVICE is None:
+        import torch
+
+        if torch.cuda.is_available():
+            DEVICE = "cuda"
+            aprint("Using CUDA device")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            DEVICE = "mps"
+            aprint("Using MPS device (Metal acceleration)")
+        else:
+            DEVICE = "cpu"
+            aprint("Using CPU device")
+
+    from luxar.gsplats import fit_gaussian_splats
+
+    with asection(f"Fitting GSplats ({N_ITERS} iters, {N_SEEDS} seeds)"):
+        aprint(f"Volume shape: {volume.shape}")
+        aprint(f"Device: {DEVICE}")
+
+        result = fit_gaussian_splats(
+            volume,
+            seeds=N_SEEDS,
+            n_iters=N_ITERS,
+            device=DEVICE,
+            verbose=True,
+            enable_dynamic_ops=True,
+        )
+
+        n_splats = len(result.amplitudes)
+        aprint(f"Fitted {n_splats:,} splats")
+
+        # Cache
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        aprint(f"Caching to {cache_file.name}")
+        result.save(
+            cache_file,
+            encoding_mode=EncodingMode.MEMORY,
+            include_fitting_info=True,
+            compress="zip",
+        )
+
+    return result
+
+
+# =============================================================================
+# Scene Creation
+# =============================================================================
+
+
+def create_luxar_scene(
+    gsplats_data: GSplatData, output_path: Path = None,
+) -> Path:
+    """Create 3D Luxar scene from fitted GSplats.
+
+    Args:
+        gsplats_data: Fitted Gaussian splats.
+        output_path: Output .zarr path (default: demos output dir).
+
+    Returns:
+        Path to saved scene.
+    """
+    if output_path is None:
+        output_path = get_demos_output_dir() / "gsplats_3d_tribolium_embryo.zarr"
+
+    with asection("Creating 3D Luxar Scene"):
+        aprint(f"Output: {output_path.name}")
+
+        # Dimensions in voxel coordinates (fitting produces voxel-space centers)
+        dims = Dimensions([
+            Dimension("x", unit="px", display=True),
+            Dimension("y", unit="px", display=True),
+            Dimension("z", unit="px", display=True),
+        ])
+
+        with LuxarZarrCompiler(
+            output_path, encoding_mode=EncodingMode.PRECISION
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.attrs["title"] = (
+                "GSplats: Tribolium castaneum Embryo (Light-Sheet)"
+            )
+            scene.attrs["description"] = """
+3D Gaussian Splatting — Tribolium castaneum Embryo
+====================================================
+
+A near-isotropic 3D light-sheet fluorescence microscopy volume of a
+developing red flour beetle embryo, represented as Gaussian splats.
+
+Data Source:
+  - Cell Tracking Challenge / Zenodo record 5270323
+  - Zeiss LightSheet Z.1
+  - Volume: 965 x 1871 x 991 voxels at 0.381 um isotropic
+
+How to Cite:
+  Yin et al. (2022). GIANI. J. Cell Sci. 135(5), jcs259022.
+  Maska et al. (2023). Cell Tracking Challenge. Nat. Methods 20, 1010-1020.
+
+Navigation:
+  - Mouse drag to rotate, scroll to zoom, right-click drag to pan
+            """
+
+            with asection("Adding GSplats"):
+                # Centre at centroid and scale intensity
+                gsplats_data = gsplats_data.translate(
+                    -gsplats_data.centers.T @ gsplats_data.amplitudes
+                    / gsplats_data.amplitudes.sum()
+                )
+                gsplats_data = gsplats_data.scale_intensity(0.1)
+
+                n_splats = len(gsplats_data.amplitudes)
+
+                # Warm amber colour for the embryo fluorescence
+                colors = np.tile(
+                    np.array([1.0, 0.85, 0.4], dtype=np.float32), (n_splats, 1)
+                )
+
+                scene.add_gsplats(
+                    name="tribolium_embryo",
+                    centers=gsplats_data.centers,
+                    amplitudes=gsplats_data.amplitudes,
+                    cholesky_factors=gsplats_data.cholesky_factors,
+                    colors=colors,
+                    sharpness=gsplats_data.sharpnesses,
+                    opacity=1.0,
+                    blending_mode="additive",
+                )
+                aprint(f"Added {n_splats:,} splats")
+
+        aprint(f"Scene saved: {output_path}")
+        return output_path
+
+
+# =============================================================================
+# Main
+# =============================================================================
+
+
+def main():
+    """Main demo execution."""
+    aprint("=" * 70)
+    aprint("GSplats Demo: 3D Tribolium castaneum Embryo (Light-Sheet)")
+    aprint("=" * 70)
+    aprint("Large isotropic 3D volume -> Gaussian splatting visualisation")
+    aprint("")
+
+    output_path = get_demos_output_dir() / "gsplats_3d_tribolium_embryo.zarr"
+
+    # Serve-only mode
+    if SERVE_ONLY:
+        if output_path.exists():
+            aprint("Serve-only mode: Launching viewer...")
+            launch_viewer(output_path)
+        else:
+            aprint(
+                f"No scene found at {output_path}. "
+                "Run without --serve-only first."
+            )
+        return
+
+    # Load data
+    volume = load_tribolium_volume()
+
+    # Fit GSplats
+    gsplats_data = fit_tribolium(volume)
+
+    # Report
+    with asection("Summary"):
+        aprint(f"Splats:  {len(gsplats_data.amplitudes):,}")
+        aprint(f"Dim:     {gsplats_data.centers.shape[1]}D")
+
+    # Create scene
+    scene_path = create_luxar_scene(gsplats_data)
+
+    # Launch viewer
+    if not NO_SERVE:
+        aprint("\nLaunching viewer...")
+        launch_viewer(scene_path)
+
+    aprint("\nDone!")
+
+
+if __name__ == "__main__":
+    main()

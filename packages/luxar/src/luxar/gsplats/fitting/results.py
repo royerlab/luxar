@@ -4,6 +4,8 @@ Result finalization for Gaussian splat fitting.
 
 from __future__ import annotations
 
+from typing import Sequence
+
 import numpy as np
 from arbol import aprint, asection
 
@@ -130,6 +132,70 @@ def _apply_voxel_footprint_correction(
     return np.linalg.cholesky(Sigma_corrected)  # Works for any d
 
 
+def _clip_to_bounds(
+    centers: np.ndarray,
+    Ls: np.ndarray,
+    shape: Sequence[int],
+    truncate: float,
+    sharpness: np.ndarray | None = None,
+) -> np.ndarray:
+    """
+    Scale down L rows so no splat extends beyond volume bounds.
+
+    For each splat k in dimension i, ensures:
+        effective_truncate * sqrt(Sigma_ii) <= min(center_ki, shape_i - 1 - center_ki)
+
+    where Sigma_ii = sum_j(L[k,i,j]^2) is the marginal variance along axis i,
+    and effective_truncate = truncate^(2/s) accounts for per-splat sharpness s.
+
+    This preserves the splat's orientation (ratios within each row of L) but
+    scales it down to fit within the volume bounds.
+
+    Parameters
+    ----------
+    centers : np.ndarray, shape (N, d)
+        Splat center positions in voxel coordinates.
+    Ls : np.ndarray, shape (N, d, d)
+        Lower-triangular Cholesky factors.
+    shape : Sequence[int]
+        Volume shape (d elements).
+    truncate : float
+        Truncation radius (same as used during rendering).
+    sharpness : np.ndarray, shape (N,), optional
+        Per-splat sharpness values. If None, assumes s=2.0 (standard Gaussian)
+        where effective_truncate = truncate.
+
+    Returns
+    -------
+    np.ndarray, shape (N, d, d)
+        Clipped Cholesky factors.
+    """
+    shape_arr = np.array(shape, dtype=np.float32)  # (d,)
+    dist_to_edge = np.maximum(
+        np.minimum(centers, shape_arr - 1.0 - centers), 0.0
+    )  # (N, d)
+
+    # Sharpness-adjusted truncation (matches rendering_core.py AABB logic)
+    # For generalized Gaussian exp(-0.5 * ||y||^s), effective radius scales
+    # as truncate^(2/s) where s is sharpness (s=2 → truncate^1 = truncate)
+    if sharpness is not None:
+        eff_truncate = truncate ** (2.0 / sharpness)  # (N,)
+        max_sigma_sq = (dist_to_edge / eff_truncate[:, np.newaxis]) ** 2  # (N, d)
+    else:
+        max_sigma_sq = (dist_to_edge / truncate) ** 2  # (N, d)
+
+    # Actual sigma_sq per dimension: Sigma_ii = sum_j(L[i,j]^2)
+    actual_sigma_sq = np.sum(Ls * Ls, axis=2)  # (N, d)
+
+    # Scale factor per row: min(1, sqrt(max_allowed / actual))
+    eps = 1e-12
+    ratio = max_sigma_sq / np.maximum(actual_sigma_sq, eps)
+    scale = np.sqrt(np.minimum(ratio, 1.0))  # (N, d)
+
+    # Scale each row of L: Ls_clipped[k,i,j] = Ls[k,i,j] * scale[k,i]
+    return Ls * scale[:, :, np.newaxis]  # (N,d,d) * (N,d,1) -> broadcast
+
+
 def finalize_results(
     optimization_results: OptimizationResults,
     config: FitConfig,
@@ -225,6 +291,14 @@ def finalize_results(
         aprint(
             f"Rescaled amplitudes to original intensity range (factor: {preprocessed_data.intensity_range:.4f})"
         )
+
+    # Clip splats to volume bounds if enabled (before voxel footprint correction)
+    if config.clip_to_bounds:
+        Ls_np = _clip_to_bounds(centers_np, Ls_np, config.V.shape, config.truncate)
+        if config.verbose:
+            aprint(
+                f"Clipped splats to volume bounds (truncate={config.truncate:.1f})"
+            )
 
     # Apply voxel footprint correction if enabled
     if config.voxel_footprint_correction:
