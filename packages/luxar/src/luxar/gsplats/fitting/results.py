@@ -294,7 +294,9 @@ def finalize_results(
 
     # Clip splats to volume bounds if enabled (before voxel footprint correction)
     if config.clip_to_bounds:
-        Ls_np = _clip_to_bounds(centers_np, Ls_np, config.V.shape, config.truncate)
+        Ls_np = _clip_to_bounds(
+            centers_np, Ls_np, config.V.shape, config.truncate, sharpness_np
+        )
         if config.verbose:
             aprint(
                 f"Clipped splats to volume bounds (truncate={config.truncate:.1f})"
