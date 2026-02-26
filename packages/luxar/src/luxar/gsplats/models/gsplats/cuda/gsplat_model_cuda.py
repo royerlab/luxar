@@ -426,6 +426,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         intensity_floor: float = 1e-5,
         tile_size: Optional[int] = None,
         use_fp16: bool = False,
+        voxel_size: Optional[np.ndarray] = None,
         device: Optional[torch.device] = None,
     ):
         super().__init__()
@@ -462,6 +463,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             max_eccentricity=max_eccentricity,
             sharpness_range=sharpness_range,
             truncate=truncate,
+            voxel_size=voxel_size,
             device=device,
         )
 
@@ -810,6 +812,10 @@ class GaussianSplatModelCUDA(torch.nn.Module):
     @property
     def amp_max(self):
         return self._base.amp_max
+
+    @property
+    def voxel_size(self):
+        return self._base.voxel_size
 
     @property
     def use_fp16(self):

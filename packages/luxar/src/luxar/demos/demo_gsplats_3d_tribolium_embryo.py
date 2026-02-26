@@ -92,7 +92,7 @@ ZENODO_URL = (
 VOXEL_SIZE_UM = 0.381  # Isotropic voxel size in micrometres
 
 # Fitting parameters
-N_SEEDS = 30_000
+N_SEEDS = 50_000
 N_ITERS = 8000
 
 # Cache location
