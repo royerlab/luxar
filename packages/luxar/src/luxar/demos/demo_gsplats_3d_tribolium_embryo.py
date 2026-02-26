@@ -185,9 +185,10 @@ def extract_and_load_volume(zip_path: Path) -> np.ndarray:
             aprint("Using cached extraction")
 
     with asection("Loading 3D volume"):
-        # Find all TIFF files recursively
-        tiff_files = sorted(extract_dir.rglob("*.tif")) + sorted(
-            extract_dir.rglob("*.tiff")
+        # Find all TIFF files recursively (case-insensitive)
+        tiff_files = sorted(
+            f for f in extract_dir.rglob("*")
+            if f.suffix.lower() in (".tif", ".tiff")
         )
 
         if not tiff_files:

@@ -263,8 +263,10 @@ def extract_sample_data(zip_path: Path) -> tuple:
 
         tiff_files = []
         for d in tiff_dirs:
-            tiff_files.extend(sorted(d.glob("*.tif")))
-            tiff_files.extend(sorted(d.glob("*.tiff")))
+            tiff_files.extend(
+                f for f in d.iterdir()
+                if f.is_file() and f.suffix.lower() in (".tif", ".tiff")
+            )
 
         # Remove duplicates and sort
         tiff_files = sorted(set(tiff_files))
