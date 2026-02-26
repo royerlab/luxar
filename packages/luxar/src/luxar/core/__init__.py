@@ -2,6 +2,7 @@
 
 from .datanode import DataNode
 from .dimensions import Dimension, Dimensions
+from .group import Group
 from .gsplats import GSplats
 from .lines import Lines
 from .node import Node
@@ -29,6 +30,7 @@ __all__ = [
     # Classes
     "Node",
     "DataNode",
+    "Group",
     "Scene",
     "Points",
     "Lines",

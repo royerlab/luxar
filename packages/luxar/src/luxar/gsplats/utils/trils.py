@@ -1,7 +1,7 @@
 # -------------------------------
 # Pack / unpack lower-triangular matrices
 # -------------------------------
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -275,3 +275,138 @@ def validate_cholesky_shape(
         )
 
     return False, actual_n_splats  # is_uniform=False, actual n_splats
+
+
+def permute_cholesky_packed(
+    packed: np.ndarray,
+    d: int,
+    perm: Sequence[int],
+) -> np.ndarray:
+    """Permute dimensions of packed Cholesky factors.
+
+    Given packed Cholesky factors L where Sigma = L @ L^T, reorder the
+    dimensions according to the permutation. The new Cholesky L' satisfies
+    Sigma'[i,j] = Sigma[perm[i], perm[j]].
+
+    Parameters
+    ----------
+    packed : np.ndarray, shape (N, k) where k = d*(d+1)//2
+        Packed lower-triangular Cholesky factors.
+    d : int
+        Number of dimensions.
+    perm : sequence of int
+        Permutation of dimension indices. perm[new_i] = old_i.
+        E.g., [2, 0, 1] means new dim 0 was old dim 2.
+
+    Returns
+    -------
+    np.ndarray, shape (N, k)
+        Packed Cholesky factors with permuted dimensions.
+
+    Examples
+    --------
+    >>> # Reverse 2D dimensions: swap X and Y
+    >>> packed = np.array([[1.0, 0.5, 2.0]])  # L00, L10, L11
+    >>> permute_cholesky_packed(packed, 2, [1, 0])
+    """
+    perm = list(perm)
+    if len(perm) != d:
+        raise ValueError(f"Permutation length {len(perm)} != dimension {d}")
+    if sorted(perm) != list(range(d)):
+        raise ValueError(f"Invalid permutation: {perm}")
+
+    # Upcast to float64 for numerical stability in Cholesky decomposition
+    input_dtype = packed.dtype
+    L = unpack_tril(packed.astype(np.float64), d)
+    # Compute covariance Sigma = L @ L^T
+    Sigma = L @ np.swapaxes(L, -2, -1)
+    # Permute: Sigma_new[i,j] = Sigma[perm[i], perm[j]]
+    Sigma_perm = Sigma[:, perm, :][:, :, perm]
+    # Re-Cholesky decompose (in float64 for robustness)
+    L_new = np.linalg.cholesky(Sigma_perm)
+    return pack_tril(L_new.astype(input_dtype))
+
+
+def embed_cholesky_packed(
+    packed: np.ndarray,
+    d_src: int,
+    d_dst: int,
+    dim_mapping: List[int],
+    fill_sigma: Optional[Dict[int, float]] = None,
+) -> np.ndarray:
+    """Embed lower-dimensional packed Cholesky factors into higher dimensions.
+
+    Takes d_src-dimensional Cholesky factors and embeds them into a
+    d_dst-dimensional space (d_dst >= d_src). Mapped dimensions carry
+    over the original covariance; unmapped dimensions get independent
+    Gaussian variance (diagonal only, no cross-terms).
+
+    Parameters
+    ----------
+    packed : np.ndarray, shape (N, k_src) where k_src = d_src*(d_src+1)//2
+        Packed Cholesky factors in the source dimensionality.
+    d_src : int
+        Source dimensionality.
+    d_dst : int
+        Target dimensionality (must be >= d_src).
+    dim_mapping : list of int, length d_src
+        Maps source dimension i to target dimension dim_mapping[i].
+        E.g., [1, 2, 3] maps src dims 0,1,2 to dst dims 1,2,3.
+    fill_sigma : dict of {target_dim_index: sigma_value}, optional
+        Standard deviations for unmapped target dimensions.
+        Unmapped dims not in fill_sigma default to 1.0.
+
+    Returns
+    -------
+    np.ndarray, shape (N, k_dst) where k_dst = d_dst*(d_dst+1)//2
+        Packed Cholesky factors in the target dimensionality.
+
+    Examples
+    --------
+    >>> # Embed 2D into 3D: src dims [0,1] → dst dims [0,1], new dim 2 has sigma=0.5
+    >>> packed_2d = np.array([[1.0, 0.0, 1.0]])  # isotropic 2D
+    >>> embed_cholesky_packed(packed_2d, 2, 3, [0, 1], fill_sigma={2: 0.5})
+    """
+    if d_dst < d_src:
+        raise ValueError(f"Target dim {d_dst} must be >= source dim {d_src}")
+    if len(dim_mapping) != d_src:
+        raise ValueError(
+            f"dim_mapping length {len(dim_mapping)} != source dim {d_src}"
+        )
+    # Validate mapping targets are valid and unique
+    if len(set(dim_mapping)) != len(dim_mapping):
+        raise ValueError(f"dim_mapping has duplicates: {dim_mapping}")
+    for idx in dim_mapping:
+        if idx < 0 or idx >= d_dst:
+            raise ValueError(
+                f"dim_mapping index {idx} out of range [0, {d_dst})"
+            )
+
+    if fill_sigma is None:
+        fill_sigma = {}
+
+    # Upcast to float64 for numerical stability in Cholesky decomposition
+    input_dtype = packed.dtype
+    L_src = unpack_tril(packed.astype(np.float64), d_src)
+    # Compute source covariance
+    Sigma_src = L_src @ np.swapaxes(L_src, -2, -1)
+
+    N = packed.shape[0]
+    # Build target covariance: start with zeros (float64)
+    Sigma_dst = np.zeros((N, d_dst, d_dst), dtype=np.float64)
+
+    # Copy source covariance block into mapped positions
+    for i_src, i_dst in enumerate(dim_mapping):
+        for j_src, j_dst in enumerate(dim_mapping):
+            Sigma_dst[:, i_dst, j_dst] = Sigma_src[:, i_src, j_src]
+
+    # Fill unmapped diagonal positions
+    mapped_set = set(dim_mapping)
+    for i_dst in range(d_dst):
+        if i_dst not in mapped_set:
+            sigma = fill_sigma.get(i_dst, 1.0)
+            Sigma_dst[:, i_dst, i_dst] = sigma * sigma  # variance = sigma^2
+
+    # Cholesky decompose in float64, then cast back to input dtype
+    L_dst = np.linalg.cholesky(Sigma_dst)
+    return pack_tril(L_dst.astype(input_dtype))

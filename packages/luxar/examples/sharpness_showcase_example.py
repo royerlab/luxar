@@ -34,7 +34,12 @@ from luxar.utils.paths import get_examples_output_dir
 
 
 def create_sharpness_gradient_example(scene, n_points: int = 5000) -> None:
-    """Create a grid showing gradual sharpness transition."""
+    """Create a grid showing gradual sharpness transition.
+
+    Args:
+        scene: The scene to add points to
+        n_points: Number of points in the grid
+    """
     aprint("Creating sharpness gradient example...")
 
     # Create a grid of points
@@ -69,7 +74,11 @@ def create_sharpness_gradient_example(scene, n_points: int = 5000) -> None:
 
 
 def create_sharpness_comparison_example(scene) -> None:
-    """Create rows of points with different fixed sharpness values."""
+    """Create rows of points with different fixed sharpness values.
+
+    Args:
+        scene: The scene to add points to
+    """
     aprint("Creating sharpness comparison example...")
 
     n_points_per_row = 20
@@ -119,7 +128,12 @@ def create_sharpness_comparison_example(scene) -> None:
 
 
 def create_mixed_sharpness_example(scene, n_points: int = 10000) -> None:
-    """Create a sphere with mixed sharpness values."""
+    """Create a sphere with mixed sharpness values.
+
+    Args:
+        scene: The scene to add points to
+        n_points: Number of points in the sphere
+    """
     aprint("Creating mixed sharpness cloud example...")
 
     rng = np.random.default_rng(789)
@@ -170,7 +184,12 @@ def create_mixed_sharpness_example(scene, n_points: int = 10000) -> None:
 
 
 def create_sharpness_wave_example(scene, n_points: int = 4000) -> None:
-    """Create a wave pattern where sharpness varies sinusoidally."""
+    """Create a wave pattern where sharpness varies sinusoidally.
+
+    Args:
+        scene: The scene to add points to
+        n_points: Number of points in the wave grid
+    """
     aprint("Creating sharpness wave example...")
 
     # Create a wave grid
@@ -235,19 +254,22 @@ def main():
         # Finalize
 
         aprint(f"\n✓ Demo scene created successfully at {output_path}")
-        aprint("\nTo view the example:")
-        aprint("1. Start the viewer: cd packages/luxar-viewer && npm run dev")
-        aprint(f"2. Serve the data: luxar serve {output_path}")
-        aprint("3. Open http://localhost:5173 in your browser")
-        aprint("\nWhat to look for:")
+
+        aprint("\n" + "=" * 60)
+        aprint("VIEWING INSTRUCTIONS:")
+        aprint(f"1. Run: luxar serve {output_path}")
+        aprint("2. Rotate the view to see all four showcases")
+        aprint("")
+        aprint("What to look for:")
         aprint(
             "- Top: Gradient from soft glowing points (left) to sharp points (right)"
         )
-        aprint("- Right: 5 rows showing different fixed sharpness values")
+        aprint("- Right: 6 rows showing different fixed sharpness values")
         aprint(
             "- Bottom left: Mixed cloud with soft blue, medium green, and sharp red points"
         )
         aprint("- Bottom: Wave pattern with varying sharpness creating visual depth")
+        aprint("=" * 60)
 
 
 if __name__ == "__main__":

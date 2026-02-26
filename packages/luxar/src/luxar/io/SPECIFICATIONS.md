@@ -621,7 +621,7 @@ centers/            # (N, D) float32, compound-sorted, chunked
 colors/             # (N, 3) float32/uint8, compound-sorted, chunked
 amplitudes/         # (N,) float32, compound-sorted, chunked
 cholesky_factors/   # (N, k) float32, compound-sorted, chunked
-sharpness/          # (N,) float32, compound-sorted, chunked
+sharpnesses/        # (N,) float32, compound-sorted, chunked
 chunk_bounds        # (num_chunks, D, 2) float32, single chunk
 ```
 
@@ -982,7 +982,7 @@ assert len(data['chunk_bounds']) > 0
 - `colors`: (N, 3) float32/uint8 array, compound-sorted (optional)
 - `amplitudes`: (N,) float32 array, compound-sorted
 - `cholesky_factors`: (N, k) float32 array, compound-sorted
-- `sharpness`: (N,) float32 array, compound-sorted (optional)
+- `sharpnesses`: (N,) float32 array, compound-sorted (optional)
 - `chunk_bounds`: (num_chunks, D, 2) float32 array
 
 **Lines Group** (no spatial indexing):

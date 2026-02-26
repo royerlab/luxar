@@ -104,12 +104,12 @@ def run_optimization_loop(
     iterations_since_improvement = 0  # Track patience for early stopping
     last_max_abs_error = float("inf")
 
+    # Track initial splat count (used for dynamic ops logging)
+    n_splats = model.n_splats() if hasattr(model, "n_splats") else preprocessed_data.N
+
     # Initialize relocation tracker for dynamic ops (prevents repeated relocation)
     relocation_tracker = None
     if config.enable_dynamic_ops:
-        n_splats = (
-            model.n_splats() if hasattr(model, "n_splats") else preprocessed_data.N
-        )
         relocation_tracker = RecentlyRelocatedTracker(
             n_splats=n_splats,
             cooldown_steps=config.dynamic_config.relocation_cooldown_steps,
@@ -279,11 +279,18 @@ def run_optimization_loop(
 
         # Log relocation statistics
         if relocation_tracker is not None:
+            current_n_splats = (
+                model.n_splats() if hasattr(model, "n_splats") else preprocessed_data.N
+            )
             stats = relocation_tracker.get_statistics()
             aprint("\n📊 Dynamic Operations Summary:")
             aprint(f"  Total relocations: {stats['total_relocations']}")
-            aprint(f"  Unique splats relocated: {stats['unique_splats']} / {n_splats}")
-            coverage_pct = (stats["unique_splats"] / n_splats) * 100
+            aprint(
+                f"  Unique splats relocated: {stats['unique_splats']} / {current_n_splats}"
+            )
+            coverage_pct = (
+                stats["unique_splats"] / max(1, current_n_splats)
+            ) * 100
             aprint(
                 f"  Coverage: {coverage_pct:.1f}% of splats were relocated at least once"
             )

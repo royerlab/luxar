@@ -7,6 +7,12 @@ This educational example demonstrates:
 - Transform inheritance in hierarchies
 - Using the luxar.transforms module
 - Visualizing coordinate systems and transformations
+
+Educational value:
+- Learn how translate, rotate, and scale transforms work
+- Understand composition order (right-multiply convention)
+- See how child nodes inherit parent transforms
+- Master the luxar.transforms API for scene construction
 """
 
 import numpy as np

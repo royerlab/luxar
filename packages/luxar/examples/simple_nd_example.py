@@ -7,6 +7,12 @@ This example demonstrates:
 - Using color and intensity to indicate position in nD space
 - Proper dimension metadata configuration
 - Grid-based layouts for easy orientation
+
+Educational value:
+- Good first example for learning nD dimension navigation
+- Understand how non-displayed dimensions work as sliders
+- See visual patterns that confirm correct slice positions
+- Foundation for more complex nD examples
 """
 
 import numpy as np
