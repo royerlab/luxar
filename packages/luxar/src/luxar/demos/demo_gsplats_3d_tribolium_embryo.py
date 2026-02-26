@@ -126,21 +126,20 @@ def download_tribolium_data() -> Path:
     Returns:
         Path to downloaded ZIP file.
     """
+    from luxar.utils.download import robust_download
+
     zip_path = CACHE_DIR / "Supplemental_File_2.zip"
 
-    if zip_path.exists():
-        size_gb = zip_path.stat().st_size / (1024**3)
-        aprint(f"Using cached download ({size_gb:.2f} GB)")
-        return zip_path
-
+    # robust_download handles caching (via expected_size), resume, and verification
     with asection("Downloading Tribolium embryo dataset from Zenodo"):
         aprint("Source: https://zenodo.org/records/5270323")
-        aprint("Size:   ~2.6 GB")
-        aprint("")
+        aprint("Size:   ~2.5 GB")
 
-        from luxar.utils.download import robust_download
-
-        robust_download(ZENODO_URL, zip_path, max_retries=5, timeout=600)
+        robust_download(
+            ZENODO_URL, zip_path,
+            max_retries=5, timeout=600,
+            expected_size=2_641_547_030,
+        )
 
     return zip_path
 

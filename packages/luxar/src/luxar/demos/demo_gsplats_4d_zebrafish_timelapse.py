@@ -127,21 +127,19 @@ def download_zebrafish_data() -> Path:
     Returns:
         Path to downloaded LSM file.
     """
-    lsm_path = CACHE_DIR / "cxcr4aMO2_290112.lsm"
+    from luxar.utils.download import robust_download
 
-    if lsm_path.exists():
-        size_gb = lsm_path.stat().st_size / (1024**3)
-        aprint(f"Using cached download ({size_gb:.2f} GB)")
-        return lsm_path
+    lsm_path = CACHE_DIR / "cxcr4aMO2_290112.lsm"
 
     with asection("Downloading zebrafish embryo dataset from Zenodo"):
         aprint("Source: https://zenodo.org/records/1211599")
-        aprint("Size:   ~2.1 GB")
-        aprint("")
+        aprint("Size:   ~1.9 GB")
 
-        from luxar.utils.download import robust_download
-
-        robust_download(ZENODO_URL, lsm_path, max_retries=5, timeout=600)
+        robust_download(
+            ZENODO_URL, lsm_path,
+            max_retries=5, timeout=600,
+            expected_size=2_080_484_264,
+        )
 
     return lsm_path
 
