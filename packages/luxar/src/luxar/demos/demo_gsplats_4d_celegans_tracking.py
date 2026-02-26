@@ -172,22 +172,20 @@ def download_celegans_data() -> Path:
     Returns:
         Path to downloaded ZIP file.
     """
-    zip_path = CACHE_DIR / "mskcc_confocal.zip"
+    from luxar.utils.download import robust_download
 
-    if zip_path.exists():
-        size_gb = zip_path.stat().st_size / (1024**3)
-        aprint(f"Using cached download ({size_gb:.1f} GB)")
-        return zip_path
+    zip_path = CACHE_DIR / "mskcc_confocal.zip"
 
     with asection("Downloading C. elegans dataset from Zenodo"):
         aprint("Source:  https://zenodo.org/records/6460303")
-        aprint("Size:    ~26 GB (this may take 30-60 minutes)")
+        aprint("Size:    ~24 GB (this may take 30-60 minutes)")
         aprint("Sample:  " + SAMPLE_NAME)
-        aprint("")
 
-        from luxar.utils.download import robust_download
-
-        robust_download(ZENODO_URL, zip_path, max_retries=5, timeout=600)
+        robust_download(
+            ZENODO_URL, zip_path,
+            max_retries=5, timeout=600,
+            expected_size=26_141_247_410,
+        )
 
     return zip_path
 
