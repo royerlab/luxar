@@ -64,11 +64,13 @@ class ConstraintConfig:
     """
 
     sigma_min_diag: Optional[Sequence[float] | float] = None
-    sigma_max_diag: Optional[Sequence[float]] = None
+    sigma_max_diag: Optional[Sequence[float] | float] = None
     amp_max: Optional[float] = None
     max_eccentricity: Optional[float] = 10.0
     sharpness_range: Optional[tuple[float, float] | float] = 2.0
     truncate: float = 3.0
+    voxel_size: Optional[Sequence[float] | float] = None
+    output_space: str = "real"
     boundary_penalty: Optional[float] = None
     clip_to_bounds: bool = False
 
@@ -91,7 +93,7 @@ class FitConfig:
     # Model parameters
     init_sigma_vox: Optional[float]
     sigma_min_diag: Optional[Sequence[float]]
-    sigma_max_diag: Optional[Sequence[float]]
+    sigma_max_diag: Optional[Sequence[float] | float]
     truncate: float
 
     # Optimization parameters
@@ -172,6 +174,15 @@ class FitConfig:
     # Boundary containment (post-processing)
     # Clip Cholesky factors so no splat extends beyond the volume bounds.
     clip_to_bounds: bool = False
+
+    # Anisotropic voxel spacing (physical size per voxel along each axis)
+    # None = isotropic (all 1s). Array of shape (d,) for anisotropic volumes.
+    voxel_size: Optional[np.ndarray] = None
+
+    # Output coordinate system: "real" (physical) or "voxel"
+    # When "real" and voxel_size is set, output centers and Cholesky are scaled to physical coords.
+    # When voxel_size is None, "real" and "voxel" produce identical results.
+    output_space: str = "real"
 
     # Boundary penalty weight (loss term during optimization)
     # Adds a differentiable penalty for splats whose effective support extends beyond bounds.

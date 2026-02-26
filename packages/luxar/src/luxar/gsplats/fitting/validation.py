@@ -32,7 +32,7 @@ def prepare_fit_config(
     l1_diag: Optional[float] = None,
     l1_sharpness: Optional[float] = None,  # L1 regularization on sharpness offsets
     sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
-    sigma_max_diag: Optional[Sequence[float]] = None,
+    sigma_max_diag: Optional[Sequence[float] | float] = None,
     amp_max: Optional[float] = None,  # Maximum amplitude (prevents explosion)
     max_eccentricity: Optional[float] = None,
     sharpness_range: Optional[tuple[float, float] | float] = None,
@@ -53,6 +53,8 @@ def prepare_fit_config(
     voxel_footprint_correction: bool | float = False,
     boundary_penalty: Optional[float] = None,
     clip_to_bounds: bool = False,
+    voxel_size: Optional[Sequence[float] | float] = None,
+    output_space: str = "real",
     **seed_kwargs,
 ) -> FitConfig:
     """
@@ -188,10 +190,19 @@ def prepare_fit_config(
             raise ValueError("All sigma_min_diag values must be positive")
 
     if sigma_max_diag is not None:
-        if len(sigma_max_diag) != d:
-            raise ValueError(f"sigma_max_diag must have length {d}")
-        if any(s <= 0 for s in sigma_max_diag):
-            raise ValueError("All sigma_max_diag values must be positive")
+        if isinstance(sigma_max_diag, (int, float)):
+            # Single scalar: interpret as fraction of volume extent per axis.
+            # Each dimension gets shape[i] * fraction independently,
+            # which correctly handles anisotropic volumes.
+            fraction = float(sigma_max_diag)
+            if fraction <= 0:
+                raise ValueError("sigma_max_diag fraction must be positive")
+            sigma_max_diag = [s * fraction for s in V.shape]
+        else:
+            if len(sigma_max_diag) != d:
+                raise ValueError(f"sigma_max_diag must have length {d}")
+            if any(s <= 0 for s in sigma_max_diag):
+                raise ValueError("All sigma_max_diag values must be positive")
         if any(s_max <= s_min for s_max, s_min in zip(sigma_max_diag, sigma_min_diag)):
             raise ValueError("sigma_max_diag must be greater than sigma_min_diag")
 
@@ -234,6 +245,27 @@ def prepare_fit_config(
     # Validate boundary_penalty
     if boundary_penalty is not None and boundary_penalty < 0:
         raise ValueError("boundary_penalty must be non-negative if specified")
+
+    # Validate voxel_size
+    voxel_size_arr = None
+    if voxel_size is not None:
+        if isinstance(voxel_size, (int, float)):
+            if voxel_size <= 0:
+                raise ValueError("voxel_size must be positive")
+            voxel_size_arr = np.array([float(voxel_size)] * d, dtype=np.float32)
+        else:
+            voxel_size_arr = np.asarray(voxel_size, dtype=np.float32)
+            if voxel_size_arr.shape != (d,):
+                raise ValueError(
+                    f"voxel_size must have length {d} to match image dimensions, "
+                    f"got length {len(voxel_size_arr)}"
+                )
+            if np.any(voxel_size_arr <= 0):
+                raise ValueError("All voxel_size values must be positive")
+
+    # Validate output_space
+    if output_space not in ("real", "voxel"):
+        raise ValueError("output_space must be 'real' or 'voxel'")
 
     return FitConfig(
         V=V,
@@ -280,4 +312,7 @@ def prepare_fit_config(
         # Boundary containment
         boundary_penalty=boundary_penalty,
         clip_to_bounds=clip_to_bounds,
+        # Anisotropic voxel spacing
+        voxel_size=voxel_size_arr,
+        output_space=output_space,
     )

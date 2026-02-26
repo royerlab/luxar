@@ -54,18 +54,37 @@ def initialize_optimization(
     else:
         # Fallback: isotropic Gaussians with init_sigma_vox or auto-computed sigma
         init_sigma = config.init_sigma_vox
+        init_sigma_phys = None  # Physical-space sigma (only used with voxel_size)
         if init_sigma is None:
-            # Auto-compute sigma based on image size: ~5% of smallest dimension, min 1.5
-            min_dim = float(min(config.V.shape))
-            init_sigma = max(1.5, min_dim * 0.05)
-            if config.verbose:
-                aprint(
-                    f"Auto-computed init_sigma={init_sigma:.2f} (5% of min dim {min_dim})"
-                )
+            if config.voxel_size is not None:
+                # Physical-space auto: use physical extents
+                phys_dims = np.array(config.V.shape, dtype=np.float32) * config.voxel_size
+                min_phys_dim = float(phys_dims.min())
+                min_vs = float(config.voxel_size.min())
+                init_sigma_phys = max(1.5 * min_vs, min_phys_dim * 0.05)
+                if config.verbose:
+                    aprint(
+                        f"Auto-computed init_sigma_phys={init_sigma_phys:.2f} "
+                        f"(5% of min physical dim {min_phys_dim:.1f})"
+                    )
+            else:
+                # Voxel-space auto: ~5% of smallest dimension, min 1.5
+                min_dim = float(min(config.V.shape))
+                init_sigma = max(1.5, min_dim * 0.05)
+                if config.verbose:
+                    aprint(
+                        f"Auto-computed init_sigma={init_sigma:.2f} (5% of min dim {min_dim})"
+                    )
 
         L0 = np.zeros((N, d, d), dtype=np.float32)
-        for i in range(d):
-            L0[:, i, i] = init_sigma
+        if init_sigma_phys is not None:
+            # Physical sigma → per-axis voxel-space L_diag
+            for i in range(d):
+                L0[:, i, i] = init_sigma_phys / config.voxel_size[i]
+        else:
+            # Scalar voxel-space sigma (backward-compatible)
+            for i in range(d):
+                L0[:, i, i] = init_sigma
 
     # Ensure diagonal values are at least sigma_min_diag to prevent gradient death
     # (inverse_softplus of values near 0 causes gradients to vanish)
@@ -147,6 +166,7 @@ def initialize_optimization(
                     truncate=config.truncate,
                     intensity_floor=config.metal_intensity_floor,
                     tile_size=config.metal_tile_size,
+                    voxel_size=config.voxel_size,
                     device=config.device,
                 )
                 if config.verbose:
@@ -192,6 +212,7 @@ def initialize_optimization(
                     truncate=config.truncate,
                     intensity_floor=config.cuda_intensity_floor,
                     tile_size=config.cuda_tile_size,  # None = auto-select
+                    voxel_size=config.voxel_size,
                     device=config.device,
                 )
                 if config.verbose:
@@ -231,6 +252,7 @@ def initialize_optimization(
             max_eccentricity=config.max_eccentricity,
             sharpness_range=config.sharpness_range,
             truncate=config.truncate,
+            voxel_size=config.voxel_size,
             device=config.device,
         )
         device_type = config.device.type
