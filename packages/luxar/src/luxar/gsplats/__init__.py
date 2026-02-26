@@ -8,7 +8,6 @@ try:
     from luxar.gsplats import clahe, seeds
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
     from luxar.gsplats.fit_multiscale_gsplats import fit_multiscale_gaussian_splats
-    from luxar.gsplats.fitting.config import ConstraintConfig, LossConfig, OptimConfig
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.seeds import (
@@ -44,18 +43,6 @@ except ImportError as exc:
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             _raise_gsplats_import_error()
 
-    class OptimConfig:
-        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-            _raise_gsplats_import_error()
-
-    class LossConfig:
-        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-            _raise_gsplats_import_error()
-
-    class ConstraintConfig:
-        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-            _raise_gsplats_import_error()
-
     def generate_seeds(*_args: Any, **_kwargs: Any) -> Any:
         _raise_gsplats_import_error()
 
@@ -76,9 +63,6 @@ __all__ = [
     "GaussianSplatFitter",
     "GSplatData",
     "DynamicOpsConfig",
-    "OptimConfig",
-    "LossConfig",
-    "ConstraintConfig",
     # Seeding functions
     "generate_seeds",
     "seed_from_decomposition",

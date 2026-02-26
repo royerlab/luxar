@@ -533,6 +533,8 @@ Before PR/merge:
 4. **Test everything** - Never skip tests, fix or mock them properly
 5. **Keep docs in sync** - Update READMEs and specs with code changes
 6. **Use existing patterns** - Follow codebase conventions
+7. **Multiple Agents at Work** - Other agents are likely at work on the same codebase and files, be mindful and careful to not delete/destroy/stash the work of the other agents.
+8. **Ask Questions when Unsure** - Ask the user questions when you are genuinely unsure about a course of action.
 
 ### Naming Conventions
 - Example files: `*_example.py` or `*_example.zarr`

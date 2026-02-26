@@ -7,6 +7,12 @@ This example demonstrates:
 - Using discrete dimensions for frame-based navigation
 - Color coding for additional visual clarity
 - Proper scene-level dimension configuration
+
+Educational value:
+- Learn how dimension navigation works with distinct visual shapes
+- Understand discrete frame-based dimension stepping
+- See how shapes change when navigating through a hidden dimension
+- Good test case for verifying nD navigation in the viewer
 """
 
 import numpy as np
@@ -17,16 +23,32 @@ from luxar.utils.paths import get_examples_output_dir
 
 
 def create_circle(radius: float = 5, n_points: int = 100) -> np.ndarray:
-    """Create points arranged in a circle."""
+    """Create points arranged in a circle.
+
+    Args:
+        radius: Radius of the circle
+        n_points: Number of points around the circle
+
+    Returns:
+        Array of 3D positions forming a circle in the XY plane
+    """
     angles = np.linspace(0, 2 * np.pi, n_points, endpoint=False)
     x = radius * np.cos(angles)
     y = radius * np.sin(angles)
     z = np.zeros(n_points)
-    return np.column_stack([x, y, z])
+    return np.column_stack([x, y, z]).astype(np.float32)
 
 
 def create_square(size: float = 10, n_points: int = 100) -> np.ndarray:
-    """Create points arranged in a square."""
+    """Create points arranged in a square.
+
+    Args:
+        size: Side length of the square
+        n_points: Total number of points (distributed across 4 edges)
+
+    Returns:
+        Array of 3D positions forming a square in the XY plane
+    """
     points_per_side = n_points // 4
     positions = []
 
@@ -54,11 +76,19 @@ def create_square(size: float = 10, n_points: int = 100) -> np.ndarray:
         z_coords = np.zeros(points_per_side)
         positions.extend(zip(x_coords, y_coords, z_coords))
 
-    return np.array(positions)
+    return np.array(positions, dtype=np.float32)
 
 
 def create_triangle(size: float = 10, n_points: int = 90) -> np.ndarray:
-    """Create points arranged in an equilateral triangle."""
+    """Create points arranged in an equilateral triangle.
+
+    Args:
+        size: Side length of the triangle
+        n_points: Total number of points (distributed across 3 edges)
+
+    Returns:
+        Array of 3D positions forming an equilateral triangle in the XY plane
+    """
     points_per_side = n_points // 3
     positions = []
 
@@ -79,11 +109,20 @@ def create_triangle(size: float = 10, n_points: int = 90) -> np.ndarray:
             pos = (1 - t) * v1 + t * v2
             positions.append(pos)
 
-    return np.array(positions)
+    return np.array(positions, dtype=np.float32)
 
 
 def create_star(size: float = 5, n_points: int = 100, n_spikes: int = 5) -> np.ndarray:
-    """Create points arranged in a star pattern."""
+    """Create points arranged in a star pattern.
+
+    Args:
+        size: Outer radius of the star
+        n_points: Total number of points
+        n_spikes: Number of star points/spikes
+
+    Returns:
+        Array of 3D positions forming a star in the XY plane
+    """
     positions = []
     points_per_spike = n_points // (n_spikes * 2)
 
@@ -112,11 +151,19 @@ def create_star(size: float = 5, n_points: int = 100, n_spikes: int = 5) -> np.n
             y = (1 - t) * outer_y + t * inner_y
             positions.append([x, y, 0])
 
-    return np.array(positions)
+    return np.array(positions, dtype=np.float32)
 
 
 def create_cross(size: float = 10, n_points: int = 100) -> np.ndarray:
-    """Create points arranged in a cross/plus pattern."""
+    """Create points arranged in a cross/plus pattern.
+
+    Args:
+        size: Total length of each cross arm
+        n_points: Total number of points (split between horizontal and vertical)
+
+    Returns:
+        Array of 3D positions forming a cross in the XY plane
+    """
     half_points = n_points // 2
 
     # Horizontal line
@@ -132,7 +179,7 @@ def create_cross(size: float = 10, n_points: int = 100) -> np.ndarray:
     horizontal = np.column_stack([h_x, h_y, h_z])
     vertical = np.column_stack([v_x, v_y, v_z])
 
-    return np.vstack([horizontal, vertical])
+    return np.vstack([horizontal, vertical]).astype(np.float32)
 
 
 def main():

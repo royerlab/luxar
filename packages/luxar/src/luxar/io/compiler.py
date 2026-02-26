@@ -922,8 +922,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         )
 
         # Initialize metadata
-        center_min = centers.min(axis=0).tolist()
-        center_max = centers.max(axis=0).tolist()
+        if n_splats > 0:
+            center_min = centers.min(axis=0).tolist()
+            center_max = centers.max(axis=0).tolist()
+        else:
+            center_min = [0.0] * n_dims
+            center_max = [0.0] * n_dims
         metadata: dict[str, Any] = {
             "n_splats": n_splats,
             "ndim": n_dims,
@@ -999,7 +1003,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             self._encoder.encode(
                 data=sharpness,
                 zarr_group=group,
-                name="sharpness",
+                name="sharpnesses",
                 semantic_type=SemanticType.BOUNDED_SCALAR,
                 mode=self._encoding_mode,
                 bounds=(0.0, SHARPNESS_MAX),
@@ -1030,6 +1034,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             from ..core.transforms import prepare_transform_for_zarr
 
             attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
+
+        # Set rendering defaults (must match write_points defaults)
+        if "opacity" not in attrs:
+            attrs["opacity"] = 1.0
+        if "gamma" not in attrs:
+            attrs["gamma"] = 1.0
+        if "blending_mode" not in attrs:
+            attrs["blending_mode"] = "additive"
 
         # Set attributes
         group.attrs.update(attrs)
@@ -1222,6 +1234,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             Dictionary with 'min' and 'max' keys, each containing a list of D floats
         """
         # Compute min and max along each dimension
+        if positions.shape[0] == 0:
+            n_dims = positions.shape[1] if positions.ndim == 2 else 0
+            return {"min": [0.0] * n_dims, "max": [0.0] * n_dims}
         min_vals = positions.min(axis=0).tolist()
         max_vals = positions.max(axis=0).tolist()
 

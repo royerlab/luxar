@@ -334,7 +334,10 @@ class LuxarScene:
         amplitudes = self._decode_array(group, "amplitudes")
         cholesky_factors = self._decode_array(group, "cholesky_factors")
         colors = self._decode_array(group, "colors")
-        sharpness = self._decode_array(group, "sharpness")
+        # Try plural name first (current format), fall back to singular (legacy)
+        sharpness = self._decode_array(group, "sharpnesses")
+        if sharpness is None:
+            sharpness = self._decode_array(group, "sharpness")
 
         # Load chunk bounds if present
         chunk_bounds = None

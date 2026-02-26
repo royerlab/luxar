@@ -55,6 +55,27 @@ class GSplatData:
         if self.stats is None:
             self.stats = {}
 
+    def __repr__(self) -> str:
+        """Summary representation (avoids dumping full arrays)."""
+        n = len(self.amplitudes)
+        ndim = self.centers.shape[1] if n > 0 else 0
+        if n > 0:
+            amp_range = f"[{float(self.amplitudes.min()):.4g}, {float(self.amplitudes.max()):.4g}]"
+            sharp_range = f"[{float(self.sharpnesses.min()):.4g}, {float(self.sharpnesses.max()):.4g}]"
+        else:
+            amp_range = "[]"
+            sharp_range = "[]"
+        colors = "yes" if self.colors is not None else "no"
+        return (
+            f"GSplatData({n:,} splats, {ndim}D, "
+            f"amplitudes={amp_range}, sharpness={sharp_range}, colors={colors})"
+        )
+
+    @property
+    def sharpness(self) -> np.ndarray:
+        """Alias for sharpnesses (matches Scene.add_gsplats parameter name)."""
+        return self.sharpnesses
+
     def save(
         self,
         path: str | Path,

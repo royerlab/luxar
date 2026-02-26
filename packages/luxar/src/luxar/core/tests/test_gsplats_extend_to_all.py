@@ -271,7 +271,7 @@ class TestGSplatsExtendToAll:
         assert store["colored_extended/cholesky_factors"].shape == (1, 10)  # 4D: k=10
         assert store["colored_extended/amplitudes"].shape == (1,)
         assert store["colored_extended/colors"].shape == (1, 3)
-        assert store["colored_extended/sharpness"].shape == (1,)
+        assert store["colored_extended/sharpnesses"].shape == (1,)
 
     def test_center_array_must_include_all_dimensions(self, tmp_path) -> None:
         """Test that center arrays must include ALL dimensions even when extending."""

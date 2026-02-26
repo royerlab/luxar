@@ -10,6 +10,7 @@ from arbol import aprint
 from ..typing_utils.aliases import GroupAttrs, SceneHierarchy, TransformMatrix
 
 if TYPE_CHECKING:
+    from ..core.group import Group
     from ..io.writer import ZarrWriterProtocol
 
 
@@ -115,44 +116,41 @@ class Node:
         return self._attrs_cache
 
     # --------------------------------------------------------------- hierarchy
-    def add_group(self, name: str, **attrs: Any) -> Node:
+    def add_group(self, name: str, **attrs: Any) -> "Group":
         """Create and add a child group node.
+
+        The returned Group has add_points(), add_lines(), and add_gsplats()
+        methods for adding data children directly.
 
         Args:
             name: Name of the child group
             **attrs: Additional attributes for the group
 
         Returns:
-            The created child node
+            The created Group node
 
         Raises:
             ValueError: If group creation fails
         """
+        from .group import Group
+
         try:
             aprint(f"Adding child group '{name}' to node '{self.name}'.")
 
-            # Check for duplicate before writing to storage
+            # Check for duplicate before creating child
             for existing_child in self.children:
                 if existing_child.name == name:
                     raise ValueError(
                         f"Duplicate child name '{name}' under parent '{self.name}'."
                     )
 
-            # Process transform if present to convert to storage format
-            if "transform" in attrs:
-                from ..core.transforms import prepare_transform_for_zarr
-
-                # Use centralized function for consistent handling
-                attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
+            # Node.__init__ handles writing to storage, attr validation, and caching
+            attrs["type"] = "group"
 
             if self._writer is not None:
-                # Create via writer interface
-                child_path = f"{self.path}/{name}" if self.path else name
-                self._writer.write_group(child_path, type="group", **attrs)
-                child_node = Node(name, parent=self, writer=self._writer, **attrs)
+                child_node = Group(name, parent=self, writer=self._writer, **attrs)
             else:
-                # Metadata-only mode (no writer available)
-                child_node = Node(name, parent=self, **attrs)
+                child_node = Group(name, parent=self, **attrs)
 
             aprint(f"✓ Child group '{name}' added successfully.")
             return child_node

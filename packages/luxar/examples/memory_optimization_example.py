@@ -37,7 +37,14 @@ from luxar.utils.paths import get_examples_output_dir
 
 
 def create_test_data(n_points: int = 100000):
-    """Create test points data with known ranges."""
+    """Create test points data with known ranges.
+
+    Args:
+        n_points: Number of points to generate
+
+    Returns:
+        Tuple of (positions, colors, radii, sharpness) arrays
+    """
     # Create positions in a reasonable range
     positions = np.random.randn(n_points, 3).astype(np.float32) * 10
 
@@ -54,7 +61,14 @@ def create_test_data(n_points: int = 100000):
 
 
 def get_zarr_size(path: Path) -> int:
-    """Calculate the total size of a zarr store in bytes."""
+    """Calculate the total size of a zarr store in bytes.
+
+    Args:
+        path: Path to the zarr store directory
+
+    Returns:
+        Total size in bytes of all files in the store
+    """
     total_size = 0
     for root, dirs, files in os.walk(path):
         for file in files:
@@ -72,7 +86,20 @@ def create_dataset_with_encoding_mode(
     sharpness: np.ndarray,
     description: str,
 ):
-    """Create a dataset with specific encoding mode."""
+    """Create a dataset with specific encoding mode.
+
+    Args:
+        output_path: Path to write the zarr store
+        encoding_mode: Encoding mode to use (AUTO, PRECISION, or MEMORY)
+        positions: Point positions array
+        colors: Point colors array
+        radii: Point radii array
+        sharpness: Point sharpness array
+        description: Human-readable description of this configuration
+
+    Returns:
+        File size of the created dataset in MB
+    """
     aprint(f"\n{'=' * 60}")
     aprint(f"Creating dataset: {description}")
     aprint(f"Output: {output_path}")

@@ -30,7 +30,12 @@ from luxar.utils.paths import get_examples_output_dir
 
 
 def create_size_gradient_example(scene, n_points: int = 10000) -> None:
-    """Create a spiral with points that gradually increase in size."""
+    """Create a spiral with points that gradually increase in size.
+
+    Args:
+        scene: The scene to add points to
+        n_points: Number of points in the spiral
+    """
     aprint("Creating size gradient demo...")
 
     # Generate a 3D spiral
@@ -53,7 +58,12 @@ def create_size_gradient_example(scene, n_points: int = 10000) -> None:
 
 
 def create_distance_based_example(scene, n_points: int = 5000) -> None:
-    """Create a sphere where point size depends on distance from center."""
+    """Create a sphere where point size depends on distance from center.
+
+    Args:
+        scene: The scene to add points to
+        n_points: Number of points on the sphere
+    """
     aprint("Creating distance-based sizing demo...")
 
     # Generate points on a sphere using spherical coordinates
@@ -90,7 +100,12 @@ def create_distance_based_example(scene, n_points: int = 5000) -> None:
 
 
 def create_random_sizing_example(scene, n_points: int = 8000) -> None:
-    """Create a cube with randomly sized points."""
+    """Create a cube with randomly sized points.
+
+    Args:
+        scene: The scene to add points to
+        n_points: Number of points in the cube
+    """
     aprint("Creating random sizing demo...")
 
     rng = np.random.default_rng(123)
@@ -117,7 +132,13 @@ def create_random_sizing_example(scene, n_points: int = 8000) -> None:
 def create_layered_spheres_example(
     scene, n_layers: int = 5, points_per_layer: int = 1000
 ) -> None:
-    """Create concentric spheres with different point sizes per layer."""
+    """Create concentric spheres with different point sizes per layer.
+
+    Args:
+        scene: The scene to add points to
+        n_layers: Number of concentric sphere layers
+        points_per_layer: Number of points per sphere layer
+    """
     aprint("Creating layered spheres demo...")
 
     rng = np.random.default_rng(456)
@@ -202,15 +223,18 @@ def main():
         # Finalize
 
         aprint(f"\n✓ Example scene created successfully at {output_path}")
-        aprint("\nTo view the example:")
-        aprint("1. Start the viewer: cd packages/luxar-viewer && npm run dev")
-        aprint(f"2. Serve the data: luxar serve {output_path}")
-        aprint("3. Open http://localhost:5173 in your browser")
-        aprint("\nLook for:")
+
+        aprint("\n" + "=" * 60)
+        aprint("VIEWING INSTRUCTIONS:")
+        aprint(f"1. Run: luxar serve {output_path}")
+        aprint("2. Rotate the view to see all four showcases")
+        aprint("")
+        aprint("Look for:")
         aprint("- Spiral with gradually increasing point sizes")
         aprint("- Sphere with larger points near the center")
         aprint("- Cube with randomly sized colorful points")
         aprint("- Nested spheres with different point sizes per layer")
+        aprint("=" * 60)
 
 
 if __name__ == "__main__":
