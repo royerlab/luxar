@@ -1,20 +1,28 @@
 #!/usr/bin/env python3
-"""GSplats Demo: 4D Multi-Channel Cells (scikit-image cells3d)
+"""GSplats Demo: 5D Multi-Channel Cells with Boolean Toggles (scikit-image cells3d)
 
-Demonstrates the ``dim_order`` feature: fitting 3D Gaussian splats per channel,
-then embedding them into a 4D scene with a categorical Channel dimension.
+Variant of the multichannel demo that uses two independent boolean dimensions
+instead of a single categorical Channel slider. This lets you toggle each
+channel on/off independently.
 
 ================================================================================
-DIM_ORDER SHOWCASE — 3D SPLATS IN A 4D SCENE
+BOOLEAN TOGGLE DIMENSIONS — INDEPENDENT CHANNEL VISIBILITY
 ================================================================================
 
 This demo uses the cells3d dataset from scikit-image — a two-channel 3D
 fluorescence microscopy volume of cells (membranes + nuclei).
 
-The key feature demonstrated here is ``dim_order``: each channel is fitted
-independently as 3D splats, then added to a 4D scene (X, Y, Z, Channel) using
-``dim_order=["z", "y", "x"]`` to map the 3D data columns to the correct scene
-dimensions. The Channel dimension is filled with a fixed value per channel.
+Instead of a single Channel slider that switches between views, this version
+creates two boolean dimensions: "Membranes" and "Nuclei". Each can be toggled
+independently, allowing four combinations:
+
+  - Both On:       See membranes + nuclei overlaid
+  - Membranes On:  See only membranes
+  - Nuclei On:     See only nuclei
+  - Both Off:      Nothing visible
+
+Each channel's splats use ``extend_to_all`` on the *other* channel's dimension
+so they remain visible regardless of that toggle's position.
 
 DATA SOURCE & CITATIONS:
 ========================
@@ -37,13 +45,13 @@ WORKFLOW:
 
 1. **Load** cells3d from scikit-image (60 × 2 × 256 × 256)
 2. **Fit** each channel independently as 3D Gaussian splats
-3. **Create 4D scene** with dimensions [X, Y, Z, Channel]
-4. **Add splats** using ``dim_order=["z", "y", "x"]`` with per-channel colors
-5. **Visualize** — Channel slider toggles between membrane and nuclear views
+3. **Create 5D scene** with dimensions [X, Y, Z, Membranes, Nuclei]
+4. **Add splats** with per-channel boolean toggles via ``fill`` + ``extend_to_all``
+5. **Visualize** — Toggle each channel independently
 
 USAGE:
 ======
-    python demo_gsplats_4d_cells3d_multichannel.py [--no-cache] [--no-serve] [--serve-only]
+    python demo_gsplats_4d_cells3d_multichannel_toggles.py [--no-cache] [--no-serve] [--serve-only]
 
 Options:
     --no-cache:   Force re-fitting (ignore cached results)
@@ -51,7 +59,7 @@ Options:
     --serve-only: Skip loading/fitting, just serve existing scene
 
 Output:
-    - Scene saved to: demos/gsplats_4d_cells3d_multichannel.zarr
+    - Scene saved to: demos/gsplats_5d_cells3d_multichannel_toggles.zarr
     - Automatically opens in browser at http://localhost:8000
 
 """
@@ -73,7 +81,7 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 
 # Fitting parameters
-N_SEEDS = 15000  # Splats per channel
+N_SEEDS = 8000  # Splats per channel
 N_ITERS = 8000  # Optimization iterations
 
 # Channel configuration
@@ -82,7 +90,7 @@ CHANNELS = [
     {"index": 1, "name": "Nuclei", "color": (0.5, 0.3, 1.0)},  # Purple
 ]
 
-# Cache directory
+# Cache directory (shared with the other demo — same fitting params)
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_cells3d"
 
 # Parse command-line flags
@@ -225,55 +233,74 @@ def fit_all_channels(volumes):
 
 
 # =============================================================================
-# Scene Creation — dim_order showcase
+# Scene Creation — Boolean toggle dimensions
 # =============================================================================
 
 
 def create_luxar_scene(gsplats_list, output_path=None):
-    """Create 4D Luxar scene using dim_order to embed 3D splats.
+    """Create 5D Luxar scene with independent boolean toggle dimensions.
 
-    This is the key part of the demo: each channel was fitted as 3D (Z, Y, X),
-    but the scene has 4 dimensions (X, Y, Z, Channel). We use ``dim_order`` to
-    map the 3D data columns to the correct scene dimensions and ``fill`` to
-    assign each channel's splats to their Channel index.
+    Instead of a single Channel slider, each channel gets its own boolean
+    dimension. Splats use ``extend_to_all`` on the *other* channel's dimension
+    so they are visible regardless of that toggle's state.
+
+    Scene dimensions: [X, Y, Z, Membranes, Nuclei]
+
+    Membrane splats:
+      - fill={"membranes": 1.0}  → visible when Membranes=On
+      - extend_to_all=["nuclei"] → visible regardless of Nuclei toggle
+
+    Nuclei splats:
+      - fill={"nuclei": 1.0}      → visible when Nuclei=On
+      - extend_to_all=["membranes"] → visible regardless of Membranes toggle
     """
     if output_path is None:
         output_path = (
-            get_demos_output_dir() / "gsplats_4d_cells3d_multichannel.zarr"
+            get_demos_output_dir() / "gsplats_5d_cells3d_multichannel_toggles.zarr"
         )
 
-    with asection("Creating 4D Luxar Scene"):
+    # Map each channel to its own dimension name and the other channel's dim
+    CHANNEL_DIM_NAMES = [ch["name"].lower() for ch in CHANNELS]
+
+    with asection("Creating 5D Luxar Scene (boolean toggles)"):
         aprint(f"Output: {output_path.name}")
 
-        # Define 4D scene: 3 spatial + 1 categorical Channel dimension
-        # Spatial ranges are NOT set — the compiler infers them from
-        # actual data (which is centroid-centered, not in voxel coords).
-        dims = Dimensions([
+        # Define 5D scene: 3 spatial + 2 boolean toggle dimensions
+        dim_list = [
             Dimension("x", unit="px", display=True),
             Dimension("y", unit="px", display=True),
             Dimension("z", unit="px", display=True),
-            Dimension(
-                "channel",
-                display=False,
-                discrete=True,
-                range=(0, len(CHANNELS) - 1),
-                step=1.0,
-                categories=[ch["name"] for ch in CHANNELS],
-            ),
-        ])
+        ]
+
+        # Add one boolean dimension per channel
+        for ch_config in CHANNELS:
+            dim_name = ch_config["name"].lower()
+            dim_list.append(
+                Dimension(
+                    dim_name,
+                    display=False,
+                    discrete=True,
+                    range=(0, 1),
+                    step=1.0,
+                    categories=["Off", "On"],
+                )
+            )
+
+        dims = Dimensions(dim_list)
 
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            scene.attrs["title"] = "GSplats: 4D Cells (dim_order demo)"
+            scene.attrs["title"] = "GSplats: 5D Cells (boolean toggle demo)"
             scene.attrs["description"] = """
-4D Multi-Channel Gaussian Splatting — cells3d (scikit-image)
-============================================================
+5D Multi-Channel Gaussian Splatting — Boolean Toggle Dimensions
+================================================================
 
-Demonstrates the dim_order feature: 3D Gaussian splats fitted per channel,
-embedded into a 4D scene with a categorical Channel dimension.
+Variant of the multichannel demo using independent boolean dimensions
+instead of a single Channel slider. Each channel can be toggled on/off
+independently, allowing all four visibility combinations.
 
 Data Source:
   - scikit-image cells3d sample dataset
@@ -281,33 +308,34 @@ Data Source:
   - Shape: (60, 2, 256, 256) — (Z, Channel, Y, X)
 
 Channels:
-  - Green: Cell membranes (Channel 0)
-  - Purple: Cell nuclei (Channel 1)
+  - Green: Cell membranes (Membranes dimension)
+  - Purple: Cell nuclei (Nuclei dimension)
 
 Navigation:
-  - Use the Channel slider to switch between membrane and nuclear views
+  - Toggle Membranes on/off to show/hide membrane splats
+  - Toggle Nuclei on/off to show/hide nuclear splats
+  - Both on: overlaid view; both off: nothing visible
   - Mouse drag to rotate, scroll to zoom, right-click drag to pan
-
-dim_order usage:
-  Each channel was fitted as 3D splats (Z, Y, X), then added to this
-  4D scene using dim_order=["z", "y", "x"] with fill={"channel": i}.
-  The Cholesky covariance factors are automatically embedded from 3D to 4D.
             """
 
             # Compute shared centroid across ALL channels so they stay aligned
-            all_centers = [g.centers for g in gsplats_list]
-            all_amps = [g.amplitudes for g in gsplats_list]
-            total_amp = sum(a.sum() for a in all_amps)
-            shared_centroid = sum(
-                c.T @ a for c, a in zip(all_centers, all_amps)
-            ) / total_amp
+            with asection("Computing shared centroid"):
+                all_centers = [g.centers for g in gsplats_list]
+                all_amps = [g.amplitudes for g in gsplats_list]
+                total_amp = sum(a.sum() for a in all_amps)
+                shared_centroid = sum(
+                    c.T @ a for c, a in zip(all_centers, all_amps)
+                ) / total_amp
+                aprint(f"  Shared centroid: {shared_centroid}")
 
-            # Add each channel as a separate gsplats node using dim_order
+            # Add each channel with its own boolean toggle dimension
             for i, (gsplats, ch_config) in enumerate(zip(gsplats_list, CHANNELS)):
                 ch_name = ch_config["name"]
                 color = ch_config["color"]
+                own_dim = CHANNEL_DIM_NAMES[i]
+                other_dim = CHANNEL_DIM_NAMES[1 - i]
 
-                with asection(f"Adding {ch_name} (Channel {i})"):
+                with asection(f"Adding {ch_name} (toggle: {own_dim})"):
                     # Transform: shared centroid so channels stay aligned
                     gsplats = gsplats.translate(-shared_centroid)
                     gsplats = gsplats.scale_intensity(0.1)
@@ -319,10 +347,9 @@ dim_order usage:
                         np.array(color, dtype=np.float32), (n_splats, 1)
                     )
 
-                    # KEY: Use dim_order to map 3D data → 4D scene
-                    # Data columns are [Z, Y, X] from fitting a (Z, Y, X) volume
-                    # Scene dimensions are [x, y, z, channel]
-                    # dim_order tells the API which scene dim each data column maps to
+                    # KEY: Each channel's splats are placed at own_dim=1 (On)
+                    # and extend_to_all on the other channel's dimension so
+                    # they don't disappear when the other toggle changes.
                     scene.add_gsplats(
                         name=f"gsplats_{ch_name.lower()}",
                         centers=gsplats.centers,
@@ -331,13 +358,13 @@ dim_order usage:
                         colors=colors,
                         sharpness=gsplats.sharpnesses,
                         dim_order=["z", "y", "x"],
-                        fill={"channel": float(i)},
-                        fill_sigma={"channel": 0.3},
-                        extend_to_all=[],  # Only visible at own Channel value
+                        fill={own_dim: 1.0},
+                        fill_sigma={own_dim: 0.3},
+                        extend_to_all=[other_dim],
                         opacity=1.0,
                         blending_mode="additive",
                     )
-                    aprint(f"  Added {n_splats:,} splats at Channel={i}")
+                    aprint(f"  Added {n_splats:,} splats with {own_dim}=On, extend_to_all=[{other_dim}]")
 
         aprint(f"Scene saved: {output_path}")
         return output_path
@@ -351,13 +378,13 @@ dim_order usage:
 def main():
     """Main demo execution."""
     aprint("=" * 70)
-    aprint("GSplats Demo: 4D Multi-Channel Cells (dim_order showcase)")
+    aprint("GSplats Demo: 5D Multi-Channel Cells (boolean toggle dimensions)")
     aprint("=" * 70)
-    aprint("3D per-channel fitting + dim_order embedding into 4D scene")
+    aprint("3D per-channel fitting + independent boolean toggles per channel")
     aprint("")
 
     output_path = (
-        get_demos_output_dir() / "gsplats_4d_cells3d_multichannel.zarr"
+        get_demos_output_dir() / "gsplats_5d_cells3d_multichannel_toggles.zarr"
     )
 
     # Serve-only mode
@@ -383,7 +410,7 @@ def main():
                 f"{gsplats.centers.shape[1]}D"
             )
 
-    # Create 4D scene using dim_order
+    # Create 5D scene with boolean toggles
     scene_path = create_luxar_scene(gsplats_list)
 
     # Launch viewer
