@@ -319,6 +319,22 @@ def finalize_results(
     # Pack Cholesky factors (without sharpness)
     cholesky_packed = pack_tril(Ls_np)
 
+    # Convert to physical coordinates if requested
+    if config.output_space == "real" and config.voxel_size is not None:
+        vs = config.voxel_size  # (d,)
+        d = centers_np.shape[1] if len(centers_np) > 0 else config.V.ndim
+        # Scale centers: voxel indices → physical coordinates
+        centers_np = centers_np * vs  # (N, d) * (d,)
+        # Scale packed Cholesky: row i has (i+1) elements, each scaled by vs[i]
+        # L_phys[i,j] = voxel_size[i] * L_vox[i,j]
+        tril_scales = np.concatenate([[vs[i]] * (i + 1) for i in range(d)])
+        cholesky_packed = cholesky_packed * tril_scales  # (N, tril) * (tril,)
+        if config.verbose:
+            aprint(
+                f"Converted output to physical coordinates "
+                f"(voxel_size={vs.tolist()})"
+            )
+
     # Compute sharpness statistics (handle empty array after culling)
     if len(sharpness_np) > 0:
         sharpness_stats = {

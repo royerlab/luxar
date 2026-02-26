@@ -81,8 +81,12 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 
 # Fitting parameters
-N_SEEDS = 8000  # Splats per channel
+N_SEEDS = 15000  # Splats per channel
 N_ITERS = 8000  # Optimization iterations
+
+# Voxel spacing (Z, Y, X) in micrometres for cells3d
+# Original: (0.29, 0.065, 0.065) µm, 4x downsampled in Y/X → (0.29, 0.26, 0.26) µm
+VOXEL_SIZE_ZYX = (0.29, 0.26, 0.26)
 
 # Channel configuration
 CHANNELS = [
@@ -198,6 +202,9 @@ def fit_channel(volume, channel_name, cache_file):
         device=DEVICE,
         verbose=True,
         enable_dynamic_ops=True,
+        boundary_penalty=0.1,
+        clip_to_bounds=True,
+        voxel_size=VOXEL_SIZE_ZYX,
     )
 
     n_splats = len(result.amplitudes)

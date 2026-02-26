@@ -109,7 +109,7 @@ class GaussianSplatFitter:
         l1_diag: Optional[float] = None,
         l1_sharpness: Optional[float] = None,
         sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
-        sigma_max_diag: Optional[Sequence[float]] = None,
+        sigma_max_diag: Optional[Sequence[float] | float] = None,
         amp_max: Optional[float] = None,  # Max amplitude (default auto: 1.0)
         max_eccentricity: Optional[float] = 10.0,
         sharpness_range: Optional[tuple[float, float] | float] = 2.0,
@@ -130,6 +130,8 @@ class GaussianSplatFitter:
         voxel_footprint_correction: bool | float = False,
         boundary_penalty: Optional[float] = None,
         clip_to_bounds: bool = False,
+        voxel_size: Optional[Sequence[float] | float] = None,
+        output_space: str = "real",
         **seed_kwargs,
     ) -> GSplatData:
         """
@@ -201,6 +203,8 @@ class GaussianSplatFitter:
             voxel_footprint_correction=voxel_footprint_correction,
             boundary_penalty=boundary_penalty,
             clip_to_bounds=clip_to_bounds,
+            voxel_size=voxel_size,
+            output_space=output_space,
             **seed_kwargs,
         )
 
@@ -246,7 +250,7 @@ def fit_gaussian_splats(
     l1_diag: Optional[float] = None,
     l1_sharpness: Optional[float] = None,
     sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
-    sigma_max_diag: Optional[Sequence[float]] = None,
+    sigma_max_diag: Optional[Sequence[float] | float] = None,
     amp_max: Optional[float] = None,
     max_eccentricity: Optional[float] = 10.0,
     sharpness_range: Optional[tuple[float, float] | float] = 2.0,
@@ -278,6 +282,9 @@ def fit_gaussian_splats(
     # Boundary containment
     boundary_penalty: Optional[float] = None,
     clip_to_bounds: bool = False,
+    # Anisotropic voxel spacing
+    voxel_size: Optional[Sequence[float] | float] = None,
+    output_space: str = "real",
     **seed_kwargs,
 ) -> GSplatData:
     """
@@ -351,8 +358,12 @@ def fit_gaussian_splats(
         float is broadcast across all dimensions.
         Defaults to sqrt(1/12) ≈ 0.289 (1-voxel box footprint) to allow
         single-voxel splats while preventing degeneracy.
-    sigma_max_diag : Sequence[float], optional
+    sigma_max_diag : Sequence[float] | float, optional
         Maximum diagonal values for Cholesky factor L along each axis.
+        - If Sequence[float]: Per-axis absolute bounds (one per dimension).
+        - If float: Fraction of volume extent per axis. Each dimension gets
+          ``shape[i] * fraction`` independently. E.g., ``sigma_max_diag=1/16``
+          on a (50, 200, 300) volume gives ``[3.125, 12.5, 18.75]``.
     amp_max : float or None, default=None (auto: 1.0)
         Maximum amplitude constraint for splats. Prevents amplitude explosion
         during optimization, especially with aggressive compression (few splats).
@@ -470,12 +481,24 @@ def fit_gaussian_splats(
         Scales down rows of the Cholesky factor L so that
         truncate * sqrt(Sigma_ii) <= distance_to_nearest_edge for each dimension.
         Preserves splat orientation but shrinks to fit within bounds.
+    voxel_size : Sequence[float] | float, optional
+        Physical voxel spacing per axis (e.g., ``(5.0, 1.0, 1.0)`` for Z-anisotropic
+        microscopy). A scalar means isotropic spacing. Affects:
+        - ``max_eccentricity``: evaluated in physical space
+        - Auto ``init_sigma``: based on physical dimensions
+        - Output coordinates: converted to physical space (see ``output_space``)
+        If None (default), all voxels are treated as unit-spaced.
+    output_space : str, default="real"
+        Coordinate system for output Gaussians:
+        - ``"real"``: Physical coordinates (centers and Cholesky scaled by voxel_size).
+          When voxel_size is None, identical to ``"voxel"``.
+        - ``"voxel"``: Raw voxel indices (no conversion).
 
     Returns
     -------
     GSplatData
         Dataclass containing all fitting results:
-        - centers: np.ndarray, shape (N, d) - Center positions in voxel coordinates
+        - centers: np.ndarray, shape (N, d) - Center positions (physical or voxel, see output_space)
         - amplitudes: np.ndarray, shape (N,) - Non-negative amplitudes rescaled to original intensity
         - cholesky_factors: np.ndarray, shape (N, d*(d+1)//2) - Packed lower-triangular Cholesky factors
         - sharpnesses: np.ndarray, shape (N,) - Per-splat sharpness values (s=2.0 is standard Gaussian)
@@ -542,6 +565,8 @@ def fit_gaussian_splats(
             voxel_footprint_correction=voxel_footprint_correction,
             boundary_penalty=boundary_penalty,
             clip_to_bounds=clip_to_bounds,
+            voxel_size=voxel_size,
+            output_space=output_space,
             **seed_kwargs,
         )
 

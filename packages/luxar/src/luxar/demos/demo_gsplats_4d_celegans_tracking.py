@@ -599,6 +599,7 @@ def fit_timepoint(
         device=DEVICE,
         verbose=True,
         enable_dynamic_ops=True,
+        voxel_size=VOXEL_SIZE_ZYX,
     )
 
     aprint(f"  Fitted {len(result.amplitudes):,} splats")

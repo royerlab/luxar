@@ -144,11 +144,13 @@ def download_zebrafish_data() -> Path:
     return lsm_path
 
 
-def load_zebrafish_volumes() -> list:
+def load_zebrafish_volumes() -> tuple:
     """Download and load the zebrafish LSM as a list of 3D volumes.
 
     Returns:
-        List of 3D float32 volumes, one per timepoint, each normalised to [0, 1].
+        Tuple of (volumes, voxel_size_zyx):
+        - volumes: List of 3D float32 volumes, one per timepoint, each normalised to [0, 1].
+        - voxel_size_zyx: Tuple of (Z, Y, X) voxel spacing in micrometres, or None.
     """
     try:
         import tifffile
@@ -161,6 +163,24 @@ def load_zebrafish_volumes() -> list:
     lsm_path = download_zebrafish_data()
 
     with asection("Loading zebrafish LSM"):
+        # Extract voxel spacing from LSM metadata
+        voxel_size_zyx = None
+        try:
+            with tifffile.TiffFile(str(lsm_path)) as tif:
+                if hasattr(tif, 'lsm_metadata') and tif.lsm_metadata:
+                    meta = tif.lsm_metadata
+                    vz = meta.get('VoxelSizeZ', 0) * 1e6  # m → µm
+                    vy = meta.get('VoxelSizeY', 0) * 1e6
+                    vx = meta.get('VoxelSizeX', 0) * 1e6
+                    if vz > 0 and vy > 0 and vx > 0:
+                        voxel_size_zyx = (vz, vy, vx)
+                        aprint(
+                            f"LSM voxel spacing (Z,Y,X): "
+                            f"({vz:.4f}, {vy:.4f}, {vx:.4f}) µm"
+                        )
+        except Exception as e:
+            aprint(f"Could not extract voxel spacing from LSM: {e}")
+
         raw = tifffile.imread(str(lsm_path))
         aprint(f"LSM shape: {raw.shape}, dtype: {raw.dtype}")
 
@@ -202,12 +222,21 @@ def load_zebrafish_volumes() -> list:
 
             volumes.append(V)
 
+        # Adjust voxel spacing for XY downsampling
+        if voxel_size_zyx is not None and DOWNSAMPLE_XY > 1:
+            vz, vy, vx = voxel_size_zyx
+            voxel_size_zyx = (vz, vy * DOWNSAMPLE_XY, vx * DOWNSAMPLE_XY)
+            aprint(
+                f"Adjusted voxel spacing for {DOWNSAMPLE_XY}x XY downsample: "
+                f"({voxel_size_zyx[0]:.4f}, {voxel_size_zyx[1]:.4f}, {voxel_size_zyx[2]:.4f}) µm"
+            )
+
         aprint(
             f"Loaded {len(volumes)} volumes, "
             f"shape per volume: {volumes[0].shape}"
         )
 
-    return volumes
+    return volumes, voxel_size_zyx
 
 
 # =============================================================================
@@ -241,6 +270,7 @@ def _time_color(t_frac: float) -> tuple:
 
 def fit_timepoint(
     volume: np.ndarray, label: str, cache_file: Path,
+    voxel_size=None,
 ) -> GSplatData:
     """Fit GSplats to a single timepoint volume with caching.
 
@@ -248,6 +278,7 @@ def fit_timepoint(
         volume: 3D float32 volume (Z, Y, X), normalised to [0, 1].
         label: Human-readable label for logging.
         cache_file: Path to .gsplats.zarr.zip cache file.
+        voxel_size: Optional tuple of (Z, Y, X) voxel spacing.
 
     Returns:
         Fitted GSplatData.
@@ -287,6 +318,7 @@ def fit_timepoint(
         device=DEVICE,
         verbose=True,
         enable_dynamic_ops=True,
+        voxel_size=voxel_size,
     )
 
     aprint(f"  Fitted {len(result.amplitudes):,} splats")
@@ -303,11 +335,12 @@ def fit_timepoint(
     return result
 
 
-def fit_all_timepoints(volumes: list) -> list:
+def fit_all_timepoints(volumes: list, voxel_size=None) -> list:
     """Fit GSplats to every timepoint.
 
     Args:
         volumes: List of 3D float32 volumes.
+        voxel_size: Optional tuple of (Z, Y, X) voxel spacing.
 
     Returns:
         List of GSplatData, one per timepoint.
@@ -317,7 +350,8 @@ def fit_all_timepoints(volumes: list) -> list:
         for t, volume in enumerate(volumes):
             cache_file = CACHE_DIR / f"zebrafish_t{t:04d}.gsplats.zarr.zip"
             with asection(f"Timepoint {t}/{len(volumes) - 1}"):
-                gsplats = fit_timepoint(volume, f"T={t}", cache_file)
+                gsplats = fit_timepoint(volume, f"T={t}", cache_file,
+                                        voxel_size=voxel_size)
                 gsplats_list.append(gsplats)
         return gsplats_list
 
@@ -478,10 +512,10 @@ def main():
         return
 
     # Load data
-    volumes = load_zebrafish_volumes()
+    volumes, voxel_size_zyx = load_zebrafish_volumes()
 
     # Fit GSplats per timepoint (with caching)
-    gsplats_list = fit_all_timepoints(volumes)
+    gsplats_list = fit_all_timepoints(volumes, voxel_size=voxel_size_zyx)
 
     # Report
     with asection("Fitting Summary"):
