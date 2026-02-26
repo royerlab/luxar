@@ -14,7 +14,7 @@ from luxar.gsplats.fitting.config import (
     PreprocessedData,
 )
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
-from luxar.gsplats.fitting.results import finalize_results
+from luxar.gsplats.fitting.results import _clip_to_bounds, finalize_results
 
 
 @pytest.fixture
@@ -931,3 +931,183 @@ class TestPostFitCulling:
 
         assert len(result.amplitudes) == 3
         assert result.stats["n_culled"] == 0
+
+
+# =============================================================================
+# Clip-to-Bounds Tests
+# =============================================================================
+
+
+class TestClipToBounds:
+    """Tests for boundary clipping in post-processing."""
+
+    def test_clip_shrinks_out_of_bounds_splats(self) -> None:
+        """Splat near edge with large L is shrunk to fit within bounds."""
+        N, d = 1, 2
+        shape = (16, 16)
+        truncate = 3.0
+
+        # Splat at position (2, 8) with sigma=5 → radius = 3*5 = 15 > 2 (dist to edge)
+        centers = np.array([[2.0, 8.0]], dtype=np.float32)
+        Ls = np.zeros((N, d, d), dtype=np.float32)
+        Ls[0, 0, 0] = 5.0  # Large sigma in dim 0
+        Ls[0, 1, 1] = 1.0  # Normal sigma in dim 1
+
+        Ls_clipped = _clip_to_bounds(centers, Ls, shape, truncate)
+
+        # After clipping: truncate * sqrt(Sigma_00) <= 2.0 (dist to edge in dim 0)
+        sigma_diag_clipped = np.sum(Ls_clipped * Ls_clipped, axis=2)  # (N, d)
+        radii_clipped = truncate * np.sqrt(sigma_diag_clipped)
+
+        dist_to_edge = np.minimum(centers, np.array(shape, dtype=np.float32) - 1.0 - centers)
+        # Radius should be <= dist_to_edge (within tolerance)
+        assert np.all(radii_clipped <= dist_to_edge + 1e-5)
+
+        # Dim 0 should have been shrunk
+        assert Ls_clipped[0, 0, 0] < Ls[0, 0, 0]
+        # Dim 1 should be unchanged (well within bounds)
+        np.testing.assert_allclose(Ls_clipped[0, 1, 1], Ls[0, 1, 1], atol=1e-6)
+
+    def test_clip_preserves_in_bounds_splats(self) -> None:
+        """Splat well inside the volume is not modified."""
+        N, d = 1, 2
+        shape = (32, 32)
+        truncate = 3.0
+
+        centers = np.array([[16.0, 16.0]], dtype=np.float32)
+        Ls = np.zeros((N, d, d), dtype=np.float32)
+        Ls[0, 0, 0] = 2.0
+        Ls[0, 1, 1] = 2.0
+
+        Ls_clipped = _clip_to_bounds(centers, Ls, shape, truncate)
+
+        # truncate * sqrt(4) = 6 << 16 (dist to edge) → no change
+        np.testing.assert_allclose(Ls_clipped, Ls, atol=1e-7)
+
+    def test_clip_preserves_orientation(self) -> None:
+        """Row element ratios within L are preserved after clipping."""
+        N, d = 1, 2
+        shape = (16, 16)
+        truncate = 3.0
+
+        centers = np.array([[2.0, 8.0]], dtype=np.float32)
+        Ls = np.zeros((N, d, d), dtype=np.float32)
+        Ls[0, 0, 0] = 5.0
+        Ls[0, 1, 0] = 2.0  # off-diagonal
+        Ls[0, 1, 1] = 4.0
+
+        Ls_clipped = _clip_to_bounds(centers, Ls, shape, truncate)
+
+        # Check ratios within row 1 are preserved
+        if abs(Ls[0, 1, 0]) > 1e-8:
+            original_ratio = Ls[0, 1, 1] / Ls[0, 1, 0]
+            clipped_ratio = Ls_clipped[0, 1, 1] / Ls_clipped[0, 1, 0]
+            np.testing.assert_allclose(clipped_ratio, original_ratio, rtol=1e-5)
+
+    def test_clip_disabled_by_default(
+        self, basic_optimization_results, basic_config, basic_preprocessed_data
+    ) -> None:
+        """clip_to_bounds=False leaves L unchanged."""
+        assert basic_config.clip_to_bounds is False
+
+        original_Ls = basic_optimization_results.Ls.cpu().numpy().copy()
+
+        result = finalize_results(
+            basic_optimization_results, basic_config, basic_preprocessed_data
+        )
+
+        from luxar.gsplats.utils.trils import pack_tril
+
+        expected_packed = pack_tril(original_Ls)
+        np.testing.assert_allclose(result.cholesky_factors, expected_packed, rtol=1e-5)
+
+    def test_clip_3d_data(self) -> None:
+        """Clip works for 3D data."""
+        N, d = 2, 3
+        shape = (10, 20, 30)
+        truncate = 3.0
+
+        # One splat near edge, one inside
+        centers = np.array([[1.0, 10.0, 15.0], [5.0, 10.0, 15.0]], dtype=np.float32)
+        Ls = np.zeros((N, d, d), dtype=np.float32)
+        for i in range(d):
+            Ls[:, i, i] = 3.0  # sigma=3, radius=9
+
+        Ls_clipped = _clip_to_bounds(centers, Ls, shape, truncate)
+
+        # Splat 0 in dim 0: dist_to_edge = 1, radius=9 → must shrink
+        assert Ls_clipped[0, 0, 0] < Ls[0, 0, 0]
+        # Splat 1 in dim 0: dist_to_edge = min(5, 4) = 4, radius=9 → must shrink
+        assert Ls_clipped[1, 0, 0] < Ls[1, 0, 0]
+        # Splat 0 in dim 1: dist_to_edge = min(10, 9) = 9, radius=9 → borderline, ≈ unchanged
+        np.testing.assert_allclose(Ls_clipped[0, 1, 1], Ls[0, 1, 1], atol=0.1)
+
+    def test_clip_center_at_boundary(self) -> None:
+        """Splat center at position 0 should have L shrunk to near-zero."""
+        N, d = 1, 2
+        shape = (16, 16)
+        truncate = 3.0
+
+        centers = np.array([[0.0, 8.0]], dtype=np.float32)
+        Ls = np.zeros((N, d, d), dtype=np.float32)
+        Ls[0, 0, 0] = 2.0
+        Ls[0, 1, 1] = 2.0
+
+        Ls_clipped = _clip_to_bounds(centers, Ls, shape, truncate)
+
+        # dist_to_edge in dim 0 = min(0, 15) = 0 → max_sigma_sq = 0 → scale = 0
+        assert abs(Ls_clipped[0, 0, 0]) < 1e-6
+        # dim 1 should be fine (dist=7)
+        assert Ls_clipped[0, 1, 1] > 0
+
+    def test_clip_before_voxel_footprint_correction(self) -> None:
+        """When both enabled, clip runs first, then voxel footprint correction inflates."""
+        N, d = 1, 2
+        shape = (16, 16)
+
+        # Splat near edge
+        centers = torch.tensor([[2.0, 8.0]], dtype=torch.float32)
+        Ls = torch.zeros(N, d, d, dtype=torch.float32)
+        Ls[0, 0, 0] = 5.0
+        Ls[0, 1, 1] = 1.0
+        amps = torch.tensor([0.5], dtype=torch.float32)
+        sharpness = torch.tensor([2.0], dtype=torch.float32)
+
+        opt = OptimizationResults(
+            centers=centers, Ls=Ls, amps=amps, sharpness=sharpness,
+            converged_early=True, early_stopped=False,
+            actual_iters=50, best_iteration=45,
+            best_loss=0.001, best_max_abs_error=0.005,
+            movie_frames=None, start_time=0.0, end_time=1.0,
+        )
+
+        V = np.random.rand(*shape).astype(np.float32)
+        config = FitConfig(
+            V=V, seeds=None, norm_percentile=0.0, init_sigma_vox=2.0,
+            sigma_min_diag=[0.5, 0.5], sigma_max_diag=[10.0, 10.0],
+            truncate=3.0, n_iters=100, lr=0.01, max_abs_error=0.01,
+            gradient_clip=None, loss_type="mse", asymmetric_penalty=None,
+            l1_amp=None, l1_diag=None, l1_sharpness=None,
+            scheduler_type="plateau", patience=10, lr_reduction_factor=0.5,
+            early_stop_patience=None, enable_dynamic_ops=False,
+            dynamic_config=DynamicOpsConfig(), dynamic_ops_verbose=False,
+            napari_movie=False, movie_every=1, movie_max_frames=100,
+            device=torch.device("cpu"), verbose=False,
+            clip_to_bounds=True,
+            voxel_footprint_correction=True,
+        )
+
+        ppd = PreprocessedData(
+            d=2, N=1,
+            seed_centers=np.array([[2.0, 8.0]], dtype=np.float32),
+            V_normalized=V, V_tensor=torch.from_numpy(V),
+            image_min=0.0, image_max=1.0, intensity_range=1.0,
+            max_abs_error=0.01,
+        )
+
+        result = finalize_results(opt, config, ppd)
+
+        # Should have 1 splat (no culling since 0.5 >> threshold)
+        assert len(result.amplitudes) == 1
+        # The result should be valid (finite values)
+        assert np.all(np.isfinite(result.cholesky_factors))

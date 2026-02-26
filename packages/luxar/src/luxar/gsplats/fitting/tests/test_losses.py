@@ -395,3 +395,163 @@ def test_different_loss_types(basic_model) -> None:
     # (though could theoretically be equal for some data)
     losses = [loss_mse.item(), loss_l1.item(), loss_poisson.item()]
     assert len(set(losses)) >= 2  # At least 2 different values
+
+
+# =============================================================================
+# Boundary Penalty Tests
+# =============================================================================
+
+
+def _make_edge_model():
+    """Create a model with splats near the edge of the volume."""
+    shape = (16, 16)
+    N = 3
+    d = 2
+    # Place splats near edges: (1, 1), (14, 1), (1, 14)
+    centers0 = np.array([[1.0, 1.0], [14.0, 1.0], [1.0, 14.0]], dtype=np.float32)
+    L0 = np.zeros((N, d, d), dtype=np.float32)
+    for i in range(d):
+        L0[:, i, i] = 2.0  # Large sigma → extends beyond bounds at truncate=3
+    amps0 = np.ones(N, dtype=np.float32) * 0.5
+
+    return GaussianSplatModel(
+        shape=shape,
+        centers0=centers0,
+        L0=L0,
+        amps0=amps0,
+        sigma_min_diag=[0.3, 0.3],
+        truncate=3.0,
+        device="cpu",
+    )
+
+
+def _make_interior_model():
+    """Create a model with splats well inside the volume."""
+    shape = (32, 32)
+    N = 3
+    d = 2
+    # Place splats in the center region, far from edges
+    centers0 = np.array([[16.0, 16.0], [14.0, 14.0], [18.0, 18.0]], dtype=np.float32)
+    L0 = np.zeros((N, d, d), dtype=np.float32)
+    for i in range(d):
+        L0[:, i, i] = 1.0  # Small sigma → well within bounds at truncate=3
+    amps0 = np.ones(N, dtype=np.float32) * 0.5
+
+    return GaussianSplatModel(
+        shape=shape,
+        centers0=centers0,
+        L0=L0,
+        amps0=amps0,
+        sigma_min_diag=[0.3, 0.3],
+        truncate=3.0,
+        device="cpu",
+    )
+
+
+def test_boundary_penalty_increases_loss() -> None:
+    """Splats near edges with large sigma: boundary penalty increases loss."""
+    model = _make_edge_model()
+    V = np.random.rand(16, 16).astype(np.float32)
+    V_tensor = torch.from_numpy(V)
+
+    preprocessed = PreprocessedData(
+        d=2, N=3,
+        seed_centers=np.array([[1, 1], [14, 1], [1, 14]], dtype=np.float32),
+        V_normalized=V, V_tensor=V_tensor,
+        image_min=0.0, image_max=1.0, intensity_range=1.0,
+        max_abs_error=0.01,
+    )
+
+    # With boundary penalty
+    config_with = create_test_config(V, boundary_penalty=1.0)
+    loss_fn_with = create_loss_function(config_with, preprocessed, model)
+    pred = model()
+    loss_with = loss_fn_with(pred)
+
+    # Without boundary penalty
+    config_without = create_test_config(V, boundary_penalty=None)
+    loss_fn_without = create_loss_function(config_without, preprocessed, model)
+    loss_without = loss_fn_without(pred)
+
+    assert loss_with > loss_without
+    assert torch.isfinite(loss_with)
+
+
+def test_boundary_penalty_zero_when_inside() -> None:
+    """Splats well inside the volume: boundary penalty adds ~0."""
+    model = _make_interior_model()
+    V = np.random.rand(32, 32).astype(np.float32)
+    V_tensor = torch.from_numpy(V)
+
+    preprocessed = PreprocessedData(
+        d=2, N=3,
+        seed_centers=np.array([[16, 16], [14, 14], [18, 18]], dtype=np.float32),
+        V_normalized=V, V_tensor=V_tensor,
+        image_min=0.0, image_max=1.0, intensity_range=1.0,
+        max_abs_error=0.01,
+    )
+
+    config_with = create_test_config(V, boundary_penalty=1.0)
+    loss_fn_with = create_loss_function(config_with, preprocessed, model)
+    pred = model()
+    loss_with = loss_fn_with(pred)
+
+    config_without = create_test_config(V, boundary_penalty=None)
+    loss_fn_without = create_loss_function(config_without, preprocessed, model)
+    loss_without = loss_fn_without(pred)
+
+    # Penalty should be negligible (splats well inside)
+    assert abs(loss_with.item() - loss_without.item()) < 1e-4
+
+
+def test_boundary_penalty_differentiable() -> None:
+    """Boundary penalty should produce non-zero gradients on center positions."""
+    model = _make_edge_model()
+    V = np.random.rand(16, 16).astype(np.float32)
+    V_tensor = torch.from_numpy(V)
+
+    preprocessed = PreprocessedData(
+        d=2, N=3,
+        seed_centers=np.array([[1, 1], [14, 1], [1, 14]], dtype=np.float32),
+        V_normalized=V, V_tensor=V_tensor,
+        image_min=0.0, image_max=1.0, intensity_range=1.0,
+        max_abs_error=0.01,
+    )
+
+    config = create_test_config(V, boundary_penalty=1.0)
+    loss_fn = create_loss_function(config, preprocessed, model)
+    pred = model()
+    loss = loss_fn(pred)
+    loss.backward()
+
+    # Gradients on raw_mu (center positions) should be non-zero
+    assert model.raw_mu.grad is not None
+    assert torch.any(model.raw_mu.grad != 0)
+
+
+def test_boundary_penalty_disabled_by_default() -> None:
+    """boundary_penalty=None should not affect loss at all."""
+    model = _make_edge_model()
+    V = np.random.rand(16, 16).astype(np.float32)
+    V_tensor = torch.from_numpy(V)
+
+    preprocessed = PreprocessedData(
+        d=2, N=3,
+        seed_centers=np.array([[1, 1], [14, 1], [1, 14]], dtype=np.float32),
+        V_normalized=V, V_tensor=V_tensor,
+        image_min=0.0, image_max=1.0, intensity_range=1.0,
+        max_abs_error=0.01,
+    )
+
+    # None and 0 should produce the same loss
+    config_none = create_test_config(V, boundary_penalty=None)
+    config_zero = create_test_config(V, boundary_penalty=0.0)
+
+    loss_fn_none = create_loss_function(config_none, preprocessed, model)
+    loss_fn_zero = create_loss_function(config_zero, preprocessed, model)
+
+    pred = model()
+    loss_none = loss_fn_none(pred)
+    loss_zero = loss_fn_zero(pred)
+
+    assert torch.allclose(loss_none, loss_zero, atol=1e-7)
