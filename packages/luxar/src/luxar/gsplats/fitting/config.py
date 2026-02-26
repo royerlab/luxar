@@ -49,6 +49,7 @@ class LossConfig:
     l1_amp: Optional[float] = None
     l1_diag: Optional[float] = None
     l1_sharpness: Optional[float] = None
+    boundary_penalty: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,8 @@ class ConstraintConfig:
     max_eccentricity: Optional[float] = 10.0
     sharpness_range: Optional[tuple[float, float] | float] = 2.0
     truncate: float = 3.0
+    boundary_penalty: Optional[float] = None
+    clip_to_bounds: bool = False
 
 
 @dataclass
@@ -165,6 +168,14 @@ class FitConfig:
     # - True: Enable with 1-voxel box footprint (sigma ≈ 0.289 voxels)
     # - float: Custom sigma in voxel units (e.g., 0.5 for half-voxel blur)
     voxel_footprint_correction: bool | float = False
+
+    # Boundary containment (post-processing)
+    # Clip Cholesky factors so no splat extends beyond the volume bounds.
+    clip_to_bounds: bool = False
+
+    # Boundary penalty weight (loss term during optimization)
+    # Adds a differentiable penalty for splats whose effective support extends beyond bounds.
+    boundary_penalty: Optional[float] = None
 
 
 @dataclass

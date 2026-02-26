@@ -258,3 +258,50 @@ class TestPrepareConfig:
         # Should reject negative
         with pytest.raises(ValueError, match="compression ratio"):
             prepare_fit_config(fitter, V, seeds=-0.1)
+
+
+class TestBoundaryPenaltyValidation:
+    """Tests for boundary_penalty parameter validation."""
+
+    def test_negative_boundary_penalty_raises_error(self) -> None:
+        """Negative boundary_penalty raises ValueError."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        with pytest.raises(ValueError, match="boundary_penalty must be non-negative"):
+            prepare_fit_config(fitter, V, boundary_penalty=-0.1)
+
+    def test_positive_boundary_penalty_accepted(self) -> None:
+        """Positive boundary_penalty is accepted."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, boundary_penalty=0.5)
+        assert config.boundary_penalty == 0.5
+
+    def test_zero_boundary_penalty_accepted(self) -> None:
+        """Zero boundary_penalty is accepted (effectively disabled)."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, boundary_penalty=0.0)
+        assert config.boundary_penalty == 0.0
+
+    def test_none_boundary_penalty_accepted(self) -> None:
+        """None boundary_penalty is accepted (default, disabled)."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, boundary_penalty=None)
+        assert config.boundary_penalty is None
+
+    def test_clip_to_bounds_accepted(self) -> None:
+        """clip_to_bounds boolean values are accepted."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, clip_to_bounds=True)
+        assert config.clip_to_bounds is True
+
+        config = prepare_fit_config(fitter, V, clip_to_bounds=False)
+        assert config.clip_to_bounds is False

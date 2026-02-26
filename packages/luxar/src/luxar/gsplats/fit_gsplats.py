@@ -128,6 +128,8 @@ class GaussianSplatFitter:
         dynamic_ops_verbose: bool = False,
         cull_ratio: float = 0.01,
         voxel_footprint_correction: bool | float = False,
+        boundary_penalty: Optional[float] = None,
+        clip_to_bounds: bool = False,
         **seed_kwargs,
     ) -> GSplatData:
         """
@@ -197,6 +199,8 @@ class GaussianSplatFitter:
             seed_method=seed_method,
             cull_ratio=cull_ratio,
             voxel_footprint_correction=voxel_footprint_correction,
+            boundary_penalty=boundary_penalty,
+            clip_to_bounds=clip_to_bounds,
             **seed_kwargs,
         )
 
@@ -271,6 +275,9 @@ def fit_gaussian_splats(
     # Post-processing
     cull_ratio: float = 0.01,
     voxel_footprint_correction: bool | float = False,
+    # Boundary containment
+    boundary_penalty: Optional[float] = None,
+    clip_to_bounds: bool = False,
     **seed_kwargs,
 ) -> GSplatData:
     """
@@ -451,6 +458,18 @@ def fit_gaussian_splats(
         - True: Enable with 1-voxel box footprint (sigma ≈ 0.289 voxels)
         - float: Custom sigma in voxel units (e.g., 0.5 for half-voxel blur, 1.0 for 1-voxel blur)
         Works for any dimension d.
+    boundary_penalty : float or None, default=None
+        Weight for boundary containment penalty during optimization.
+        Adds a differentiable penalty for splats whose effective support
+        (truncate * sqrt(Sigma_ii)) extends beyond the volume bounds.
+        The penalty is: boundary_penalty * mean(overflow^2).
+        - None: Disabled (default)
+        - float > 0: Enable with this weight (e.g., 0.1 for mild, 1.0 for strong)
+    clip_to_bounds : bool, default=False
+        Post-fit hard clipping to guarantee no splat extends beyond the volume bounds.
+        Scales down rows of the Cholesky factor L so that
+        truncate * sqrt(Sigma_ii) <= distance_to_nearest_edge for each dimension.
+        Preserves splat orientation but shrinks to fit within bounds.
 
     Returns
     -------
@@ -521,6 +540,8 @@ def fit_gaussian_splats(
             early_stop_patience=early_stop_patience,
             cull_ratio=cull_ratio,
             voxel_footprint_correction=voxel_footprint_correction,
+            boundary_penalty=boundary_penalty,
+            clip_to_bounds=clip_to_bounds,
             **seed_kwargs,
         )
 

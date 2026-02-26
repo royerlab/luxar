@@ -51,6 +51,8 @@ def prepare_fit_config(
     seed_method: str = "auto",
     cull_ratio: float = 0.1,
     voxel_footprint_correction: bool | float = False,
+    boundary_penalty: Optional[float] = None,
+    clip_to_bounds: bool = False,
     **seed_kwargs,
 ) -> FitConfig:
     """
@@ -229,6 +231,10 @@ def prepare_fit_config(
     ):
         raise ValueError("voxel_footprint_correction sigma must be positive")
 
+    # Validate boundary_penalty
+    if boundary_penalty is not None and boundary_penalty < 0:
+        raise ValueError("boundary_penalty must be non-negative if specified")
+
     return FitConfig(
         V=V,
         seeds=seeds,
@@ -271,4 +277,7 @@ def prepare_fit_config(
         # Post-processing
         cull_ratio=cull_ratio,
         voxel_footprint_correction=voxel_footprint_correction,
+        # Boundary containment
+        boundary_penalty=boundary_penalty,
+        clip_to_bounds=clip_to_bounds,
     )
