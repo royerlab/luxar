@@ -300,6 +300,12 @@ def load_timepoint_volume(tiff_path: Path) -> np.ndarray:
     elif volume.ndim == 4 and volume.shape[-1] <= 4:
         volume = volume[..., 0]
 
+    if volume.ndim != 3:
+        raise ValueError(
+            f"Expected 3D volume from {tiff_path.name}, "
+            f"got {volume.ndim}D with shape {volume.shape}"
+        )
+
     # Normalise
     vmin, vmax = volume.min(), volume.max()
     if vmax > vmin:
@@ -596,6 +602,9 @@ def fit_timepoint(
 
     aprint(f"  Fitting {label} ({N_ITERS} iters, {N_SEEDS} seeds)...")
 
+    # Pass voxel_size so GSplats account for the strong Z-anisotropy
+    # (0.75 µm Z vs 0.15 µm XY = 5x).  output_space defaults to "real",
+    # so centers come back in physical µm coordinates.
     result = fit_gaussian_splats(
         volume,
         seeds=N_SEEDS,
@@ -657,24 +666,30 @@ def add_cell_tracks(
 
     All tracks are batched into a single "segments" line node.  Each consecutive
     pair of positions in a track becomes one line segment.  Vertices are 4D:
-    [x, y, z, time].
+    [x, y, z, time] in physical µm coordinates.
+
+    Track positions from CSV/nuclei files are in voxel coordinates and are
+    converted to physical µm using VOXEL_SIZE_ZYX before centering.
 
     Args:
         scene: Luxar Scene object.
         tracking_data: Dict with 'tracks' and 'colors'.
-        shared_centroid: 3D centroid (Z, Y, X) for aligning tracks with GSplats.
+        shared_centroid: 3D centroid in physical µm (Z, Y, X order),
+            matching the GSplats output space.
     """
     tracks = tracking_data["tracks"]
     track_colors = tracking_data["colors"]
+
+    # Voxel-to-physical conversion factors (Z, Y, X)
+    vz, vy, vx = VOXEL_SIZE_ZYX
 
     with asection(f"Adding {len(tracks)} cell track lines"):
         # Build segment vertices: pairs of consecutive points per track
         all_verts = []
         all_colors = []
 
-        # Track positions might be in voxel coordinates — the GSplats centroid
-        # comes from fitting which also uses voxel coordinates, so the
-        # centering should be consistent.
+        # shared_centroid is in µm, order [Z, Y, X] (from GSplat fitting).
+        # Scene dims are [x, y, z, time], so remap:
         cx, cy, cz = shared_centroid[2], shared_centroid[1], shared_centroid[0]
 
         total_segments = 0
@@ -686,13 +701,26 @@ def add_cell_tracks(
                 t0, z0, y0, x0 = positions[i]
                 t1, z1, y1, x1 = positions[i + 1]
 
-                # 4D vertex: [x, y, z, time] — matching scene dims
+                # Convert voxel coords to physical µm (same as GSplats:
+                # physical = voxel_index * voxel_size, no half-voxel offset)
+                # then subtract the shared centroid.
+                # 4D vertex: [x_um, y_um, z_um, time] — matching scene dims
                 v0 = np.array(
-                    [x0 - cx, y0 - cy, z0 - cz, float(t0)],
+                    [
+                        x0 * vx - cx,
+                        y0 * vy - cy,
+                        z0 * vz - cz,
+                        float(t0),
+                    ],
                     dtype=np.float32,
                 )
                 v1 = np.array(
-                    [x1 - cx, y1 - cy, z1 - cz, float(t1)],
+                    [
+                        x1 * vx - cx,
+                        y1 * vy - cy,
+                        z1 * vz - cz,
+                        float(t1),
+                    ],
                     dtype=np.float32,
                 )
 
@@ -755,11 +783,13 @@ def create_luxar_scene(
         aprint(f"Timepoints: {n_timepoints}")
         aprint(f"Tracking: {'yes' if tracking_data else 'no'}")
 
+        # GSplats are fitted with voxel_size → output in µm (output_space="real").
+        # Track line vertices are also converted to µm in add_cell_tracks().
         dims = Dimensions(
             [
-                Dimension("x", unit="px", display=True),
-                Dimension("y", unit="px", display=True),
-                Dimension("z", unit="px", display=True),
+                Dimension("x", unit="um", display=True),
+                Dimension("y", unit="um", display=True),
+                Dimension("z", unit="um", display=True),
                 Dimension(
                     "time",
                     unit="frame",
