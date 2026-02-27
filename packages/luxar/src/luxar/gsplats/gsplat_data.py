@@ -40,6 +40,7 @@ class GSplatData:
         - sharpness_min/max/mean/std/median: Sharpness statistics
         - best_iteration: Iteration where best state was found
         - final_max_abs_error: Maximum absolute error in best state
+        - final_rel_l2: Relative L2 error in best state
         - movie_frames: Optional optimization movie frames (if napari_movie=True)
     """
 
@@ -296,7 +297,12 @@ class GSplatData:
         if N_original == 0:
             pruned_stats = self.stats.copy() if self.stats else {}
             pruned_stats.update(
-                {"pruned": True, "pruning_method": method, "n_original": 0, "n_removed": 0}
+                {
+                    "pruned": True,
+                    "pruning_method": method,
+                    "n_original": 0,
+                    "n_removed": 0,
+                }
             )
             return GSplatData(
                 centers=self.centers.copy(),

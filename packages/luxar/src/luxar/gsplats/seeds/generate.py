@@ -397,7 +397,9 @@ def _auto_combine(
     else:
         total_before = sum(len(r.centers) for r in results)
         with asection(f"Deduplication ({total_before} → target)"):
-            result = _combine_gsplatdata(results, min_distance, device=device, ndim=ndim)
+            result = _combine_gsplatdata(
+                results, min_distance, device=device, ndim=ndim
+            )
             if verbose:
                 aprint(f"✓ Final: {len(result.centers)} seeds after deduplication")
             return result

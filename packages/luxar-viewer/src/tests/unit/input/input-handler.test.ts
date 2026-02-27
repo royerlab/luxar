@@ -160,19 +160,21 @@ describe('InputHandler Utilities', () => {
   });
 
   describe('mapKeyToDimension', () => {
-    it('should map "1" to dimension 0 if not displayed', () => {
-      const dims = createDims(5, [1, 2, 3]); // 0 is not displayed
-      expect(mapKeyToDimension('1', dims)).toBe(0);
+    it('should map "1" to first non-displayed dimension', () => {
+      const dims = createDims(5, [1, 2, 3]); // Non-displayed: 0, 4
+      expect(mapKeyToDimension('1', dims)).toBe(0); // First navigable = dim 0
     });
 
-    it('should return -1 for "1" if dimension 0 is displayed', () => {
-      const dims = createDims(5, [0, 1, 2]); // 0 is displayed
-      expect(mapKeyToDimension('1', dims)).toBe(-1);
+    it('should map "1" to first navigable dim even when dim 0 is displayed', () => {
+      const dims = createDims(5, [0, 1, 2]); // Non-displayed: 3, 4
+      expect(mapKeyToDimension('1', dims)).toBe(3); // First navigable = dim 3
+      expect(mapKeyToDimension('2', dims)).toBe(4); // Second navigable = dim 4
     });
 
-    it('should map "9" to dimension 8', () => {
-      const dims = createDims(10, [0, 1, 2]); // 8 is not displayed
-      expect(mapKeyToDimension('9', dims)).toBe(8);
+    it('should return -1 when key exceeds navigable count', () => {
+      const dims = createDims(10, [0, 1, 2]); // Non-displayed: 3,4,5,6,7,8,9 (7 navigable)
+      expect(mapKeyToDimension('7', dims)).toBe(9); // 7th navigable = dim 9
+      expect(mapKeyToDimension('8', dims)).toBe(-1); // Only 7 navigable dims
     });
 
     it('should return -1 for "0"', () => {
@@ -187,9 +189,10 @@ describe('InputHandler Utilities', () => {
       expect(mapKeyToDimension(' ', dims)).toBe(-1);
     });
 
-    it('should return -1 for dimension out of range', () => {
+    it('should return -1 when all dimensions are displayed', () => {
       const dims = createDims(3, [0, 1, 2]);
-      expect(mapKeyToDimension('5', dims)).toBe(-1); // Dimension 4 doesn't exist
+      expect(mapKeyToDimension('1', dims)).toBe(-1); // No navigable dims
+      expect(mapKeyToDimension('5', dims)).toBe(-1);
     });
 
     it('should return -1 for empty string', () => {

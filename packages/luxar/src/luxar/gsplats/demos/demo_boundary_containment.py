@@ -215,13 +215,9 @@ def analyze_results(results, V):
         aprint("-" * 70)
 
         for name, result in results.items():
-            n_oob, total, max_overflow = count_out_of_bounds(
-                result, shape, TRUNCATE
-            )
+            n_oob, total, max_overflow = count_out_of_bounds(result, shape, TRUNCATE)
             recon = render_gaussians_numpy(shape, result, truncate=TRUNCATE)
-            rel_err = float(
-                np.linalg.norm(V - recon) / (np.linalg.norm(V) + 1e-12)
-            )
+            rel_err = float(np.linalg.norm(V - recon) / (np.linalg.norm(V) + 1e-12))
             oob_pct = 100.0 * n_oob / max(total, 1)
 
             aprint(
@@ -243,10 +239,9 @@ def show_napari(results, V):
     names = list(results.keys())
 
     # Stack reconstructions and residuals
-    recons = np.stack([
-        render_gaussians_numpy(shape, results[n], truncate=TRUNCATE)
-        for n in names
-    ])
+    recons = np.stack(
+        [render_gaussians_numpy(shape, results[n], truncate=TRUNCATE) for n in names]
+    )
     residuals = np.abs(np.stack([V] * len(names)) - recons)
 
     viewer = napari.Viewer(title="Boundary Containment Demo")
@@ -310,9 +305,9 @@ def show_napari(results, V):
 
     # Volume boundary rectangle
     h, w = shape
-    boundary = np.array([
-        [0, 0], [0, w - 1], [h - 1, w - 1], [h - 1, 0]
-    ], dtype=np.float32)
+    boundary = np.array(
+        [[0, 0], [0, w - 1], [h - 1, w - 1], [h - 1, 0]], dtype=np.float32
+    )
     viewer.add_shapes(
         [boundary],
         shape_type="polygon",
@@ -348,8 +343,10 @@ def show_napari(results, V):
         # Toggle ellipse/center layers
         for i, n in enumerate(names):
             for layer in viewer.layers:
-                if n in layer.name and ("ellipses" in layer.name or "centers" in layer.name):
-                    layer.visible = (i == t)
+                if n in layer.name and (
+                    "ellipses" in layer.name or "centers" in layer.name
+                ):
+                    layer.visible = i == t
 
     _update_overlay()
     viewer.dims.events.current_step.connect(_update_overlay)

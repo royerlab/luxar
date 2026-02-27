@@ -1226,7 +1226,6 @@ export class RenderingControls {
     // No additional setup needed here
   }
 
-
   /**
    * Add click outside handler to blur inputs
    */

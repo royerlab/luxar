@@ -524,8 +524,7 @@ if not NO_NAPARI:
         rel = float(rel_err_frames[t_index])
         viewer.text_overlay.visible = True
         viewer.text_overlay.text = (
-            f"Splats: {K}/{N}  |  {fold:.1f}x compression  "
-            f"|  rel L2 error: {rel:.4f}"
+            f"Splats: {K}/{N}  |  {fold:.1f}x compression  |  rel L2 error: {rel:.4f}"
         )
 
     # Initialize and wire slider

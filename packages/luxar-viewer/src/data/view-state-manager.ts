@@ -102,6 +102,10 @@ export class ViewStateManager {
       display: dim.display,
       discrete: dim.discrete,
       step: dim.step,
+      spatial: dim.spatial,
+      cyclic: dim.cyclic,
+      categories: dim.categories,
+      description: dim.description,
     }));
   }
 
@@ -121,8 +125,12 @@ export class ViewStateManager {
   }
 
   /**
-   * Calculate initial slice position for all dimensions
-   * Uses minimum of range (start at beginning for time-like dimensions)
+   * Calculate initial slice position for all dimensions.
+   *
+   * Policy (aligned with SceneDimsManager.initFromScene):
+   * - Discrete/categorical non-displayed: start at minimum (first frame/category)
+   * - Continuous non-displayed: start at center (no natural "first" position)
+   * - Displayed: start at 0 (camera-controlled)
    */
   private static calculateInitialSlice(
     metadata: DimensionMetadata[],
@@ -134,18 +142,15 @@ export class ViewStateManager {
     for (let i = 0; i < ndim; i++) {
       const range = metadata[i].range;
       if (!displayed.includes(i) && range) {
-        // FIXED: Use minimum of range (leftmost slider position) for time dimensions
-        // This ensures time starts at 0 and matches dimension slider initialization
-        const [rangeMin] = range;
-        let initialValue = rangeMin; // Start at minimum, not center!
+        const [rangeMin, rangeMax] = range;
 
-        // For discrete dimensions, floor to nearest integer
-        // Use floor instead of round to avoid edge cases
-        if (metadata[i].discrete) {
-          initialValue = Math.floor(initialValue);
+        if (metadata[i].discrete || metadata[i].categories) {
+          // Discrete/categorical: start at minimum (first frame, first category)
+          currentStep[i] = metadata[i].discrete ? Math.floor(rangeMin) : rangeMin;
+        } else {
+          // Continuous: start at center (no natural "first" position)
+          currentStep[i] = (rangeMin + rangeMax) / 2;
         }
-
-        currentStep[i] = initialValue;
       }
     }
 

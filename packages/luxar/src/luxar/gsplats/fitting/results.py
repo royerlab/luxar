@@ -19,8 +19,22 @@ from luxar.gsplats.utils.trils import pack_tril
 
 # ANSI 256-color codes: red → yellow → green → cyan gradient
 _GRADIENT_CODES = [
-    196, 196, 202, 208, 214, 220, 226, 190,
-    154, 118, 82, 46, 48, 50, 51, 45,
+    196,
+    196,
+    202,
+    208,
+    214,
+    220,
+    226,
+    190,
+    154,
+    118,
+    82,
+    46,
+    48,
+    50,
+    51,
+    45,
 ]
 _RESET = "\033[0m"
 _DIM = "\033[2m"
@@ -94,8 +108,7 @@ def _print_amplitude_histogram(
                 marker = f" {_DIM}◄ cull{_RESET}"
 
             aprint(
-                f"  {lo:9.6f} ┤{bar}{pad} "
-                f"{count:>{count_width}} ({pct:5.1f}%){marker}"
+                f"  {lo:9.6f} ┤{bar}{pad} {count:>{count_width}} ({pct:5.1f}%){marker}"
             )
 
         aprint(f"  {max_val:9.6f} ┘")
@@ -298,9 +311,7 @@ def finalize_results(
             centers_np, Ls_np, config.V.shape, config.truncate, sharpness_np
         )
         if config.verbose:
-            aprint(
-                f"Clipped splats to volume bounds (truncate={config.truncate:.1f})"
-            )
+            aprint(f"Clipped splats to volume bounds (truncate={config.truncate:.1f})")
 
     # Apply voxel footprint correction if enabled
     if config.voxel_footprint_correction:
@@ -331,8 +342,7 @@ def finalize_results(
         cholesky_packed = cholesky_packed * tril_scales  # (N, tril) * (tril,)
         if config.verbose:
             aprint(
-                f"Converted output to physical coordinates "
-                f"(voxel_size={vs.tolist()})"
+                f"Converted output to physical coordinates (voxel_size={vs.tolist()})"
             )
 
     # Compute sharpness statistics (handle empty array after culling)
@@ -360,6 +370,7 @@ def finalize_results(
         "best_iteration": optimization_results.best_iteration,  # Iteration that achieved best quality
         "final_loss": optimization_results.best_loss,
         "final_max_abs_error": optimization_results.best_max_abs_error,
+        "final_rel_l2": optimization_results.best_rel_l2,
         "converged": optimization_results.converged_early,
         "early_stopped": optimization_results.early_stopped,
         "n_splats": len(amps_np),  # Final splat count (after culling)

@@ -58,7 +58,9 @@ def initialize_optimization(
         if init_sigma is None:
             if config.voxel_size is not None:
                 # Physical-space auto: use physical extents
-                phys_dims = np.array(config.V.shape, dtype=np.float32) * config.voxel_size
+                phys_dims = (
+                    np.array(config.V.shape, dtype=np.float32) * config.voxel_size
+                )
                 min_phys_dim = float(phys_dims.min())
                 min_vs = float(config.voxel_size.min())
                 init_sigma_phys = max(1.5 * min_vs, min_phys_dim * 0.05)

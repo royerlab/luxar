@@ -766,8 +766,12 @@ export class DataLoadingMonitor {
    * @returns true if incremental update succeeded, false if full rebuild is needed
    */
   private updateCompactViewValues(): boolean {
-    const pointsEl = this.panel?.querySelector('.luxar-monitor-compact .luxar-monitor-compact__points');
-    const memoryEl = this.panel?.querySelector('.luxar-monitor-compact .luxar-monitor-compact__memory');
+    const pointsEl = this.panel?.querySelector(
+      '.luxar-monitor-compact .luxar-monitor-compact__points'
+    );
+    const memoryEl = this.panel?.querySelector(
+      '.luxar-monitor-compact .luxar-monitor-compact__memory'
+    );
     const qpsEl = this.panel?.querySelector('.luxar-monitor-compact .luxar-monitor-compact__qps');
 
     // If structure doesn't exist yet, need full rebuild
@@ -791,7 +795,9 @@ export class DataLoadingMonitor {
    * Sets the interaction lock when hovering over the expand button.
    */
   private attachCompactViewInteractionHandlers(): void {
-    const expandBtn = this.panel?.querySelector('.luxar-monitor-compact .luxar-data-monitor__expand-btn');
+    const expandBtn = this.panel?.querySelector(
+      '.luxar-monitor-compact .luxar-data-monitor__expand-btn'
+    );
     if (!expandBtn) return;
 
     expandBtn.addEventListener('mouseenter', () => this.setMonitorInteractionLock(true));
