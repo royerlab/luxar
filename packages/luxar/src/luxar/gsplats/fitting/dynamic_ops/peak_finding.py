@@ -269,9 +269,7 @@ def _find_residual_peaks_tiled(
         sampled = residual_positive.reshape(-1)[::stride]
         positive_sample = sampled[sampled > 0]
         if len(positive_sample) > 0:
-            strong_peak_threshold = torch.quantile(
-                positive_sample.float(), 0.75
-            ).item()
+            strong_peak_threshold = torch.quantile(positive_sample.float(), 0.75).item()
         else:
             strong_peak_threshold = float("inf")  # No positive residuals
     else:

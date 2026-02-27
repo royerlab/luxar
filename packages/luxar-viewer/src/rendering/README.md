@@ -185,6 +185,7 @@ Specialized shader material for volumetric Gaussian splatting with nD slicing su
 - **GPU Optimizations**: Flat interpolation, reciprocal precomputation, early discard at 3σ
 
 **Culling Strategy:**
+
 - **Behind-camera rejection**: Prevents rendering splats behind the viewer
 - **Near-plane culling**: Two-stage approach prevents overdraw from splats very close to camera
   - Stage 1: Fixed threshold (z < 0.1) culls most splats instantly

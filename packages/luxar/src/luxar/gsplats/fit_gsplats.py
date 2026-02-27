@@ -117,6 +117,7 @@ class GaussianSplatFitter:
         seed_method: str = "auto",
         verbose: bool = True,
         max_abs_error: Optional[float] = None,
+        rel_l2_target: Optional[float] = None,
         gradient_clip: Optional[float] = 1.0,
         napari_movie: bool = False,
         movie_every: int = 1,
@@ -189,6 +190,7 @@ class GaussianSplatFitter:
             truncate,
             verbose,
             max_abs_error,
+            rel_l2_target,
             gradient_clip,
             napari_movie,
             movie_every,
@@ -260,6 +262,7 @@ def fit_gaussian_splats(
     verbose: bool = True,
     # Optimization parameters
     max_abs_error: Optional[float] = None,
+    rel_l2_target: Optional[float] = None,
     gradient_clip: Optional[float] = 1.0,
     # Per-splat optimizer parameters
     scheduler_type: str = "plateau",
@@ -418,6 +421,12 @@ def fit_gaussian_splats(
         optimization stops when max(|prediction - target|) < max_abs_error.
         If None, automatically set to 0.01 (1% of normalized [0,1] range) for
         sensible convergence behavior. Auto-threshold usage is logged.
+    rel_l2_target : float or None, default=None
+        Relative L2 error threshold for convergence. If specified,
+        optimization stops when ||pred - target||₂ / ||target||₂ < rel_l2_target.
+        This is an additional (OR) criterion alongside max_abs_error — either
+        being satisfied triggers convergence. Provides a smoother, more stable
+        convergence signal than max_abs_error. If None, this criterion is disabled.
     gradient_clip : float or None, default=1.0
         Maximum gradient norm for clipping. None disables clipping.
     scheduler_type : str, default="plateau"
@@ -553,6 +562,7 @@ def fit_gaussian_splats(
             seed_method=seed_method,
             verbose=verbose,
             max_abs_error=max_abs_error,
+            rel_l2_target=rel_l2_target,
             gradient_clip=gradient_clip,
             napari_movie=napari_movie,
             movie_every=movie_every,
@@ -601,9 +611,13 @@ def fit_gaussian_splats(
                 elif result.stats["sharpness_mean"] < 2.5:
                     aprint("→ Standard Gaussians (s ≈ 2): Classic Gaussian profiles")
                 elif result.stats["sharpness_mean"] < 4.0:
-                    aprint("→ Sharp edges (2 < s < 4): Compact splats with faster decay")
+                    aprint(
+                        "→ Sharp edges (2 < s < 4): Compact splats with faster decay"
+                    )
                 else:
-                    aprint("→ Very sharp (s ≥ 4): Near box-like splats with abrupt cutoff")
+                    aprint(
+                        "→ Very sharp (s ≥ 4): Near box-like splats with abrupt cutoff"
+                    )
 
     # Show napari movie OUTSIDE the fitting section (so it doesn't affect timing)
     if result.stats.get("movie_frames") is not None:

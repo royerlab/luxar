@@ -75,7 +75,9 @@ function validateCamera(config: AppConfig, errors: string[], warnings: string[])
     errors.push(`Invalid camera near plane: ${defaults.near} (must be > 0)`);
   }
   if (defaults.far <= defaults.near) {
-    errors.push(`Invalid camera far plane: ${defaults.far} (must be > near plane ${defaults.near})`);
+    errors.push(
+      `Invalid camera far plane: ${defaults.far} (must be > near plane ${defaults.near})`
+    );
   }
 
   // FOV min/max validation

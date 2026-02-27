@@ -38,6 +38,7 @@ def simple_2d_setup():
         n_iters=50,
         lr=0.1,
         max_abs_error=0.05,
+        rel_l2_target=None,
         gradient_clip=None,
         loss_type="mse",
         asymmetric_penalty=None,
@@ -335,6 +336,48 @@ def test_verbose_logging(simple_2d_setup) -> None:
     results = run_optimization_loop(components, loss_fn, config, preprocessed_data)
 
     assert results.actual_iters == 10
+
+
+def test_convergence_rel_l2_target(simple_2d_setup) -> None:
+    """Test convergence via rel_l2_target criterion."""
+    config, preprocessed_data = simple_2d_setup
+    config.n_iters = 50
+
+    # Set very tight max_abs_error so it won't trigger
+    preprocessed_data.max_abs_error = 1e-10
+    # Set very loose rel_l2_target so it triggers quickly
+    preprocessed_data.rel_l2_target = 0.99
+
+    components = initialize_optimization(config, preprocessed_data)
+    loss_fn = create_loss_function(config, preprocessed_data, components.model)
+
+    results = run_optimization_loop(components, loss_fn, config, preprocessed_data)
+
+    # Should converge via rel_l2 before hitting iteration limit
+    assert results.converged_early
+    assert results.actual_iters < config.n_iters
+    assert results.best_rel_l2 >= 0
+
+
+def test_rel_l2_target_none_no_effect(simple_2d_setup) -> None:
+    """Test that rel_l2_target=None doesn't change behavior."""
+    config, preprocessed_data = simple_2d_setup
+    config.n_iters = 10
+
+    # Set very tight max_abs_error so it won't trigger
+    preprocessed_data.max_abs_error = 1e-10
+    # Ensure rel_l2_target is None (default)
+    preprocessed_data.rel_l2_target = None
+
+    components = initialize_optimization(config, preprocessed_data)
+    loss_fn = create_loss_function(config, preprocessed_data, components.model)
+
+    results = run_optimization_loop(components, loss_fn, config, preprocessed_data)
+
+    # Should NOT converge (neither criterion met)
+    assert not results.converged_early
+    assert results.actual_iters == config.n_iters
+    assert results.best_rel_l2 >= 0
 
 
 def test_different_loss_types_in_optimization(simple_2d_setup) -> None:

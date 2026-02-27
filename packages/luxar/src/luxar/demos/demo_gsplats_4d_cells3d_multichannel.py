@@ -124,7 +124,9 @@ def load_cells3d():
         # cells3d() returns (60, 2, 256, 256) — (Z, Channel, Y, X), uint16
         raw = cells3d()
         aprint(f"Raw data shape: {raw.shape}, dtype: {raw.dtype}")
-        aprint(f"  Axes: (Z={raw.shape[0]}, C={raw.shape[1]}, Y={raw.shape[2]}, X={raw.shape[3]})")
+        aprint(
+            f"  Axes: (Z={raw.shape[0]}, C={raw.shape[1]}, Y={raw.shape[2]}, X={raw.shape[3]})"
+        )
 
         volumes = []
         for ch_config in CHANNELS:
@@ -243,9 +245,7 @@ def create_luxar_scene(gsplats_list, output_path=None):
     assign each channel's splats to their Channel index.
     """
     if output_path is None:
-        output_path = (
-            get_demos_output_dir() / "gsplats_4d_cells3d_multichannel.zarr"
-        )
+        output_path = get_demos_output_dir() / "gsplats_4d_cells3d_multichannel.zarr"
 
     with asection("Creating 4D Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -253,19 +253,21 @@ def create_luxar_scene(gsplats_list, output_path=None):
         # Define 4D scene: 3 spatial + 1 categorical Channel dimension
         # Spatial ranges are NOT set — the compiler infers them from
         # actual data (which is centroid-centered, not in voxel coords).
-        dims = Dimensions([
-            Dimension("x", unit="px", display=True),
-            Dimension("y", unit="px", display=True),
-            Dimension("z", unit="px", display=True),
-            Dimension(
-                "channel",
-                display=False,
-                discrete=True,
-                range=(0, len(CHANNELS) - 1),
-                step=1.0,
-                categories=[ch["name"] for ch in CHANNELS],
-            ),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="px", display=True),
+                Dimension("y", unit="px", display=True),
+                Dimension("z", unit="px", display=True),
+                Dimension(
+                    "channel",
+                    display=False,
+                    discrete=True,
+                    range=(0, len(CHANNELS) - 1),
+                    step=1.0,
+                    categories=[ch["name"] for ch in CHANNELS],
+                ),
+            ]
+        )
 
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
@@ -303,9 +305,9 @@ dim_order usage:
             all_centers = [g.centers for g in gsplats_list]
             all_amps = [g.amplitudes for g in gsplats_list]
             total_amp = sum(a.sum() for a in all_amps)
-            shared_centroid = sum(
-                c.T @ a for c, a in zip(all_centers, all_amps)
-            ) / total_amp
+            shared_centroid = (
+                sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
+            )
 
             # Add each channel as a separate gsplats node using dim_order
             for i, (gsplats, ch_config) in enumerate(zip(gsplats_list, CHANNELS)):
@@ -320,9 +322,7 @@ dim_order usage:
                     n_splats = len(gsplats.amplitudes)
 
                     # Assign channel color to all splats
-                    colors = np.tile(
-                        np.array(color, dtype=np.float32), (n_splats, 1)
-                    )
+                    colors = np.tile(np.array(color, dtype=np.float32), (n_splats, 1))
 
                     # KEY: Use dim_order to map 3D data → 4D scene
                     # Data columns are [Z, Y, X] from fitting a (Z, Y, X) volume
@@ -361,9 +361,7 @@ def main():
     aprint("3D per-channel fitting + dim_order embedding into 4D scene")
     aprint("")
 
-    output_path = (
-        get_demos_output_dir() / "gsplats_4d_cells3d_multichannel.zarr"
-    )
+    output_path = get_demos_output_dir() / "gsplats_4d_cells3d_multichannel.zarr"
 
     # Serve-only mode
     if SERVE_ONLY:

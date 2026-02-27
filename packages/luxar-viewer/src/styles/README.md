@@ -34,13 +34,16 @@ See `src/themes/` for the full set of available properties.
 ## Base Styles
 
 ### Layout (`base/layout.css`)
+
 - Viewport: Canvas fills the entire window (`width: 100%`, `height: 100%`)
 - Container: Max-width 1200px with auto margins
 - Grid: `.luxar-grid` with responsive column support
 - Flexbox: `.luxar-flex`, `.luxar-flex-col`, `.luxar-flex-row`
 
 ### Utilities (`base/utilities.css`)
+
 Tailwind-like utility classes, all prefixed with `luxar-`:
+
 - **Flex alignment**: `luxar-items-center`, `luxar-items-start`, `luxar-justify-between`
 - **Spacing**: `luxar-gap-2`, `luxar-p-4`, `luxar-m-2`
 - **Display**: `luxar-hidden`, `luxar-block`, `luxar-inline-flex`
@@ -49,19 +52,20 @@ Tailwind-like utility classes, all prefixed with `luxar-`:
 
 Each UI component has a dedicated CSS file:
 
-| File | Component |
-|------|-----------|
-| `dimension-sliders.css` | nD dimension navigation sliders |
-| `dataset-browser.css` | Directory listing and dataset selector |
-| `debug-console.css` | In-viewer debug console overlay |
-| `data-loading-monitor.css` | Loading progress indicators |
-| `error-dialog.css` | Error display dialogs |
-| `help-overlay.css` | Keyboard shortcut help overlay |
-| `resolution-indicator.css` | Adaptive DPR resolution badge |
+| File                       | Component                              |
+| -------------------------- | -------------------------------------- |
+| `dimension-sliders.css`    | nD dimension navigation sliders        |
+| `dataset-browser.css`      | Directory listing and dataset selector |
+| `debug-console.css`        | In-viewer debug console overlay        |
+| `data-loading-monitor.css` | Loading progress indicators            |
+| `error-dialog.css`         | Error display dialogs                  |
+| `help-overlay.css`         | Keyboard shortcut help overlay         |
+| `resolution-indicator.css` | Adaptive DPR resolution badge          |
 
 ## Theme Overrides
 
 Theme-specific CSS files provide visual enhancements:
+
 - `themes/frosted-glass.css` — Backdrop blur and glass morphism effects
 - `themes/liquid-glass.css` — Geometry-aware refraction with SVG filters
 

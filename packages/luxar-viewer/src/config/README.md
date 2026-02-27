@@ -138,6 +138,7 @@ adaptiveDPR: {
 ```
 
 **How It Works**:
+
 - When FPS drops below `minFPS`, DPR is reduced by `scaleDownFactor`
 - When FPS stays above `maxFPS` for `hysteresisSeconds`, DPR increases by `scaleUpFactor`
 - Asymmetric scaling (slower up, faster down) prevents quality oscillation

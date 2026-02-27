@@ -81,7 +81,8 @@ function computeMarginalCholesky(
         sum -= lSub[packedIndex(i, k)] * lSub[packedIndex(j, k)];
       }
       if (i === j) {
-        lSub[packedIndex(i, i)] = sum > CHOLESKY_EPSILON ? Math.sqrt(sum) : Math.sqrt(CHOLESKY_EPSILON);
+        lSub[packedIndex(i, i)] =
+          sum > CHOLESKY_EPSILON ? Math.sqrt(sum) : Math.sqrt(CHOLESKY_EPSILON);
       } else {
         const diag = lSub[packedIndex(j, j)];
         lSub[packedIndex(i, j)] = diag > CHOLESKY_EPSILON ? sum / diag : 0;

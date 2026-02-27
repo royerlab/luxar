@@ -44,18 +44,18 @@ try {
 
 ## API Overview
 
-| Method | Purpose |
-|--------|---------|
-| `beginUpdate()` | Start timing cycle (root session) |
-| `endUpdate()` | End cycle, notify listeners |
-| `time(name, fn)` | Time a function with automatic nesting |
-| `timeWithMeta(name, fn)` | Time with metadata callback |
-| `begin(name)` | Start manual timing entry |
-| `skip(name, reason)` | Mark operation as skipped |
-| `getTimings()` | Get timing hierarchy for UI |
-| `addListener(fn)` | Add update listener |
-| `removeListener(fn)` | Remove update listener |
-| `reset()` | Clear all timing data |
+| Method                   | Purpose                                |
+| ------------------------ | -------------------------------------- |
+| `beginUpdate()`          | Start timing cycle (root session)      |
+| `endUpdate()`            | End cycle, notify listeners            |
+| `time(name, fn)`         | Time a function with automatic nesting |
+| `timeWithMeta(name, fn)` | Time with metadata callback            |
+| `begin(name)`            | Start manual timing entry              |
+| `skip(name, reason)`     | Mark operation as skipped              |
+| `getTimings()`           | Get timing hierarchy for UI            |
+| `addListener(fn)`        | Add update listener                    |
+| `removeListener(fn)`     | Remove update listener                 |
+| `reset()`                | Clear all timing data                  |
 
 ## Session Stack Pattern
 
@@ -98,21 +98,21 @@ Total Update                              [root]
 
 ## Metadata Per Entry
 
-| Entry Type | Metadata Fields |
-|------------|-----------------|
-| Total Update | (none) |
-| Points | `points` (visible count) |
-| Lines | `segments` (visible count) |
-| GSplats | `splats` (visible count) |
+| Entry Type      | Metadata Fields               |
+| --------------- | ----------------------------- |
+| Total Update    | (none)                        |
+| Points          | `points` (visible count)      |
+| Lines           | `segments` (visible count)    |
+| GSplats         | `splats` (visible count)      |
 | Skipped entries | `skipped: true`, `skipReason` |
-| Sub-operations | (none, time is the metric) |
+| Sub-operations  | (none, time is the metric)    |
 
 ## EMA Smoothing
 
 The profiler uses Exponential Moving Average with alpha=0.1:
 
 ```typescript
-avgMs = 0.1 * newValue + 0.9 * previousAvg
+avgMs = 0.1 * newValue + 0.9 * previousAvg;
 ```
 
 This provides stability (takes ~10 measurements for 65% reflection of changes) while still responding to sustained changes.
@@ -120,6 +120,7 @@ This provides stability (takes ~10 measurements for 65% reflection of changes) w
 ## Performance Overhead
 
 With ~20 timing entries per update:
+
 - ~40us for `performance.now()` calls
 - ~200us for object allocations
 - ~120us for EMA + merge operations
@@ -148,6 +149,7 @@ this.monitor.setProfiler(this.profiler);
 ## Complete Documentation
 
 See `SPECIFICATIONS.md` for:
+
 - Full API specification
 - Implementation details
 - UI panel layout

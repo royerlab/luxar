@@ -14,12 +14,12 @@ ThemeManager (singleton)
 
 ## Built-in Themes
 
-| Theme | ID | Description |
-|-------|----|-------------|
-| Dark | `dark` | Classic dark theme (`#111111` background) |
-| Light | `light` | Light theme with bright backgrounds |
-| Frosted Glass | `frosted-glass` | Backdrop blur and glass morphism |
-| Liquid Glass | `liquid-glass` | Geometry-aware refraction with SVG filters |
+| Theme         | ID              | Description                                |
+| ------------- | --------------- | ------------------------------------------ |
+| Dark          | `dark`          | Classic dark theme (`#111111` background)  |
+| Light         | `light`         | Light theme with bright backgrounds        |
+| Frosted Glass | `frosted-glass` | Backdrop blur and glass morphism           |
+| Liquid Glass  | `liquid-glass`  | Geometry-aware refraction with SVG filters |
 
 **Default**: `frosted-glass`
 
@@ -50,6 +50,7 @@ unsubscribe();
 Each theme implements the `Theme` interface with these sections:
 
 ### Colors
+
 - **Background**: primary, secondary, tertiary, overlay
 - **Text**: primary, secondary, muted, disabled, inverse
 - **Semantic**: success, warning, error, info, highlight
@@ -58,15 +59,18 @@ Each theme implements the `Theme` interface with these sections:
 - **Visualization**: hot, warm, cold, neutral
 
 ### Typography
+
 - **Font families**: base, mono, display
 - **Font sizes**: xs through 3xl
 - **Font weights**: normal, medium, semibold, bold
 - **Line heights**: tight, normal, relaxed
 
 ### Spacing
+
 Scale keys `[0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20]` mapping to `[0, 2, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40]` px
 
 ### Effects
+
 - **Border radius**: none, sm, md, lg, full (pill)
 - **Shadows**: sm, md, lg, xl
 - **Backdrop blur**: none, sm, md, lg
@@ -74,17 +78,19 @@ Scale keys `[0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20]` mapping to `[0, 2, 4, 6, 8
 - **Transitions**: fast (0.1s), normal (0.2s), slow (0.3s)
 
 ### Z-Index Layers
-| Layer | Value |
-|-------|-------|
-| base | 100 |
-| dropdown | 1000 |
-| modal | 2000 |
-| popover | 3000 |
-| tooltip | 4000 |
+
+| Layer    | Value |
+| -------- | ----- |
+| base     | 100   |
+| dropdown | 1000  |
+| modal    | 2000  |
+| popover  | 3000  |
+| tooltip  | 4000  |
 
 ## Glass Filter System
 
 The liquid glass theme uses an advanced SVG filter pipeline:
+
 1. **Geometry-aware refraction** — elements act as convex lenses
 2. **Sobel edge detection** — computes gradient for distortion direction
 3. **Chromatic aberration** — subtle RGB channel separation

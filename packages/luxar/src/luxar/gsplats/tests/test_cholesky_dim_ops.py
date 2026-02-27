@@ -60,8 +60,10 @@ class TestPermuteCholeskyPacked:
         for i in range(3):
             for j in range(3):
                 np.testing.assert_allclose(
-                    Sigma_new[0, i, j], Sigma_orig[0, perm[i], perm[j]], atol=1e-6,
-                    err_msg=f"Mismatch at [{i},{j}]"
+                    Sigma_new[0, i, j],
+                    Sigma_orig[0, perm[i], perm[j]],
+                    atol=1e-6,
+                    err_msg=f"Mismatch at [{i},{j}]",
                 )
 
     def test_batch_permutation(self) -> None:
@@ -136,8 +138,7 @@ class TestEmbedCholeskyPacked:
 
         # src [0,1,2] → dst [0,1,2], new dims 3,4
         packed_5d = embed_cholesky_packed(
-            packed_3d, 3, 5, [0, 1, 2],
-            fill_sigma={3: 2.0, 4: 0.5}
+            packed_3d, 3, 5, [0, 1, 2], fill_sigma={3: 2.0, 4: 0.5}
         )
 
         assert packed_5d.shape == (1, 15)  # 5*(5+1)/2 = 15

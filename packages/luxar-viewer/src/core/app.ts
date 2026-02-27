@@ -429,10 +429,10 @@ export class LuxarApp {
           pointClouds,
           dimensions: dims
             ? {
-                ndim: dims.ndim,
-                displayed: dims.displayed,
-                currentStep: dims.currentStep,
-              }
+              ndim: dims.ndim,
+              displayed: dims.displayed,
+              currentStep: dims.currentStep,
+            }
             : null,
           camera: {
             position: {

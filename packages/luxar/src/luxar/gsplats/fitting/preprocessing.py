@@ -264,6 +264,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         d=d,
         N=N,
         max_abs_error=max_abs_error,
+        rel_l2_target=config.rel_l2_target,
         l1_amp=l1_amp,
         l1_diag=l1_diag,
         l1_sharpness=l1_sharpness,

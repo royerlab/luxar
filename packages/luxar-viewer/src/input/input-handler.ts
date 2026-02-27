@@ -1284,17 +1284,12 @@ export class InputHandler {
       return;
     }
 
-    // Use utility to map key to actual dimension index
+    // mapKeyToDimension maps key (index+1) to the N-th navigable dimension
     const dimIndex = mapKeyToDimension((index + 1).toString(), dims);
 
     if (dimIndex >= 0) {
-      // Find which position this is in the non-displayed list
-      const navigableDims = this.getNavigableDimensionsList(dims);
-      const position = navigableDims.indexOf(dimIndex);
-      if (position >= 0) {
-        this.selectedDimension = position;
-        // Dimension is now selected for [ ] navigation
-      }
+      // index is already the 0-based navigable position (key 1 → index 0, etc.)
+      this.selectedDimension = index;
     } else {
       const navigableDims = this.getNavigableDimensionsList(dims);
       log.info(

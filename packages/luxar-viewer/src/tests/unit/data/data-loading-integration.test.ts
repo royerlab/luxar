@@ -433,6 +433,43 @@ describe('Data Loading Integration', () => {
       expect(callArgs.tolerance[3]).toBe(0.3); // Non-displayed dim
       expect(callArgs.tolerance[4]).toBe(0.3); // Non-displayed dim
     });
+
+    it('should use 0.5 tolerance for discrete non-spatial dims regardless of maxRadius', async () => {
+      const dims: SimpleDims = {
+        ndim: 5,
+        displayed: [0, 1, 2],
+        currentStep: [0, 0, 0, 5, 2],
+        metadata: [
+          { name: 'x', unit: 'um', scale: 1, display: true },
+          { name: 'y', unit: 'um', scale: 1, display: true },
+          { name: 'z', unit: 'um', scale: 1, display: true },
+          { name: 'time', unit: 's', scale: 1, display: false }, // Continuous → maxRadius
+          {
+            name: 'channel',
+            unit: '',
+            scale: 1,
+            display: false,
+            discrete: true,
+            spatial: false,
+          }, // Discrete non-spatial → 0.5
+        ],
+      };
+
+      // Set maxRadius to something clearly different from 0.5
+      scene.userData.maxRadius = 2.0;
+
+      await updateSceneForDimensions(dims, scene);
+
+      const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
+      const mockManager = SceneLoaderManager.getInstance() as any;
+      const mockLoader = mockManager.getDefaultLoader() as any;
+      const callArgs = mockLoader.updateView.mock.calls[0][0];
+      expect(callArgs.tolerance[0]).toBe(0); // Displayed
+      expect(callArgs.tolerance[1]).toBe(0); // Displayed
+      expect(callArgs.tolerance[2]).toBe(0); // Displayed
+      expect(callArgs.tolerance[3]).toBe(2.0); // Continuous non-displayed → maxRadius
+      expect(callArgs.tolerance[4]).toBe(0.5); // Discrete non-spatial → 0.5 (not maxRadius)
+    });
   });
 
   describe('resource cleanup', () => {

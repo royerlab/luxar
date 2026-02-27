@@ -83,10 +83,7 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 
 # Data source
-ZENODO_URL = (
-    "https://zenodo.org/api/records/1211599/files/"
-    "cxcr4aMO2_290112.lsm/content"
-)
+ZENODO_URL = "https://zenodo.org/api/records/1211599/files/cxcr4aMO2_290112.lsm/content"
 
 # Fitting parameters
 N_SEEDS = 8000
@@ -136,8 +133,10 @@ def download_zebrafish_data() -> Path:
         aprint("Size:   ~1.9 GB")
 
         robust_download(
-            ZENODO_URL, lsm_path,
-            max_retries=5, timeout=600,
+            ZENODO_URL,
+            lsm_path,
+            max_retries=5,
+            timeout=600,
             expected_size=2_080_484_264,
         )
 
@@ -156,8 +155,7 @@ def load_zebrafish_volumes() -> tuple:
         import tifffile
     except ImportError:
         raise ImportError(
-            "tifffile is required for this demo.\n"
-            "Install with: pip install tifffile"
+            "tifffile is required for this demo.\nInstall with: pip install tifffile"
         )
 
     lsm_path = download_zebrafish_data()
@@ -167,11 +165,11 @@ def load_zebrafish_volumes() -> tuple:
         voxel_size_zyx = None
         try:
             with tifffile.TiffFile(str(lsm_path)) as tif:
-                if hasattr(tif, 'lsm_metadata') and tif.lsm_metadata:
+                if hasattr(tif, "lsm_metadata") and tif.lsm_metadata:
                     meta = tif.lsm_metadata
-                    vz = meta.get('VoxelSizeZ', 0) * 1e6  # m → µm
-                    vy = meta.get('VoxelSizeY', 0) * 1e6
-                    vx = meta.get('VoxelSizeX', 0) * 1e6
+                    vz = meta.get("VoxelSizeZ", 0) * 1e6  # m → µm
+                    vy = meta.get("VoxelSizeY", 0) * 1e6
+                    vx = meta.get("VoxelSizeX", 0) * 1e6
                     if vz > 0 and vy > 0 and vx > 0:
                         voxel_size_zyx = (vz, vy, vx)
                         aprint(
@@ -188,14 +186,18 @@ def load_zebrafish_volumes() -> tuple:
         # Handle various shapes:
         if raw.ndim == 5:
             # (T, C, Z, Y, X) — select channel 0
-            aprint(f"  5D detected: (T={raw.shape[0]}, C={raw.shape[1]}, "
-                   f"Z={raw.shape[2]}, Y={raw.shape[3]}, X={raw.shape[4]})")
+            aprint(
+                f"  5D detected: (T={raw.shape[0]}, C={raw.shape[1]}, "
+                f"Z={raw.shape[2]}, Y={raw.shape[3]}, X={raw.shape[4]})"
+            )
             aprint("  Using channel 0")
             raw = raw[:, 0, :, :, :]
         elif raw.ndim == 4:
             # (T, Z, Y, X) — already good
-            aprint(f"  4D detected: (T={raw.shape[0]}, Z={raw.shape[1]}, "
-                   f"Y={raw.shape[2]}, X={raw.shape[3]})")
+            aprint(
+                f"  4D detected: (T={raw.shape[0]}, Z={raw.shape[1]}, "
+                f"Y={raw.shape[2]}, X={raw.shape[3]})"
+            )
         elif raw.ndim == 3:
             # Single volume — treat as single timepoint
             aprint(f"  3D detected: single volume {raw.shape}")
@@ -231,10 +233,7 @@ def load_zebrafish_volumes() -> tuple:
                 f"({voxel_size_zyx[0]:.4f}, {voxel_size_zyx[1]:.4f}, {voxel_size_zyx[2]:.4f}) µm"
             )
 
-        aprint(
-            f"Loaded {len(volumes)} volumes, "
-            f"shape per volume: {volumes[0].shape}"
-        )
+        aprint(f"Loaded {len(volumes)} volumes, shape per volume: {volumes[0].shape}")
 
     return volumes, voxel_size_zyx
 
@@ -269,7 +268,9 @@ def _time_color(t_frac: float) -> tuple:
 
 
 def fit_timepoint(
-    volume: np.ndarray, label: str, cache_file: Path,
+    volume: np.ndarray,
+    label: str,
+    cache_file: Path,
     voxel_size=None,
 ) -> GSplatData:
     """Fit GSplats to a single timepoint volume with caching.
@@ -350,8 +351,9 @@ def fit_all_timepoints(volumes: list, voxel_size=None) -> list:
         for t, volume in enumerate(volumes):
             cache_file = CACHE_DIR / f"zebrafish_t{t:04d}.gsplats.zarr.zip"
             with asection(f"Timepoint {t}/{len(volumes) - 1}"):
-                gsplats = fit_timepoint(volume, f"T={t}", cache_file,
-                                        voxel_size=voxel_size)
+                gsplats = fit_timepoint(
+                    volume, f"T={t}", cache_file, voxel_size=voxel_size
+                )
                 gsplats_list.append(gsplats)
         return gsplats_list
 
@@ -362,7 +364,8 @@ def fit_all_timepoints(volumes: list, voxel_size=None) -> list:
 
 
 def create_luxar_scene(
-    gsplats_list: list, output_path: Path = None,
+    gsplats_list: list,
+    output_path: Path = None,
 ) -> Path:
     """Create 4D Luxar scene with Time dimension.
 
@@ -377,9 +380,7 @@ def create_luxar_scene(
         Path to saved scene.
     """
     if output_path is None:
-        output_path = (
-            get_demos_output_dir() / "gsplats_4d_zebrafish_timelapse.zarr"
-        )
+        output_path = get_demos_output_dir() / "gsplats_4d_zebrafish_timelapse.zarr"
 
     n_timepoints = len(gsplats_list)
 
@@ -393,28 +394,28 @@ def create_luxar_scene(
         aprint(f"Output: {output_path.name}")
         aprint(f"Timepoints: {n_timepoints}")
 
-        dims = Dimensions([
-            Dimension("x", unit="px", display=True),
-            Dimension("y", unit="px", display=True),
-            Dimension("z", unit="px", display=True),
-            Dimension(
-                "time",
-                unit="frame",
-                display=False,
-                discrete=True,
-                range=(0, n_timepoints - 1),
-                step=1.0,
-            ),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="px", display=True),
+                Dimension("y", unit="px", display=True),
+                Dimension("z", unit="px", display=True),
+                Dimension(
+                    "time",
+                    unit="frame",
+                    display=False,
+                    discrete=True,
+                    range=(0, n_timepoints - 1),
+                    step=1.0,
+                ),
+            ]
+        )
 
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            scene.attrs["title"] = (
-                "GSplats: Zebrafish Embryo 4D Time-Lapse (Confocal)"
-            )
+            scene.attrs["title"] = "GSplats: Zebrafish Embryo 4D Time-Lapse (Confocal)"
             scene.attrs["description"] = f"""
 4D Gaussian Splatting — Zebrafish Embryo Gastrulation
 ======================================================
@@ -442,9 +443,9 @@ Navigation:
                 all_centers = [g.centers for g in gsplats_list]
                 all_amps = [g.amplitudes for g in gsplats_list]
                 total_amp = sum(a.sum() for a in all_amps)
-                shared_centroid = sum(
-                    c.T @ a for c, a in zip(all_centers, all_amps)
-                ) / total_amp
+                shared_centroid = (
+                    sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
+                )
                 aprint(f"Shared centroid: {shared_centroid}")
 
             # Add each timepoint
@@ -458,9 +459,7 @@ Navigation:
                     # Time-based colour
                     t_frac = t / max(n_timepoints - 1, 1)
                     color = _time_color(t_frac)
-                    colors = np.tile(
-                        np.array(color, dtype=np.float32), (n_splats, 1)
-                    )
+                    colors = np.tile(np.array(color, dtype=np.float32), (n_splats, 1))
 
                     scene.add_gsplats(
                         name=f"gsplats_t{t:04d}",
@@ -495,9 +494,7 @@ def main():
     aprint("Per-timepoint 3D fitting -> 4D scene with dim_order + fill")
     aprint("")
 
-    output_path = (
-        get_demos_output_dir() / "gsplats_4d_zebrafish_timelapse.zarr"
-    )
+    output_path = get_demos_output_dir() / "gsplats_4d_zebrafish_timelapse.zarr"
 
     # Serve-only mode
     if SERVE_ONLY:
@@ -505,10 +502,7 @@ def main():
             aprint("Serve-only mode: Launching viewer...")
             launch_viewer(output_path)
         else:
-            aprint(
-                f"No scene found at {output_path}. "
-                "Run without --serve-only first."
-            )
+            aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
     # Load data

@@ -156,9 +156,7 @@ describe('validateConfig', () => {
       const result = validateConfig(cfg);
 
       // fovSensitivity = 1 means <= 0 is false and > 1 is false, so no warning
-      expect(
-        result.warnings.filter((w) => w.includes('FOV sensitivity'))
-      ).toHaveLength(0);
+      expect(result.warnings.filter((w) => w.includes('FOV sensitivity'))).toHaveLength(0);
     });
   });
 
@@ -241,9 +239,7 @@ describe('validateConfig', () => {
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(
-        expect.stringContaining('Unusual bloom.bloomRadius')
-      );
+      expect(result.warnings).toContainEqual(expect.stringContaining('Unusual bloom.bloomRadius'));
     });
 
     it('should warn when bloomRadius exceeds 10', () => {
@@ -252,9 +248,7 @@ describe('validateConfig', () => {
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(
-        expect.stringContaining('Unusual bloom.bloomRadius')
-      );
+      expect(result.warnings).toContainEqual(expect.stringContaining('Unusual bloom.bloomRadius'));
     });
 
     it('should warn when bloomThreshold is negative', () => {
@@ -282,14 +276,14 @@ describe('validateConfig', () => {
     it('should accept bloomThreshold at boundary values (0 and 1)', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomThreshold = 0;
-      expect(
-        validateConfig(cfg).warnings.filter((w) => w.includes('bloomThreshold'))
-      ).toHaveLength(0);
+      expect(validateConfig(cfg).warnings.filter((w) => w.includes('bloomThreshold'))).toHaveLength(
+        0
+      );
 
       cfg.renderingControls.defaults.bloomThreshold = 1;
-      expect(
-        validateConfig(cfg).warnings.filter((w) => w.includes('bloomThreshold'))
-      ).toHaveLength(0);
+      expect(validateConfig(cfg).warnings.filter((w) => w.includes('bloomThreshold'))).toHaveLength(
+        0
+      );
     });
 
     it('should warn when bloomLevels is less than 1', () => {
@@ -298,9 +292,7 @@ describe('validateConfig', () => {
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(
-        expect.stringContaining('Invalid bloom.bloomLevels')
-      );
+      expect(result.warnings).toContainEqual(expect.stringContaining('Invalid bloom.bloomLevels'));
     });
 
     it('should warn when bloomLevels exceeds 12', () => {
@@ -309,22 +301,16 @@ describe('validateConfig', () => {
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(
-        expect.stringContaining('Invalid bloom.bloomLevels')
-      );
+      expect(result.warnings).toContainEqual(expect.stringContaining('Invalid bloom.bloomLevels'));
     });
 
     it('should accept bloomLevels at boundary values (1 and 12)', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomLevels = 1;
-      expect(
-        validateConfig(cfg).warnings.filter((w) => w.includes('bloomLevels'))
-      ).toHaveLength(0);
+      expect(validateConfig(cfg).warnings.filter((w) => w.includes('bloomLevels'))).toHaveLength(0);
 
       cfg.renderingControls.defaults.bloomLevels = 12;
-      expect(
-        validateConfig(cfg).warnings.filter((w) => w.includes('bloomLevels'))
-      ).toHaveLength(0);
+      expect(validateConfig(cfg).warnings.filter((w) => w.includes('bloomLevels'))).toHaveLength(0);
     });
   });
 
@@ -519,14 +505,14 @@ describe('validateConfig', () => {
     it('should accept backgroundColor at boundaries (0x000000 and 0xffffff)', () => {
       const cfg = cloneConfig();
       cfg.scene.backgroundColor = 0x000000;
-      expect(
-        validateConfig(cfg).errors.filter((e) => e.includes('background color'))
-      ).toHaveLength(0);
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('background color'))).toHaveLength(
+        0
+      );
 
       cfg.scene.backgroundColor = 0xffffff;
-      expect(
-        validateConfig(cfg).errors.filter((e) => e.includes('background color'))
-      ).toHaveLength(0);
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('background color'))).toHaveLength(
+        0
+      );
     });
 
     it('should error when fitRatio is zero', () => {
@@ -576,9 +562,7 @@ describe('validateConfig', () => {
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(
-        expect.stringContaining('Unusual input sensitivity')
-      );
+      expect(result.warnings).toContainEqual(expect.stringContaining('Unusual input sensitivity'));
     });
 
     it('should warn when sensitivity is negative', () => {
@@ -587,9 +571,7 @@ describe('validateConfig', () => {
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(
-        expect.stringContaining('Unusual input sensitivity')
-      );
+      expect(result.warnings).toContainEqual(expect.stringContaining('Unusual input sensitivity'));
     });
 
     it('should warn when sensitivity exceeds 1', () => {
@@ -598,9 +580,7 @@ describe('validateConfig', () => {
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(
-        expect.stringContaining('Unusual input sensitivity')
-      );
+      expect(result.warnings).toContainEqual(expect.stringContaining('Unusual input sensitivity'));
     });
 
     it('should not warn when sensitivity is within valid range', () => {
@@ -609,9 +589,7 @@ describe('validateConfig', () => {
 
       const result = validateConfig(cfg);
 
-      expect(
-        result.warnings.filter((w) => w.includes('input sensitivity'))
-      ).toHaveLength(0);
+      expect(result.warnings.filter((w) => w.includes('input sensitivity'))).toHaveLength(0);
     });
   });
 
@@ -712,9 +690,7 @@ describe('validateConfig', () => {
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(
-        expect.stringContaining('Power preference mismatch')
-      );
+      expect(result.warnings).toContainEqual(expect.stringContaining('Power preference mismatch'));
     });
 
     it('should warn when context and renderer preserveDrawingBuffer mismatch', () => {
@@ -808,9 +784,7 @@ describe('logValidationResults', () => {
 
     logValidationResults(result);
 
-    expect(logSpy.success).toHaveBeenCalledWith(
-      expect.stringContaining('validation passed')
-    );
+    expect(logSpy.success).toHaveBeenCalledWith(expect.stringContaining('validation passed'));
   });
 
   it('should log errors when validation fails', () => {
@@ -822,9 +796,7 @@ describe('logValidationResults', () => {
 
     logValidationResults(result);
 
-    expect(logSpy.error).toHaveBeenCalledWith(
-      expect.stringContaining('validation failed')
-    );
+    expect(logSpy.error).toHaveBeenCalledWith(expect.stringContaining('validation failed'));
     // Each error is also logged individually
     expect(logSpy.error).toHaveBeenCalledWith(expect.stringContaining('Error 1'));
     expect(logSpy.error).toHaveBeenCalledWith(expect.stringContaining('Error 2'));
@@ -839,12 +811,8 @@ describe('logValidationResults', () => {
 
     logValidationResults(result);
 
-    expect(logSpy.warning).toHaveBeenCalledWith(
-      expect.stringContaining('1 warnings')
-    );
-    expect(logSpy.warning).toHaveBeenCalledWith(
-      expect.stringContaining('Warning 1')
-    );
+    expect(logSpy.warning).toHaveBeenCalledWith(expect.stringContaining('1 warnings'));
+    expect(logSpy.warning).toHaveBeenCalledWith(expect.stringContaining('Warning 1'));
   });
 
   it('should not log warnings when there are none', () => {
