@@ -1,39 +1,44 @@
 #!/usr/bin/env python3
-"""GSplats Demo: 5D Multi-Channel Cells with Boolean Toggles (scikit-image cells3d)
+"""GSplats Demo: 6D Multi-Channel Kidney with Boolean Toggles (scikit-image kidney)
 
-Variant of the multichannel demo that uses two independent boolean dimensions
-instead of a single categorical Channel slider. This lets you toggle each
-channel on/off independently.
+Variant of the multichannel toggle demo adapted for the napari/scikit-image
+kidney sample dataset — a 3-channel confocal fluorescence microscopy volume
+of mouse kidney tissue.
 
 ================================================================================
 BOOLEAN TOGGLE DIMENSIONS — INDEPENDENT CHANNEL VISIBILITY
 ================================================================================
 
-This demo uses the cells3d dataset from scikit-image — a two-channel 3D
-fluorescence microscopy volume of cells (membranes + nuclei).
+This demo uses the kidney() dataset from scikit-image — a three-channel 3D
+confocal fluorescence microscopy volume of mouse kidney tissue (FluoCells
+Prepared Slide #3).
 
-Instead of a single Channel slider that switches between views, this version
-creates two boolean dimensions: "Membranes" and "Nuclei". Each can be toggled
-independently, allowing four combinations:
+Each channel gets its own boolean dimension for independent on/off control,
+allowing all eight visibility combinations:
 
-  - Both On:       See membranes + nuclei overlaid
-  - Membranes On:  See only membranes
-  - Nuclei On:     See only nuclei
-  - Both Off:      Nothing visible
+  - All three On:        Full overlay of nuclei + WGA + actin
+  - Any two On:          Pair overlay (e.g. WGA + actin without nuclei)
+  - Single channel On:   View one structure in isolation
+  - All Off:             Nothing visible
 
-Each channel's splats use ``extend_to_all`` on the *other* channel's dimension
-so they remain visible regardless of that toggle's position.
+Each channel's splats use ``extend_to_all`` on the *other* channels' dimensions
+so they remain visible regardless of those toggles' positions.
 
 DATA SOURCE & CITATIONS:
 ========================
 
 Dataset:
 --------
-Source: scikit-image sample data (``skimage.data.cells3d()``)
-Shape: (60, 2, 256, 256) — (Z, Channel, Y, X), uint16
-Channel 0: Cell membranes
-Channel 1: Cell nuclei (fluorescent stain)
-Origin: Allen Institute for Cell Science
+Source: scikit-image sample data (``skimage.data.kidney()``)
+Shape: (16, 512, 512, 3) — (Z, Y, X, C), uint16
+Channel 0 (450nm): DAPI — cell nuclei
+Channel 1 (515nm): Alexa Fluor 488 WGA (wheat germ agglutinin) — glomeruli and tubules
+Channel 2 (605nm): Alexa Fluor 568 Phalloidin — actin filaments
+Voxel size: 1.25 µm (Z), 1.24 µm (Y), 1.24 µm (X)
+Origin: FluoCells Prepared Slide #3 (Invitrogen F-24630)
+        Mouse kidney cryostat section, confocal fluorescence microscopy
+        Acquired by Genevieve Buckley at Monash Micro Imaging, 2018
+License: CC0
 
 How to Cite:
 ------------
@@ -43,15 +48,15 @@ van der Walt et al. (2014). PeerJ 2:e453. DOI: 10.7717/peerj.453
 WORKFLOW:
 =========
 
-1. **Load** cells3d from scikit-image (60 × 2 × 256 × 256)
+1. **Load** kidney dataset from scikit-image (16 × 512 × 512 × 3)
 2. **Fit** each channel independently as 3D Gaussian splats
-3. **Create 5D scene** with dimensions [X, Y, Z, Membranes, Nuclei]
+3. **Create 6D scene** with dimensions [X, Y, Z, Nuclei, WGA, Actin]
 4. **Add splats** with per-channel boolean toggles via ``fill`` + ``extend_to_all``
 5. **Visualize** — Toggle each channel independently
 
 USAGE:
 ======
-    python demo_gsplats_4d_cells3d_multichannel_toggles.py [--no-cache] [--no-serve] [--serve-only]
+    python demo_gsplats_4d_kidney_multichannel_toggles.py [--no-cache] [--no-serve] [--serve-only]
 
 Options:
     --no-cache:   Force re-fitting (ignore cached results)
@@ -59,7 +64,7 @@ Options:
     --serve-only: Skip loading/fitting, just serve existing scene
 
 Output:
-    - Scene saved to: demos/gsplats_5d_cells3d_multichannel_toggles.zarr
+    - Scene saved to: demos/gsplats_6d_kidney_multichannel_toggles.zarr
     - Automatically opens in browser at http://localhost:8000
 
 """
@@ -81,21 +86,39 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 
 # Fitting parameters
-N_SEEDS = 15000  # Splats per channel
+N_SEEDS = 50000  # Splats per channel
 N_ITERS = 8000  # Optimization iterations
 
-# Voxel spacing (Z, Y, X) in micrometres for cells3d
-# Original: (0.29, 0.065, 0.065) µm, 4x downsampled in Y/X → (0.29, 0.26, 0.26) µm
-VOXEL_SIZE_ZYX = (0.29, 0.26, 0.26)
+# Voxel spacing (Z, Y, X) in micrometres for kidney dataset
+VOXEL_SIZE_ZYX = (1.25, 1.24, 1.24)
 
-# Channel configuration
+# Channel configuration — ordered by emission wavelength
 CHANNELS = [
-    {"index": 0, "name": "Membranes", "color": (0.0, 1.0, 0.3)},  # Green
-    {"index": 1, "name": "Nuclei", "color": (0.5, 0.3, 1.0)},  # Purple
+    {
+        "index": 0,
+        "name": "Nuclei",
+        "color": (0.3, 0.4, 1.0),  # Blue (DAPI, 450nm)
+        "emission": "450nm",
+        "stain": "DAPI",
+    },
+    {
+        "index": 1,
+        "name": "WGA",
+        "color": (0.0, 1.0, 0.3),  # Green (Alexa Fluor 488 WGA, 515nm)
+        "emission": "515nm",
+        "stain": "Alexa Fluor 488 WGA",
+    },
+    {
+        "index": 2,
+        "name": "Actin",
+        "color": (1.0, 0.3, 0.2),  # Red (Alexa Fluor 568 Phalloidin, 605nm)
+        "emission": "605nm",
+        "stain": "Alexa Fluor 568 Phalloidin",
+    },
 ]
 
-# Cache directory (shared with the other demo — same fitting params)
-CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_cells3d"
+# Cache directory
+CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_kidney"
 
 # Parse command-line flags
 NO_CACHE = "--no-cache" in sys.argv
@@ -114,39 +137,50 @@ DEVICE = None
 # =============================================================================
 
 
-def load_cells3d():
-    """Load cells3d dataset from scikit-image.
+def load_kidney():
+    """Load kidney dataset from scikit-image.
 
     Returns:
         list[np.ndarray]: One 3D volume per channel, shape (Z, Y, X), float32 [0, 1].
     """
-    with asection("Loading cells3d dataset"):
+    with asection("Loading kidney dataset"):
         try:
-            from skimage.data import cells3d
+            from skimage.data import kidney
         except ImportError:
             raise ImportError(
                 "scikit-image is required for this demo.\n"
-                "Install with: pip install scikit-image"
+                "Install with: pip install scikit-image pooch"
             )
 
-        # cells3d() returns (60, 2, 256, 256) — (Z, Channel, Y, X), uint16
-        raw = cells3d()
+        # kidney() returns (16, 512, 512, 3) — (Z, Y, X, C), uint16
+        # Unlike cells3d, kidney() downloads data via pooch on first call
+        try:
+            raw = kidney()
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load kidney dataset: {e}\n"
+                "This dataset is downloaded on first use and requires 'pooch'.\n"
+                "Install with: pip install pooch"
+            ) from e
         aprint(f"Raw data shape: {raw.shape}, dtype: {raw.dtype}")
         aprint(
-            f"  Axes: (Z={raw.shape[0]}, C={raw.shape[1]}, Y={raw.shape[2]}, X={raw.shape[3]})"
+            f"  Axes: (Z={raw.shape[0]}, Y={raw.shape[1]}, X={raw.shape[2]}, C={raw.shape[3]})"
         )
 
         volumes = []
         for ch_config in CHANNELS:
             ch_idx = ch_config["index"]
             ch_name = ch_config["name"]
+            ch_stain = ch_config["stain"]
 
-            V = raw[:, ch_idx, :, :].astype(np.float32)
+            V = raw[:, :, :, ch_idx].astype(np.float32)
             # Normalize to [0, 1]
             V = (V - V.min()) / (V.max() - V.min() + 1e-8)
 
             volumes.append(V)
-            aprint(f"  {ch_name}: {V.shape}, range [{V.min():.3f}, {V.max():.3f}]")
+            aprint(
+                f"  {ch_name} ({ch_stain}): {V.shape}, range [{V.min():.3f}, {V.max():.3f}]"
+            )
 
         aprint(f"Loaded {len(volumes)} channels")
         return volumes
@@ -232,9 +266,9 @@ def fit_all_channels(volumes):
 
         for i, (volume, ch_config) in enumerate(zip(volumes, CHANNELS)):
             ch_name = ch_config["name"]
-            cache_file = CACHE_DIR / f"cells3d_ch{i}.gsplats.zarr.zip"
+            cache_file = CACHE_DIR / f"kidney_ch{i}.gsplats.zarr.zip"
 
-            with asection(f"Channel {i}: {ch_name}"):
+            with asection(f"Channel {i}: {ch_name} ({ch_config['stain']})"):
                 gsplats = fit_channel(volume, ch_name, cache_file)
                 gsplats_list.append(gsplats)
 
@@ -247,38 +281,42 @@ def fit_all_channels(volumes):
 
 
 def create_luxar_scene(gsplats_list, output_path=None):
-    """Create 5D Luxar scene with independent boolean toggle dimensions.
+    """Create 6D Luxar scene with independent boolean toggle dimensions.
 
     Instead of a single Channel slider, each channel gets its own boolean
-    dimension. Splats use ``extend_to_all`` on the *other* channel's dimension
-    so they are visible regardless of that toggle's state.
+    dimension. Splats use ``extend_to_all`` on the *other* channels' dimensions
+    so they are visible regardless of those toggles' states.
 
-    Scene dimensions: [X, Y, Z, Membranes, Nuclei]
-
-    Membrane splats:
-      - fill={"membranes": 1.0}  → visible when Membranes=On
-      - extend_to_all=["nuclei"] → visible regardless of Nuclei toggle
+    Scene dimensions: [X, Y, Z, Nuclei, WGA, Actin]
 
     Nuclei splats:
-      - fill={"nuclei": 1.0}      → visible when Nuclei=On
-      - extend_to_all=["membranes"] → visible regardless of Membranes toggle
+      - fill={"nuclei": 1.0}  → visible when Nuclei=On
+      - extend_to_all=["wga", "actin"] → visible regardless of other toggles
+
+    WGA splats:
+      - fill={"wga": 1.0}  → visible when WGA=On
+      - extend_to_all=["nuclei", "actin"] → visible regardless of other toggles
+
+    Actin splats:
+      - fill={"actin": 1.0}  → visible when Actin=On
+      - extend_to_all=["nuclei", "wga"] → visible regardless of other toggles
     """
     if output_path is None:
         output_path = (
-            get_demos_output_dir() / "gsplats_5d_cells3d_multichannel_toggles.zarr"
+            get_demos_output_dir() / "gsplats_6d_kidney_multichannel_toggles.zarr"
         )
 
-    # Map each channel to its own dimension name and the other channel's dim
+    # Map each channel to its dimension name
     CHANNEL_DIM_NAMES = [ch["name"].lower() for ch in CHANNELS]
 
-    with asection("Creating 5D Luxar Scene (boolean toggles)"):
+    with asection("Creating 6D Luxar Scene (boolean toggles)"):
         aprint(f"Output: {output_path.name}")
 
-        # Define 5D scene: 3 spatial + 2 boolean toggle dimensions
+        # Define 6D scene: 3 spatial + 3 boolean toggle dimensions
         dim_list = [
-            Dimension("x", unit="px", display=True),
-            Dimension("y", unit="px", display=True),
-            Dimension("z", unit="px", display=True),
+            Dimension("x", unit="um", display=True),
+            Dimension("y", unit="um", display=True),
+            Dimension("z", unit="um", display=True),
         ]
 
         # Add one boolean dimension per channel
@@ -302,28 +340,29 @@ def create_luxar_scene(gsplats_list, output_path=None):
         ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            scene.attrs["title"] = "GSplats: 5D Cells (boolean toggle demo)"
+            scene.attrs["title"] = "GSplats: 6D Kidney (boolean toggle demo)"
             scene.attrs["description"] = """
-5D Multi-Channel Gaussian Splatting — Boolean Toggle Dimensions
+6D Multi-Channel Gaussian Splatting — Boolean Toggle Dimensions
 ================================================================
 
-Variant of the multichannel demo using independent boolean dimensions
-instead of a single Channel slider. Each channel can be toggled on/off
-independently, allowing all four visibility combinations.
+Three-channel confocal fluorescence microscopy of mouse kidney tissue
+with independent boolean toggle dimensions for each channel.
 
 Data Source:
-  - scikit-image cells3d sample dataset
-  - Allen Institute for Cell Science
-  - Shape: (60, 2, 256, 256) — (Z, Channel, Y, X)
+  - scikit-image kidney() sample dataset
+  - FluoCells Prepared Slide #3 (Invitrogen F-24630)
+  - Mouse kidney cryostat section
+  - Confocal microscopy (Nikon C1 inverted)
+  - Acquired by Genevieve Buckley, Monash Micro Imaging, 2018
 
 Channels:
-  - Green: Cell membranes (Membranes dimension)
-  - Purple: Cell nuclei (Nuclei dimension)
+  - Blue:  DAPI — cell nuclei (450nm)
+  - Green: Alexa Fluor 488 WGA — glomeruli/tubules (515nm)
+  - Red:   Alexa Fluor 568 Phalloidin — actin filaments (605nm)
 
 Navigation:
-  - Toggle Membranes on/off to show/hide membrane splats
-  - Toggle Nuclei on/off to show/hide nuclear splats
-  - Both on: overlaid view; both off: nothing visible
+  - Toggle Nuclei/WGA/Actin on/off independently
+  - 8 visibility combinations (all on, pairs, singles, all off)
   - Mouse drag to rotate, scroll to zoom, right-click drag to pan
             """
 
@@ -342,7 +381,7 @@ Navigation:
                 ch_name = ch_config["name"]
                 color = ch_config["color"]
                 own_dim = CHANNEL_DIM_NAMES[i]
-                other_dim = CHANNEL_DIM_NAMES[1 - i]
+                other_dims = [d for j, d in enumerate(CHANNEL_DIM_NAMES) if j != i]
 
                 with asection(f"Adding {ch_name} (toggle: {own_dim})"):
                     # Transform: shared centroid so channels stay aligned
@@ -355,8 +394,8 @@ Navigation:
                     colors = np.tile(np.array(color, dtype=np.float32), (n_splats, 1))
 
                     # KEY: Each channel's splats are placed at own_dim=1 (On)
-                    # and extend_to_all on the other channel's dimension so
-                    # they don't disappear when the other toggle changes.
+                    # and extend_to_all on the other channels' dimensions so
+                    # they don't disappear when any other toggle changes.
                     scene.add_gsplats(
                         name=f"gsplats_{ch_name.lower()}",
                         centers=gsplats.centers,
@@ -367,12 +406,13 @@ Navigation:
                         dim_order=["z", "y", "x"],
                         fill={own_dim: 1.0},
                         fill_sigma={own_dim: 0.3},
-                        extend_to_all=[other_dim],
+                        extend_to_all=other_dims,
                         opacity=1.0,
                         blending_mode="additive",
                     )
                     aprint(
-                        f"  Added {n_splats:,} splats with {own_dim}=On, extend_to_all=[{other_dim}]"
+                        f"  Added {n_splats:,} splats with {own_dim}=On, "
+                        f"extend_to_all={other_dims}"
                     )
 
         aprint(f"Scene saved: {output_path}")
@@ -387,14 +427,13 @@ Navigation:
 def main():
     """Main demo execution."""
     aprint("=" * 70)
-    aprint("GSplats Demo: 5D Multi-Channel Cells (boolean toggle dimensions)")
+    aprint("GSplats Demo: 6D Multi-Channel Kidney (boolean toggle dimensions)")
     aprint("=" * 70)
     aprint("3D per-channel fitting + independent boolean toggles per channel")
+    aprint("Dataset: Mouse kidney — DAPI (nuclei) + WGA (tubules) + Phalloidin (actin)")
     aprint("")
 
-    output_path = (
-        get_demos_output_dir() / "gsplats_5d_cells3d_multichannel_toggles.zarr"
-    )
+    output_path = get_demos_output_dir() / "gsplats_6d_kidney_multichannel_toggles.zarr"
 
     # Serve-only mode
     if SERVE_ONLY:
@@ -406,7 +445,7 @@ def main():
         return
 
     # Load data
-    volumes = load_cells3d()
+    volumes = load_kidney()
 
     # Fit gsplats per channel (with caching)
     gsplats_list = fit_all_channels(volumes)
@@ -415,11 +454,12 @@ def main():
     with asection("Fitting Summary"):
         for i, (gsplats, ch_config) in enumerate(zip(gsplats_list, CHANNELS)):
             aprint(
-                f"  {ch_config['name']}: {len(gsplats.amplitudes):,} splats, "
+                f"  {ch_config['name']} ({ch_config['stain']}): "
+                f"{len(gsplats.amplitudes):,} splats, "
                 f"{gsplats.centers.shape[1]}D"
             )
 
-    # Create 5D scene with boolean toggles
+    # Create 6D scene with boolean toggles
     scene_path = create_luxar_scene(gsplats_list)
 
     # Launch viewer

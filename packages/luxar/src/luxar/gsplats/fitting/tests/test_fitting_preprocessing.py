@@ -42,6 +42,7 @@ def mock_config_2d():
         n_iters=100,
         lr=0.01,
         max_abs_error=None,
+        rel_l2_target=None,
         gradient_clip=1.0,
         loss_type="l1",
         asymmetric_penalty=10.0,

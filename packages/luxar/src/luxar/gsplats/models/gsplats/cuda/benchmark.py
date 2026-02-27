@@ -590,12 +590,8 @@ def _print_summary_tables(results: dict) -> None:
             fp32_str = f"{r['fp32_ms']:.2f}" if r.get("fp32_ms") else "OOM"
             amp_str = f"{r['amp_ms']:.2f}" if r.get("amp_ms") else "OOM"
             fp16_str = f"{r['fp16_ms']:.2f}" if r.get("fp16_ms") else "OOM"
-            fp32_cpu_str = (
-                f"{r['fp32_vs_cpu']:.1f}x" if r.get("fp32_vs_cpu") else "-"
-            )
-            amp_fp32_str = (
-                f"{r['amp_vs_fp32']:.2f}x" if r.get("amp_vs_fp32") else "-"
-            )
+            fp32_cpu_str = f"{r['fp32_vs_cpu']:.1f}x" if r.get("fp32_vs_cpu") else "-"
+            amp_fp32_str = f"{r['amp_vs_fp32']:.2f}x" if r.get("amp_vs_fp32") else "-"
 
             row = (
                 f"{label:<20} {r['N']:>8,} {r['voxels']:>12,} "
@@ -630,9 +626,7 @@ def _print_summary_tables(results: dict) -> None:
             # Handle None values for OOM configs
             fp32_fwd = f"{r['fp32_fwd_ms']:.2f}" if r.get("fp32_fwd_ms") else "OOM"
             fp32_bwd = f"{r['fp32_bwd_ms']:.2f}" if r.get("fp32_bwd_ms") else "-"
-            fp32_tot = (
-                f"{r['fp32_train_ms']:.2f}" if r.get("fp32_train_ms") else "-"
-            )
+            fp32_tot = f"{r['fp32_train_ms']:.2f}" if r.get("fp32_train_ms") else "-"
             amp_fwd = f"{r['amp_fwd_ms']:.2f}" if r.get("amp_fwd_ms") else "OOM"
             amp_bwd = f"{r['amp_bwd_ms']:.2f}" if r.get("amp_bwd_ms") else "-"
             amp_tot = f"{r['amp_train_ms']:.2f}" if r.get("amp_train_ms") else "-"
@@ -675,19 +669,13 @@ def _print_summary_tables(results: dict) -> None:
         for label, r in dim_results.items():
             # Handle None values for OOM configs
             gv_fp32 = (
-                f"{r['gvoxel_per_s_fp32']:.1f}"
-                if r.get("gvoxel_per_s_fp32")
-                else "OOM"
+                f"{r['gvoxel_per_s_fp32']:.1f}" if r.get("gvoxel_per_s_fp32") else "OOM"
             )
             gv_amp = (
-                f"{r['gvoxel_per_s_amp']:.1f}"
-                if r.get("gvoxel_per_s_amp")
-                else "OOM"
+                f"{r['gvoxel_per_s_amp']:.1f}" if r.get("gvoxel_per_s_amp") else "OOM"
             )
             gv_fp16 = (
-                f"{r['gvoxel_per_s_fp16']:.1f}"
-                if r.get("gvoxel_per_s_fp16")
-                else "OOM"
+                f"{r['gvoxel_per_s_fp16']:.1f}" if r.get("gvoxel_per_s_fp16") else "OOM"
             )
             fp32_ms = f"{r['fp32_ms']:.2f}" if r.get("fp32_ms") else "-"
             amp_ms = f"{r['amp_ms']:.2f}" if r.get("amp_ms") else "-"
@@ -709,9 +697,7 @@ def _print_summary_tables(results: dict) -> None:
     print("  - '-' indicates skipped (too slow or OOM).")
     print("  - AMP is RECOMMENDED for training (FP32 params, FP16 compute).")
     print("  - FP16 is inference only (may overflow during training).")
-    print(
-        "  - Backward pass uses Per-Tile Gradient Accumulation (16x fewer atomics)."
-    )
+    print("  - Backward pass uses Per-Tile Gradient Accumulation (16x fewer atomics).")
     print("  - If throughput plateaus at large sizes, GPU is saturated.")
     print("  - If throughput keeps increasing, there's room for more parallelism.")
 
@@ -747,9 +733,7 @@ def run_splat_sweep(
         raise RuntimeError("CUDA is not available. Cannot run benchmark.")
 
     # Generate log-spaced splat counts, deduplicated
-    splat_counts = np.unique(
-        np.geomspace(splats_min, splats_max, n_steps).astype(int)
-    )
+    splat_counts = np.unique(np.geomspace(splats_min, splats_max, n_steps).astype(int))
 
     voxels = int(np.prod(shape))
     dim = len(shape)
@@ -763,7 +747,9 @@ def run_splat_sweep(
         free_gb, total_gb = _gpu_mem_info()
         print(f"GPU: {torch.cuda.get_device_name(0)}")
         print(f"GPU Memory: {free_gb:.1f} GB free / {total_gb:.1f} GB total")
-        print(f"Splat range: {splats_min:,} to {splats_max:,} ({len(splat_counts)} steps)")
+        print(
+            f"Splat range: {splats_min:,} to {splats_max:,} ({len(splat_counts)} steps)"
+        )
         print()
         print("-" * 90)
         header = (

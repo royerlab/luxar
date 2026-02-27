@@ -1005,7 +1005,10 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     if (box.isEmpty()) {
       log.warning(Modules.SCENE_MANAGER, 'No scene content for clipping plane calculation');
-      return { near: config.renderingControls.defaults.near, far: config.renderingControls.defaults.far };
+      return {
+        near: config.renderingControls.defaults.near,
+        far: config.renderingControls.defaults.far,
+      };
     }
 
     // Use unified utility function with camera position

@@ -39,6 +39,7 @@ def prepare_fit_config(
     truncate: float = 3.0,
     verbose: bool = True,
     max_abs_error: Optional[float] = None,
+    rel_l2_target: Optional[float] = None,
     gradient_clip: Optional[float] = 1.0,
     napari_movie: bool = False,
     movie_every: int = 1,
@@ -162,6 +163,8 @@ def prepare_fit_config(
         raise ValueError("truncate must be positive")
     if max_abs_error is not None and max_abs_error <= 0:
         raise ValueError("max_abs_error must be positive if specified")
+    if rel_l2_target is not None and rel_l2_target <= 0:
+        raise ValueError("rel_l2_target must be positive if specified")
     if movie_max_frames is not None and movie_max_frames <= 0:
         raise ValueError("movie_max_frames must be positive or None")
     if movie_every < 1:
@@ -280,6 +283,7 @@ def prepare_fit_config(
         n_iters=n_iters,
         lr=lr,
         max_abs_error=max_abs_error,
+        rel_l2_target=rel_l2_target,
         gradient_clip=gradient_clip,
         loss_type=loss_type,
         asymmetric_penalty=asymmetric_penalty,

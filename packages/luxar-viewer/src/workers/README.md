@@ -44,14 +44,17 @@ disposeWorkerPool();
 ## Worker Pool
 
 ### Configuration
+
 - **Worker count**: Defaults to `navigator.hardwareConcurrency - 1` (reserves one core for main thread)
 - **Minimum**: 1 worker
 - **Fallback**: If `hardwareConcurrency` is unavailable, assumes 4 cores
 
 ### Load Balancing
+
 The pool tracks `activeQueries` per worker and selects the worker with the fewest active tasks. Callers using `getWorkerWithTracking()` receive `markQueryStart`/`markQueryEnd` callbacks to keep the counters accurate.
 
 ### Initialization
+
 - Lazy: workers are created on first `getWorkerPool()` call
 - Safe: promise deduplication ensures concurrent callers share a single initialization
 - Resilient: uses `Promise.allSettled()` so partial worker failures don't block the pool
@@ -60,19 +63,21 @@ The pool tracks `activeQueries` per worker and selects the worker with the fewes
 
 Each worker loads a WASM module on `initialize()` and exposes these operations:
 
-| Category | Methods |
-|----------|---------|
-| **Spatial queries** | `querySpatialIndex()` — find chunks intersecting nD slice |
-| **nD visibility** | `computeNDVisibilityPoints()`, `computeNDVisibilityLines()`, `computeNDVisibilityGSplats()` |
-| **Decoding** | `decodeQuantized()`, `decodeLogScalar()`, `decodeLUT()`, `decodeBroadcasted()` |
-| **Projection** | `projectPointsTo3D()`, `projectLinesTo3D()`, `projectGSplatsTo3D()` |
+| Category            | Methods                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------- |
+| **Spatial queries** | `querySpatialIndex()` — find chunks intersecting nD slice                                   |
+| **nD visibility**   | `computeNDVisibilityPoints()`, `computeNDVisibilityLines()`, `computeNDVisibilityGSplats()` |
+| **Decoding**        | `decodeQuantized()`, `decodeLogScalar()`, `decodeLUT()`, `decodeBroadcasted()`              |
+| **Projection**      | `projectPointsTo3D()`, `projectLinesTo3D()`, `projectGSplatsTo3D()`                         |
 
 ### What workers handle
+
 - Spatial index queries (chunk bounding box tests)
 - nD visibility computation (hypersphere intersection)
 - Array decoding (LUT, quantization, log-space)
 
 ### What stays on main thread
+
 - Zarr chunk fetching (network I/O)
 - GPU buffer updates (WebGL)
 - UI rendering and interaction

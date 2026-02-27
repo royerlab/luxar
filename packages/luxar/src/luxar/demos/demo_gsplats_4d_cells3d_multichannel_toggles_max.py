@@ -142,7 +142,9 @@ def load_cells3d():
         # cells3d() returns (60, 2, 256, 256) — (Z, Channel, Y, X), uint16
         raw = cells3d()
         aprint(f"Raw data shape: {raw.shape}, dtype: {raw.dtype}")
-        aprint(f"  Axes: (Z={raw.shape[0]}, C={raw.shape[1]}, Y={raw.shape[2]}, X={raw.shape[3]})")
+        aprint(
+            f"  Axes: (Z={raw.shape[0]}, C={raw.shape[1]}, Y={raw.shape[2]}, X={raw.shape[3]})"
+        )
 
         volumes = []
         for ch_config in CHANNELS:
@@ -344,9 +346,9 @@ Navigation:
                 all_centers = [g.centers for g in gsplats_list]
                 all_amps = [g.amplitudes for g in gsplats_list]
                 total_amp = sum(a.sum() for a in all_amps)
-                shared_centroid = sum(
-                    c.T @ a for c, a in zip(all_centers, all_amps)
-                ) / total_amp
+                shared_centroid = (
+                    sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
+                )
                 aprint(f"  Shared centroid: {shared_centroid}")
 
             # Add each channel with its own boolean toggle dimension
@@ -364,9 +366,7 @@ Navigation:
                     n_splats = len(gsplats.amplitudes)
 
                     # Assign channel color to all splats
-                    colors = np.tile(
-                        np.array(color, dtype=np.float32), (n_splats, 1)
-                    )
+                    colors = np.tile(np.array(color, dtype=np.float32), (n_splats, 1))
 
                     # KEY: Each channel's splats are placed at own_dim=1 (On)
                     # and extend_to_all on the other channel's dimension so
@@ -386,7 +386,9 @@ Navigation:
                         opacity=1.0,
                         blending_mode="max",
                     )
-                    aprint(f"  Added {n_splats:,} splats with {own_dim}=On, extend_to_all=[{other_dim}]")
+                    aprint(
+                        f"  Added {n_splats:,} splats with {own_dim}=On, extend_to_all=[{other_dim}]"
+                    )
 
         aprint(f"Scene saved: {output_path}")
         return output_path

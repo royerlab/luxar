@@ -70,39 +70,39 @@ def get_legends_dir() -> Path:
 
 # Tab10-inspired palette for small categories (up to 10)
 TAB10_COLORS = [
-    (31, 119, 180),   # Blue
-    (255, 127, 14),   # Orange
-    (44, 160, 44),    # Green
-    (214, 39, 40),    # Red
+    (31, 119, 180),  # Blue
+    (255, 127, 14),  # Orange
+    (44, 160, 44),  # Green
+    (214, 39, 40),  # Red
     (148, 103, 189),  # Purple
-    (140, 86, 75),    # Brown
+    (140, 86, 75),  # Brown
     (227, 119, 194),  # Pink
     (127, 127, 127),  # Gray
-    (188, 189, 34),   # Olive
-    (23, 190, 207),   # Teal
+    (188, 189, 34),  # Olive
+    (23, 190, 207),  # Teal
 ]
 
 # Extended palette for medium categories (up to 20)
 TAB20_COLORS = [
-    (31, 119, 180),   # Blue
+    (31, 119, 180),  # Blue
     (174, 199, 232),  # Light blue
-    (255, 127, 14),   # Orange
+    (255, 127, 14),  # Orange
     (255, 187, 120),  # Light orange
-    (44, 160, 44),    # Green
+    (44, 160, 44),  # Green
     (152, 223, 138),  # Light green
-    (214, 39, 40),    # Red
+    (214, 39, 40),  # Red
     (255, 152, 150),  # Light red
     (148, 103, 189),  # Purple
     (197, 176, 213),  # Light purple
-    (140, 86, 75),    # Brown
+    (140, 86, 75),  # Brown
     (196, 156, 148),  # Light brown
     (227, 119, 194),  # Pink
     (247, 182, 210),  # Light pink
     (127, 127, 127),  # Gray
     (199, 199, 199),  # Light gray
-    (188, 189, 34),   # Olive
+    (188, 189, 34),  # Olive
     (219, 219, 141),  # Light olive
-    (23, 190, 207),   # Teal
+    (23, 190, 207),  # Teal
     (158, 218, 229),  # Light teal
 ]
 
@@ -124,11 +124,11 @@ def get_sequential_color(t: float) -> tuple[int, int, int]:
     # Plasma-inspired colormap control points
     # Format: (t, r, g, b) - all in 0-1 range
     control_points = [
-        (0.0, 0.05, 0.03, 0.53),    # Deep blue-purple
-        (0.25, 0.42, 0.12, 0.66),   # Purple
-        (0.5, 0.80, 0.24, 0.46),    # Magenta-pink
-        (0.75, 0.97, 0.55, 0.20),   # Orange
-        (1.0, 0.94, 0.98, 0.13),    # Bright yellow
+        (0.0, 0.05, 0.03, 0.53),  # Deep blue-purple
+        (0.25, 0.42, 0.12, 0.66),  # Purple
+        (0.5, 0.80, 0.24, 0.46),  # Magenta-pink
+        (0.75, 0.97, 0.55, 0.20),  # Orange
+        (1.0, 0.94, 0.98, 0.13),  # Bright yellow
     ]
 
     # Find the two control points to interpolate between
@@ -144,9 +144,11 @@ def get_sequential_color(t: float) -> tuple[int, int, int]:
             return (int(r * 255), int(g * 255), int(b * 255))
 
     # Fallback to last color
-    return (int(control_points[-1][1] * 255),
-            int(control_points[-1][2] * 255),
-            int(control_points[-1][3] * 255))
+    return (
+        int(control_points[-1][1] * 255),
+        int(control_points[-1][2] * 255),
+        int(control_points[-1][3] * 255),
+    )
 
 
 def get_categorical_color(index: int, n_categories: int) -> tuple[int, int, int]:
@@ -391,7 +393,9 @@ def generate_all_legends(
             # Generate legend (use sequential colormap for timepoints)
             output_path = legends_dir / f"legend_{prefix}_{attr_name}.png"
             use_sequential = attr_name == "timepoint"
-            generate_legend_image(labels, display_name, output_path, use_sequential=use_sequential)
+            generate_legend_image(
+                labels, display_name, output_path, use_sequential=use_sequential
+            )
 
             aprint(f"  {display_name}: {len(labels)} categories -> {output_path.name}")
 

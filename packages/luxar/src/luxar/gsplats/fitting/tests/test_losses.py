@@ -29,6 +29,7 @@ def create_test_config(V, **kwargs):
         n_iters=10,
         lr=0.01,
         max_abs_error=0.01,
+        rel_l2_target=None,
         gradient_clip=None,
         loss_type="mse",
         asymmetric_penalty=None,
@@ -455,10 +456,14 @@ def test_boundary_penalty_increases_loss() -> None:
     V_tensor = torch.from_numpy(V)
 
     preprocessed = PreprocessedData(
-        d=2, N=3,
+        d=2,
+        N=3,
         seed_centers=np.array([[1, 1], [14, 1], [1, 14]], dtype=np.float32),
-        V_normalized=V, V_tensor=V_tensor,
-        image_min=0.0, image_max=1.0, intensity_range=1.0,
+        V_normalized=V,
+        V_tensor=V_tensor,
+        image_min=0.0,
+        image_max=1.0,
+        intensity_range=1.0,
         max_abs_error=0.01,
     )
 
@@ -484,10 +489,14 @@ def test_boundary_penalty_zero_when_inside() -> None:
     V_tensor = torch.from_numpy(V)
 
     preprocessed = PreprocessedData(
-        d=2, N=3,
+        d=2,
+        N=3,
         seed_centers=np.array([[16, 16], [14, 14], [18, 18]], dtype=np.float32),
-        V_normalized=V, V_tensor=V_tensor,
-        image_min=0.0, image_max=1.0, intensity_range=1.0,
+        V_normalized=V,
+        V_tensor=V_tensor,
+        image_min=0.0,
+        image_max=1.0,
+        intensity_range=1.0,
         max_abs_error=0.01,
     )
 
@@ -511,10 +520,14 @@ def test_boundary_penalty_differentiable() -> None:
     V_tensor = torch.from_numpy(V)
 
     preprocessed = PreprocessedData(
-        d=2, N=3,
+        d=2,
+        N=3,
         seed_centers=np.array([[1, 1], [14, 1], [1, 14]], dtype=np.float32),
-        V_normalized=V, V_tensor=V_tensor,
-        image_min=0.0, image_max=1.0, intensity_range=1.0,
+        V_normalized=V,
+        V_tensor=V_tensor,
+        image_min=0.0,
+        image_max=1.0,
+        intensity_range=1.0,
         max_abs_error=0.01,
     )
 
@@ -536,10 +549,14 @@ def test_boundary_penalty_disabled_by_default() -> None:
     V_tensor = torch.from_numpy(V)
 
     preprocessed = PreprocessedData(
-        d=2, N=3,
+        d=2,
+        N=3,
         seed_centers=np.array([[1, 1], [14, 1], [1, 14]], dtype=np.float32),
-        V_normalized=V, V_tensor=V_tensor,
-        image_min=0.0, image_max=1.0, intensity_range=1.0,
+        V_normalized=V,
+        V_tensor=V_tensor,
+        image_min=0.0,
+        image_max=1.0,
+        intensity_range=1.0,
         max_abs_error=0.01,
     )
 

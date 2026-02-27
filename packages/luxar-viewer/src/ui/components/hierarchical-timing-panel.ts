@@ -100,7 +100,12 @@ function renderMetadata(metadata: TimingMetadata | undefined): string {
     const total = metadata.cacheHits + metadata.cacheMisses;
     if (total > 0) {
       const hitRate = Math.round((metadata.cacheHits / total) * 100);
-      const tagClass = hitRate > 80 ? 'luxar-timing-panel__tag--good' : hitRate > 50 ? '' : 'luxar-timing-panel__tag--warn';
+      const tagClass =
+        hitRate > 80
+          ? 'luxar-timing-panel__tag--good'
+          : hitRate > 50
+            ? ''
+            : 'luxar-timing-panel__tag--warn';
       tags.push(`<span class="luxar-timing-panel__tag ${tagClass}">${hitRate}% cache</span>`);
     }
   }
@@ -110,11 +115,15 @@ function renderMetadata(metadata: TimingMetadata | undefined): string {
   }
 
   if (metadata.segments !== undefined) {
-    tags.push(`<span class="luxar-timing-panel__tag">${formatCount(metadata.segments)} segs</span>`);
+    tags.push(
+      `<span class="luxar-timing-panel__tag">${formatCount(metadata.segments)} segs</span>`
+    );
   }
 
   if (metadata.splats !== undefined) {
-    tags.push(`<span class="luxar-timing-panel__tag">${formatCount(metadata.splats)} splats</span>`);
+    tags.push(
+      `<span class="luxar-timing-panel__tag">${formatCount(metadata.splats)} splats</span>`
+    );
   }
 
   if (metadata.info) {
@@ -397,7 +406,8 @@ function renderEntry(entry: TimingEntry, depth: number, parentPath: string): str
   const rowClasses = ['luxar-timing-panel__row'];
   if (entry.overBudget) rowClasses.push('luxar-timing-panel__row--over');
   if (entry.metadata?.skipped) rowClasses.push('luxar-timing-panel__row--skipped');
-  if (hasOverBudget(entry) && !entry.overBudget) rowClasses.push('luxar-timing-panel__row--child-over');
+  if (hasOverBudget(entry) && !entry.overBudget)
+    rowClasses.push('luxar-timing-panel__row--child-over');
 
   // Expand/collapse indicator
   const expandIcon = hasChildren
@@ -432,7 +442,6 @@ function renderEntry(entry: TimingEntry, depth: number, parentPath: string): str
 
   return html;
 }
-
 
 /**
  * Create an aggregated version of the root entry with children grouped by node type
@@ -576,7 +585,8 @@ function updateEntryValues(
       const rowClasses = ['luxar-timing-panel__row'];
       if (entry.overBudget) rowClasses.push('luxar-timing-panel__row--over');
       if (entry.metadata?.skipped) rowClasses.push('luxar-timing-panel__row--skipped');
-      if (hasOverBudget(entry) && !entry.overBudget) rowClasses.push('luxar-timing-panel__row--child-over');
+      if (hasOverBudget(entry) && !entry.overBudget)
+        rowClasses.push('luxar-timing-panel__row--child-over');
       (row as HTMLElement).className = rowClasses.join(' ');
 
       // Update expand icon
@@ -598,7 +608,9 @@ function updateEntryValues(
       const timingName = row.querySelector('.luxar-timing-panel__name');
       if (timingName) {
         // Remove existing metadata tags
-        timingName.querySelectorAll('.luxar-timing-panel__tag').forEach((tag: Element) => tag.remove());
+        timingName
+          .querySelectorAll('.luxar-timing-panel__tag')
+          .forEach((tag: Element) => tag.remove());
         // Add new metadata
         const metadataHtml = renderMetadata(entry.metadata);
         if (metadataHtml) {

@@ -92,10 +92,7 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 
 # Data source
-ZENODO_URL = (
-    "https://zenodo.org/api/records/6460303/files/"
-    "mskcc_confocal.zip/content"
-)
+ZENODO_URL = "https://zenodo.org/api/records/6460303/files/mskcc_confocal.zip/content"
 
 # Volume specs
 VOXEL_SIZE_ZYX = (0.75, 0.15, 0.15)  # Micrometres
@@ -182,8 +179,10 @@ def download_celegans_data() -> Path:
         aprint("Sample:  " + SAMPLE_NAME)
 
         robust_download(
-            ZENODO_URL, zip_path,
-            max_retries=5, timeout=600,
+            ZENODO_URL,
+            zip_path,
+            max_retries=5,
+            timeout=600,
             expected_size=26_141_247_410,
         )
 
@@ -209,14 +208,10 @@ def extract_sample_data(zip_path: Path) -> tuple:
         with zipfile.ZipFile(zip_path, "r") as zf:
             # List all members belonging to our sample
             all_members = zf.namelist()
-            sample_members = [
-                m for m in all_members if SAMPLE_NAME in m
-            ]
+            sample_members = [m for m in all_members if SAMPLE_NAME in m]
 
             if not sample_members:
-                available = {
-                    m.split("/")[0] for m in all_members if "/" in m
-                }
+                available = {m.split("/")[0] for m in all_members if "/" in m}
                 raise FileNotFoundError(
                     f"Sample {SAMPLE_NAME} not found in ZIP. "
                     f"Available: {sorted(available)}"
@@ -262,7 +257,8 @@ def extract_sample_data(zip_path: Path) -> tuple:
         tiff_files = []
         for d in tiff_dirs:
             tiff_files.extend(
-                f for f in d.iterdir()
+                f
+                for f in d.iterdir()
                 if f.is_file() and f.suffix.lower() in (".tif", ".tiff")
             )
 
@@ -271,9 +267,7 @@ def extract_sample_data(zip_path: Path) -> tuple:
 
         # Tracking files — look for CSV first, then StarryNite nuclei files
         csv_files = sorted(sample_dir.rglob("*.csv"))
-        nuclei_dirs = sorted(
-            d for d in sample_dir.rglob("nuclei") if d.is_dir()
-        )
+        nuclei_dirs = sorted(d for d in sample_dir.rglob("nuclei") if d.is_dir())
 
         aprint(f"  TIFF images: {len(tiff_files)}")
         aprint(f"  CSV files: {len(csv_files)}")
@@ -295,8 +289,7 @@ def load_timepoint_volume(tiff_path: Path) -> np.ndarray:
         import tifffile
     except ImportError:
         raise ImportError(
-            "tifffile is required for this demo.\n"
-            "Install with: pip install tifffile"
+            "tifffile is required for this demo.\nInstall with: pip install tifffile"
         )
 
     volume = tifffile.imread(str(tiff_path)).astype(np.float32)
@@ -366,9 +359,17 @@ def load_tracks_from_csv(csv_files: list, n_timepoints: int) -> dict:
                         elif hl in ("z", "pos_z", "position_z"):
                             col_map["z"] = h
                         elif hl in (
-                            "track_id", "trackid", "track",
-                            "lineage_id", "lineageid", "id", "label",
-                            "cell", "cell_name", "name", "identity",
+                            "track_id",
+                            "trackid",
+                            "track",
+                            "lineage_id",
+                            "lineageid",
+                            "id",
+                            "label",
+                            "cell",
+                            "cell_name",
+                            "name",
+                            "identity",
                         ):
                             if "track" not in col_map:
                                 col_map["track"] = h
@@ -380,9 +381,11 @@ def load_tracks_from_csv(csv_files: list, n_timepoints: int) -> dict:
                         continue
 
                     track_col = col_map.get("track")
-                    aprint(f"  Mapped: t={col_map['t']}, x={col_map['x']}, "
-                           f"y={col_map['y']}, z={col_map['z']}, "
-                           f"track={track_col}")
+                    aprint(
+                        f"  Mapped: t={col_map['t']}, x={col_map['x']}, "
+                        f"y={col_map['y']}, z={col_map['z']}, "
+                        f"track={track_col}"
+                    )
 
                     row_count = 0
                     for row in reader:
@@ -411,8 +414,9 @@ def load_tracks_from_csv(csv_files: list, n_timepoints: int) -> dict:
                         tracks[tid].append((t, z, y, x))
                         row_count += 1
 
-                    aprint(f"  Parsed {row_count} positions, "
-                           f"{len(tracks)} unique tracks")
+                    aprint(
+                        f"  Parsed {row_count} positions, {len(tracks)} unique tracks"
+                    )
 
     if not tracks:
         return None
@@ -422,9 +426,7 @@ def load_tracks_from_csv(csv_files: list, n_timepoints: int) -> dict:
         tracks[tid].sort(key=lambda p: p[0])
 
     # Filter: keep only tracks with >= 2 timepoints (need a line)
-    tracks = {
-        tid: pts for tid, pts in tracks.items() if len(pts) >= 2
-    }
+    tracks = {tid: pts for tid, pts in tracks.items() if len(pts) >= 2}
 
     # Assign colours by lineage (unique hue per track)
     n_tracks = len(tracks)
@@ -554,7 +556,9 @@ def load_tracking_data(csv_files: list, nuclei_dirs: list, n_timepoints: int) ->
 
 
 def fit_timepoint(
-    volume: np.ndarray, label: str, cache_file: Path,
+    volume: np.ndarray,
+    label: str,
+    cache_file: Path,
 ) -> GSplatData:
     """Fit GSplats to a single timepoint with caching.
 
@@ -629,7 +633,9 @@ def fit_all_timepoints(tiff_files: list) -> list:
     with asection(f"Fitting GSplats ({n} timepoints)"):
         gsplats_list = []
         for t in range(n):
-            cache_file = CACHE_DIR / f"celegans_s{SAMPLE_INDEX}_t{t:04d}.gsplats.zarr.zip"
+            cache_file = (
+                CACHE_DIR / f"celegans_s{SAMPLE_INDEX}_t{t:04d}.gsplats.zarr.zip"
+            )
             with asection(f"Timepoint {t}/{n - 1}"):
                 volume = load_timepoint_volume(tiff_files[t])
                 gsplats = fit_timepoint(volume, f"T={t}", cache_file)
@@ -643,7 +649,9 @@ def fit_all_timepoints(tiff_files: list) -> list:
 
 
 def add_cell_tracks(
-    scene, tracking_data: dict, shared_centroid: np.ndarray,
+    scene,
+    tracking_data: dict,
+    shared_centroid: np.ndarray,
 ) -> None:
     """Add cell tracking lines to the scene.
 
@@ -732,9 +740,7 @@ def create_luxar_scene(
         Path to saved scene.
     """
     if output_path is None:
-        output_path = (
-            get_demos_output_dir() / "gsplats_4d_celegans_tracking.zarr"
-        )
+        output_path = get_demos_output_dir() / "gsplats_4d_celegans_tracking.zarr"
 
     n_timepoints = len(gsplats_list)
 
@@ -749,19 +755,21 @@ def create_luxar_scene(
         aprint(f"Timepoints: {n_timepoints}")
         aprint(f"Tracking: {'yes' if tracking_data else 'no'}")
 
-        dims = Dimensions([
-            Dimension("x", unit="px", display=True),
-            Dimension("y", unit="px", display=True),
-            Dimension("z", unit="px", display=True),
-            Dimension(
-                "time",
-                unit="frame",
-                display=False,
-                discrete=True,
-                range=(0, n_timepoints - 1),
-                step=1.0,
-            ),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="px", display=True),
+                Dimension("y", unit="px", display=True),
+                Dimension("z", unit="px", display=True),
+                Dimension(
+                    "time",
+                    unit="frame",
+                    display=False,
+                    discrete=True,
+                    range=(0, n_timepoints - 1),
+                    step=1.0,
+                ),
+            ]
+        )
 
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
@@ -771,9 +779,7 @@ def create_luxar_scene(
             has_tracks = tracking_data is not None
             n_tracks = len(tracking_data["tracks"]) if has_tracks else 0
 
-            scene.attrs["title"] = (
-                "GSplats: C. elegans Embryo — Nuclei Tracking"
-            )
+            scene.attrs["title"] = "GSplats: C. elegans Embryo — Nuclei Tracking"
             scene.attrs["description"] = f"""
 4D Gaussian Splatting + Cell Lineage Tracks — C. elegans Embryo
 ================================================================
@@ -808,9 +814,9 @@ Navigation:
                 all_centers = [g.centers for g in gsplats_list]
                 all_amps = [g.amplitudes for g in gsplats_list]
                 total_amp = sum(a.sum() for a in all_amps)
-                shared_centroid = sum(
-                    c.T @ a for c, a in zip(all_centers, all_amps)
-                ) / total_amp
+                shared_centroid = (
+                    sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
+                )
                 aprint(f"Shared centroid: {shared_centroid}")
 
             # Add GSplats per timepoint
@@ -865,9 +871,7 @@ def main():
     aprint("Volume rendering (GSplats) + cell lineage tracks (Lines)")
     aprint("")
 
-    output_path = (
-        get_demos_output_dir() / "gsplats_4d_celegans_tracking.zarr"
-    )
+    output_path = get_demos_output_dir() / "gsplats_4d_celegans_tracking.zarr"
 
     # Serve-only mode
     if SERVE_ONLY:
@@ -875,10 +879,7 @@ def main():
             aprint("Serve-only mode: Launching viewer...")
             launch_viewer(output_path)
         else:
-            aprint(
-                f"No scene found at {output_path}. "
-                "Run without --serve-only first."
-            )
+            aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
     # Download
@@ -907,9 +908,7 @@ def main():
         aprint(f"Total splats: {total_splats:,} across {len(gsplats_list)} timepoints")
         if tracking_data:
             aprint(f"Tracks: {len(tracking_data['tracks'])}")
-            total_pts = sum(
-                len(pts) for pts in tracking_data["tracks"].values()
-            )
+            total_pts = sum(len(pts) for pts in tracking_data["tracks"].values())
             aprint(f"Track points: {total_pts:,}")
 
     # Create 4D scene

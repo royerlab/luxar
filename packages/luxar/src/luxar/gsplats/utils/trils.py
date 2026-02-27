@@ -370,17 +370,13 @@ def embed_cholesky_packed(
     if d_dst < d_src:
         raise ValueError(f"Target dim {d_dst} must be >= source dim {d_src}")
     if len(dim_mapping) != d_src:
-        raise ValueError(
-            f"dim_mapping length {len(dim_mapping)} != source dim {d_src}"
-        )
+        raise ValueError(f"dim_mapping length {len(dim_mapping)} != source dim {d_src}")
     # Validate mapping targets are valid and unique
     if len(set(dim_mapping)) != len(dim_mapping):
         raise ValueError(f"dim_mapping has duplicates: {dim_mapping}")
     for idx in dim_mapping:
         if idx < 0 or idx >= d_dst:
-            raise ValueError(
-                f"dim_mapping index {idx} out of range [0, {d_dst})"
-            )
+            raise ValueError(f"dim_mapping index {idx} out of range [0, {d_dst})")
 
     if fill_sigma is None:
         fill_sigma = {}

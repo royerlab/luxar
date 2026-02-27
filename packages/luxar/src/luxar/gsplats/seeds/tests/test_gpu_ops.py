@@ -126,7 +126,9 @@ class TestSobelGradientGPU:
         # Should have near-identical edge patterns (>95% overlap)
         overlap = np.logical_and(cpu_edges, gpu_edges).sum()
         cpu_total = cpu_edges.sum()
-        assert overlap / cpu_total > 0.95, f"Edge overlap too low: {overlap / cpu_total}"
+        assert overlap / cpu_total > 0.95, (
+            f"Edge overlap too low: {overlap / cpu_total}"
+        )
 
         # Magnitudes should be close (allowing for float32 vs float64 differences)
         # scipy uses float64, GPU uses float32
@@ -164,7 +166,9 @@ class TestSobelGradientGPU:
         # Should have near-identical edge patterns (>95% overlap)
         overlap = np.logical_and(cpu_edges, gpu_edges).sum()
         cpu_total = cpu_edges.sum()
-        assert overlap / cpu_total > 0.95, f"Edge overlap too low: {overlap / cpu_total}"
+        assert overlap / cpu_total > 0.95, (
+            f"Edge overlap too low: {overlap / cpu_total}"
+        )
 
         # Magnitudes should be close
         mask = cpu_result > 0.1

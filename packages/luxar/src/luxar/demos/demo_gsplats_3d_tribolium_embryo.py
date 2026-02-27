@@ -84,8 +84,7 @@ from luxar.utils.paths import get_demos_output_dir
 
 # Data source
 ZENODO_URL = (
-    "https://zenodo.org/api/records/5270323/files/"
-    "Supplemental_File_2.zip/content"
+    "https://zenodo.org/api/records/5270323/files/Supplemental_File_2.zip/content"
 )
 
 # Volume specs
@@ -136,8 +135,10 @@ def download_tribolium_data() -> Path:
         aprint("Size:   ~2.5 GB")
 
         robust_download(
-            ZENODO_URL, zip_path,
-            max_retries=5, timeout=600,
+            ZENODO_URL,
+            zip_path,
+            max_retries=5,
+            timeout=600,
             expected_size=2_641_547_030,
         )
 
@@ -157,8 +158,7 @@ def extract_and_load_volume(zip_path: Path) -> np.ndarray:
         import tifffile
     except ImportError:
         raise ImportError(
-            "tifffile is required for this demo.\n"
-            "Install with: pip install tifffile"
+            "tifffile is required for this demo.\nInstall with: pip install tifffile"
         )
 
     extract_dir = CACHE_DIR / "extracted"
@@ -170,8 +170,7 @@ def extract_and_load_volume(zip_path: Path) -> np.ndarray:
             with zipfile.ZipFile(zip_path, "r") as zf:
                 # Only extract TIFF files
                 tiff_members = [
-                    m for m in zf.namelist()
-                    if m.lower().endswith((".tif", ".tiff"))
+                    m for m in zf.namelist() if m.lower().endswith((".tif", ".tiff"))
                 ]
                 if not tiff_members:
                     # Extract everything if no TIFFs found at top level
@@ -186,14 +185,12 @@ def extract_and_load_volume(zip_path: Path) -> np.ndarray:
     with asection("Loading 3D volume"):
         # Find all TIFF files recursively (case-insensitive)
         tiff_files = sorted(
-            f for f in extract_dir.rglob("*")
-            if f.suffix.lower() in (".tif", ".tiff")
+            f for f in extract_dir.rglob("*") if f.suffix.lower() in (".tif", ".tiff")
         )
 
         if not tiff_files:
             raise FileNotFoundError(
-                f"No TIFF files found in {extract_dir}. "
-                "Check the ZIP contents."
+                f"No TIFF files found in {extract_dir}. Check the ZIP contents."
             )
 
         aprint(f"Found {len(tiff_files)} TIFF file(s)")
@@ -335,7 +332,8 @@ def fit_tribolium(volume: np.ndarray) -> GSplatData:
 
 
 def create_luxar_scene(
-    gsplats_data: GSplatData, output_path: Path = None,
+    gsplats_data: GSplatData,
+    output_path: Path = None,
 ) -> Path:
     """Create 3D Luxar scene from fitted GSplats.
 
@@ -353,20 +351,20 @@ def create_luxar_scene(
         aprint(f"Output: {output_path.name}")
 
         # Dimensions in voxel coordinates (fitting produces voxel-space centers)
-        dims = Dimensions([
-            Dimension("x", unit="px", display=True),
-            Dimension("y", unit="px", display=True),
-            Dimension("z", unit="px", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="px", display=True),
+                Dimension("y", unit="px", display=True),
+                Dimension("z", unit="px", display=True),
+            ]
+        )
 
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            scene.attrs["title"] = (
-                "GSplats: Tribolium castaneum Embryo (Light-Sheet)"
-            )
+            scene.attrs["title"] = "GSplats: Tribolium castaneum Embryo (Light-Sheet)"
             scene.attrs["description"] = """
 3D Gaussian Splatting — Tribolium castaneum Embryo
 ====================================================
@@ -390,7 +388,8 @@ Navigation:
             with asection("Adding GSplats"):
                 # Centre at centroid and scale intensity
                 gsplats_data = gsplats_data.translate(
-                    -gsplats_data.centers.T @ gsplats_data.amplitudes
+                    -gsplats_data.centers.T
+                    @ gsplats_data.amplitudes
                     / gsplats_data.amplitudes.sum()
                 )
                 gsplats_data = gsplats_data.scale_intensity(0.1)
@@ -439,10 +438,7 @@ def main():
             aprint("Serve-only mode: Launching viewer...")
             launch_viewer(output_path)
         else:
-            aprint(
-                f"No scene found at {output_path}. "
-                "Run without --serve-only first."
-            )
+            aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
     # Load data

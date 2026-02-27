@@ -43,6 +43,7 @@ def basic_optimization_results():
         best_iteration=45,
         best_loss=0.001,
         best_max_abs_error=0.005,
+        best_rel_l2=0.1,
         movie_frames=None,
         start_time=start_time,
         end_time=end_time,
@@ -64,6 +65,7 @@ def basic_config():
         n_iters=100,
         lr=0.01,
         max_abs_error=0.01,
+        rel_l2_target=None,
         gradient_clip=None,
         loss_type="mse",
         asymmetric_penalty=None,
@@ -197,6 +199,7 @@ def test_stats_dictionary_structure(
         "best_iteration",
         "final_loss",
         "final_max_abs_error",
+        "final_rel_l2",
         "converged",
         "early_stopped",
         "n_splats",
@@ -317,6 +320,7 @@ def test_3d_data(basic_config, basic_preprocessed_data) -> None:
         best_iteration=25,
         best_loss=0.002,
         best_max_abs_error=0.008,
+        best_rel_l2=0.15,
         movie_frames=None,
         start_time=time.time(),
         end_time=time.time() + 5,
@@ -523,6 +527,7 @@ class TestVoxelFootprintCorrection:
             best_iteration=25,
             best_loss=0.002,
             best_max_abs_error=0.008,
+            best_rel_l2=0.15,
             movie_frames=None,
             start_time=time.time(),
             end_time=time.time() + 5,
@@ -579,6 +584,7 @@ class TestVoxelFootprintCorrection:
             best_iteration=25,
             best_loss=0.002,
             best_max_abs_error=0.008,
+            best_rel_l2=0.15,
             movie_frames=None,
             start_time=time.time(),
             end_time=time.time() + 5,
@@ -774,6 +780,7 @@ class TestPostFitCulling:
             best_iteration=90,
             best_loss=0.001,
             best_max_abs_error=0.005,
+            best_rel_l2=0.1,
             movie_frames=None,
             start_time=0.0,
             end_time=1.0,
@@ -793,6 +800,7 @@ class TestPostFitCulling:
             n_iters=100,
             lr=0.01,
             max_abs_error=0.01,
+            rel_l2_target=None,
             gradient_clip=None,
             loss_type="mse",
             asymmetric_penalty=None,
@@ -959,7 +967,9 @@ class TestClipToBounds:
         sigma_diag_clipped = np.sum(Ls_clipped * Ls_clipped, axis=2)  # (N, d)
         radii_clipped = truncate * np.sqrt(sigma_diag_clipped)
 
-        dist_to_edge = np.minimum(centers, np.array(shape, dtype=np.float32) - 1.0 - centers)
+        dist_to_edge = np.minimum(
+            centers, np.array(shape, dtype=np.float32) - 1.0 - centers
+        )
         # Radius should be <= dist_to_edge (within tolerance)
         assert np.all(radii_clipped <= dist_to_edge + 1e-5)
 
@@ -1074,34 +1084,66 @@ class TestClipToBounds:
         sharpness = torch.tensor([2.0], dtype=torch.float32)
 
         opt = OptimizationResults(
-            centers=centers, Ls=Ls, amps=amps, sharpness=sharpness,
-            converged_early=True, early_stopped=False,
-            actual_iters=50, best_iteration=45,
-            best_loss=0.001, best_max_abs_error=0.005,
-            movie_frames=None, start_time=0.0, end_time=1.0,
+            centers=centers,
+            Ls=Ls,
+            amps=amps,
+            sharpness=sharpness,
+            converged_early=True,
+            early_stopped=False,
+            actual_iters=50,
+            best_iteration=45,
+            best_loss=0.001,
+            best_max_abs_error=0.005,
+            best_rel_l2=0.1,
+            movie_frames=None,
+            start_time=0.0,
+            end_time=1.0,
         )
 
         V = np.random.rand(*shape).astype(np.float32)
         config = FitConfig(
-            V=V, seeds=None, norm_percentile=0.0, init_sigma_vox=2.0,
-            sigma_min_diag=[0.5, 0.5], sigma_max_diag=[10.0, 10.0],
-            truncate=3.0, n_iters=100, lr=0.01, max_abs_error=0.01,
-            gradient_clip=None, loss_type="mse", asymmetric_penalty=None,
-            l1_amp=None, l1_diag=None, l1_sharpness=None,
-            scheduler_type="plateau", patience=10, lr_reduction_factor=0.5,
-            early_stop_patience=None, enable_dynamic_ops=False,
-            dynamic_config=DynamicOpsConfig(), dynamic_ops_verbose=False,
-            napari_movie=False, movie_every=1, movie_max_frames=100,
-            device=torch.device("cpu"), verbose=False,
+            V=V,
+            seeds=None,
+            norm_percentile=0.0,
+            init_sigma_vox=2.0,
+            sigma_min_diag=[0.5, 0.5],
+            sigma_max_diag=[10.0, 10.0],
+            truncate=3.0,
+            n_iters=100,
+            lr=0.01,
+            max_abs_error=0.01,
+            rel_l2_target=None,
+            gradient_clip=None,
+            loss_type="mse",
+            asymmetric_penalty=None,
+            l1_amp=None,
+            l1_diag=None,
+            l1_sharpness=None,
+            scheduler_type="plateau",
+            patience=10,
+            lr_reduction_factor=0.5,
+            early_stop_patience=None,
+            enable_dynamic_ops=False,
+            dynamic_config=DynamicOpsConfig(),
+            dynamic_ops_verbose=False,
+            napari_movie=False,
+            movie_every=1,
+            movie_max_frames=100,
+            device=torch.device("cpu"),
+            verbose=False,
             clip_to_bounds=True,
             voxel_footprint_correction=True,
         )
 
         ppd = PreprocessedData(
-            d=2, N=1,
+            d=2,
+            N=1,
             seed_centers=np.array([[2.0, 8.0]], dtype=np.float32),
-            V_normalized=V, V_tensor=torch.from_numpy(V),
-            image_min=0.0, image_max=1.0, intensity_range=1.0,
+            V_normalized=V,
+            V_tensor=torch.from_numpy(V),
+            image_min=0.0,
+            image_max=1.0,
+            intensity_range=1.0,
             max_abs_error=0.01,
         )
 
@@ -1111,3 +1153,189 @@ class TestClipToBounds:
         assert len(result.amplitudes) == 1
         # The result should be valid (finite values)
         assert np.all(np.isfinite(result.cholesky_factors))
+
+
+# =============================================================================
+# Voxel Size Output Conversion Tests
+# =============================================================================
+
+
+class TestVoxelSizeOutputConversion:
+    """Tests for voxel_size + output_space coordinate conversion in finalize_results."""
+
+    def _make_config_and_data(self, d, voxel_size=None, output_space="real"):
+        """Helper to create config and data for conversion tests."""
+        shape = tuple([32] * d)
+        V = np.random.rand(*shape).astype(np.float32)
+        N = 3
+
+        config = FitConfig(
+            V=V,
+            seeds=None,
+            norm_percentile=0.0,
+            init_sigma_vox=2.0,
+            sigma_min_diag=[0.5] * d,
+            sigma_max_diag=[10.0] * d,
+            truncate=3.0,
+            n_iters=100,
+            lr=0.01,
+            max_abs_error=0.01,
+            rel_l2_target=None,
+            gradient_clip=None,
+            loss_type="mse",
+            asymmetric_penalty=None,
+            l1_amp=None,
+            l1_diag=None,
+            l1_sharpness=None,
+            scheduler_type="plateau",
+            patience=10,
+            lr_reduction_factor=0.5,
+            early_stop_patience=None,
+            enable_dynamic_ops=False,
+            dynamic_config=DynamicOpsConfig(),
+            dynamic_ops_verbose=False,
+            napari_movie=False,
+            movie_every=1,
+            movie_max_frames=100,
+            device=torch.device("cpu"),
+            verbose=False,
+            voxel_size=voxel_size,
+            output_space=output_space,
+        )
+
+        # Deterministic centers and Ls for predictable output
+        centers = torch.tensor([[5.0] * d, [15.0] * d, [25.0] * d], dtype=torch.float32)
+        Ls = torch.zeros(N, d, d, dtype=torch.float32)
+        for i in range(d):
+            Ls[:, i, i] = 1.0 + 0.1 * i  # slightly different per axis
+        amps = torch.tensor([0.5, 0.6, 0.7], dtype=torch.float32)
+        sharpness = torch.tensor([2.0, 2.0, 2.0], dtype=torch.float32)
+
+        start_time = time.time()
+        opt = OptimizationResults(
+            centers=centers,
+            Ls=Ls,
+            amps=amps,
+            sharpness=sharpness,
+            converged_early=True,
+            early_stopped=False,
+            actual_iters=50,
+            best_iteration=45,
+            best_loss=0.001,
+            best_max_abs_error=0.005,
+            best_rel_l2=0.1,
+            movie_frames=None,
+            start_time=start_time,
+            end_time=start_time + 1.0,
+        )
+        ppd = PreprocessedData(
+            d=d,
+            N=N,
+            seed_centers=np.random.rand(N, d).astype(np.float32),
+            V_normalized=V,
+            V_tensor=torch.from_numpy(V),
+            image_min=0.0,
+            image_max=1.0,
+            intensity_range=1.0,
+            max_abs_error=0.01,
+        )
+        return config, opt, ppd
+
+    def test_no_voxel_size_no_conversion(self):
+        """voxel_size=None produces voxel-space output regardless of output_space."""
+        config, opt, ppd = self._make_config_and_data(3)
+        result = finalize_results(opt, config, ppd)
+        # Centers should be in voxel range [0, 32)
+        assert result.centers.max() < 32
+
+    def test_voxel_size_real_scales_centers(self):
+        """output_space='real' with voxel_size scales centers correctly."""
+        vs = np.array([5.0, 1.0, 1.0], dtype=np.float32)
+
+        # Get voxel-space result
+        config_vox, opt, ppd = self._make_config_and_data(
+            3, voxel_size=vs, output_space="voxel"
+        )
+        result_vox = finalize_results(opt, config_vox, ppd)
+
+        # Get real-space result (re-create opt since finalize_results modifies tensors)
+        config_real, opt2, ppd2 = self._make_config_and_data(
+            3, voxel_size=vs, output_space="real"
+        )
+        result_real = finalize_results(opt2, config_real, ppd2)
+
+        # Real centers = voxel centers * voxel_size
+        np.testing.assert_allclose(
+            result_real.centers, result_vox.centers * vs, rtol=1e-5
+        )
+
+    def test_voxel_size_real_scales_cholesky(self):
+        """output_space='real' scales packed Cholesky factors correctly."""
+        vs = np.array([5.0, 2.0, 1.0], dtype=np.float32)
+        d = 3
+
+        config_vox, opt, ppd = self._make_config_and_data(
+            d, voxel_size=vs, output_space="voxel"
+        )
+        result_vox = finalize_results(opt, config_vox, ppd)
+
+        config_real, opt2, ppd2 = self._make_config_and_data(
+            d, voxel_size=vs, output_space="real"
+        )
+        result_real = finalize_results(opt2, config_real, ppd2)
+
+        # Build expected scale factors for packed tril: row i → vs[i]
+        tril_scales = np.concatenate([[vs[i]] * (i + 1) for i in range(d)])
+        np.testing.assert_allclose(
+            result_real.cholesky_factors,
+            result_vox.cholesky_factors * tril_scales,
+            rtol=1e-5,
+        )
+
+    def test_voxel_size_amplitudes_unchanged(self):
+        """Amplitudes are NOT scaled by voxel_size (not spatial quantities)."""
+        vs = np.array([5.0, 2.0, 1.0], dtype=np.float32)
+
+        config_vox, opt, ppd = self._make_config_and_data(
+            3, voxel_size=vs, output_space="voxel"
+        )
+        result_vox = finalize_results(opt, config_vox, ppd)
+
+        config_real, opt2, ppd2 = self._make_config_and_data(
+            3, voxel_size=vs, output_space="real"
+        )
+        result_real = finalize_results(opt2, config_real, ppd2)
+
+        np.testing.assert_allclose(
+            result_real.amplitudes, result_vox.amplitudes, rtol=1e-5
+        )
+
+    def test_voxel_size_voxel_output_no_scaling(self):
+        """output_space='voxel' suppresses coordinate conversion."""
+        vs = np.array([5.0, 1.0, 1.0], dtype=np.float32)
+
+        config_vox, opt, ppd = self._make_config_and_data(
+            3, voxel_size=vs, output_space="voxel"
+        )
+        result = finalize_results(opt, config_vox, ppd)
+
+        # Centers should be in voxel range, not physical
+        assert result.centers[:, 0].max() < 32  # not 32*5=160
+
+    def test_2d_output_conversion(self):
+        """Output conversion works for 2D data."""
+        vs = np.array([3.0, 1.5], dtype=np.float32)
+
+        config_vox, opt, ppd = self._make_config_and_data(
+            2, voxel_size=vs, output_space="voxel"
+        )
+        result_vox = finalize_results(opt, config_vox, ppd)
+
+        config_real, opt2, ppd2 = self._make_config_and_data(
+            2, voxel_size=vs, output_space="real"
+        )
+        result_real = finalize_results(opt2, config_real, ppd2)
+
+        np.testing.assert_allclose(
+            result_real.centers, result_vox.centers * vs, rtol=1e-5
+        )

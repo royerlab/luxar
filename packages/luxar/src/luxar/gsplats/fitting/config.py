@@ -100,6 +100,7 @@ class FitConfig:
     n_iters: int
     lr: float
     max_abs_error: Optional[float]
+    rel_l2_target: Optional[float]
     gradient_clip: Optional[float]
 
     # Loss function
@@ -143,7 +144,9 @@ class FitConfig:
     seed_method: str = (
         "auto"  # "decomposition", "grid", "edges", "auto", or comma-separated
     )
-    seed_kwargs: Optional[Dict[str, Any]] = None  # Additional parameters for seed generation
+    seed_kwargs: Optional[Dict[str, Any]] = (
+        None  # Additional parameters for seed generation
+    )
 
     # Pre-initialized parameters (for GSplatData seeds or moment pursuit)
     # If set, these override the default initialization
@@ -213,8 +216,9 @@ class PreprocessedData:
     d: int
     N: int  # number of candidates
 
-    # Convergence threshold
+    # Convergence thresholds
     max_abs_error: float
+    rel_l2_target: Optional[float] = None
 
     # Computed L1 regularization values (set during preprocessing)
     # These are stored here instead of mutating FitConfig
@@ -250,6 +254,7 @@ class OptimizationResults:
     best_iteration: int
     best_loss: float
     best_max_abs_error: float
+    best_rel_l2: float
 
     # Movie frames (if enabled)
     movie_frames: Optional[Dict[str, Any]]

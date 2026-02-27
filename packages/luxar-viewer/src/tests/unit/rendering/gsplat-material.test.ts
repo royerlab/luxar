@@ -47,7 +47,9 @@ describe('GSplatMaterial', () => {
     it('should create a material with default values', () => {
       const material = new GSplatMaterial();
 
-      expect(material.uniforms.uHDRMultiplier.value).toBe(config.renderingControls.defaults.hdrMultiplier);
+      expect(material.uniforms.uHDRMultiplier.value).toBe(
+        config.renderingControls.defaults.hdrMultiplier
+      );
       expect(material.uniforms.uOpacity.value).toBe(1.0);
       expect(material.uniforms.uTruncate.value).toBe(3.0);
       expect(material.uniforms.uResolution.value).toBeInstanceOf(THREE.Vector2);
@@ -209,7 +211,9 @@ describe('GSplatMaterial', () => {
 
       // Check for generalized Gaussian falloff with projection correction
       // The correction factor handles non-separability of 3D→2D projection for s≠2
-      expect(material.fragmentShader).toContain('float correctionFactor(float r, float s, float alpha)');
+      expect(material.fragmentShader).toContain(
+        'float correctionFactor(float r, float s, float alpha)'
+      );
       expect(material.fragmentShader).toContain('float gauss_2d = exp(-0.5 * mahalSq)');
       expect(material.fragmentShader).toContain(
         'float correction = correctionFactor(r_2D, vSharpness, vAspectRatio)'

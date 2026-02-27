@@ -465,7 +465,11 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     let blending: THREE.Blending;
     if (isOpaque || blendingMode === 'normal') {
       blending = THREE.NormalBlending;
-    } else if (blendingMode === 'additive' || blendingMode === 'luminous' || blendingMode === 'max') {
+    } else if (
+      blendingMode === 'additive' ||
+      blendingMode === 'luminous' ||
+      blendingMode === 'max'
+    ) {
       // All additive-style modes use CustomBlending for correct linear contribution
       blending = THREE.CustomBlending;
     } else {
