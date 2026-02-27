@@ -1099,6 +1099,67 @@ def _dfs(
         raise
 
 
+# ─────────────────────────────── export ──────────────────────────────────────
+@app.command()
+def export(
+    source: Path = typer.Argument(..., exists=True, readable=True, help="Zarr dataset"),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="Output folder for the standalone export"
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Overwrite existing output folder"
+    ),
+    open_browser: bool = typer.Option(
+        False, "--open", help="Serve and open browser after export"
+    ),
+    port: int = typer.Option(
+        8000, "--port", "-p", help="Port for local server (with --open)"
+    ),
+) -> None:
+    """Export a zarr scene + viewer as a standalone offline folder.
+
+    Creates a self-contained folder with the viewer, dataset, and a serve
+    script. Anyone can view the scene with just Python 3 and a browser.
+
+    Examples:
+        luxar export my_scene.zarr -o my_export/
+        luxar export my_scene.zarr -o my_export/ --overwrite
+        luxar export my_scene.zarr -o my_export/ --open
+    """
+    try:
+        from .export import export_scene
+
+        with asection("Luxar Export"):
+            result = export_scene(
+                source=source,
+                output=output,
+                overwrite=overwrite,
+            )
+            aprint(f"Exported to {result}")
+            aprint(f"To view: cd {result} && python serve.py")
+
+        if open_browser:
+            import subprocess
+            import sys
+
+            serve_script = result / "serve.py"
+            aprint(f"Starting local server on port {port}...")
+            subprocess.run(
+                [sys.executable, str(serve_script), "--port", str(port)],
+                cwd=str(result),
+            )
+    except FileExistsError as e:
+        aprint(f"Error: {e}")
+        aprint("Use --overwrite to replace existing output")
+        raise typer.Exit(1)
+    except (FileNotFoundError, ValueError) as e:
+        aprint(f"Error: {e}")
+        raise typer.Exit(1)
+    except Exception as e:
+        aprint(f"Error exporting scene: {e}")
+        raise typer.Exit(1)
+
+
 # ─────────────────────────────── profiles ────────────────────────────────────
 @app.command()
 def profiles() -> None:

@@ -455,7 +455,7 @@ export const config: AppConfig = {
       // Phase 3: WASM Acceleration - Documentation flag
       // Actual WASM loading is automatic via initWasm() when workers enabled
       useWASM: true, // WASM module built and ready
-      wasmModulePath: '/wasm/luxar_wasm_bg.wasm',
+      wasmModulePath: 'wasm/luxar_wasm_bg.wasm', // Resolved relative to bundle via import.meta.url
 
       // Phase 4: GPU Buffer Pool - ENABLED ✅
       // Multi-type support: Float32Array, Uint8Array, Uint16Array (with auto normalization)

@@ -58,7 +58,7 @@ Options:
     --no-cache:          Force re-fitting (ignore cached GSplats)
     --no-serve:          Generate scene without launching viewer
     --serve-only:        Just serve a previously generated scene
-    --max-timepoints=N:  Max number of timepoints to process (default: 20)
+    --max-timepoints=N:  Max number of timepoints to process (default: 64)
     --downsample-xy=N:   XY downsample factor (default: 2)
 
 Output:
@@ -97,7 +97,7 @@ NO_CACHE = "--no-cache" in sys.argv
 NO_SERVE = "--no-serve" in sys.argv
 SERVE_ONLY = "--serve-only" in sys.argv
 
-MAX_TIMEPOINTS = 20
+MAX_TIMEPOINTS = 64
 DOWNSAMPLE_XY = 2
 
 for _arg in sys.argv:
@@ -147,9 +147,10 @@ def load_zebrafish_volumes() -> tuple:
     """Download and load the zebrafish LSM as a list of 3D volumes.
 
     Returns:
-        Tuple of (volumes, voxel_size_zyx):
+        Tuple of (volumes, voxel_size_zyx, time_indices):
         - volumes: List of 3D float32 volumes, one per timepoint, each normalised to [0, 1].
         - voxel_size_zyx: Tuple of (Z, Y, X) voxel spacing in micrometres, or None.
+        - time_indices: List of source frame indices used (for cache key stability).
     """
     try:
         import tifffile
@@ -207,10 +208,18 @@ def load_zebrafish_volumes() -> tuple:
 
         n_total = raw.shape[0]
         n_use = min(n_total, MAX_TIMEPOINTS)
-        aprint(f"Using {n_use} of {n_total} timepoints")
+
+        # Sample timepoints evenly across the full recording so we capture
+        # the developmental progression, not just the first few frames.
+        stride = max(1, n_total // n_use)
+        time_indices = list(range(0, n_total, stride))[:n_use]
+        aprint(
+            f"Using {len(time_indices)} of {n_total} timepoints "
+            f"(stride={stride}, indices={time_indices[0]}..{time_indices[-1]})"
+        )
 
         volumes = []
-        for t in range(n_use):
+        for t in time_indices:
             V = raw[t].astype(np.float32)
             # Normalise to [0, 1]
             vmin, vmax = V.min(), V.max()
@@ -235,7 +244,7 @@ def load_zebrafish_volumes() -> tuple:
 
         aprint(f"Loaded {len(volumes)} volumes, shape per volume: {volumes[0].shape}")
 
-    return volumes, voxel_size_zyx
+    return volumes, voxel_size_zyx, time_indices
 
 
 # =============================================================================
@@ -336,23 +345,30 @@ def fit_timepoint(
     return result
 
 
-def fit_all_timepoints(volumes: list, voxel_size=None) -> list:
+def fit_all_timepoints(volumes: list, voxel_size=None, time_indices=None) -> list:
     """Fit GSplats to every timepoint.
 
     Args:
         volumes: List of 3D float32 volumes.
         voxel_size: Optional tuple of (Z, Y, X) voxel spacing.
+        time_indices: Source frame indices (for cache key stability).
+            If None, uses sequential indices 0, 1, 2, ...
 
     Returns:
         List of GSplatData, one per timepoint.
     """
+    if time_indices is None:
+        time_indices = list(range(len(volumes)))
+
     with asection(f"Fitting GSplats ({len(volumes)} timepoints)"):
         gsplats_list = []
-        for t, volume in enumerate(volumes):
-            cache_file = CACHE_DIR / f"zebrafish_t{t:04d}.gsplats.zarr.zip"
-            with asection(f"Timepoint {t}/{len(volumes) - 1}"):
+        for t, (volume, src_idx) in enumerate(zip(volumes, time_indices)):
+            # Use source frame index in cache filename so changing
+            # MAX_TIMEPOINTS doesn't cause stale cache hits.
+            cache_file = CACHE_DIR / f"zebrafish_frame{src_idx:04d}.gsplats.zarr.zip"
+            with asection(f"Timepoint {t}/{len(volumes) - 1} (frame {src_idx})"):
                 gsplats = fit_timepoint(
-                    volume, f"T={t}", cache_file, voxel_size=voxel_size
+                    volume, f"T={t} (frame {src_idx})", cache_file, voxel_size=voxel_size
                 )
                 gsplats_list.append(gsplats)
         return gsplats_list
@@ -394,11 +410,13 @@ def create_luxar_scene(
         aprint(f"Output: {output_path.name}")
         aprint(f"Timepoints: {n_timepoints}")
 
+        # When voxel_size is provided to fit_gaussian_splats, output centers
+        # are in physical coordinates (µm) by default (output_space="real").
         dims = Dimensions(
             [
-                Dimension("x", unit="px", display=True),
-                Dimension("y", unit="px", display=True),
-                Dimension("z", unit="px", display=True),
+                Dimension("x", unit="um", display=True),
+                Dimension("y", unit="um", display=True),
+                Dimension("z", unit="um", display=True),
                 Dimension(
                     "time",
                     unit="frame",
@@ -452,7 +470,15 @@ Navigation:
             for t, gsplats in enumerate(gsplats_list):
                 with asection(f"Adding timepoint {t}"):
                     gsplats = gsplats.translate(-shared_centroid)
-                    gsplats = gsplats.scale_intensity(0.1)
+
+                    # Normalise per-timepoint so max amplitude = 0.1.
+                    # Without this, early frames (very sparse signal) are
+                    # invisible while late frames dominate.
+                    amp_max = gsplats.amplitudes.max()
+                    if amp_max > 0:
+                        gsplats = gsplats.scale_intensity(0.1 / amp_max)
+                    else:
+                        gsplats = gsplats.scale_intensity(0.1)
 
                     n_splats = len(gsplats.amplitudes)
 
@@ -506,10 +532,12 @@ def main():
         return
 
     # Load data
-    volumes, voxel_size_zyx = load_zebrafish_volumes()
+    volumes, voxel_size_zyx, time_indices = load_zebrafish_volumes()
 
     # Fit GSplats per timepoint (with caching)
-    gsplats_list = fit_all_timepoints(volumes, voxel_size=voxel_size_zyx)
+    gsplats_list = fit_all_timepoints(
+        volumes, voxel_size=voxel_size_zyx, time_indices=time_indices
+    )
 
     # Report
     with asection("Fitting Summary"):
