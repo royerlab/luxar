@@ -6,7 +6,7 @@
  * config is imported and deep-cloned for mutation in each test.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { config } from '../../../config';
 import type { AppConfig } from '../../../config/types';
 import { validateConfig, logValidationResults, validateAndLog } from '../../../config/validation';
@@ -757,9 +757,9 @@ describe('validateConfig', () => {
 
 describe('logValidationResults', () => {
   let logSpy: {
-    success: ReturnType<typeof vi.fn>;
-    error: ReturnType<typeof vi.fn>;
-    warning: ReturnType<typeof vi.fn>;
+    success: MockInstance;
+    error: MockInstance;
+    warning: MockInstance;
   };
 
   beforeEach(() => {
