@@ -13,6 +13,7 @@ Usage:
 
 from __future__ import annotations
 
+import re
 import shutil
 import stat
 from pathlib import Path
@@ -88,9 +89,59 @@ def _copy_viewer(dest: Path) -> None:
     viewer_dist = get_viewer_dist_path()
     with asection("Copying viewer files"):
         shutil.copytree(viewer_dist, dest)
+        # Rewrite absolute asset paths to relative so the viewer works
+        # when served from a subdirectory (e.g. /viewer/).
+        _rewrite_absolute_paths(dest)
         # Count files for user feedback
         n_files = sum(1 for _ in dest.rglob("*") if _.is_file())
         aprint(f"Copied {n_files} viewer files to {dest}")
+
+
+def _rewrite_absolute_paths(viewer_dir: Path) -> None:
+    """Rewrite absolute asset/wasm paths to relative in all viewer files.
+
+    Vite builds may produce absolute paths like ``/assets/index-xxx.js``
+    and JS bundles reference ``"/wasm/..."`` and ``"/assets/..."``.
+    These break when the viewer is served from a subdirectory
+    (e.g. ``/viewer/``). This rewrites them to ``./`` relative paths.
+
+    Args:
+        viewer_dir: Root directory of the copied viewer files.
+    """
+    count = 0
+    for path in viewer_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        suffix = path.suffix.lower()
+        if suffix not in (".html", ".js", ".css"):
+            continue
+        text = path.read_text()
+        # Compute the relative prefix from this file back to the viewer root.
+        # Files in viewer/ use "./" while files in viewer/assets/ use "../".
+        rel = path.parent.relative_to(viewer_dir)
+        if rel == Path("."):
+            prefix = "./"
+        else:
+            prefix = "../" * len(rel.parts)
+        # Rewrite /assets/ and /wasm/ absolute paths to relative.
+        # For import() calls, paths resolve relative to the module URL,
+        # so files in assets/ need "../" to reach sibling dirs like wasm/.
+        updated = re.sub(r'(["\'])/assets/', rf"\1{prefix}assets/", text)
+        updated = re.sub(r'(["\'])/wasm/', rf"\1{prefix}wasm/", updated)
+        # Rewrite Vite's base path resolver: function(n){return"/"+n}
+        # This function creates <link> elements in document.head for
+        # modulepreload. Links resolve relative to the DOCUMENT URL
+        # (not the module URL), so always use "./" here.
+        updated = re.sub(
+            r'function\(n\)\{return"/"\+n\}',
+            'function(n){return"./"+n}',
+            updated,
+        )
+        if updated != text:
+            path.write_text(updated)
+            count += 1
+    if count:
+        aprint(f"Rewrote absolute paths to relative in {count} file(s)")
 
 
 def _copy_zarr_data(source: Path, dest: Path) -> None:
