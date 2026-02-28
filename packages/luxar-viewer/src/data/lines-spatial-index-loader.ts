@@ -41,7 +41,7 @@ import { getWorkerPool } from '../workers/worker-pool';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
 import { initWasm, getFallback } from '../wasm';
 import type { WasmModule } from '../wasm/types';
-import { DecompressedChunkCache, wrapWithCache } from '../cache';
+import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache';
 
 // ============================================================================
 // WASM Module Caching for Hot Path Optimization
@@ -106,6 +106,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
 
+  // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
+  private prefetcher: ChunkPrefetcher | null = null;
+
   // Suppress detail logs after first successful view update
   private _initialLoadDone = false;
 
@@ -123,15 +126,24 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable,
     profiler?: UpdateProfiler,
-    l0Cache?: DecompressedChunkCache
+    l0Cache?: DecompressedChunkCache,
+    prefetcher?: ChunkPrefetcher
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
     this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
     this.zarrStore = zarrStore || null;
     this.l0Cache = l0Cache || null;
+    this.prefetcher = prefetcher || null;
     // profiler parameter kept for API compatibility; session is passed directly to methods
     void profiler;
+  }
+
+  /** Register array shape with the prefetcher for upper-bounds checking. */
+  private registerBounds(arrayName: string, array: zarr.Array<zarr.DataType, zarr.Readable>): void {
+    if (!this.prefetcher) return;
+    const path = `${this.node.path.startsWith('/') ? this.node.path.slice(1) : this.node.path}/${arrayName}`;
+    this.prefetcher.registerArrayBounds(path, array.shape, array.chunks);
   }
 
   /**
@@ -172,6 +184,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       let segmentsArray = await zarr.open(this.zarrLocation.resolve('segments'), {
         kind: 'array',
       });
+      // Register array bounds with prefetcher for upper-bounds checking
+      this.registerBounds('vertices', verticesArray);
+      this.registerBounds('segments', segmentsArray);
       // Wrap with L0 cache if enabled (caches decoded chunks to avoid Blosc decompression)
       if (this.l0Cache) {
         verticesArray = wrapWithCache(verticesArray, this.l0Cache, `${this.node.path}/vertices`);
@@ -187,6 +202,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     // Try to open optional arrays
     try {
       let widthsArray = await zarr.open(this.zarrLocation.resolve('widths'), { kind: 'array' });
+      this.registerBounds('widths', widthsArray);
       if (this.l0Cache) {
         widthsArray = wrapWithCache(widthsArray, this.l0Cache, `${this.node.path}/widths`);
       }
@@ -197,6 +213,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     try {
       let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+      this.registerBounds('colors', colorsArray);
       if (this.l0Cache) {
         colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`);
       }
@@ -209,6 +226,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
         kind: 'array',
       });
+      this.registerBounds('sharpness', sharpnessArray);
       if (this.l0Cache) {
         sharpnessArray = wrapWithCache(sharpnessArray, this.l0Cache, `${this.node.path}/sharpness`);
       }

@@ -190,3 +190,21 @@ class TestEmbedCholeskyPacked:
             embed_cholesky_packed(packed, 2, 3, [0, 0])
         with pytest.raises(ValueError, match="out of range"):
             embed_cholesky_packed(packed, 2, 3, [0, 5])
+
+    def test_fill_sigma_zero_for_discrete_dims(self) -> None:
+        """fill_sigma=0 for discrete dims should not crash; produces tiny positive diagonal."""
+        packed_2d = np.array([[1.0, 0.0, 1.0]])  # 2D identity
+
+        # sigma=0 for dim 2 (discrete time) — should be handled gracefully
+        packed_3d = embed_cholesky_packed(
+            packed_2d, 2, 3, [0, 1], fill_sigma={2: 0}
+        )
+
+        assert packed_3d.shape == (1, 6)
+        L_3d = unpack_tril(packed_3d, 3)
+        # Dim 2 diagonal should be tiny but positive (not zero or negative)
+        assert L_3d[0, 2, 2] > 0
+        assert L_3d[0, 2, 2] < 1e-5
+        # Original 2x2 block should be preserved
+        Sigma_3d = L_3d @ L_3d.transpose(0, 2, 1)
+        np.testing.assert_allclose(Sigma_3d[0, :2, :2], np.eye(2), atol=1e-6)

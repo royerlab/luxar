@@ -499,7 +499,7 @@ Navigation:
                         sharpness=gsplats.sharpnesses,
                         dim_order=["z", "y", "x"],
                         fill={"time": float(t)},
-                        fill_sigma={"time": 0.3},
+                        fill_sigma={"time": 0},
                         extend_to_all=[],
                         opacity=1.0,
                         blending_mode="additive",

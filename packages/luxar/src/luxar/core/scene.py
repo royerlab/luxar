@@ -16,6 +16,7 @@ from arbol import aprint
 
 from ..core.dimensions import Dimensions
 from ..core.group import Group
+from ..core.viewer_config import ViewerConfig
 from ..io.writer import ZarrWriterProtocol
 
 
@@ -55,6 +56,7 @@ class Scene(Group):
         self,
         writer: ZarrWriterProtocol,
         dimensions: Dimensions,
+        viewer_config: Optional[ViewerConfig] = None,
     ) -> None:
         """Initialize a new Luxar scene.
 
@@ -62,6 +64,8 @@ class Scene(Group):
             writer: Writer interface for progressive writing (required)
             dimensions: Scene-level dimension definitions (REQUIRED).
                 Defines the coordinate system for all data in the scene.
+            viewer_config: Optional viewer configuration hints. Stored in
+                the zarr file and used by the viewer as scene-specific defaults.
 
         Raises:
             ValueError: If writer is None, dimensions is None, or initialization fails
@@ -86,6 +90,11 @@ class Scene(Group):
 
             # Store dimensions in attributes
             writer.write_group("/", scene_dimensions=dimensions.to_dict())
+
+            # Store viewer config if provided
+            self._viewer_config: Optional[ViewerConfig] = viewer_config
+            if viewer_config is not None:
+                writer.write_group("/", viewer_config=viewer_config.to_dict())
 
             aprint("✓ Scene initialized successfully with progressive writer")
 
@@ -394,6 +403,34 @@ class Scene(Group):
                 "dimensions are required when creating a scene."
             )
         return self._dimensions
+
+    @property
+    def viewer_config(self) -> Optional[ViewerConfig]:
+        """Get viewer configuration hints.
+
+        Returns:
+            ViewerConfig if set, None otherwise.
+        """
+        if self._viewer_config is None and "viewer_config" in self.attrs:
+            vc_dict = self.attrs["viewer_config"]
+            self._viewer_config = ViewerConfig.from_dict(vc_dict)
+        return self._viewer_config
+
+    @viewer_config.setter
+    def viewer_config(self, vc: Optional[ViewerConfig]) -> None:
+        """Set viewer configuration hints.
+
+        Args:
+            vc: ViewerConfig object, or None to clear.
+        """
+        self._viewer_config = vc
+        if vc is not None:
+            vc.validate()
+            self.attrs["viewer_config"] = vc.to_dict()
+            if self._writer:
+                self._writer.write_group("/", viewer_config=vc.to_dict())
+        elif "viewer_config" in self.attrs:
+            del self.attrs["viewer_config"]
 
     @dimensions.setter
     def dimensions(self, dims: Dimensions) -> None:

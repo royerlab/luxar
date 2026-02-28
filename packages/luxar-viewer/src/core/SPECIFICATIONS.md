@@ -579,7 +579,7 @@ console.log(loader);
 
 ### 6.5 Cache Debug API
 
-**Purpose**: Inspect and manipulate two-tier cache (L1 memory + L2 IndexedDB).
+**Purpose**: Inspect and manipulate two-tier cache (L1 memory + L2 OPFS).
 
 **Location**: `app.ts` lines 362-423
 
@@ -643,7 +643,7 @@ datasets.forEach((d) => {
 
 #### cache.clearL1()
 
-**Purpose**: Clear L1 (memory) cache only, preserving L2 (IndexedDB).
+**Purpose**: Clear L1 (memory) cache only, preserving L2 (OPFS).
 
 **Usage**:
 
@@ -654,7 +654,7 @@ console.log('L1 cache cleared - L2 preserved');
 
 #### cache.clearL2()
 
-**Purpose**: Clear L2 (IndexedDB) cache only, preserving L1 (memory).
+**Purpose**: Clear L2 (OPFS) cache only, preserving L1 (memory).
 
 **Usage**:
 

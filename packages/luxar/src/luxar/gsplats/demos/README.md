@@ -66,7 +66,7 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_2d_synthetic_blobs.
 - Dynamic operations (seeding, pruning) enabled by default
 - Simple napari visualization
 
-**Key concepts**: Per-splat optimizer, early stopping, dynamic topology changes
+**Key concepts**: Standard Adam optimizer, early stopping, fixed-pool splat relocation
 
 **Usage**: `python demo_basic_fitting.py [--no-napari] [--n-iters N] [--disable-dynamic]`
 
@@ -300,10 +300,10 @@ python demo_performance_metrics.py --no-napari --n-iters 500
 ## 🔧 What Each Demo Demonstrates
 
 ### **Core Features (All Demos)**
-- ✅ Per-splat Adam optimizer with individual learning rates
-- ✅ Dynamic operations (seeding, pruning)
-- ✅ Automatic seed generation with intelligent defaults
-- ✅ Early stopping based on convergence criteria
+- Standard PyTorch Adam optimizer with gradient dilution compensation
+- Dynamic operations (fixed-pool splat relocation)
+- Automatic seed generation with intelligent defaults
+- Early stopping based on convergence criteria
 - ✅ Structured logging with arbol
 - ✅ Headless operation (`--no-napari` flag)
 
@@ -506,7 +506,7 @@ done
 - **Main gsplats README**: `../README.md` - Full package overview
 - **SPECIFICATIONS**: `../SPECIFICATIONS.md` - Mathematical specifications
 - **GLOSSARY**: `../GLOSSARY.md` - Terminology reference
-- **Demo SPECIFICATION**: `./SPECIFICATION.md` - Detailed demo standards
+- **Demo SPECIFICATIONS**: `./SPECIFICATIONS.md` - Detailed demo standards
 
 ---
 
@@ -521,7 +521,7 @@ When adding new demos, follow these standards:
 5. **Documentation**: Update this README with new demo entry
 6. **Cross-refs**: Add "Related demos" section in docstring
 
-See `SPECIFICATION.md` for complete demo development guidelines.
+See `SPECIFICATIONS.md` for complete demo development guidelines.
 
 ---
 

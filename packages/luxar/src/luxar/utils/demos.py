@@ -20,6 +20,41 @@ from ..typing_utils.config import check_dataset_size_warning
 from ..typing_utils.protocols import PathLike
 
 
+def warn_if_no_cuda_gpu() -> None:
+    """Print a warning if no CUDA GPU is available.
+
+    GSplat demos require significant GPU compute for fitting.  Running on
+    CPU is orders of magnitude slower and generally impractical for
+    production runs.  This function prints a prominent warning so users
+    understand the hardware requirements before waiting hours for a CPU run.
+    """
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return  # All good
+        device = "MPS" if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()) else "CPU"
+    except ImportError:
+        device = "CPU (PyTorch not installed)"
+
+    aprint("")
+    aprint("=" * 70)
+    aprint("WARNING: No CUDA GPU detected — running on " + device)
+    aprint("=" * 70)
+    aprint("GSplat demos require a CUDA GPU for practical performance.")
+    aprint("Without one, fitting can take hours instead of minutes.")
+    if device.startswith("MPS"):
+        aprint("MPS (Apple Metal) provides some acceleration but is much")
+        aprint("slower than CUDA for Gaussian splatting workloads.")
+    aprint("")
+    aprint("Options:")
+    aprint("  - Use a machine with an NVIDIA GPU (CUDA)")
+    aprint("  - Use --timepoints=2 for a quick test run")
+    aprint("  - Use --serve-only if a scene was already generated")
+    aprint("=" * 70)
+    aprint("")
+
+
 def launch_viewer(output_path: Union[str, Path], open_browser: bool = True) -> None:
     """Launch the Luxar viewer to display a dataset.
 

@@ -52,7 +52,7 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 - `NumericT = TypeVar('NumericT', bound=np.generic)`
 - `ZarrDataT = TypeVar(np.float32 | np.uint8 | np.int32 | ...)`
 
-**Note**: protocols.py also imports and re-exports validation functions from validation/types.py
+**Note**: Validation functions have been moved to `validation/types.py`. Import from there directly (protocols.py no longer re-exports them).
 
 ### enums.py - Enumeration Types
 **Purpose**: Type-safe string constants
@@ -61,6 +61,8 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 - `NORMAL = "normal"` - Standard alpha blending
 - `ADDITIVE = "additive"` - Colors add together (glow effect)
 - `MAX = "max"` - Maximum of source and destination (brightest wins)
+- `OPAQUE = "opaque"` - Solid rendering with depth write (closest object wins)
+- `LUMINOUS = "luminous"` - Same visual as additive, but respects depth occlusion
 
 **NodeType**:
 - `SCENE = "scene"` - Root node
@@ -95,7 +97,7 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 ### Rendering Constants
 - `OPACITY_MIN/MAX = 0.0, 1.0`
 - `GAMMA_MIN/MAX = 0.1, 10.0` (symmetric: gamma and 1/gamma have equal range)
-- `SHARPNESS_MIN/MAX = 0.0, 31.0`
+- `SHARPNESS_MIN/MAX = 0.001, 31.0` (SHARPNESS_MIN is practical minimum; values must be > 0)
 - `DEFAULT_OPACITY/GAMMA/BLENDING_MODE = 1.0, 1.0, "additive"`
 
 ### Data Constants
@@ -193,9 +195,9 @@ Returns warning message if dataset is large, None otherwise.
 
 ## Type Guards and Validators
 
-**All validators now in validation/types.py, re-exported from protocols.py**
+**All validators now in validation/types.py** (import directly from `luxar.validation.types`, not from `protocols.py`)
 
-**Purpose of Re-export**: Maintain import paths for backward compatibility while centralizing implementation
+**Note**: `protocols.py` no longer re-exports validators. The re-export was removed to centralize validation in the `validation` package.
 
 ---
 

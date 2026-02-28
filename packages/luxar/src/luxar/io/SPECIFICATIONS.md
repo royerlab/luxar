@@ -1021,7 +1021,7 @@ assert len(data['chunk_bounds']) > 0
 - `CHUNK_SIZE_MAX` - Maximum chunk size
 
 **Sharpness** (existing in `typing_utils/constants.py`):
-- `SHARPNESS_MIN = 0.0`
+- `SHARPNESS_MIN = 0.001`
 - `SHARPNESS_MAX = 31.0`
 - `SHARPNESS_DEFAULT = 2.0`
 

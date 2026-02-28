@@ -150,9 +150,19 @@ These practices ensure consistency, maintainability, and usability across all de
     - **Best for**: Understanding multi-scale optimization benefits
 
 12. **demo_splats_mitosis_explicit_seeding.py**
-    - **Description**: Demonstrates the new explicit seeding API where seeds are generated using `seed_from_decomposition()`, `seed_from_gaussian()`, or `seed_from_moments()`. Shows how GSplatData with scale-informed shapes flows from seeding to fitting. Includes compression analysis with interactive napari visualization.
+    - **Description**: Demonstrates the explicit seeding API where seeds are generated using `seed_from_decomposition()`, `seed_from_edges()`, or `seed_from_grid()`. Shows how GSplatData with scale-informed shapes flows from seeding to fitting. Includes compression analysis with interactive napari visualization.
     - **Usage**: `python demo_splats_mitosis_explicit_seeding.py [--no-napari]`
     - **Best for**: Learning the explicit seeding API and understanding how scale information is preserved from detection to initialization
+
+13. **demo_boundary_containment.py**
+    - **Description**: Demonstrates boundary containment parameters (`boundary_penalty` and `clip_to_bounds`) that constrain splats within volume bounds during and after optimization. Provides side-by-side comparison of unconstrained vs constrained fitting, showing how edge splats behave with and without containment enforcement.
+    - **Usage**: `python demo_boundary_containment.py [--no-napari]`
+    - **Best for**: Understanding boundary containment for edge-aware fitting and preventing splat overflow
+
+14. **demo_3d_celegans_confocal.py**
+    - **Description**: 3D Gaussian splatting on a single timepoint from a C. elegans embryo confocal dataset with anisotropic voxel spacing (5:1 Z-anisotropy). Includes fitting quality inspection via napari (input, reconstruction, residual) and compression sweep to visualize quality vs splat count trade-off. Requires pre-downloaded data from the 4D C. elegans tracking demo.
+    - **Usage**: `python demo_3d_celegans_confocal.py [--no-napari]`
+    - **Best for**: Working with anisotropic voxel spacing, single-timepoint inspection, and compression analysis on real biological data
 
 ### Running Demos
 
@@ -196,5 +206,7 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_basic_fitting.py --
 **Advanced/Specialized:**
 - `demo_multiscale_fitting.py` - Multi-scale vs single-scale comparison
 - `demo_splats_mitosis_intgrad.py` - CLAHE seeding validation
+- `demo_boundary_containment.py` - Boundary containment and edge-aware fitting
+- `demo_3d_celegans_confocal.py` - Anisotropic voxel spacing and compression analysis
 
 All demos follow the standardized best practices outlined in this specification, ensuring consistent code quality, documentation, and user experience across the entire demo collection.

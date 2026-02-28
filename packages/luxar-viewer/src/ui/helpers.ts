@@ -528,3 +528,42 @@ export function clearError() {
     errorDiv.remove();
   }
 }
+
+/**
+ * Show a brief toast notification that auto-dismisses.
+ *
+ * @param message - Text to display
+ * @param durationMs - How long to show (default 2000ms)
+ */
+export function showToast(message: string, durationMs: number = 2000): void {
+  // Remove existing toast if any
+  const existing = document.getElementById('luxar-toast');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.id = 'luxar-toast';
+  toast.textContent = message;
+  Object.assign(toast.style, {
+    position: 'fixed',
+    bottom: '20px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '10px 20px',
+    borderRadius: '8px',
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    color: '#fff',
+    fontSize: '14px',
+    fontFamily: 'system-ui, sans-serif',
+    zIndex: '99999',
+    pointerEvents: 'none',
+    transition: 'opacity 0.3s ease',
+    opacity: '1',
+  });
+
+  document.body.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 300);
+  }, durationMs);
+}

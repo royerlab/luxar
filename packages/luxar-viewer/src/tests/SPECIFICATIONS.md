@@ -1,7 +1,7 @@
 # luxar-viewer.tests - Test Suite Specification
 
-**Version**: 1.0.3
-**Last Updated**: 2025-12-11
+**Version**: 1.1.0
+**Last Updated**: 2026-02-28
 
 ## Purpose
 
@@ -29,32 +29,69 @@ The test suite ensures correctness, reliability, and maintainability of the Luxa
 
 ```
 tests/
-├── unit/              # Fast, isolated, mocked (931 tests, ~2.6s runtime)
-│   ├── data/          # Data loading, encoding, zarr compatibility
-│   ├── ndim/          # nD slicing, spatial queries, projections
+├── unit/              # Fast, isolated, mocked
+│   ├── architecture/  # Clean architecture, state management
 │   ├── cache/         # Memory management, LRU/OPFS caching
+│   ├── config/        # Viewer configuration validation
 │   ├── controls/      # Camera controls, input handling
+│   ├── core/          # App initialization and lifecycle
+│   ├── data/          # Data loading, encoding, zarr compatibility
+│   ├── input/         # Input handling, keyup events
+│   ├── integration/   # Cross-component integration tests
+│   ├── ndim/          # nD slicing, spatial queries, projections
+│   ├── performance/   # GPU pool and accumulator performance
 │   ├── rendering/     # Materials, shaders, post-processing
-│   ├── scene/         # Scene management, transforms
-│   └── architecture/  # Clean architecture, state management
+│   ├── scene/         # Scene management, transforms, animation
+│   ├── themes/        # Theme manager tests
+│   ├── types/         # Type definition tests (points, lines, gsplats)
+│   ├── ui/            # UI components, dimension sliders, debug console
+│   ├── utils/         # Utility function tests (escape-html, etc.)
+│   ├── wasm/          # WASM vs TypeScript comparison and performance
+│   └── workers/       # Worker pool tests
 │
-├── e2e/               # Slow, integrated, real browser (Playwright)
-│   ├── basic-rendering.spec.ts      # Core rendering pipeline
-│   ├── all-examples-smoke-test.spec.ts  # All example datasets render
-│   ├── visual-regression.spec.ts     # Screenshot comparisons
-│   └── performance-benchmarks.spec.ts   # Performance measurement
+├── e2e/               # Slow, integrated, real browser (Playwright, 28 spec files)
+│   ├── basic-rendering.spec.ts         # Core rendering pipeline
+│   ├── all-examples-smoke-test.spec.ts # All example datasets render
+│   ├── cache-system.spec.ts            # Cache system behavior
+│   ├── controls-interaction.spec.ts    # Camera controls interaction
+│   ├── custom-gui-library.spec.ts      # Custom GUI library tests
+│   ├── data-loading.spec.ts            # Data loading pipeline
+│   ├── data-monitor-metrics.spec.ts    # Data monitor metrics
+│   ├── demo-scripts-e2e.spec.ts        # Demo script execution
+│   ├── dimension-animation.spec.ts     # Dimension animation
+│   ├── dimension-initialization.spec.ts # Dimension initialization
+│   ├── error-recovery.spec.ts          # Error recovery scenarios
+│   ├── first-time-ux.spec.ts           # First-time user experience
+│   ├── keyboard-input-system.spec.ts   # Keyboard input handling
+│   ├── nd-navigation.spec.ts           # nD navigation
+│   ├── performance-benchmarks.spec.ts  # Performance measurement
+│   ├── performance-tracking.spec.ts    # Performance tracking
+│   ├── position-bounds-clipping.spec.ts # Position bounds clipping
+│   ├── python-typescript-integration.spec.ts # Cross-language integration
+│   ├── real-dataset-loading.spec.ts    # Real dataset loading
+│   ├── rendering-controls.spec.ts      # Rendering controls UI
+│   ├── scene-integration.spec.ts       # Scene integration
+│   ├── spatial-index-accuracy.spec.ts  # Spatial index correctness
+│   ├── test-fixtures-rendering.spec.ts # Test fixture rendering
+│   ├── theme-visual-regression.spec.ts # Theme visual regression
+│   ├── transform-hierarchy.spec.ts     # Transform hierarchy
+│   ├── visual-regression.spec.ts       # Screenshot comparisons
+│   ├── webgl-errors.spec.ts            # WebGL error handling
+│   └── worker-wasm-integration.spec.ts # Worker/WASM integration
 │
 ├── mocks/             # Centralized mock infrastructure
-│   ├── three.mock.ts           # THREE.js complete mock (1525 lines)
-│   ├── webgl.mock.ts           # WebGL context mock (165 lines)
-│   ├── browser-apis.mock.ts    # Browser APIs (matchMedia, observers, etc.)
-│   ├── opfs.mock.ts            # Origin Private File System mock
-│   └── orbit-controls.mock.ts  # THREE OrbitControls mock
+│   ├── index.ts              # Central export, installAllMocks()
+│   ├── three.mock.ts         # THREE.js complete mock (~1520 lines)
+│   ├── webgl.mock.ts         # WebGL context mock (~164 lines)
+│   ├── browser-apis.mock.ts  # Browser APIs (matchMedia, observers, etc.)
+│   ├── opfs.mock.ts          # Origin Private File System mock
+│   └── orbit-controls.mock.ts # THREE OrbitControls mock
 │
 ├── builders/          # Test data builders and helpers
-└── fixtures/          # Python-generated zarr test datasets
-    ├── generate_test_data.py  # Fixture generation script
-    └── *.zarr         # Test datasets (broadcasting, LUT, quantization, etc.)
+├── global-setup.ts    # Auto-generates missing zarr fixtures before tests
+└── fixtures/          # Python-generated zarr test datasets (in tests/ not src/tests/)
+    ├── generate_test_data.py  # Fixture generation script (~788 lines)
+    └── *.zarr         # Test datasets (12 total)
 ```
 
 ---
@@ -218,8 +255,8 @@ All mocks are in `src/tests/mocks/` for easy maintenance and reuse.
 ```
 mocks/
 ├── index.ts              # Central export, installAllMocks()
-├── three.mock.ts         # Complete THREE.js mock (all classes)
-├── webgl.mock.ts         # MockWebGLRenderingContext
+├── three.mock.ts         # Complete THREE.js mock (~1520 lines, all classes)
+├── webgl.mock.ts         # MockWebGLRenderingContext (~164 lines)
 ├── browser-apis.mock.ts  # window.matchMedia, observers, etc.
 ├── opfs.mock.ts          # navigator.storage, OPFS API
 └── orbit-controls.mock.ts # OrbitControls from three/examples
@@ -273,11 +310,11 @@ All mocks use proper TypeScript types where possible, with `any` escape hatches 
 
 ### Python-Generated Fixtures
 
-**Script**: `tests/fixtures/generate_test_data.py` (635 lines)
+**Script**: `tests/fixtures/generate_test_data.py` (~788 lines)
 
-**Datasets Generated** (11 total):
+**Datasets Generated** (12 total):
 
-1. `test_broadcasting.zarr` - Uniform values (1 color → 1000 points)
+1. `test_broadcasting.zarr` - Uniform values (1 color to 1000 points)
 2. `test_lut.zarr` - 10 unique colors (LUT encoding)
 3. `test_quantization.zarr` - uint8 quantized colors/radii
 4. `test_array_refs.zarr` - Shared arrays (deduplication)
@@ -286,8 +323,9 @@ All mocks use proper TypeScript types where possible, with `any` escape hatches 
 7. `test_4d_scalar_lut.zarr` - 4D with scalar LUT (quantum orbitals bug fix)
 8. `test_hierarchical_transforms.zarr` - Nested transforms
 9. `test_hdr_colors.zarr` - HDR colors (values > 1.0)
-10. `test_sharpness_range.zarr` - Full sharpness range [1, 31]
-11. `test_log_scalar.zarr` - Log-space encoded radii
+10. `test_log_scalar.zarr` - Log-space encoded radii
+11. `test_uint16_quantization.zarr` - uint16 quantized encoding
+12. `test_sharpness_range.zarr` - Full sharpness range [1, 31]
 
 **Auto-Generation**:
 Fixtures are automatically regenerated before tests to match current Python encoding:
@@ -479,26 +517,23 @@ test('should render points correctly', async ({ page }) => {
 
 ### Current Status
 
-**Unit Tests**:
+> **Note**: These counts are approximate snapshots and evolve with ongoing development.
+> Run `pnpm test --run` and `hatch run test` for current counts.
 
-- Total: 936 tests
-- Passing: 931 (99.5%)
-- Skipped: 5 (intentional - require specific setup)
-- Failing: 0 ✅
-- Runtime: ~2.6 seconds
+**Unit Tests** (as of late 2025):
+
+- Passing: >930 tests
+- Runtime: ~2-3 seconds
+- 18 subdirectories under `unit/`
 
 **E2E Tests**:
 
-- Total: ~50 tests
-- Passing: ~48 (96%)
-- Flaky: 2 (network-dependent)
-- Runtime: ~60 seconds
+- 28 spec files covering rendering, navigation, caching, controls, and more
+- Runtime: varies (~60s per browser, ~5min for all browsers)
 
 **Python Tests**:
 
-- Total: 1372 tests
-- Passing: 1369 (99.8%)
-- Skipped: 3
+- > 1300 tests across all subpackages
 - Runtime: ~4 minutes
 
 ### Test Suite Health Indicators
@@ -652,6 +687,15 @@ pnpm test --run
 ---
 
 ## Changelog
+
+### v1.1.0 (2026-02-28)
+
+- Updated directory listing: 7 unit subdirectories expanded to 18 (added config, core, input, integration, performance, themes, types, ui, utils, wasm, workers)
+- Updated E2E test listing: 4 spec files expanded to 28 actual spec files
+- Fixed fixture count: 11 to 12 (added test_uint16_quantization.zarr)
+- Fixed line counts: three.mock.ts 1525->~1520, webgl.mock.ts 165->~164, generate_test_data.py 635->~788
+- Replaced specific test count snapshots with approximate ranges (counts evolve with development)
+- Added global-setup.ts to directory tree
 
 ### v1.0.3 (2025-12-11)
 

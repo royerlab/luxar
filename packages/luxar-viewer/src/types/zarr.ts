@@ -36,6 +36,131 @@ export interface SceneDimensionAttrs {
 }
 
 /**
+ * Viewer configuration from Python API (stored in zarr root .zattrs).
+ * All fields are optional — only set fields are present.
+ * Keys use snake_case to match the Python/zarr convention.
+ *
+ * This is also the format exported by Ctrl+Shift+S in the viewer,
+ * enabling full Python → zarr → viewer → export → Python round-trips.
+ */
+export interface ZarrViewerConfig {
+  // Camera
+  camera?: {
+    position?: [number, number, number];
+    target?: [number, number, number];
+    up?: [number, number, number];
+    fov?: number;
+    fov_preset?: string;
+    near?: number;
+    far?: number;
+    /** Named scene graph node whose bounding box center becomes the camera target */
+    target_node?: string;
+  };
+
+  // Scene
+  background_color?: string;
+
+  // Rendering pipeline
+  tone_mapping?: string;
+  hdr_multiplier?: number;
+
+  // Bloom
+  bloom_enabled?: boolean;
+  bloom_strength?: number;
+  bloom_radius?: number;
+  bloom_threshold?: number;
+  bloom_levels?: number;
+
+  // Navigation
+  control_type?: string;
+  auto_rotate?: boolean;
+  auto_rotate_speed?: number;
+
+  // Cinematic
+  cinematic_mode?: boolean;
+
+  // Vignette
+  vignette_enabled?: boolean;
+  vignette_darkness?: number;
+  vignette_offset?: number;
+
+  // Depth of field
+  dof_enabled?: boolean;
+  dof_focus?: number;
+  dof_strength?: number;
+
+  // Ambient occlusion
+  ao_enabled?: boolean;
+  ao_quality?: string;
+
+  // Detector noise
+  detector_noise_enabled?: boolean;
+  detector_noise_readout_sigma?: number;
+  detector_noise_photon_gain?: number;
+  detector_noise_fpn_sigma?: number;
+
+  // Anti-aliasing
+  fxaa_enabled?: boolean;
+  smaa_enabled?: boolean;
+  smaa_threshold?: number;
+  smaa_search_steps?: number;
+  msaa_enabled?: boolean;
+  msaa_samples?: number;
+  ssaa_enabled?: boolean;
+  ssaa_multiplier?: number;
+
+  // Chromatic lens distortion
+  chromatic_lens_distortion_enabled?: boolean;
+  chromatic_lens_distortion_x?: number;
+  chromatic_lens_distortion_y?: number;
+  chromatic_lens_dispersion?: number;
+  chromatic_lens_principal_point_x?: number;
+  chromatic_lens_principal_point_y?: number;
+  chromatic_lens_focal_length_x?: number;
+  chromatic_lens_focal_length_y?: number;
+  chromatic_lens_skew?: number;
+
+  // Fly controls
+  fly_movement_speed?: number;
+  fly_rotation_speed?: number;
+  fly_inertial_mode?: boolean;
+  fly_damping?: number;
+  fly_rotation_damping?: number;
+
+  // Dynamic clipping
+  dynamic_clipping_enabled?: boolean;
+  clipping_adapt_speed?: number;
+
+  // Adaptive resolution
+  adaptive_dpr_enabled?: boolean;
+
+  // UI panel visibility
+  ui?: {
+    show_help?: boolean;
+    show_rendering_controls?: boolean;
+    show_performance_monitor?: boolean;
+    show_dimensions?: boolean;
+  };
+
+  // Theme
+  theme?: string;
+
+  // Dimension navigation state
+  dimensions?: {
+    current_step?: number[];
+    selected_dimension?: number;
+  };
+
+  // Animation state (per-dimension)
+  animation?: Array<{
+    playing?: boolean;
+    target_fps?: number;
+    loop?: string;
+    direction?: string;
+  }>;
+}
+
+/**
  * Zarr group attributes for the root scene
  */
 export interface ZarrSceneAttrs {
@@ -53,6 +178,9 @@ export interface ZarrSceneAttrs {
 
   /** Scene-level position bounds (union of all node bounds) */
   position_bounds?: PositionBounds;
+
+  /** Viewer configuration hints from Python API */
+  viewer_config?: ZarrViewerConfig;
 
   /** Any additional metadata */
   [key: string]: unknown;

@@ -14,7 +14,7 @@ The cache package provides a three-level caching system with intelligent prefetc
 ### Data Pipeline Position
 
 ```
-HTTP Request → TwoLevelCachingStore → zarrita decompression → L0 Cache → ArrayDecoder → RangeCache → Rendering
+HTTP Request → TwoLevelCachingStore → zarrita decompression → L0 Cache → ArrayDecoder → Rendering
                 ↑                            ↑                    ↑
             Caches compressed chunks    ~2ms overhead     Caches decompressed chunks
             (L1/L2)                   (skipped on L0 hit)      (~1μs access)

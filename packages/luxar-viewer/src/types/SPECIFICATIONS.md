@@ -1,7 +1,7 @@
 # luxar-viewer.types - Technical Specification
 
-**Version**: 1.3.0
-**Last Updated**: 2025-12-27
+**Version**: 1.3.1
+**Last Updated**: 2026-02-28
 
 ## Purpose
 
@@ -26,6 +26,10 @@ The `luxar-viewer.types` package provides the foundational type system for nD da
 6. [Data Structures](#data-structures)
 7. [Lines Types](#lines-types)
 8. [Points Types](#points-types)
+9. [Animation Types](#animation-types)
+10. [GSplats Types](#gsplats-types)
+11. [Zarr Types](#zarr-types)
+12. [Float16Array Type Declaration](#float16array-type-declaration)
 
 ---
 
@@ -759,14 +763,19 @@ function stepDimension(dims, dimIndex, direction, ranges, options = {}) {
 ```typescript
 /**
  * Dimension metadata matching Python luxar.core.Dimension
+ * See Section 1.2 for complete field documentation
  */
 interface DimensionMetadata {
   name: string;
   unit: string;
-  range: [number, number];
+  scale: number;
+  range?: [number, number];
   step?: number;
-  display: boolean;
+  display?: boolean;
   discrete?: boolean;
+  cyclic?: boolean;
+  spatial?: boolean;
+  categories?: string[];
   description?: string;
 }
 
@@ -1134,7 +1143,7 @@ interface PointsMetadata {
   gamma?: number;
 
   /** Blending mode */
-  blending_mode?: 'additive' | 'normal' | 'max';
+  blending_mode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
 
   /** List of dimension names to extend visibility across */
   extend_to_all?: string[];
@@ -1313,7 +1322,335 @@ function isPointsUserData(userData: unknown): userData is PointsUserData {
 
 ---
 
+## 9. Animation Types
+
+### 9.1 Purpose
+
+The `animation.ts` module defines types for dimension animation state management. It supports FPS-based animation through dimension ranges with configurable loop modes and direction control.
+
+**Source File**: `animation.ts`
+
+### 9.2 LoopMode
+
+```typescript
+/**
+ * Loop behavior at dimension boundaries.
+ * - 'once': Play forward once, then stop at the end
+ * - 'loop': Play forward, jump back to start, repeat
+ * - 'bounce': Play forward, then backward, repeat (ping-pong)
+ */
+type LoopMode = 'once' | 'loop' | 'bounce';
+```
+
+### 9.3 AnimationDirection
+
+```typescript
+/**
+ * Current playback direction.
+ * In 'bounce' mode, direction toggles at each boundary.
+ */
+type AnimationDirection = 'forward' | 'backward';
+```
+
+### 9.4 DimensionAnimationState
+
+```typescript
+/**
+ * Animation state for a single dimension.
+ * Managed by DimensionAnimationManager (in the scene package).
+ */
+interface DimensionAnimationState {
+  /** Whether animation is currently playing */
+  isPlaying: boolean;
+  /** Target FPS for animation */
+  targetFPS: number;
+  /** Loop behavior (once, loop, bounce) */
+  loopMode: LoopMode;
+  /** Current animation direction */
+  direction: AnimationDirection;
+  /** Last update timestamp (ms since epoch) */
+  lastUpdateTime: number;
+  /** Frame counter for FPS measurement */
+  frameCount: number;
+  /** Time of last FPS measurement */
+  lastFPSMeasurementTime: number;
+  /** Measured actual FPS (may differ from target due to load) */
+  actualFPS: number;
+}
+```
+
+### 9.5 DimensionAnimationEvents
+
+```typescript
+/**
+ * Events emitted by DimensionAnimationManager for UI synchronization.
+ */
+interface DimensionAnimationEvents {
+  play: { dimIndex: number };
+  pause: { dimIndex: number };
+  complete: { dimIndex: number };
+  speedChange: { dimIndex: number; fps: number };
+  loopModeChange: { dimIndex: number; loopMode: LoopMode };
+  directionChange: { dimIndex: number; direction: AnimationDirection };
+  fpsWarning: { dimIndex: number; targetFPS: number; actualFPS: number };
+}
+```
+
+**Relationships**: These types are consumed by `DimensionAnimationManager` (in the `scene/` package) and the animation UI controls.
+
+---
+
+## 10. GSplats Types
+
+### 10.1 Purpose
+
+The `gsplats.ts` module defines types for Gaussian splat data throughout the viewer. GSplats are volumetric primitives representing oriented, anisotropic Gaussian density functions with a generalized falloff exponent (sharpness). These types mirror the Python `luxar.gsplats` module.
+
+**Source File**: `gsplats.ts`
+
+### 10.2 Metadata Types
+
+#### ValueRange
+
+```typescript
+/** Range with min and max values. Used for amplitude and sharpness bounds. */
+interface ValueRange {
+  min: number;
+  max: number;
+}
+```
+
+#### CoordinateBounds
+
+```typescript
+/** Bounding box with min and max coordinates per dimension. */
+interface CoordinateBounds {
+  min: number[];
+  max: number[];
+}
+```
+
+#### GSplatsMetadata
+
+**Purpose**: Node metadata from zarr `.zattrs`. Defines all properties stored with a GSplats node.
+
+**Key Fields**:
+
+- `type: 'gsplats'` - Node type identifier
+- `n_splats: number` - Total splat count
+- `ndim: number` - Position dimensionality
+- `has_colors`, `has_sharpness` - Optional array flags
+- `chunk_size` - Elements per chunk
+- `amplitude_range`, `sharpness_bounds`, `center_bounds` - Value bounds
+- `ordering` - Spatial ordering method (`'morton' | 'hilbert' | 'none'`)
+- `ordering_min`, `ordering_max`, `ordering_bits_per_dim` - Ordering parameters (when ordering != 'none')
+- `transform`, `opacity`, `gamma`, `blending_mode` - Rendering attributes
+- `extend_to_all` - Dimension names to extend visibility across
+
+### 10.3 Spatial Index Types
+
+#### GSplatsChunkSpatialIndex
+
+```typescript
+interface GSplatsChunkSpatialIndex {
+  metadata: GSplatsMetadata;
+  chunkBounds: Float32Array; // (num_chunks * ndim * 2), flattened row-major
+  chunkCount: number; // ceil(n_splats / chunk_size)
+}
+```
+
+#### SplatRange
+
+```typescript
+/** Splat range for partial loading (inclusive start, exclusive end). */
+interface SplatRange {
+  start: number;
+  end: number;
+}
+```
+
+### 10.4 Loaded Data Types
+
+#### LoadedGSplatsData
+
+**Purpose**: Raw gsplats data loaded from zarr before nD projection. Centers are in full nD space, Cholesky factors are packed (k = ndim\*(ndim+1)/2 elements per splat).
+
+**Key Fields**:
+
+- `positions: Float32Array` - (N \* ndim) flattened row-major
+- `amplitudes: Float32Array` - (N,)
+- `choleskyFactors: Float32Array` - (N \* k) packed lower-triangular `[L00, L10, L11, L20, ...]`
+- `colors: Float32Array | Uint8Array | Uint16Array | null` - (N \* 3) RGB
+- `sharpness: Float32Array | null` - (N,), defaults to 2.0 (standard Gaussian)
+- `splatCount: number`, `ndim: number`
+
+#### ProcessedGSplatsData
+
+**Purpose**: Processed data ready for GPU rendering after nD to 3D slicing.
+
+**Key Fields**:
+
+- `centers3D: Float32Array` - (M \* 3) in display space
+- `amplitudes: Float32Array` - (M,) attenuated based on nD slice distance
+- `choleskyFactors3D: Float32Array` - (M \* 6) packed as `[L00, L10, L11, L20, L21, L22]`
+- `colors: Float32Array` - (M \* 3) RGB
+- `sharpness: Float32Array` - (M,)
+- `splatCount: number` - Visible splats after nD clipping
+
+### 10.5 Scene Integration Types
+
+#### GSplatsDataLoader
+
+```typescript
+interface GSplatsDataLoader {
+  loadGSplats(viewState: GSplatsViewState, session?: UpdateSession): Promise<LoadedGSplatsData>;
+  updateView(viewState: GSplatsViewState, session?: UpdateSession): Promise<LoadedGSplatsData>;
+  dispose(): void;
+}
+```
+
+#### GSplatsViewState
+
+```typescript
+interface GSplatsViewState {
+  displayDims: number[];
+  slicePosition: number[];
+  tolerance: number[];
+  dimensions?: DimensionMetadata[]; // Raw metadata array (NOT SimpleDims)
+}
+```
+
+**Note**: Unlike `ViewState` in `data-loader-types.ts` which uses `SimpleDims` for its `dimensions` field, `GSplatsViewState.dimensions` is `DimensionMetadata[]` (the raw metadata array).
+
+#### GSplatsUserData
+
+```typescript
+interface GSplatsUserData {
+  nodeType: 'gsplats';
+  loader: GSplatsDataLoader;
+  attrs: GSplatsMetadata;
+  spatialIndex?: GSplatsChunkSpatialIndex;
+  visibleSplatCount?: number;
+}
+```
+
+### 10.6 Type Guards and Utilities
+
+- `isGSplatsMetadata(attrs)` - Check if attributes indicate a GSplats node
+- `isGSplatsUserData(userData)` - Check if userData indicates a GSplats object
+- `choleskyPackedSize(ndim)` - Returns `ndim * (ndim + 1) / 2`
+- `CHOLESKY_SIZES` - Standard packed sizes: `{ '2D': 3, '3D': 6, '4D': 10 }`
+
+---
+
+## 11. Zarr Types
+
+### 11.1 Purpose
+
+The `zarr.ts` module provides proper typing for Zarr group and array attributes, eliminating the need for `as any` type assertions throughout the codebase. These types define the schema for metadata stored in `.zattrs` files.
+
+**Source File**: `zarr.ts`
+
+### 11.2 PositionBounds
+
+```typescript
+/** nD bounding box (min/max per dimension). */
+interface PositionBounds {
+  min: number[];
+  max: number[];
+}
+```
+
+### 11.3 SceneDimensionAttrs
+
+**Purpose**: Scene-level dimension information stored in zarr root `.zattrs`. Mirrors Python's `luxar.core.Dimension` class.
+
+```typescript
+interface SceneDimensionAttrs {
+  dimensions: Array<{
+    name: string;
+    unit: string;
+    scale?: number;
+    range?: [number, number];
+    display: boolean;
+    discrete?: boolean;
+    step?: number;
+    cyclic?: boolean;
+    spatial?: boolean;
+    categories?: string[];
+    description?: string;
+  }>;
+}
+```
+
+### 11.4 ZarrViewerConfig
+
+**Purpose**: Viewer configuration hints from the Python API, stored in zarr root `.zattrs` under the `viewer_config` key. All fields are optional (only set fields are present). Keys use snake_case to match Python/zarr convention.
+
+**Key Fields**: `camera` (position, target, up, fov), `background_color`, `tone_mapping`, `hdr_multiplier`, bloom settings (`bloom_enabled`, `bloom_strength`, `bloom_radius`, `bloom_threshold`), `control_type`, `auto_rotate`, cinematic settings (`cinematic_mode`, `vignette_*`, `dof_*`), `detector_noise_*` settings, anti-aliasing (`fxaa_enabled`, `smaa_enabled`).
+
+### 11.5 ZarrSceneAttrs
+
+**Purpose**: Zarr group attributes for the root scene.
+
+```typescript
+interface ZarrSceneAttrs {
+  luxar_version?: string;
+  scene_dimensions?: SceneDimensionAttrs;
+  type?: 'scene' | string;
+  units?: string;
+  position_bounds?: PositionBounds;
+  viewer_config?: ZarrViewerConfig;
+  [key: string]: unknown; // Additional metadata
+}
+```
+
+### 11.6 ZarrNodeAttrs
+
+**Purpose**: Zarr group attributes for nodes in the scene graph.
+
+**Key Fields**: `type` (points, group, etc.), `transform` (16-element 4x4 matrix), rendering attributes (`opacity`, `gamma`, `blending_mode`, `point_size`, `depth_test`, `depth_write`), points metadata (`n_points`, `max_radius`, `max_sharpness`), `position_bounds`, `extend_to_all`, `arrays`, `units`.
+
+### 11.7 Type Guards
+
+- `hasContentsMethod(store)` - Check if a zarr store has a `contents()` method
+- `hasTransform(attrs)` - Check if attributes contain a valid 16-element transform
+- `isPointsNode(attrs)` - Check if attributes indicate a points node
+- `hasSceneDimensions(attrs)` - Check if root attributes contain scene dimensions
+
+---
+
+## 12. Float16Array Type Declaration
+
+### 12.1 Purpose
+
+The `float16array.d.ts` module provides TypeScript type declarations for `Float16Array`, which is supported in modern browsers (2024+) but does not yet have built-in TypeScript type definitions.
+
+**Source File**: `float16array.d.ts`
+
+### 12.2 Browser Support
+
+- Chrome 122+ (Feb 2024)
+- Edge 122+ (Feb 2024)
+- Firefox 127+ (Jun 2024)
+- Safari 17+ (Sep 2023)
+
+### 12.3 Declarations
+
+Declares `Float16ArrayConstructor` and `Float16Array` interfaces matching the standard TypedArray API (`buffer`, `byteLength`, `length`, `BYTES_PER_ELEMENT`, `set()`, `subarray()`, `slice()`, `fill()`, `copyWithin()`, `forEach()`, `indexOf()`, `lastIndexOf()`). Extends the global scope via `declare global`.
+
+**Usage**: Referenced by `PositionArray` and `ScalarArray` type aliases in `data-loader-types.ts`, enabling HDR and half-precision data support throughout the viewer.
+
+---
+
 ## Changelog
+
+- **v1.3.1** (2026-02-28): Additional type modules documentation
+  - **ADDED**: Section 9 - Animation Types (`animation.ts`)
+  - **ADDED**: Section 10 - GSplats Types (`gsplats.ts`)
+  - **ADDED**: Section 11 - Zarr Types (`zarr.ts`)
+  - **ADDED**: Section 12 - Float16Array Type Declaration (`float16array.d.ts`)
+  - All type modules in the `types/` package are now documented
 
 - **v1.3.0** (2025-12-27): Points types (homogenization with Lines/GSplats)
   - **ADDED**: Section 8 - Points Types

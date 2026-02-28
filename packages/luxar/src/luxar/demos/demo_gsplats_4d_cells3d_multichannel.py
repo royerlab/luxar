@@ -337,7 +337,7 @@ dim_order usage:
                         sharpness=gsplats.sharpnesses,
                         dim_order=["z", "y", "x"],
                         fill={"channel": float(i)},
-                        fill_sigma={"channel": 0.3},
+                        fill_sigma={"channel": 0},
                         extend_to_all=[],  # Only visible at own Channel value
                         opacity=1.0,
                         blending_mode="additive",

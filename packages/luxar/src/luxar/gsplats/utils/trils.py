@@ -401,6 +401,11 @@ def embed_cholesky_packed(
     for i_dst in range(d_dst):
         if i_dst not in mapped_set:
             sigma = fill_sigma.get(i_dst, 1.0)
+            # Handle sigma=0: use tiny epsilon to keep matrix positive-definite.
+            # For discrete dimensions (e.g., time), sigma=0 is semantically correct
+            # (no physical extent), but np.linalg.cholesky requires positive-definite.
+            if sigma == 0:
+                sigma = 1e-7
             Sigma_dst[:, i_dst, i_dst] = sigma * sigma  # variance = sigma^2
 
     # Cholesky decompose in float64, then cast back to input dtype
