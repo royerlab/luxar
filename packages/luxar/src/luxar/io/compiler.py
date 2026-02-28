@@ -56,7 +56,9 @@ def _calculate_intelligent_chunks(
         Optimized chunk shape
     """
     if len(shape) == 1:
-        # 1D array - simple chunking
+        # 1D array - use spatial index chunk_size if available for alignment
+        if spatial_index_data and "chunk_size" in spatial_index_data:
+            return (min(shape[0], spatial_index_data["chunk_size"]),)
         return (min(shape[0], target_chunk_size),)
 
     if len(shape) == 2:
@@ -603,7 +605,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             chunks_1d = None  # Scalar doesn't need chunks
         else:
             n_elems = None  # Array already has correct size
-            chunks_1d = _calculate_intelligent_chunks((n_vertices,))
+            chunks_1d = _calculate_intelligent_chunks(
+                (n_vertices,),
+                spatial_index_data=ordering_data.get("vertex_ordering")
+                if ordering_data
+                else None,
+            )
 
         self._encoder.encode(
             data=widths,
@@ -638,7 +645,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 chunks_colors = None
             elif isinstance(colors, np.ndarray):
                 validate_colors_for_writing(colors, n_vertices)
-                chunks_colors = _calculate_intelligent_chunks(colors.shape)
+                chunks_colors = _calculate_intelligent_chunks(
+                    colors.shape,
+                    spatial_index_data=ordering_data.get("vertex_ordering")
+                    if ordering_data
+                    else None,
+                )
                 n_elems_color = None
 
                 # Detect color_mode for arrays
@@ -671,7 +683,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             else:
                 validate_sharpness_for_writing(sharpness, n_vertices)
                 n_elems_sharp = None
-                chunks_sharp = _calculate_intelligent_chunks((n_vertices,))
+                chunks_sharp = _calculate_intelligent_chunks(
+                    (n_vertices,),
+                    spatial_index_data=ordering_data.get("vertex_ordering")
+                    if ordering_data
+                    else None,
+                )
 
             self._encoder.encode(
                 data=sharpness,
@@ -866,7 +883,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             raise ValueError(f"Amplitude must be non-negative (>= 0). Got {amplitudes}")
 
         # Write centers using ArrayEncoder (COORDINATE)
-        chunks_centers = _calculate_intelligent_chunks(centers.shape)
+        chunks_centers = _calculate_intelligent_chunks(
+            centers.shape, spatial_index_data=ordering_data
+        )
         self._encoder.encode(
             data=centers,
             zarr_group=group,
@@ -888,7 +907,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 float(np.max(amplitudes)),
             )
             n_elems_amp = None
-            chunks_amp = _calculate_intelligent_chunks((n_splats,))
+            chunks_amp = _calculate_intelligent_chunks(
+                (n_splats,), spatial_index_data=ordering_data
+            )
 
         self._encoder.encode(
             data=amplitudes,
@@ -908,7 +929,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             chunks_cholesky = None
         else:
             n_elems_chol = None
-            chunks_cholesky = _calculate_intelligent_chunks(cholesky_factors.shape)
+            chunks_cholesky = _calculate_intelligent_chunks(
+                cholesky_factors.shape, spatial_index_data=ordering_data
+            )
 
         self._encoder.encode(
             data=cholesky_factors,
@@ -962,7 +985,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 chunks_colors = None
             elif isinstance(colors, np.ndarray):
                 validate_colors_for_writing(colors, n_splats)
-                chunks_colors = _calculate_intelligent_chunks(colors.shape)
+                chunks_colors = _calculate_intelligent_chunks(
+                    colors.shape, spatial_index_data=ordering_data
+                )
                 n_elems_color = None
 
                 # Detect color_mode
@@ -996,7 +1021,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             else:
                 validate_sharpness_for_writing(sharpness, n_splats)
                 n_elems_sharp = None
-                chunks_sharp = _calculate_intelligent_chunks((n_splats,))
+                chunks_sharp = _calculate_intelligent_chunks(
+                    (n_splats,), spatial_index_data=ordering_data
+                )
                 sharpness_min = float(np.min(sharpness))
                 sharpness_max = float(np.max(sharpness))
 
@@ -1404,7 +1431,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             color_chunks = None
         else:
             n_elems = None
-            color_chunks = _calculate_intelligent_chunks(colors.shape)
+            color_chunks = _calculate_intelligent_chunks(
+                colors.shape, spatial_index_data=spatial_index_data
+            )
 
             # Detect color_mode for float arrays
             color_mode = None
@@ -1471,7 +1500,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         else:
             max_radius = float(np.max(radii))
             n_elems = None
-            radii_chunks = _calculate_intelligent_chunks(radii.shape)
+            radii_chunks = _calculate_intelligent_chunks(
+                radii.shape, spatial_index_data=spatial_index_data
+            )
 
         aprint(f"  ✓ Max radius: {max_radius:.3f}")
 
@@ -1525,7 +1556,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         else:
             max_sharpness = float(np.max(sharpness))
             n_elems = None
-            sharp_chunks = _calculate_intelligent_chunks(sharpness.shape)
+            sharp_chunks = _calculate_intelligent_chunks(
+                sharpness.shape, spatial_index_data=spatial_index_data
+            )
 
         aprint(f"  ✓ Max sharpness: {max_sharpness:.3f}")
 

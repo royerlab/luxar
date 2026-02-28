@@ -84,6 +84,364 @@ class TestChunkAlignment:
             assert chunks[1] == 3
 
 
+class TestChunkBoundsZarrAlignment:
+    """Test that chunk_bounds spatial partitions align with zarr chunk boundaries.
+
+    This guards against the bug where the compiler computed spatial index
+    partitions with one chunk_size but wrote zarr arrays with a different
+    chunk_size, causing the viewer to fetch misaligned data.
+    """
+
+    # -- GSplats alignment ---------------------------------------------------
+
+    def test_gsplats_all_arrays_aligned(self) -> None:
+        """All gsplats zarr arrays must have chunks[0] == spatial chunk_size."""
+        from math import ceil
+
+        from luxar.core.dimensions import Dimension, Dimensions
+        from luxar.gsplats.utils.trils import tril_size
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            n_splats = 2500
+            ndim = 4
+            k = tril_size(ndim)
+
+            with LuxarZarrCompiler(zarr_path, enable_spatial_index=True) as compiler:
+                dims = Dimensions(
+                    [
+                        Dimension("x", display=True),
+                        Dimension("y", display=True),
+                        Dimension("z", display=True),
+                        Dimension("t", display=False, discrete=True),
+                    ]
+                )
+                scene = compiler.create_scene(dimensions=dims)
+                centers = np.random.randn(n_splats, ndim).astype(np.float32)
+                amplitudes = np.random.rand(n_splats).astype(np.float32)
+                cholesky = np.random.randn(n_splats, k).astype(np.float32)
+                colors = np.random.rand(n_splats, 3).astype(np.float32)
+                # Use non-uniform sharpness so the encoder doesn't broadcast it
+                sharpness = np.random.uniform(1.5, 3.0, n_splats).astype(np.float32)
+
+                scene.add_gsplats(
+                    "splats",
+                    centers=centers,
+                    amplitudes=amplitudes,
+                    cholesky_factors=cholesky,
+                    colors=colors,
+                    sharpness=sharpness,
+                )
+
+            store = zarr.open_group(zarr_path, mode="r")
+            g = store["splats"]
+            chunk_size = g.attrs["chunk_size"]
+            assert chunk_size > 0, "chunk_size metadata must be positive"
+
+            # Every array's first chunk dimension must match chunk_size
+            assert g["centers"].chunks[0] == chunk_size, (
+                f"centers chunks[0]={g['centers'].chunks[0]} != chunk_size={chunk_size}"
+            )
+            assert g["amplitudes"].chunks[0] == chunk_size, (
+                f"amplitudes chunks[0]={g['amplitudes'].chunks[0]} != chunk_size={chunk_size}"
+            )
+            assert g["cholesky_factors"].chunks[0] == chunk_size, (
+                f"cholesky chunks[0]={g['cholesky_factors'].chunks[0]} != chunk_size={chunk_size}"
+            )
+            assert g["colors"].chunks[0] == chunk_size, (
+                f"colors chunks[0]={g['colors'].chunks[0]} != chunk_size={chunk_size}"
+            )
+            assert g["sharpnesses"].chunks[0] == chunk_size, (
+                f"sharpnesses chunks[0]={g['sharpnesses'].chunks[0]} != chunk_size={chunk_size}"
+            )
+
+            # chunk_bounds partitions must match number of zarr chunks
+            cb = np.array(g["chunk_bounds"])
+            expected_partitions = ceil(n_splats / chunk_size)
+            assert cb.shape[0] == expected_partitions, (
+                f"chunk_bounds has {cb.shape[0]} partitions but expected "
+                f"{expected_partitions} (ceil({n_splats}/{chunk_size}))"
+            )
+
+            # Zarr chunk count along first axis must equal partition count
+            zarr_n_chunks = ceil(g["centers"].shape[0] / g["centers"].chunks[0])
+            assert zarr_n_chunks == cb.shape[0], (
+                f"zarr has {zarr_n_chunks} chunks but chunk_bounds has {cb.shape[0]} partitions"
+            )
+
+    def test_gsplats_small_dataset_single_chunk(self) -> None:
+        """GSplats with fewer splats than chunk_size should produce 1 partition."""
+        from luxar.core.dimensions import Dimension, Dimensions
+        from luxar.gsplats.utils.trils import tril_size
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            n_splats = 100
+            ndim = 3
+            k = tril_size(ndim)
+
+            with LuxarZarrCompiler(zarr_path, enable_spatial_index=True) as compiler:
+                dims = Dimensions(
+                    [
+                        Dimension("x", display=True),
+                        Dimension("y", display=True),
+                        Dimension("z", display=True),
+                    ]
+                )
+                scene = compiler.create_scene(dimensions=dims)
+                centers = np.random.randn(n_splats, ndim).astype(np.float32)
+                amplitudes = np.random.rand(n_splats).astype(np.float32)
+                cholesky = np.random.randn(n_splats, k).astype(np.float32)
+
+                scene.add_gsplats(
+                    "small",
+                    centers=centers,
+                    amplitudes=amplitudes,
+                    cholesky_factors=cholesky,
+                )
+
+            store = zarr.open_group(zarr_path, mode="r")
+            g = store["small"]
+            chunk_size = g.attrs["chunk_size"]
+
+            # chunk_size should be clamped to n_splats
+            assert chunk_size >= n_splats, (
+                f"chunk_size={chunk_size} should be >= n_splats={n_splats}"
+            )
+
+            # Exactly 1 chunk_bounds partition and 1 zarr chunk
+            cb = np.array(g["chunk_bounds"])
+            assert cb.shape[0] == 1, f"Expected 1 partition, got {cb.shape[0]}"
+            assert g["centers"].chunks[0] >= n_splats, (
+                f"centers chunks[0]={g['centers'].chunks[0]} should contain all {n_splats} splats"
+            )
+
+    # -- Points alignment ----------------------------------------------------
+
+    def test_points_all_attributes_aligned(self) -> None:
+        """All point attribute arrays must share the same chunk_size as positions."""
+        from math import ceil
+
+        from luxar.core.dimensions import Dimension, Dimensions
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            n_points = 10000
+
+            with LuxarZarrCompiler(zarr_path, enable_spatial_index=True) as compiler:
+                dims = Dimensions(
+                    [
+                        Dimension("x", display=True),
+                        Dimension("y", display=True),
+                        Dimension("z", display=True),
+                    ]
+                )
+                scene = compiler.create_scene(dimensions=dims)
+                positions = np.random.randn(n_points, 3).astype(np.float32)
+                colors = np.random.rand(n_points, 3).astype(np.float32)
+                radii = np.random.rand(n_points).astype(np.float32) + 0.1
+                # Use non-uniform sharpness so the encoder doesn't broadcast it
+                sharpness = np.random.uniform(1.5, 3.0, n_points).astype(np.float32)
+
+                scene.add_points(
+                    "pts",
+                    positions=positions,
+                    colors=colors,
+                    radii=radii,
+                    sharpness=sharpness,
+                )
+
+            store = zarr.open_group(zarr_path, mode="r")
+            g = store["pts"]
+            chunk_size = g.attrs["chunk_size"]
+            pos_chunk0 = g["positions"].chunks[0]
+
+            # Positions must match chunk_size
+            assert pos_chunk0 == chunk_size, (
+                f"positions chunks[0]={pos_chunk0} != chunk_size={chunk_size}"
+            )
+
+            # All attributes must match positions chunk[0]
+            assert g["colors"].chunks[0] == pos_chunk0, (
+                f"colors chunks[0]={g['colors'].chunks[0]} != positions chunks[0]={pos_chunk0}"
+            )
+            assert g["radii"].chunks[0] == pos_chunk0, (
+                f"radii chunks[0]={g['radii'].chunks[0]} != positions chunks[0]={pos_chunk0}"
+            )
+            assert g["sharpness"].chunks[0] == pos_chunk0, (
+                f"sharpness chunks[0]={g['sharpness'].chunks[0]} != positions chunks[0]={pos_chunk0}"
+            )
+
+            # chunk_bounds partitions == zarr chunk count
+            cb = np.array(g["chunk_bounds"])
+            expected = ceil(n_points / chunk_size)
+            assert cb.shape[0] == expected, (
+                f"chunk_bounds has {cb.shape[0]} partitions, expected {expected}"
+            )
+
+    def test_points_4d_with_discrete_dim(self) -> None:
+        """4D points with discrete time dim must also align all attributes."""
+        from luxar.core.dimensions import Dimension, Dimensions
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            n_points = 5000
+
+            with LuxarZarrCompiler(zarr_path, enable_spatial_index=True) as compiler:
+                dims = Dimensions(
+                    [
+                        Dimension("x", display=True),
+                        Dimension("y", display=True),
+                        Dimension("z", display=True),
+                        Dimension("t", display=False, discrete=True),
+                    ]
+                )
+                scene = compiler.create_scene(dimensions=dims)
+                positions = np.random.randn(n_points, 4).astype(np.float32)
+                # Assign discrete time values (0, 1, 2, ...)
+                positions[:, 3] = np.random.randint(0, 10, n_points).astype(np.float32)
+                colors = np.random.rand(n_points, 3).astype(np.float32)
+                radii = np.random.rand(n_points).astype(np.float32) + 0.1
+
+                scene.add_points(
+                    "pts4d",
+                    positions=positions,
+                    colors=colors,
+                    radii=radii,
+                )
+
+            store = zarr.open_group(zarr_path, mode="r")
+            g = store["pts4d"]
+            chunk_size = g.attrs["chunk_size"]
+            pos_chunk0 = g["positions"].chunks[0]
+
+            assert pos_chunk0 == chunk_size
+            assert g["colors"].chunks[0] == pos_chunk0
+            assert g["radii"].chunks[0] == pos_chunk0
+
+    # -- Lines alignment -----------------------------------------------------
+
+    def test_lines_all_attributes_aligned(self) -> None:
+        """All line attribute arrays must share the vertex chunk_size."""
+        from luxar.core.dimensions import Dimension, Dimensions
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            n_vertices = 5000
+
+            with LuxarZarrCompiler(zarr_path, enable_spatial_index=True) as compiler:
+                dims = Dimensions(
+                    [
+                        Dimension("x", display=True),
+                        Dimension("y", display=True),
+                        Dimension("z", display=True),
+                    ]
+                )
+                scene = compiler.create_scene(dimensions=dims)
+                # Need even number for segments (pairs of vertices)
+                vertices = np.random.randn(n_vertices, 3).astype(np.float32)
+                widths = np.random.rand(n_vertices).astype(np.float32) + 0.01
+                colors = np.random.rand(n_vertices, 3).astype(np.float32)
+                # Use non-uniform sharpness so the encoder doesn't broadcast it
+                sharpness_arr = np.random.uniform(1.5, 3.0, n_vertices).astype(
+                    np.float32
+                )
+
+                scene.add_lines(
+                    "lines",
+                    vertices=vertices,
+                    widths=widths,
+                    line_type="segments",
+                    colors=colors,
+                    sharpness=sharpness_arr,
+                )
+
+            store = zarr.open_group(zarr_path, mode="r")
+            g = store["lines"]
+
+            # Get vertex chunk_size from ordering metadata
+            vtx_chunk0 = g["vertices"].chunks[0]
+
+            # All vertex-indexed attributes must match
+            assert g["widths"].chunks[0] == vtx_chunk0, (
+                f"widths chunks[0]={g['widths'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
+            )
+            assert g["colors"].chunks[0] == vtx_chunk0, (
+                f"colors chunks[0]={g['colors'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
+            )
+            assert g["sharpness"].chunks[0] == vtx_chunk0, (
+                f"sharpness chunks[0]={g['sharpness'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
+            )
+
+    # -- No spatial index (regression guard) ---------------------------------
+
+    def test_no_spatial_index_still_works(self) -> None:
+        """Without spatial ordering, standard chunking should still work."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            with LuxarZarrCompiler(zarr_path, enable_spatial_index=False) as compiler:
+                dims = Dimensions.default_3d()
+                scene = compiler.create_scene(dimensions=dims)
+                positions = np.random.randn(5000, 3).astype(np.float32)
+                colors = np.random.rand(5000, 3).astype(np.float32)
+                radii = np.random.rand(5000).astype(np.float32) + 0.1
+
+                scene.add_points("pts", positions, colors=colors, radii=radii)
+
+            store = zarr.open_group(zarr_path, mode="r")
+            g = store["pts"]
+
+            # Should have valid chunks (no assertion on exact values, just sanity)
+            assert g["positions"].chunks[0] > 0
+            assert g["positions"].chunks[1] == 3
+            assert g["colors"].chunks[0] > 0
+            assert g["radii"].chunks[0] > 0
+
+            # Should NOT have chunk_bounds
+            assert "chunk_bounds" not in g
+
+    # -- Unit test for _calculate_intelligent_chunks -------------------------
+
+    def test_calculate_intelligent_chunks_1d_uses_spatial_data(self) -> None:
+        """_calculate_intelligent_chunks must use spatial chunk_size for 1D arrays."""
+        from luxar.io.compiler import _calculate_intelligent_chunks
+
+        spatial = {"chunk_size": 512}
+
+        # Without spatial data: uses default
+        result = _calculate_intelligent_chunks((10000,))
+        assert result == (min(10000, 32768),)
+
+        # With spatial data: uses chunk_size
+        result = _calculate_intelligent_chunks((10000,), spatial_index_data=spatial)
+        assert result == (512,)
+
+        # Small array clamped to actual size
+        result = _calculate_intelligent_chunks((100,), spatial_index_data=spatial)
+        assert result == (100,)
+
+    def test_calculate_intelligent_chunks_2d_uses_spatial_data(self) -> None:
+        """_calculate_intelligent_chunks must use spatial chunk_size for 2D arrays."""
+        from luxar.io.compiler import _calculate_intelligent_chunks
+
+        spatial = {"chunk_size": 1024}
+
+        # Without spatial data: uses default
+        result = _calculate_intelligent_chunks((5000, 4))
+        assert result[1] == 4
+        assert result[0] == min(5000, 32768 // 4)
+
+        # With spatial data: uses chunk_size
+        result = _calculate_intelligent_chunks((5000, 4), spatial_index_data=spatial)
+        assert result == (1024, 4)
+
+
 class TestTransformCentralization:
     """Test centralized transform conversion."""
 

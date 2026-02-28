@@ -99,8 +99,8 @@ VOXEL_SIZE_ZYX = (0.75, 0.15, 0.15)  # Micrometres
 IMAGE_SHAPE = (41, 512, 512)  # Z, Y, X per timepoint
 
 # Fitting parameters
-N_SEEDS = 3000  # Per timepoint (small volumes)
-N_ITERS = 4000
+N_SEEDS = 5000  # Per timepoint (small volumes)
+N_ITERS = 6000
 
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_celegans"
@@ -607,6 +607,7 @@ def fit_timepoint(
     # so centers come back in physical µm coordinates.
     result = fit_gaussian_splats(
         volume,
+        lr=0.01,
         seeds=N_SEEDS,
         n_iters=N_ITERS,
         device=DEVICE,
@@ -853,23 +854,58 @@ Navigation:
             for t, gsplats in enumerate(gsplats_list):
                 with asection(f"Adding GSplats timepoint {t}"):
                     gsplats = gsplats.translate(-shared_centroid)
-                    gsplats = gsplats.scale_intensity(0.1)
 
-                    n_splats = len(gsplats.amplitudes)
+                    # Filter out oversized "background" splats.
+                    # The fitting produces a few huge splats (sigma > 5 µm)
+                    # that cover the entire volume as a diffuse glow,
+                    # drowning out the ~2000 small detail splats (sigma
+                    # ~0.1 µm) that represent actual nuclei structure.
+                    # C. elegans nuclei are ~3-5 µm, so sigma > 3 µm is
+                    # clearly background.
+                    ndim_spatial = gsplats.centers.shape[1]
+                    chol = gsplats.cholesky_factors
+                    max_sigma = np.zeros(len(chol))
+                    for d in range(ndim_spatial):
+                        start = d * (d + 1) // 2
+                        var = np.zeros(len(chol))
+                        for i in range(d + 1):
+                            var += chol[:, start + i] ** 2
+                        max_sigma = np.maximum(max_sigma, np.sqrt(var))
+
+                    sigma_threshold = 3.0  # µm — nuclei are ~3-5 µm diameter
+                    keep = max_sigma < sigma_threshold
+                    n_before = len(gsplats.amplitudes)
+                    centers_f = gsplats.centers[keep]
+                    amps_f = gsplats.amplitudes[keep]
+                    chol_f = gsplats.cholesky_factors[keep]
+                    sharp_f = gsplats.sharpnesses[keep]
+                    n_after = len(amps_f)
+
+                    if n_after < n_before:
+                        aprint(
+                            f"  Filtered {n_before - n_after} oversized splats "
+                            f"(sigma > {sigma_threshold} µm), {n_after} remain"
+                        )
+
+                    # Normalise per-timepoint so max amplitude = 0.1.
+                    if n_after > 0:
+                        amp_max = amps_f.max()
+                        if amp_max > 0:
+                            amps_f = amps_f * (0.1 / amp_max)
 
                     # Soft green colour for the fluorescence
                     colors = np.tile(
                         np.array([0.4, 1.0, 0.5], dtype=np.float32),
-                        (n_splats, 1),
+                        (n_after, 1),
                     )
 
                     scene.add_gsplats(
                         name=f"gsplats_t{t:04d}",
-                        centers=gsplats.centers,
-                        amplitudes=gsplats.amplitudes,
-                        cholesky_factors=gsplats.cholesky_factors,
+                        centers=centers_f,
+                        amplitudes=amps_f,
+                        cholesky_factors=chol_f,
                         colors=colors,
-                        sharpness=gsplats.sharpnesses,
+                        sharpness=sharp_f,
                         dim_order=["z", "y", "x"],
                         fill={"time": float(t)},
                         fill_sigma={"time": 0.3},
@@ -877,7 +913,7 @@ Navigation:
                         opacity=0.7,
                         blending_mode="additive",
                     )
-                    aprint(f"  Added {n_splats:,} splats at time={t}")
+                    aprint(f"  Added {n_after:,} splats at time={t}")
 
             # Add cell track lines
             if tracking_data:
