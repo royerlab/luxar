@@ -92,6 +92,9 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
 
+  // Suppress detail logs after first successful view update
+  private _initialLoadDone = false;
+
   /**
    * Get node attributes with proper PointsMetadata typing.
    * This provides type-safe access to point node attributes.
@@ -430,11 +433,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       const loadSession = session?.begin('Load Arrays');
       try {
-        log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading attributes sequentially for ${ranges.length} ranges`
-        );
+        if (!this._initialLoadDone) {
+          log.load(
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading attributes sequentially for ${ranges.length} ranges`
+          );
+        }
 
         // Load positions (required)
         const positionsResult = await this.loadRanges('positions', ranges);
@@ -625,7 +629,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   async updateView(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData> {
     // For now, just reload everything
     // TODO: Implement incremental updates
-    return this.loadPoints(viewState, session);
+    const result = await this.loadPoints(viewState, session);
+    if (!this._initialLoadDone) {
+      this._initialLoadDone = true;
+      this.rangeLoader.setVerbose(false);
+    }
+    return result;
   }
 
   /**
@@ -657,11 +666,13 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       const isExtending = extendDims.some((edim) => currentNonDisplayedDims.includes(edim));
 
       if (isExtending) {
-        log.custom(
-          LogEmoji.BROADCAST,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
-        );
+        if (!this._initialLoadDone) {
+          log.custom(
+            LogEmoji.BROADCAST,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
+          );
+        }
         // Return all points for extended dimensions
         const totalPoints =
           this.node.attrs.n_points ||
@@ -954,7 +965,9 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const array = this.arrays[arrayName as keyof typeof this.arrays];
     if (!array) return null;
 
-    log.load(Modules.SPATIAL_INDEX_LOADER, `Loading ${arrayName} for ${ranges.length} ranges`);
+    if (!this._initialLoadDone) {
+      log.load(Modules.SPATIAL_INDEX_LOADER, `Loading ${arrayName} for ${ranges.length} ranges`);
+    }
 
     // Analyze array metadata
     const attrs = array.attrs as unknown as ArrayMetadata;

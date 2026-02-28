@@ -480,10 +480,12 @@ export class SceneLoader {
 
             const points = await loader.updateView(pointsViewState, session);
             if (points) {
-              log.info(
-                Modules.SCENE_LOADER,
-                `[GEOM] v${currentVersion} points ${path}: ${points.pointCount} visible`
-              );
+              if (currentVersion <= 1) {
+                log.info(
+                  Modules.SCENE_LOADER,
+                  `[GEOM] v${currentVersion} points ${path}: ${points.pointCount} visible`
+                );
+              }
               this.updatePointsGeometry(path, points);
               // Set metadata with point count
               session.setMetadata({ points: points.metadata.loadedPoints });
@@ -560,10 +562,12 @@ export class SceneLoader {
 
             const data = await loader.updateView(linesViewState, session);
             if (data) {
-              log.info(
-                Modules.SCENE_LOADER,
-                `[GEOM] v${currentVersion} lines ${path}: ${data.segmentCount} loaded`
-              );
+              if (currentVersion <= 1) {
+                log.info(
+                  Modules.SCENE_LOADER,
+                  `[GEOM] v${currentVersion} lines ${path}: ${data.segmentCount} loaded`
+                );
+              }
               await this.updateLinesGeometry(path, data, linesViewState, session);
               // Set metadata with segment count (each segment is 2 indices)
               session.setMetadata({ segments: data.segments ? data.segments.length / 2 : 0 });
@@ -840,10 +844,12 @@ export class SceneLoader {
     }
 
     // Log visible segment count after projection
-    log.info(
-      Modules.SCENE_LOADER,
-      `[GEOM] lines ${path}: ${processed.segmentCount}/${data.segmentCount} visible after projection`
-    );
+    if (this._updateVersion <= 1) {
+      log.info(
+        Modules.SCENE_LOADER,
+        `[GEOM] lines ${path}: ${processed.segmentCount}/${data.segmentCount} visible after projection`
+      );
+    }
 
     // Phase 4: Use GPU buffer pool if enabled
     if (this._gpuBufferPool) {
@@ -902,10 +908,12 @@ export class SceneLoader {
     try {
       const worker = await getWorkerPool().getWorker();
 
-      log.info(
-        Modules.SCENE_LOADER,
-        `Projecting ${data.segmentCount} line segments to 3D using worker`
-      );
+      if (this._updateVersion <= 1) {
+        log.info(
+          Modules.SCENE_LOADER,
+          `Projecting ${data.segmentCount} line segments to 3D using worker`
+        );
+      }
 
       const workerResult = await worker.projectLinesTo3D({
         positions: data.positions,
@@ -920,10 +928,12 @@ export class SceneLoader {
         segmentCount: data.segmentCount,
       });
 
-      log.info(
-        Modules.SCENE_LOADER,
-        `Worker projection complete: ${workerResult.visibleSegmentCount}/${data.segmentCount} visible segments`
-      );
+      if (this._updateVersion <= 1) {
+        log.info(
+          Modules.SCENE_LOADER,
+          `Worker projection complete: ${workerResult.visibleSegmentCount}/${data.segmentCount} visible segments`
+        );
+      }
 
       return {
         startPositions: workerResult.startPositions,
@@ -962,7 +972,14 @@ export class SceneLoader {
     if (!this.rootGroup) return;
 
     const mesh = this.rootGroup.getObjectByName(path) as THREE.Mesh;
-    if (!mesh || mesh.userData?.nodeType !== 'gsplats') return;
+    if (!mesh || mesh.userData?.nodeType !== 'gsplats') {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `GSplats update skipped for ${path}: ${!mesh ? 'mesh not found in scene' : `unexpected nodeType=${mesh.userData?.nodeType}`}. ` +
+          `Data had ${data.splatCount} splats.`
+      );
+      return;
+    }
 
     // Strategy: use worker for larger datasets when enabled (nD only, not 3D)
     const useWorkerProjection =
@@ -1001,6 +1018,33 @@ export class SceneLoader {
       cholesky01 = packed.cholesky01;
       cholesky23 = packed.cholesky23;
       cholesky45 = packed.cholesky45;
+    }
+
+    // Log nD→3D filtering results for diagnostic purposes
+    if (data.splatCount > 0 && processed.splatCount === 0) {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `GSplats ${path}: all ${data.splatCount} loaded splats were filtered out during nD→3D processing. ` +
+          `slicePosition=[${viewState.slicePosition.join(', ')}], displayDims=[${viewState.displayDims.join(', ')}], ndim=${data.ndim}`
+      );
+    } else if (data.splatCount > 0) {
+      // Show pre/post amplitude comparison to diagnose attenuation issues
+      const preMax = Math.max(
+        ...Array.from(data.amplitudes.slice(0, Math.min(100, data.splatCount)))
+      );
+      const postMax =
+        processed.splatCount > 0
+          ? Math.max(
+            ...Array.from(processed.amplitudes.slice(0, Math.min(100, processed.splatCount)))
+          )
+          : 0;
+      log.info(
+        Modules.SCENE_LOADER,
+        `GSplats ${path}: ${processed.splatCount}/${data.splatCount} visible, ` +
+          `ampMax pre=${preMax.toFixed(6)} post=${postMax.toFixed(6)} ` +
+          `(attenuation=${preMax > 0 ? (postMax / preMax).toFixed(4) : 'N/A'}), ` +
+          `slice=[${viewState.slicePosition.join(', ')}], worker=${useWorkerProjection}`
+      );
     }
 
     // Phase 4: Use GPU buffer pool if enabled
@@ -1067,10 +1111,12 @@ export class SceneLoader {
     try {
       const worker = await getWorkerPool().getWorker();
 
-      log.info(
-        Modules.SCENE_LOADER,
-        `Projecting ${data.splatCount} gsplats to 3D using worker (ndim=${data.ndim})`
-      );
+      if (this._updateVersion <= 1) {
+        log.info(
+          Modules.SCENE_LOADER,
+          `Projecting ${data.splatCount} gsplats to 3D using worker (ndim=${data.ndim})`
+        );
+      }
 
       const workerResult = await worker.projectGSplatsTo3D({
         positions: data.positions,
@@ -1084,10 +1130,12 @@ export class SceneLoader {
         splatCount: data.splatCount,
       });
 
-      log.info(
-        Modules.SCENE_LOADER,
-        `Worker projection complete: ${workerResult.visibleCount}/${data.splatCount} visible splats`
-      );
+      if (this._updateVersion <= 1) {
+        log.info(
+          Modules.SCENE_LOADER,
+          `Worker projection complete: ${workerResult.visibleCount}/${data.splatCount} visible splats`
+        );
+      }
 
       return {
         centers3D: workerResult.centers3D,

@@ -106,6 +106,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
 
+  // Suppress detail logs after first successful view update
+  private _initialLoadDone = false;
+
   private arrays: {
     vertices?: zarr.Array<zarr.DataType, zarr.Readable>;
     segments?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -290,11 +293,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     }
 
     // Load segment indices
-    log.info(
-      LogEmoji.LOAD,
-      Modules.SPATIAL_INDEX_LOADER,
-      `Loading segments for ${segmentRanges.length} ranges`
-    );
+    if (!this._initialLoadDone) {
+      log.load(Modules.SPATIAL_INDEX_LOADER, `Loading segments for ${segmentRanges.length} ranges`);
+    }
     let segmentData: Uint32Array;
     if (session) {
       const loadSegSession = session.begin('Load Segments');
@@ -324,31 +325,32 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const indexSpan = maxIdx - minIdx + 1;
     const efficiency = sortedIndices.length / indexSpan;
 
-    log.info(
-      LogEmoji.LOAD,
-      Modules.SPATIAL_INDEX_LOADER,
-      `Loading vertices for ${mergedVertexRanges.length} ranges (${sortedIndices.length} unique vertices)`
-    );
-    log.info(
-      Modules.SPATIAL_INDEX_LOADER,
-      `  Vertex index range: [${minIdx} - ${maxIdx}], span=${indexSpan}, efficiency=${(efficiency * 100).toFixed(1)}%`
-    );
-    if (mergedVertexRanges.length <= 10) {
+    if (!this._initialLoadDone) {
+      log.load(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Loading vertices for ${mergedVertexRanges.length} ranges (${sortedIndices.length} unique vertices)`
+      );
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `  Ranges: ${mergedVertexRanges.map((r) => `[${r.start}-${r.end})`).join(', ')}`
+        `  Vertex index range: [${minIdx} - ${maxIdx}], span=${indexSpan}, efficiency=${(efficiency * 100).toFixed(1)}%`
       );
-    } else {
-      const first5 = mergedVertexRanges
-        .slice(0, 5)
-        .map((r) => `[${r.start}-${r.end})`)
-        .join(', ');
-      const last5 = mergedVertexRanges
-        .slice(-5)
-        .map((r) => `[${r.start}-${r.end})`)
-        .join(', ');
-      log.info(Modules.SPATIAL_INDEX_LOADER, `  First 5 ranges: ${first5}`);
-      log.info(Modules.SPATIAL_INDEX_LOADER, `  Last 5 ranges: ${last5}`);
+      if (mergedVertexRanges.length <= 10) {
+        log.info(
+          Modules.SPATIAL_INDEX_LOADER,
+          `  Ranges: ${mergedVertexRanges.map((r) => `[${r.start}-${r.end})`).join(', ')}`
+        );
+      } else {
+        const first5 = mergedVertexRanges
+          .slice(0, 5)
+          .map((r) => `[${r.start}-${r.end})`)
+          .join(', ');
+        const last5 = mergedVertexRanges
+          .slice(-5)
+          .map((r) => `[${r.start}-${r.end})`)
+          .join(', ');
+        log.info(Modules.SPATIAL_INDEX_LOADER, `  First 5 ranges: ${first5}`);
+        log.info(Modules.SPATIAL_INDEX_LOADER, `  Last 5 ranges: ${last5}`);
+      }
     }
 
     // Phase 1 DEEP Integration: Load directly to accumulator if enabled (ZERO allocations!)
@@ -529,7 +531,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    * @param session - Optional profiler session for nested timing
    */
   async updateView(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData> {
-    return this.loadLines(viewState, session);
+    const result = await this.loadLines(viewState, session);
+    if (!this._initialLoadDone) {
+      this._initialLoadDone = true;
+      this.rangeLoader.setVerbose(false);
+    }
+    return result;
   }
 
   /**
@@ -563,11 +570,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       const isExtending = extendDims.some((edim: string) => currentNonDisplayedDims.includes(edim));
 
       if (isExtending) {
-        log.custom(
-          LogEmoji.BROADCAST,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
-        );
+        if (!this._initialLoadDone) {
+          log.custom(
+            LogEmoji.BROADCAST,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
+          );
+        }
         // Return all segments for extended dimensions
         return [{ start: 0, end: attrs.n_segments }];
       }

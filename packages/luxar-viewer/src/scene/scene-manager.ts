@@ -194,12 +194,22 @@ export class SceneManager extends THREE.EventDispatcher<{
       showError('Failed to create WebGL2 context. Your browser may not support WebGL2.');
     }
 
-    // Create WebGL renderer using configuration values
-    // This ensures consistent settings across all rendering components
+    // Create WebGL renderer using configuration values.
+    // Shared attributes (antialias, powerPreference, etc.) come from webgl.context;
+    // renderer-specific settings (precision, shadowMap, etc.) come from webgl.renderer.
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvasElement, // Use our pre-existing canvas element
       context: gl || undefined, // Use our HDR context if available
-      ...config.webgl.renderer, // Apply all renderer settings from config
+      // Shared attributes from context config
+      alpha: config.webgl.context.alpha,
+      antialias: config.webgl.context.antialias,
+      depth: config.webgl.context.depth,
+      stencil: config.webgl.context.stencil,
+      powerPreference: config.webgl.context.powerPreference,
+      preserveDrawingBuffer: config.webgl.context.preserveDrawingBuffer,
+      premultipliedAlpha: config.webgl.context.premultipliedAlpha,
+      // Renderer-specific settings
+      ...config.webgl.renderer,
     });
 
     // Configure page for immersive fullscreen 3D experience
@@ -958,7 +968,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     log.info(
       Modules.SCENE_MANAGER,
-      `Clipping planes updated - Near: ${near.toFixed(3)}, Far: ${far.toFixed(1)} (ratio: ${ratio.toFixed(0)}:1)`
+      `Clipping planes updated - Near: ${near < 0.001 ? near.toExponential(1) : near.toFixed(3)}, Far: ${far.toFixed(1)} (ratio: ${ratio.toFixed(0)}:1)`
     );
   }
 
@@ -1113,6 +1123,16 @@ export class SceneManager extends THREE.EventDispatcher<{
       Modules.SCENE_MANAGER,
       `Dynamic clipping ${enabled ? 'enabled' : 'disabled'}${adaptSpeed !== undefined ? ` (adapt speed: ${this.clippingAdaptSpeed})` : ''}`
     );
+  }
+
+  /**
+   * Set clipping adapt speed without logging.
+   * Use this for continuous updates (e.g., slider drag) to avoid log spam.
+   *
+   * @param speed - Exponential smoothing factor (0.01-0.5)
+   */
+  setClippingAdaptSpeed(speed: number): void {
+    this.clippingAdaptSpeed = Math.max(0.01, Math.min(0.5, speed));
   }
 
   /**

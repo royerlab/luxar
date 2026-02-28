@@ -594,7 +594,7 @@ describe('validateConfig', () => {
   });
 
   describe('WebGL validation', () => {
-    it('should error on invalid context powerPreference', () => {
+    it('should error on invalid powerPreference', () => {
       const cfg = cloneConfig();
       (cfg.webgl.context as any).powerPreference = 'super-power';
 
@@ -602,19 +602,7 @@ describe('validateConfig', () => {
 
       expect(result.valid).toBe(false);
       expect(result.errors).toContainEqual(
-        expect.stringContaining('Invalid WebGL context powerPreference')
-      );
-    });
-
-    it('should error on invalid renderer powerPreference', () => {
-      const cfg = cloneConfig();
-      (cfg.webgl.renderer as any).powerPreference = 'ultra';
-
-      const result = validateConfig(cfg);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(
-        expect.stringContaining('Invalid WebGL renderer powerPreference')
+        expect.stringContaining('Invalid WebGL powerPreference')
       );
     });
 
@@ -672,59 +660,34 @@ describe('validateConfig', () => {
         expect(result.warnings.filter((w) => w.includes('color space'))).toHaveLength(0);
       }
     });
+  });
 
-    it('should warn when context and renderer antialias mismatch', () => {
+  describe('controls validation', () => {
+    it('should error when ConfigRange min >= max', () => {
       const cfg = cloneConfig();
-      cfg.webgl.context.antialias = true;
-      cfg.webgl.renderer.antialias = false;
+      cfg.controls.fly.movement.speed.min = 50;
+      cfg.controls.fly.movement.speed.max = 0.5;
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(expect.stringContaining('Antialias mismatch'));
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('fly.movement.speed'));
     });
 
-    it('should warn when context and renderer powerPreference mismatch', () => {
+    it('should error when ConfigRange default is outside [min, max]', () => {
       const cfg = cloneConfig();
-      (cfg.webgl.context as any).powerPreference = 'high-performance';
-      (cfg.webgl.renderer as any).powerPreference = 'low-power';
+      cfg.controls.orbit.damping.factor.default = 99;
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(expect.stringContaining('Power preference mismatch'));
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('orbit.damping.factor'));
     });
 
-    it('should warn when context and renderer preserveDrawingBuffer mismatch', () => {
-      const cfg = cloneConfig();
-      cfg.webgl.context.preserveDrawingBuffer = true;
-      cfg.webgl.renderer.preserveDrawingBuffer = false;
+    it('should pass with default controls config', () => {
+      const result = validateConfig(config as unknown as AppConfig);
 
-      const result = validateConfig(cfg);
-
-      expect(result.warnings).toContainEqual(
-        expect.stringContaining('Preserve drawing buffer mismatch')
-      );
-    });
-
-    it('should not warn when context and renderer settings are consistent', () => {
-      const cfg = cloneConfig();
-      // Ensure consistency
-      cfg.webgl.context.antialias = true;
-      cfg.webgl.renderer.antialias = true;
-      (cfg.webgl.context as any).powerPreference = 'high-performance';
-      (cfg.webgl.renderer as any).powerPreference = 'high-performance';
-      cfg.webgl.context.preserveDrawingBuffer = false;
-      cfg.webgl.renderer.preserveDrawingBuffer = false;
-
-      const result = validateConfig(cfg);
-
-      expect(
-        result.warnings.filter(
-          (w) =>
-            w.includes('Antialias mismatch') ||
-            w.includes('Power preference mismatch') ||
-            w.includes('Preserve drawing buffer mismatch')
-        )
-      ).toHaveLength(0);
+      expect(result.errors.filter((e) => e.includes('controls.'))).toHaveLength(0);
     });
   });
 
