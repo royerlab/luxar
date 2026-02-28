@@ -38,7 +38,7 @@ import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { DimensionAnimationManager } from '../scene/dimension-animation-manager';
 import { RenderingControls } from '../ui/rendering-controls';
-import { showHelpOverlay, hideHelpOverlay } from '../ui/helpers';
+import { showHelpOverlay, hideHelpOverlay, clearError } from '../ui/helpers';
 import { SimpleDims } from '../types/dims';
 import { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
@@ -1352,11 +1352,11 @@ export class InputHandler {
    */
   private closeAllPanels(): void {
     // Close all open panels (starting with topmost)
-    // Close help overlay (usually topmost)
-    const helpOverlay = document.getElementById('help-overlay');
-    if (helpOverlay) {
-      helpOverlay.remove();
-    }
+    // Close help overlay (usually topmost) - use hideHelpOverlay to clean up click listener
+    hideHelpOverlay();
+
+    // Close error messages
+    clearError();
 
     // Close dataset browser
     const datasetBrowser = document.getElementById('dataset-browser');

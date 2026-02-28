@@ -400,3 +400,239 @@ describe('edge cases', () => {
     expect(result.sharpness[0]).toBe(2.0);
   });
 });
+
+describe('workspace reuse safety', () => {
+  it('should produce correct results when called consecutively with different ndim', () => {
+    // First call: 4D data (1 hidden dim)
+    const loaded4D: LoadedGSplatsData = {
+      positions: new Float32Array([1, 2, 3, 0.5]),
+      amplitudes: new Float32Array([1.0]),
+      // 4D identity Cholesky (10 elements)
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1]),
+      colors: null,
+      sharpness: new Float32Array([2.0]),
+      splatCount: 1,
+      ndim: 4,
+    };
+    const viewState4D: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [1, 1, 1, 1],
+    };
+    const result4D = processGSplatsTo3D(loaded4D, viewState4D);
+
+    // Second call: 5D data (2 hidden dims) — workspace must be clean
+    const loaded5D: LoadedGSplatsData = {
+      positions: new Float32Array([10, 20, 30, 0, 0]),
+      amplitudes: new Float32Array([1.0]),
+      // 5D identity Cholesky (15 elements)
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
+      colors: null,
+      sharpness: new Float32Array([2.0]),
+      splatCount: 1,
+      ndim: 5,
+    };
+    const viewState5D: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0, 0],
+      tolerance: [1, 1, 1, 1, 1],
+    };
+    const result5D = processGSplatsTo3D(loaded5D, viewState5D);
+
+    // Third call: back to 3D (0 hidden dims) — workspace must not interfere
+    const loaded3D: LoadedGSplatsData = {
+      positions: new Float32Array([5, 6, 7]),
+      amplitudes: new Float32Array([0.8]),
+      choleskyFactors: new Float32Array([2, 0, 2, 0, 0, 2]),
+      colors: null,
+      sharpness: new Float32Array([2.0]),
+      splatCount: 1,
+      ndim: 3,
+    };
+    const viewState3D: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0],
+      tolerance: [1, 1, 1],
+    };
+    const result3D = processGSplatsTo3D(loaded3D, viewState3D);
+
+    // Verify each call produced correct independent results
+    expect(result4D.splatCount).toBe(1);
+    expect(result4D.centers3D[0]).toBe(1);
+    expect(result4D.centers3D[1]).toBe(2);
+    expect(result4D.centers3D[2]).toBe(3);
+
+    expect(result5D.splatCount).toBe(1);
+    expect(result5D.centers3D[0]).toBe(10);
+    expect(result5D.centers3D[1]).toBe(20);
+    expect(result5D.centers3D[2]).toBe(30);
+
+    expect(result3D.splatCount).toBe(1);
+    expect(result3D.centers3D[0]).toBe(5);
+    expect(result3D.centers3D[1]).toBe(6);
+    expect(result3D.centers3D[2]).toBe(7);
+    expect(result3D.amplitudes[0]).toBeCloseTo(0.8, 5); // No attenuation for pure 3D
+  });
+
+  it('should correctly attenuate with cross-correlated hidden dimensions', () => {
+    // 4D data where hidden dim (3) is correlated with display dims via L[3,0..2] != 0
+    // This verifies marginal Cholesky (not just submatrix extraction) is correct.
+    //
+    // Full 4D Cholesky L:
+    //   L00=1, L10=0, L11=1, L20=0, L21=0, L22=1, L30=0.5, L31=0.5, L32=0.5, L33=1
+    //
+    // Covariance Σ = L @ L^T:
+    //   Σ[3,3] = L30^2 + L31^2 + L32^2 + L33^2 = 0.25 + 0.25 + 0.25 + 1 = 1.75
+    // Hidden marginal covariance (just dim 3): Σ_h = [[1.75]]
+    // Marginal Cholesky: L_h = [[sqrt(1.75)]] ≈ [[1.3229]]
+    //
+    // Splat center at dim3 = 1.0, slice at dim3 = 0
+    // Mahalanobis distance = |1.0| / sqrt(1.75) ≈ 0.7559
+    // Attenuation = exp(-0.5 * 0.7559^2) = exp(-0.2857) ≈ 0.7514
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([0, 0, 0, 1.0]), // dim3 = 1.0
+      amplitudes: new Float32Array([1.0]),
+      choleskyFactors: new Float32Array([
+        1, // L00
+        0,
+        1, // L10, L11
+        0,
+        0,
+        1, // L20, L21, L22
+        0.5,
+        0.5,
+        0.5,
+        1, // L30, L31, L32, L33 - cross-correlations!
+      ]),
+      colors: null,
+      sharpness: new Float32Array([2.0]),
+      splatCount: 1,
+      ndim: 4,
+    };
+
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [1, 1, 1, 1],
+    };
+
+    const result = processGSplatsTo3D(loaded, viewState);
+
+    expect(result.splatCount).toBe(1);
+    // Attenuation = exp(-0.5 * (1.0 / sqrt(1.75))^2) = exp(-0.5 / 1.75) ≈ exp(-0.2857) ≈ 0.7514
+    const expectedAttenuation = Math.exp(-0.5 * (1.0 / Math.sqrt(1.75)) ** 2);
+    expect(result.amplitudes[0]).toBeCloseTo(expectedAttenuation, 4);
+  });
+
+  it('should produce consistent attenuation across mix of visible and filtered splats', () => {
+    // 4D data with 4 splats at varying distances in hidden dim
+    // Verifies the attenuation cache correctly pairs cached values with visible indices
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([
+        0,
+        0,
+        0,
+        0, // Splat 0: on slice → visible
+        0,
+        0,
+        0,
+        100, // Splat 1: far away → filtered out
+        0,
+        0,
+        0,
+        0.5, // Splat 2: close → visible with some attenuation
+        0,
+        0,
+        0,
+        50, // Splat 3: very far → filtered out
+      ]),
+      amplitudes: new Float32Array([1.0, 1.0, 1.0, 1.0]),
+      // 4D identity Cholesky for each splat (10 elements each)
+      choleskyFactors: new Float32Array([
+        1,
+        0,
+        1,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1, // splat 0
+        1,
+        0,
+        1,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1, // splat 1
+        1,
+        0,
+        1,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1, // splat 2
+        1,
+        0,
+        1,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1, // splat 3
+      ]),
+      colors: new Float32Array([
+        1,
+        0,
+        0, // red
+        0,
+        1,
+        0, // green (should be filtered)
+        0,
+        0,
+        1, // blue
+        1,
+        1,
+        0, // yellow (should be filtered)
+      ]),
+      sharpness: new Float32Array([2.0, 2.0, 2.0, 2.0]),
+      splatCount: 4,
+      ndim: 4,
+    };
+
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [1, 1, 1, 1],
+    };
+
+    const result = processGSplatsTo3D(loaded, viewState);
+
+    // Only splats 0 and 2 should survive
+    expect(result.splatCount).toBe(2);
+
+    // Splat 0: on slice, full amplitude
+    expect(result.amplitudes[0]).toBeCloseTo(1.0, 5);
+    // Color should be red (from splat 0, not green from splat 1)
+    expect(result.colors[0]).toBeCloseTo(1.0, 5); // R
+    expect(result.colors[1]).toBeCloseTo(0.0, 5); // G
+    expect(result.colors[2]).toBeCloseTo(0.0, 5); // B
+
+    // Splat 2: 0.5 units away, attenuation = exp(-0.5 * 0.5^2) = exp(-0.125) ≈ 0.8825
+    const expectedAtt = Math.exp(-0.5 * 0.25);
+    expect(result.amplitudes[1]).toBeCloseTo(expectedAtt, 4);
+    // Color should be blue (from splat 2)
+    expect(result.colors[3]).toBeCloseTo(0.0, 5); // R
+    expect(result.colors[4]).toBeCloseTo(0.0, 5); // G
+    expect(result.colors[5]).toBeCloseTo(1.0, 5); // B
+  });
+});

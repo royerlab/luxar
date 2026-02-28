@@ -86,17 +86,14 @@ export const config: AppConfig = {
     },
   },
 
-  // Animation loop and performance optimization settings
+  // Animation loop settings
   animation: {
     idleTimeoutMs: 2000, // Time in milliseconds before pausing animation when idle - saves power
-    targetFPS: 60, // Target frames per second
-    minFPS: 30, // Minimum acceptable FPS before quality reduction
   },
 
   // Adaptive pixel ratio configuration for dynamic performance optimization
   adaptiveDPR: {
-    enabled: true, // Enable adaptive DPR by default
-    targetFPS: 55, // Target FPS - slightly below 60 to prevent toggling
+    enabled: true, // Construction-time default; runtime toggle is renderingControls.defaults.adaptiveDPREnabled
     minFPS: 50, // FPS threshold for scaling down resolution
     maxFPS: 58, // FPS threshold for scaling up resolution
     minDPR: 0.5, // Minimum DPR - lower bound before image becomes too pixelated
@@ -117,25 +114,6 @@ export const config: AppConfig = {
   shader: {
     points: {
       baseAlpha: 0.01, // Base alpha intensity
-    },
-  },
-
-  // Post-processing pipeline configuration
-  postProcessing: {
-    hdr: {
-      renderTargetType: THREE.HalfFloatType, // Use 16-bit float for HDR precision without banding
-    },
-    // Note: bloom settings moved to renderingControls.defaults for centralization
-
-    toneMapping: {
-      initial: {
-        outputColorSpace: THREE.LinearSRGBColorSpace,
-        toneMapping: THREE.NoToneMapping,
-      },
-      final: {
-        outputColorSpace: THREE.SRGBColorSpace,
-        toneMapping: THREE.ACESFilmicToneMapping,
-      },
     },
   },
 
@@ -197,7 +175,6 @@ export const config: AppConfig = {
     // UI component-specific configuration for consistent styling
     components: {
       datasetBrowser: {
-        zIndex: 1000,
         borderRadius: {
           panel: 12,
           section: 6,
@@ -210,7 +187,6 @@ export const config: AppConfig = {
         },
       },
       debugConsole: {
-        zIndex: 150,
         borderRadius: {
           header: 8,
           content: 4,
@@ -294,8 +270,8 @@ export const config: AppConfig = {
       autoRotate: false, // Auto-rotation disabled by default
       autoRotateSpeed: 0.25, // Slow rotation speed for presentations
       // Note: Fly control settings are referenced directly from controls.fly to avoid duplication
-      // Adaptive resolution
-      adaptiveDPREnabled: true, // Adaptive resolution enabled by default
+      // Adaptive resolution (runtime/UI toggle; overrides adaptiveDPR.enabled after init)
+      adaptiveDPREnabled: true, // Persisted per-scene via localStorage
       // Cinematic mode (disabled by default)
       cinematicMode: false,
     },
@@ -461,7 +437,7 @@ export const config: AppConfig = {
       // Multi-type support: Float32Array, Uint8Array, Uint16Array (with auto normalization)
       // Reuses geometries when capacity AND types match (0ms allocation on reuse)
       // Integrated into scene-loader: updatePointsGeometry/updateLinesGeometry/updateGSplatsGeometry
-      useGPUBufferPool: true, // ✅ ACTIVATED - Multi-type geometry pooling enabled
+      useGPUBufferPool: false, // ❌ DISABLED — investigating gsplats 4D visibility bug (pool geometry not reaching mesh)
       gpuPoolMaxSize: 20,
       gpuPoolEvictionFrames: 300,
 
@@ -486,14 +462,12 @@ export const config: AppConfig = {
       failIfMajorPerformanceCaveat: false, // Don't fail on slow GPUs
     },
 
-    // THREE.WebGLRenderer specific settings
+    // THREE.WebGLRenderer specific settings (renderer-only; shared attributes
+    // like antialias, powerPreference, preserveDrawingBuffer, premultipliedAlpha
+    // are sourced from webgl.context and spread at renderer creation time)
     renderer: {
-      antialias: true, // MSAA for smoother rendering
-      powerPreference: 'high-performance' as const, // High performance GPU
-      preserveDrawingBuffer: false, // Better performance
       logarithmicDepthBuffer: false, // Standard depth buffer (faster)
       precision: 'highp' as const, // High precision for better quality
-      premultipliedAlpha: true, // Standard alpha blending
       shadowMap: {
         enabled: false, // No shadows needed for points
         type: THREE.PCFSoftShadowMap, // Soft shadows if enabled
@@ -505,25 +479,6 @@ export const config: AppConfig = {
       depthBuffer: true, // Needed for depth testing
       stencilBuffer: false, // Not needed, saves memory
       samples: 0, // MSAA samples (0 = disabled for additive blending compatibility)
-    },
-
-    // Performance profiles for different hardware/use cases
-    profiles: {
-      quality: {
-        powerPreference: 'high-performance' as const,
-        antialias: true,
-        precision: 'highp' as const,
-      },
-      balanced: {
-        powerPreference: 'default' as const,
-        antialias: true,
-        precision: 'mediump' as const,
-      },
-      performance: {
-        powerPreference: 'low-power' as const,
-        antialias: false,
-        precision: 'lowp' as const,
-      },
     },
   },
 

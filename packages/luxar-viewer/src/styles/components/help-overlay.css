@@ -174,23 +174,3 @@
 [data-theme='light'] .luxar-help-overlay {
   background: rgba(255, 255, 255, 0.95);
 }
-
-[data-theme='light'] .luxar-help-overlay__close-btn {
-  color: var(--luxar-text-muted);
-}
-
-[data-theme='light'] .luxar-help-overlay__close-btn:hover {
-  color: var(--luxar-text-primary);
-}
-
-[data-theme='light'] .luxar-help-overlay__category-header {
-  color: var(--luxar-success);
-}
-
-[data-theme='light'] .luxar-help-overlay__item--tip {
-  color: var(--luxar-text-secondary);
-}
-
-[data-theme='light'] .luxar-help-overlay__item--note {
-  color: var(--luxar-warning);
-}

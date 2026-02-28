@@ -180,7 +180,10 @@ def run_benchmarks(worktree_path: str, commit_sha: str):
             GaussianSplatModelCUDA,
         )
     except ImportError as e:
-        return {"error": f"Cannot import GaussianSplatModelCUDA: {e}", "commit": commit_sha}
+        return {
+            "error": f"Cannot import GaussianSplatModelCUDA: {e}",
+            "commit": commit_sha,
+        }
 
     # Reduced config set for fast bisection
     configs = [
@@ -217,7 +220,13 @@ def run_benchmarks(worktree_path: str, commit_sha: str):
         try:
             torch.cuda.empty_cache()
             model = create_model(
-                GaussianSplatModelCUDA, shape, centers, L, amps, sigma_min, use_fp16=False
+                GaussianSplatModelCUDA,
+                shape,
+                centers,
+                L,
+                amps,
+                sigma_min,
+                use_fp16=False,
             )
             fp32_time = benchmark_forward(model, sync_cuda=True)
             config_result["fp32_inference_ms"] = round(fp32_time, 3)
@@ -241,7 +250,13 @@ def run_benchmarks(worktree_path: str, commit_sha: str):
         try:
             torch.cuda.empty_cache()
             model = create_model(
-                GaussianSplatModelCUDA, shape, centers, L, amps, sigma_min, use_fp16=False
+                GaussianSplatModelCUDA,
+                shape,
+                centers,
+                L,
+                amps,
+                sigma_min,
+                use_fp16=False,
             )
             amp_time = benchmark_forward(model, sync_cuda=True, use_amp=True)
             config_result["amp_inference_ms"] = round(amp_time, 3)
@@ -265,7 +280,13 @@ def run_benchmarks(worktree_path: str, commit_sha: str):
         try:
             torch.cuda.empty_cache()
             model = create_model(
-                GaussianSplatModelCUDA, shape, centers, L, amps, sigma_min, use_fp16=True
+                GaussianSplatModelCUDA,
+                shape,
+                centers,
+                L,
+                amps,
+                sigma_min,
+                use_fp16=True,
             )
             fp16_time = benchmark_forward(model, sync_cuda=True)
             config_result["fp16_inference_ms"] = round(fp16_time, 3)
@@ -302,10 +323,10 @@ def main():
     commit_sha = sys.argv[2]
     output_json = sys.argv[3]
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Benchmarking commit {commit_sha}")
     print(f"Worktree: {worktree_path}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     try:
         results = run_benchmarks(worktree_path, commit_sha)

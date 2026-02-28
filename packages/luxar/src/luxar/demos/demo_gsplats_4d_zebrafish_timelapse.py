@@ -368,7 +368,10 @@ def fit_all_timepoints(volumes: list, voxel_size=None, time_indices=None) -> lis
             cache_file = CACHE_DIR / f"zebrafish_frame{src_idx:04d}.gsplats.zarr.zip"
             with asection(f"Timepoint {t}/{len(volumes) - 1} (frame {src_idx})"):
                 gsplats = fit_timepoint(
-                    volume, f"T={t} (frame {src_idx})", cache_file, voxel_size=voxel_size
+                    volume,
+                    f"T={t} (frame {src_idx})",
+                    cache_file,
+                    voxel_size=voxel_size,
                 )
                 gsplats_list.append(gsplats)
         return gsplats_list

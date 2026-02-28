@@ -52,6 +52,7 @@ export type EncodingType = 'broadcasted' | 'quantized' | 'lut' | 'array_ref' | '
 export class RangeLoader {
   private decoder: ArrayDecoder;
   private config: Required<RangeLoaderConfig>;
+  private _verbose = true;
 
   constructor(refRegistry: ArrayRefRegistry, config: RangeLoaderConfig = {}) {
     this.decoder = new ArrayDecoder(refRegistry);
@@ -59,6 +60,11 @@ export class RangeLoader {
       workerThreshold: config.workerThreshold ?? 1000,
       logModule: config.logModule ?? Modules.SPATIAL_INDEX_LOADER,
     };
+  }
+
+  /** Suppress detail logs after initial load */
+  setVerbose(verbose: boolean): void {
+    this._verbose = verbose;
   }
 
   /**
@@ -143,10 +149,12 @@ export class RangeLoader {
     const useWorkers = appConfig.dataLoading.performance.useWebWorkers;
     const arrayName = attrs.encoding?.name || 'broadcasted';
 
-    log.info(
-      this.config.logModule,
-      `Broadcasted: replicating to ${totalElements} elements (worker=${useWorkers})`
-    );
+    if (this._verbose) {
+      log.info(
+        this.config.logModule,
+        `Broadcasted: replicating to ${totalElements} elements (worker=${useWorkers})`
+      );
+    }
 
     // Fetch single value (cached via TwoLevelCachingStore)
     const fullData = await get(array);
@@ -203,10 +211,12 @@ export class RangeLoader {
     const useWorkers = appConfig.dataLoading.performance.useWebWorkers;
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
-    log.info(
-      this.config.logModule,
-      `Quantized: ${totalPoints} values (${ArrayDecoder.getEncodingMode(attrs)}, dtype=${quantMetadata.dtype}, worker=${useWorkers})`
-    );
+    if (this._verbose) {
+      log.info(
+        this.config.logModule,
+        `Quantized: ${totalPoints} values (${ArrayDecoder.getEncodingMode(attrs)}, dtype=${quantMetadata.dtype}, worker=${useWorkers})`
+      );
+    }
 
     let destOffset = 0;
     const shape = array.shape;
@@ -276,10 +286,12 @@ export class RangeLoader {
     const useWorkers = appConfig.dataLoading.performance.useWebWorkers;
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
-    log.info(
-      this.config.logModule,
-      `LUT: ${totalPoints} indices, k=${lutMetadata.k}, mode=${lutMetadata.lutMode} (worker=${useWorkers})`
-    );
+    if (this._verbose) {
+      log.info(
+        this.config.logModule,
+        `LUT: ${totalPoints} indices, k=${lutMetadata.k}, mode=${lutMetadata.lutMode} (worker=${useWorkers})`
+      );
+    }
 
     // Flatten LUT once (shared across all ranges)
     const flatLUT: number[] = Array.isArray(lutMetadata.lut[0])
@@ -345,7 +357,9 @@ export class RangeLoader {
   ): Promise<number> {
     const enc = attrs.encoding!;
 
-    log.info(this.config.logModule, `Array ref: target=${enc.target}, hash=${enc.hash}`);
+    if (this._verbose) {
+      log.info(this.config.logModule, `Array ref: target=${enc.target}, hash=${enc.hash}`);
+    }
 
     // For now, array_ref handling requires the full ArrayDecoder flow
     // This is a placeholder - in practice, array_refs should be resolved
@@ -364,7 +378,9 @@ export class RangeLoader {
     ranges: LoadRange[],
     output: Float32Array
   ): Promise<number> {
-    log.info(this.config.logModule, `Direct: loading ${ranges.length} ranges`);
+    if (this._verbose) {
+      log.info(this.config.logModule, `Direct: loading ${ranges.length} ranges`);
+    }
 
     let destOffset = 0;
     const shape = array.shape;

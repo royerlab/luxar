@@ -78,6 +78,8 @@ export class AdaptiveDPRManager {
 
     this.nativeDPR = window.devicePixelRatio || 1;
     this.currentDPR = this.nativeDPR;
+    // Initial enabled state from config. At runtime, this is overridden by
+    // renderingControls.defaults.adaptiveDPREnabled (persisted per-scene in localStorage).
     this.isEnabled = this.config.enabled;
 
     log.info(

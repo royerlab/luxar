@@ -138,8 +138,7 @@ class Group(Node):
                         f"fill_sigma is only for unmapped dimensions"
                     )
             fill_sigma_indexed = {
-                scene_names.index(name): sigma
-                for name, sigma in fill_sigma.items()
+                scene_names.index(name): sigma for name, sigma in fill_sigma.items()
             }
 
         if cholesky_factors.ndim == 1:

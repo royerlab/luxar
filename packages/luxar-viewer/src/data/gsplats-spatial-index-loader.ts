@@ -61,6 +61,9 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
 
+  // Suppress detail logs after first successful view update
+  private _initialLoadDone = false;
+
   private arrays: {
     centers?: zarr.Array<zarr.DataType, zarr.Readable>;
     amplitudes?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -253,11 +256,12 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     // Count total splats to load
     const totalSplats = splatRanges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
-    log.info(
-      LogEmoji.LOAD,
-      Modules.SPATIAL_INDEX_LOADER,
-      `Loading ${totalSplats} gsplats from ${splatRanges.length} ranges`
-    );
+    if (!this._initialLoadDone) {
+      log.load(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Loading ${totalSplats} gsplats from ${splatRanges.length} ranges`
+      );
+    }
 
     // Phase 1 DEEP Integration: Load DIRECTLY to accumulator buffers (ZERO allocations!)
     if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
@@ -374,6 +378,21 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
         : null;
     }
 
+    // DATA VALIDATION: Check loaded values to diagnose 4D visibility bug
+    if (totalSplats > 0 && attrs.ndim >= 4) {
+      const ndim = attrs.ndim;
+      const timeCol = ndim - 1; // Last dimension is typically time
+      const firstTime = centers[timeCol]; // First splat's time coordinate
+      const firstAmp = amplitudes[0];
+      const maxAmp = Math.max(...Array.from(amplitudes.slice(0, Math.min(100, totalSplats))));
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        `DATA CHECK ${this.node.path}: ${totalSplats} splats loaded, ndim=${ndim}, ` +
+          `first_center=[${centers.slice(0, ndim).join(', ')}], ` +
+          `time_col[0]=${firstTime.toFixed(3)}, amp[0]=${firstAmp.toFixed(6)}, ampMax100=${maxAmp.toFixed(6)}`
+      );
+    }
+
     return {
       positions: centers,
       amplitudes,
@@ -394,7 +413,12 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     viewState: GSplatsViewState,
     session?: UpdateSession
   ): Promise<LoadedGSplatsData> {
-    return this.loadGSplats(viewState, session);
+    const result = await this.loadGSplats(viewState, session);
+    if (!this._initialLoadDone) {
+      this._initialLoadDone = true;
+      this.rangeLoader.setVerbose(false);
+    }
+    return result;
   }
 
   /**
@@ -427,11 +451,13 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       const isExtending = extendDims.some((edim: string) => currentNonDisplayedDims.includes(edim));
 
       if (isExtending) {
-        log.custom(
-          LogEmoji.BROADCAST,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
-        );
+        if (!this._initialLoadDone) {
+          log.custom(
+            LogEmoji.BROADCAST,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
+          );
+        }
         // Return all splats for extended dimensions
         return [{ start: 0, end: attrs.n_splats }];
       }

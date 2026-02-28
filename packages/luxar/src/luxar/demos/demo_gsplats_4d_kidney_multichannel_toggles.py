@@ -233,6 +233,7 @@ def fit_channel(volume, channel_name, cache_file):
 
     result = fit_gaussian_splats(
         volume,
+        lr=0.01,
         seeds=N_SEEDS,
         n_iters=N_ITERS,
         device=DEVICE,

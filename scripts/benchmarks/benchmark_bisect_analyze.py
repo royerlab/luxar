@@ -93,7 +93,9 @@ def generate_report(results):
     """Generate markdown comparison report."""
     lines = []
     lines.append("# CUDA Performance Bisection Report\n")
-    lines.append(f"**Commits analyzed**: {len([r for r in results.values() if 'error' not in r])}")
+    lines.append(
+        f"**Commits analyzed**: {len([r for r in results.values() if 'error' not in r])}"
+    )
 
     # Get GPU info from first successful result
     for r in results.values():
@@ -174,7 +176,9 @@ def generate_report(results):
             fp32_tot_s = fmt_ms(fp32_tot, prev_fp32_tot)
             amp_tot_s = fmt_ms(amp_tot)
 
-            lines.append(f"| {i} | `{sha}` | {fp32_fwd_s} | {fp32_bwd_s} | {fp32_tot_s} | {amp_tot_s} |")
+            lines.append(
+                f"| {i} | `{sha}` | {fp32_fwd_s} | {fp32_bwd_s} | {fp32_tot_s} | {amp_tot_s} |"
+            )
 
             if fp32_tot is not None:
                 prev_fp32_tot = fp32_tot
@@ -185,10 +189,16 @@ def generate_report(results):
     lines.append("Comparing each commit to its predecessor. ")
     lines.append("Changes > 10% are highlighted.\n")
 
-    lines.append("| Commit | Message | 3D_128_1K | 3D_256_10K | 3D_512_50K | 2D_1024_5K | 2D_4096_50K |")
-    lines.append("|--------|---------|-----------|------------|------------|------------|-------------|")
+    lines.append(
+        "| Commit | Message | 3D_128_1K | 3D_256_10K | 3D_512_50K | 2D_1024_5K | 2D_4096_50K |"
+    )
+    lines.append(
+        "|--------|---------|-----------|------------|------------|------------|-------------|"
+    )
 
-    successful_shas = [sha for sha in COMMIT_ORDER if "error" not in results.get(sha, {"error": True})]
+    successful_shas = [
+        sha for sha in COMMIT_ORDER if "error" not in results.get(sha, {"error": True})
+    ]
     for idx, sha in enumerate(successful_shas):
         msg = COMMIT_MESSAGES.get(sha, "?")[:50]
         r = results[sha]

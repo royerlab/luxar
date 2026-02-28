@@ -52,7 +52,7 @@ def mock_viewer_dist(tmp_path: Path) -> Path:
     dist = tmp_path / "mock_viewer_dist"
     dist.mkdir()
     (dist / "index.html").write_text(
-        '<!doctype html><html><head>'
+        "<!doctype html><html><head>"
         '<script type="module" crossorigin src="./assets/index-abc123.js"></script>'
         '<link rel="stylesheet" crossorigin href="./assets/index-def456.css">'
         "</head><body><canvas></canvas></body></html>"
@@ -127,9 +127,7 @@ class TestExportScene:
         root = zarr.open_group(output / "my_dataset", mode="r")
         assert "LorenzAttractor" in root
 
-    def test_fails_on_existing_output(
-        self, sample_scene: Path, tmp_path: Path
-    ) -> None:
+    def test_fails_on_existing_output(self, sample_scene: Path, tmp_path: Path) -> None:
         """FileExistsError when output exists and overwrite=False."""
         output = tmp_path / "existing"
         output.mkdir()
@@ -297,7 +295,13 @@ class TestServeScript:
 
         # Start serve.py as a subprocess
         proc = subprocess.Popen(
-            [sys.executable, str(export_dir / "serve.py"), "--port", str(port), "--no-open"],
+            [
+                sys.executable,
+                str(export_dir / "serve.py"),
+                "--port",
+                str(port),
+                "--no-open",
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -453,9 +457,7 @@ class TestCLIExportCommand:
         )
         assert result.exit_code != 0
 
-    def test_missing_output_flag(
-        self, runner: CliRunner, sample_scene: Path
-    ) -> None:
+    def test_missing_output_flag(self, runner: CliRunner, sample_scene: Path) -> None:
         """Exit code != 0 when --output is not provided."""
         result = runner.invoke(app, ["export", str(sample_scene)])
         assert result.exit_code != 0

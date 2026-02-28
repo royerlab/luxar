@@ -305,9 +305,12 @@ export function setupCameraControls(
     .add(settings, 'clippingAdaptSpeed', 0.01, 0.5, 0.01)
     .name('Adapt Speed')
     .onChange((value: number) => {
-      sceneManager.setDynamicClipping(settings.dynamicClippingEnabled, value);
+      sceneManager.setClippingAdaptSpeed(value);
       saveSettings();
       triggerAnimation();
+    })
+    .onFinishChange((value: number) => {
+      sceneManager.setDynamicClipping(settings.dynamicClippingEnabled, value);
     });
 
   // Store reference
