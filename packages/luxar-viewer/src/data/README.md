@@ -32,7 +32,6 @@ data/
 ├── lines-spatial-index-loader.ts  # Loads lines with nD clipping and attribute interpolation
 ├── lines-chunk-spatial-index.ts   # Dual spatial index for lines (vertices + segments)
 ├── gsplats-spatial-index-loader.ts # Loads Gaussian splats with nD visibility
-├── range-cache.ts                 # Intelligent caching for range-based queries
 ├── array-decoder.ts               # Decodes Python luxar.encoding arrays
 ├── data-monitor-manager.ts        # Singleton manager for monitoring UI instances
 ├── directory-navigator.ts         # Multi-strategy server directory browsing
@@ -1036,18 +1035,6 @@ location /data/ {
 | `queryChunksForView(index, pos, tol)`       | Query chunks that intersect the given box       |
 | `chunkIndicesToRanges(index, chunkIndices)` | Convert chunk indices to point ranges           |
 | `mergePointRanges(ranges)`                  | Merge overlapping or adjacent ranges            |
-
-### Range Cache (range-cache.ts)
-
-| Class/Method                   | Description                                 |
-| ------------------------------ | ------------------------------------------- |
-| `RangeCache`                   | Cache for point spatial index range queries |
-| `get(arrayPath, ranges)`       | Get cached data if available                |
-| `set(arrayPath, ranges, data)` | Store data in cache                         |
-| `has(arrayPath, ranges)`       | Check if ranges are cached                  |
-| `getStats()`                   | Get cache statistics                        |
-| `clear()`                      | Clear all cached data                       |
-| `getMemoryInfo()`              | Get memory usage information                |
 
 ### Monitoring Management (data-monitor-manager.ts)
 

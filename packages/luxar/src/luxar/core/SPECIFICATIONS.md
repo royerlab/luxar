@@ -1,7 +1,7 @@
 # luxar.core - Technical Specification
 
-**Version**: 0.12.0
-**Last Updated**: 2025-12-09
+**Version**: 0.13.0
+**Last Updated**: 2026-02-28
 
 ## Purpose
 
@@ -123,6 +123,127 @@ This discriminator enables the viewer to determine how to render each node.
 
 **REQUIRED Attribute**: `scene_dimensions` MUST be present on all scenes. Creating a scene without dimensions will raise a `ValueError`.
 
+**Viewer Configuration** (`viewer_config`):
+
+Scenes can optionally carry a `ViewerConfig` that provides scene-specific defaults to the viewer (camera position, post-processing effects, etc.). See the ViewerConfig section below (Section 2b) for full details.
+
+---
+
+### 2b. ViewerConfig and CameraConfig
+
+**Purpose**: Provide scene-author-controlled hints to the Luxar viewer. These are stored as zarr attributes and read at load time to become scene-specific defaults.
+
+**Priority Chain** (highest to lowest):
+1. `localStorage` per-scene user overrides (persisted in browser)
+2. zarr `viewer_config` (this object)
+3. Viewer application built-in defaults
+
+#### CameraConfig
+
+**Class**: `CameraConfig` (dataclass in `core/viewer_config.py`)
+
+| Field | Type | Default | Validation |
+|-------|------|---------|------------|
+| `position` | `Optional[Tuple[float, float, float]]` | `None` | Must have 3 elements |
+| `target` | `Optional[Tuple[float, float, float]]` | `None` | Must have 3 elements |
+| `up` | `Optional[Tuple[float, float, float]]` | `None` | Must have 3 elements |
+| `fov` | `Optional[float]` | `None` | 1 to 180 degrees |
+| `fov_preset` | `Optional[str]` | `None` | One of: `"28mm Wide"`, `"35mm"`, `"50mm Normal"`, `"85mm Portrait"`, `"135mm Tele"`, `"Custom"` |
+| `near` | `Optional[float]` | `None` | Must be > 0 |
+| `far` | `Optional[float]` | `None` | Must be > 0 |
+| `target_node` | `Optional[str]` | `None` | Name of scene graph node; overrides `target` if both set |
+
+All fields are optional. Unset fields use the viewer's built-in defaults.
+
+#### ViewerConfig
+
+**Class**: `ViewerConfig` (dataclass in `core/viewer_config.py`)
+
+All fields are `Optional` and default to `None`. Only non-None fields are serialized to the zarr file.
+
+| Field | Type | Validation |
+|-------|------|------------|
+| `camera` | `Optional[CameraConfig]` | See CameraConfig above |
+| `background_color` | `Optional[str]` | Hex format `#rrggbb` |
+| `tone_mapping` | `Optional[str]` | One of: `"None"`, `"Linear"`, `"Reinhard"`, `"Cineon"`, `"ACES"`, `"AgX"`, `"Neutral"` |
+| `hdr_multiplier` | `Optional[float]` | >= 0 |
+| `bloom_enabled` | `Optional[bool]` | -- |
+| `bloom_strength` | `Optional[float]` | >= 0 |
+| `bloom_radius` | `Optional[float]` | >= 0 |
+| `bloom_threshold` | `Optional[float]` | 0 to 1 |
+| `bloom_levels` | `Optional[int]` | >= 1 |
+| `control_type` | `Optional[str]` | One of: `"orbit"`, `"arcball"`, `"fly"` |
+| `auto_rotate` | `Optional[bool]` | -- |
+| `auto_rotate_speed` | `Optional[float]` | -- |
+| `cinematic_mode` | `Optional[bool]` | Activates vignette, DOF, and bloom as a preset |
+| `vignette_enabled` | `Optional[bool]` | -- |
+| `vignette_darkness` | `Optional[float]` | 0 to 1 |
+| `vignette_offset` | `Optional[float]` | -- |
+| `dof_enabled` | `Optional[bool]` | -- |
+| `dof_focus` | `Optional[float]` | -- |
+| `dof_strength` | `Optional[float]` | 0 to 1 |
+| `detector_noise_enabled` | `Optional[bool]` | -- |
+| `detector_noise_readout_sigma` | `Optional[float]` | 0 to 0.1 |
+| `detector_noise_photon_gain` | `Optional[float]` | 0.0001 to 0.1 |
+| `detector_noise_fpn_sigma` | `Optional[float]` | 0 to 0.05 |
+| `fxaa_enabled` | `Optional[bool]` | -- |
+| `smaa_enabled` | `Optional[bool]` | -- |
+| `smaa_threshold` | `Optional[float]` | -- |
+| `smaa_search_steps` | `Optional[int]` | -- |
+| `msaa_enabled` | `Optional[bool]` | -- |
+| `msaa_samples` | `Optional[int]` | -- |
+| `ssaa_enabled` | `Optional[bool]` | -- |
+| `ssaa_multiplier` | `Optional[float]` | -- |
+| `ao_enabled` | `Optional[bool]` | -- |
+| `ao_quality` | `Optional[str]` | One of: `"low"`, `"medium"`, `"high"`, `"ultra"` |
+| `chromatic_lens_distortion_enabled` | `Optional[bool]` | -- |
+| `chromatic_lens_distortion_x` | `Optional[float]` | -- |
+| `chromatic_lens_distortion_y` | `Optional[float]` | -- |
+| `chromatic_lens_dispersion` | `Optional[float]` | -- |
+| `chromatic_lens_principal_point_x` | `Optional[float]` | -- |
+| `chromatic_lens_principal_point_y` | `Optional[float]` | -- |
+| `chromatic_lens_focal_length_x` | `Optional[float]` | -- |
+| `chromatic_lens_focal_length_y` | `Optional[float]` | -- |
+| `chromatic_lens_skew` | `Optional[float]` | -- |
+| `fly_movement_speed` | `Optional[float]` | -- |
+| `fly_rotation_speed` | `Optional[float]` | -- |
+| `fly_inertial_mode` | `Optional[bool]` | -- |
+| `fly_damping` | `Optional[float]` | -- |
+| `fly_rotation_damping` | `Optional[float]` | -- |
+| `dynamic_clipping_enabled` | `Optional[bool]` | -- |
+| `clipping_adapt_speed` | `Optional[float]` | -- |
+| `adaptive_dpr_enabled` | `Optional[bool]` | -- |
+| `ui` | `Optional[UIConfig]` | Nested: `show_help`, `show_rendering_controls`, `show_performance_monitor`, `show_dimensions` |
+| `theme` | `Optional[str]` | One of: `"dark"`, `"light"`, `"frosted-glass"`, `"liquid-glass"` |
+| `dimensions` | `Optional[DimensionsConfig]` | Nested: `current_step`, `selected_dimension` |
+| `animation` | `Optional[List[AnimationConfig]]` | Per-dimension: `playing`, `target_fps`, `loop` (`"once"`, `"loop"`, `"bounce"`), `direction` (`"forward"`, `"backward"`) |
+
+**Serialization**:
+- `to_dict()`: Returns a dictionary with only non-None fields. CameraConfig tuples are converted to lists.
+- `from_dict(data)`: Creates an instance from a dictionary. Unknown keys are ignored (forward compatibility).
+- Validation runs on `__post_init__` (at construction time).
+
+**Integration with Scene**:
+- Passed via `LuxarZarrCompiler.create_scene(dimensions=dims, viewer_config=vc)`
+- Stored as `viewer_config` attribute on the root zarr group
+- Accessible via `scene.viewer_config` property (getter and setter)
+- Setting `scene.viewer_config = vc` validates and persists to zarr immediately
+
+**Example**:
+```python
+from luxar.core.viewer_config import ViewerConfig, CameraConfig
+
+vc = ViewerConfig(
+    camera=CameraConfig(position=(0, 5, 20), target=(0, 0, 0)),
+    background_color="#000000",
+    bloom_enabled=True,
+    bloom_strength=0.5,
+    hdr_multiplier=3.0,
+)
+with LuxarZarrCompiler('output.zarr') as compiler:
+    scene = compiler.create_scene(dimensions=dims, viewer_config=vc)
+```
+
 ---
 
 ### 3. Group (Container Node)
@@ -151,7 +272,7 @@ data-adding methods (`add_points`, `add_lines`, `add_gsplats`, etc.). `Scene` ex
   "transform": [...],         # optional, 16-element column-major
   "opacity": 1.0,             # optional
   "gamma": 1.0,               # optional
-  "blending_mode": "additive" # optional (normal, additive, max)
+  "blending_mode": "additive" # optional (normal, additive, max, opaque, luminous)
 }
 ```
 *Note: Comments shown for documentation; actual JSON has no comments.*
@@ -166,6 +287,132 @@ data-adding methods (`add_points`, `add_lines`, `add_gsplats`, etc.). `Scene` ex
 - Groups can contain any DataNode type (Points, Lines, GSplats)
 - Empty Groups (zero children) are valid but should raise a warning during `finalize()` - the user may have forgotten to add children
 - A Group with only Group children is valid (for purely organizational purposes)
+
+#### Dimension Mapping (`dim_order` / `fill`)
+
+**Purpose**: Enables adding lower-dimensional data to higher-dimensional scenes. For example, adding 3D-fitted Gaussian splats to a 4D scene that includes a Time dimension.
+
+**Parameters** (available on `add_points`, `add_lines`, `add_gsplats`, and `add_gsplats_from_*`):
+- `dim_order: Optional[List[str]]` -- Maps each data column to a scene dimension by name. Length must equal the number of data columns.
+- `fill: Optional[Dict[str, float]]` -- Fixed coordinate values for scene dimensions not covered by `dim_order`. Defaults to `0.0` for unspecified unmapped dimensions.
+
+**Algorithm** (`Scene._apply_dim_order`):
+1. Validate `dim_order` length matches data column count
+2. Validate all names exist in scene dimensions and are unique
+3. Validate `fill` keys exist in scene dimensions and are NOT in `dim_order`
+4. Create output array of shape `(N, scene_ndim)` initialized to zeros
+5. For each scene dimension:
+   - If name is in `dim_order`: copy the corresponding data column
+   - Otherwise: fill with `fill[name]` or `0.0`
+6. Return the transformed array and the list of unmapped dimension names
+
+**Unmapped dimensions and `extend_to_all`**: When `dim_order` is used and `extend_to_all` is not explicitly set, unmapped dimensions are automatically added to `extend_to_all`. This makes the data visible at all values of the unmapped dimensions (e.g., a 3D structure visible at every time step).
+
+**GSplats Special Case** (`_apply_dim_order_cholesky`):
+When `dim_order` is used with `add_gsplats`, the Cholesky factors are also transformed:
+- The packed lower-triangular Cholesky factors are embedded from `d_data x d_data` into `scene_ndim x scene_ndim` using `embed_cholesky_packed()` from `gsplats.utils.trils`
+- `fill_sigma: Optional[Dict[str, float]]` provides standard deviations for unmapped dimensions (default `1.0`), controlling how far splats extend in those dimensions
+- The embedding permutes existing dimensions and adds diagonal entries for unmapped dimensions
+
+**Validation Rules**:
+- `len(dim_order) == positions.shape[1]` (must match data columns)
+- All names in `dim_order` must exist in scene dimensions
+- No duplicate names in `dim_order`
+- `fill` keys must exist in scene dimensions but NOT be in `dim_order`
+- `fill_sigma` keys must exist in scene dimensions but NOT be in `dim_order`
+
+**Example**:
+```python
+# 4D scene: Time, Z, Y, X
+dims = Dimensions([
+    Dimension("Time", range=(0, 9), step=1, display=False),
+    Dimension("Z", display=True),
+    Dimension("Y", display=True),
+    Dimension("X", display=True),
+])
+
+# 3D splats fitted from a single volume (no time dimension in data)
+result = fit_gaussian_splats(volume_3d)
+
+# Map 3D data into the 4D scene, fixing Time=5
+scene.add_gsplats_from_data(
+    "splats_t5", result,
+    dim_order=["Z", "Y", "X"],      # maps data cols to scene dims
+    fill={"Time": 5.0},              # fixed value for unmapped dim
+    fill_sigma={"Time": 2.0},        # splat extent in Time dimension
+)
+```
+
+#### Convenience Methods for GSplats
+
+**`add_gsplats_from_data(name, result, ...)`**
+
+Add Gaussian splats from a `GSplatData` object (typically returned by `fit_gaussian_splats()`).
+
+```python
+def add_gsplats_from_data(
+    self,
+    name: str,
+    result: GSplatData,
+    parent: Optional[Node] = None,
+    extend_to_all: Optional[Union[List[str], str]] = None,
+    dim_order: Optional[List[str]] = None,
+    fill: Optional[Dict[str, float]] = None,
+    fill_sigma: Optional[Dict[str, float]] = None,
+    **attrs: Any,
+) -> GSplats:
+```
+
+Extracts `centers`, `amplitudes`, `cholesky_factors`, `colors`, and `sharpnesses` from the `GSplatData` object and delegates to `add_gsplats()`. Raises `TypeError` if `result` is not a `GSplatData` instance.
+
+**`add_gsplats_from_file(name, path, ...)`**
+
+Load a `.gsplats.zarr` file and add it as a GSplats node.
+
+```python
+def add_gsplats_from_file(
+    self,
+    name: str,
+    path: Union[str, Path],
+    parent: Optional[Node] = None,
+    extend_to_all: Optional[Union[List[str], str]] = None,
+    dim_order: Optional[List[str]] = None,
+    fill: Optional[Dict[str, float]] = None,
+    fill_sigma: Optional[Dict[str, float]] = None,
+    **attrs: Any,
+) -> GSplats:
+```
+
+Loads the file via `load_gsplats(path)` and delegates to `add_gsplats_from_data()`. Raises `FileNotFoundError` if the path does not exist.
+
+**`add_gsplats_from_volume(name, volume, ...)`**
+
+Fit Gaussian splats to a volume and add them in one step.
+
+```python
+def add_gsplats_from_volume(
+    self,
+    name: str,
+    volume: np.ndarray,
+    seeds: Optional[Union[int, float]] = None,
+    n_iters: int = 1000,
+    device: Optional[str] = None,
+    parent: Optional[Node] = None,
+    extend_to_all: Optional[Union[List[str], str]] = None,
+    dim_order: Optional[List[str]] = None,
+    fill: Optional[Dict[str, float]] = None,
+    fill_sigma: Optional[Dict[str, float]] = None,
+    opacity: Optional[float] = None,
+    blending_mode: Optional[str] = None,
+    **fit_kwargs: Any,
+) -> GSplats:
+```
+
+Calls `fit_gaussian_splats(volume, seeds=seeds, n_iters=n_iters, device=device, **fit_kwargs)` and delegates to `add_gsplats_from_data()`. The `opacity` and `blending_mode` parameters are forwarded as node attributes.
+
+- `seeds`: Number of splats (int), compression ratio (float), or None for automatic
+- `n_iters`: Optimization iterations (default: 1000)
+- `device`: Compute device (`"cuda"`, `"mps"`, `"cpu"`, or `None` for auto-detect)
 
 ---
 
@@ -312,14 +559,12 @@ Valid range: [0, 31]. This is a polynomial falloff, NOT a Gaussian.
 - All validation failures raise `ValueError`
 
 **Color Mode (SDR vs HDR)**:
-Float colors require an explicit `color_mode` parameter to distinguish SDR from HDR:
+The encoding layer distinguishes SDR from HDR float colors via a `color_mode` flag:
 - `color_mode="sdr"`: Values must be in [0, 1] range. Values outside raise `ValueError`.
 - `color_mode="hdr"`: Unbounded, any non-negative values allowed.
 
-This explicit flag is **required** for float32 colors to avoid ambiguity. Auto-detection (values > 1 = HDR) was rejected because buggy SDR data with out-of-range values would silently be treated as HDR instead of raising an error.
-
 **Implementation notes**:
-- The `color_mode` flag must be passed to `write_points()`, `write_lines()`, `write_gsplats()`
+- `color_mode` is **auto-detected** by the compiler (`LuxarZarrCompiler`): values > 1.0 are classified as HDR, otherwise SDR. Users do not pass `color_mode` through the core API (`add_points`, `add_lines`, `add_gsplats`).
 - The flag is stored in array metadata: `{"encoding": {..., "color_mode": "sdr"|"hdr"}}`
 - uint8 colors are implicitly SDR (no flag needed)
 - The encoding layer uses this flag to determine validation and encoding strategy
@@ -1397,7 +1642,12 @@ User provides data → Node validates → Writer writes to Zarr → Metadata ret
 **Valid Ranges**:
 - `opacity`: 0.0 to 1.0 (float)
 - `gamma`: 0.1 to 10.0 (float)
-- `blending_mode`: "normal" | "additive" | "max" (string)
+- `blending_mode`: "normal" | "additive" | "max" | "opaque" | "luminous" (string)
+  - `"normal"`: Standard alpha blending (semi-transparent), depthTest=true, depthWrite=true when opacity >= 0.99
+  - `"additive"`: Classic additive blending, ignores depth entirely (depthTest=false, depthWrite=false)
+  - `"max"`: Maximum of source and destination (brightest wins), depthTest=true, depthWrite=false
+  - `"opaque"`: Solid rendering with depth write (closest object wins), depthTest=true, depthWrite=true
+  - `"luminous"`: Same visual as additive but respects depth occlusion (depthTest=true, depthWrite=false)
 
 **Validation**: All values validated on assignment, invalid values raise ValueError
 
@@ -1800,6 +2050,14 @@ This specification is sufficient to re-implement the core package in any languag
 ---
 
 ## Changelog
+
+- **v0.13.0** (2026-02-28): ViewerConfig, blending modes, dim_order, and GSplats convenience methods
+  - Added ViewerConfig and CameraConfig documentation (Section 2b)
+  - Updated blending modes: added `"opaque"` and `"luminous"` to all blending_mode references with depth behavior descriptions
+  - Clarified `color_mode` is auto-detected by the compiler, not user-supplied at the core API level
+  - Added dim_order/fill documentation: dimension mapping for lower-dimensional data in higher-dimensional scenes
+  - Added _apply_dim_order algorithm specification including GSplats Cholesky factor embedding
+  - Added `add_gsplats_from_data`, `add_gsplats_from_file`, `add_gsplats_from_volume` convenience method documentation
 
 - **v0.12.0** (2025-12-09): Lines spatial indexing via dual ordering
   - **MAJOR**: Lines now support spatial indexing for efficient lazy loading

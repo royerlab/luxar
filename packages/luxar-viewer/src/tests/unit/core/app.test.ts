@@ -79,6 +79,7 @@ describe('LuxarApp', () => {
       init: vi.fn().mockResolvedValue(undefined),
       loadSceneData: vi.fn().mockResolvedValue(undefined),
       updateDynamicClippingPlanes: vi.fn(),
+      getSceneViewerConfig: vi.fn().mockReturnValue(undefined),
       dispose: vi.fn(),
       renderer: { domElement: {} },
       scene: {},
@@ -110,6 +111,9 @@ describe('LuxarApp', () => {
       setAnimationController: vi.fn(),
       setAdaptiveDPRManager: vi.fn(),
       setSceneId: vi.fn(),
+      setZarrViewerConfig: vi.fn(),
+      hasStoredSettings: vi.fn().mockReturnValue(false),
+      applyZarrDefaults: vi.fn(),
       dispose: vi.fn(),
     };
 

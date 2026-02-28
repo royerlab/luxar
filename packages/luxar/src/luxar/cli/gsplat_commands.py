@@ -6,10 +6,13 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 import typer
 from arbol import aprint, asection
+
+if TYPE_CHECKING:
+    import numpy as np
 
 app_gsplat = typer.Typer(help="Gaussian splat tools")
 

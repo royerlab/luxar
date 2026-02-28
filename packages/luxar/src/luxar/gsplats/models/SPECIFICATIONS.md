@@ -406,14 +406,14 @@ class GSplatData:
     stats: Dict[str, Any]        # Fitting statistics (loss history, convergence, etc.)
 ```
 
-**Persistence** (see `fit_result.py:16-148`):
+**Persistence** (see `gsplat_data.py`):
 ```python
-# Save result
-result.save('fitted_splats.npz')
+# Save result to .gsplats.zarr format
+result.save('fitted.gsplats.zarr')
 
 # Load result
 from luxar.gsplats import GSplatData
-result = GSplatData.load('fitted_splats.npz')
+result = GSplatData.load('fitted.gsplats.zarr')
 ```
 
 **Migration from Old API** (deprecated Nov 2025):

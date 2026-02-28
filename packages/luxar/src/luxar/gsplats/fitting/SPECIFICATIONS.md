@@ -330,25 +330,25 @@ be immediately clamped to 1.0, causing poor reconstruction.
   where `floats_per_splat = d + d×(d+1)/2 + 2` (7 for 2D, 11 for 3D, 16 for 4D)
 - **If seeds is None**: Auto-generate using combined decomposition and multiscale approach:
   ```python
-  # Generate seeds using both methods for comprehensive coverage
+  # Generate seeds using multiple methods for comprehensive coverage
   from luxar.gsplats.seeds import (
       combine_seeds,
       seed_from_decomposition,
-      seed_from_gaussian,
+      seed_from_edges,
   )
 
   # Both methods return GSplatData with scale-informed shapes
   seeds_decomp = seed_from_decomposition(V)
-  seeds_gaussian = seed_from_gaussian(V)
+  seeds_edges = seed_from_edges(V)
 
   # Combine positions with decomposition prioritized (coarse structure first)
   seed_centers = combine_seeds(
       seeds_decomp.centers,   # Decomposition first (global structure priority)
-      seeds_gaussian.centers,  # Then gaussian (local features)
+      seeds_edges.centers,     # Then edges (local features)
   )
   ```
 
-  **Rationale**: Combined approach ensures both global structure (decomposition) and local features (gaussian) are captured.
+  **Rationale**: Combined approach ensures both global structure (decomposition) and local features (edges) are captured.
 
 **L1 Regularization Defaults**:
 ```python

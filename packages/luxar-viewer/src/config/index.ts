@@ -437,7 +437,7 @@ export const config: AppConfig = {
       // Multi-type support: Float32Array, Uint8Array, Uint16Array (with auto normalization)
       // Reuses geometries when capacity AND types match (0ms allocation on reuse)
       // Integrated into scene-loader: updatePointsGeometry/updateLinesGeometry/updateGSplatsGeometry
-      useGPUBufferPool: false, // ❌ DISABLED — investigating gsplats 4D visibility bug (pool geometry not reaching mesh)
+      useGPUBufferPool: true,
       gpuPoolMaxSize: 20,
       gpuPoolEvictionFrames: 300,
 

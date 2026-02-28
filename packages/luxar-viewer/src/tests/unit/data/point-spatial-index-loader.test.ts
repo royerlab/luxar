@@ -42,28 +42,6 @@ vi.mock('../../../data/chunk-spatial-index', () => ({
   mergePointRanges: vi.fn(),
 }));
 
-// Mock RangeCache
-vi.mock('../../../data/range-cache', () => ({
-  RangeCache: vi.fn().mockImplementation(() => ({
-    get: vi.fn(),
-    set: vi.fn(),
-    has: vi.fn(),
-    clear: vi.fn(),
-    getStats: vi.fn().mockReturnValue({
-      hits: 5,
-      misses: 3,
-      hitRate: 0.625,
-      numEntries: 2,
-      totalMemory: 1024 * 1024,
-    }),
-    getMemoryInfo: vi.fn().mockReturnValue({
-      used: 1024 * 1024,
-      max: 100 * 1024 * 1024,
-      percentage: 1,
-    }),
-  })),
-}));
-
 // Import mocked modules
 import {
   loadChunkSpatialIndex,

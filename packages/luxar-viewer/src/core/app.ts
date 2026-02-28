@@ -296,6 +296,14 @@ export class LuxarApp {
     // Load scene data (animation loop will continue even if this fails)
     await this.sceneManager.loadSceneData(src);
 
+    // Pass zarr viewer_config to rendering controls (available after scene loads).
+    // If no localStorage settings exist for this scene, apply zarr defaults.
+    const viewerConfig = this.sceneManager.getSceneViewerConfig();
+    this.renderingControls.setZarrViewerConfig(viewerConfig);
+    if (!this.renderingControls.hasStoredSettings() && viewerConfig) {
+      this.renderingControls.applyZarrDefaults();
+    }
+
     // Initialize dimension sliders for nD data
     this.inputHandler.initDimensionSliders();
 

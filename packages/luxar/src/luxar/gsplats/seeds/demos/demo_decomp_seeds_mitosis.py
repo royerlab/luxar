@@ -5,7 +5,7 @@ Human mitosis seed generation comparison demo.
 This demo compares three seed generation methods on the scikit-image human mitosis dataset:
 1. Grid method: Uniform grid seeding for baseline coverage
 2. Decomposition method: Scale-hierarchical detection via image decomposition
-3. Edges method: Edge-based seeding with anisotropic shapes
+3. Edges method: Edge-based seeding with isotropic shapes
 
 All methods return GSplatData with scale-informed Gaussian shapes.
 Displays seed locations side-by-side in napari for visual comparison.

@@ -636,3 +636,130 @@ describe('workspace reuse safety', () => {
     expect(result.colors[5]).toBeCloseTo(1.0, 5); // B
   });
 });
+
+describe('discrete dimension handling', () => {
+  it('should use binary visibility for discrete hidden dims (on-slice = full amplitude)', () => {
+    // 4D data with dim 3 as discrete (time=23, slicePosition=23)
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([0, 0, 0, 23.0]),
+      amplitudes: new Float32Array([1.0]),
+      // 4D Cholesky: identity in spatial, tiny sigma=0.3 in time (L[3,3]=0.3)
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 0.3]),
+      colors: null,
+      sharpness: new Float32Array([2.0]),
+      splatCount: 1,
+      ndim: 4,
+    };
+
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 23.0],
+      tolerance: [1e10, 1e10, 1e10, 0.5],
+      dimensions: [
+        { name: 'X', unit: 'um', scale: 1 },
+        { name: 'Y', unit: 'um', scale: 1 },
+        { name: 'Z', unit: 'um', scale: 1 },
+        { name: 'Time', unit: 'frame', scale: 1, discrete: true, step: 1.0 },
+      ],
+    };
+
+    const result = processGSplatsTo3D(loaded, viewState);
+
+    expect(result.splatCount).toBe(1);
+    // Discrete dim: no Gaussian attenuation, full amplitude
+    expect(result.amplitudes[0]).toBeCloseTo(1.0, 5);
+  });
+
+  it('should filter out splats from wrong discrete step', () => {
+    // Splat at time=24, slicePosition=23, step=1.0 → |diff|=1.0 > 0.5 → invisible
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([0, 0, 0, 24.0]),
+      amplitudes: new Float32Array([1.0]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 0.3]),
+      colors: null,
+      sharpness: new Float32Array([2.0]),
+      splatCount: 1,
+      ndim: 4,
+    };
+
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 23.0],
+      tolerance: [1e10, 1e10, 1e10, 0.5],
+      dimensions: [
+        { name: 'X', unit: 'um', scale: 1 },
+        { name: 'Y', unit: 'um', scale: 1 },
+        { name: 'Z', unit: 'um', scale: 1 },
+        { name: 'Time', unit: 'frame', scale: 1, discrete: true, step: 1.0 },
+      ],
+    };
+
+    const result = processGSplatsTo3D(loaded, viewState);
+
+    expect(result.splatCount).toBe(0); // Filtered out by discrete check
+  });
+
+  it('should handle mixed discrete + continuous hidden dims', () => {
+    // 5D: dims 0-2 display, dim 3 discrete (time), dim 4 continuous (wavelength)
+    // Splat at correct time but offset in wavelength
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([0, 0, 0, 5.0, 2.0]),
+      amplitudes: new Float32Array([1.0]),
+      // 5D identity Cholesky (15 elements)
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
+      colors: null,
+      sharpness: new Float32Array([2.0]),
+      splatCount: 1,
+      ndim: 5,
+    };
+
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 5.0, 0.0], // At time=5, wavelength=0
+      tolerance: [1e10, 1e10, 1e10, 0.5, 3.0],
+      dimensions: [
+        { name: 'X', unit: 'um', scale: 1 },
+        { name: 'Y', unit: 'um', scale: 1 },
+        { name: 'Z', unit: 'um', scale: 1 },
+        { name: 'Time', unit: 'frame', scale: 1, discrete: true, step: 1.0 },
+        { name: 'Wavelength', unit: 'nm', scale: 1 }, // continuous
+      ],
+    };
+
+    const result = processGSplatsTo3D(loaded, viewState);
+
+    // Time passes (discrete, exact match), wavelength offset = 2.0
+    // Continuous Mahalanobis for dim 4 only: diff=2.0, sigma=1 → mahal=2.0
+    // Attenuation = exp(-0.5 * 2.0^2) = exp(-2.0) ≈ 0.1353
+    expect(result.splatCount).toBe(1);
+    const expected = Math.exp(-0.5 * 4.0);
+    expect(result.amplitudes[0]).toBeCloseTo(expected, 4);
+  });
+
+  it('should default to continuous (backward compat) when no dimensions metadata', () => {
+    // Without dimensions metadata, all hidden dims use Gaussian attenuation
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([0, 0, 0, 0.5]),
+      amplitudes: new Float32Array([1.0]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1]),
+      colors: null,
+      sharpness: new Float32Array([2.0]),
+      splatCount: 1,
+      ndim: 4,
+    };
+
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [1, 1, 1, 1],
+      // No dimensions metadata → backward-compatible Gaussian behavior
+    };
+
+    const result = processGSplatsTo3D(loaded, viewState);
+
+    expect(result.splatCount).toBe(1);
+    // Gaussian attenuation: mahal=0.5, sharpness=2 → exp(-0.5 * 0.25) ≈ 0.8825
+    const expected = Math.exp(-0.5 * 0.25);
+    expect(result.amplitudes[0]).toBeCloseTo(expected, 4);
+  });
+});

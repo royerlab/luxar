@@ -366,7 +366,7 @@ Navigation:
                         sharpness=gsplats.sharpnesses,
                         dim_order=["z", "y", "x"],
                         fill={own_dim: 1.0},
-                        fill_sigma={own_dim: 0.3},
+                        fill_sigma={own_dim: 0},
                         extend_to_all=[other_dim],
                         opacity=1.0,
                         blending_mode="additive",

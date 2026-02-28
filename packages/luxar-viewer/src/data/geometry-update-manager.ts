@@ -675,6 +675,18 @@ export class GeometryUpdateManager {
         `Projecting ${data.splatCount} gsplats to 3D using worker (ndim=${data.ndim})`
       );
 
+      // Extract discrete dimension info for worker
+      const discreteDims: number[] = [];
+      const discreteSteps: Record<number, number> = {};
+      if (viewState.dimensions) {
+        for (let d = 0; d < viewState.dimensions.length; d++) {
+          if (viewState.dimensions[d]?.discrete && !viewState.displayDims.includes(d)) {
+            discreteDims.push(d);
+            discreteSteps[d] = viewState.dimensions[d].step ?? 1.0;
+          }
+        }
+      }
+
       const workerResult = await worker.projectGSplatsTo3D({
         positions: data.positions,
         choleskyFactors: data.choleskyFactors,
@@ -685,6 +697,8 @@ export class GeometryUpdateManager {
         slicePosition: viewState.slicePosition,
         ndim: data.ndim,
         splatCount: data.splatCount,
+        discreteDims,
+        discreteSteps,
       });
 
       log.info(

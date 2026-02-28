@@ -34,9 +34,10 @@ The utils package provides specialized functionality that extends beyond basic 3
 ```typescript
 utils/
 ├── console-interceptor.ts # Console output capture and buffering system
-├── hdr-detection.ts      # HDR display capability detection
-├── memory-detector.ts    # System memory detection for cache management
-└── log.ts                # Structured logging utility
+├── escape-html.ts         # HTML entity escaping for safe rendering
+├── hdr-detection.ts       # HDR display capability detection
+├── log.ts                 # Structured logging utility
+└── memory-detector.ts     # System memory detection for cache management
 ```
 
 Each module is focused on a specific domain with minimal dependencies, promoting reusability and maintainability.
@@ -209,17 +210,6 @@ if (isHDRDisplay(hdrCapabilities)) {
 ```
 
 ## Performance Considerations
-
-### Slicing Optimization
-
-- **Early Termination**: Break loops as soon as point is excluded
-- **Memory Reuse**: Reuse buffers when possible to minimize allocations
-
-### Navigation Efficiency
-
-- **Minimal Updates**: Only update GPU when dimensions actually change
-- **Batch Operations**: Group multiple attribute updates together
-- **Bounds Caching**: Cache bounding sphere calculations when possible
 
 ### Console Buffer Management
 

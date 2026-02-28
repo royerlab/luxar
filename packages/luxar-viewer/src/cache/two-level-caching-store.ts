@@ -70,6 +70,13 @@ export class TwoLevelCachingStore implements AsyncReadable {
   }
 
   /**
+   * Get the attached prefetcher (if any).
+   */
+  getPrefetcher(): ChunkPrefetcher | null {
+    return this.prefetcher;
+  }
+
+  /**
    * Initialize the two-level cache and validate against remote dataset.
    *
    * Performs complete cache setup including OPFS initialization and content

@@ -1,50 +1,35 @@
 # luxar.utils.tests - Technical Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2026-01-02
+**Version**: 1.1.0
+**Last Updated**: 2026-02-28
 
 ## Purpose
 
-Test helpers and test cases for this package.
+Tests for the Luxar utility modules: data type support, error handling, demo scene generators, builder helpers, and array utility functions.
 
 ---
 
-## Core Concepts
+## Test Files
 
-- Defines the responsibilities of this package and its interactions with neighbors.
+| File | Description |
+|------|-------------|
+| `test_dtype_support.py` | Encoding mode support with the compiler (replaces old DataTypeConfig tests) |
+| `test_error_handling.py` | Comprehensive error handling tests for Luxar |
+| `test_demos.py` | Demo scene generator tests |
+| `test_builder_helpers.py` | Builder helper function tests |
+| `test_array.py` | Array utility function tests |
 
----
-
-## Data Structures
-
-- Follows the shared Luxar data model and scene conventions.
-
----
-
-## Algorithms
-
-- No standalone algorithms beyond module-level orchestration.
-
----
-
-## Validation Rules
-
-- Inputs must follow the constraints enforced by upstream validators.
-
----
-
-## Cross-Language Compatibility
-
-- No additional cross-language constraints beyond shared Luxar specs.
+**Total**: 5 test files
 
 ---
 
 ## Related Specifications
 
-- Refer to adjacent package SPECIFICATIONS.md files as needed.
+- `luxar.utils` package: `../SPECIFICATIONS.md`
 
 ---
 
 ## Changelog
 
-- **v1.0.0** (2026-01-02): Initial specification.
+- **v1.1.0** (2026-02-28): Rewritten with actual test file inventory (5 files).
+- **v1.0.0** (2026-01-02): Initial specification (boilerplate).

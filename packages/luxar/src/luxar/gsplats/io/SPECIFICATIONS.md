@@ -279,7 +279,7 @@ def morton_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
 The system supports both Morton and Hilbert ordering methods:
 
 ```python
-def sort_splats_spatially(
+def sort_splats_spatial(
     centers: np.ndarray,
     method: Literal["morton", "hilbert"] = "hilbert",
     resolution: int = None,  # Auto if None, max 2^16
@@ -547,7 +547,7 @@ print(result.stats['time_seconds'])
 ### Inspection
 
 ```python
-from luxar.gsplats import inspect_gsplats_zarr
+from luxar.gsplats.io import inspect_gsplats_zarr
 
 info = inspect_gsplats_zarr("fitted.gsplats.zarr")
 print(info)
