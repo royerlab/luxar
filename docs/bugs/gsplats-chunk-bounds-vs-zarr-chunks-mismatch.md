@@ -126,3 +126,17 @@ Load all zarr chunks for a visible node, then use `chunk_bounds` client-side to 
 This bug was discovered while testing the `demo_gsplats_4d_zebrafish_timelapse.py` demo, which creates a 4D scene with 64 gsplats nodes (one per timepoint of a zebrafish embryo confocal recording). The same bug would affect any scene with gsplats nodes that have more spatial partitions than zarr chunks — which happens whenever the splat count is small enough to fit in a single zarr chunk but the Morton/Hilbert ordering creates multiple partitions.
 
 The existing `demo_gsplats_4d_cells3d_multichannel.py` works because it has only 2 channel nodes with ~15,000 splats each — likely producing chunk counts that match partition counts. The zebrafish demo has 64 nodes with 1,200–7,000 splats each, which consistently triggers the mismatch.
+
+## Resolution
+
+**Fixed** by passing `ordering_data` / `spatial_index_data` to `_calculate_intelligent_chunks()` at all 11 call sites in `compiler.py` that were missing it. Also fixed the function itself to handle 1D arrays (radii, amplitudes, sharpness, widths) with spatial index data — previously only 2D arrays used the `chunk_size` from spatial ordering.
+
+**Note on symptoms**: The viewer uses `zarrita.get(array, sliceSpec)` with logical row ranges (not direct chunk file paths), so zarrita handles the physical chunk mapping internally. The primary consequence of misaligned chunks is **bandwidth waste** (the same physical zarr chunk fetched repeatedly for different partitions), not HTTP 404 errors. The 404 errors described above may have been observed with a different zarr client or HTTP serving configuration.
+
+The fix was applied to:
+- `write_gsplats()`: centers, amplitudes, cholesky_factors, colors, sharpness (5 sites)
+- `write_lines()`: widths, colors, sharpness (3 sites)
+- `_write_colors_dataset()`, `_write_radii_dataset()`, `_write_sharpness_dataset()` (3 sites, used by `write_points()`)
+- `_calculate_intelligent_chunks()`: 1D branch now checks `spatial_index_data`
+
+**Option A** (compiler-side alignment) was implemented. Existing data must be re-compiled to benefit.
