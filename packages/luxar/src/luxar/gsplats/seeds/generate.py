@@ -37,7 +37,7 @@ def generate_seeds(
         - "auto": Fast edges + grid combination (default, recommended)
         - "decomposition": Multi-scale decomposition for blob-like features (slow)
         - "grid": Uniform grid for spatial coverage
-        - "edges": Edge-based with anisotropic shapes (for boundaries)
+        - "edges": Edge-based boundary detection with Sobel gradients
         - "decomposition,edges,grid": Include all methods (comma-separated)
     **kwargs
         Method-specific parameters. Common parameters are routed to all applicable
@@ -139,7 +139,7 @@ def generate_seeds(
     - Default method is "auto" (fast edges + grid combination)
     - "decomposition" is best for blob-like features but slow
     - "grid" provides uniform spatial coverage
-    - "edges" captures boundaries with anisotropic shapes
+    - "edges" captures boundaries with isotropic shapes (orientation learned during fitting)
     - Use "decomposition,edges,grid" to include all methods
     - The fitter will refine all parameters during optimization
     """

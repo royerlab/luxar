@@ -306,6 +306,15 @@ export class SceneLoader {
       );
     }
 
+    // Extract viewer_config if present (Python API scene defaults)
+    if (sceneAttrs?.viewer_config) {
+      this.rootGroup.userData.viewerConfig = sceneAttrs.viewer_config;
+      log.info(
+        Modules.SCENE_LOADER,
+        `Viewer config found in zarr: ${Object.keys(sceneAttrs.viewer_config).join(', ')}`
+      );
+    }
+
     // Store scene-level position bounds (from Python compiler)
     // These bounds represent the full dataset extent, available immediately without loading points
     if (sceneAttrs?.position_bounds) {
@@ -1020,30 +1029,12 @@ export class SceneLoader {
       cholesky45 = packed.cholesky45;
     }
 
-    // Log nD→3D filtering results for diagnostic purposes
+    // Warn if all loaded splats were filtered out (unexpected in normal operation)
     if (data.splatCount > 0 && processed.splatCount === 0) {
       log.warning(
         Modules.SCENE_LOADER,
         `GSplats ${path}: all ${data.splatCount} loaded splats were filtered out during nD→3D processing. ` +
           `slicePosition=[${viewState.slicePosition.join(', ')}], displayDims=[${viewState.displayDims.join(', ')}], ndim=${data.ndim}`
-      );
-    } else if (data.splatCount > 0) {
-      // Show pre/post amplitude comparison to diagnose attenuation issues
-      const preMax = Math.max(
-        ...Array.from(data.amplitudes.slice(0, Math.min(100, data.splatCount)))
-      );
-      const postMax =
-        processed.splatCount > 0
-          ? Math.max(
-            ...Array.from(processed.amplitudes.slice(0, Math.min(100, processed.splatCount)))
-          )
-          : 0;
-      log.info(
-        Modules.SCENE_LOADER,
-        `GSplats ${path}: ${processed.splatCount}/${data.splatCount} visible, ` +
-          `ampMax pre=${preMax.toFixed(6)} post=${postMax.toFixed(6)} ` +
-          `(attenuation=${preMax > 0 ? (postMax / preMax).toFixed(4) : 'N/A'}), ` +
-          `slice=[${viewState.slicePosition.join(', ')}], worker=${useWorkerProjection}`
       );
     }
 
@@ -1118,6 +1109,18 @@ export class SceneLoader {
         );
       }
 
+      // Extract discrete dimension info for worker
+      const discreteDims: number[] = [];
+      const discreteSteps: Record<number, number> = {};
+      if (viewState.dimensions) {
+        for (let d = 0; d < viewState.dimensions.length; d++) {
+          if (viewState.dimensions[d]?.discrete && !viewState.displayDims.includes(d)) {
+            discreteDims.push(d);
+            discreteSteps[d] = viewState.dimensions[d].step ?? 1.0;
+          }
+        }
+      }
+
       const workerResult = await worker.projectGSplatsTo3D({
         positions: data.positions,
         choleskyFactors: data.choleskyFactors,
@@ -1128,6 +1131,8 @@ export class SceneLoader {
         slicePosition: viewState.slicePosition,
         ndim: data.ndim,
         splatCount: data.splatCount,
+        discreteDims,
+        discreteSteps,
       });
 
       if (this._updateVersion <= 1) {
@@ -1509,7 +1514,8 @@ export class SceneLoader {
       this.arrayRefRegistry,
       this.store!,
       this.profiler ?? undefined,
-      this.l0Cache ?? undefined
+      this.l0Cache ?? undefined,
+      this.cachingStore?.getPrefetcher() ?? undefined
     );
 
     return loader;
@@ -1642,7 +1648,8 @@ export class SceneLoader {
       this.arrayRefRegistry,
       this.store!,
       this.profiler ?? undefined,
-      this.l0Cache ?? undefined
+      this.l0Cache ?? undefined,
+      this.cachingStore?.getPrefetcher() ?? undefined
     );
 
     return loader;
@@ -1667,7 +1674,8 @@ export class SceneLoader {
       this.arrayRefRegistry,
       this.store!,
       this.profiler ?? undefined,
-      this.l0Cache ?? undefined
+      this.l0Cache ?? undefined,
+      this.cachingStore?.getPrefetcher() ?? undefined
     );
 
     // Connect to monitor if available

@@ -163,20 +163,37 @@ export function processGSplatsTo3D(
   // Sort dimensions for consistent submatrix extraction
   const sortedDisplayDims = [...displayDims].sort((a, b) => a - b);
   const sortedHiddenDims = [...hiddenDims].sort((a, b) => a - b);
-  const numHidden = sortedHiddenDims.length;
+
+  // Separate hidden dims into discrete (binary visibility) and continuous (Gaussian attenuation).
+  // Discrete dimensions (e.g., time, channel) use step-based in/out: if the splat's center
+  // is within half a step of slicePosition, it's fully visible; otherwise invisible.
+  // Continuous dimensions use the existing marginal Cholesky + Mahalanobis attenuation.
+  // When no dimension metadata is available, all hidden dims default to continuous (backward compat).
+  const discreteHiddenDims: number[] = [];
+  const continuousHiddenDims: number[] = [];
+  for (const dim of sortedHiddenDims) {
+    if (viewState.dimensions?.[dim]?.discrete) {
+      discreteHiddenDims.push(dim);
+    } else {
+      continuousHiddenDims.push(dim);
+    }
+  }
+  const numContinuousHidden = continuousHiddenDims.length;
 
   // Compute packed sizes
   const fullPackedSize = (ndim * (ndim + 1)) / 2;
   const display3DPackedSize = 6; // 3D Cholesky has 6 elements
-  const hiddenPackedSize = (numHidden * (numHidden + 1)) / 2;
+  const continuousHiddenPackedSize = (numContinuousHidden * (numContinuousHidden + 1)) / 2;
 
   // Minimum amplitude threshold (splats with lower amplitude are invisible)
   const minAmplitude = 1e-6;
 
   // Pre-allocate reusable temporary buffers ONCE (avoid per-splat GC pressure)
-  const hiddenCholesky = numHidden > 0 ? new Float32Array(hiddenPackedSize) : null;
-  const diff = numHidden > 0 ? new Array<number>(numHidden) : null;
-  const yBuffer = numHidden > 0 ? new Array<number>(numHidden) : null;
+  // Buffers sized for continuous hidden dims only (discrete dims don't need Cholesky)
+  const hiddenCholesky =
+    numContinuousHidden > 0 ? new Float32Array(continuousHiddenPackedSize) : null;
+  const diff = numContinuousHidden > 0 ? new Array<number>(numContinuousHidden) : null;
+  const yBuffer = numContinuousHidden > 0 ? new Array<number>(numContinuousHidden) : null;
 
   // Single pass: compute attenuation for ALL splats, cache the values,
   // and collect visible indices. This avoids recomputing the expensive
@@ -186,30 +203,56 @@ export function processGSplatsTo3D(
   const visibleIndices: number[] = [];
 
   for (let i = 0; i < splatCount; i++) {
+    const centerOffset = i * ndim;
+
+    // Step 1: Binary visibility check for discrete hidden dimensions.
+    // If the splat's center is more than half a step away in any discrete dim,
+    // it belongs to a different slice and should be invisible.
+    let discreteVisible = true;
+    for (let dIdx = 0; dIdx < discreteHiddenDims.length; dIdx++) {
+      const dim = discreteHiddenDims[dIdx];
+      const step = viewState.dimensions?.[dim]?.step ?? 1.0;
+      const absDiff = Math.abs(slicePosition[dim] - loaded.positions[centerOffset + dim]);
+      if (absDiff > step * 0.5) {
+        discreteVisible = false;
+        break;
+      }
+    }
+
+    if (!discreteVisible) {
+      attenuations[i] = 0.0;
+      continue;
+    }
+
+    // Step 2: Gaussian attenuation for continuous hidden dimensions only.
     const splatSharpness = loaded.sharpness?.[i] ?? 2.0;
-
     let attenuation = 1.0;
-    if (numHidden > 0) {
-      const centerOffset = i * ndim;
 
-      // Fill diff vector in-place (no allocation)
-      for (let hIdx = 0; hIdx < numHidden; hIdx++) {
+    if (numContinuousHidden > 0) {
+      // Fill diff vector for continuous hidden dims only
+      for (let hIdx = 0; hIdx < numContinuousHidden; hIdx++) {
         diff![hIdx] =
-          slicePosition[sortedHiddenDims[hIdx]] -
-          loaded.positions[centerOffset + sortedHiddenDims[hIdx]];
+          slicePosition[continuousHiddenDims[hIdx]] -
+          loaded.positions[centerOffset + continuousHiddenDims[hIdx]];
       }
 
-      // Compute marginal Cholesky into reusable buffer
+      // Compute marginal Cholesky for continuous hidden dims
       computeMarginalCholesky(
         loaded.choleskyFactors,
         i * fullPackedSize,
-        sortedHiddenDims,
+        continuousHiddenDims,
         hiddenCholesky!,
         0
       );
 
       // Compute Mahalanobis distance using reusable y buffer
-      const mahalDist = mahalanobisDistanceReuse(diff!, hiddenCholesky!, 0, numHidden, yBuffer!);
+      const mahalDist = mahalanobisDistanceReuse(
+        diff!,
+        hiddenCholesky!,
+        0,
+        numContinuousHidden,
+        yBuffer!
+      );
 
       attenuation = Math.exp(-0.5 * Math.pow(mahalDist, splatSharpness));
     }

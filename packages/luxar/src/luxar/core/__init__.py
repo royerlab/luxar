@@ -25,6 +25,13 @@ from .transforms import (
     translate,
     translation,
 )
+from .viewer_config import (
+    AnimationConfig,
+    CameraConfig,
+    DimensionsConfig,
+    UIConfig,
+    ViewerConfig,
+)
 
 __all__ = [
     # Classes
@@ -37,6 +44,11 @@ __all__ = [
     "GSplats",
     "Dimension",
     "Dimensions",
+    "ViewerConfig",
+    "CameraConfig",
+    "UIConfig",
+    "DimensionsConfig",
+    "AnimationConfig",
     # Transform functions
     "compose",
     "from_list",

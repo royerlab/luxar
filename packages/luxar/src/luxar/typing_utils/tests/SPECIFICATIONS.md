@@ -1,50 +1,32 @@
 # luxar.typing_utils.tests - Technical Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2026-01-02
+**Version**: 1.1.0
+**Last Updated**: 2026-02-28
 
 ## Purpose
 
-Test helpers and test cases for this package.
+Tests for the Luxar typing utilities: configuration constants and enum types used throughout the library.
 
 ---
 
-## Core Concepts
+## Test Files
 
-- Defines the responsibilities of this package and its interactions with neighbors.
+| File | Description |
+|------|-------------|
+| `test_config.py` | Tests for `typing_utils/config.py` module (defaults, compression settings, etc.) |
+| `test_enums.py` | Tests for enum types and their validation methods |
 
----
-
-## Data Structures
-
-- Follows the shared Luxar data model and scene conventions.
-
----
-
-## Algorithms
-
-- No standalone algorithms beyond module-level orchestration.
-
----
-
-## Validation Rules
-
-- Inputs must follow the constraints enforced by upstream validators.
-
----
-
-## Cross-Language Compatibility
-
-- No additional cross-language constraints beyond shared Luxar specs.
+**Total**: 2 test files
 
 ---
 
 ## Related Specifications
 
-- Refer to adjacent package SPECIFICATIONS.md files as needed.
+- `luxar.typing_utils` package: `../SPECIFICATIONS.md`
 
 ---
 
 ## Changelog
 
-- **v1.0.0** (2026-01-02): Initial specification.
+- **v1.1.0** (2026-02-28): Rewritten with actual test file inventory (2 files).
+- **v1.0.0** (2026-01-02): Initial specification (boilerplate).

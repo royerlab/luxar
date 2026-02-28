@@ -213,15 +213,18 @@ for vis in result.stats['per_scale_visualizations']:
 For specialized use cases requiring custom candidate generation:
 
 ```python
-from luxar.gsplats.seeds import seed_from_gaussian
+from luxar.gsplats.seeds import generate_seeds, seed_from_edges
 
-# Custom seed generation with specific parameters
-custom_seeds = seed_from_gaussian(
+# Custom seed generation with specific method
+custom_seeds = seed_from_edges(
     image,
-    scales=(1.0, 2.0, 4.0),      # Custom scales
-    peaks_per_scale=1000,        # Custom density
-    percentile_thresh=95,        # Custom selectivity
+    n_seeds=1000,                # Custom density
+    min_distance=2.0,            # Minimum seed spacing
+    edge_threshold_rel=0.1,      # Edge detection threshold
 )
+
+# Or use unified entry point
+custom_seeds = generate_seeds(image, method="edges")
 
 result = fit_gaussian_splats(
     image, seeds=custom_seeds
@@ -690,15 +693,22 @@ Main fitting function with automatic optimizations.
 - `params`: (N, d + d*(d+1)/2) array of [centers, packed_cholesky]
 - `amps`: (N,) array of amplitudes
 
-#### `seed_from_gaussian(V, **kwargs)`
-Generate initial seed splats using multiscale Gaussian detection.
-Returns `GSplatData` with scale-informed Gaussian shapes (sigma = detection scale).
+#### `generate_seeds(V, method="auto", **kwargs)`
+Unified entry point for all seed generation methods.
+Returns `GSplatData` with scale-informed Gaussian shapes.
 
 **Key Parameters:**
-- `scales`: Gaussian filter scales (default: (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0))
-- `peaks_per_scale`: Maximum peaks per scale (default: None)
-- `percentile_thresh`: Intensity threshold percentile (default: 75.0)
-- `min_distance`: Minimum distance between candidates (default: 2.0)
+- `method`: `"auto"` (edges+grid), `"edges"`, `"grid"`, `"decomposition"`, or comma-separated combo
+- `**kwargs`: Passed to the selected seeding method(s)
+
+#### `seed_from_edges(V, n_seeds=None, min_distance=2.0, edge_threshold_rel=0.1, device=None, ...)`
+Edge-based seeding using Sobel gradients with Poisson disk sampling.
+
+#### `seed_from_grid(V, spacing=None, jitter=0.0, sigma=None, ...)`
+Uniform grid seeding for spatial coverage with optional jitter.
+
+#### `seed_from_decomposition(V, scales=..., ignore_finest_k=1, ...)`
+Scale-hierarchical detection via optimized image decomposition.
 
 ## Device Support and Performance
 

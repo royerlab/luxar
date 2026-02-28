@@ -684,6 +684,10 @@ export class GPUBufferPool {
     // Update instance count
     geometry.instanceCount = count;
 
+    // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (geometry as any)._maxInstanceCount;
+
     // CRITICAL: Recompute bounding box after position updates
     // Without this, frustum culling uses stale bounds from previous frame/time slice
     // This causes geometry to disappear when zooming close (small frustum excludes stale box)
@@ -878,6 +882,12 @@ export class GPUBufferPool {
     }
 
     geometry.instanceCount = count;
+
+    // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
+    // Without this, geometries initially created with 0 instances cache _maxInstanceCount=0,
+    // causing the renderer to draw min(instanceCount, 0) = 0 instances even after updating.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (geometry as any)._maxInstanceCount;
 
     // CRITICAL: Recompute bounding box from updated center positions
     // GSplats use aCenter attribute for positions in frustum culling

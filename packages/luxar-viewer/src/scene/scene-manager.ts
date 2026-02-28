@@ -12,6 +12,8 @@ import { ControlsManager } from '../controls/controls-manager';
 import { loadScene } from '../data';
 import { showLoadingIndicator, hideLoadingIndicator, showError } from '../ui/helpers';
 import { config } from '../config';
+import { extractCameraOverrides, extractBackgroundColor } from '../config/viewer-config-utils';
+import type { ZarrViewerConfig } from '../types/zarr';
 import { PostProcessingManager } from '../rendering/post-processing-manager';
 import { materialManager } from '../rendering/material-manager';
 import {
@@ -472,6 +474,9 @@ export class SceneManager extends THREE.EventDispatcher<{
       // Materials created during loading already have correct FOV/resolution
       // No need to update again - this would be redundant work
 
+      // Apply viewer config from zarr (camera position, background color)
+      this.applyZarrViewerConfig(root);
+
       // Auto-adjust clipping planes using scene bounds from metadata
       // This uses position_bounds stored in zarr, which represents the full dataset extent
       // and doesn't require waiting for point data to load
@@ -486,6 +491,106 @@ export class SceneManager extends THREE.EventDispatcher<{
       showError(`Failed to load scene from "${src}". Please check the path and try again.`);
       throw error;
     }
+  }
+
+  /**
+   * Get the viewer config from the loaded scene's root group userData.
+   */
+  getSceneViewerConfig(): ZarrViewerConfig | undefined {
+    const root = this.scene.children.find((c) => c.name === 'LuxarScene');
+    return root?.userData?.viewerConfig as ZarrViewerConfig | undefined;
+  }
+
+  /**
+   * Apply viewer config from zarr (camera position/target/up, background color).
+   * Camera config is applied on every load — it's the data author's intended "home" view.
+   */
+  private applyZarrViewerConfig(root: THREE.Group): void {
+    const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
+    if (!viewerConfig) return;
+
+    // Apply camera position/target/up
+    const camOverrides = extractCameraOverrides(viewerConfig);
+    if (camOverrides.position) {
+      this.camera.position.set(
+        camOverrides.position.x,
+        camOverrides.position.y,
+        camOverrides.position.z
+      );
+    }
+
+    // target_node takes precedence over explicit target coordinates.
+    // Use controls.lookAt() so that orbit/arcball controls pivot around the
+    // correct point, not just the camera orientation.
+    if (camOverrides.targetNode) {
+      const resolved = this.resolveTargetNode(root, camOverrides.targetNode);
+      if (resolved) {
+        this.controls.lookAt(resolved, false);
+        log.info(
+          Modules.SCENE_MANAGER,
+          `Resolved target_node '${camOverrides.targetNode}' to (${resolved.x.toFixed(2)}, ${resolved.y.toFixed(2)}, ${resolved.z.toFixed(2)})`
+        );
+      } else {
+        log.warning(
+          Modules.SCENE_MANAGER,
+          `target_node '${camOverrides.targetNode}' not found in scene graph`
+        );
+      }
+    } else if (camOverrides.target) {
+      const targetVec = new THREE.Vector3(
+        camOverrides.target.x,
+        camOverrides.target.y,
+        camOverrides.target.z
+      );
+      this.controls.lookAt(targetVec, false);
+    }
+
+    if (camOverrides.up) {
+      this.camera.up.set(camOverrides.up.x, camOverrides.up.y, camOverrides.up.z);
+    }
+    if (
+      camOverrides.position ||
+      camOverrides.target ||
+      camOverrides.targetNode ||
+      camOverrides.up
+    ) {
+      this.camera.updateMatrixWorld(true);
+      this.controls.update();
+      log.info(Modules.SCENE_MANAGER, 'Applied camera config from zarr viewer_config');
+    }
+
+    // Apply background color
+    const bgColor = extractBackgroundColor(viewerConfig);
+    if (bgColor) {
+      this.scene.background = new THREE.Color(bgColor);
+      log.info(Modules.SCENE_MANAGER, `Applied background color from zarr: ${bgColor}`);
+    }
+  }
+
+  /**
+   * Find a named node in the scene graph and return its bounding box center.
+   *
+   * @param root - Scene graph root to search
+   * @param nodeName - Name of the node to find
+   * @returns Bounding box center, or null if node not found
+   */
+  private resolveTargetNode(root: THREE.Group, nodeName: string): THREE.Vector3 | null {
+    let targetObject: THREE.Object3D | null = null;
+
+    root.traverse((obj) => {
+      if (obj.name === nodeName && !targetObject) {
+        targetObject = obj;
+      }
+    });
+
+    if (!targetObject) return null;
+
+    const box = new THREE.Box3().setFromObject(targetObject);
+    if (box.isEmpty()) return null;
+
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    return center;
   }
 
   /**

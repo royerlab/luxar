@@ -36,7 +36,7 @@ import { GSplatsDataAccumulator, type AccumulatorStats } from './data-accumulato
 import { config as appConfig } from '../config';
 import { getWorkerPool } from '../workers/worker-pool';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
-import { DecompressedChunkCache, wrapWithCache } from '../cache';
+import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache';
 
 /**
  * GSplats data loader using spatial indices for efficient nD queries.
@@ -61,6 +61,9 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
 
+  // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
+  private prefetcher: ChunkPrefetcher | null = null;
+
   // Suppress detail logs after first successful view update
   private _initialLoadDone = false;
 
@@ -78,15 +81,24 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable,
     profiler?: UpdateProfiler,
-    l0Cache?: DecompressedChunkCache
+    l0Cache?: DecompressedChunkCache,
+    prefetcher?: ChunkPrefetcher
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
     this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
     this.zarrStore = zarrStore || null;
     this.l0Cache = l0Cache || null;
+    this.prefetcher = prefetcher || null;
     // profiler parameter kept for API compatibility; session is passed directly to methods
     void profiler;
+  }
+
+  /** Register array shape with the prefetcher for upper-bounds checking. */
+  private registerBounds(arrayName: string, array: zarr.Array<zarr.DataType, zarr.Readable>): void {
+    if (!this.prefetcher) return;
+    const path = `${this.node.path.startsWith('/') ? this.node.path.slice(1) : this.node.path}/${arrayName}`;
+    this.prefetcher.registerArrayBounds(path, array.shape, array.chunks);
   }
 
   /**
@@ -147,6 +159,11 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       this.arrays.centers = centersArray;
       this.arrays.amplitudes = amplitudesArray;
       this.arrays.cholesky_factors = choleskyArray;
+
+      // Register array bounds with prefetcher for upper-bounds checking
+      this.registerBounds('centers', centersArray);
+      this.registerBounds('amplitudes', amplitudesArray);
+      this.registerBounds('cholesky_factors', choleskyArray);
     } catch (e) {
       log.error(Modules.SPATIAL_INDEX_LOADER, 'Failed to open required GSplats arrays:', e);
       throw e;
@@ -155,6 +172,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     // Try to open optional arrays
     try {
       let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+      this.registerBounds('colors', colorsArray);
       if (this.l0Cache) {
         colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`);
       }
@@ -168,6 +186,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
         kind: 'array',
       });
+      this.registerBounds('sharpnesses', sharpnessArray);
       if (this.l0Cache) {
         sharpnessArray = wrapWithCache(
           sharpnessArray,
@@ -376,21 +395,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       sharpness = this.arrays.sharpness
         ? await this.loadArrayRanges('sharpness', splatRanges, 1)
         : null;
-    }
-
-    // DATA VALIDATION: Check loaded values to diagnose 4D visibility bug
-    if (totalSplats > 0 && attrs.ndim >= 4) {
-      const ndim = attrs.ndim;
-      const timeCol = ndim - 1; // Last dimension is typically time
-      const firstTime = centers[timeCol]; // First splat's time coordinate
-      const firstAmp = amplitudes[0];
-      const maxAmp = Math.max(...Array.from(amplitudes.slice(0, Math.min(100, totalSplats))));
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `DATA CHECK ${this.node.path}: ${totalSplats} splats loaded, ndim=${ndim}, ` +
-          `first_center=[${centers.slice(0, ndim).join(', ')}], ` +
-          `time_col[0]=${firstTime.toFixed(3)}, amp[0]=${firstAmp.toFixed(6)}, ampMax100=${maxAmp.toFixed(6)}`
-      );
     }
 
     return {

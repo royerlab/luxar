@@ -1,7 +1,7 @@
 # luxar.cli - Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2025-12-11
+**Version**: 1.2.0
+**Last Updated**: 2026-02-28
 
 ## Purpose
 
@@ -119,6 +119,165 @@ The `cli` package provides command-line interface for building, serving, and ins
 
 ---
 
+### `luxar export`
+
+**Purpose**: Export a zarr scene and the Luxar viewer into a standalone offline folder. The exported folder contains everything needed to view the scene without any external dependencies beyond Python 3 and a web browser.
+
+**Parameters**:
+- `source`: Path to the zarr dataset (required, positional)
+- `--output, -o`: Output folder for the standalone export (required)
+- `--overwrite`: Overwrite existing output folder (default: False)
+- `--open`: Serve and open browser after export (default: False)
+- `--port, -p`: Port for local server when using --open (default: 8000)
+
+**Behavior**:
+1. Validate the source is a valid zarr store
+2. Check that the viewer has been built (error if not)
+3. If output exists and --overwrite not set, raise FileExistsError
+4. Copy viewer dist files (HTML, JS, CSS, WASM) to `output/viewer/`
+5. Rewrite absolute asset paths to relative (for serving from subdirectory)
+6. Copy zarr data to `output/data/`
+7. Generate `serve.py` (Python 3 stdlib only, no pip install needed)
+8. Generate `README.txt` with usage instructions
+9. If `--open`: Launch the generated serve.py script
+
+**Output Structure**:
+```
+output/
+  viewer/         # Luxar viewer (HTML, JS, CSS, WASM)
+  data/           # Zarr dataset (copied as-is)
+  serve.py        # Local HTTP server (Python stdlib only)
+  README.txt      # Usage instructions
+```
+
+**Example**:
+```bash
+luxar export my_scene.zarr -o my_export/
+luxar export my_scene.zarr -o my_export/ --overwrite
+luxar export my_scene.zarr -o my_export/ --open
+```
+
+---
+
+### `luxar gsplat`
+
+**Purpose**: Subcommand group for Gaussian splat tools. Provides operations for inspecting, viewing, and pruning `.gsplats.zarr` datasets.
+
+**Subcommands**:
+- `luxar gsplat info` - Show detailed dataset statistics
+- `luxar gsplat napari` - Open dataset in napari for inspection
+- `luxar gsplat view` - Quick view in the Luxar web viewer
+- `luxar gsplat prune` - Remove low-impact splats to reduce dataset size
+
+---
+
+### `luxar gsplat info`
+
+**Purpose**: Display comprehensive statistics about a Gaussian splat dataset.
+
+**Parameters**:
+- `path`: Path to `.gsplats.zarr` dataset or compressed archive (required, positional)
+- `--histograms/--no-histograms`: Show ASCII histograms (default: True)
+- `--bins, -b`: Number of bins for histograms (default: 40, range: 10-100)
+
+**Behavior**:
+1. Load the `.gsplats.zarr` dataset (supports `.zip` and `.tar.gz`)
+2. Display basic info: file size, splat count, dimensionality, color/sharpness presence
+3. Display bounding box per dimension with ranges
+4. Display amplitude statistics with percentile distribution and cumulative contribution analysis
+5. Display volume statistics (3-sigma ellipsoid volumes from Cholesky factors)
+6. Display sharpness statistics (identify standard Gaussians with s=2.0)
+7. Display color channel statistics (if colors present)
+8. Display metadata (fitting info, provenance, format version)
+9. Provide pruning recommendation if significant splats are low-contribution
+
+**Example**:
+```bash
+luxar gsplat info dataset.gsplats.zarr.zip
+luxar gsplat info dataset.gsplats.zarr.zip --no-histograms
+luxar gsplat info dataset.gsplats.zarr.zip --bins 60
+```
+
+---
+
+### `luxar gsplat napari`
+
+**Purpose**: Open a Gaussian splat dataset in napari for interactive 3D inspection.
+
+**Parameters**:
+- `path`: Path to `.gsplats.zarr` dataset or compressed archive (required, positional)
+
+**Behavior**:
+1. Load the `.gsplats.zarr` dataset
+2. Render splats back to a volume (auto-detects best device: cuda/mps/cpu)
+3. Open napari with the rendered volume (viridis colormap, additive blending) and splat centers as points (red, semi-transparent)
+
+**Requires**: `napari` must be installed (`pip install napari[all]`).
+
+---
+
+### `luxar gsplat view`
+
+**Purpose**: Quick view of a Gaussian splat dataset in the Luxar web viewer. Converts the dataset to a Luxar scene, serves it, and opens the viewer.
+
+**Parameters**:
+- `path`: Path to `.gsplats.zarr` dataset or compressed archive (required, positional)
+- `--port, -p`: Data server port (default: 8000)
+- `--viewer-port`: Viewer port (default: 5173)
+- `--open/--no-open`: Open browser automatically (default: True)
+
+**Behavior**:
+1. Build viewer if not already built
+2. Load the `.gsplats.zarr` dataset
+3. Center data at its centroid for optimal viewing
+4. Create a temporary Luxar scene with appropriate dimensions
+5. Start data server and viewer server
+6. Open browser with the viewer URL
+
+---
+
+### `luxar gsplat prune`
+
+**Purpose**: Remove low-impact splats from a dataset to reduce file size and rendering cost while preserving quality.
+
+**Parameters**:
+- `input_path`: Input `.gsplats.zarr` dataset (required, positional)
+- `output_path`: Output `.gsplats.zarr` dataset (required, positional)
+- `--method, -m`: Pruning strategy (default: "cumulative")
+  - `"cumulative"`: Keep top splats contributing X% of total amplitude
+  - `"amplitude_percentile"`: Remove bottom X percentile by amplitude
+  - `"combined"`: Remove splats with low amplitude OR large volume
+- `--retention, -r`: Amplitude retention fraction for cumulative method (default: 0.95, range: 0.0-1.0)
+- `--amplitude-percentile, -a`: Bottom percentile to remove (default: 5.0, range: 0-100)
+- `--volume-percentile, -v`: Volume percentile threshold for combined method (default: 95.0, range: 0-100)
+- `--encoding, -e`: Encoding mode for output: "auto", "precision", or "memory" (default: "auto")
+- `--compress, -c`: Compress output as "zip" or "tar.gz" (default: None)
+- `--napari, -n`: Open napari comparison viewer after pruning (default: False)
+
+**Behavior**:
+1. Load the input dataset with statistics
+2. Apply the chosen pruning method
+3. Save the pruned dataset with optional compression
+4. Report removal statistics (count, percentage, amplitude retention)
+5. If `--napari`: Render both original and pruned to volumes and open napari with comparison layers (green=original, magenta=pruned, red=difference)
+
+**Example**:
+```bash
+# Keep 95% of amplitude (recommended)
+luxar gsplat prune input.gsplats.zarr.zip output.gsplats.zarr.zip \
+    --method cumulative --retention 0.95
+
+# With compression
+luxar gsplat prune input.gsplats.zarr.zip output.gsplats.zarr.zip \
+    --method cumulative --retention 0.95 --compress zip
+
+# Compare before/after in napari
+luxar gsplat prune input.gsplats.zarr.zip output.gsplats.zarr.zip \
+    --method cumulative --retention 0.95 --napari
+```
+
+---
+
 ## Network Simulation
 
 Luxar CLI provides comprehensive network simulation capabilities for testing viewer performance under various network conditions (3G, 4G, 5G, broadband, satellite, etc.).
@@ -169,7 +328,7 @@ The implementation uses a pure ASGI wrapper approach (wrapping the complete Fast
 
 **Integration Point**: Middleware wraps the complete app after all routes/middleware configured, applied only to data server (not viewer HTML server).
 
-**Detailed Documentation**: See `docs/NETWORK_SIMULATION_SPEC.md` for complete specification including algorithms, profiles, and testing guidelines.
+**Detailed Documentation**: See `docs/guides/developer/NETWORK_SIMULATION_SPEC.md` for complete specification including algorithms, profiles, and testing guidelines.
 
 ---
 
@@ -209,12 +368,12 @@ The implementation uses a pure ASGI wrapper approach (wrapping the complete Fast
 ## Utility Functions
 
 ### Port Management
-- `check_port_available(port)` - Test if port is free
-- `find_available_port(start_port, max_tries=100)` - Find next available port
+- `check_port_available(port, host="127.0.0.1")` - Test if port is free
+- `find_available_port(start_port, max_attempts=100)` - Find next available port
 
 **Algorithm**:
 ```
-Try port, port+1, port+2, ... up to max_tries
+Try port, port+1, port+2, ... up to max_attempts
 For each port:
   Try to bind socket
   If successful: return port
@@ -315,6 +474,14 @@ If all fail: return None
 
 ## Changelog
 
+### v1.2.0 (2026-02-28)
+- Added `luxar export` command documentation (standalone offline scene export)
+- Added `luxar gsplat` subcommand group documentation
+- Added `luxar gsplat info` command documentation (dataset statistics)
+- Added `luxar gsplat napari` command documentation (napari viewer)
+- Added `luxar gsplat view` command documentation (quick web viewer)
+- Added `luxar gsplat prune` command documentation (dataset pruning)
+
 ### v1.1.0 (2025-12-11)
 - Added network simulation documentation (Section "Network Simulation")
 - Documented `luxar profiles` command
@@ -322,9 +489,7 @@ If all fail: return None
 - Cross-referenced NETWORK_SIMULATION_SPEC.md for detailed specification
 - Note: Network simulation feature was implemented 2025-12-06 (commit 87c078e)
 
-
-
-- **v1.0.0** (2025-11-27): Initial versioned specification
-  - Documented demo, serve, viewer, info commands
-  - Specified HTTP serving architecture
-  - Defined exit codes and dependencies
+### v1.0.0 (2025-11-27)
+- Documented demo, serve, viewer, info commands
+- Specified HTTP serving architecture
+- Defined exit codes and dependencies

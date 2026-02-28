@@ -61,6 +61,13 @@ from .core.transforms import (
     translate,
     translation,
 )
+from .core.viewer_config import (
+    AnimationConfig,
+    CameraConfig,
+    DimensionsConfig,
+    UIConfig,
+    ViewerConfig,
+)
 
 # I/O classes
 from .io.compiler import LuxarZarrCompiler

@@ -23,6 +23,8 @@ import { setupHDRControls } from './rendering-controls/hdr-setup';
 import { setupAntiAliasingControls } from './rendering-controls/anti-aliasing-setup';
 import { setupPostProcessingControls } from './rendering-controls/post-processing-setup';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
+import type { ZarrViewerConfig } from '../types/zarr';
+import { extractRenderingOverrides } from '../config/viewer-config-utils';
 
 /**
  * Advanced rendering parameters GUI for real-time visual control.
@@ -62,11 +64,13 @@ export class RenderingControls {
   /** The custom GUI instance */
   private gui: GUI;
 
-  /** Current rendering settings */
-  private settings: RenderingSettings;
+  /** Current rendering settings (public for state capture) */
+  public settings: RenderingSettings;
 
   /** Scene identifier for settings persistence */
   private sceneId: string = '';
+  private zarrViewerConfig: ZarrViewerConfig | undefined = undefined;
+  private hasStoredLocalSettings: boolean = false;
 
   /** Reference to post-processing manager */
   private postProcessing: PostProcessingManager;
@@ -322,6 +326,13 @@ export class RenderingControls {
       flyDamping: config.controls.fly.movement.damping.default,
       flyRotationDamping: config.controls.fly.rotation.damping.default,
     };
+
+    // Overlay zarr viewer_config on top of hardcoded defaults (if available).
+    // This makes the data author's recommendations the "true defaults" for this scene.
+    if (this.zarrViewerConfig) {
+      const zarrOverrides = extractRenderingOverrides(this.zarrViewerConfig);
+      Object.assign(defaults, zarrOverrides);
+    }
 
     // Update settings object in place to maintain GUI bindings
     Object.assign(this.settings, defaults);
@@ -669,6 +680,70 @@ export class RenderingControls {
   }
 
   /**
+   * Set the zarr viewer config from the loaded scene.
+   * Called after loadSceneData() completes so the zarr metadata is available.
+   */
+  setZarrViewerConfig(viewerConfig: ZarrViewerConfig | undefined): void {
+    this.zarrViewerConfig = viewerConfig;
+  }
+
+  /**
+   * Whether this scene has stored settings in localStorage.
+   */
+  hasStoredSettings(): boolean {
+    return this.hasStoredLocalSettings;
+  }
+
+  /**
+   * Apply zarr viewer_config as defaults for a first-time scene visit.
+   * Called when no localStorage exists and zarr provides scene-specific defaults.
+   * Re-applies the full 3-tier priority chain and updates the scene.
+   */
+  applyZarrDefaults(): void {
+    if (!this.zarrViewerConfig) return;
+
+    const zarrOverrides = extractRenderingOverrides(this.zarrViewerConfig);
+    Object.assign(this.settings, zarrOverrides);
+
+    // Apply FOV if overridden
+    if (zarrOverrides.fov !== undefined) {
+      const currentFOV = this.sceneManager.camera.fov;
+      if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
+        const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
+        this.sceneManager.updateFOV(delta);
+      }
+    }
+
+    // Apply clipping planes if overridden
+    if (zarrOverrides.near !== undefined || zarrOverrides.far !== undefined) {
+      this.sceneManager.updateClippingPlanes(this.settings.near, this.settings.far);
+    }
+
+    // Apply navigation settings if overridden
+    if (zarrOverrides.controlType !== undefined) {
+      this.sceneManager.setControlType(this.settings.controlType);
+    }
+    if (zarrOverrides.autoRotate !== undefined) {
+      this.sceneManager.setAutoRotate(this.settings.autoRotate);
+    }
+    if (zarrOverrides.autoRotateSpeed !== undefined) {
+      this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
+    }
+
+    // Update GUI controllers to reflect new values
+    this.gui.controllersRecursive().forEach((controller) => {
+      controller.updateDisplay();
+    });
+
+    // Sync HDR log slider
+    this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
+
+    // Apply post-processing and other rendering settings
+    this.applySettings();
+    log.info(Modules.RENDERER, 'Applied viewer config defaults from zarr');
+  }
+
+  /**
    * Trigger animation when parameters change
    */
   private triggerAnimation(): void {
@@ -827,6 +902,7 @@ export class RenderingControls {
 
     const key = generateSettingsKey(this.sceneId);
     const stored = localStorage.getItem(key);
+    this.hasStoredLocalSettings = !!stored;
 
     if (stored) {
       const loadedSettings = deserializeSettings(stored);

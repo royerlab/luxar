@@ -547,6 +547,5 @@ See [SPECIFICATIONS.md](./SPECIFICATIONS.md) for detailed algorithms and design 
 
 ## Related Packages
 
-- **RangeCache** (`../data/range-cache.ts`) - Caches decoded Float32Array data
 - **Scene Loader** (`../data/scene-loader.ts`) - Uses TwoLevelCachingStore transparently
-- **Configuration** (`../config/`) - Cache configuration options
+- **Configuration** (`../config/index.ts`) - Cache configuration options

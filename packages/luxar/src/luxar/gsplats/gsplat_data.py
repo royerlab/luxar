@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Literal, Optional
 
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from luxar.encoding import EncodingMode
 
 
-@dataclass
+@dataclass(eq=False)
 class GSplatData:
     """Container for Gaussian splat data.
 
@@ -49,17 +49,26 @@ class GSplatData:
     cholesky_factors: np.ndarray
     sharpnesses: np.ndarray
     colors: Optional[np.ndarray] = None
-    stats: Dict[str, Any] = None  # type: ignore[assignment]
+    stats: Dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        """Initialize stats to empty dict if None."""
-        if self.stats is None:
-            self.stats = {}
+    @property
+    def n_splats(self) -> int:
+        """Number of splats."""
+        return self.centers.shape[0]
+
+    @property
+    def ndim(self) -> int:
+        """Number of spatial dimensions."""
+        return self.centers.shape[1] if self.n_splats > 0 else 0
+
+    def __len__(self) -> int:
+        """Return number of splats."""
+        return self.n_splats
 
     def __repr__(self) -> str:
         """Summary representation (avoids dumping full arrays)."""
-        n = len(self.amplitudes)
-        ndim = self.centers.shape[1] if n > 0 else 0
+        n = self.n_splats
+        ndim = self.ndim
         if n > 0:
             amp_range = f"[{float(self.amplitudes.min()):.4g}, {float(self.amplitudes.max()):.4g}]"
             sharp_range = f"[{float(self.sharpnesses.min()):.4g}, {float(self.sharpnesses.max()):.4g}]"
@@ -123,7 +132,7 @@ class GSplatData:
         provenance_info = None
 
         if include_fitting_info and self.stats:
-            # Extract common fitting fields (including pruning stats)
+            # Extract common fitting fields (including quality metrics and pruning stats)
             fitting_info = {
                 k: v
                 for k, v in self.stats.items()
@@ -132,6 +141,14 @@ class GSplatData:
                     "time_seconds",
                     "iterations",
                     "converged",
+                    "early_stopped",
+                    "best_iteration",
+                    "final_loss",
+                    "final_max_abs_error",
+                    "final_rel_l2",
+                    "n_splats",
+                    "n_splats_before_culling",
+                    "n_culled",
                     "fitter_name",
                     "fitter_version",
                     "timestamp",
@@ -199,12 +216,13 @@ class GSplatData:
         which corresponds to the center of mass of the represented density.
 
         Returns:
-            New GSplatData centered at origin (centroid at [0, 0, ...])
+            New GSplatData centered at origin (amplitude-weighted centroid at [0, 0, ...])
 
         Example:
             >>> # Center splats at origin for easier viewing
             >>> centered = data.center_at_centroid()
-            >>> aprint(centered.centers.mean(axis=0))  # Should be close to [0, 0, 0]
+            >>> # Amplitude-weighted centroid is now at origin
+            >>> centroid = (centered.centers.T @ centered.amplitudes) / centered.amplitudes.sum()
         """
         # Compute amplitude-weighted centroid
         total_amplitude = self.amplitudes.sum()
@@ -336,7 +354,8 @@ class GSplatData:
             det_Sigma = det_L**2
             volumes = np.abs(det_Sigma) ** (1 / ndim)  # Take nth root for nD
 
-        # Select pruning strategy
+        # Select pruning strategy (method already validated above)
+        mask = np.ones(N_original, dtype=bool)  # default: keep all
         if method == "cumulative":
             # Sort by amplitude (descending) and find cutoff
             sorted_indices = np.argsort(self.amplitudes)[::-1]
@@ -372,9 +391,6 @@ class GSplatData:
             amp_threshold = np.percentile(self.amplitudes, amplitude_percentile)
             vol_threshold = np.percentile(volumes, volume_percentile)
             mask = (self.amplitudes >= amp_threshold) & (volumes <= vol_threshold)
-
-        else:
-            raise ValueError(f"Unknown pruning method: {method}")
 
         # Apply mask
         pruned_centers = self.centers[mask]

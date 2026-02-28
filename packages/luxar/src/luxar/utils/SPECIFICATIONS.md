@@ -1,7 +1,7 @@
 # luxar.utils - Technical Specification
 
-**Version**: 1.1.1
-**Last Updated**: 2025-11-30
+**Version**: 1.2.0
+**Last Updated**: 2026-02-28
 
 ## Purpose
 
@@ -171,6 +171,133 @@ RGB = (r+m, g+m, b+m)
 
 ---
 
+## Path Utilities (paths.py)
+
+### Purpose
+
+Provides consistent path resolution for all generated datasets, ensuring outputs go to a centralized `datasets/` folder at the project root regardless of where scripts are run from.
+
+### Functions
+
+#### get_project_root() -> Path
+
+**Purpose**: Find the Luxar project root directory by traversing up from the module file looking for `pyproject.toml`.
+
+**Behavior**:
+- Starts from `Path(__file__).resolve()` and walks up through parent directories
+- Returns the first parent directory containing a `pyproject.toml` file
+- Result is cached via `@lru_cache(maxsize=1)` for performance
+
+**Returns**: `Path` to the project root
+
+**Raises**: `RuntimeError` if no parent directory contains `pyproject.toml`
+
+#### get_datasets_dir() -> Path
+
+**Purpose**: Get the `datasets/` directory at project root.
+
+**Behavior**: Calls `get_project_root() / "datasets"` and creates the directory if it does not exist (`mkdir(exist_ok=True)`).
+
+**Returns**: `Path` to `<project_root>/datasets/`
+
+#### get_examples_output_dir() -> Path
+
+**Purpose**: Get the output directory for example scripts.
+
+**Behavior**: Calls `get_datasets_dir() / "examples"` and creates the directory if it does not exist.
+
+**Returns**: `Path` to `<project_root>/datasets/examples/`
+
+#### get_demos_output_dir() -> Path
+
+**Purpose**: Get the output directory for demo scripts.
+
+**Behavior**: Calls `get_datasets_dir() / "demos"` and creates the directory if it does not exist.
+
+**Returns**: `Path` to `<project_root>/datasets/demos/`
+
+### Directory Layout
+
+```
+<project_root>/
+  pyproject.toml          # Sentinel for root detection
+  datasets/               # Created by get_datasets_dir()
+    examples/             # Created by get_examples_output_dir()
+    demos/                # Created by get_demos_output_dir()
+```
+
+---
+
+## Download Utilities (download.py)
+
+### Purpose
+
+Production-grade download functionality for large datasets with automatic retry on failure, partial download resume via HTTP Range requests, progress tracking with ETA, and integrity verification.
+
+### Functions
+
+#### robust_download(url, output_path, ...)
+
+**Purpose**: Download a file with automatic retry, resume capability, and progress tracking.
+
+**Parameters**:
+- `url` (`str`): URL to download from
+- `output_path` (`Path`): Where to save the downloaded file
+- `max_retries` (`int`, default `3`): Maximum number of retry attempts
+- `timeout` (`int`, default `300`): Timeout in seconds for initial connection
+- `chunk_size` (`int`, default `1048576`): Size of download chunks in bytes (1 MB)
+- `verify_size` (`bool`, default `True`): Whether to verify final file size matches Content-Length
+- `expected_size` (`Optional[int]`, default `None`): Expected file size in bytes for validation
+
+**Returns**: `Path` to downloaded file
+
+**Raises**:
+- `requests.HTTPError`: If HTTP error occurs after all retries
+- `requests.ConnectionError`: If connection fails after all retries
+- `ValueError`: If downloaded file size does not match expected size
+
+**Behavior**:
+1. Skips download if file already exists and matches `expected_size`
+2. Sets up `requests.Session` with exponential backoff retry strategy (2s, 4s, 8s...)
+3. Retries on HTTP status codes: 429, 500, 502, 503, 504
+4. If a partial file exists, attempts resume via HTTP Range header
+5. Falls back to full download if server returns 200 instead of 206
+6. Reports progress every 100 MB with download speed and ETA
+7. Verifies final file size against Content-Length when `verify_size=True`
+8. On HTTP errors, deletes partial file; on connection errors, keeps partial file for future resume
+
+#### verify_file_checksum(file_path, expected_md5=None, expected_sha256=None)
+
+**Purpose**: Verify file integrity using MD5 and/or SHA256 checksums.
+
+**Parameters**:
+- `file_path` (`Path`): Path to file to verify
+- `expected_md5` (`Optional[str]`): Expected MD5 hex digest
+- `expected_sha256` (`Optional[str]`): Expected SHA256 hex digest
+
+**Returns**: `True` if file matches all provided checksums, `False` otherwise (or if file does not exist)
+
+**Behavior**: Reads file in 1 MB chunks for memory-efficient hashing. Checks MD5 first, then SHA256 (if both provided). Returns `False` on first mismatch.
+
+#### download_with_checksum(url, output_path, expected_md5=None, expected_sha256=None, **kwargs)
+
+**Purpose**: Combine `robust_download()` with checksum verification for data integrity.
+
+**Parameters**:
+- `url` (`str`): URL to download from
+- `output_path` (`Path`): Where to save the file
+- `expected_md5` (`Optional[str]`): Expected MD5 hash
+- `expected_sha256` (`Optional[str]`): Expected SHA256 hash
+- `**kwargs`: Additional arguments passed to `robust_download()`
+
+**Returns**: `Path` to downloaded and verified file
+
+**Raises**: `ValueError` if checksum verification fails (file is deleted automatically on failure)
+
+**Behavior**: Calls `robust_download()` first, then `verify_file_checksum()`. If verification fails, the corrupted file is deleted and a `ValueError` is raised.
+
+---
+
 ## Error Handling
 
 **Validation Errors**:
@@ -185,11 +312,12 @@ RGB = (r+m, g+m, b+m)
 
 ---
 
-## This specification provides sufficient detail to re-implement the utility functions and demo generators.
-
----
-
 ## Changelog
+
+- **v1.2.0** (2026-02-28): Added path and download utility documentation
+  - **ADDED**: Path Utilities (paths.py) section documenting `get_project_root()`, `get_datasets_dir()`, `get_examples_output_dir()`, `get_demos_output_dir()`
+  - **ADDED**: Download Utilities (download.py) section documenting `robust_download()`, `verify_file_checksum()`, `download_with_checksum()`
+  - Removed stray heading-level concluding sentence
 
 - **v1.1.1** (2025-11-30): Documentation cleanup
   - Removed obsolete "Utility Constants" section that referenced removed np.tile() broadcasting

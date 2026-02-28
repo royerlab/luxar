@@ -823,6 +823,15 @@ export function updateInstancedGSplatsMesh(
     );
     geometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(meshConfig.colors, 3));
     geometry.instanceCount = meshConfig.splatCount;
+
+    // CRITICAL: Force THREE.js to recalculate _maxInstanceCount from the new attributes.
+    // When a mesh is initially created with 0 instances (e.g., a gsplat node not at the
+    // current time slice), THREE.js caches _maxInstanceCount=0. Later updates that add
+    // instances via setAttribute won't trigger recalculation, so the renderer still draws
+    // min(instanceCount, 0) = 0 instances. Deleting the cached value forces recalculation
+    // on the next render frame.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (geometry as any)._maxInstanceCount;
   } else {
     // Same size, update in place
     const centerAttr = geometry.getAttribute('aCenter') as THREE.InstancedBufferAttribute;

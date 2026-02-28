@@ -18,6 +18,7 @@ import xxhash
 
 if TYPE_CHECKING:
     from ..core.scene import Scene
+    from ..core.viewer_config import ViewerConfig
 import zarr
 from arbol import aprint
 from numpy.typing import NDArray
@@ -199,13 +200,20 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if self._tmpdir is not None:
             self._tmpdir.cleanup()
 
-    def create_scene(self, dimensions: Dimensions) -> "Scene":
+    def create_scene(
+        self,
+        dimensions: Dimensions,
+        viewer_config: Optional["ViewerConfig"] = None,
+    ) -> "Scene":
         """Create a scene with this compiler as writer.
 
         Args:
             dimensions: Dimension specification for the scene (REQUIRED).
                 Scene dimensions are the single source of truth for the
                 coordinate system and must always be specified.
+            viewer_config: Optional viewer configuration hints. Stored in
+                the zarr file and read by the viewer at load time as
+                scene-specific defaults.
 
         Returns:
             Scene object configured with this compiler as writer
@@ -227,8 +235,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Store dimensions in root attributes
         self.store.attrs["scene_dimensions"] = dimensions.to_dict()
 
-        # Create scene with writer injection
-        scene = Scene(writer=self, dimensions=dimensions)
+        # Create scene with writer injection and optional viewer config
+        scene = Scene(writer=self, dimensions=dimensions, viewer_config=viewer_config)
         aprint("✅ Scene created with progressive writer")
 
         return scene

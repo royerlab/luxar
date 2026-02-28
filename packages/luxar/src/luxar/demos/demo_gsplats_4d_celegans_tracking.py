@@ -51,11 +51,12 @@ WORKFLOW:
 1. **Download** ZIP from Zenodo (26 GB — large, with resume support)
 2. **Extract** sample s1 data (TIFF images + tracking CSV)
 3. **Parse** tracking CSV for nuclei positions and lineage IDs
-4. **Fit** GSplats per timepoint (with per-timepoint caching)
-5. **Create 4D scene** [X, Y, Z, Time]
-6. **Add GSplats** per timepoint using dim_order + fill
-7. **Add Lines** for cell tracks as 4D polylines
-8. **Visualise** — scrub through time, see tracks + volumes
+4. **Preprocess** each volume: N2S-NLM denoise (3D) + CLAHE (cached per-timepoint)
+5. **Fit** GSplats per timepoint on preprocessed volumes (with per-timepoint caching)
+6. **Create 4D scene** [X, Y, Z, Time]
+7. **Add GSplats** per timepoint using dim_order + fill
+8. **Add Lines** for cell tracks as 4D polylines
+9. **Visualise** — scrub through time, see tracks + volumes
 
 USAGE:
 ======
@@ -65,7 +66,7 @@ Options:
     --no-cache:      Force re-fitting (ignore cached GSplats)
     --no-serve:      Generate scene without launching viewer
     --serve-only:    Just serve a previously generated scene
-    --timepoints=N:  Number of timepoints to process (default: 50, max: 400)
+    --timepoints=N:  Number of timepoints to process (default: 400, max: 400)
     --sample=N:      Which sample to use: 1, 2, or 3 (default: 1)
 
 Output:
@@ -74,17 +75,20 @@ Output:
 """
 
 import csv
+import json
 import sys
 import zipfile
 from pathlib import Path
 
 import numpy as np
 from arbol import Arbol, aprint, asection
+from skimage.restoration import calibrate_denoiser, denoise_nl_means
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
+from luxar.gsplats.clahe import apply_clahe
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.demos import launch_viewer
+from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -105,12 +109,18 @@ N_ITERS = 6000
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_celegans"
 
+# Preprocessing parameters (CLAHE + Noise2Self-calibrated NLM)
+PREPROCESS_CLAHE_TILE = 16
+PREPROCESS_CLAHE_CLIP = 2.0
+PREPROCESS_NLM_PATCH_SIZE = 3
+PREPROCESS_NLM_PATCH_DISTANCE = 5
+
 # Parse command-line flags
 NO_CACHE = "--no-cache" in sys.argv
 NO_SERVE = "--no-serve" in sys.argv
 SERVE_ONLY = "--serve-only" in sys.argv
 
-DEFAULT_TIMEPOINTS = 50
+DEFAULT_TIMEPOINTS = 400
 MAX_TIMEPOINTS = 400
 TIMEPOINTS = DEFAULT_TIMEPOINTS
 SAMPLE_INDEX = 1
@@ -557,8 +567,199 @@ def load_tracking_data(csv_files: list, nuclei_dirs: list, n_timepoints: int) ->
 
 
 # =============================================================================
+# Cache Utilities
+# =============================================================================
+
+
+def _is_cached(cache_file: Path) -> bool:
+    """Check whether a valid cache file exists.
+
+    Returns True only when the file exists AND is not a leftover partial
+    write (indicated by a corresponding .tmp file still present).
+    """
+    if NO_CACHE:
+        return False
+    if not cache_file.exists():
+        return False
+    # If a .tmp sibling exists, the previous save was interrupted
+    tmp_file = cache_file.with_suffix(cache_file.suffix + ".tmp")
+    if tmp_file.exists():
+        # Clean up the corrupt cache and the tmp marker
+        cache_file.unlink(missing_ok=True)
+        tmp_file.unlink(missing_ok=True)
+        return False
+    return True
+
+
+# =============================================================================
+# Volume Preprocessing (CLAHE + N2S-NLM)
+# =============================================================================
+
+
+def calibrate_nlm_once(first_volume: np.ndarray) -> float:
+    """Calibrate Non-Local Means denoising using the Noise2Self (J-invariant) method.
+
+    Uses skimage's ``calibrate_denoiser`` on a single representative 2D slice
+    to find the optimal ``h`` parameter for ``denoise_nl_means``.  The result
+    is cached in ``CACHE_DIR / "nlm_calibration_s{SAMPLE_INDEX}.json"`` so
+    subsequent runs skip the calibration step entirely.
+
+    Args:
+        first_volume: 3D float32 volume (Z, Y, X) from the first timepoint,
+            normalised to [0, 1].  Must not be None.
+
+    Returns:
+        Optimal ``h`` parameter for ``denoise_nl_means``.
+    """
+    cal_file = CACHE_DIR / f"nlm_calibration_s{SAMPLE_INDEX}.json"
+
+    if _is_cached(cal_file):
+        try:
+            with open(cal_file) as f:
+                cal = json.load(f)
+            h = cal["h"]
+            aprint(f"  Loaded cached NLM calibration: h={h:.6f}")
+            return h
+        except Exception as e:
+            aprint(f"  Calibration cache load failed: {e}, re-calibrating")
+            cal_file.unlink(missing_ok=True)
+
+    with asection("Calibrating NLM denoiser (Noise2Self / J-invariant)"):
+        # Use middle z-slice — representative since imaging is consistent
+        mid_z = first_volume.shape[0] // 2
+        cal_slice = first_volume[mid_z]
+        aprint(f"  Calibrating on z={mid_z} slice ({cal_slice.shape})")
+
+        calibrated = calibrate_denoiser(
+            cal_slice,
+            denoise_nl_means,
+            denoise_parameters=dict(
+                h=np.arange(0.005, 0.08, 0.005),
+                fast_mode=[True],
+                patch_size=[PREPROCESS_NLM_PATCH_SIZE],
+                patch_distance=[PREPROCESS_NLM_PATCH_DISTANCE],
+            ),
+            stride=2,
+        )
+
+        # Extract the calibrated h from the partial-function keywords
+        h = calibrated.keywords.get("h", 0.02)
+        aprint(f"  Optimal h={h:.6f}")
+
+        # Cache the result with marker-file safety
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_file = cal_file.with_suffix(cal_file.suffix + ".tmp")
+        tmp_file.touch()
+        with open(cal_file, "w") as f:
+            json.dump({"h": float(h), "sample": SAMPLE_INDEX}, f)
+        tmp_file.unlink(missing_ok=True)
+
+    return h
+
+
+def preprocess_volume(volume: np.ndarray, nlm_h: float) -> np.ndarray:
+    """Preprocess a 3D volume with N2S-NLM denoising followed by CLAHE.
+
+    Pipeline:
+      1. Full 3D Non-Local Means denoising (using calibrated ``h``)
+      2. CLAHE contrast enhancement (GPU-accelerated via luxar)
+
+    Args:
+        volume: 3D float32 volume (Z, Y, X), normalised to [0, 1].
+        nlm_h: Calibrated ``h`` parameter for ``denoise_nl_means``.
+
+    Returns:
+        Preprocessed float32 volume, normalised to [0, 1].
+    """
+    import torch
+
+    # Step 1: Full 3D Non-Local Means denoising
+    denoised = denoise_nl_means(
+        volume,
+        h=nlm_h,
+        patch_size=PREPROCESS_NLM_PATCH_SIZE,
+        patch_distance=PREPROCESS_NLM_PATCH_DISTANCE,
+        fast_mode=True,
+    ).astype(np.float32)
+
+    # Step 2: CLAHE (GPU-accelerated)
+    vol_torch = torch.from_numpy(denoised)
+    if torch.cuda.is_available():
+        vol_torch = vol_torch.cuda()
+    result = apply_clahe(
+        vol_torch,
+        tile_size=PREPROCESS_CLAHE_TILE,
+        clip_limit=PREPROCESS_CLAHE_CLIP,
+    )
+    result = result.cpu().numpy()
+
+    # Re-normalise to [0, 1]
+    rmin, rmax = result.min(), result.max()
+    if rmax > rmin:
+        result = (result - rmin) / (rmax - rmin)
+
+    return result
+
+
+def preprocess_timepoint(
+    tiff_path: Path,
+    label: str,
+    cache_file: Path,
+    nlm_h: float,
+) -> np.ndarray:
+    """Load, preprocess, and cache a single timepoint volume.
+
+    If a valid cache exists, the preprocessed volume is loaded directly
+    (skipping TIFF reading and denoising).  Uses the same marker-file
+    pattern as GSplat caching for crash safety.
+
+    Args:
+        tiff_path: Path to raw TIFF file.
+        label: Human-readable label for logging.
+        cache_file: Path to cache file (.npy).
+        nlm_h: Calibrated ``h`` for NLM denoising.
+
+    Returns:
+        Preprocessed float32 volume, normalised to [0, 1].
+    """
+    if _is_cached(cache_file):
+        try:
+            volume = np.load(cache_file)
+            aprint(f"  Loaded cached preprocessed volume ({label})")
+            return volume
+        except Exception as e:
+            aprint(f"  Preprocessed cache load failed: {e}, reprocessing")
+            cache_file.unlink(missing_ok=True)
+
+    aprint(f"  Preprocessing {label} (NLM denoise + CLAHE)...")
+    raw_volume = load_timepoint_volume(tiff_path)
+    volume = preprocess_volume(raw_volume, nlm_h)
+
+    # Cache with marker-file safety
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_file = cache_file.with_suffix(cache_file.suffix + ".tmp")
+    tmp_file.touch()
+    np.save(cache_file, volume)
+    tmp_file.unlink(missing_ok=True)
+
+    return volume
+
+
+# =============================================================================
 # GSplats Fitting
 # =============================================================================
+
+
+def _load_cached(cache_file: Path, label: str) -> GSplatData | None:
+    """Try loading a cached GSplatData.  Returns None on failure."""
+    try:
+        result = GSplatData.load(cache_file, include_stats=False)
+        aprint(f"  Loaded {len(result.amplitudes):,} cached splats ({label})")
+        return result
+    except Exception as e:
+        aprint(f"  Cache load failed: {e}, will re-fit")
+        cache_file.unlink(missing_ok=True)
+        return None
 
 
 def fit_timepoint(
@@ -568,6 +769,11 @@ def fit_timepoint(
 ) -> GSplatData:
     """Fit GSplats to a single timepoint with caching.
 
+    Uses a marker-file mechanism to detect interrupted saves: a ``.tmp``
+    sentinel is created before writing and removed after.  If the process
+    is killed mid-save, ``_is_cached()`` will detect the leftover
+    sentinel on the next run and discard the partial cache file.
+
     Args:
         volume: 3D float32 volume (Z, Y, X), normalised to [0, 1].
         label: Human-readable label for logging.
@@ -576,13 +782,10 @@ def fit_timepoint(
     Returns:
         Fitted GSplatData.
     """
-    if cache_file.exists() and not NO_CACHE:
-        try:
-            result = GSplatData.load(cache_file, include_stats=False)
-            aprint(f"  Loaded {len(result.amplitudes):,} cached splats ({label})")
+    if _is_cached(cache_file):
+        result = _load_cached(cache_file, label)
+        if result is not None:
             return result
-        except Exception as e:
-            aprint(f"  Cache load failed: {e}, re-fitting...")
 
     global DEVICE
     if DEVICE is None:
@@ -618,19 +821,32 @@ def fit_timepoint(
 
     aprint(f"  Fitted {len(result.amplitudes):,} splats")
 
+    # Marker-file save: create .tmp sentinel before writing, remove after.
+    # If interrupted mid-save, _is_cached() will detect the leftover .tmp
+    # on the next run and discard the partial cache file.
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_file = cache_file.with_suffix(cache_file.suffix + ".tmp")
+    tmp_file.touch()  # marker: save in progress
     result.save(
         cache_file,
         encoding_mode=EncodingMode.MEMORY,
         include_fitting_info=True,
         compress="zip",
     )
+    tmp_file.unlink(missing_ok=True)  # save complete — remove marker
 
     return result
 
 
-def fit_all_timepoints(tiff_files: list) -> list:
-    """Fit GSplats for each timepoint, loading volumes one at a time.
+def preprocess_and_fit_all_timepoints(tiff_files: list) -> list:
+    """Preprocess and fit GSplats for each timepoint.
+
+    Two-pass pipeline:
+      1. **Calibrate** NLM denoiser (once, on first timepoint's middle slice)
+      2. **For each timepoint**: preprocess (NLM + CLAHE) → fit GSplats
+
+    Both preprocessing and fitting results are cached independently, so
+    interrupted runs resume from where they left off.
 
     Args:
         tiff_files: List of TIFF file paths (one per timepoint).
@@ -640,16 +856,58 @@ def fit_all_timepoints(tiff_files: list) -> list:
     """
     n = min(len(tiff_files), TIMEPOINTS)
 
-    with asection(f"Fitting GSplats ({n} timepoints)"):
+    # --- Pass 1: Calibrate NLM denoiser -----------------------------------
+
+    with asection("NLM Calibration"):
+        # calibrate_nlm_once checks its own cache internally, but we
+        # need the first volume loaded if calibration must run.
+        first_vol = load_timepoint_volume(tiff_files[0])
+        nlm_h = calibrate_nlm_once(first_vol)
+        del first_vol  # Free memory
+
+    # --- Pre-scan caches --------------------------------------------------
+
+    preprocess_cache_files = [
+        CACHE_DIR / f"celegans_s{SAMPLE_INDEX}_t{t:04d}_preprocessed.npy"
+        for t in range(n)
+    ]
+    gsplat_cache_files = [
+        CACHE_DIR / f"celegans_s{SAMPLE_INDEX}_t{t:04d}.gsplats.zarr.zip"
+        for t in range(n)
+    ]
+    preprocess_cached = [_is_cached(f) for f in preprocess_cache_files]
+    gsplat_cached = [_is_cached(f) for f in gsplat_cache_files]
+
+    n_pp_cached = sum(preprocess_cached)
+    n_gs_cached = sum(gsplat_cached)
+
+    with asection(f"Processing {n} timepoints"):
+        aprint(f"  Preprocessed cached: {n_pp_cached}/{n}")
+        aprint(f"  GSplats cached: {n_gs_cached}/{n}")
+        aprint(f"  Remaining: {n - n_gs_cached} to fit")
+
         gsplats_list = []
         for t in range(n):
-            cache_file = (
-                CACHE_DIR / f"celegans_s{SAMPLE_INDEX}_t{t:04d}.gsplats.zarr.zip"
-            )
             with asection(f"Timepoint {t}/{n - 1}"):
-                volume = load_timepoint_volume(tiff_files[t])
-                gsplats = fit_timepoint(volume, f"T={t}", cache_file)
+                # If GSplats are already cached, skip everything
+                if gsplat_cached[t]:
+                    gsplats = _load_cached(gsplat_cache_files[t], f"T={t}")
+                    if gsplats is not None:
+                        gsplats_list.append(gsplats)
+                        continue
+
+                # Preprocess (load from cache or compute)
+                volume = preprocess_timepoint(
+                    tiff_files[t],
+                    f"T={t}",
+                    preprocess_cache_files[t],
+                    nlm_h,
+                )
+
+                # Fit GSplats on preprocessed volume
+                gsplats = fit_timepoint(volume, f"T={t}", gsplat_cache_files[t])
                 gsplats_list.append(gsplats)
+
         return gsplats_list
 
 
@@ -908,7 +1166,7 @@ Navigation:
                         sharpness=sharp_f,
                         dim_order=["z", "y", "x"],
                         fill={"time": float(t)},
-                        fill_sigma={"time": 0.3},
+                        fill_sigma={"time": 0},
                         extend_to_all=[],
                         opacity=0.7,
                         blending_mode="additive",
@@ -965,8 +1223,8 @@ def main():
     # Load tracking data
     tracking_data = load_tracking_data(csv_files, nuclei_dirs, n_use)
 
-    # Fit GSplats per timepoint
-    gsplats_list = fit_all_timepoints(tiff_files[:n_use])
+    # Preprocess + fit GSplats per timepoint
+    gsplats_list = preprocess_and_fit_all_timepoints(tiff_files[:n_use])
 
     # Report
     with asection("Fitting Summary"):

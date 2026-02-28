@@ -729,6 +729,10 @@ async function projectGSplatsTo3D(params: {
   slicePosition: number[];
   ndim: number;
   splatCount: number;
+  /** Indices of hidden dimensions that are discrete (binary visibility) */
+  discreteDims?: number[];
+  /** Per-dimension step sizes for discrete dims (keyed by dim index) */
+  discreteSteps?: Record<number, number>;
 }): Promise<{
   centers3D: Float32Array;
   choleskyFactors3D: Float32Array;
@@ -765,9 +769,15 @@ async function projectGSplatsTo3D(params: {
   const sortedDisplayDims = [...displayDims].sort((a, b) => a - b);
   const sortedHiddenDims = [...hiddenDims].sort((a, b) => a - b);
 
+  // Separate hidden dims into discrete (binary visibility) and continuous (Gaussian attenuation).
+  // Discrete dimensions use a half-step threshold; continuous use WASM Mahalanobis.
+  const discreteSet = new Set(params.discreteDims ?? []);
+  const continuousHiddenDims = sortedHiddenDims.filter((d) => !discreteSet.has(d));
+  const discreteHiddenDims = sortedHiddenDims.filter((d) => discreteSet.has(d));
+
   // Convert to WASM-compatible arrays
   const slicePosF32 = new Float32Array(slicePosition);
-  const hiddenDimsU32 = new Uint32Array(sortedHiddenDims);
+  const continuousHiddenDimsU32 = new Uint32Array(continuousHiddenDims);
   const displayDimsU32 = new Uint32Array(sortedDisplayDims);
 
   // Minimum amplitude threshold
@@ -782,23 +792,55 @@ async function projectGSplatsTo3D(params: {
     sharpnessF32.fill(2.0);
   }
 
-  // Step 1: Compute attenuation and visibility for all splats using WASM
+  // Step 0: Pre-filter discrete dimensions (TypeScript, before WASM).
+  // Splats whose center is more than half a step away in any discrete dim are invisible.
+  const discreteVisibility = new Uint8Array(splatCount);
+  if (discreteHiddenDims.length > 0) {
+    const discreteSteps = params.discreteSteps ?? {};
+    for (let i = 0; i < splatCount; i++) {
+      const centerOffset = i * ndim;
+      let vis = true;
+      for (let dIdx = 0; dIdx < discreteHiddenDims.length; dIdx++) {
+        const dim = discreteHiddenDims[dIdx];
+        const step = discreteSteps[dim] ?? 1.0;
+        if (Math.abs(slicePosF32[dim] - positions[centerOffset + dim]) > step * 0.5) {
+          vis = false;
+          break;
+        }
+      }
+      discreteVisibility[i] = vis ? 1 : 0;
+    }
+  } else {
+    discreteVisibility.fill(1);
+  }
+
+  // Step 1: Compute attenuation and visibility for CONTINUOUS hidden dims using WASM
   const visibility = new Uint8Array(splatCount);
   const attenuation = new Float32Array(splatCount);
 
-  const visibleCount = wasmModule.compute_gsplats_attenuation(
+  wasmModule.compute_gsplats_attenuation(
     positions,
     choleskyFactors,
     amplitudes,
     sharpnessF32,
     slicePosF32,
-    hiddenDimsU32,
+    continuousHiddenDimsU32,
     ndim,
     splatCount,
     minAmplitude,
     visibility,
     attenuation
   );
+
+  // Combine discrete and continuous visibility masks
+  let visibleCount = 0;
+  for (let i = 0; i < splatCount; i++) {
+    if (discreteVisibility[i] === 0) {
+      visibility[i] = 0;
+      attenuation[i] = 0.0;
+    }
+    if (visibility[i] !== 0) visibleCount++;
+  }
 
   // Early exit if no visible splats
   if (visibleCount === 0) {
