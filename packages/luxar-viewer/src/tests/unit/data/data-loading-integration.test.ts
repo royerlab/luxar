@@ -66,6 +66,7 @@ vi.mock('three', () => {
   return {
     Group: mockGroup,
     Points: mockPoints,
+    Mesh: vi.fn(),
     Box3: vi.fn().mockImplementation(() => ({
       expandByPoint: vi.fn(),
       clone: vi.fn().mockReturnThis(),

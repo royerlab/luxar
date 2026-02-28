@@ -22,6 +22,7 @@ vi.mock('../../../ui/gui', () => {
     updateDisplay = vi.fn().mockReturnThis();
     setValue = vi.fn().mockReturnThis();
     onChange = vi.fn().mockReturnThis();
+    onFinishChange = vi.fn().mockReturnThis();
     name = vi.fn().mockReturnThis();
     show = vi.fn().mockReturnThis();
     hide = vi.fn().mockReturnThis();
@@ -119,6 +120,7 @@ describe('RenderingControls', () => {
         mockCamera.far = far;
       }),
       setDynamicClipping: vi.fn(),
+      setClippingAdaptSpeed: vi.fn(),
       getDynamicClippingState: vi.fn(() => ({
         enabled: false,
         adaptSpeed: 0.1,

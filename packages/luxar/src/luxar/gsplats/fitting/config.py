@@ -25,7 +25,7 @@ class OptimConfig:
     """
 
     n_iters: int = 1000
-    lr: float = 0.05
+    lr: float = 0.01
     gradient_clip: Optional[float] = 1.0
     scheduler_type: str = "plateau"
     patience: int = 25

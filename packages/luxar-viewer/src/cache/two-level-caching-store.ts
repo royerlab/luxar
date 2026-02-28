@@ -3,6 +3,7 @@ import { SegmentedLRUCache } from './segmented-lru-cache';
 import { OPFSStore } from './opfs-store';
 import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { log, Modules } from '../utils/log';
+import { config } from '../config';
 
 export interface TwoLevelCachingStoreOptions {
   /** L1 memory cache size in bytes (default: 100MB) */
@@ -29,8 +30,8 @@ export class TwoLevelCachingStore implements AsyncReadable {
   private debug: boolean;
   private shouldClearOnInit: boolean;
 
-  private static readonly DEFAULT_L1_SIZE = 100 * 1024 * 1024; // 100MB
-  private static readonly DEFAULT_L2_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
+  private static readonly DEFAULT_L1_SIZE = config.cache.l1MaxSizeMB * 1024 * 1024;
+  private static readonly DEFAULT_L2_SIZE = config.cache.l2MaxSizeMB * 1024 * 1024;
 
   // Network I/O tracking
   private networkBytesTransferred = 0;

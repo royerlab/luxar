@@ -102,7 +102,7 @@ class GaussianSplatFitter:
         norm_percentile: float = 0.0,
         init_sigma_vox: Optional[float] = None,
         n_iters: int = 1000,
-        lr: float = 0.05,
+        lr: float = 0.01,
         loss_type: str = "l1",
         asymmetric_penalty: Optional[float] = 10.0,
         l1_amp: Optional[float] = None,
@@ -245,7 +245,7 @@ def fit_gaussian_splats(
     norm_percentile: float = 0.0,
     init_sigma_vox: Optional[float] = None,
     n_iters: int = 1000,
-    lr: float = 0.05,
+    lr: float = 0.01,
     loss_type: str = "l1",
     asymmetric_penalty: Optional[float] = 10.0,
     l1_amp: Optional[float] = None,
@@ -334,7 +334,7 @@ def fit_gaussian_splats(
     n_iters : int, default=1000
         Maximum number of optimization iterations. Default is generous to allow
         max_abs_error convergence criterion to work effectively.
-    lr : float, default=0.05
+    lr : float, default=0.01
         Learning rate for Adam optimizer.
     loss_type : str, default="l1"
         Loss function: "mse", "poisson" (better for count/photon data), or "l1" (robust to outliers, preserves sharp features, default).

@@ -325,12 +325,16 @@ Always available regardless of context:
 
 #### Dimension Navigation
 
-| Key         | Action            |
-| ----------- | ----------------- |
-| `1-9`       | Select dimension  |
-| `[`         | Step backward     |
-| `]`         | Step forward      |
-| `Shift+[/]` | Jump to start/end |
+| Key       | Action                   |
+| --------- | ------------------------ |
+| `1-9`     | Select dimension         |
+| `[`       | Step backward            |
+| `]`       | Step forward             |
+| `K`       | Play/pause animation     |
+| `Home`    | Jump to dimension start  |
+| `End`     | Jump to dimension end    |
+| `Shift+↑` | Increase animation speed |
+| `Shift+↓` | Decrease animation speed |
 
 ---
 

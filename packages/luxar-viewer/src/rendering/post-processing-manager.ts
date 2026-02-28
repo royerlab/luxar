@@ -1283,7 +1283,7 @@ export class PostProcessingManager {
 
     log.update(
       Modules.POST_PROCESSING,
-      `SSAA ${enabled ? 'enabled' : 'disabled'} (${this.ssaaMultiplier}x)`
+      `SSAA ${enabled ? `enabled (${this.ssaaMultiplier}x)` : 'disabled'}`
     );
   }
 

@@ -48,7 +48,7 @@ describe('UI Helpers - Critical Fixes', () => {
       expect(document.getElementById('help-overlay')).toBe(firstOverlay);
     });
 
-    it('should properly clean up global click listener when closed via keyboard', () => {
+    it('should properly clean up global click listener when closed via hideHelpOverlay', () => {
       const removeEventSpy = vi.spyOn(document, 'removeEventListener');
 
       showHelpOverlay();
@@ -58,9 +58,8 @@ describe('UI Helpers - Critical Fixes', () => {
       // Advance timers to trigger the click listener addition
       vi.advanceTimersByTime(150);
 
-      // Simulate Escape key
-      const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
-      overlay?.dispatchEvent(event);
+      // Close via hideHelpOverlay (how InputHandler closes it on Escape/H)
+      hideHelpOverlay();
 
       // Check overlay is removed
       expect(document.getElementById('help-overlay')).toBeNull();

@@ -149,6 +149,8 @@ export function dispose(loaderId?: string): void {
 function logSceneStats(scene: THREE.Group): void {
   let totalPoints = 0;
   let totalPointsObjects = 0;
+  let totalGSplats = 0;
+  let totalGSplatsObjects = 0;
   let usedSpatialIndex = 0;
 
   // Check if scene has traverse method (it might be a mock in tests)
@@ -168,11 +170,22 @@ function logSceneStats(scene: THREE.Group): void {
       if (obj.userData.attrs?.has_spatial_index || obj.userData.spatialIndex) {
         usedSpatialIndex++;
       }
+    } else if (obj instanceof THREE.Mesh && obj.userData?.nodeType === 'gsplats') {
+      totalGSplatsObjects++;
+      totalGSplats += obj.userData.visibleSplatCount ?? 0;
+      if (obj.userData.spatialIndex) {
+        usedSpatialIndex++;
+      }
     }
   });
 
   log.info(Modules.LUXAR, 'Scene statistics:');
   log.info(Modules.LUXAR, `  - Points objects: ${totalPointsObjects}`);
   log.info(Modules.LUXAR, `  - Total points loaded: ${totalPoints.toLocaleString()}`);
-  log.info(Modules.LUXAR, `  - Using spatial index: ${usedSpatialIndex}/${totalPointsObjects}`);
+  log.info(Modules.LUXAR, `  - GSplats objects: ${totalGSplatsObjects}`);
+  log.info(Modules.LUXAR, `  - Total gsplats loaded: ${totalGSplats.toLocaleString()}`);
+  log.info(
+    Modules.LUXAR,
+    `  - Using spatial index: ${usedSpatialIndex}/${totalPointsObjects + totalGSplatsObjects}`
+  );
 }

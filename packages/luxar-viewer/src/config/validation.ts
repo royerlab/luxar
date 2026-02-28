@@ -33,7 +33,7 @@ export function validateConfig(config: AppConfig): ValidationResult {
   // Validate bloom configuration consistency
   validateBloomConsistency(config, errors, warnings);
 
-  // Validate control configuration
+  // Validate control configuration (ConfigRange consistency)
   validateControls(config, errors, warnings);
 
   // Validate data loading configuration
@@ -47,9 +47,6 @@ export function validateConfig(config: AppConfig): ValidationResult {
 
   // Validate WebGL configuration
   validateWebGL(config, errors, warnings);
-
-  // Check for value synchronization
-  checkValueSync(config, warnings);
 
   return {
     valid: errors.length === 0,
@@ -131,11 +128,33 @@ function validateBloomConsistency(config: AppConfig, _errors: string[], warnings
 }
 
 /**
- * Validate control configuration
+ * Validate control configuration (ConfigRange consistency)
  */
-function validateControls(_config: AppConfig, _errors: string[], _warnings: string[]): void {
-  // Fly control validation removed - no longer duplicated
-  // Add any other control validations here as needed
+function validateControls(config: AppConfig, errors: string[], _warnings: string[]): void {
+  const { controls } = config;
+
+  // Validate all ConfigRange objects: min < max and min <= default <= max
+  const ranges: Array<{ name: string; range: { min: number; max: number; default: number } }> = [
+    { name: 'fly.movement.speed', range: controls.fly.movement.speed },
+    { name: 'fly.movement.acceleration', range: controls.fly.movement.acceleration },
+    { name: 'fly.movement.damping', range: controls.fly.movement.damping },
+    { name: 'fly.rotation.speed', range: controls.fly.rotation.speed },
+    { name: 'fly.rotation.damping', range: controls.fly.rotation.damping },
+    { name: 'orbit.autoRotate.speed', range: controls.orbit.autoRotate.speed },
+    { name: 'orbit.zoom.speed', range: controls.orbit.zoom.speed },
+    { name: 'orbit.damping.factor', range: controls.orbit.damping.factor },
+  ];
+
+  for (const { name, range } of ranges) {
+    if (range.min >= range.max) {
+      errors.push(`Invalid controls.${name}: min (${range.min}) >= max (${range.max})`);
+    }
+    if (range.default < range.min || range.default > range.max) {
+      errors.push(
+        `Invalid controls.${name}: default (${range.default}) outside [${range.min}, ${range.max}]`
+      );
+    }
+  }
 }
 
 /**
@@ -223,12 +242,7 @@ function validateWebGL(config: AppConfig, errors: string[], warnings: string[]):
   const validPowerPreferences = ['high-performance', 'low-power', 'default'];
   if (!validPowerPreferences.includes(webgl.context.powerPreference)) {
     errors.push(
-      `Invalid WebGL context powerPreference: ${webgl.context.powerPreference} (must be one of: ${validPowerPreferences.join(', ')})`
-    );
-  }
-  if (!validPowerPreferences.includes(webgl.renderer.powerPreference)) {
-    errors.push(
-      `Invalid WebGL renderer powerPreference: ${webgl.renderer.powerPreference} (must be one of: ${validPowerPreferences.join(', ')})`
+      `Invalid WebGL powerPreference: ${webgl.context.powerPreference} (must be one of: ${validPowerPreferences.join(', ')})`
     );
   }
 
@@ -255,31 +269,6 @@ function validateWebGL(config: AppConfig, errors: string[], warnings: string[]):
       `Unusual color space: ${webgl.context.colorSpace} (typical values: ${validColorSpaces.join(', ')})`
     );
   }
-
-  // Check for consistency between context and renderer
-  if (webgl.context.antialias !== webgl.renderer.antialias) {
-    warnings.push(
-      `Antialias mismatch: context=${webgl.context.antialias}, renderer=${webgl.renderer.antialias}`
-    );
-  }
-  if (webgl.context.powerPreference !== webgl.renderer.powerPreference) {
-    warnings.push(
-      `Power preference mismatch: context=${webgl.context.powerPreference}, renderer=${webgl.renderer.powerPreference}`
-    );
-  }
-  if (webgl.context.preserveDrawingBuffer !== webgl.renderer.preserveDrawingBuffer) {
-    warnings.push(
-      `Preserve drawing buffer mismatch: context=${webgl.context.preserveDrawingBuffer}, renderer=${webgl.renderer.preserveDrawingBuffer}`
-    );
-  }
-}
-
-/**
- * Check value synchronization
- */
-function checkValueSync(_config: AppConfig, _warnings: string[]): void {
-  // This has been covered in bloom and control validation
-  // Add any additional sync checks here
 }
 
 /**

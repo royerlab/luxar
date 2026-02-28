@@ -28,6 +28,14 @@ const MAX_SUPPORTED_DIMS = 16;
 const CHOLESKY_EPSILON = 1e-10;
 
 /**
+ * Pre-allocated workspace buffers for computeMarginalCholesky.
+ * Avoids per-call allocation when called in tight loops (100K+ splats).
+ * Module-level singletons, safe because JS is single-threaded.
+ */
+const _sigmaWorkspace = new Float32Array(MAX_SUPPORTED_DIMS * MAX_SUPPORTED_DIMS);
+const _lSubWorkspace = new Float32Array((MAX_SUPPORTED_DIMS * (MAX_SUPPORTED_DIMS + 1)) / 2);
+
+/**
  * Compute the correct marginal Cholesky factor for a subset of dimensions.
  *
  * For Σ = L·Lᵀ, the marginal covariance for dimensions S is:
@@ -35,6 +43,8 @@ const CHOLESKY_EPSILON = 1e-10;
  *
  * This function reconstructs Σ_S and then Cholesky-factorizes it.
  * Simply extracting L elements is INCORRECT when there are cross-dimension correlations.
+ *
+ * Uses module-level workspace buffers to avoid per-call allocation.
  *
  * @param packed - Full packed Cholesky factor array
  * @param offset - Start offset in packed for this splat
@@ -52,8 +62,7 @@ function computeMarginalCholesky(
   const subNdim = keepDims.length;
 
   // Step 1: Reconstruct marginal covariance Σ_S[i,j] = Σ_k L[s_i,k]·L[s_j,k]
-  const sigma = new Float32Array(MAX_SUPPORTED_DIMS * MAX_SUPPORTED_DIMS);
-
+  // Uses pre-allocated workspace (zeroing only the region we use)
   for (let i = 0; i < subNdim; i++) {
     const si = keepDims[i];
     for (let j = 0; j <= i; j++) {
@@ -65,73 +74,59 @@ function computeMarginalCholesky(
         const lSjK = packed[offset + packedIndex(sj, k)];
         sum += lSiK * lSjK;
       }
-      sigma[i * MAX_SUPPORTED_DIMS + j] = sum;
-      sigma[j * MAX_SUPPORTED_DIMS + i] = sum;
+      _sigmaWorkspace[i * MAX_SUPPORTED_DIMS + j] = sum;
+      _sigmaWorkspace[j * MAX_SUPPORTED_DIMS + i] = sum;
     }
   }
 
   // Step 2: Cholesky-Crout factorization of Σ_S → L_S
   const subPackedSize = (subNdim * (subNdim + 1)) / 2;
-  const lSub = new Float32Array(subPackedSize);
 
   for (let i = 0; i < subNdim; i++) {
     for (let j = 0; j <= i; j++) {
-      let sum = sigma[i * MAX_SUPPORTED_DIMS + j];
+      let sum = _sigmaWorkspace[i * MAX_SUPPORTED_DIMS + j];
       for (let k = 0; k < j; k++) {
-        sum -= lSub[packedIndex(i, k)] * lSub[packedIndex(j, k)];
+        sum -= _lSubWorkspace[packedIndex(i, k)] * _lSubWorkspace[packedIndex(j, k)];
       }
       if (i === j) {
-        lSub[packedIndex(i, i)] =
+        _lSubWorkspace[packedIndex(i, i)] =
           sum > CHOLESKY_EPSILON ? Math.sqrt(sum) : Math.sqrt(CHOLESKY_EPSILON);
       } else {
-        const diag = lSub[packedIndex(j, j)];
-        lSub[packedIndex(i, j)] = diag > CHOLESKY_EPSILON ? sum / diag : 0;
+        const diag = _lSubWorkspace[packedIndex(j, j)];
+        _lSubWorkspace[packedIndex(i, j)] = diag > CHOLESKY_EPSILON ? sum / diag : 0;
       }
     }
   }
 
-  // Copy to output
+  // Copy to output from workspace
   for (let k = 0; k < subPackedSize; k++) {
-    output[outputOffset + k] = lSub[k];
+    output[outputOffset + k] = _lSubWorkspace[k];
   }
 }
 
 /**
- * Compute Mahalanobis distance for a point using packed Cholesky factor.
- *
- * Given L (lower-triangular Cholesky of covariance),
- * Mahalanobis distance = ||L⁻¹ · (x - μ)||
- *
- * We use forward substitution to solve L·y = d, then ||y|| is the Mahalanobis distance.
- *
- * @param diff - Difference vector (x - μ) for the dimensions
- * @param packedL - Packed Cholesky factor [L00, L10, L11, ...]
- * @param offset - Start offset in packedL
- * @param ndim - Dimensionality of the Cholesky
- * @returns Mahalanobis distance
+ * Compute Mahalanobis distance reusing a pre-allocated y buffer.
+ * Avoids per-call allocation, matching the pattern in gsplats_processing.ts.
  */
-function mahalanobisDistance(
+function mahalanobisDistanceReuse(
   diff: number[],
   packedL: Float32Array,
   offset: number,
-  ndim: number
+  ndim: number,
+  yBuffer: number[]
 ): number {
-  // Forward substitution: solve L · y = diff
-  const y = new Array(ndim);
-
   for (let i = 0; i < ndim; i++) {
     let val = diff[i];
     for (let j = 0; j < i; j++) {
-      val -= packedL[offset + packedIndex(i, j)] * y[j];
+      val -= packedL[offset + packedIndex(i, j)] * yBuffer[j];
     }
     const diag = packedL[offset + packedIndex(i, i)];
-    y[i] = diag > 1e-10 ? val / diag : 0;
+    yBuffer[i] = diag > 1e-10 ? val / diag : 0;
   }
 
-  // Compute ||y||
   let sumSq = 0;
   for (let i = 0; i < ndim; i++) {
-    sumSq += y[i] * y[i];
+    sumSq += yBuffer[i] * yBuffer[i];
   }
   return Math.sqrt(sumSq);
 }
@@ -168,48 +163,58 @@ export function processGSplatsTo3D(
   // Sort dimensions for consistent submatrix extraction
   const sortedDisplayDims = [...displayDims].sort((a, b) => a - b);
   const sortedHiddenDims = [...hiddenDims].sort((a, b) => a - b);
+  const numHidden = sortedHiddenDims.length;
 
   // Compute packed sizes
   const fullPackedSize = (ndim * (ndim + 1)) / 2;
   const display3DPackedSize = 6; // 3D Cholesky has 6 elements
-  const hiddenPackedSize = (sortedHiddenDims.length * (sortedHiddenDims.length + 1)) / 2;
+  const hiddenPackedSize = (numHidden * (numHidden + 1)) / 2;
 
   // Minimum amplitude threshold (splats with lower amplitude are invisible)
   const minAmplitude = 1e-6;
 
-  // First pass: count visible splats
+  // Pre-allocate reusable temporary buffers ONCE (avoid per-splat GC pressure)
+  const hiddenCholesky = numHidden > 0 ? new Float32Array(hiddenPackedSize) : null;
+  const diff = numHidden > 0 ? new Array<number>(numHidden) : null;
+  const yBuffer = numHidden > 0 ? new Array<number>(numHidden) : null;
+
+  // Single pass: compute attenuation for ALL splats, cache the values,
+  // and collect visible indices. This avoids recomputing the expensive
+  // marginal Cholesky + Mahalanobis distance in a second pass.
+  const attenuations = new Float32Array(splatCount);
   let visibleCount = 0;
   const visibleIndices: number[] = [];
 
   for (let i = 0; i < splatCount; i++) {
-    const sharpness = loaded.sharpness?.[i] ?? 2.0;
+    const splatSharpness = loaded.sharpness?.[i] ?? 2.0;
 
-    // Compute hidden dimension distance if there are hidden dims
     let attenuation = 1.0;
-    if (sortedHiddenDims.length > 0) {
-      // Extract hidden dimension center components
+    if (numHidden > 0) {
       const centerOffset = i * ndim;
-      const diff = sortedHiddenDims.map(
-        (d) => slicePosition[d] - loaded.positions[centerOffset + d]
-      );
 
-      // Compute marginal Cholesky for hidden dimensions
-      const hiddenCholesky = new Float32Array(hiddenPackedSize);
+      // Fill diff vector in-place (no allocation)
+      for (let hIdx = 0; hIdx < numHidden; hIdx++) {
+        diff![hIdx] =
+          slicePosition[sortedHiddenDims[hIdx]] -
+          loaded.positions[centerOffset + sortedHiddenDims[hIdx]];
+      }
+
+      // Compute marginal Cholesky into reusable buffer
       computeMarginalCholesky(
         loaded.choleskyFactors,
         i * fullPackedSize,
         sortedHiddenDims,
-        hiddenCholesky,
+        hiddenCholesky!,
         0
       );
 
-      // Compute Mahalanobis distance in hidden dims
-      const mahalDist = mahalanobisDistance(diff, hiddenCholesky, 0, sortedHiddenDims.length);
+      // Compute Mahalanobis distance using reusable y buffer
+      const mahalDist = mahalanobisDistanceReuse(diff!, hiddenCholesky!, 0, numHidden, yBuffer!);
 
-      // Attenuation: exp(-½ · mahal^sharpness)
-      attenuation = Math.exp(-0.5 * Math.pow(mahalDist, sharpness));
+      attenuation = Math.exp(-0.5 * Math.pow(mahalDist, splatSharpness));
     }
 
+    attenuations[i] = attenuation;
     const attenuatedAmplitude = loaded.amplitudes[i] * attenuation;
 
     if (attenuatedAmplitude >= minAmplitude) {
@@ -225,7 +230,16 @@ export function processGSplatsTo3D(
   const sharpness = new Float32Array(visibleCount);
   const colors = new Float32Array(visibleCount * 3);
 
-  // Second pass: extract visible splat data
+  // Color normalization factor (computed once, not per-splat)
+  const normFactor = loaded.colors
+    ? loaded.colors instanceof Uint8Array
+      ? 1 / 255
+      : loaded.colors instanceof Uint16Array
+        ? 1 / 65535
+        : 1
+    : 0;
+
+  // Second pass: extract visible splat data (attenuation reused from cache, NOT recomputed)
   for (let outIdx = 0; outIdx < visibleCount; outIdx++) {
     const srcIdx = visibleIndices[outIdx];
     const srcCenterOffset = srcIdx * ndim;
@@ -246,40 +260,15 @@ export function processGSplatsTo3D(
       outIdx * display3DPackedSize
     );
 
-    // Compute attenuated amplitude
+    // Use cached attenuation from first pass (no recomputation!)
     const srcSharpness = loaded.sharpness?.[srcIdx] ?? 2.0;
     sharpness[outIdx] = srcSharpness;
-
-    let attenuation = 1.0;
-    if (sortedHiddenDims.length > 0) {
-      const diff = sortedHiddenDims.map(
-        (d) => slicePosition[d] - loaded.positions[srcCenterOffset + d]
-      );
-      const hiddenCholesky = new Float32Array(hiddenPackedSize);
-      computeMarginalCholesky(
-        loaded.choleskyFactors,
-        srcCholeskyOffset,
-        sortedHiddenDims,
-        hiddenCholesky,
-        0
-      );
-      const mahalDist = mahalanobisDistance(diff, hiddenCholesky, 0, sortedHiddenDims.length);
-      attenuation = Math.exp(-0.5 * Math.pow(mahalDist, srcSharpness));
-    }
-
-    amplitudes[outIdx] = loaded.amplitudes[srcIdx] * attenuation;
+    amplitudes[outIdx] = loaded.amplitudes[srcIdx] * attenuations[srcIdx];
 
     // Copy colors with normalization (default to white if not present)
     const srcColorOffset = srcIdx * 3;
     const dstColorOffset = outIdx * 3;
     if (loaded.colors) {
-      // Normalize Uint8 (0-255) and Uint16 (0-65535) to Float32 (0-1)
-      const normFactor =
-        loaded.colors instanceof Uint8Array
-          ? 1 / 255
-          : loaded.colors instanceof Uint16Array
-            ? 1 / 65535
-            : 1;
       colors[dstColorOffset] = loaded.colors[srcColorOffset] * normFactor;
       colors[dstColorOffset + 1] = loaded.colors[srcColorOffset + 1] * normFactor;
       colors[dstColorOffset + 2] = loaded.colors[srcColorOffset + 2] * normFactor;
@@ -351,11 +340,7 @@ export function processGSplats3DOnly(loaded: LoadedGSplatsData): ProcessedGSplat
       }
     }
   } else {
-    for (let i = 0; i < splatCount; i++) {
-      colors[i * 3] = 1.0;
-      colors[i * 3 + 1] = 1.0;
-      colors[i * 3 + 2] = 1.0;
-    }
+    colors.fill(1.0);
   }
 
   return {

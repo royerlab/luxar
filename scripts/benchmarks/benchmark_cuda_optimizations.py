@@ -321,9 +321,7 @@ def compare_results(file_a: str, file_b: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="CUDA optimization benchmark runner"
-    )
+    parser = argparse.ArgumentParser(description="CUDA optimization benchmark runner")
     parser.add_argument("--label", type=str, help="Label for this benchmark run")
     parser.add_argument("--output", type=str, help="Output JSON path")
     parser.add_argument(

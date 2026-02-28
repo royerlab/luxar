@@ -11,12 +11,14 @@ from luxar.io.compiler import LuxarZarrCompiler
 
 def _make_4d_dims() -> Dimensions:
     """Scene: [X, Y, Z, Time] — 3 displayed + 1 hidden."""
-    return Dimensions([
-        Dimension("X", display=True, range=(0, 10)),
-        Dimension("Y", display=True, range=(0, 10)),
-        Dimension("Z", display=True, range=(0, 10)),
-        Dimension("Time", display=False, discrete=True, range=(0, 5), step=1.0),
-    ])
+    return Dimensions(
+        [
+            Dimension("X", display=True, range=(0, 10)),
+            Dimension("Y", display=True, range=(0, 10)),
+            Dimension("Z", display=True, range=(0, 10)),
+            Dimension("Time", display=False, discrete=True, range=(0, 5), step=1.0),
+        ]
+    )
 
 
 class TestDimOrderPoints:
@@ -31,7 +33,8 @@ class TestDimOrderPoints:
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=_make_4d_dims())
             pts = scene.add_points(
-                "pts", positions_3d,
+                "pts",
+                positions_3d,
                 dim_order=["Z", "Y", "X"],
                 fill={"Time": 2.0},
             )
@@ -70,7 +73,8 @@ class TestDimOrderPoints:
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=_make_4d_dims())
             scene.add_points(
-                "pts", positions,
+                "pts",
+                positions,
                 dim_order=["X", "Y", "Z"],
                 extend_to_all=[],  # explicit: no extension
             )
@@ -88,7 +92,8 @@ class TestDimOrderPoints:
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=dims)
             scene.add_points(
-                "pts", positions_2d,
+                "pts",
+                positions_2d,
                 dim_order=["x", "y"],
                 fill={"z": 5.0},
             )
@@ -120,8 +125,11 @@ class TestDimOrderLines:
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lines = scene.add_lines(
-                "lines", vertices_2d, widths=0.1,
-                dim_order=["x", "y"], fill={"z": 0.0},
+                "lines",
+                vertices_2d,
+                widths=0.1,
+                dim_order=["x", "y"],
+                fill={"z": 0.0},
             )
             assert lines.n_elements == 2
 
@@ -143,7 +151,10 @@ class TestDimOrderGSplats:
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=_make_4d_dims())
             gsplats = scene.add_gsplats(
-                "splats", centers_3d, amplitudes, cholesky_3d,
+                "splats",
+                centers_3d,
+                amplitudes,
+                cholesky_3d,
                 dim_order=["Z", "Y", "X"],
                 fill={"Time": 0.0},
                 fill_sigma={"Time": 0.5},
@@ -187,7 +198,10 @@ class TestDimOrderGSplats:
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=_make_4d_dims())
             scene.add_gsplats(
-                "splats", centers, amplitudes, cholesky_3d,
+                "splats",
+                centers,
+                amplitudes,
+                cholesky_3d,
                 dim_order=["Z", "Y", "X"],
                 fill={"Time": 0.0},
             )
@@ -201,14 +215,18 @@ class TestDimOrderGSplats:
         # perm: data[0]→Z(2), data[1]→Y(1), data[2]→X(0) in scene
         # So Sigma_4d[scene_i, scene_j] = Sigma_3d[data_i, data_j] where
         # X(scene 0) = data 2, Y(scene 1) = data 1, Z(scene 2) = data 0
-        perm = [2, 1, 0]  # scene_to_data: scene[0]→data[2], scene[1]→data[1], scene[2]→data[0]
+        perm = [
+            2,
+            1,
+            0,
+        ]  # scene_to_data: scene[0]→data[2], scene[1]→data[1], scene[2]→data[0]
         for si in range(3):
             for sj in range(3):
                 np.testing.assert_allclose(
                     Sigma_4d[0, si, sj],
                     Sigma_3d[0, perm[si], perm[sj]],
                     atol=1e-5,
-                    err_msg=f"Sigma mismatch at scene[{si},{sj}]"
+                    err_msg=f"Sigma mismatch at scene[{si},{sj}]",
                 )
 
     def test_gsplats_from_data_with_dim_order(self, tmp_path) -> None:
@@ -226,7 +244,8 @@ class TestDimOrderGSplats:
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=_make_4d_dims())
             gsplats = scene.add_gsplats_from_data(
-                "splats", result,
+                "splats",
+                result,
                 dim_order=["Z", "Y", "X"],
                 fill={"Time": 3.0},
             )
@@ -267,7 +286,9 @@ class TestDimOrderValidation:
 
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="dim_order has 2 names but data has 3"):
+            with pytest.raises(
+                ValueError, match="dim_order has 2 names but data has 3"
+            ):
                 scene.add_points("pts", positions, dim_order=["x", "y"])
 
     def test_wrong_length_too_many(self, tmp_path) -> None:
@@ -277,7 +298,9 @@ class TestDimOrderValidation:
 
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="dim_order has 3 names but data has 2"):
+            with pytest.raises(
+                ValueError, match="dim_order has 3 names but data has 2"
+            ):
                 scene.add_points("pts", positions, dim_order=["x", "y", "z"])
 
     def test_fill_key_also_in_dim_order(self, tmp_path) -> None:
@@ -289,7 +312,8 @@ class TestDimOrderValidation:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="already in dim_order"):
                 scene.add_points(
-                    "pts", positions,
+                    "pts",
+                    positions,
                     dim_order=["x", "y"],
                     fill={"x": 5.0},
                 )
@@ -303,7 +327,8 @@ class TestDimOrderValidation:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="fill key.*not found"):
                 scene.add_points(
-                    "pts", positions,
+                    "pts",
+                    positions,
                     dim_order=["x", "y"],
                     fill={"BOGUS": 0.0},
                 )
@@ -358,7 +383,10 @@ class TestDimOrderValidation:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="not found in scene dimensions"):
                 scene.add_gsplats(
-                    "splats", centers, amplitudes, cholesky,
+                    "splats",
+                    centers,
+                    amplitudes,
+                    cholesky,
                     dim_order=["x", "NOPE"],
                 )
 
@@ -369,7 +397,9 @@ class TestDimOrderValidation:
 
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="dim_order has 0 names but data has 2"):
+            with pytest.raises(
+                ValueError, match="dim_order has 0 names but data has 2"
+            ):
                 scene.add_points("pts", positions, dim_order=[])
 
     def test_fill_sigma_unknown_dimension(self, tmp_path) -> None:
@@ -384,7 +414,10 @@ class TestDimOrderValidation:
             scene = compiler.create_scene(dimensions=_make_4d_dims())
             with pytest.raises(ValueError, match="fill_sigma key.*not found"):
                 scene.add_gsplats(
-                    "splats", centers, amplitudes, cholesky,
+                    "splats",
+                    centers,
+                    amplitudes,
+                    cholesky,
                     dim_order=["X", "Y", "Z"],
                     fill_sigma={"BOGUS": 0.5},
                 )
@@ -399,9 +432,14 @@ class TestDimOrderValidation:
 
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=_make_4d_dims())
-            with pytest.raises(ValueError, match="fill_sigma key.*already in dim_order"):
+            with pytest.raises(
+                ValueError, match="fill_sigma key.*already in dim_order"
+            ):
                 scene.add_gsplats(
-                    "splats", centers, amplitudes, cholesky,
+                    "splats",
+                    centers,
+                    amplitudes,
+                    cholesky,
                     dim_order=["X", "Y", "Z"],
                     fill_sigma={"X": 0.5},  # X is mapped, not unmapped
                 )

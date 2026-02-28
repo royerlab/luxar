@@ -62,40 +62,17 @@ camera: {
 
 ### Shader Configuration
 
-Point rendering and HDR settings:
+Point rendering shader constants:
 
 ```typescript
 shader: {
   points: {
-    hdrMultiplier: 16.0,     // HDR bloom multiplier
-    baseAlpha: 0.01,         // Transparency
+    baseAlpha: 0.01,         // Base alpha intensity
   }
 }
 ```
 
-**Note**: Bloom settings moved to `renderingControls.defaults` for centralization.
-
-### Post-Processing Pipeline
-
-Advanced rendering effects configuration:
-
-```typescript
-postProcessing: {
-  hdr: {
-    renderTargetType: THREE.HalfFloatType  // 16-bit float precision
-  },
-  toneMapping: {
-    initial: {
-      outputColorSpace: THREE.LinearSRGBColorSpace,
-      toneMapping: THREE.NoToneMapping
-    },
-    final: {
-      outputColorSpace: THREE.SRGBColorSpace,
-      toneMapping: THREE.ACESFilmicToneMapping
-    }
-  }
-}
-```
+**Note**: All user-adjustable rendering effect settings (bloom, tone mapping, HDR multiplier, etc.) live in `renderingControls.defaults` as the single source of truth. Post-processing pipeline internals (HalfFloatType, tone mapping modes) are managed directly by the PostProcessingManager.
 
 ### User Interface Configuration
 
@@ -295,7 +272,6 @@ interface AppConfig {
   animation: AnimationConfig;
   scene: SceneConfig;
   shader: ShaderConfig;
-  postProcessing: PostProcessingConfig;
   ui: UIConfig;
   renderingControls: RenderingControlsConfig;
   controls: ControlsConfig;
