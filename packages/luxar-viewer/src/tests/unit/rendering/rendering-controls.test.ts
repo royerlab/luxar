@@ -136,6 +136,7 @@ describe('RenderingControls', () => {
       setFlyInertialMode: vi.fn(),
       setFlyDamping: vi.fn(),
       setFlyRotationDamping: vi.fn(),
+      getSceneScale: vi.fn(() => 0),
     };
 
     // Setup mock post-processing

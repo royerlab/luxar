@@ -304,6 +304,9 @@ export class LuxarApp {
       this.renderingControls.applyZarrDefaults();
     }
 
+    // Update fly speed slider range and value based on scene scale
+    this.renderingControls.updateSceneScale();
+
     // Initialize dimension sliders for nD data
     this.inputHandler.initDimensionSliders();
 

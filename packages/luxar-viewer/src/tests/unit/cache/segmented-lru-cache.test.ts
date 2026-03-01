@@ -291,14 +291,15 @@ describe('SegmentedLRUCache', () => {
       cache.set('.zmetadata', new Uint8Array(100));
       cache.set('chunk', new Uint8Array(100));
 
-      // Miss in metadata segment (checks metadata first, then chunks)
-      cache.get('missing_meta'); // Checked in both segments = 2 misses
-      // Miss in chunks segment
-      cache.get('missing_chunk'); // Also checked in both = 2 misses
+      // Miss in chunks segment (routed by key pattern)
+      cache.get('missing_chunk'); // 1 miss in chunks segment
+      cache.get('another_missing'); // 1 miss in chunks segment
+      // Miss in metadata segment
+      cache.get('.zattrs'); // 1 miss in metadata segment (not set)
 
       const stats = cache.getStats();
-      // Each get() that finds nothing checks both segments
-      expect(stats.misses).toBe(4); // 2 + 2
+      // Each get() is routed to exactly one segment, so one miss per call
+      expect(stats.misses).toBe(3);
     });
 
     it('should track hits and misses accurately for metadata files', () => {

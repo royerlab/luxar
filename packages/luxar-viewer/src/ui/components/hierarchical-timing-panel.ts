@@ -40,40 +40,6 @@ function getTooltip(name: string): string | undefined {
 const expandedState = new Map<string, boolean>();
 
 /**
- * Interaction lock - prevents updates while user is interacting
- */
-let interactionLock = false;
-let interactionLockTimeout: ReturnType<typeof setTimeout> | null = null;
-
-/**
- * Check if interaction is locked (updates should be skipped)
- */
-export function isInteractionLocked(): boolean {
-  return interactionLock;
-}
-
-/**
- * Set interaction lock (called when user hovers over expand buttons)
- */
-export function setInteractionLock(locked: boolean): void {
-  interactionLock = locked;
-
-  // Clear any pending timeout
-  if (interactionLockTimeout) {
-    clearTimeout(interactionLockTimeout);
-    interactionLockTimeout = null;
-  }
-
-  // If locking, also set a timeout to auto-unlock after interaction
-  if (locked) {
-    interactionLockTimeout = setTimeout(() => {
-      interactionLock = false;
-      interactionLockTimeout = null;
-    }, 2000); // Keep locked for 2 seconds after last interaction
-  }
-}
-
-/**
  * Get a unique path for an entry (for tracking expanded state)
  */
 function getEntryPath(entry: TimingEntry, parentPath = ''): string {
@@ -533,25 +499,11 @@ export function attachTimingPanelHandlers(container: HTMLElement, onUpdate: () =
     if ((el as HTMLElement).dataset.hasListener) return;
     (el as HTMLElement).dataset.hasListener = 'true';
 
-    // Lock interaction when hovering over expand buttons
-    el.addEventListener('mouseenter', () => {
-      setInteractionLock(true);
-    });
-
-    el.addEventListener('mouseleave', () => {
-      // Keep lock for a bit after leaving to allow click
-      setTimeout(() => {
-        setInteractionLock(false);
-      }, 500);
-    });
-
     el.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
       const path = (el as HTMLElement).dataset.path;
       if (path) {
-        // Extend lock during toggle
-        setInteractionLock(true);
         toggleExpanded(path);
         onUpdate();
       }

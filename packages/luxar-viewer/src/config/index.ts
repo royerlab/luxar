@@ -279,12 +279,17 @@ export const config: AppConfig = {
 
   // Control system configuration (migrated from control-config.ts)
   controls: {
+    scaleMultipliers: {
+      minDistanceFactor: 0.001,
+      maxDistanceFactor: 10,
+      flySpeedFactor: 0.05,
+    },
     fly: {
       inertialMode: {
         default: true,
       },
       movement: {
-        speed: { min: 0.5, max: 50.0, default: 5.0, step: 0.1 },
+        speed: { min: 0.01, max: 5.0, default: 0.5, step: 0.01 },
         acceleration: { min: 0.1, max: 2.0, default: 0.5, step: 0.1 },
         damping: { min: 0.9, max: 0.99999, default: 0.999, step: 0.0001 },
       },

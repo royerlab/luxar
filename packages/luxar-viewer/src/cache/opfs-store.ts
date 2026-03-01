@@ -131,8 +131,12 @@ export class OPFSStore {
     try {
       const fileHandle = await this.navigateToFile(key, true);
       const writable = await fileHandle.createWritable();
-      // Type assertion: Uint8Arrays from network are always ArrayBuffer, not SharedArrayBuffer
-      await writable.write(data.buffer as ArrayBuffer);
+      // Slice the view's portion, NOT data.buffer directly. If the Uint8Array is
+      // a view on a larger ArrayBuffer (e.g., from a sub-slice), data.buffer would
+      // write the entire underlying buffer, corrupting the stored data. slice()
+      // copies only the relevant bytes. Cast is safe: network data is never SharedArrayBuffer.
+      const bytes = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+      await writable.write(bytes);
       await writable.close();
 
       // Update index

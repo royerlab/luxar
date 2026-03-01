@@ -410,6 +410,10 @@ export class RenderingControls {
       }
     }
 
+    // Re-apply scale-aware fly speed (resetToDefaults uses hardcoded config defaults
+    // which don't account for scene scale)
+    this.updateSceneScale();
+
     log.info(Modules.RENDERER, 'Rendering settings reset to defaults');
   }
 
@@ -824,6 +828,52 @@ export class RenderingControls {
         this.controllers.farPlane.updateDisplay();
       }
     }
+  }
+
+  /**
+   * Update fly speed UI slider range and value based on scene scale.
+   * Called after scene data loads and scale is known.
+   */
+  public updateSceneScale(): void {
+    const scale = this.sceneManager.getSceneScale();
+    if (scale <= 0) return;
+
+    // Re-apply scale to ControlsManager. This is necessary because applyZarrDefaults()
+    // may have called setFlyMovementSpeed() with config defaults after
+    // autoAdjustClippingPlanes() set the scale-derived speed, overwriting it.
+    this.sceneManager.controls.setSceneScale(scale);
+
+    const m = config.controls.scaleMultipliers;
+    const scaledSpeed = scale * m.flySpeedFactor;
+
+    // Update slider range: allow 0.1x to 10x of the scale-derived speed
+    const newMin = Math.max(0.01, scaledSpeed * 0.1);
+    const newMax = scaledSpeed * 10;
+    const newStep = Math.max(0.01, scaledSpeed * 0.01);
+
+    if (this.controllers.flyMovementSpeed) {
+      // NumberController supports dynamic .min()/.max()/.step()
+      const ctrl = this.controllers.flyMovementSpeed as any;
+      if (typeof ctrl.min === 'function') {
+        ctrl.min(newMin).max(newMax).step(newStep);
+      }
+    }
+
+    // Sync the settings and UI with the scale-derived speed
+    this.settings.flyMovementSpeed = scaledSpeed;
+    this.sceneManager.setFlyMovementSpeed(scaledSpeed);
+
+    // Update slider display
+    if (this.controllers.flyMovementSpeed) {
+      this.controllers.flyMovementSpeed.setValue(scaledSpeed);
+      this.controllers.flyMovementSpeed.updateDisplay();
+    }
+
+    log.info(
+      Modules.UI,
+      `Fly speed range updated for scale ${scale.toFixed(1)}: ` +
+        `[${newMin.toFixed(2)}, ${newMax.toFixed(1)}], speed=${scaledSpeed.toFixed(1)}`
+    );
   }
 
   /**

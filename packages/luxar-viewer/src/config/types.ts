@@ -140,11 +140,26 @@ export interface OrbitControlsConfig {
 }
 
 /**
+ * Scale multipliers for adapting camera controls to scene size.
+ * All factors are multiplied by the bounding box diagonal to produce
+ * the actual control parameter value.
+ */
+export interface ScaleMultipliers {
+  /** orbit/arcball minDistance = diagonal * factor (default: 0.001) */
+  minDistanceFactor: number;
+  /** orbit/arcball maxDistance = diagonal * factor (default: 10) */
+  maxDistanceFactor: number;
+  /** fly movementSpeed = diagonal * factor (default: 0.05) */
+  flySpeedFactor: number;
+}
+
+/**
  * Control system configuration
  */
 export interface ControlsConfig {
   fly: FlyControlsConfig;
   orbit: OrbitControlsConfig;
+  scaleMultipliers: ScaleMultipliers;
 }
 
 /**
