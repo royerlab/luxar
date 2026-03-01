@@ -33,7 +33,11 @@ def warn_if_no_cuda_gpu() -> None:
 
         if torch.cuda.is_available():
             return  # All good
-        device = "MPS" if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()) else "CPU"
+        device = (
+            "MPS"
+            if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+            else "CPU"
+        )
     except ImportError:
         device = "CPU (PyTorch not installed)"
 

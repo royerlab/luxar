@@ -28,28 +28,32 @@ type SemanticColor = 'success' | 'warning' | 'error' | 'info' | 'muted' | 'dimme
 /**
  * Get CSS class for a semantic color.
  */
-function getColorClass(color: SemanticColor): string {
+export function getColorClass(color: SemanticColor): string {
   return `luxar-color--${color}`;
 }
 
 /**
  * Template for metric card component
  * @param colorClass - CSS class for color (e.g., 'luxar-color--success')
+ * @param dataField - Optional data-field attribute for targeted DOM patching
  */
 export function renderMetricCard(
   title: string,
   value: string | number,
   subtitle?: string,
   colorClass: string = '',
-  size: 'small' | 'medium' | 'large' = 'medium'
+  size: 'small' | 'medium' | 'large' = 'medium',
+  dataField?: string
 ): string {
+  const fieldAttr = dataField ? ` data-field="${dataField}"` : '';
+  const subFieldAttr = dataField ? ` data-field="${dataField}-sub"` : '';
   return `
     <div class="luxar-metric-card luxar-metric-card--${size}">
       ${title ? `<div class="luxar-metric-card__title">${title}</div>` : ''}
-      <div class="luxar-metric-card__value luxar-metric-card__value--${size} ${colorClass}">
+      <div class="luxar-metric-card__value luxar-metric-card__value--${size} ${colorClass}"${fieldAttr}>
         ${value}
       </div>
-      ${subtitle ? `<div class="luxar-metric-card__subtitle">${subtitle}</div>` : ''}
+      ${subtitle ? `<div class="luxar-metric-card__subtitle"${subFieldAttr}>${subtitle}</div>` : ''}
     </div>
   `;
 }
@@ -141,7 +145,7 @@ export function renderSecondaryMetrics(
     <div class="luxar-secondary-metrics">
       <div class="luxar-secondary-metrics__item">
         <span class="luxar-secondary-metrics__label">MEMORY</span>
-        <div class="luxar-secondary-metrics__value">
+        <div class="luxar-secondary-metrics__value" data-field="memory-used">
           ${formatBytes(memory.used)}
         </div>
         ${renderProgressBar(memoryPercent, getCacheMemoryColorClass(memoryPercent), '', 2)}
@@ -149,20 +153,20 @@ export function renderSecondaryMetrics(
 
       <div class="luxar-secondary-metrics__item">
         <span class="luxar-secondary-metrics__label">QUERY SPEED</span>
-        <div class="luxar-secondary-metrics__value">
+        <div class="luxar-secondary-metrics__value" data-field="query-speed">
           ${querySpeed.avgTime.toFixed(0)}ms
         </div>
-        <div class="luxar-secondary-metrics__subtitle">
+        <div class="luxar-secondary-metrics__subtitle" data-field="query-rate">
           ${querySpeed.perSec.toFixed(1)}/sec
         </div>
       </div>
 
       <div class="luxar-secondary-metrics__item">
         <span class="luxar-secondary-metrics__label">NETWORK I/O</span>
-        <div class="luxar-secondary-metrics__value">
+        <div class="luxar-secondary-metrics__value" data-field="network-bytes">
           ${network ? formatBytes(network.bytesTransferred) : '0B'}
         </div>
-        <div class="luxar-secondary-metrics__subtitle">
+        <div class="luxar-secondary-metrics__subtitle" data-field="network-detail">
           ${network ? `${network.requestCount} req · ${formatBytes(network.bandwidth)}/s` : '0 req'}
         </div>
       </div>
@@ -209,21 +213,24 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     formatNumber(stats.visiblePoints),
     `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)}`,
     getColorClass('success'),
-    'small'
+    'small',
+    'visible-points'
   )}
         ${renderMetricCard(
     'VISIBLE LINES',
     formatNumber(stats.visibleSegments),
     `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)}`,
     getColorClass('warning'),
-    'small'
+    'small',
+    'visible-lines'
   )}
         ${renderMetricCard(
     'VISIBLE SPLATS',
     formatNumber(stats.visibleSplats),
     `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)}`,
     getColorClass('info'),
-    'small'
+    'small',
+    'visible-splats'
   )}
       </div>
     `;
@@ -237,7 +244,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           formatNumber(stats.visiblePoints),
           `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)}`,
           getColorClass('success'),
-          'medium'
+          'medium',
+          'visible-points'
         )
       );
     }
@@ -248,7 +256,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           formatNumber(stats.visibleSegments),
           `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)}`,
           getColorClass('warning'),
-          'medium'
+          'medium',
+          'visible-lines'
         )
       );
     }
@@ -259,7 +268,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           formatNumber(stats.visibleSplats),
           `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)}`,
           getColorClass('info'),
-          'medium'
+          'medium',
+          'visible-splats'
         )
       );
     }
@@ -277,7 +287,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     formatNumber(stats.visiblePoints),
     `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
     getColorClass('success'),
-    'large'
+    'large',
+    'visible-points'
   )}
       </div>
     `;
@@ -290,7 +301,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     formatNumber(stats.visibleSegments),
     `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
     getColorClass('warning'),
-    'large'
+    'large',
+    'visible-lines'
   )}
       </div>
     `;
@@ -303,7 +315,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     formatNumber(stats.visibleSplats),
     `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)} total`,
     getColorClass('info'),
-    'large'
+    'large',
+    'visible-splats'
   )}
       </div>
     `;
@@ -351,6 +364,7 @@ function renderCacheSection(
     subtitle: string;
     tooltip: string;
     colorClass?: string;
+    dataField?: string;
   }>
 ): string {
   const cols = metrics.length === 2 ? 'cols-2' : 'cols-3';
@@ -368,13 +382,15 @@ function renderCacheSection(
               metrics.length === 2
                 ? 'luxar-metric-card__value--medium'
                 : 'luxar-metric-card__value--small';
+      const fieldAttr = metric.dataField ? ` data-field="${metric.dataField}"` : '';
+      const subFieldAttr = metric.dataField ? ` data-field="${metric.dataField}-sub"` : '';
       return `
           <div class="luxar-metric-card luxar-metric-card--small"${metric.tooltip ? ` title="${metric.tooltip}"` : ''}>
             <div class="luxar-metric-card__title">${metric.label}</div>
-            <div class="luxar-metric-card__value ${sizeClass} ${metric.colorClass || ''}">
+            <div class="luxar-metric-card__value ${sizeClass} ${metric.colorClass || ''}"${fieldAttr}>
               ${metric.value}
             </div>
-            <div class="luxar-metric-card__subtitle">
+            <div class="luxar-metric-card__subtitle"${subFieldAttr}>
               ${metric.subtitle}
             </div>
           </div>
@@ -475,6 +491,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
           tooltip:
                     'L0 decompressed cache: stores already-decoded TypedArrays, eliminating decompression latency',
           colorClass: getColorClass('primary'),
+          dataField: 'l0-size',
         },
         {
           label: 'HIT RATE',
@@ -483,6 +500,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
           tooltip:
                     'L0 hit: ~1μs lookup (no decompression). Miss: ~2ms decompression + L1 lookup',
           colorClass: l0HitRateColorClass,
+          dataField: 'l0-hitrate',
         },
         {
           label: 'EVICTIONS',
@@ -493,6 +511,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
                     cacheMetrics.l0.evictions > 0
                       ? getColorClass('warning')
                       : getColorClass('dimmed'),
+          dataField: 'l0-evictions',
         },
       ]
     )
@@ -507,6 +526,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
       subtitle: `${cacheMetrics.l1!.count} entries`,
       tooltip: 'L1 memory cache: fast in-memory storage for recently accessed chunks',
       colorClass: getColorClass('success'),
+      dataField: 'l1-size',
     },
     {
       label: 'HIT RATE',
@@ -514,6 +534,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
       subtitle: `${formatNumber(cacheMetrics.l1!.hits)} hits · ${formatNumber(cacheMetrics.l1!.misses)} miss`,
       tooltip: `Cache hit rate: ${cacheMetrics.l1!.hits.toLocaleString()} hits out of ${l1Total.toLocaleString()} total accesses`,
       colorClass: l1HitRateColorClass,
+      dataField: 'l1-hitrate',
     },
     {
       label: 'EVICTIONS',
@@ -523,6 +544,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
             'Entries removed from cache when memory limit reached (LRU = Least Recently Used)',
       colorClass:
             cacheMetrics.l1!.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed'),
+      dataField: 'l1-evictions',
     },
   ])}
 
@@ -540,12 +562,14 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
         tooltip:
               'L2 persistent cache: stored in browser\'s Origin Private File System, survives page reloads',
         colorClass: getColorClass('info'),
+        dataField: 'l2-size',
       },
       {
         label: 'I/O',
         value: `${formatNumber(cacheMetrics.l2!.reads)} reads`,
         subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes`,
         tooltip: 'Disk I/O operations: reads from cache, writes to cache',
+        dataField: 'l2-io',
       },
     ]
   )}
@@ -556,7 +580,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
           <span class="luxar-cache-total__label" title="Combined L0 + L1 + L2 cache usage">TOTAL</span>
           <button data-action="clearAll" class="luxar-cache-section__clear-btn" title="Clear all caches (L0 + L1 + L2)">Clear All</button>
         </div>
-        <div class="luxar-cache-total__value" title="${cacheMetrics.totalCacheMemory.toLocaleString()} bytes total cached">
+        <div class="luxar-cache-total__value" data-field="cache-total" title="${cacheMetrics.totalCacheMemory.toLocaleString()} bytes total cached">
           ${formatBytes(cacheMetrics.totalCacheMemory)}
         </div>
         ${renderProgressBar(cacheMetrics.memoryPercent, getCacheMemoryColorClass(cacheMetrics.memoryPercent), `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)} limit`, 6)}
@@ -669,7 +693,7 @@ export interface MemoryMetrics {
 /**
  * Helper to calculate reuse rate percentage
  */
-function calculateReuseRate(allocations: number, reuses: number): number {
+export function calculateReuseRate(allocations: number, reuses: number): number {
   const total = allocations + reuses;
   return total > 0 ? (reuses / total) * 100 : 0;
 }
@@ -677,7 +701,7 @@ function calculateReuseRate(allocations: number, reuses: number): number {
 /**
  * Get color class for reuse rate
  */
-function getReuseRateColorClass(rate: number): string {
+export function getReuseRateColorClass(rate: number): string {
   if (rate >= 80) return getColorClass('success');
   if (rate >= 50) return getColorClass('warning');
   return getColorClass('error');
@@ -722,7 +746,7 @@ export function renderMemoryContent(metrics: MemoryMetrics): string {
       ${accumulatorsSection}
       <div class="luxar-memory-total">
         <span class="luxar-memory-total__label">Total:</span>
-        <span class="luxar-memory-total__value">
+        <span class="luxar-memory-total__value" data-field="memory-total">
           ${totalAllocations} allocs · ${overallReuseRate.toFixed(0)}% reuse · ${totalAccumulatorMemory.toFixed(1)}MB
         </span>
       </div>
@@ -745,18 +769,18 @@ function renderGPUPoolSection(stats: GPUPoolStats): string {
       const reuseColorClass = hasData ? getReuseRateColorClass(reuseRate) : getColorClass('dimmed');
 
       return `
-      <tr class="luxar-memory-table__row">
+      <tr class="luxar-memory-table__row" data-row="gpu-${type}">
         <td class="luxar-memory-table__cell luxar-memory-table__cell--type">${capitalize(type)}</td>
-        <td class="luxar-memory-table__cell luxar-memory-table__cell--value ${reuseColorClass}">
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--value ${reuseColorClass}" data-field="gpu-${type}-reuse">
           ${hasData ? `${reuseRate.toFixed(0)}%` : '—'}
         </td>
-        <td class="luxar-memory-table__cell luxar-memory-table__cell--value">
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--value" data-field="gpu-${type}-active">
           ${hasData ? typeStats.activeBuffers : '—'}
         </td>
-        <td class="luxar-memory-table__cell luxar-memory-table__cell--value">
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--value" data-field="gpu-${type}-pooled">
           ${hasData ? typeStats.pooledBuffers : '—'}
         </td>
-        <td class="luxar-memory-table__cell luxar-memory-table__cell--value">
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--value" data-field="gpu-${type}-allocs">
           ${hasData ? typeStats.allocations : '—'}
         </td>
       </tr>
@@ -784,7 +808,7 @@ function renderGPUPoolSection(stats: GPUPoolStats): string {
           ${rows}
         </tbody>
       </table>
-      <div class="luxar-memory-section__summary">
+      <div class="luxar-memory-section__summary" data-field="gpu-summary">
         Total: ${stats.allocations} allocs · ${stats.reuses} reuses · ${stats.evictions} evicted
       </div>
     </div>
@@ -803,15 +827,15 @@ function renderAccumulatorsSection(accumulators: MemoryMetrics['accumulators']):
       const hasData = stats !== null && stats.capacity > 0;
 
       return `
-      <tr class="luxar-memory-table__row">
+      <tr class="luxar-memory-table__row" data-row="acc-${type}">
         <td class="luxar-memory-table__cell luxar-memory-table__cell--type">${capitalize(type)}</td>
-        <td class="luxar-memory-table__cell luxar-memory-table__cell--value">
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--value" data-field="acc-${type}-capacity">
           ${hasData ? formatNumber(stats.capacity) : '—'}
         </td>
-        <td class="luxar-memory-table__cell luxar-memory-table__cell--value">
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--value" data-field="acc-${type}-memory">
           ${hasData ? `${stats.memoryMB.toFixed(1)}MB` : '—'}
         </td>
-        <td class="luxar-memory-table__cell luxar-memory-table__cell--value ${hasData && stats.growthEvents > 5 ? getColorClass('warning') : ''}">
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--value ${hasData && stats.growthEvents > 5 ? getColorClass('warning') : ''}" data-field="acc-${type}-grows">
           ${hasData ? stats.growthEvents : '—'}
         </td>
       </tr>
@@ -848,7 +872,7 @@ function renderAccumulatorsSection(accumulators: MemoryMetrics['accumulators']):
           ${rows}
         </tbody>
       </table>
-      <div class="luxar-memory-section__summary">
+      <div class="luxar-memory-section__summary" data-field="acc-summary">
         Total: ${totalMemory.toFixed(1)}MB · ${totalAllocations} allocations
       </div>
     </div>
@@ -862,16 +886,16 @@ function capitalize(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
-// Helper functions
+// Helper functions (exported for use by value update functions in the monitor)
 
-function formatNumber(n: number): string {
+export function formatNumber(n: number): string {
   if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
   return n.toString();
 }
 
-function formatBytes(bytes: number): string {
+export function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + 'GB';
   if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + 'MB';
   if (bytes >= 1e3) return (bytes / 1e3).toFixed(1) + 'KB';
@@ -881,7 +905,7 @@ function formatBytes(bytes: number): string {
 /**
  * Get CSS color class for cache memory usage percentage
  */
-function getCacheMemoryColorClass(percent: number): string {
+export function getCacheMemoryColorClass(percent: number): string {
   if (percent <= 60) return getColorClass('success');
   if (percent <= 80) return getColorClass('warning');
   return getColorClass('error');
@@ -1004,7 +1028,7 @@ function renderSceneGraphNode(
         <!-- Stats badge -->
         ${
   statsText
-    ? `<span class="luxar-scene-graph__badge" title="${escapeHtml(statsTooltip)}">${statsText}</span>`
+    ? `<span class="luxar-scene-graph__badge" data-node-path="${escapeHtml(node.path)}" title="${escapeHtml(statsTooltip)}">${statsText}</span>`
     : ''
 }
 

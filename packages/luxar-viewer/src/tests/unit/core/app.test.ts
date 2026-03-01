@@ -114,6 +114,7 @@ describe('LuxarApp', () => {
       setZarrViewerConfig: vi.fn(),
       hasStoredSettings: vi.fn().mockReturnValue(false),
       applyZarrDefaults: vi.fn(),
+      updateSceneScale: vi.fn(),
       dispose: vi.fn(),
     };
 
