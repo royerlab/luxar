@@ -34,7 +34,6 @@ import { RangeLoader, type LoadRange } from './loaders';
 import { choleskyPackedSize } from '../types/gsplats';
 import { GSplatsDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
-import { getWorkerPool } from '../workers/worker-pool';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
 import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache';
 
@@ -314,40 +313,44 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       const choleskyBuffer = this._accumulator['choleskyBuffer'] as Float32Array;
 
       // Load directly into accumulator buffers (ZERO intermediate allocations!)
-      // Note: Nested timing disabled due to async context issues - top-level timing captures total
-      await this.loadArrayRanges('centers', splatRanges, attrs.ndim, centerBuffer);
-      await this.loadArrayRanges('amplitudes', splatRanges, 1, amplitudeBuffer);
-      await this.loadArrayRanges(
-        'cholesky_factors',
-        splatRanges,
-        choleskyPackedSize(attrs.ndim),
-        choleskyBuffer
-      );
+      const loadSession = session?.begin('Load Arrays');
+      try {
+        await this.loadArrayRanges('centers', splatRanges, attrs.ndim, centerBuffer);
+        await this.loadArrayRanges('amplitudes', splatRanges, 1, amplitudeBuffer);
+        await this.loadArrayRanges(
+          'cholesky_factors',
+          splatRanges,
+          choleskyPackedSize(attrs.ndim),
+          choleskyBuffer
+        );
 
-      // Load optional arrays directly to accumulator
-      if (this.arrays.colors) {
-        // Use loadColorRanges for proper multi-type handling
-        // NOTE: For LUT encoding, loadColorRanges may return a different buffer type
-        // (Float32Array) than the accumulator's colorBuffer (Uint8Array based on stored dtype).
-        // We MUST use the returned buffer since it contains the decoded colors.
-        const colorBuffer = this._accumulator['colorBuffer'] as
-          | Float32Array
-          | Uint8Array
-          | Uint16Array;
-        const loadedColors = await this.loadColorRanges(splatRanges, colorBuffer);
+        // Load optional arrays directly to accumulator
+        if (this.arrays.colors) {
+          // Use loadColorRanges for proper multi-type handling
+          // NOTE: For LUT encoding, loadColorRanges may return a different buffer type
+          // (Float32Array) than the accumulator's colorBuffer (Uint8Array based on stored dtype).
+          // We MUST use the returned buffer since it contains the decoded colors.
+          const colorBuffer = this._accumulator['colorBuffer'] as
+            | Float32Array
+            | Uint8Array
+            | Uint16Array;
+          const loadedColors = await this.loadColorRanges(splatRanges, colorBuffer);
 
-        // If loadColorRanges returned a different buffer (e.g., LUT decoded to Float32Array),
-        // we need to update the accumulator with the new buffer
-        if (loadedColors !== colorBuffer) {
-          // Replace accumulator's color buffer with the decoded colors
-          // This handles LUT encoding where decoded output is Float32Array
-          (this._accumulator as unknown as { colorBuffer: typeof loadedColors }).colorBuffer =
-            loadedColors;
+          // If loadColorRanges returned a different buffer (e.g., LUT decoded to Float32Array),
+          // we need to update the accumulator with the new buffer
+          if (loadedColors !== colorBuffer) {
+            // Replace accumulator's color buffer with the decoded colors
+            // This handles LUT encoding where decoded output is Float32Array
+            (this._accumulator as unknown as { colorBuffer: typeof loadedColors }).colorBuffer =
+              loadedColors;
+          }
         }
-      }
-      if (this.arrays.sharpness) {
-        const sharpnessBuffer = this._accumulator['sharpnessBuffer'] as Float32Array;
-        await this.loadArrayRanges('sharpness', splatRanges, 1, sharpnessBuffer);
+        if (this.arrays.sharpness) {
+          const sharpnessBuffer = this._accumulator['sharpnessBuffer'] as Float32Array;
+          await this.loadArrayRanges('sharpness', splatRanges, 1, sharpnessBuffer);
+        }
+      } finally {
+        loadSession?.end();
       }
 
       // Return from accumulator (subarrays, zero copy!)
@@ -481,30 +484,11 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       slicePosition[i] = viewState.slicePosition[i] ?? 0;
     }
 
-    // Query chunks (worker or main thread based on config)
-    let chunkIndices: number[];
-
-    if (appConfig.dataLoading.performance.useWebWorkers) {
-      // Phase 2: Use worker for spatial queries
-      try {
-        const worker = await getWorkerPool().getWorker();
-        const result = await worker.querySpatialIndex({
-          chunkBounds: this.chunkIndex.chunkBounds,
-          slicePosition: new Float32Array(slicePosition),
-          tolerance: new Float32Array(tolerance),
-          numChunks: this.chunkIndex.chunkCount,
-          ndim: attrs.ndim,
-        });
-        chunkIndices = Array.from(result);
-      } catch (error) {
-        log.error(Modules.SPATIAL_INDEX_LOADER, 'Worker query failed, using main thread:', error);
-        // Fallback to main thread
-        chunkIndices = queryGSplatsChunksForView(this.chunkIndex, slicePosition, tolerance);
-      }
-    } else {
-      // Main thread query
-      chunkIndices = queryGSplatsChunksForView(this.chunkIndex, slicePosition, tolerance);
-    }
+    // Always query on main thread — AABB scan is O(chunks × ndim) and completes in
+    // microseconds. Worker roundtrips add ~3ms each (structured clone, postMessage,
+    // deserialization), which dominates when many nodes query concurrently (e.g. 50
+    // nodes × 3ms = 150ms of pure overhead for nanoseconds of actual computation).
+    const chunkIndices = queryGSplatsChunksForView(this.chunkIndex, slicePosition, tolerance);
 
     if (chunkIndices.length === 0) {
       return [];

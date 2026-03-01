@@ -118,7 +118,7 @@ Controls:
 # Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
 
-from luxar.utils.demos import launch_viewer
+from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
@@ -504,6 +504,7 @@ def serve_scene(scene_path):
 
 def main():
     """Main demo execution."""
+    warn_if_no_cuda_gpu()
     aprint("=" * 70)
     aprint("GSplats Demo: 3D Organoid DAPI-Stained Nuclei")
     aprint("=" * 70)

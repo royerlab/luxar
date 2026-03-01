@@ -422,10 +422,10 @@ export const config: AppConfig = {
 
       // Phase 2: Web Workers - ENABLED ✅
       // Phase 3: WASM - ENABLED ✅ (loads automatically when workers enabled)
-      // Worker-based queries with WASM acceleration (3-5x faster)
-      // Workers ARE integrated in hot path: see *-spatial-index-loader.ts
+      // Workers offload CPU-heavy operations: nD→3D projection, visibility, decoding
+      // Note: AABB spatial queries always run on main thread (faster than roundtrip)
       // WASM module built (17KB): public/wasm/luxar_wasm_bg.wasm
-      useWebWorkers: true, // ✅ ACTIVATED - Offloads spatial queries to worker
+      useWebWorkers: true, // ✅ ACTIVATED - Offloads projection/visibility/decoding to workers
       workerCount: 0, // 0 = auto (uses navigator.hardwareConcurrency - 1)
 
       // Phase 3: WASM Acceleration - Documentation flag
