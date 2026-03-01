@@ -113,14 +113,14 @@ describe('LRUCache', () => {
       expect(cache.size).toBe(80); // 30 + 50
     });
 
-    it('should handle item larger than cache size', () => {
+    it('should reject item larger than cache size', () => {
       cache.set('key1', new Uint8Array(50));
       cache.set('key2', new Uint8Array(150)); // Larger than 100 byte max!
 
-      // All previous items evicted, new item added even though oversized
-      expect(cache.has('key1')).toBe(false);
-      expect(cache.has('key2')).toBe(true);
-      expect(cache.size).toBe(150); // Exceeds max!
+      // Oversized item silently rejected, existing entries preserved
+      expect(cache.has('key1')).toBe(true);
+      expect(cache.has('key2')).toBe(false);
+      expect(cache.size).toBe(50);
     });
 
     it('should not evict when adding zero-size item to full cache', () => {
@@ -132,13 +132,14 @@ describe('LRUCache', () => {
       expect(cache.size).toBe(100);
     });
 
-    it('should break eviction loop safely if cache becomes empty', () => {
+    it('should reject oversized items without evicting existing entries', () => {
       cache.set('key1', new Uint8Array(50));
       cache.set('key2', new Uint8Array(200)); // Much larger than cache
 
-      // Should evict key1, then add key2 even though oversized
-      expect(cache.has('key1')).toBe(false);
-      expect(cache.has('key2')).toBe(true);
+      // Oversized item rejected, existing entries preserved
+      expect(cache.has('key1')).toBe(true);
+      expect(cache.has('key2')).toBe(false);
+      expect(cache.size).toBe(50);
     });
   });
 

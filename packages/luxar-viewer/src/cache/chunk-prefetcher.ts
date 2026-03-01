@@ -44,6 +44,11 @@ export class ChunkPrefetcher {
   private queue = new Set<string>();
   private processing = false;
 
+  // Tracks all keys whose neighbors have already been enqueued, preventing
+  // cascading prefetch amplification: without this, prefetched chunks trigger
+  // their own neighbor prefetches, which cascade across the entire dataset.
+  private seen = new Set<string>();
+
   /** Upper bounds per array path for suppressing out-of-range prefetch requests */
   private maxChunkIndices = new Map<string, number[]>();
 
@@ -73,6 +78,13 @@ export class ChunkPrefetcher {
    */
   onAccess(key: string): void {
     if (!this.enabled) return;
+
+    // Prevent cascading prefetch amplification: if we've already expanded
+    // this key's neighbors, don't do it again. Without this guard, a prefetched
+    // chunk triggers its own neighbor expansion, which cascades until the entire
+    // dataset is fetched (O(N^D) for D-dimensional data with N chunks/dim).
+    if (this.seen.has(key)) return;
+    this.seen.add(key);
 
     const adjacent = this.getAdjacentChunks(key);
     if (adjacent.length === 0) {

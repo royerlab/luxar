@@ -406,19 +406,21 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     const speedMultiplier = this.speedBoost ? 2.0 : 1.0;
 
     // Always use physics-based movement (unified approach)
-    // Calculate acceleration from input
+    // Calculate acceleration from input.
+    // movementSpeed is the user-facing "speed" parameter (controlled by UI slider
+    // and scale-aware system). acceleration is a responsiveness tuning constant.
     const accel = new THREE.Vector3();
     accel.addScaledVector(
       forward,
-      (this.moveState.forward - this.moveState.back) * this.acceleration * speedMultiplier
+      (this.moveState.forward - this.moveState.back) * this.movementSpeed * speedMultiplier
     );
     accel.addScaledVector(
       right,
-      (this.moveState.right - this.moveState.left) * this.acceleration * speedMultiplier
+      (this.moveState.right - this.moveState.left) * this.movementSpeed * speedMultiplier
     );
     accel.addScaledVector(
       up,
-      (this.moveState.up - this.moveState.down) * this.acceleration * speedMultiplier
+      (this.moveState.up - this.moveState.down) * this.movementSpeed * speedMultiplier
     );
 
     // Update velocity

@@ -63,7 +63,7 @@ USAGE:
     python demo_gsplats_4d_celegans_tracking.py [options]
 
 Options:
-    --no-cache:      Force re-fitting (ignore cached GSplats)
+    --no-cache:      Force re-processing (ignore all caches: preprocessing + GSplats)
     --no-serve:      Generate scene without launching viewer
     --serve-only:    Just serve a previously generated scene
     --timepoints=N:  Number of timepoints to process (default: 400, max: 400)

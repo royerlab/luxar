@@ -849,17 +849,11 @@ def run_splat_sweep(
     return results
 
 
-def _find_project_root() -> Optional[Path]:
-    """Walk up from this file to find the project root (contains pyproject.toml)."""
-    current = Path(__file__).resolve().parent
-    for _ in range(10):  # Max 10 levels up
-        if (current / "pyproject.toml").exists():
-            return current
-        parent = current.parent
-        if parent == current:
-            break
-        current = parent
-    return None
+def _luxar_config_dir() -> Path:
+    """Return ~/.luxar/, creating it if necessary."""
+    config_dir = Path.home() / ".luxar"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir
 
 
 def generate_profile(
@@ -879,7 +873,7 @@ def generate_profile(
         benchmark_results: Results from run_benchmark().
         sweep_results: Optional results from run_splat_sweep().
         sweep_shape: Shape used for the sweep.
-        output_path: Where to write. Default: <project_root>/gpu_benchmark_profile.yaml.
+        output_path: Where to write. Default: ~/.luxar/gpu_benchmark_profile.yaml.
 
     Returns:
         Path to the written YAML file.
@@ -887,10 +881,7 @@ def generate_profile(
     import yaml
 
     if output_path is None:
-        root = _find_project_root()
-        if root is None:
-            root = Path.cwd()
-        output_path = root / "gpu_benchmark_profile.yaml"
+        output_path = _luxar_config_dir() / "gpu_benchmark_profile.yaml"
 
     profile: Dict[str, Any] = {}
 

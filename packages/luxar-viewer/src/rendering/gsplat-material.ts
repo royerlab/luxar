@@ -830,7 +830,7 @@ export function updateInstancedGSplatsMesh(
     // instances via setAttribute won't trigger recalculation, so the renderer still draws
     // min(instanceCount, 0) = 0 instances. Deleting the cached value forces recalculation
     // on the next render frame.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     delete (geometry as any)._maxInstanceCount;
   } else {
     // Same size, update in place

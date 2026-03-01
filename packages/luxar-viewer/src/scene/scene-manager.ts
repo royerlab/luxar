@@ -25,6 +25,7 @@ import {
   validateFOV,
   calculateClippingPlanes,
   calculateDistancesToBoundingBox,
+  getBoundingBoxDiagonal,
   BoundingBox,
   CLIPPING_SAFETY_MARGIN,
   MIN_NEAR_PLANE,
@@ -760,6 +761,12 @@ export class SceneManager extends THREE.EventDispatcher<{
         return;
       }
 
+      // Update scale-aware controls from geometry bounding box
+      const diagonal = size.length();
+      if (diagonal > 0) {
+        this.controls.setSceneScale(diagonal);
+      }
+
       const center = box.getCenter(new THREE.Vector3());
 
       // Store the center for later use
@@ -1101,6 +1108,12 @@ export class SceneManager extends THREE.EventDispatcher<{
     const sceneBounds = this.getSceneBoundsFromMetadata();
 
     if (sceneBounds) {
+      // Update scale-aware controls from metadata bounds (available before geometry loads)
+      const diagonal = getBoundingBoxDiagonal(sceneBounds);
+      if (diagonal > 0) {
+        this.controls.setSceneScale(diagonal);
+      }
+
       // Use unified utility function with camera position
       const { near, far } = calculateClippingPlanes(sceneBounds, cameraPos);
 
@@ -1127,13 +1140,18 @@ export class SceneManager extends THREE.EventDispatcher<{
     }
 
     // Use unified utility function with camera position
-    const { near, far } = calculateClippingPlanes(
-      {
-        min: { x: box.min.x, y: box.min.y, z: box.min.z },
-        max: { x: box.max.x, y: box.max.y, z: box.max.z },
-      },
-      cameraPos
-    );
+    const fallbackBounds = {
+      min: { x: box.min.x, y: box.min.y, z: box.min.z },
+      max: { x: box.max.x, y: box.max.y, z: box.max.z },
+    };
+
+    // Update scale-aware controls from geometry bounds as fallback
+    const diagonal = getBoundingBoxDiagonal(fallbackBounds);
+    if (diagonal > 0) {
+      this.controls.setSceneScale(diagonal);
+    }
+
+    const { near, far } = calculateClippingPlanes(fallbackBounds, cameraPos);
 
     // Apply the calculated planes
     this.updateClippingPlanes(near, far);
@@ -1486,5 +1504,12 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   setFlyRotationDamping(damping: number): void {
     this.controls.setFlyRotationDamping(damping);
+  }
+
+  /**
+   * Get current scene scale (bounding box diagonal). Returns 0 if not yet set.
+   */
+  getSceneScale(): number {
+    return this.controls.getSceneScale();
   }
 }

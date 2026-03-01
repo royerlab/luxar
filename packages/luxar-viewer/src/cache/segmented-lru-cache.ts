@@ -25,7 +25,8 @@ export class SegmentedLRUCache {
   constructor(totalSize: number) {
     const getSize = (v: Uint8Array) => v.byteLength;
     const metadataSize = Math.max(totalSize * 0.2, SegmentedLRUCache.MIN_METADATA_SIZE);
-    const chunksSize = totalSize - metadataSize;
+    // Guard: if totalSize < MIN_METADATA_SIZE, chunksSize would go negative
+    const chunksSize = Math.max(0, totalSize - metadataSize);
 
     this.metadata = new LRUCache(metadataSize, getSize);
     this.chunks = new LRUCache(chunksSize, getSize);
@@ -41,19 +42,13 @@ export class SegmentedLRUCache {
   }
 
   get(key: string): Uint8Array | undefined {
-    // Check metadata segment first
-    const metadataHit = this.metadata.get(key);
-    if (metadataHit) {
-      return metadataHit;
+    // Route to correct segment to avoid double-counting misses.
+    // Previously, checking metadata first then chunks would record a spurious
+    // miss on the metadata segment for every chunk lookup, inflating miss stats.
+    if (SegmentedLRUCache.isMetadataFile(key)) {
+      return this.metadata.get(key);
     }
-
-    // Check chunks segment
-    const chunksHit = this.chunks.get(key);
-    if (chunksHit) {
-      return chunksHit;
-    }
-
-    return undefined;
+    return this.chunks.get(key);
   }
 
   set(key: string, data: Uint8Array): void {

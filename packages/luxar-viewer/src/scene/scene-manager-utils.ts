@@ -143,6 +143,18 @@ export function getBoundingBoxMaxDimension(box: BoundingBox): number {
 }
 
 /**
+ * Calculates diagonal of bounding box (Euclidean distance from min to max corner).
+ * Used as the scene scale metric for scale-aware camera controls.
+ *
+ * @param box - Bounding box
+ * @returns Diagonal length
+ */
+export function getBoundingBoxDiagonal(box: BoundingBox): number {
+  const size = getBoundingBoxSize(box);
+  return Math.sqrt(size.x * size.x + size.y * size.y + size.z * size.z);
+}
+
+/**
  * Calculates optimal camera distance to fit bounding box in view
  *
  * @param box - Bounding box to fit
@@ -404,17 +416,6 @@ export function isPointInBoundingBox(
     point.z >= box.min.z &&
     point.z <= box.max.z
   );
-}
-
-/**
- * Calculates bounding box diagonal length
- *
- * @param box - Bounding box
- * @returns Diagonal length
- */
-export function getBoundingBoxDiagonal(box: BoundingBox): number {
-  const size = getBoundingBoxSize(box);
-  return Math.sqrt(size.x * size.x + size.y * size.y + size.z * size.z);
 }
 
 /**

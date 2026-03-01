@@ -75,6 +75,10 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     flyAcceleration: config.controls.fly.movement.acceleration.default,
   };
 
+  // Scene scale (bounding box diagonal) for scale-aware control parameters.
+  // 0 = not yet set, use hardcoded config defaults.
+  private sceneScale: number = 0;
+
   // Saved camera state for switching
   private savedCameraPosition = new THREE.Vector3();
   private savedCameraRotation = new THREE.Euler();
@@ -185,8 +189,18 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.screenSpacePanning = true;
-    controls.minDistance = 0.1;
-    controls.maxDistance = 1000;
+
+    // Scale-aware distance limits: use scene diagonal when available, else config defaults
+    const m = config.controls.scaleMultipliers;
+    controls.minDistance =
+      this.sceneScale > 0
+        ? this.sceneScale * m.minDistanceFactor
+        : config.controls.orbit.zoom.minDistance;
+    controls.maxDistance =
+      this.sceneScale > 0
+        ? this.sceneScale * m.maxDistanceFactor
+        : config.controls.orbit.zoom.maxDistance;
+
     controls.autoRotate = this.config.autoRotate || false;
     controls.autoRotateSpeed = this.config.autoRotateSpeed || 0.25;
 
@@ -225,8 +239,17 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     controls.enablePan = true;
     controls.enableRotate = true;
     controls.enableZoom = true;
-    controls.minDistance = 0.1;
-    controls.maxDistance = 1000;
+
+    // Scale-aware distance limits (same logic as orbit controls)
+    const m = config.controls.scaleMultipliers;
+    controls.minDistance =
+      this.sceneScale > 0
+        ? this.sceneScale * m.minDistanceFactor
+        : config.controls.orbit.zoom.minDistance;
+    controls.maxDistance =
+      this.sceneScale > 0
+        ? this.sceneScale * m.maxDistanceFactor
+        : config.controls.orbit.zoom.maxDistance;
 
     // IMPORTANT: Disable gizmos completely - both the flag and visibility
     controls.enableGizmos = false;
@@ -570,10 +593,10 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     } else if (this.currentControls instanceof ArcballControls) {
       return (this.currentControls as any).target.clone();
     } else {
-      // For fly controls, return a point in front of the camera
+      // For fly controls, return a point in front of the camera (scale-aware distance)
       const forward = new THREE.Vector3();
       this.camera.getWorldDirection(forward);
-      return this.camera.position.clone().add(forward.multiplyScalar(10));
+      return this.camera.position.clone().add(forward.multiplyScalar(this.sceneScale || 10));
     }
   }
 
@@ -606,6 +629,57 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       movementSpeed: this.config.flyMovementSpeed ?? config.controls.fly.movement.speed.default,
       rotationSpeed: this.config.flyRotationSpeed ?? config.controls.fly.rotation.speed.default,
     };
+  }
+
+  /**
+   * Update control parameters based on scene scale (bounding box diagonal).
+   *
+   * Scales orbit/arcball distance limits and fly movement speed proportionally.
+   * Parameters are computed using multipliers from config.controls.scaleMultipliers.
+   *
+   * @param diagonal - Diagonal of the scene bounding box in world units
+   */
+  public setSceneScale(diagonal: number): void {
+    if (diagonal <= 0) return;
+    this.sceneScale = diagonal;
+
+    const m = config.controls.scaleMultipliers;
+    const minDist = diagonal * m.minDistanceFactor;
+    const maxDist = diagonal * m.maxDistanceFactor;
+
+    // Update active orbit/arcball controls
+    if (this.currentControls instanceof OrbitControls) {
+      this.currentControls.minDistance = minDist;
+      this.currentControls.maxDistance = maxDist;
+    } else if (this.currentControls instanceof ArcballControls) {
+      (this.currentControls as any).minDistance = minDist;
+      (this.currentControls as any).maxDistance = maxDist;
+    }
+
+    // Update fly movement speed in stored config (applied on next createFlyControls).
+    // movementSpeed is the physics driver — it directly controls acceleration magnitude
+    // in the fly controls update loop. acceleration remains a fixed responsiveness constant.
+    this.config.flyMovementSpeed = diagonal * m.flySpeedFactor;
+
+    // Update active fly controls if they exist
+    if (this.currentControls instanceof LuxarFlyControls) {
+      this.currentControls.movementSpeed = this.config.flyMovementSpeed;
+    }
+
+    log.custom(
+      LogEmoji.CONTROLS,
+      Modules.CONTROLS,
+      `Scale-aware controls: diagonal=${diagonal.toFixed(1)}, ` +
+        `dist=[${minDist.toFixed(3)}, ${maxDist.toFixed(1)}], ` +
+        `flySpeed=${this.config.flyMovementSpeed!.toFixed(2)}`
+    );
+  }
+
+  /**
+   * Get current scene scale (bounding box diagonal). Returns 0 if not yet set.
+   */
+  public getSceneScale(): number {
+    return this.sceneScale;
   }
 
   /**

@@ -140,7 +140,6 @@ datasets/
 
 # Benchmarking
 .benchmarks/
-gpu_benchmark_profile.yaml
 
 # Profiling
 *.prof
