@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   SpatialQueryBuilder,
   computeQueryTolerance,
@@ -7,31 +7,11 @@ import {
   mergeRanges,
   shouldExtendVisibility,
   createLoadAllRange,
+  executeSpatialQuery,
   DISPLAYED_DIM_TOLERANCE,
 } from '../../../../data/loaders/spatial-query-builder';
 import type { BaseViewState } from '../../../../data/loaders/base-types';
 import type { DimensionMetadata } from '../../../../types/dims';
-
-// Mock worker pool
-vi.mock('../../../../workers/worker-pool', () => ({
-  getWorkerPool: () => ({
-    getWorker: () =>
-      Promise.resolve({
-        querySpatialIndex: vi.fn().mockResolvedValue(new Uint32Array([0, 1, 2])),
-      }),
-  }),
-}));
-
-// Mock config
-vi.mock('../../../../config', () => ({
-  config: {
-    dataLoading: {
-      performance: {
-        useWebWorkers: false, // Start with main thread for easier testing
-      },
-    },
-  },
-}));
 
 describe('computeQueryTolerance', () => {
   it('should set infinite tolerance for displayed dimensions', () => {
@@ -304,10 +284,6 @@ describe('SpatialQueryBuilder', () => {
     metadata: { ndim, chunk_size: 1000 },
   });
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   it('should build and execute query', async () => {
     // Create a simple 3D index with 2 chunks
     const index = createMockIndex(2, 3);
@@ -370,5 +346,107 @@ describe('SpatialQueryBuilder', () => {
       .execute();
 
     expect(ranges.length).toBeGreaterThan(0);
+  });
+});
+
+describe('executeSpatialQuery', () => {
+  it('should return matching chunk indices for intersecting query', () => {
+    // Two chunks in 3D: [0,50]³ and [50,100]³
+    const chunkBounds = new Float32Array([
+      0,
+      50,
+      0,
+      50,
+      0,
+      50, // Chunk 0
+      50,
+      100,
+      50,
+      100,
+      50,
+      100, // Chunk 1
+    ]);
+
+    // Query at [25,25,25] with tight tolerance — should hit only chunk 0
+    const result = executeSpatialQuery({
+      chunkBounds,
+      queryPosition: [25, 25, 25],
+      queryTolerance: [10, 10, 10],
+      numChunks: 2,
+      ndim: 3,
+    });
+
+    expect(result).toEqual([0]);
+  });
+
+  it('should return empty array when no chunks intersect', () => {
+    const chunkBounds = new Float32Array([0, 50, 0, 50, 0, 50]);
+
+    const result = executeSpatialQuery({
+      chunkBounds,
+      queryPosition: [200, 200, 200],
+      queryTolerance: [10, 10, 10],
+      numChunks: 1,
+      ndim: 3,
+    });
+
+    expect(result).toEqual([]);
+  });
+
+  it('should return synchronously (not a Promise)', () => {
+    const chunkBounds = new Float32Array([0, 100, 0, 100, 0, 100]);
+
+    const result = executeSpatialQuery({
+      chunkBounds,
+      queryPosition: [50, 50, 50],
+      queryTolerance: [1e10, 1e10, 1e10],
+      numChunks: 1,
+      ndim: 3,
+    });
+
+    // Verify it's a plain array, not a Promise
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).not.toBeInstanceOf(Promise);
+    expect(result).toEqual([0]);
+  });
+
+  it('should match all chunks with infinite tolerance', () => {
+    // 3 chunks in 4D
+    const chunkBounds = new Float32Array([
+      0,
+      10,
+      0,
+      10,
+      0,
+      10,
+      0,
+      10, // Chunk 0
+      10,
+      20,
+      10,
+      20,
+      10,
+      20,
+      10,
+      20, // Chunk 1
+      90,
+      100,
+      90,
+      100,
+      90,
+      100,
+      90,
+      100, // Chunk 2 (far away)
+    ]);
+
+    const result = executeSpatialQuery({
+      chunkBounds,
+      queryPosition: [0, 0, 0, 0],
+      queryTolerance: [1e10, 1e10, 1e10, 1e10],
+      numChunks: 3,
+      ndim: 4,
+    });
+
+    expect(result).toEqual([0, 1, 2]);
   });
 });

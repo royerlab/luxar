@@ -37,7 +37,6 @@ import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-deco
 import { RangeLoader, type LoadRange } from './loaders';
 import { LinesDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
-import { getWorkerPool } from '../workers/worker-pool';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
 import { initWasm, getFallback } from '../wasm';
 import type { WasmModule } from '../wasm/types';
@@ -616,30 +615,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       slicePosition[i] = viewState.slicePosition[i] ?? 0;
     }
 
-    // Query segment chunks (worker or main thread based on config)
-    let chunkIndices: number[];
-
-    if (appConfig.dataLoading.performance.useWebWorkers) {
-      // Phase 2: Use worker for spatial queries
-      try {
-        const worker = await getWorkerPool().getWorker();
-        const result = await worker.querySpatialIndex({
-          chunkBounds: this.chunkIndex.segmentChunkBounds,
-          slicePosition: new Float32Array(slicePosition),
-          tolerance: new Float32Array(tolerance),
-          numChunks: this.chunkIndex.segmentChunkCount,
-          ndim: attrs.ndim,
-        });
-        chunkIndices = Array.from(result);
-      } catch (error) {
-        log.error(Modules.SPATIAL_INDEX_LOADER, 'Worker query failed, using main thread:', error);
-        // Fallback to main thread
-        chunkIndices = querySegmentChunksForView(this.chunkIndex, slicePosition, tolerance);
-      }
-    } else {
-      // Main thread query
-      chunkIndices = querySegmentChunksForView(this.chunkIndex, slicePosition, tolerance);
-    }
+    // Always query on main thread — AABB scan is O(chunks × ndim) and completes in
+    // microseconds. Worker roundtrips add ~3ms each (structured clone, postMessage,
+    // deserialization), which dominates when many nodes query concurrently.
+    const chunkIndices = querySegmentChunksForView(this.chunkIndex, slicePosition, tolerance);
 
     if (chunkIndices.length === 0) {
       return [];

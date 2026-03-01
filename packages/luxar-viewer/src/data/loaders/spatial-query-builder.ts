@@ -14,8 +14,6 @@
  */
 
 import { log, Modules } from '../../utils/log';
-import { config as appConfig } from '../../config';
-import { getWorkerPool } from '../../workers/worker-pool';
 import type { BaseViewState, LoadRange } from './base-types';
 import type { DimensionMetadata } from '../../types/dims';
 
@@ -147,34 +145,17 @@ export interface SpatialQueryParams {
 }
 
 /**
- * Execute spatial query using workers (if enabled) or main thread.
+ * Execute spatial query on main thread.
  *
- * This unified function replaces the duplicated query execution logic in all three loaders.
+ * Always runs on main thread — AABB scan is O(chunks × ndim) and completes in
+ * microseconds. Worker roundtrips add ~3ms each (structured clone, postMessage,
+ * deserialization), which dominates when many nodes query concurrently.
  *
  * @param params - Query parameters
  * @returns Array of chunk indices that match the query
  */
-export async function executeSpatialQuery(params: SpatialQueryParams): Promise<number[]> {
+export function executeSpatialQuery(params: SpatialQueryParams): number[] {
   const { chunkBounds, queryPosition, queryTolerance, numChunks, ndim } = params;
-
-  if (appConfig.dataLoading.performance.useWebWorkers) {
-    try {
-      const worker = await getWorkerPool().getWorker();
-      const result = await worker.querySpatialIndex({
-        chunkBounds,
-        slicePosition: new Float32Array(queryPosition),
-        tolerance: new Float32Array(queryTolerance),
-        numChunks,
-        ndim,
-      });
-      return Array.from(result);
-    } catch (error) {
-      log.warning(Modules.SPATIAL_INDEX, 'Worker spatial query failed, using main thread:', error);
-      // Fall through to main thread
-    }
-  }
-
-  // Main thread execution
   return queryChunksMainThread(chunkBounds, queryPosition, queryTolerance, numChunks, ndim);
 }
 
@@ -439,7 +420,7 @@ export class SpatialQueryBuilder {
     );
 
     // Execute query
-    const chunkIndices = await executeSpatialQuery({
+    const chunkIndices = executeSpatialQuery({
       chunkBounds: this.chunkBounds,
       queryPosition,
       queryTolerance,

@@ -1140,6 +1140,10 @@
   text-overflow: ellipsis;
 }
 
+.luxar-timing-panel__label[title] {
+  cursor: help;
+}
+
 .luxar-timing-panel__tag {
   font-size: 9px;
   padding: 1px var(--luxar-spacing-2);

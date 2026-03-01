@@ -65,7 +65,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.demos import launch_viewer
+from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -355,6 +355,7 @@ dim_order usage:
 
 def main():
     """Main demo execution."""
+    warn_if_no_cuda_gpu()
     aprint("=" * 70)
     aprint("GSplats Demo: 4D Multi-Channel Cells (dim_order showcase)")
     aprint("=" * 70)

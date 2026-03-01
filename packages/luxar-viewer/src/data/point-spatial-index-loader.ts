@@ -757,30 +757,10 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     let ranges: PointRange[];
 
     if (this.chunkIndex) {
-      // Use chunk-based queries (worker or main thread based on config)
-      let chunkIndices: number[];
-
-      if (appConfig.dataLoading.performance.useWebWorkers) {
-        // Phase 2: Use worker for spatial queries (offloads CPU work)
-        try {
-          const worker = await getWorkerPool().getWorker();
-          const result = await worker.querySpatialIndex({
-            chunkBounds: this.chunkIndex.chunkBounds,
-            slicePosition: new Float32Array(querySlicePos),
-            tolerance: new Float32Array(queryTolerance),
-            numChunks: this.chunkIndex.metadata.total_chunks,
-            ndim: fullDim,
-          });
-          chunkIndices = Array.from(result);
-        } catch (error) {
-          log.error(Modules.SPATIAL_INDEX_LOADER, 'Worker query failed, using main thread:', error);
-          // Fallback to main thread
-          chunkIndices = queryChunksForView(this.chunkIndex, querySlicePos, queryTolerance);
-        }
-      } else {
-        // Main thread query
-        chunkIndices = queryChunksForView(this.chunkIndex, querySlicePos, queryTolerance);
-      }
+      // Always query on main thread — AABB scan is O(chunks × ndim) and completes in
+      // microseconds. Worker roundtrips add ~3ms each (structured clone, postMessage,
+      // deserialization), which dominates when many nodes query concurrently.
+      const chunkIndices = queryChunksForView(this.chunkIndex, querySlicePos, queryTolerance);
 
       ranges = chunkIndicesToRanges(
         chunkIndices,

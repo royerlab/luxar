@@ -69,6 +69,10 @@ Options:
     --timepoints=N:  Number of timepoints to process (default: 400, max: 400)
     --sample=N:      Which sample to use: 1, 2, or 3 (default: 1)
 
+Requirements:
+    - CUDA GPU strongly recommended (fitting is ~100x slower on CPU)
+    - scikit-image for N2S-NLM denoising:  pip install scikit-image
+
 Output:
     - Scene saved to:  datasets/demos/gsplats_4d_celegans_tracking.zarr
     - Automatically opens in browser
@@ -82,7 +86,6 @@ from pathlib import Path
 
 import numpy as np
 from arbol import Arbol, aprint, asection
-from skimage.restoration import calibrate_denoiser, denoise_nl_means
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
@@ -596,7 +599,7 @@ def _is_cached(cache_file: Path) -> bool:
 # =============================================================================
 
 
-def calibrate_nlm_once(first_volume: np.ndarray) -> float:
+def calibrate_nlm_once(first_volume: np.ndarray | None) -> float:
     """Calibrate Non-Local Means denoising using the Noise2Self (J-invariant) method.
 
     Uses skimage's ``calibrate_denoiser`` on a single representative 2D slice
@@ -606,7 +609,8 @@ def calibrate_nlm_once(first_volume: np.ndarray) -> float:
 
     Args:
         first_volume: 3D float32 volume (Z, Y, X) from the first timepoint,
-            normalised to [0, 1].  Must not be None.
+            normalised to [0, 1].  May be None if the calibration is expected
+            to be loaded from cache.
 
     Returns:
         Optimal ``h`` parameter for ``denoise_nl_means``.
@@ -623,6 +627,20 @@ def calibrate_nlm_once(first_volume: np.ndarray) -> float:
         except Exception as e:
             aprint(f"  Calibration cache load failed: {e}, re-calibrating")
             cal_file.unlink(missing_ok=True)
+
+    if first_volume is None:
+        raise RuntimeError(
+            "NLM calibration cache is missing or corrupt and no volume was "
+            "provided for re-calibration.  Re-run with --no-cache."
+        )
+
+    try:
+        from skimage.restoration import calibrate_denoiser, denoise_nl_means
+    except ImportError as e:
+        raise ImportError(
+            "scikit-image is required for preprocessing.\n"
+            "Install with: pip install scikit-image"
+        ) from e
 
     with asection("Calibrating NLM denoiser (Noise2Self / J-invariant)"):
         # Use middle z-slice — representative since imaging is consistent
@@ -642,8 +660,11 @@ def calibrate_nlm_once(first_volume: np.ndarray) -> float:
             stride=2,
         )
 
-        # Extract the calibrated h from the partial-function keywords
-        h = calibrated.keywords.get("h", 0.02)
+        # Extract the calibrated h from the partial-function keywords.
+        # calibrate_denoiser returns functools.partial(denoise_invariant, ...)
+        # with the best params nested in 'denoiser_kwargs'.
+        best_kwargs = calibrated.keywords.get("denoiser_kwargs", {})
+        h = best_kwargs.get("h", 0.02)
         aprint(f"  Optimal h={h:.6f}")
 
         # Cache the result with marker-file safety
@@ -672,6 +693,7 @@ def preprocess_volume(volume: np.ndarray, nlm_h: float) -> np.ndarray:
         Preprocessed float32 volume, normalised to [0, 1].
     """
     import torch
+    from skimage.restoration import denoise_nl_means
 
     # Step 1: Full 3D Non-Local Means denoising
     denoised = denoise_nl_means(
@@ -859,11 +881,14 @@ def preprocess_and_fit_all_timepoints(tiff_files: list) -> list:
     # --- Pass 1: Calibrate NLM denoiser -----------------------------------
 
     with asection("NLM Calibration"):
-        # calibrate_nlm_once checks its own cache internally, but we
-        # need the first volume loaded if calibration must run.
-        first_vol = load_timepoint_volume(tiff_files[0])
-        nlm_h = calibrate_nlm_once(first_vol)
-        del first_vol  # Free memory
+        cal_file = CACHE_DIR / f"nlm_calibration_s{SAMPLE_INDEX}.json"
+        if _is_cached(cal_file):
+            # Fast path: calibration already cached, skip TIFF loading
+            nlm_h = calibrate_nlm_once(None)
+        else:
+            first_vol = load_timepoint_volume(tiff_files[0])
+            nlm_h = calibrate_nlm_once(first_vol)
+            del first_vol  # Free memory
 
     # --- Pre-scan caches --------------------------------------------------
 
@@ -1188,6 +1213,7 @@ Navigation:
 
 def main():
     """Main demo execution."""
+    warn_if_no_cuda_gpu()
     aprint("=" * 70)
     aprint("GSplats Demo: 4D C. elegans Embryo — Nuclei Tracking")
     aprint("=" * 70)
