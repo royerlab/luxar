@@ -11,6 +11,30 @@ import { formatMs, hasOverBudget } from '../../profiling/update-profiler';
 import { escapeHtml } from '../../utils/escape-html';
 
 /**
+ * Tooltip descriptions for timing operations.
+ * Keys are matched against entry names (exact match).
+ */
+const TOOLTIPS: Record<string, string> = {
+  'Total Update': 'End-to-end time for all node updates in this frame',
+  Points: 'Point cloud data: query, load, project, and upload',
+  Lines: 'Line/track data: query segments, load vertices, project, and upload',
+  GSplats: 'Gaussian splat data: query, load, project, and upload',
+  'Spatial Query': 'Find which data chunks intersect the current view slice',
+  'Load Arrays': 'Fetch and decompress zarr chunks from the data source',
+  'Load Segments': 'Fetch segment index arrays (pairs of vertex references)',
+  'Load Vertices': 'Fetch vertex positions and attributes for referenced vertices',
+  'Project to 3D': 'Slice nD data to 3D display space (visibility filtering, Cholesky marginals)',
+  'Update Buffers': 'Upload processed data to GPU buffer attributes',
+};
+
+/**
+ * Get tooltip text for a timing entry name
+ */
+function getTooltip(name: string): string | undefined {
+  return TOOLTIPS[name];
+}
+
+/**
  * State tracking for collapsed/expanded nodes
  */
 const expandedState = new Map<string, boolean>();
@@ -418,12 +442,16 @@ function renderEntry(entry: TimingEntry, depth: number, parentPath: string): str
   const lastValue = entry.metadata?.skipped ? '—' : formatMs(entry.lastMs);
   const avgValue = entry.metadata?.skipped ? '—' : formatMs(entry.avgMs);
 
+  // Tooltip for the operation label
+  const tooltip = getTooltip(entry.name);
+  const titleAttr = tooltip ? ` title="${escapeHtml(tooltip)}"` : '';
+
   // Build row HTML (data-path on row for incremental updates)
   let html = `
     <div class="${rowClasses.join(' ')}" style="padding-left: ${indent}px" data-path="${escapeHtml(path)}">
       <div class="luxar-timing-panel__name">
         ${expandIcon}
-        <span class="luxar-timing-panel__label">${escapeHtml(entry.name)}</span>
+        <span class="luxar-timing-panel__label"${titleAttr}>${escapeHtml(entry.name)}</span>
         ${renderMetadata(entry.metadata)}
       </div>
       <div class="luxar-timing-panel__values">

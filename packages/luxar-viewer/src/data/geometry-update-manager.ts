@@ -19,7 +19,7 @@ import { isLinesUserData } from '../types/lines';
 import type { LoadedGSplatsData, GSplatsViewState, GSplatsUserData } from '../types/gsplats';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { materialManager, BlendingMode } from '../rendering/material-manager';
-import { createInstancedLinesMesh, LineMaterial } from '../rendering/line-material';
+import { updateInstancedLinesMesh } from '../rendering/line-material';
 import { buildInstanceBuffers } from './lines-spatial-index-loader';
 import { computeLinesTolerance } from './lines-chunk-spatial-index';
 import { processGSplats } from './gsplats-processor';
@@ -284,8 +284,14 @@ export class GeometryUpdateManager {
    * @param rootGroup - The root THREE.Group containing the scene
    * @param path - Path/name of the points object
    * @param data - New points data
+   * @param session - Optional profiler session
    */
-  updatePointsGeometry(rootGroup: THREE.Group, path: string, data: LoadedPointsData): void {
+  updatePointsGeometry(
+    rootGroup: THREE.Group,
+    path: string,
+    data: LoadedPointsData,
+    session?: UpdateSession
+  ): void {
     // Find the points object
     const points = rootGroup.getObjectByName(path) as THREE.Points;
     if (!points) return;
@@ -304,46 +310,65 @@ export class GeometryUpdateManager {
     }
 
     // Phase 4: Use GPU buffer pool if enabled (now supports all TypedArray types!)
-    if (this._gpuBufferPool) {
-      // Acquire geometry from pool (type-aware: matches capacity AND attribute types)
-      const geometry = this._gpuBufferPool.acquirePointsGeometry(path, data, data.pointCount);
+    const bufferSession = session?.begin('Update Buffers');
+    try {
+      if (this._gpuBufferPool) {
+        // Acquire geometry from pool (type-aware: matches capacity AND attribute types)
+        const geometry = this._gpuBufferPool.acquirePointsGeometry(path, data, data.pointCount);
 
-      // Update attributes in place (zero GPU allocations on reuse)
-      this._gpuBufferPool.updatePointsGeometry(geometry, data, data.pointCount);
+        // Update attributes in place (zero GPU allocations on reuse)
+        this._gpuBufferPool.updatePointsGeometry(geometry, data, data.pointCount);
 
-      // Update bounding box
-      if (data.metadata.bounds) {
-        geometry.boundingBox = data.metadata.bounds.clone();
+        // Update bounding box
+        if (data.metadata.bounds) {
+          geometry.boundingBox = data.metadata.bounds.clone();
+        }
+
+        // Assign to mesh (might be same geometry, reused)
+        points.geometry = geometry;
+      } else {
+        // Fallback: GPU buffer pool disabled
+        const oldGeometry = points.geometry;
+        const oldPositionAttr = oldGeometry?.getAttribute(
+          'position'
+        ) as THREE.BufferAttribute | null;
+        const oldCount = oldPositionAttr ? oldPositionAttr.count : 0;
+
+        if (oldCount === data.pointCount && data.pointCount > 0) {
+          // Same size: update in place (zero GPU allocation)
+          (oldPositionAttr!.array as Float32Array).set(data.positions as Float32Array);
+          oldPositionAttr!.needsUpdate = true;
+
+          const colorAttr = oldGeometry.getAttribute('color') as THREE.BufferAttribute;
+          if (colorAttr && data.colors) {
+            (colorAttr.array as ArrayLike<number> & { set: Function }).set(data.colors);
+            colorAttr.needsUpdate = true;
+          }
+
+          const radiiAttr = oldGeometry.getAttribute('radius') as THREE.BufferAttribute;
+          if (radiiAttr && data.radii) {
+            (radiiAttr.array as ArrayLike<number> & { set: Function }).set(data.radii);
+            radiiAttr.needsUpdate = true;
+          }
+
+          const sharpAttr = oldGeometry.getAttribute('sharpness') as THREE.BufferAttribute;
+          if (sharpAttr && data.sharpness) {
+            (sharpAttr.array as ArrayLike<number> & { set: Function }).set(data.sharpness);
+            sharpAttr.needsUpdate = true;
+          }
+
+          oldGeometry.computeBoundingBox();
+          oldGeometry.computeBoundingSphere();
+        } else {
+          // Different size: dispose + create (handles complex dtype logic)
+          if (oldGeometry) {
+            oldGeometry.dispose();
+          }
+          points.geometry = this.createPointsGeometry(data);
+        }
       }
-
-      // Assign to mesh (might be same geometry, reused)
-      points.geometry = geometry;
-    } else {
-      // Fallback: GPU buffer pool disabled, use standard path
-      const oldGeometry = points.geometry;
-
-      // Save bounding box/sphere BEFORE disposal to preserve them
-      const savedBoundingBox = oldGeometry?.boundingBox?.clone() || null;
-      const savedBoundingSphere = oldGeometry?.boundingSphere?.clone() || null;
-
-      // Dispose old geometry FIRST to free GPU memory immediately
-      if (oldGeometry) {
-        oldGeometry.dispose();
-      }
-
-      // Create new geometry AFTER disposal
-      const newGeometry = this.createPointsGeometry(data);
-
-      // Restore bounding box/sphere if available
-      if (savedBoundingBox) {
-        newGeometry.boundingBox = savedBoundingBox;
-      }
-      if (savedBoundingSphere) {
-        newGeometry.boundingSphere = savedBoundingSphere;
-      }
-
-      // Assign the new geometry
-      points.geometry = newGeometry;
+    } finally {
+      bufferSession?.end();
     }
   }
 
@@ -433,33 +458,25 @@ export class GeometryUpdateManager {
     }
 
     // Phase 4: Use GPU buffer pool if enabled
-    if (this._gpuBufferPool) {
-      // Acquire geometry from pool (may reuse existing)
-      const geometry = this._gpuBufferPool.acquireLinesGeometry(path, processed.segmentCount);
+    const bufferSession = session?.begin('Update Buffers');
+    try {
+      if (this._gpuBufferPool) {
+        // Acquire geometry from pool (may reuse existing)
+        const geometry = this._gpuBufferPool.acquireLinesGeometry(path, processed.segmentCount);
 
-      // Update attributes in place (zero GPU allocations on reuse)
-      this._gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount);
+        // Update attributes in place (zero GPU allocations on reuse)
+        this._gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount);
 
-      // Assign to mesh (might be same geometry, reused)
-      mesh.geometry = geometry;
-      mesh.count = processed.segmentCount;
-    } else {
-      // Fallback: Original path (dispose + create new)
-      const oldGeometry = mesh.geometry;
-      if (oldGeometry) {
-        oldGeometry.dispose();
+        // Assign to mesh (might be same geometry, reused)
+        mesh.geometry = geometry;
+        mesh.count = processed.segmentCount;
+      } else {
+        // Fallback: In-place update (mirrors gsplats updateInstancedGSplatsMesh pattern)
+        updateInstancedLinesMesh(mesh, processed);
+        mesh.count = processed.segmentCount;
       }
-
-      // Create new geometry with updated data
-      const newMesh = createInstancedLinesMesh(processed, mesh.material as LineMaterial);
-
-      // Copy geometry to existing mesh
-      mesh.geometry = newMesh.geometry;
-      mesh.count = processed.segmentCount;
-
-      // Clean up temporary mesh (but not its geometry, which is now on the original mesh)
-      newMesh.geometry = new THREE.BufferGeometry(); // Replace to avoid double disposal
-      newMesh.geometry.dispose();
+    } finally {
+      bufferSession?.end();
     }
 
     // Track visible segment count in mesh userData for monitor reporting
@@ -607,40 +624,45 @@ export class GeometryUpdateManager {
     }
 
     // Phase 4: Use GPU buffer pool if enabled
-    if (this._gpuBufferPool) {
-      // Acquire geometry from pool (may reuse existing)
-      const geometry = this._gpuBufferPool.acquireGSplatsGeometry(path, processed.splatCount);
+    const bufferSession = session?.begin('Update Buffers');
+    try {
+      if (this._gpuBufferPool) {
+        // Acquire geometry from pool (may reuse existing)
+        const geometry = this._gpuBufferPool.acquireGSplatsGeometry(path, processed.splatCount);
 
-      // Update attributes in place (zero GPU allocations on reuse)
-      this._gpuBufferPool.updateGSplatsGeometry(
-        geometry,
-        {
-          centers3D: processed.centers3D,
-          amplitudes: processed.amplitudes,
+        // Update attributes in place (zero GPU allocations on reuse)
+        this._gpuBufferPool.updateGSplatsGeometry(
+          geometry,
+          {
+            centers3D: processed.centers3D,
+            amplitudes: processed.amplitudes,
+            cholesky01,
+            cholesky23,
+            cholesky45,
+            colors: processed.colors,
+            sharpness: processed.sharpness,
+            splatCount: processed.splatCount,
+          },
+          processed.splatCount
+        );
+
+        // Assign to mesh (might be same geometry, reused)
+        mesh.geometry = geometry;
+      } else {
+        // Fallback: Original path (updateInstancedGSplatsMesh)
+        updateInstancedGSplatsMesh(mesh, {
+          centers: processed.centers3D,
           cholesky01,
           cholesky23,
           cholesky45,
-          colors: processed.colors,
+          amplitudes: processed.amplitudes,
           sharpness: processed.sharpness,
+          colors: processed.colors,
           splatCount: processed.splatCount,
-        },
-        processed.splatCount
-      );
-
-      // Assign to mesh (might be same geometry, reused)
-      mesh.geometry = geometry;
-    } else {
-      // Fallback: Original path (updateInstancedGSplatsMesh)
-      updateInstancedGSplatsMesh(mesh, {
-        centers: processed.centers3D,
-        cholesky01,
-        cholesky23,
-        cholesky45,
-        amplitudes: processed.amplitudes,
-        sharpness: processed.sharpness,
-        colors: processed.colors,
-        splatCount: processed.splatCount,
-      });
+        });
+      }
+    } finally {
+      bufferSession?.end();
     }
 
     // Track visible splat count in mesh userData
