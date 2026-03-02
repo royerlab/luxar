@@ -1,21 +1,11 @@
 // Type definitions for ALL configuration interfaces
 // This file is the single source of truth for configuration types
 
-import type {
-  HalfFloatType,
-  LinearSRGBColorSpace,
-  SRGBColorSpace,
-  NoToneMapping,
-  ACESFilmicToneMapping,
-} from 'three';
-
 /**
  * Camera configuration for 3D perspective and navigation
  */
 export interface CameraConfig {
-  fov: number;
-  near: number;
-  far: number;
+  // Note: fov, near, far live in RenderingSettings (renderingControls.defaults) as the single source of truth
   initialPosition: { x: number; y: number; z: number };
   fovMin: number;
   fovMax: number;
@@ -37,12 +27,10 @@ export interface CameraConfig {
 }
 
 /**
- * Animation loop and performance optimization settings
+ * Animation loop settings
  */
 export interface AnimationConfig {
   idleTimeoutMs: number;
-  targetFPS: number;
-  minFPS: number;
 }
 
 /**
@@ -53,10 +41,9 @@ export interface AnimationConfig {
  * prevent rapid toggling between quality levels.
  */
 export interface AdaptiveDPRConfig {
-  /** Enable adaptive DPR system (default: true) */
+  /** Enable adaptive DPR system at construction time (default: true).
+   *  Runtime toggle is via renderingControls.defaults.adaptiveDPREnabled. */
   enabled: boolean;
-  /** Target FPS - slightly below 60 to prevent toggling (default: 55) */
-  targetFPS: number;
   /** FPS threshold for scaling down resolution (default: 50) */
   minFPS: number;
   /** FPS threshold for scaling up resolution (default: 58) */
@@ -86,28 +73,8 @@ export interface SceneConfig {
  */
 export interface ShaderConfig {
   points: {
-    hdrMultiplier: number;
+    // Note: hdrMultiplier lives in RenderingSettings (renderingControls.defaults) as the single source of truth
     baseAlpha: number;
-  };
-}
-
-/**
- * Post-processing pipeline configuration
- */
-export interface PostProcessingConfig {
-  hdr: {
-    renderTargetType: typeof HalfFloatType;
-  };
-  // Note: bloom configuration moved to RenderingSettings for centralization
-  toneMapping: {
-    initial: {
-      outputColorSpace: typeof LinearSRGBColorSpace;
-      toneMapping: typeof NoToneMapping;
-    };
-    final: {
-      outputColorSpace: typeof SRGBColorSpace;
-      toneMapping: typeof ACESFilmicToneMapping;
-    };
   };
 }
 
@@ -173,11 +140,26 @@ export interface OrbitControlsConfig {
 }
 
 /**
+ * Scale multipliers for adapting camera controls to scene size.
+ * All factors are multiplied by the bounding box diagonal to produce
+ * the actual control parameter value.
+ */
+export interface ScaleMultipliers {
+  /** orbit/arcball minDistance = diagonal * factor (default: 0.001) */
+  minDistanceFactor: number;
+  /** orbit/arcball maxDistance = diagonal * factor (default: 10) */
+  maxDistanceFactor: number;
+  /** fly movementSpeed = diagonal * factor (default: 0.05) */
+  flySpeedFactor: number;
+}
+
+/**
  * Control system configuration
  */
 export interface ControlsConfig {
   fly: FlyControlsConfig;
   orbit: OrbitControlsConfig;
+  scaleMultipliers: ScaleMultipliers;
 }
 
 /**
@@ -245,7 +227,6 @@ export interface DebugConsoleConfig {
  */
 export interface UIComponentsConfig {
   datasetBrowser: {
-    zIndex: number;
     borderRadius: {
       panel: number;
       section: number;
@@ -258,7 +239,6 @@ export interface UIComponentsConfig {
     };
   };
   debugConsole: {
-    zIndex: number;
     borderRadius: {
       header: number;
       content: number;
@@ -525,15 +505,14 @@ export interface WebGLContextAttributes {
 }
 
 /**
- * THREE.WebGLRenderer configuration
+ * THREE.WebGLRenderer configuration (renderer-specific settings only).
+ * Shared attributes (antialias, powerPreference, preserveDrawingBuffer,
+ * premultipliedAlpha) live in WebGLContextAttributes and are spread
+ * alongside these at renderer creation time.
  */
 export interface WebGLRendererConfig {
-  antialias: boolean;
-  powerPreference: 'high-performance' | 'low-power' | 'default';
-  preserveDrawingBuffer: boolean;
   logarithmicDepthBuffer: boolean;
   precision: 'highp' | 'mediump' | 'lowp';
-  premultipliedAlpha: boolean;
   shadowMap: {
     enabled: boolean;
     type: number;
@@ -550,26 +529,12 @@ export interface WebGLRenderTargetConfig {
 }
 
 /**
- * WebGL performance profile
- */
-export interface WebGLPerformanceProfile {
-  powerPreference: 'high-performance' | 'low-power' | 'default';
-  antialias: boolean;
-  precision: 'highp' | 'mediump' | 'lowp';
-}
-
-/**
  * WebGL configuration
  */
 export interface WebGLConfig {
   context: WebGLContextAttributes;
   renderer: WebGLRendererConfig;
   renderTarget: WebGLRenderTargetConfig;
-  profiles: {
-    quality: WebGLPerformanceProfile;
-    balanced: WebGLPerformanceProfile;
-    performance: WebGLPerformanceProfile;
-  };
 }
 
 /**
@@ -624,7 +589,6 @@ export interface AppConfig {
   adaptiveDPR: AdaptiveDPRConfig;
   scene: SceneConfig;
   shader: ShaderConfig;
-  postProcessing: PostProcessingConfig;
   ui: UIConfig;
   renderingControls: RenderingControlsConfig;
   controls: ControlsConfig;

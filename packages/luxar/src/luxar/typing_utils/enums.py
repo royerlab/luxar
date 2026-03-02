@@ -160,7 +160,7 @@ class RenderingLimits:
     OPACITY_MAX = 1.0
     GAMMA_MIN = 0.1  # Symmetric: gamma and 1/gamma have equal range
     GAMMA_MAX = 10.0  # Symmetric: gamma and 1/gamma have equal range
-    SHARPNESS_MIN = 0.0
+    SHARPNESS_MIN = 0.001  # Must be > 0 (mirrors constants.SHARPNESS_MIN)
     SHARPNESS_MAX = 31.0
 
     # HDR color ranges

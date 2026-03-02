@@ -103,7 +103,7 @@ class TestSobelGradientGPU:
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_sobel_2d_gpu_vs_cpu(self):
-        """GPU and CPU Sobel should detect edges (magnitudes may differ)."""
+        """GPU Sobel should closely match scipy.ndimage.sobel (full separable kernel)."""
         # Create test image with edge
         img_np = np.zeros((100, 100))
         img_np[40:60, :] = 1.0
@@ -113,26 +113,37 @@ class TestSobelGradientGPU:
             sum(ndi.sobel(img_np, axis=i, mode="nearest") ** 2 for i in range(2))
         )
 
-        # GPU version - uses simple gradient (no smoothing)
+        # GPU version - now also uses full separable Sobel with smoothing
         img_gpu = torch.tensor(img_np, device="cuda", dtype=torch.float32)
         gpu_result_tensor = _compute_nd_sobel_magnitude_gpu(img_gpu)
         gpu_result = gpu_result_tensor.cpu().numpy()
 
-        # Both should detect edges at same locations (non-zero where edges are)
-        # Magnitudes differ due to scipy using [1,2,1] smoothing kernel
-        cpu_edges = cpu_result > 0.5
-        gpu_edges = gpu_result > 0.1
+        # Both should detect edges at same locations with same threshold
+        threshold = 0.3
+        cpu_edges = cpu_result > threshold
+        gpu_edges = gpu_result > threshold
 
-        # Should have similar edge patterns
+        # Should have near-identical edge patterns (>95% overlap)
         overlap = np.logical_and(cpu_edges, gpu_edges).sum()
         cpu_total = cpu_edges.sum()
+        assert overlap / cpu_total > 0.95, (
+            f"Edge overlap too low: {overlap / cpu_total}"
+        )
 
-        # At least 80% overlap in detected edges
-        assert overlap / cpu_total > 0.8, f"Edge overlap too low: {overlap / cpu_total}"
+        # Magnitudes should be close (allowing for float32 vs float64 differences)
+        # scipy uses float64, GPU uses float32
+        mask = cpu_result > 0.1
+        if mask.sum() > 0:
+            rel_error = np.abs(cpu_result[mask] - gpu_result[mask]) / (
+                cpu_result[mask] + 1e-12
+            )
+            assert np.median(rel_error) < 0.05, (
+                f"Median relative error too high: {np.median(rel_error):.4f}"
+            )
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_sobel_3d_gpu_vs_cpu(self):
-        """GPU and CPU Sobel should detect edges (magnitudes may differ)."""
+        """GPU Sobel should closely match scipy.ndimage.sobel (full separable kernel)."""
         # Create test volume with edge
         img_np = np.zeros((50, 50, 50))
         img_np[20:30, :, :] = 1.0
@@ -142,21 +153,32 @@ class TestSobelGradientGPU:
             sum(ndi.sobel(img_np, axis=i, mode="nearest") ** 2 for i in range(3))
         )
 
-        # GPU version - uses simple gradient (no smoothing)
+        # GPU version - now also uses full separable Sobel with smoothing
         img_gpu = torch.tensor(img_np, device="cuda", dtype=torch.float32)
         gpu_result_tensor = _compute_nd_sobel_magnitude_gpu(img_gpu)
         gpu_result = gpu_result_tensor.cpu().numpy()
 
-        # Both should detect edges at same locations
-        cpu_edges = cpu_result > 0.5
-        gpu_edges = gpu_result > 0.1
+        # Both should detect edges at same locations with same threshold
+        threshold = 0.3
+        cpu_edges = cpu_result > threshold
+        gpu_edges = gpu_result > threshold
 
-        # Should have similar edge patterns
+        # Should have near-identical edge patterns (>95% overlap)
         overlap = np.logical_and(cpu_edges, gpu_edges).sum()
         cpu_total = cpu_edges.sum()
+        assert overlap / cpu_total > 0.95, (
+            f"Edge overlap too low: {overlap / cpu_total}"
+        )
 
-        # At least 80% overlap in detected edges
-        assert overlap / cpu_total > 0.8, f"Edge overlap too low: {overlap / cpu_total}"
+        # Magnitudes should be close
+        mask = cpu_result > 0.1
+        if mask.sum() > 0:
+            rel_error = np.abs(cpu_result[mask] - gpu_result[mask]) / (
+                cpu_result[mask] + 1e-12
+            )
+            assert np.median(rel_error) < 0.05, (
+                f"Median relative error too high: {np.median(rel_error):.4f}"
+            )
 
     def test_sobel_cpu_device(self):
         """Sobel should work on CPU device."""

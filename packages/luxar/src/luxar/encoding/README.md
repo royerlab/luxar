@@ -593,19 +593,17 @@ encoder.encode(
 The encoding system is used by the Luxar compiler:
 
 ```python
-from luxar import LuxarZarrCompiler
+from luxar import LuxarZarrCompiler, Dimensions
 from luxar.encoding import EncodingMode
 
 # Create compiler with encoding mode
+dims = Dimensions.default_3d()
 with LuxarZarrCompiler(
     "output.zarr",
     encoding_mode=EncodingMode.MEMORY  # Use aggressive compression
 ) as compiler:
-    scene = compiler.create_scene()
-    points = scene.create_points()
-    points.set_positions(positions)
-    points.set_colors(colors, color_mode="sdr")  # Explicit mode
-    points.set_radii(radii)
+    scene = compiler.create_scene(dimensions=dims)
+    scene.add_points("cloud", positions, colors, radii=radii)
 ```
 
 **Internal Flow:**
@@ -832,10 +830,10 @@ compiler = LuxarZarrCompiler("data.zarr", encoding_mode=EncodingMode.MEMORY)
 # For maximum memory efficiency (Python-only)
 compiler = LuxarZarrCompiler(
     "data.zarr",
-    encoding_mode=EncodingMode.MEMORY, 
+    encoding_mode=EncodingMode.MEMORY,
     float16_allowed=True
 )
 ```
 
-**Why False by Default?**  
+**Why False by Default?**
 JavaScript/TypeScript zarr libraries (zarrita) don't support float16 dtype. Setting `float16_allowed=False` ensures datasets can be loaded by web viewers while maintaining good precision with float32.

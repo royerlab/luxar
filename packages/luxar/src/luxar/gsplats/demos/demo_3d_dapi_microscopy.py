@@ -25,12 +25,12 @@
 - Processing: Downscaled to 128³ voxels via zoom interpolation
 - Fallback: Creates synthetic nucleus-like blobs if remote load fails
 
-**Visualization:** 3D napari viewer with MIP rendering
-- DAPI input volume (gray colormap)
-- Reconstruction (cyan colormap, 80% opacity)
-- Absolute residual (red colormap)
-- 3D wireframe ellipsoids (yellow, 30% opacity)
-- Splat centers (lime green points)
+**Visualization:** 3D napari viewer with MIP rendering (all layers gray/white LUT)
+- DAPI input volume
+- Final reconstruction from fitted model (with PSNR/compression stats)
+- Final residual: original minus reconstruction
+- Compression sweep: reconstruction at varying splat counts (slider)
+- Compression sweep residual (slider)
 
 **Controls:**
 - Top slider: Compression level (all splats → minimal)
@@ -45,7 +45,6 @@
 
 import sys
 
-import napari
 import numpy as np
 import zarr
 from arbol import Arbol, aprint, asection
@@ -63,6 +62,7 @@ if NO_NAPARI:
     aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
+NUM_SPLATS = 6000
 N_ITERS = 6000
 DEVICE = None  # None -> auto: CUDA on Linux with NVIDIA, MPS on macOS, CPU fallback
 N_FRAMES = 30  # number of compression steps (<= #splats)
@@ -319,7 +319,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
         # - Metal kernels on Apple Silicon (3-7x speedup)
         result = fit_gaussian_splats(
             V,
-            seeds=8000,  # initial seed count
+            seeds=NUM_SPLATS,  # initial seed count
             n_iters=N_ITERS,
             device=DEVICE,
             use_metal=USE_METAL,  # Enable Metal acceleration (macOS)
@@ -338,6 +338,32 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             raise RuntimeError(
                 "No splats fitted; lower thresholds or increase iterations."
             )
+
+    # ----- Final reconstruction vs original -----
+    with asection("Final reconstruction vs original"):
+        V_final = render_gaussians_numpy(V.shape, result, truncate=3.0)
+        residual_final = V - V_final
+
+        # Quality metrics
+        mse_final = float(np.mean(residual_final**2))
+        psnr_final = 10.0 * np.log10(float(V.max()) ** 2 / (mse_final + 1e-12))
+        rel_error_final = float(
+            np.linalg.norm(residual_final) / (np.linalg.norm(V) + 1e-12)
+        )
+        max_abs_error_final = float(np.abs(residual_final).max())
+
+        n_splats_final = len(result.amplitudes)
+        model_bits_final = n_splats_final * (3 + tril_size(3) + 1 + 1) * 32
+        compression_final = 100.0 * (1.0 - model_bits_final / (V.size * 32))
+
+        fold_compression_final = (V.size * 32) / max(model_bits_final, 1)
+
+        aprint(f"Final model: {n_splats_final} splats")
+        aprint(f"Compression: {compression_final:.1f}% ({fold_compression_final:.1f}x)")
+        aprint(f"MSE: {mse_final:.4f}")
+        aprint(f"PSNR: {psnr_final:.2f} dB")
+        aprint(f"Relative L2 error: {rel_error_final:.4f}")
+        aprint(f"Max absolute error: {max_abs_error_final:.4f}")
 
 # ----- Compression ranking by approximate L2 energy -----
 # For a 3D Gaussian, ||G||_2^2 = (sqrt(pi))^d * sqrt(det Σ).
@@ -429,15 +455,17 @@ for i, K in enumerate(keep_counts[::5]):  # Show every 5th frame
     idx = i * 5
     if idx < len(keep_counts):
         mb = int(model_bits_frames[idx])
-        cp = bit_compression_pct[idx]
         bp = bpp_frames[idx]
         re = rel_err_frames[idx]
+        fold = IMAGE_BITS / max(mb, 1)
         aprint(
-            f"Fr{idx:02d} K={K:4d} bits={mb:>10,} comp={cp:5.1f}% "
+            f"Fr{idx:02d} K={K:4d} bits={mb:>10,} {fold:>7.1f}x "
             f"bpv={bp:.3f} L2={re:.4f}"
         )
 
 if not NO_NAPARI:
+    import napari
+
     # ----- Napari viewer with "compression" slider -----
     aprint("🔬 Launching interactive 3D napari viewer...")
     viewer = napari.Viewer(title="3D DAPI Gaussian Splatting Demo", ndisplay=3)
@@ -448,27 +476,43 @@ if not NO_NAPARI:
         name="DAPI (input)",
         colormap="gray",
         contrast_limits=[0, float(V.max())],
-        rendering="mip",  # Maximum intensity projection
+        rendering="mip",
     )
 
+    # ----- Final reconstruction layers (post-culling model) -----
+    viewer.add_image(
+        V_final,
+        name="final reconstruction",
+        colormap="gray",
+        contrast_limits=[0, float(V.max())],
+        rendering="mip",
+    )
+
+    viewer.add_image(
+        np.abs(residual_final),
+        name="final residual",
+        colormap="gray",
+        contrast_limits=[0, max(1e-12, max_abs_error_final)],
+        rendering="mip",
+    )
+
+    # ----- Compression sweep layers (slider-controlled) -----
     # Add reconstruction stack
     viewer.add_image(
         stack_recon,
         name="reconstruction (compression, oriented 3D)",
-        colormap="cyan",
+        colormap="gray",
         contrast_limits=[0, float(V.max())],
         rendering="mip",
-        opacity=0.8,
     )
 
     # Add residual stack
     viewer.add_image(
         np.abs(stack_resid),
         name="absolute residual",
-        colormap="red",
+        colormap="gray",
         contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
         rendering="mip",
-        opacity=0.5,
     )
 
     def _update_3d_layers(t_index: int) -> None:
@@ -477,14 +521,11 @@ if not NO_NAPARI:
         # Update text overlay
         K = int(keep_counts[t_index])
         bits_model = int(model_bits_frames[t_index])
-        bpp = float(bpp_frames[t_index])
-        pct_bits = float(bit_compression_pct[t_index])
+        fold = IMAGE_BITS / max(bits_model, 1)
         rel = float(rel_err_frames[t_index])
         viewer.text_overlay.visible = True
         viewer.text_overlay.text = (
-            f"🧬 3D DAPI Demo | Kept splats: {K}/{N}  |  Model bits: {bits_model:,}  "
-            f"|  bpv: {bpp:.3f} (raw=32.0)  |  Compression: {pct_bits:.1f}%  "
-            f"|  rel L2 error: {rel:.4f}"
+            f"Splats: {K}/{N}  |  {fold:.1f}x compression  |  rel L2 error: {rel:.4f}"
         )
 
     # Initialize and wire slider
@@ -508,19 +549,27 @@ if not NO_NAPARI:
     aprint("   • Rotate view with mouse drag")
     aprint("   • Zoom with mouse wheel")
     aprint("   • Toggle layers on/off to compare input vs reconstruction")
-    aprint("   • Yellow points = 3D ellipsoid wireframes")
-    aprint("   • Lime points = splat centers")
+    aprint("")
+    aprint("📊 Layer guide:")
+    aprint("   • 'DAPI (input)' = original volume")
+    aprint(
+        "   • 'final reconstruction' = fitted model output "
+        f"({n_splats_final} splats, PSNR {psnr_final:.1f} dB)"
+    )
+    aprint("   • 'final residual' = original minus reconstruction")
+    aprint("   • 'reconstruction (compression...)' = compression sweep (slider)")
+    aprint("   • 'absolute residual' = compression sweep residual (slider)")
     aprint("")
     aprint("🔍 What to notice:")
-    aprint("   • How 3D nuclear structures are represented by oriented ellipsoids")
-    aprint("   • Efficiency of 3D Gaussians for volumetric microscopy data")
-    aprint("   • Trade-off between storage size and reconstruction fidelity")
+    aprint("   • Toggle 'final reconstruction' to compare with input")
+    aprint("   • Toggle 'final residual' to see where the model struggles")
+    aprint("   • Use the compression slider to see quality vs splat count")
     aprint("   • Alignment of ellipsoids with nuclear morphology")
 
     # Best compression and final error
-    best_compression = bit_compression_pct.max()
+    best_fold = IMAGE_BITS / max(int(model_bits_frames[-1]), 1)
     final_error = rel_err_frames[-1]
-    aprint(f"  • Best compression: {best_compression:.1f}% bit reduction")
+    aprint(f"  • All splats: {best_fold:.1f}x compression")
     aprint(f"  • Final relative error: {final_error:.4f}")
     aprint("  • 3D splats efficiently capture volumetric DAPI structures!")
 

@@ -113,6 +113,21 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     from luxar.gsplats.gsplat_data import GSplatData
 
     V = config.V.copy()  # Work with a copy
+
+    # Validate input: NaN/Inf causes silent failures in normalization and fitting
+    if np.any(np.isnan(V)):
+        nan_count = int(np.sum(np.isnan(V)))
+        raise ValueError(
+            f"Input volume contains {nan_count} NaN value(s). "
+            f"Clean the data before fitting (e.g., np.nan_to_num(V))."
+        )
+    if np.any(np.isinf(V)):
+        inf_count = int(np.sum(np.isinf(V)))
+        raise ValueError(
+            f"Input volume contains {inf_count} Inf value(s). "
+            f"Clean the data before fitting (e.g., np.nan_to_num(V))."
+        )
+
     seeds = config.seeds
     seed_kwargs = config.seed_kwargs or {}  # Default to empty dict if None
 
@@ -249,6 +264,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         d=d,
         N=N,
         max_abs_error=max_abs_error,
+        rel_l2_target=config.rel_l2_target,
         l1_amp=l1_amp,
         l1_diag=l1_diag,
         l1_sharpness=l1_sharpness,

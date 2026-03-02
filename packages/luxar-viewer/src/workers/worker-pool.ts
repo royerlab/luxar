@@ -19,7 +19,6 @@ interface WorkerInstance {
 class WorkerPool {
   private workers: WorkerInstance[] = [];
   private initPromise: Promise<void> | null = null;
-  private initLock = false;
 
   /**
    * Get the configured worker count, capped by hardware concurrency
@@ -48,18 +47,8 @@ class WorkerPool {
    * Initialize worker pool (lazy initialization)
    */
   async initialize(): Promise<void> {
-    // Atomic check-and-set to prevent race conditions
+    // Return existing promise if initialization already started or completed
     if (this.initPromise) return this.initPromise;
-
-    if (this.initLock) {
-      // Another initialization in progress, wait for it
-      while (this.initLock) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      return this.initPromise!;
-    }
-
-    this.initLock = true;
 
     this.initPromise = (async () => {
       try {
@@ -110,8 +99,15 @@ class WorkerPool {
         }
 
         log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
-      } finally {
-        this.initLock = false;
+      } catch (e) {
+        // Clean up any workers that were partially pushed during this attempt
+        for (const { worker } of this.workers) {
+          worker.terminate();
+        }
+        this.workers = [];
+        // Reset so callers can retry after transient failures
+        this.initPromise = null;
+        throw e;
       }
     })();
 
@@ -225,7 +221,6 @@ class WorkerPool {
       }
       this.workers = [];
       this.initPromise = null;
-      this.initLock = false;
     }
   }
 }

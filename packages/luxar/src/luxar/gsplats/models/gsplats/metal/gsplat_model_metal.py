@@ -434,6 +434,7 @@ class GaussianSplatModelMetal(torch.nn.Module):
         intensity_floor: float = 1e-5,
         tile_size: int = 4,  # Tile size for 3D binning (4 is optimal)
         use_metal_conic: bool = False,  # DISABLED: Gradient bug found, investigating
+        voxel_size: Optional[np.ndarray] = None,
         device: Optional[torch.device | str] = None,
     ) -> None:
         super().__init__()
@@ -462,7 +463,7 @@ class GaussianSplatModelMetal(torch.nn.Module):
         import inspect
 
         base_params = inspect.signature(GaussianSplatModel.__init__).parameters
-        if len(base_params) > 13:  # Expected: ~12 parameters (self + 11 init params)
+        if len(base_params) > 14:  # Expected: ~13 parameters (self + 12 init params)
             import warnings
 
             warnings.warn(
@@ -485,6 +486,7 @@ class GaussianSplatModelMetal(torch.nn.Module):
             max_eccentricity=max_eccentricity,
             sharpness_range=sharpness_range,
             truncate=truncate,
+            voxel_size=voxel_size,
             device=base_device,
         )
 
@@ -676,6 +678,11 @@ class GaussianSplatModelMetal(torch.nn.Module):
     def sigma_max_diag(self) -> Optional[torch.Tensor]:
         """Delegate to base model (required by optimizer)."""
         return self._base.sigma_max_diag
+
+    @property
+    def voxel_size(self) -> Optional[torch.Tensor]:
+        """Delegate to base model."""
+        return self._base.voxel_size
 
     def __repr__(self) -> str:
         return f"GaussianSplatModelMetal(n_splats={self.n_splats()}, shape={self._shape}, device={next(self.parameters()).device})"

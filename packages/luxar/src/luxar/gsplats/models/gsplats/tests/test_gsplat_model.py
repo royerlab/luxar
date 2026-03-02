@@ -557,5 +557,180 @@ class TestEdgeCases:
         assert torch.sum(output) > 0
 
 
+class TestVoxelSizeEccentricity:
+    """Tests for voxel_size-aware eccentricity constraints in _build_L()."""
+
+    def test_voxel_size_none_same_as_before(self, simple_3d_setup):
+        """voxel_size=None produces same result as omitting it."""
+        setup = simple_3d_setup
+        model_none = GaussianSplatModel(
+            **setup,
+            max_eccentricity=4.0,
+            device=torch.device("cpu"),
+        )
+        model_explicit = GaussianSplatModel(
+            **setup,
+            max_eccentricity=4.0,
+            voxel_size=None,
+            device=torch.device("cpu"),
+        )
+        with torch.no_grad():
+            L_none = model_none._build_L()
+            L_explicit = model_explicit._build_L()
+        assert torch.allclose(L_none, L_explicit)
+
+    def test_isotropic_voxel_size_same_as_none(self, simple_3d_setup):
+        """voxel_size=(1,1,1) produces identical _build_L() as None."""
+        setup = simple_3d_setup
+        model_none = GaussianSplatModel(
+            **setup,
+            max_eccentricity=4.0,
+            device=torch.device("cpu"),
+        )
+        model_iso = GaussianSplatModel(
+            **setup,
+            max_eccentricity=4.0,
+            voxel_size=np.array([1.0, 1.0, 1.0]),
+            device=torch.device("cpu"),
+        )
+        with torch.no_grad():
+            L_none = model_none._build_L()
+            L_iso = model_iso._build_L()
+        assert torch.allclose(L_none, L_iso, atol=1e-6)
+
+    def test_anisotropic_allows_physical_isotropy(self):
+        """Physically isotropic splat is NOT clamped with anisotropic voxels."""
+        shape = (10, 50, 50)
+        N = 1
+        d = 3
+        voxel_size = np.array([5.0, 1.0, 1.0])
+
+        centers0 = np.array([[5.0, 25.0, 25.0]], dtype=np.float32)
+        # L_diag in voxel space: (1, 5, 5) → physical: (5, 5, 5) = isotropic
+        L0 = np.zeros((N, d, d), dtype=np.float32)
+        L0[0, 0, 0] = 1.0
+        L0[0, 1, 1] = 5.0
+        L0[0, 2, 2] = 5.0
+        amps0 = np.array([1.0], dtype=np.float32)
+        sigma_min_diag = [0.1, 0.1, 0.1]
+
+        model = GaussianSplatModel(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=sigma_min_diag,
+            max_eccentricity=2.0,
+            voxel_size=voxel_size,
+            device=torch.device("cpu"),
+        )
+        with torch.no_grad():
+            L = model._build_L()
+        diag = torch.diagonal(L[0])
+        # Physical diags: 1*5=5, 5*1=5, 5*1=5 — isotropic, no clamping
+        assert diag[0].item() == pytest.approx(1.0, abs=0.1)
+        assert diag[1].item() == pytest.approx(5.0, abs=0.1)
+        assert diag[2].item() == pytest.approx(5.0, abs=0.1)
+
+    def test_anisotropic_clamps_physical_elongation(self):
+        """Physically elongated splat IS clamped."""
+        shape = (10, 50, 50)
+        N = 1
+        d = 3
+        voxel_size = np.array([5.0, 1.0, 1.0])
+
+        centers0 = np.array([[5.0, 25.0, 25.0]], dtype=np.float32)
+        # L_diag voxel: (1, 50, 50) → physical: (5, 50, 50) → ratio 10x
+        L0 = np.zeros((N, d, d), dtype=np.float32)
+        L0[0, 0, 0] = 1.0
+        L0[0, 1, 1] = 50.0
+        L0[0, 2, 2] = 50.0
+        amps0 = np.array([1.0], dtype=np.float32)
+        sigma_min_diag = [0.1, 0.1, 0.1]
+
+        model = GaussianSplatModel(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=sigma_min_diag,
+            max_eccentricity=4.0,
+            voxel_size=voxel_size,
+            device=torch.device("cpu"),
+        )
+        with torch.no_grad():
+            L = model._build_L()
+        diag = torch.diagonal(L[0])
+        # Physical diags after clamping: min_phys ≈ 5, max_allowed = 5*2 = 10
+        # So physical ratio should be <= sqrt(4) = 2
+        diag_phys = diag * torch.tensor(voxel_size)
+        ratio = diag_phys.max() / diag_phys.min()
+        assert ratio.item() <= 2.0 + 0.01  # sqrt(4) with tolerance
+
+    def test_sigma_min_diag_preserved_after_eccentricity(self):
+        """sigma_min_diag is respected even after eccentricity clamping."""
+        shape = (10, 50, 50)
+        N = 1
+        d = 3
+        # Extreme anisotropy: Z is 100x physical size per voxel
+        voxel_size = np.array([100.0, 1.0, 1.0])
+        sigma_min_diag = [0.3, 0.3, 0.3]
+
+        centers0 = np.array([[5.0, 25.0, 25.0]], dtype=np.float32)
+        # L_diag voxel: (3, 0.5, 0.5) → physical: (300, 0.5, 0.5) → ratio 600
+        # Eccentricity will try to shrink axis 0, but sigma_min must hold
+        L0 = np.zeros((N, d, d), dtype=np.float32)
+        L0[0, 0, 0] = 3.0
+        L0[0, 1, 1] = 0.5
+        L0[0, 2, 2] = 0.5
+        amps0 = np.array([1.0], dtype=np.float32)
+
+        model = GaussianSplatModel(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=sigma_min_diag,
+            max_eccentricity=4.0,
+            voxel_size=voxel_size,
+            device=torch.device("cpu"),
+        )
+        with torch.no_grad():
+            L = model._build_L()
+        diag = torch.diagonal(L[0])
+        # All diagonals must be >= sigma_min_diag
+        for i in range(d):
+            assert diag[i].item() >= sigma_min_diag[i] - 1e-6
+
+    def test_without_voxel_size_same_diags_clamped(self):
+        """Without voxel_size, voxel-space-elongated splat IS clamped."""
+        shape = (10, 50, 50)
+        N = 1
+        d = 3
+        centers0 = np.array([[5.0, 25.0, 25.0]], dtype=np.float32)
+        # L_diag: (1, 5, 5) → voxel ratio = 5, eccentricity = 25 > 4 → clamped
+        L0 = np.zeros((N, d, d), dtype=np.float32)
+        L0[0, 0, 0] = 1.0
+        L0[0, 1, 1] = 5.0
+        L0[0, 2, 2] = 5.0
+        amps0 = np.array([1.0], dtype=np.float32)
+        sigma_min_diag = [0.1, 0.1, 0.1]
+
+        model = GaussianSplatModel(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=sigma_min_diag,
+            max_eccentricity=4.0,
+            device=torch.device("cpu"),
+        )
+        with torch.no_grad():
+            L = model._build_L()
+        diag = torch.diagonal(L[0])
+        ratio = diag.max() / diag.min()
+        assert ratio.item() <= 2.0 + 0.01  # sqrt(4)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

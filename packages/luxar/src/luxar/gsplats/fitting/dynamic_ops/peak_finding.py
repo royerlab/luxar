@@ -261,12 +261,15 @@ def _find_residual_peaks_tiled(
         k_deterministic = None
         # Calculate threshold for "strong" peaks that should always be kept
         # Use 75th percentile of positive residual as threshold
-        # Only consider non-zero values for percentile calculation
-        positive_values = residual_positive[residual_positive > 0]
-        if len(positive_values) > 0:
-            strong_peak_threshold = torch.quantile(
-                positive_values.float().flatten(), 0.75
-            ).item()
+        # Strided sampling: zero-copy view, no allocation, no GPU kernel
+        # (torch.quantile() is limited to ~16M elements: pytorch/pytorch#64947)
+        max_samples = 2**20  # ~1M is plenty for a percentile estimate
+        n = residual_positive.numel()
+        stride = max(1, n // max_samples)
+        sampled = residual_positive.reshape(-1)[::stride]
+        positive_sample = sampled[sampled > 0]
+        if len(positive_sample) > 0:
+            strong_peak_threshold = torch.quantile(positive_sample.float(), 0.75).item()
         else:
             strong_peak_threshold = float("inf")  # No positive residuals
     else:

@@ -7,6 +7,12 @@ This example demonstrates:
 - 3D slices through W dimension show spheres of varying radius
 - Rainbow colors based on 4D position
 - Proper scene dimension definitions for 4D spatial data
+
+Educational value:
+- Understand true 4D spatial geometry (not time-based 4D)
+- Learn how 3D slices through a hypersphere change with W position
+- See the relationship between slice position and visible sphere radius
+- Master 4D dimension configuration for spatial data
 """
 
 import numpy as np

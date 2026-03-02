@@ -287,17 +287,17 @@ optimizer = optim.Adam(model.parameters(), lr=0.01)
 # Training loop
 for i in range(1000):
     optimizer.zero_grad()
-    
+
     # Render
     rendered = model()
-    
+
     # Loss
     loss = torch.nn.functional.mse_loss(rendered, target)
-    
+
     # Backward
     loss.backward()
     optimizer.step()
-    
+
     if i % 100 == 0:
         print(f"Iteration {i}, Loss: {loss.item():.6f}")
 ```

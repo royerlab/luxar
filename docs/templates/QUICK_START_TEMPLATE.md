@@ -142,6 +142,7 @@ with LuxarZarrCompiler('scene.zarr') as c:
 ```
 
 **Missing**:
+- `create_scene()` requires `dimensions` parameter
 - What are `pos`, `col`, `r`? (show creation)
 - What does this achieve?
 - What happens next?

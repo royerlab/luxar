@@ -1,0 +1,93 @@
+{
+  "label": "original_code",
+  "timestamp": "2026-02-25T11:41:37.764536",
+  "commit": "83d65b8",
+  "gpu": "NVIDIA GeForce RTX 3090 Ti",
+  "cuda_version": "12.1",
+  "pytorch_version": "2.5.1+cu121",
+  "configs": {
+    "3D_128_1K": {
+      "N": 1000,
+      "shape": [
+        128,
+        128,
+        128
+      ],
+      "voxels": 2097152,
+      "fp32_inference_ms": 0.932,
+      "fp32_train_fwd_ms": 0.946,
+      "fp32_train_bwd_ms": 2.419,
+      "fp32_train_total_ms": 3.365,
+      "amp_inference_ms": 0.994,
+      "amp_train_fwd_ms": 1.007,
+      "amp_train_bwd_ms": 2.44,
+      "amp_train_total_ms": 3.448
+    },
+    "3D_256_10K": {
+      "N": 10000,
+      "shape": [
+        256,
+        256,
+        256
+      ],
+      "voxels": 16777216,
+      "fp32_inference_ms": 1.301,
+      "fp32_train_fwd_ms": 1.299,
+      "fp32_train_bwd_ms": 2.246,
+      "fp32_train_total_ms": 3.545,
+      "amp_inference_ms": 1.379,
+      "amp_train_fwd_ms": 1.344,
+      "amp_train_bwd_ms": 2.136,
+      "amp_train_total_ms": 3.48
+    },
+    "3D_512_50K": {
+      "N": 50000,
+      "shape": [
+        512,
+        512,
+        512
+      ],
+      "voxels": 134217728,
+      "fp32_inference_ms": 3.77,
+      "fp32_train_fwd_ms": 3.775,
+      "fp32_train_bwd_ms": 10.159,
+      "fp32_train_total_ms": 13.934,
+      "amp_inference_ms": 3.9,
+      "amp_train_fwd_ms": 3.875,
+      "amp_train_bwd_ms": 10.052,
+      "amp_train_total_ms": 13.927
+    },
+    "2D_1024_5K": {
+      "N": 5000,
+      "shape": [
+        1024,
+        1024
+      ],
+      "voxels": 1048576,
+      "fp32_inference_ms": 0.7,
+      "fp32_train_fwd_ms": 0.688,
+      "fp32_train_bwd_ms": 1.407,
+      "fp32_train_total_ms": 2.095,
+      "amp_inference_ms": 0.747,
+      "amp_train_fwd_ms": 0.747,
+      "amp_train_bwd_ms": 1.414,
+      "amp_train_total_ms": 2.161
+    },
+    "2D_4096_50K": {
+      "N": 50000,
+      "shape": [
+        4096,
+        4096
+      ],
+      "voxels": 16777216,
+      "fp32_inference_ms": 0.988,
+      "fp32_train_fwd_ms": 0.995,
+      "fp32_train_bwd_ms": 1.151,
+      "fp32_train_total_ms": 2.146,
+      "amp_inference_ms": 1.047,
+      "amp_train_fwd_ms": 1.034,
+      "amp_train_bwd_ms": 1.195,
+      "amp_train_total_ms": 2.23
+    }
+  }
+}

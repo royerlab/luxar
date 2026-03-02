@@ -22,17 +22,72 @@ export function getDefaultRenderingSettings(): RenderingSettings {
   return config.renderingControls.defaults;
 }
 
+/** Valid tone mapping options */
+const VALID_TONE_MAPPINGS = ['None', 'Linear', 'Reinhard', 'Cineon', 'ACES', 'AgX', 'Neutral'];
+
+/** Valid control types */
+const VALID_CONTROL_TYPES = ['orbit', 'arcball', 'fly'];
+
+/** Valid AO quality levels */
+const VALID_AO_QUALITIES = ['low', 'medium', 'high', 'ultra'];
+
 /**
- * Validates rendering settings and applies defaults for missing/invalid values
+ * Validates rendering settings and applies defaults for missing/invalid values.
+ * Guards against corrupted localStorage by range-checking numeric values
+ * and verifying enum membership for string values.
  *
- * @param settings - Partial settings object
- * @returns Complete validated settings
+ * @param settings - Partial settings object (e.g. from localStorage)
+ * @returns Complete validated settings with invalid values replaced by defaults
  */
 export function validateRenderingSettings(settings: Partial<RenderingSettings>): RenderingSettings {
-  const validated: RenderingSettings = { ...getDefaultRenderingSettings() };
+  const defaults = getDefaultRenderingSettings();
+  const merged = { ...defaults, ...settings };
 
-  // Simply merge provided settings with defaults, letting TypeScript catch any invalid properties
-  return { ...validated, ...settings };
+  // Numeric range validation — replace out-of-range with default
+  const clampOrDefault = (value: unknown, fallback: number, min: number, max: number): number => {
+    if (typeof value !== 'number' || !isFinite(value)) return fallback;
+    if (value < min || value > max) return fallback;
+    return value;
+  };
+
+  const positiveOrDefault = (value: unknown, fallback: number): number => {
+    if (typeof value !== 'number' || !isFinite(value) || value <= 0) return fallback;
+    return value;
+  };
+
+  merged.fov = clampOrDefault(merged.fov, defaults.fov, config.camera.fovMin, config.camera.fovMax);
+  merged.near = positiveOrDefault(merged.near, defaults.near);
+  merged.far = positiveOrDefault(merged.far, defaults.far);
+  if (merged.far <= merged.near) merged.far = defaults.far;
+
+  merged.bloomThreshold = clampOrDefault(merged.bloomThreshold, defaults.bloomThreshold, 0, 1);
+  merged.bloomStrength = clampOrDefault(merged.bloomStrength, defaults.bloomStrength, 0, 10);
+  merged.bloomRadius = clampOrDefault(merged.bloomRadius, defaults.bloomRadius, 0, 10);
+  merged.bloomLevels = clampOrDefault(merged.bloomLevels, defaults.bloomLevels, 1, 12);
+  merged.bloomLevels = Math.round(merged.bloomLevels);
+  merged.hdrMultiplier = clampOrDefault(merged.hdrMultiplier, defaults.hdrMultiplier, 0, Infinity);
+  merged.msaaSamples = clampMSAASamples(merged.msaaSamples);
+  merged.dofStrength = clampOrDefault(merged.dofStrength, defaults.dofStrength, 0, 1);
+  merged.vignetteDarkness = clampOrDefault(
+    merged.vignetteDarkness,
+    defaults.vignetteDarkness,
+    0,
+    1
+  );
+  merged.vignetteOffset = clampOrDefault(merged.vignetteOffset, defaults.vignetteOffset, 0, 1);
+
+  // Enum validation — replace invalid strings with default
+  if (!VALID_TONE_MAPPINGS.includes(merged.toneMapping)) {
+    merged.toneMapping = defaults.toneMapping;
+  }
+  if (!VALID_CONTROL_TYPES.includes(merged.controlType)) {
+    merged.controlType = defaults.controlType;
+  }
+  if (!VALID_AO_QUALITIES.includes(merged.aoQuality)) {
+    merged.aoQuality = defaults.aoQuality;
+  }
+
+  return merged;
 }
 
 /**
@@ -180,22 +235,6 @@ export function getSettingsRequiringRebuild(
   }
 
   return rebuildRequired;
-}
-
-/**
- * Filters settings for export (removes temporary/local values)
- *
- * @param settings - Full settings object
- * @returns Exportable settings
- */
-export function filterExportableSettings(settings: RenderingSettings): Partial<RenderingSettings> {
-  // Remove settings that shouldn't be exported/shared
-  const exportable = { ...settings };
-
-  // These might be scene-specific and shouldn't transfer
-  delete (exportable as any).backgroundColor; // Keep local
-
-  return exportable;
 }
 
 /**

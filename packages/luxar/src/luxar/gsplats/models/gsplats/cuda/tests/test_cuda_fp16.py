@@ -13,6 +13,8 @@ import numpy as np
 import pytest
 import torch
 
+from .conftest import compute_L_row_norms
+
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
 
@@ -563,6 +565,7 @@ class TestFP16LowLevelBackend:
             .repeat(N, 1, 1)
         )
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         amps = torch.rand(N, device="cuda", dtype=torch.float32)
         sharpness = torch.full((N,), 2.0, device="cuda", dtype=torch.float32)
 
@@ -572,6 +575,7 @@ class TestFP16LowLevelBackend:
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             shape,
             3.0,  # truncate
             1e-5,  # intensity_floor
@@ -601,6 +605,7 @@ class TestFP16LowLevelBackend:
             .repeat(N, 1, 1)
         )
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         amps = torch.rand(N, device="cuda", dtype=torch.float32)
         sharpness = torch.full((N,), 2.0, device="cuda", dtype=torch.float32)
 
@@ -610,6 +615,7 @@ class TestFP16LowLevelBackend:
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             shape,
             3.0,  # truncate
             1e-5,  # intensity_floor

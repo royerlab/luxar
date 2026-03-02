@@ -7,7 +7,7 @@ Run with: hatch run python scripts/benchmarks/benchmark_seeding_gpu.py
 """
 
 import time
-from typing import Callable, Dict, List, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -230,7 +230,9 @@ def run_dimension_support_tests():
             try:
                 # Test edges method (uses Sobel + interpolation)
                 start = time.perf_counter()
-                seeds = generate_seeds(volume, method="edges", device=device, n_seeds=50)
+                seeds = generate_seeds(
+                    volume, method="edges", device=device, n_seeds=50
+                )
                 elapsed = time.perf_counter() - start
 
                 aprint(

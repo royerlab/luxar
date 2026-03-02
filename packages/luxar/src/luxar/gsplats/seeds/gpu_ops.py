@@ -202,8 +202,11 @@ def _compute_nd_sobel_magnitude_gpu(V_tensor: torch.Tensor) -> torch.Tensor:
     """
     Compute nD Sobel gradient magnitude on GPU.
 
-    Uses separable Sobel kernel [-1, 0, 1] applied along each axis.
-    This is ~10-50x faster than scipy.ndimage.sobel on large volumes.
+    Uses the full separable Sobel kernel matching ``scipy.ndimage.sobel``:
+    for each axis, apply the differentiation kernel ``[-1, 0, 1]`` along
+    that axis and the smoothing kernel ``[1, 2, 1]`` (unnormalized) along
+    all perpendicular axes. This is ~10-50x faster than scipy on large
+    volumes.
 
     Parameters
     ----------
@@ -217,21 +220,37 @@ def _compute_nd_sobel_magnitude_gpu(V_tensor: torch.Tensor) -> torch.Tensor:
 
     Notes
     -----
-    Sobel gradient is computed as:
-    - Gradient kernel: [-1, 0, 1] (central difference)
-    - Applied along each axis separately
-    - Magnitude: sqrt(sum(gradient_i^2))
+    Sobel gradient for each axis is computed as a separable convolution:
 
-    This replaces scipy.ndimage.sobel which runs on CPU.
+    - Differentiation kernel ``[-1, 0, 1]`` along the target axis
+    - Smoothing kernel ``[1, 2, 1]`` (unnormalized) along every other axis
+
+    The overall magnitude is ``sqrt(sum(sobel_i^2))``.
+
+    This matches ``scipy.ndimage.sobel`` which applies the same separable
+    decomposition.  The ``[1, 2, 1]`` smoothing suppresses high-frequency
+    noise, producing more robust edge detection than a bare central
+    difference.
     """
     ndim = V_tensor.ndim
-    sobel_kernel = torch.tensor([-1.0, 0.0, 1.0], device=V_tensor.device)
+    diff_kernel = torch.tensor([-1.0, 0.0, 1.0], device=V_tensor.device)
+    # Unnormalized smoothing kernel, matching scipy.ndimage.sobel
+    smooth_kernel = torch.tensor([1.0, 2.0, 1.0], device=V_tensor.device)
 
     grad_sq_sum = torch.zeros_like(V_tensor)
 
     for axis in range(ndim):
-        grad = _conv1d_along_axis(V_tensor, sobel_kernel, axis, padding="same")
-        grad_sq_sum += grad**2
+        result = V_tensor
+        for other_axis in range(ndim):
+            if other_axis == axis:
+                result = _conv1d_along_axis(
+                    result, diff_kernel, other_axis, padding="same"
+                )
+            else:
+                result = _conv1d_along_axis(
+                    result, smooth_kernel, other_axis, padding="same"
+                )
+        grad_sq_sum += result**2
 
     return torch.sqrt(grad_sq_sum)
 
@@ -449,7 +468,8 @@ def sample_amplitudes_gpu(
     )
 
     # Extract results: (1, 1, N, 1, ...) → (N,)
-    return sampled.squeeze()
+    # Use reshape(-1) instead of squeeze() to handle N=1 correctly
+    return sampled.reshape(-1)
 
 
 def estimate_gpu_memory_needed(V: np.ndarray, operation: str = "sobel") -> int:

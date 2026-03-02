@@ -603,12 +603,12 @@ dims = Dimensions([
 
 with LuxarZarrCompiler("output.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
-    
+
     # Add points
     positions = np.random.randn(10000, 4).astype(np.float32)  # 4D points
     colors = np.random.rand(10000, 3).astype(np.float32)  # SDR colors (0.0-1.0)
     radii = np.ones(10000, dtype=np.float32) * 0.5
-    
+
     scene.add_points("my_points", positions, colors, radii=radii)
     # Context manager handles finalization automatically
 ```

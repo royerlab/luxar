@@ -108,11 +108,20 @@ export async function updateSceneForDimensions(
   // Update max radius from scene metadata if available
   const maxRadius = scene.userData.maxRadius || config.dataLoading.spatial.defaultMaxRadius;
 
-  // For non-displayed dimensions, use the max radius as tolerance for slicing
-  // Displayed dimensions are not indexed, so no tolerance is needed for them
-  viewState.tolerance = viewState.tolerance.map(
-    (_, i) => (dims.displayed.includes(i) ? 0 : maxRadius) // 0 for displayed dims (not used in queries)
-  );
+  // Set tolerance per dimension based on type:
+  // - Displayed dimensions: 0 (they're in the viewing plane, not queried)
+  // - Discrete non-displayed: 0.5 (exact match with float tolerance)
+  // - Spatial/continuous non-displayed: maxRadius (points extend through these)
+  viewState.tolerance = viewState.tolerance.map((_, i) => {
+    if (dims.displayed.includes(i)) {
+      return 0;
+    }
+    const meta = dims.metadata?.[i];
+    if (meta?.discrete && !meta?.spatial) {
+      return 0.5; // Discrete dimensions need near-exact match
+    }
+    return maxRadius;
+  });
 
   await updateView(viewState, loaderId);
 }
@@ -140,6 +149,8 @@ export function dispose(loaderId?: string): void {
 function logSceneStats(scene: THREE.Group): void {
   let totalPoints = 0;
   let totalPointsObjects = 0;
+  let totalGSplats = 0;
+  let totalGSplatsObjects = 0;
   let usedSpatialIndex = 0;
 
   // Check if scene has traverse method (it might be a mock in tests)
@@ -159,11 +170,22 @@ function logSceneStats(scene: THREE.Group): void {
       if (obj.userData.attrs?.has_spatial_index || obj.userData.spatialIndex) {
         usedSpatialIndex++;
       }
+    } else if (obj instanceof THREE.Mesh && obj.userData?.nodeType === 'gsplats') {
+      totalGSplatsObjects++;
+      totalGSplats += obj.userData.visibleSplatCount ?? 0;
+      if (obj.userData.spatialIndex) {
+        usedSpatialIndex++;
+      }
     }
   });
 
   log.info(Modules.LUXAR, 'Scene statistics:');
   log.info(Modules.LUXAR, `  - Points objects: ${totalPointsObjects}`);
   log.info(Modules.LUXAR, `  - Total points loaded: ${totalPoints.toLocaleString()}`);
-  log.info(Modules.LUXAR, `  - Using spatial index: ${usedSpatialIndex}/${totalPointsObjects}`);
+  log.info(Modules.LUXAR, `  - GSplats objects: ${totalGSplatsObjects}`);
+  log.info(Modules.LUXAR, `  - Total gsplats loaded: ${totalGSplats.toLocaleString()}`);
+  log.info(
+    Modules.LUXAR,
+    `  - Using spatial index: ${usedSpatialIndex}/${totalPointsObjects + totalGSplatsObjects}`
+  );
 }

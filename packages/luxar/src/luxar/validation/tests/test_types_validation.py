@@ -5,12 +5,12 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
+from luxar.validation import validate_categories
 from luxar.validation.types import (
     is_color_array,
     is_position_array,
     is_transform_matrix,
     validate_blending_mode,
-    validate_categories,
     validate_category_indices,
     validate_colors,
     validate_gamma,
@@ -56,6 +56,25 @@ class TestTransformValidation:
         transform_1d = np.array([1, 2, 3, 4])
         with pytest.raises(ValueError, match="Transform must be a 4x4 matrix"):
             validate_transform(transform_1d)
+
+    def test_transform_nan_rejected(self) -> None:
+        """Test that transform with NaN values raises ValueError."""
+        transform = np.eye(4, dtype=np.float32)
+        transform[1, 2] = np.nan
+        with pytest.raises(ValueError, match="Transform contains NaN"):
+            validate_transform(transform)
+
+    def test_transform_inf_rejected(self) -> None:
+        """Test that transform with Inf values raises ValueError."""
+        transform = np.eye(4, dtype=np.float32)
+        transform[0, 3] = np.inf
+        with pytest.raises(ValueError, match="Transform contains Inf"):
+            validate_transform(transform)
+
+        transform_neg_inf = np.eye(4, dtype=np.float32)
+        transform_neg_inf[2, 2] = -np.inf
+        with pytest.raises(ValueError, match="Transform contains Inf"):
+            validate_transform(transform_neg_inf)
 
     def test_transform_dtype_conversion(self) -> None:
         """Test that transform is converted to float32."""

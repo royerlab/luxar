@@ -19,7 +19,7 @@ keywords = [
     "nd-visualization",
     "points",
     "surfaces",
-    "volumes", 
+    "volumes",
     "visualization",
     "zarr",
     "scientific-computing",
@@ -142,6 +142,8 @@ dependencies = [
     "mlx>=0.29.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # Demo dependencies
     "scikit-image>=0.19.0",
+    "tifffile>=2023.1.0",
+    "imagecodecs>=2023.1.0",
     "napari[all]>=0.4.18"
 ]
 
@@ -158,7 +160,7 @@ lint = [
 ]
 check = [
     "format",
-    "lint", 
+    "lint",
     "test-cov"
 ]
 
@@ -305,6 +307,8 @@ addopts = [
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
+    "gpu: marks tests requiring GPU (deselect with '-m \"not gpu\"')",
+    "numerical: marks numerical accuracy tests",
 ]
 
 [tool.coverage.run]
@@ -363,7 +367,7 @@ exclude = [
 # Enable various rule sets - start with essential ones
 select = [
     "E",      # pycodestyle errors
-    "W",      # pycodestyle warnings  
+    "W",      # pycodestyle warnings
     "F",      # pyflakes
     "I",      # isort
 ]

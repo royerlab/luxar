@@ -42,6 +42,7 @@ export {
 export {
   mahalanobis_distance,
   extract_cholesky_submatrix,
+  computeMarginalCholesky,
   compute_gsplats_attenuation,
   extract_visible_cholesky_3d,
   compact_attenuated_amplitudes,

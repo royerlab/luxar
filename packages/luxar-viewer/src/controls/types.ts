@@ -48,7 +48,6 @@ export interface FlyState {
   inertialMode: boolean;
   damping: number;
   rotationDamping: number;
-  acceleration: number;
 }
 
 /**

@@ -24,19 +24,19 @@ Key Functions
 .. autofunction:: luxar.cli.main.create_server_app
 
    This function is particularly useful for:
-   
+
    * **Integration Testing**: Create test servers that serve real Zarr data
    * **Programmatic Server Creation**: Embed Luxar server in larger applications
    * **Custom Deployments**: Configure and run servers with custom settings
-   
+
    Example usage in tests::
-   
+
       from luxar.cli.main import create_server_app
       import uvicorn
-      
+
       # Create server app
       app = create_server_app("/path/to/data.zarr", serve_viewer=False)
-      
+
       # Run with uvicorn
       uvicorn.run(app, host="127.0.0.1", port=8000)
 
@@ -75,10 +75,10 @@ Example usage::
 
    # Simulate 3G connection
    luxar serve data.zarr --profile 3g --viewer
-   
+
    # Custom slow connection
    luxar serve data.zarr --bandwidth 500kbps --latency 200ms --packet-loss 2%
-   
+
    # Override profile settings
    luxar serve data.zarr --profile 4g --latency 300ms
 

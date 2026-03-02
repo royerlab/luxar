@@ -46,14 +46,14 @@ Validation for categorical dimensions, extracted to avoid circular imports.
 
    This module provides validation for category lists used in categorical dimensions.
    Categories must be non-empty lists of unique strings with reasonable length limits.
-   
+
    Example::
-   
+
       from luxar.validation.category_validation import validate_categories
-      
+
       # Valid categories
       categories = validate_categories(["DAPI", "GFP", "mCherry"])
-      
+
       # Raises ValueError for duplicates
       try:
           validate_categories(["A", "A", "B"])

@@ -22,7 +22,7 @@ from luxar.gsplats.seeds.utils import (
 
 def seed_from_decomposition(
     V: np.ndarray,
-    scales: List[int] = [1, 2, 4, 8, 16, 32, 64],
+    scales: Optional[List[int]] = None,
     ignore_finest_k: int = 1,
     peaks_per_scale: Optional[int] = None,
     min_distance: float = 2.0,
@@ -87,6 +87,10 @@ def seed_from_decomposition(
     """
     # Lazy import to avoid circular dependency
     from luxar.gsplats.multiscale.decompose import decompose_image
+
+    # Default scales
+    if scales is None:
+        scales = [1, 2, 4, 8, 16, 32, 64]
 
     # Input validation
     V = np.asarray(V, dtype=float)

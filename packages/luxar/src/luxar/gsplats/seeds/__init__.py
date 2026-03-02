@@ -14,8 +14,8 @@ return GSplatData with scale-informed Gaussian shapes.
 2. **seed_from_grid**: Uniform grid seeding for spatial coverage.
    Isotropic Gaussians with user-defined or auto-computed sigma.
 
-3. **seed_from_edges**: Edge-based seeding with anisotropic shapes.
-   Uses structure tensor for Gaussian orientation along edges.
+3. **seed_from_edges**: Edge-based seeding with isotropic shapes.
+   Uses Sobel gradients for edge detection and Poisson disk sampling.
 
 **Unified Entry Point:**
 

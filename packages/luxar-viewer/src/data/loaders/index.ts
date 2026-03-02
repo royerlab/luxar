@@ -23,7 +23,7 @@
  * Unified spatial query logic:
  * - SpatialQueryBuilder: Fluent API for building and executing spatial queries
  * - computeQueryTolerance: Unified tolerance calculation
- * - executeSpatialQuery: Worker dispatch for spatial queries
+ * - executeSpatialQuery: Main-thread AABB spatial queries
  * - Replaces ~300 lines of duplicated code
  *
  * ## Usage

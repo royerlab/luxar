@@ -166,33 +166,33 @@
 }
 
 /* Tab content containers */
-.overview-content,
-.performance-content,
-.insights-content {
+.luxar-tab-content--overview,
+.luxar-tab-content--performance,
+.luxar-tab-content--insights {
   display: flex;
   flex-direction: column;
   gap: var(--luxar-spacing-8);
 }
 
 /* Cache tab has tighter spacing to fit more content */
-.cache-content {
+.luxar-tab-content--cache {
   display: flex;
   flex-direction: column;
   gap: var(--luxar-spacing-4);
 }
 
-.scene-or-loaders {
+.luxar-overview__scene-loaders {
   margin-top: var(--luxar-spacing-8);
 }
 
 /* Compact view elements */
-.loader-type {
+.luxar-monitor-compact__type {
   font-size: var(--luxar-text-lg);
 }
 
-.points,
-.memory,
-.qps {
+.luxar-monitor-compact__points,
+.luxar-monitor-compact__memory,
+.luxar-monitor-compact__qps {
   display: flex;
   align-items: center;
   gap: var(--luxar-spacing-2);
@@ -200,7 +200,7 @@
   font-size: var(--luxar-text-sm);
 }
 
-.alert {
+.luxar-monitor-compact__alert {
   color: var(--luxar-warning);
   font-size: var(--luxar-text-lg);
   animation: pulse 2s ease-in-out infinite;
@@ -216,10 +216,17 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .luxar-data-monitor .luxar-monitor-compact__alert {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+}
+
 /* Header action buttons */
-.header-btn,
-.minimize-btn,
-.expand-btn {
+.luxar-data-monitor__header-btn,
+.luxar-data-monitor__minimize-btn,
+.luxar-data-monitor__expand-btn {
   background: none;
   border: none;
   color: var(--luxar-text-muted);
@@ -234,21 +241,21 @@
   transition: var(--luxar-transition-fast);
 }
 
-.header-btn:hover,
-.minimize-btn:hover,
-.expand-btn:hover {
+.luxar-data-monitor__header-btn:hover,
+.luxar-data-monitor__minimize-btn:hover,
+.luxar-data-monitor__expand-btn:hover {
   color: var(--luxar-text-primary);
 }
 
-.timeline-controls {
+.luxar-data-monitor__timeline-controls {
   display: flex;
   gap: var(--luxar-spacing-4);
   margin-top: var(--luxar-spacing-4);
   align-items: center;
 }
 
-.message-count,
-.filter-status {
+.luxar-debug-console__message-count,
+.luxar-debug-console__filter-status {
   font-size: var(--luxar-text-xs);
   color: var(--luxar-text-muted);
 }
@@ -876,7 +883,7 @@
 
 /* ========== Memory Tab ========== */
 
-.memory-content {
+.luxar-tab-content--memory {
   display: flex;
   flex-direction: column;
   gap: var(--luxar-spacing-6);
@@ -1031,23 +1038,23 @@
  * Uses semantic colors from theme system for consistency.
  */
 
-.timing-panel {
+.luxar-timing-panel {
   font-family: var(--luxar-font-mono);
   font-size: var(--luxar-text-xs);
   color: var(--luxar-text-primary);
 }
 
-.timing-empty {
+.luxar-timing-panel--empty {
   padding: var(--luxar-spacing-8);
   text-align: center;
 }
 
-.timing-empty-message {
+.luxar-timing-panel__empty-msg {
   color: var(--luxar-text-muted);
   font-style: italic;
 }
 
-.timing-header {
+.luxar-timing-panel__header {
   display: flex;
   justify-content: space-between;
   padding: var(--luxar-spacing-2) var(--luxar-spacing-4);
@@ -1059,19 +1066,19 @@
   color: var(--luxar-text-muted);
 }
 
-.timing-header-values {
+.luxar-timing-panel__header-values {
   display: flex;
   gap: var(--luxar-spacing-6);
   min-width: 120px;
   justify-content: flex-end;
 }
 
-.timing-body {
+.luxar-timing-panel__body {
   max-height: 300px;
   overflow-y: auto;
 }
 
-.timing-row {
+.luxar-timing-panel__row {
   display: flex;
   justify-content: space-between;
   padding: var(--luxar-spacing-1) var(--luxar-spacing-4);
@@ -1079,29 +1086,29 @@
   transition: var(--luxar-transition-fast);
 }
 
-.timing-row:hover {
+.luxar-timing-panel__row:hover {
   background: var(--luxar-interactive-hover);
 }
 
 /* Over budget (>16ms) - use error semantic color */
-.timing-over-budget {
+.luxar-timing-panel__row--over {
   background: color-mix(in srgb, var(--luxar-error) 15%, transparent);
 }
 
-.timing-over-budget:hover {
+.luxar-timing-panel__row--over:hover {
   background: color-mix(in srgb, var(--luxar-error) 25%, transparent);
 }
 
 /* Child over budget - use warning semantic color */
-.timing-child-over-budget {
+.luxar-timing-panel__row--child-over {
   background: color-mix(in srgb, var(--luxar-warning) 10%, transparent);
 }
 
-.timing-skipped {
+.luxar-timing-panel__row--skipped {
   opacity: var(--luxar-opacity-disabled);
 }
 
-.timing-name {
+.luxar-timing-panel__name {
   display: flex;
   align-items: center;
   gap: var(--luxar-spacing-2);
@@ -1110,7 +1117,7 @@
   overflow: hidden;
 }
 
-.timing-expand {
+.luxar-timing-panel__expand {
   cursor: pointer;
   width: 12px;
   font-size: 10px;
@@ -1119,21 +1126,25 @@
   transition: var(--luxar-transition-fast);
 }
 
-.timing-expand:hover {
+.luxar-timing-panel__expand:hover {
   color: var(--luxar-text-primary);
 }
 
-.timing-expand-placeholder {
+.luxar-timing-panel__expand-placeholder {
   width: 12px;
 }
 
-.timing-label {
+.luxar-timing-panel__label {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.timing-tag {
+.luxar-timing-panel__label[title] {
+  cursor: help;
+}
+
+.luxar-timing-panel__tag {
   font-size: 9px;
   padding: 1px var(--luxar-spacing-2);
   border-radius: var(--luxar-radius-sm);
@@ -1142,23 +1153,23 @@
   white-space: nowrap;
 }
 
-.timing-tag-good {
+.luxar-timing-panel__tag--good {
   background: color-mix(in srgb, var(--luxar-success) 20%, transparent);
   color: var(--luxar-success);
 }
 
-.timing-tag-warn {
+.luxar-timing-panel__tag--warn {
   background: color-mix(in srgb, var(--luxar-warning) 20%, transparent);
   color: var(--luxar-warning);
 }
 
-.timing-tag-skip {
+.luxar-timing-panel__tag--skip {
   background: var(--luxar-bg-tertiary);
   color: var(--luxar-text-muted);
   font-style: italic;
 }
 
-.timing-values {
+.luxar-timing-panel__values {
   display: flex;
   gap: var(--luxar-spacing-4);
   min-width: 120px;
@@ -1166,18 +1177,18 @@
   font-variant-numeric: tabular-nums;
 }
 
-.timing-last {
+.luxar-timing-panel__last {
   min-width: 50px;
   text-align: right;
 }
 
-.timing-avg {
+.luxar-timing-panel__avg {
   min-width: 50px;
   text-align: right;
   color: var(--luxar-text-muted);
 }
 
-.timing-footer {
+.luxar-timing-panel__footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1188,36 +1199,36 @@
   color: var(--luxar-text-muted);
 }
 
-.timing-legend {
+.luxar-timing-panel__legend {
   display: flex;
   gap: var(--luxar-spacing-5);
 }
 
-.timing-legend-item {
+.luxar-timing-panel__legend-item {
   display: flex;
   align-items: center;
   gap: var(--luxar-spacing-2);
 }
 
-.timing-legend-item::before {
+.luxar-timing-panel__legend-item::before {
   content: '';
   width: 8px;
   height: 8px;
   border-radius: var(--luxar-radius-sm);
 }
 
-.timing-legend-normal::before {
+.luxar-timing-panel__legend-item--normal::before {
   background: var(--luxar-bg-tertiary);
 }
 
-.timing-legend-over::before {
+.luxar-timing-panel__legend-item--over::before {
   background: color-mix(in srgb, var(--luxar-error) 40%, transparent);
 }
 
-.timing-legend-skip::before {
+.luxar-timing-panel__legend-item--skip::before {
   background: var(--luxar-interactive-disabled);
 }
 
-.timing-update-count {
+.luxar-timing-panel__update-count {
   font-style: italic;
 }

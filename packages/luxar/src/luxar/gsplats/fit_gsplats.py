@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Optional, Sequence
 
 import numpy as np
@@ -34,7 +35,7 @@ class GaussianSplatFitter:
     ----------
     device : str, optional
         PyTorch device ('cpu', 'cuda', 'mps'). Auto-detects if None.
-    enable_dynamic_ops : bool, default=False
+    enable_dynamic_ops : bool, default=True
         Enable dynamic operations (seeding, splitting, pruning).
     dynamic_config : DynamicOpsConfig, optional
         Configuration for dynamic operations.
@@ -47,7 +48,7 @@ class GaussianSplatFitter:
     def __init__(
         self,
         device: Optional[str] = None,
-        enable_dynamic_ops: bool = False,
+        enable_dynamic_ops: bool = True,
         dynamic_config: Optional[DynamicOpsConfig] = None,
         use_metal: bool = True,
         use_cuda: bool = True,
@@ -72,6 +73,24 @@ class GaussianSplatFitter:
             else:
                 self.device = torch.device("cpu")
 
+        if self.device.type == "cpu":
+            from arbol import aprint
+
+            aprint(
+                "WARNING: Gaussian splat fitting will run on CPU — "
+                "this is 10-50x SLOWER than GPU! "
+                "For serious work, use device='cuda' (NVIDIA) or device='mps' (Apple Silicon). "
+                "To install CUDA support: make setup-cuda && make build-cuda"
+            )
+            warnings.warn(
+                "Gaussian splat fitting will run on CPU. "
+                "This is 10-50x SLOWER than GPU. "
+                "For serious work, use device='cuda' (NVIDIA) or device='mps' (Apple Silicon). "
+                "To install CUDA support: make setup-cuda && make build-cuda",
+                UserWarning,
+                stacklevel=2,
+            )
+
         # Dynamic operations configuration
         self.enable_dynamic_ops = enable_dynamic_ops
         self.dynamic_config = dynamic_config or DynamicOpsConfig()
@@ -83,31 +102,37 @@ class GaussianSplatFitter:
         norm_percentile: float = 0.0,
         init_sigma_vox: Optional[float] = None,
         n_iters: int = 1000,
-        lr: float = 0.05,
+        lr: float = 0.01,
         loss_type: str = "l1",
         asymmetric_penalty: Optional[float] = 10.0,
         l1_amp: Optional[float] = None,
         l1_diag: Optional[float] = None,
         l1_sharpness: Optional[float] = None,
         sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
-        sigma_max_diag: Optional[Sequence[float]] = None,
+        sigma_max_diag: Optional[Sequence[float] | float] = None,
         amp_max: Optional[float] = None,  # Max amplitude (default auto: 1.0)
-        max_eccentricity: Optional[float] = None,
-        sharpness_range: Optional[tuple[float, float] | float] = None,
+        max_eccentricity: Optional[float] = 10.0,
+        sharpness_range: Optional[tuple[float, float] | float] = 2.0,
         truncate: float = 3.0,
         seed_method: str = "auto",
         verbose: bool = True,
         max_abs_error: Optional[float] = None,
+        rel_l2_target: Optional[float] = None,
         gradient_clip: Optional[float] = 1.0,
         napari_movie: bool = False,
         movie_every: int = 1,
         movie_max_frames: Optional[int] = None,
         scheduler_type: str = "plateau",
         patience: int = 25,
-        lr_reduction_factor: float = 0.95,
-        early_stop_patience: Optional[int] = 200,
+        lr_reduction_factor: float = 0.98,
+        early_stop_patience: Optional[int] = 300,
         dynamic_ops_verbose: bool = False,
+        cull_ratio: float = 0.01,
         voxel_footprint_correction: bool | float = False,
+        boundary_penalty: Optional[float] = None,
+        clip_to_bounds: bool = False,
+        voxel_size: Optional[Sequence[float] | float] = None,
+        output_space: str = "real",
         **seed_kwargs,
     ) -> GSplatData:
         """
@@ -165,6 +190,7 @@ class GaussianSplatFitter:
             truncate,
             verbose,
             max_abs_error,
+            rel_l2_target,
             gradient_clip,
             napari_movie,
             movie_every,
@@ -175,7 +201,12 @@ class GaussianSplatFitter:
             early_stop_patience,
             dynamic_ops_verbose,
             seed_method=seed_method,
+            cull_ratio=cull_ratio,
             voxel_footprint_correction=voxel_footprint_correction,
+            boundary_penalty=boundary_penalty,
+            clip_to_bounds=clip_to_bounds,
+            voxel_size=voxel_size,
+            output_space=output_space,
             **seed_kwargs,
         )
 
@@ -214,14 +245,14 @@ def fit_gaussian_splats(
     norm_percentile: float = 0.0,
     init_sigma_vox: Optional[float] = None,
     n_iters: int = 1000,
-    lr: float = 0.05,
+    lr: float = 0.01,
     loss_type: str = "l1",
     asymmetric_penalty: Optional[float] = 10.0,
     l1_amp: Optional[float] = None,
     l1_diag: Optional[float] = None,
     l1_sharpness: Optional[float] = None,
     sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
-    sigma_max_diag: Optional[Sequence[float]] = None,
+    sigma_max_diag: Optional[Sequence[float] | float] = None,
     amp_max: Optional[float] = None,
     max_eccentricity: Optional[float] = 10.0,
     sharpness_range: Optional[tuple[float, float] | float] = 2.0,
@@ -231,6 +262,7 @@ def fit_gaussian_splats(
     verbose: bool = True,
     # Optimization parameters
     max_abs_error: Optional[float] = None,
+    rel_l2_target: Optional[float] = None,
     gradient_clip: Optional[float] = 1.0,
     # Per-splat optimizer parameters
     scheduler_type: str = "plateau",
@@ -248,7 +280,14 @@ def fit_gaussian_splats(
     use_metal: bool = True,
     use_cuda: bool = True,
     # Post-processing
+    cull_ratio: float = 0.01,
     voxel_footprint_correction: bool | float = False,
+    # Boundary containment
+    boundary_penalty: Optional[float] = None,
+    clip_to_bounds: bool = False,
+    # Anisotropic voxel spacing
+    voxel_size: Optional[Sequence[float] | float] = None,
+    output_space: str = "real",
     **seed_kwargs,
 ) -> GSplatData:
     """
@@ -295,7 +334,7 @@ def fit_gaussian_splats(
     n_iters : int, default=1000
         Maximum number of optimization iterations. Default is generous to allow
         max_abs_error convergence criterion to work effectively.
-    lr : float, default=0.05
+    lr : float, default=0.01
         Learning rate for Adam optimizer.
     loss_type : str, default="l1"
         Loss function: "mse", "poisson" (better for count/photon data), or "l1" (robust to outliers, preserves sharp features, default).
@@ -322,8 +361,12 @@ def fit_gaussian_splats(
         float is broadcast across all dimensions.
         Defaults to sqrt(1/12) ≈ 0.289 (1-voxel box footprint) to allow
         single-voxel splats while preventing degeneracy.
-    sigma_max_diag : Sequence[float], optional
+    sigma_max_diag : Sequence[float] | float, optional
         Maximum diagonal values for Cholesky factor L along each axis.
+        - If Sequence[float]: Per-axis absolute bounds (one per dimension).
+        - If float: Fraction of volume extent per axis. Each dimension gets
+          ``shape[i] * fraction`` independently. E.g., ``sigma_max_diag=1/16``
+          on a (50, 200, 300) volume gives ``[3.125, 12.5, 18.75]``.
     amp_max : float or None, default=None (auto: 1.0)
         Maximum amplitude constraint for splats. Prevents amplitude explosion
         during optimization, especially with aggressive compression (few splats).
@@ -378,19 +421,25 @@ def fit_gaussian_splats(
         optimization stops when max(|prediction - target|) < max_abs_error.
         If None, automatically set to 0.01 (1% of normalized [0,1] range) for
         sensible convergence behavior. Auto-threshold usage is logged.
+    rel_l2_target : float or None, default=None
+        Relative L2 error threshold for convergence. If specified,
+        optimization stops when ||pred - target||₂ / ||target||₂ < rel_l2_target.
+        This is an additional (OR) criterion alongside max_abs_error — either
+        being satisfied triggers convergence. Provides a smoother, more stable
+        convergence signal than max_abs_error. If None, this criterion is disabled.
     gradient_clip : float or None, default=1.0
         Maximum gradient norm for clipping. None disables clipping.
     scheduler_type : str, default="plateau"
         Type of learning rate scheduler ("plateau" or "exponential").
     patience : int, default=25
         Scheduler patience: iterations without loss improvement before LR reduction.
-    lr_reduction_factor : float, default=0.95
+    lr_reduction_factor : float, default=0.98
         LR multiplier on plateau (new_lr = lr × lr_reduction_factor).
-        Examples: 0.5=halve LR, 0.1=reduce to 10%, 0.95=gentle reduction.
-    early_stop_patience : Optional[int], default=200
+        Examples: 0.5=halve LR, 0.1=reduce to 10%, 0.98=gentle reduction.
+    early_stop_patience : Optional[int], default=300
         Early stopping: stop if no loss improvement for N iterations.
         None disables early stopping (runs until convergence or iteration limit).
-        Example: 200 stops if no improvement for 200 consecutive iterations.
+        Example: 300 stops if no improvement for 300 consecutive iterations.
     enable_dynamic_ops : bool, default=True
         Enable dynamic operations (seeding and pruning).
     dynamic_config : DynamicOpsConfig, optional
@@ -412,6 +461,14 @@ def fit_gaussian_splats(
     use_cuda : bool, default=True
         Enable custom CUDA kernels on NVIDIA GPUs.
         Provides 10-50x speedup for 2D-8D volumes. Automatically disabled if not available.
+    cull_ratio : float, default=0.01
+        Post-fit culling threshold as a fraction of max_abs_error. Splats with
+        amplitude below ``cull_ratio * max_abs_error`` are removed after fitting.
+        This completes the work L1 regularization started by removing near-zero
+        splats that the softplus parameterization prevented from reaching exactly zero.
+        - 0.0: Disable culling (keep all splats)
+        - 0.01 (default): Cull splats below 1% of the convergence threshold
+        - 1.0: Cull at the full convergence threshold (aggressive)
     voxel_footprint_correction : bool | float, default=False
         Post-fit correction to inflate splat covariances by the voxel footprint.
         This ensures that upsampling doesn't invent detail beyond what the original
@@ -421,12 +478,36 @@ def fit_gaussian_splats(
         - True: Enable with 1-voxel box footprint (sigma ≈ 0.289 voxels)
         - float: Custom sigma in voxel units (e.g., 0.5 for half-voxel blur, 1.0 for 1-voxel blur)
         Works for any dimension d.
+    boundary_penalty : float or None, default=None
+        Weight for boundary containment penalty during optimization.
+        Adds a differentiable penalty for splats whose effective support
+        (truncate * sqrt(Sigma_ii)) extends beyond the volume bounds.
+        The penalty is: boundary_penalty * mean(overflow^2).
+        - None: Disabled (default)
+        - float > 0: Enable with this weight (e.g., 0.1 for mild, 1.0 for strong)
+    clip_to_bounds : bool, default=False
+        Post-fit hard clipping to guarantee no splat extends beyond the volume bounds.
+        Scales down rows of the Cholesky factor L so that
+        truncate * sqrt(Sigma_ii) <= distance_to_nearest_edge for each dimension.
+        Preserves splat orientation but shrinks to fit within bounds.
+    voxel_size : Sequence[float] | float, optional
+        Physical voxel spacing per axis (e.g., ``(5.0, 1.0, 1.0)`` for Z-anisotropic
+        microscopy). A scalar means isotropic spacing. Affects:
+        - ``max_eccentricity``: evaluated in physical space
+        - Auto ``init_sigma``: based on physical dimensions
+        - Output coordinates: converted to physical space (see ``output_space``)
+        If None (default), all voxels are treated as unit-spaced.
+    output_space : str, default="real"
+        Coordinate system for output Gaussians:
+        - ``"real"``: Physical coordinates (centers and Cholesky scaled by voxel_size).
+          When voxel_size is None, identical to ``"voxel"``.
+        - ``"voxel"``: Raw voxel indices (no conversion).
 
     Returns
     -------
     GSplatData
         Dataclass containing all fitting results:
-        - centers: np.ndarray, shape (N, d) - Center positions in voxel coordinates
+        - centers: np.ndarray, shape (N, d) - Center positions (physical or voxel, see output_space)
         - amplitudes: np.ndarray, shape (N,) - Non-negative amplitudes rescaled to original intensity
         - cholesky_factors: np.ndarray, shape (N, d*(d+1)//2) - Packed lower-triangular Cholesky factors
         - sharpnesses: np.ndarray, shape (N,) - Per-splat sharpness values (s=2.0 is standard Gaussian)
@@ -481,6 +562,7 @@ def fit_gaussian_splats(
             seed_method=seed_method,
             verbose=verbose,
             max_abs_error=max_abs_error,
+            rel_l2_target=rel_l2_target,
             gradient_clip=gradient_clip,
             napari_movie=napari_movie,
             movie_every=movie_every,
@@ -489,7 +571,12 @@ def fit_gaussian_splats(
             patience=patience,
             lr_reduction_factor=lr_reduction_factor,
             early_stop_patience=early_stop_patience,
+            cull_ratio=cull_ratio,
             voxel_footprint_correction=voxel_footprint_correction,
+            boundary_penalty=boundary_penalty,
+            clip_to_bounds=clip_to_bounds,
+            voxel_size=voxel_size,
+            output_space=output_space,
             **seed_kwargs,
         )
 
@@ -510,22 +597,27 @@ def fit_gaussian_splats(
 
         display_compression_analysis(V, result)
 
-        # Display sharpness statistics
-        with asection("Sharpness Statistics"):
-            aprint(
-                f"Range: [{result.stats['sharpness_min']:.2f}, {result.stats['sharpness_max']:.2f}]  "
-                f"Mean: {result.stats['sharpness_mean']:.2f} ± {result.stats['sharpness_std']:.2f}  "
-                f"Median: {result.stats['sharpness_median']:.2f}"
-            )
-            # Provide interpretation
-            if result.stats["sharpness_mean"] < 1.5:
-                aprint("→ Soft falloff (s < 2): Heavy-tailed Gaussians")
-            elif result.stats["sharpness_mean"] < 2.5:
-                aprint("→ Standard Gaussians (s ≈ 2): Classic Gaussian profiles")
-            elif result.stats["sharpness_mean"] < 4.0:
-                aprint("→ Sharp edges (2 < s < 4): Compact splats with faster decay")
-            else:
-                aprint("→ Very sharp (s ≥ 4): Near box-like splats with abrupt cutoff")
+        # Display sharpness statistics (skip if all splats were culled)
+        if len(result.amplitudes) > 0:
+            with asection("Sharpness Statistics"):
+                aprint(
+                    f"Range: [{result.stats['sharpness_min']:.2f}, {result.stats['sharpness_max']:.2f}]  "
+                    f"Mean: {result.stats['sharpness_mean']:.2f} ± {result.stats['sharpness_std']:.2f}  "
+                    f"Median: {result.stats['sharpness_median']:.2f}"
+                )
+                # Provide interpretation
+                if result.stats["sharpness_mean"] < 1.5:
+                    aprint("→ Soft falloff (s < 2): Heavy-tailed Gaussians")
+                elif result.stats["sharpness_mean"] < 2.5:
+                    aprint("→ Standard Gaussians (s ≈ 2): Classic Gaussian profiles")
+                elif result.stats["sharpness_mean"] < 4.0:
+                    aprint(
+                        "→ Sharp edges (2 < s < 4): Compact splats with faster decay"
+                    )
+                else:
+                    aprint(
+                        "→ Very sharp (s ≥ 4): Near box-like splats with abrupt cutoff"
+                    )
 
     # Show napari movie OUTSIDE the fitting section (so it doesn't affect timing)
     if result.stats.get("movie_frames") is not None:

@@ -41,6 +41,7 @@ import {
   radii_to_visibility_mask,
   mahalanobis_distance,
   extract_cholesky_submatrix,
+  computeMarginalCholesky,
   compute_gsplats_attenuation,
   extract_visible_cholesky_3d,
   compact_attenuated_amplitudes,
@@ -1462,6 +1463,113 @@ describe('TypeScript Reference Implementation Tests', () => {
       // seg3: t1=0.25 (clipped), t2=1.0 (not clipped)
       expect(startClipped[2]).toBe(1);
       expect(endClipped[2]).toBe(0);
+    });
+  });
+
+  // ============================================================================
+  // MARGINAL CHOLESKY TESTS (correlated covariance correctness)
+  // ============================================================================
+  describe('gsplats_processing: computeMarginalCholesky', () => {
+    it('should match raw extraction for diagonal Cholesky', () => {
+      // 4D diagonal L: diag(2, 3, 5, 7)
+      // Packed: [2, 0,3, 0,0,5, 0,0,0,7]
+      const packed = new Float32Array([2, 0, 3, 0, 0, 5, 0, 0, 0, 7]);
+      const keepDims = new Uint32Array([0, 2]);
+      const output = new Float32Array(3);
+
+      computeMarginalCholesky(packed, 0, keepDims, 2, output, 0);
+
+      // Σ = diag(4,9,25,49), marginal for [0,2] = diag(4,25)
+      // Cholesky = diag(2, 5) → packed [2, 0, 5]
+      expect(output[0]).toBeCloseTo(2.0, 4);
+      expect(output[1]).toBeCloseTo(0.0, 4);
+      expect(output[2]).toBeCloseTo(5.0, 4);
+    });
+
+    it('should produce correct marginal for correlated Cholesky', () => {
+      // 3D L with correlations (matches Rust test):
+      // L = [[2, 0, 0], [1, 3, 0], [0.5, 0.5, 4]]
+      // Packed: [2, 1,3, 0.5,0.5,4]
+      const packed = new Float32Array([2, 1, 3, 0.5, 0.5, 4]);
+      const keepDims = new Uint32Array([0, 2]);
+      const output = new Float32Array(3);
+
+      computeMarginalCholesky(packed, 0, keepDims, 2, output, 0);
+
+      // Σ_S = [[4, 1], [1, 16.5]]
+      // L_S[0,0] = 2, L_S[1,0] = 0.5, L_S[1,1] = sqrt(16.25) ≈ 4.031
+      expect(output[0]).toBeCloseTo(2.0, 4);
+      expect(output[1]).toBeCloseTo(0.5, 4);
+      expect(output[2]).toBeCloseTo(Math.sqrt(16.25), 3);
+    });
+
+    it('should differ from raw extraction for correlated Cholesky', () => {
+      // Same correlated L as above
+      const packed = new Float32Array([2, 1, 3, 0.5, 0.5, 4]);
+      const keepDims = new Uint32Array([0, 2]);
+
+      const rawOutput = new Float32Array(3);
+      extract_cholesky_submatrix(packed, keepDims, 2, rawOutput);
+
+      const marginalOutput = new Float32Array(3);
+      computeMarginalCholesky(packed, 0, keepDims, 2, marginalOutput, 0);
+
+      // Raw gives [L[0,0], L[2,0], L[2,2]] = [2, 0.5, 4]
+      expect(rawOutput[2]).toBeCloseTo(4.0, 5);
+      // Marginal gives sqrt(16.25) ≈ 4.031 ≠ 4.0
+      expect(Math.abs(marginalOutput[2] - rawOutput[2])).toBeGreaterThan(0.01);
+    });
+
+    it('should give correct Mahalanobis distance with marginal Cholesky', () => {
+      // Same 3D correlated L
+      const packed = new Float32Array([2, 1, 3, 0.5, 0.5, 4]);
+      const keepDims = new Uint32Array([0, 2]);
+
+      const marginalL = new Float32Array(3);
+      computeMarginalCholesky(packed, 0, keepDims, 2, marginalL, 0);
+
+      const diff = new Float32Array([1.0, 0.0]);
+      const dist = mahalanobis_distance(diff, marginalL, 2);
+
+      // Forward substitution: y[0]=1/2=0.5, y[1]=(0-0.5*0.5)/4.031≈-0.0621
+      // ||y|| ≈ sqrt(0.25 + 0.00386) ≈ 0.504
+      expect(dist).toBeCloseTo(0.5, 1);
+    });
+
+    it('should produce correct attenuation with correlated Cholesky', () => {
+      // 4D splat with correlated L (matches Rust test)
+      // L = [[2,0,0,0], [1,3,0,0], [0,0,2,0], [0.5,0.5,0,4]]
+      const positions = new Float32Array([0, 0, 0, 0]);
+      const cholesky = new Float32Array([2, 1, 3, 0, 0, 2, 0.5, 0.5, 0, 4]);
+      const amplitudes = new Float32Array([1.0]);
+      const sharpness = new Float32Array([2.0]);
+      const slicePos = new Float32Array([0, 0, 0, 1]); // slice at dim3 = 1
+      const hiddenDims = new Uint32Array([3]);
+
+      const visibility = new Uint8Array(1);
+      const attenuation = new Float32Array(1);
+
+      compute_gsplats_attenuation(
+        positions,
+        cholesky,
+        amplitudes,
+        sharpness,
+        slicePos,
+        hiddenDims,
+        4,
+        1,
+        0.001,
+        visibility,
+        attenuation
+      );
+
+      // Marginal for dim [3]: Σ_33 = 0.25+0.25+0+16 = 16.5
+      // L_S = sqrt(16.5) ≈ 4.062
+      // Mahalanobis: 1/4.062 ≈ 0.2462
+      // Attenuation: exp(-0.5 * 0.2462^2) ≈ 0.970
+      expect(attenuation[0]).toBeGreaterThan(0.9);
+      expect(attenuation[0]).toBeLessThan(1.0);
+      expect(visibility[0]).toBe(1);
     });
   });
 });

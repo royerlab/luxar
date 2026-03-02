@@ -37,7 +37,12 @@ export interface BaseViewState {
   /** Tolerance for slicing in each dimension */
   tolerance: number[];
 
-  /** Dimension metadata for the dataset */
+  /**
+   * Dimension metadata for the dataset (raw metadata array).
+   *
+   * **NOTE**: Unlike `ViewState.dimensions` (which is `SimpleDims`), this is `DimensionMetadata[]`.
+   * When converting from ViewState, extract the metadata: `viewState.dimensions?.metadata`
+   */
   dimensions?: DimensionMetadata[];
 }
 

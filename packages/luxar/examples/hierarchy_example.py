@@ -8,6 +8,12 @@ This educational example demonstrates:
 - Rendering attribute inheritance (opacity, gamma, blending)
 - Nested group hierarchies
 - Educational visualization of hierarchical structures
+
+Educational value:
+- Understand how parent-child relationships affect rendering
+- Learn property inheritance (opacity, gamma, blending propagate down)
+- See how transforms compose through the hierarchy
+- Master group organization for complex multi-object scenes
 """
 
 import numpy as np

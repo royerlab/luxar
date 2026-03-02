@@ -79,8 +79,14 @@ class DataNode(Node, ABC):
             Number of dimensions (from metadata)
         """
         # Handle both "ndim" (Lines, GSplats) and "dims" (Points) for compatibility
-        value = self._metadata.get("ndim", self._metadata.get("dims", 0))
-        return int(value) if value is not None else 0
+        value = self._metadata.get("ndim", self._metadata.get("dims"))
+        if value is None:
+            raise ValueError(
+                f"Node '{self.name}' has no dimensionality metadata "
+                f"(expected 'ndim' or 'dims' key in metadata). "
+                f"Available keys: {list(self._metadata.keys())}"
+            )
+        return int(value)
 
     @property
     def metadata(self) -> Dict[str, Any]:

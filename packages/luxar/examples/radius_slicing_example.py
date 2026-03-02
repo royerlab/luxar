@@ -7,6 +7,12 @@ This example demonstrates:
 - Larger radii making points visible across wider dimension ranges
 - Visual size changes as points move away from slice center
 - Practical applications for uncertainty visualization
+
+Educational value:
+- Understand the nD hypersphere slicing model for point visibility
+- Learn how radius controls visibility range across dimensions
+- See why larger radii make points visible in more slices
+- Essential concept for working with nD point cloud data
 """
 
 import numpy as np

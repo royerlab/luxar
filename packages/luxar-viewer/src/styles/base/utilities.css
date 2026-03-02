@@ -437,3 +437,11 @@
 .luxar-z-tooltip {
   z-index: var(--luxar-z-tooltip);
 }
+
+/* ========== Reduced Motion ========== */
+@media (prefers-reduced-motion: reduce) {
+  .luxar-animate-fade-in {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+}

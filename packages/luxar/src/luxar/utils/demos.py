@@ -20,6 +20,71 @@ from ..typing_utils.config import check_dataset_size_warning
 from ..typing_utils.protocols import PathLike
 
 
+def detect_device(verbose: bool = True) -> str:
+    """Auto-detect the best available compute device (cuda > mps > cpu).
+
+    Args:
+        verbose: If True, print detected device via arbol.
+
+    Returns:
+        Device string: 'cuda', 'mps', or 'cpu'.
+    """
+    import torch
+
+    if torch.cuda.is_available():
+        device = "cuda"
+        if verbose:
+            aprint("Using CUDA device")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = "mps"
+        if verbose:
+            aprint("Using MPS device (Metal acceleration)")
+    else:
+        device = "cpu"
+        if verbose:
+            aprint("Using CPU device")
+    return device
+
+
+def warn_if_no_cuda_gpu() -> None:
+    """Print a warning if no CUDA GPU is available.
+
+    GSplat demos require significant GPU compute for fitting.  Running on
+    CPU is orders of magnitude slower and generally impractical for
+    production runs.  This function prints a prominent warning so users
+    understand the hardware requirements before waiting hours for a CPU run.
+    """
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return  # All good
+        device = (
+            "MPS"
+            if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+            else "CPU"
+        )
+    except ImportError:
+        device = "CPU (PyTorch not installed)"
+
+    aprint("")
+    aprint("=" * 70)
+    aprint("WARNING: No CUDA GPU detected — running on " + device)
+    aprint("=" * 70)
+    aprint("GSplat demos require a CUDA GPU for practical performance.")
+    aprint("Without one, fitting can take hours instead of minutes.")
+    if device.startswith("MPS"):
+        aprint("MPS (Apple Metal) provides some acceleration but is much")
+        aprint("slower than CUDA for Gaussian splatting workloads.")
+    aprint("")
+    aprint("Options:")
+    aprint("  - Use a machine with an NVIDIA GPU (CUDA)")
+    aprint("  - Use --timepoints=2 for a quick test run")
+    aprint("  - Use --serve-only if a scene was already generated")
+    aprint("=" * 70)
+    aprint("")
+
+
 def launch_viewer(output_path: Union[str, Path], open_browser: bool = True) -> None:
     """Launch the Luxar viewer to display a dataset.
 
@@ -168,10 +233,6 @@ def create_lorenz_attractor(
 
     # Add match value to get final RGB (adjust for brightness)
     colors = np.column_stack([r + m, g + m, b + m]).astype(np.float32)
-
-    # Generate radii based on position in the trajectory (growing over time)
-    # This creates a visual effect of the attractor "growing" as it evolves
-    np.linspace(0.01, 0.02, n_points).astype(np.float32)
 
     # Create scene with new API
     with LuxarZarrCompiler(store_path) as compiler:

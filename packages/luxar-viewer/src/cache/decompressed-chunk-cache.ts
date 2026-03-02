@@ -17,6 +17,7 @@
 
 import { LRUCache } from './lru-cache';
 import { log, Modules, LogEmoji } from '../utils/log';
+import { config } from '../config';
 
 /**
  * Cached decompressed chunk structure.
@@ -81,8 +82,8 @@ export interface DecompressedChunkCacheStats {
  * ```
  */
 export class DecompressedChunkCache {
-  /** Default cache size: 200MB */
-  private static readonly DEFAULT_MAX_SIZE = 200 * 1024 * 1024;
+  /** Default cache size derived from config.cache.l0MaxSizeMB */
+  private static readonly DEFAULT_MAX_SIZE = config.cache.l0MaxSizeMB * 1024 * 1024;
 
   /** Metadata overhead estimate per chunk (shape array, stride array, object wrapper) */
   private static readonly METADATA_OVERHEAD = 64;

@@ -14,6 +14,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from arbol import aprint
 
 from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 from luxar.gsplats.models.utils.inverse_softplus import stable_inverse_softplus
@@ -87,6 +88,7 @@ class GaussianSplatModel(nn.Module):
             tuple[float, float] | float
         ] = None,  # Sharpness constraints
         truncate: float = 3.0,
+        voxel_size: Optional[np.ndarray] = None,
         device: Optional[torch.device] = None,
     ) -> None:
         super().__init__()
@@ -103,6 +105,18 @@ class GaussianSplatModel(nn.Module):
                 device = torch.device("cuda")
             else:
                 device = torch.device("cpu")
+
+        aprint(f"GaussianSplatModel: using device '{device}'")
+
+        # Store voxel_size for physical-space constraint enforcement
+        if voxel_size is not None:
+            self.voxel_size: Optional[torch.Tensor] = torch.tensor(
+                np.asarray(voxel_size, dtype=np.float32),
+                dtype=torch.float32,
+                device=device,
+            )
+        else:
+            self.voxel_size = None
 
         # ---- Center parameterization: sigmoid ensures centers stay within image bounds ----
         # Transform initial centers to sigmoid parameter space
@@ -215,11 +229,23 @@ class GaussianSplatModel(nn.Module):
         # Two-part constraint for efficiency:
         # 1. Constrain diagonal ratio: max(diag)/min(diag) <= sqrt(max_eccentricity)
         # 2. Constrain off-diagonal magnitude relative to diagonal (see below)
+        # When voxel_size is set, eccentricity is evaluated in physical space:
+        # diag_phys = diag_vox * voxel_size, then ratio computed on physical diags.
         if self.max_eccentricity is not None:
             max_ratio = float(self.max_eccentricity) ** 0.5
-            min_diag = diag.min(dim=1, keepdim=True).values  # (N, 1)
-            max_allowed_diag = min_diag * max_ratio
-            diag = torch.minimum(diag, max_allowed_diag)
+            if self.voxel_size is not None:
+                # Physical-space eccentricity
+                diag_phys = diag * self.voxel_size  # (N, d)
+                min_phys = diag_phys.min(dim=1, keepdim=True).values  # (N, 1)
+                max_allowed_vox = (min_phys * max_ratio) / self.voxel_size  # (N, d)
+                diag = torch.minimum(diag, max_allowed_vox)
+                # Re-enforce sigma_min_diag: physical-space clamping can push
+                # voxel-space diag below the floor for high-voxel-size axes
+                diag = torch.maximum(diag, self.sigma_min_diag)
+            else:
+                min_diag = diag.min(dim=1, keepdim=True).values  # (N, 1)
+                max_allowed_diag = min_diag * max_ratio
+                diag = torch.minimum(diag, max_allowed_diag)
 
         # Initialize lower-triangular matrices (zeros above diagonal)
         L = torch.zeros((N, d, d), dtype=torch.float32, device=diag.device)
@@ -255,9 +281,18 @@ class GaussianSplatModel(nn.Module):
 
                 # Constrain off-diagonal elements to limit eccentricity
                 # |L[i,j]| <= γ * min(L[i,i], L[j,j])
+                # With voxel_size: constraint evaluated in physical space
+                # |vs[i]*L[i,j]| <= γ * min(vs[i]*L[i,i], vs[j]*L[j,j])
                 if off_gamma is not None:
-                    min_diag_ij = torch.minimum(diag[:, i], diag[:, j])
-                    max_off = off_gamma * min_diag_ij
+                    if self.voxel_size is not None:
+                        min_phys_ij = torch.minimum(
+                            diag[:, i] * self.voxel_size[i],
+                            diag[:, j] * self.voxel_size[j],
+                        )
+                        max_off = off_gamma * min_phys_ij / self.voxel_size[i]
+                    else:
+                        min_diag_ij = torch.minimum(diag[:, i], diag[:, j])
+                        max_off = off_gamma * min_diag_ij
                     off_val = torch.clamp(off_val, min=-max_off, max=max_off)
 
                 L[:, i, j] = off_val

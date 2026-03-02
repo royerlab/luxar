@@ -12,6 +12,8 @@ import { ControlsManager } from '../controls/controls-manager';
 import { loadScene } from '../data';
 import { showLoadingIndicator, hideLoadingIndicator, showError } from '../ui/helpers';
 import { config } from '../config';
+import { extractCameraOverrides, extractBackgroundColor } from '../config/viewer-config-utils';
+import type { ZarrViewerConfig } from '../types/zarr';
 import { PostProcessingManager } from '../rendering/post-processing-manager';
 import { materialManager } from '../rendering/material-manager';
 import {
@@ -23,6 +25,7 @@ import {
   validateFOV,
   calculateClippingPlanes,
   calculateDistancesToBoundingBox,
+  getBoundingBoxDiagonal,
   BoundingBox,
   CLIPPING_SAFETY_MARGIN,
   MIN_NEAR_PLANE,
@@ -90,8 +93,8 @@ export class SceneManager extends THREE.EventDispatcher<{
   private dynamicClippingEnabled: boolean =
     config.renderingControls.defaults.dynamicClippingEnabled;
   private clippingAdaptSpeed: number = config.renderingControls.defaults.clippingAdaptSpeed;
-  private smoothedNear: number = config.camera.near;
-  private smoothedFar: number = config.camera.far;
+  private smoothedNear: number = config.renderingControls.defaults.near;
+  private smoothedFar: number = config.renderingControls.defaults.far;
 
   /**
    * Create a new scene manager instance.
@@ -194,12 +197,22 @@ export class SceneManager extends THREE.EventDispatcher<{
       showError('Failed to create WebGL2 context. Your browser may not support WebGL2.');
     }
 
-    // Create WebGL renderer using configuration values
-    // This ensures consistent settings across all rendering components
+    // Create WebGL renderer using configuration values.
+    // Shared attributes (antialias, powerPreference, etc.) come from webgl.context;
+    // renderer-specific settings (precision, shadowMap, etc.) come from webgl.renderer.
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvasElement, // Use our pre-existing canvas element
       context: gl || undefined, // Use our HDR context if available
-      ...config.webgl.renderer, // Apply all renderer settings from config
+      // Shared attributes from context config
+      alpha: config.webgl.context.alpha,
+      antialias: config.webgl.context.antialias,
+      depth: config.webgl.context.depth,
+      stencil: config.webgl.context.stencil,
+      powerPreference: config.webgl.context.powerPreference,
+      preserveDrawingBuffer: config.webgl.context.preserveDrawingBuffer,
+      premultipliedAlpha: config.webgl.context.premultipliedAlpha,
+      // Renderer-specific settings
+      ...config.webgl.renderer,
     });
 
     // Configure page for immersive fullscreen 3D experience
@@ -332,10 +345,10 @@ export class SceneManager extends THREE.EventDispatcher<{
     // Create perspective camera with realistic 3D projection
     // FOV of 60° provides natural human-like viewing angle
     this.camera = new THREE.PerspectiveCamera(
-      config.camera.fov, // Field of view (60 degrees)
+      config.renderingControls.defaults.fov, // Field of view (60 degrees)
       width / height, // Aspect ratio (canvas width/height)
-      config.camera.near, // Near clipping plane (0.1 units)
-      config.camera.far // Far clipping plane (1000 units)
+      config.renderingControls.defaults.near, // Near clipping plane (0.1 units)
+      config.renderingControls.defaults.far // Far clipping plane (1000 units)
     );
 
     // Position camera at initial viewing location
@@ -462,6 +475,9 @@ export class SceneManager extends THREE.EventDispatcher<{
       // Materials created during loading already have correct FOV/resolution
       // No need to update again - this would be redundant work
 
+      // Apply viewer config from zarr (camera position, background color)
+      this.applyZarrViewerConfig(root);
+
       // Auto-adjust clipping planes using scene bounds from metadata
       // This uses position_bounds stored in zarr, which represents the full dataset extent
       // and doesn't require waiting for point data to load
@@ -476,6 +492,106 @@ export class SceneManager extends THREE.EventDispatcher<{
       showError(`Failed to load scene from "${src}". Please check the path and try again.`);
       throw error;
     }
+  }
+
+  /**
+   * Get the viewer config from the loaded scene's root group userData.
+   */
+  getSceneViewerConfig(): ZarrViewerConfig | undefined {
+    const root = this.scene.children.find((c) => c.name === 'LuxarScene');
+    return root?.userData?.viewerConfig as ZarrViewerConfig | undefined;
+  }
+
+  /**
+   * Apply viewer config from zarr (camera position/target/up, background color).
+   * Camera config is applied on every load — it's the data author's intended "home" view.
+   */
+  private applyZarrViewerConfig(root: THREE.Group): void {
+    const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
+    if (!viewerConfig) return;
+
+    // Apply camera position/target/up
+    const camOverrides = extractCameraOverrides(viewerConfig);
+    if (camOverrides.position) {
+      this.camera.position.set(
+        camOverrides.position.x,
+        camOverrides.position.y,
+        camOverrides.position.z
+      );
+    }
+
+    // target_node takes precedence over explicit target coordinates.
+    // Use controls.lookAt() so that orbit/arcball controls pivot around the
+    // correct point, not just the camera orientation.
+    if (camOverrides.targetNode) {
+      const resolved = this.resolveTargetNode(root, camOverrides.targetNode);
+      if (resolved) {
+        this.controls.lookAt(resolved, false);
+        log.info(
+          Modules.SCENE_MANAGER,
+          `Resolved target_node '${camOverrides.targetNode}' to (${resolved.x.toFixed(2)}, ${resolved.y.toFixed(2)}, ${resolved.z.toFixed(2)})`
+        );
+      } else {
+        log.warning(
+          Modules.SCENE_MANAGER,
+          `target_node '${camOverrides.targetNode}' not found in scene graph`
+        );
+      }
+    } else if (camOverrides.target) {
+      const targetVec = new THREE.Vector3(
+        camOverrides.target.x,
+        camOverrides.target.y,
+        camOverrides.target.z
+      );
+      this.controls.lookAt(targetVec, false);
+    }
+
+    if (camOverrides.up) {
+      this.camera.up.set(camOverrides.up.x, camOverrides.up.y, camOverrides.up.z);
+    }
+    if (
+      camOverrides.position ||
+      camOverrides.target ||
+      camOverrides.targetNode ||
+      camOverrides.up
+    ) {
+      this.camera.updateMatrixWorld(true);
+      this.controls.update();
+      log.info(Modules.SCENE_MANAGER, 'Applied camera config from zarr viewer_config');
+    }
+
+    // Apply background color
+    const bgColor = extractBackgroundColor(viewerConfig);
+    if (bgColor) {
+      this.scene.background = new THREE.Color(bgColor);
+      log.info(Modules.SCENE_MANAGER, `Applied background color from zarr: ${bgColor}`);
+    }
+  }
+
+  /**
+   * Find a named node in the scene graph and return its bounding box center.
+   *
+   * @param root - Scene graph root to search
+   * @param nodeName - Name of the node to find
+   * @returns Bounding box center, or null if node not found
+   */
+  private resolveTargetNode(root: THREE.Group, nodeName: string): THREE.Vector3 | null {
+    let targetObject: THREE.Object3D | null = null;
+
+    root.traverse((obj) => {
+      if (obj.name === nodeName && !targetObject) {
+        targetObject = obj;
+      }
+    });
+
+    if (!targetObject) return null;
+
+    const box = new THREE.Box3().setFromObject(targetObject);
+    if (box.isEmpty()) return null;
+
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    return center;
   }
 
   /**
@@ -643,6 +759,12 @@ export class SceneManager extends THREE.EventDispatcher<{
           `Scene too small for auto-centering (size: ${maxDim.toFixed(2)}, primitives: ${totalPrimitiveCount})`
         );
         return;
+      }
+
+      // Update scale-aware controls from geometry bounding box
+      const diagonal = size.length();
+      if (diagonal > 0) {
+        this.controls.setSceneScale(diagonal);
       }
 
       const center = box.getCenter(new THREE.Vector3());
@@ -958,7 +1080,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     log.info(
       Modules.SCENE_MANAGER,
-      `Clipping planes updated - Near: ${near.toFixed(3)}, Far: ${far.toFixed(1)} (ratio: ${ratio.toFixed(0)}:1)`
+      `Clipping planes updated - Near: ${near < 0.001 ? near.toExponential(1) : near.toFixed(3)}, Far: ${far.toFixed(1)} (ratio: ${ratio.toFixed(0)}:1)`
     );
   }
 
@@ -986,6 +1108,12 @@ export class SceneManager extends THREE.EventDispatcher<{
     const sceneBounds = this.getSceneBoundsFromMetadata();
 
     if (sceneBounds) {
+      // Update scale-aware controls from metadata bounds (available before geometry loads)
+      const diagonal = getBoundingBoxDiagonal(sceneBounds);
+      if (diagonal > 0) {
+        this.controls.setSceneScale(diagonal);
+      }
+
       // Use unified utility function with camera position
       const { near, far } = calculateClippingPlanes(sceneBounds, cameraPos);
 
@@ -1005,17 +1133,25 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     if (box.isEmpty()) {
       log.warning(Modules.SCENE_MANAGER, 'No scene content for clipping plane calculation');
-      return { near: config.camera.near, far: config.camera.far };
+      return {
+        near: config.renderingControls.defaults.near,
+        far: config.renderingControls.defaults.far,
+      };
     }
 
     // Use unified utility function with camera position
-    const { near, far } = calculateClippingPlanes(
-      {
-        min: { x: box.min.x, y: box.min.y, z: box.min.z },
-        max: { x: box.max.x, y: box.max.y, z: box.max.z },
-      },
-      cameraPos
-    );
+    const fallbackBounds = {
+      min: { x: box.min.x, y: box.min.y, z: box.min.z },
+      max: { x: box.max.x, y: box.max.y, z: box.max.z },
+    };
+
+    // Update scale-aware controls from geometry bounds as fallback
+    const diagonal = getBoundingBoxDiagonal(fallbackBounds);
+    if (diagonal > 0) {
+      this.controls.setSceneScale(diagonal);
+    }
+
+    const { near, far } = calculateClippingPlanes(fallbackBounds, cameraPos);
 
     // Apply the calculated planes
     this.updateClippingPlanes(near, far);
@@ -1110,6 +1246,16 @@ export class SceneManager extends THREE.EventDispatcher<{
       Modules.SCENE_MANAGER,
       `Dynamic clipping ${enabled ? 'enabled' : 'disabled'}${adaptSpeed !== undefined ? ` (adapt speed: ${this.clippingAdaptSpeed})` : ''}`
     );
+  }
+
+  /**
+   * Set clipping adapt speed without logging.
+   * Use this for continuous updates (e.g., slider drag) to avoid log spam.
+   *
+   * @param speed - Exponential smoothing factor (0.01-0.5)
+   */
+  setClippingAdaptSpeed(speed: number): void {
+    this.clippingAdaptSpeed = Math.max(0.01, Math.min(0.5, speed));
   }
 
   /**
@@ -1358,5 +1504,12 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   setFlyRotationDamping(damping: number): void {
     this.controls.setFlyRotationDamping(damping);
+  }
+
+  /**
+   * Get current scene scale (bounding box diagonal). Returns 0 if not yet set.
+   */
+  getSceneScale(): number {
+    return this.controls.getSceneScale();
   }
 }

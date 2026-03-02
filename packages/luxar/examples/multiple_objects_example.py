@@ -8,6 +8,12 @@ This educational example demonstrates:
 - Color coding and visual differentiation
 - Mixed object sizes and densities
 - Educational scene composition
+
+Educational value:
+- Learn to compose scenes with multiple distinct point clouds
+- Understand per-object rendering property configuration
+- See spatial arrangement strategies for multi-object scenes
+- Good reference for real-world multi-dataset visualization
 """
 
 import numpy as np

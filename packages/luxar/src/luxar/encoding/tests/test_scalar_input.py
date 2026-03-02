@@ -505,12 +505,12 @@ class TestScalarInputIntegration:
             store = zarr.open_group(zarr_path, mode="r")
             assert store["test/radii"].shape == (1,)
             assert store["test/colors"].shape == (1, 3)
-            assert store["test/sharpness"].shape == (1,)
+            assert store["test/sharpnesses"].shape == (1,)
 
             # Check values
             assert store["test/radii"][:][0] == pytest.approx(0.8)
             assert np.allclose(store["test/colors"][:], [[0.5, 0.5, 1.0]])
-            assert store["test/sharpness"][:][0] == pytest.approx(3.0)
+            assert store["test/sharpnesses"][:][0] == pytest.approx(3.0)
 
     def test_mixed_scalar_and_array(self) -> None:
         """Test mixing scalar and array attributes."""
@@ -536,7 +536,7 @@ class TestScalarInputIntegration:
             store = zarr.open_group(zarr_path, mode="r")
             assert store["test/radii"].shape == (100,)  # Full array
             assert store["test/colors"].shape == (1, 3)  # Broadcasted
-            assert store["test/sharpness"].shape == (1,)  # Broadcasted
+            assert store["test/sharpnesses"].shape == (1,)  # Broadcasted
 
 
 class TestScalarNoIntermediateArrays:

@@ -826,7 +826,7 @@ When HDR multiplier is updated via `updateHDRMultiplier()`, the MaterialManager 
 
 ```typescript
 // MaterialManager stores current HDR value
-private currentHDRMultiplier: number = config.shader.points.hdrMultiplier;
+private currentHDRMultiplier: number = config.renderingControls.defaults.hdrMultiplier;
 
 updateHDRMultiplier(value: number): void {
   this.currentHDRMultiplier = value;
@@ -1477,6 +1477,7 @@ interface LineMaterialUniforms {
 The GSplat Material implements volumetric Gaussian splatting for rendering oriented, anisotropic 3D Gaussian density functions with nD slicing support.
 
 **Key Features:**
+
 - Full 3D covariance representation via packed Cholesky factors
 - Perspective-correct projection of 3D covariance to 2D screen space
 - Generalized Gaussian falloff: `exp(-½ · r^sharpness)`
@@ -1492,6 +1493,7 @@ G(x) = a · exp(-½ · ‖L⁻¹(x - μ)‖^s)
 ```
 
 Where:
+
 - `a` = amplitude (intensity, attenuated by hidden nD dimensions)
 - `μ` = center position (3D after nD slicing)
 - `L` = Cholesky factor of covariance (Σ = L·Lᵀ)
@@ -1501,6 +1503,7 @@ Where:
 **Covariance Representation:**
 
 Covariance stored as packed Cholesky factors (lower triangular):
+
 ```
 3D Cholesky: [L00, L10, L11, L20, L21, L22] → 6 elements
 Packed into three vec2 attributes for GPU efficiency
@@ -1513,6 +1516,7 @@ Packed into three vec2 attributes for GPU efficiency
 **Key Steps:**
 
 1. **Transform to Camera Space**
+
    ```glsl
    vec4 centerCam4 = modelViewMatrix * vec4(aCenter, 1.0);
    mat3 R = mat3(modelViewMatrix);
@@ -1521,6 +1525,7 @@ Packed into three vec2 attributes for GPU efficiency
    ```
 
 2. **Two-Stage Near-Plane Culling**
+
    ```glsl
    // Stage 1: Fixed threshold (fast path: 1 cycle)
    if (-centerCam.z < 0.1) {
@@ -1540,6 +1545,7 @@ Packed into three vec2 attributes for GPU efficiency
    ```
 
 3. **Perspective Jacobian Projection**
+
    ```glsl
    // Jacobian J = ∂(screen)/∂(camera)
    mat3x2 J;
@@ -1551,6 +1557,7 @@ Packed into three vec2 attributes for GPU efficiency
    ```
 
 4. **Eigenvalue Decomposition & Quad Expansion**
+
    ```glsl
    // Compute eigenvalues for extent
    float trace = Sigma2D[0][0] + Sigma2D[1][1];
@@ -1588,6 +1595,7 @@ Packed into three vec2 attributes for GPU efficiency
 **Key Steps:**
 
 1. **Mahalanobis Distance via Forward Substitution**
+
    ```glsl
    vec2 d = gl_FragCoord.xy - vCenterScreen;
    float y0 = d.x * vL2D.x;  // d.x * invL00
@@ -1596,11 +1604,13 @@ Packed into three vec2 attributes for GPU efficiency
    ```
 
 2. **Early Discard at 3σ**
+
    ```glsl
    if (mahalSq > 9.0) discard;  // exp(-4.5) ≈ 0.011 (negligible)
    ```
 
 3. **Generalized Gaussian Falloff**
+
    ```glsl
    // Standard Gaussian (s=2.0)
    intensity = vAmplitude2D * exp(-0.5 * mahalSq);
@@ -1618,6 +1628,7 @@ Packed into three vec2 attributes for GPU efficiency
 ### 8.5 Near-Plane Culling Strategy
 
 **Problem**: When camera is very close to splats or inside datasets:
+
 - Splats behind camera still render (if not culled)
 - Large splats project to thousands of pixels (overdraw)
 - Result: White screen, performance degradation
@@ -1625,11 +1636,13 @@ Packed into three vec2 attributes for GPU efficiency
 **Solution**: Two-stage culling with performance-cost tradeoff
 
 **Stage 1 - Fixed Threshold (1 cycle cost)**:
+
 - Cull if `z < 0.1`
 - Catches ~95% of normal-sized splats
 - Single comparison, very fast
 
 **Stage 2 - Adaptive Threshold (~6 cycles cost)**:
+
 - Only runs if `sigma > 0.1` (trace of covariance > 0.01)
 - Computes splat extent: `sigmaTrace = sqrt(Σ_cam[0][0] + Σ_cam[1][1] + Σ_cam[2][2])`
 - Cull if `z < sigmaTrace * uTruncate`
@@ -1642,7 +1655,7 @@ Packed into three vec2 attributes for GPU efficiency
 ```typescript
 // For additive/luminous modes
 this.blendEquation = THREE.AddEquation;
-this.blendSrc = THREE.OneFactor;  // NOT SrcAlpha!
+this.blendSrc = THREE.OneFactor; // NOT SrcAlpha!
 this.blendDst = THREE.OneFactor;
 
 // For max mode
@@ -1653,23 +1666,24 @@ this.blendEquation = THREE.MaxEquation;
 
 ### 8.7 GPU Optimizations
 
-| Optimization | Implementation | Benefit |
-|--------------|----------------|---------|
-| `flat` interpolation | All per-instance varyings | Skips GPU interpolator hardware |
-| Reciprocal precomputation | `vL2D = [1/L00, L10, 1/L11]` | DIV→MUL in fragment shader |
-| Early discard at 3σ | Before `pow()/exp()` | Avoids expensive math for edges |
-| Sharpness=2.0 specialization | Skip `pow()` in both shaders | Common case fast path |
-| Two-stage culling | Fixed + adaptive thresholds | Minimal cost for common case |
-| `mediump` for colors | Fragment shader precision | Reduces register pressure |
+| Optimization                 | Implementation               | Benefit                         |
+| ---------------------------- | ---------------------------- | ------------------------------- |
+| `flat` interpolation         | All per-instance varyings    | Skips GPU interpolator hardware |
+| Reciprocal precomputation    | `vL2D = [1/L00, L10, 1/L11]` | DIV→MUL in fragment shader      |
+| Early discard at 3σ          | Before `pow()/exp()`         | Avoids expensive math for edges |
+| Sharpness=2.0 specialization | Skip `pow()` in both shaders | Common case fast path           |
+| Two-stage culling            | Fixed + adaptive thresholds  | Minimal cost for common case    |
+| `mediump` for colors         | Fragment shader precision    | Reduces register pressure       |
 
 ### 8.8 Data Structures
 
 **GSplatMaterialConfig**:
+
 ```typescript
 interface GSplatMaterialConfig {
-  opacity?: number;               // 0.0 to 1.0
-  hdrMultiplier?: number;         // Typically 16.0
-  truncationRadius?: number;      // In sigmas (default 3.0)
+  opacity?: number; // 0.0 to 1.0
+  hdrMultiplier?: number; // Typically 16.0
+  truncationRadius?: number; // In sigmas (default 3.0)
   blendingMode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
   transparent?: boolean;
   depthTest?: boolean;
@@ -1677,19 +1691,21 @@ interface GSplatMaterialConfig {
 ```
 
 **GSplatMaterialUniforms**:
+
 ```typescript
 interface GSplatMaterialUniforms {
-  uResolution: { value: THREE.Vector2 };     // [width, height]
-  uFx: { value: number };                    // Focal length X (pixels)
-  uFy: { value: number };                    // Focal length Y (pixels)
-  uTruncate: { value: number };              // Truncation radius (sigmas)
-  uHDRMultiplier: { value: number };         // HDR intensity boost
-  uOpacity: { value: number };               // Global opacity
-  uProjectionMode: { value: number };        // 0=sum, 1=max
+  uResolution: { value: THREE.Vector2 }; // [width, height]
+  uFx: { value: number }; // Focal length X (pixels)
+  uFy: { value: number }; // Focal length Y (pixels)
+  uTruncate: { value: number }; // Truncation radius (sigmas)
+  uHDRMultiplier: { value: number }; // HDR intensity boost
+  uOpacity: { value: number }; // Global opacity
+  uProjectionMode: { value: number }; // 0=sum, 1=max
 }
 ```
 
 **Per-Instance Attributes**:
+
 ```typescript
 - aCenter: vec3           // 3D center (after nD slicing)
 - aCholesky01: vec2       // [L00, L10]
@@ -1726,14 +1742,15 @@ mesh.frustumCulled = true;
 
 **Splat Count Limits**:
 
-| Splats | Performance          |
-|--------|----------------------|
-| < 100K | Smooth (60 fps)      |
-| 100K-1M | Good (30-60 fps)    |
-| 1M-10M | Moderate (10-30 fps) |
-| > 10M  | May require LOD      |
+| Splats  | Performance          |
+| ------- | -------------------- |
+| < 100K  | Smooth (60 fps)      |
+| 100K-1M | Good (30-60 fps)     |
+| 1M-10M  | Moderate (10-30 fps) |
+| > 10M   | May require LOD      |
 
 **Optimizations**:
+
 1. **Two-stage culling**: Prevents rendering splats too close to camera
 2. **Spatial chunking**: Load only visible splat chunks
 3. **Frustum culling**: Bounding box-based visibility

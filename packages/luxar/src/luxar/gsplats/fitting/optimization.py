@@ -44,6 +44,28 @@ def _compute_max_abs_error(pred: torch.Tensor, target: torch.Tensor) -> float:
     return torch.max(torch.abs(pred - target)).item()
 
 
+def _compute_rel_l2(pred: torch.Tensor, target: torch.Tensor) -> float:
+    """
+    Compute relative L2 error: ||pred - target||₂ / ||target||₂.
+
+    Parameters
+    ----------
+    pred : torch.Tensor
+        Model prediction
+    target : torch.Tensor
+        Target values
+
+    Returns
+    -------
+    float
+        Relative L2 error (0 = perfect, 1 = error magnitude equals signal)
+    """
+    return float(
+        torch.linalg.norm((pred - target).reshape(-1))
+        / (torch.linalg.norm(target.reshape(-1)) + 1e-12)
+    )
+
+
 def run_optimization_loop(
     components: ModelComponents,
     loss_fn: Callable[[torch.Tensor], torch.Tensor],
@@ -95,21 +117,26 @@ def run_optimization_loop(
         aprint(
             f"Convergence criterion: max absolute error < {preprocessed_data.max_abs_error:.6f}"
         )
+        if preprocessed_data.rel_l2_target is not None:
+            aprint(
+                f"Convergence criterion: relL2 < {preprocessed_data.rel_l2_target:.6f}"
+            )
         aprint(f"Maximum iterations: {config.n_iters}")
 
     # Initialize best state tracking for quality guarantee
     best_max_abs_error = float("inf")
+    best_rel_l2 = float("inf")
     best_state = None
     best_iteration = 0
     iterations_since_improvement = 0  # Track patience for early stopping
     last_max_abs_error = float("inf")
 
+    # Track initial splat count (used for dynamic ops logging)
+    n_splats = model.n_splats() if hasattr(model, "n_splats") else preprocessed_data.N
+
     # Initialize relocation tracker for dynamic ops (prevents repeated relocation)
     relocation_tracker = None
     if config.enable_dynamic_ops:
-        n_splats = (
-            model.n_splats() if hasattr(model, "n_splats") else preprocessed_data.N
-        )
         relocation_tracker = RecentlyRelocatedTracker(
             n_splats=n_splats,
             cooldown_steps=config.dynamic_config.relocation_cooldown_steps,
@@ -168,6 +195,7 @@ def run_optimization_loop(
         # Convergence check and best state tracking using maximum absolute error
         with torch.no_grad():
             current_max_abs_error = _compute_max_abs_error(pred_eval, V_t)
+            current_rel_l2 = _compute_rel_l2(pred_eval, V_t)
             last_max_abs_error = current_max_abs_error
 
             # Track best state based on loss (smoother signal for optimization progress)
@@ -177,6 +205,7 @@ def run_optimization_loop(
 
                 best_loss = current_loss
                 best_max_abs_error = current_max_abs_error
+                best_rel_l2 = current_rel_l2
                 best_iteration = it
                 iterations_since_improvement = 0  # Reset patience counter
 
@@ -189,6 +218,7 @@ def run_optimization_loop(
                     "sharpness": sharpness.detach().clone(),
                     "iteration": it,
                     "max_abs_error": current_max_abs_error,
+                    "rel_l2": current_rel_l2,
                     "loss": current_loss,
                 }
 
@@ -202,13 +232,24 @@ def run_optimization_loop(
                 # No improvement this iteration
                 iterations_since_improvement += 1
 
-            # Check for convergence
+            # Check for convergence (either criterion suffices)
             if current_max_abs_error < preprocessed_data.max_abs_error:
                 converged_early = True
                 if config.verbose:
                     aprint(f"✓ CONVERGENCE ACHIEVED at iteration {it}")
                     aprint(
                         f"  Max absolute error: {current_max_abs_error:.6f} < threshold: {preprocessed_data.max_abs_error:.6f}"
+                    )
+                break
+            elif (
+                preprocessed_data.rel_l2_target is not None
+                and current_rel_l2 < preprocessed_data.rel_l2_target
+            ):
+                converged_early = True
+                if config.verbose:
+                    aprint(f"✓ CONVERGENCE ACHIEVED at iteration {it}")
+                    aprint(
+                        f"  Relative L2 error: {current_rel_l2:.6f} < target: {preprocessed_data.rel_l2_target:.6f}"
                     )
                 break
 
@@ -247,14 +288,10 @@ def run_optimization_loop(
         # Logging (update N after potential dynamic ops)
         N = model.n_splats() if hasattr(model, "n_splats") else preprocessed_data.N
         if config.verbose and (it % max(1, config.n_iters // 10) == 0 or it <= 5):
-            with torch.no_grad():
-                rel = torch.linalg.norm((pred_eval - V_t).reshape(-1)) / (
-                    torch.linalg.norm(V_t.reshape(-1)) + 1e-12
-                )
-            # Reuse current_max_abs_error computed earlier (line 149) - no redundant computation
+            # Reuse current_rel_l2 and current_max_abs_error computed earlier
             aprint(
                 f"[{it:4d}/{config.n_iters}] loss={current_loss:.5g}  "
-                f"relL2={float(rel):.4f}  maxAbsErr={current_max_abs_error:.5g}  N={N}"
+                f"relL2={current_rel_l2:.4f}  maxAbsErr={current_max_abs_error:.5g}  N={N}"
             )
 
     end_time = time.time()
@@ -279,11 +316,16 @@ def run_optimization_loop(
 
         # Log relocation statistics
         if relocation_tracker is not None:
+            current_n_splats = (
+                model.n_splats() if hasattr(model, "n_splats") else preprocessed_data.N
+            )
             stats = relocation_tracker.get_statistics()
             aprint("\n📊 Dynamic Operations Summary:")
             aprint(f"  Total relocations: {stats['total_relocations']}")
-            aprint(f"  Unique splats relocated: {stats['unique_splats']} / {n_splats}")
-            coverage_pct = (stats["unique_splats"] / n_splats) * 100
+            aprint(
+                f"  Unique splats relocated: {stats['unique_splats']} / {current_n_splats}"
+            )
+            coverage_pct = (stats["unique_splats"] / max(1, current_n_splats)) * 100
             aprint(
                 f"  Coverage: {coverage_pct:.1f}% of splats were relocated at least once"
             )
@@ -310,11 +352,14 @@ def run_optimization_loop(
         sharpness = best_state["sharpness"]
         best_loss = best_state["loss"]
         best_max_abs_error = best_state["max_abs_error"]
+        best_rel_l2 = best_state["rel_l2"]
     else:
         # Fallback to final state if no best state saved
         with torch.no_grad():
             centers, Ls, amps, sharpness = model.current_params()
-            best_max_abs_error = _compute_max_abs_error(model(), V_t)
+            pred_final = model()
+            best_max_abs_error = _compute_max_abs_error(pred_final, V_t)
+            best_rel_l2 = _compute_rel_l2(pred_final, V_t)
 
     return OptimizationResults(
         centers=centers,
@@ -327,6 +372,7 @@ def run_optimization_loop(
         best_iteration=best_iteration,
         best_loss=best_loss,
         best_max_abs_error=best_max_abs_error,
+        best_rel_l2=best_rel_l2,
         movie_frames=movie_frames,
         start_time=start_time,
         end_time=end_time,

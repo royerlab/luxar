@@ -73,7 +73,7 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      expect(viewState.slicePosition[0]).toBe(400); // Starts at minimum of [400, 700]
+      expect(viewState.slicePosition[0]).toBe(550); // Continuous: starts at center of [400, 700]
       expect(viewState.tolerance[0]).toBeGreaterThan(0); // Should have default tolerance
     });
 
@@ -221,7 +221,7 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      expect(viewState.slicePosition[0]).toBe(0); // Starts at minimum
+      expect(viewState.slicePosition[0]).toBe(500000); // Continuous: starts at center
     });
 
     it('should handle negative ranges correctly', () => {
@@ -234,7 +234,7 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      expect(viewState.slicePosition[0]).toBe(-100); // Starts at minimum of [-100, -50]
+      expect(viewState.slicePosition[0]).toBe(-75); // Continuous: starts at center of [-100, -50]
     });
 
     it('should handle fractional discrete dimension ranges', () => {
@@ -301,6 +301,49 @@ describe('ViewStateManager', () => {
       expect(timeMeta?.discrete).toBe(true);
       expect(timeMeta?.step).toBe(10);
       expect(timeMeta?.range).toEqual([0, 1000]);
+    });
+
+    it('should preserve spatial, cyclic, categories, and description fields', () => {
+      const sceneDims: SceneDimensions = {
+        dimensions: [
+          {
+            name: 'channel',
+            unit: '',
+            scale: 1.0,
+            range: [0, 3],
+            display: false,
+            discrete: true,
+            spatial: false,
+            cyclic: false,
+            categories: ['DAPI', 'GFP', 'RFP', 'Merge'],
+            description: 'Fluorescence channel',
+          },
+          {
+            name: 'angle',
+            unit: 'rad',
+            scale: 1.0,
+            range: [0, 6.28],
+            display: false,
+            cyclic: true,
+            spatial: true,
+            description: 'Rotation angle',
+          },
+          { name: 'x', unit: 'um', scale: 1.0, display: true },
+        ],
+      };
+
+      const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
+
+      const channelMeta = viewState.dimensions?.metadata?.[0];
+      expect(channelMeta?.spatial).toBe(false);
+      expect(channelMeta?.cyclic).toBe(false);
+      expect(channelMeta?.categories).toEqual(['DAPI', 'GFP', 'RFP', 'Merge']);
+      expect(channelMeta?.description).toBe('Fluorescence channel');
+
+      const angleMeta = viewState.dimensions?.metadata?.[1];
+      expect(angleMeta?.spatial).toBe(true);
+      expect(angleMeta?.cyclic).toBe(true);
+      expect(angleMeta?.description).toBe('Rotation angle');
     });
   });
 

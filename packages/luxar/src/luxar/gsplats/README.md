@@ -51,7 +51,7 @@ result.save("output.gsplats.zarr")
 ### 1. Seed Generation
 The system starts by finding initial seed positions using multiscale seed generation:
 - **Gaussian filtering** at multiple scales to detect blob-like structures
-- **Difference of Gaussians (DoG)** for edge and boundary detection  
+- **Difference of Gaussians (DoG)** for edge and boundary detection
 - **Intensity-weighted grid sampling** for spatial coverage
 - **Spatial deduplication of seeds** to remove redundant seeds
 
@@ -66,7 +66,7 @@ Each Gaussian splat is parameterized using covariance matrix representation:
 
 Mathematical form: `f(x) = a * exp(-0.5 * ||y||^s)` where `y = Σ^(-1/2) @ (x-μ)` and s controls edge sharpness
 
-The implementation avoids explicit matrix inversion by solving the triangular system `L @ y = (x-μ)` 
+The implementation avoids explicit matrix inversion by solving the triangular system `L @ y = (x-μ)`
 and computing the quadratic form as `||y||²`.
 
 ### 3. Optimization Process
@@ -83,7 +83,7 @@ The fitting uses PyTorch with advanced optimization strategies:
 Efficient rendering using batched operations with two computational approaches:
 
 **Efficient Rendering Pipeline:**
-- **AABB Truncation**: Each splat rendered only within `truncate * σ` radius  
+- **AABB Truncation**: Each splat rendered only within `truncate * σ` radius
 - **Batched Triangular Solve**: Avoids explicit matrix inversion via `L @ y = (x-μ)`
 - **Specialized 2D/3D Paths**: Optimized renderers with explicit forward-substitution
 - **Amplitude-aware Culling**: Reduces computation for weak splats
@@ -95,10 +95,10 @@ The implementation includes several key optimizations that provide significant s
 
 1. **2D/3D Specialized Paths**: Optimized renderers with explicit forward-substitution for common cases
 2. **Convergence Detection**: Automatically stops when loss plateaus (saves 20-60% iterations)
-3. **Adaptive Learning**: Reduces learning rate on plateaus for better convergence  
+3. **Adaptive Learning**: Reduces learning rate on plateaus for better convergence
 4. **Device-Aware Selection**: Automatic selection of best available device (CUDA > CPU > MPS)
 5. **Cached Computations**: Reuses grids and strides for repeated operations
-6. **Optional Enhancements**: 
+6. **Optional Enhancements**:
    - Model compilation with `torch.compile` (PyTorch 2.0+, CUDA only)
    - Mixed precision training (FP16 on CUDA)
    - Pre-allocated buffers for memory efficiency
@@ -213,15 +213,18 @@ for vis in result.stats['per_scale_visualizations']:
 For specialized use cases requiring custom candidate generation:
 
 ```python
-from luxar.gsplats.seeds import seed_from_gaussian
+from luxar.gsplats.seeds import generate_seeds, seed_from_edges
 
-# Custom seed generation with specific parameters
-custom_seeds = seed_from_gaussian(
+# Custom seed generation with specific method
+custom_seeds = seed_from_edges(
     image,
-    scales=(1.0, 2.0, 4.0),      # Custom scales
-    peaks_per_scale=1000,        # Custom density
-    percentile_thresh=95,        # Custom selectivity
+    n_seeds=1000,                # Custom density
+    min_distance=2.0,            # Minimum seed spacing
+    edge_threshold_rel=0.1,      # Edge detection threshold
 )
+
+# Or use unified entry point
+custom_seeds = generate_seeds(image, method="edges")
 
 result = fit_gaussian_splats(
     image, seeds=custom_seeds
@@ -690,15 +693,22 @@ Main fitting function with automatic optimizations.
 - `params`: (N, d + d*(d+1)/2) array of [centers, packed_cholesky]
 - `amps`: (N,) array of amplitudes
 
-#### `seed_from_gaussian(V, **kwargs)`
-Generate initial seed splats using multiscale Gaussian detection.
-Returns `GSplatData` with scale-informed Gaussian shapes (sigma = detection scale).
+#### `generate_seeds(V, method="auto", **kwargs)`
+Unified entry point for all seed generation methods.
+Returns `GSplatData` with scale-informed Gaussian shapes.
 
 **Key Parameters:**
-- `scales`: Gaussian filter scales (default: (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0))
-- `peaks_per_scale`: Maximum peaks per scale (default: None)
-- `percentile_thresh`: Intensity threshold percentile (default: 75.0)
-- `min_distance`: Minimum distance between candidates (default: 2.0)
+- `method`: `"auto"` (edges+grid), `"edges"`, `"grid"`, `"decomposition"`, or comma-separated combo
+- `**kwargs`: Passed to the selected seeding method(s)
+
+#### `seed_from_edges(V, n_seeds=None, min_distance=2.0, edge_threshold_rel=0.1, device=None, ...)`
+Edge-based seeding using Sobel gradients with Poisson disk sampling.
+
+#### `seed_from_grid(V, spacing=None, jitter=0.0, sigma=None, ...)`
+Uniform grid seeding for spatial coverage with optional jitter.
+
+#### `seed_from_decomposition(V, scales=..., ignore_finest_k=1, ...)`
+Scale-hierarchical detection via optimized image decomposition.
 
 ## Device Support and Performance
 

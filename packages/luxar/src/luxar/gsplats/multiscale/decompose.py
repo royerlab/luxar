@@ -340,13 +340,29 @@ def _downsample_to_scale(
                     img_expanded, kernel_size=scale, stride=scale
                 )
     else:
-        # For nD where n > 3, use interpolate
-        target_shape = tuple(s // scale for s in img.shape)
+        # For nD where n > 3: F.interpolate doesn't support tensors with >5 dims.
+        # Use separable approach for both area and nearest modes.
         if mode == "area":
-            downsampled = F.interpolate(img_expanded, size=target_shape, mode="nearest")
+            # Separable area averaging: reshape each axis into
+            # (size//scale, scale) blocks and average along the block axis.
+            # This is exact (not an approximation) because averaging is separable.
+            result = img
+            for ax in range(ndim):
+                s = result.shape[ax]
+                new_s = s // scale
+                # Truncate to exact multiple of scale
+                slices = [slice(None)] * result.ndim
+                slices[ax] = slice(0, new_s * scale)
+                result = result[tuple(slices)]
+                # Reshape axis into (new_s, scale) and average over the block dim
+                new_shape = list(result.shape)
+                new_shape[ax : ax + 1] = [new_s, scale]
+                result = result.reshape(new_shape).mean(dim=ax + 1)
         else:
-            # Fallback for higher dimensions
-            downsampled = F.interpolate(img_expanded, size=target_shape, mode="nearest")
+            # Nearest-neighbor downsampling: stride along each axis
+            slices = tuple(slice(None, None, scale) for _ in range(ndim))
+            result = img[slices]
+        downsampled = result[None, None, ...]
 
     # Remove batch and channel dimensions
     return downsampled[0, 0]

@@ -38,7 +38,8 @@ import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { DimensionAnimationManager } from '../scene/dimension-animation-manager';
 import { RenderingControls } from '../ui/rendering-controls';
-import { showHelpOverlay, hideHelpOverlay } from '../ui/helpers';
+import { showHelpOverlay, hideHelpOverlay, clearError, showToast } from '../ui/helpers';
+import { captureViewerState } from '../config/viewer-state-capture';
 import { SimpleDims } from '../types/dims';
 import { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
@@ -872,6 +873,18 @@ export class InputHandler {
       description: 'Close panels / Exit fullscreen',
     });
 
+    // Export viewer state (Ctrl+Shift+S)
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 's',
+      modifiers: { ctrl: true, shift: true },
+      handler: (event) => {
+        event.preventDefault();
+        this.exportViewerState();
+      },
+      preventDefault: true,
+      description: 'Export viewer state to clipboard',
+    });
+
     // ===== FLY CONTROLS CONTEXT BINDINGS =====
     // These are active when in fly mode (WASD movement)
     // Fly controls must work with ANY modifiers:
@@ -1080,6 +1093,48 @@ export class InputHandler {
   }
 
   /**
+   * Export the complete viewer state as JSON to the clipboard.
+   *
+   * Triggered by Ctrl+Shift+S. Captures all rendering settings, camera state,
+   * dimensions, theme, etc. and copies the JSON to the clipboard. The JSON
+   * can be loaded in Python with `luxar.ViewerConfig.from_json()`.
+   *
+   * @private
+   */
+  private exportViewerState(): void {
+    if (!this.renderingControls) {
+      log.warning(Modules.INPUT, 'Cannot export state: rendering controls not available');
+      return;
+    }
+
+    const state = captureViewerState(
+      this.sceneManager,
+      this.renderingControls,
+      sceneDimsManager,
+      this.animationManager
+    );
+
+    const json = JSON.stringify(state, null, 2);
+
+    // Copy to clipboard
+    navigator.clipboard
+      .writeText(json)
+      .then(() => {
+        showToast('Viewer state copied to clipboard');
+        log.info(Modules.INPUT, 'Viewer state exported to clipboard');
+      })
+      .catch((err) => {
+        log.error(Modules.INPUT, 'Failed to copy state to clipboard:', err);
+        showToast('Failed to copy state to clipboard');
+      });
+
+    // Also store on debug interface for programmatic access
+    if ((window as any).__luxarDebug) {
+      (window as any).__luxarDebug.lastExportedState = state;
+    }
+  }
+
+  /**
    * Cycle through camera control modes: Orbit → Arcball → Fly → Orbit.
    *
    * Triggered by V key. Control modes provide different camera interaction styles:
@@ -1284,17 +1339,12 @@ export class InputHandler {
       return;
     }
 
-    // Use utility to map key to actual dimension index
+    // mapKeyToDimension maps key (index+1) to the N-th navigable dimension
     const dimIndex = mapKeyToDimension((index + 1).toString(), dims);
 
     if (dimIndex >= 0) {
-      // Find which position this is in the non-displayed list
-      const navigableDims = this.getNavigableDimensionsList(dims);
-      const position = navigableDims.indexOf(dimIndex);
-      if (position >= 0) {
-        this.selectedDimension = position;
-        // Dimension is now selected for [ ] navigation
-      }
+      // index is already the 0-based navigable position (key 1 → index 0, etc.)
+      this.selectedDimension = index;
     } else {
       const navigableDims = this.getNavigableDimensionsList(dims);
       log.info(
@@ -1357,11 +1407,11 @@ export class InputHandler {
    */
   private closeAllPanels(): void {
     // Close all open panels (starting with topmost)
-    // Close help overlay (usually topmost)
-    const helpOverlay = document.getElementById('help-overlay');
-    if (helpOverlay) {
-      helpOverlay.remove();
-    }
+    // Close help overlay (usually topmost) - use hideHelpOverlay to clean up click listener
+    hideHelpOverlay();
+
+    // Close error messages
+    clearError();
 
     // Close dataset browser
     const datasetBrowser = document.getElementById('dataset-browser');

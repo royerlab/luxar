@@ -1,0 +1,401 @@
+/**
+ * Tests for AnimationController - manages the main rendering loop
+ *
+ * These tests verify callback management, lifecycle control, idle timeout
+ * behavior, and proper resource cleanup. External dependencies (ControlsManager,
+ * PostProcessingManager, PerformanceMonitor) are mocked while testing real
+ * AnimationController logic.
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+// Mock external dependencies only - NOT the module under test
+vi.mock('../../../controls/controls-manager', () => ({
+  ControlsManager: vi.fn(),
+}));
+
+vi.mock('../../../rendering/post-processing-manager', () => ({
+  PostProcessingManager: vi.fn(),
+}));
+
+vi.mock('../../../ui/performance-monitor', () => {
+  return {
+    PerformanceMonitor: class MockPerformanceMonitor {
+      begin = vi.fn();
+      end = vi.fn();
+      dispose = vi.fn();
+    },
+  };
+});
+
+vi.mock('../../../rendering/adaptive-dpr-manager', () => ({
+  AdaptiveDPRManager: vi.fn(),
+}));
+
+import { AnimationController } from '../../../scene/animation-controller';
+
+describe('AnimationController', () => {
+  let controller: AnimationController;
+  let mockControls: any;
+  let mockPostProcessing: any;
+  let mockRAF: ReturnType<typeof vi.fn>;
+  let mockCAF: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+
+    // Create mock controls manager
+    mockControls = {
+      update: vi.fn(),
+      getAutoRotate: vi.fn().mockReturnValue(false),
+    };
+
+    // Create mock post-processing manager
+    mockPostProcessing = {
+      render: vi.fn(),
+      needsContinuousAnimation: vi.fn().mockReturnValue(false),
+    };
+
+    // Mock requestAnimationFrame and cancelAnimationFrame
+    let rafId = 0;
+    mockRAF = vi.fn().mockImplementation(() => ++rafId);
+    mockCAF = vi.fn();
+    vi.stubGlobal('requestAnimationFrame', mockRAF);
+    vi.stubGlobal('cancelAnimationFrame', mockCAF);
+
+    // Mock performance.now for adaptive DPR
+    vi.spyOn(performance, 'now').mockReturnValue(1000);
+
+    // Create controller with mock dependencies
+    controller = new AnimationController(mockControls, mockPostProcessing);
+  });
+
+  afterEach(() => {
+    controller.dispose();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  describe('per-frame callbacks', () => {
+    it('should add a per-frame callback', () => {
+      const callback = vi.fn();
+      controller.addPerFrameCallback('test', callback);
+
+      expect(controller.hasPerFrameCallback('test')).toBe(true);
+    });
+
+    it('should remove a per-frame callback', () => {
+      const callback = vi.fn();
+      controller.addPerFrameCallback('test', callback);
+
+      const removed = controller.removePerFrameCallback('test');
+
+      expect(removed).toBe(true);
+      expect(controller.hasPerFrameCallback('test')).toBe(false);
+    });
+
+    it('should return false when removing a non-existent callback', () => {
+      const removed = controller.removePerFrameCallback('nonexistent');
+
+      expect(removed).toBe(false);
+    });
+
+    it('should return false for hasPerFrameCallback with non-existent ID', () => {
+      expect(controller.hasPerFrameCallback('nonexistent')).toBe(false);
+    });
+
+    it('should execute registered callbacks during animation', () => {
+      const callback1 = vi.fn();
+      const callback2 = vi.fn();
+      controller.addPerFrameCallback('cb1', callback1);
+      controller.addPerFrameCallback('cb2', callback2);
+
+      controller.startAnimation();
+
+      // The animate() is called synchronously from startAnimation
+      expect(callback1).toHaveBeenCalledTimes(1);
+      expect(callback2).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not execute removed callbacks', () => {
+      const callback = vi.fn();
+      controller.addPerFrameCallback('test', callback);
+      controller.removePerFrameCallback('test');
+
+      controller.startAnimation();
+
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it('should support overwriting a callback with the same ID', () => {
+      const callback1 = vi.fn();
+      const callback2 = vi.fn();
+      controller.addPerFrameCallback('test', callback1);
+      controller.addPerFrameCallback('test', callback2);
+
+      controller.startAnimation();
+
+      expect(callback1).not.toHaveBeenCalled();
+      expect(callback2).toHaveBeenCalled();
+    });
+  });
+
+  describe('legacy setPerFrameCallback', () => {
+    it('should add a legacy callback', () => {
+      const callback = vi.fn();
+      controller.setPerFrameCallback(callback);
+
+      expect(controller.hasPerFrameCallback('legacy')).toBe(true);
+    });
+
+    it('should clear legacy callback with null', () => {
+      const callback = vi.fn();
+      controller.setPerFrameCallback(callback);
+      controller.setPerFrameCallback(null);
+
+      expect(controller.hasPerFrameCallback('legacy')).toBe(false);
+    });
+
+    it('should execute legacy callback during animation', () => {
+      const callback = vi.fn();
+      controller.setPerFrameCallback(callback);
+
+      controller.startAnimation();
+
+      expect(callback).toHaveBeenCalled();
+    });
+  });
+
+  describe('setAdaptiveDPRManager', () => {
+    it('should set the adaptive DPR manager', () => {
+      const mockDPRManager = {
+        recordFrame: vi.fn(),
+      };
+
+      controller.setAdaptiveDPRManager(mockDPRManager as any);
+
+      // Verify it's used during animation
+      controller.startAnimation();
+
+      expect(mockDPRManager.recordFrame).toHaveBeenCalledWith(expect.any(Number));
+    });
+
+    it('should stop calling recordFrame after setting manager to null', () => {
+      const mockDPRManager = {
+        recordFrame: vi.fn(),
+      };
+
+      // Set manager and verify it's called during animation
+      controller.setAdaptiveDPRManager(mockDPRManager as any);
+      controller.startAnimation();
+      expect(mockDPRManager.recordFrame).toHaveBeenCalled();
+
+      // Clear the call history, set to null, then restart animation
+      mockDPRManager.recordFrame.mockClear();
+      controller.stopAnimation();
+      controller.setAdaptiveDPRManager(null);
+      controller.startAnimation();
+
+      // Should not call recordFrame after null
+      expect(mockDPRManager.recordFrame).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('lifecycle', () => {
+    it('should set isActive to true when startAnimation is called', () => {
+      expect(controller.isActive).toBe(false);
+
+      controller.startAnimation();
+
+      expect(controller.isActive).toBe(true);
+    });
+
+    it('should set isActive to false when stopAnimation is called', () => {
+      controller.startAnimation();
+      controller.stopAnimation();
+
+      expect(controller.isActive).toBe(false);
+    });
+
+    it('should be idempotent on double start (does not start duplicate loops)', () => {
+      controller.startAnimation();
+      controller.startAnimation();
+
+      // animate() is called once in the first startAnimation
+      // The second startAnimation should not trigger another animate()
+      // since isAnimating is already true
+      // It only calls RAF once from the first animate() call
+      expect(mockRAF).toHaveBeenCalledTimes(1);
+    });
+
+    it('should call controls.update during animation', () => {
+      controller.startAnimation();
+
+      expect(mockControls.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('should call postProcessing.render during animation', () => {
+      controller.startAnimation();
+
+      expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
+    });
+
+    it('should schedule next frame via requestAnimationFrame', () => {
+      controller.startAnimation();
+
+      expect(mockRAF).toHaveBeenCalledTimes(1);
+      expect(mockRAF).toHaveBeenCalledWith(expect.any(Function));
+    });
+
+    it('should cancel animation frame on stop', () => {
+      controller.startAnimation();
+      controller.stopAnimation();
+
+      expect(mockCAF).toHaveBeenCalled();
+    });
+
+    it('should clear idle timeout on stop', () => {
+      controller.startAnimation();
+
+      // idleTimeout is set after startAnimation
+      controller.stopAnimation();
+
+      // Advancing time should not trigger any idle handler
+      vi.advanceTimersByTime(10000);
+      // If timeout was properly cleared, no new stopAnimation call happens
+      // (no crash or unexpected behavior)
+    });
+  });
+
+  describe('idle timeout', () => {
+    it('should stop animation after idle timeout when no continuous effects', () => {
+      mockControls.getAutoRotate.mockReturnValue(false);
+      mockPostProcessing.needsContinuousAnimation.mockReturnValue(false);
+
+      controller.startAnimation();
+      expect(controller.isActive).toBe(true);
+
+      // Advance time past idle timeout (config.animation.idleTimeoutMs = 2000)
+      vi.advanceTimersByTime(2000);
+
+      expect(controller.isActive).toBe(false);
+    });
+
+    it('should continue animation when autoRotate is enabled', () => {
+      mockControls.getAutoRotate.mockReturnValue(true);
+      mockPostProcessing.needsContinuousAnimation.mockReturnValue(false);
+
+      controller.startAnimation();
+
+      // Advance time past idle timeout
+      vi.advanceTimersByTime(2000);
+
+      // Should still be active due to autoRotate
+      expect(controller.isActive).toBe(true);
+    });
+
+    it('should continue animation when postProcessing needs continuous', () => {
+      mockControls.getAutoRotate.mockReturnValue(false);
+      mockPostProcessing.needsContinuousAnimation.mockReturnValue(true);
+
+      controller.startAnimation();
+
+      // Advance time past idle timeout
+      vi.advanceTimersByTime(2000);
+
+      // Should still be active due to continuous effects
+      expect(controller.isActive).toBe(true);
+    });
+
+    it('should reset idle timeout on subsequent startAnimation calls', () => {
+      mockControls.getAutoRotate.mockReturnValue(false);
+      mockPostProcessing.needsContinuousAnimation.mockReturnValue(false);
+
+      controller.startAnimation();
+
+      // Advance halfway through idle timeout
+      vi.advanceTimersByTime(1000);
+      expect(controller.isActive).toBe(true);
+
+      // Trigger startAnimation again (simulating user interaction)
+      controller.startAnimation();
+
+      // Advance another 1500ms (total 2500ms since start, 1500ms since reset)
+      vi.advanceTimersByTime(1500);
+
+      // Should still be active because timeout was reset
+      expect(controller.isActive).toBe(true);
+
+      // Advance remaining time past the reset timeout
+      vi.advanceTimersByTime(500);
+
+      // Now should be idle
+      expect(controller.isActive).toBe(false);
+    });
+
+    it('should reschedule check when continuous effects are active at timeout', () => {
+      // Start with continuous effects active
+      mockControls.getAutoRotate.mockReturnValue(true);
+      mockPostProcessing.needsContinuousAnimation.mockReturnValue(false);
+
+      controller.startAnimation();
+
+      // First idle timeout fires - continuous effects active, reschedules
+      vi.advanceTimersByTime(2000);
+      expect(controller.isActive).toBe(true);
+
+      // Now disable continuous effects
+      mockControls.getAutoRotate.mockReturnValue(false);
+
+      // Second idle timeout fires - no continuous effects, should stop
+      vi.advanceTimersByTime(2000);
+      expect(controller.isActive).toBe(false);
+    });
+  });
+
+  describe('dispose', () => {
+    it('should stop animation on dispose', () => {
+      controller.startAnimation();
+      expect(controller.isActive).toBe(true);
+
+      controller.dispose();
+
+      expect(controller.isActive).toBe(false);
+    });
+
+    it('should cancel animation frame on dispose', () => {
+      controller.startAnimation();
+      controller.dispose();
+
+      expect(mockCAF).toHaveBeenCalled();
+    });
+
+    it('should not crash on double dispose', () => {
+      controller.startAnimation();
+      controller.dispose();
+
+      expect(() => controller.dispose()).not.toThrow();
+    });
+  });
+
+  describe('getters', () => {
+    it('should return animation state via isActive', () => {
+      expect(controller.isActive).toBe(false);
+
+      controller.startAnimation();
+      expect(controller.isActive).toBe(true);
+
+      controller.stopAnimation();
+      expect(controller.isActive).toBe(false);
+    });
+
+    it('should return performance monitor via performanceStats', () => {
+      const stats = controller.performanceStats;
+
+      expect(stats).toBeDefined();
+      expect(stats.begin).toBeDefined();
+      expect(stats.end).toBeDefined();
+      expect(stats.dispose).toBeDefined();
+    });
+  });
+});

@@ -40,6 +40,54 @@ describe('rendering-controls-utils', () => {
       expect(result.hdrMultiplier).toBe(20.0);
       expect(result.controlType).toBe('fly');
     });
+
+    it('should replace out-of-range numeric values with defaults', () => {
+      const defaults = getDefaultRenderingSettings();
+      const result = validateRenderingSettings({
+        bloomThreshold: -5, // out of [0, 1]
+        bloomLevels: 99, // out of [1, 12]
+        near: -1, // must be > 0
+      });
+
+      expect(result.bloomThreshold).toBe(defaults.bloomThreshold);
+      expect(result.bloomLevels).toBe(defaults.bloomLevels);
+      expect(result.near).toBe(defaults.near);
+    });
+
+    it('should replace non-numeric values with defaults', () => {
+      const defaults = getDefaultRenderingSettings();
+      const result = validateRenderingSettings({
+        fov: 'hello' as any,
+        bloomStrength: NaN,
+      });
+
+      expect(result.fov).toBe(defaults.fov);
+      expect(result.bloomStrength).toBe(defaults.bloomStrength);
+    });
+
+    it('should replace invalid enum values with defaults', () => {
+      const defaults = getDefaultRenderingSettings();
+      const result = validateRenderingSettings({
+        toneMapping: 'InvalidMode' as any,
+        controlType: 'magic' as any,
+        aoQuality: 'extreme' as any,
+      });
+
+      expect(result.toneMapping).toBe(defaults.toneMapping);
+      expect(result.controlType).toBe(defaults.controlType);
+      expect(result.aoQuality).toBe(defaults.aoQuality);
+    });
+
+    it('should round bloomLevels to integer', () => {
+      const result = validateRenderingSettings({ bloomLevels: 5.7 });
+      expect(result.bloomLevels).toBe(6);
+    });
+
+    it('should reset far to default when far <= near', () => {
+      const defaults = getDefaultRenderingSettings();
+      const result = validateRenderingSettings({ near: 10, far: 5 });
+      expect(result.far).toBe(defaults.far);
+    });
   });
 
   describe('mergeSettings', () => {

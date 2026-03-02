@@ -433,7 +433,7 @@ This is much simpler than per-splat optimizer state management.
 
 ## Related Specifications
 
-- **Seeds**: `../seeds/SPECIFICATIONS.md` - Initial seed generation
+- **Seeds**: `../../seeds/SPECIFICATIONS.md` - Initial seed generation
 - **Model**: `../../models/gsplats/SPECIFICATIONS.md` - GaussianSplatModel
 - **Optimizer**: `../../optim/SPECIFICATIONS.md` - Standard Adam with gradient dilution
 

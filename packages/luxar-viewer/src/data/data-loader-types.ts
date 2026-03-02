@@ -34,6 +34,12 @@ export interface ViewState {
    * the optimization will silently be skipped.
    *
    * Always provide dimensions when using nD datasets with extend_to_all.
+   *
+   * **NOTE**: This is `SimpleDims` (with `.metadata`, `.ndim`, `.displayed`, `.currentStep`).
+   * `BaseViewState.dimensions` in `loaders/base-types.ts` is `DimensionMetadata[]` (the raw
+   * metadata array). When passing ViewState data to BaseViewState-consuming code (e.g.,
+   * SpatialQueryBuilder's `computeQueryTolerance`), extract `.metadata` first:
+   * `viewState.dimensions?.metadata`
    */
   dimensions?: SimpleDims;
 }

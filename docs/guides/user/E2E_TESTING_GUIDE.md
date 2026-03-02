@@ -1,5 +1,7 @@
 # Luxar E2E Testing - Quick Reference Guide
 
+> For a comprehensive Playwright setup and debugging guide, see [`PLAYWRIGHT_GUIDE.md`](../developer/PLAYWRIGHT_GUIDE.md).
+
 ## 🎯 Console Output Capture - YES, It Works!
 
 ### Three Methods to Capture Browser Console:

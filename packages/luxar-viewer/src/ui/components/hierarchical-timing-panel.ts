@@ -8,45 +8,36 @@
 
 import type { TimingEntry, TimingMetadata } from '../../profiling/update-profiler';
 import { formatMs, hasOverBudget } from '../../profiling/update-profiler';
+import { escapeHtml } from '../../utils/escape-html';
+
+/**
+ * Tooltip descriptions for timing operations.
+ * Keys are matched against entry names (exact match).
+ */
+const TOOLTIPS: Record<string, string> = {
+  'Total Update': 'End-to-end time for all node updates in this frame',
+  Points: 'Point cloud data: query, load, project, and upload',
+  Lines: 'Line/track data: query segments, load vertices, project, and upload',
+  GSplats: 'Gaussian splat data: query, load, project, and upload',
+  'Spatial Query': 'Find which data chunks intersect the current view slice',
+  'Load Arrays': 'Fetch and decompress zarr chunks from the data source',
+  'Load Segments': 'Fetch segment index arrays (pairs of vertex references)',
+  'Load Vertices': 'Fetch vertex positions and attributes for referenced vertices',
+  'Project to 3D': 'Slice nD data to 3D display space (visibility filtering, Cholesky marginals)',
+  'Update Buffers': 'Upload processed data to GPU buffer attributes',
+};
+
+/**
+ * Get tooltip text for a timing entry name
+ */
+function getTooltip(name: string): string | undefined {
+  return TOOLTIPS[name];
+}
 
 /**
  * State tracking for collapsed/expanded nodes
  */
 const expandedState = new Map<string, boolean>();
-
-/**
- * Interaction lock - prevents updates while user is interacting
- */
-let interactionLock = false;
-let interactionLockTimeout: ReturnType<typeof setTimeout> | null = null;
-
-/**
- * Check if interaction is locked (updates should be skipped)
- */
-export function isInteractionLocked(): boolean {
-  return interactionLock;
-}
-
-/**
- * Set interaction lock (called when user hovers over expand buttons)
- */
-export function setInteractionLock(locked: boolean): void {
-  interactionLock = locked;
-
-  // Clear any pending timeout
-  if (interactionLockTimeout) {
-    clearTimeout(interactionLockTimeout);
-    interactionLockTimeout = null;
-  }
-
-  // If locking, also set a timeout to auto-unlock after interaction
-  if (locked) {
-    interactionLockTimeout = setTimeout(() => {
-      interactionLock = false;
-      interactionLockTimeout = null;
-    }, 2000); // Keep locked for 2 seconds after last interaction
-  }
-}
 
 /**
  * Get a unique path for an entry (for tracking expanded state)
@@ -88,36 +79,45 @@ function renderMetadata(metadata: TimingMetadata | undefined): string {
   const tags: string[] = [];
 
   if (metadata.skipped) {
-    return `<span class="timing-tag timing-tag-skip">${metadata.skipReason || 'skipped'}</span>`;
+    return `<span class="luxar-timing-panel__tag luxar-timing-panel__tag--skip">${escapeHtml(metadata.skipReason || 'skipped')}</span>`;
   }
 
   if (metadata.chunks !== undefined) {
-    tags.push(`<span class="timing-tag">${metadata.chunks} chunks</span>`);
+    tags.push(`<span class="luxar-timing-panel__tag">${metadata.chunks} chunks</span>`);
   }
 
   if (metadata.cacheHits !== undefined && metadata.cacheMisses !== undefined) {
     const total = metadata.cacheHits + metadata.cacheMisses;
     if (total > 0) {
       const hitRate = Math.round((metadata.cacheHits / total) * 100);
-      const tagClass = hitRate > 80 ? 'timing-tag-good' : hitRate > 50 ? '' : 'timing-tag-warn';
-      tags.push(`<span class="timing-tag ${tagClass}">${hitRate}% cache</span>`);
+      const tagClass =
+        hitRate > 80
+          ? 'luxar-timing-panel__tag--good'
+          : hitRate > 50
+            ? ''
+            : 'luxar-timing-panel__tag--warn';
+      tags.push(`<span class="luxar-timing-panel__tag ${tagClass}">${hitRate}% cache</span>`);
     }
   }
 
   if (metadata.points !== undefined) {
-    tags.push(`<span class="timing-tag">${formatCount(metadata.points)} pts</span>`);
+    tags.push(`<span class="luxar-timing-panel__tag">${formatCount(metadata.points)} pts</span>`);
   }
 
   if (metadata.segments !== undefined) {
-    tags.push(`<span class="timing-tag">${formatCount(metadata.segments)} segs</span>`);
+    tags.push(
+      `<span class="luxar-timing-panel__tag">${formatCount(metadata.segments)} segs</span>`
+    );
   }
 
   if (metadata.splats !== undefined) {
-    tags.push(`<span class="timing-tag">${formatCount(metadata.splats)} splats</span>`);
+    tags.push(
+      `<span class="luxar-timing-panel__tag">${formatCount(metadata.splats)} splats</span>`
+    );
   }
 
   if (metadata.info) {
-    tags.push(`<span class="timing-tag">${metadata.info}</span>`);
+    tags.push(`<span class="luxar-timing-panel__tag">${escapeHtml(metadata.info)}</span>`);
   }
 
   return tags.join(' ');
@@ -393,31 +393,36 @@ function renderEntry(entry: TimingEntry, depth: number, parentPath: string): str
   const indent = depth * 16;
 
   // Determine row classes
-  const rowClasses = ['timing-row'];
-  if (entry.overBudget) rowClasses.push('timing-over-budget');
-  if (entry.metadata?.skipped) rowClasses.push('timing-skipped');
-  if (hasOverBudget(entry) && !entry.overBudget) rowClasses.push('timing-child-over-budget');
+  const rowClasses = ['luxar-timing-panel__row'];
+  if (entry.overBudget) rowClasses.push('luxar-timing-panel__row--over');
+  if (entry.metadata?.skipped) rowClasses.push('luxar-timing-panel__row--skipped');
+  if (hasOverBudget(entry) && !entry.overBudget)
+    rowClasses.push('luxar-timing-panel__row--child-over');
 
   // Expand/collapse indicator
   const expandIcon = hasChildren
-    ? `<span class="timing-expand" data-path="${path}">${expanded ? '▼' : '►'}</span>`
-    : '<span class="timing-expand-placeholder"></span>';
+    ? `<span class="luxar-timing-panel__expand" data-path="${escapeHtml(path)}">${expanded ? '▼' : '►'}</span>`
+    : '<span class="luxar-timing-panel__expand-placeholder"></span>';
 
   // Time values (skip for skipped entries)
   const lastValue = entry.metadata?.skipped ? '—' : formatMs(entry.lastMs);
   const avgValue = entry.metadata?.skipped ? '—' : formatMs(entry.avgMs);
 
+  // Tooltip for the operation label
+  const tooltip = getTooltip(entry.name);
+  const titleAttr = tooltip ? ` title="${escapeHtml(tooltip)}"` : '';
+
   // Build row HTML (data-path on row for incremental updates)
   let html = `
-    <div class="${rowClasses.join(' ')}" style="padding-left: ${indent}px" data-path="${path}">
-      <div class="timing-name">
+    <div class="${rowClasses.join(' ')}" style="padding-left: ${indent}px" data-path="${escapeHtml(path)}">
+      <div class="luxar-timing-panel__name">
         ${expandIcon}
-        <span class="timing-label">${escapeHtml(entry.name)}</span>
+        <span class="luxar-timing-panel__label"${titleAttr}>${escapeHtml(entry.name)}</span>
         ${renderMetadata(entry.metadata)}
       </div>
-      <div class="timing-values">
-        <span class="timing-last">${lastValue}</span>
-        <span class="timing-avg">${avgValue}</span>
+      <div class="luxar-timing-panel__values">
+        <span class="luxar-timing-panel__last">${lastValue}</span>
+        <span class="luxar-timing-panel__avg">${avgValue}</span>
       </div>
     </div>
   `;
@@ -430,17 +435,6 @@ function renderEntry(entry: TimingEntry, depth: number, parentPath: string): str
   }
 
   return html;
-}
-
-/**
- * Escape HTML special characters
- */
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
 
 /**
@@ -460,8 +454,8 @@ function createAggregatedRoot(root: TimingEntry): TimingEntry {
 export function renderHierarchicalTimingPanel(root: TimingEntry): string {
   if (root.count === 0) {
     return `
-      <div class="timing-panel timing-empty">
-        <div class="timing-empty-message">
+      <div class="luxar-timing-panel luxar-timing-panel--empty">
+        <div class="luxar-timing-panel__empty-msg">
           No timing data yet. Move a slider or navigate dimensions to see performance breakdown.
         </div>
       </div>
@@ -472,24 +466,24 @@ export function renderHierarchicalTimingPanel(root: TimingEntry): string {
   const aggregatedRoot = createAggregatedRoot(root);
 
   return `
-    <div class="timing-panel">
-      <div class="timing-header">
-        <div class="timing-header-label">Operation</div>
-        <div class="timing-header-values">
-          <span class="timing-header-last">Last</span>
-          <span class="timing-header-avg">Avg</span>
+    <div class="luxar-timing-panel">
+      <div class="luxar-timing-panel__header">
+        <div class="luxar-timing-panel__header-label">Operation</div>
+        <div class="luxar-timing-panel__header-values">
+          <span class="luxar-timing-panel__header-last">Last</span>
+          <span class="luxar-timing-panel__header-avg">Avg</span>
         </div>
       </div>
-      <div class="timing-body">
+      <div class="luxar-timing-panel__body">
         ${renderEntry(aggregatedRoot, 0, '')}
       </div>
-      <div class="timing-footer">
-        <span class="timing-legend">
-          <span class="timing-legend-item timing-legend-normal">Normal</span>
-          <span class="timing-legend-item timing-legend-over">&gt;16ms (60fps)</span>
-          <span class="timing-legend-item timing-legend-skip">Skipped</span>
+      <div class="luxar-timing-panel__footer">
+        <span class="luxar-timing-panel__legend">
+          <span class="luxar-timing-panel__legend-item luxar-timing-panel__legend-item--normal">Normal</span>
+          <span class="luxar-timing-panel__legend-item luxar-timing-panel__legend-item--over">&gt;16ms (60fps)</span>
+          <span class="luxar-timing-panel__legend-item luxar-timing-panel__legend-item--skip">Skipped</span>
         </span>
-        <span class="timing-update-count">${root.count} updates</span>
+        <span class="luxar-timing-panel__update-count">${root.count} updates</span>
       </div>
     </div>
   `;
@@ -500,30 +494,16 @@ export function renderHierarchicalTimingPanel(root: TimingEntry): string {
  * Call this after rendering the panel
  */
 export function attachTimingPanelHandlers(container: HTMLElement, onUpdate: () => void): void {
-  container.querySelectorAll('.timing-expand').forEach((el) => {
+  container.querySelectorAll('.luxar-timing-panel__expand').forEach((el) => {
     // Avoid adding duplicate listeners by checking for marker
     if ((el as HTMLElement).dataset.hasListener) return;
     (el as HTMLElement).dataset.hasListener = 'true';
-
-    // Lock interaction when hovering over expand buttons
-    el.addEventListener('mouseenter', () => {
-      setInteractionLock(true);
-    });
-
-    el.addEventListener('mouseleave', () => {
-      // Keep lock for a bit after leaving to allow click
-      setTimeout(() => {
-        setInteractionLock(false);
-      }, 500);
-    });
 
     el.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
       const path = (el as HTMLElement).dataset.path;
       if (path) {
-        // Extend lock during toggle
-        setInteractionLock(true);
         toggleExpanded(path);
         onUpdate();
       }
@@ -540,11 +520,11 @@ export function attachTimingPanelHandlers(container: HTMLElement, onUpdate: () =
  * @returns true if update was successful, false if full re-render is needed
  */
 export function updateTimingPanelValues(container: HTMLElement, root: TimingEntry): boolean {
-  const timingBody = container.querySelector('.timing-body');
+  const timingBody = container.querySelector('.luxar-timing-panel__body');
   if (!timingBody) return false;
 
   // Update the update count in footer
-  const updateCount = container.querySelector('.timing-update-count');
+  const updateCount = container.querySelector('.luxar-timing-panel__update-count');
   if (updateCount) {
     updateCount.textContent = `${root.count} updates`;
   }
@@ -570,7 +550,7 @@ function updateEntryValues(
   const expanded = isExpanded(path, depth);
 
   // Find the row for this entry
-  const rows = Array.from(container.querySelectorAll(':scope > .timing-row'));
+  const rows = Array.from(container.querySelectorAll(':scope > .luxar-timing-panel__row'));
   let rowIndex = 0;
 
   // Find the row matching this path (by checking the row's data-path)
@@ -580,12 +560,13 @@ function updateEntryValues(
 
     // Match by path
     if (rowPath === path) {
-      const expandBtn = row.querySelector('.timing-expand') as HTMLElement;
+      const expandBtn = row.querySelector('.luxar-timing-panel__expand') as HTMLElement;
       // Update row classes
-      const rowClasses = ['timing-row'];
-      if (entry.overBudget) rowClasses.push('timing-over-budget');
-      if (entry.metadata?.skipped) rowClasses.push('timing-skipped');
-      if (hasOverBudget(entry) && !entry.overBudget) rowClasses.push('timing-child-over-budget');
+      const rowClasses = ['luxar-timing-panel__row'];
+      if (entry.overBudget) rowClasses.push('luxar-timing-panel__row--over');
+      if (entry.metadata?.skipped) rowClasses.push('luxar-timing-panel__row--skipped');
+      if (hasOverBudget(entry) && !entry.overBudget)
+        rowClasses.push('luxar-timing-panel__row--child-over');
       (row as HTMLElement).className = rowClasses.join(' ');
 
       // Update expand icon
@@ -594,8 +575,8 @@ function updateEntryValues(
       }
 
       // Update timing values
-      const lastSpan = row.querySelector('.timing-last');
-      const avgSpan = row.querySelector('.timing-avg');
+      const lastSpan = row.querySelector('.luxar-timing-panel__last');
+      const avgSpan = row.querySelector('.luxar-timing-panel__avg');
       if (lastSpan) {
         lastSpan.textContent = entry.metadata?.skipped ? '—' : formatMs(entry.lastMs);
       }
@@ -604,10 +585,12 @@ function updateEntryValues(
       }
 
       // Update metadata tags
-      const timingName = row.querySelector('.timing-name');
+      const timingName = row.querySelector('.luxar-timing-panel__name');
       if (timingName) {
         // Remove existing metadata tags
-        timingName.querySelectorAll('.timing-tag').forEach((tag: Element) => tag.remove());
+        timingName
+          .querySelectorAll('.luxar-timing-panel__tag')
+          .forEach((tag: Element) => tag.remove());
         // Add new metadata
         const metadataHtml = renderMetadata(entry.metadata);
         if (metadataHtml) {

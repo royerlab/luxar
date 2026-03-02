@@ -92,10 +92,12 @@ def cholesky_to_conic(L: torch.Tensor) -> torch.Tensor:
         return torch.stack([c_00, c_01, c_02, c_11, c_12, c_22], dim=1)
 
     else:
-        # Generic nD: use PyTorch linalg
-        # Note: This is slower but works for any dimension
-        Sigma = L @ L.transpose(-2, -1)
-        Sigma_inv = torch.linalg.inv(Sigma)
+        # Generic nD: use triangular solve for numerical stability
+        # Compute L⁻¹ via forward substitution (exploits triangular structure)
+        # Σ⁻¹ = L⁻ᵀ @ L⁻¹ = (L⁻¹)ᵀ @ L⁻¹
+        eye = torch.eye(d, device=device, dtype=L.dtype).unsqueeze(0).expand(N, -1, -1)
+        L_inv = torch.linalg.solve_triangular(L, eye, upper=False)
+        Sigma_inv = L_inv.transpose(-2, -1) @ L_inv
 
         # Extract upper triangle in row-major order
         indices = torch.triu_indices(d, d, device=device)
@@ -142,17 +144,24 @@ class CUDASplatFunction(torch.autograd.Function):
         Ls_for_conic = Ls.detach().clone().requires_grad_(True)
         conic = cholesky_to_conic(Ls_for_conic)
 
+        # Compute exact L_row_norms from Cholesky factors for AABB computation
+        # L_row_norms[i] = sqrt(sum_j L[i,j]^2) = sqrt(Sigma[i,i])
+        # This is exact (unlike the old conic-diagonal approximation)
+        L_row_norms = torch.sqrt(torch.sum(Ls * Ls, dim=2))  # (N, d)
+
         # Convert to FP16 for kernel if needed (AMP mode converts FP32 params to FP16)
         if use_fp16_kernel and centers.dtype != torch.float16:
             centers_kernel = centers.half().contiguous()
             conic_kernel = conic.half().contiguous()
             amps_kernel = amps.half().contiguous()
             sharpness_kernel = sharpness.half().contiguous()
+            L_row_norms_kernel = L_row_norms.half().contiguous()
         else:
             centers_kernel = centers.contiguous()
             conic_kernel = conic.contiguous()
             amps_kernel = amps.contiguous()
             sharpness_kernel = sharpness.contiguous()
+            L_row_norms_kernel = L_row_norms.float().contiguous()
 
         if CUDA_BACKEND_AVAILABLE:
             # Dispatch to CUDA kernels (use FP16 kernel if autocast or explicit)
@@ -161,6 +170,7 @@ class CUDASplatFunction(torch.autograd.Function):
                 conic_kernel,
                 amps_kernel,
                 sharpness_kernel,
+                L_row_norms_kernel,
                 list(shape),
                 truncate,
                 intensity_floor,
@@ -175,6 +185,9 @@ class CUDASplatFunction(torch.autograd.Function):
             tile_offsets = result[2] if len(result) > 2 else None
             tile_content = result[3] if len(result) > 3 else None
             global_splat_ids = result[4] if len(result) > 4 else None
+            # Cached device tensors from forward (avoids H2D copy in backward)
+            shape_tensor_cached = result[5] if len(result) > 5 else None
+            tile_dims_tensor_cached = result[6] if len(result) > 6 else None
         else:
             # Fallback to PyTorch rendering
             from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
@@ -186,6 +199,8 @@ class CUDASplatFunction(torch.autograd.Function):
             tile_offsets = None
             tile_content = None
             global_splat_ids = None
+            shape_tensor_cached = None
+            tile_dims_tensor_cached = None
 
         # Save for backward (keep FP16 tensors for backward pass if enabled)
         ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps, sharpness)
@@ -203,6 +218,8 @@ class CUDASplatFunction(torch.autograd.Function):
         ctx.tile_offsets = tile_offsets
         ctx.tile_content = tile_content
         ctx.global_splat_ids = global_splat_ids
+        ctx.shape_tensor_cached = shape_tensor_cached
+        ctx.tile_dims_tensor_cached = tile_dims_tensor_cached
         ctx.d = d
         ctx.use_fp16 = use_fp16_kernel  # Actual kernel mode
         ctx.explicit_fp16 = use_fp16  # Original flag (FP16 params, unsafe for train)
@@ -245,6 +262,13 @@ class CUDASplatFunction(torch.autograd.Function):
         if CUDA_BACKEND_AVAILABLE and ctx.tile_counts is not None:
             # Use CUDA backward kernels with cached FP16 tensors if enabled
             # This avoids re-conversion overhead in the backward pass
+            # Build optional kwargs for cached device tensors (backward compat)
+            cached_kwargs = {}
+            if ctx.shape_tensor_cached is not None:
+                cached_kwargs["shape_tensor_cached"] = ctx.shape_tensor_cached
+            if ctx.tile_dims_tensor_cached is not None:
+                cached_kwargs["tile_dims_tensor_cached"] = ctx.tile_dims_tensor_cached
+
             d_centers, d_conic, d_amps, d_sharpness = cuda_splatting_backend.backward(
                 grad_output.contiguous(),
                 ctx.centers_kernel,  # Use cached FP16 or FP32 tensor
@@ -261,6 +285,7 @@ class CUDASplatFunction(torch.autograd.Function):
                 tile_size,
                 batch_size,
                 use_fp16,
+                **cached_kwargs,
             )
 
             # Chain rule: d_conic → d_Ls via PyTorch autograd
@@ -401,6 +426,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         intensity_floor: float = 1e-5,
         tile_size: Optional[int] = None,
         use_fp16: bool = False,
+        voxel_size: Optional[np.ndarray] = None,
         device: Optional[torch.device] = None,
     ):
         super().__init__()
@@ -437,6 +463,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             max_eccentricity=max_eccentricity,
             sharpness_range=sharpness_range,
             truncate=truncate,
+            voxel_size=voxel_size,
             device=device,
         )
 
@@ -785,6 +812,10 @@ class GaussianSplatModelCUDA(torch.nn.Module):
     @property
     def amp_max(self):
         return self._base.amp_max
+
+    @property
+    def voxel_size(self):
+        return self._base.voxel_size
 
     @property
     def use_fp16(self):

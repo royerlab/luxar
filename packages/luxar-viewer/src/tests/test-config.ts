@@ -13,9 +13,9 @@ import * as THREE from 'three';
  * Uses actual config values to ensure tests match production behavior
  */
 export const testCameraConfig = {
-  fov: config.camera.fov,
-  near: config.camera.near,
-  far: config.camera.far,
+  fov: config.renderingControls.defaults.fov,
+  near: config.renderingControls.defaults.near,
+  far: config.renderingControls.defaults.far,
   aspectRatio: 1, // Default aspect ratio for tests
   position: config.camera.initialPosition,
 };

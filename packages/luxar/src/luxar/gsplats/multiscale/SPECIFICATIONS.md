@@ -391,7 +391,7 @@ Initialize all scales to zero (or near-zero values):
 def initialize_zero(target: Tensor) -> None:
     """
     Initialize all scales to zero (or near-zero).
-    
+
     This creates a "worst case" starting point where all scales start at
     effectively zero and must be learned from scratch. Useful for understanding
     the importance of initialization and as a baseline comparison.
@@ -950,7 +950,7 @@ else:
    - Visualization of scale components
    - Energy distribution plots
 
-2. **demo_decompose_mitosis.py**:
+2. **demo_decompose_2d_mitosis.py**:
    - Human mitosis biological histology data
    - Shows cellular feature distribution across scales
    - Demonstrates scale-specific biological structures
@@ -1095,7 +1095,7 @@ The `show_optimization_movie()` function displays:
 
 ## Changelog
 
-- **v0.1.0** (2025-01-XX): Initial specification with hierarchical energy loss
+- **v0.1.0** (2025-01): Initial specification with hierarchical energy loss
   - Basic decomposition with softplus constraints
   - Gaussian pyramid initialization
   - MSE reconstruction + energy penalty losses

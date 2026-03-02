@@ -6,6 +6,7 @@
  */
 
 import { DirectoryNavigator, type DirectoryEntry } from '../data';
+import { escapeHtml } from '../utils/escape-html';
 
 export interface DatasetBrowserConfig {
   container: HTMLElement;
@@ -258,7 +259,7 @@ export class DatasetBrowser {
       content.innerHTML = `
         <div class="luxar-dataset-browser__error">
           <p>Failed to load directory</p>
-          <p class="luxar-dataset-browser__error-details">${error}</p>
+          <p class="luxar-dataset-browser__error-details">${escapeHtml(String(error))}</p>
         </div>
       `;
       statusBar.textContent = 'Error loading directory';

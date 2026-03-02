@@ -37,11 +37,10 @@ import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-deco
 import { RangeLoader, type LoadRange } from './loaders';
 import { LinesDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
-import { getWorkerPool } from '../workers/worker-pool';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
 import { initWasm, getFallback } from '../wasm';
 import type { WasmModule } from '../wasm/types';
-import { DecompressedChunkCache, wrapWithCache } from '../cache';
+import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache';
 
 // ============================================================================
 // WASM Module Caching for Hot Path Optimization
@@ -106,6 +105,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
 
+  // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
+  private prefetcher: ChunkPrefetcher | null = null;
+
+  // Suppress detail logs after first successful view update
+  private _initialLoadDone = false;
+
   private arrays: {
     vertices?: zarr.Array<zarr.DataType, zarr.Readable>;
     segments?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -120,15 +125,24 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable,
     profiler?: UpdateProfiler,
-    l0Cache?: DecompressedChunkCache
+    l0Cache?: DecompressedChunkCache,
+    prefetcher?: ChunkPrefetcher
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
     this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
     this.zarrStore = zarrStore || null;
     this.l0Cache = l0Cache || null;
+    this.prefetcher = prefetcher || null;
     // profiler parameter kept for API compatibility; session is passed directly to methods
     void profiler;
+  }
+
+  /** Register array shape with the prefetcher for upper-bounds checking. */
+  private registerBounds(arrayName: string, array: zarr.Array<zarr.DataType, zarr.Readable>): void {
+    if (!this.prefetcher) return;
+    const path = `${this.node.path.startsWith('/') ? this.node.path.slice(1) : this.node.path}/${arrayName}`;
+    this.prefetcher.registerArrayBounds(path, array.shape, array.chunks);
   }
 
   /**
@@ -169,6 +183,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       let segmentsArray = await zarr.open(this.zarrLocation.resolve('segments'), {
         kind: 'array',
       });
+      // Register array bounds with prefetcher for upper-bounds checking
+      this.registerBounds('vertices', verticesArray);
+      this.registerBounds('segments', segmentsArray);
       // Wrap with L0 cache if enabled (caches decoded chunks to avoid Blosc decompression)
       if (this.l0Cache) {
         verticesArray = wrapWithCache(verticesArray, this.l0Cache, `${this.node.path}/vertices`);
@@ -184,6 +201,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     // Try to open optional arrays
     try {
       let widthsArray = await zarr.open(this.zarrLocation.resolve('widths'), { kind: 'array' });
+      this.registerBounds('widths', widthsArray);
       if (this.l0Cache) {
         widthsArray = wrapWithCache(widthsArray, this.l0Cache, `${this.node.path}/widths`);
       }
@@ -194,6 +212,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     try {
       let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+      this.registerBounds('colors', colorsArray);
       if (this.l0Cache) {
         colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`);
       }
@@ -203,15 +222,34 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     }
 
     try {
-      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
-        kind: 'array',
-      });
+      // Try plural name first (current format), fall back to singular (legacy)
+      let sharpnessArray: zarr.Array<zarr.DataType, zarr.Readable>;
+      let sharpnessName: string;
+      try {
+        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
+          kind: 'array',
+        });
+        sharpnessName = 'sharpnesses';
+      } catch {
+        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
+          kind: 'array',
+        });
+        sharpnessName = 'sharpness';
+      }
+      this.registerBounds(sharpnessName, sharpnessArray);
       if (this.l0Cache) {
-        sharpnessArray = wrapWithCache(sharpnessArray, this.l0Cache, `${this.node.path}/sharpness`);
+        sharpnessArray = wrapWithCache(
+          sharpnessArray,
+          this.l0Cache,
+          `${this.node.path}/${sharpnessName}`
+        );
       }
       this.arrays.sharpness = sharpnessArray;
     } catch {
-      log.info(Modules.SPATIAL_INDEX_LOADER, 'No sharpness array found (using default sharpness)');
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        'No sharpnesses array found (using default sharpness)'
+      );
     }
 
     // Initialize data accumulator for object pooling (Phase 1 optimization)
@@ -290,11 +328,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     }
 
     // Load segment indices
-    log.info(
-      LogEmoji.LOAD,
-      Modules.SPATIAL_INDEX_LOADER,
-      `Loading segments for ${segmentRanges.length} ranges`
-    );
+    if (!this._initialLoadDone) {
+      log.load(Modules.SPATIAL_INDEX_LOADER, `Loading segments for ${segmentRanges.length} ranges`);
+    }
     let segmentData: Uint32Array;
     if (session) {
       const loadSegSession = session.begin('Load Segments');
@@ -324,31 +360,32 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const indexSpan = maxIdx - minIdx + 1;
     const efficiency = sortedIndices.length / indexSpan;
 
-    log.info(
-      LogEmoji.LOAD,
-      Modules.SPATIAL_INDEX_LOADER,
-      `Loading vertices for ${mergedVertexRanges.length} ranges (${sortedIndices.length} unique vertices)`
-    );
-    log.info(
-      Modules.SPATIAL_INDEX_LOADER,
-      `  Vertex index range: [${minIdx} - ${maxIdx}], span=${indexSpan}, efficiency=${(efficiency * 100).toFixed(1)}%`
-    );
-    if (mergedVertexRanges.length <= 10) {
+    if (!this._initialLoadDone) {
+      log.load(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Loading vertices for ${mergedVertexRanges.length} ranges (${sortedIndices.length} unique vertices)`
+      );
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `  Ranges: ${mergedVertexRanges.map((r) => `[${r.start}-${r.end})`).join(', ')}`
+        `  Vertex index range: [${minIdx} - ${maxIdx}], span=${indexSpan}, efficiency=${(efficiency * 100).toFixed(1)}%`
       );
-    } else {
-      const first5 = mergedVertexRanges
-        .slice(0, 5)
-        .map((r) => `[${r.start}-${r.end})`)
-        .join(', ');
-      const last5 = mergedVertexRanges
-        .slice(-5)
-        .map((r) => `[${r.start}-${r.end})`)
-        .join(', ');
-      log.info(Modules.SPATIAL_INDEX_LOADER, `  First 5 ranges: ${first5}`);
-      log.info(Modules.SPATIAL_INDEX_LOADER, `  Last 5 ranges: ${last5}`);
+      if (mergedVertexRanges.length <= 10) {
+        log.info(
+          Modules.SPATIAL_INDEX_LOADER,
+          `  Ranges: ${mergedVertexRanges.map((r) => `[${r.start}-${r.end})`).join(', ')}`
+        );
+      } else {
+        const first5 = mergedVertexRanges
+          .slice(0, 5)
+          .map((r) => `[${r.start}-${r.end})`)
+          .join(', ');
+        const last5 = mergedVertexRanges
+          .slice(-5)
+          .map((r) => `[${r.start}-${r.end})`)
+          .join(', ');
+        log.info(Modules.SPATIAL_INDEX_LOADER, `  First 5 ranges: ${first5}`);
+        log.info(Modules.SPATIAL_INDEX_LOADER, `  Last 5 ranges: ${last5}`);
+      }
     }
 
     // Phase 1 DEEP Integration: Load directly to accumulator if enabled (ZERO allocations!)
@@ -529,7 +566,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    * @param session - Optional profiler session for nested timing
    */
   async updateView(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData> {
-    return this.loadLines(viewState, session);
+    const result = await this.loadLines(viewState, session);
+    if (!this._initialLoadDone) {
+      this._initialLoadDone = true;
+      this.rangeLoader.setVerbose(false);
+    }
+    return result;
   }
 
   /**
@@ -563,11 +605,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       const isExtending = extendDims.some((edim: string) => currentNonDisplayedDims.includes(edim));
 
       if (isExtending) {
-        log.custom(
-          LogEmoji.BROADCAST,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
-        );
+        if (!this._initialLoadDone) {
+          log.custom(
+            LogEmoji.BROADCAST,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
+          );
+        }
         // Return all segments for extended dimensions
         return [{ start: 0, end: attrs.n_segments }];
       }
@@ -589,30 +633,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       slicePosition[i] = viewState.slicePosition[i] ?? 0;
     }
 
-    // Query segment chunks (worker or main thread based on config)
-    let chunkIndices: number[];
-
-    if (appConfig.dataLoading.performance.useWebWorkers) {
-      // Phase 2: Use worker for spatial queries
-      try {
-        const worker = await getWorkerPool().getWorker();
-        const result = await worker.querySpatialIndex({
-          chunkBounds: this.chunkIndex.segmentChunkBounds,
-          slicePosition: new Float32Array(slicePosition),
-          tolerance: new Float32Array(tolerance),
-          numChunks: this.chunkIndex.segmentChunkCount,
-          ndim: attrs.ndim,
-        });
-        chunkIndices = Array.from(result);
-      } catch (error) {
-        log.error(Modules.SPATIAL_INDEX_LOADER, 'Worker query failed, using main thread:', error);
-        // Fallback to main thread
-        chunkIndices = querySegmentChunksForView(this.chunkIndex, slicePosition, tolerance);
-      }
-    } else {
-      // Main thread query
-      chunkIndices = querySegmentChunksForView(this.chunkIndex, slicePosition, tolerance);
-    }
+    // Always query on main thread — AABB scan is O(chunks × ndim) and completes in
+    // microseconds. Worker roundtrips add ~3ms each (structured clone, postMessage,
+    // deserialization), which dominates when many nodes query concurrently.
+    const chunkIndices = querySegmentChunksForView(this.chunkIndex, slicePosition, tolerance);
 
     if (chunkIndices.length === 0) {
       return [];
