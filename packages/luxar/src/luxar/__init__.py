@@ -132,6 +132,12 @@ __all__: list[str] = [
     # Dimension system
     "Dimensions",
     "Dimension",
+    # Viewer configuration
+    "ViewerConfig",
+    "CameraConfig",
+    "UIConfig",
+    "DimensionsConfig",
+    "AnimationConfig",
     # Enumerations
     "BlendingMode",
     "NodeType",

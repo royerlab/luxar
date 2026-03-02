@@ -66,8 +66,7 @@ class GSplatData:
             )
         if self.colors is not None and self.colors.shape[0] != n:
             raise ValueError(
-                f"Colors count {self.colors.shape[0]} doesn't match "
-                f"centers count {n}"
+                f"Colors count {self.colors.shape[0]} doesn't match centers count {n}"
             )
         if self.centers.ndim >= 2:
             from luxar.gsplats.utils.trils import validate_cholesky_shape
@@ -121,8 +120,9 @@ class GSplatData:
         return self.cholesky_factors[:, diag_indices]
 
     def volumes(self) -> np.ndarray:
-        """Per-splat volume proportional to det(Sigma)^(1/d).
+        """Per-splat characteristic length: det(Σ)^(1/d).
 
+        This is the geometric mean of the eigenvalues (not a true volume).
         For lower-triangular L: det(L) = product of diagonal elements,
         det(Sigma) = det(L)^2.
 
@@ -133,7 +133,7 @@ class GSplatData:
             return np.empty(0, dtype=np.float64)
         diag = self._cholesky_diag_elements()
         det_L = np.prod(diag, axis=1)
-        return np.abs(det_L ** 2) ** (1.0 / self.ndim)
+        return np.abs(det_L**2) ** (1.0 / self.ndim)
 
     def masses(self) -> np.ndarray:
         """Per-splat mass: amplitude * volume.
@@ -156,7 +156,7 @@ class GSplatData:
         from luxar.gsplats.utils.trils import unpack_tril
 
         L = unpack_tril(self.cholesky_factors.astype(np.float64), self.ndim)
-        return np.sqrt(np.sum(L ** 2, axis=2))
+        return np.sqrt(np.sum(L**2, axis=2))
 
     def eccentricities(self) -> np.ndarray:
         """Per-splat eccentricity: max marginal sigma / min marginal sigma.
@@ -202,7 +202,7 @@ class GSplatData:
             cholesky_factors=self.cholesky_factors[mask],
             sharpnesses=self.sharpnesses[mask],
             colors=self.colors[mask] if self.colors is not None else None,
-            stats=self.stats.copy() if self.stats else {},
+            stats=dict(self.stats),
         )
 
     # ── Combine / Split / Embed ─────────────────────────────
@@ -225,27 +225,32 @@ class GSplatData:
         if len(datasets) == 0:
             raise ValueError("At least one GSplatData is required")
 
-        ndim = datasets[0].ndim
-        for i, ds in enumerate(datasets[1:], start=1):
-            if ds.ndim != ndim and ds.n_splats > 0:
+        # Filter out empty datasets to avoid shape mismatch in np.concatenate
+        non_empty = [d for d in datasets if d.n_splats > 0]
+        if len(non_empty) == 0:
+            return datasets[0]  # All empty: return first as-is
+
+        ndim = non_empty[0].ndim
+        for i, ds in enumerate(non_empty[1:], start=1):
+            if ds.ndim != ndim:
                 raise ValueError(
                     f"Dimensionality mismatch: dataset 0 has {ndim}D, "
                     f"dataset {i} has {ds.ndim}D"
                 )
 
-        all_centers = np.concatenate([d.centers for d in datasets], axis=0)
-        all_amplitudes = np.concatenate([d.amplitudes for d in datasets])
-        all_cholesky = np.concatenate([d.cholesky_factors for d in datasets], axis=0)
-        all_sharpnesses = np.concatenate([d.sharpnesses for d in datasets])
+        all_centers = np.concatenate([d.centers for d in non_empty], axis=0)
+        all_amplitudes = np.concatenate([d.amplitudes for d in non_empty])
+        all_cholesky = np.concatenate([d.cholesky_factors for d in non_empty], axis=0)
+        all_sharpnesses = np.concatenate([d.sharpnesses for d in non_empty])
 
-        has_colors = [d.colors is not None for d in datasets]
+        has_colors = [d.colors is not None for d in non_empty]
         if all(has_colors):
-            all_colors = np.concatenate([d.colors for d in datasets], axis=0)
+            all_colors = np.concatenate([d.colors for d in non_empty], axis=0)
         elif not any(has_colors):
             all_colors = None
         else:
             parts = []
-            for d in datasets:
+            for d in non_empty:
                 if d.colors is not None:
                     parts.append(d.colors)
                 else:
@@ -256,7 +261,7 @@ class GSplatData:
             "concatenated_from": len(datasets),
             "splats_per_source": [d.n_splats for d in datasets],
         }
-        total_time = sum(d.stats.get("time_seconds", 0) for d in datasets)
+        total_time = sum(d.stats.get("time_seconds", 0) for d in non_empty)
         if total_time > 0:
             merged_stats["time_seconds"] = total_time
 
@@ -269,9 +274,7 @@ class GSplatData:
             stats=merged_stats,
         )
 
-    def split(
-        self, n_or_indices: "int | list[int] | np.ndarray"
-    ) -> "list[GSplatData]":
+    def split(self, n_or_indices: "int | list[int] | np.ndarray") -> "list[GSplatData]":
         """Split into multiple GSplatData objects.
 
         Args:
@@ -294,23 +297,31 @@ class GSplatData:
             if len(idx) == 0:
                 d = self.ndim
                 k = tril_size(d) if d > 0 else 0
-                results.append(GSplatData(
-                    centers=np.empty((0, d), dtype=self.centers.dtype),
-                    amplitudes=np.empty(0, dtype=self.amplitudes.dtype),
-                    cholesky_factors=np.empty((0, k), dtype=self.cholesky_factors.dtype),
-                    sharpnesses=np.empty(0, dtype=self.sharpnesses.dtype),
-                    colors=np.empty((0, 3), dtype=np.float32) if self.colors is not None else None,
-                    stats=self.stats.copy() if self.stats else {},
-                ))
+                results.append(
+                    GSplatData(
+                        centers=np.empty((0, d), dtype=self.centers.dtype),
+                        amplitudes=np.empty(0, dtype=self.amplitudes.dtype),
+                        cholesky_factors=np.empty(
+                            (0, k), dtype=self.cholesky_factors.dtype
+                        ),
+                        sharpnesses=np.empty(0, dtype=self.sharpnesses.dtype),
+                        colors=np.empty((0, 3), dtype=np.float32)
+                        if self.colors is not None
+                        else None,
+                        stats=dict(self.stats),
+                    )
+                )
             else:
-                results.append(GSplatData(
-                    centers=self.centers[idx],
-                    amplitudes=self.amplitudes[idx],
-                    cholesky_factors=self.cholesky_factors[idx],
-                    sharpnesses=self.sharpnesses[idx],
-                    colors=self.colors[idx] if self.colors is not None else None,
-                    stats=self.stats.copy() if self.stats else {},
-                ))
+                results.append(
+                    GSplatData(
+                        centers=self.centers[idx],
+                        amplitudes=self.amplitudes[idx],
+                        cholesky_factors=self.cholesky_factors[idx],
+                        sharpnesses=self.sharpnesses[idx],
+                        colors=self.colors[idx] if self.colors is not None else None,
+                        stats=dict(self.stats),
+                    )
+                )
         return results
 
     def embed_dimension(
@@ -366,7 +377,7 @@ class GSplatData:
             cholesky_factors=new_cholesky,
             sharpnesses=self.sharpnesses,
             colors=self.colors,
-            stats=self.stats.copy() if self.stats else {},
+            stats=dict(self.stats),
         )
 
     # ── Geometric transforms ────────────────────────────────
@@ -413,7 +424,7 @@ class GSplatData:
                 )
         else:
             raise ValueError(
-                f"Matrix shape must be ({d},{d}) or ({d+1},{d+1}), got {matrix.shape}"
+                f"Matrix shape must be ({d},{d}) or ({d + 1},{d + 1}), got {matrix.shape}"
             )
 
         if self.n_splats == 0:
@@ -423,12 +434,12 @@ class GSplatData:
                 cholesky_factors=self.cholesky_factors.copy(),
                 sharpnesses=self.sharpnesses,
                 colors=self.colors,
-                stats=self.stats.copy() if self.stats else {},
+                stats=dict(self.stats),
             )
 
-        new_centers = (
-            self.centers.astype(np.float64) @ A.T + t
-        ).astype(self.centers.dtype)
+        new_centers = (self.centers.astype(np.float64) @ A.T + t).astype(
+            self.centers.dtype
+        )
 
         L = unpack_tril(self.cholesky_factors.astype(np.float64), d)
         Sigma = L @ np.swapaxes(L, -2, -1)
@@ -442,14 +453,12 @@ class GSplatData:
             cholesky_factors=new_cholesky,
             sharpnesses=self.sharpnesses,
             colors=self.colors,
-            stats=self.stats.copy() if self.stats else {},
+            stats=dict(self.stats),
         )
 
     # ── Intensity transforms ────────────────────────────────
 
-    def affine_intensity(
-        self, scale: float = 1.0, offset: float = 0.0
-    ) -> "GSplatData":
+    def affine_intensity(self, scale: float = 1.0, offset: float = 0.0) -> "GSplatData":
         """Apply affine transform to amplitudes: new_amp = scale * amp + offset.
 
         Args:
@@ -465,7 +474,7 @@ class GSplatData:
             cholesky_factors=self.cholesky_factors,
             sharpnesses=self.sharpnesses,
             colors=self.colors,
-            stats=self.stats.copy() if self.stats else {},
+            stats=dict(self.stats),
         )
 
     def normalize_intensity(self, target_max: float = 1.0) -> "GSplatData":
@@ -485,7 +494,7 @@ class GSplatData:
                 cholesky_factors=self.cholesky_factors,
                 sharpnesses=self.sharpnesses,
                 colors=self.colors,
-                stats=self.stats.copy() if self.stats else {},
+                stats=dict(self.stats),
             )
         return self.scale_intensity(target_max / current_max)
 
@@ -514,7 +523,7 @@ class GSplatData:
             cholesky_factors=self.cholesky_factors,
             sharpnesses=self.sharpnesses,
             colors=self.colors,
-            stats=self.stats.copy() if self.stats else {},
+            stats=dict(self.stats),
         )
 
     # ── I/O ─────────────────────────────────────────────────
@@ -639,7 +648,7 @@ class GSplatData:
             cholesky_factors=self.cholesky_factors,  # REFERENCE
             sharpnesses=self.sharpnesses,  # REFERENCE
             colors=self.colors,  # REFERENCE (None-safe)
-            stats=self.stats.copy() if self.stats else {},
+            stats=dict(self.stats),
         )
 
     def center_at_centroid(self) -> "GSplatData":
@@ -691,7 +700,7 @@ class GSplatData:
             cholesky_factors=self.cholesky_factors,  # REFERENCE
             sharpnesses=self.sharpnesses,  # REFERENCE
             colors=self.colors,  # REFERENCE (None-safe)
-            stats=self.stats.copy() if self.stats else {},
+            stats=dict(self.stats),
         )
 
     def prune(
@@ -748,7 +757,12 @@ class GSplatData:
         if N_original == 0:
             result = self.filter(np.ones(0, dtype=bool))
             result.stats.update(
-                {"pruned": True, "pruning_method": method, "n_original": 0, "n_removed": 0}
+                {
+                    "pruned": True,
+                    "pruning_method": method,
+                    "n_original": 0,
+                    "n_removed": 0,
+                }
             )
             return result
 
@@ -789,15 +803,19 @@ class GSplatData:
 
         # Update stats with pruning metadata
         total_amp = np.sum(self.amplitudes)
-        result.stats.update({
-            "pruned": True,
-            "pruning_method": method,
-            "n_original": N_original,
-            "n_removed": N_original - result.n_splats,
-            "amplitude_retention": (
-                float(np.sum(result.amplitudes) / total_amp) if total_amp > 0 else 1.0
-            ),
-        })
+        result.stats.update(
+            {
+                "pruned": True,
+                "pruning_method": method,
+                "n_original": N_original,
+                "n_removed": N_original - result.n_splats,
+                "amplitude_retention": (
+                    float(np.sum(result.amplitudes) / total_amp)
+                    if total_amp > 0
+                    else 1.0
+                ),
+            }
+        )
 
         return result
 
@@ -934,12 +952,12 @@ class GSplatData:
             raise ValueError("At least one GSplatData object is required")
 
         # Validate all have same dimensionality
-        ndim = gsplats_per_channel[0].centers.shape[1]
+        ndim = gsplats_per_channel[0].ndim
         for i, gsplat in enumerate(gsplats_per_channel[1:], start=1):
-            if gsplat.centers.shape[1] != ndim:
+            if gsplat.ndim != ndim:
                 raise ValueError(
                     f"Dimensionality mismatch: channel 0 has {ndim}D, "
-                    f"channel {i} has {gsplat.centers.shape[1]}D"
+                    f"channel {i} has {gsplat.ndim}D"
                 )
 
         # Concatenate all arrays

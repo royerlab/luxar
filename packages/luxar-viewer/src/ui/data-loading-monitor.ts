@@ -137,10 +137,10 @@ export class DataLoadingMonitor {
     lines: { getStats: () => NonNullable<MemoryMetrics['accumulators']['lines']> } | null;
     gsplats: { getStats: () => NonNullable<MemoryMetrics['accumulators']['gsplats']> } | null;
   } = {
-      points: null,
-      lines: null,
-      gsplats: null,
-    };
+    points: null,
+    lines: null,
+    gsplats: null,
+  };
 
   // DOM element references for efficient updates (avoids full innerHTML replacement)
   private contentContainer: HTMLElement | null = null;
@@ -1000,11 +1000,12 @@ export class DataLoadingMonitor {
 
     if (hasPoints) {
       const pct =
-        stats.datasetSize > 0
-          ? ((stats.visiblePoints / stats.datasetSize) * 100).toFixed(1)
-          : '0';
+        stats.datasetSize > 0 ? ((stats.visiblePoints / stats.datasetSize) * 100).toFixed(1) : '0';
       this.patchField('visible-points', templateFormatNumber(stats.visiblePoints));
-      this.patchField('visible-points-sub', `${pct}% of ${templateFormatNumber(stats.datasetSize)}${suffix}`);
+      this.patchField(
+        'visible-points-sub',
+        `${pct}% of ${templateFormatNumber(stats.datasetSize)}${suffix}`
+      );
     }
     if (hasLines) {
       const pct =
@@ -1012,7 +1013,10 @@ export class DataLoadingMonitor {
           ? ((stats.visibleSegments / stats.datasetSegments) * 100).toFixed(1)
           : '0';
       this.patchField('visible-lines', templateFormatNumber(stats.visibleSegments));
-      this.patchField('visible-lines-sub', `${pct}% of ${templateFormatNumber(stats.datasetSegments)}${suffix}`);
+      this.patchField(
+        'visible-lines-sub',
+        `${pct}% of ${templateFormatNumber(stats.datasetSegments)}${suffix}`
+      );
     }
     if (hasGSplats) {
       const pct =
@@ -1020,7 +1024,10 @@ export class DataLoadingMonitor {
           ? ((stats.visibleSplats / stats.datasetSplats) * 100).toFixed(1)
           : '0';
       this.patchField('visible-splats', templateFormatNumber(stats.visibleSplats));
-      this.patchField('visible-splats-sub', `${pct}% of ${templateFormatNumber(stats.datasetSplats)}${suffix}`);
+      this.patchField(
+        'visible-splats-sub',
+        `${pct}% of ${templateFormatNumber(stats.datasetSplats)}${suffix}`
+      );
     }
 
     // Update secondary metrics
@@ -1063,7 +1070,9 @@ export class DataLoadingMonitor {
   private updateSceneGraphBadges(): void {
     if (!this.contentContainer || !this.sceneGraphState.root) return;
 
-    const badges = this.contentContainer.querySelectorAll('.luxar-scene-graph__badge[data-node-path]');
+    const badges = this.contentContainer.querySelectorAll(
+      '.luxar-scene-graph__badge[data-node-path]'
+    );
     badges.forEach((badge) => {
       const path = (badge as HTMLElement).dataset.nodePath;
       if (!path) return;
@@ -1254,7 +1263,10 @@ export class DataLoadingMonitor {
       const stats = metrics.accumulators[type];
       const hasData = stats !== null && stats.capacity > 0;
 
-      this.patchField(`acc-${type}-capacity`, hasData ? templateFormatNumber(stats!.capacity) : '—');
+      this.patchField(
+        `acc-${type}-capacity`,
+        hasData ? templateFormatNumber(stats!.capacity) : '—'
+      );
       this.patchField(`acc-${type}-memory`, hasData ? `${stats!.memoryMB.toFixed(1)}MB` : '—');
 
       const growsEl = this.contentContainer.querySelector(`[data-field="acc-${type}-grows"]`);
@@ -1278,7 +1290,10 @@ export class DataLoadingMonitor {
       (metrics.accumulators.points?.allocations ?? 0) +
       (metrics.accumulators.lines?.allocations ?? 0) +
       (metrics.accumulators.gsplats?.allocations ?? 0);
-    this.patchField('acc-summary', `Total: ${totalAccMemory.toFixed(1)}MB · ${totalAccAllocs} allocations`);
+    this.patchField(
+      'acc-summary',
+      `Total: ${totalAccMemory.toFixed(1)}MB · ${totalAccAllocs} allocations`
+    );
 
     // Overall total
     const totalAllocations = metrics.gpuPool ? metrics.gpuPool.allocations : 0;

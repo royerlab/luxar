@@ -685,7 +685,7 @@ export class GPUBufferPool {
     geometry.instanceCount = count;
 
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
-     
+
     delete (geometry as any)._maxInstanceCount;
 
     // CRITICAL: Recompute bounding box after position updates
@@ -886,7 +886,7 @@ export class GPUBufferPool {
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
     // Without this, geometries initially created with 0 instances cache _maxInstanceCount=0,
     // causing the renderer to draw min(instanceCount, 0) = 0 instances even after updating.
-     
+
     delete (geometry as any)._maxInstanceCount;
 
     // CRITICAL: Recompute bounding box from updated center positions

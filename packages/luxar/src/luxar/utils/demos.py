@@ -20,6 +20,32 @@ from ..typing_utils.config import check_dataset_size_warning
 from ..typing_utils.protocols import PathLike
 
 
+def detect_device(verbose: bool = True) -> str:
+    """Auto-detect the best available compute device (cuda > mps > cpu).
+
+    Args:
+        verbose: If True, print detected device via arbol.
+
+    Returns:
+        Device string: 'cuda', 'mps', or 'cpu'.
+    """
+    import torch
+
+    if torch.cuda.is_available():
+        device = "cuda"
+        if verbose:
+            aprint("Using CUDA device")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = "mps"
+        if verbose:
+            aprint("Using MPS device (Metal acceleration)")
+    else:
+        device = "cpu"
+        if verbose:
+            aprint("Using CPU device")
+    return device
+
+
 def warn_if_no_cuda_gpu() -> None:
     """Print a warning if no CUDA GPU is available.
 

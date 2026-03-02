@@ -140,6 +140,7 @@ class Scene(Group):
         extend_to_all: Optional[Union[List[str], str]],
         positions: np.ndarray,
         data_type: str,
+        _stacklevel: int = 3,
     ) -> List[str]:
         """Resolve extend_to_all parameter into a final list of dimension names.
 
@@ -173,7 +174,7 @@ class Scene(Group):
                     f"    extend_to_all=[]  # Explicit: no extension\n"
                     f"Set extend_to_all explicitly to silence this warning.",
                     UserWarning,
-                    stacklevel=3,
+                    stacklevel=_stacklevel,
                 )
             return []
         elif extend_to_all == "all":
@@ -246,6 +247,7 @@ class Scene(Group):
         positions: np.ndarray,
         node_name: str,
         data_type: str = "positions",
+        _stacklevel: int = 3,
     ) -> None:
         """Validate that data dimensions match scene dimensions.
 
@@ -290,7 +292,7 @@ class Scene(Group):
                         f"[{range_min}, {range_max}]. "
                         f"Consider adjusting the dimension range or data values.",
                         UserWarning,
-                        stacklevel=3,
+                        stacklevel=_stacklevel,
                     )
 
     # ---------------------------------------------------------- dim_order

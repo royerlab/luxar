@@ -250,7 +250,7 @@ class Group(Node):
                 writer=scene._writer,
                 **attrs,
             )
-        except Exception as e:
+        except (ValueError, TypeError) as e:
             aprint(f"Failed to add points node '{name}': {e}")
             raise ValueError(f"Could not add points '{name}': {e}") from e
 
@@ -345,7 +345,7 @@ class Group(Node):
                 writer=scene._writer,
                 **attrs,
             )
-        except Exception as e:
+        except (ValueError, TypeError) as e:
             aprint(f"Failed to add lines node '{name}': {e}")
             raise ValueError(f"Could not add lines '{name}': {e}") from e
 
@@ -451,7 +451,7 @@ class Group(Node):
                 writer=scene._writer,
                 **attrs,
             )
-        except Exception as e:
+        except (ValueError, TypeError) as e:
             aprint(f"Failed to add gsplats node '{name}': {e}")
             raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 

@@ -137,13 +137,7 @@ class Node:
         try:
             aprint(f"Adding child group '{name}' to node '{self.name}'.")
 
-            # Check for duplicate before creating child
-            for existing_child in self.children:
-                if existing_child.name == name:
-                    raise ValueError(
-                        f"Duplicate child name '{name}' under parent '{self.name}'."
-                    )
-
+            # Duplicate check is handled by Node.__init__ (lines 59-65)
             # Node.__init__ handles writing to storage, attr validation, and caching
             attrs["type"] = "group"
 
@@ -364,10 +358,16 @@ class Node:
         """Equality based on path in the scene graph."""
         if not isinstance(other, Node):
             return NotImplemented
+        # Root nodes (empty path) use identity to avoid all roots comparing equal
+        if self.path == "" and other.path == "":
+            return self is other
         return self.path == other.path
 
     def __hash__(self) -> int:
         """Hash based on path in the scene graph."""
+        # Root nodes use identity hash to avoid all roots hashing identically
+        if self.path == "":
+            return id(self)
         return hash(self.path)
 
     # --------------------------------------------------------------- repr

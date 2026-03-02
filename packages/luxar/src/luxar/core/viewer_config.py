@@ -66,7 +66,9 @@ class CameraConfig:
         """Validate camera configuration values."""
         if self.position is not None:
             if len(self.position) != 3:
-                raise ValueError(f"position must have 3 elements, got {len(self.position)}")
+                raise ValueError(
+                    f"position must have 3 elements, got {len(self.position)}"
+                )
 
         if self.target is not None:
             if len(self.target) != 3:
@@ -142,7 +144,12 @@ class UIConfig:
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary, omitting None fields."""
         result: Dict[str, Any] = {}
-        for field_name in ("show_help", "show_rendering_controls", "show_performance_monitor", "show_dimensions"):
+        for field_name in (
+            "show_help",
+            "show_rendering_controls",
+            "show_performance_monitor",
+            "show_dimensions",
+        ):
             value = getattr(self, field_name)
             if value is not None:
                 result[field_name] = value
@@ -207,7 +214,9 @@ class AnimationConfig:
 
     def __post_init__(self) -> None:
         if self.loop is not None and self.loop not in VALID_LOOP_MODES:
-            raise ValueError(f"loop must be one of {VALID_LOOP_MODES}, got '{self.loop}'")
+            raise ValueError(
+                f"loop must be one of {VALID_LOOP_MODES}, got '{self.loop}'"
+            )
         if self.direction is not None and self.direction not in VALID_DIRECTIONS:
             raise ValueError(
                 f"direction must be one of {VALID_DIRECTIONS}, got '{self.direction}'"
@@ -383,12 +392,18 @@ class ViewerConfig:
         if self.background_color is not None:
             _validate_hex_color(self.background_color)
 
-        if self.tone_mapping is not None and self.tone_mapping not in VALID_TONE_MAPPINGS:
+        if (
+            self.tone_mapping is not None
+            and self.tone_mapping not in VALID_TONE_MAPPINGS
+        ):
             raise ValueError(
                 f"tone_mapping must be one of {VALID_TONE_MAPPINGS}, got '{self.tone_mapping}'"
             )
 
-        if self.control_type is not None and self.control_type not in VALID_CONTROL_TYPES:
+        if (
+            self.control_type is not None
+            and self.control_type not in VALID_CONTROL_TYPES
+        ):
             raise ValueError(
                 f"control_type must be one of {VALID_CONTROL_TYPES}, got '{self.control_type}'"
             )
@@ -409,9 +424,25 @@ class ViewerConfig:
             raise ValueError(f"bloom_levels must be >= 1, got {self.bloom_levels}")
         _validate_range(self.vignette_darkness, "vignette_darkness", 0, 1)
         _validate_range(self.dof_strength, "dof_strength", 0, 1)
-        _validate_range(self.detector_noise_readout_sigma, "detector_noise_readout_sigma", 0, 0.1)
-        _validate_range(self.detector_noise_photon_gain, "detector_noise_photon_gain", 0.0001, 0.1)
-        _validate_range(self.detector_noise_fpn_sigma, "detector_noise_fpn_sigma", 0, 0.05)
+        _validate_range(
+            self.detector_noise_readout_sigma, "detector_noise_readout_sigma", 0, 0.1
+        )
+        _validate_range(
+            self.detector_noise_photon_gain, "detector_noise_photon_gain", 0.0001, 0.1
+        )
+        _validate_range(
+            self.detector_noise_fpn_sigma, "detector_noise_fpn_sigma", 0, 0.05
+        )
+
+        # Control speeds and damping
+        _validate_min(self.auto_rotate_speed, "auto_rotate_speed", 0)
+        _validate_min(self.fly_movement_speed, "fly_movement_speed", 0)
+        _validate_min(self.fly_rotation_speed, "fly_rotation_speed", 0)
+        _validate_min(self.clipping_adapt_speed, "clipping_adapt_speed", 0)
+        _validate_range(self.fly_damping, "fly_damping", 0, 1)
+        _validate_range(self.fly_rotation_damping, "fly_rotation_damping", 0, 1)
+        _validate_min(self.vignette_offset, "vignette_offset", 0)
+        _validate_min(self.dof_focus, "dof_focus", 0)
 
     # -- Simple field names for sparse serialization --
     _SIMPLE_FIELDS = [
