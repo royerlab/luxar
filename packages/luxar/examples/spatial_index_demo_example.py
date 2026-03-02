@@ -1,18 +1,12 @@
 #!/usr/bin/env python3
-"""Point spatial index demonstration example.
+"""Spatial Index Demo Example - Efficient nD point cloud navigation with spatial indexing.
 
-This example creates a 5D dataset with point spatial indexing enabled to demonstrate
-efficient nD points navigation and querying.
-
-The dataset contains multiple clusters of points distributed across a 5D space
-(x, y, z, time, channel), with the point spatial index enabling efficient loading
-of only the relevant points for any given slice position.
-
-Run with:
-    python spatial_index_demo_example.py [--no-spatial-index]
-
-Then view with:
-    luxar serve spatial_index_demo_example.zarr
+This example demonstrates:
+- 5D dataset with point spatial indexing for efficient navigation
+- Clustered point distributions across (x, y, z, time, channel) space
+- How spatial indices enable loading only relevant points per slice
+- Comparing indexed vs non-indexed performance with --no-spatial-index flag
+- Grid-based spatial partitioning for multi-dimensional queries
 
 Educational value:
 - Learn how spatial indices improve performance for nD point clouds
@@ -20,6 +14,11 @@ Educational value:
 - See how to organize 5D data for efficient slice-based navigation
 - Compare indexed vs non-indexed performance using --no-spatial-index flag
 - Understand practical benefits of spatial indexing for large datasets
+
+Key principle:
+- Spatial indexing reorders points by locality for cache-efficient access
+- Only relevant chunks are loaded when navigating through dimensions
+- Essential for large datasets where loading all points is too slow
 """
 
 import argparse

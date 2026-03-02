@@ -59,7 +59,7 @@
   /* Effects */
   backdrop-filter: var(--luxar-blur-sm);
   box-shadow: var(--luxar-shadow-md);
-  z-index: var(--luxar-z-notification);
+  z-index: var(--luxar-z-tooltip);
 
   /* Animation */
   animation: luxar-resolution-fade-in 0.3s ease-out forwards;
@@ -81,4 +81,16 @@
 .luxar-resolution-indicator__text {
   color: var(--luxar-text-secondary);
   white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luxar-resolution-indicator {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+
+  .luxar-resolution-indicator--hidden {
+    animation: none !important;
+    opacity: 0 !important;
+  }
 }

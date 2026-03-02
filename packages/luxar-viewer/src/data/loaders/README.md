@@ -132,8 +132,8 @@ const tolerance = computeQueryTolerance(viewState, ndim, {
 // Build position array
 const position = buildQueryPosition(viewState, ndim);
 
-// Execute query (uses workers if enabled)
-const chunkIndices = await executeSpatialQuery({
+// Execute query (main thread AABB scan)
+const chunkIndices = executeSpatialQuery({
   chunkBounds,
   queryPosition: position,
   queryTolerance: tolerance,

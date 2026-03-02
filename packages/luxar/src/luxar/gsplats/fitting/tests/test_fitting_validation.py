@@ -258,3 +258,230 @@ class TestPrepareConfig:
         # Should reject negative
         with pytest.raises(ValueError, match="compression ratio"):
             prepare_fit_config(fitter, V, seeds=-0.1)
+
+
+class TestBoundaryPenaltyValidation:
+    """Tests for boundary_penalty parameter validation."""
+
+    def test_negative_boundary_penalty_raises_error(self) -> None:
+        """Negative boundary_penalty raises ValueError."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        with pytest.raises(ValueError, match="boundary_penalty must be non-negative"):
+            prepare_fit_config(fitter, V, boundary_penalty=-0.1)
+
+    def test_positive_boundary_penalty_accepted(self) -> None:
+        """Positive boundary_penalty is accepted."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, boundary_penalty=0.5)
+        assert config.boundary_penalty == 0.5
+
+    def test_zero_boundary_penalty_accepted(self) -> None:
+        """Zero boundary_penalty is accepted (effectively disabled)."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, boundary_penalty=0.0)
+        assert config.boundary_penalty == 0.0
+
+    def test_none_boundary_penalty_accepted(self) -> None:
+        """None boundary_penalty is accepted (default, disabled)."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, boundary_penalty=None)
+        assert config.boundary_penalty is None
+
+    def test_clip_to_bounds_accepted(self) -> None:
+        """clip_to_bounds boolean values are accepted."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, clip_to_bounds=True)
+        assert config.clip_to_bounds is True
+
+        config = prepare_fit_config(fitter, V, clip_to_bounds=False)
+        assert config.clip_to_bounds is False
+
+
+class TestVoxelSizeValidation:
+    """Tests for voxel_size parameter validation."""
+
+    def test_voxel_size_none_default(self) -> None:
+        """Default voxel_size is None."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(8, 16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V)
+        assert config.voxel_size is None
+
+    def test_voxel_size_scalar_broadcasts_to_array(self) -> None:
+        """Scalar voxel_size broadcasts to per-dim array."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(8, 16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, voxel_size=0.381)
+        assert config.voxel_size is not None
+        assert config.voxel_size.shape == (3,)
+        assert config.voxel_size.dtype == np.float32
+        np.testing.assert_allclose(config.voxel_size, [0.381, 0.381, 0.381])
+
+    def test_voxel_size_tuple_accepted(self) -> None:
+        """Tuple voxel_size (as demos use) is accepted."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(8, 16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, voxel_size=(0.29, 0.26, 0.26))
+        np.testing.assert_allclose(config.voxel_size, [0.29, 0.26, 0.26])
+
+    def test_voxel_size_list_accepted(self) -> None:
+        """List voxel_size is accepted."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(8, 16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, voxel_size=[5.0, 1.0, 1.0])
+        np.testing.assert_allclose(config.voxel_size, [5.0, 1.0, 1.0])
+
+    def test_voxel_size_wrong_length_raises(self) -> None:
+        """Mismatched length raises ValueError."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(8, 16, 16).astype(np.float32)
+
+        with pytest.raises(ValueError, match="voxel_size must have length 3"):
+            prepare_fit_config(fitter, V, voxel_size=[1.0, 1.0])
+
+    def test_voxel_size_negative_raises(self) -> None:
+        """Negative voxel_size raises ValueError."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(8, 16, 16).astype(np.float32)
+
+        with pytest.raises(ValueError, match="voxel_size values must be positive"):
+            prepare_fit_config(fitter, V, voxel_size=[5.0, -1.0, 1.0])
+
+    def test_voxel_size_zero_raises(self) -> None:
+        """Zero voxel_size raises ValueError."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(8, 16, 16).astype(np.float32)
+
+        with pytest.raises(ValueError, match="voxel_size values must be positive"):
+            prepare_fit_config(fitter, V, voxel_size=[5.0, 0.0, 1.0])
+
+    def test_voxel_size_scalar_negative_raises(self) -> None:
+        """Negative scalar voxel_size raises ValueError."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(8, 16, 16).astype(np.float32)
+
+        with pytest.raises(ValueError, match="voxel_size must be positive"):
+            prepare_fit_config(fitter, V, voxel_size=-1.0)
+
+
+class TestOutputSpaceValidation:
+    """Tests for output_space parameter validation."""
+
+    def test_output_space_default_is_real(self) -> None:
+        """Default output_space is 'real'."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V)
+        assert config.output_space == "real"
+
+    def test_output_space_real_accepted(self) -> None:
+        """output_space='real' is accepted."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, output_space="real")
+        assert config.output_space == "real"
+
+    def test_output_space_voxel_accepted(self) -> None:
+        """output_space='voxel' is accepted."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, output_space="voxel")
+        assert config.output_space == "voxel"
+
+    def test_output_space_invalid_raises(self) -> None:
+        """Invalid output_space raises ValueError."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        with pytest.raises(ValueError, match="output_space must be 'real' or 'voxel'"):
+            prepare_fit_config(fitter, V, output_space="physical")
+
+
+class TestSigmaMaxDiagFraction:
+    """Tests for sigma_max_diag scalar fraction feature."""
+
+    def test_sigma_max_diag_fraction_2d(self) -> None:
+        """Scalar sigma_max_diag as fraction of volume extent (2D)."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(50, 200).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, sigma_max_diag=1 / 16)
+        expected = [50 / 16, 200 / 16]
+        assert len(config.sigma_max_diag) == 2
+        np.testing.assert_allclose(config.sigma_max_diag, expected)
+
+    def test_sigma_max_diag_fraction_3d_anisotropic(self) -> None:
+        """Scalar sigma_max_diag on anisotropic 3D volume."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(10, 100, 100).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, sigma_max_diag=0.25)
+        expected = [10 * 0.25, 100 * 0.25, 100 * 0.25]
+        np.testing.assert_allclose(config.sigma_max_diag, expected)
+
+    def test_sigma_max_diag_fraction_negative_raises(self) -> None:
+        """Negative fraction raises ValueError."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        with pytest.raises(
+            ValueError, match="sigma_max_diag fraction must be positive"
+        ):
+            prepare_fit_config(fitter, V, sigma_max_diag=-0.1)
+
+    def test_sigma_max_diag_sequence_still_works(self) -> None:
+        """Per-axis sequence sigma_max_diag still works."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, sigma_max_diag=[5.0, 8.0])
+        assert list(config.sigma_max_diag) == [5.0, 8.0]
+
+    def test_rel_l2_target_negative_raises(self) -> None:
+        """Negative rel_l2_target raises ValueError."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        with pytest.raises(ValueError, match="rel_l2_target must be positive"):
+            prepare_fit_config(fitter, V, rel_l2_target=-0.1)
+
+    def test_rel_l2_target_zero_raises(self) -> None:
+        """Zero rel_l2_target raises ValueError."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        with pytest.raises(ValueError, match="rel_l2_target must be positive"):
+            prepare_fit_config(fitter, V, rel_l2_target=0.0)
+
+    def test_rel_l2_target_valid(self) -> None:
+        """Valid rel_l2_target is accepted."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, rel_l2_target=0.1)
+        assert config.rel_l2_target == 0.1
+
+    def test_rel_l2_target_none_default(self) -> None:
+        """rel_l2_target defaults to None."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V)
+        assert config.rel_l2_target is None

@@ -44,7 +44,6 @@ describe('LuxarFlyControls', () => {
       expect(controls.lookSpeed).toBe(config.controls.fly.look.mouseSpeed.default);
       expect(controls.inertialMode).toBe(true); // Default is now true
       expect(controls.damping).toBe(config.controls.fly.movement.damping.default);
-      expect(controls.acceleration).toBe(config.controls.fly.movement.acceleration.default);
     });
 
     it('should accept custom configuration', () => {
@@ -53,14 +52,12 @@ describe('LuxarFlyControls', () => {
         lookSpeed: 0.005,
         inertialMode: true,
         damping: 0.95,
-        acceleration: 1.0,
       });
 
       expect(customControls.movementSpeed).toBe(10);
       expect(customControls.lookSpeed).toBe(0.005);
       expect(customControls.inertialMode).toBe(true);
       expect(customControls.damping).toBe(0.95);
-      expect(customControls.acceleration).toBe(1.0);
 
       customControls.dispose();
     });

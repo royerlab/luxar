@@ -23,6 +23,8 @@ import { setupHDRControls } from './rendering-controls/hdr-setup';
 import { setupAntiAliasingControls } from './rendering-controls/anti-aliasing-setup';
 import { setupPostProcessingControls } from './rendering-controls/post-processing-setup';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
+import type { ZarrViewerConfig } from '../types/zarr';
+import { extractRenderingOverrides } from '../config/viewer-config-utils';
 
 /**
  * Advanced rendering parameters GUI for real-time visual control.
@@ -62,11 +64,13 @@ export class RenderingControls {
   /** The custom GUI instance */
   private gui: GUI;
 
-  /** Current rendering settings */
-  private settings: RenderingSettings;
+  /** Current rendering settings (public for state capture) */
+  public settings: RenderingSettings;
 
   /** Scene identifier for settings persistence */
   private sceneId: string = '';
+  private zarrViewerConfig: ZarrViewerConfig | undefined = undefined;
+  private hasStoredLocalSettings: boolean = false;
 
   /** Reference to post-processing manager */
   private postProcessing: PostProcessingManager;
@@ -151,10 +155,6 @@ export class RenderingControls {
     // Custom styling now in src/styles/components/rendering-controls.css
 
     this.setupControls();
-
-    // Add keyboard event listener to the GUI container to handle 'R' key
-    // This ensures the panel can be closed even when a control has focus
-    this.setupKeyboardHandling();
   }
 
   /**
@@ -327,6 +327,13 @@ export class RenderingControls {
       flyRotationDamping: config.controls.fly.rotation.damping.default,
     };
 
+    // Overlay zarr viewer_config on top of hardcoded defaults (if available).
+    // This makes the data author's recommendations the "true defaults" for this scene.
+    if (this.zarrViewerConfig) {
+      const zarrOverrides = extractRenderingOverrides(this.zarrViewerConfig);
+      Object.assign(defaults, zarrOverrides);
+    }
+
     // Update settings object in place to maintain GUI bindings
     Object.assign(this.settings, defaults);
 
@@ -402,6 +409,10 @@ export class RenderingControls {
         this.controllers.flyRotationDamping.hide();
       }
     }
+
+    // Re-apply scale-aware fly speed (resetToDefaults uses hardcoded config defaults
+    // which don't account for scene scale)
+    this.updateSceneScale();
 
     log.info(Modules.RENDERER, 'Rendering settings reset to defaults');
   }
@@ -673,6 +684,70 @@ export class RenderingControls {
   }
 
   /**
+   * Set the zarr viewer config from the loaded scene.
+   * Called after loadSceneData() completes so the zarr metadata is available.
+   */
+  setZarrViewerConfig(viewerConfig: ZarrViewerConfig | undefined): void {
+    this.zarrViewerConfig = viewerConfig;
+  }
+
+  /**
+   * Whether this scene has stored settings in localStorage.
+   */
+  hasStoredSettings(): boolean {
+    return this.hasStoredLocalSettings;
+  }
+
+  /**
+   * Apply zarr viewer_config as defaults for a first-time scene visit.
+   * Called when no localStorage exists and zarr provides scene-specific defaults.
+   * Re-applies the full 3-tier priority chain and updates the scene.
+   */
+  applyZarrDefaults(): void {
+    if (!this.zarrViewerConfig) return;
+
+    const zarrOverrides = extractRenderingOverrides(this.zarrViewerConfig);
+    Object.assign(this.settings, zarrOverrides);
+
+    // Apply FOV if overridden
+    if (zarrOverrides.fov !== undefined) {
+      const currentFOV = this.sceneManager.camera.fov;
+      if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
+        const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
+        this.sceneManager.updateFOV(delta);
+      }
+    }
+
+    // Apply clipping planes if overridden
+    if (zarrOverrides.near !== undefined || zarrOverrides.far !== undefined) {
+      this.sceneManager.updateClippingPlanes(this.settings.near, this.settings.far);
+    }
+
+    // Apply navigation settings if overridden
+    if (zarrOverrides.controlType !== undefined) {
+      this.sceneManager.setControlType(this.settings.controlType);
+    }
+    if (zarrOverrides.autoRotate !== undefined) {
+      this.sceneManager.setAutoRotate(this.settings.autoRotate);
+    }
+    if (zarrOverrides.autoRotateSpeed !== undefined) {
+      this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
+    }
+
+    // Update GUI controllers to reflect new values
+    this.gui.controllersRecursive().forEach((controller) => {
+      controller.updateDisplay();
+    });
+
+    // Sync HDR log slider
+    this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
+
+    // Apply post-processing and other rendering settings
+    this.applySettings();
+    log.info(Modules.RENDERER, 'Applied viewer config defaults from zarr');
+  }
+
+  /**
    * Trigger animation when parameters change
    */
   private triggerAnimation(): void {
@@ -756,6 +831,52 @@ export class RenderingControls {
   }
 
   /**
+   * Update fly speed UI slider range and value based on scene scale.
+   * Called after scene data loads and scale is known.
+   */
+  public updateSceneScale(): void {
+    const scale = this.sceneManager.getSceneScale();
+    if (scale <= 0) return;
+
+    // Re-apply scale to ControlsManager. This is necessary because applyZarrDefaults()
+    // may have called setFlyMovementSpeed() with config defaults after
+    // autoAdjustClippingPlanes() set the scale-derived speed, overwriting it.
+    this.sceneManager.controls.setSceneScale(scale);
+
+    const m = config.controls.scaleMultipliers;
+    const scaledSpeed = scale * m.flySpeedFactor;
+
+    // Update slider range: allow 0.1x to 10x of the scale-derived speed
+    const newMin = Math.max(0.01, scaledSpeed * 0.1);
+    const newMax = scaledSpeed * 10;
+    const newStep = Math.max(0.01, scaledSpeed * 0.01);
+
+    if (this.controllers.flyMovementSpeed) {
+      // NumberController supports dynamic .min()/.max()/.step()
+      const ctrl = this.controllers.flyMovementSpeed as any;
+      if (typeof ctrl.min === 'function') {
+        ctrl.min(newMin).max(newMax).step(newStep);
+      }
+    }
+
+    // Sync the settings and UI with the scale-derived speed
+    this.settings.flyMovementSpeed = scaledSpeed;
+    this.sceneManager.setFlyMovementSpeed(scaledSpeed);
+
+    // Update slider display
+    if (this.controllers.flyMovementSpeed) {
+      this.controllers.flyMovementSpeed.setValue(scaledSpeed);
+      this.controllers.flyMovementSpeed.updateDisplay();
+    }
+
+    log.info(
+      Modules.UI,
+      `Fly speed range updated for scale ${scale.toFixed(1)}: ` +
+        `[${newMin.toFixed(2)}, ${newMax.toFixed(1)}], speed=${scaledSpeed.toFixed(1)}`
+    );
+  }
+
+  /**
    * Update navigation controls visibility based on control type
    */
   private updateNavigationControls(controlType: 'orbit' | 'arcball' | 'fly'): void {
@@ -831,6 +952,7 @@ export class RenderingControls {
 
     const key = generateSettingsKey(this.sceneId);
     const stored = localStorage.getItem(key);
+    this.hasStoredLocalSettings = !!stored;
 
     if (stored) {
       const loadedSettings = deserializeSettings(stored);
@@ -1228,30 +1350,6 @@ export class RenderingControls {
   private setupAutoBlur(): void {
     // Auto-blur is now handled by the custom GUI library's applyAutoBlur() utility
     // No additional setup needed here
-  }
-
-  /**
-   * Setup keyboard handling for the GUI panel
-   */
-  private setupKeyboardHandling(): void {
-    // Add keydown listener to the GUI's DOM element
-    // Note: We don't stopPropagation() for toggle keys so they can be handled globally
-    this.gui.domElement.addEventListener('keydown', (event: KeyboardEvent) => {
-      // For toggle keys (R), don't stopPropagation so main handler can process it
-      if (
-        (event.key === 'r' || event.key === 'R') &&
-        !event.metaKey &&
-        !event.ctrlKey &&
-        !event.shiftKey
-      ) {
-        // Don't prevent the event from bubbling up
-        // The main input handler will toggle the panel properly
-      }
-      // For Escape, also let it bubble up for proper priority handling
-      else if (event.key === 'Escape') {
-        // Don't prevent the event from bubbling up
-      }
-    });
   }
 
   /**

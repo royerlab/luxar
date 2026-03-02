@@ -467,12 +467,16 @@ class CUDASplatFunction(torch.autograd.Function):
         Ls_for_conic = Ls.detach().clone().requires_grad_(True)
         conic = cholesky_to_conic(Ls_for_conic)
 
+        # Compute exact L_row_norms for AABB computation
+        L_row_norms = torch.sqrt(torch.sum(Ls * Ls, dim=2))
+
         # Dispatch to CUDA
         output, tile_counts, tile_offsets, tile_content = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -547,6 +551,7 @@ def gaussian_splat_forward(
     conic: Tensor,
     amps: Tensor,
     sharpness: Tensor,
+    L_row_norms: Tensor,
     shape: list[int],
     truncate: float,
     intensity_floor: float,
@@ -558,6 +563,7 @@ def gaussian_splat_forward(
         conic.contiguous(),
         amps.contiguous(),
         sharpness.contiguous(),
+        L_row_norms.contiguous(),
         shape,
         truncate,
         intensity_floor,

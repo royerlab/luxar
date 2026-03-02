@@ -11,6 +11,7 @@
  */
 
 import * as zarr from 'zarrita';
+import { get, slice } from 'zarrita';
 import { log, Modules, LogEmoji } from '../utils/log';
 import {
   loadGSplatsChunkSpatialIndex,
@@ -33,9 +34,8 @@ import { RangeLoader, type LoadRange } from './loaders';
 import { choleskyPackedSize } from '../types/gsplats';
 import { GSplatsDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
-import { getWorkerPool } from '../workers/worker-pool';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
-import { DecompressedChunkCache, wrapWithCache } from '../cache';
+import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache';
 
 /**
  * GSplats data loader using spatial indices for efficient nD queries.
@@ -60,6 +60,12 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
 
+  // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
+  private prefetcher: ChunkPrefetcher | null = null;
+
+  // Suppress detail logs after first successful view update
+  private _initialLoadDone = false;
+
   private arrays: {
     centers?: zarr.Array<zarr.DataType, zarr.Readable>;
     amplitudes?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -74,15 +80,24 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable,
     profiler?: UpdateProfiler,
-    l0Cache?: DecompressedChunkCache
+    l0Cache?: DecompressedChunkCache,
+    prefetcher?: ChunkPrefetcher
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
     this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
     this.zarrStore = zarrStore || null;
     this.l0Cache = l0Cache || null;
+    this.prefetcher = prefetcher || null;
     // profiler parameter kept for API compatibility; session is passed directly to methods
     void profiler;
+  }
+
+  /** Register array shape with the prefetcher for upper-bounds checking. */
+  private registerBounds(arrayName: string, array: zarr.Array<zarr.DataType, zarr.Readable>): void {
+    if (!this.prefetcher) return;
+    const path = `${this.node.path.startsWith('/') ? this.node.path.slice(1) : this.node.path}/${arrayName}`;
+    this.prefetcher.registerArrayBounds(path, array.shape, array.chunks);
   }
 
   /**
@@ -143,6 +158,11 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       this.arrays.centers = centersArray;
       this.arrays.amplitudes = amplitudesArray;
       this.arrays.cholesky_factors = choleskyArray;
+
+      // Register array bounds with prefetcher for upper-bounds checking
+      this.registerBounds('centers', centersArray);
+      this.registerBounds('amplitudes', amplitudesArray);
+      this.registerBounds('cholesky_factors', choleskyArray);
     } catch (e) {
       log.error(Modules.SPATIAL_INDEX_LOADER, 'Failed to open required GSplats arrays:', e);
       throw e;
@@ -151,6 +171,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     // Try to open optional arrays
     try {
       let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+      this.registerBounds('colors', colorsArray);
       if (this.l0Cache) {
         colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`);
       }
@@ -160,15 +181,26 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     }
 
     try {
-      // GSplats format uses "sharpnesses" (plural) - see SPECIFICATIONS.md
-      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
-        kind: 'array',
-      });
+      // Try plural name first (current format), fall back to singular (legacy)
+      let sharpnessArray: zarr.Array<zarr.DataType, zarr.Readable>;
+      let sharpnessName: string;
+      try {
+        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
+          kind: 'array',
+        });
+        sharpnessName = 'sharpnesses';
+      } catch {
+        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
+          kind: 'array',
+        });
+        sharpnessName = 'sharpness';
+      }
+      this.registerBounds(sharpnessName, sharpnessArray);
       if (this.l0Cache) {
         sharpnessArray = wrapWithCache(
           sharpnessArray,
           this.l0Cache,
-          `${this.node.path}/sharpnesses`
+          `${this.node.path}/${sharpnessName}`
         );
       }
       this.arrays.sharpness = sharpnessArray;
@@ -252,11 +284,12 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     // Count total splats to load
     const totalSplats = splatRanges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
-    log.info(
-      LogEmoji.LOAD,
-      Modules.SPATIAL_INDEX_LOADER,
-      `Loading ${totalSplats} gsplats from ${splatRanges.length} ranges`
-    );
+    if (!this._initialLoadDone) {
+      log.load(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Loading ${totalSplats} gsplats from ${splatRanges.length} ranges`
+      );
+    }
 
     // Phase 1 DEEP Integration: Load DIRECTLY to accumulator buffers (ZERO allocations!)
     if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
@@ -290,40 +323,44 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       const choleskyBuffer = this._accumulator['choleskyBuffer'] as Float32Array;
 
       // Load directly into accumulator buffers (ZERO intermediate allocations!)
-      // Note: Nested timing disabled due to async context issues - top-level timing captures total
-      await this.loadArrayRanges('centers', splatRanges, attrs.ndim, centerBuffer);
-      await this.loadArrayRanges('amplitudes', splatRanges, 1, amplitudeBuffer);
-      await this.loadArrayRanges(
-        'cholesky_factors',
-        splatRanges,
-        choleskyPackedSize(attrs.ndim),
-        choleskyBuffer
-      );
+      const loadSession = session?.begin('Load Arrays');
+      try {
+        await this.loadArrayRanges('centers', splatRanges, attrs.ndim, centerBuffer);
+        await this.loadArrayRanges('amplitudes', splatRanges, 1, amplitudeBuffer);
+        await this.loadArrayRanges(
+          'cholesky_factors',
+          splatRanges,
+          choleskyPackedSize(attrs.ndim),
+          choleskyBuffer
+        );
 
-      // Load optional arrays directly to accumulator
-      if (this.arrays.colors) {
-        // Use loadColorRanges for proper multi-type handling
-        // NOTE: For LUT encoding, loadColorRanges may return a different buffer type
-        // (Float32Array) than the accumulator's colorBuffer (Uint8Array based on stored dtype).
-        // We MUST use the returned buffer since it contains the decoded colors.
-        const colorBuffer = this._accumulator['colorBuffer'] as
-          | Float32Array
-          | Uint8Array
-          | Uint16Array;
-        const loadedColors = await this.loadColorRanges(splatRanges, colorBuffer);
+        // Load optional arrays directly to accumulator
+        if (this.arrays.colors) {
+          // Use loadColorRanges for proper multi-type handling
+          // NOTE: For LUT encoding, loadColorRanges may return a different buffer type
+          // (Float32Array) than the accumulator's colorBuffer (Uint8Array based on stored dtype).
+          // We MUST use the returned buffer since it contains the decoded colors.
+          const colorBuffer = this._accumulator['colorBuffer'] as
+            | Float32Array
+            | Uint8Array
+            | Uint16Array;
+          const loadedColors = await this.loadColorRanges(splatRanges, colorBuffer);
 
-        // If loadColorRanges returned a different buffer (e.g., LUT decoded to Float32Array),
-        // we need to update the accumulator with the new buffer
-        if (loadedColors !== colorBuffer) {
-          // Replace accumulator's color buffer with the decoded colors
-          // This handles LUT encoding where decoded output is Float32Array
-          (this._accumulator as unknown as { colorBuffer: typeof loadedColors }).colorBuffer =
-            loadedColors;
+          // If loadColorRanges returned a different buffer (e.g., LUT decoded to Float32Array),
+          // we need to update the accumulator with the new buffer
+          if (loadedColors !== colorBuffer) {
+            // Replace accumulator's color buffer with the decoded colors
+            // This handles LUT encoding where decoded output is Float32Array
+            (this._accumulator as unknown as { colorBuffer: typeof loadedColors }).colorBuffer =
+              loadedColors;
+          }
         }
-      }
-      if (this.arrays.sharpness) {
-        const sharpnessBuffer = this._accumulator['sharpnessBuffer'] as Float32Array;
-        await this.loadArrayRanges('sharpness', splatRanges, 1, sharpnessBuffer);
+        if (this.arrays.sharpness) {
+          const sharpnessBuffer = this._accumulator['sharpnessBuffer'] as Float32Array;
+          await this.loadArrayRanges('sharpness', splatRanges, 1, sharpnessBuffer);
+        }
+      } finally {
+        loadSession?.end();
       }
 
       // Return from accumulator (subarrays, zero copy!)
@@ -393,7 +430,12 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     viewState: GSplatsViewState,
     session?: UpdateSession
   ): Promise<LoadedGSplatsData> {
-    return this.loadGSplats(viewState, session);
+    const result = await this.loadGSplats(viewState, session);
+    if (!this._initialLoadDone) {
+      this._initialLoadDone = true;
+      this.rangeLoader.setVerbose(false);
+    }
+    return result;
   }
 
   /**
@@ -426,11 +468,13 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       const isExtending = extendDims.some((edim: string) => currentNonDisplayedDims.includes(edim));
 
       if (isExtending) {
-        log.custom(
-          LogEmoji.BROADCAST,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
-        );
+        if (!this._initialLoadDone) {
+          log.custom(
+            LogEmoji.BROADCAST,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
+          );
+        }
         // Return all splats for extended dimensions
         return [{ start: 0, end: attrs.n_splats }];
       }
@@ -450,30 +494,11 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       slicePosition[i] = viewState.slicePosition[i] ?? 0;
     }
 
-    // Query chunks (worker or main thread based on config)
-    let chunkIndices: number[];
-
-    if (appConfig.dataLoading.performance.useWebWorkers) {
-      // Phase 2: Use worker for spatial queries
-      try {
-        const worker = await getWorkerPool().getWorker();
-        const result = await worker.querySpatialIndex({
-          chunkBounds: this.chunkIndex.chunkBounds,
-          slicePosition: new Float32Array(slicePosition),
-          tolerance: new Float32Array(tolerance),
-          numChunks: this.chunkIndex.chunkCount,
-          ndim: attrs.ndim,
-        });
-        chunkIndices = Array.from(result);
-      } catch (error) {
-        log.error(Modules.SPATIAL_INDEX_LOADER, 'Worker query failed, using main thread:', error);
-        // Fallback to main thread
-        chunkIndices = queryGSplatsChunksForView(this.chunkIndex, slicePosition, tolerance);
-      }
-    } else {
-      // Main thread query
-      chunkIndices = queryGSplatsChunksForView(this.chunkIndex, slicePosition, tolerance);
-    }
+    // Always query on main thread — AABB scan is O(chunks × ndim) and completes in
+    // microseconds. Worker roundtrips add ~3ms each (structured clone, postMessage,
+    // deserialization), which dominates when many nodes query concurrently (e.g. 50
+    // nodes × 3ms = 150ms of pure overhead for nanoseconds of actual computation).
+    const chunkIndices = queryGSplatsChunksForView(this.chunkIndex, slicePosition, tolerance);
 
     if (chunkIndices.length === 0) {
       return [];
@@ -723,7 +748,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     ranges: SplatRange[],
     output: Float32Array | Uint8Array | Uint16Array
   ): Promise<void> {
-    const { get, slice } = await import('zarrita');
     let destOffset = 0;
     const shape = array.shape;
 

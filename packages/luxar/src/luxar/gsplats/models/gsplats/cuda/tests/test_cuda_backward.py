@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 import torch
 
+from .conftest import Tolerances, compute_L_row_norms
+
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
 
@@ -139,14 +141,16 @@ class TestCUDABackward:
                 (torch.sign(cpu_amp_grad) == torch.sign(cuda_amp_grad)).float().mean()
             )
             # Allow some sign differences due to numerical precision
-            assert sign_match > 0.7, f"Gradient sign match {sign_match:.2f} too low"
+            assert sign_match > Tolerances.BACKWARD_SIGN_MATCH, (
+                f"Gradient sign match {sign_match:.2f} too low"
+            )
 
             # Check gradient magnitudes are in similar range
             cpu_mag = cpu_amp_grad.abs().mean()
             cuda_mag = cuda_amp_grad.abs().mean()
             if cpu_mag > 1e-8 and cuda_mag > 1e-8:
                 mag_ratio = max(cpu_mag / cuda_mag, cuda_mag / cpu_mag)
-                assert mag_ratio < 10, (
+                assert mag_ratio < Tolerances.BACKWARD_MAG_RATIO, (
                     f"Gradient magnitude ratio {mag_ratio:.2f} too large"
                 )
 
@@ -262,11 +266,13 @@ class TestOptimizedVsGenericPath:
 
         # Run optimized 2D path
         conic_2d = cholesky_to_conic(L_2d)
+        L_row_norms_2d = compute_L_row_norms(L_2d)
         result_2d = cuda_splatting_backend.forward(
             centers_2d.contiguous(),
             conic_2d.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms_2d.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -277,11 +283,13 @@ class TestOptimizedVsGenericPath:
         # Embed into 4D and run generic path
         centers_4d, L_4d, shape_4d = self._embed_2d_to_4d(centers_2d, L_2d, shape)
         conic_4d = cholesky_to_conic(L_4d)
+        L_row_norms_4d = compute_L_row_norms(L_4d)
         result_4d = cuda_splatting_backend.forward(
             centers_4d.contiguous(),
             conic_4d.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms_4d.contiguous(),
             list(shape_4d),
             truncate,
             intensity_floor,
@@ -333,11 +341,13 @@ class TestOptimizedVsGenericPath:
 
         # Run optimized 3D path
         conic_3d = cholesky_to_conic(L_3d)
+        L_row_norms_3d = compute_L_row_norms(L_3d)
         result_3d = cuda_splatting_backend.forward(
             centers_3d.contiguous(),
             conic_3d.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms_3d.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -348,11 +358,13 @@ class TestOptimizedVsGenericPath:
         # Embed into 4D and run generic path
         centers_4d, L_4d, shape_4d = self._embed_3d_to_4d(centers_3d, L_3d, shape)
         conic_4d = cholesky_to_conic(L_4d)
+        L_row_norms_4d = compute_L_row_norms(L_4d)
         result_4d = cuda_splatting_backend.forward(
             centers_4d.contiguous(),
             conic_4d.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms_4d.contiguous(),
             list(shape_4d),
             truncate,
             intensity_floor,
@@ -399,11 +411,13 @@ class TestOptimizedVsGenericPath:
 
         # Optimized 2D
         conic_2d = cholesky_to_conic(L_2d)
+        L_row_norms_2d = compute_L_row_norms(L_2d)
         result_2d = cuda_splatting_backend.forward(
             centers_2d.contiguous(),
             conic_2d.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms_2d.contiguous(),
             list(shape),
             3.0,
             1e-5,
@@ -414,11 +428,13 @@ class TestOptimizedVsGenericPath:
         # Generic 4D
         centers_4d, L_4d, shape_4d = self._embed_2d_to_4d(centers_2d, L_2d, shape)
         conic_4d = cholesky_to_conic(L_4d)
+        L_row_norms_4d = compute_L_row_norms(L_4d)
         result_4d = cuda_splatting_backend.forward(
             centers_4d.contiguous(),
             conic_4d.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms_4d.contiguous(),
             list(shape_4d),
             3.0,
             1e-5,
@@ -465,11 +481,13 @@ class TestOptimizedVsGenericPath:
 
         # Optimized 3D
         conic_3d = cholesky_to_conic(L_3d)
+        L_row_norms_3d = compute_L_row_norms(L_3d)
         result_3d = cuda_splatting_backend.forward(
             centers_3d.contiguous(),
             conic_3d.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms_3d.contiguous(),
             list(shape),
             3.0,
             1e-5,
@@ -480,11 +498,13 @@ class TestOptimizedVsGenericPath:
         # Generic 4D
         centers_4d, L_4d, shape_4d = self._embed_3d_to_4d(centers_3d, L_3d, shape)
         conic_4d = cholesky_to_conic(L_4d)
+        L_row_norms_4d = compute_L_row_norms(L_4d)
         result_4d = cuda_splatting_backend.forward(
             centers_4d.contiguous(),
             conic_4d.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms_4d.contiguous(),
             list(shape_4d),
             3.0,
             1e-5,
@@ -530,11 +550,13 @@ class TestOptimizedVsGenericPath:
 
         # Optimized 2D
         conic_2d = cholesky_to_conic(L_2d)
+        L_row_norms_2d = compute_L_row_norms(L_2d)
         result_2d = cuda_splatting_backend.forward(
             centers_2d.contiguous(),
             conic_2d.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms_2d.contiguous(),
             list(shape),
             3.0,
             1e-5,
@@ -545,11 +567,13 @@ class TestOptimizedVsGenericPath:
         # Generic 4D
         centers_4d, L_4d, shape_4d = self._embed_2d_to_4d(centers_2d, L_2d, shape)
         conic_4d = cholesky_to_conic(L_4d)
+        L_row_norms_4d = compute_L_row_norms(L_4d)
         result_4d = cuda_splatting_backend.forward(
             centers_4d.contiguous(),
             conic_4d.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms_4d.contiguous(),
             list(shape_4d),
             3.0,
             1e-5,

@@ -1,7 +1,7 @@
 # luxar-viewer.data - Technical Specification
 
-**Version**: 1.2.8
-**Last Updated**: 2025-12-27
+**Version**: 1.2.9
+**Last Updated**: 2026-02-28
 
 ## Purpose
 
@@ -26,6 +26,8 @@ The `luxar-viewer.data` package provides the client-side data loading infrastruc
 5. [Cache Management](#cache-management)
 6. [Data Structures](#data-structures)
 7. [Lines Spatial Index System](#lines-spatial-index-system)
+8. [Web Worker Offloading](#web-worker-offloading)
+9. [Module Reference](#module-reference)
 
 ---
 
@@ -1418,7 +1420,7 @@ function computeLinesTolerance(sceneDims: DimensionMetadata[], displayDims: numb
 
 **Why Displayed Dimensions Need Infinite Tolerance**: We want to include all segments that are visible in the 3D displayed dimensions, without filtering by position along those axes. The `displayDims` parameter specifies which dimensions are being rendered.
 
-### 7.10 nD Endpoint Clipping
+### 7.11 nD Endpoint Clipping
 
 For lines in nD space, segments may partially intersect the visible slice. We handle this with **endpoint clipping**.
 
@@ -1448,7 +1450,7 @@ Case E: Both OUT, same side         → Don't render (segment misses slice)
 
 **Rendering Integration**: See `../rendering/SPECIFICATIONS.md` Section 7.4 for how `aStartClipped`/`aEndClipped` attributes affect the vertex shader's cap factor calculation and the complete clipping algorithm implementation.
 
-### 7.11 Optimized Encoding Handling for Lines
+### 7.12 Optimized Encoding Handling for Lines
 
 **Purpose**: Lines vertex attributes (widths, colors, sharpness) may use various encoding modes. The `loadVertexRanges()` function must handle these efficiently to avoid performance degradation.
 
@@ -1520,7 +1522,7 @@ For a 250-frame animation with 2.2M total vertices but only 32K visible per fram
 
 **Key Insight**: This optimization mirrors the approach already implemented in `PointSpatialIndexLoader.loadRanges()` (see lines 650-880 in point-spatial-index-loader.ts).
 
-### 7.12 Lines Fallback (No Spatial Index)
+### 7.13 Lines Fallback (No Spatial Index)
 
 When `ordering === "none"`, load all data:
 
@@ -1697,7 +1699,198 @@ consolidated into `RangeLoader` as part of the unified loader architecture.
 
 ---
 
+## 9. Module Reference
+
+This section documents all TypeScript source files in the `data/` package with their purpose, key exports, and relationships.
+
+### 9.1 Core Loading Pipeline
+
+#### `zarr-loader.ts`
+
+**Purpose**: Top-level entry point for loading Zarr-based nD scenes. Provides the public API functions (`loadScene`, `updateView`, `updateSceneForDimensions`, `dispose`) that delegate to the SceneLoader instance managed by SceneLoaderManager.
+
+**Key Exports**: `loadScene()`, `updateView()`, `updateSceneForDimensions()`, `dispose()`
+
+**Relationships**: Uses `SceneLoaderManager` to access `SceneLoader` instances; delegates all complex logic downstream.
+
+#### `scene-loader.ts`
+
+**Purpose**: Unified scene loader that orchestrates loading of complete Luxar scenes. Handles the entire scene graph using spatial index-based loading for all node types (Points, Lines, GSplats) and manages THREE.js scene construction, view state, and dimension navigation updates.
+
+**Key Exports**: `SceneLoader`
+
+**Relationships**: Uses `LoaderOrchestrator` for loader creation, `GeometryUpdateManager` for GPU buffer management, `SceneGraphBuilder` for zarr metadata parsing, `ViewStateManager` for view state initialization, and `DataMonitorManager` for monitoring.
+
+#### `scene-loader-manager.ts`
+
+**Purpose**: Manages `SceneLoader` instances without global state. Uses a singleton pattern with explicit instance management. Also owns the `UpdateProfiler` singleton for timing scene updates.
+
+**Key Exports**: `SceneLoaderManager`, `getSceneLoader()`
+
+**Relationships**: Wraps `SceneLoader`; provides centralized access for `zarr-loader.ts` and UI components.
+
+#### `loader-orchestrator.ts`
+
+**Purpose**: Manages creation, storage, and lifecycle of data loaders for Points, Lines, and GSplats nodes. Extracted from `SceneLoader` to reduce its complexity.
+
+**Key Exports**: `LoaderOrchestrator`, `FailedLoaderInfo`, `OrchestratorConfig`
+
+**Relationships**: Creates `PointSpatialIndexLoader`, `LinesSpatialIndexLoader`, and `GSplatsSpatialIndexLoader` instances. Tracks failed loaders for error recovery and aggregates accumulator statistics.
+
+#### `scene-graph-builder.ts`
+
+**Purpose**: Builds the hierarchical `SceneNode` structure from Zarr store metadata. Handles store enumeration, node attribute parsing, URL normalization, and type detection. Extracted from `SceneLoader`.
+
+**Key Exports**: `SceneGraphBuilder`, `StoreEntry`
+
+**Relationships**: Produces `SceneNode` trees consumed by `SceneLoader` for THREE.js scene construction.
+
+### 9.2 Spatial Index Loaders
+
+#### `point-spatial-index-loader.ts`
+
+**Purpose**: Point data loader using chunk-based spatial indices for efficient nD queries. Queries spatial index to find visible point ranges, loads all attributes with identical ranges (ensuring alignment), projects nD points to 3D display space, and applies effective radius calculation.
+
+**Key Exports**: `PointSpatialIndexLoader`
+
+**Relationships**: Uses `ChunkSpatialIndex` from `chunk-spatial-index.ts`, `EffectiveRadiusConfig` from `effective-radius-calculator.ts`, `ArrayDecoder`/`ArrayRefRegistry` from `array-decoder.ts`, `RangeLoader` from `loaders/`, and `LoadedPointsDataAccumulator` from `data-accumulator.ts`.
+
+#### `lines-spatial-index-loader.ts`
+
+**Purpose**: Lines data loader using dual spatial indices. Implements two-phase loading: (1) query segment chunks for visible segments, (2) derive required vertex chunks from segment indices and load vertices. Also handles nD slicing with endpoint clipping.
+
+**Key Exports**: `LinesSpatialIndexLoader`, `buildInstanceBuffers()`, `clipSegmentToSlice()`, `lerp()`, `lerpVec3()`, `distance3D()`
+
+**Relationships**: Uses `LinesChunkSpatialIndex` from `lines-chunk-spatial-index.ts`, `ArrayDecoder`/`ArrayRefRegistry` from `array-decoder.ts`, `RangeLoader` from `loaders/`, and `LinesDataAccumulator` from `data-accumulator.ts`.
+
+#### `gsplats-spatial-index-loader.ts`
+
+**Purpose**: GSplats data loader using spatial indices for efficient nD gsplats loading. Unlike Lines, GSplats do not need two-phase loading since all data is per-splat. Handles all array encoding types (broadcasted, quantized, LUT, etc.).
+
+**Key Exports**: `GSplatsSpatialIndexLoader`
+
+**Relationships**: Uses `GSplatsChunkSpatialIndex` from `gsplats-chunk-spatial-index.ts`, `ArrayDecoder`/`ArrayRefRegistry` from `array-decoder.ts`, `RangeLoader` from `loaders/`, and `GSplatsDataAccumulator` from `data-accumulator.ts`.
+
+### 9.3 Spatial Index Infrastructure
+
+#### `chunk-spatial-index.ts`
+
+**Purpose**: Core chunk-based spatial index implementation for Points. Loads chunk bounding boxes from Zarr and provides AABB intersection queries for finding chunks visible in the current nD view. Uses Morton/Hilbert space-filling curve metadata.
+
+**Key Exports**: `ChunkSpatialIndex`, `loadChunkSpatialIndex()`, `queryChunksForView()`, `chunkIndicesToRanges()`, `mergePointRanges()`
+
+**Relationships**: Used by `PointSpatialIndexLoader`. Provides the foundational spatial query pattern reused by Lines and GSplats variants.
+
+#### `gsplats-chunk-spatial-index.ts`
+
+**Purpose**: Spatial index loading and querying for GSplats. GSplats use space-filling curves (Morton or Hilbert) for chunk-based loading, with each chunk bounding box including splat extents based on Cholesky factors.
+
+**Key Exports**: `loadGSplatsChunkSpatialIndex()`, `queryGSplatsChunksForView()`, `chunkIndicesToSplatRanges()`, `mergeRanges()`, `computeToleranceFromViewState()`
+
+**Relationships**: Used by `GSplatsSpatialIndexLoader`. Consumes `GSplatsMetadata` and `GSplatsChunkSpatialIndex` types from `types/gsplats.ts`.
+
+#### `lines-chunk-spatial-index.ts`
+
+**Purpose**: Dual spatial index loading for Lines. Lines have two independent spatial orderings: vertices ordered in D-dimensional space and segments ordered in D-space with bounds including line width. Segment bounds already include line width extent, so spatial queries for non-displayed dimensions use tolerance = 0.
+
+**Key Exports**: `loadLinesChunkSpatialIndex()`, `querySegmentChunksForView()`, `queryVertexChunksForView()`, `computeLinesTolerance()`, `segmentChunkIndicesToRanges()`, `vertexChunkIndicesToRanges()`, `mergeRanges()`, `computeVertexChunksForIndices()`, `computeVertexRangesFromIndices()`
+
+**Relationships**: Used by `LinesSpatialIndexLoader`. Consumes `LinesMetadata` and `LinesChunkSpatialIndex` types from `types/lines.ts`.
+
+### 9.4 Data Processing
+
+#### `gsplats-processor.ts`
+
+**Purpose**: Handles conversion of nD gsplats data to 3D for rendering. Key operations: (1) extract 3D center from nD center using display dimensions, (2) extract 3D Cholesky submatrix from nD Cholesky via marginal covariance reconstruction, (3) attenuate amplitude based on distance to hyperplane in hidden dimensions. Uses pre-allocated workspace buffers to avoid per-call allocation in tight loops.
+
+**Key Exports**: `processGSplats()`
+
+**Relationships**: Called by `GeometryUpdateManager` during GSplats geometry updates. Consumes `LoadedGSplatsData`, `ProcessedGSplatsData`, and `GSplatsViewState` types from `types/gsplats.ts`.
+
+#### `effective-radius-calculator.ts`
+
+**Purpose**: Implements mathematical calculations for determining the visible radius of nD hyperspheres when intersected by a hyperplane. Uses the Pythagorean theorem: `R_effective = sqrt(R^2 - D^2)`, considering displayed dimensions (full extent), non-displayed spatial dimensions (Pythagorean reduction), and non-displayed discrete dimensions (exact match required).
+
+**Key Exports**: `calculateEffectiveRadii()`, `calculateSpatialQueryTolerance()`, `shouldApplyEffectiveRadius()`, `EffectiveRadiusConfig`
+
+**Relationships**: Used by `PointSpatialIndexLoader` for nD point visibility filtering.
+
+#### `geometry-update-manager.ts`
+
+**Purpose**: Handles GPU buffer management and geometry updates for Points, Lines, and GSplats. Creates and updates THREE.js geometries, manages GPU buffer pool for zero-allocation updates, supports worker-based projection offloading, and applies data validation and transforms. Extracted from `SceneLoader` (~500 lines).
+
+**Key Exports**: `GeometryUpdateManager`, `GeometryUpdateManagerConfig`
+
+**Relationships**: Used by `SceneLoader`. Integrates with `GPUBufferPool` from `rendering/`, `processGSplats()` from `gsplats-processor.ts`, and `buildInstanceBuffers()` from `lines-spatial-index-loader.ts`.
+
+### 9.5 State Management
+
+#### `view-state-manager.ts`
+
+**Purpose**: Centralized ViewState initialization and validation. Handles all complex logic for initializing ViewState from scene dimensions, including tolerance calculation, slice positioning, and dimension validation. Extracted from `SceneLoader` for testability.
+
+**Key Exports**: `ViewStateManager`, `SceneDimensions`, `ValidationResult`
+
+**Relationships**: Used by `SceneLoader` to create initial ViewState from scene dimension metadata.
+
+#### `data-monitor-manager.ts`
+
+**Purpose**: Manages `DataLoadingMonitor` instances without global state. Provides centralized access to monitor instances using a singleton pattern.
+
+**Key Exports**: `DataMonitorManager`, `getDataMonitor()`, `showDataMonitor()`, `hideDataMonitor()`, `toggleDataMonitor()`, `cycleDataMonitor()`
+
+**Relationships**: Used by `SceneLoader` and UI components to display data loading status and timing data.
+
+### 9.6 Memory Optimization
+
+#### `data-accumulator.ts`
+
+**Purpose**: Multi-type object pooling for Points, Lines, and GSplats. Implements persistent TypedArray buffers that grow by 1.5x when needed, eliminating per-frame allocations and reducing GC pressure. Supports Float32Array, Uint8Array, and Uint16Array natively. All three loaders use deep integration for the loading phase (write directly to accumulator buffers, return zero-copy subarrays).
+
+**Key Exports**: `DataAccumulator<T>` (generic interface), `LoadedPointsDataAccumulator`, `LinesDataAccumulator`, `GSplatsDataAccumulator`, `AccumulatorStats`
+
+**Relationships**: Each accumulator variant is used by its corresponding spatial index loader for zero-allocation data loading.
+
+### 9.7 Types and Utilities
+
+#### `data-loader-types.ts`
+
+**Purpose**: Core types and interfaces for the data loading architecture. Defines clean abstractions for loading nD points data with spatial indexing support and aligned attribute loading.
+
+**Key Exports**: `ViewState`, `LoadedPointsData`, `DataLoader`, `LoaderConfig`, `PointRange`, `SceneNode`, `SpatialQueryResult`, `LoaderStats`, `PositionArray`, `ColorArray`, `ScalarArray`, `validateViewStateForExtendToAll()`
+
+**Relationships**: Foundational type definitions consumed by all loader implementations and the scene loading pipeline.
+
+#### `array-decoder.ts`
+
+**Purpose**: Decodes arrays encoded by the Python `luxar.encoding` system. Supports all encoding modes: broadcasting, LUT, quantization, log-space, and array references. Critical for cross-language compatibility between Python encoder and TypeScript decoder.
+
+**Key Exports**: `ArrayDecoder`, `ArrayRefRegistry`, `loadAndDecodeOptionalArray()`, `ArrayMetadata`, `EncodingMetadata`
+
+**Relationships**: Used by all spatial index loaders to decode zarr arrays with arbitrary encoding schemes.
+
+#### `directory-navigator.ts`
+
+**Purpose**: Server-agnostic directory navigation service for Luxar datasets. Provides a flexible system for navigating directories containing Zarr datasets across different server types (WebDAV, S3, nginx, etc.) using multiple detection strategies.
+
+**Key Exports**: `DirectoryNavigator`, `DirectoryEntry`, `NavigationResult`
+
+**Relationships**: Used by the UI for dataset browsing. Operates independently from the loading pipeline.
+
+#### `index.ts`
+
+**Purpose**: Module barrel file that re-exports all public API from the data package.
+
+**Key Exports**: Aggregated re-exports from all modules in the package.
+
+---
+
 ## Changelog
+
+- **v1.2.9** (2026-02-28): Module reference documentation
+  - **ADDED**: Section 9 - Module Reference
+  - Documented all 21 source files in the data/ package
+  - Organized by functional area: loading pipeline, spatial index loaders, spatial index infrastructure, data processing, state management, memory optimization, types/utilities
 
 - **v1.2.8** (2025-12-27): Web Worker integration documentation
   - **ADDED**: Section 8 - Web Worker Offloading

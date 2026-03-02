@@ -215,7 +215,7 @@ class TestRenderingLimits:
 
     def test_sharpness_limits(self) -> None:
         """Test sharpness limits."""
-        assert RenderingLimits.SHARPNESS_MIN == 0.0
+        assert RenderingLimits.SHARPNESS_MIN == 0.001
         assert RenderingLimits.SHARPNESS_MAX == 31.0
 
     def test_color_limits(self) -> None:

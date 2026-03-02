@@ -137,10 +137,10 @@ import { config } from '../config';
 
 // Initialize camera with defaults
 const camera = new PerspectiveCamera(
-  config.camera.fov,
+  config.renderingControls.defaults.fov,
   aspectRatio,
-  config.camera.near,
-  config.camera.far
+  config.renderingControls.defaults.near,
+  config.renderingControls.defaults.far
 );
 camera.position.set(
   config.camera.initialPosition.x,
@@ -404,13 +404,13 @@ import { config } from '../config';
 
 const pointsMaterial = new THREE.ShaderMaterial({
   uniforms: {
-    uHdrMultiplier: { value: config.shader.points.hdrMultiplier },
+    uHdrMultiplier: { value: config.renderingControls.defaults.hdrMultiplier },
     uBaseAlpha: { value: config.shader.points.baseAlpha },
   },
   vertexShader: `...`,
   fragmentShader: `
     void main() {
-      vec3 hdrColor = color * ${config.shader.points.hdrMultiplier};
+      vec3 hdrColor = color * ${config.renderingControls.defaults.hdrMultiplier};
       gl_FragColor = vec4(hdrColor, ${config.shader.points.baseAlpha});
     }
   `,
@@ -465,23 +465,22 @@ interface PostProcessingConfig {
 ### 7.4 Usage Example
 
 ```typescript
-import { config } from '../config';
 import * as THREE from 'three';
 
-// Create HDR render target
+// Create HDR render target (HalfFloatType used directly in post-processing-manager)
 const renderTarget = new THREE.WebGLRenderTarget(width, height, {
-  type: config.postProcessing.hdr.renderTargetType,
-  colorSpace: config.postProcessing.toneMapping.initial.outputColorSpace,
+  type: THREE.HalfFloatType,
+  colorSpace: THREE.LinearSRGBColorSpace,
 });
 
 // Initial renderer (no tone mapping for HDR pipeline)
-renderer.outputColorSpace = config.postProcessing.toneMapping.initial.outputColorSpace;
-renderer.toneMapping = config.postProcessing.toneMapping.initial.toneMapping;
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+renderer.toneMapping = THREE.NoToneMapping;
 
 // Final output pass (apply tone mapping)
 const outputPass = new OutputPass();
-outputPass.outputColorSpace = config.postProcessing.toneMapping.final.outputColorSpace;
-outputPass.toneMapping = config.postProcessing.toneMapping.final.toneMapping;
+outputPass.outputColorSpace = THREE.SRGBColorSpace;
+outputPass.toneMapping = THREE.ACESFilmicToneMapping;
 ```
 
 ### 7.5 Post-Processing Effects
@@ -1003,37 +1002,34 @@ const canvas = document.getElementById('app') as HTMLCanvasElement;
 const gl = canvas.getContext('webgl2', config.webgl.context);
 
 // Create THREE.js renderer with config
+// Shared attributes (antialias, powerPreference, etc.) from context,
+// renderer-specific settings (precision, shadowMap) from renderer.
 const renderer = new THREE.WebGLRenderer({
   canvas,
   context: gl,
+  alpha: config.webgl.context.alpha,
+  antialias: config.webgl.context.antialias,
+  powerPreference: config.webgl.context.powerPreference,
+  preserveDrawingBuffer: config.webgl.context.preserveDrawingBuffer,
+  premultipliedAlpha: config.webgl.context.premultipliedAlpha,
   ...config.webgl.renderer,
 });
 
 // Create render target for post-processing
 const renderTarget = new THREE.WebGLRenderTarget(width, height, {
   ...config.webgl.renderTarget,
-  type: config.postProcessing.hdr.renderTargetType,
+  type: THREE.HalfFloatType,
 });
-
-// Switch to performance profile on low-end device
-if (isMobileDevice()) {
-  const profile = config.webgl.profiles.performance;
-  renderer.setPixelRatio(1.0); // No devicePixelRatio scaling
-  renderer.capabilities.precision = profile.precision;
-}
 ```
 
 ### 11.5 Validation Rules
 
 - **context.powerPreference**: Must be 'high-performance' | 'low-power' | 'default'
-- **renderer.powerPreference**: Must match context.powerPreference
 - **renderer.precision**: Must be 'highp' | 'mediump' | 'lowp'
 - **renderTarget.samples**: 0, 2, 4, or 8
 - **colorSpace**: Typical 'srgb', 'display-p3', 'rec2020'
-- Consistency checks:
-  - context.antialias should match renderer.antialias
-  - context.powerPreference should match renderer.powerPreference
-  - context.preserveDrawingBuffer should match renderer.preserveDrawingBuffer
+
+Note: Shared attributes (antialias, powerPreference, preserveDrawingBuffer, premultipliedAlpha) live in `webgl.context` only and are spread at renderer creation time. No sync checks needed.
 
 ---
 

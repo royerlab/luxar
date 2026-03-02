@@ -14,7 +14,6 @@ For constants, see constants.py.
 
 from __future__ import annotations
 
-import sys
 from typing import (
     Any,
     List,
@@ -25,13 +24,6 @@ from typing import (
 
 import numpy as np
 from numpy.typing import NDArray
-
-# Python 3.10+ compatibility
-if sys.version_info >= (3, 10):
-    pass
-else:
-    pass
-
 
 # Import type aliases from aliases module
 from .aliases import (

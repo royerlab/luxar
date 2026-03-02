@@ -2,6 +2,7 @@
 
 from .datanode import DataNode
 from .dimensions import Dimension, Dimensions
+from .group import Group
 from .gsplats import GSplats
 from .lines import Lines
 from .node import Node
@@ -24,17 +25,30 @@ from .transforms import (
     translate,
     translation,
 )
+from .viewer_config import (
+    AnimationConfig,
+    CameraConfig,
+    DimensionsConfig,
+    UIConfig,
+    ViewerConfig,
+)
 
 __all__ = [
     # Classes
     "Node",
     "DataNode",
+    "Group",
     "Scene",
     "Points",
     "Lines",
     "GSplats",
     "Dimension",
     "Dimensions",
+    "ViewerConfig",
+    "CameraConfig",
+    "UIConfig",
+    "DimensionsConfig",
+    "AnimationConfig",
     # Transform functions
     "compose",
     "from_list",

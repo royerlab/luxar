@@ -331,6 +331,9 @@ When to run E2E:
 - After changing decoder
 - Before PR/merge (always run full suite)
 
+### Test Fixture Auto-Generation
+Unit tests (`pnpm test`) auto-generate missing zarr fixtures via `globalSetup` in `vitest.config.ts`. The expected fixture list in `src/tests/global-setup.ts` must stay in sync with `tests/fixtures/generate_test_data.py` — when adding a new fixture to the Python script, add its name to the `EXPECTED_FIXTURES` array too.
+
 ---
 
 ## AI-Assisted Debugging
@@ -533,6 +536,8 @@ Before PR/merge:
 4. **Test everything** - Never skip tests, fix or mock them properly
 5. **Keep docs in sync** - Update READMEs and specs with code changes
 6. **Use existing patterns** - Follow codebase conventions
+7. **Multiple Agents at Work** - Other agents are likely at work on the same codebase and files, be mindful and careful to not delete/destroy/stash the work of the other agents.
+8. **Ask Questions when Unsure** - Ask the user questions when you are genuinely unsure about a course of action.
 
 ### Naming Conventions
 - Example files: `*_example.py` or `*_example.zarr`

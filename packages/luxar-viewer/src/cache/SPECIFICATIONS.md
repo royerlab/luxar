@@ -14,7 +14,7 @@ The cache package provides a three-level caching system with intelligent prefetc
 ### Data Pipeline Position
 
 ```
-HTTP Request → TwoLevelCachingStore → zarrita decompression → L0 Cache → ArrayDecoder → RangeCache → Rendering
+HTTP Request → TwoLevelCachingStore → zarrita decompression → L0 Cache → ArrayDecoder → Rendering
                 ↑                            ↑                    ↑
             Caches compressed chunks    ~2ms overhead     Caches decompressed chunks
             (L1/L2)                   (skipped on L0 hit)      (~1μs access)
@@ -781,9 +781,9 @@ Prevents metadata thrashing:
 
 ### Why the Original Range-Based L0 Cache Was Removed (Then Replaced)
 
-An earlier architecture included a 4-layer cache system with an L0 "RangeCache" that cached decoded Float32Array data keyed by byte ranges. This *range-based* cache was **removed** for the following reasons:
+An earlier architecture included a 4-layer cache system with an L0 "RangeCache" that cached decoded Float32Array data keyed by byte ranges. This _range-based_ cache was **removed** for the following reasons:
 
-> **Note**: The current L0 DecompressedChunkCache (documented in Section 3 above) is a *different design* that addresses these issues using chunk-based keys and ES6 Proxy interception. The problems below applied to the original range-based approach.
+> **Note**: The current L0 DecompressedChunkCache (documented in Section 3 above) is a _different design_ that addresses these issues using chunk-based keys and ES6 Proxy interception. The problems below applied to the original range-based approach.
 
 **Problems with L0 Cache:**
 
@@ -816,7 +816,8 @@ An earlier architecture included a 4-layer cache system with an L0 "RangeCache" 
 - Simpler, more efficient, easier to maintain
 - Measured impact: 0.7ms slower queries but 36% better memory coverage
 
-**Subsequent Evolution** (v1.4.0+): The current L0 DecompressedChunkCache was added later with a *chunk-based* design that avoids these problems:
+**Subsequent Evolution** (v1.4.0+): The current L0 DecompressedChunkCache was added later with a _chunk-based_ design that avoids these problems:
+
 - Uses chunk coordinates as keys (not byte ranges) → no fragmentation
 - Uses ES6 Proxy for transparent interception → no zarrita changes needed
 - Caches all TypedArrays (not just Float32Array) → consistent benefits

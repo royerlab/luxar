@@ -86,6 +86,9 @@ export class DimensionSliders {
   /** Map of dimension indices to their corresponding dropdown select elements */
   private dropdowns: Map<number, HTMLSelectElement> = new Map();
 
+  /** Map of dimension indices to their corresponding toggle elements (binary categoricals) */
+  private toggles: Map<number, HTMLElement> = new Map();
+
   /** Map to store bound event handlers for cleanup */
   private eventHandlers: Map<
     number,
@@ -93,6 +96,7 @@ export class DimensionSliders {
       input?: () => void;
       keydown?: (e: KeyboardEvent) => void;
       change?: () => void;
+      toggleClick?: () => void;
       mouseenter?: () => void;
       mouseleave?: () => void;
       focus?: () => void;
@@ -271,10 +275,20 @@ export class DimensionSliders {
       }
     }
 
+    // Remove event listeners from existing toggles
+    for (const [dimIndex, toggle] of this.toggles) {
+      const handlers = this.eventHandlers.get(dimIndex);
+      if (handlers) {
+        if (handlers.toggleClick) toggle.removeEventListener('click', handlers.toggleClick);
+        if (handlers.keydown) toggle.removeEventListener('keydown', handlers.keydown);
+      }
+    }
+
     // Clear any existing slider UI to prevent duplicates
     this.slidersContainer.innerHTML = '';
     this.sliders.clear();
     this.dropdowns.clear();
+    this.toggles.clear();
     this.eventHandlers.clear();
 
     // Add title section with status text
@@ -292,8 +306,9 @@ export class DimensionSliders {
     titleContainer.appendChild(this.statusText);
     this.slidersContainer.appendChild(titleContainer);
 
-    // Separate dimensions by type: sliders (continuous + many categorical) vs dropdowns (few categorical/discrete)
+    // Separate dimensions by type: sliders vs toggles (binary) vs dropdowns (few categorical/discrete)
     const sliderDims: number[] = [];
+    const toggleDims: number[] = [];
     const dropdownDims: number[] = [];
 
     for (let i = 0; i < this.dims.ndim; i++) {
@@ -308,11 +323,19 @@ export class DimensionSliders {
         const numDiscreteValues =
           range && step > 0 ? Math.floor((range[1] - range[0]) / step) + 1 : 0;
 
-        // Categorical with explicit labels and < 10 categories → dropdown (at bottom)
-        if (categories && categories.length < 10) {
+        // Binary categorical (exactly 2 categories) → toggle button
+        if (categories && categories.length === 2) {
+          toggleDims.push(i);
+        }
+        // Binary discrete non-categorical (exactly 2 values) → toggle button
+        else if (!categories && isDiscrete && numDiscreteValues === 2) {
+          toggleDims.push(i);
+        }
+        // Categorical with 3-9 categories → dropdown
+        else if (categories && categories.length < 10) {
           dropdownDims.push(i);
         }
-        // Discrete dimension with small range (< 10 values) → dropdown with numeric labels
+        // Discrete dimension with small range (3-9 values) → dropdown with numeric labels
         else if (isDiscrete && numDiscreteValues > 0 && numDiscreteValues < 10) {
           dropdownDims.push(i);
         }
@@ -328,11 +351,16 @@ export class DimensionSliders {
       this.createSlider(dimIndex);
     }
 
-    // Create categorical dropdowns in a grid at the bottom (max 3 per row)
-    if (dropdownDims.length > 0) {
+    // Create toggles and dropdowns in a grid at the bottom (max 3 per row)
+    const gridDims = [...toggleDims, ...dropdownDims];
+    if (gridDims.length > 0) {
       const dropdownGrid = document.createElement('div');
       dropdownGrid.className =
-        `luxar-dimension-dropdown-grid ${dropdownDims.length >= 3 ? 'luxar-dimension-dropdown-grid--three-cols' : ''} ${sliderDims.length > 0 ? 'luxar-dimension-dropdown-grid--with-spacing' : ''}`.trim();
+        `luxar-dimension-dropdown-grid ${gridDims.length >= 3 ? 'luxar-dimension-dropdown-grid--three-cols' : ''} ${sliderDims.length > 0 ? 'luxar-dimension-dropdown-grid--with-spacing' : ''}`.trim();
+
+      for (const dimIndex of toggleDims) {
+        this.createToggleInGrid(dimIndex, dropdownGrid);
+      }
 
       for (const dimIndex of dropdownDims) {
         this.createDropdownInGrid(dimIndex, dropdownGrid);
@@ -342,7 +370,7 @@ export class DimensionSliders {
     }
 
     // Handle edge case: no dimensions are navigable
-    if (this.sliders.size === 0 && this.dropdowns.size === 0) {
+    if (this.sliders.size === 0 && this.dropdowns.size === 0 && this.toggles.size === 0) {
       const message = document.createElement('div');
       message.className = 'luxar-dimension-sliders__empty';
       message.textContent = 'All dimensions are displayed';
@@ -478,6 +506,142 @@ export class DimensionSliders {
     gridContainer.appendChild(dropdownItem);
 
     this.dropdowns.set(dimIndex, dropdown);
+  }
+
+  /**
+   * Create a binary toggle control for a dimension with exactly 2 values.
+   *
+   * Segmented toggle button that shows both labels side by side with the
+   * active value highlighted. Single click toggles between the two values.
+   *
+   * Provides:
+   * - Compact segmented layout: [ValueA | ValueB]
+   * - One-click toggle interaction (vs 2-click dropdown)
+   * - Keyboard navigation (arrow keys, [ / ] keys, Space, Enter)
+   * - Tooltips matching Luxar UI style
+   *
+   * @param dimIndex - Zero-based index of dimension to create toggle for
+   * @param gridContainer - Grid container to append toggle to
+   * @private
+   */
+  private createToggleInGrid(dimIndex: number, gridContainer: HTMLElement): void {
+    const dimMeta = this.dims.metadata?.[dimIndex];
+    const categories = dimMeta?.categories;
+    const range = this.dimensionRanges[dimIndex];
+
+    // Determine the two labels
+    let label0: string;
+    let label1: string;
+    if (categories && categories.length === 2) {
+      label0 = categories[0];
+      label1 = categories[1];
+    } else {
+      // Discrete non-categorical: use numeric labels
+      label0 = String(Math.round(range[0]));
+      label1 = String(Math.round(range[1]));
+    }
+
+    // Container (grid item) — reuses dropdown wrapper class for consistent grid layout
+    const toggleItem = document.createElement('div');
+    toggleItem.className = 'luxar-dimension-dropdown';
+
+    // Label — reuses dropdown label class for consistent styling
+    const label = document.createElement('div');
+    label.className = dimMeta?.description
+      ? 'luxar-dimension-dropdown__label luxar-dimension-dropdown__label--with-tooltip'
+      : 'luxar-dimension-dropdown__label';
+
+    const name = this.dimensionNames[dimIndex] || `Dim ${dimIndex}`;
+    label.textContent = name;
+
+    if (dimMeta?.description) {
+      label.title = dimMeta.description;
+    }
+
+    // Single button toggle — shows current value, click swaps to other
+    const toggle = document.createElement('div');
+    toggle.className = 'luxar-dimension-toggle';
+    toggle.id = `dim-toggle-${dimIndex}`;
+    toggle.setAttribute('role', 'switch');
+    toggle.setAttribute('aria-label', `${name}: click to toggle`);
+    toggle.tabIndex = 0;
+
+    // Store both labels as data attributes for text swapping
+    toggle.dataset.label0 = label0;
+    toggle.dataset.label1 = label1;
+
+    // Set initial state
+    const currentValue = Math.round(this.dims.currentStep[dimIndex]);
+    this.updateToggleState(toggle, currentValue);
+
+    // Click handler — clicking toggles to other value
+    const clickHandler = () => {
+      const current = Math.round(this.dims.currentStep[dimIndex]);
+      const newValue = current === 0 ? 1 : 0;
+      sceneDimsManager.setDimensionValue(dimIndex, newValue);
+    };
+
+    // Keyboard handler — same keys as dropdowns for consistency
+    const keydownHandler = (event: KeyboardEvent) => {
+      if (
+        event.key === 'ArrowUp' ||
+        event.key === 'ArrowLeft' ||
+        event.key === 'ArrowDown' ||
+        event.key === 'ArrowRight' ||
+        event.key === '[' ||
+        event.key === ']' ||
+        event.key === ' ' ||
+        event.key === 'Enter'
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        const current = Math.round(this.dims.currentStep[dimIndex]);
+        const newValue = current === 0 ? 1 : 0;
+        sceneDimsManager.setDimensionValue(dimIndex, newValue);
+      }
+    };
+
+    toggle.addEventListener('click', clickHandler);
+    toggle.addEventListener('keydown', keydownHandler);
+
+    // Store handlers for cleanup
+    this.eventHandlers.set(dimIndex, {
+      toggleClick: clickHandler,
+      keydown: keydownHandler,
+    });
+
+    toggleItem.appendChild(label);
+    toggleItem.appendChild(toggle);
+    gridContainer.appendChild(toggleItem);
+
+    this.toggles.set(dimIndex, toggle);
+  }
+
+  /**
+   * Update a toggle element's text and visual state.
+   *
+   * Shows the current value's label. When value is 1 (second option),
+   * applies the --on modifier for highlighted styling.
+   *
+   * @param toggle - The toggle button element
+   * @param activeValue - The currently active value (0 or 1)
+   * @private
+   */
+  private updateToggleState(toggle: HTMLElement, activeValue: number): void {
+    const label0 = toggle.dataset.label0 || '0';
+    const label1 = toggle.dataset.label1 || '1';
+
+    if (activeValue === 1) {
+      toggle.textContent = label1;
+      toggle.classList.add('luxar-dimension-toggle--on');
+      toggle.title = `${label1} (click to switch to ${label0})`;
+      toggle.setAttribute('aria-checked', 'true');
+    } else {
+      toggle.textContent = label0;
+      toggle.classList.remove('luxar-dimension-toggle--on');
+      toggle.title = `${label0} (click to switch to ${label1})`;
+      toggle.setAttribute('aria-checked', 'false');
+    }
   }
 
   /**
@@ -854,6 +1018,12 @@ export class DimensionSliders {
       dropdown.value = String(currentValue);
     }
 
+    // Update each toggle's text and state
+    for (const [dimIndex, toggle] of this.toggles) {
+      const currentValue = Math.round(this.dims.currentStep[dimIndex]);
+      this.updateToggleState(toggle, currentValue);
+    }
+
     // Refresh the status bar to show current state
     this.updateStatusBar();
   }
@@ -1191,6 +1361,15 @@ export class DimensionSliders {
       }
     }
 
+    // Remove all event listeners from toggles
+    for (const [dimIndex, toggle] of this.toggles) {
+      const handlers = this.eventHandlers.get(dimIndex);
+      if (handlers) {
+        if (handlers.toggleClick) toggle.removeEventListener('click', handlers.toggleClick);
+        if (handlers.keydown) toggle.removeEventListener('keydown', handlers.keydown);
+      }
+    }
+
     // Remove all event listeners from animation controls
     for (const [dimIndex, playButton] of this.playButtons) {
       const handlers = this.eventHandlers.get(dimIndex);
@@ -1219,6 +1398,7 @@ export class DimensionSliders {
     this.eventHandlers.clear();
     this.sliders.clear();
     this.dropdowns.clear();
+    this.toggles.clear();
     this.playButtons.clear();
     this.animationEventHandlers = {};
 

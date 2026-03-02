@@ -13,9 +13,7 @@ The module provides three complementary approaches:
 
 1. **Decomposition-Based** (`seed_from_decomposition`): Scale-hierarchical detection via image decomposition
 2. **Grid-Based** (`seed_from_grid`): Uniform spatial coverage with isotropic shapes
-3. **Edge-Based** (`seed_from_edges`): Boundary detection with anisotropic shapes
-
-## Methods
+3. **Edge-Based** (`seed_from_edges`): Boundary detection with isotropic shapes
 
 ## Unified Entry Point: `generate_seeds()`
 
@@ -36,7 +34,7 @@ def generate_seeds(
   - `"auto"`: Fast edges + grid combination - **DEFAULT, RECOMMENDED**
   - `"decomposition"`: Hierarchical scale decomposition-based detection (slow)
   - `"grid"`: Uniform grid seeding for spatial coverage
-  - `"edges"`: Edge-based seeding with anisotropic shapes
+  - `"edges"`: Edge-based seeding along detected boundaries
   - Comma-separated: e.g., `"decomposition,edges,grid"` for specific combination
 - `device` (str, optional): PyTorch device for GPU acceleration
   - `None` (default): CPU using scipy.ndimage
@@ -86,7 +84,7 @@ seeds = generate_seeds(image, device='mps')   # Apple Metal GPU
 
 **Auto Mode Budget Allocation**:
 The "auto" method combines edges + grid (decomposition excluded for speed):
-- Edges: 60% (boundaries with anisotropic shapes)
+- Edges: 60% (boundary detection with Sobel gradients)
 - Grid: 40% (coverage for gaps)
 
 Use `method="decomposition,edges,grid"` to include all methods explicitly.
@@ -199,20 +197,19 @@ seeds = seed_from_grid(
 
 **Function**: `seed_from_edges()`
 
-**Strategy**: Detect edges using Sobel gradients, sample along edges, and compute anisotropic Gaussian shapes from the local structure tensor.
+**Strategy**: Detect edges using Sobel gradients and place seeds along boundaries using Poisson disk sampling with isotropic shapes (sigma=1.0).
 
 **How It Works**:
 1. Compute nD Sobel gradient magnitude
-2. Threshold to get edge mask
+2. Threshold to get edge mask (relative to maximum gradient)
 3. Poisson disk sampling weighted by edge response
-4. Compute structure tensor at each point
-5. Convert eigenvalues to anisotropic sigmas
-6. Build oriented Cholesky factors
+4. Assign isotropic sigma=1.0 to all seeds
+5. Build isotropic Cholesky factors
 
 **When to Use**:
 - For images with clear boundaries
-- When you need anisotropic (oriented) Gaussians
-- For capturing edge structure
+- When you need dense seeds along edges
+- For capturing boundary structure
 
 **Key Parameters**:
 ```python
@@ -221,16 +218,14 @@ seeds = seed_from_edges(
     n_seeds=None,                         # Target number (None = auto)
     min_distance=2.0,                     # Min distance between seeds
     edge_threshold_rel=0.1,               # Relative edge threshold (0.0-1.0)
-    structure_radius=3.0,                 # Radius for structure tensor
-    min_sigma=0.5,                        # Minimum sigma
-    max_sigma=16.0,                       # Maximum sigma
+    device=None,                          # GPU device (None=CPU, 'auto', 'cuda', 'mps')
 )
 ```
 
 **Advantages**:
-- **Anisotropic shapes**: Captures edge orientation
-- **Structure-aware**: Uses gradient information
-- **Boundary-focused**: Seeds placed along edges
+- **Edge-aware**: Seeds concentrated along boundaries
+- **Gradient-informed**: Uses Sobel gradient magnitude for weighting
+- **Boundary-focused**: Seeds placed along edges via Poisson disk sampling
 
 ---
 
@@ -239,7 +234,7 @@ seeds = seed_from_edges(
 | Aspect | Decomposition | Grid | Edges |
 |--------|---------------|------|-------|
 | **Philosophy** | Scale-hierarchical | Uniform coverage | Boundary detection |
-| **Shape Type** | Isotropic | Isotropic | Anisotropic |
+| **Shape Type** | Isotropic | Isotropic | Isotropic |
 | **Best For** | Blob-like features | Textures, coverage | Boundaries |
 | **Noise Handling** | ignore_finest_k | Intensity threshold | Edge threshold |
 | **Speed** | Slower (decomposition) | Fast | Medium |
@@ -297,9 +292,9 @@ seeds = generate_seeds(volume, device='cuda:1')
 GPU acceleration is applied to:
 - **Sobel gradients**: 10-50x faster (supports arbitrary dimensions)
 - **Peak detection**: 20-100x faster (2D/3D only)
-- **Soft blur**: 5-20x faster (2D/3D only)
+- **Soft blur**: 5-20x faster (all dimensions via separable 1D convolution)
 - **Interpolation**: 10-30x faster (2D/3D only)
-- **Deduplication**: 5-20x faster
+- **Deduplication**: Always CPU (KD-tree based, `device` parameter ignored)
 
 ### Dimension Support
 
@@ -308,7 +303,7 @@ GPU acceleration is applied to:
 | Sobel gradients | ✅ GPU | ✅ GPU | ✅ GPU | ✅ GPU |
 | Peak detection | ❌ CPU | ✅ GPU | ✅ GPU | ❌ CPU |
 | Interpolation | ❌ CPU | ✅ GPU | ✅ GPU | ❌ CPU |
-| Deduplication | ✅ GPU | ✅ GPU | ✅ GPU | ✅ GPU |
+| Deduplication | ✅ CPU | ✅ CPU | ✅ CPU | ✅ CPU |
 
 **Note**: For unsupported dimensions, the system automatically falls back to CPU with a warning.
 
@@ -414,7 +409,7 @@ seeds = seed_from_grid(
 seeds = seed_from_edges(
     image,
     edge_threshold_rel=0.2,     # Higher edge threshold
-    structure_radius=5.0,       # Larger integration radius
+    min_distance=3.0,           # Larger spacing between seeds
 )
 ```
 
@@ -437,12 +432,13 @@ Uses `dedupe_farthest_first()` for spatial deduplication:
 4. Only keep candidates satisfying min_distance constraint
 5. Ensures maximum spatial diversity with quality priority
 
-### Structure Tensor (Edges)
+### Edge Seeding (Sobel + Poisson Disk)
 
-The edges method computes the structure tensor S = Σ (∇V)(∇V)^T:
-- Eigendecomposition gives orientation (eigenvectors) and scale (eigenvalues)
-- Sigma = 1/sqrt(eigenvalue) with clamping
-- Cholesky factor L = Q @ diag(sigma) for anisotropic shape
+The edges method uses Sobel gradients for edge detection:
+- Computes nD Sobel gradient magnitude for edge strength
+- Thresholds at `edge_threshold_rel * max_gradient`
+- Poisson disk sampling weighted by gradient magnitude
+- Assigns isotropic sigma=1.0 to all seeds (orientation learned during fitting)
 
 ## Testing
 
@@ -481,7 +477,7 @@ hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_generate_seed
 - **v2.0 (2025-01)**: Major refactor
   - Removed `seed_from_gaussian()` and `seed_from_moments()` methods
   - Added `seed_from_grid()` for uniform coverage
-  - Added `seed_from_edges()` for anisotropic edge seeding
+  - Added `seed_from_edges()` for isotropic edge seeding
   - Changed default method from "decomposition" to "auto"
 
 - **v0.1 (2025-01)**: Initial implementation

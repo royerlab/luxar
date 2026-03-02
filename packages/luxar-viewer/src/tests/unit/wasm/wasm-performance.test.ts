@@ -8,12 +8,16 @@
  * assert correctness (that's covered by wasm-vs-typescript.test.ts).
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import type { WasmModule } from '../../../wasm/types';
 import { TypeScriptFallback } from '../../../wasm/typescript';
+
+// Increase timeout for all benchmarks in this file - coverage instrumentation
+// adds significant overhead to the tight loops used by performance benchmarks.
+vi.setConfig({ testTimeout: 30_000 });
 
 // Check if WASM files exist
 const __filename = fileURLToPath(import.meta.url);

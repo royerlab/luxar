@@ -118,7 +118,7 @@ Controls:
 # Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
 
-from luxar.utils.demos import launch_viewer
+from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
@@ -147,6 +147,7 @@ TARGET_SIZE = 128  # Downscale to manageable size
 TIME_POINT = 0  # First time point
 
 # Fitting parameters
+NUM_SPLATS = 8000
 N_ITERS = 6000  # Good balance of quality vs speed
 DEVICE = None  # Auto-detect (cuda/mps/cpu)
 
@@ -295,7 +296,7 @@ def fit_or_load_gsplats(volume):
 
         result = fit_gaussian_splats(
             volume,
-            seeds=8000,
+            seeds=NUM_SPLATS,
             n_iters=N_ITERS,
             device=DEVICE,
             verbose=True,
@@ -454,7 +455,7 @@ def view_with_napari(volume, gsplats_data):
         # Using GPU-accelerated renderer (100-1000x faster than old NumPy implementation)
         aprint("Rendering gsplats to volume (GPU-accelerated)...")
         rendered = gsplats_data.render_to_volume(
-            shape=(dim_len * 2 for dim_len in volume.shape)
+            shape=tuple(dim_len * 2 for dim_len in volume.shape)
         )
         aprint("✓ Rendering complete")
 
@@ -503,6 +504,7 @@ def serve_scene(scene_path):
 
 def main():
     """Main demo execution."""
+    warn_if_no_cuda_gpu()
     aprint("=" * 70)
     aprint("GSplats Demo: 3D Organoid DAPI-Stained Nuclei")
     aprint("=" * 70)

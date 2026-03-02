@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 import torch
 
+from .conftest import Tolerances, compute_L_row_norms
+
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
 
@@ -74,8 +76,17 @@ class Test4DDiagnostics:
 
         # CUDA forward
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
-            center, conic, amps, sharpness, list(shape), 3.0, 1e-5, tile_size
+            center,
+            conic,
+            amps,
+            sharpness,
+            L_row_norms.contiguous(),
+            list(shape),
+            3.0,
+            1e-5,
+            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -117,8 +128,8 @@ class Test4DDiagnostics:
             0, 1
         ].item()
 
-        assert correlation > 0.99, (
-            f"Correlation {correlation:.4f} should be > 0.99 for single centered splat"
+        assert correlation > Tolerances.COMPARISON_MIN_CORRELATION, (
+            f"Correlation {correlation:.4f} too low for single centered splat"
         )
 
     def test_conic_computation_4d(self):
@@ -220,8 +231,17 @@ class Test4DDiagnostics:
         sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
-            center, conic, amps, sharpness, list(shape), 3.0, 1e-5, tile_size
+            center,
+            conic,
+            amps,
+            sharpness,
+            L_row_norms.contiguous(),
+            list(shape),
+            3.0,
+            1e-5,
+            tile_size,
         )
 
         # cuda_result contains: [output, tile_counts, tile_offsets, tile_content]
@@ -284,8 +304,17 @@ class Test4DDiagnostics:
         sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
-            centers, conic, amps, sharpness, list(shape), 3.0, 1e-5, tile_size
+            centers,
+            conic,
+            amps,
+            sharpness,
+            L_row_norms.contiguous(),
+            list(shape),
+            3.0,
+            1e-5,
+            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -349,8 +378,17 @@ class Test4DDiagnostics:
             sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
             conic = cholesky_to_conic(L)
+            L_row_norms = compute_L_row_norms(L)
             cuda_result = cuda_splatting_backend.forward(
-                center, conic, amps, sharpness, list(shape), 3.0, 1e-5, tile_size
+                center,
+                conic,
+                amps,
+                sharpness,
+                L_row_norms.contiguous(),
+                list(shape),
+                3.0,
+                1e-5,
+                tile_size,
             )
             cuda_output = cuda_result[0].reshape(shape)
             tile_counts = cuda_result[1]
@@ -392,8 +430,17 @@ class Test4DDiagnostics:
             sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
             conic = cholesky_to_conic(L)
+            L_row_norms = compute_L_row_norms(L)
             cuda_result = cuda_splatting_backend.forward(
-                center, conic, amps, sharpness, list(shape), 3.0, 1e-5, tile_size
+                center,
+                conic,
+                amps,
+                sharpness,
+                L_row_norms.contiguous(),
+                list(shape),
+                3.0,
+                1e-5,
+                tile_size,
             )
             cuda_output = cuda_result[0].reshape(shape)
 
@@ -453,6 +500,7 @@ class TestGlobalSplatHandling:
         sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
 
         # Run CUDA backend (should trigger global splat handling)
         cuda_result = cuda_splatting_backend.forward(
@@ -460,6 +508,7 @@ class TestGlobalSplatHandling:
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -529,6 +578,7 @@ class TestGlobalSplatHandling:
         sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
 
         # Run CUDA backend
         cuda_result = cuda_splatting_backend.forward(
@@ -536,6 +586,7 @@ class TestGlobalSplatHandling:
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -617,6 +668,7 @@ class TestGlobalSplatHandling:
         )
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
 
         # Forward pass
         cuda_result = cuda_splatting_backend.forward(
@@ -624,6 +676,7 @@ class TestGlobalSplatHandling:
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -728,6 +781,7 @@ class TestGlobalSplatHandling:
         sharpness_t = torch.tensor(sharpnesses, device="cuda")
 
         conic = cholesky_to_conic(L_t)
+        L_row_norms = compute_L_row_norms(L_t)
 
         # Run CUDA backend
         cuda_result = cuda_splatting_backend.forward(
@@ -735,6 +789,7 @@ class TestGlobalSplatHandling:
             conic.contiguous(),
             amps_t.contiguous(),
             sharpness_t.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -770,10 +825,11 @@ class TestGlobalSplatHandling:
             print(f"  Max relative diff: {max_rel_diff:.4f}")
             print(f"  Mean relative diff: {mean_rel_diff:.6f}")
 
+            # Tighter than COMPARISON_MAX_REL_DIFF for mixed splat test
             assert max_rel_diff < 0.1, (
                 f"Mixed splat max relative diff {max_rel_diff:.4f} too large"
             )
-            assert mean_rel_diff < 0.01, (
+            assert mean_rel_diff < Tolerances.COMPARISON_MEAN_REL_DIFF, (
                 f"Mixed splat mean relative diff {mean_rel_diff:.6f} too large"
             )
 
@@ -810,6 +866,7 @@ class TestGlobalSplatHandling:
         sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
 
         # Run CUDA backend
         cuda_result = cuda_splatting_backend.forward(
@@ -817,6 +874,7 @@ class TestGlobalSplatHandling:
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -890,6 +948,7 @@ class TestGlobalSplatHandling:
         sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
+        L_row_norms = compute_L_row_norms(L)
 
         # Forward pass
         cuda_result = cuda_splatting_backend.forward(
@@ -897,6 +956,7 @@ class TestGlobalSplatHandling:
             conic.contiguous(),
             amps.contiguous(),
             sharpness.contiguous(),
+            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
@@ -1001,10 +1061,10 @@ class Test5DAnd6DDimensions:
                 f"\n5D forward: max_rel_diff={max_rel_diff:.4f}, mean={mean_rel_diff:.6f}"
             )
 
-            assert max_rel_diff < 0.15, (
+            assert max_rel_diff < Tolerances.COMPARISON_MAX_REL_DIFF, (
                 f"5D max relative diff {max_rel_diff:.4f} too large"
             )
-            assert mean_rel_diff < 0.02, (
+            assert mean_rel_diff < Tolerances.COMPARISON_MEAN_REL_DIFF * 2, (
                 f"5D mean relative diff {mean_rel_diff:.6f} too large"
             )
 

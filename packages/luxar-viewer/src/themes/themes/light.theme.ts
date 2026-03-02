@@ -70,7 +70,12 @@ export const lightTheme: Theme = {
   spacing: { ...darkTheme.spacing },
   effects: {
     borderRadius: { ...darkTheme.effects.borderRadius },
-    shadow: { ...darkTheme.effects.shadow },
+    shadow: {
+      sm: '0 1px 2px rgba(0, 0, 0, 0.08)',
+      md: '0 4px 12px rgba(0, 0, 0, 0.1)',
+      lg: '0 8px 24px rgba(0, 0, 0, 0.12)',
+      xl: '0 12px 48px rgba(0, 0, 0, 0.15)',
+    },
     blur: { ...darkTheme.effects.blur },
     opacity: { ...darkTheme.effects.opacity },
     transition: { ...darkTheme.effects.transition },

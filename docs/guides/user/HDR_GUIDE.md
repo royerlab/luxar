@@ -1,7 +1,7 @@
 # HDR Color Guide for Luxar
 
 **Version**: 1.0
-**Last Updated**: 2025-12-13
+**Last Updated**: 2026-02-22
 
 ---
 
@@ -45,41 +45,36 @@ Luxar supports High Dynamic Range (HDR) colors, allowing you to create visualiza
 
 ```python
 import numpy as np
-from luxar import Scene
+from luxar import LuxarZarrCompiler, Dimensions
 
 # Create a scene
-scene = Scene(name="hdr_demo", store_path="hdr_example.zarr")
+dims = Dimensions.default_3d()
+with LuxarZarrCompiler("hdr_example.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
 
-# HDR colors (values > 1.0)
-emissive_colors = np.array([
-    [5.0, 3.0, 0.5],  # Bright yellow glow
-    [2.0, 1.5, 1.0],  # Moderate HDR
-    [0.5, 0.7, 1.2],  # Slightly bright blue
-], dtype=np.float32)
+    # HDR colors (values > 1.0, float32)
+    emissive_colors = np.array([
+        [5.0, 3.0, 0.5],  # Bright yellow glow
+        [2.0, 1.5, 1.0],  # Moderate HDR
+        [0.5, 0.7, 1.2],  # Slightly bright blue
+    ], dtype=np.float32)
 
-# IMPORTANT: Specify color_mode for float32 colors
-scene.add_points(
-    name="emissive",
-    positions=positions,
-    colors=emissive_colors,
-    color_mode="hdr",  # Required for float32 colors since v0.4
-    radii=radii
-)
+    # Float32 colors are automatically treated as HDR
+    scene.add_points(
+        name="emissive",
+        positions=positions,
+        colors=emissive_colors,
+        radii=radii,
+    )
 ```
 
-### Color Mode Parameter
+### HDR Color Detection
 
-As of Luxar v0.4, you **must** specify `color_mode` when using float32 colors:
+Luxar automatically detects HDR colors based on the data type:
+- **`np.float32`** colors: Treated as HDR-capable (values can exceed 1.0)
+- **`np.uint8`** colors: Standard 8-bit colors (values 0-255)
 
-```python
-# For HDR colors (float32, values can exceed 1.0)
-color_mode="hdr"
-
-# For SDR colors (float32, but values in [0, 1])
-color_mode="sdr"
-
-# Auto-detect is NO LONGER SUPPORTED
-```
+No explicit `color_mode` parameter is needed.
 
 ### Example Scenes
 
@@ -92,7 +87,7 @@ fire_colors = np.array([
     [2.0, 0.5, 0.1],  # Edges
 ], dtype=np.float32)
 
-scene.add_points("fire", positions, colors=fire_colors, color_mode="hdr")
+scene.add_points("fire", positions, colors=fire_colors)
 ```
 
 **Natural Lighting:**
@@ -238,7 +233,7 @@ console.log('Float support:', !!gl.getExtension('EXT_color_buffer_float'));
 
 **"No visible difference with HDR"**
 - Ensure your dataset uses values > 1.0
-- Check that `color_mode="hdr"` is set in Python
+- Check that colors use `dtype=np.float32` in Python
 - Verify display is actually in HDR mode (not SDR)
 
 **"Colors look wrong"**
@@ -276,8 +271,7 @@ console.log('Float support:', !!gl.getExtension('EXT_color_buffer_float'));
 ## Best Practices
 
 ### DO:
-- Use `dtype=np.float32` for HDR colors
-- Specify `color_mode="hdr"` when adding points/lines
+- Use `dtype=np.float32` for HDR color arrays
 - Keep most colors in [0.0, 3.0] range
 - Reserve values > 3.0 for very bright emissive objects
 - Use ACES tone mapping for HDR content
@@ -287,7 +281,6 @@ console.log('Float support:', !!gl.getExtension('EXT_color_buffer_float'));
 - Use values > 10.0 unless necessary (reduces dynamic range)
 - Mix uint8 and float32 colors in same scene
 - Assume all users have HDR displays
-- Forget to set `color_mode` parameter
 - Use negative color values (physically meaningless)
 
 ---

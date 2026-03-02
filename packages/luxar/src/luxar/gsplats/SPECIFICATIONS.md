@@ -12,6 +12,9 @@ This specification serves as the **hub** for the entire gsplats package. For det
 - **Optimizers**: [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) - Standard Adam with gradient dilution compensation
 - **Models**: [models/SPECIFICATIONS.md](./models/SPECIFICATIONS.md) - PyTorch model and rendering engine
 - **Utilities**: [utils/SPECIFICATIONS.md](./utils/SPECIFICATIONS.md) - Matrix operations and gradient dilution utilities
+- **Seeds**: [seeds/SPECIFICATIONS.md](./seeds/SPECIFICATIONS.md) - Seed generation methods for Gaussian splatting
+- **I/O**: [io/SPECIFICATIONS.md](./io/SPECIFICATIONS.md) - GSplats serialization and inspection
+- **CLAHE**: [clahe/SPECIFICATIONS.md](./clahe/SPECIFICATIONS.md) - CLAHE-based perceptual sampling
 - **Terminology Glossary**: [GLOSSARY.md](./GLOSSARY.md) - Standard terminology and naming conventions
 
 **Reading Order**:
@@ -38,7 +41,7 @@ dimmed = centered.scale_intensity(0.1)  # Reduce brightness 10x
 shifted = dimmed.translate([10, 20, 30])  # Translate in space
 ```
 
-## 0. GSplat Data Container (`fit_result.py`)
+## 0. GSplat Data Container (`gsplat_data.py`)
 
 ### Class: `GSplatData`
 
@@ -89,56 +92,42 @@ Key requirements:
 - Mathematically stable parameterizations avoiding singularities
 - GPU-accelerated rendering with memory management
 
-## 1. Seed Generation Sub-Package (`seeds/)
+## 1. Seed Generation Sub-Package (`seeds/`)
 
-### Core Function: `seed_from_gaussian(V, spacing=None, scales=(0.7,1.0,1.4,2.0,2.8,4.0), peaks_per_scale=1000, percentile_thresh=70.0, min_distance=2.0, add_intensity_grid=True, grid_step=None, grid_percentile=60.0)`
+> Full specification: [seeds/SPECIFICATIONS.md](./seeds/SPECIFICATIONS.md)
 
 
-**Note**: Seed generation is implemented in the `seeds/` sub-package (not a single file).
-The `clahe/` sub-package provides CLAHE-based perceptual sampling functionality.
-Both packages are exported from the root `__init__.py` for convenience.
+Seed generation provides initial Gaussian splat positions and shapes for the fitting pipeline.
 
-Generate overcomplete seed locations using three complementary methods:
+### Unified Entry Point: `generate_seeds(V, method="auto", **kwargs)`
 
-**Method 1: Multi-scale Gaussian peaks**
-- For each scale � in `scales`: apply `gaussian_filter(V, sigma=�)`
-- Find local maxima using `maximum_filter` with kernel size `2*ceil(1.5*�)+1`
-- Keep peaks where `image[x] == max_filtered[x] AND image[x] >= percentile(image, percentile_thresh)`
-- Return top `peaks_per_scale` strongest peaks per scale
+The `generate_seeds()` function in `seeds/generate.py` is the recommended entry point. It dispatches to one or more seeding methods and combines results with deduplication.
 
-**Method 2: Difference of Gaussians (DoG)**
-- Compute `DoG = gaussian_filter(V, �) - gaussian_filter(V, 1.6*�)` for each scale
-- Find local maxima using same approach as Method 1
-- Return top `peaks_per_scale//2` peaks per scale
+- **method="auto"** (default): Fast combination of edges (60%) + grid (40%)
+- **method="edges"**: Edge-based seeding via nD Sobel gradients with Poisson disk sampling
+- **method="grid"**: Uniform grid with optional jitter and intensity filtering
+- **method="decomposition"**: Multi-scale decomposition peak detection (slower, best for blobs)
+- Comma-separated combinations (e.g., `"decomposition,edges,grid"`) are supported
 
-**Method 3: Intensity-weighted grid sampling** (if `add_intensity_grid=True`)
-- Create regular grid with step `grid_step` (default: `4*min(scales)`)
-- Offset grid by half-step: start at `step//2` to avoid boundaries
-- Apply `uniform_filter` with size `max(1, step//3)` for local averaging
-- Keep points above `percentile(local_intensities, grid_percentile)`
+### Three Seeding Methods
 
-**Method 4: CLAHE-based perceptual sampling** (if `add_clahe_sampling=True`)
-- Apply CLAHE to enhance local contrast (tile_size=16, clip_limit=2.0)
-- Sample from CLAHE-equalized intensities as probability distribution
-- Generates perceptually-balanced candidates (dim structures get fair representation)
-- Number of samples: `clahe_samples_per_scale` (default: `peaks_per_scale`)
+1. **`seed_from_edges(V, ...)`** (`edges.py`): Detects edges using nD Sobel gradients, samples via weighted Poisson disk sampling. Returns isotropic Gaussians (sigma=1.0).
 
-**Spatial deduplication of seeds (Farthest-First Selection):**
-- Sort all candidates by detection strength (intensity or CLAHE value)
-- Initialize with strongest candidate
-- Iteratively select candidate furthest from all previously selected
-- Continue until budget exhausted or all candidates processed
-- **Result**: Maximum spatial diversity with quality priority
-- **Complexity**: O(k² × n) where k is output size, n is input candidates
+2. **`seed_from_grid(V, ...)`** (`grid.py`): Places seeds on a regular grid with aspect-ratio-aware spacing. Supports jitter, intensity filtering. Returns isotropic Gaussians (sigma=spacing/2).
 
-**Sub-pixel refinement:**
-- For each candidate, extract 3�3�...�3 neighborhood (clamped to image bounds)
-- Compute intensity-weighted centroid: `� = �(w_i * x_i) / �(w_i)` where `w_i = intensity_i - min_intensity`
+3. **`seed_from_decomposition(V, ...)`** (`multiscale_decomposition.py`): Decomposes image into multiple scales via `decompose_image()`, finds local maxima per scale. Returns isotropic Gaussians where sigma equals the detection scale factor.
 
-### Helper Functions:
-- `_local_maxima(img, radius, thresh, top_k)`: L neighborhood maxima detection
-- `dog_response (removed)(vol, sigma, k=1.6)`: Difference of Gaussians computation
-- `_dedupe(coords, min_distance)`: Spatial deduplication with KDTree/greedy fallback
+### Shared Utilities (`utils.py`)
+
+- **`local_maxima(img, radius, thresh, top_k)`**: L-infinity neighborhood peak detection using `scipy.ndimage.maximum_filter`
+- **`dedupe_farthest_first(coords, min_distance, intensities)`**: Greedy spatial deduplication with KD-tree acceleration. Returns `(deduped_coords, kept_indices)` for O(1) attribute lookup.
+- **`sigmas_to_cholesky_isotropic(sigmas, ndim)`**: Converts per-seed isotropic sigmas to packed lower-triangular Cholesky factors
+- **`combine_seeds(*arrays, min_distance)`**: Merges seed coordinate arrays with optional deduplication
+
+### GPU Acceleration (`gpu_ops.py`)
+
+All seeding methods accept an optional `device` parameter (`'cuda'`, `'mps'`, `'auto'`) for GPU acceleration via PyTorch. Provides 10-50x speedup for large volumes (>100 cubed). Operations: Sobel gradients (all dimensions), peak detection (2D/3D), amplitude interpolation (2D/3D).
+
 
 ## 2. Gaussian Splat Model (`models/gsplats/gsplat_model.py`)
 
@@ -1083,7 +1072,7 @@ With proper iteration distribution (more iterations on coarse scales):
 - Handle device-specific limitations (e.g., MPS doesn't support torch.unique with dim)
 - Provide fallbacks for missing functionality
 
-### Memory Management  
+### Memory Management
 - Implement adaptive chunking based on available memory
 - Use grid caching with process-wide cache keyed by (device, dtype, strides, shape)
 - Monitor and report memory usage for debugging

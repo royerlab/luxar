@@ -106,7 +106,7 @@ describe('TwoLevelCachingStore', () => {
   beforeEach(async () => {
     mocks = createMocks();
     store = new TwoLevelCachingStore('https://example.com/data.zarr', {
-      l1MaxSize: 1024, // 1KB for easier testing
+      l1MaxSize: 20 * 1024 * 1024, // 20MB (must exceed SegmentedLRU MIN_METADATA_SIZE of 10MB)
       l2MaxSize: 4096, // 4KB
       urlParams: new URLSearchParams(''), // Don't read from window
     });

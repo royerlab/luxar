@@ -14,37 +14,9 @@
 
 use wasm_bindgen::prelude::*;
 
-/// Maximum number of dimensions supported by WASM functions.
-/// This limit exists because fixed-size arrays are used for performance.
-/// If you need more dimensions, the code would need to use Vec<f32> with
-/// pre-allocation, which has a small performance cost.
-pub const MAX_SUPPORTED_DIMS: usize = 16;
-
-/// Maximum packed Cholesky size for MAX_SUPPORTED_DIMS dimensions.
-/// Formula: n * (n + 1) / 2 = 16 * 17 / 2 = 136
-const MAX_PACKED_CHOLESKY_SIZE: usize = (MAX_SUPPORTED_DIMS * (MAX_SUPPORTED_DIMS + 1)) / 2;
-
-/// Compute the packed index for a Cholesky element L[row, col].
-/// Packed lower-triangular: [L00, L10, L11, L20, L21, L22, ...]
-/// Formula: row * (row + 1) / 2 + col (for col <= row)
-#[inline]
-fn packed_index(row: usize, col: usize) -> usize {
-    (row * (row + 1)) / 2 + col
-}
-
-/// Validate that the number of dimensions is within the supported limit.
-/// Panics with a clear error message if the limit is exceeded.
-#[inline]
-fn validate_ndim(ndim: usize, function_name: &str) {
-    if ndim > MAX_SUPPORTED_DIMS {
-        panic!(
-            "[WASM] {}: ndim={} exceeds maximum supported dimensions ({}). \
-             Luxar WASM functions support up to {} dimensions. \
-             For higher dimensions, use TypeScript fallback or reduce dataset dimensionality.",
-            function_name, ndim, MAX_SUPPORTED_DIMS, MAX_SUPPORTED_DIMS
-        );
-    }
-}
+use crate::common::{
+    packed_index, validate_ndim, CHOLESKY_EPSILON, MAX_PACKED_CHOLESKY_SIZE, MAX_SUPPORTED_DIMS,
+};
 
 /// Compute Mahalanobis distance for a single point using packed Cholesky factor.
 ///
@@ -100,7 +72,104 @@ pub fn mahalanobis_distance(diff: &[f32], packed_l: &[f32], ndim: usize) -> f32 
     sum_sq.sqrt()
 }
 
-/// Extract a Cholesky submatrix for specified dimensions.
+/// Compute the Cholesky factor of the marginal covariance for a subset of dimensions.
+///
+/// Given a full packed Cholesky factor L where Σ = L·Lᵀ, this computes
+/// the Cholesky factor L_S of the marginal covariance Σ_S for the dimensions
+/// specified by `keep_dims`.
+///
+/// **Why this is needed**: Simply extracting rows/columns from L does NOT give the
+/// correct Cholesky of the marginal covariance when there are off-diagonal correlations
+/// between the subset dimensions and other dimensions. The correct approach is:
+/// 1. Reconstruct the marginal covariance: Σ_S[i,j] = Σ_k L[s_i,k]·L[s_j,k]
+/// 2. Cholesky-factorize Σ_S
+///
+/// # Arguments
+/// * `full_packed_l` - Full packed Cholesky factor (may contain multiple splats)
+/// * `full_packed_offset` - Offset into full_packed_l for this splat's data
+/// * `keep_dims` - Indices of dimensions to keep (must be sorted ascending) [sub_ndim]
+/// * `sub_ndim` - Number of dimensions to keep
+/// * `output` - Output packed marginal Cholesky factor [subPackedSize]
+///
+/// # Performance
+/// Cost: O(sub_ndim² · max_dim) for marginal covariance + O(sub_ndim³) for Cholesky.
+/// For typical sub_ndim=1-3, this is negligible.
+#[inline]
+fn compute_marginal_cholesky(
+    full_packed_l: &[f32],
+    full_packed_offset: usize,
+    keep_dims: &[u32],
+    sub_ndim: usize,
+    output: &mut [f32],
+) {
+    // Step 1: Reconstruct the dense marginal covariance matrix Σ_S
+    // Σ_S[i,j] = Σ_{k=0}^{min(s_i,s_j)} L[s_i,k] · L[s_j,k]
+    // Use fixed-size buffer on the stack (16×16 = 256 floats = 1KB)
+    let mut sigma = [0.0f32; MAX_SUPPORTED_DIMS * MAX_SUPPORTED_DIMS];
+
+    for i in 0..sub_ndim {
+        let si = keep_dims[i] as usize;
+        for j in 0..=i {
+            let sj = keep_dims[j] as usize;
+            // L is lower-triangular: L[row,k] = 0 for k > row
+            // So we only sum up to min(si, sj)
+            let k_max = si.min(sj);
+            let mut sum = 0.0f32;
+            for k in 0..=k_max {
+                let l_si_k = full_packed_l[full_packed_offset + packed_index(si, k)];
+                let l_sj_k = full_packed_l[full_packed_offset + packed_index(sj, k)];
+                sum += l_si_k * l_sj_k;
+            }
+            sigma[i * MAX_SUPPORTED_DIMS + j] = sum;
+            sigma[j * MAX_SUPPORTED_DIMS + i] = sum; // Symmetric
+        }
+    }
+
+    // Step 2: Cholesky factorization of Σ_S (Cholesky-Crout algorithm)
+    let mut l_sub = [0.0f32; MAX_PACKED_CHOLESKY_SIZE];
+
+    for i in 0..sub_ndim {
+        for j in 0..=i {
+            let mut sum = sigma[i * MAX_SUPPORTED_DIMS + j];
+            for k in 0..j {
+                sum -= l_sub[packed_index(i, k)] * l_sub[packed_index(j, k)];
+            }
+            if i == j {
+                // Diagonal: L[i,i] = sqrt(Σ[i,i] - Σ_{k<i} L[i,k]²)
+                // Guard against numerical issues (negative due to floating point)
+                l_sub[packed_index(i, i)] = if sum > CHOLESKY_EPSILON {
+                    sum.sqrt()
+                } else {
+                    CHOLESKY_EPSILON.sqrt() // Regularize degenerate covariance
+                };
+            } else {
+                // Off-diagonal: L[i,j] = (Σ[i,j] - Σ_{k<j} L[i,k]·L[j,k]) / L[j,j]
+                let diag = l_sub[packed_index(j, j)];
+                l_sub[packed_index(i, j)] = if diag > CHOLESKY_EPSILON {
+                    sum / diag
+                } else {
+                    0.0
+                };
+            }
+        }
+    }
+
+    // Copy result to output
+    let sub_packed_size = (sub_ndim * (sub_ndim + 1)) / 2;
+    output[..sub_packed_size].copy_from_slice(&l_sub[..sub_packed_size]);
+}
+
+/// Extract raw elements from a packed Cholesky factor for specified dimensions.
+///
+/// **WARNING**: This extracts raw L elements, NOT the Cholesky factor of the
+/// marginal covariance. For a full Cholesky L where Σ = L·Lᵀ, the Cholesky of
+/// the marginal covariance Σ_S for dimensions S is generally NOT the submatrix
+/// of L when there are cross-dimension correlations.
+///
+/// This function is only correct when the Cholesky factor is block-diagonal
+/// (no correlations between the kept and removed dimensions). For the correct
+/// marginal Cholesky, use `compute_gsplats_attenuation` or `extract_visible_cholesky_3d`
+/// which handle this internally.
 ///
 /// # Arguments
 /// * `packed` - Full packed Cholesky [packedSize]
@@ -192,17 +261,14 @@ pub fn compute_gsplats_attenuation(
                 diff[h_idx] = slice_position[d] - positions[center_offset + d];
             }
 
-            // Extract hidden Cholesky submatrix
-            let mut out_idx = 0;
-            for sub_row in 0..num_hidden {
-                let orig_row = hidden_dims[sub_row] as usize;
-                for sub_col in 0..=sub_row {
-                    let orig_col = hidden_dims[sub_col] as usize;
-                    hidden_cholesky[out_idx] =
-                        cholesky[cholesky_offset + packed_index(orig_row, orig_col)];
-                    out_idx += 1;
-                }
-            }
+            // Compute correct marginal Cholesky for hidden dimensions
+            compute_marginal_cholesky(
+                cholesky,
+                cholesky_offset,
+                hidden_dims,
+                num_hidden,
+                &mut hidden_cholesky,
+            );
 
             // Compute Mahalanobis distance
             let mahal_dist =
@@ -296,16 +362,10 @@ pub fn extract_visible_cholesky_3d(
         let src_offset = i * full_packed_size;
         let dst_offset = (out_splat as usize) * 6;
 
-        // Extract 3x3 Cholesky submatrix (6 elements)
-        let mut out_idx = 0;
-        for sub_row in 0..3 {
-            let orig_row = display_dims[sub_row] as usize;
-            for sub_col in 0..=sub_row {
-                let orig_col = display_dims[sub_col] as usize;
-                output[dst_offset + out_idx] = cholesky[src_offset + packed_index(orig_row, orig_col)];
-                out_idx += 1;
-            }
-        }
+        // Compute correct marginal Cholesky for display dimensions
+        let mut temp_cholesky = [0.0f32; 6]; // 3D packed = 6 elements
+        compute_marginal_cholesky(cholesky, src_offset, display_dims, 3, &mut temp_cholesky);
+        output[dst_offset..dst_offset + 6].copy_from_slice(&temp_cholesky[..6]);
 
         out_splat += 1;
     }
@@ -480,5 +540,158 @@ mod tests {
         assert!(attenuation[1] < 0.001);
 
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_compute_marginal_cholesky_diagonal() {
+        // For diagonal L, marginal Cholesky should equal raw extraction
+        // 4D diagonal L: L = diag(2, 3, 5, 7)
+        // Packed: [2, 0,3, 0,0,5, 0,0,0,7]
+        let packed = vec![2.0, 0.0, 3.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 7.0];
+        let keep_dims = vec![0u32, 2];
+        let mut output = vec![0.0f32; 3]; // 2D packed
+
+        compute_marginal_cholesky(&packed, 0, &keep_dims, 2, &mut output);
+
+        // Σ = diag(4, 9, 25, 49), marginal for dims [0,2] = diag(4, 25)
+        // Cholesky of diag(4, 25) = diag(2, 5) → packed [2, 0, 5]
+        assert!((output[0] - 2.0).abs() < 1e-5, "L_S[0,0] = 2.0, got {}", output[0]);
+        assert!(output[1].abs() < 1e-5, "L_S[1,0] = 0.0, got {}", output[1]);
+        assert!((output[2] - 5.0).abs() < 1e-5, "L_S[1,1] = 5.0, got {}", output[2]);
+    }
+
+    #[test]
+    fn test_compute_marginal_cholesky_correlated() {
+        // 3D L with correlations:
+        // L = [[2, 0, 0],
+        //      [1, 3, 0],
+        //      [0.5, 0.5, 4]]
+        // Packed: [2, 1,3, 0.5,0.5,4]
+        //
+        // Σ = L·L^T:
+        // Σ[0,0] = 2*2 = 4
+        // Σ[1,0] = 1*2 = 2,  Σ[1,1] = 1*1 + 3*3 = 10
+        // Σ[2,0] = 0.5*2 = 1,  Σ[2,1] = 0.5*1 + 0.5*3 = 2,  Σ[2,2] = 0.5*0.5 + 0.5*0.5 + 4*4 = 16.5
+        //
+        // Marginal for dims [0, 2]:
+        // Σ_S = [[4, 1], [1, 16.5]]
+        // Cholesky of Σ_S:
+        //   L_S[0,0] = sqrt(4) = 2
+        //   L_S[1,0] = 1/2 = 0.5
+        //   L_S[1,1] = sqrt(16.5 - 0.25) = sqrt(16.25) ≈ 4.0311
+        let packed = vec![2.0, 1.0, 3.0, 0.5, 0.5, 4.0];
+        let keep_dims = vec![0u32, 2];
+        let mut output = vec![0.0f32; 3];
+
+        compute_marginal_cholesky(&packed, 0, &keep_dims, 2, &mut output);
+
+        assert!((output[0] - 2.0).abs() < 1e-4, "L_S[0,0] = 2.0, got {}", output[0]);
+        assert!((output[1] - 0.5).abs() < 1e-4, "L_S[1,0] = 0.5, got {}", output[1]);
+        let expected_diag = (16.25_f32).sqrt(); // ≈ 4.0311
+        assert!(
+            (output[2] - expected_diag).abs() < 1e-4,
+            "L_S[1,1] = {}, got {}",
+            expected_diag,
+            output[2]
+        );
+    }
+
+    #[test]
+    fn test_marginal_vs_raw_extraction_difference() {
+        // Prove that raw extraction and marginal Cholesky differ for correlated L
+        // Same L as above
+        let packed = vec![2.0, 1.0, 3.0, 0.5, 0.5, 4.0];
+        let keep_dims = vec![0u32, 2];
+
+        let mut raw_output = vec![0.0f32; 3];
+        extract_cholesky_submatrix(&packed, &keep_dims, 2, &mut raw_output);
+
+        let mut marginal_output = vec![0.0f32; 3];
+        compute_marginal_cholesky(&packed, 0, &keep_dims, 2, &mut marginal_output);
+
+        // Raw extraction gives [L[0,0], L[2,0], L[2,2]] = [2.0, 0.5, 4.0]
+        assert!((raw_output[0] - 2.0).abs() < 1e-5);
+        assert!((raw_output[1] - 0.5).abs() < 1e-5);
+        assert!((raw_output[2] - 4.0).abs() < 1e-5);
+
+        // Marginal Cholesky gives different L[2,2]: sqrt(16.25) ≈ 4.031 ≠ 4.0
+        assert!(
+            (marginal_output[2] - raw_output[2]).abs() > 0.01,
+            "Marginal and raw should differ for correlated L: marginal={}, raw={}",
+            marginal_output[2],
+            raw_output[2]
+        );
+    }
+
+    #[test]
+    fn test_mahalanobis_with_marginal_cholesky() {
+        // Verify Mahalanobis distance is correct when using marginal Cholesky
+        // 3D L with correlations, extracting marginal for dims [0, 2]
+        let packed = vec![2.0, 1.0, 3.0, 0.5, 0.5, 4.0];
+        let keep_dims = vec![0u32, 2];
+
+        let mut marginal_l = vec![0.0f32; 3];
+        compute_marginal_cholesky(&packed, 0, &keep_dims, 2, &mut marginal_l);
+
+        // Mahalanobis distance with diff = [1, 0]
+        let diff = vec![1.0f32, 0.0];
+        let dist = mahalanobis_distance(&diff, &marginal_l, 2);
+
+        // With Σ_S = [[4, 1], [1, 16.5]], Σ_S⁻¹ ≈ [[0.2538, -0.01538], [-0.01538, 0.06154]]
+        // d^T Σ_S⁻¹ d = 0.2538 for diff = [1, 0]
+        // Mahalanobis = sqrt(0.2538) ≈ 0.5038
+        // Or via forward substitution: y[0] = 1/2 = 0.5, y[1] = (0 - 0.5*0.5) / 4.031 ≈ -0.0621
+        // ||y|| = sqrt(0.25 + 0.00386) ≈ 0.5038
+        assert!(
+            (dist - 0.5).abs() < 0.05,
+            "Mahalanobis distance should be ~0.5, got {}",
+            dist
+        );
+    }
+
+    #[test]
+    fn test_attenuation_with_correlated_cholesky() {
+        // End-to-end: 4D splat with correlated Cholesky, hidden dim = [3]
+        // L = [[2, 0, 0, 0],
+        //      [1, 3, 0, 0],
+        //      [0, 0, 2, 0],
+        //      [0.5, 0.5, 0, 4]]
+        // Packed: [2, 1,3, 0,0,2, 0.5,0.5,0,4]
+        let positions = vec![0.0, 0.0, 0.0, 0.0]; // at origin
+        let cholesky = vec![2.0, 1.0, 3.0, 0.0, 0.0, 2.0, 0.5, 0.5, 0.0, 4.0];
+        let amplitudes = vec![1.0];
+        let sharpness = vec![2.0];
+        let slice_pos = vec![0.0, 0.0, 0.0, 1.0]; // slice at dim3 = 1
+        let hidden_dims = vec![3u32];
+
+        let mut visibility = vec![0u8; 1];
+        let mut attenuation = vec![0.0f32; 1];
+
+        compute_gsplats_attenuation(
+            &positions,
+            &cholesky,
+            &amplitudes,
+            &sharpness,
+            &slice_pos,
+            &hidden_dims,
+            4,
+            1,
+            0.001,
+            &mut visibility,
+            &mut attenuation,
+        );
+
+        // Hidden dim marginal for dim [3]:
+        // Σ_33 = L[3,0]^2 + L[3,1]^2 + L[3,2]^2 + L[3,3]^2
+        //      = 0.25 + 0.25 + 0 + 16 = 16.5
+        // L_S = sqrt(16.5) ≈ 4.062
+        // Mahalanobis distance of diff=1.0: 1.0 / 4.062 ≈ 0.2462
+        // Attenuation = exp(-0.5 * 0.2462^2) ≈ exp(-0.0303) ≈ 0.970
+        assert!(
+            attenuation[0] > 0.9 && attenuation[0] < 1.0,
+            "Expected attenuation ~0.97, got {}",
+            attenuation[0]
+        );
+        assert_eq!(visibility[0], 1);
     }
 }

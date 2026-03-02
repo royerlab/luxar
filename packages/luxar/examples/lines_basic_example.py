@@ -1,16 +1,18 @@
-#!/usr/bin/env python
-"""
-Lines Basic Example
+#!/usr/bin/env python3
+"""Lines Basic Example - Line rendering with segments, polylines, and loops.
 
-Creates a simple 3D scene with lines to test line rendering in the viewer.
-Demonstrates:
-- Basic line creation with segments
-- Polylines (connected vertices)
+This example demonstrates:
+- Basic line creation with segments (pairs of vertices)
+- Polylines (connected chain of vertices)
+- Closed loops (polyline with first-last connection)
 - Per-vertex colors and widths
-- Varying sharpness values
+- Varying sharpness values for soft vs crisp edges
 
-Run with:
-    hatch run python packages/luxar/examples/lines_basic_example.py
+Educational value:
+- Learn the three line types: segments, polyline, loop
+- Understand per-vertex attributes (color, width, sharpness)
+- See how line width and sharpness interact visually
+- Master line-based visualization patterns
 """
 
 import numpy as np
@@ -19,12 +21,18 @@ from arbol import aprint
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.utils.paths import get_examples_output_dir
 
-# Output path
-output_path = get_examples_output_dir() / "lines_basic_example.zarr"
-
 
 def create_spiral_line(n_points: int = 100, radius: float = 5.0, height: float = 10.0):
-    """Create a 3D spiral polyline."""
+    """Create a 3D spiral polyline.
+
+    Args:
+        n_points: Number of vertices in the spiral
+        radius: Radius of the spiral
+        height: Total height of the spiral
+
+    Returns:
+        Array of 3D vertex positions
+    """
     t = np.linspace(0, 4 * np.pi, n_points)
     x = radius * np.cos(t)
     y = radius * np.sin(t)
@@ -33,7 +41,15 @@ def create_spiral_line(n_points: int = 100, radius: float = 5.0, height: float =
 
 
 def create_grid_lines(size: float = 10.0, n_lines: int = 10):
-    """Create a grid of line segments on the XY plane."""
+    """Create a grid of line segments on the XY plane.
+
+    Args:
+        size: Total size of the grid
+        n_lines: Number of lines per direction
+
+    Returns:
+        Array of vertex pairs forming grid segments
+    """
     vertices = []
 
     # Horizontal lines
@@ -54,7 +70,16 @@ def create_grid_lines(size: float = 10.0, n_lines: int = 10):
 def create_star_burst(
     n_rays: int = 20, inner_radius: float = 1.0, outer_radius: float = 8.0
 ):
-    """Create a star burst pattern of line segments."""
+    """Create a star burst pattern of line segments.
+
+    Args:
+        n_rays: Number of rays emanating from center
+        inner_radius: Starting radius of rays
+        outer_radius: Ending radius of rays
+
+    Returns:
+        Array of vertex pairs forming star burst segments
+    """
     vertices = []
     angles = np.linspace(0, 2 * np.pi, n_rays, endpoint=False)
 
@@ -73,7 +98,8 @@ def create_star_burst(
 
 
 def main():
-    """Create lines example scene."""
+    """Create lines example scene with segments, polylines, and loops."""
+    output_path = get_examples_output_dir() / "lines_basic_example.zarr"
     aprint(f"Creating lines example at {output_path}")
 
     with LuxarZarrCompiler(output_path) as compiler:

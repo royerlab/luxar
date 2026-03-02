@@ -8,6 +8,12 @@ This example demonstrates:
 - Pulsating point sizes with spatial patterns
 - Dynamic sharpness variations
 - High-density points (200,000 points per frame × 256 frames)
+
+Educational value:
+- Learn to create large-scale temporal animations
+- Understand time as a discrete navigation dimension
+- See how per-frame transformations create smooth animation
+- Good stress test for high-density temporal rendering
 """
 
 import numpy as np

@@ -142,11 +142,12 @@ Tile count grows as `O(∏ tile_dims[d])`. For high-dimensional data:
 - 5D with tile_size=2 and shape=32: 16⁵ = 1M tiles (at limit)
 - 5D with tile_size=2 and shape=64: 32⁵ = 33M tiles (unacceptable)
 
-**Hard Limit**: The implementation enforces a **10 million tile maximum**. Exceeding this
-triggers an error with guidance to use CPU fallback or downsample. This limit exists because:
-1. Memory: 10M tiles × ~12 bytes metadata = 120MB overhead before splat data
-2. Performance: CUB prefix sum becomes dominant at >10M elements
-3. Practicality: >10M tiles usually indicates inappropriate tiling strategy for the dimension
+**Hard Limit**: The implementation enforces a **1 million tile maximum** (`MAX_TILES = 1000000`).
+Exceeding this triggers an error with guidance to use CPU fallback or downsample. This limit
+exists because:
+1. Memory: 1M tiles × ~12 bytes metadata = 12MB overhead before splat data
+2. Performance: CUB prefix sum and binning become less efficient at >1M elements
+3. Practicality: >1M tiles usually indicates inappropriate tiling strategy for the dimension
 
 **Automatic Tile Size Adjustment**:
 

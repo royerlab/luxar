@@ -5,7 +5,7 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 ## ✨ Features
 
 - **🎨 Advanced HDR Rendering**: 16-bit floating-point precision with ACES filmic tone mapping
-- **✨ Real-time Bloom Effects**: Professional-quality UnrealBloomPass with customizable parameters  
+- **✨ Real-time Bloom Effects**: Professional-quality UnrealBloomPass with customizable parameters
 - **🖱️ Intuitive Navigation**: Smooth camera controls optimized for scientific data exploration
 - **📱 Responsive Design**: Seamless fullscreen support and dynamic viewport management
 - **⚡ Unlimited Performance**: GPU-accelerated pipeline designed to scale with hardware capabilities
@@ -252,7 +252,7 @@ src/
 ├── types/
 │   └── dims.ts                   # Dimension type definitions
 └── utils/
-    ├── slicing.ts                # nD slicing algorithms  
+    ├── slicing.ts                # nD slicing algorithms
     ├── console-interceptor.ts    # Console output capture
     ├── hdr-detection.ts          # HDR display detection
     ├── memory-detector.ts        # Memory availability detection

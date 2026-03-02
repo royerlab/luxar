@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 import torch
 
+from .conftest import Tolerances
+
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
 
@@ -188,11 +190,12 @@ class TestCUDAForward:
             max_rel_diff = rel_diff.max().item()
             mean_rel_diff = rel_diff.mean().item()
 
-            # Relaxed tolerance for CUDA vs CPU comparison
+            # Tighter than COMPARISON_MAX_REL_DIFF (0.15) since this is
+            # a direct CUDA vs CPU comparison within the same implementation
             assert max_rel_diff < 0.1, (
                 f"Max relative difference {max_rel_diff:.4f} exceeds threshold"
             )
-            assert mean_rel_diff < 0.01, (
+            assert mean_rel_diff < Tolerances.COMPARISON_MEAN_REL_DIFF, (
                 f"Mean relative difference {mean_rel_diff:.4f} exceeds threshold"
             )
 
@@ -201,7 +204,9 @@ class TestCUDAForward:
         cuda_flat = cuda_output_cpu.flatten()
         if cpu_flat.std() > 1e-6 and cuda_flat.std() > 1e-6:
             correlation = torch.corrcoef(torch.stack([cpu_flat, cuda_flat]))[0, 1]
-            assert correlation > 0.99, f"Correlation {correlation:.4f} too low"
+            assert correlation > Tolerances.COMPARISON_MIN_CORRELATION, (
+                f"Correlation {correlation:.4f} too low"
+            )
 
     def test_forward_matches_cpu_2d(self):
         """Verify CUDA 2D forward matches PyTorch reference."""
@@ -256,7 +261,9 @@ class TestCUDAForward:
         cuda_flat = cuda_output_cpu.flatten()
         if cpu_flat.std() > 1e-6 and cuda_flat.std() > 1e-6:
             correlation = torch.corrcoef(torch.stack([cpu_flat, cuda_flat]))[0, 1]
-            assert correlation > 0.99, f"Correlation {correlation:.4f} too low"
+            assert correlation > Tolerances.COMPARISON_MIN_CORRELATION, (
+                f"Correlation {correlation:.4f} too low"
+            )
 
 
 class TestCUDAKernelActivation:

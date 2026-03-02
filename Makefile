@@ -7,7 +7,7 @@
 .PHONY: help install-dev format-python format-typescript format-rust format-cuda format-all \
         lint-python lint-typescript type-check-python type-check-typescript security \
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures test-wasm test-viewer test-viewer-fixtures test-e2e \
-        clean-all clean-python clean-viewer clean-examples clean-setup enable-pre-commit run-pre-commit \
+        clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
         check-all check-typescript check-rust check-wasm-deps setup-dev \
         check-docs check-docs-verbose clean-docs build-docs serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer rebuild-viewer \
@@ -505,7 +505,7 @@ clean-docs:  ## Clean built documentation
 	@echo "✅ Documentation artifacts cleaned"
 
 # Clean up
-clean-all:  ## Clean all artifacts (Python, TypeScript, WASM, CUDA, datasets)
+clean-all:  ## Clean all artifacts (Python, TypeScript, WASM, CUDA, datasets, cache)
 	@echo "🧹 Cleaning all artifacts..."
 	@echo ""
 	$(MAKE) clean-python
@@ -513,6 +513,7 @@ clean-all:  ## Clean all artifacts (Python, TypeScript, WASM, CUDA, datasets)
 	$(MAKE) clean-wasm
 	$(MAKE) clean-cuda
 	$(MAKE) clean-examples
+	$(MAKE) clean-cache
 	@echo ""
 	@echo "✅ Clean complete!"
 
@@ -537,6 +538,11 @@ clean-viewer:  ## Clean viewer build artifacts (node_modules, dist, etc.)
 	rm -rf packages/luxar-viewer/.parcel-cache/
 	rm -f packages/luxar-viewer/*.tsbuildinfo
 	rm -f packages/luxar-viewer/vite.config.*.timestamp-*
+
+clean-cache:  ## Clear the Luxar user cache (~/.cache/luxar)
+	@echo "🧹 Clearing Luxar cache..."
+	rm -rf ~/.cache/luxar
+	@echo "✅ Luxar cache cleared!"
 
 clean-examples:  ## Clean up generated datasets (examples, demos, zarr files)
 	@echo "🧹 Cleaning generated datasets..."
@@ -589,6 +595,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 		echo "  make clean-viewer   - Clean TypeScript artifacts"; \
 		echo "  make clean-cuda     - Clean CUDA artifacts"; \
 		echo "  make clean-wasm     - Clean WASM artifacts"; \
+		echo "  make clean-cache    - Clear user cache (~/.cache/luxar)"; \
 		exit 1; \
 	fi
 	@echo ""
@@ -1719,9 +1726,13 @@ clean-cuda:  ## Clean CUDA build artifacts
 test-cuda:  ## Run CUDA extension tests
 	@echo "🧪 Running CUDA extension tests..."
 	@echo ""
-	@# Check if extension is built
+	@# Check if extension is built and up-to-date
 	@if ! ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
 		echo "⚠️  CUDA extension not built. Building first..."; \
+		$(MAKE) build-cuda; \
+		echo ""; \
+	elif [ -n "$$(find $(CUDA_EXT_DIR)/src/ \( -name '*.cu' -o -name '*.cuh' -o -name '*.cpp' -o -name '*.h' \) -newer $$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1) 2>/dev/null)" ]; then \
+		echo "⚠️  CUDA source files changed since last build. Rebuilding..."; \
 		$(MAKE) build-cuda; \
 		echo ""; \
 	fi
@@ -1733,9 +1744,13 @@ test-cuda:  ## Run CUDA extension tests
 benchmark-cuda:  ## Run CUDA performance benchmarks
 	@echo "🚀 Running CUDA performance benchmarks..."
 	@echo ""
-	@# Check if extension is built
+	@# Check if extension is built and up-to-date
 	@if ! ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
 		echo "⚠️  CUDA extension not built. Building first..."; \
+		$(MAKE) build-cuda; \
+		echo ""; \
+	elif [ -n "$$(find $(CUDA_EXT_DIR)/src/ \( -name '*.cu' -o -name '*.cuh' -o -name '*.cpp' -o -name '*.h' \) -newer $$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1) 2>/dev/null)" ]; then \
+		echo "⚠️  CUDA source files changed since last build. Rebuilding..."; \
 		$(MAKE) build-cuda; \
 		echo ""; \
 	fi

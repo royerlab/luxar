@@ -153,10 +153,10 @@ def format_gsplats_info(info: Dict[str, Any]) -> str:
     # Ordering
     ordering = info["ordering"]
     if ordering == "morton":
-        resolution = info.get("morton_resolution", "unknown")
+        resolution = info.get("ordering_resolution") or "unknown"
         lines.append(f"Ordering: morton (resolution={resolution})")
     elif ordering == "hilbert":
-        resolution = info.get("hilbert_resolution", "unknown")
+        resolution = info.get("ordering_resolution") or "unknown"
         lines.append(f"Ordering: hilbert (resolution={resolution})")
     else:
         lines.append("Ordering: none")

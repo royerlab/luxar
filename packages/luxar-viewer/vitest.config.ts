@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    globalSetup: ['./src/tests/global-setup.ts'],
     setupFiles: ['./src/tests/setup.ts'],
     exclude: [
       '**/node_modules/**',
@@ -23,14 +24,12 @@ export default defineConfig({
         '**/mockData/*',
         'dist/',
       ],
-      // Thresholds temporarily disabled to allow coverage generation
-      // TODO: Re-enable when coverage improves
-      // thresholds: {
-      //   lines: 80,
-      //   functions: 80,
-      //   branches: 80,
-      //   statements: 80,
-      // },
+      thresholds: {
+        lines: 59,
+        functions: 73,
+        branches: 77,
+        statements: 59,
+      },
     },
   },
   resolve: {

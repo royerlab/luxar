@@ -33,10 +33,10 @@ export function calculate_effective_radii(
   const discreteTolerance = 0.5;
   let visibleCount = 0;
 
-  // Create display dims lookup set
-  const isDisplayDim = new Set<number>();
+  // Create display dims lookup (Uint8Array bitmap is faster than Set in hot loops)
+  const isDisplayDim = new Uint8Array(ndim);
   for (let i = 0; i < displayDims.length; i++) {
-    isDisplayDim.add(displayDims[i]);
+    isDisplayDim[displayDims[i]] = 1;
   }
 
   for (let i = 0; i < numPoints; i++) {
@@ -46,7 +46,7 @@ export function calculate_effective_radii(
     // Check discrete dimensions for exact match
     let discreteMatch = true;
     for (let d = 0; d < ndim; d++) {
-      if (isDisplayDim.has(d)) continue;
+      if (isDisplayDim[d]) continue;
 
       // Check if this is a spatial or discrete dimension
       const isSpatial = d < spatialExtendDims.length ? spatialExtendDims[d] !== 0 : true;
@@ -70,7 +70,7 @@ export function calculate_effective_radii(
     // Calculate squared distance in non-displayed spatial dimensions
     let distanceSquared = 0;
     for (let d = 0; d < ndim; d++) {
-      if (isDisplayDim.has(d)) continue;
+      if (isDisplayDim[d]) continue;
 
       const isSpatial = d < spatialExtendDims.length ? spatialExtendDims[d] !== 0 : true;
 

@@ -10,7 +10,7 @@ Main functions:
 - format_gsplats_info() - Format inspection info as string
 
 Spatial ordering utilities:
-- sort_splats_spatially() - Sort splats using Morton or Hilbert curves
+- sort_splats_spatial() - Sort splats using Morton or Hilbert curves
 - compute_chunk_bounds() - Compute chunk bounding boxes with extent
 """
 

@@ -21,11 +21,12 @@ The Luxar Controls package provides a sophisticated, extensible control system f
 controls/
 ├── controls-manager.ts      # Central control system orchestrator
 ├── luxar-fly-controls.ts   # Free-flight 6DOF controller
-├── control-config.ts       # Centralized configuration and defaults
-├── input-context-manager.ts # Input routing and conflict resolution
 ├── types.ts                # TypeScript type definitions
 └── README.md               # This documentation
 ```
+
+> **Note**: Configuration defaults are in `../config/index.ts` (unified config system).
+> Input context management is in `../input/input-context-manager.ts`.
 
 ---
 
@@ -128,13 +129,13 @@ The `ControlsManager` class orchestrates the entire control system:
 ```typescript
 class ControlsManager {
   // Switch between control types
-  setControlType(type: 'orbit' | 'fly'): void;
+  setControlType(type: 'orbit' | 'arcball' | 'fly'): void;
 
   // Get current control type
   getControlType(): ControlType;
 
   // Access specific controls
-  getControls(): OrbitControls | LuxarFlyControls;
+  getControls(): OrbitControls | ArcballControls | LuxarFlyControls;
   getFlyControls(): LuxarFlyControls | null;
 
   // Configuration
@@ -533,7 +534,7 @@ function smoothLookAt(target: Vector3, duration: number) {
 
 **Problem: Keys not working in fly mode**
 
-- Solution: Check that keys are in `flyModeKeys` array in control-config.ts
+- Solution: Check that keys are in `flyModeKeys` array in `config/index.ts`
 
 **Problem: Inertial mode not persisting**
 
@@ -580,7 +581,7 @@ case 'custom':
 3. Update configuration system:
 
 ```typescript
-// In control-config.ts
+// In config/index.ts
 custom: {
   // Add configuration parameters
 }
@@ -588,7 +589,7 @@ custom: {
 
 ### Adding New Input Modes
 
-1. Define new keys in control-config.ts:
+1. Define new keys in `config/index.ts`:
 
 ```typescript
 customModeKeys: ['x', 'y', 'z'],
@@ -821,4 +822,4 @@ Part of the Luxar project. See root LICENSE file for details.
 
 ---
 
-_For detailed implementation notes on the fly controls mathematics and physics, see the [Fly Controls Implementation Guide](./luxar-fly-controls-guide.md)._
+_For detailed implementation notes on the fly controls mathematics and physics, see the [Controls SPECIFICATIONS.md](./SPECIFICATIONS.md)._

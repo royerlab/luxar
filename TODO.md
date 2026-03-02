@@ -53,17 +53,17 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
 
 11- Introduce the notion of "scene domain". The main domain is the 'main' domain that of nD space visualised in a 3D 'slice', another domain is 'overlay' which is that for a specific set of non-visible dimensions from main, we can associate a scene that is rendered as a transparent overlay on top of the main rendering, this overlay is fixed, and its frame of reference is in normalised canvas coordinates ([0, 1]x[0, 1]). The viewer controls do not affect that scene since it is fixed and not in the main domain. Finally another important domain is that of 'sound' which allows to associate sound to a scene, and have it played when the scene is loaded. This is useful for providing context to the visualisation.
     - **Status**: Open
-    - **Priority**: LOW (do not fix yet!) 
+    - **Priority**: LOW (do not fix yet!)
 
-12- VR/AR Add the possibility to activate VR/AR mode. 
+12- VR/AR Add the possibility to activate VR/AR mode.
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!)
 
-13- ✅ Rename luxar-player to luxar-viewer everywhere. 
+13- ✅ Rename luxar-player to luxar-viewer everywhere.
     - **Status**: COMPLETED
     - **Priority**: LOW
 
-14- ✅ In the viewer, we should not use 'point cloud' terminology, we should use 'points' instead. A 'Point Cloud' should be a 'Points' 'object' in Luxar terminology.  
+14- ✅ In the viewer, we should not use 'point cloud' terminology, we should use 'points' instead. A 'Point Cloud' should be a 'Points' 'object' in Luxar terminology.
     - **Status**: COMPLETED
     - Updated all TypeScript types: PointCloudData → PointsData
     - Updated all function names: loadPointCloud → loadPoints
@@ -78,7 +78,7 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
     - **CPU-side filtering**: Points with effective radius < 0.0001 are filtered out before sending to GPU
     - **Empty cloud handling**: When ALL points have zero radius (e.g., viewing outside hypersphere), returns empty point cloud instead of showing ultrathin points
     - This correctly shows no points when viewing outside the 4D hypersphere bounds
-    - **Status**: RESOLVED  
+    - **Status**: RESOLVED
     - **Priority**: HIGH
 
 16- Clarify cache eviction policy (I don't see eviction happening when I expect it to happen)

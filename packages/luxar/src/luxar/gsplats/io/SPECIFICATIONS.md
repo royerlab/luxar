@@ -145,7 +145,7 @@ The `fitting/` group is **optional** and designed to be **fitter-agnostic**. Dif
 {
   // Luxar gsplats fitter example:
   "n_iters": 1000,
-  "lr": 0.05,
+  "lr": 0.01,
   "loss_type": "l1",
   "asymmetric_penalty": 10.0,
   "init_sigma_vox": 0.5,
@@ -279,7 +279,7 @@ def morton_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
 The system supports both Morton and Hilbert ordering methods:
 
 ```python
-def sort_splats_spatially(
+def sort_splats_spatial(
     centers: np.ndarray,
     method: Literal["morton", "hilbert"] = "hilbert",
     resolution: int = None,  # Auto if None, max 2^16
@@ -547,7 +547,7 @@ print(result.stats['time_seconds'])
 ### Inspection
 
 ```python
-from luxar.gsplats import inspect_gsplats_zarr
+from luxar.gsplats.io import inspect_gsplats_zarr
 
 info = inspect_gsplats_zarr("fitted.gsplats.zarr")
 print(info)
@@ -621,18 +621,19 @@ There are two ways to store Gaussian splats, serving different purposes:
 Once `.gsplats.zarr` format is stable, integrate with Luxar visualization:
 
 ```python
-from luxar import LuxarZarrCompiler
+from luxar import LuxarZarrCompiler, Dimensions
 from luxar.gsplats import GSplatData
 
 # Option 1: From in-memory result
 result = fit_gaussian_splats(image)
+dims = Dimensions.default_3d()
 with LuxarZarrCompiler("scene.zarr") as compiler:
-    scene = compiler.create_scene()
+    scene = compiler.create_scene(dimensions=dims)
     scene.add_gsplats("nuclei", result)
 
 # Option 2: From saved .gsplats.zarr file
 with LuxarZarrCompiler("scene.zarr") as compiler:
-    scene = compiler.create_scene()
+    scene = compiler.create_scene(dimensions=dims)
     scene.add_gsplats("nuclei", "fitted.gsplats.zarr")  # Path
 ```
 

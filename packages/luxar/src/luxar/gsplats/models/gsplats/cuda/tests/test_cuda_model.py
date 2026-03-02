@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 import torch
 
+from .conftest import Tolerances
+
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
 
@@ -597,7 +599,7 @@ class TestSpecializedVsGenericImplementations:
             max_rel_diff = rel_diff.max().item()
             mean_rel_diff = rel_diff.mean().item()
 
-            assert max_rel_diff < 0.3, (
+            assert max_rel_diff < Tolerances.COMPARISON_BOUNDARY_REL_DIFF, (
                 f"3D vs 4D max relative difference {max_rel_diff:.4f} too large"
             )
             assert mean_rel_diff < 0.05, (
@@ -670,7 +672,7 @@ class TestSpecializedVsGenericImplementations:
             max_rel_diff = rel_diff.max().item()
             mean_rel_diff = rel_diff.mean().item()
 
-            assert max_rel_diff < 0.3, (
+            assert max_rel_diff < Tolerances.COMPARISON_BOUNDARY_REL_DIFF, (
                 f"2D vs 3D max relative difference {max_rel_diff:.4f} too large"
             )
             assert mean_rel_diff < 0.05, (
@@ -845,7 +847,7 @@ class TestSpecializedVsGenericImplementations:
                     .mean()
                 )
                 # Allow some differences due to numerical precision
-                assert sign_match > 0.7, (
+                assert sign_match > Tolerances.BACKWARD_SIGN_MATCH, (
                     f"3D vs 4D amplitude gradient sign match {sign_match:.2f} too low"
                 )
 
@@ -931,7 +933,7 @@ class TestSpecializedVsGenericImplementations:
                     .mean()
                 )
                 # Allow some differences due to numerical precision
-                assert sign_match > 0.7, (
+                assert sign_match > Tolerances.BACKWARD_SIGN_MATCH, (
                     f"2D vs 3D amplitude gradient sign match {sign_match:.2f} too low"
                 )
 

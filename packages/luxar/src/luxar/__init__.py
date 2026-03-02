@@ -36,6 +36,9 @@ from __future__ import annotations
 # Core classes and functions
 from .core import transforms
 from .core.dimensions import Dimension, Dimensions
+from .core.group import Group
+from .core.gsplats import GSplats
+from .core.lines import Lines
 from .core.node import Node
 from .core.points import Points
 from .core.scene import Scene
@@ -57,6 +60,13 @@ from .core.transforms import (
     to_list,
     translate,
     translation,
+)
+from .core.viewer_config import (
+    AnimationConfig,
+    CameraConfig,
+    DimensionsConfig,
+    UIConfig,
+    ViewerConfig,
 )
 
 # I/O classes
@@ -110,7 +120,10 @@ sys.modules["luxar._io"] = io.reader
 __all__: list[str] = [
     # Core classes
     "Scene",
+    "Group",
     "Points",
+    "Lines",
+    "GSplats",
     "Node",
     # Progressive writing
     "LuxarZarrCompiler",
@@ -119,6 +132,12 @@ __all__: list[str] = [
     # Dimension system
     "Dimensions",
     "Dimension",
+    # Viewer configuration
+    "ViewerConfig",
+    "CameraConfig",
+    "UIConfig",
+    "DimensionsConfig",
+    "AnimationConfig",
     # Enumerations
     "BlendingMode",
     "NodeType",

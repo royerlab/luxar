@@ -41,14 +41,16 @@ Key Features
 Example::
 
    from luxar.io import LuxarZarrCompiler
+   from luxar.core.dimensions import Dimensions
    import numpy as np
-   
+
+   dims = Dimensions.default_3d()
    with LuxarZarrCompiler('scene.zarr') as compiler:
-       scene = compiler.create_scene()
-       
+       scene = compiler.create_scene(dimensions=dims)
+
        # Add root-level points
        compiler.write_points('cloud', positions, colors)
-       
+
        # Create hierarchy with full paths
        compiler.write_points('GroupA/SubPoints', positions2, colors2)
 
@@ -73,14 +75,14 @@ Key Features
 Example::
 
    from luxar.io import LuxarScene
-   
+
    # Load scene (metadata only)
    scene = LuxarScene.load('scene.zarr')
-   
+
    # List available nodes
    print(scene.list_points())
    print(scene.list_lines())
-   
+
    # Get node data (lazy loading)
    points_node = scene.get_points('cloud')
    positions = points_node.positions[:]  # Fetch from disk

@@ -139,8 +139,8 @@ export class DebugConsole {
         </div>
         <div class="luxar-debug-console__content"></div>
         <div class="luxar-debug-console__status">
-          <span class="message-count">0 messages</span>
-          <span class="filter-status"></span>
+          <span class="luxar-debug-console__message-count">0 messages</span>
+          <span class="luxar-debug-console__filter-status"></span>
         </div>
       </div>
     `;
@@ -447,8 +447,8 @@ export class DebugConsole {
    * Update status bar
    */
   private updateStatus(): void {
-    const countEl = this.panel.querySelector('.message-count');
-    const filterEl = this.panel.querySelector('.filter-status');
+    const countEl = this.panel.querySelector('.luxar-debug-console__message-count');
+    const filterEl = this.panel.querySelector('.luxar-debug-console__filter-status');
 
     if (countEl) {
       const visibleCount = this.contentArea.querySelectorAll(

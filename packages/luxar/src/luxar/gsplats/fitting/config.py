@@ -13,6 +13,68 @@ import torch
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 
 
+@dataclass(frozen=True)
+class OptimConfig:
+    """Optimization hyperparameters for fit_gaussian_splats().
+
+    Example::
+
+        from luxar.gsplats.fitting.config import OptimConfig
+        cfg = OptimConfig(n_iters=2000, lr=0.01, early_stop_patience=500)
+        result = fit_gaussian_splats(volume, optim=cfg)
+    """
+
+    n_iters: int = 1000
+    lr: float = 0.01
+    gradient_clip: Optional[float] = 1.0
+    scheduler_type: str = "plateau"
+    patience: int = 25
+    lr_reduction_factor: float = 0.98
+    early_stop_patience: Optional[int] = 300
+
+
+@dataclass(frozen=True)
+class LossConfig:
+    """Loss function configuration for fit_gaussian_splats().
+
+    Example::
+
+        from luxar.gsplats.fitting.config import LossConfig
+        cfg = LossConfig(loss_type="mse", asymmetric_penalty=5.0)
+        result = fit_gaussian_splats(volume, loss=cfg)
+    """
+
+    loss_type: str = "l1"
+    asymmetric_penalty: Optional[float] = 10.0
+    l1_amp: Optional[float] = None
+    l1_diag: Optional[float] = None
+    l1_sharpness: Optional[float] = None
+    boundary_penalty: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class ConstraintConfig:
+    """Constraint configuration for fit_gaussian_splats().
+
+    Example::
+
+        from luxar.gsplats.fitting.config import ConstraintConfig
+        cfg = ConstraintConfig(amp_max=2.0, max_eccentricity=5.0)
+        result = fit_gaussian_splats(volume, constraints=cfg)
+    """
+
+    sigma_min_diag: Optional[Sequence[float] | float] = None
+    sigma_max_diag: Optional[Sequence[float] | float] = None
+    amp_max: Optional[float] = None
+    max_eccentricity: Optional[float] = 10.0
+    sharpness_range: Optional[tuple[float, float] | float] = 2.0
+    truncate: float = 3.0
+    voxel_size: Optional[Sequence[float] | float] = None
+    output_space: str = "real"
+    boundary_penalty: Optional[float] = None
+    clip_to_bounds: bool = False
+
+
 @dataclass
 class FitConfig:
     """
@@ -31,13 +93,14 @@ class FitConfig:
     # Model parameters
     init_sigma_vox: Optional[float]
     sigma_min_diag: Optional[Sequence[float]]
-    sigma_max_diag: Optional[Sequence[float]]
+    sigma_max_diag: Optional[Sequence[float] | float]
     truncate: float
 
     # Optimization parameters
     n_iters: int
     lr: float
     max_abs_error: Optional[float]
+    rel_l2_target: Optional[float]
     gradient_clip: Optional[float]
 
     # Loss function
@@ -81,7 +144,9 @@ class FitConfig:
     seed_method: str = (
         "auto"  # "decomposition", "grid", "edges", "auto", or comma-separated
     )
-    seed_kwargs: Dict[str, Any] = None  # Additional parameters for seed generation
+    seed_kwargs: Optional[Dict[str, Any]] = (
+        None  # Additional parameters for seed generation
+    )
 
     # Pre-initialized parameters (for GSplatData seeds or moment pursuit)
     # If set, these override the default initialization
@@ -98,11 +163,33 @@ class FitConfig:
         None  # (min, max) tuple or fixed value
     )
 
+    # Post-fit culling ratio: threshold = cull_ratio * max_abs_error
+    # Splats with amplitude below this threshold are removed after fitting.
+    # 0.0 disables culling, 1.0 culls at the full convergence threshold.
+    cull_ratio: float = 0.01
+
     # Voxel footprint correction (post-processing)
     # - False: Disabled (default)
     # - True: Enable with 1-voxel box footprint (sigma ≈ 0.289 voxels)
     # - float: Custom sigma in voxel units (e.g., 0.5 for half-voxel blur)
     voxel_footprint_correction: bool | float = False
+
+    # Boundary containment (post-processing)
+    # Clip Cholesky factors so no splat extends beyond the volume bounds.
+    clip_to_bounds: bool = False
+
+    # Anisotropic voxel spacing (physical size per voxel along each axis)
+    # None = isotropic (all 1s). Array of shape (d,) for anisotropic volumes.
+    voxel_size: Optional[np.ndarray] = None
+
+    # Output coordinate system: "real" (physical) or "voxel"
+    # When "real" and voxel_size is set, output centers and Cholesky are scaled to physical coords.
+    # When voxel_size is None, "real" and "voxel" produce identical results.
+    output_space: str = "real"
+
+    # Boundary penalty weight (loss term during optimization)
+    # Adds a differentiable penalty for splats whose effective support extends beyond bounds.
+    boundary_penalty: Optional[float] = None
 
 
 @dataclass
@@ -129,8 +216,9 @@ class PreprocessedData:
     d: int
     N: int  # number of candidates
 
-    # Convergence threshold
+    # Convergence thresholds
     max_abs_error: float
+    rel_l2_target: Optional[float] = None
 
     # Computed L1 regularization values (set during preprocessing)
     # These are stored here instead of mutating FitConfig
@@ -166,6 +254,7 @@ class OptimizationResults:
     best_iteration: int
     best_loss: float
     best_max_abs_error: float
+    best_rel_l2: float
 
     # Movie frames (if enabled)
     movie_frames: Optional[Dict[str, Any]]

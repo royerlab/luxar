@@ -35,6 +35,19 @@ constexpr int BIN_BLOCK_SIZE = 256;
 constexpr int RASTER_BLOCK_SIZE_2D = 256;  // 16x16 tile
 constexpr int RASTER_BLOCK_SIZE_3D = 512;  // 8x8x8 tile
 constexpr int RASTER_BLOCK_SIZE_DEFAULT = 256;
+constexpr int GLOBAL_BLOCK_SIZE = 256;
+
+/**
+ * Compile-time block size for rasterization kernels based on dimension.
+ * Used by __launch_bounds__ to inform the compiler of the actual max threads,
+ * allowing better register allocation (avoid spills from assuming 1024 threads).
+ */
+template <int DIM>
+constexpr int raster_block_size() {
+    if constexpr (DIM == 3) return RASTER_BLOCK_SIZE_3D;
+    else if constexpr (DIM == 2) return RASTER_BLOCK_SIZE_2D;
+    else return RASTER_BLOCK_SIZE_DEFAULT;
+}
 
 // =============================================================================
 // PREPROCESS KERNEL LAUNCHER
@@ -43,9 +56,9 @@ constexpr int RASTER_BLOCK_SIZE_DEFAULT = 256;
 template <int DIM, typename InputDType = float>
 void launch_preprocess(
     const InputDType* centers,
-    const InputDType* conic,
     const InputDType* amps,
     const InputDType* sharpness,
+    const InputDType* L_row_norms,
     int N,
     const int* shape,
     const int* tile_dims,
@@ -54,16 +67,19 @@ void launch_preprocess(
     float intensity_floor,
     int* tile_counts,
     bool* global_flags,
+    int* aabb_lo,
+    int* aabb_hi,
     int64_t num_tiles,
+    int* global_count,
     cudaStream_t stream
 ) {
     int block_size = PREPROCESS_BLOCK_SIZE;
     int num_blocks = (N + block_size - 1) / block_size;
 
     preprocess_kernel<DIM, InputDType><<<num_blocks, block_size, 0, stream>>>(
-        centers, conic, amps, sharpness, N,
+        centers, amps, sharpness, L_row_norms, N,
         shape, tile_dims, tile_size, truncate, intensity_floor,
-        tile_counts, global_flags, num_tiles
+        tile_counts, global_flags, aabb_lo, aabb_hi, num_tiles, global_count
     );
 }
 
@@ -71,18 +87,13 @@ void launch_preprocess(
 // BINNING KERNEL LAUNCHER
 // =============================================================================
 
-template <int DIM, typename InputDType = float>
+template <int DIM>
 void launch_bin(
-    const InputDType* centers,
-    const InputDType* conic,
-    const InputDType* amps,
-    const InputDType* sharpness,
+    const int* aabb_lo,
+    const int* aabb_hi,
+    const bool* global_flags,
     int N,
-    const int* shape,
     const int* tile_dims,
-    int tile_size,
-    float truncate,
-    float intensity_floor,
     const int64_t* tile_offsets,
     int* tile_write_heads,
     int* tile_content,
@@ -92,10 +103,9 @@ void launch_bin(
     int block_size = BIN_BLOCK_SIZE;
     int num_blocks = (N + block_size - 1) / block_size;
 
-    bin_kernel<DIM, InputDType><<<num_blocks, block_size, 0, stream>>>(
-        centers, conic, amps, sharpness, N,
-        shape, tile_dims, tile_size, truncate, intensity_floor,
-        tile_offsets, tile_write_heads, tile_content, num_tiles
+    bin_kernel<DIM><<<num_blocks, block_size, 0, stream>>>(
+        aabb_lo, aabb_hi, global_flags, N,
+        tile_dims, tile_offsets, tile_write_heads, tile_content, num_tiles
     );
 }
 
@@ -147,7 +157,7 @@ void launch_rasterize_forward(
         rasterize_forward_kernel<DIM, BATCH_SIZE, InputDType><<<grid, block_size, smem_size, stream>>>(
             centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
-            tile_offsets, tile_counts, tile_content, output, 0
+            tile_offsets, tile_counts, tile_content, output
         );
     } else if constexpr (DIM == 2) {
         // Grid: (y, x, 1) so blockIdx.x=y, blockIdx.y=x
@@ -155,7 +165,7 @@ void launch_rasterize_forward(
         rasterize_forward_kernel<DIM, BATCH_SIZE, InputDType><<<grid, block_size, smem_size, stream>>>(
             centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
-            tile_offsets, tile_counts, tile_content, output, 0
+            tile_offsets, tile_counts, tile_content, output
         );
     } else {
         // For DIM > 3, use 1D grid
@@ -163,7 +173,7 @@ void launch_rasterize_forward(
         rasterize_forward_kernel<DIM, BATCH_SIZE, InputDType><<<num_blocks, block_size, smem_size, stream>>>(
             centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
-            tile_offsets, tile_counts, tile_content, output, 0
+            tile_offsets, tile_counts, tile_content, output
         );
     }
 }
@@ -221,7 +231,7 @@ void launch_rasterize_backward(
             grad_output, centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content,
-            d_centers, d_conic, d_amps, d_sharpness, 0
+            d_centers, d_conic, d_amps, d_sharpness
         );
     } else if constexpr (DIM == 2) {
         // Grid: (y, x, 1) so blockIdx.x=y, blockIdx.y=x
@@ -230,7 +240,7 @@ void launch_rasterize_backward(
             grad_output, centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content,
-            d_centers, d_conic, d_amps, d_sharpness, 0
+            d_centers, d_conic, d_amps, d_sharpness
         );
     } else {
         // For DIM > 3, use 1D grid
@@ -239,7 +249,7 @@ void launch_rasterize_backward(
             grad_output, centers, conic, amps, sharpness, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content,
-            d_centers, d_conic, d_amps, d_sharpness, 0
+            d_centers, d_conic, d_amps, d_sharpness
         );
     }
 }

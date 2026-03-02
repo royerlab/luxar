@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Literal, Optional
 
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from luxar.encoding import EncodingMode
 
 
-@dataclass
+@dataclass(eq=False)
 class GSplatData:
     """Container for Gaussian splat data.
 
@@ -40,6 +40,7 @@ class GSplatData:
         - sharpness_min/max/mean/std/median: Sharpness statistics
         - best_iteration: Iteration where best state was found
         - final_max_abs_error: Maximum absolute error in best state
+        - final_rel_l2: Relative L2 error in best state
         - movie_frames: Optional optimization movie frames (if napari_movie=True)
     """
 
@@ -48,12 +49,484 @@ class GSplatData:
     cholesky_factors: np.ndarray
     sharpnesses: np.ndarray
     colors: Optional[np.ndarray] = None
-    stats: Dict[str, Any] = None  # type: ignore[assignment]
+    stats: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Initialize stats to empty dict if None."""
-        if self.stats is None:
-            self.stats = {}
+        """Validate array shape consistency."""
+        n = self.centers.shape[0]
+        if self.amplitudes.shape != (n,):
+            raise ValueError(
+                f"Amplitudes shape {self.amplitudes.shape} doesn't match "
+                f"centers count ({n},)"
+            )
+        if self.sharpnesses.shape != (n,):
+            raise ValueError(
+                f"Sharpnesses shape {self.sharpnesses.shape} doesn't match "
+                f"centers count ({n},)"
+            )
+        if self.colors is not None and self.colors.shape[0] != n:
+            raise ValueError(
+                f"Colors count {self.colors.shape[0]} doesn't match centers count {n}"
+            )
+        if self.centers.ndim >= 2:
+            from luxar.gsplats.utils.trils import validate_cholesky_shape
+
+            validate_cholesky_shape(
+                self.cholesky_factors,
+                ndim=self.centers.shape[1],
+                n_splats=n,
+                allow_uniform=False,
+            )
+
+    @property
+    def n_splats(self) -> int:
+        """Number of splats."""
+        return self.centers.shape[0]
+
+    @property
+    def ndim(self) -> int:
+        """Number of spatial dimensions."""
+        return self.centers.shape[1] if self.centers.ndim >= 2 else 0
+
+    def __len__(self) -> int:
+        """Return number of splats."""
+        return self.n_splats
+
+    def __repr__(self) -> str:
+        """Summary representation (avoids dumping full arrays)."""
+        n = self.n_splats
+        ndim = self.ndim
+        if n > 0:
+            amp_range = f"[{float(self.amplitudes.min()):.4g}, {float(self.amplitudes.max()):.4g}]"
+            sharp_range = f"[{float(self.sharpnesses.min()):.4g}, {float(self.sharpnesses.max()):.4g}]"
+        else:
+            amp_range = "[]"
+            sharp_range = "[]"
+        colors = "yes" if self.colors is not None else "no"
+        return (
+            f"GSplatData({n:,} splats, {ndim}D, "
+            f"amplitudes={amp_range}, sharpness={sharp_range}, colors={colors})"
+        )
+
+    # ── Computed properties ─────────────────────────────────
+
+    def _cholesky_diag_elements(self) -> np.ndarray:
+        """Extract diagonal elements from packed Cholesky factors.
+
+        Returns shape (N, d) where result[i, j] = L_i[j, j].
+        """
+        ndim = self.ndim
+        diag_indices = np.cumsum(np.arange(1, ndim + 1)) - 1
+        return self.cholesky_factors[:, diag_indices]
+
+    def volumes(self) -> np.ndarray:
+        """Per-splat characteristic length: det(Σ)^(1/d).
+
+        This is the geometric mean of the eigenvalues (not a true volume).
+        For lower-triangular L: det(L) = product of diagonal elements,
+        det(Sigma) = det(L)^2.
+
+        Returns:
+            shape (N,) float array.
+        """
+        if self.n_splats == 0:
+            return np.empty(0, dtype=np.float64)
+        diag = self._cholesky_diag_elements()
+        det_L = np.prod(diag, axis=1)
+        return np.abs(det_L**2) ** (1.0 / self.ndim)
+
+    def masses(self) -> np.ndarray:
+        """Per-splat mass: amplitude * volume.
+
+        Returns:
+            shape (N,) float array.
+        """
+        return self.amplitudes * self.volumes()
+
+    def marginal_sigmas(self) -> np.ndarray:
+        """Per-dimension standard deviation: sqrt(Sigma_ii).
+
+        For lower-triangular L: Sigma[i,i] = sum_j L[i,j]^2.
+
+        Returns:
+            shape (N, d) float array.
+        """
+        if self.n_splats == 0:
+            return np.empty((0, self.ndim), dtype=np.float64)
+        from luxar.gsplats.utils.trils import unpack_tril
+
+        L = unpack_tril(self.cholesky_factors.astype(np.float64), self.ndim)
+        return np.sqrt(np.sum(L**2, axis=2))
+
+    def eccentricities(self) -> np.ndarray:
+        """Per-splat eccentricity: max marginal sigma / min marginal sigma.
+
+        1.0 = isotropic. Higher values = more elongated.
+
+        Returns:
+            shape (N,) float array. Returns 1.0 for degenerate splats.
+        """
+        if self.n_splats == 0:
+            return np.empty(0, dtype=np.float64)
+        sigmas = self.marginal_sigmas()
+        min_s = sigmas.min(axis=1)
+        max_s = sigmas.max(axis=1)
+        result = np.ones(self.n_splats, dtype=np.float64)
+        nonzero = min_s > 0
+        result[nonzero] = max_s[nonzero] / min_s[nonzero]
+        return result
+
+    # ── Filtering ───────────────────────────────────────────
+
+    def filter(self, mask: np.ndarray) -> "GSplatData":
+        """Return new GSplatData with only the splats where mask is True.
+
+        Args:
+            mask: Boolean array of shape (N,).
+
+        Returns:
+            New GSplatData with filtered arrays.
+
+        Example:
+            >>> filtered = data.filter(data.volumes() < 100)
+            >>> filtered = data.filter((data.amplitudes > 0.1) & (data.eccentricities() < 5))
+        """
+        mask = np.asarray(mask, dtype=bool)
+        if mask.shape != (self.n_splats,):
+            raise ValueError(
+                f"Mask shape {mask.shape} doesn't match splat count ({self.n_splats},)"
+            )
+        return GSplatData(
+            centers=self.centers[mask],
+            amplitudes=self.amplitudes[mask],
+            cholesky_factors=self.cholesky_factors[mask],
+            sharpnesses=self.sharpnesses[mask],
+            colors=self.colors[mask] if self.colors is not None else None,
+            stats=dict(self.stats),
+        )
+
+    # ── Combine / Split / Embed ─────────────────────────────
+
+    @classmethod
+    def concatenate(cls, datasets: list["GSplatData"]) -> "GSplatData":
+        """Concatenate multiple GSplatData objects into one.
+
+        All datasets must have the same dimensionality.
+
+        Colors: if all have colors, concatenate; if all None, None;
+        if mixed, fill missing with white (1,1,1).
+
+        Args:
+            datasets: List of GSplatData (same ndim required).
+
+        Returns:
+            New GSplatData with all splats concatenated.
+        """
+        if len(datasets) == 0:
+            raise ValueError("At least one GSplatData is required")
+
+        # Filter out empty datasets to avoid shape mismatch in np.concatenate
+        non_empty = [d for d in datasets if d.n_splats > 0]
+        if len(non_empty) == 0:
+            return datasets[0]  # All empty: return first as-is
+
+        ndim = non_empty[0].ndim
+        for i, ds in enumerate(non_empty[1:], start=1):
+            if ds.ndim != ndim:
+                raise ValueError(
+                    f"Dimensionality mismatch: dataset 0 has {ndim}D, "
+                    f"dataset {i} has {ds.ndim}D"
+                )
+
+        all_centers = np.concatenate([d.centers for d in non_empty], axis=0)
+        all_amplitudes = np.concatenate([d.amplitudes for d in non_empty])
+        all_cholesky = np.concatenate([d.cholesky_factors for d in non_empty], axis=0)
+        all_sharpnesses = np.concatenate([d.sharpnesses for d in non_empty])
+
+        has_colors = [d.colors is not None for d in non_empty]
+        if all(has_colors):
+            all_colors = np.concatenate([d.colors for d in non_empty], axis=0)
+        elif not any(has_colors):
+            all_colors = None
+        else:
+            parts = []
+            for d in non_empty:
+                if d.colors is not None:
+                    parts.append(d.colors)
+                else:
+                    parts.append(np.ones((d.n_splats, 3), dtype=np.float32))
+            all_colors = np.concatenate(parts, axis=0)
+
+        merged_stats: Dict[str, Any] = {
+            "concatenated_from": len(datasets),
+            "splats_per_source": [d.n_splats for d in datasets],
+        }
+        total_time = sum(d.stats.get("time_seconds", 0) for d in non_empty)
+        if total_time > 0:
+            merged_stats["time_seconds"] = total_time
+
+        return cls(
+            centers=all_centers,
+            amplitudes=all_amplitudes,
+            cholesky_factors=all_cholesky,
+            sharpnesses=all_sharpnesses,
+            colors=all_colors,
+            stats=merged_stats,
+        )
+
+    def split(self, n_or_indices: "int | list[int] | np.ndarray") -> "list[GSplatData]":
+        """Split into multiple GSplatData objects.
+
+        Args:
+            n_or_indices: If int, split into n roughly equal parts.
+                If list/array of ints, split at those indices.
+
+        Returns:
+            List of GSplatData objects.
+        """
+        indices = np.arange(self.n_splats)
+        if isinstance(n_or_indices, int):
+            groups = np.array_split(indices, n_or_indices)
+        else:
+            groups = np.split(indices, n_or_indices)
+
+        from luxar.gsplats.utils.trils import tril_size
+
+        results = []
+        for idx in groups:
+            if len(idx) == 0:
+                d = self.ndim
+                k = tril_size(d) if d > 0 else 0
+                results.append(
+                    GSplatData(
+                        centers=np.empty((0, d), dtype=self.centers.dtype),
+                        amplitudes=np.empty(0, dtype=self.amplitudes.dtype),
+                        cholesky_factors=np.empty(
+                            (0, k), dtype=self.cholesky_factors.dtype
+                        ),
+                        sharpnesses=np.empty(0, dtype=self.sharpnesses.dtype),
+                        colors=np.empty((0, 3), dtype=np.float32)
+                        if self.colors is not None
+                        else None,
+                        stats=dict(self.stats),
+                    )
+                )
+            else:
+                results.append(
+                    GSplatData(
+                        centers=self.centers[idx],
+                        amplitudes=self.amplitudes[idx],
+                        cholesky_factors=self.cholesky_factors[idx],
+                        sharpnesses=self.sharpnesses[idx],
+                        colors=self.colors[idx] if self.colors is not None else None,
+                        stats=dict(self.stats),
+                    )
+                )
+        return results
+
+    def embed_dimension(
+        self,
+        values: "np.ndarray | float",
+        sigma: float = 0.0,
+    ) -> "GSplatData":
+        """Add a new dimension to the splat data.
+
+        Appends a column to centers and embeds Cholesky factors into
+        the higher-dimensional space.
+
+        Args:
+            values: Coordinate for the new dimension. Scalar (same for all)
+                or (N,) array (per-splat).
+            sigma: Standard deviation in the new dimension (default 0.0
+                for discrete dimensions like time).
+
+        Returns:
+            New GSplatData with ndim+1 dimensions.
+
+        Example:
+            >>> data_4d = data_3d.embed_dimension(5.0, sigma=0.0)
+            >>> data_4d = data_3d.embed_dimension(time_values, sigma=0.5)
+        """
+        from luxar.gsplats.utils.trils import embed_cholesky_packed
+
+        n = self.n_splats
+        d = self.ndim
+
+        if np.isscalar(values):
+            new_col = np.full((n, 1), values, dtype=self.centers.dtype)
+        else:
+            values = np.asarray(values, dtype=self.centers.dtype)
+            if values.shape != (n,):
+                raise ValueError(
+                    f"values shape {values.shape} doesn't match splat count ({n},)"
+                )
+            new_col = values.reshape(n, 1)
+
+        new_centers = np.concatenate([self.centers, new_col], axis=1)
+        new_cholesky = embed_cholesky_packed(
+            self.cholesky_factors,
+            d_src=d,
+            d_dst=d + 1,
+            dim_mapping=list(range(d)),
+            fill_sigma={d: sigma},
+        )
+
+        return GSplatData(
+            centers=new_centers,
+            amplitudes=self.amplitudes,
+            cholesky_factors=new_cholesky,
+            sharpnesses=self.sharpnesses,
+            colors=self.colors,
+            stats=dict(self.stats),
+        )
+
+    # ── Geometric transforms ────────────────────────────────
+
+    def transform(self, matrix: np.ndarray) -> "GSplatData":
+        """Apply affine transformation to all splats.
+
+        Transforms centers and covariance matrices. Amplitudes, sharpnesses,
+        and colors are unchanged.
+
+        Args:
+            matrix: Either (d, d) for linear-only transform or
+                (d+1, d+1) for full affine (last row must be [0..0, 1]).
+
+        Returns:
+            New GSplatData with transformed geometry.
+
+        Raises:
+            ValueError: If matrix shape is invalid.
+            np.linalg.LinAlgError: If transform produces non-positive-definite covariance.
+
+        Example:
+            >>> scaled = data.transform(np.eye(3) * 2.0)
+            >>> M = np.eye(4); M[:3, 3] = [10, 20, 30]
+            >>> transformed = data.transform(M)
+        """
+        from luxar.gsplats.utils.trils import pack_tril, unpack_tril
+
+        matrix = np.asarray(matrix, dtype=np.float64)
+        d = self.ndim
+
+        if matrix.shape == (d, d):
+            A = matrix
+            t = np.zeros(d, dtype=np.float64)
+        elif matrix.shape == (d + 1, d + 1):
+            A = matrix[:d, :d]
+            t = matrix[:d, d]
+            expected = np.zeros(d + 1, dtype=np.float64)
+            expected[-1] = 1.0
+            if not np.allclose(matrix[d, :], expected):
+                raise ValueError(
+                    f"Last row of (d+1)x(d+1) matrix must be [0...0, 1], "
+                    f"got {matrix[d, :]}"
+                )
+        else:
+            raise ValueError(
+                f"Matrix shape must be ({d},{d}) or ({d + 1},{d + 1}), got {matrix.shape}"
+            )
+
+        if self.n_splats == 0:
+            return GSplatData(
+                centers=self.centers.copy(),
+                amplitudes=self.amplitudes,
+                cholesky_factors=self.cholesky_factors.copy(),
+                sharpnesses=self.sharpnesses,
+                colors=self.colors,
+                stats=dict(self.stats),
+            )
+
+        new_centers = (self.centers.astype(np.float64) @ A.T + t).astype(
+            self.centers.dtype
+        )
+
+        L = unpack_tril(self.cholesky_factors.astype(np.float64), d)
+        Sigma = L @ np.swapaxes(L, -2, -1)
+        Sigma_new = A @ Sigma @ A.T
+        L_new = np.linalg.cholesky(Sigma_new)
+        new_cholesky = pack_tril(L_new).astype(self.cholesky_factors.dtype)
+
+        return GSplatData(
+            centers=new_centers,
+            amplitudes=self.amplitudes,
+            cholesky_factors=new_cholesky,
+            sharpnesses=self.sharpnesses,
+            colors=self.colors,
+            stats=dict(self.stats),
+        )
+
+    # ── Intensity transforms ────────────────────────────────
+
+    def affine_intensity(self, scale: float = 1.0, offset: float = 0.0) -> "GSplatData":
+        """Apply affine transform to amplitudes: new_amp = scale * amp + offset.
+
+        Args:
+            scale: Multiplicative factor.
+            offset: Additive offset.
+
+        Returns:
+            New GSplatData with transformed amplitudes.
+        """
+        return GSplatData(
+            centers=self.centers,
+            amplitudes=self.amplitudes * scale + offset,
+            cholesky_factors=self.cholesky_factors,
+            sharpnesses=self.sharpnesses,
+            colors=self.colors,
+            stats=dict(self.stats),
+        )
+
+    def normalize_intensity(self, target_max: float = 1.0) -> "GSplatData":
+        """Normalize amplitudes so the maximum equals target_max.
+
+        Args:
+            target_max: Desired maximum amplitude (default 1.0).
+
+        Returns:
+            New GSplatData. Returns copy if all amplitudes are zero.
+        """
+        current_max = float(self.amplitudes.max()) if self.n_splats > 0 else 0.0
+        if current_max == 0:
+            return GSplatData(
+                centers=self.centers,
+                amplitudes=self.amplitudes.copy(),
+                cholesky_factors=self.cholesky_factors,
+                sharpnesses=self.sharpnesses,
+                colors=self.colors,
+                stats=dict(self.stats),
+            )
+        return self.scale_intensity(target_max / current_max)
+
+    def clamp_intensity(
+        self,
+        min: "float | None" = None,
+        max: "float | None" = None,
+    ) -> "GSplatData":
+        """Clamp amplitudes to a range.
+
+        Args:
+            min: Lower bound (None = no lower bound).
+            max: Upper bound (None = no upper bound).
+
+        Returns:
+            New GSplatData with clamped amplitudes.
+        """
+        new_amps = self.amplitudes.copy()
+        if min is not None:
+            new_amps = np.maximum(new_amps, min)
+        if max is not None:
+            new_amps = np.minimum(new_amps, max)
+        return GSplatData(
+            centers=self.centers,
+            amplitudes=new_amps,
+            cholesky_factors=self.cholesky_factors,
+            sharpnesses=self.sharpnesses,
+            colors=self.colors,
+            stats=dict(self.stats),
+        )
+
+    # ── I/O ─────────────────────────────────────────────────
 
     def save(
         self,
@@ -101,7 +574,7 @@ class GSplatData:
         provenance_info = None
 
         if include_fitting_info and self.stats:
-            # Extract common fitting fields (including pruning stats)
+            # Extract common fitting fields (including quality metrics and pruning stats)
             fitting_info = {
                 k: v
                 for k, v in self.stats.items()
@@ -110,6 +583,14 @@ class GSplatData:
                     "time_seconds",
                     "iterations",
                     "converged",
+                    "early_stopped",
+                    "best_iteration",
+                    "final_loss",
+                    "final_max_abs_error",
+                    "final_rel_l2",
+                    "n_splats",
+                    "n_splats_before_culling",
+                    "n_culled",
                     "fitter_name",
                     "fitter_version",
                     "timestamp",
@@ -167,7 +648,7 @@ class GSplatData:
             cholesky_factors=self.cholesky_factors,  # REFERENCE
             sharpnesses=self.sharpnesses,  # REFERENCE
             colors=self.colors,  # REFERENCE (None-safe)
-            stats=self.stats.copy() if self.stats else {},
+            stats=dict(self.stats),
         )
 
     def center_at_centroid(self) -> "GSplatData":
@@ -177,12 +658,13 @@ class GSplatData:
         which corresponds to the center of mass of the represented density.
 
         Returns:
-            New GSplatData centered at origin (centroid at [0, 0, ...])
+            New GSplatData centered at origin (amplitude-weighted centroid at [0, 0, ...])
 
         Example:
             >>> # Center splats at origin for easier viewing
             >>> centered = data.center_at_centroid()
-            >>> aprint(centered.centers.mean(axis=0))  # Should be close to [0, 0, 0]
+            >>> # Amplitude-weighted centroid is now at origin
+            >>> centroid = (centered.centers.T @ centered.amplitudes) / centered.amplitudes.sum()
         """
         # Compute amplitude-weighted centroid
         total_amplitude = self.amplitudes.sum()
@@ -218,7 +700,7 @@ class GSplatData:
             cholesky_factors=self.cholesky_factors,  # REFERENCE
             sharpnesses=self.sharpnesses,  # REFERENCE
             colors=self.colors,  # REFERENCE (None-safe)
-            stats=self.stats.copy() if self.stats else {},
+            stats=dict(self.stats),
         )
 
     def prune(
@@ -264,87 +746,78 @@ class GSplatData:
             The "cumulative" method is recommended as it provides a quality guarantee
             (e.g., "retain 95% of signal") and automatically determines the optimal threshold.
         """
-        N_original = len(self.amplitudes)
+        N_original = self.n_splats
 
-        # Compute volumes for combined method
-        if method == "combined":
-            # Unpack diagonal elements from Cholesky factors
-            # For 3D: cholesky is (N, 6) packed as [L00, L10, L11, L20, L21, L22]
-            ndim = self.centers.shape[1]
-            chol_size = self.cholesky_factors.shape[1]
-            expected_size = ndim * (ndim + 1) // 2
+        # Validate method
+        valid_methods = ("cumulative", "amplitude_percentile", "combined")
+        if method not in valid_methods:
+            raise ValueError(f"Unknown pruning method: {method}")
 
-            if chol_size != expected_size:
-                raise ValueError(
-                    f"Cholesky factors have unexpected shape: {self.cholesky_factors.shape}"
-                )
+        # Short-circuit for empty data
+        if N_original == 0:
+            result = self.filter(np.ones(0, dtype=bool))
+            result.stats.update(
+                {
+                    "pruned": True,
+                    "pruning_method": method,
+                    "n_original": 0,
+                    "n_removed": 0,
+                }
+            )
+            return result
 
-            # Extract diagonal elements for volume computation
-            # For nD: positions are at [0, 2, 5, 9, 14, ...] = cumsum([1,2,3,4,5,...])
-            diag_indices = np.cumsum(np.arange(1, ndim + 1)) - 1
-            diag_elements = self.cholesky_factors[:, diag_indices]
+        # Compute mask based on pruning strategy
+        mask = np.ones(N_original, dtype=bool)
 
-            # Volume ∝ det(Σ)^(1/2) = |det(L)| = |product of diagonal elements|
-            det_L = np.prod(diag_elements, axis=1)
-            det_Sigma = det_L**2
-            volumes = np.abs(det_Sigma) ** (1 / ndim)  # Take nth root for nD
-
-        # Select pruning strategy
         if method == "cumulative":
-            # Sort by amplitude (descending) and find cutoff
             sorted_indices = np.argsort(self.amplitudes)[::-1]
             sorted_amps = self.amplitudes[sorted_indices]
             cumsum_amps = np.cumsum(sorted_amps)
-            cumsum_norm = cumsum_amps / cumsum_amps[-1]
-
-            # Find where we reach target retention
-            n_keep = np.searchsorted(cumsum_norm, target_retention) + 1
-            n_keep = min(n_keep, N_original)  # Safety check
-
-            # Create mask for splats to keep
-            keep_indices = sorted_indices[:n_keep]
-            mask = np.zeros(N_original, dtype=bool)
-            mask[keep_indices] = True
+            total_amp = cumsum_amps[-1]
+            if total_amp == 0:
+                mask = (
+                    np.ones(N_original, dtype=bool)
+                    if target_retention > 0
+                    else np.zeros(N_original, dtype=bool)
+                )
+            else:
+                cumsum_norm = cumsum_amps / total_amp
+                n_keep = np.searchsorted(cumsum_norm, target_retention) + 1
+                n_keep = min(n_keep, N_original)
+                keep_indices = sorted_indices[:n_keep]
+                mask = np.zeros(N_original, dtype=bool)
+                mask[keep_indices] = True
 
         elif method == "amplitude_percentile":
-            # Remove bottom percentile
             threshold = np.percentile(self.amplitudes, amplitude_percentile)
             mask = self.amplitudes >= threshold
 
         elif method == "combined":
-            # Remove if (low amplitude OR large volume)
+            vols = self.volumes()
             amp_threshold = np.percentile(self.amplitudes, amplitude_percentile)
-            vol_threshold = np.percentile(volumes, volume_percentile)
-            mask = (self.amplitudes >= amp_threshold) & (volumes <= vol_threshold)
+            vol_threshold = np.percentile(vols, volume_percentile)
+            mask = (self.amplitudes >= amp_threshold) & (vols <= vol_threshold)
 
-        else:
-            raise ValueError(f"Unknown pruning method: {method}")
+        # Apply mask via filter()
+        result = self.filter(mask)
 
-        # Apply mask
-        pruned_centers = self.centers[mask]
-        pruned_cholesky = self.cholesky_factors[mask]
-        pruned_amplitudes = self.amplitudes[mask]
-        pruned_sharpnesses = self.sharpnesses[mask]
-        pruned_colors = self.colors[mask] if self.colors is not None else None
-
-        # Update stats
-        pruned_stats = self.stats.copy() if self.stats else {}
-        pruned_stats["pruned"] = True
-        pruned_stats["pruning_method"] = method
-        pruned_stats["n_original"] = N_original
-        pruned_stats["n_removed"] = N_original - len(pruned_amplitudes)
-        pruned_stats["amplitude_retention"] = float(
-            np.sum(pruned_amplitudes) / np.sum(self.amplitudes)
+        # Update stats with pruning metadata
+        total_amp = np.sum(self.amplitudes)
+        result.stats.update(
+            {
+                "pruned": True,
+                "pruning_method": method,
+                "n_original": N_original,
+                "n_removed": N_original - result.n_splats,
+                "amplitude_retention": (
+                    float(np.sum(result.amplitudes) / total_amp)
+                    if total_amp > 0
+                    else 1.0
+                ),
+            }
         )
 
-        return GSplatData(
-            centers=pruned_centers,
-            amplitudes=pruned_amplitudes,
-            cholesky_factors=pruned_cholesky,
-            sharpnesses=pruned_sharpnesses,
-            colors=pruned_colors,
-            stats=pruned_stats,
-        )
+        return result
 
     def render_to_volume(
         self,
@@ -479,12 +952,12 @@ class GSplatData:
             raise ValueError("At least one GSplatData object is required")
 
         # Validate all have same dimensionality
-        ndim = gsplats_per_channel[0].centers.shape[1]
+        ndim = gsplats_per_channel[0].ndim
         for i, gsplat in enumerate(gsplats_per_channel[1:], start=1):
-            if gsplat.centers.shape[1] != ndim:
+            if gsplat.ndim != ndim:
                 raise ValueError(
                     f"Dimensionality mismatch: channel 0 has {ndim}D, "
-                    f"channel {i} has {gsplat.centers.shape[1]}D"
+                    f"channel {i} has {gsplat.ndim}D"
                 )
 
         # Concatenate all arrays

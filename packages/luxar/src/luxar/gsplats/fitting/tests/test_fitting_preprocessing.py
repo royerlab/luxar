@@ -42,6 +42,7 @@ def mock_config_2d():
         n_iters=100,
         lr=0.01,
         max_abs_error=None,
+        rel_l2_target=None,
         gradient_clip=1.0,
         loss_type="l1",
         asymmetric_penalty=10.0,
@@ -63,6 +64,28 @@ def mock_config_2d():
         seed_method="auto",  # Use new default
         seed_kwargs={},
     )
+
+
+class TestPreprocessDataValidation:
+    """Test input data validation in preprocessing."""
+
+    def test_nan_input_raises_error(self, mock_config_2d) -> None:
+        """Test that NaN in input volume raises ValueError."""
+        mock_config_2d.V[5, 5] = np.nan
+        with pytest.raises(ValueError, match="NaN value"):
+            preprocess_data(mock_config_2d)
+
+    def test_inf_input_raises_error(self, mock_config_2d) -> None:
+        """Test that Inf in input volume raises ValueError."""
+        mock_config_2d.V[5, 5] = np.inf
+        with pytest.raises(ValueError, match="Inf value"):
+            preprocess_data(mock_config_2d)
+
+    def test_negative_inf_input_raises_error(self, mock_config_2d) -> None:
+        """Test that -Inf in input volume raises ValueError."""
+        mock_config_2d.V[5, 5] = -np.inf
+        with pytest.raises(ValueError, match="Inf value"):
+            preprocess_data(mock_config_2d)
 
 
 class TestPreprocessData:

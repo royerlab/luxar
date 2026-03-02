@@ -88,7 +88,7 @@ class TestCompilerWithDtypes:
             assert points["radii"].dtype == np.float32, (
                 "PRECISION uses float32 for radii"
             )
-            assert points["sharpness"].dtype == np.float32, (
+            assert points["sharpnesses"].dtype == np.float32, (
                 "PRECISION uses float32 for sharpness"
             )
 

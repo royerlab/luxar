@@ -136,7 +136,8 @@ This glossary defines standard terminology used throughout the gsplats package s
 - ✅ **Dynamic seeding** (to clarify context)
 
 **Functions**:
-- `seed_from_gaussian()`, `seed_from_decomposition()`, `seed_from_moments()`: Initial seeding
+- `seed_from_edges()`, `seed_from_grid()`, `seed_from_decomposition()`: Individual seeding methods
+- `generate_seeds()`: Unified seeding entry point
 - `add_splats()` / `append_()`: Dynamic adding
 
 **Rationale**: "Seeding" emphasizes the initialization aspect, "adding" is more general.

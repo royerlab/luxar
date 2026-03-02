@@ -271,11 +271,6 @@ Tests for memory management and performance optimization.
 
 **Key Files**:
 
-- `range-cache.test.ts` - Range-based cache for point data
-  - Range intersection detection
-  - Partial overlap handling
-  - Memory limits
-
 - `lru-cache.test.ts` - LRU eviction strategy
   - Least-recently-used eviction
   - Access time tracking

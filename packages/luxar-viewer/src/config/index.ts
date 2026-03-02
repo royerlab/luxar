@@ -14,10 +14,8 @@ import type { AppConfig } from './types';
  */
 export const config: AppConfig = {
   // Camera configuration for 3D perspective and navigation
+  // Note: fov, near, far live in renderingControls.defaults as the single source of truth
   camera: {
-    fov: 47, // Field of view in degrees - 47° equivalent to 50mm Normal lens (natural human vision)
-    near: 0.1, // Near clipping plane distance - objects closer than this are not rendered
-    far: 1000, // Far clipping plane distance - objects further than this are not rendered
     initialPosition: { x: 0, y: 0, z: 8 }, // Initial camera position in 3D space (world coordinates)
     fovMin: 10, // Minimum field of view for zoom limits - prevents excessive zoom-in
     fovMax: 170, // Maximum field of view for zoom limits - must be <180° (fish-eye territory)
@@ -88,17 +86,14 @@ export const config: AppConfig = {
     },
   },
 
-  // Animation loop and performance optimization settings
+  // Animation loop settings
   animation: {
     idleTimeoutMs: 2000, // Time in milliseconds before pausing animation when idle - saves power
-    targetFPS: 60, // Target frames per second
-    minFPS: 30, // Minimum acceptable FPS before quality reduction
   },
 
   // Adaptive pixel ratio configuration for dynamic performance optimization
   adaptiveDPR: {
-    enabled: true, // Enable adaptive DPR by default
-    targetFPS: 55, // Target FPS - slightly below 60 to prevent toggling
+    enabled: true, // Construction-time default; runtime toggle is renderingControls.defaults.adaptiveDPREnabled
     minFPS: 50, // FPS threshold for scaling down resolution
     maxFPS: 58, // FPS threshold for scaling up resolution
     minDPR: 0.5, // Minimum DPR - lower bound before image becomes too pixelated
@@ -114,32 +109,11 @@ export const config: AppConfig = {
     defaultFitRatio: 0.75, // How much of view to fill when fitting to bounds (0-1)
   },
 
-  // Note: Rendering configuration moved to renderingControls.defaults for centralization
-
   // Shader configuration for point rendering
+  // Note: hdrMultiplier lives in renderingControls.defaults as the single source of truth
   shader: {
     points: {
-      hdrMultiplier: 1.0, // HDR color multiplier for bloom effects (default: neutral 1.0)
       baseAlpha: 0.01, // Base alpha intensity
-    },
-  },
-
-  // Post-processing pipeline configuration
-  postProcessing: {
-    hdr: {
-      renderTargetType: THREE.HalfFloatType, // Use 16-bit float for HDR precision without banding
-    },
-    // Note: bloom settings moved to renderingControls.defaults for centralization
-
-    toneMapping: {
-      initial: {
-        outputColorSpace: THREE.LinearSRGBColorSpace,
-        toneMapping: THREE.NoToneMapping,
-      },
-      final: {
-        outputColorSpace: THREE.SRGBColorSpace,
-        toneMapping: THREE.ACESFilmicToneMapping,
-      },
     },
   },
 
@@ -201,7 +175,6 @@ export const config: AppConfig = {
     // UI component-specific configuration for consistent styling
     components: {
       datasetBrowser: {
-        zIndex: 1000,
         borderRadius: {
           panel: 12,
           section: 6,
@@ -214,7 +187,6 @@ export const config: AppConfig = {
         },
       },
       debugConsole: {
-        zIndex: 150,
         borderRadius: {
           header: 8,
           content: 4,
@@ -298,8 +270,8 @@ export const config: AppConfig = {
       autoRotate: false, // Auto-rotation disabled by default
       autoRotateSpeed: 0.25, // Slow rotation speed for presentations
       // Note: Fly control settings are referenced directly from controls.fly to avoid duplication
-      // Adaptive resolution
-      adaptiveDPREnabled: true, // Adaptive resolution enabled by default
+      // Adaptive resolution (runtime/UI toggle; overrides adaptiveDPR.enabled after init)
+      adaptiveDPREnabled: true, // Persisted per-scene via localStorage
       // Cinematic mode (disabled by default)
       cinematicMode: false,
     },
@@ -307,12 +279,17 @@ export const config: AppConfig = {
 
   // Control system configuration (migrated from control-config.ts)
   controls: {
+    scaleMultipliers: {
+      minDistanceFactor: 0.001,
+      maxDistanceFactor: 10,
+      flySpeedFactor: 0.05,
+    },
     fly: {
       inertialMode: {
         default: true,
       },
       movement: {
-        speed: { min: 0.5, max: 50.0, default: 5.0, step: 0.1 },
+        speed: { min: 0.01, max: 5.0, default: 0.5, step: 0.01 },
         acceleration: { min: 0.1, max: 2.0, default: 0.5, step: 0.1 },
         damping: { min: 0.9, max: 0.99999, default: 0.999, step: 0.0001 },
       },
@@ -450,22 +427,22 @@ export const config: AppConfig = {
 
       // Phase 2: Web Workers - ENABLED ✅
       // Phase 3: WASM - ENABLED ✅ (loads automatically when workers enabled)
-      // Worker-based queries with WASM acceleration (3-5x faster)
-      // Workers ARE integrated in hot path: see *-spatial-index-loader.ts
+      // Workers offload CPU-heavy operations: nD→3D projection, visibility, decoding
+      // Note: AABB spatial queries always run on main thread (faster than roundtrip)
       // WASM module built (17KB): public/wasm/luxar_wasm_bg.wasm
-      useWebWorkers: true, // ✅ ACTIVATED - Offloads spatial queries to worker
+      useWebWorkers: true, // ✅ ACTIVATED - Offloads projection/visibility/decoding to workers
       workerCount: 0, // 0 = auto (uses navigator.hardwareConcurrency - 1)
 
       // Phase 3: WASM Acceleration - Documentation flag
       // Actual WASM loading is automatic via initWasm() when workers enabled
       useWASM: true, // WASM module built and ready
-      wasmModulePath: '/wasm/luxar_wasm_bg.wasm',
+      wasmModulePath: 'wasm/luxar_wasm_bg.wasm', // Resolved relative to bundle via import.meta.url
 
       // Phase 4: GPU Buffer Pool - ENABLED ✅
       // Multi-type support: Float32Array, Uint8Array, Uint16Array (with auto normalization)
       // Reuses geometries when capacity AND types match (0ms allocation on reuse)
       // Integrated into scene-loader: updatePointsGeometry/updateLinesGeometry/updateGSplatsGeometry
-      useGPUBufferPool: true, // ✅ ACTIVATED - Multi-type geometry pooling enabled
+      useGPUBufferPool: true,
       gpuPoolMaxSize: 20,
       gpuPoolEvictionFrames: 300,
 
@@ -490,14 +467,12 @@ export const config: AppConfig = {
       failIfMajorPerformanceCaveat: false, // Don't fail on slow GPUs
     },
 
-    // THREE.WebGLRenderer specific settings
+    // THREE.WebGLRenderer specific settings (renderer-only; shared attributes
+    // like antialias, powerPreference, preserveDrawingBuffer, premultipliedAlpha
+    // are sourced from webgl.context and spread at renderer creation time)
     renderer: {
-      antialias: true, // MSAA for smoother rendering
-      powerPreference: 'high-performance' as const, // High performance GPU
-      preserveDrawingBuffer: false, // Better performance
       logarithmicDepthBuffer: false, // Standard depth buffer (faster)
       precision: 'highp' as const, // High precision for better quality
-      premultipliedAlpha: true, // Standard alpha blending
       shadowMap: {
         enabled: false, // No shadows needed for points
         type: THREE.PCFSoftShadowMap, // Soft shadows if enabled
@@ -509,25 +484,6 @@ export const config: AppConfig = {
       depthBuffer: true, // Needed for depth testing
       stencilBuffer: false, // Not needed, saves memory
       samples: 0, // MSAA samples (0 = disabled for additive blending compatibility)
-    },
-
-    // Performance profiles for different hardware/use cases
-    profiles: {
-      quality: {
-        powerPreference: 'high-performance' as const,
-        antialias: true,
-        precision: 'highp' as const,
-      },
-      balanced: {
-        powerPreference: 'default' as const,
-        antialias: true,
-        precision: 'mediump' as const,
-      },
-      performance: {
-        powerPreference: 'low-power' as const,
-        antialias: false,
-        precision: 'lowp' as const,
-      },
     },
   },
 

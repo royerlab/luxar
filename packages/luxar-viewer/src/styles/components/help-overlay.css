@@ -133,13 +133,9 @@
 
 .luxar-help-overlay__category-content {
   margin-bottom: var(--luxar-spacing-2);
-  border-left: 2px solid rgba(76, 175, 80, 0.2);
+  border-left: 2px solid color-mix(in srgb, var(--luxar-success) 20%, transparent);
   margin-left: var(--luxar-spacing-4);
   padding-left: var(--luxar-spacing-6);
-}
-
-.luxar-help-overlay__category-content--collapsed {
-  display: none;
 }
 
 .luxar-help-overlay__category-content--collapsed {
@@ -177,24 +173,4 @@
 /* Theme-specific overrides */
 [data-theme='light'] .luxar-help-overlay {
   background: rgba(255, 255, 255, 0.95);
-}
-
-[data-theme='light'] .luxar-help-overlay__close-btn {
-  color: var(--luxar-text-muted);
-}
-
-[data-theme='light'] .luxar-help-overlay__close-btn:hover {
-  color: var(--luxar-text-primary);
-}
-
-[data-theme='light'] .luxar-help-overlay__category-header {
-  color: var(--luxar-success);
-}
-
-[data-theme='light'] .luxar-help-overlay__item--tip {
-  color: var(--luxar-text-secondary);
-}
-
-[data-theme='light'] .luxar-help-overlay__item--note {
-  color: var(--luxar-warning);
 }

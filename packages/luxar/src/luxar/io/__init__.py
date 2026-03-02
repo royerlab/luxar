@@ -7,7 +7,7 @@ from .ordering import (
     sort_points_compound,
     sort_splats_spatial,
 )
-from .reader import DEFAULT_COMP, LuxarScene
+from .reader import DEFAULT_COMP, GSplatsData, LinesData, LuxarScene, PointsData
 from .writer import ZarrWriterProtocol
 
 __all__ = [
@@ -19,4 +19,7 @@ __all__ = [
     "sort_splats_spatial",
     "compute_chunk_bounds_points",
     "compute_chunk_bounds_gsplats",
+    "PointsData",
+    "LinesData",
+    "GSplatsData",
 ]
