@@ -336,24 +336,30 @@ export class GeometryUpdateManager {
 
         if (oldCount === data.pointCount && data.pointCount > 0) {
           // Same size: update in place (zero GPU allocation)
-          (oldPositionAttr!.array as Float32Array).set(data.positions as Float32Array);
+          // Use typed array .set() which handles implicit type conversion safely
+          const posArr = oldPositionAttr!.array as Float32Array;
+          posArr.set(
+            data.positions instanceof Float32Array
+              ? data.positions
+              : new Float32Array(data.positions)
+          );
           oldPositionAttr!.needsUpdate = true;
 
           const colorAttr = oldGeometry.getAttribute('color') as THREE.BufferAttribute;
           if (colorAttr && data.colors) {
-            (colorAttr.array as ArrayLike<number> & { set: Function }).set(data.colors);
+            (colorAttr.array as Float32Array).set(data.colors);
             colorAttr.needsUpdate = true;
           }
 
           const radiiAttr = oldGeometry.getAttribute('radius') as THREE.BufferAttribute;
           if (radiiAttr && data.radii) {
-            (radiiAttr.array as ArrayLike<number> & { set: Function }).set(data.radii);
+            (radiiAttr.array as Float32Array).set(data.radii);
             radiiAttr.needsUpdate = true;
           }
 
           const sharpAttr = oldGeometry.getAttribute('sharpness') as THREE.BufferAttribute;
           if (sharpAttr && data.sharpness) {
-            (sharpAttr.array as ArrayLike<number> & { set: Function }).set(data.sharpness);
+            (sharpAttr.array as Float32Array).set(data.sharpness);
             sharpAttr.needsUpdate = true;
           }
 

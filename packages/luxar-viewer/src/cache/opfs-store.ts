@@ -135,7 +135,10 @@ export class OPFSStore {
       // a view on a larger ArrayBuffer (e.g., from a sub-slice), data.buffer would
       // write the entire underlying buffer, corrupting the stored data. slice()
       // copies only the relevant bytes. Cast is safe: network data is never SharedArrayBuffer.
-      const bytes = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+      const bytes = data.buffer.slice(
+        data.byteOffset,
+        data.byteOffset + data.byteLength
+      ) as ArrayBuffer;
       await writable.write(bytes);
       await writable.close();
 

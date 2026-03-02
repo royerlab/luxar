@@ -331,8 +331,8 @@ export function calculateNextPosition(
   // Handle boundaries
   if (wrapAround) {
     const rangeSize = range[1] - range[0];
-    if (rangeSize === 0) {
-      return range[0]; // Degenerate: only one valid position
+    if (rangeSize <= 0) {
+      return range[0]; // Degenerate or invalid range
     }
     if (newPos < range[0]) {
       newPos = range[1] - ((range[0] - newPos) % rangeSize);

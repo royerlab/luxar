@@ -38,7 +38,6 @@ Options:
 import sys
 from pathlib import Path
 
-import napari
 import numpy as np
 from arbol import Arbol, aprint, asection
 
@@ -231,6 +230,8 @@ with asection("3D C. elegans Confocal — Gaussian Splatting Demo"):
                 aprint(f"  K={K:4d}  {image_bits / max(bits, 1):.0f}x  relL2={err:.4f}")
 
 if not NO_NAPARI:
+    import napari
+
     aprint("Launching napari viewer...")
     viewer = napari.Viewer(
         title=f"C. elegans t={TIMEPOINT} — GSplats Fitting", ndisplay=3

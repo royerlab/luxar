@@ -20,7 +20,6 @@ export interface LuxarFlyControlsConfig {
   inertialMode?: boolean; // True for low damping, false for high damping
   damping?: number; // Translation damping: 0.9-0.99 for inertial mode
   rotationDamping?: number; // Rotation damping: 0.9-0.99 for inertial mode
-  acceleration?: number; // Acceleration rate for inertial mode
 }
 
 export class LuxarFlyControls extends THREE.EventDispatcher<{
@@ -37,7 +36,6 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   public inertialMode: boolean = config.controls.fly.inertialMode.default;
   public damping: number = config.controls.fly.movement.damping.default;
   public rotationDamping: number = config.controls.fly.rotation.damping.default;
-  public acceleration: number = config.controls.fly.movement.acceleration.default;
 
   // Movement state
   private moveState = {
@@ -99,7 +97,6 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
       this.inertialMode = config.inertialMode ?? this.inertialMode;
       this.damping = config.damping ?? this.damping;
       this.rotationDamping = config.rotationDamping ?? this.rotationDamping;
-      this.acceleration = config.acceleration ?? this.acceleration;
     }
 
     // Initialize orientation from current camera
@@ -408,7 +405,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     // Always use physics-based movement (unified approach)
     // Calculate acceleration from input.
     // movementSpeed is the user-facing "speed" parameter (controlled by UI slider
-    // and scale-aware system). acceleration is a responsiveness tuning constant.
+    // and scale-aware system).
     const accel = new THREE.Vector3();
     accel.addScaledVector(
       forward,

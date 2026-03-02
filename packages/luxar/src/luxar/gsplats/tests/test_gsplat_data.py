@@ -295,7 +295,9 @@ class TestPrune:
 
     def test_combined(self):
         gs = _make_3d_gsplat(n=100)
-        pruned = gs.prune(method="combined", amplitude_percentile=10, volume_percentile=90)
+        pruned = gs.prune(
+            method="combined", amplitude_percentile=10, volume_percentile=90
+        )
         assert pruned.n_splats <= gs.n_splats
 
     def test_prune_empty(self):
@@ -421,7 +423,9 @@ class TestSaveWhitelist:
         }
 
         for key in fitting_keys:
-            assert key in fitting_info, f"Quality metric '{key}' missing from save whitelist"
+            assert key in fitting_info, (
+                f"Quality metric '{key}' missing from save whitelist"
+            )
 
         # movie_frames should NOT be saved
         assert "movie_frames" not in fitting_info
@@ -756,7 +760,9 @@ class TestMasses:
         gs = GSplatData(
             centers=np.zeros((2, 3), dtype=np.float32),
             amplitudes=np.zeros(2, dtype=np.float32),
-            cholesky_factors=np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (2, 1)),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (2, 1)
+            ),
             sharpnesses=np.ones(2, dtype=np.float32),
         )
         assert np.allclose(gs.masses(), 0.0)
@@ -856,7 +862,9 @@ class TestFilter:
         gs = GSplatData(
             centers=np.zeros((3, 3), dtype=np.float32),
             amplitudes=np.ones(3, dtype=np.float32),
-            cholesky_factors=np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
+            ),
             sharpnesses=np.ones(3, dtype=np.float32),
             colors=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32),
         )
@@ -996,9 +1004,13 @@ class TestSplit:
         gs = GSplatData(
             centers=np.zeros((4, 3), dtype=np.float32),
             amplitudes=np.ones(4, dtype=np.float32),
-            cholesky_factors=np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (4, 1)),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (4, 1)
+            ),
             sharpnesses=np.ones(4, dtype=np.float32),
-            colors=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0]], dtype=np.float32),
+            colors=np.array(
+                [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0]], dtype=np.float32
+            ),
         )
         parts = gs.split(2)
         assert parts[0].colors is not None
@@ -1081,14 +1093,14 @@ class TestTransform:
             sharpnesses=np.ones(1, dtype=np.float32),
         )
         theta = np.pi / 2
-        R = np.array([[np.cos(theta), -np.sin(theta)],
-                       [np.sin(theta), np.cos(theta)]])
+        R = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
         result = gs.transform(R)
         assert np.allclose(result.centers[0], [0, 1], atol=1e-5)
 
     def test_covariance_correctness(self):
         """Verify Sigma_new = A @ Sigma @ A.T for known transform."""
         from luxar.gsplats.utils.trils import unpack_tril
+
         gs = GSplatData(
             centers=np.zeros((1, 2), dtype=np.float32),
             amplitudes=np.ones(1, dtype=np.float32),
@@ -1169,7 +1181,9 @@ class TestNormalizeIntensity:
         gs = GSplatData(
             centers=np.zeros((2, 3), dtype=np.float32),
             amplitudes=np.zeros(2, dtype=np.float32),
-            cholesky_factors=np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (2, 1)),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (2, 1)
+            ),
             sharpnesses=np.ones(2, dtype=np.float32),
         )
         result = gs.normalize_intensity()

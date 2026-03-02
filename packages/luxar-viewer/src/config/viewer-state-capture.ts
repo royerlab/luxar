@@ -30,7 +30,8 @@ export function captureViewerState(
   sceneManager: SceneManager,
   renderingControls: RenderingControls,
   sceneDimsManager: SceneDimsManager,
-  animationManager?: DimensionAnimationManager
+  animationManager?: DimensionAnimationManager,
+  themeManager?: ThemeManager
 ): ZarrViewerConfig {
   const result: ZarrViewerConfig = {};
   const settings = renderingControls.settings;
@@ -68,8 +69,8 @@ export function captureViewerState(
 
   // --- Theme ---
   try {
-    const themeManager = ThemeManager.getInstance();
-    result.theme = themeManager.getCurrentTheme().id;
+    const tm = themeManager ?? ThemeManager.getInstance();
+    result.theme = tm.getCurrentTheme().id;
   } catch {
     // ThemeManager may not be initialized in tests
   }
