@@ -10,6 +10,7 @@ from arbol import aprint
 from ..typing_utils.aliases import GroupAttrs, SceneHierarchy, TransformMatrix
 
 if TYPE_CHECKING:
+    from ..core.group import Group
     from ..io.writer import ZarrWriterProtocol
 
 
@@ -42,6 +43,11 @@ class Node:
             writer: Writer interface for progressive data writing
             **attrs: Additional attributes to set on the node
         """
+        if name and "/" in name:
+            raise ValueError(
+                f"Node name cannot contain '/': got '{name}'. "
+                f"Use add_group() to create hierarchical structure instead."
+            )
         self.name: str = name
         self._writer = writer
         self.parent: Optional[Node] = parent
@@ -51,6 +57,11 @@ class Node:
 
         # Determine path in hierarchy
         if parent is not None:
+            for existing_child in parent.children:
+                if existing_child.name == name:
+                    raise ValueError(
+                        f"Duplicate child name '{name}' under parent '{parent.name}'."
+                    )
             parent.children.append(self)
             parent_path = getattr(parent, "path", None)
             self.path = f"{parent_path}/{name}" if parent_path else name
@@ -67,8 +78,7 @@ class Node:
                     # Use centralized function for consistent handling
                     attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
                 except Exception as e:
-                    aprint(f"Invalid transform for node '{name}': {e}")
-                    raise ValueError(f"Invalid transform: {e}") from e
+                    raise ValueError(f"Invalid transform for node '{name}': {e}") from e
 
             # Validate rendering attributes if present
             if "opacity" in attrs:
@@ -106,37 +116,35 @@ class Node:
         return self._attrs_cache
 
     # --------------------------------------------------------------- hierarchy
-    def add_group(self, name: str, **attrs: Any) -> Node:
+    def add_group(self, name: str, **attrs: Any) -> "Group":
         """Create and add a child group node.
+
+        The returned Group has add_points(), add_lines(), and add_gsplats()
+        methods for adding data children directly.
 
         Args:
             name: Name of the child group
             **attrs: Additional attributes for the group
 
         Returns:
-            The created child node
+            The created Group node
 
         Raises:
             ValueError: If group creation fails
         """
+        from .group import Group
+
         try:
             aprint(f"Adding child group '{name}' to node '{self.name}'.")
 
-            # Process transform if present to convert to storage format
-            if "transform" in attrs:
-                from ..core.transforms import prepare_transform_for_zarr
-
-                # Use centralized function for consistent handling
-                attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
+            # Duplicate check is handled by Node.__init__ (lines 59-65)
+            # Node.__init__ handles writing to storage, attr validation, and caching
+            attrs["type"] = "group"
 
             if self._writer is not None:
-                # Create via writer interface
-                child_path = f"{self.path}/{name}" if self.path else name
-                self._writer.write_group(child_path, type="group", **attrs)
-                child_node = Node(name, parent=self, writer=self._writer, **attrs)
+                child_node = Group(name, parent=self, writer=self._writer, **attrs)
             else:
-                # Metadata-only mode (no writer available)
-                child_node = Node(name, parent=self, **attrs)
+                child_node = Group(name, parent=self, **attrs)
 
             aprint(f"✓ Child group '{name}' added successfully.")
             return child_node
@@ -344,6 +352,23 @@ class Node:
         """
         self.blending_mode = value
         return self
+
+    # --------------------------------------------------------------- equality
+    def __eq__(self, other: object) -> bool:
+        """Equality based on path in the scene graph."""
+        if not isinstance(other, Node):
+            return NotImplemented
+        # Root nodes (empty path) use identity to avoid all roots comparing equal
+        if self.path == "" and other.path == "":
+            return self is other
+        return self.path == other.path
+
+    def __hash__(self) -> int:
+        """Hash based on path in the scene graph."""
+        # Root nodes use identity hash to avoid all roots hashing identically
+        if self.path == "":
+            return id(self)
+        return hash(self.path)
 
     # --------------------------------------------------------------- repr
     def __repr__(self) -> str:  # pragma: no cover

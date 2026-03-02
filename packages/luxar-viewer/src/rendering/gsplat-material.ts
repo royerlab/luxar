@@ -465,7 +465,11 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     let blending: THREE.Blending;
     if (isOpaque || blendingMode === 'normal') {
       blending = THREE.NormalBlending;
-    } else if (blendingMode === 'additive' || blendingMode === 'luminous' || blendingMode === 'max') {
+    } else if (
+      blendingMode === 'additive' ||
+      blendingMode === 'luminous' ||
+      blendingMode === 'max'
+    ) {
       // All additive-style modes use CustomBlending for correct linear contribution
       blending = THREE.CustomBlending;
     } else {
@@ -479,7 +483,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         uFy: { value: 500 },
         uTruncate: { value: materialConfig.truncationRadius ?? 3.0 },
         uHDRMultiplier: {
-          value: materialConfig.hdrMultiplier ?? config.shader.points.hdrMultiplier,
+          value: materialConfig.hdrMultiplier ?? config.renderingControls.defaults.hdrMultiplier,
         },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
         uProjectionMode: { value: blendingMode === 'max' ? 1 : 0 }, // 0=sum, 1=max
@@ -819,6 +823,15 @@ export function updateInstancedGSplatsMesh(
     );
     geometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(meshConfig.colors, 3));
     geometry.instanceCount = meshConfig.splatCount;
+
+    // CRITICAL: Force THREE.js to recalculate _maxInstanceCount from the new attributes.
+    // When a mesh is initially created with 0 instances (e.g., a gsplat node not at the
+    // current time slice), THREE.js caches _maxInstanceCount=0. Later updates that add
+    // instances via setAttribute won't trigger recalculation, so the renderer still draws
+    // min(instanceCount, 0) = 0 instances. Deleting the cached value forces recalculation
+    // on the next render frame. (THREE.js r163+ internal property)
+
+    delete (geometry as any)._maxInstanceCount;
   } else {
     // Same size, update in place
     const centerAttr = geometry.getAttribute('aCenter') as THREE.InstancedBufferAttribute;

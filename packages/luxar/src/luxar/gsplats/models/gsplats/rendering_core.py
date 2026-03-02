@@ -89,6 +89,15 @@ _GRID_CACHE: Dict[
 ] = {}
 
 
+def clear_grid_cache() -> None:
+    """Clear the cached base grids and linear offsets.
+
+    Call this to free GPU/CPU memory when changing volume shapes
+    or after completing a fitting session.
+    """
+    _GRID_CACHE.clear()
+
+
 def _cached_base_and_offsets(
     box_shape: Sequence[int],
     strides: torch.Tensor,  # (d,), long
@@ -159,8 +168,8 @@ def _fwd_norm2_2d(L: torch.Tensor, d0: torch.Tensor, d1: torch.Tensor) -> torch.
     l21 = L[:, 1, 0].unsqueeze(1)
     l22 = L[:, 1, 1].unsqueeze(1)
 
-    y0 = d0 / torch.clamp(l11, min=1e-12)
-    y1 = (d1 - l21 * y0) / torch.clamp(l22, min=1e-12)
+    y0 = d0 / torch.clamp(l11, min=1e-6)
+    y1 = (d1 - l21 * y0) / torch.clamp(l22, min=1e-6)
     return y0.mul(y0).add_(y1.mul(y1))
 
 
@@ -179,9 +188,9 @@ def _fwd_norm2_3d(
     l32 = L[:, 2, 1].unsqueeze(1)
     l33 = L[:, 2, 2].unsqueeze(1)
 
-    y0 = d0 / torch.clamp(l11, min=1e-12)
-    y1 = (d1 - l21 * y0) / torch.clamp(l22, min=1e-12)
-    y2 = (d2 - l31 * y0 - l32 * y1) / torch.clamp(l33, min=1e-12)
+    y0 = d0 / torch.clamp(l11, min=1e-6)
+    y1 = (d1 - l21 * y0) / torch.clamp(l22, min=1e-6)
+    y2 = (d2 - l31 * y0 - l32 * y1) / torch.clamp(l33, min=1e-6)
     return y0.mul(y0).add_(y1.mul(y1)).add_(y2.mul(y2))
 
 

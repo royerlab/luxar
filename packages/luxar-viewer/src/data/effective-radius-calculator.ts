@@ -55,10 +55,6 @@ export function calculateEffectiveRadii(
   // Small tolerance for floating point comparison in discrete dimensions
   const discreteTolerance = 0.5;
 
-  // DEBUG: Uncomment to track statistics for troubleshooting
-  // let discreteFilteredCount = 0;
-  // const sampleOrbitalValues: number[] = [];
-
   // Helper function to safely check if a dimension is spatial
   // If spatialExtendDims doesn't cover this dimension, default to true (spatial)
   // This is the safer default as it won't unexpectedly filter out points
@@ -72,11 +68,6 @@ export function calculateEffectiveRadii(
 
   for (let i = 0; i < numPoints; i++) {
     const originalRadius = radii[i];
-
-    // DEBUG: Uncomment to collect sample values for troubleshooting
-    // if (i < 10 && ndim > 0) {
-    //   sampleOrbitalValues.push(positions[i * ndim + 0]);
-    // }
 
     // First check discrete dimensions for exact match
     let discreteMatch = true;
@@ -103,7 +94,6 @@ export function calculateEffectiveRadii(
     // If discrete dimensions don't match, point is invisible
     if (!discreteMatch) {
       effectiveRadii[i] = 0;
-      // discreteFilteredCount++;  // DEBUG: Uncomment for troubleshooting
       continue;
     }
 
@@ -136,25 +126,6 @@ export function calculateEffectiveRadii(
     // Clamp to zero for numerical stability (points at hypersphere boundary)
     effectiveRadii[i] = effectiveRadiusSquared > 0 ? Math.sqrt(effectiveRadiusSquared) : 0;
   }
-
-  // DEBUG: Uncomment for troubleshooting discrete dimension filtering issues
-  // const zeroCount = effectiveRadii.filter((r) => r < 0.0001).length;
-  // if (discreteFilteredCount > 0 || zeroCount > 0) {
-  //   console.log(
-  //     `[DEBUG EffectiveRadius] ${numPoints} points: ${discreteFilteredCount} filtered by discrete match, ` +
-  //       `${zeroCount} with zero radius (${numPoints - zeroCount} visible)`
-  //   );
-  //   console.log(
-  //     `[DEBUG EffectiveRadius] Config: spatialExtendDims=[${spatialExtendDims.join(', ')}], ` +
-  //       `displayDims=[${displayDims.join(', ')}], ndim=${ndim}`
-  //   );
-  //   console.log(
-  //     `[DEBUG EffectiveRadius] Sample orbital values (first 10 points): [${sampleOrbitalValues.join(', ')}]`
-  //   );
-  //   console.log(
-  //     `[DEBUG EffectiveRadius] Query target: orbital=${slicePosition[0]?.toFixed(2) ?? 'null'}, tolerance=${0.5}`
-  //   );
-  // }
 
   return effectiveRadii;
 }

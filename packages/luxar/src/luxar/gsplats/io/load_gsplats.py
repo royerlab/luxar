@@ -39,8 +39,15 @@ def _extract_compressed_zarr(compressed_path: Path) -> Path:
     elif compressed_path.suffix == ".gz" or str(compressed_path).endswith(
         (".tar.gz", ".gsplats.zarr.tar.gz")
     ):
-        # TAR.GZ extraction
+        # TAR.GZ extraction (with path traversal protection)
         with tarfile.open(compressed_path, "r:gz") as tar_ref:
+            # Validate no path traversal (CVE-2007-4559)
+            for member in tar_ref.getmembers():
+                member_path = Path(temp_dir) / member.name
+                if not member_path.resolve().is_relative_to(Path(temp_dir).resolve()):
+                    raise ValueError(
+                        f"Tar member '{member.name}' would escape extraction directory"
+                    )
             tar_ref.extractall(temp_dir)
     else:
         raise ValueError(f"Unsupported compression format: {compressed_path}")
@@ -97,12 +104,17 @@ def load_gsplats(
     temp_dir = None
     zarr_path = path
 
-    if path.is_file() or str(path).endswith(
-        (".zip", ".tar.gz", ".gsplats.zarr.zip", ".gsplats.zarr.tar.gz")
-    ):
+    compressed_suffixes = (".zip", ".tar.gz")
+    is_compressed = any(str(path).endswith(s) for s in compressed_suffixes)
+    if is_compressed:
         # Compressed archive - extract to temp
         zarr_path = _extract_compressed_zarr(path)
         temp_dir = zarr_path.parent
+    elif path.is_file():
+        raise ValueError(
+            f"Expected a zarr directory or compressed archive (.zip/.tar.gz), "
+            f"got regular file: {path}"
+        )
 
     try:
         # Open zarr store

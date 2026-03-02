@@ -49,6 +49,12 @@ import {
   renderMemoryContent,
   renderInsightsContent,
   renderSceneGraphTree,
+  formatNumber as templateFormatNumber,
+  formatBytes as templateFormatBytes,
+  getColorClass,
+  getCacheMemoryColorClass,
+  calculateReuseRate,
+  getReuseRateColorClass,
   type MemoryMetrics,
 } from './data-monitor-templates';
 
@@ -56,7 +62,6 @@ import {
   renderHierarchicalTimingPanel,
   attachTimingPanelHandlers,
   updateTimingPanelValues,
-  isInteractionLocked,
 } from './components/hierarchical-timing-panel';
 
 import type { UpdateProfiler } from '../profiling/update-profiler';
@@ -132,10 +137,10 @@ export class DataLoadingMonitor {
     lines: { getStats: () => NonNullable<MemoryMetrics['accumulators']['lines']> } | null;
     gsplats: { getStats: () => NonNullable<MemoryMetrics['accumulators']['gsplats']> } | null;
   } = {
-      points: null,
-      lines: null,
-      gsplats: null,
-    };
+    points: null,
+    lines: null,
+    gsplats: null,
+  };
 
   // DOM element references for efficient updates (avoids full innerHTML replacement)
   private contentContainer: HTMLElement | null = null;
@@ -157,10 +162,9 @@ export class DataLoadingMonitor {
   // Track expanded nodes in scene graph tree (by path)
   private expandedNodes = new Set<string>(['/']);
 
-  // Interaction lock to prevent DOM replacement during user interaction
-  // This prevents click events from being lost when innerHTML is replaced
-  private monitorInteractionLock = false;
-  private monitorInteractionLockTimeout: ReturnType<typeof setTimeout> | null = null;
+  // Flag to force a full DOM rebuild on next update (set by structural changes like
+  // tree node toggle, scene graph mutation). Cleared after rebuild.
+  private structureDirty = false;
 
   constructor(container: HTMLElement, config?: Partial<MonitorConfig>) {
     this.container = container;
@@ -284,6 +288,9 @@ export class DataLoadingMonitor {
     this.gpuBufferPoolProvider = provider;
     if (provider) {
       log.info(Modules.DATA_MONITOR, 'GPU buffer pool provider connected');
+      // Provider availability changes the memory tab structure
+      // (from "Not initialized" to full table)
+      this.structureDirty = true;
     }
   }
 
@@ -295,6 +302,8 @@ export class DataLoadingMonitor {
     this.profiler = profiler;
     if (profiler) {
       log.info(Modules.DATA_MONITOR, 'Update profiler connected');
+      // Profiler availability changes the performance tab structure
+      this.structureDirty = true;
     }
   }
 
@@ -377,6 +386,8 @@ export class DataLoadingMonitor {
       Modules.DATA_MONITOR,
       `Scene graph updated: ${stats.totalNodes} nodes, ${stats.totalPoints} points, ${stats.totalSegments} segments`
     );
+    // Scene graph structure changed — need full rebuild on next update
+    this.structureDirty = true;
     if (this.uiState.isVisible) {
       this.updateUI();
     }
@@ -398,6 +409,7 @@ export class DataLoadingMonitor {
     } else {
       this.expandedNodes.add(path);
     }
+    this.structureDirty = true;
     this.updateUI();
   }
 
@@ -406,26 +418,6 @@ export class DataLoadingMonitor {
    */
   public isNodeExpanded(path: string): boolean {
     return this.expandedNodes.has(path);
-  }
-
-  /**
-   * Set the monitor interaction lock to prevent DOM replacement during user interaction.
-   * This prevents click events from being lost when innerHTML is replaced during polling updates.
-   * @param locked - Whether to lock (true) or unlock (false) interactions
-   */
-  private setMonitorInteractionLock(locked: boolean): void {
-    this.monitorInteractionLock = locked;
-    if (this.monitorInteractionLockTimeout) {
-      clearTimeout(this.monitorInteractionLockTimeout);
-      this.monitorInteractionLockTimeout = null;
-    }
-    if (locked) {
-      // Auto-release after 2 seconds to prevent stuck locks
-      this.monitorInteractionLockTimeout = setTimeout(() => {
-        this.monitorInteractionLock = false;
-        this.monitorInteractionLockTimeout = null;
-      }, 2000);
-    }
   }
 
   /**
@@ -766,9 +758,13 @@ export class DataLoadingMonitor {
    * @returns true if incremental update succeeded, false if full rebuild is needed
    */
   private updateCompactViewValues(): boolean {
-    const pointsEl = this.panel?.querySelector('.luxar-monitor-compact .points');
-    const memoryEl = this.panel?.querySelector('.luxar-monitor-compact .memory');
-    const qpsEl = this.panel?.querySelector('.luxar-monitor-compact .qps');
+    const pointsEl = this.panel?.querySelector(
+      '.luxar-monitor-compact .luxar-monitor-compact__points'
+    );
+    const memoryEl = this.panel?.querySelector(
+      '.luxar-monitor-compact .luxar-monitor-compact__memory'
+    );
+    const qpsEl = this.panel?.querySelector('.luxar-monitor-compact .luxar-monitor-compact__qps');
 
     // If structure doesn't exist yet, need full rebuild
     if (!pointsEl || !memoryEl || !qpsEl) return false;
@@ -780,35 +776,22 @@ export class DataLoadingMonitor {
     }
 
     const stats = this.getGlobalStats();
-    pointsEl.textContent = this.formatNumber(stats.visiblePoints);
-    memoryEl.textContent = this.formatBytes(stats.totalMemory);
+    pointsEl.textContent = templateFormatNumber(stats.visiblePoints);
+    memoryEl.textContent = templateFormatBytes(stats.totalMemory);
     qpsEl.textContent = `${stats.queriesPerSecond.toFixed(1)}/s`;
     return true;
   }
 
   /**
-   * Attach interaction handlers to compact view elements.
-   * Sets the interaction lock when hovering over the expand button.
-   */
-  private attachCompactViewInteractionHandlers(): void {
-    const expandBtn = this.panel?.querySelector('.luxar-monitor-compact .expand-btn');
-    if (!expandBtn) return;
-
-    expandBtn.addEventListener('mouseenter', () => this.setMonitorInteractionLock(true));
-    expandBtn.addEventListener('mouseleave', () => {
-      // Delay unlock slightly to ensure click events are processed
-      setTimeout(() => this.setMonitorInteractionLock(false), 500);
-    });
-  }
-
-  /**
-   * Update compact view
+   * Update compact view.
+   * Tries incremental value update first; only does full innerHTML rebuild
+   * when the structure doesn't exist yet (first render or after expand/minimize).
    */
   private updateCompactView(): void {
     if (!this.panel) return;
 
-    // If interaction locked and structure exists, just update values
-    if (this.monitorInteractionLock && this.updateCompactViewValues()) {
+    // Try incremental update first (preserves DOM, no interaction issues)
+    if (this.updateCompactViewValues()) {
       return;
     }
 
@@ -827,33 +810,30 @@ export class DataLoadingMonitor {
     this.panel.innerHTML = `
       <div class="luxar-glass-refraction" aria-hidden="true"></div>
       <div class="luxar-monitor-compact">
-        <span class="loader-type" title="Loading mode">
+        <span class="luxar-monitor-compact__type" title="Loading mode">
           ${hasSpatialIndex ? '🔍' : '📦'}
         </span>
 
-        <span class="points" title="Visible points">
-          ${this.formatNumber(stats.visiblePoints)}
+        <span class="luxar-monitor-compact__points" title="Visible points">
+          ${templateFormatNumber(stats.visiblePoints)}
         </span>
 
-        <span class="memory" title="Memory usage">
-          ${this.formatBytes(stats.totalMemory)}
+        <span class="luxar-monitor-compact__memory" title="Memory usage">
+          ${templateFormatBytes(stats.totalMemory)}
         </span>
 
-        <span class="qps" title="Queries per second">
+        <span class="luxar-monitor-compact__qps" title="Queries per second">
           ${stats.queriesPerSecond.toFixed(1)}/s
         </span>
 
-        ${hasErrors ? '<span class="alert" title="Errors detected">🔴</span>' : ''}
-        ${hasWarnings ? '<span class="alert" title="Warnings">🟡</span>' : ''}
+        ${hasErrors ? '<span class="luxar-monitor-compact__alert" title="Errors detected">🔴</span>' : ''}
+        ${hasWarnings ? '<span class="luxar-monitor-compact__alert" title="Warnings">🟡</span>' : ''}
 
-        <button class="expand-btn" data-action="expand" title="Show details">
+        <button class="luxar-data-monitor__expand-btn" data-action="expand" title="Show details">
           ⊞
         </button>
       </div>
     `;
-
-    // Attach interaction handlers after building the structure
-    this.attachCompactViewInteractionHandlers();
   }
 
   /**
@@ -879,7 +859,7 @@ export class DataLoadingMonitor {
           ${this.renderTabs()}
         </div>
 
-        <!-- Content (updated frequently) -->
+        <!-- Content (updated frequently via targeted patching) -->
         <div class="luxar-data-monitor__content">
           ${this.renderTabContent()}
         </div>
@@ -889,64 +869,40 @@ export class DataLoadingMonitor {
     // Cache reference to content container for efficient updates
     this.contentContainer = this.panel.querySelector('.luxar-data-monitor__content');
 
-    // Attach timing panel handlers if on performance tab
-    if (this.uiState.activeTab === 'performance' && this.contentContainer) {
-      attachTimingPanelHandlers(this.contentContainer, () => this.updateUI());
-    }
-
-    // Attach scene graph interaction handlers if on overview tab
-    if (this.uiState.activeTab === 'overview') {
-      this.attachSceneGraphInteractionHandlers();
-    }
-
-    // Add hover effects to header buttons (only once)
-    this.addHeaderButtonHoverEffects();
+    // Attach tab-specific handlers after full rebuild
+    this.attachTabHandlers();
   }
 
   /**
-   * Attach interaction handlers to scene graph tree toggle buttons.
-   * Sets the interaction lock when hovering over toggle buttons.
+   * Attach handlers needed by the current tab after a full content rebuild.
    */
-  private attachSceneGraphInteractionHandlers(): void {
-    if (!this.contentContainer) return;
-
-    const toggleBtns = this.contentContainer.querySelectorAll(
-      '.luxar-scene-graph__toggle--clickable'
-    );
-    toggleBtns.forEach((btn) => {
-      btn.addEventListener('mouseenter', () => this.setMonitorInteractionLock(true));
-      btn.addEventListener('mouseleave', () => {
-        // Delay unlock slightly to ensure click events are processed
-        setTimeout(() => this.setMonitorInteractionLock(false), 500);
+  private attachTabHandlers(): void {
+    if (this.uiState.activeTab === 'performance' && this.contentContainer) {
+      // Timing panel expand/collapse is a structural change — the incremental
+      // updater can't add/remove child rows, so we need a full rebuild.
+      attachTimingPanelHandlers(this.contentContainer, () => {
+        this.structureDirty = true;
+        this.updateUI();
       });
-    });
+    }
   }
 
   /**
-   * Update detailed view (optimized to only update content, not structure)
+   * Update detailed view using targeted DOM patching.
+   *
+   * On each polling tick, tries incremental value updates first (updating only
+   * textContent/style of specific elements via data-field attributes). This
+   * preserves the DOM tree, event handlers, focus, and scroll position.
+   *
+   * Falls back to full innerHTML rebuild only when:
+   * - Structure doesn't exist yet (first render)
+   * - structureDirty flag is set (tree toggle, scene graph mutation)
+   * - Incremental update reports structure mismatch
    */
   private updateDetailedView(): void {
     if (!this.panel) return;
 
-    // Skip full updates if user is interacting with the timing panel
-    if (this.uiState.activeTab === 'performance' && isInteractionLocked()) {
-      // Only update timing values, skip full re-render
-      if (this.contentContainer && this.profiler) {
-        const timingData = this.profiler.getTimings();
-        if (timingData.count > 0) {
-          updateTimingPanelValues(this.contentContainer, timingData);
-        }
-      }
-      return;
-    }
-
-    // Skip full updates if user is interacting with the scene graph tree
-    if (this.uiState.activeTab === 'overview' && this.monitorInteractionLock) {
-      // Skip full re-render when user is interacting with scene graph tree
-      return;
-    }
-
-    // Update metrics from all loaders first
+    // Update metrics from all loaders
     for (const [path, loader] of this.loaders) {
       const metrics = loader.getMetrics();
       this.metrics.set(path, metrics);
@@ -958,47 +914,410 @@ export class DataLoadingMonitor {
       this.advisor.analyzeMemoryMetrics(memoryMetrics);
     }
 
-    // If structure doesn't exist yet, build it
+    // If structure doesn't exist yet, build it (first render or after tab/view change)
     if (!this.contentContainer) {
       this.buildDetailedViewStructure();
+      this.structureDirty = false; // Full build satisfies any pending structural change
       return;
     }
 
-    // For performance tab, try incremental update first to preserve expand/collapse state
-    if (this.uiState.activeTab === 'performance' && this.profiler) {
-      const timingData = this.profiler.getTimings();
-      if (timingData.count > 0) {
-        // Try incremental update (preserves DOM structure and click handlers)
-        const updated = updateTimingPanelValues(this.contentContainer, timingData);
-        if (updated) {
-          // Incremental update succeeded, no need to re-render
-          return;
-        }
-        // Fall through to full re-render if structure changed
+    // Try incremental value update for the active tab
+    let updated = false;
+
+    if (!this.structureDirty) {
+      switch (this.uiState.activeTab) {
+        case 'overview':
+          updated = this.updateOverviewTabValues();
+          break;
+        case 'cache':
+          updated = this.updateCacheTabValues();
+          break;
+        case 'memory':
+          updated = this.updateMemoryTabValues();
+          break;
+        case 'performance':
+          if (this.profiler) {
+            const timingData = this.profiler.getTimings();
+            if (timingData.count > 0) {
+              updated = updateTimingPanelValues(this.contentContainer, timingData);
+            }
+          }
+          break;
+        case 'insights':
+          // Always rebuild — structural content (variable-length recommendations list)
+          break;
       }
     }
 
-    // Full re-render for other tabs or when timing structure changes
-    this.contentContainer.innerHTML = this.renderTabContent();
+    // Clear structureDirty after checking it (whether we used it or not)
+    this.structureDirty = false;
 
-    // Attach timing panel handlers if on performance tab
-    if (this.uiState.activeTab === 'performance') {
-      attachTimingPanelHandlers(this.contentContainer, () => this.updateUI());
-    }
-
-    // Attach scene graph interaction handlers if on overview tab
-    if (this.uiState.activeTab === 'overview') {
-      this.attachSceneGraphInteractionHandlers();
+    if (!updated) {
+      // Full content rebuild (structure changed or first render for this tab)
+      this.contentContainer.innerHTML = this.renderTabContent();
+      this.attachTabHandlers();
     }
   }
 
-  /**
-   * Add hover effects to header buttons
-   */
-  private addHeaderButtonHoverEffects(): void {
-    if (!this.panel) return;
+  // ─── Per-tab incremental value update functions ───────────────────────
 
-    // Button hover effects now handled by CSS :hover pseudo-class
+  /**
+   * Helper: update a single element's textContent by data-field attribute.
+   * Returns false if the element was not found.
+   */
+  private patchField(field: string, text: string): boolean {
+    const el = this.contentContainer?.querySelector(`[data-field="${field}"]`);
+    if (!el) return false;
+    el.textContent = text;
+    return true;
+  }
+
+  /**
+   * Incrementally update overview tab values without rebuilding DOM.
+   * Updates primary metric cards, secondary metrics, and scene graph badges.
+   */
+  private updateOverviewTabValues(): boolean {
+    if (!this.contentContainer) return false;
+
+    const stats = this.getGlobalStats();
+    const cacheMetrics = this.getCacheMetrics();
+
+    // Update primary metric card values
+    const hasPoints = stats.datasetSize > 0 || stats.visiblePoints > 0;
+    const hasLines = stats.datasetSegments > 0 || stats.visibleSegments > 0;
+    const hasGSplats = stats.datasetSplats > 0 || stats.visibleSplats > 0;
+
+    // Check at least one primary metric exists in DOM (structure validation)
+    const anyPrimaryField =
+      this.contentContainer.querySelector('[data-field="visible-points"]') ||
+      this.contentContainer.querySelector('[data-field="visible-lines"]') ||
+      this.contentContainer.querySelector('[data-field="visible-splats"]');
+    if (!anyPrimaryField) return false; // Structure not built yet
+
+    // Single-type layouts use " total" suffix in subtitle (matches template rendering)
+    const dataTypeCount = [hasPoints, hasLines, hasGSplats].filter(Boolean).length;
+    const suffix = dataTypeCount === 1 ? ' total' : '';
+
+    if (hasPoints) {
+      const pct =
+        stats.datasetSize > 0 ? ((stats.visiblePoints / stats.datasetSize) * 100).toFixed(1) : '0';
+      this.patchField('visible-points', templateFormatNumber(stats.visiblePoints));
+      this.patchField(
+        'visible-points-sub',
+        `${pct}% of ${templateFormatNumber(stats.datasetSize)}${suffix}`
+      );
+    }
+    if (hasLines) {
+      const pct =
+        stats.datasetSegments > 0
+          ? ((stats.visibleSegments / stats.datasetSegments) * 100).toFixed(1)
+          : '0';
+      this.patchField('visible-lines', templateFormatNumber(stats.visibleSegments));
+      this.patchField(
+        'visible-lines-sub',
+        `${pct}% of ${templateFormatNumber(stats.datasetSegments)}${suffix}`
+      );
+    }
+    if (hasGSplats) {
+      const pct =
+        stats.datasetSplats > 0
+          ? ((stats.visibleSplats / stats.datasetSplats) * 100).toFixed(1)
+          : '0';
+      this.patchField('visible-splats', templateFormatNumber(stats.visibleSplats));
+      this.patchField(
+        'visible-splats-sub',
+        `${pct}% of ${templateFormatNumber(stats.datasetSplats)}${suffix}`
+      );
+    }
+
+    // Update secondary metrics
+    this.patchField('memory-used', templateFormatBytes(cacheMetrics.totalCacheMemory));
+    this.patchField('query-speed', `${stats.avgQueryTime.toFixed(0)}ms`);
+    this.patchField('query-rate', `${stats.queriesPerSecond.toFixed(1)}/sec`);
+    this.patchField(
+      'network-bytes',
+      cacheMetrics.network ? templateFormatBytes(cacheMetrics.network.bytesTransferred) : '0B'
+    );
+    this.patchField(
+      'network-detail',
+      cacheMetrics.network
+        ? `${cacheMetrics.network.requestCount} req · ${templateFormatBytes(cacheMetrics.network.bandwidth)}/s`
+        : '0 req'
+    );
+
+    // Update secondary metrics memory progress bar
+    const memoryPercent =
+      cacheMetrics.memoryLimit > 0
+        ? (cacheMetrics.totalCacheMemory / cacheMetrics.memoryLimit) * 100
+        : 0;
+    const overviewBarFill = this.contentContainer.querySelector(
+      '.luxar-secondary-metrics .luxar-progress-bar__fill'
+    ) as HTMLElement | null;
+    if (overviewBarFill) {
+      overviewBarFill.style.width = `${Math.min(100, memoryPercent)}%`;
+      this.updateColorClass(overviewBarFill, getCacheMemoryColorClass(memoryPercent));
+    }
+
+    // Update scene graph badges (by data-node-path)
+    this.updateSceneGraphBadges();
+
+    return true;
+  }
+
+  /**
+   * Update scene graph tree badge values without rebuilding the tree DOM.
+   */
+  private updateSceneGraphBadges(): void {
+    if (!this.contentContainer || !this.sceneGraphState.root) return;
+
+    const badges = this.contentContainer.querySelectorAll(
+      '.luxar-scene-graph__badge[data-node-path]'
+    );
+    badges.forEach((badge) => {
+      const path = (badge as HTMLElement).dataset.nodePath;
+      if (!path) return;
+      const node = this.findSceneGraphNode(this.sceneGraphState.root!, path);
+      if (!node) return;
+
+      let text = '';
+      if (node.type === 'points' && node.pointCount !== undefined) {
+        text = templateFormatNumber(node.pointCount);
+      } else if (node.type === 'lines' && node.segmentCount !== undefined) {
+        text = templateFormatNumber(node.segmentCount);
+      } else if (node.type === 'gsplats' && node.splatCount !== undefined) {
+        text = templateFormatNumber(node.splatCount);
+      } else if (node.type === 'group' && node.children.length > 0) {
+        text = `${node.children.length}`;
+      }
+      if (text) {
+        badge.textContent = text;
+      }
+    });
+  }
+
+  /**
+   * Find a scene graph node by path (depth-first search).
+   */
+  private findSceneGraphNode(root: SceneGraphNode, path: string): SceneGraphNode | null {
+    if (root.path === path) return root;
+    for (const child of root.children) {
+      const found = this.findSceneGraphNode(child, path);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  /**
+   * Incrementally update cache tab values without rebuilding DOM.
+   */
+  private updateCacheTabValues(): boolean {
+    if (!this.contentContainer) return false;
+
+    const cacheMetrics = this.getCacheMetrics();
+
+    // Structure validation: check for cache total (always present in L1/L2 view)
+    if (!this.contentContainer.querySelector('[data-field="cache-total"]')) return false;
+
+    // L0 stats
+    if (cacheMetrics.l0) {
+      const l0Total = cacheMetrics.l0.hits + cacheMetrics.l0.misses;
+      const l0HitRate = l0Total > 0 ? (cacheMetrics.l0.hits / l0Total) * 100 : 0;
+
+      this.patchField('l0-size', templateFormatBytes(cacheMetrics.l0.size));
+      this.patchField('l0-size-sub', `${cacheMetrics.l0.count} chunks`);
+      this.patchField('l0-hitrate', `${l0HitRate.toFixed(1)}%`);
+      this.patchField(
+        'l0-hitrate-sub',
+        `${templateFormatNumber(cacheMetrics.l0.hits)} hits · ${templateFormatNumber(cacheMetrics.l0.misses)} miss`
+      );
+      this.patchField('l0-evictions', templateFormatNumber(cacheMetrics.l0.evictions));
+
+      // Update hit rate color class
+      const l0HitrateEl = this.contentContainer.querySelector('[data-field="l0-hitrate"]');
+      if (l0HitrateEl) {
+        const colorClass =
+          l0HitRate > 80
+            ? getColorClass('success')
+            : l0HitRate > 50
+              ? getColorClass('warning')
+              : getColorClass('error');
+        this.updateColorClass(l0HitrateEl as HTMLElement, colorClass);
+      }
+
+      // Update eviction color class (warning when >0, dimmed when 0)
+      const l0EvictEl = this.contentContainer.querySelector('[data-field="l0-evictions"]');
+      if (l0EvictEl) {
+        this.updateColorClass(
+          l0EvictEl as HTMLElement,
+          cacheMetrics.l0.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed')
+        );
+      }
+    }
+
+    // L1 stats
+    if (cacheMetrics.l1) {
+      const l1Total = cacheMetrics.l1.hits + cacheMetrics.l1.misses;
+      const l1HitRate = l1Total > 0 ? (cacheMetrics.l1.hits / l1Total) * 100 : 0;
+
+      this.patchField('l1-size', templateFormatBytes(cacheMetrics.l1.size));
+      this.patchField('l1-size-sub', `${cacheMetrics.l1.count} entries`);
+      this.patchField('l1-hitrate', `${l1HitRate.toFixed(1)}%`);
+      this.patchField(
+        'l1-hitrate-sub',
+        `${templateFormatNumber(cacheMetrics.l1.hits)} hits · ${templateFormatNumber(cacheMetrics.l1.misses)} miss`
+      );
+      this.patchField('l1-evictions', templateFormatNumber(cacheMetrics.l1.evictions));
+
+      // Update hit rate color class
+      const l1HitrateEl = this.contentContainer.querySelector('[data-field="l1-hitrate"]');
+      if (l1HitrateEl) {
+        const colorClass =
+          l1HitRate > 80
+            ? getColorClass('success')
+            : l1HitRate > 50
+              ? getColorClass('warning')
+              : getColorClass('error');
+        this.updateColorClass(l1HitrateEl as HTMLElement, colorClass);
+      }
+
+      // Update eviction color class
+      const l1EvictEl = this.contentContainer.querySelector('[data-field="l1-evictions"]');
+      if (l1EvictEl) {
+        this.updateColorClass(
+          l1EvictEl as HTMLElement,
+          cacheMetrics.l1.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed')
+        );
+      }
+    }
+
+    // L2 stats
+    if (cacheMetrics.l2) {
+      this.patchField('l2-size', templateFormatBytes(cacheMetrics.l2.size));
+      this.patchField('l2-size-sub', `${cacheMetrics.l2.count} entries`);
+      this.patchField('l2-io', `${templateFormatNumber(cacheMetrics.l2.reads)} reads`);
+      this.patchField('l2-io-sub', `${templateFormatNumber(cacheMetrics.l2.writes)} writes`);
+    }
+
+    // Total
+    this.patchField('cache-total', templateFormatBytes(cacheMetrics.totalCacheMemory));
+
+    // Update progress bar
+    const barFill = this.contentContainer.querySelector(
+      '.luxar-cache-total .luxar-progress-bar__fill'
+    ) as HTMLElement | null;
+    if (barFill) {
+      barFill.style.width = `${Math.min(100, cacheMetrics.memoryPercent)}%`;
+      this.updateColorClass(barFill, getCacheMemoryColorClass(cacheMetrics.memoryPercent));
+    }
+    const barLabel = this.contentContainer.querySelector(
+      '.luxar-cache-total .luxar-progress-bar__label'
+    );
+    if (barLabel) {
+      barLabel.textContent = `${cacheMetrics.memoryPercent.toFixed(0)}% of ${templateFormatBytes(cacheMetrics.memoryLimit)} limit`;
+    }
+
+    return true;
+  }
+
+  /**
+   * Incrementally update memory tab values without rebuilding DOM.
+   */
+  private updateMemoryTabValues(): boolean {
+    if (!this.contentContainer) return false;
+
+    const metrics = this.getMemoryMetrics();
+
+    // Structure validation
+    if (!this.contentContainer.querySelector('[data-field="memory-total"]')) return false;
+
+    // GPU pool table
+    if (metrics.gpuPool) {
+      const types = ['points', 'lines', 'gsplats'] as const;
+      for (const type of types) {
+        const typeStats = metrics.gpuPool.byType[type];
+        const reuseRate = calculateReuseRate(typeStats.allocations, typeStats.reuses);
+        const hasData =
+          typeStats.allocations > 0 || typeStats.reuses > 0 || typeStats.activeBuffers > 0;
+
+        const reuseEl = this.contentContainer.querySelector(`[data-field="gpu-${type}-reuse"]`);
+        if (reuseEl) {
+          reuseEl.textContent = hasData ? `${reuseRate.toFixed(0)}%` : '—';
+          this.updateColorClass(
+            reuseEl as HTMLElement,
+            hasData ? getReuseRateColorClass(reuseRate) : getColorClass('dimmed')
+          );
+        }
+        this.patchField(`gpu-${type}-active`, hasData ? `${typeStats.activeBuffers}` : '—');
+        this.patchField(`gpu-${type}-pooled`, hasData ? `${typeStats.pooledBuffers}` : '—');
+        this.patchField(`gpu-${type}-allocs`, hasData ? `${typeStats.allocations}` : '—');
+      }
+      this.patchField(
+        'gpu-summary',
+        `Total: ${metrics.gpuPool.allocations} allocs · ${metrics.gpuPool.reuses} reuses · ${metrics.gpuPool.evictions} evicted`
+      );
+    }
+
+    // Accumulator table
+    const accTypes = ['points', 'lines', 'gsplats'] as const;
+    for (const type of accTypes) {
+      const stats = metrics.accumulators[type];
+      const hasData = stats !== null && stats.capacity > 0;
+
+      this.patchField(
+        `acc-${type}-capacity`,
+        hasData ? templateFormatNumber(stats!.capacity) : '—'
+      );
+      this.patchField(`acc-${type}-memory`, hasData ? `${stats!.memoryMB.toFixed(1)}MB` : '—');
+
+      const growsEl = this.contentContainer.querySelector(`[data-field="acc-${type}-grows"]`);
+      if (growsEl) {
+        growsEl.textContent = hasData ? `${stats!.growthEvents}` : '—';
+        // Update warning class for high growth events (clear when <= 5)
+        if (hasData && stats!.growthEvents > 5) {
+          this.updateColorClass(growsEl as HTMLElement, getColorClass('warning'));
+        } else {
+          this.updateColorClass(growsEl as HTMLElement, '');
+        }
+      }
+    }
+
+    // Accumulator summary
+    const totalAccMemory =
+      (metrics.accumulators.points?.memoryMB ?? 0) +
+      (metrics.accumulators.lines?.memoryMB ?? 0) +
+      (metrics.accumulators.gsplats?.memoryMB ?? 0);
+    const totalAccAllocs =
+      (metrics.accumulators.points?.allocations ?? 0) +
+      (metrics.accumulators.lines?.allocations ?? 0) +
+      (metrics.accumulators.gsplats?.allocations ?? 0);
+    this.patchField(
+      'acc-summary',
+      `Total: ${totalAccMemory.toFixed(1)}MB · ${totalAccAllocs} allocations`
+    );
+
+    // Overall total
+    const totalAllocations = metrics.gpuPool ? metrics.gpuPool.allocations : 0;
+    const totalReuses = metrics.gpuPool ? metrics.gpuPool.reuses : 0;
+    const overallReuseRate = calculateReuseRate(totalAllocations, totalReuses);
+    this.patchField(
+      'memory-total',
+      `${totalAllocations} allocs · ${overallReuseRate.toFixed(0)}% reuse · ${totalAccMemory.toFixed(1)}MB`
+    );
+
+    return true;
+  }
+
+  /**
+   * Update CSS color classes on an element, replacing any existing luxar-color--* class.
+   * Pass empty string to clear all color classes without adding a new one.
+   */
+  private updateColorClass(el: HTMLElement, newColorClass: string): void {
+    // Remove existing color classes
+    const classes = el.className.split(' ').filter((c) => c && !c.startsWith('luxar-color--'));
+    if (newColorClass) {
+      classes.push(newColorClass);
+    }
+    el.className = classes.join(' ');
   }
 
   /**
@@ -1115,8 +1434,8 @@ export class DataLoadingMonitor {
     if (!timingData) {
       return `
         <div class="luxar-performance-content">
-          <div class="timing-panel timing-empty">
-            <div class="timing-empty-message">
+          <div class="luxar-timing-panel luxar-timing-panel--empty">
+            <div class="luxar-timing-panel__empty-msg">
               Profiler not connected. Timing data will appear here once the scene is loaded.
             </div>
           </div>
@@ -1528,22 +1847,6 @@ export class DataLoadingMonitor {
    */
   private stopUpdating(): void {
     this.pollingLoop.stop();
-  }
-
-  // Utility methods
-
-  private formatNumber(n: number): string {
-    if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
-    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-    return n.toString();
-  }
-
-  private formatBytes(bytes: number): string {
-    if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + 'GB';
-    if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + 'MB';
-    if (bytes >= 1e3) return (bytes / 1e3).toFixed(1) + 'KB';
-    return bytes.toFixed(0) + 'B';
   }
 
   // All styling now handled by CSS classes in data-loading-monitor.css

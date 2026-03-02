@@ -44,7 +44,7 @@ V = Σₖ upsample(Vₖ)
 where each `Vₖ` is a non-negative image at scale `k`. A hierarchical energy loss pushes low-frequency content toward coarse scales:
 
 ```
-Loss = MSE(reconstruction, target) + λ × Σₖ(αᵏ × ∫Vₖ)
+Loss = L1(reconstruction, target) + λ × Σₖ(αᵏ × ∫Vₖ)
 ```
 
 ## Parameters
@@ -322,12 +322,11 @@ from luxar.gsplats import fit_gaussian_splats
 scales_list, _ = decompose_image(V, scales=[1, 2, 4, 8])
 
 # Step 2: Fit splats at each scale
-all_params = []
-all_amps = []
+all_results = []
 
 for scale_factor, V_scale in zip([1, 2, 4, 8], scales_list):
     # Fit with scale-appropriate sigma
-    params, amps, _ = fit_gaussian_splats(
+    result = fit_gaussian_splats(
         V_scale,
         init_sigma_vox=1.5 * scale_factor,  # Larger splats for coarse scales
         n_iters=1000
@@ -336,15 +335,15 @@ for scale_factor, V_scale in zip([1, 2, 4, 8], scales_list):
     # Scale parameters back to full resolution
     d = V.ndim
     if scale_factor > 1:
-        params[:, :d] *= scale_factor  # Scale centers
-        params[:, d:] *= scale_factor  # Scale Cholesky factors
+        result.centers[:, :d] *= scale_factor  # Scale centers
+        result.cholesky_factors *= scale_factor  # Scale Cholesky factors
 
-    all_params.append(params)
-    all_amps.append(amps)
+    all_results.append(result)
 
-# Combine
-params_combined = np.vstack(all_params)
-amps_combined = np.concatenate(all_amps)
+# Combine centers, amplitudes, etc. from all results
+import numpy as np
+centers_combined = np.vstack([r.centers for r in all_results])
+amps_combined = np.concatenate([r.amplitudes for r in all_results])
 ```
 
 ## Tuning Guide
@@ -496,9 +495,11 @@ class MultiScaleDecomposer(nn.Module):
 ```
 
 **Initialization Methods:**
-- `initialize_from_pyramid()`: Distribute energy across scales from coarse to fine (recommended)
+- `initialize_coarse()`: Energy weighted toward coarse scales proportional to scale factor (**strongly recommended**, default)
+- `initialize_from_pyramid()`: Distribute energy across scales from coarse to fine
 - `initialize_uniform()`: Split energy equally across all scales (balanced approach)
 - `initialize_finest_scale()`: Put all energy in finest scale, other scales near zero
+- `initialize_zero()`: All scales start at near-zero (worst-case baseline, research only)
 
 ### Loss Function
 

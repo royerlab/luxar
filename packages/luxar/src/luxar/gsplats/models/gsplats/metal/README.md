@@ -159,17 +159,15 @@ if is_metal_available():
 The model automatically uses Metal when available and appropriate:
 
 ```python
-from luxar.gsplats.fitting import fit_gsplats
+from luxar.gsplats import fit_gaussian_splats
 
 # Metal will be used automatically if:
 # 1. Metal extension is installed
 # 2. Device is MPS
 # 3. Dimensionality ≤ 3
-result = fit_gsplats(
+result = fit_gaussian_splats(
     volume,
-    n_splats=1000,
     device='mps',  # Use MPS device for Metal acceleration
-    use_metal=True  # Enable Metal (default)
 )
 ```
 

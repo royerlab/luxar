@@ -35,21 +35,21 @@ from luxar import LuxarZarrCompiler, Dimensions, Dimension
 # Create a scene with dimensions for nD visualization
 dimensions = Dimensions([
     Dimension("x", unit="μm", range=(-100, 100), display=True),
-    Dimension("y", unit="μm", range=(-100, 100), display=True),  
+    Dimension("y", unit="μm", range=(-100, 100), display=True),
     Dimension("z", unit="μm", range=(-50, 50), display=True),
     Dimension("time", unit="s", range=(0, 10), step=0.1, display=False)
 ])
 
 with LuxarZarrCompiler("my_dataset.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dimensions)
-    
+
     # Add 4D points data (time + xyz)
     positions = np.random.randn(1_000_000, 4).astype(np.float32)
     colors = np.random.rand(1_000_000, 3).astype(np.float32)  # HDR colors supported
     radii = np.random.uniform(0.1, 0.5, 1_000_000).astype(np.float32)
     scene.add_points("TimeSeriesData", positions, colors=colors, radii=radii)
-    
-    # Add hierarchical organization  
+
+    # Add hierarchical organization
     group = scene.add_group("Experiment1")
     scene.add_points("Measurement", positions2, colors2, parent=group)
 
@@ -126,14 +126,16 @@ dimensions = Dimensions([
     Dimension("x", unit="μm", range=(-100, 100), display=True),
     Dimension("y", unit="μm", range=(-100, 100), display=True),
     Dimension("z", unit="μm", range=(-50, 50), display=True),
-    
+
     # Non-displayed dimensions (navigated via sliders)
     Dimension("time", unit="s", range=(0, 60), step=0.5, display=False),
     Dimension("channel", unit="", range=(0, 3), discrete=True, display=False),
     Dimension("depth", unit="μm", range=(-20, 20), display=False)
 ])
 
-scene = Scene("multidimensional.zarr", dimensions=dimensions)
+with LuxarZarrCompiler("multidimensional.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dimensions)
+    # ... add data to scene ...
 ```
 
 ### Dimension Types
@@ -148,13 +150,13 @@ scene = Scene("multidimensional.zarr", dimensions=dimensions)
 Enhanced points visualization with per-point attributes:
 
 ```python
-# Generate 5D data (time, z, x, y, channel) 
+# Generate 5D data (time, z, x, y, channel)
 n_points = 50_000
 positions = np.random.randn(n_points, 5).astype(np.float32)
 
 # Scale to fit dimension ranges
 positions[:, 0] *= 5      # time: -5 to 5
-positions[:, 1] *= 25     # z: -25 to 25  
+positions[:, 1] *= 25     # z: -25 to 25
 positions[:, 2] *= 50     # x: -50 to 50
 positions[:, 3] *= 50     # y: -50 to 50
 positions[:, 4] = np.random.choice([0, 1, 2], n_points)  # discrete channels
@@ -194,9 +196,10 @@ class LuxarZarrCompiler:
         self,
         store_path: Optional[PathLike] = None,
         compressor: Optional[Compressor] = DEFAULT_COMP,
-        version: str = "0.1",
+        version: str = DEFAULT_VERSION,
         enable_spatial_index: bool = True,
-        dtype_config: Optional[DataTypeConfig] = None
+        encoding_mode: EncodingMode = EncodingMode.AUTO,
+        ordering_method: Literal["morton", "hilbert"] = "morton",
     ) -> None:
         """
         Create a new Zarr compiler for progressive writing.
@@ -206,22 +209,15 @@ class LuxarZarrCompiler:
             compressor: Zarr compressor for datasets
             version: Luxar format version
             enable_spatial_index: Whether to build spatial indices (default: True)
-            dtype_config: Data type configuration (default: auto-detect)
-
-        Note:
-            Physical units are specified per-dimension using the Dimensions
-            system. This provides flexibility for multi-dimensional data where
-            different axes may have different units.
+            encoding_mode: Encoding mode (AUTO/PRECISION/MEMORY)
+            ordering_method: Spatial ordering ("morton" or "hilbert")
         """
 
-    def create_scene(
-        self,
-        dimensions: Optional[Dimensions] = None
-    ) -> Scene:
+    def create_scene(self, dimensions: Dimensions) -> Scene:
         """Create a scene with this compiler as writer.
 
         Args:
-            dimensions: Scene-level dimension definitions
+            dimensions: Scene-level dimension definitions (REQUIRED)
 
         Returns:
             Scene object for building the scene graph
@@ -232,21 +228,21 @@ class LuxarZarrCompiler:
 ```python
 class Scene:
     """Root scene node. Created via LuxarZarrCompiler.create_scene()."""
-    
+
     def add_group(self, name: str, **attrs) -> Node:
         """Add a group node for organization.
-        
+
         Args:
             name: Group node name
             **attrs: Additional attributes including:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.2-2.0, default 1.0) - Gamma correction
-                blending_mode: str ("normal", "additive", "max", default "additive")
+                blending_mode: str ("normal", "additive", "max", "opaque", "luminous", default "additive")
                 transform: list[float] - 16-element 4x4 transformation matrix (use transforms.to_list())
         """
-    
+
     def add_points(
-        self, 
+        self,
         name: str,
         positions: np.ndarray,  # shape: (N, D), dtype: float32
         colors: Optional[np.ndarray] = None,  # shape: (N, 3), dtype: uint8
@@ -256,7 +252,7 @@ class Scene:
         **attrs
     ) -> Points:
         """Add a points to the scene.
-        
+
         Args:
             name: Node name
             positions: nD coordinates where D matches scene dimensions
@@ -266,13 +262,12 @@ class Scene:
             parent: Parent node in hierarchy
             **attrs: Additional attributes including:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
-                gamma: float (0.2-2.0, default 1.0) - Gamma correction  
-                blending_mode: str ("normal", "additive", "max", default "additive")
+                gamma: float (0.2-2.0, default 1.0) - Gamma correction
+                blending_mode: str ("normal", "additive", "max", "opaque", "luminous", default "additive")
                 transform: list[float] - 16-element 4x4 transformation matrix (use transforms.to_list())
         """
-    
-    def finalize(self) -> None:
-        """Consolidate metadata for optimal loading performance."""
+
+    # Finalization is handled automatically by the LuxarZarrCompiler context manager
 ```
 
 ### Node Class
@@ -280,10 +275,10 @@ class Scene:
 ```python
 class Node:
     """Base class for all scene graph nodes."""
-    
+
     def add_group(self, name: str, **attrs) -> Node:
         """Add a child group."""
-    
+
     @property
     def transform(self) -> np.ndarray:
         """4x4 transformation matrix."""
@@ -294,7 +289,7 @@ class Node:
 ```python
 class Points(Node):
     """Point cloud geometry node."""
-    
+
     # Created automatically via Scene.add_points()
     # Manages positions, colors, radii, and sharpness datasets in Zarr
 ```
@@ -304,10 +299,10 @@ class Points(Node):
 ```python
 class Dimensions:
     """Container for scene-level dimension definitions."""
-    
+
     def __init__(self, dimensions: List[Dimension]) -> None:
         """Create dimensions from list of Dimension objects."""
-    
+
     def validate_positions(self, positions: np.ndarray) -> None:
         """Validate that positions match dimension count."""
 ```
@@ -317,7 +312,7 @@ class Dimensions:
 ```python
 class Dimension:
     """Single dimension definition with metadata."""
-    
+
     def __init__(
         self,
         name: str,
@@ -330,7 +325,7 @@ class Dimension:
     ) -> None:
         """
         Define a dimension.
-        
+
         Args:
             name: Dimension name (e.g., "x", "time", "channel")
             unit: Physical unit (e.g., "μm", "s", "nm")
@@ -361,7 +356,7 @@ luxar info dataset.zarr
 ```
 
 **Serving datasets:**
-- `luxar serve <path.zarr>` - Start HTTP server for dataset  
+- `luxar serve <path.zarr>` - Start HTTP server for dataset
 - Use `--port` to specify port (default: 8000)
 - Use `--host` to bind to specific interface
 
@@ -376,36 +371,28 @@ luxar info dataset.zarr
 Control the visual appearance of nodes with rendering attributes:
 
 ```python
-from luxar import LuxarZarrCompiler
+from luxar import LuxarZarrCompiler, Dimensions
 
-scene = Scene("styled_scene.zarr")
+dims = Dimensions.default_3d()
+with LuxarZarrCompiler("styled_scene.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
 
-# Add points with custom rendering
-points = scene.add_points(
-    "StyledPoints",
-    positions,
-    colors=colors,
-    opacity=0.8,           # Semi-transparent (0.0-1.0)
-    gamma=1.5,             # Brighter gamma correction (0.2-2.0)
-    blending_mode="normal" # Use normal blending instead of additive
-)
+    # Add points with custom rendering attributes
+    scene.add_points(
+        "StyledPoints",
+        positions,
+        colors=colors,
+        opacity=0.8,           # Semi-transparent (0.0-1.0)
+        gamma=1.5,             # Brighter gamma correction (0.2-2.0)
+        blending_mode="normal" # Use normal blending instead of additive
+    )
 
-# Modify rendering after creation
-points.opacity = 0.5
-points.gamma = 0.8
-points.blending_mode = "normal"
-
-# Chain modifications
-points.set_opacity(0.7).set_gamma(1.2).set_blending_mode("additive")
-
-# Apply to groups as well
-group = scene.add_group(
-    "TransparentGroup",
-    opacity=0.6,
-    blending_mode="normal"
-)
-
-# Context manager handles finalization automatically
+    # Apply to groups as well
+    group = scene.add_group(
+        "TransparentGroup",
+        opacity=0.6,
+        blending_mode="normal"
+    )
 ```
 
 **Blending Modes:**
@@ -418,47 +405,41 @@ group = scene.add_group(
 ### Custom Chunking Strategy
 
 ```python
-from luxar import LuxarZarrCompiler
-import zarr
+from luxar import LuxarZarrCompiler, Dimensions
 
-# Custom chunking for streaming large datasets
-scene = Scene("large_dataset.zarr")
-
-# Configure chunk size based on expected access patterns
-# Smaller chunks = better streaming, more overhead
-# Larger chunks = better sequential access, worse random access
-chunk_size = 65536  # Points per chunk
+dims = Dimensions.default_3d()
 
 positions = np.random.randn(10_000_000, 3).astype(np.float32)
 colors = np.random.rand(10_000_000, 3).astype(np.uint8)
 
-# Luxar automatically handles chunking, but you can tune it
-# via the underlying Zarr arrays if needed
-scene.add_points("LargeCloud", positions, colors)
-# Context manager handles finalization automatically
+# Luxar automatically handles chunking and spatial ordering
+with LuxarZarrCompiler("large_dataset.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
+    scene.add_points("LargeCloud", positions, colors)
 ```
 
 ### Hierarchical Data Organization
 
 ```python
-# Organize multi-scale experimental data
-scene = Scene("experiment.zarr")
+from luxar import LuxarZarrCompiler, Dimensions
 
-# Time series organization
-for t in range(num_timepoints):
-    time_group = scene.add_group(f"t_{t:04d}")
-    
-    # Multiple measurements per timepoint
-    for sensor_id in range(num_sensors):
-        data = load_sensor_data(t, sensor_id)
-        scene.add_points(
-            f"sensor_{sensor_id}", 
-            data.positions,
-            data.colors,
-            parent=time_group
-        )
+dims = Dimensions.default_3d()
+with LuxarZarrCompiler("experiment.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
 
-# Context manager handles finalization automatically
+    # Time series organization
+    for t in range(num_timepoints):
+        time_group = scene.add_group(f"t_{t:04d}")
+
+        # Multiple measurements per timepoint
+        for sensor_id in range(num_sensors):
+            data = load_sensor_data(t, sensor_id)
+            scene.add_points(
+                f"sensor_{sensor_id}",
+                data.positions,
+                data.colors,
+                parent=time_group
+            )
 ```
 
 ### Transforms and Coordinate Systems
@@ -466,48 +447,41 @@ for t in range(num_timepoints):
 Luxar provides comprehensive transform utilities for 3D scene manipulation:
 
 ```python
-from luxar import LuxarZarrCompiler, transforms
+from luxar import LuxarZarrCompiler, Dimensions, transforms
 
-scene = Scene("transformed_scene.zarr")
+dims = Dimensions.default_3d()
+with LuxarZarrCompiler("transformed_scene.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
 
-# Basic transforms
-translation = transforms.translate(10, 5, 0)      # Move 10 units in X, 5 in Y
-rotation = transforms.rotate(45, 'z')             # Rotate 45° around Z axis
-scaling = transforms.scale(2, 2, 2)               # Scale 2x in all dimensions
-uniform_scale = transforms.scale(uniform=0.5)     # Scale uniformly by 0.5
+    # Basic transforms
+    translation = transforms.translate(10, 5, 0)      # Move 10 units in X, 5 in Y
+    rotation = transforms.rotate(45, 'z')             # Rotate 45° around Z axis
+    scaling = transforms.scale(2, 2, 2)               # Scale 2x in all dimensions
+    uniform_scale = transforms.scale(uniform=0.5)     # Scale uniformly by 0.5
 
-# Compose multiple transforms (applied left-to-right)
-combined = transforms.compose(translation, rotation, scaling)
+    # Compose multiple transforms (applied left-to-right)
+    combined = transforms.compose(translation, rotation, scaling)
 
-# Apply transforms to groups (transforms must be converted to list format)
-group = scene.add_group("MyGroup")
-group.transform = combined  # Can set directly as matrix
+    # Apply transforms to groups (via transform attribute)
+    group = scene.add_group("MyGroup", transform=transforms.to_list(combined))
 
-# OR during creation
-group = scene.add_group("MyGroup", transform=transforms.to_list(combined))
+    # Hierarchical transforms (child inherits parent transform)
+    parent = scene.add_group("Robot", transform=transforms.to_list(
+        transforms.translate(100, 0, 0)
+    ))
+    scene.add_group("Sensor", parent=parent, transform=transforms.to_list(
+        transforms.rotate_y(90)  # Relative to parent
+    ))
 
-# Or use the transform property
-group.transform = transforms.rotate_x(30)  # Rotate 30° around X
-
-# Hierarchical transforms (child inherits parent transform)
-parent = scene.add_group("Robot")
-parent.transform = transforms.translate(100, 0, 0)
-
-child = parent.add_group("Sensor")  
-child.transform = transforms.rotate_y(90)  # Relative to parent
-
-# Advanced transforms
+# Transform utilities (standalone, no scene needed)
 look_at = transforms.look_at(
     eye=(10, 10, 10),     # Camera position
     target=(0, 0, 0),     # Look at origin
     up=(0, 1, 0)          # Y-up
 )
 
-# Inverse transforms
 t = transforms.translate(5, 0, 0)
 t_inv = transforms.inverse(t)  # Translates -5, 0, 0
-
-# Context manager handles finalization automatically
 ```
 
 ### Extending with New Geometry Types
@@ -518,7 +492,7 @@ from luxar._io import create_dataset
 
 class Lines(Node):
     """Example: Adding line geometry support."""
-    
+
     def __init__(
         self,
         name: str,
@@ -531,13 +505,13 @@ class Lines(Node):
         # Initialize node
         group = parent._group.create_group(name)
         super().__init__(name, group)
-        
+
         # Store geometry
         create_dataset(group, "vertices", vertices)
         create_dataset(group, "edges", edges)
         if colors is not None:
             create_dataset(group, "colors", colors)
-        
+
         # Set type attribute
         group.attrs["type"] = "lines"
         group.attrs.update(attrs)
@@ -558,6 +532,7 @@ class Lines(Node):
 
 ```python
 from numcodecs import Blosc
+from luxar import LuxarZarrCompiler, Dimensions
 
 # For maximum speed (local visualization)
 fast_compressor = Blosc(cname='lz4', clevel=1, shuffle=Blosc.SHUFFLE)
@@ -568,7 +543,10 @@ balanced_compressor = Blosc(cname='zstd', clevel=3, shuffle=Blosc.SHUFFLE)
 # For archival storage (space-limited)
 compact_compressor = Blosc(cname='zstd', clevel=9, shuffle=Blosc.SHUFFLE)
 
-scene = Scene("data.zarr", compressor=balanced_compressor)
+dims = Dimensions.default_3d()
+with LuxarZarrCompiler("data.zarr", compressor=balanced_compressor) as compiler:
+    scene = compiler.create_scene(dimensions=dims)
+    scene.add_points("cloud", positions, colors)
 ```
 
 ### Memory-Efficient Processing
@@ -577,19 +555,19 @@ scene = Scene("data.zarr", compressor=balanced_compressor)
 # Process massive datasets without loading into memory
 def process_in_chunks(scene_path: str, chunk_size: int = 1_000_000):
     """Example: Apply colormap to huge points."""
-    
+
     root = zarr.open_group(scene_path, mode='r+')
     positions = root['points/positions']
     colors = root['points/colors']
-    
+
     # Process in chunks
     for i in range(0, len(positions), chunk_size):
         chunk_positions = positions[i:i + chunk_size]
-        
+
         # Compute colors based on height
         heights = chunk_positions[:, 2]
         chunk_colors = height_to_color(heights)
-        
+
         # Write back
         colors[i:i + chunk_size] = chunk_colors
 ```
@@ -617,7 +595,7 @@ The project enforces strict code quality standards:
 # Format code (use Hatch environment)
 hatch run ruff format packages/luxar/src/
 
-# Type checking  
+# Type checking
 hatch run type-check
 
 # Linting
@@ -642,7 +620,7 @@ hatch run lint && hatch run type-check
 ```python
 # Luxar works seamlessly with NumPy
 positions = np.random.randn(1000, 3).astype(np.float32)
-colors = ((positions - positions.min()) / 
+colors = ((positions - positions.min()) /
           (positions.max() - positions.min()) * 255).astype(np.uint8)
 
 scene.add_points("normalized", positions, colors)

@@ -8,15 +8,17 @@ Write and read a scene in 3 steps:
 
 ```python
 from luxar.io import LuxarZarrCompiler, LuxarScene
+from luxar.core.dimensions import Dimensions
 import numpy as np
 
 # 1. Create sample data
 positions = np.random.randn(1000, 3).astype(np.float32)
 colors = np.random.rand(1000, 3).astype(np.float32)
+dims = Dimensions.default_3d()
 
 # 2. Write to zarr (progressive - data written immediately)
 with LuxarZarrCompiler('scene.zarr') as compiler:
-    scene = compiler.create_scene()
+    scene = compiler.create_scene(dimensions=dims)
     scene.add_points('cloud', positions, colors, radii=0.1)
 
 # 3. Read it back (memory-efficient lazy loading)

@@ -165,20 +165,27 @@ describe('nD Navigation Utilities', () => {
       expect(calculateNextPosition(9, 1, 2, [0, 10], false, true)).toBe(1); // Wrap to start
       expect(calculateNextPosition(1, -1, 2, [0, 10], false, true)).toBe(9); // Wrap to end
     });
+
+    it('should handle zero-range dimension without NaN', () => {
+      // Degenerate range where min === max: only one valid position
+      expect(calculateNextPosition(5, 1, 1, [5, 5], false, true)).toBe(5); // Wrap-around
+      expect(calculateNextPosition(5, -1, 1, [5, 5], false, false)).toBe(5); // Clamp
+    });
   });
 
   describe('mapKeyToDimension', () => {
-    it('should map number keys to dimension indices', () => {
+    it('should map number keys to navigable dimension positions', () => {
       const dims = new DimensionsBuilder()
         .withNDimensions(5)
         .withDisplayed(0, 1) // Only x, y displayed
         .build();
 
-      expect(mapKeyToDimension('1', dims)).toBe(-1); // Index 0 is displayed
-      expect(mapKeyToDimension('2', dims)).toBe(-1); // Index 1 is displayed
-      expect(mapKeyToDimension('3', dims)).toBe(2); // Index 2 not displayed
-      expect(mapKeyToDimension('4', dims)).toBe(3); // Index 3 not displayed
-      expect(mapKeyToDimension('5', dims)).toBe(4); // Index 4 not displayed
+      // Non-displayed: [2, 3, 4]. Key 1→first navigable (dim 2), etc.
+      expect(mapKeyToDimension('1', dims)).toBe(2); // First navigable
+      expect(mapKeyToDimension('2', dims)).toBe(3); // Second navigable
+      expect(mapKeyToDimension('3', dims)).toBe(4); // Third navigable
+      expect(mapKeyToDimension('4', dims)).toBe(-1); // Only 3 navigable dims
+      expect(mapKeyToDimension('5', dims)).toBe(-1);
     });
 
     it('should return -1 for invalid keys', () => {
@@ -189,10 +196,11 @@ describe('nD Navigation Utilities', () => {
       expect(mapKeyToDimension('10', dims)).toBe(-1);
     });
 
-    it('should return -1 for dimensions beyond ndim', () => {
-      const dims = new DimensionsBuilder().withNDimensions(3).withDisplayed(0).build();
+    it('should return -1 when no navigable dimensions exist', () => {
+      const dims = new DimensionsBuilder().withNDimensions(3).withDisplayed(0, 1, 2).build();
 
-      expect(mapKeyToDimension('4', dims)).toBe(-1); // Beyond dimension count
+      expect(mapKeyToDimension('1', dims)).toBe(-1); // All displayed
+      expect(mapKeyToDimension('4', dims)).toBe(-1); // Beyond ndim
     });
   });
 
@@ -247,8 +255,8 @@ describe('nD Navigation Utilities', () => {
 
       expect(help).toContain('Selected: time = 5.00s');
       expect(help).toContain('Non-displayed dimensions:');
-      expect(help.some((line) => line.includes('[4] time'))).toBe(true);
-      expect(help.some((line) => line.includes('[5] channel'))).toBe(true);
+      expect(help.some((line) => line.includes('[1] time'))).toBe(true);
+      expect(help.some((line) => line.includes('[2] channel'))).toBe(true);
     });
 
     it('should indicate when all dimensions are displayed', () => {

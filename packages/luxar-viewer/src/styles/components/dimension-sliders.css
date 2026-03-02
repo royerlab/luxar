@@ -89,7 +89,7 @@
 
 .luxar-dimension-dropdown__label--with-tooltip {
   cursor: help;
-  border-bottom: 1px dotted rgba(255, 255, 255, 0.4);
+  border-bottom: 1px dotted var(--luxar-text-muted);
   display: inline-block;
 }
 
@@ -113,7 +113,7 @@
 .luxar-dimension-slider__track {
   position: relative;
   height: 20px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--luxar-interactive-default);
   border-radius: 10px;
   overflow: hidden;
   flex: 1; /* Take remaining space in controls wrapper */
@@ -165,10 +165,6 @@
   margin-top: var(--luxar-spacing-4);
 }
 
-.luxar-dimension-dropdown-grid--with-spacing {
-  margin-top: var(--luxar-spacing-4);
-}
-
 .luxar-dimension-dropdown {
   display: flex;
   flex-direction: column;
@@ -178,22 +174,22 @@
 .luxar-dimension-dropdown__label {
   font-size: var(--luxar-text-md);
   font-weight: var(--luxar-font-medium);
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--luxar-text-primary);
   margin-bottom: var(--luxar-spacing-1);
 }
 
 .luxar-dimension-dropdown__label--with-tooltip {
   cursor: help;
-  border-bottom: 1px dotted rgba(255, 255, 255, 0.4);
+  border-bottom: 1px dotted var(--luxar-text-muted);
   display: inline-block;
 }
 
 .luxar-dimension-dropdown__select {
   width: 100%;
   padding: 6px 8px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--luxar-interactive-default);
   color: var(--luxar-text-primary);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--luxar-border-strong);
   border-radius: var(--luxar-radius-sm);
   font-size: var(--luxar-text-sm);
   cursor: pointer;
@@ -203,13 +199,13 @@
 }
 
 .luxar-dimension-dropdown__select:hover {
-  background: rgba(255, 255, 255, 0.15);
-  border-color: rgba(76, 175, 80, 0.5);
+  background: var(--luxar-interactive-hover);
+  border-color: color-mix(in srgb, var(--luxar-success) 50%, transparent);
 }
 
 .luxar-dimension-dropdown__select:focus {
   border-color: var(--luxar-success);
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--luxar-interactive-hover);
 }
 
 /**
@@ -228,6 +224,45 @@
 .luxar-dimension-dropdown__select option:checked {
   background-color: #2a2a2a;
   color: #ffffff;
+}
+
+/* ========== Binary Toggles ========== */
+
+.luxar-dimension-toggle {
+  width: 100%;
+  padding: 6px 8px;
+  text-align: center;
+  font-size: var(--luxar-text-sm);
+  font-family: inherit;
+  background: var(--luxar-interactive-default);
+  color: var(--luxar-text-primary);
+  border: 1px solid var(--luxar-border-strong);
+  border-radius: var(--luxar-radius-sm);
+  cursor: pointer;
+  user-select: none;
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-dimension-toggle:hover {
+  background: var(--luxar-interactive-hover);
+  border-color: color-mix(in srgb, var(--luxar-success) 50%, transparent);
+}
+
+.luxar-dimension-toggle:focus {
+  outline: none;
+  border-color: var(--luxar-success);
+}
+
+.luxar-dimension-toggle--on {
+  background: var(--luxar-success);
+  color: white;
+  font-weight: var(--luxar-font-medium);
+  border-color: var(--luxar-success);
+}
+
+.luxar-dimension-toggle--on:hover {
+  background: color-mix(in srgb, var(--luxar-success) 85%, white);
+  border-color: color-mix(in srgb, var(--luxar-success) 85%, white);
 }
 
 /* ========== Empty State ========== */
@@ -277,6 +312,27 @@
   color: #000000;
 }
 
+[data-theme='light'] .luxar-dimension-toggle {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+[data-theme='light'] .luxar-dimension-toggle:hover {
+  background: rgba(0, 0, 0, 0.08);
+  border-color: var(--luxar-success);
+}
+
+[data-theme='light'] .luxar-dimension-toggle--on {
+  background: var(--luxar-success);
+  color: white;
+  border-color: var(--luxar-success);
+}
+
+[data-theme='light'] .luxar-dimension-toggle--on:hover {
+  background: color-mix(in srgb, var(--luxar-success) 85%, white);
+  border-color: color-mix(in srgb, var(--luxar-success) 85%, white);
+}
+
 /* ========== Animation Controls (Compact Layout) ========== */
 
 /* Play/Pause Button - Inline with slider */
@@ -310,7 +366,7 @@
 }
 
 .luxar-dimension-slider__play-btn:hover {
-  background: var(--luxar-success-hover);
+  background: color-mix(in srgb, var(--luxar-success) 85%, white);
   transform: scale(1.05);
 }
 
@@ -323,7 +379,7 @@
 }
 
 .luxar-dimension-slider__play-btn--playing:hover {
-  background: var(--luxar-warning-hover);
+  background: color-mix(in srgb, var(--luxar-warning) 85%, white);
 }
 
 /* Context Menu (Napari-style) */
@@ -401,4 +457,11 @@
 [data-theme='light'] .luxar-dimension-slider__context-item:hover {
   background: var(--luxar-success);
   color: white;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luxar-dimension-slider__context-menu {
+    animation: none !important;
+    opacity: 1 !important;
+  }
 }

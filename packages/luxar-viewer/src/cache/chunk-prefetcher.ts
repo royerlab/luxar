@@ -44,6 +44,14 @@ export class ChunkPrefetcher {
   private queue = new Set<string>();
   private processing = false;
 
+  // Tracks all keys whose neighbors have already been enqueued, preventing
+  // cascading prefetch amplification: without this, prefetched chunks trigger
+  // their own neighbor prefetches, which cascade across the entire dataset.
+  private seen = new Set<string>();
+
+  /** Upper bounds per array path for suppressing out-of-range prefetch requests */
+  private maxChunkIndices = new Map<string, number[]>();
+
   constructor(store: TwoLevelCachingStore, options?: ChunkPrefetcherOptions) {
     this.store = store;
 
@@ -70,6 +78,13 @@ export class ChunkPrefetcher {
    */
   onAccess(key: string): void {
     if (!this.enabled) return;
+
+    // Prevent cascading prefetch amplification: if we've already expanded
+    // this key's neighbors, don't do it again. Without this guard, a prefetched
+    // chunk triggers its own neighbor expansion, which cascades until the entire
+    // dataset is fetched (O(N^D) for D-dimensional data with N chunks/dim).
+    if (this.seen.has(key)) return;
+    this.seen.add(key);
 
     const adjacent = this.getAdjacentChunks(key);
     if (adjacent.length === 0) {
@@ -157,6 +172,19 @@ export class ChunkPrefetcher {
   }
 
   /**
+   * Register array shape and chunk sizes for bounds checking during prefetch.
+   * When registered, getAdjacentChunks will skip indices beyond valid bounds.
+   *
+   * @param arrayPath - Base path of the array (e.g., 'gsplats_t0023/centers')
+   * @param shape - Array shape (e.g., [2096, 4])
+   * @param chunks - Chunk sizes (e.g., [1024, 4])
+   */
+  registerArrayBounds(arrayPath: string, shape: number[], chunks: number[]): void {
+    const maxIndices = shape.map((s, i) => Math.ceil(s / chunks[i]));
+    this.maxChunkIndices.set(arrayPath, maxIndices);
+  }
+
+  /**
    * Generate adjacent chunk keys (±1 in each dimension).
    *
    * @example
@@ -173,6 +201,9 @@ export class ChunkPrefetcher {
     const isV3 = key.includes('/c/');
     const basePath = isV3 ? key.replace(/\/c\/[\d/]+$/, '') : key.replace(/\/[\d.]+$/, '');
 
+    // Look up upper bounds for this array (if registered)
+    const maxIndices = this.maxChunkIndices.get(basePath);
+
     // Debug logging for troubleshooting
     if (this.debug) {
       this.log(`Debug - key: ${key}`);
@@ -187,8 +218,11 @@ export class ChunkPrefetcher {
         const newIndices = [...indices];
         newIndices[dim] += delta;
 
-        // Skip negative indices
+        // Skip negative indices (lower bounds)
         if (newIndices[dim] < 0) continue;
+
+        // Skip indices beyond array bounds (upper bounds)
+        if (maxIndices && dim < maxIndices.length && newIndices[dim] >= maxIndices[dim]) continue;
 
         // Generate key in same format as input
         const indexStr = isV3 ? 'c/' + newIndices.join('/') : newIndices.join('.');

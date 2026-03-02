@@ -7,6 +7,12 @@ This example demonstrates:
 - Organizing scene construction with helper functions
 - Best practices for modular scene building
 - Proper resource management with context managers
+
+Educational value:
+- Learn the recommended pattern for building Luxar scenes
+- Understand context manager benefits (automatic finalization)
+- See how to organize complex scene construction with helpers
+- Good reference for starting new Luxar projects
 """
 
 from pathlib import Path

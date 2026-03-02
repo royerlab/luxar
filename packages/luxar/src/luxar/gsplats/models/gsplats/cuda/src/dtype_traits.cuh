@@ -15,6 +15,7 @@
 
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
+#include <cassert>
 
 // =============================================================================
 // FP16 (HALF PRECISION) SUPPORT
@@ -79,9 +80,15 @@ struct DTypeTraits<__half> {
     /**
      * Vectorized load of 2 consecutive FP16 values as FP32.
      * Uses __half2 for efficient 32-bit aligned load.
+     *
+     * IMPORTANT: idx must be even (4-byte aligned for __half2).
+     * Callers must verify alignment before calling this function.
+     * Unaligned access causes undefined behavior on CUDA.
      */
     __device__ __forceinline__ static void load2(const __half* ptr, int idx, float& a, float& b) {
         // Aligned load of 2 half values (4 bytes total)
+        // Assert alignment in debug builds
+        assert((idx & 1) == 0 && "load2 requires even index for __half2 alignment");
         __half2 h2 = *reinterpret_cast<const __half2*>(&ptr[idx]);
         a = __low2float(h2);
         b = __high2float(h2);
@@ -252,35 +259,6 @@ __device__ __forceinline__ void load_conic_2d(
         out[1] = DTypeTraits<InputDType>::load(conic, base + 1);
         out[2] = DTypeTraits<InputDType>::load(conic, base + 2);
     }
-}
-
-/**
- * Load amplitude and sharpness using vectorized load.
- *
- * For FP16: Uses load2() for both values (single 32-bit aligned read).
- * For FP32: Falls back to individual loads.
- *
- * Note: Assumes amps and sharpness are stored contiguously per-splat.
- * If stored separately, use individual load() calls instead.
- *
- * @tparam InputDType Source data type (__half or float)
- * @param amps        Amplitude array
- * @param sharpness   Sharpness array
- * @param splat_idx   Index of splat (0-based)
- * @param out_amp     Output amplitude
- * @param out_sharp   Output sharpness
- */
-template <typename InputDType>
-__device__ __forceinline__ void load_amp_sharpness(
-    const InputDType* __restrict__ amps,
-    const InputDType* __restrict__ sharpness,
-    int splat_idx,
-    float& out_amp,
-    float& out_sharp
-) {
-    // Amps and sharpness are separate arrays, so load individually
-    out_amp = DTypeTraits<InputDType>::load(amps, splat_idx);
-    out_sharp = DTypeTraits<InputDType>::load(sharpness, splat_idx);
 }
 
 #endif // CUDA_SPLATTING_DTYPE_TRAITS_CUH

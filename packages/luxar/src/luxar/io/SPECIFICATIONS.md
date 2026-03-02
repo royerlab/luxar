@@ -53,9 +53,8 @@ The `io` package implements progressive writing to Zarr stores and spatial index
 
 **Input**:
 - `positions`: (N, D) float32 array (required - **NOT** broadcastable, see encoding/SPECIFICATIONS.md)
-- `radii`: (N,) float32 array, (1,) array, or scalar float (required)
+- `radii`: (N,) float32 array, (1,) array, or scalar float (optional, defaults to 0.5 at Scene level)
 - `colors`: Optional - (N, 3) array, (1, 3) array, scalar tuple/list, or None
-- `color_mode`: Required for float32 colors: `"sdr"` or `"hdr"`
 - `sharpness`: Optional - (N,) array, (1,) array, scalar float, or None
 - `scene_dimensions`: Optional dimension specifications for compound ordering
 - `**attrs`: Additional attributes (transform, opacity, extend_to_all, etc.)
@@ -74,7 +73,7 @@ The compiler passes scalars directly to the encoder with `n_elements=N`, elimina
 **Validation**:
 1. Positions must be 2D array with N ≥ 1 points, D ≥ 1 dimensions (arrays only, no broadcasting)
 2. Radii must be positive (> 0) - validated whether scalar or array
-3. Float32 colors require explicit `color_mode` ("sdr" or "hdr")
+3. Float32 colors are auto-classified as SDR (values in [0, 1]) or HDR (values > 1.0) internally
 4. Sharpness must be in [0, 31] - validated whether scalar or array
 
 **Algorithm**: See [Write Algorithm](#write-algorithm) in Spatial Index section for the full compound ordering algorithm.
@@ -622,7 +621,7 @@ centers/            # (N, D) float32, compound-sorted, chunked
 colors/             # (N, 3) float32/uint8, compound-sorted, chunked
 amplitudes/         # (N,) float32, compound-sorted, chunked
 cholesky_factors/   # (N, k) float32, compound-sorted, chunked
-sharpness/          # (N,) float32, compound-sorted, chunked
+sharpnesses/        # (N,) float32, compound-sorted, chunked
 chunk_bounds        # (num_chunks, D, 2) float32, single chunk
 ```
 
@@ -682,10 +681,10 @@ Example: 10M points, 5D, chunk_size=2K → 5000 chunks × 5 × 8 = 200KB metadat
 
 **Colors**:
 - **uint8**: Implicit SDR, values [0, 255] normalized to [0, 1]
-- **float32 with `color_mode="sdr"`**: Values must be in [0, 1], out-of-range raises error
-- **float32 with `color_mode="hdr"`**: Unbounded non-negative values allowed
+- **float32 SDR**: Values in [0, 1], auto-detected when no values exceed 1.0
+- **float32 HDR**: Non-negative values, auto-detected when any value exceeds 1.0
 
-**Note**: Auto-detection (values > 1 = HDR) was rejected because buggy SDR data would silently be treated as HDR instead of raising an error. Explicit `color_mode` is required.
+**Note**: Color mode (SDR vs HDR) is auto-detected internally by the compiler based on whether any float32 color values exceed 1.0. Users do not need to specify a `color_mode` parameter.
 
 **Radii/Sharpness**:
 - Default: float32
@@ -713,8 +712,9 @@ For very large datasets (TB-scale), the recommended approach is:
 
 **Split into Multiple Nodes**:
 ```python
+dims = Dimensions.default_3d()
 with LuxarZarrCompiler('huge.zarr', ordering_method="hilbert") as compiler:
-    scene = compiler.create_scene()
+    scene = compiler.create_scene(dimensions=dims)
 
     # Process in chunks, each chunk becomes a separate node
     for i in range(100):
@@ -778,9 +778,10 @@ scene.get_node_type(name: str) -> str  # 'points', 'gsplats', 'lines', 'group'
 scene.get_node_metadata(name: str) -> Dict[str, Any]  # Metadata only, no data
 
 # Load node data (automatic decoding via ArrayDecoder)
-scene.get_points(name: str) -> Dict[str, Any]
-scene.get_gsplats(name: str) -> Dict[str, Any]
-scene.get_lines(name: str) -> Dict[str, Any]
+# Returns frozen dataclasses with dict-style access (data["key"], "key" in data)
+scene.get_points(name: str) -> PointsData
+scene.get_gsplats(name: str) -> GSplatsData
+scene.get_lines(name: str) -> LinesData
 ```
 
 #### Return Value Structure
@@ -920,8 +921,9 @@ if points['chunk_bounds'] is not None:
 **Round-trip test**:
 ```python
 # Write
+dims = Dimensions.default_3d()
 with LuxarZarrCompiler('test.zarr') as compiler:
-    scene_w = compiler.create_scene()
+    scene_w = compiler.create_scene(dimensions=dims)
     scene_w.add_points('test', positions, colors, radii)
 
 # Read back
@@ -980,7 +982,7 @@ assert len(data['chunk_bounds']) > 0
 - `colors`: (N, 3) float32/uint8 array, compound-sorted (optional)
 - `amplitudes`: (N,) float32 array, compound-sorted
 - `cholesky_factors`: (N, k) float32 array, compound-sorted
-- `sharpness`: (N,) float32 array, compound-sorted (optional)
+- `sharpnesses`: (N,) float32 array, compound-sorted (optional)
 - `chunk_bounds`: (num_chunks, D, 2) float32 array
 
 **Lines Group** (no spatial indexing):
@@ -1019,7 +1021,7 @@ assert len(data['chunk_bounds']) > 0
 - `CHUNK_SIZE_MAX` - Maximum chunk size
 
 **Sharpness** (existing in `typing_utils/constants.py`):
-- `SHARPNESS_MIN = 0.0`
+- `SHARPNESS_MIN = 0.001`
 - `SHARPNESS_MAX = 31.0`
 - `SHARPNESS_DEFAULT = 2.0`
 
@@ -1034,9 +1036,9 @@ assert len(data['chunk_bounds']) > 0
 **Write-Time Validation**:
 - Positions: Must be 2D array, at least 1 point, at least 1 dimension
 - Colors (uint8): Must be (N, 3), values in [0, 255]
-- Colors (float32 SDR): Must be (N, 3), values in [0, 1], requires `color_mode="sdr"`
-- Colors (float32 HDR): Must be (N, 3), non-negative, requires `color_mode="hdr"`
-- Radii: Must be (N,) or (1,), all positive (> 0), no zeros
+- Colors (float32 SDR): Must be (N, 3), values in [0, 1] (auto-detected)
+- Colors (float32 HDR): Must be (N, 3), non-negative (auto-detected when values > 1.0)
+- Radii: Must be (N,) or (1,), all positive (> 0), no zeros (defaults to 0.5 if omitted at Scene level)
 - Sharpness: Must be (N,) or (1,), range [0, 31]
 
 **Helpful Error Messages**:

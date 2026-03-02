@@ -262,7 +262,7 @@ export class LineMaterial extends THREE.ShaderMaterial {
         uFOV: { value: (60 * Math.PI) / 180 }, // Default 60° FOV
         uResolution: { value: new THREE.Vector2(1, 1) },
         uHDRMultiplier: {
-          value: materialConfig.hdrMultiplier ?? config.shader.points.hdrMultiplier,
+          value: materialConfig.hdrMultiplier ?? config.renderingControls.defaults.hdrMultiplier,
         },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
       },
@@ -443,6 +443,42 @@ export interface InstancedLinesMeshConfig {
  * - This avoids exceeding WebGL's 16 attribute location limit
  * - InstancedBufferGeometry with Mesh still uses instanced drawing
  *
+/**
+ * Compute bounding box and sphere from line segment start/end positions.
+ * Uses a direct min/max pass without temporary geometry or array allocations.
+ */
+function computeLineBounds(
+  geometry: THREE.InstancedBufferGeometry,
+  meshConfig: InstancedLinesMeshConfig
+): void {
+  const box = new THREE.Box3(
+    new THREE.Vector3(Infinity, Infinity, Infinity),
+    new THREE.Vector3(-Infinity, -Infinity, -Infinity)
+  );
+  const v = new THREE.Vector3();
+
+  for (let i = 0; i < meshConfig.segmentCount; i++) {
+    const si = i * 3;
+    v.set(
+      meshConfig.startPositions[si],
+      meshConfig.startPositions[si + 1],
+      meshConfig.startPositions[si + 2]
+    );
+    box.expandByPoint(v);
+    v.set(
+      meshConfig.endPositions[si],
+      meshConfig.endPositions[si + 1],
+      meshConfig.endPositions[si + 2]
+    );
+    box.expandByPoint(v);
+  }
+
+  geometry.boundingBox = box;
+  geometry.boundingSphere = new THREE.Sphere();
+  box.getBoundingSphere(geometry.boundingSphere);
+}
+
+/**
  * @param meshConfig - Configuration with all segment data
  * @param material - LineMaterial to use for rendering
  * @returns THREE.Mesh with InstancedBufferGeometry ready for scene addition
@@ -497,30 +533,8 @@ export function createInstancedLinesMesh(
   // Set instance count
   geometry.instanceCount = meshConfig.segmentCount;
 
-  // Compute bounding box from segment positions
-  const positions = new Float32Array(meshConfig.segmentCount * 6);
-  for (let i = 0; i < meshConfig.segmentCount; i++) {
-    positions[i * 6 + 0] = meshConfig.startPositions[i * 3 + 0];
-    positions[i * 6 + 1] = meshConfig.startPositions[i * 3 + 1];
-    positions[i * 6 + 2] = meshConfig.startPositions[i * 3 + 2];
-    positions[i * 6 + 3] = meshConfig.endPositions[i * 3 + 0];
-    positions[i * 6 + 4] = meshConfig.endPositions[i * 3 + 1];
-    positions[i * 6 + 5] = meshConfig.endPositions[i * 3 + 2];
-  }
-
-  const tempGeometry = new THREE.BufferGeometry();
-  tempGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  tempGeometry.computeBoundingBox();
-  tempGeometry.computeBoundingSphere();
-
-  if (tempGeometry.boundingBox) {
-    geometry.boundingBox = tempGeometry.boundingBox.clone();
-  }
-  if (tempGeometry.boundingSphere) {
-    geometry.boundingSphere = tempGeometry.boundingSphere.clone();
-  }
-
-  tempGeometry.dispose();
+  // Compute bounding box from segment positions (direct min/max pass, no temp allocations)
+  computeLineBounds(geometry, meshConfig);
 
   // Create mesh with instanced geometry
   // Using THREE.Mesh instead of THREE.InstancedMesh avoids the instanceMatrix attribute
@@ -529,4 +543,63 @@ export function createInstancedLinesMesh(
   mesh.frustumCulled = true;
 
   return mesh;
+}
+
+/**
+ * Update an existing instanced lines mesh with new segment data.
+ *
+ * Mirrors the pattern in `updateInstancedGSplatsMesh` (gsplat-material.ts):
+ * - Same count: in-place `.set()` on existing attributes (zero GPU allocation)
+ * - Different count: `setAttribute` with new InstancedBufferAttribute + `_maxInstanceCount` fix
+ * - Always: recompute bounding box/sphere from segment positions
+ *
+ * @param mesh - Existing mesh to update (must have InstancedBufferGeometry)
+ * @param meshConfig - New segment data
+ */
+export function updateInstancedLinesMesh(
+  mesh: THREE.Mesh,
+  meshConfig: InstancedLinesMeshConfig
+): void {
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+  const currentCount = geometry.instanceCount;
+
+  // Attribute layout: [name, source data, components per instance]
+  const attrSpecs: Array<[string, Float32Array | Uint8Array, number, boolean]> = [
+    ['aStartPos', meshConfig.startPositions, 3, false],
+    ['aEndPos', meshConfig.endPositions, 3, false],
+    ['aStartColor', meshConfig.startColors, 3, false],
+    ['aEndColor', meshConfig.endColors, 3, false],
+    ['aStartWidth', meshConfig.startWidths, 1, false],
+    ['aEndWidth', meshConfig.endWidths, 1, false],
+    ['aStartSharpness', meshConfig.startSharpness, 1, false],
+    ['aEndSharpness', meshConfig.endSharpness, 1, false],
+    ['aSegmentLength', meshConfig.segmentLengths, 1, false],
+    ['aStartClipped', meshConfig.startClipped, 1, true], // Uint8 → Float32
+    ['aEndClipped', meshConfig.endClipped, 1, true], // Uint8 → Float32
+  ];
+
+  if (meshConfig.segmentCount !== currentCount) {
+    // Size changed: recreate attributes
+    for (const [name, data, size, needsFloat32Convert] of attrSpecs) {
+      const arrayData = needsFloat32Convert ? new Float32Array(data) : (data as Float32Array);
+      geometry.setAttribute(name, new THREE.InstancedBufferAttribute(arrayData, size));
+    }
+    geometry.instanceCount = meshConfig.segmentCount;
+
+    // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
+    // Same issue as gsplats: meshes created with 0 instances cache _maxInstanceCount=0.
+    // (THREE.js r163+ internal property)
+    delete (geometry as any)._maxInstanceCount;
+  } else {
+    // Same size: update in place (zero GPU allocation)
+    for (const [name, data, , needsFloat32Convert] of attrSpecs) {
+      const attr = geometry.getAttribute(name) as THREE.InstancedBufferAttribute;
+      const arrayData = needsFloat32Convert ? new Float32Array(data) : data;
+      attr.set(arrayData);
+      attr.needsUpdate = true;
+    }
+  }
+
+  // Recompute bounding box from segment positions (direct min/max pass, no temp allocations)
+  computeLineBounds(geometry, meshConfig);
 }

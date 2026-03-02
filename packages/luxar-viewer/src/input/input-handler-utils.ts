@@ -331,6 +331,9 @@ export function calculateNextPosition(
   // Handle boundaries
   if (wrapAround) {
     const rangeSize = range[1] - range[0];
+    if (rangeSize <= 0) {
+      return range[0]; // Degenerate or invalid range
+    }
     if (newPos < range[0]) {
       newPos = range[1] - ((range[0] - newPos) % rangeSize);
     } else if (newPos > range[1]) {
@@ -345,47 +348,39 @@ export function calculateNextPosition(
 }
 
 /**
- * Map number key (1-9) to navigable dimension index.
+ * Map number key (1-9) to dimension index using navigable-position mapping.
  *
- * Converts keyboard number input to actual dimension indices, filtering
- * out displayed dimensions. Number keys map to non-displayed dimensions
- * only, allowing users to select which hidden dimension to control with
- * [/] navigation keys.
+ * Converts keyboard number input to actual dimension indices by mapping
+ * key N to the N-th non-displayed (navigable) dimension. This provides
+ * an intuitive napari-style UX where keys always start at 1 regardless
+ * of how many displayed dimensions exist.
  *
- * Key mapping is order-based: '1' maps to first non-displayed dimension,
- * '2' to second, etc. For a 5D dataset with X,Y,Z displayed, '1' would
- * map to Time (index 3) and '2' to Channel (index 4).
+ * For a 5D dataset [X(0), Y(1), Z(2), Time(3), Channel(4)] with
+ * X,Y,Z displayed:
+ * - Key '1' → Time (dim 3, first navigable)
+ * - Key '2' → Channel (dim 4, second navigable)
+ * - Key '3' → -1 (no third navigable dim)
  *
  * @param key - String representation of number key pressed ('1' through '9')
  * @param dims - Complete dimension configuration with display settings
- * @returns Actual dimension index (0-based), or -1 if key is invalid,
- *          out of range, or maps to a displayed dimension
+ * @returns Actual dimension index (0-based), or -1 if key is invalid
+ *          or there aren't enough non-displayed dimensions
  *
  * @example
  * ```typescript
  * // 5D dataset: X, Y, Z displayed (dims 0, 1, 2)
- * // Non-displayed: Time (dim 3), Channel (dim 4)
  * const dims = { ndim: 5, displayed: [0, 1, 2], ... };
- *
- * // Press '1' to select Time dimension
- * const dimIndex = mapKeyToDimension('1', dims);
- * console.log(dimIndex); // 3 (Time is first non-displayed)
- *
- * // Press '2' to select Channel dimension
- * const dimIndex2 = mapKeyToDimension('2', dims);
- * console.log(dimIndex2); // 4 (Channel is second non-displayed)
- *
- * // Press '3' when only 2 non-displayed dimensions exist
- * const invalid = mapKeyToDimension('3', dims);
- * console.log(invalid); // -1 (out of range)
+ * mapKeyToDimension('1', dims); // 3 (Time, first navigable)
+ * mapKeyToDimension('2', dims); // 4 (Channel, second navigable)
+ * mapKeyToDimension('3', dims); // -1 (only 2 navigable dims)
  * ```
  *
  * @example
  * ```typescript
- * // 3D dataset: no non-displayed dimensions
- * const dims3d = { ndim: 3, displayed: [0, 1, 2] };
- * const result = mapKeyToDimension('1', dims3d);
- * console.log(result); // -1 (no non-displayed dimensions)
+ * // 5D dataset with non-contiguous display: dims 1, 2, 3 displayed
+ * const dims = { ndim: 5, displayed: [1, 2, 3], ... };
+ * mapKeyToDimension('1', dims); // 0 (first non-displayed)
+ * mapKeyToDimension('2', dims); // 4 (second non-displayed)
  * ```
  */
 export function mapKeyToDimension(key: string, dims: SimpleDims): number {
@@ -395,15 +390,15 @@ export function mapKeyToDimension(key: string, dims: SimpleDims): number {
     return -1;
   }
 
-  // Map 1-9 to dimension indices 0-8
-  const dimIndex = num - 1;
+  // Map key N to the N-th non-displayed (navigable) dimension
+  const nonDisplayed = getNonDisplayedDimensions(dims);
+  const navigableIndex = num - 1;
 
-  // Check if dimension exists and is not displayed
-  if (dimIndex >= dims.ndim || dims.displayed.includes(dimIndex)) {
+  if (navigableIndex >= nonDisplayed.length) {
     return -1;
   }
 
-  return dimIndex;
+  return nonDisplayed[navigableIndex];
 }
 
 /**
@@ -561,13 +556,14 @@ export function generateNavigationHelp(selectedDim: number, dims: SimpleDims): s
     help.push('No dimension selected');
   }
 
-  // Available dimensions
+  // Available dimensions (keys map to navigable position, not raw index)
   help.push('');
   help.push('Non-displayed dimensions:');
-  for (const dimIdx of nonDisplayed) {
+  for (let navIdx = 0; navIdx < nonDisplayed.length; navIdx++) {
+    const dimIdx = nonDisplayed[navIdx];
     const meta = dims.metadata?.[dimIdx];
     const name = meta?.name || `Dim ${dimIdx}`;
-    const key = dimIdx < 9 ? `[${dimIdx + 1}]` : '   ';
+    const key = navIdx < 9 ? `[${navIdx + 1}]` : '   ';
     const value = formatDimensionValue(dims.currentStep[dimIdx], dimIdx, dims);
     const selected = dimIdx === selectedDim ? ' ←' : '';
     help.push(`  ${key} ${name}: ${value}${selected}`);

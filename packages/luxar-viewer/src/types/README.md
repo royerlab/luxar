@@ -298,16 +298,16 @@ Metadata for gsplats nodes from zarr `.zattrs`:
 ```typescript
 interface GSplatsMetadata {
   type: 'gsplats';
-  n_splats: number;              // Total splat count
-  ndim: number;                  // Position dimensionality
-  has_colors: boolean;           // Whether colors array is present
-  has_sharpness: boolean;        // Whether sharpness array is present
-  chunk_size: number;            // Elements per chunk
-  amplitude_range: ValueRange;   // Amplitude value range
-  sharpness_bounds: ValueRange;  // Sharpness value bounds
+  n_splats: number; // Total splat count
+  ndim: number; // Position dimensionality
+  has_colors: boolean; // Whether colors array is present
+  has_sharpness: boolean; // Whether sharpness array is present
+  chunk_size: number; // Elements per chunk
+  amplitude_range: ValueRange; // Amplitude value range
+  sharpness_bounds: ValueRange; // Sharpness value bounds
   center_bounds: CoordinateBounds; // Center coordinate bounds
   ordering: 'morton' | 'hilbert' | 'none'; // Spatial ordering method
-  extend_to_all?: string[];      // Dimensions to extend visibility across
+  extend_to_all?: string[]; // Dimensions to extend visibility across
   // ... additional properties
 }
 ```
@@ -318,8 +318,8 @@ Raw gsplats data loaded from zarr before nD projection:
 
 ```typescript
 interface LoadedGSplatsData {
-  positions: Float32Array;       // Splat positions (N * ndim)
-  amplitudes: Float32Array;      // Splat amplitudes (N,)
+  positions: Float32Array; // Splat positions (N * ndim)
+  amplitudes: Float32Array; // Splat amplitudes (N,)
   choleskyFactors: Float32Array; // Packed Cholesky (N * k) where k = ndim*(ndim+1)/2
   colors: Float32Array | Uint8Array | Uint16Array | null; // RGB colors
   sharpness: Float32Array | null; // Sharpness values (defaults to 2.0)

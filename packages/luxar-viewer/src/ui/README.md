@@ -673,7 +673,7 @@ Global keyboard shortcuts managed by the UI system:
 | `H`       | Toggle help                | Global                   |
 | `P`       | Toggle performance monitor | Global                   |
 | `R`       | Toggle rendering controls  | Global                   |
-| `D`       | Toggle dimension sliders   | When nD data loaded      |
+| `N`       | Toggle dimension sliders   | When nD data loaded      |
 | `M`       | Cycle data loading monitor | Global                   |
 | `Ctrl+L`  | Toggle debug console       | Development mode         |
 | `Esc`     | Close active panel         | Any panel open           |

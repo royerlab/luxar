@@ -90,13 +90,20 @@ export class LRUCache<V> {
    * @performance O(k) where k = number of evictions needed (typically 0-2)
    */
   set(key: string, value: V): void {
+    const size = this.getSize(value);
+
+    // Reject items that exceed total cache capacity to avoid permanent
+    // size invariant violation (currentSize > maxSize).
+    // IMPORTANT: This check must be BEFORE removing the existing entry,
+    // otherwise replacing a key with an oversized value would silently
+    // delete the old entry (data loss).
+    if (size > this.maxSize) return;
+
     // If exists, remove old
     if (this.cache.has(key)) {
       this.currentSize -= this.getSize(this.cache.get(key)!);
       this.cache.delete(key);
     }
-
-    const size = this.getSize(value);
 
     // Evict LRU until space available
     while (this.currentSize + size > this.maxSize && this.cache.size > 0) {
@@ -117,7 +124,7 @@ export class LRUCache<V> {
 
   delete(key: string): boolean {
     const value = this.cache.get(key);
-    if (value) {
+    if (value !== undefined) {
       this.currentSize -= this.getSize(value);
       return this.cache.delete(key);
     }

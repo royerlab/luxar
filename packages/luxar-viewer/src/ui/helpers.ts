@@ -19,6 +19,9 @@ import { config } from '../config';
 // UI Configuration constants
 const UI_CONFIG = config.ui;
 
+/** Module-level reference to the active help overlay click handler, for cleanup */
+let activeHelpClickHandler: ((event: MouseEvent) => void) | null = null;
+
 /**
  * Create and show animated loading indicator.
  *
@@ -91,7 +94,7 @@ export function hideLoadingIndicator() {
  * - Keyboard shortcuts reminder
  * - Auto-dismiss after timeout
  *
- * The dialog is dismissible by clicking, pressing Escape/Enter/Space,
+ * The dialog is dismissible by clicking, pressing Escape (closes all panels),
  * or automatically after configured timeout (default 30 seconds).
  *
  * Replaces any existing error message to avoid cluttering the UI.
@@ -206,14 +209,6 @@ export function showError(message: string) {
     errorDiv.remove();
   });
 
-  // Add keyboard navigation support
-  errorDiv.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ' || event.key === 'Escape') {
-      event.preventDefault();
-      errorDiv.remove();
-    }
-  });
-
   // Auto-dismiss after configured timeout
   setTimeout(() => {
     if (errorDiv.parentNode) {
@@ -263,11 +258,8 @@ export function cleanupUI() {
     errorDiv.remove();
   }
 
-  // Remove any lingering help overlays
-  const helpDiv = document.getElementById('help-overlay');
-  if (helpDiv) {
-    helpDiv.remove();
-  }
+  // Remove any lingering help overlays (use hideHelpOverlay to clean up click listener)
+  hideHelpOverlay();
 }
 
 /**
@@ -356,6 +348,9 @@ export function showHelpOverlay() {
         '1-9: Select dimension to control',
         '[ / ]: Navigate selected dimension',
         'N: Dimension sliders panel',
+        'K: Play/pause dimension animation',
+        'Home / End: Jump to dimension start/end',
+        '⇧ + ↑/↓: Animation speed up/down',
       ],
     },
     {
@@ -468,6 +463,7 @@ export function showHelpOverlay() {
     if (help) {
       // Remove global click listener first
       document.removeEventListener('click', handleDocumentClick);
+      activeHelpClickHandler = null;
       // Then remove the panel
       help.remove();
     }
@@ -481,20 +477,10 @@ export function showHelpOverlay() {
     }
   };
 
+  activeHelpClickHandler = handleDocumentClick;
+
   // Wire up close button to use the proper cleanup function
   closeBtn.onclick = () => closeHelp();
-
-  // Add click handler within help panel - but NOT to close
-  // (clicking inside should not close, only clicking outside should)
-  // So we remove the helpDiv.addEventListener('click', closeHelp) line
-
-  // Add keyboard navigation support
-  helpDiv.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ' || event.key === 'Escape') {
-      event.preventDefault();
-      closeHelp();
-    }
-  });
 
   document.body.appendChild(helpDiv);
 
@@ -522,6 +508,10 @@ export function showHelpOverlay() {
 export function hideHelpOverlay() {
   const helpDiv = document.getElementById('help-overlay');
   if (helpDiv) {
+    if (activeHelpClickHandler) {
+      document.removeEventListener('click', activeHelpClickHandler);
+      activeHelpClickHandler = null;
+    }
     helpDiv.remove();
   }
 }
@@ -537,4 +527,43 @@ export function clearError() {
   if (errorDiv) {
     errorDiv.remove();
   }
+}
+
+/**
+ * Show a brief toast notification that auto-dismisses.
+ *
+ * @param message - Text to display
+ * @param durationMs - How long to show (default 2000ms)
+ */
+export function showToast(message: string, durationMs: number = 2000): void {
+  // Remove existing toast if any
+  const existing = document.getElementById('luxar-toast');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.id = 'luxar-toast';
+  toast.textContent = message;
+  Object.assign(toast.style, {
+    position: 'fixed',
+    bottom: '20px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '10px 20px',
+    borderRadius: '8px',
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    color: '#fff',
+    fontSize: '14px',
+    fontFamily: 'system-ui, sans-serif',
+    zIndex: '99999',
+    pointerEvents: 'none',
+    transition: 'opacity 0.3s ease',
+    opacity: '1',
+  });
+
+  document.body.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 300);
+  }, durationMs);
 }

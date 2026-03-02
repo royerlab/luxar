@@ -1,1804 +1,586 @@
 # Seed Generation for Gaussian Splatting
 
-**Version**: 1.3.0
-**Last Updated**: 2026-01-11
+**Version**: 2.0.0
+**Last Updated**: 2026-02-28
 
 ## Overview
 
-This subpackage provides two complementary methods for generating seed Gaussian splat locations from n-dimensional images. Seeds serve as initial positions for Gaussian splat fitting, determining where splats should be placed to approximate image features.
+This subpackage provides seed Gaussian splat generation from n-dimensional images. Seeds serve as initial positions and shapes for Gaussian splat fitting, determining where splats should be placed to approximate image features. All seeding methods return `GSplatData` with scale-informed Gaussian shapes.
 
-**Primary Use Cases:**
-1. **Gaussian Splat Initialization**: Seeding the fitting process with high-quality seed positions
-2. **Multi-Scale Feature Detection**: Identifying important features across spatial scales
-3. **Sparse Representation**: Finding optimal locations for efficient image approximation
+**Architecture: 4-Method Design**
 
-**Two Complementary Approaches:**
-1. **Multiscale Gaussian Method**: Comprehensive multiscale Gaussian-blurred peak detection with optional CLAHE preprocessing
-2. **Decomposition Method**: Hierarchical scale-based detection via optimized image decomposition
+1. **`generate_seeds()`** (unified entry point): Dispatches to one or more methods, combines results with deduplication
+2. **`seed_from_edges()`**: Edge-based seeding via nD Sobel gradients with Poisson disk sampling
+3. **`seed_from_grid()`**: Uniform grid seeding for spatial coverage
+4. **`seed_from_decomposition()`**: Multi-scale decomposition peak detection for blob-like features
 
 **Shared Utilities:**
-- Peak detection with L∞ neighborhoods
-- Spatial deduplication with farthest-first selection
+- L-infinity neighborhood peak detection
+- Greedy spatial deduplication with KD-tree acceleration
+- Isotropic sigma to Cholesky factor conversion
 - Seed combination and merging
 
-## Architectural Overview
+**GPU Acceleration:**
+- All methods accept `device` parameter for PyTorch GPU acceleration
+- 10-50x speedup for large volumes (>100^3) on CUDA/MPS devices
 
-### Package Structure
+## Package Structure
 
 ```
 seeds/
 ├── __init__.py                    # Public API exports
 ├── generate.py                    # Unified entry point (generate_seeds)
-├── multiscale_gaussian.py         # Multiscale Gaussian seed generation
-├── multiscale_decomposition.py    # Decomposition-based seed generation
-├── moment_seeding.py              # Moment-based seeding with full covariance
-├── utils.py                       # Shared utilities (peak detection, deduplication)
+├── edges.py                       # Edge-based seeding (seed_from_edges)
+├── grid.py                        # Grid seeding (seed_from_grid)
+├── multiscale_decomposition.py    # Decomposition-based seeding (seed_from_decomposition)
+├── gpu_ops.py                     # GPU-accelerated operations (PyTorch)
+├── utils.py                       # Shared utilities (peak detection, deduplication, Cholesky)
+├── tests/                         # Unit tests
 ├── README.md                      # User-facing documentation
 └── SPECIFICATIONS.md              # This file (technical specification)
 ```
 
-### Design Philosophy
+## Public API Exports
 
-**Two Complementary Philosophies:**
-
-1. **Multiscale Gaussian (Overcomplete)**: Cast a wide net by detecting features at multiple scales using Gaussian filtering. Generates many candidates with some redundancy, letting downstream fitting select the best subset.
-
-2. **Decomposition (Hierarchical)**: Use optimized scale decomposition to explicitly separate features by scale, then select candidates from each scale layer. Generates fewer, more principled candidates with natural coarse-to-fine ordering.
-
-**Integration Philosophy:**
-- Both methods use shared utilities for consistency
-- Both produce identical output format: `GSplatData` with scale-informed shapes
-- Both integrate seamlessly with `fit_gaussian_splats()`
-- Methods can be combined for comprehensive coverage via `generate_seeds(method="all")`
-
-## Method 1: Multiscale Gaussian Seed Generation
-
-### Mathematical Foundation
-
-#### Scale-Space Theory
-
-The multiscale Gaussian approach is based on **scale-space theory**: convolving an image with Gaussian kernels at different scales creates a scale-space representation where features at different sizes become apparent at corresponding scales.
-
-**Gaussian Scale-Space:**
-```
-L(x, σ) = G(x, σ) * I(x)
-```
-
-where:
-- `I(x)`: Input image
-- `G(x, σ)`: Gaussian kernel with standard deviation σ
-- `L(x, σ)`: Scale-space representation at scale σ
-- `*`: Convolution operator
-
-**Blob Detection:**
-Peaks (local maxima) in `L(x, σ)` correspond to blob-like structures of size ~σ in the original image.
-
-#### CLAHE Preprocessing (Optional)
-
-CLAHE (Contrast Limited Adaptive Histogram Equalization) enhances local contrast, making features in dim regions as detectable as features in bright regions.
-
-**Purpose:**
-- Balanced detection across heterogeneous data
-- Reveal dim structures that would be missed by global thresholding
-- Prevent bright regions from dominating candidate selection
-
-**Integration:**
-When `apply_clahe=True`, all processing uses the CLAHE-enhanced image for consistency between detection and refinement.
-
-### Algorithm: `seed_from_gaussian()`
-
-#### High-Level Algorithm
-
-```
-Input:
-  - V: n-dimensional image/volume
-  - scales: sequence of Gaussian scales (in voxels)
-  - peaks_per_scale: max peaks per scale (optional)
-  - percentile_thresh: intensity percentile threshold (0-100)
-  - min_distance: minimum distance between candidates
-  - apply_clahe: enable CLAHE preprocessing
-  - clahe_*: CLAHE parameters
-
-Steps:
-1. Optional CLAHE preprocessing
-   - Convert to torch tensor
-   - Apply CLAHE with specified parameters
-   - Convert back to numpy for processing
-   - All subsequent operations use CLAHE-enhanced image
-
-2. Multiscale Gaussian-blurred peak detection
-   - For each scale σ in scales (coarsest to finest):
-     a. Apply Gaussian filter: img = gaussian_filter(V_work, σ)
-     b. Compute threshold: thr = percentile(img, percentile_thresh)
-     c. Set neighborhood radius: radius = max(1, round(1.5 × σ))
-     d. Find local maxima: peaks = local_maxima(img, radius, thr, peaks_per_scale)
-     e. Collect peak coordinates
-   
-3. Combine all candidates from all detection methods
-   - Stack coordinate arrays vertically
-   - Filter out empty arrays
-
-4. Spatial deduplication
-   - Remove candidates closer than min_distance
-   - Use farthest-first selection for maximum spatial diversity
-
-5. Sub-voxel refinement
-   - For each candidate position:
-     a. Extract 3×3×...×3 neighborhood (clamped at borders)
-     b. Compute intensity-weighted centroid
-     c. Use relative weights: w = patch - patch.min()
-     d. Calculate: mu = Σ(w × coords) / Σ(w)
-   - Return refined float coordinates
-
-6. Build GSplatData with scale-informed shapes
-   - Convert scales to Cholesky factors: L = diag(scale, scale, ..., scale)
-   - Get amplitudes from original image at refined positions (scaled to 90%)
-   - Set sharpness to 2.0 (standard Gaussian)
-   - **Note**: Amplitudes are on original image scale; preprocessing will rescale
-     them to [0, 1] to match the normalized optimization target
-
-Output:
-  - GSplatData containing:
-    - centers: (N, ndim) float coordinates
-    - amplitudes: (N,) peak intensities
-    - cholesky_factors: (N, ndim*(ndim+1)//2) scale-informed shapes
-    - sharpnesses: (N,) all set to 2.0
-```
-
-#### Detailed Algorithm Steps
-
-**Step 1: CLAHE Preprocessing (Optional)**
+From `__init__.py`:
 
 ```python
-if apply_clahe:
-    import torch
-    from luxar.gsplats.clahe import apply_clahe as apply_clahe_torch
-    
-    # Convert to torch
-    V_torch = torch.tensor(V, dtype=torch.float32)
-    
-    # Apply CLAHE
-    V_clahe_torch = apply_clahe_torch(
-        V_torch,
-        tile_size=clahe_tile_size,
-        clip_limit=clahe_clip_limit,
-        nbins=clahe_nbins,
-    )
-    
-    # Convert back to numpy
-    V_work = V_clahe_torch.cpu().numpy()
-else:
-    V_work = V
+# Primary public API
+generate_seeds          # Unified entry point (recommended)
+
+# Individual seeding methods
+seed_from_decomposition
+seed_from_grid
+seed_from_edges
+
+# Utility functions (for advanced usage)
+sigmas_to_cholesky_isotropic
+local_maxima
+dedupe_farthest_first
+combine_seeds
 ```
 
-**Step 2: Multiscale Gaussian Peak Detection**
+---
 
-Process scales from coarsest to finest (reversed order) for farthest-first priority:
+## 1. Unified Entry Point: `generate_seeds()`
 
-```python
-# Pre-compute base image threshold (cache for efficiency)
-V_percentile_thresh = np.percentile(V_work, percentile_thresh)
+**Module**: `generate.py`
 
-for s in reversed(scales):  # Coarsest to finest
-    # Apply Gaussian smoothing
-    img = ndi.gaussian_filter(V_work, sigma=s, mode='nearest')
-    
-    # Adaptive threshold selection
-    if s <= min(scales) * 2.0:  # Fine scales: use base threshold
-        thr = V_percentile_thresh
-    else:  # Coarse scales: compute specific threshold
-        thr = np.percentile(img, percentile_thresh)
-    
-    # Neighborhood radius scales with filter size
-    # Factor 1.5 ensures peaks are well-separated relative to blob size
-    radius = int(max(1, round(1.5 * s)))
-    
-    # Find local maxima
-    coords = local_maxima(img, radius=radius, thresh=thr, top_k=peaks_per_scale)
-    all_coords.append(coords)
-```
-
-**Rationale for Coarse-to-Fine Processing:**
-- Farthest-first deduplication processes candidates in order
-- Coarse-scale features detected first get priority
-- Ensures large structures are represented before fine details
-- Matches hierarchical decomposition philosophy
-
-**Step 3: Spatial Deduplication**
+### Signature
 
 ```python
-# Combine all coordinate arrays
-coords = np.vstack([c for c in all_coords if c.size > 0])
-
-# Deduplicate with farthest-first selection
-coords = dedupe_farthest_first(coords, min_distance=min_distance)
-```
-
-**Step 4: Sub-Voxel Refinement**
-
-Refine integer peak positions to sub-voxel precision:
-
-```python
-centers = []
-for c in coords:
-    # Extract 3×3×...×3 neighborhood (clamped at image borders)
-    slices = []
-    for ax in range(d):
-        lo = max(0, int(c[ax] - 1))
-        hi = min(V_work.shape[ax], int(c[ax] + 2))
-        slices.append(slice(lo, hi))
-    
-    # Extract intensity patch
-    patch = V_work[tuple(slices)]
-    
-    # Create coordinate grids
-    grids = np.meshgrid(*[np.arange(s.start, s.stop) for s in slices], indexing='ij')
-    
-    # Compute intensity-weighted centroid
-    w = patch - patch.min()  # Relative intensities (non-negative)
-    W = w.sum() + 1e-12      # Avoid division by zero
-    
-    # Weighted average across all axes
-    mu = np.array([float((w * grids[ax]).sum() / W) for ax in range(d)], dtype=float)
-    centers.append(mu)
-
-centers = np.array(centers, float)
-```
-
-**Rationale:**
-- Intensity weighting improves localization accuracy
-- Uses same image (V_work) for consistency with detection
-- Relative weighting (patch - patch.min()) handles varying backgrounds
-- Sub-voxel precision improves downstream fitting
-
-### API Specification
-
-```python
-def seed_from_gaussian(
+def generate_seeds(
     V: np.ndarray,
-    scales: Sequence[float] = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0),
-    peaks_per_scale: Optional[int] = None,
-    percentile_thresh: float = 75.0,
+    method: str = "auto",
+    **kwargs,
+) -> GSplatData:
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `V` | `np.ndarray` | (required) | Input n-dimensional image/volume |
+| `method` | `str` | `"auto"` | Seeding method(s) to use |
+
+**Method options:**
+- `"auto"`: Fast edges + grid combination (default, recommended)
+- `"edges"`: Edge-based boundary detection with Sobel gradients
+- `"grid"`: Uniform grid for spatial coverage
+- `"decomposition"`: Multi-scale decomposition for blob-like features (slow)
+- Comma-separated: e.g. `"decomposition,edges,grid"` to include all
+
+**Common kwargs (apply to multiple methods):**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `min_distance` | `float` | `2.0` | Minimum Euclidean distance between seeds (voxels) |
+| `target_seeds` | `int` or `None` | `None` | Target seed count for "auto" mode |
+| `device` | `str` or `None` | `None` | PyTorch device (`None`, `'cpu'`, `'cuda'`, `'mps'`, `'auto'`) |
+
+**Decomposition kwargs** (method="decomposition"):
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `scales` | `list[int]` | `[1,2,4,8,16,32,64]` | Scale factors for decomposition |
+| `ignore_finest_k` | `int` | `1` | Number of finest scales to ignore |
+| `threshold_rel` | `float` | `0.1` | Relative threshold for peak detection (0.0-1.0) |
+| `peaks_per_scale` | `int` or `None` | `None` | Maximum peaks per scale |
+| `decompose_kwargs` | `dict` or `None` | `None` | Additional kwargs for `decompose_image()` |
+| `verbose` | `bool` | `False` | Print progress |
+
+**Grid kwargs** (method="grid"):
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `spacing` | `float` or `Sequence[float]` or `None` | `None` | Grid spacing (None = aspect-ratio-aware auto) |
+| `jitter` | `float` | `0.0` | Jitter fraction (0.0-0.5) |
+| `sigma` | `float` or `None` | `None` | Gaussian sigma (None = spacing/2) |
+| `exclude_below` | `float` or `None` | `None` | Absolute intensity threshold |
+| `exclude_below_percentile` | `float` or `None` | `None` | Percentile intensity threshold (0-100) |
+
+**Edge kwargs** (method="edges"):
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `n_seeds` | `int` or `None` | `None` | Target number of edge seeds |
+| `edge_threshold_rel` | `float` | `0.1` | Relative edge threshold (0.0-1.0) |
+
+### Returns
+
+`GSplatData` with:
+- `centers`: Peak/centroid positions (N, ndim)
+- `amplitudes`: Peak intensities (N,), scaled by `SEED_AMPLITUDE_SCALE` (0.9)
+- `cholesky_factors`: Scale-informed packed Cholesky factors (N, tril_size)
+- `sharpnesses`: All set to 2.0 (standard Gaussian)
+
+### Algorithm: Auto Mode
+
+When `method="auto"`, `generate_seeds()` uses `_auto_combine()`:
+
+1. **Budget allocation**: 60% edges, 40% grid (decomposition excluded for speed)
+2. **Target estimation**: If `target_seeds` is None, heuristic based on volume size:
+   - `target = max(100, int(total_voxels^(1/ndim) / 2))`, capped at 10,000
+3. **Phase 1 - Edge seeds**: Calls `seed_from_edges(V, n_seeds=budget_edges, ...)`
+4. **Phase 2 - Grid seeds**: Auto-computes spacing from budget, calls `seed_from_grid(V, spacing=..., ...)`
+5. **Deduplication**: Combines results via `_combine_gsplatdata()` with `dedupe_farthest_first()`
+
+### Algorithm: Multi-Method Combination
+
+When comma-separated methods are specified (e.g. `"decomposition,grid"`):
+
+1. **Parameter routing**: Each kwarg is routed to applicable methods based on parameter sets
+2. **Sequential generation**: Each method runs independently
+3. **Combination**: Results concatenated and deduplicated via `_combine_gsplatdata()`
+
+### Internal Functions
+
+**`_empty_gsplatdata(ndim: int) -> GSplatData`**
+- Creates empty GSplatData with correct array shapes
+
+**`_auto_combine(V, target_seeds, min_distance, ...) -> GSplatData`**
+- Implements the auto mode budget allocation strategy
+
+**`_combine_gsplatdata(results, min_distance, device, ndim) -> GSplatData`**
+- Concatenates arrays from multiple GSplatData objects
+- Deduplicates using `dedupe_farthest_first()` sorted by amplitude (highest priority)
+- Returns deduplicated GSplatData with O(1) index-based attribute lookup
+
+---
+
+## 2. Edge-Based Seeding: `seed_from_edges()`
+
+**Module**: `edges.py`
+
+### Signature
+
+```python
+def seed_from_edges(
+    V: np.ndarray,
+    n_seeds: Optional[int] = None,
     min_distance: float = 2.0,
-    apply_clahe: bool = True,
-    clahe_tile_size: int = 32,
-    clahe_clip_limit: float = 16.0,
-    clahe_nbins: int = 256,
-) -> GSplatData
+    edge_threshold_rel: float = 0.1,
+    device: Optional[str] = None,
+) -> GSplatData:
 ```
 
-**Parameters:**
+### Parameters
 
-- `V` (np.ndarray): Input n-dimensional image/volume
-- `scales` (Sequence[float]): Standard deviations for Gaussian filtering (in voxels)
-  - Default: `(1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0)`
-  - Should cover range of expected feature sizes
-- `peaks_per_scale` (Optional[int]): Maximum peaks to detect at each scale
-  - Default: `None` (unlimited)
-  - Limits computational cost and memory usage
-- `percentile_thresh` (float): Intensity percentile threshold (0-100)
-  - Default: `75.0` (75th percentile)
-  - Higher values → fewer, stronger candidates
-  - Lower values → more, weaker candidates
-- `min_distance` (float): Minimum Euclidean distance between candidates (in voxels)
-  - Default: `2.0`
-  - Used for spatial deduplication
-- `apply_clahe` (bool): Enable CLAHE preprocessing
-  - Default: `True`
-  - Recommended for heterogeneous data
-- `clahe_tile_size` (int): Tile size for CLAHE (in voxels)
-  - Default: `32`
-  - Smaller tiles → more local enhancement
-- `clahe_clip_limit` (float): Contrast limiting factor for CLAHE
-  - Default: `16.0`
-  - Range: `1.0` (no enhancement) to `40.0` (aggressive)
-  - Typical: `2.0-16.0`
-- `clahe_nbins` (int): Number of histogram bins for CLAHE
-  - Default: `256`
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `V` | `np.ndarray` | (required) | Input n-dimensional image/volume |
+| `n_seeds` | `int` or `None` | `None` | Target number of seeds (None = auto-estimate) |
+| `min_distance` | `float` | `2.0` | Minimum distance between seeds (voxels) |
+| `edge_threshold_rel` | `float` | `0.1` | Relative edge threshold (0.0-1.0), fraction of max edge response |
+| `device` | `str` or `None` | `None` | PyTorch device for GPU acceleration |
 
-**Returns:**
-- `GSplatData`: Gaussian splat seeds containing:
-  - `centers`: Peak coordinates of shape `(N, ndim)` with float values
-  - `amplitudes`: Peak intensities of shape `(N,)`
-  - `cholesky_factors`: Isotropic Cholesky factors of shape `(N, ndim*(ndim+1)//2)` where sigma = scale
-  - `sharpnesses`: All set to 2.0 (standard Gaussian) of shape `(N,)`
+### Algorithm
 
-**Raises:**
-- `ValueError`: If input array is empty or 0-dimensional
-- `ValueError`: If scales is empty or contains non-positive values
-- `ValueError`: If peaks_per_scale is non-positive
-- `ValueError`: If percentile_thresh is not in [0, 100]
-- `ValueError`: If min_distance is non-positive
+1. **Sobel gradient magnitude**: Compute nD Sobel gradients via `_compute_nd_sobel_magnitude()`.
+   - CPU path: `scipy.ndimage.sobel()` applied along each axis, summed as RSS
+   - GPU path: Separable convolution with differentiation kernel `[-1, 0, 1]` and smoothing kernel `[1, 2, 1]`
+2. **Normalize**: Scale edge response to [0, 1]
+3. **Threshold**: Apply `edge_threshold_rel` mask
+4. **Poisson disk sampling**: `_poisson_disk_sample_weighted()` selects `n_seeds` points weighted by edge response, enforcing `min_distance` via KD-tree
+5. **Isotropic initialization**: All seeds get sigma=1.0 via `sigmas_to_cholesky_isotropic()`
+6. **Amplitude sampling**: Interpolate from V at seed positions via `_sample_amplitudes()`, scaled by `SEED_AMPLITUDE_SCALE` (0.9)
+7. **Sharpness**: All set to 2.0 (standard Gaussian)
 
-### Performance Characteristics
+### Auto-estimation of n_seeds
 
-**Time Complexity:**
-- CLAHE preprocessing: O(n_voxels × nbins × ndim)
-- Gaussian filtering per scale: O(n_voxels × kernel_size^ndim)
-- Peak detection per scale: O(n_voxels)
-- Deduplication: O(N × M × log M) where M = number of selected candidates
-- Sub-voxel refinement: O(N × 3^ndim)
-- **Total**: O(n_scales × n_voxels) + O(N × M × log M)
-
-**Space Complexity:**
-- Working images: O(n_voxels) per scale
-- Candidate storage: O(N × ndim)
-- **Peak usage**: ~2-3× input image size
-
-**Typical Performance (3D volume, 512³, 7 scales):**
-- CLAHE preprocessing: ~1-2 seconds
-- Gaussian filtering: ~5-10 seconds
-- Peak detection: <1 second
-- Deduplication (1000 candidates): ~0.1 seconds
-- **Total**: ~10-15 seconds
-
-### Edge Cases and Robustness
-
-1. **Empty input**: Raises ValueError
-2. **Uniform image**: Returns empty array (no peaks above threshold)
-3. **Single voxel**: Returns that voxel if above threshold
-4. **Anisotropic voxels**: Currently treats voxels as isotropic (spacing parameter reserved for future)
-5. **No peaks found**: Returns empty array with shape `(0, ndim)`
-6. **Border handling**: Sub-voxel refinement clamps neighborhoods at image borders
-
-## Method 2: Decomposition-Based Seed Generation
-
-### Mathematical Foundation
-
-#### Multi-Scale Image Decomposition
-
-The decomposition method builds on the multi-scale decomposition framework:
-
+When `n_seeds` is None:
 ```
-V = Σₖ upsample(Vₖ)
+n_seeds = max(50, int(total_voxels^(1/ndim) / 4))
+n_seeds = min(n_seeds, 5000)
 ```
 
-where:
-- `Vₖ`: Image at scale k with shape `(s₀/rₖ, s₁/rₖ, ..., sₙ₋₁/rₖ)`
-- `rₖ`: Scale factor (e.g., 1, 2, 4, 8, 16, 32)
-- `upsample()`: Interpolation function (nearest, linear, cubic)
-
-**Key Properties:**
-1. **Energy Separation**: Optimization explicitly distributes energy across scales
-2. **Non-Overlapping**: Each scale captures distinct frequency bands
-3. **Hierarchical**: Natural coarse-to-fine ordering
-4. **Sparse**: Energy concentrated at important features per scale
-
-For detailed mathematical formulation, see [multiscale/SPECIFICATIONS.md](../multiscale/SPECIFICATIONS.md).
-
-#### Noise Suppression via Scale Filtering
-
-**Problem**: Finest scales (especially scale=1, full resolution) capture high-frequency noise along with genuine detail.
-
-**Solution**: Ignore the finest k scales for candidate generation.
-
-**Rationale:**
-1. **Noise suppression**: Finest scales dominated by noise, not signal
-2. **Overfitting prevention**: Too many fine candidates lead to overfitting
-3. **Computational efficiency**: Fewer candidates → faster convergence
-4. **Coarse-to-fine bias**: Start with global structure, add detail via dynamic seeding
-
-**Default**: `ignore_finest_k=1` (skip full-resolution scale only)
-
-### Algorithm: `seed_from_decomposition()`
-
-#### High-Level Algorithm
-
-```
-Input:
-  - V: n-dimensional image/volume
-  - scales: scale factors for decomposition [1, 2, 4, 8, ...]
-  - ignore_finest_k: number of finest scales to ignore
-  - peaks_per_scale: max peaks per scale (optional)
-  - min_distance: minimum distance between candidates
-  - threshold_rel: relative intensity threshold (0.0-1.0)
-  - decompose_kwargs: additional args for decompose_image()
-  - verbose: print progress information
-
-Steps:
-1. Input validation
-   - Check array dimensions and values
-   - Validate scale parameters
-   - Validate ignore_finest_k (adjust if too large)
-
-2. Multi-scale decomposition
-   - Call decompose_image(V, scales, **decompose_kwargs)
-   - Returns: scale_images (list of arrays), stats (dict)
-   - Typical: 500 iterations, 6 scales → 10-60 seconds
-
-3. Peak detection per scale (excluding finest k)
-   - Determine scales to process: range(ignore_finest_k, len(scales))
-   - Process from coarse to fine (reversed order)
-   - For each scale:
-     a. Get scale image and scale factor
-     b. Compute threshold: thresh = threshold_rel × max(scale_img)
-     c. Find local maxima with radius=1 (3×3×...×3 neighborhood)
-     d. Map peak coordinates to full resolution:
-        peak_full_res = peak_scale × scale_factor + scale_factor/2
-     e. Record energies: energies = scale_img[peak_positions]
-
-4. Combine candidates from all scales
-   - Stack all coordinate arrays
-   - Stack all energy arrays
-
-5. Spatial deduplication
-   - Use dedupe_farthest_first with energy priority
-   - Remove candidates closer than min_distance
-   - Keep higher-energy peaks
-
-6. Build GSplatData with scale-informed shapes
-   - Convert scale_factors to Cholesky factors: L = diag(scale_factor, ..., scale_factor)
-   - Get amplitudes from original image at seed positions (scaled to 90%)
-   - Set sharpness to 2.0 (standard Gaussian)
-   - **Note**: Amplitudes are on original image scale; preprocessing will rescale
-     them to [0, 1] to match the normalized optimization target
-
-Output:
-  - GSplatData containing:
-    - centers: (N, ndim) float coordinates in full resolution
-    - amplitudes: (N,) intensities from original image
-    - cholesky_factors: (N, ndim*(ndim+1)//2) scale-informed shapes
-    - sharpnesses: (N,) all set to 2.0
-```
-
-#### Detailed Algorithm Steps
-
-**Step 1: Input Validation**
+### Poisson Disk Sampling: `_poisson_disk_sample_weighted()`
 
 ```python
-# Convert to float array
-V = np.asarray(V, dtype=float)
-if V.size == 0:
-    raise ValueError("Input array V cannot be empty")
-if V.ndim == 0:
-    raise ValueError("Input array V must have at least 1 dimension")
-
-ndim = V.ndim
-
-# Validate scales
-if not scales or len(scales) == 0:
-    raise ValueError("scales must be a non-empty list")
-if any(s <= 0 for s in scales):
-    raise ValueError("All scale values must be positive")
-
-# Validate and adjust ignore_finest_k
-if ignore_finest_k < 0:
-    raise ValueError("ignore_finest_k must be non-negative")
-if ignore_finest_k >= len(scales):
-    warnings.warn(
-        f"ignore_finest_k={ignore_finest_k} >= len(scales)={len(scales)}. "
-        f"Using ignore_finest_k={len(scales) - 1} instead."
-    )
-    ignore_finest_k = len(scales) - 1
+def _poisson_disk_sample_weighted(
+    density: np.ndarray,   # Sampling density
+    mask: np.ndarray,      # Valid locations
+    n_samples: int,        # Target count
+    min_distance: float,   # Minimum spacing
+) -> np.ndarray:
 ```
 
-**Step 2: Multi-Scale Decomposition**
+Algorithm:
+1. Extract valid coordinates and density values from mask
+2. Normalize density to probability distribution
+3. Oversample: draw `min(len(valid), n_samples * 10)` candidates weighted by density
+4. Greedy selection with KD-tree distance checks:
+   - For each candidate, query KD-tree for nearest selected seed
+   - Accept if distance >= `min_distance`
+   - Rebuild KD-tree periodically for efficiency
+   - For last 3 slots, use simple distance check (avoids tree rebuild overhead)
+5. Uses fixed random seed (42) for reproducibility
+
+**Complexity**: O(N_candidates * log(M_selected)) with KD-tree queries
+
+### Internal Functions
+
+**`_compute_nd_sobel_magnitude(V, device) -> np.ndarray`**
+- nD Sobel gradient magnitude computation
+- Dispatches to GPU when device is not None/cpu and volume is large enough
+
+**`_sample_amplitudes(V, coords, device) -> np.ndarray`**
+- Interpolates amplitude values from V at given coordinates
+- CPU: `scipy.ndimage.map_coordinates` with order=1, mode='nearest'
+- GPU: `torch.nn.functional.grid_sample` (2D/3D only, falls back to CPU for other dims)
+
+---
+
+## 3. Grid Seeding: `seed_from_grid()`
+
+**Module**: `grid.py`
+
+### Signature
 
 ```python
-# Lazy import to avoid circular dependency
-from luxar.gsplats.multiscale.decompose import decompose_image
-
-# Prepare kwargs
-decompose_kwargs = decompose_kwargs or {}
-if "verbose" not in decompose_kwargs:
-    decompose_kwargs["verbose"] = verbose
-
-# Decompose image
-scale_images, stats = decompose_image(V, scales=scales, **decompose_kwargs)
-
-# scale_images[i] corresponds to scales[i]
-# scale_images[0] is finest resolution (scale factor = scales[0], typically 1)
-# scale_images[-1] is coarsest resolution
+def seed_from_grid(
+    V: np.ndarray,
+    spacing: Optional[Union[float, Sequence[float]]] = None,
+    jitter: float = 0.0,
+    sigma: Optional[float] = None,
+    exclude_below: Optional[float] = None,
+    exclude_below_percentile: Optional[float] = None,
+    device: Optional[str] = None,
+) -> GSplatData:
 ```
 
-**Step 3: Peak Detection Per Scale**
+### Parameters
 
-```python
-all_candidates = []
-all_energies = []
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `V` | `np.ndarray` | (required) | Input n-dimensional image/volume |
+| `spacing` | `float`, `Sequence[float]`, or `None` | `None` | Grid spacing (None = aspect-ratio-aware auto) |
+| `jitter` | `float` | `0.0` | Jitter fraction (0.0-0.5) |
+| `sigma` | `float` or `None` | `None` | Gaussian sigma (None = mean(spacing)/2) |
+| `exclude_below` | `float` or `None` | `None` | Absolute intensity threshold |
+| `exclude_below_percentile` | `float` or `None` | `None` | Percentile threshold (0-100) |
+| `device` | `str` or `None` | `None` | PyTorch device for GPU acceleration |
 
-# Determine which scales to process (skip finest k)
-scales_to_process = list(range(ignore_finest_k, len(scales)))
+`exclude_below` and `exclude_below_percentile` are mutually exclusive.
 
-# Process scales from coarse to fine (reversed order)
-for scale_idx in reversed(scales_to_process):
-    scale_factor = scales[scale_idx]
-    scale_img = scale_images[scale_idx]
-    
-    # Compute threshold for this scale
-    max_intensity = scale_img.max()
-    if max_intensity <= 0:
-        continue  # Skip empty scales
-    
-    threshold = threshold_rel * max_intensity
-    
-    # Find local maxima in scale image
-    # Use radius=1 for finest resolution in scale image (3×3×...×3 neighborhood)
-    radius = 1
-    peaks = local_maxima(scale_img, radius=radius, thresh=threshold, top_k=peaks_per_scale)
-    
-    if len(peaks) == 0:
-        continue  # No peaks in this scale
-    
-    # Map peak coordinates to full resolution
-    # Peak at position (i, j, ...) in scale image corresponds to
-    # position (i×scale_factor + scale_factor/2, ...) in full resolution
-    candidates_full_res = peaks.astype(float) * scale_factor + scale_factor / 2.0
-    
-    # Get energy (intensity) at each peak location
-    energies = scale_img[tuple(peaks.T)]
-    
-    all_candidates.append(candidates_full_res)
-    all_energies.append(energies)
-```
+### Algorithm
 
-**Coordinate Mapping Rationale:**
-- Scale image at scale factor `r` has shape `(H/r, W/r, ...)`
-- A voxel at integer position `(i, j, ...)` in scale image represents region `[i×r, (i+1)×r) × [j×r, (j+1)×r) × ...` in full resolution
-- Center of this region: `(i×r + r/2, j×r + r/2, ...)`
-- Provides sub-voxel precision through geometric mapping
+1. **Compute spacing** (if None):
+   - Aspect-ratio-aware: spacing proportional to each dimension's size
+   - `s_old = max(2.0, min_dim * 0.05)` (old isotropic baseline)
+   - `k = geometric_mean(shape) / s_old`
+   - `spacing[i] = shape[i] / k`, clamped to minimum 2.0
+   - Example: 1000x1000x10 image produces [136, 136, 1.4] spacing (not [29, 29, 29])
+2. **Compute sigma** (if None): `sigma = mean(spacing) / 2`
+3. **Generate grid**: Create meshgrid from `[spacing/2, shape - spacing/2]` per dimension
+4. **Apply jitter**: Random offset in `[-jitter*spacing, +jitter*spacing]` (seed=42), clipped to bounds
+5. **Sample amplitudes**: Via `_sample_amplitudes()` from `edges.py`, scaled by `SEED_AMPLITUDE_SCALE` (0.9)
+6. **Intensity filtering**: Apply `exclude_below` or `exclude_below_percentile` mask
+7. **Cholesky factors**: `sigmas_to_cholesky_isotropic(sigma, ndim)` for all seeds
+8. **Sharpness**: All set to 2.0
 
-**Step 4: Combine Candidates**
+---
 
-```python
-if len(all_candidates) == 0:
-    return np.zeros((0, ndim), dtype=float)
+## 4. Decomposition-Based Seeding: `seed_from_decomposition()`
 
-candidates = np.vstack(all_candidates)
-energies = np.concatenate(all_energies)
-```
+**Module**: `multiscale_decomposition.py`
 
-**Step 5: Spatial Deduplication**
-
-```python
-# Deduplicate spatially close candidates
-# Use farthest-first selection with energy priority
-candidates_dedup = dedupe_farthest_first(
-    candidates, 
-    min_distance=min_distance, 
-    intensities=energies
-)
-
-# Output is already sorted by energy (descending)
-return candidates_dedup
-```
-
-### API Specification
+### Signature
 
 ```python
 def seed_from_decomposition(
     V: np.ndarray,
-    scales: List[int] = [1, 2, 4, 8, 16, 32, 64],
+    scales: Optional[List[int]] = None,
     ignore_finest_k: int = 1,
     peaks_per_scale: Optional[int] = None,
     min_distance: float = 2.0,
     threshold_rel: float = 0.1,
     decompose_kwargs: Optional[Dict[str, Any]] = None,
     verbose: bool = False,
-) -> GSplatData
+    device: Optional[str] = None,
+) -> GSplatData:
 ```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `V` | `np.ndarray` | (required) | Input n-dimensional image/volume |
+| `scales` | `List[int]` or `None` | `[1,2,4,8,16,32,64]` | Scale factors for decomposition |
+| `ignore_finest_k` | `int` | `1` | Finest scales to skip (noise suppression) |
+| `peaks_per_scale` | `int` or `None` | `None` | Max peaks per scale |
+| `min_distance` | `float` | `2.0` | Minimum distance between seeds (voxels) |
+| `threshold_rel` | `float` | `0.1` | Relative threshold for peak detection (0.0-1.0) |
+| `decompose_kwargs` | `dict` or `None` | `None` | Extra kwargs for `decompose_image()` |
+| `verbose` | `bool` | `False` | Print progress |
+| `device` | `str` or `None` | `None` | PyTorch device for GPU acceleration |
+
+### Algorithm
+
+1. **Decompose image**: Call `decompose_image(V, scales=scales, **decompose_kwargs)` to produce scale images
+2. **Process scales** (coarse to fine, skipping finest `ignore_finest_k`):
+   - For each scale: compute threshold as `threshold_rel * max_intensity`
+   - Find local maxima using `local_maxima(scale_img, radius=1, thresh=threshold, top_k=peaks_per_scale)`
+   - Map peak coordinates to full resolution: `position = peak * scale_factor + scale_factor / 2`
+   - Record scale factor and energy (intensity) for each peak
+3. **Combine all seeds**: Concatenate across scales
+4. **Deduplicate**: `_dedupe_with_scales_and_energies()` - energy-based priority, greedy spatial deduplication
+5. **Amplitudes**: Sample from original image V at (rounded) seed positions, scaled by `SEED_AMPLITUDE_SCALE`
+6. **Cholesky factors**: `sigmas_to_cholesky_isotropic(scale_factors, ndim)` - sigma equals detection scale
+7. **Sharpness**: All set to 2.0
+
+### Internal Functions
+
+**`_dedupe_with_scales_and_energies(coords, scales, energies, min_distance)`**
+- Sort by energy (highest first)
+- Greedy O(N^2) deduplication: for each seed, mark all seeds within `min_distance` as rejected
+- Returns (coords, scales, energies) tuple after filtering
+
+---
+
+## 5. GPU Acceleration
+
+**Module**: `gpu_ops.py`
+
+All operations use pure PyTorch (no kornia/faiss dependencies).
+
+### Device Resolution: `_get_device(device)`
+
+| Input | Output | Notes |
+|-------|--------|-------|
+| `None` | `'cpu'` | Backward-compatible default |
+| `'auto'` | Best available | cuda > mps > cpu |
+| `'cpu'` | `'cpu'` | Force CPU |
+| `'cuda'` | `'cuda'` or `'cpu'` | Fallback with warning if unavailable |
+| `'mps'` | `'mps'` or `'cpu'` | Fallback with warning if unavailable |
+| `'cuda:N'` | `'cuda:N'` | Specific GPU device |
+
+### Size Threshold: `should_use_gpu(V, device)`
+
+- Returns `False` for `device='cpu'`
+- Returns `False` for volumes smaller than 50^3 voxels (GPU overhead not worth it)
+- Returns `True` otherwise
+
+### GPU Operations
+
+**`_compute_nd_sobel_magnitude_gpu(V_tensor) -> torch.Tensor`**
+- Separable nD Sobel gradient computation
+- Differentiation kernel: `[-1, 0, 1]` along target axis
+- Smoothing kernel: `[1, 2, 1]` (unnormalized) along all perpendicular axes
+- Matches `scipy.ndimage.sobel` output
+- Works for arbitrary dimensions via `_conv1d_along_axis()`
+
+**`local_maxima_gpu(img, radius, thresh, top_k) -> np.ndarray`**
+- Peak detection via `F.max_pool2d` / `F.max_pool3d`
+- **Supports 2D and 3D only** (raises `NotImplementedError` for other dims)
+- Replicate padding to match scipy 'nearest' mode
+- Returns integer coordinates (N, ndim)
+
+**`soft_blur_nd_gpu(img) -> torch.Tensor`**
+- Separable blur with kernel `[0.25, 0.5, 0.25]`
+- Applied along each axis via `_conv1d_along_axis()`
+- Works for arbitrary dimensions
+
+**`sample_amplitudes_gpu(V, coords, mode) -> torch.Tensor`**
+- Volume interpolation via `F.grid_sample`
+- **Supports 2D and 3D only** (raises `NotImplementedError` for other dims)
+- Coordinate system: reverses axis order (scipy row,col -> grid_sample x,y)
+- Normalization: voxel coords [0, shape-1] mapped to [-1, 1]
+- Padding mode: 'border' (matches scipy 'nearest')
+
+**`_conv1d_along_axis(x, kernel, axis, padding) -> torch.Tensor`**
+- Applies 1D convolution along a specific axis of nD tensor
+- Strategy: permute target axis to last, reshape for conv1d, apply, reshape back
+- Supports 'same' padding via replicate mode
+
+### Memory Estimation
+
+**`estimate_gpu_memory_needed(V, operation) -> int`**
+- Rough memory estimates: Sobel 5x, blur 3x, maxpool 3x, interpolation 2x of input size
+
+**`check_gpu_memory(V, device, operation) -> bool`**
+- Conservative check using 80% of GPU total memory as threshold
+- CUDA only (MPS doesn't expose memory info, assumed OK)
+
+---
+
+## 6. Shared Utilities
+
+**Module**: `utils.py`
+
+### Constants
+
+**`SEED_AMPLITUDE_SCALE = 0.9`**
+- Multiplier for seed amplitude initialization
+- Starting at 90% avoids initial over-prediction when splats overlap
+- Prevents triggering asymmetric over-prediction penalty and divergence
+
+### `sigmas_to_cholesky_isotropic(sigmas, ndim) -> np.ndarray`
+
+Convert per-seed isotropic sigmas to packed Cholesky factors.
 
 **Parameters:**
+- `sigmas`: (N,) array of isotropic sigma values
+- `ndim`: number of spatial dimensions
 
-- `V` (np.ndarray): Input n-dimensional image/volume
-- `scales` (List[int]): Scale factors for decomposition
-  - Default: `[1, 2, 4, 8, 16, 32, 64]`
-  - Scale 1 = full resolution, scale 2 = half resolution, etc.
-  - Should cover range of feature sizes
-- `ignore_finest_k` (int): Number of finest scales to ignore
-  - Default: `1` (ignore full-resolution scale)
-  - `0` = use all scales (no filtering)
-  - `2` = aggressive noise suppression
-- `peaks_per_scale` (Optional[int]): Maximum peaks per scale
-  - Default: `None` (unlimited)
-  - Limits candidates from each scale
-- `min_distance` (float): Minimum Euclidean distance between candidates (in voxels)
-  - Default: `2.0`
-  - Used for spatial deduplication
-- `threshold_rel` (float): Relative threshold for peak detection
-  - Default: `0.1` (peaks must be ≥10% of scale maximum)
-  - Range: `0.0-1.0`
-  - Higher values → fewer, stronger candidates
-- `decompose_kwargs` (Optional[Dict[str, Any]]): Additional arguments for `decompose_image()`
-  - Common options:
-    - `n_iters` (int): Optimization iterations (default 500)
-    - `energy_weight` (float): Hierarchical energy penalty (default 0.01)
-    - `loss_type` (str): "l1" (default), "mse", or "poisson"
-    - `lr` (float): Learning rate (default 0.01)
-  - See [multiscale/SPECIFICATIONS.md](../multiscale/SPECIFICATIONS.md) for full details
-- `verbose` (bool): Print progress information
-  - Default: `False`
+**Returns:** (N, ndim*(ndim+1)//2) packed lower-triangular Cholesky factors
 
-**Returns:**
-- `GSplatData`: Gaussian splat seeds containing:
-  - `centers`: Coordinates of shape `(N, ndim)` with float values, sorted by energy (descending)
-  - `amplitudes`: Intensities of shape `(N,)` from original image
-  - `cholesky_factors`: Isotropic Cholesky factors of shape `(N, ndim*(ndim+1)//2)` where sigma = scale_factor
-  - `sharpnesses`: All set to 2.0 (standard Gaussian) of shape `(N,)`
+**Packed format:** Column-by-column lower triangular: `[L00, L10, L11, L20, L21, L22, ...]`
 
-**Raises:**
-- `ValueError`: If input array is empty or 0-dimensional
-- `ValueError`: If scales is empty or contains non-positive values
-- `ValueError`: If ignore_finest_k is negative
-- `ValueError`: If peaks_per_scale is non-positive
-- `ValueError`: If min_distance is non-positive
-- `ValueError`: If threshold_rel is not in [0, 1]
-- `UserWarning`: If ignore_finest_k >= len(scales) (auto-adjusted)
+For isotropic: only diagonal positions are non-zero. Diagonal index for dimension k: `k*(k+3)//2`
 
-### Performance Characteristics
+Example (3D, sigma=s): `[s, 0, s, 0, 0, s]` representing `L = diag(s, s, s)`
 
-**Time Complexity:**
-- Decomposition: O(n_iters × n_scales × n_voxels) - dominant cost
-- Peak detection: O(n_scales × n_voxels_per_scale)
-- Deduplication: O(N × M × log M) where M = number of selected candidates
-- **Total**: Dominated by decomposition (95%+ of time)
+### `local_maxima(img, radius, thresh, top_k) -> np.ndarray`
 
-**Space Complexity:**
-- Scale images: O(Σₖ n_voxels / rₖ^ndim) ≈ O(n_voxels × (1 + 1/2^d + 1/4^d + ...))
-- For d=3: ≈ 1.14× input size
-- Candidate storage: O(N × ndim)
-- **Peak usage**: ~2× input image size
-
-**Typical Performance (3D volume, 512³, 7 scales):**
-- Decomposition (500 iterations): ~30-60 seconds
-- Peak detection: <1 second
-- Deduplication (500 candidates): ~0.05 seconds
-- **Total**: ~30-60 seconds
-
-### Edge Cases and Robustness
-
-1. **Empty input**: Raises ValueError
-2. **Uniform image**: May return empty array (depends on decomposition convergence)
-3. **No peaks found**: Returns empty array with shape `(0, ndim)`
-4. **ignore_finest_k too large**: Automatically adjusted to `len(scales) - 1` with warning
-5. **Scale with zero energy**: Skipped automatically
-6. **Decomposition convergence failure**: Still produces candidates, but quality may be reduced (check `stats['converged']`)
-
-## Shared Utilities
-
-### Peak Detection: `local_maxima()`
-
-Identifies local maxima in n-dimensional images using L∞ (Chebyshev) neighborhoods.
-
-#### Mathematical Definition
-
-A point `p` is a local maximum if:
-```
-V(p) = max{V(q) : q ∈ N_∞(p, r)} AND V(p) ≥ threshold
-```
-
-where:
-- `N_∞(p, r)`: L∞ neighborhood (hypercube) of radius r around p
-- `N_∞(p, r) = {q : max_i |q_i - p_i| ≤ r}`
-- Hypercube has side length `2r + 1` in each dimension
-- Total neighborhood size: `(2r + 1)^ndim`
-
-**L∞ vs L₂ (Euclidean) Neighborhood:**
-- L∞: Hypercube (e.g., 3×3×3 for r=1 in 3D)
-- L₂: Hypersphere (e.g., 7 voxels for r=1 in 3D: center + 6 face neighbors)
-- L∞ is more permissive (includes edge and corner neighbors)
-- L∞ is faster to compute (no distance calculations)
-- L∞ matches natural image grid topology
-
-#### Algorithm Implementation
-
-```python
-def local_maxima(
-    img: np.ndarray,
-    radius: int,
-    thresh: float,
-    top_k: Optional[int]
-) -> np.ndarray:
-    """
-    Find local maxima in n-dimensional image.
-    
-    Returns: np.ndarray of shape (N, ndim) with integer coordinates
-    """
-    # Ensure minimum radius
-    if radius < 1:
-        radius = 1
-    
-    # Define kernel size (avoid creating large footprint arrays)
-    kernel_size = [2 * radius + 1] * img.ndim
-    
-    # Apply maximum filter
-    max_f = ndi.maximum_filter(img, size=kernel_size, mode='nearest')
-    
-    # Peak criteria: equals neighborhood maximum AND exceeds threshold
-    peaks_mask = (img == max_f) & (img >= thresh)
-    
-    # Extract coordinates
-    coords = np.argwhere(peaks_mask)
-    
-    if coords.size == 0:
-        return coords
-    
-    # Optionally limit to top_k strongest peaks
-    if top_k is not None and len(coords) > top_k:
-        vals = img[tuple(coords.T)]
-        keep = np.argsort(vals)[-top_k:]  # Indices of top k
-        coords = coords[keep]
-    
-    return coords
-```
-
-#### Implementation Details
-
-**Maximum Filter:**
-- Uses `scipy.ndimage.maximum_filter` with `size` parameter
-- `size=[2r+1, 2r+1, ...]` defines hypercube kernel
-- `mode='nearest'` handles boundaries by replicating border values
-- Time complexity: O(n_voxels × kernel_size^ndim) with optimized sliding window
-
-**Peak Identification:**
-- `img == max_f`: Finds voxels equal to neighborhood maximum
-- Multiple voxels can satisfy this if they have identical maximum value
-- Threshold filter reduces false positives from noise
-
-**Top-k Selection:**
-- Sorts peaks by intensity (descending)
-- Selects strongest k peaks
-- Time complexity: O(N log N) for sorting
-
-**Boundary Handling:**
-- `mode='nearest'` replicates border values
-- Prevents border voxels from becoming spurious peaks due to padding
-- Alternative modes: 'constant', 'reflect', 'wrap' (not used)
-
-#### API Specification
-
-```python
-def local_maxima(
-    img: np.ndarray,
-    radius: int,
-    thresh: float,
-    top_k: Optional[int]
-) -> np.ndarray
-```
+Find local maxima in n-dimensional image using L-infinity (Chebyshev) neighborhood.
 
 **Parameters:**
-- `img` (np.ndarray): Input n-dimensional image
-- `radius` (int): Half-width of L∞ neighborhood (minimum 1)
-- `thresh` (float): Minimum intensity threshold
-- `top_k` (Optional[int]): Maximum number of peaks to return (None = unlimited)
+- `img`: n-dimensional image array
+- `radius`: half-width of hypercube neighborhood (minimum 1)
+- `thresh`: minimum intensity threshold
+- `top_k`: maximum number of strongest peaks (None = all)
 
-**Returns:**
-- `np.ndarray`: Integer coordinates of shape `(N, ndim)`
+**Algorithm:**
+1. Apply `scipy.ndimage.maximum_filter` with `size=[2*radius+1]*ndim`
+2. Peak criteria: `(img == max_filtered) & (img >= thresh)`
+3. Extract coordinates via `np.argwhere`
+4. Optionally select top_k by intensity (argsort, take last k)
 
-### Spatial Deduplication: `dedupe_farthest_first()`
+**Returns:** (N, ndim) integer coordinates
 
-Removes spatially redundant candidates using farthest-first selection with quality priority.
+**Note:** Uses `size` parameter instead of `footprint` for memory efficiency. For 3D radius=5, `size=[11,11,11]` vs. footprint with 11^3=1331 boolean elements.
 
-#### Algorithm: Farthest-First Greedy Selection
+### `soft_blur_nd(img) -> np.ndarray`
 
-The farthest-first algorithm ensures **maximum spatial diversity** while respecting quality priorities:
+Separable blur with tent kernel `[0.25, 0.5, 0.25]` applied via `scipy.ndimage.convolve1d` along each axis. Complexity: O(3*ndim*N) vs O(3^ndim*N) for direct convolution.
 
-```
-Input:
-  - coords: (N, ndim) candidate coordinates
-  - min_distance: minimum distance constraint
-  - intensities: (N,) optional quality values
+### `count_local_maxima(img, radius, threshold_rel, blur) -> int`
 
-Steps:
-1. Sort candidates by intensity (descending) if provided
-   - Ensures high-quality candidates are considered first
+Count local maxima with optional soft blur preprocessing. Returns integer count.
 
-2. Initialize selected set with first (highest quality) candidate
-   - S = {coords[0]}
+### `dedupe_farthest_first(coords, min_distance, intensities, device) -> tuple[np.ndarray, np.ndarray]`
 
-3. Build KD-tree from selected set for efficient queries
-   - tree = KDTree(S)
-
-4. For each remaining candidate in order:
-   a. Query KD-tree for nearest distance to selected set
-      dist = tree.query(candidate, k=1)
-   
-   b. If dist >= min_distance:
-      - Candidate satisfies constraint
-      - Add to candidate pool
-   
-5. Among valid candidates, select FARTHEST one
-   - candidate* = argmax(distances)
-   - Add to selected set: S = S ∪ {candidate*}
-   - Rebuild KD-tree with updated S
-
-6. Repeat until no valid candidates remain
-
-Output:
-  - Selected candidates with maximum spatial diversity
-```
-
-#### Why Farthest-First?
-
-**Comparison with Greedy Sequential:**
-
-**Greedy Sequential (naive):**
-```python
-for candidate in sorted_by_quality:
-    if all(distance(candidate, s) >= min_distance for s in selected):
-        selected.append(candidate)
-```
-- Problem: Can create spatial clusters
-- Early selections can "block" entire regions
-- No guarantee of spatial coverage
-
-**Farthest-First:**
-```python
-while candidates_remain:
-    distances = [min_distance_to_selected(c) for c in candidates]
-    farthest = argmax(distances)
-    if distances[farthest] >= min_distance:
-        selected.append(farthest)
-```
-- Actively maximizes spatial spread
-- Each selection considers global spatial distribution
-- Guaranteed maximum diversity given constraints
-
-**Visual Example (2D):**
-```
-Greedy Sequential:        Farthest-First:
-    ×  ×  ×  ×                 ×     ×
-    ×  ×  ×  ×                 
-                               ×     ×
-    ×  ×  ×  ×                 
-                               ×     ×
-(clustered)                (well-distributed)
-```
-
-#### KD-Tree Optimization
-
-**Naive Implementation:** O(N³)
-```python
-for i in range(N):                          # O(N)
-    for s in selected:                      # O(M) where M ≤ N
-        distance = sqrt(sum((c[i] - s)**2)) # O(ndim)
-    # Total: O(N × M × ndim) ≈ O(N² × ndim) for greedy
-    # For farthest-first: need all distances → O(N × M × ndim) per iteration → O(N² × M × ndim) ≈ O(N³)
-```
-
-**KD-Tree Implementation:** O(N × M × log M)
-```python
-tree = KDTree(selected)                     # O(M log M)
-for i in range(remaining):                  # O(N)
-    distance = tree.query(c[i], k=1)        # O(log M)
-    # Total per iteration: O(remaining × log M)
-    # Total: O(N × M × log M) where M is final selection size
-```
-
-**Performance Gain:**
-- For N=1000, M=500: Naive ≈ 10⁹ operations, KD-tree ≈ 10⁶ operations
-- Speedup: ~1000× for large datasets
-
-**Small Dataset Optimization:**
-For N < 50, KD-tree overhead isn't worth it → use simple greedy O(N²) fallback.
-
-#### Algorithm Implementation
-
-```python
-def dedupe_farthest_first(
-    coords: np.ndarray,
-    min_distance: float,
-    intensities: Optional[np.ndarray] = None
-) -> np.ndarray:
-    """
-    Remove duplicate candidates using farthest-first selection.
-    
-    Returns: np.ndarray of shape (M, ndim) with M ≤ N (float coordinates)
-    """
-    # Handle empty input
-    if len(coords) == 0:
-        return coords.astype(float)
-    
-    # Small dataset: use simple O(N²) greedy
-    if len(coords) < 50:
-        return _dedupe_simple(coords, min_distance, intensities)
-    
-    # Sort by intensity if provided (highest first)
-    if intensities is not None:
-        sort_indices = np.argsort(intensities)[::-1]
-        coords_sorted = coords[sort_indices].astype(float)
-    else:
-        coords_sorted = coords.astype(float)
-    
-    # Initialize with first (strongest) candidate
-    selected = [coords_sorted[0]]
-    selected_array = np.array(selected)
-    tree = cKDTree(selected_array)
-    
-    # Track remaining candidates
-    remaining_mask = np.ones(len(coords_sorted), dtype=bool)
-    remaining_mask[0] = False
-    
-    # Farthest-first selection loop
-    while True:
-        remaining_indices = np.where(remaining_mask)[0]
-        
-        if len(remaining_indices) == 0:
-            break  # No more candidates
-        
-        # Query KD-tree for all remaining candidates (vectorized)
-        remaining_coords = coords_sorted[remaining_indices]
-        distances, _ = tree.query(remaining_coords, k=1)
-        
-        # Find candidates satisfying min_distance
-        valid_mask = distances >= min_distance
-        
-        if not np.any(valid_mask):
-            break  # No more valid candidates
-        
-        # Among valid candidates, pick the FARTHEST one
-        valid_distances = distances[valid_mask]
-        valid_indices_in_remaining = np.where(valid_mask)[0]
-        farthest_idx_in_valid = np.argmax(valid_distances)
-        farthest_idx_in_remaining = valid_indices_in_remaining[farthest_idx_in_valid]
-        farthest_idx_global = remaining_indices[farthest_idx_in_remaining]
-        
-        # Add farthest candidate to selected set
-        selected.append(coords_sorted[farthest_idx_global])
-        remaining_mask[farthest_idx_global] = False
-        
-        # Rebuild KD-tree with all selected points
-        selected_array = np.array(selected)
-        tree = cKDTree(selected_array)
-    
-    return np.array(selected, dtype=float)
-```
-
-#### API Specification
-
-```python
-def dedupe_farthest_first(
-    coords: np.ndarray,
-    min_distance: float,
-    intensities: Optional[np.ndarray] = None
-) -> np.ndarray
-```
+Greedy spatial deduplication with KD-tree acceleration.
 
 **Parameters:**
-- `coords` (np.ndarray): Candidate coordinates of shape `(N, ndim)`
-- `min_distance` (float): Minimum Euclidean distance strictly enforced
-- `intensities` (Optional[np.ndarray]): Quality values of shape `(N,)` for priority sorting
+- `coords`: (N, ndim) seed coordinates
+- `min_distance`: minimum Euclidean distance between kept seeds
+- `intensities`: optional (N,) quality values for priority sorting
+- `device`: ignored (always uses CPU KD-tree)
 
-**Returns:**
-- `np.ndarray`: Deduplicated coordinates of shape `(M, ndim)` where M ≤ N (float dtype)
+**Returns:** `(deduped_coords, kept_indices)` tuple
+- `deduped_coords`: (M, ndim) deduplicated coordinates
+- `kept_indices`: (M,) indices into original coords array for O(1) attribute lookup
 
-**Guarantees:**
-- All pairwise distances ≥ min_distance: `∀i,j: ||coords[i] - coords[j]|| ≥ min_distance`
-- Maximum spatial diversity among valid selections
-- Quality ordering respected (if intensities provided)
+**Algorithm:**
+1. For small inputs (<50 seeds): `_dedupe_simple()` with O(N^2) greedy
+2. For larger inputs:
+   - Sort by intensity (highest first) if provided
+   - Pre-allocate output arrays
+   - Start with strongest seed
+   - For each candidate: query KD-tree for nearest selected, keep if >= min_distance
+   - Also check against seeds added since last tree rebuild
+   - Rebuild KD-tree every 100 seeds for efficiency
+3. Map back to original indices if sorted
 
-### Candidate Combination: `combine_seeds()`
+**Complexity:** O(N log M) where N is input count, M is selected count
 
-Merges candidate arrays from multiple detection methods.
+**Note:** GPU deduplication was removed because CPU with KD-tree is faster for typical seed counts (<100K). CPU completes 16K seeds in ~0.77s.
 
-#### Algorithm
+### `_dedupe_simple(coords, min_distance, intensities) -> tuple[np.ndarray, np.ndarray]`
 
-```python
-def combine_seeds(
-    *candidate_arrays: np.ndarray,
-    min_distance: Optional[float] = None,
-    method: str = "union",
-) -> np.ndarray:
-    """
-    Combine candidates from multiple detection methods.
-    
-    Returns: np.ndarray of shape (M, ndim)
-    """
-    if method != "union":
-        raise ValueError(f"Unknown method: {method}")
-    
-    # Filter out empty arrays
-    non_empty = [arr for arr in candidate_arrays if len(arr) > 0]
-    
-    if len(non_empty) == 0:
-        # Return empty array with correct shape
-        for arr in candidate_arrays:
-            if arr is not None:
-                return np.zeros((0, arr.shape[1]), dtype=float)
-        return np.zeros((0, 2), dtype=float)  # Default to 2D
-    
-    # Concatenate all non-empty arrays
-    combined = np.vstack(non_empty)
-    
-    # Optionally deduplicate
-    if min_distance is not None:
-        combined = dedupe_farthest_first(combined, min_distance=min_distance)
-    
-    return combined
-```
+O(N^2) greedy deduplication for <50 seeds. Uses boolean mask to mark nearby seeds as used.
 
-#### API Specification
+### `combine_seeds(*candidate_arrays, min_distance, method) -> np.ndarray`
 
-```python
-def combine_seeds(
-    *candidate_arrays: np.ndarray,
-    min_distance: Optional[float] = None,
-    method: str = "union",
-) -> np.ndarray
-```
+Combine seed coordinate arrays from multiple methods.
 
 **Parameters:**
-- `*candidate_arrays` (np.ndarray): Variable number of candidate arrays, each shape `(N_i, ndim)`
-- `min_distance` (Optional[float]): If provided, deduplicate merged candidates
-- `method` (str): Combination method (currently only "union" supported)
+- `*candidate_arrays`: variable number of (N_i, ndim) arrays
+- `min_distance`: optional deduplication distance (None = no dedup)
+- `method`: `"union"` only (concatenation)
 
-**Returns:**
-- `np.ndarray`: Combined candidates of shape `(M, ndim)`
+**Returns:** (M, ndim) combined coordinates
 
-**Future Extensions:**
-- `method="intersection"`: Keep only candidates appearing in multiple methods
-- `method="weighted"`: Weight candidates by detection confidence
-- Priority ordering for deduplication
+---
 
-## Algorithmic Comparisons
+## 7. Return Type: GSplatData
 
-### Philosophical Differences
+All seeding methods return `GSplatData` (from `luxar.gsplats.gsplat_data`):
 
-| Aspect | Multiscale Gaussian | Decomposition |
-|--------|-------------------|---------------|
-| **Philosophy** | Overcomplete detection | Hierarchical selection |
-| **Scale Treatment** | Independent Gaussian filtering | Optimized energy separation |
-| **Feature Overlap** | Redundant across scales | Non-overlapping by design |
-| **Noise Handling** | CLAHE preprocessing | Scale filtering (ignore_finest_k) |
-| **Candidate Count** | Many (1000-10000+) | Fewer (100-1000) |
-| **Quality Metric** | Coverage completeness | Energy-based importance |
-| **Computational Cost** | Fast (1-15 seconds) | Slower (30-60 seconds) |
+| Field | Shape | Dtype | Description |
+|-------|-------|-------|-------------|
+| `centers` | (N, ndim) | float32 | Seed positions |
+| `amplitudes` | (N,) | float32 | Intensity values (scaled by 0.9) |
+| `cholesky_factors` | (N, tril_size) | float32 | Packed lower-triangular Cholesky factors |
+| `sharpnesses` | (N,) | float32 | All 2.0 (standard Gaussian) |
 
-### Performance Trade-offs
+Where `tril_size = ndim * (ndim + 1) // 2`.
 
-#### Speed vs Quality
+---
 
-**Multiscale Gaussian:**
-- **Speed**: Fast Gaussian filtering + peak detection
-- **Quality**: High coverage, some redundancy
-- **Use case**: When speed matters, comprehensive coverage needed
+## 8. Usage Examples
 
-**Decomposition:**
-- **Speed**: Slow decomposition + fast peak detection
-- **Quality**: Principled selection, sparse representation
-- **Use case**: When quality matters, computational budget allows
-
-#### Coverage vs Sparsity
-
-**Multiscale Gaussian:**
-- Dense candidate coverage
-- Multiple candidates per feature (at different scales)
-- Downstream fitting selects best subset
-- Higher memory usage
-
-**Decomposition:**
-- Sparse candidate distribution
-- One candidate per feature per scale
-- Pre-filtered by decomposition quality
-- Lower memory usage
-
-### When to Use Which Method
-
-**Use Multiscale Gaussian When:**
-1. **Speed is critical**: Need candidates quickly (<15 seconds)
-2. **Comprehensive coverage**: Want to ensure no features missed
-3. **Downstream selection**: Fitting process will prune redundancy
-4. **Heterogeneous data**: CLAHE preprocessing valuable
-5. **Complex scenes**: Mixed feature types benefit from multiple detection methods
-
-**Use Decomposition When:**
-1. **Quality matters**: Computational budget allows thorough decomposition
-2. **Noisy data**: Scale filtering provides robust noise suppression
-3. **Hierarchical structure**: Want explicit coarse-to-fine ordering
-4. **Sparse representation**: Prefer fewer, higher-quality seeds
-5. **Energy-based priority**: Want seeds sorted by importance
-6. **Principled approach**: Value mathematically-motivated feature separation
-
-**Use Both (Combined) When:**
-1. **Critical application**: Maximum robustness required
-2. **Unknown data characteristics**: Hedge against method weaknesses
-3. **Exploration**: Compare and evaluate both approaches
-4. **Research**: Studying method differences and complementarity
-
-### Complementarity
-
-The two methods are **complementary**, not competing:
-
-**Multiscale Gaussian strengths address Decomposition weaknesses:**
-- Fast when decomposition is slow
-- Dense coverage when decomposition is sparse
-- Multiple detection methods vs single decomposition approach
-
-**Decomposition strengths address Multiscale Gaussian weaknesses:**
-- Principled scale separation vs overlapping Gaussian scales
-- Energy-based quality vs simple intensity thresholding
-- Explicit noise filtering vs preprocessing
-
-**Combining Both:**
 ```python
-# Generate seeds from all methods (returns GSplatData)
-seeds_gaussian = seed_from_gaussian(image, min_distance=3.0)
-seeds_decomp = seed_from_decomposition(image, scales=[1,2,4,8])
+from luxar.gsplats.seeds import generate_seeds
+from luxar.gsplats import fit_gaussian_splats
+import numpy as np
 
-# Combine centers with deduplication
-combined_centers = combine_seeds(
-    seeds_gaussian.centers,
-    seeds_decomp.centers,
-    min_distance=3.0
-)
+# Auto mode (recommended) - fast edges + grid combination
+seeds = generate_seeds(image)
 
-# Use for fitting (positions only - fitter initializes shapes)
-result = fit_gaussian_splats(image, seeds=combined_centers)
+# Single method
+seeds = generate_seeds(image, method="decomposition")
+seeds = generate_seeds(image, method="grid", spacing=10.0)
+seeds = generate_seeds(image, method="edges", n_seeds=1000)
+
+# All methods combined
+seeds = generate_seeds(image, method="decomposition,edges,grid")
+
+# GPU acceleration
+seeds = generate_seeds(image, method="auto", device="cuda")
+seeds = generate_seeds(image, method="edges", device="auto")
+
+# Use with fitter
+seeds = generate_seeds(image, method="auto")
+result = fit_gaussian_splats(image, seeds=seeds)
 ```
 
-**Result:**
-- Coarse structure from decomposition (high energy, principled)
-- Fine detail from multiscale Gaussian (comprehensive coverage)
-- Robust to failures of either individual method
-
-## Testing Strategy
-
-### Unit Tests
-
-#### Multiscale Gaussian Tests
-
-**Basic Functionality:**
-```python
-def test_multiscale_gaussian_2d():
-    """Test basic 2D seed generation."""
-    # Create synthetic 2D image with known features
-    image = create_synthetic_blobs_2d(n_blobs=10, size=128)
-
-    # Returns GSplatData with scale-informed shapes
-    seeds = seed_from_gaussian(
-        image,
-        scales=(1.0, 2.0, 4.0),
-        min_distance=3.0,
-        apply_clahe=False,
-    )
-
-    # Should find approximately n_blobs seeds (±tolerance)
-    assert 5 <= len(seeds.centers) <= 15
-    assert seeds.centers.shape[1] == 2  # 2D coordinates
-    assert seeds.centers.dtype == float
-```
-
-**Parameter Validation:**
-```python
-def test_multiscale_gaussian_parameter_validation():
-    """Test parameter validation."""
-    image = np.random.rand(64, 64)
-    
-    # Empty scales
-    with pytest.raises(ValueError, match="scales must be a non-empty"):
-        seed_from_gaussian(image, scales=[])
-    
-    # Negative scale
-    with pytest.raises(ValueError, match="All scale values must be positive"):
-        seed_from_gaussian(image, scales=[1.0, -2.0])
-    
-    # Invalid percentile
-    with pytest.raises(ValueError, match="percentile_thresh must be between 0 and 100"):
-        seed_from_gaussian(image, percentile_thresh=150.0)
-```
-
-**Edge Cases:**
-```python
-def test_multiscale_gaussian_edge_cases():
-    """Test edge cases."""
-    # Uniform image → no peaks
-    uniform = np.ones((64, 64))
-    seeds = seed_from_gaussian(uniform)
-    assert len(seeds.centers) == 0
-
-    # Single peak → one seed
-    single_peak = np.zeros((64, 64))
-    single_peak[32, 32] = 1.0
-    seeds = seed_from_gaussian(single_peak, min_distance=1.0)
-    assert len(seeds.centers) >= 1
-    assert np.allclose(seeds.centers[0], [32, 32], atol=2.0)
-```
-
-#### Decomposition Tests
-
-**Basic Functionality:**
-```python
-def test_decomposition_2d():
-    """Test decomposition-based seed generation in 2D."""
-    image = create_synthetic_blobs_2d(n_blobs=10, size=128)
-
-    # Returns GSplatData with scale-informed shapes
-    seeds = seed_from_decomposition(
-        image,
-        scales=[1, 2, 4],
-        ignore_finest_k=1,
-        min_distance=3.0,
-        decompose_kwargs={'n_iters': 200},  # Fast for testing
-    )
-
-    # Should find seeds (count depends on decomposition quality)
-    assert len(seeds.centers) > 0
-    assert seeds.centers.shape[1] == 2
-    assert seeds.centers.dtype == float
-```
-
-**ignore_finest_k Validation:**
-```python
-def test_decomposition_ignore_finest_k():
-    """Test ignore_finest_k parameter."""
-    image = create_synthetic_blobs_2d(n_blobs=5, size=64)
-
-    # ignore_finest_k = 0: use all scales
-    seeds_all = seed_from_decomposition(
-        image, scales=[1, 2, 4], ignore_finest_k=0
-    )
-
-    # ignore_finest_k = 1: skip finest scale
-    seeds_skip1 = seed_from_decomposition(
-        image, scales=[1, 2, 4], ignore_finest_k=1
-    )
-
-    # ignore_finest_k = 2: skip two finest scales
-    seeds_skip2 = seed_from_decomposition(
-        image, scales=[1, 2, 4], ignore_finest_k=2
-    )
-
-    # More filtering → fewer or equal seeds
-    assert len(seeds_skip1.centers) <= len(seeds_all.centers)
-    assert len(seeds_skip2.centers) <= len(seeds_skip1.centers)
-    
-    # Validate warning for ignore_finest_k >= len(scales)
-    with pytest.warns(UserWarning):
-        seed_from_decomposition(image, scales=[1, 2], ignore_finest_k=3)
-```
-
-#### Utility Tests
-
-**local_maxima Tests:**
-```python
-def test_local_maxima_basic():
-    """Test basic peak detection."""
-    # Create image with 4 peaks at known locations
-    img = np.zeros((32, 32))
-    peaks_true = [(8, 8), (8, 24), (24, 8), (24, 24)]
-    for y, x in peaks_true:
-        img[y, x] = 1.0
-    
-    # Detect peaks
-    peaks = local_maxima(img, radius=1, thresh=0.5, top_k=None)
-    
-    # Should find all 4 peaks
-    assert len(peaks) == 4
-    
-    # Should match known locations (order may vary)
-    peaks_set = set(map(tuple, peaks))
-    assert peaks_set == set(peaks_true)
-
-def test_local_maxima_top_k():
-    """Test top-k limiting."""
-    # Create image with intensity gradient
-    img = np.random.rand(32, 32)
-    
-    peaks_all = local_maxima(img, radius=1, thresh=0.0, top_k=None)
-    peaks_10 = local_maxima(img, radius=1, thresh=0.0, top_k=10)
-    
-    assert len(peaks_10) == 10
-    assert len(peaks_10) <= len(peaks_all)
-    
-    # Top 10 should be strongest peaks
-    vals_10 = img[tuple(peaks_10.T)]
-    vals_all = img[tuple(peaks_all.T)]
-    assert np.min(vals_10) >= np.percentile(vals_all, 50)  # At least median
-```
-
-**dedupe_farthest_first Tests:**
-```python
-def test_dedupe_farthest_first_basic():
-    """Test basic deduplication."""
-    # Create candidates with known distances
-    coords = np.array([
-        [0, 0],
-        [1, 0],  # Close to first (distance 1)
-        [10, 0], # Far from first (distance 10)
-    ], dtype=float)
-    
-    # min_distance = 5.0 should keep only [0,0] and [10,0]
-    deduped = dedupe_farthest_first(coords, min_distance=5.0)
-    
-    assert len(deduped) == 2
-    assert np.allclose(deduped[0], [0, 0])
-    assert np.allclose(deduped[1], [10, 0])
-
-def test_dedupe_with_intensities():
-    """Test deduplication with quality priority."""
-    coords = np.array([
-        [0, 0],
-        [1, 0],
-        [10, 0],
-    ], dtype=float)
-    
-    intensities = np.array([0.5, 1.0, 0.3])  # Middle one is strongest
-    
-    deduped = dedupe_farthest_first(coords, min_distance=5.0, intensities=intensities)
-    
-    # Strongest candidate [1,0] should be selected first
-    # Then [10,0] is far enough away
-    assert len(deduped) == 2
-    assert np.allclose(deduped[0], [1, 0])  # Highest intensity selected first
-```
-
-**combine_seeds Tests:**
-```python
-def test_combine_seeds_basic():
-    """Test basic candidate combination."""
-    cand1 = np.array([[0, 0], [10, 10]], dtype=float)
-    cand2 = np.array([[5, 5], [15, 15]], dtype=float)
-    
-    # No deduplication
-    combined = combine_seeds(cand1, cand2, min_distance=None)
-    assert len(combined) == 4
-    
-    # With deduplication
-    combined = combine_seeds(cand1, cand2, min_distance=8.0)
-    # [0,0], [10,10], [5,5], [15,15] → pairwise distances vary
-    # Should keep well-separated subset
-    assert len(combined) <= 4
-```
-
-### Integration Tests
-
-**Integration with fit_gaussian_splats:**
-```python
-def test_seeds_integration_with_fitting():
-    """Test seeds integrate properly with fitting pipeline."""
-    image = create_synthetic_blobs_2d(n_blobs=10, size=128)
-
-    # Generate seeds (returns GSplatData)
-    seeds = seed_from_gaussian(image, min_distance=3.0)
-
-    # Fit Gaussian splats - passes GSplatData directly
-    result = fit_gaussian_splats(
-        image,
-        seeds=seeds,  # GSplatData with scale-informed shapes
-        n_iters=100,
-        enable_dynamic_ops=False,  # Use only provided seeds
-    )
-
-    # Should have fitted splats
-    assert len(result.amplitudes) > 0
-    assert len(result.amplitudes) <= len(seeds.centers)  # May prune some
-```
-
-**Cross-Method Comparison:**
-```python
-def test_methods_comparison():
-    """Compare multiscale Gaussian vs decomposition on same image."""
-    image = create_synthetic_blobs_2d(n_blobs=20, size=256)
-
-    # Both methods return GSplatData with scale-informed shapes
-    seeds_gaussian = seed_from_gaussian(
-        image,
-        scales=(1.0, 2.0, 4.0, 8.0),
-        min_distance=3.0,
-    )
-
-    seeds_decomp = seed_from_decomposition(
-        image,
-        scales=[1, 2, 4, 8],
-        ignore_finest_k=1,
-        min_distance=3.0,
-        decompose_kwargs={'n_iters': 200},
-    )
-
-    # Both should find seeds
-    assert len(seeds_gaussian.centers) > 0
-    assert len(seeds_decomp.centers) > 0
-
-    # Gaussian typically finds more (overcomplete)
-    # But not guaranteed (depends on parameters)
-    print(f"Gaussian: {len(seeds_gaussian.centers)}, Decomposition: {len(seeds_decomp.centers)}")
-```
-
-### Dimension-Agnostic Tests
-
-**1D, 2D, 3D, 4D:**
-```python
-@pytest.mark.parametrize("ndim", [1, 2, 3, 4])
-def test_multiscale_gaussian_ndim(ndim):
-    """Test multiscale Gaussian in various dimensions."""
-    shape = (32,) * ndim
-    image = create_synthetic_blobs_nd(n_blobs=5, shape=shape)
-
-    seeds = seed_from_gaussian(
-        image,
-        scales=(2.0, 4.0),
-        min_distance=3.0,
-    )
-
-    assert seeds.centers.shape[1] == ndim
-    assert len(seeds.centers) > 0
-
-@pytest.mark.parametrize("ndim", [1, 2, 3, 4])
-def test_decomposition_ndim(ndim):
-    """Test decomposition in various dimensions."""
-    shape = (32,) * ndim
-    image = create_synthetic_blobs_nd(n_blobs=5, shape=shape)
-
-    seeds = seed_from_decomposition(
-        image,
-        scales=[1, 2, 4],
-        ignore_finest_k=1,
-        decompose_kwargs={'n_iters': 100},
-    )
-
-    assert seeds.centers.shape[1] == ndim
-    assert len(seeds.centers) > 0
-```
-
-## Implementation Design Decisions
-
-### Coordinate Precision: Integer vs Float
-
-**Decision**: All candidate functions return **float coordinates**.
-
-**Rationale:**
-1. **Sub-voxel precision**: Refinement steps produce non-integer positions
-2. **Downstream compatibility**: Gaussian fitting expects float positions
-3. **Consistency**: Uniform interface across all methods
-4. **Future extensibility**: Allows arbitrary precision improvements
-
-**Impact:**
-- All utilities (`local_maxima`, `dedupe_farthest_first`) handle integer coordinates internally but return float
-- Coordinate mapping in decomposition produces float coordinates naturally
-
-### CLAHE Integration: Preprocessing vs Detection
-
-**Decision**: When `apply_clahe=True`, **all processing** uses CLAHE-enhanced image.
-
-**Rationale:**
-1. **Consistency**: Detection and refinement see same features
-2. **Effectiveness**: Sub-voxel refinement should match detected features
-3. **Simplicity**: Single working image avoids dual-path complexity
-
-**Alternative Considered:**
-- Apply CLAHE only for detection, refine on original image
-- Rejected: Sub-voxel refinement would not match detected peaks
-
-### Deduplication: Farthest-First vs Greedy
-
-**Decision**: Use **farthest-first** selection for spatial deduplication.
-
-**Rationale:**
-1. **Spatial diversity**: Actively maximizes spatial spread
-2. **Global optimization**: Considers entire selected set
-3. **Quality**: Avoids spatial clustering artifacts
-4. **Empirical performance**: Better coverage in practice
-
-**Alternative Considered:**
-- Simple greedy: Keep candidates passing min_distance check in order
-- Rejected: Creates spatial clusters, poor coverage
-
-### Scale Processing Order: Coarse-to-Fine
-
-**Decision**: Process scales from **coarse to fine** (reversed order).
-
-**Rationale:**
-1. **Priority ordering**: Coarse features selected first in deduplication
-2. **Hierarchical philosophy**: Large structures before fine details
-3. **Consistency**: Matches decomposition energy hierarchy
-4. **Robustness**: Coarse features more stable, less noise-sensitive
-
-**Impact:**
-- Both methods process scales in same order
-- Farthest-first deduplication prioritizes earlier (coarser) candidates
-
-### Decomposition: ignore_finest_k Default
-
-**Decision**: Default `ignore_finest_k=1` (skip full-resolution scale).
-
-**Rationale:**
-1. **Noise suppression**: Full-resolution scale dominated by noise
-2. **Overfitting prevention**: Too many fine candidates harm convergence
-3. **Empirical validation**: Testing shows k=1 optimal for most data
-4. **Adjustability**: Users can override for clean synthetic data (k=0)
-
-**Alternative Defaults Considered:**
-- `k=0`: Use all scales - rejected (too noisy)
-- `k=2`: Aggressive filtering - rejected (loses too much detail)
-
-### API Design: Shared Parameters
-
-**Decision**: Use **consistent parameter names** across both methods.
-
-**Common Parameters:**
-- `min_distance`: Same meaning in both methods
-- `peaks_per_scale`: Same limiting behavior
-- Return type: Always `np.ndarray` of shape `(N, ndim)`
-
-**Method-Specific Parameters:**
-- Multiscale Gaussian: `scales` (floats, Gaussian σ), `apply_clahe`, etc.
-- Decomposition: `scales` (ints, scale factors), `ignore_finest_k`, etc.
-
-**Rationale:**
-1. **Learnability**: Similar concepts use same names
-2. **Interchangeability**: Easy to switch between methods
-3. **Clarity**: Method-specific parameters clearly distinguished
-
-## Future Extensions
-
-### Hybrid Approaches
-
-**Motivation**: Combine strengths of both methods.
-
-**Proposal 1: Two-Stage Detection**
-```python
-def seed_hybrid(V, **kwargs):
-    # Stage 1: Decomposition for coarse structure (scales 8, 16, 32)
-    coarse = seed_from_decomposition(
-        V, scales=[8, 16, 32], ignore_finest_k=0
-    )
-
-    # Stage 2: Gaussian for fine detail (scales 1.0, 2.0, 4.0)
-    fine = seed_from_gaussian(
-        V, scales=(1.0, 2.0, 4.0)
-    )
-
-    # Combine centers with deduplication
-    combined_centers = combine_seeds(
-        coarse.centers, fine.centers, min_distance=kwargs['min_distance']
-    )
-    # Note: Loses shape info - consider preserving GSplatData
-    return combined_centers
-```
-
-**Proposal 2: Adaptive Method Selection**
-```python
-def seed_adaptive(V, **kwargs):
-    # Analyze image characteristics
-    snr = estimate_snr(V)
-    complexity = estimate_complexity(V)
-
-    # All methods return GSplatData with scale-informed shapes
-    if snr < 5.0:  # Noisy
-        return seed_from_decomposition(V, ignore_finest_k=2)
-    elif complexity > 0.7:  # Complex
-        return seed_from_gaussian(V, apply_clahe=True)
-    else:  # Default
-        return seed_from_decomposition(V, ignore_finest_k=1)
-```
-
-### Adaptive Parameters
-
-**Motivation**: Automatically tune parameters based on data characteristics.
-
-**Proposal 1: Adaptive ignore_finest_k**
-```python
-def auto_ignore_finest_k(scale_images, scales):
-    """
-    Determine optimal ignore_finest_k based on energy distribution.
-    
-    Idea: Skip scales where energy is dominated by noise (high frequency, low structure).
-    """
-    energies = [scale_img.sum() for scale_img in scale_images]
-    
-    # Compute normalized gradient of energy distribution
-    energy_gradient = np.diff(energies) / energies[:-1]
-    
-    # Find first scale where gradient stabilizes
-    # (transition from noise-dominated to structure-dominated)
-    threshold_gradient = 0.1
-    for k, grad in enumerate(energy_gradient):
-        if abs(grad) < threshold_gradient:
-            return k
-    
-    return 1  # Default
-```
-
-**Proposal 2: Adaptive min_distance**
-```python
-def auto_min_distance(V, target_density=0.001):
-    """
-    Determine min_distance to achieve target candidate density.
-    
-    target_density: candidates per voxel (e.g., 0.001 → 1 candidate per 1000 voxels)
-    """
-    n_voxels = V.size
-    n_candidates_target = int(n_voxels * target_density)
-    
-    # Estimate required min_distance via binary search
-    # (requires iterative candidate generation - expensive)
-    # Simplified: use heuristic based on image size
-    ndim = V.ndim
-    voxels_per_candidate = 1 / target_density
-    min_distance = (voxels_per_candidate) ** (1 / ndim)
-    
-    return float(min_distance)
-```
-
-### Multi-Channel Support
-
-**Motivation**: Handle multi-channel images (e.g., RGB, multi-fluorescence).
-
-**Proposal: Per-Channel Decomposition + Merging**
-```python
-def seed_multichannel(V_channels, **kwargs):
-    """
-    Generate seeds from multi-channel image.
-
-    V_channels: list of nD arrays (one per channel)
-    Returns: combined centers (positions only - shape info lost)
-    """
-    all_centers = []
-
-    for channel_idx, V in enumerate(V_channels):
-        # Decompose each channel independently (returns GSplatData)
-        seeds = seed_from_decomposition(V, **kwargs)
-        all_centers.append(seeds.centers)
-
-    # Combine centers across channels with deduplication
-    combined = combine_seeds(*all_centers, min_distance=kwargs['min_distance'])
-
-    return combined
-```
-
-**Alternative: Joint Decomposition**
-- Decompose multi-channel image as single tensor
-- Requires extension of decomposition algorithm
-- More principled but more complex
-
-### Confidence Scores
-
-**Motivation**: Provide quality metrics for each seed.
-
-**Proposal: Multi-Factor Confidence**
-```python
-def seed_with_confidence(V, **kwargs):
-    """
-    Return seeds with confidence scores.
-
-    Returns: (GSplatData, confidences)
-    """
-    seeds = seed_from_gaussian(V, **kwargs)
-    centers = seeds.centers
-
-    confidences = []
-    for c in centers:
-        # Factor 1: Peak intensity
-        intensity = V[tuple(c.astype(int))]
-        
-        # Factor 2: Local contrast (peak vs neighborhood mean)
-        neighborhood = extract_neighborhood(V, c, radius=5)
-        contrast = intensity / (neighborhood.mean() + 1e-6)
-        
-        # Factor 3: Peak sharpness (second derivative magnitude)
-        sharpness = compute_laplacian_magnitude(V, c)
-        
-        # Combine factors (weighted)
-        confidence = 0.5 * intensity + 0.3 * contrast + 0.2 * sharpness
-        confidences.append(confidence)
-    
-    confidences = np.array(confidences)
-    
-    return candidates, confidences
-```
-
-**Use Case:**
-- Prioritize high-confidence candidates in fitting
-- Threshold low-confidence candidates for speed
-- Visualize confidence for diagnostics
-
-### GPU Acceleration
-
-**Motivation**: Speed up candidate generation for large volumes.
-
-**Proposal 1: GPU Gaussian Filtering**
-```python
-def seed_from_gaussian_gpu(V, **kwargs):
-    """
-    GPU-accelerated multiscale Gaussian candidate generation.
-    """
-    import cupy as cp
-    from cupyx.scipy.ndimage import gaussian_filter as gpu_gaussian_filter
-    
-    # Transfer to GPU
-    V_gpu = cp.asarray(V)
-    
-    all_coords = []
-    for s in kwargs['scales']:
-        # GPU Gaussian filtering
-        img_gpu = gpu_gaussian_filter(V_gpu, sigma=s)
-        
-        # GPU peak detection (custom kernel)
-        peaks_gpu = gpu_local_maxima(img_gpu, ...)
-        
-        # Transfer back to CPU
-        peaks = cp.asnumpy(peaks_gpu)
-        all_coords.append(peaks)
-    
-    # Rest of processing on CPU (deduplication, refinement)
-    ...
-```
-
-**Expected Speedup**: 5-10× for large 3D volumes (512³+)
-
-**Proposal 2: GPU Decomposition**
-- Already supported via PyTorch (decompose_image uses torch)
-- Automatically uses GPU if available
-
-### Learned Candidate Generation
-
-**Motivation**: Use machine learning to predict optimal candidate locations.
-
-**Proposal: CNN-Based Detection**
-```python
-class CandidateNetworkModel(nn.Module):
-    """
-    U-Net style network that predicts candidate probability maps.
-    
-    Input: Image/volume
-    Output: Probability map (same size as input)
-    """
-    def __init__(self, ndim):
-        # ... define U-Net architecture for ndim dimensions
-        pass
-    
-    def forward(self, x):
-        # ... forward pass producing probability map
-        pass
-
-def seed_learned(V, model, threshold=0.5):
-    """
-    Use trained neural network to predict seed locations.
-    Returns centers only (positions without shape info).
-    """
-    # Predict probability map
-    prob_map = model(torch.tensor(V))
-
-    # Threshold and find peaks
-    centers = local_maxima(prob_map.numpy(), radius=2, thresh=threshold)
-
-    return centers
-```
-
-**Training:**
-- Supervised: Train on images with known optimal candidate locations
-- Unsupervised: Train to minimize reconstruction error in fitting pipeline
-- Transfer learning: Pre-train on large dataset, fine-tune for specific modality
-
-**Challenges:**
-- Requires large training dataset
-- Generalization across data types
-- Computational cost of inference
-
-## References
-
-**Internal References:**
-- **Multiscale Decomposition**: [multiscale/SPECIFICATIONS.md](../multiscale/SPECIFICATIONS.md)
-- **CLAHE Preprocessing**: [clahe/SPECIFICATIONS.md](../clahe/SPECIFICATIONS.md)
-- **Gaussian Splat Fitting**: [fitting/SPECIFICATIONS.md](../fitting/SPECIFICATIONS.md)
-- **Main Fitting API**: [SPECIFICATIONS.md](../SPECIFICATIONS.md)
-
-**External References:**
-- **Scale-Space Theory**: Lindeberg, T. (1993). "Scale-space theory: A basic tool for analyzing structures at different scales." Journal of Applied Statistics.
-- **CLAHE**: Pizer, S. M., et al. (1987). "Adaptive histogram equalization and its variations." Computer Vision, Graphics, and Image Processing.
-- **KD-Tree**: Bentley, J. L. (1975). "Multidimensional binary search trees used for associative searching." Communications of the ACM.
-- **Farthest-First Traversal**: Hochbaum, D. S., & Shmoys, D. B. (1985). "A best possible heuristic for the k-center problem." Mathematics of Operations Research.
+---
 
 ## Changelog
 
-- **v1.3.0 (2026-01-11)**: Grid seeding uses spacing-based sigma
-  - `seed_from_grid`: Changed sigma initialization from σ=1.0 to σ=spacing/2
-    - Splats now cover the image with ~60% overlap at midpoints between grid points
-    - Provides better initial coverage for uniform grid seeds
-  - Sigma initialization summary across all methods:
-    - **Decomposition**: Uses scale_factor from decomposition as σ (scale-informed)
-    - **Edges**: Uses σ=1.0 isotropic (no scale info from edge detection)
-    - **Grid**: Uses σ=spacing/2 for coverage (spacing-informed)
-  - All methods: amplitudes scaled to 90% to avoid overlap overshoot
+### 2.0.0 (2026-02-28)
+- **Complete rewrite** to match actual implementation
+- Documented 4-method architecture: generate_seeds, edges, grid, decomposition
+- Removed references to non-existent files: `multiscale_gaussian.py`, `moment_seeding.py`
+- Removed references to non-existent function: `seed_from_gaussian()`
+- Added full documentation for GPU acceleration (`gpu_ops.py`)
+- Added full documentation for shared utilities (`utils.py`)
+- Documented parameter routing in `generate_seeds()`
+- Documented Poisson disk sampling algorithm in edges.py
+- Documented aspect-ratio-aware grid spacing in grid.py
 
-- **v1.2.0 (2026-01-11)**: Amplitude rescaling documentation
-  - Added documentation about amplitude rescaling during preprocessing
-  - Amplitudes extracted from original image scale are rescaled to [0, 1] in `preprocessing.py`
-
-- **v1.0 (2025-11-27)**: Initial comprehensive specification
-  - Documented both multiscale Gaussian and decomposition methods
-  - Detailed shared utilities (peak detection, deduplication, combination)
-  - Algorithmic comparisons and performance trade-offs
-  - Mathematical foundations and implementation details
-  - Testing strategy and future extensions
-  - Replaces previous single-method SPECIFICATION.md (backed up as SPECIFICATION.md.backup)
+### 1.3.0 (2026-01-11)
+- Previous version (severely outdated, documented non-existent code)

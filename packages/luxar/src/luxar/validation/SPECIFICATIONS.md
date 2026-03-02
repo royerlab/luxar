@@ -123,7 +123,7 @@ Error Messages: Distinguish between wrong count vs wrong channels
 - Raises ValueError if out of range
 
 **Blending Mode**:
-- Valid: "normal", "additive", "max"
+- Valid: "normal", "additive", "max", "opaque", "luminous"
 - Must be string
 - Case-sensitive
 
@@ -265,7 +265,7 @@ Format: Includes breakdown of missing values per dimension
 **From constants.py**:
 - `OPACITY_MIN = 0.0`, `OPACITY_MAX = 1.0`
 - `GAMMA_MIN = 0.1`, `GAMMA_MAX = 10.0`
-- `SHARPNESS_MIN = 0.0`, `SHARPNESS_MAX = 31.0`
+- `SHARPNESS_MIN = 0.001`, `SHARPNESS_MAX = 31.0`
 - `MIN_POINT_RADIUS = 0.001`, `MAX_POINT_RADIUS = 1000.0`
 
 ---

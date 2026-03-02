@@ -144,8 +144,8 @@ def save_gsplats(
             f"Sharpnesses shape {sharpnesses.shape} doesn't match ({n_splats},)"
         )
 
-    # Apply spatial ordering
-    if ordering != "none":
+    # Apply spatial ordering (skip for empty data)
+    if ordering != "none" and n_splats > 0:
         sort_indices, ordering_metadata = sort_splats_spatial(centers, method=ordering)
 
         # Reorder all arrays
@@ -186,19 +186,25 @@ def save_gsplats(
     splats_group = root.create_group("splats")
 
     # Compute amplitude and sharpness ranges for metadata
-    amplitude_min = float(amplitudes.min())
-    amplitude_max = float(amplitudes.max())
-
-    if sharpnesses is not None:
-        sharpness_min = float(sharpnesses.min())
-        sharpness_max = float(sharpnesses.max())
+    if n_splats == 0:
+        amplitude_min, amplitude_max = 0.0, 0.0
+        sharpness_min, sharpness_max = 2.0, 2.0
+        center_min = [0.0] * ndim
+        center_max = [0.0] * ndim
     else:
-        sharpness_min = 2.0  # Default Gaussian
-        sharpness_max = 2.0
+        amplitude_min = float(amplitudes.min())
+        amplitude_max = float(amplitudes.max())
 
-    # Center bounds
-    center_min = centers.min(axis=0).tolist()
-    center_max = centers.max(axis=0).tolist()
+        if sharpnesses is not None:
+            sharpness_min = float(sharpnesses.min())
+            sharpness_max = float(sharpnesses.max())
+        else:
+            sharpness_min = 2.0  # Default Gaussian
+            sharpness_max = 2.0
+
+        # Center bounds
+        center_min = centers.min(axis=0).tolist()
+        center_max = centers.max(axis=0).tolist()
 
     # Splats group attributes
     splats_attrs = {

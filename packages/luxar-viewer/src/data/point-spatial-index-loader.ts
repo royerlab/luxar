@@ -49,7 +49,7 @@ import { LoadedPointsDataAccumulator, type AccumulatorStats } from './data-accum
 import { config as appConfig } from '../config';
 import { getWorkerPool } from '../workers/worker-pool';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
-import { DecompressedChunkCache, wrapWithCache } from '../cache';
+import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache';
 
 /**
  * Loader implementation that uses spatial indices for efficient nD queries.
@@ -92,6 +92,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
 
+  // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
+  private prefetcher: ChunkPrefetcher | null = null;
+
+  // Suppress detail logs after first successful view update
+  private _initialLoadDone = false;
+
   /**
    * Get node attributes with proper PointsMetadata typing.
    * This provides type-safe access to point node attributes.
@@ -107,13 +113,15 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable,
     profiler?: UpdateProfiler,
-    l0Cache?: DecompressedChunkCache
+    l0Cache?: DecompressedChunkCache,
+    prefetcher?: ChunkPrefetcher
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
     this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
     this.zarrStore = zarrStore || null;
     this.l0Cache = l0Cache || null;
+    this.prefetcher = prefetcher || null;
     // profiler parameter kept for API compatibility; session is passed directly to methods
     void profiler;
 
@@ -134,6 +142,13 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       memoryUsed: 0,
       memoryLimit: 0,
     };
+  }
+
+  /** Register array shape with the prefetcher for upper-bounds checking. */
+  private registerBounds(arrayName: string, array: zarr.Array<zarr.DataType, zarr.Readable>): void {
+    if (!this.prefetcher) return;
+    const path = `${this.node.path.startsWith('/') ? this.node.path.slice(1) : this.node.path}/${arrayName}`;
+    this.prefetcher.registerArrayBounds(path, array.shape, array.chunks);
   }
 
   /**
@@ -246,6 +261,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       let positionsArray = await zarr.open(this.zarrLocation.resolve('positions'), {
         kind: 'array',
       });
+      this.registerBounds('positions', positionsArray);
       // Wrap with L0 cache if enabled (caches decoded chunks to avoid Blosc decompression)
       if (this.l0Cache) {
         positionsArray = wrapWithCache(positionsArray, this.l0Cache, `${this.node.path}/positions`);
@@ -259,6 +275,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     // Try to open optional arrays - these may not exist and that's OK
     try {
       let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+      this.registerBounds('colors', colorsArray);
       // Wrap with L0 cache if enabled
       if (this.l0Cache) {
         colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`);
@@ -273,6 +290,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     try {
       let radiiArray = await zarr.open(this.zarrLocation.resolve('radii'), { kind: 'array' });
+      this.registerBounds('radii', radiiArray);
       // Wrap with L0 cache if enabled
       if (this.l0Cache) {
         radiiArray = wrapWithCache(radiiArray, this.l0Cache, `${this.node.path}/radii`);
@@ -286,12 +304,28 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     }
 
     try {
-      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
-        kind: 'array',
-      });
+      // Try plural name first (current format), fall back to singular (legacy)
+      let sharpnessArray: zarr.Array<zarr.DataType, zarr.Readable>;
+      let sharpnessName: string;
+      try {
+        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
+          kind: 'array',
+        });
+        sharpnessName = 'sharpnesses';
+      } catch {
+        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
+          kind: 'array',
+        });
+        sharpnessName = 'sharpness';
+      }
+      this.registerBounds(sharpnessName, sharpnessArray);
       // Wrap with L0 cache if enabled
       if (this.l0Cache) {
-        sharpnessArray = wrapWithCache(sharpnessArray, this.l0Cache, `${this.node.path}/sharpness`);
+        sharpnessArray = wrapWithCache(
+          sharpnessArray,
+          this.l0Cache,
+          `${this.node.path}/${sharpnessName}`
+        );
       }
       this.arrays.sharpness = sharpnessArray;
     } catch (e: any) {
@@ -430,11 +464,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       const loadSession = session?.begin('Load Arrays');
       try {
-        log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading attributes sequentially for ${ranges.length} ranges`
-        );
+        if (!this._initialLoadDone) {
+          log.load(
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading attributes sequentially for ${ranges.length} ranges`
+          );
+        }
 
         // Load positions (required)
         const positionsResult = await this.loadRanges('positions', ranges);
@@ -625,7 +660,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   async updateView(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData> {
     // For now, just reload everything
     // TODO: Implement incremental updates
-    return this.loadPoints(viewState, session);
+    const result = await this.loadPoints(viewState, session);
+    if (!this._initialLoadDone) {
+      this._initialLoadDone = true;
+      this.rangeLoader.setVerbose(false);
+    }
+    return result;
   }
 
   /**
@@ -657,11 +697,13 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       const isExtending = extendDims.some((edim) => currentNonDisplayedDims.includes(edim));
 
       if (isExtending) {
-        log.custom(
-          LogEmoji.BROADCAST,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
-        );
+        if (!this._initialLoadDone) {
+          log.custom(
+            LogEmoji.BROADCAST,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
+          );
+        }
         // Return all points for extended dimensions
         const totalPoints =
           this.node.attrs.n_points ||
@@ -730,30 +772,10 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     let ranges: PointRange[];
 
     if (this.chunkIndex) {
-      // Use chunk-based queries (worker or main thread based on config)
-      let chunkIndices: number[];
-
-      if (appConfig.dataLoading.performance.useWebWorkers) {
-        // Phase 2: Use worker for spatial queries (offloads CPU work)
-        try {
-          const worker = await getWorkerPool().getWorker();
-          const result = await worker.querySpatialIndex({
-            chunkBounds: this.chunkIndex.chunkBounds,
-            slicePosition: new Float32Array(querySlicePos),
-            tolerance: new Float32Array(queryTolerance),
-            numChunks: this.chunkIndex.metadata.total_chunks,
-            ndim: fullDim,
-          });
-          chunkIndices = Array.from(result);
-        } catch (error) {
-          log.error(Modules.SPATIAL_INDEX_LOADER, 'Worker query failed, using main thread:', error);
-          // Fallback to main thread
-          chunkIndices = queryChunksForView(this.chunkIndex, querySlicePos, queryTolerance);
-        }
-      } else {
-        // Main thread query
-        chunkIndices = queryChunksForView(this.chunkIndex, querySlicePos, queryTolerance);
-      }
+      // Always query on main thread — AABB scan is O(chunks × ndim) and completes in
+      // microseconds. Worker roundtrips add ~3ms each (structured clone, postMessage,
+      // deserialization), which dominates when many nodes query concurrently.
+      const chunkIndices = queryChunksForView(this.chunkIndex, querySlicePos, queryTolerance);
 
       ranges = chunkIndicesToRanges(
         chunkIndices,
@@ -954,7 +976,9 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const array = this.arrays[arrayName as keyof typeof this.arrays];
     if (!array) return null;
 
-    log.load(Modules.SPATIAL_INDEX_LOADER, `Loading ${arrayName} for ${ranges.length} ranges`);
+    if (!this._initialLoadDone) {
+      log.load(Modules.SPATIAL_INDEX_LOADER, `Loading ${arrayName} for ${ranges.length} ranges`);
+    }
 
     // Analyze array metadata
     const attrs = array.attrs as unknown as ArrayMetadata;

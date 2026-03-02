@@ -62,40 +62,17 @@ camera: {
 
 ### Shader Configuration
 
-Point rendering and HDR settings:
+Point rendering shader constants:
 
 ```typescript
 shader: {
   points: {
-    hdrMultiplier: 16.0,     // HDR bloom multiplier
-    baseAlpha: 0.01,         // Transparency
+    baseAlpha: 0.01,         // Base alpha intensity
   }
 }
 ```
 
-**Note**: Bloom settings moved to `renderingControls.defaults` for centralization.
-
-### Post-Processing Pipeline
-
-Advanced rendering effects configuration:
-
-```typescript
-postProcessing: {
-  hdr: {
-    renderTargetType: THREE.HalfFloatType  // 16-bit float precision
-  },
-  toneMapping: {
-    initial: {
-      outputColorSpace: THREE.LinearSRGBColorSpace,
-      toneMapping: THREE.NoToneMapping
-    },
-    final: {
-      outputColorSpace: THREE.SRGBColorSpace,
-      toneMapping: THREE.ACESFilmicToneMapping
-    }
-  }
-}
-```
+**Note**: All user-adjustable rendering effect settings (bloom, tone mapping, HDR multiplier, etc.) live in `renderingControls.defaults` as the single source of truth. Post-processing pipeline internals (HalfFloatType, tone mapping modes) are managed directly by the PostProcessingManager.
 
 ### User Interface Configuration
 
@@ -138,6 +115,7 @@ adaptiveDPR: {
 ```
 
 **How It Works**:
+
 - When FPS drops below `minFPS`, DPR is reduced by `scaleDownFactor`
 - When FPS stays above `maxFPS` for `hysteresisSeconds`, DPR increases by `scaleUpFactor`
 - Asymmetric scaling (slower up, faster down) prevents quality oscillation
@@ -253,10 +231,10 @@ const bloomSettings = config.renderingControls.defaults;
 ```typescript
 // In SceneManager
 const camera = new THREE.PerspectiveCamera(
-  config.camera.fov,
+  config.renderingControls.defaults.fov,
   aspectRatio,
-  config.camera.near,
-  config.camera.far
+  config.renderingControls.defaults.near,
+  config.renderingControls.defaults.far
 );
 
 // In PostProcessing
@@ -294,7 +272,6 @@ interface AppConfig {
   animation: AnimationConfig;
   scene: SceneConfig;
   shader: ShaderConfig;
-  postProcessing: PostProcessingConfig;
   ui: UIConfig;
   renderingControls: RenderingControlsConfig;
   controls: ControlsConfig;
@@ -357,7 +334,7 @@ const { fov, near, far } = config.camera;
 import type { CameraConfig } from '../config';
 
 // ❌ Avoid: Don't modify configuration at runtime
-// config.camera.fov = 90; // This would break immutability
+// config.renderingControls.defaults.fov = 90; // This would break immutability
 ```
 
 ### Adding New Configuration

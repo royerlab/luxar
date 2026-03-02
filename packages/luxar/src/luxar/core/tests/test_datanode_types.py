@@ -4,6 +4,45 @@ import numpy as np
 import pytest
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.core.datanode import DataNode
+
+
+class TestDataNodeNdim:
+    """Test DataNode.ndim property."""
+
+    def test_ndim_raises_on_missing_metadata(self) -> None:
+        """Test that ndim raises ValueError when metadata has no dims key."""
+
+        class _StubDataNode(DataNode):
+            @property
+            def n_elements(self) -> int:
+                return 0
+
+        node = _StubDataNode("test_node", metadata={})
+        with pytest.raises(ValueError, match="no dimensionality metadata"):
+            _ = node.ndim
+
+    def test_ndim_works_with_dims_key(self) -> None:
+        """Test that ndim reads from 'dims' key (Points compat)."""
+
+        class _StubDataNode(DataNode):
+            @property
+            def n_elements(self) -> int:
+                return 0
+
+        node = _StubDataNode("test_node", metadata={"dims": 3})
+        assert node.ndim == 3
+
+    def test_ndim_works_with_ndim_key(self) -> None:
+        """Test that ndim reads from 'ndim' key (Lines/GSplats)."""
+
+        class _StubDataNode(DataNode):
+            @property
+            def n_elements(self) -> int:
+                return 0
+
+        node = _StubDataNode("test_node", metadata={"ndim": 5})
+        assert node.ndim == 5
 
 
 class TestLinesNode:
@@ -167,7 +206,7 @@ class TestGSplatsNode:
             assert gsplats.n_elements == 3  # n_elements == n_splats
             assert gsplats.ndim == 2
             assert gsplats.has_colors is False
-            assert gsplats.has_sharpness is False
+            assert gsplats.has_sharpness is True  # Default sharpness=2.0 always written
             assert gsplats.amplitude_range["min"] == 1.0
             assert gsplats.amplitude_range["max"] == 2.0
 

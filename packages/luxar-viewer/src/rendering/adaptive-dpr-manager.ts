@@ -48,8 +48,9 @@ export class AdaptiveDPRManager {
   private config: AdaptiveDPRConfig;
   private renderer: DPRRenderer | null = null;
 
-  // FPS tracking using sliding window
+  // FPS tracking using circular buffer for O(1) insertion and trimming
   private frameTimestamps: number[] = [];
+  private frameStartIndex: number = 0;
   private readonly FPS_SAMPLE_WINDOW_MS = 1000;
 
   // State
@@ -77,6 +78,8 @@ export class AdaptiveDPRManager {
 
     this.nativeDPR = window.devicePixelRatio || 1;
     this.currentDPR = this.nativeDPR;
+    // Initial enabled state from config. At runtime, this is overridden by
+    // renderingControls.defaults.adaptiveDPREnabled (persisted per-scene in localStorage).
     this.isEnabled = this.config.enabled;
 
     log.info(
@@ -104,10 +107,19 @@ export class AdaptiveDPRManager {
 
     this.frameTimestamps.push(timestamp);
 
-    // Trim timestamps older than sample window
+    // Trim timestamps older than sample window using index advancement (O(1) amortized)
     const cutoff = timestamp - this.FPS_SAMPLE_WINDOW_MS;
-    while (this.frameTimestamps.length > 0 && this.frameTimestamps[0] < cutoff) {
-      this.frameTimestamps.shift();
+    while (
+      this.frameStartIndex < this.frameTimestamps.length &&
+      this.frameTimestamps[this.frameStartIndex] < cutoff
+    ) {
+      this.frameStartIndex++;
+    }
+
+    // Compact array periodically to prevent unbounded growth
+    if (this.frameStartIndex > 120) {
+      this.frameTimestamps = this.frameTimestamps.slice(this.frameStartIndex);
+      this.frameStartIndex = 0;
     }
 
     // Evaluate DPR at configured interval
@@ -122,12 +134,14 @@ export class AdaptiveDPRManager {
    * Returns 0 if not enough data to calculate
    */
   getCurrentFPS(): number {
-    if (this.frameTimestamps.length < 2) return 0;
+    const frameCount = this.frameTimestamps.length - this.frameStartIndex;
+    if (frameCount < 2) return 0;
 
     // FPS = frame count over the sample window
     // We use frame count - 1 because we're measuring intervals between frames
-    const frameCount = this.frameTimestamps.length;
-    const timeSpan = this.frameTimestamps[frameCount - 1] - this.frameTimestamps[0];
+    const timeSpan =
+      this.frameTimestamps[this.frameTimestamps.length - 1] -
+      this.frameTimestamps[this.frameStartIndex];
 
     if (timeSpan <= 0) return 0;
 
@@ -176,7 +190,6 @@ export class AdaptiveDPRManager {
     this.applyDPR();
 
     // Update reduced resolution mode status
-    const wasReducedResolution = this.isReducedResolution;
     this.isReducedResolution = newDPR < this.nativeDPR * 0.95;
 
     log.custom(
@@ -186,7 +199,7 @@ export class AdaptiveDPRManager {
     );
 
     // Notify callback
-    if (this.onDPRChange && (wasReducedResolution !== this.isReducedResolution || true)) {
+    if (this.onDPRChange) {
       this.onDPRChange(newDPR, this.isReducedResolution);
     }
   }
@@ -246,6 +259,7 @@ export class AdaptiveDPRManager {
       this.isReducedResolution = false;
       this.highFPSStartTime = null;
       this.frameTimestamps = [];
+      this.frameStartIndex = 0;
 
       if (this.onDPRChange) {
         this.onDPRChange(this.nativeDPR, false);
@@ -337,6 +351,7 @@ export class AdaptiveDPRManager {
    */
   dispose(): void {
     this.frameTimestamps = [];
+    this.frameStartIndex = 0;
     this.onDPRChange = null;
     this.renderer = null;
     log.info(Modules.ADAPTIVE_DPR, 'Disposed');

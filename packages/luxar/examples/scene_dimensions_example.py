@@ -86,9 +86,9 @@ def main():
                         if ch == 0:
                             colors.append([1.0, 0.2, 0.2])  # Red
                         elif ch == 1:
-                            colors.append([50, 255, 50])  # Green
+                            colors.append([0.2, 1.0, 0.2])  # Green
                         else:
-                            colors.append([50, 50, 255])  # Blue
+                            colors.append([0.2, 0.2, 1.0])  # Blue
 
                         # Radius varies with z depth (smaller when deeper)
                         radius = 0.3 + 0.2 * (z + 50) / 100

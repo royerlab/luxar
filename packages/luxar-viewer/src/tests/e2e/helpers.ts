@@ -607,6 +607,111 @@ export async function waitForRenderStable(
   }
 }
 
+/**
+ * Wait for the next N render frames to complete
+ *
+ * Records the current renderer frame counter and waits until it advances
+ * by the specified number of frames. This replaces most `waitForTimeout(100-500)`
+ * calls after user actions (key presses, clicks, etc.) that trigger re-renders.
+ *
+ * Falls back to a state-based wait + time buffer if the frame counter is unavailable.
+ *
+ * @param page - Playwright page
+ * @param frames - Number of frames to wait for (default: 2)
+ * @param timeout - Maximum wait time in ms (default: 5000)
+ */
+export async function waitForNextRender(page: Page, frames = 2, timeout = 5000): Promise<void> {
+  // Try to read the current frame counter
+  const currentFrame = await page.evaluate(() => {
+    const debug = (window as any).__luxarDebug;
+    return typeof debug?.renderer?.info?.render?.frame === 'number'
+      ? debug.renderer.info.render.frame
+      : null;
+  });
+
+  if (currentFrame !== null) {
+    // Use frame counter for precise wait
+    const targetFrame = currentFrame + frames;
+    await page.waitForFunction(
+      (target: number) => {
+        const debug = (window as any).__luxarDebug;
+        const frame = debug?.renderer?.info?.render?.frame;
+        return typeof frame === 'number' && frame >= target;
+      },
+      targetFrame,
+      { timeout }
+    );
+  } else {
+    // Fallback: wait for stable initialized state + time buffer
+    await page.waitForFunction(
+      () => {
+        const debug = (window as any).__luxarDebug;
+        const state = debug?.getState?.();
+        return state && !state.isLoading && state.initialized;
+      },
+      null,
+      { timeout }
+    );
+    await page.waitForTimeout(frames * 50);
+  }
+}
+
+/**
+ * Wait for an animation step on a specific dimension
+ *
+ * Records the current slice position for the given dimension index and waits
+ * until the position changes, indicating an animation step has completed.
+ * This replaces post-animation-key timeouts where a dimension value is expected
+ * to change (e.g., after pressing `]` or starting an animation with `k`).
+ *
+ * @param page - Playwright page
+ * @param dimIndex - The dimension index to monitor for position changes
+ * @param timeout - Maximum wait time in ms (default: 3000)
+ */
+export async function waitForAnimationStep(
+  page: Page,
+  dimIndex: number,
+  timeout = 3000
+): Promise<void> {
+  // Record the current slice position for this dimension
+  const currentPosition = await page.evaluate((idx: number) => {
+    const debug = (window as any).__luxarDebug;
+    const state = debug?.getState?.();
+    if (state?.slicePosition && idx < state.slicePosition.length) {
+      return state.slicePosition[idx];
+    }
+    // Fallback: try sceneDimsManager
+    const dims = debug?.sceneDimsManager?.getDims?.();
+    if (dims?.currentStep && idx < dims.currentStep.length) {
+      return dims.currentStep[idx];
+    }
+    return null;
+  }, dimIndex);
+
+  if (currentPosition !== null) {
+    // Wait until the position changes
+    await page.waitForFunction(
+      ({ idx, prevPos }: { idx: number; prevPos: number }) => {
+        const debug = (window as any).__luxarDebug;
+        const state = debug?.getState?.();
+        if (state?.slicePosition && idx < state.slicePosition.length) {
+          return state.slicePosition[idx] !== prevPos;
+        }
+        const dims = debug?.sceneDimsManager?.getDims?.();
+        if (dims?.currentStep && idx < dims.currentStep.length) {
+          return dims.currentStep[idx] !== prevPos;
+        }
+        return false;
+      },
+      { idx: dimIndex, prevPos: currentPosition },
+      { timeout }
+    );
+  } else {
+    // Fallback: if we can't read position, wait for a render frame
+    await waitForNextRender(page, 2, timeout);
+  }
+}
+
 export async function assertNoConsoleErrors(
   page: Page,
   allowedPatterns: RegExp[] = []

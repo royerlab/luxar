@@ -37,17 +37,24 @@ export type { WasmModule } from './types';
  *
  * ## Load Order
  *
- * 1. Try to load compiled WASM from /wasm/luxar_wasm_bg.wasm
+ * 1. Try to load compiled WASM from wasm/luxar_wasm_bg.wasm (resolved relative to bundle)
  * 2. If fails (not built or browser incompatibility), use TypeScript fallback
  *
  * @returns Promise resolving to WasmModule interface
  */
 export async function initWasm(): Promise<WasmModule> {
   try {
+    // Compute WASM module URL relative to this bundle file.
+    // At build time, this module is bundled into assets/index-*.js and the WASM
+    // files live at wasm/ (sibling of assets/). Using a variable prevents Vite
+    // from trying to resolve the path as a source asset at build time.
+    const wasmRelativePath = '../wasm/luxar_wasm.js';
+    const wasmJsUrl = new URL(wasmRelativePath, import.meta.url).href;
+
     // Use Function constructor to avoid TypeScript compile-time module resolution
     // This allows the code to compile even when WASM module doesn't exist yet
-    const importWasm = new Function('return import("/wasm/luxar_wasm.js")');
-    const wasmModule = await importWasm();
+    const importWasm = new Function('url', 'return import(url)');
+    const wasmModule = await importWasm(wasmJsUrl);
 
     // Initialize WASM (loads the .wasm binary)
     await wasmModule.default();

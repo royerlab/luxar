@@ -18,8 +18,10 @@
 
 use wasm_bindgen::prelude::*;
 
-/// Maximum dimensions supported (matches other modules)
-const MAX_DIMS: usize = 16;
+use crate::common::{validate_ndim, MAX_SUPPORTED_DIMS};
+
+/// Alias for readability within this module
+const MAX_DIMS: usize = MAX_SUPPORTED_DIMS;
 
 /// Clip a single segment to the nD slice and return interpolation parameters.
 ///
@@ -42,6 +44,8 @@ pub fn clip_segment_single(
 ) -> Vec<f32> {
     let mut t1: f32 = 0.0;
     let mut t2: f32 = 1.0;
+
+    validate_ndim(ndim, "clip_segment_single");
 
     // OPTIMIZATION: Use fixed-size array instead of HashSet (zero allocation)
     let mut is_display_dim = [false; MAX_DIMS];
@@ -139,6 +143,8 @@ pub fn clip_segments_batch(
     output_t1: &mut [f32],
     output_t2: &mut [f32],
 ) -> u32 {
+    validate_ndim(ndim, "clip_segments_batch");
+
     // OPTIMIZATION: Use fixed-size array instead of HashSet (zero allocation)
     let mut is_display_dim = [false; MAX_DIMS];
     for &d in display_dims {
@@ -179,13 +185,13 @@ pub fn clip_segments_batch(
                 continue;
             }
 
-            if !p1_in && !p2_in {
-                if (v1_val < slice_min && v2_val < slice_min)
-                    || (v1_val > slice_max && v2_val > slice_max)
-                {
-                    visible = false;
-                    break;
-                }
+            if !p1_in
+                && !p2_in
+                && ((v1_val < slice_min && v2_val < slice_min)
+                    || (v1_val > slice_max && v2_val > slice_max))
+            {
+                visible = false;
+                break;
             }
 
             let dv = v2_val - v1_val;
