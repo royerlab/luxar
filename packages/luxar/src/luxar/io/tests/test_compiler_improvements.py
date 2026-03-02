@@ -13,10 +13,10 @@ from luxar.validation.base import ValidationError, validate_zarr_attributes
 
 
 class TestVersionUpdate:
-    """Test that the version is correctly set to 0.3."""
+    """Test that the version is correctly set to 0.1."""
 
     def test_compiler_writes_correct_version(self) -> None:
-        """Verify compiler writes version 0.3 to zarr attributes."""
+        """Verify compiler writes version 0.1 to zarr attributes."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
 
@@ -271,8 +271,8 @@ class TestChunkBoundsZarrAlignment:
             assert g["radii"].chunks[0] == pos_chunk0, (
                 f"radii chunks[0]={g['radii'].chunks[0]} != positions chunks[0]={pos_chunk0}"
             )
-            assert g["sharpness"].chunks[0] == pos_chunk0, (
-                f"sharpness chunks[0]={g['sharpness'].chunks[0]} != positions chunks[0]={pos_chunk0}"
+            assert g["sharpnesses"].chunks[0] == pos_chunk0, (
+                f"sharpnesses chunks[0]={g['sharpnesses'].chunks[0]} != positions chunks[0]={pos_chunk0}"
             )
 
             # chunk_bounds partitions == zarr chunk count
@@ -374,8 +374,8 @@ class TestChunkBoundsZarrAlignment:
             assert g["colors"].chunks[0] == vtx_chunk0, (
                 f"colors chunks[0]={g['colors'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
             )
-            assert g["sharpness"].chunks[0] == vtx_chunk0, (
-                f"sharpness chunks[0]={g['sharpness'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
+            assert g["sharpnesses"].chunks[0] == vtx_chunk0, (
+                f"sharpnesses chunks[0]={g['sharpnesses'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
             )
 
     # -- No spatial index (regression guard) ---------------------------------

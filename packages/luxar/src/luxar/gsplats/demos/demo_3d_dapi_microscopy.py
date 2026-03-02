@@ -45,7 +45,6 @@
 
 import sys
 
-import napari
 import numpy as np
 import zarr
 from arbol import Arbol, aprint, asection
@@ -465,6 +464,8 @@ for i, K in enumerate(keep_counts[::5]):  # Show every 5th frame
         )
 
 if not NO_NAPARI:
+    import napari
+
     # ----- Napari viewer with "compression" slider -----
     aprint("🔬 Launching interactive 3D napari viewer...")
     viewer = napari.Viewer(title="3D DAPI Gaussian Splatting Demo", ndisplay=3)

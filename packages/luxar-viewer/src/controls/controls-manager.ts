@@ -45,7 +45,6 @@ export interface ControlsManagerConfig {
   flyInertialMode?: boolean;
   flyDamping?: number;
   flyRotationDamping?: number;
-  flyAcceleration?: number;
 }
 
 interface ControlsManagerEventMap {
@@ -72,7 +71,6 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     flyInertialMode: config.controls.fly.inertialMode.default,
     flyDamping: config.controls.fly.movement.damping.default,
     flyRotationDamping: config.controls.fly.rotation.damping.default,
-    flyAcceleration: config.controls.fly.movement.acceleration.default,
   };
 
   // Scene scale (bounding box diagonal) for scale-aware control parameters.
@@ -287,7 +285,6 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       inertialMode: this.config.flyInertialMode,
       damping: this.config.flyDamping,
       rotationDamping: this.config.flyRotationDamping,
-      acceleration: this.config.flyAcceleration,
     });
 
     // Enable external input management for better control
@@ -620,7 +617,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     rotationDamping: number;
     movementSpeed: number;
     rotationSpeed: number;
-    } {
+  } {
     return {
       inertialMode: this.config.flyInertialMode ?? config.controls.fly.inertialMode.default,
       damping: this.config.flyDamping ?? config.controls.fly.movement.damping.default,
@@ -641,6 +638,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
    */
   public setSceneScale(diagonal: number): void {
     if (diagonal <= 0) return;
+    // Skip redundant updates (avoids flickering when called from multiple paths)
+    if (this.sceneScale > 0 && Math.abs(diagonal - this.sceneScale) < 0.001 * this.sceneScale)
+      return;
     this.sceneScale = diagonal;
 
     const m = config.controls.scaleMultipliers;
@@ -658,7 +658,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
 
     // Update fly movement speed in stored config (applied on next createFlyControls).
     // movementSpeed is the physics driver — it directly controls acceleration magnitude
-    // in the fly controls update loop. acceleration remains a fixed responsiveness constant.
+    // in the fly controls update loop.
     this.config.flyMovementSpeed = diagonal * m.flySpeedFactor;
 
     // Update active fly controls if they exist

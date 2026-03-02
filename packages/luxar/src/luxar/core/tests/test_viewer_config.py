@@ -154,7 +154,9 @@ class TestAnimationConfig:
     """Tests for AnimationConfig."""
 
     def test_round_trip(self) -> None:
-        anim = AnimationConfig(playing=True, target_fps=10.0, loop="bounce", direction="forward")
+        anim = AnimationConfig(
+            playing=True, target_fps=10.0, loop="bounce", direction="forward"
+        )
         d = anim.to_dict()
         anim2 = AnimationConfig.from_dict(d)
         assert anim2.playing is True
@@ -251,7 +253,9 @@ class TestViewerConfig:
             ViewerConfig(bloom_threshold=1.5)
 
     def test_invalid_vignette_darkness(self) -> None:
-        with pytest.raises(ValueError, match="vignette_darkness must be between 0 and 1"):
+        with pytest.raises(
+            ValueError, match="vignette_darkness must be between 0 and 1"
+        ):
             ViewerConfig(vignette_darkness=-0.1)
 
     def test_invalid_detector_noise_readout_sigma(self) -> None:

@@ -42,6 +42,20 @@ class _DictCompatMixin:
     def keys(self) -> Iterator[str]:
         return iter(f.name for f in self.__dataclass_fields__.values())  # type: ignore[attr-defined]
 
+    def values(self) -> Iterator[Any]:
+        return iter(getattr(self, f.name) for f in self.__dataclass_fields__.values())  # type: ignore[attr-defined]
+
+    def items(self) -> Iterator[tuple[str, Any]]:
+        return iter(
+            (f.name, getattr(self, f.name)) for f in self.__dataclass_fields__.values()
+        )  # type: ignore[attr-defined]
+
+    def __iter__(self) -> Iterator[str]:
+        return self.keys()
+
+    def __len__(self) -> int:
+        return len(self.__dataclass_fields__)  # type: ignore[attr-defined]
+
     def __contains__(self, key: str) -> bool:
         return key in self.__dataclass_fields__  # type: ignore[attr-defined]
 
@@ -284,7 +298,10 @@ class LuxarScene:
         positions = self._decode_array(group, "positions")
         colors = self._decode_array(group, "colors")
         radii = self._decode_array(group, "radii")
-        sharpness = self._decode_array(group, "sharpness")
+        # Try plural name first (current format), fall back to singular (legacy)
+        sharpness = self._decode_array(group, "sharpnesses")
+        if sharpness is None:
+            sharpness = self._decode_array(group, "sharpness")
 
         # Load chunk bounds if present
         chunk_bounds = None
@@ -387,7 +404,10 @@ class LuxarScene:
         vertices = self._decode_array(group, "vertices")
         widths = self._decode_array(group, "widths")
         colors = self._decode_array(group, "colors")
-        sharpness = self._decode_array(group, "sharpness")
+        # Try plural name first (current format), fall back to singular (legacy)
+        sharpness = self._decode_array(group, "sharpnesses")
+        if sharpness is None:
+            sharpness = self._decode_array(group, "sharpness")
         indices = self._decode_array(group, "indices")
 
         # Build metadata

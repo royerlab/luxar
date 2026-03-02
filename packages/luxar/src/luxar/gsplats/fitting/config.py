@@ -166,7 +166,7 @@ class FitConfig:
     # Post-fit culling ratio: threshold = cull_ratio * max_abs_error
     # Splats with amplitude below this threshold are removed after fitting.
     # 0.0 disables culling, 1.0 culls at the full convergence threshold.
-    cull_ratio: float = 0.1
+    cull_ratio: float = 0.01
 
     # Voxel footprint correction (post-processing)
     # - False: Disabled (default)

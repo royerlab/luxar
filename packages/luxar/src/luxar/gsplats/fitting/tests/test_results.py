@@ -786,8 +786,8 @@ class TestPostFitCulling:
             end_time=1.0,
         )
 
-    def _make_config(self):
-        """Helper: minimal FitConfig."""
+    def _make_config(self, cull_ratio=0.1):
+        """Helper: minimal FitConfig with explicit cull_ratio for culling tests."""
         V = np.random.rand(16, 16).astype(np.float32)
         return FitConfig(
             V=V,
@@ -819,6 +819,7 @@ class TestPostFitCulling:
             movie_max_frames=100,
             device=torch.device("cpu"),
             verbose=False,
+            cull_ratio=cull_ratio,
         )
 
     def _make_preprocessed(self, N, max_abs_error=0.01):

@@ -12,8 +12,16 @@
 /** Maximum supported dimensions (must match Rust MAX_SUPPORTED_DIMS). */
 const MAX_SUPPORTED_DIMS = 16;
 
+/** Maximum packed Cholesky size for MAX_SUPPORTED_DIMS. */
+const MAX_PACKED_CHOLESKY_SIZE = (MAX_SUPPORTED_DIMS * (MAX_SUPPORTED_DIMS + 1)) / 2;
+
 /** Epsilon for degenerate diagonal detection during Cholesky factorization. */
 const CHOLESKY_EPSILON = 1e-10;
+
+// Module-level workspace buffers — safe because JS is single-threaded.
+// Avoids per-call allocation in hot loops.
+const _sigmaWorkspace = new Float32Array(MAX_SUPPORTED_DIMS * MAX_SUPPORTED_DIMS);
+const _lSubWorkspace = new Float32Array(MAX_PACKED_CHOLESKY_SIZE);
 
 /**
  * Compute the packed index for a Cholesky element L[row, col].
@@ -50,7 +58,9 @@ export function computeMarginalCholesky(
   outputOffset: number
 ): void {
   // Step 1: Reconstruct marginal covariance Σ_S[i,j] = Σ_k L[s_i,k]·L[s_j,k]
-  const sigma = new Float32Array(MAX_SUPPORTED_DIMS * MAX_SUPPORTED_DIMS);
+  // Uses module-level workspace buffer (zeroed below, safe in single-threaded JS)
+  const sigma = _sigmaWorkspace;
+  sigma.fill(0, 0, subNdim * MAX_SUPPORTED_DIMS);
 
   for (let i = 0; i < subNdim; i++) {
     const si = keepDims[i];
@@ -70,7 +80,8 @@ export function computeMarginalCholesky(
 
   // Step 2: Cholesky-Crout factorization of Σ_S → L_S
   const subPackedSize = (subNdim * (subNdim + 1)) / 2;
-  const lSub = new Float32Array(subPackedSize);
+  const lSub = _lSubWorkspace;
+  lSub.fill(0, 0, subPackedSize);
 
   for (let i = 0; i < subNdim; i++) {
     for (let j = 0; j <= i; j++) {

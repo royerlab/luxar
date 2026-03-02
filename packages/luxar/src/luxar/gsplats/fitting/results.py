@@ -4,7 +4,10 @@ Result finalization for Gaussian splat fitting.
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
+
+if TYPE_CHECKING:
+    import torch
 
 import numpy as np
 from arbol import aprint, asection
@@ -41,7 +44,7 @@ _DIM = "\033[2m"
 
 
 def _print_amplitude_histogram(
-    amps,
+    amps: "torch.Tensor",
     noise_floor: float | None = None,
     n_bins: int = 16,
 ) -> None:
@@ -192,6 +195,7 @@ def _clip_to_bounds(
     # For generalized Gaussian exp(-0.5 * ||y||^s), effective radius scales
     # as truncate^(2/s) where s is sharpness (s=2 → truncate^1 = truncate)
     if sharpness is not None:
+        sharpness = np.maximum(sharpness, 1e-6)  # Guard against near-zero exponent
         eff_truncate = truncate ** (2.0 / sharpness)  # (N,)
         max_sigma_sq = (dist_to_edge / eff_truncate[:, np.newaxis]) ** 2  # (N, d)
     else:
@@ -245,7 +249,8 @@ def finalize_results(
         if config.cull_ratio > 0
         else None
     )
-    _print_amplitude_histogram(amps_dev, noise_floor=noise_floor_val)
+    if config.verbose:
+        _print_amplitude_histogram(amps_dev, noise_floor=noise_floor_val)
 
     if config.cull_ratio > 0:
         noise_floor = config.cull_ratio * preprocessed_data.max_abs_error

@@ -443,6 +443,42 @@ export interface InstancedLinesMeshConfig {
  * - This avoids exceeding WebGL's 16 attribute location limit
  * - InstancedBufferGeometry with Mesh still uses instanced drawing
  *
+/**
+ * Compute bounding box and sphere from line segment start/end positions.
+ * Uses a direct min/max pass without temporary geometry or array allocations.
+ */
+function computeLineBounds(
+  geometry: THREE.InstancedBufferGeometry,
+  meshConfig: InstancedLinesMeshConfig
+): void {
+  const box = new THREE.Box3(
+    new THREE.Vector3(Infinity, Infinity, Infinity),
+    new THREE.Vector3(-Infinity, -Infinity, -Infinity)
+  );
+  const v = new THREE.Vector3();
+
+  for (let i = 0; i < meshConfig.segmentCount; i++) {
+    const si = i * 3;
+    v.set(
+      meshConfig.startPositions[si],
+      meshConfig.startPositions[si + 1],
+      meshConfig.startPositions[si + 2]
+    );
+    box.expandByPoint(v);
+    v.set(
+      meshConfig.endPositions[si],
+      meshConfig.endPositions[si + 1],
+      meshConfig.endPositions[si + 2]
+    );
+    box.expandByPoint(v);
+  }
+
+  geometry.boundingBox = box;
+  geometry.boundingSphere = new THREE.Sphere();
+  box.getBoundingSphere(geometry.boundingSphere);
+}
+
+/**
  * @param meshConfig - Configuration with all segment data
  * @param material - LineMaterial to use for rendering
  * @returns THREE.Mesh with InstancedBufferGeometry ready for scene addition
@@ -497,30 +533,8 @@ export function createInstancedLinesMesh(
   // Set instance count
   geometry.instanceCount = meshConfig.segmentCount;
 
-  // Compute bounding box from segment positions
-  const positions = new Float32Array(meshConfig.segmentCount * 6);
-  for (let i = 0; i < meshConfig.segmentCount; i++) {
-    positions[i * 6 + 0] = meshConfig.startPositions[i * 3 + 0];
-    positions[i * 6 + 1] = meshConfig.startPositions[i * 3 + 1];
-    positions[i * 6 + 2] = meshConfig.startPositions[i * 3 + 2];
-    positions[i * 6 + 3] = meshConfig.endPositions[i * 3 + 0];
-    positions[i * 6 + 4] = meshConfig.endPositions[i * 3 + 1];
-    positions[i * 6 + 5] = meshConfig.endPositions[i * 3 + 2];
-  }
-
-  const tempGeometry = new THREE.BufferGeometry();
-  tempGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  tempGeometry.computeBoundingBox();
-  tempGeometry.computeBoundingSphere();
-
-  if (tempGeometry.boundingBox) {
-    geometry.boundingBox = tempGeometry.boundingBox.clone();
-  }
-  if (tempGeometry.boundingSphere) {
-    geometry.boundingSphere = tempGeometry.boundingSphere.clone();
-  }
-
-  tempGeometry.dispose();
+  // Compute bounding box from segment positions (direct min/max pass, no temp allocations)
+  computeLineBounds(geometry, meshConfig);
 
   // Create mesh with instanced geometry
   // Using THREE.Mesh instead of THREE.InstancedMesh avoids the instanceMatrix attribute
@@ -574,7 +588,7 @@ export function updateInstancedLinesMesh(
 
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
     // Same issue as gsplats: meshes created with 0 instances cache _maxInstanceCount=0.
-     
+    // (THREE.js r163+ internal property)
     delete (geometry as any)._maxInstanceCount;
   } else {
     // Same size: update in place (zero GPU allocation)
@@ -586,28 +600,6 @@ export function updateInstancedLinesMesh(
     }
   }
 
-  // Recompute bounding box from segment positions (both start and end)
-  const positions = new Float32Array(meshConfig.segmentCount * 6);
-  for (let i = 0; i < meshConfig.segmentCount; i++) {
-    positions[i * 6 + 0] = meshConfig.startPositions[i * 3 + 0];
-    positions[i * 6 + 1] = meshConfig.startPositions[i * 3 + 1];
-    positions[i * 6 + 2] = meshConfig.startPositions[i * 3 + 2];
-    positions[i * 6 + 3] = meshConfig.endPositions[i * 3 + 0];
-    positions[i * 6 + 4] = meshConfig.endPositions[i * 3 + 1];
-    positions[i * 6 + 5] = meshConfig.endPositions[i * 3 + 2];
-  }
-
-  const tempGeometry = new THREE.BufferGeometry();
-  tempGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  tempGeometry.computeBoundingBox();
-  tempGeometry.computeBoundingSphere();
-
-  if (tempGeometry.boundingBox) {
-    geometry.boundingBox = tempGeometry.boundingBox.clone();
-  }
-  if (tempGeometry.boundingSphere) {
-    geometry.boundingSphere = tempGeometry.boundingSphere.clone();
-  }
-
-  tempGeometry.dispose();
+  // Recompute bounding box from segment positions (direct min/max pass, no temp allocations)
+  computeLineBounds(geometry, meshConfig);
 }

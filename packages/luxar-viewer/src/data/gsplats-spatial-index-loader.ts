@@ -181,16 +181,26 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     }
 
     try {
-      // GSplats format uses "sharpnesses" (plural) - see SPECIFICATIONS.md
-      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
-        kind: 'array',
-      });
-      this.registerBounds('sharpnesses', sharpnessArray);
+      // Try plural name first (current format), fall back to singular (legacy)
+      let sharpnessArray: zarr.Array<zarr.DataType, zarr.Readable>;
+      let sharpnessName: string;
+      try {
+        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
+          kind: 'array',
+        });
+        sharpnessName = 'sharpnesses';
+      } catch {
+        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
+          kind: 'array',
+        });
+        sharpnessName = 'sharpness';
+      }
+      this.registerBounds(sharpnessName, sharpnessArray);
       if (this.l0Cache) {
         sharpnessArray = wrapWithCache(
           sharpnessArray,
           this.l0Cache,
-          `${this.node.path}/sharpnesses`
+          `${this.node.path}/${sharpnessName}`
         );
       }
       this.arrays.sharpness = sharpnessArray;

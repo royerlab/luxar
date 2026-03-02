@@ -196,9 +196,7 @@ class TestEmbedCholeskyPacked:
         packed_2d = np.array([[1.0, 0.0, 1.0]])  # 2D identity
 
         # sigma=0 for dim 2 (discrete time) — should be handled gracefully
-        packed_3d = embed_cholesky_packed(
-            packed_2d, 2, 3, [0, 1], fill_sigma={2: 0}
-        )
+        packed_3d = embed_cholesky_packed(packed_2d, 2, 3, [0, 1], fill_sigma={2: 0})
 
         assert packed_3d.shape == (1, 6)
         L_3d = unpack_tril(packed_3d, 3)

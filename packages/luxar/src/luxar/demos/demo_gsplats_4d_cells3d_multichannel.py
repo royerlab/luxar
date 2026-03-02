@@ -173,17 +173,9 @@ def fit_channel(volume, channel_name, cache_file):
     # Auto-detect device
     global DEVICE
     if DEVICE is None:
-        import torch
+        from luxar.utils.demos import detect_device
 
-        if torch.cuda.is_available():
-            DEVICE = "cuda"
-            aprint("Using CUDA device")
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            DEVICE = "mps"
-            aprint("Using MPS device (Metal acceleration)")
-        else:
-            DEVICE = "cpu"
-            aprint("Using CPU device")
+        DEVICE = detect_device()
 
     from luxar.gsplats import fit_gaussian_splats
 
@@ -305,9 +297,12 @@ dim_order usage:
             all_centers = [g.centers for g in gsplats_list]
             all_amps = [g.amplitudes for g in gsplats_list]
             total_amp = sum(a.sum() for a in all_amps)
-            shared_centroid = (
-                sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
-            )
+            if total_amp > 0:
+                shared_centroid = (
+                    sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
+                )
+            else:
+                shared_centroid = np.mean(np.concatenate(all_centers, axis=0), axis=0)
 
             # Add each channel as a separate gsplats node using dim_order
             for i, (gsplats, ch_config) in enumerate(zip(gsplats_list, CHANNELS)):

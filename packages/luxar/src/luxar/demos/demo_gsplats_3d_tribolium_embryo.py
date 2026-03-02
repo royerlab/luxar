@@ -283,17 +283,9 @@ def fit_tribolium(volume: np.ndarray) -> GSplatData:
     # Auto-detect device
     global DEVICE
     if DEVICE is None:
-        import torch
+        from luxar.utils.demos import detect_device
 
-        if torch.cuda.is_available():
-            DEVICE = "cuda"
-            aprint("Using CUDA device")
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            DEVICE = "mps"
-            aprint("Using MPS device (Metal acceleration)")
-        else:
-            DEVICE = "cpu"
-            aprint("Using CPU device")
+        DEVICE = detect_device()
 
     from luxar.gsplats import fit_gaussian_splats
 
@@ -333,7 +325,7 @@ def fit_tribolium(volume: np.ndarray) -> GSplatData:
 
 def create_luxar_scene(
     gsplats_data: GSplatData,
-    output_path: Path = None,
+    output_path: Path | None = None,
 ) -> Path:
     """Create 3D Luxar scene from fitted GSplats.
 

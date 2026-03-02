@@ -701,7 +701,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             self._encoder.encode(
                 data=sharpness,
                 zarr_group=group,
-                name="sharpness",
+                name="sharpnesses",
                 semantic_type=SemanticType.BOUNDED_SCALAR,
                 mode=self._encoding_mode,
                 bounds=(0.0, SHARPNESS_MAX),
@@ -1574,7 +1574,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._encoder.encode(
             data=sharpness,
             zarr_group=group,
-            name="sharpness",
+            name="sharpnesses",
             semantic_type=SemanticType.BOUNDED_SCALAR,
             mode=self._encoding_mode,
             bounds=(0.0, SHARPNESS_MAX),
@@ -1584,7 +1584,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         )
 
         # Log encoding result
-        enc = group["sharpness"].attrs.get("encoding", {})
+        enc = group["sharpnesses"].attrs.get("encoding", {})
         enc_name = enc.get("name", "unknown")
         if enc_name == "broadcasted":
             aprint("  ✓ Wrote sharpness (broadcasted - uniform)")

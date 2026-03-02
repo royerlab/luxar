@@ -160,10 +160,10 @@ def test_valid_sharpness(tmp_path) -> None:
         compiler.write_points("test", positions, sharpness=sharpness)
 
     root = zarr.open_group(store, mode="r")
-    assert "test/sharpness" in root
+    assert "test/sharpnesses" in root
 
     decoder = ArrayDecoder()
-    stored_sharpness = decoder.decode(root["test/sharpness"], root)
+    stored_sharpness = decoder.decode(root["test/sharpnesses"], root)
     np.testing.assert_array_equal(stored_sharpness, sharpness)
 
 

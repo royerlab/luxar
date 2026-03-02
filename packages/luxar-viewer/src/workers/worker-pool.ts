@@ -51,53 +51,64 @@ class WorkerPool {
     if (this.initPromise) return this.initPromise;
 
     this.initPromise = (async () => {
-      const workerCount = this.getConfiguredWorkerCount();
-      log.info(Modules.WORKER_POOL, `Creating ${workerCount} data worker(s)...`);
+      try {
+        const workerCount = this.getConfiguredWorkerCount();
+        log.info(Modules.WORKER_POOL, `Creating ${workerCount} data worker(s)...`);
 
-      // Create all workers in parallel
-      const workerPromises = Array.from({ length: workerCount }, async (_, index) => {
-        const worker = new Worker(new URL('./data-worker.ts', import.meta.url), {
-          type: 'module',
+        // Create all workers in parallel
+        const workerPromises = Array.from({ length: workerCount }, async (_, index) => {
+          const worker = new Worker(new URL('./data-worker.ts', import.meta.url), {
+            type: 'module',
+          });
+
+          const api = wrap<DataWorkerAPI>(worker);
+
+          try {
+            await api.initialize();
+            log.info(Modules.WORKER_POOL, `Worker ${index + 1}/${workerCount} ready`);
+            return { worker, api, activeQueries: 0 };
+          } catch (error) {
+            log.error(Modules.WORKER_POOL, `Worker ${index + 1} initialization failed`, error);
+            worker.terminate();
+            throw error;
+          }
         });
 
-        const api = wrap<DataWorkerAPI>(worker);
+        // Wait for all workers to initialize
+        const results = await Promise.allSettled(workerPromises);
 
-        try {
-          await api.initialize();
-          log.info(Modules.WORKER_POOL, `Worker ${index + 1}/${workerCount} ready`);
-          return { worker, api, activeQueries: 0 };
-        } catch (error) {
-          log.error(Modules.WORKER_POOL, `Worker ${index + 1} initialization failed`, error);
+        // Collect successful workers
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            this.workers.push(result.value);
+          }
+        }
+
+        if (this.workers.length === 0) {
+          throw new Error(
+            'Failed to initialize any data workers. ' +
+              'Luxar requires WebAssembly and Web Workers support.'
+          );
+        }
+
+        if (this.workers.length < workerCount) {
+          log.warning(
+            Modules.WORKER_POOL,
+            `Only ${this.workers.length}/${workerCount} workers initialized successfully`
+          );
+        }
+
+        log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
+      } catch (e) {
+        // Clean up any workers that were partially pushed during this attempt
+        for (const { worker } of this.workers) {
           worker.terminate();
-          throw error;
         }
-      });
-
-      // Wait for all workers to initialize
-      const results = await Promise.allSettled(workerPromises);
-
-      // Collect successful workers
-      for (const result of results) {
-        if (result.status === 'fulfilled') {
-          this.workers.push(result.value);
-        }
+        this.workers = [];
+        // Reset so callers can retry after transient failures
+        this.initPromise = null;
+        throw e;
       }
-
-      if (this.workers.length === 0) {
-        throw new Error(
-          'Failed to initialize any data workers. ' +
-            'Luxar requires WebAssembly and Web Workers support.'
-        );
-      }
-
-      if (this.workers.length < workerCount) {
-        log.warning(
-          Modules.WORKER_POOL,
-          `Only ${this.workers.length}/${workerCount} workers initialized successfully`
-        );
-      }
-
-      log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
     })();
 
     return this.initPromise;

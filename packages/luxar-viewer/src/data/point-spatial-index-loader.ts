@@ -304,13 +304,28 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     }
 
     try {
-      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
-        kind: 'array',
-      });
-      this.registerBounds('sharpness', sharpnessArray);
+      // Try plural name first (current format), fall back to singular (legacy)
+      let sharpnessArray: zarr.Array<zarr.DataType, zarr.Readable>;
+      let sharpnessName: string;
+      try {
+        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
+          kind: 'array',
+        });
+        sharpnessName = 'sharpnesses';
+      } catch {
+        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
+          kind: 'array',
+        });
+        sharpnessName = 'sharpness';
+      }
+      this.registerBounds(sharpnessName, sharpnessArray);
       // Wrap with L0 cache if enabled
       if (this.l0Cache) {
-        sharpnessArray = wrapWithCache(sharpnessArray, this.l0Cache, `${this.node.path}/sharpness`);
+        sharpnessArray = wrapWithCache(
+          sharpnessArray,
+          this.l0Cache,
+          `${this.node.path}/${sharpnessName}`
+        );
       }
       this.arrays.sharpness = sharpnessArray;
     } catch (e: any) {
