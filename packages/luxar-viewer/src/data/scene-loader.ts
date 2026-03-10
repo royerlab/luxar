@@ -57,6 +57,34 @@ import type { AccumulatorStats } from './data-accumulator';
 import { UpdateProfiler } from '../profiling/update-profiler';
 import { getWorkerPool } from '../workers/worker-pool';
 
+// ============================================================================
+// Staged commit types for atomic geometry updates
+// ============================================================================
+// During dimension animation, all nodes must update in the same render frame
+// to prevent flickering. These types hold processed data between the async
+// load+process phase and the synchronous commit phase.
+
+/** Staged points data ready for GPU commit */
+interface StagedPointsCommit {
+  path: string;
+  data: LoadedPointsData;
+}
+
+/** Staged lines data ready for GPU commit (already projected to 3D) */
+interface StagedLinesCommit {
+  path: string;
+  processed: ProcessedLinesData;
+}
+
+/** Staged gsplats data ready for GPU commit (already projected + Cholesky packed) */
+interface StagedGSplatsCommit {
+  path: string;
+  processed: ReturnType<typeof processGSplats>;
+  cholesky01: Float32Array;
+  cholesky23: Float32Array;
+  cholesky45: Float32Array;
+}
+
 /**
  * Main scene loader that handles the complete loading pipeline.
  *
@@ -436,10 +464,25 @@ export class SceneLoader {
     this.profiler?.beginUpdate();
 
     try {
-      // Update points loaders
-      const pointsUpdates = Array.from(this.loaders.entries()).map(async ([path, loader]) => {
-        // Use profiler.timeTopLevel() for concurrent async operations
-        const updateFn = async (session: import('../profiling/update-profiler').UpdateSession) => {
+      // Noop session for when no profiler is available
+      const noopSession = {
+        begin: () => ({ end: () => {}, setMetadata: () => {}, markSkipped: () => {} }) as any,
+        end: () => {},
+        setMetadata: () => {},
+        markSkipped: () => {},
+      };
+
+      // ================================================================
+      // Phase 1: Load + Process all nodes in parallel (async)
+      // Each callback returns staged commit data WITHOUT mutating geometry.
+      // This ensures all nodes are ready before any geometry changes.
+      // ================================================================
+
+      // Load points data (no processing needed — data is used directly)
+      const pointsLoaders = Array.from(this.loaders.entries()).map(async ([path, loader]) => {
+        const updateFn = async (
+          session: import('../profiling/update-profiler').UpdateSession
+        ): Promise<StagedPointsCommit | null> => {
           try {
             // Get points object to check extend_to_all attribute
             const pointsObj = this.rootGroup?.getObjectByName(path) as THREE.Points | undefined;
@@ -461,27 +504,25 @@ export class SceneLoader {
               );
 
               if (isFullyExtended) {
-                // All non-displayed dimensions are extended - geometry is unchanged
                 log.info(
                   Modules.SCENE_LOADER,
                   `Skipping update for ${path} - all non-displayed dims are extended`
                 );
                 session.markSkipped('extend_to_all');
-                return;
+                return null;
               }
             }
 
             // Build viewState with tolerance override for extend_to_all dimensions
             let pointsViewState = this.viewState;
             if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
-              // Create modified tolerance array with infinite tolerance for extended dims
               const tolerance = [...this.viewState.tolerance];
               for (const dimName of extendDims) {
                 const dimIndex = this.viewState.dimensions.metadata.findIndex(
                   (d: { name?: string }) => d.name === dimName
                 );
                 if (dimIndex >= 0 && dimIndex < tolerance.length) {
-                  tolerance[dimIndex] = 1e10; // Effectively infinite tolerance
+                  tolerance[dimIndex] = 1e10;
                 }
               }
               pointsViewState = { ...this.viewState, tolerance };
@@ -495,11 +536,12 @@ export class SceneLoader {
                   `[GEOM] v${currentVersion} points ${path}: ${points.pointCount} visible`
                 );
               }
-              this.updatePointsGeometry(path, points, session);
-              // Set metadata with point count
               session.setMetadata({ points: points.metadata.loadedPoints });
+              this.failedLoaders.delete(path);
+              return { path, data: points };
             }
             this.failedLoaders.delete(path);
+            return null;
           } catch (error) {
             const errorInfo = this.failedLoaders.get(path);
             const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
@@ -512,27 +554,23 @@ export class SceneLoader {
               Modules.SCENE_LOADER,
               `Failed to update ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
             );
+            return null;
           }
         };
 
         if (this.profiler) {
-          await this.profiler.timeTopLevel(`Points (${path})`, updateFn);
+          return this.profiler.timeTopLevel(`Points (${path})`, updateFn);
         } else {
-          await updateFn({
-            begin: () => ({ end: () => {}, setMetadata: () => {}, markSkipped: () => {} }) as any,
-            end: () => {},
-            setMetadata: () => {},
-            markSkipped: () => {},
-          });
+          return updateFn(noopSession as any);
         }
       });
 
-      // Update lines loaders
-      const linesUpdates = Array.from(this.linesLoaders.entries()).map(async ([path, loader]) => {
-        // Use profiler.timeTopLevel() for concurrent async operations
-        const updateFn = async (session: import('../profiling/update-profiler').UpdateSession) => {
+      // Load + process lines data (includes async worker projection)
+      const linesLoaders = Array.from(this.linesLoaders.entries()).map(async ([path, loader]) => {
+        const updateFn = async (
+          session: import('../profiling/update-profiler').UpdateSession
+        ): Promise<StagedLinesCommit | null> => {
           try {
-            // Get mesh to check extend_to_all attribute
             const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
             const attrs = mesh?.userData?.attrs as { extend_to_all?: string[] } | undefined;
             const extendDims: string[] = attrs?.extend_to_all || [];
@@ -552,13 +590,12 @@ export class SceneLoader {
               );
 
               if (isFullyExtended) {
-                // All non-displayed dimensions are extended - geometry is unchanged
                 log.info(
                   Modules.SCENE_LOADER,
                   `Skipping update for ${path} - all non-displayed dims are extended`
                 );
                 session.markSkipped('extend_to_all');
-                return;
+                return null;
               }
             }
 
@@ -577,11 +614,13 @@ export class SceneLoader {
                   `[GEOM] v${currentVersion} lines ${path}: ${data.segmentCount} loaded`
                 );
               }
-              await this.updateLinesGeometry(path, data, linesViewState, session);
-              // Set metadata with segment count (each segment is 2 indices)
+              const staged = await this.processLinesData(path, data, linesViewState, session);
               session.setMetadata({ segments: data.segments ? data.segments.length / 2 : 0 });
+              this.failedLoaders.delete(path);
+              return staged;
             }
             this.failedLoaders.delete(path);
+            return null;
           } catch (error) {
             const errorInfo = this.failedLoaders.get(path);
             const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
@@ -594,30 +633,24 @@ export class SceneLoader {
               Modules.SCENE_LOADER,
               `Failed to update lines ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
             );
+            return null;
           }
         };
 
         if (this.profiler) {
-          await this.profiler.timeTopLevel(`Lines (${path})`, updateFn);
+          return this.profiler.timeTopLevel(`Lines (${path})`, updateFn);
         } else {
-          await updateFn({
-            begin: () => ({ end: () => {}, setMetadata: () => {}, markSkipped: () => {} }) as any,
-            end: () => {},
-            setMetadata: () => {},
-            markSkipped: () => {},
-          });
+          return updateFn(noopSession as any);
         }
       });
 
-      // Update gsplat loaders
-      const gsplatsUpdates = Array.from(this.gsplatLoaders.entries()).map(
+      // Load + process gsplats data (includes async worker projection + Cholesky packing)
+      const gsplatsLoaders = Array.from(this.gsplatLoaders.entries()).map(
         async ([path, loader]) => {
-          // Use profiler.timeTopLevel() for concurrent async operations
           const updateFn = async (
             session: import('../profiling/update-profiler').UpdateSession
-          ) => {
+          ): Promise<StagedGSplatsCommit | null> => {
             try {
-              // Get mesh to check extend_to_all attribute
               const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
               const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
               const extendDims: string[] = attrs?.extend_to_all || [];
@@ -637,13 +670,12 @@ export class SceneLoader {
                 );
 
                 if (isFullyExtended) {
-                  // All non-displayed dimensions are extended - geometry is unchanged
                   log.info(
                     Modules.SCENE_LOADER,
                     `Skipping gsplats update for ${path} - all non-displayed dims are extended`
                   );
                   session.markSkipped('extend_to_all');
-                  return;
+                  return null;
                 }
               }
 
@@ -655,14 +687,13 @@ export class SceneLoader {
                 dimensions: this.viewState.dimensions?.metadata,
               };
               if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
-                // Create modified tolerance array with infinite tolerance for extended dims
                 const tolerance = [...this.viewState.tolerance];
                 for (const dimName of extendDims) {
                   const dimIndex = this.viewState.dimensions.metadata.findIndex(
                     (d: { name?: string }) => d.name === dimName
                   );
                   if (dimIndex >= 0 && dimIndex < tolerance.length) {
-                    tolerance[dimIndex] = 1e10; // Effectively infinite tolerance
+                    tolerance[dimIndex] = 1e10;
                   }
                 }
                 gsplatsViewState = { ...gsplatsViewState, tolerance };
@@ -670,11 +701,18 @@ export class SceneLoader {
 
               const data = await loader.updateView(gsplatsViewState, session);
               if (data) {
-                await this.updateGSplatsGeometry(path, data, gsplatsViewState, session);
-                // Set metadata with splat count
+                const staged = await this.processGSplatsData(
+                  path,
+                  data,
+                  gsplatsViewState,
+                  session
+                );
                 session.setMetadata({ splats: data.splatCount });
+                this.failedLoaders.delete(path);
+                return staged;
               }
               this.failedLoaders.delete(path);
+              return null;
             } catch (error) {
               const errorInfo = this.failedLoaders.get(path);
               const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
@@ -687,23 +725,40 @@ export class SceneLoader {
                 Modules.SCENE_LOADER,
                 `Failed to update gsplats ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
               );
+              return null;
             }
           };
 
           if (this.profiler) {
-            await this.profiler.timeTopLevel(`GSplats (${path})`, updateFn);
+            return this.profiler.timeTopLevel(`GSplats (${path})`, updateFn);
           } else {
-            await updateFn({
-              begin: () => ({ end: () => {}, setMetadata: () => {}, markSkipped: () => {} }) as any,
-              end: () => {},
-              setMetadata: () => {},
-              markSkipped: () => {},
-            });
+            return updateFn(noopSession as any);
           }
         }
       );
 
-      await Promise.all([...pointsUpdates, ...linesUpdates, ...gsplatsUpdates]);
+      // Wait for ALL loaders to complete (load + process)
+      const [pointsStaged, linesStaged, gsplatsStaged] = await Promise.all([
+        Promise.all(pointsLoaders),
+        Promise.all(linesLoaders),
+        Promise.all(gsplatsLoaders),
+      ]);
+
+      // ================================================================
+      // Phase 2: Atomic commit — ALL geometry mutations in one sync block
+      // Since JS is single-threaded, no requestAnimationFrame can fire
+      // during this block. All meshes update in the same rendered frame.
+      // ================================================================
+
+      for (const staged of pointsStaged) {
+        if (staged) this.updatePointsGeometry(staged.path, staged.data);
+      }
+      for (const staged of linesStaged) {
+        if (staged) this.commitLinesGeometry(staged);
+      }
+      for (const staged of gsplatsStaged) {
+        if (staged) this.commitGSplatsGeometry(staged);
+      }
 
       // Update monitor with total visible segments across all lines nodes
       this.updateVisibleCountsInMonitor();
@@ -783,18 +838,19 @@ export class SceneLoader {
   }
 
   /**
-   * Update lines geometry for a specific path
+   * Process lines data: compute tolerance, project to 3D (async).
+   * Returns staged commit data without mutating any mesh geometry.
    */
-  private async updateLinesGeometry(
+  private async processLinesData(
     path: string,
     data: LoadedLinesData,
     viewState: { displayDims: number[]; slicePosition: number[]; dimensions?: any[] },
     session?: import('../profiling/update-profiler').UpdateSession
-  ): Promise<void> {
-    if (!this.rootGroup) return;
+  ): Promise<StagedLinesCommit | null> {
+    if (!this.rootGroup) return null;
 
     const mesh = this.rootGroup.getObjectByName(path) as THREE.Mesh;
-    if (!mesh || !isLinesUserData(mesh.userData)) return;
+    if (!mesh || !isLinesUserData(mesh.userData)) return null;
 
     // Build new instance buffers
     const ndim = data.ndim;
@@ -860,37 +916,42 @@ export class SceneLoader {
       );
     }
 
-    // Phase 4: Use GPU buffer pool if enabled
-    const bufferSession = session?.begin('Update Buffers');
-    try {
-      if (this._gpuBufferPool) {
-        // Acquire geometry from pool (may reuse existing)
-        const geometry = this._gpuBufferPool.acquireLinesGeometry(path, processed.segmentCount);
+    return { path, processed };
+  }
 
-        // Update attributes in place (zero GPU allocations on reuse)
-        this._gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount);
+  /**
+   * Commit lines geometry to GPU buffers (synchronous).
+   * Called as part of the atomic commit phase — no async operations allowed.
+   */
+  private commitLinesGeometry(staged: StagedLinesCommit): void {
+    if (!this.rootGroup) return;
 
-        // Assign to mesh (might be same geometry, reused)
-        mesh.geometry = geometry;
-        mesh.count = processed.segmentCount;
-      } else {
-        // Fallback: In-place update (mirrors gsplats updateInstancedGSplatsMesh pattern)
-        updateInstancedLinesMesh(mesh, processed);
-        mesh.count = processed.segmentCount;
-      }
-    } finally {
-      bufferSession?.end();
+    const mesh = this.rootGroup.getObjectByName(staged.path) as THREE.Mesh;
+    if (!mesh || !isLinesUserData(mesh.userData)) return;
+
+    const { processed } = staged;
+
+    if (this._gpuBufferPool) {
+      const geometry = this._gpuBufferPool.acquireLinesGeometry(
+        staged.path,
+        processed.segmentCount
+      );
+      this._gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount);
+      mesh.geometry = geometry;
+      mesh.count = processed.segmentCount;
+    } else {
+      updateInstancedLinesMesh(mesh, processed);
+      mesh.count = processed.segmentCount;
     }
 
-    // Track visible segment count in mesh userData for monitor reporting
     if (isLinesUserData(mesh.userData)) {
       mesh.userData.visibleSegmentCount = processed.segmentCount;
     }
 
-    if (data.segmentCount === 0) {
+    if (processed.segmentCount === 0) {
       log.info(
         Modules.SCENE_LOADER,
-        `Clearing lines for ${path} (no visible segments at current slice)`
+        `Clearing lines for ${staged.path} (no visible segments at current slice)`
       );
     }
   }
@@ -962,15 +1023,16 @@ export class SceneLoader {
   }
 
   /**
-   * Update gsplats geometry for a specific path
+   * Process gsplats data: project nD to 3D, pack Cholesky factors (async).
+   * Returns staged commit data without mutating any mesh geometry.
    */
-  private async updateGSplatsGeometry(
+  private async processGSplatsData(
     path: string,
     data: LoadedGSplatsData,
     viewState: GSplatsViewState,
     session?: import('../profiling/update-profiler').UpdateSession
-  ): Promise<void> {
-    if (!this.rootGroup) return;
+  ): Promise<StagedGSplatsCommit | null> {
+    if (!this.rootGroup) return null;
 
     const mesh = this.rootGroup.getObjectByName(path) as THREE.Mesh;
     if (!mesh || mesh.userData?.nodeType !== 'gsplats') {
@@ -979,7 +1041,7 @@ export class SceneLoader {
         `GSplats update skipped for ${path}: ${!mesh ? 'mesh not found in scene' : `unexpected nodeType=${mesh.userData?.nodeType}`}. ` +
           `Data had ${data.splatCount} splats.`
       );
-      return;
+      return null;
     }
 
     // Strategy: use worker for larger datasets when enabled (nD only, not 3D)
@@ -1030,49 +1092,54 @@ export class SceneLoader {
       );
     }
 
-    // Phase 4: Use GPU buffer pool if enabled
-    const bufferSession = session?.begin('Update Buffers');
-    try {
-      if (this._gpuBufferPool) {
-        // Acquire geometry from pool (may reuse existing)
-        const geometry = this._gpuBufferPool.acquireGSplatsGeometry(path, processed.splatCount);
+    return { path, processed, cholesky01, cholesky23, cholesky45 };
+  }
 
-        // Update attributes in place (zero GPU allocations on reuse)
-        this._gpuBufferPool.updateGSplatsGeometry(
-          geometry,
-          {
-            centers3D: processed.centers3D,
-            amplitudes: processed.amplitudes,
-            cholesky01,
-            cholesky23,
-            cholesky45,
-            colors: processed.colors,
-            sharpness: processed.sharpness,
-            splatCount: processed.splatCount,
-          },
-          processed.splatCount
-        );
+  /**
+   * Commit gsplats geometry to GPU buffers (synchronous).
+   * Called as part of the atomic commit phase — no async operations allowed.
+   */
+  private commitGSplatsGeometry(staged: StagedGSplatsCommit): void {
+    if (!this.rootGroup) return;
 
-        // Assign to mesh (might be same geometry, reused)
-        mesh.geometry = geometry;
-      } else {
-        // Fallback: Original path (updateInstancedGSplatsMesh)
-        updateInstancedGSplatsMesh(mesh, {
-          centers: processed.centers3D,
+    const mesh = this.rootGroup.getObjectByName(staged.path) as THREE.Mesh;
+    if (!mesh || mesh.userData?.nodeType !== 'gsplats') return;
+
+    const { processed, cholesky01, cholesky23, cholesky45 } = staged;
+
+    if (this._gpuBufferPool) {
+      const geometry = this._gpuBufferPool.acquireGSplatsGeometry(
+        staged.path,
+        processed.splatCount
+      );
+      this._gpuBufferPool.updateGSplatsGeometry(
+        geometry,
+        {
+          centers3D: processed.centers3D,
+          amplitudes: processed.amplitudes,
           cholesky01,
           cholesky23,
           cholesky45,
-          amplitudes: processed.amplitudes,
-          sharpness: processed.sharpness,
           colors: processed.colors,
+          sharpness: processed.sharpness,
           splatCount: processed.splatCount,
-        });
-      }
-    } finally {
-      bufferSession?.end();
+        },
+        processed.splatCount
+      );
+      mesh.geometry = geometry;
+    } else {
+      updateInstancedGSplatsMesh(mesh, {
+        centers: processed.centers3D,
+        cholesky01,
+        cholesky23,
+        cholesky45,
+        amplitudes: processed.amplitudes,
+        sharpness: processed.sharpness,
+        colors: processed.colors,
+        splatCount: processed.splatCount,
+      });
     }
 
-    // Track visible splat count in mesh userData
     if (mesh.userData) {
       (mesh.userData as GSplatsUserData).visibleSplatCount = processed.splatCount;
     }
@@ -1080,7 +1147,7 @@ export class SceneLoader {
     if (processed.splatCount === 0) {
       log.info(
         Modules.SCENE_LOADER,
-        `Clearing gsplats for ${path} (no visible splats at current slice)`
+        `Clearing gsplats for ${staged.path} (no visible splats at current slice)`
       );
     }
   }
@@ -1106,12 +1173,16 @@ export class SceneLoader {
         );
       }
 
-      // Extract discrete dimension info for worker
+      // Extract discrete dimension info and extend_to_all dims for worker.
       const discreteDims: number[] = [];
       const discreteSteps: Record<number, number> = {};
+      const extendToAllDims: number[] = [];
       if (viewState.dimensions) {
         for (let d = 0; d < viewState.dimensions.length; d++) {
-          if (viewState.dimensions[d]?.discrete && !viewState.displayDims.includes(d)) {
+          if (viewState.displayDims.includes(d)) continue;
+          if (viewState.tolerance[d] >= 1e9) {
+            extendToAllDims.push(d);
+          } else if (viewState.dimensions[d]?.discrete) {
             discreteDims.push(d);
             discreteSteps[d] = viewState.dimensions[d].step ?? 1.0;
           }
@@ -1130,6 +1201,7 @@ export class SceneLoader {
         splatCount: data.splatCount,
         discreteDims,
         discreteSteps,
+        extendToAllDims,
       });
 
       if (this._updateVersion <= 1) {
@@ -1419,8 +1491,8 @@ export class SceneLoader {
       let tolerance = linesViewState.dimensions
         ? computeLinesTolerance(linesViewState.dimensions, linesViewState.displayDims)
         : new Array(attrs.ndim || 3)
-            .fill(0)
-            .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
+          .fill(0)
+          .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
 
       // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
       // This ensures segments aren't clipped when navigating through extended dimensions
@@ -1537,13 +1609,26 @@ export class SceneLoader {
     this.gsplatLoaders.set(node.path, loader);
 
     try {
-      // Build gsplats view state
-      const gsplatsViewState: GSplatsViewState = {
+      // Build gsplats view state with tolerance override for extend_to_all dimensions
+      const extendDims: string[] = (node.attrs.extend_to_all as string[]) || [];
+      let gsplatsViewState: GSplatsViewState = {
         displayDims: this.viewState.displayDims,
         slicePosition: this.viewState.slicePosition,
         tolerance: this.viewState.tolerance,
         dimensions: this.viewState.dimensions?.metadata,
       };
+      if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
+        const tolerance = [...this.viewState.tolerance];
+        for (const dimName of extendDims) {
+          const dimIndex = this.viewState.dimensions.metadata.findIndex(
+            (d: { name?: string }) => d.name === dimName
+          );
+          if (dimIndex >= 0 && dimIndex < tolerance.length) {
+            tolerance[dimIndex] = 1e10;
+          }
+        }
+        gsplatsViewState = { ...gsplatsViewState, tolerance };
+      }
 
       // Load gsplats data
       const data = await loader.loadGSplats(gsplatsViewState);
@@ -2306,7 +2391,8 @@ export class SceneLoader {
         };
         const data = await linesLoader.updateView(linesViewState);
         if (data) {
-          await this.updateLinesGeometry(path, data, linesViewState);
+          const staged = await this.processLinesData(path, data, linesViewState);
+          if (staged) this.commitLinesGeometry(staged);
         }
         this.failedLoaders.delete(path);
         log.success(Modules.SCENE_LOADER, `Successfully retried lines loader: ${path}`);
@@ -2321,7 +2407,8 @@ export class SceneLoader {
         };
         const data = await gsplatsLoader.updateView(gsplatsViewState);
         if (data) {
-          await this.updateGSplatsGeometry(path, data, gsplatsViewState);
+          const staged = await this.processGSplatsData(path, data, gsplatsViewState);
+          if (staged) this.commitGSplatsGeometry(staged);
         }
         this.failedLoaders.delete(path);
         log.success(Modules.SCENE_LOADER, `Successfully retried gsplats loader: ${path}`);

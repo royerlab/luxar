@@ -314,11 +314,25 @@ async function projectPointsTo3D(params: {
       effectiveRadiusConfig.spatialExtendDims.map((b) => (b ? 1 : 0))
     );
 
+    // For effective radius calculation, extend_to_all dims should be treated
+    // as "display" dims (completely skipped — no discrete check, no distance).
+    // Build an augmented display dims array that includes extend_to_all dims.
+    const extendToAllDims: number[] = [];
+    for (let d = 0; d < ndim; d++) {
+      if (!displayDims.includes(d) && viewState.tolerance[d] >= 1e9) {
+        extendToAllDims.push(d);
+      }
+    }
+    const effectiveRadiiDisplayDims =
+      extendToAllDims.length > 0
+        ? new Uint32Array([...displayDims, ...extendToAllDims])
+        : displayDimsU32;
+
     // Use WASM for effective radius calculation
     wasmModule!.calculate_effective_radii(
       positions,
       radii,
-      displayDimsU32,
+      effectiveRadiiDisplayDims,
       slicePositionF32,
       spatialExtendDimsU8,
       ndim,
@@ -733,6 +747,8 @@ async function projectGSplatsTo3D(params: {
   discreteDims?: number[];
   /** Per-dimension step sizes for discrete dims (keyed by dim index) */
   discreteSteps?: Record<number, number>;
+  /** Indices of dimensions to skip entirely (extend_to_all — always visible) */
+  extendToAllDims?: number[];
 }): Promise<{
   centers3D: Float32Array;
   choleskyFactors3D: Float32Array;
@@ -771,9 +787,12 @@ async function projectGSplatsTo3D(params: {
 
   // Separate hidden dims into discrete (binary visibility) and continuous (Gaussian attenuation).
   // Discrete dimensions use a half-step threshold; continuous use WASM Mahalanobis.
+  // extend_to_all dimensions are skipped entirely — splats are always visible there.
+  const extendSet = new Set(params.extendToAllDims ?? []);
   const discreteSet = new Set(params.discreteDims ?? []);
-  const continuousHiddenDims = sortedHiddenDims.filter((d) => !discreteSet.has(d));
-  const discreteHiddenDims = sortedHiddenDims.filter((d) => discreteSet.has(d));
+  const activeHiddenDims = sortedHiddenDims.filter((d) => !extendSet.has(d));
+  const continuousHiddenDims = activeHiddenDims.filter((d) => !discreteSet.has(d));
+  const discreteHiddenDims = activeHiddenDims.filter((d) => discreteSet.has(d));
 
   // Convert to WASM-compatible arrays
   const slicePosF32 = new Float32Array(slicePosition);

@@ -703,12 +703,16 @@ export class GeometryUpdateManager {
         `Projecting ${data.splatCount} gsplats to 3D using worker (ndim=${data.ndim})`
       );
 
-      // Extract discrete dimension info for worker
+      // Extract discrete dimension info and extend_to_all dims for worker.
       const discreteDims: number[] = [];
       const discreteSteps: Record<number, number> = {};
+      const extendToAllDims: number[] = [];
       if (viewState.dimensions) {
         for (let d = 0; d < viewState.dimensions.length; d++) {
-          if (viewState.dimensions[d]?.discrete && !viewState.displayDims.includes(d)) {
+          if (viewState.displayDims.includes(d)) continue;
+          if (viewState.tolerance[d] >= 1e9) {
+            extendToAllDims.push(d);
+          } else if (viewState.dimensions[d]?.discrete) {
             discreteDims.push(d);
             discreteSteps[d] = viewState.dimensions[d].step ?? 1.0;
           }
@@ -727,6 +731,7 @@ export class GeometryUpdateManager {
         splatCount: data.splatCount,
         discreteDims,
         discreteSteps,
+        extendToAllDims,
       });
 
       log.info(
