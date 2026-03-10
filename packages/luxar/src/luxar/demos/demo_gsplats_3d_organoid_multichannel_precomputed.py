@@ -205,7 +205,9 @@ def create_luxar_scene(merged_gsplats, output_path: Path | None = None):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene = compiler.create_scene(
+                dimensions=Dimensions.default_3d(),
+            )
 
             # Add scene metadata
             scene.attrs["title"] = "GSplats: Multi-Channel 3D Organoids"

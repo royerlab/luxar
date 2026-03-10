@@ -1028,15 +1028,155 @@ def add_cell_tracks(
         aprint(f"  Added cell_tracks node ({total_segments:,} segments)")
 
 
+def _compute_max_sigma(gsplats: GSplatData) -> np.ndarray:
+    """Compute the maximum standard deviation across spatial dimensions per splat."""
+    ndim = gsplats.centers.shape[1]
+    chol = gsplats.cholesky_factors
+    max_sigma = np.zeros(len(chol))
+    for d in range(ndim):
+        start = d * (d + 1) // 2
+        var = np.zeros(len(chol))
+        for i in range(d + 1):
+            var += chol[:, start + i] ** 2
+        max_sigma = np.maximum(max_sigma, np.sqrt(var))
+    return max_sigma
+
+
+def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
+    """Process and combine per-timepoint 3D GSplats into a single 4D dataset.
+
+    For each timepoint:
+      1. Translate to amplitude-weighted shared centroid (all timepoints)
+      2. Filter oversized background splats (sigma > 3 um)
+      3. Normalise amplitudes per-timepoint (max = 0.1)
+      4. Assign soft green fluorescence colour
+
+    Then combines all timepoints into one 4D dataset using
+    ``GSplatData.combine_as_new_dimension`` with ``sigma=0`` (splats do not
+    extend in the time dimension).
+
+    The result is cached so repeated runs skip the combine step.
+
+    Args:
+        gsplats_list: List of 3D GSplatData, one per timepoint.
+
+    Returns:
+        Single 4D GSplatData with all timepoints combined.
+    """
+    n_timepoints = len(gsplats_list)
+
+    if n_timepoints < 2:
+        raise ValueError(
+            f"Need at least 2 timepoints for 4D, got {n_timepoints}. "
+            f"Use --timepoints=N with N >= 2."
+        )
+
+    cache_file = CACHE_DIR / (
+        f"celegans_s{SAMPLE_INDEX}_combined_4d_{n_timepoints}tp.gsplats.zarr.zip"
+    )
+
+    if _is_cached(cache_file):
+        result = _load_cached(cache_file, "combined 4D")
+        if result is not None:
+            return result
+
+    with asection(f"Combining {n_timepoints} timepoints into single 4D dataset"):
+        # Compute amplitude-weighted shared centroid across ALL timepoints
+        with asection("Computing shared centroid"):
+            all_centers = [g.centers for g in gsplats_list]
+            all_amps = [g.amplitudes for g in gsplats_list]
+            total_amp = sum(a.sum() for a in all_amps)
+            if total_amp > 0:
+                shared_centroid = (
+                    sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
+                )
+            else:
+                shared_centroid = np.mean(
+                    np.concatenate(all_centers, axis=0), axis=0
+                )
+            aprint(f"Shared centroid: {shared_centroid}")
+
+        # Process each timepoint: translate, filter, normalise, colour
+        processed = []
+        for t, gsplats in enumerate(gsplats_list):
+            with asection(f"Processing timepoint {t}"):
+                gsplats = gsplats.translate(-shared_centroid)
+
+                # Filter oversized "background" splats (sigma > 3 um).
+                # C. elegans nuclei are ~3-5 um diameter, so anything larger
+                # is diffuse background that drowns out detail splats.
+                sigma_threshold = 3.0  # um
+                max_sigma = _compute_max_sigma(gsplats)
+                keep = max_sigma < sigma_threshold
+                n_before = gsplats.n_splats
+                gsplats = gsplats.filter(keep)
+                n_after = gsplats.n_splats
+
+                if n_after < n_before:
+                    aprint(
+                        f"  Filtered {n_before - n_after} oversized splats "
+                        f"(sigma > {sigma_threshold} um), {n_after} remain"
+                    )
+
+                # Normalise per-timepoint so max amplitude = 0.1,
+                # and assign soft green fluorescence colour.
+                if n_after > 0:
+                    amps = gsplats.amplitudes
+                    amp_max = amps.max()
+                    if amp_max > 0:
+                        amps = amps * (0.1 / amp_max)
+                    gsplats = GSplatData(
+                        centers=gsplats.centers,
+                        amplitudes=amps,
+                        cholesky_factors=gsplats.cholesky_factors,
+                        sharpnesses=gsplats.sharpnesses,
+                        colors=np.tile(
+                            np.array([0.4, 1.0, 0.5], dtype=np.float32),
+                            (n_after, 1),
+                        ),
+                        stats=dict(gsplats.stats),
+                    )
+
+                processed.append(gsplats)
+                aprint(f"  {n_after:,} splats ready")
+
+        # Combine into a single 4D dataset: time is the new dimension (sigma=0)
+        combined = GSplatData.combine_as_new_dimension(
+            processed,
+            values=[float(t) for t in range(n_timepoints)],
+            sigma=0.0,
+        )
+        aprint(
+            f"Combined: {combined.n_splats:,} splats, "
+            f"{combined.ndim}D (3D spatial + time)"
+        )
+
+        # Cache the combined result
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_file = cache_file.with_suffix(cache_file.suffix + ".tmp")
+        tmp_file.touch()
+        combined.save(
+            cache_file,
+            encoding_mode=EncodingMode.MEMORY,
+            include_fitting_info=True,
+            color_mode="sdr",
+            compress="zip",
+        )
+        tmp_file.unlink(missing_ok=True)
+        aprint(f"Cached combined 4D dataset: {cache_file.name}")
+
+    return combined
+
+
 def create_luxar_scene(
-    gsplats_list: list,
+    combined_4d: GSplatData,
     tracking_data: dict | None = None,
     output_path: Path | None = None,
 ) -> Path:
-    """Create 4D Luxar scene with GSplats per timepoint and optional track lines.
+    """Create 4D Luxar scene from a single combined 4D GSplat dataset.
 
     Args:
-        gsplats_list: List of GSplatData, one per timepoint.
+        combined_4d: Single 4D GSplatData (3D spatial + time).
         tracking_data: Optional tracking data with 'tracks' and 'colors'.
         output_path: Output .zarr path.
 
@@ -1046,21 +1186,16 @@ def create_luxar_scene(
     if output_path is None:
         output_path = get_demos_output_dir() / "gsplats_4d_celegans_tracking.zarr"
 
-    n_timepoints = len(gsplats_list)
-
-    if n_timepoints < 2:
-        raise ValueError(
-            f"Need at least 2 timepoints for a 4D scene, got {n_timepoints}. "
-            f"Use --timepoints=N with N >= 2."
-        )
+    # Infer number of timepoints from the time coordinate (last column)
+    time_coords = combined_4d.centers[:, -1]
+    n_timepoints = int(time_coords.max()) + 1
 
     with asection("Creating 4D Luxar Scene"):
         aprint(f"Output: {output_path.name}")
+        aprint(f"Splats: {combined_4d.n_splats:,} ({combined_4d.ndim}D)")
         aprint(f"Timepoints: {n_timepoints}")
-        aprint(f"Tracking: {'yes' if tracking_data else 'no'}")
 
-        # GSplats are fitted with voxel_size → output in µm (output_space="real").
-        # Track line vertices are also converted to µm in add_cell_tracks().
+        # GSplats are fitted with voxel_size -> output in um (output_space="real").
         dims = Dimensions(
             [
                 Dimension("x", unit="um", display=True),
@@ -1080,22 +1215,21 @@ def create_luxar_scene(
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
-
-            has_tracks = tracking_data is not None
-            n_tracks = len(tracking_data["tracks"]) if has_tracks else 0
+            scene = compiler.create_scene(
+                dimensions=dims,
+            )
 
             scene.attrs["title"] = "GSplats: C. elegans Embryo — Nuclei Tracking"
             scene.attrs["description"] = f"""
-4D Gaussian Splatting + Cell Lineage Tracks — C. elegans Embryo
-================================================================
+4D Gaussian Splatting — C. elegans Embryo
+==========================================
 
 A confocal microscopy time-series of a developing C. elegans embryo,
 fully tracked with StarryNite and manually curated.
 
 Visualisation:
-  - GSplats: 3D Gaussian splats per timepoint (volume rendering)
-  - Lines:   4D polylines for {n_tracks} tracked cell nuclei trajectories
+  - Single 4D GSplat dataset ({combined_4d.n_splats:,} splats)
+  - 3D Gaussian splats per timepoint, discrete in time (no temporal extent)
 
 Data Source:
   - Zenodo record 6460303
@@ -1111,93 +1245,28 @@ Imaging:
 
 Navigation:
   - Use the Time slider to scrub through development
-  - Cell tracks are always visible as coloured lines
   - Mouse drag to rotate, scroll to zoom, right-click drag to pan
             """
 
-            # Compute shared centroid across ALL timepoints
-            with asection("Computing shared centroid"):
-                all_centers = [g.centers for g in gsplats_list]
-                all_amps = [g.amplitudes for g in gsplats_list]
-                total_amp = sum(a.sum() for a in all_amps)
-                if total_amp > 0:
-                    shared_centroid = (
-                        sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
-                    )
-                else:
-                    shared_centroid = np.mean(
-                        np.concatenate(all_centers, axis=0), axis=0
-                    )
-                aprint(f"Shared centroid: {shared_centroid}")
+            # Add the single combined 4D dataset.
+            # Centers are [Z, Y, X, Time] from embed_dimension; dim_order maps
+            # them to the scene's [x, y, z, time] dimensions.
+            scene.add_gsplats_from_data(
+                name="gsplats_4d",
+                result=combined_4d,
+                dim_order=["z", "y", "x", "time"],
+                extend_to_all=[],
+                opacity=0.7,
+                blending_mode="additive",
+            )
+            aprint(
+                f"Added single 4D gsplats node: "
+                f"{combined_4d.n_splats:,} splats"
+            )
 
-            # Add GSplats per timepoint
-            for t, gsplats in enumerate(gsplats_list):
-                with asection(f"Adding GSplats timepoint {t}"):
-                    gsplats = gsplats.translate(-shared_centroid)
-
-                    # Filter out oversized "background" splats.
-                    # The fitting produces a few huge splats (sigma > 5 µm)
-                    # that cover the entire volume as a diffuse glow,
-                    # drowning out the ~2000 small detail splats (sigma
-                    # ~0.1 µm) that represent actual nuclei structure.
-                    # C. elegans nuclei are ~3-5 µm, so sigma > 3 µm is
-                    # clearly background.
-                    ndim_spatial = gsplats.centers.shape[1]
-                    chol = gsplats.cholesky_factors
-                    max_sigma = np.zeros(len(chol))
-                    for d in range(ndim_spatial):
-                        start = d * (d + 1) // 2
-                        var = np.zeros(len(chol))
-                        for i in range(d + 1):
-                            var += chol[:, start + i] ** 2
-                        max_sigma = np.maximum(max_sigma, np.sqrt(var))
-
-                    sigma_threshold = 3.0  # µm — nuclei are ~3-5 µm diameter
-                    keep = max_sigma < sigma_threshold
-                    n_before = len(gsplats.amplitudes)
-                    centers_f = gsplats.centers[keep]
-                    amps_f = gsplats.amplitudes[keep]
-                    chol_f = gsplats.cholesky_factors[keep]
-                    sharp_f = gsplats.sharpnesses[keep]
-                    n_after = len(amps_f)
-
-                    if n_after < n_before:
-                        aprint(
-                            f"  Filtered {n_before - n_after} oversized splats "
-                            f"(sigma > {sigma_threshold} µm), {n_after} remain"
-                        )
-
-                    # Normalise per-timepoint so max amplitude = 0.1.
-                    if n_after > 0:
-                        amp_max = amps_f.max()
-                        if amp_max > 0:
-                            amps_f = amps_f * (0.1 / amp_max)
-
-                    # Soft green colour for the fluorescence
-                    colors = np.tile(
-                        np.array([0.4, 1.0, 0.5], dtype=np.float32),
-                        (n_after, 1),
-                    )
-
-                    scene.add_gsplats(
-                        name=f"gsplats_t{t:04d}",
-                        centers=centers_f,
-                        amplitudes=amps_f,
-                        cholesky_factors=chol_f,
-                        colors=colors,
-                        sharpness=sharp_f,
-                        dim_order=["z", "y", "x"],
-                        fill={"time": float(t)},
-                        fill_sigma={"time": 0},
-                        extend_to_all=[],
-                        opacity=0.7,
-                        blending_mode="additive",
-                    )
-                    aprint(f"  Added {n_after:,} splats at time={t}")
-
-            # Add cell track lines
-            if tracking_data:
-                add_cell_tracks(scene, tracking_data, shared_centroid)
+            # # Add cell track lines (commented out — too visually cluttered)
+            # if tracking_data:
+            #     add_cell_tracks(scene, tracking_data, shared_centroid)
 
         aprint(f"Scene saved: {output_path}")
         return output_path
@@ -1249,7 +1318,7 @@ def main():
     # Preprocess + fit GSplats per timepoint
     gsplats_list = preprocess_and_fit_all_timepoints(tiff_files[:n_use])
 
-    # Report
+    # Report per-timepoint fitting
     with asection("Fitting Summary"):
         total_splats = sum(len(g.amplitudes) for g in gsplats_list)
         aprint(f"Total splats: {total_splats:,} across {len(gsplats_list)} timepoints")
@@ -1258,8 +1327,15 @@ def main():
             total_pts = sum(len(pts) for pts in tracking_data["tracks"].values())
             aprint(f"Track points: {total_pts:,}")
 
-    # Create 4D scene
-    scene_path = create_luxar_scene(gsplats_list, tracking_data)
+    # Combine all timepoints into a single 4D GSplat dataset (cached)
+    combined_4d = combine_timepoints_to_4d(gsplats_list)
+
+    with asection("Combined 4D Summary"):
+        aprint(f"Total 4D splats: {combined_4d.n_splats:,}")
+        aprint(f"Dimensions: {combined_4d.ndim}D")
+
+    # Create 4D scene from the single combined dataset
+    scene_path = create_luxar_scene(combined_4d, tracking_data)
 
     # Launch viewer
     if not NO_SERVE:

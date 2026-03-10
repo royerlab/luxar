@@ -331,7 +331,9 @@ def create_luxar_scene(gsplats_list, output_path=None):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims,
+            )
 
             scene.attrs["title"] = "GSplats: 6D Kidney (boolean toggle demo)"
             scene.attrs["description"] = """

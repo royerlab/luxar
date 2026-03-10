@@ -736,6 +736,41 @@ describe('discrete dimension handling', () => {
     expect(result.amplitudes[0]).toBeCloseTo(expected, 4);
   });
 
+  it('should skip discrete check for extend_to_all dims (tolerance >= 1e9)', () => {
+    // 5D: dims 0-2 display, dim 3 "membranes" (discrete, fill=1), dim 4 "nuclei" (discrete, extend_to_all)
+    // Splat at membranes=1.0, nuclei=0.0 (unmapped default).
+    // Slice at membranes=1, nuclei=1. Without extend_to_all fix, |1-0|=1 > 0.5 kills the splat.
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([0, 0, 0, 1.0, 0.0]),
+      amplitudes: new Float32Array([1.0]),
+      // 5D identity Cholesky (15 elements)
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
+      colors: null,
+      sharpness: new Float32Array([2.0]),
+      splatCount: 1,
+      ndim: 5,
+    };
+
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 1.0, 1.0], // Both toggles ON
+      tolerance: [1e10, 1e10, 1e10, 0.5, 1e10], // nuclei (dim 4) has extend_to_all tolerance
+      dimensions: [
+        { name: 'X', unit: 'px', scale: 1 },
+        { name: 'Y', unit: 'px', scale: 1 },
+        { name: 'Z', unit: 'px', scale: 1 },
+        { name: 'Membranes', unit: '', scale: 1, discrete: true, step: 1.0 },
+        { name: 'Nuclei', unit: '', scale: 1, discrete: true, step: 1.0 },
+      ],
+    };
+
+    const result = processGSplatsTo3D(loaded, viewState);
+
+    // Splat should be visible: membranes=1 matches, nuclei is extend_to_all (skipped)
+    expect(result.splatCount).toBe(1);
+    expect(result.amplitudes[0]).toBeCloseTo(1.0, 5);
+  });
+
   it('should default to continuous (backward compat) when no dimensions metadata', () => {
     // Without dimensions metadata, all hidden dims use Gaussian attenuation
     const loaded: LoadedGSplatsData = {
