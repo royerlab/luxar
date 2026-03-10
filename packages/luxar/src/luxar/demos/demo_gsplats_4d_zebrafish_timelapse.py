@@ -72,7 +72,7 @@ from pathlib import Path
 import numpy as np
 from arbol import Arbol, aprint, asection
 
-from luxar import Dimension, Dimensions, LuxarZarrCompiler, ViewerConfig
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
@@ -428,7 +428,6 @@ def create_luxar_scene(
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(bloom_enabled=True),
             )
 
             scene.attrs["title"] = "GSplats: Zebrafish Embryo 4D Time-Lapse (Confocal)"
