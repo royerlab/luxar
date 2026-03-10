@@ -168,10 +168,13 @@ export function processGSplatsTo3D(
   // Discrete dimensions (e.g., time, channel) use step-based in/out: if the splat's center
   // is within half a step of slicePosition, it's fully visible; otherwise invisible.
   // Continuous dimensions use the existing marginal Cholesky + Mahalanobis attenuation.
+  // Dimensions with extend_to_all (tolerance >= 1e9) are skipped entirely — splats are
+  // always visible in those dimensions regardless of position.
   // When no dimension metadata is available, all hidden dims default to continuous (backward compat).
   const discreteHiddenDims: number[] = [];
   const continuousHiddenDims: number[] = [];
   for (const dim of sortedHiddenDims) {
+    if (viewState.tolerance[dim] >= 1e9) continue; // extend_to_all: always visible
     if (viewState.dimensions?.[dim]?.discrete) {
       discreteHiddenDims.push(dim);
     } else {

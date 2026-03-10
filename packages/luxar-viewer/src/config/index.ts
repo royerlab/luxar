@@ -225,7 +225,7 @@ export const config: AppConfig = {
       dynamicClippingEnabled: true, // Auto-adjust clipping planes based on camera position
       clippingAdaptSpeed: 0.1, // Exponential smoothing factor (0.01-0.5, lower = smoother)
       // Bloom settings - single source of truth (moved from config.rendering.bloom)
-      bloomEnabled: true, // Enable/disable bloom effect
+      bloomEnabled: false, // Enable/disable bloom effect (opt-in via zarr viewer_config)
       bloomThreshold: 0.01, // Luminance threshold (0-1), lower = more bloom, higher = less bloom
       bloomStrength: 0.25, // Bloom intensity multiplier (moved from rendering.bloom)
       bloomRadius: 1.0, // Blur radius for bloom spread (moved from rendering.bloom)
