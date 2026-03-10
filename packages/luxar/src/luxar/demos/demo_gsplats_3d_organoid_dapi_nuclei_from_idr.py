@@ -131,7 +131,7 @@ import numpy as np
 import zarr
 from arbol import Arbol, aprint, asection
 
-from luxar import Dimensions, LuxarZarrCompiler, ViewerConfig
+from luxar import Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
@@ -349,7 +349,6 @@ def create_luxar_scene(gsplats_data, output_path: Path | None = None):
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
-                viewer_config=ViewerConfig(bloom_enabled=True),
             )
 
             # Add scene metadata
