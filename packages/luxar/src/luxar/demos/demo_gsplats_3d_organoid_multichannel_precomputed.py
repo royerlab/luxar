@@ -101,7 +101,7 @@ from pathlib import Path
 
 from arbol import Arbol, aprint, asection
 
-from luxar import Dimensions, LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler, ViewerConfig
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
@@ -205,7 +205,10 @@ def create_luxar_scene(merged_gsplats, output_path: Path | None = None):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene = compiler.create_scene(
+                dimensions=Dimensions.default_3d(),
+                viewer_config=ViewerConfig(bloom_enabled=True),
+            )
 
             # Add scene metadata
             scene.attrs["title"] = "GSplats: Multi-Channel 3D Organoids"

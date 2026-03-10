@@ -274,6 +274,73 @@ class GSplatData:
             stats=merged_stats,
         )
 
+    @classmethod
+    def combine_as_new_dimension(
+        cls,
+        datasets: "list[GSplatData]",
+        values: "np.ndarray | list[float] | None" = None,
+        sigma: float = 0.0,
+    ) -> "GSplatData":
+        """Combine datasets by embedding each into a new dimension, then concatenating.
+
+        Each dataset is promoted from D-dimensional to (D+1)-dimensional by
+        appending a coordinate in the new dimension, then all are concatenated
+        into a single dataset.
+
+        This is useful for combining per-timepoint 3D fits into a single 4D
+        dataset, per-slice 2D fits into 3D, or any similar stacking operation.
+
+        Args:
+            datasets: List of GSplatData, all with the same ndim.
+            values: Coordinate for each dataset in the new dimension.
+                If None, uses 0.0, 1.0, 2.0, ... (one per dataset).
+                If scalar-per-dataset, all splats in that dataset get the same
+                coordinate.  Can also be a list of per-splat arrays if different
+                splats within a dataset need different coordinates.
+            sigma: Standard deviation in the new dimension.
+                Use 0.0 for discrete dimensions (e.g., time frames) where
+                splats should not extend across the new axis.
+                Use a positive value for continuous dimensions where splats
+                should have Gaussian extent.
+
+        Returns:
+            Single GSplatData with ndim+1 dimensions containing all splats.
+
+        Raises:
+            ValueError: If datasets is empty, lengths mismatch, or ndims differ.
+
+        Example:
+            >>> # Combine 3D timepoints into 4D
+            >>> combined = GSplatData.combine_as_new_dimension(
+            ...     [t0_3d, t1_3d, t2_3d], sigma=0.0
+            ... )
+            >>> combined.ndim  # 4
+            >>> combined.n_splats  # sum of all timepoints
+        """
+        if not datasets:
+            raise ValueError("At least one GSplatData is required")
+
+        if values is None:
+            values = [float(i) for i in range(len(datasets))]
+        elif hasattr(values, "__len__"):
+            values = list(values)
+        else:
+            raise TypeError(
+                f"values must be a list/array or None, got {type(values).__name__}"
+            )
+
+        if len(values) != len(datasets):
+            raise ValueError(
+                f"Number of values ({len(values)}) must match "
+                f"number of datasets ({len(datasets)})"
+            )
+
+        embedded = [
+            ds.embed_dimension(val, sigma=sigma)
+            for ds, val in zip(datasets, values)
+        ]
+        return cls.concatenate(embedded)
+
     def split(self, n_or_indices: "int | list[int] | np.ndarray") -> "list[GSplatData]":
         """Split into multiple GSplatData objects.
 

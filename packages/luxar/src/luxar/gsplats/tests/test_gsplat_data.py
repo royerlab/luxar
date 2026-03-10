@@ -1063,6 +1063,135 @@ class TestEmbedDimension:
         assert result.n_splats == 0
 
 
+# ── Combine as new dimension ─────────────────────────────
+
+
+class TestCombineAsNewDimension:
+    """Tests for GSplatData.combine_as_new_dimension()."""
+
+    def test_basic_3d_to_4d(self):
+        """Combine three 3D datasets into one 4D dataset."""
+        datasets = [_make_3d_gsplat(n=4, seed=i) for i in range(3)]
+        result = GSplatData.combine_as_new_dimension(datasets)
+        assert result.ndim == 4
+        assert result.n_splats == 12
+        # Cholesky factors for 4D: k = 4*5/2 = 10
+        assert result.cholesky_factors.shape[1] == 10
+
+    def test_default_values_are_sequential(self):
+        """When values=None, the new dim gets 0.0, 1.0, 2.0, ..."""
+        datasets = [_make_3d_gsplat(n=2, seed=i) for i in range(3)]
+        result = GSplatData.combine_as_new_dimension(datasets)
+        # New dim is the last column (index 3)
+        time_col = result.centers[:, 3]
+        assert np.allclose(time_col[:2], 0.0)
+        assert np.allclose(time_col[2:4], 1.0)
+        assert np.allclose(time_col[4:6], 2.0)
+
+    def test_explicit_values(self):
+        """Custom coordinate values for the new dimension."""
+        datasets = [_make_3d_gsplat(n=2, seed=i) for i in range(2)]
+        result = GSplatData.combine_as_new_dimension(
+            datasets, values=[10.0, 20.0]
+        )
+        time_col = result.centers[:, 3]
+        assert np.allclose(time_col[:2], 10.0)
+        assert np.allclose(time_col[2:4], 20.0)
+
+    def test_sigma_zero_discrete(self):
+        """sigma=0 gives near-zero variance in the new dimension."""
+        gs = _make_3d_gsplat(n=3)
+        result = GSplatData.combine_as_new_dimension([gs], sigma=0.0)
+        assert result.ndim == 4
+        # The time dimension should have essentially zero variance.
+        # Cholesky for 4D: last diagonal element at index 9 (d=3: start=6, diag at 6+3=9)
+        # L[3,3] should be ~1e-7 (the epsilon used for positive-definiteness)
+        l_33 = result.cholesky_factors[:, 9]
+        assert np.all(np.abs(l_33) < 1e-4)
+
+    def test_sigma_positive(self):
+        """sigma>0 gives nonzero extent in the new dimension."""
+        gs = _make_3d_gsplat(n=3)
+        result = GSplatData.combine_as_new_dimension([gs], sigma=2.0)
+        # L[3,3] should be ~2.0
+        l_33 = result.cholesky_factors[:, 9]
+        assert np.allclose(l_33, 2.0, atol=0.1)
+
+    def test_preserves_spatial_centers(self):
+        """Original spatial coordinates are preserved."""
+        gs = _make_3d_gsplat(n=5, seed=42)
+        result = GSplatData.combine_as_new_dimension([gs], values=[7.0])
+        assert np.allclose(result.centers[:, :3], gs.centers)
+
+    def test_preserves_amplitudes_and_sharpnesses(self):
+        gs1 = _make_3d_gsplat(n=3, seed=1)
+        gs2 = _make_3d_gsplat(n=4, seed=2)
+        result = GSplatData.combine_as_new_dimension([gs1, gs2])
+        assert np.allclose(result.amplitudes[:3], gs1.amplitudes)
+        assert np.allclose(result.amplitudes[3:], gs2.amplitudes)
+        assert np.allclose(result.sharpnesses[:3], gs1.sharpnesses)
+        assert np.allclose(result.sharpnesses[3:], gs2.sharpnesses)
+
+    def test_preserves_colors(self):
+        """Colors are correctly concatenated."""
+        gs1 = GSplatData(
+            centers=np.zeros((2, 3), dtype=np.float32),
+            amplitudes=np.ones(2, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (2, 1)
+            ),
+            sharpnesses=np.ones(2, dtype=np.float32),
+            colors=np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32),
+        )
+        gs2 = GSplatData(
+            centers=np.ones((1, 3), dtype=np.float32),
+            amplitudes=np.ones(1, dtype=np.float32),
+            cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
+            sharpnesses=np.ones(1, dtype=np.float32),
+            colors=np.array([[0, 0, 1]], dtype=np.float32),
+        )
+        result = GSplatData.combine_as_new_dimension([gs1, gs2])
+        assert result.colors is not None
+        assert np.allclose(result.colors[0], [1, 0, 0])
+        assert np.allclose(result.colors[2], [0, 0, 1])
+
+    def test_2d_to_3d(self):
+        """Also works for 2D → 3D."""
+        datasets = [_make_2d_gsplat(n=3, seed=i) for i in range(2)]
+        result = GSplatData.combine_as_new_dimension(datasets)
+        assert result.ndim == 3
+        assert result.n_splats == 6
+
+    def test_empty_datasets_handled(self):
+        """Empty datasets in the list don't break concatenation."""
+        gs_real = _make_3d_gsplat(n=5, seed=1)
+        gs_empty = _make_empty_gsplat(ndim=3)
+        result = GSplatData.combine_as_new_dimension([gs_real, gs_empty])
+        assert result.ndim == 4
+        assert result.n_splats == 5
+
+    def test_single_dataset(self):
+        """Works with a single dataset (adds the dimension)."""
+        gs = _make_3d_gsplat(n=5)
+        result = GSplatData.combine_as_new_dimension([gs])
+        assert result.ndim == 4
+        assert result.n_splats == 5
+
+    def test_empty_list_raises(self):
+        with pytest.raises(ValueError, match="At least one"):
+            GSplatData.combine_as_new_dimension([])
+
+    def test_values_length_mismatch_raises(self):
+        datasets = [_make_3d_gsplat(n=2, seed=i) for i in range(3)]
+        with pytest.raises(ValueError, match="must match"):
+            GSplatData.combine_as_new_dimension(datasets, values=[0.0, 1.0])
+
+    def test_values_not_list_raises(self):
+        datasets = [_make_3d_gsplat(n=2)]
+        with pytest.raises(TypeError, match="must be a list"):
+            GSplatData.combine_as_new_dimension(datasets, values=5.0)
+
+
 # ── Transform ───────────────────────────────────────────
 
 
