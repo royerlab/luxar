@@ -72,7 +72,7 @@ from pathlib import Path
 import numpy as np
 from arbol import Arbol, aprint, asection
 
-from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar import Dimension, Dimensions, LuxarZarrCompiler, ViewerConfig
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
@@ -426,7 +426,10 @@ def create_luxar_scene(
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims,
+                viewer_config=ViewerConfig(bloom_enabled=True),
+            )
 
             scene.attrs["title"] = "GSplats: Zebrafish Embryo 4D Time-Lapse (Confocal)"
             scene.attrs["description"] = f"""
@@ -532,10 +535,12 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Load data
+    # Load data — per-timepoint cache checks happen inside fit_all_timepoints().
+    # We can't skip the load here because the time_indices (which frames to use)
+    # depend on the stride computed from the data's total frame count.
     volumes, voxel_size_zyx, time_indices = load_zebrafish_volumes()
 
-    # Fit GSplats per timepoint (with caching)
+    # Fit GSplats per timepoint (with per-frame caching)
     gsplats_list = fit_all_timepoints(
         volumes, voxel_size=voxel_size_zyx, time_indices=time_indices
     )

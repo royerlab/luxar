@@ -76,11 +76,12 @@ WORKFLOW:
 
 USAGE:
 ======
-    python demo_gsplats_3d_organoid_multichannel_from_idr.py [--no-cache] [--no-serve]
+    python demo_gsplats_3d_organoid_multichannel_from_idr.py [--no-cache] [--no-serve] [--no-napari]
 
 Options:
-    --no-cache: Force re-fitting even if cached results exist
-    --no-serve: Don't auto-launch viewer after scene creation
+    --no-cache:  Force re-fitting even if cached results exist
+    --no-serve:  Don't auto-launch viewer after scene creation
+    --no-napari: Skip napari visualization (useful for headless/CI)
     --serve-only: Skip fitting, just serve existing scene
 
 Note: This demo fetches data from IDR and performs full GSplat fitting (slow).
@@ -102,7 +103,7 @@ import numpy as np
 import zarr
 from arbol import Arbol, aprint, asection
 
-from luxar import Dimensions, LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler, ViewerConfig
 from luxar.encoding import EncodingMode
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
@@ -135,6 +136,7 @@ CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_multichannel"
 # Parse command line flags
 NO_CACHE = "--no-cache" in sys.argv
 NO_SERVE = "--no-serve" in sys.argv
+NO_NAPARI = "--no-napari" in sys.argv
 SERVE_ONLY = "--serve-only" in sys.argv
 
 # Setup
@@ -401,7 +403,10 @@ def create_luxar_scene(merged_gsplats, output_path: Path | None = None):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene = compiler.create_scene(
+                dimensions=Dimensions.default_3d(),
+                viewer_config=ViewerConfig(bloom_enabled=True),
+            )
 
             # Add scene metadata
             scene.attrs["title"] = "GSplats: Multi-Channel 3D Organoids"
@@ -474,18 +479,40 @@ def main():
             aprint("Run without --serve-only to generate first")
             return
 
-    # Load multi-channel data
-    volumes = load_multichannel_data()
+    # Check if all channels are cached before loading volumes
+    volumes = None
+    gsplats_list = None
 
-    if len(volumes) < 2:
-        aprint("Error: Need at least 2 channels for this demo")
-        return
+    if not NO_CACHE:
+        cache_files = [
+            CACHE_DIR / f"organoids_gsplats_ch{i}.gsplats.zarr.zip"
+            for i in range(len(CHANNELS))
+        ]
+        if all(f.exists() for f in cache_files):
+            with asection("Loading cached GSplats for all channels"):
+                try:
+                    gsplats_list = []
+                    for i, (cache_file, ch_config) in enumerate(
+                        zip(cache_files, CHANNELS)
+                    ):
+                        result = GSplatData.load(cache_file, include_stats=False)
+                        aprint(
+                            f"  {ch_config['name']}: {len(result.amplitudes)} cached splats"
+                        )
+                        gsplats_list.append(result)
+                except Exception as e:
+                    aprint(f"Cache load failed: {e}, will re-fit...")
+                    gsplats_list = None
 
-    # Fit each channel
-    gsplats_list = fit_all_channels(volumes)
+    if gsplats_list is None:
+        # Load data only when we need to fit
+        volumes = load_multichannel_data()
 
-    # Open in napari before merging/transforming for proper alignment
-    view_with_napari(volumes, gsplats_list, CHANNELS[: len(gsplats_list)])
+        if len(volumes) < 2:
+            aprint("Error: Need at least 2 channels for this demo")
+            return
+
+        gsplats_list = fit_all_channels(volumes)
 
     # Merge with channel colors
     with asection("Merging channels with colors"):
@@ -511,24 +538,29 @@ def main():
     # Create scene
     scene_path = create_luxar_scene(merged, output_path)
 
-    # Summary
-    total_splats = len(merged.amplitudes)
-    total_voxels = sum(v.size for v in volumes)
-    volume_bytes = total_voxels * 4  # float32
-    # 11 floats per splat + 3 for color = 14
-    splats_bytes = total_splats * 14 * 4
-    compression = volume_bytes / splats_bytes
+    # Summary (only if volumes were loaded)
+    if volumes is not None:
+        total_splats = len(merged.amplitudes)
+        total_voxels = sum(v.size for v in volumes)
+        volume_bytes = total_voxels * 4  # float32
+        # 11 floats per splat + 3 for color = 14
+        splats_bytes = total_splats * 14 * 4
+        compression = volume_bytes / splats_bytes
 
-    aprint("\n" + "=" * 70)
-    aprint("Multi-Channel Compression Summary")
-    aprint("=" * 70)
-    aprint(f"Channels: {len(volumes)}")
-    aprint(f"Total voxels: {total_voxels:,}")
-    aprint(f"Total splats: {total_splats:,}")
-    aprint(f"Raw size: {volume_bytes / 1024 / 1024:.2f} MB")
-    aprint(f"Splat size: {splats_bytes / 1024:.2f} KB")
-    aprint(f"Compression ratio: {compression:.1f}:1")
-    aprint("=" * 70)
+        aprint("\n" + "=" * 70)
+        aprint("Multi-Channel Compression Summary")
+        aprint("=" * 70)
+        aprint(f"Channels: {len(volumes)}")
+        aprint(f"Total voxels: {total_voxels:,}")
+        aprint(f"Total splats: {total_splats:,}")
+        aprint(f"Raw size: {volume_bytes / 1024 / 1024:.2f} MB")
+        aprint(f"Splat size: {splats_bytes / 1024:.2f} KB")
+        aprint(f"Compression ratio: {compression:.1f}:1")
+        aprint("=" * 70)
+
+    # Open in napari before merging/transforming for proper alignment
+    if not NO_NAPARI and volumes is not None:
+        view_with_napari(volumes, gsplats_list, CHANNELS[: len(gsplats_list)])
 
     # Launch viewer
     if NO_SERVE:

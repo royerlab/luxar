@@ -95,11 +95,12 @@ Typical results for 128³ volume:
 
 USAGE:
 ======
-    python demo_gsplats_3d_organoid_dapi_nuclei_from_idr.py [--no-cache] [--no-serve]
+    python demo_gsplats_3d_organoid_dapi_nuclei_from_idr.py [--no-cache] [--no-serve] [--no-napari]
 
 Options:
-    --no-cache: Force re-fitting even if cached result exists
-    --no-serve: Don't auto-launch viewer after scene creation
+    --no-cache:  Force re-fitting even if cached result exists
+    --no-serve:  Don't auto-launch viewer after scene creation
+    --no-napari: Skip napari visualization (useful for headless/CI)
     --serve-only: Skip fitting, just serve existing scene
 
 Output:
@@ -130,7 +131,7 @@ import numpy as np
 import zarr
 from arbol import Arbol, aprint, asection
 
-from luxar import Dimensions, LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler, ViewerConfig
 from luxar.encoding import EncodingMode
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
@@ -158,6 +159,7 @@ CACHE_FILE = CACHE_DIR / "gsplats_dapi_fit.npz"
 # Parse command line flags
 NO_CACHE = "--no-cache" in sys.argv
 NO_SERVE = "--no-serve" in sys.argv
+NO_NAPARI = "--no-napari" in sys.argv
 SERVE_ONLY = "--serve-only" in sys.argv
 
 # Setup
@@ -345,7 +347,10 @@ def create_luxar_scene(gsplats_data, output_path: Path | None = None):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene = compiler.create_scene(
+                dimensions=Dimensions.default_3d(),
+                viewer_config=ViewerConfig(bloom_enabled=True),
+            )
 
             # Add scene metadata
             scene.attrs["title"] = "GSplats: 3D Organoid DAPI-Stained Nuclei"
@@ -527,14 +532,29 @@ def main():
             aprint("Run without --serve-only to generate first")
             return
 
-    # Load data
-    volume = load_dapi_data()
+    # Check cache before loading the (large) volume
+    volume = None
+    gsplats_data_original = None
 
-    # Fit or load gsplats (keep original for napari)
-    gsplats_data_original = fit_or_load_gsplats(volume)
+    if CACHE_FILE.exists() and not NO_CACHE:
+        with asection("Loading cached GSplats"):
+            try:
+                cache = np.load(CACHE_FILE)
+                gsplats_data_original = GSplatData(
+                    centers=cache["centers"],
+                    cholesky_factors=cache["cholesky_factors"],
+                    amplitudes=cache["amplitudes"],
+                    sharpnesses=cache["sharpnesses"],
+                    stats={},
+                )
+                aprint(f"Loaded {len(gsplats_data_original.amplitudes)} cached splats")
+            except Exception as e:
+                aprint(f"Cache load failed: {e}, will re-fit...")
 
-    # Open in napari FIRST with original un-transformed data (proper alignment!)
-    view_with_napari(volume, gsplats_data_original)
+    if gsplats_data_original is None:
+        # Load data only when we need to fit
+        volume = load_dapi_data()
+        gsplats_data_original = fit_or_load_gsplats(volume)
 
     # Apply transformations for web viewer
     with asection("Applying transformations for web viewer"):
@@ -556,22 +576,27 @@ def main():
     # Create scene with transformed data
     scene_path = create_luxar_scene(gsplats_data, output_path)
 
-    # Summary
-    n_splats = len(gsplats_data.amplitudes)
-    volume_bytes = volume.size * 4  # float32
-    splats_bytes = n_splats * 11 * 4  # 11 floats per splat
-    compression = volume_bytes / splats_bytes
+    # Summary (only if volume was loaded)
+    if volume is not None:
+        n_splats = len(gsplats_data.amplitudes)
+        volume_bytes = volume.size * 4  # float32
+        splats_bytes = n_splats * 11 * 4  # 11 floats per splat
+        compression = volume_bytes / splats_bytes
 
-    aprint("\n" + "=" * 70)
-    aprint("Compression Summary")
-    aprint("=" * 70)
-    aprint(f"Volume: {volume.shape} = {volume.size:,} voxels")
-    aprint(f"Splats: {n_splats} x 11 floats = {n_splats * 11:,} floats")
-    aprint(f"Raw size: {volume_bytes / 1024 / 1024:.2f} MB")
-    aprint(f"Splat size: {splats_bytes / 1024:.2f} KB")
-    aprint(f"Compression ratio: {compression:.1f}:1")
-    aprint(f"Space savings: {(1 - 1 / compression) * 100:.1f}%")
-    aprint("=" * 70)
+        aprint("\n" + "=" * 70)
+        aprint("Compression Summary")
+        aprint("=" * 70)
+        aprint(f"Volume: {volume.shape} = {volume.size:,} voxels")
+        aprint(f"Splats: {n_splats} x 11 floats = {n_splats * 11:,} floats")
+        aprint(f"Raw size: {volume_bytes / 1024 / 1024:.2f} MB")
+        aprint(f"Splat size: {splats_bytes / 1024:.2f} KB")
+        aprint(f"Compression ratio: {compression:.1f}:1")
+        aprint(f"Space savings: {(1 - 1 / compression) * 100:.1f}%")
+        aprint("=" * 70)
+
+    # Open in napari with original un-transformed data (proper alignment)
+    if not NO_NAPARI and volume is not None:
+        view_with_napari(volume, gsplats_data_original)
 
     # Launch viewer
     if NO_SERVE:
