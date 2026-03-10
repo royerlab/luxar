@@ -260,7 +260,7 @@ def load_tribolium_volume() -> np.ndarray:
 
 
 def fit_tribolium(volume: np.ndarray) -> GSplatData:
-    """Fit Gaussian splats to the Tribolium volume with caching.
+    """Fit Gaussian splats to the Tribolium volume (no cache check — caller handles that).
 
     Args:
         volume: 3D float32 volume (Z, Y, X), normalised to [0, 1].
@@ -269,16 +269,6 @@ def fit_tribolium(volume: np.ndarray) -> GSplatData:
         Fitted GSplatData.
     """
     cache_file = CACHE_DIR / "tribolium_gsplats.gsplats.zarr.zip"
-
-    # Check cache
-    if cache_file.exists() and not NO_CACHE:
-        with asection("Loading cached GSplats"):
-            try:
-                result = GSplatData.load(cache_file, include_stats=False)
-                aprint(f"Loaded {len(result.amplitudes):,} cached splats")
-                return result
-            except Exception as e:
-                aprint(f"Cache load failed: {e}, re-fitting...")
 
     # Auto-detect device
     global DEVICE
@@ -354,7 +344,9 @@ def create_luxar_scene(
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims,
+            )
 
             scene.attrs["title"] = "GSplats: Tribolium castaneum Embryo (Light-Sheet)"
             scene.attrs["description"] = """
@@ -434,11 +426,22 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Load data
-    volume = load_tribolium_volume()
+    # Check cache before loading the (large) volume
+    cache_file = CACHE_DIR / "tribolium_gsplats.gsplats.zarr.zip"
+    gsplats_data = None
 
-    # Fit GSplats
-    gsplats_data = fit_tribolium(volume)
+    if cache_file.exists() and not NO_CACHE:
+        with asection("Loading cached GSplats"):
+            try:
+                gsplats_data = GSplatData.load(cache_file, include_stats=False)
+                aprint(f"Loaded {len(gsplats_data.amplitudes):,} cached splats")
+            except Exception as e:
+                aprint(f"Cache load failed: {e}, will re-fit...")
+
+    if gsplats_data is None:
+        # Load data only when we need to fit
+        volume = load_tribolium_volume()
+        gsplats_data = fit_tribolium(volume)
 
     # Report
     with asection("Summary"):

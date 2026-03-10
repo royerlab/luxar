@@ -78,6 +78,11 @@ export function calculateEffectiveRadii(
         continue;
       }
 
+      // Skip extend_to_all dimensions (tolerance >= 1e9) — always visible
+      if (viewState.tolerance[d] >= 1e9) {
+        continue;
+      }
+
       // For non-spatial (discrete) dimensions, require exact match
       if (!isSpatialDim(d)) {
         const value = positions[i * ndim + d];
@@ -103,6 +108,11 @@ export function calculateEffectiveRadii(
     for (let d = 0; d < ndim; d++) {
       // Skip if dimension is displayed (it's in the viewing plane)
       if (displayDims.includes(d)) {
+        continue;
+      }
+
+      // Skip extend_to_all dimensions — no distance contribution
+      if (viewState.tolerance[d] >= 1e9) {
         continue;
       }
 
@@ -170,6 +180,9 @@ export function calculateSpatialQueryTolerance(
       // Displayed dimensions need INFINITE tolerance - we want to see ALL points
       // regardless of their position in these dimensions (they're all in the view)
       // Use a very large number instead of Infinity for numerical stability
+      queryTolerance[d] = 1e10;
+    } else if (viewState.tolerance[d] >= 1e9) {
+      // extend_to_all dimension — use infinite tolerance so all chunks are loaded
       queryTolerance[d] = 1e10;
     } else if (isSpatialDim(d)) {
       // Non-displayed spatial dimensions need maxRadius tolerance
