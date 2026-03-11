@@ -301,8 +301,8 @@ export const config: AppConfig = {
   renderingControls: {
     defaults: {
       fxaaEnabled: true,        // FXAA anti-aliasing (recommended)
-      msaaEnabled: false,       // MSAA (has brightness issues with additive blending)
-      ssaaEnabled: false,       // SSAA (has brightness issues with additive blending)
+      msaaEnabled: false,       // MSAA (hardware-accelerated, fast and sharp)
+      ssaaEnabled: false,       // SSAA (supersampling, highest quality, heavy cost)
       // ... more rendering options
     },
   },
@@ -377,18 +377,18 @@ Luxar Player supports multiple anti-aliasing techniques with important compatibi
 renderingControls: {
   defaults: {
     fxaaEnabled: true,          // FXAA: Works well with additive blending
-    msaaEnabled: false,         // MSAA: Causes brightness issues with additive blending
-    ssaaEnabled: false,         // SSAA: Causes dimming with additive blending
+    msaaEnabled: false,         // MSAA: Hardware-accelerated, fast and sharp
+    ssaaEnabled: false,         // SSAA: Supersampling, highest quality, heavy cost
     smaaEnabled: false,         // SMAA: Advanced edge-detection AA
   },
 },
 ```
 
-**Anti-Aliasing Compatibility Notes:**
-- **FXAA**: Recommended for additive blending - no brightness issues
-- **MSAA**: Causes brightness increase with additive blending due to sample accumulation
-- **SSAA**: Causes dimming due to downsampling averaging bright additive contributions
-- **SMAA**: Advanced technique with preset quality levels (LOW/MEDIUM/HIGH/ULTRA)
+**Anti-Aliasing Notes:**
+- **MSAA**: Hardware-accelerated, fast and sharp — great default for most scenes
+- **FXAA**: Fastest post-process AA, may slightly blur the image
+- **SMAA**: Advanced edge detection with preset quality levels (LOW/MEDIUM/HIGH/ULTRA)
+- **SSAA**: Highest quality (supersampling), significant performance cost
 
 ### Performance Optimization
 
@@ -448,10 +448,10 @@ const frameTime = monitor.getAverageFrameTime();
 - Ensure proper Zarr metadata (.zarray files)
 - Verify scene dimensions are defined for nD datasets
 
-**Anti-aliasing brightness issues**
-- MSAA causes brightness increase with additive blending - disable if too bright
-- SSAA causes dimming with additive blending - adjust exposure compensation
-- Use FXAA for best compatibility with additive point rendering
+**Anti-aliasing selection**
+- Try MSAA first (fast, sharp, hardware-accelerated)
+- Use FXAA or SMAA for lightweight post-process smoothing
+- Use SSAA only for final renders (heavy performance cost)
 
 **nD navigation not working**
 - Verify `sceneDimensions` are defined in dataset `.zattrs`

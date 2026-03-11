@@ -556,7 +556,7 @@ import { log, Modules, LogEmoji } from '../utils/log';
 // Informational logging
 log.info(Modules.DATA_MONITOR, 'Starting data monitor');
 log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
-log.warning(Modules.RENDERER, 'MSAA incompatible with additive blending');
+log.warning(Modules.RENDERER, 'WebGL extension not supported');
 log.error(Modules.ZARR_LOADER, 'Failed to fetch chunk', error);
 
 // Action-specific logging

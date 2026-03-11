@@ -157,14 +157,24 @@ luxar gsplat convert splats.gsplats.zarr scene.zarr --center
 # Render gsplats back to volume for quality comparison
 luxar gsplat render splats.gsplats.zarr rendered.npy --shape 128,128,128
 
+# Split into parts
+luxar gsplat split splats.gsplats.zarr output_dir/ --parts 4
+luxar gsplat split splats.gsplats.zarr output_dir/ --indices "1000,5000"
+
 # Merge multiple datasets
 luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
 luxar gsplat merge t0.zarr t1.zarr -o 4d.zarr --as-dimension --values 0,1
 luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00ff00"
 
-# Inspect and prune (existing commands)
+# Slice by coordinate ranges (numpy-style)
+luxar gsplat slice input.gsplats.zarr output.gsplats.zarr "0:50, :, 10:90"
+luxar gsplat slice input.gsplats.zarr output.gsplats.zarr ":50, 20:80, :"
+
+# Inspect, prune, and filter
 luxar gsplat info splats.gsplats.zarr          # Dataset statistics
 luxar gsplat prune splats.gsplats.zarr pruned.gsplats.zarr --retention 0.95
+luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --amplitude-min 0.1 --eccentricity-max 5
+luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --bbox "0,50,0,50,0,50" --volume-max 100
 luxar gsplat view splats.gsplats.zarr          # Quick web viewer
 ```
 

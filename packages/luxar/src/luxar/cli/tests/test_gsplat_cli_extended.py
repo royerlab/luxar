@@ -343,11 +343,16 @@ class TestFitCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "fit",
-                str(small_volume_npy), str(out),
-                "--preset", "draft",
-                "--iters", "5",
-                "--seeds", "10",
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(out),
+                "--preset",
+                "draft",
+                "--iters",
+                "5",
+                "--seeds",
+                "10",
                 "--quiet",
             ],
         )
@@ -364,11 +369,16 @@ class TestFitCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "fit",
-                str(small_volume_npy), str(out),
-                "--preset", "draft",
-                "--iters", "5",
-                "--seeds", "10",
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(out),
+                "--preset",
+                "draft",
+                "--iters",
+                "5",
+                "--seeds",
+                "10",
                 "--quiet",
             ],
         )
@@ -392,10 +402,14 @@ class TestFitCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "fit",
-                str(small_volume_npy), str(out),
-                "--config", str(config_path),
-                "--seeds", "10",
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(out),
+                "--config",
+                str(config_path),
+                "--seeds",
+                "10",
                 "--quiet",
             ],
         )
@@ -456,12 +470,17 @@ class TestConvertCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "convert",
-                str(sample_gsplats), str(out),
-                "--scale-intensity", "0.5",
+                "gsplat",
+                "convert",
+                str(sample_gsplats),
+                str(out),
+                "--scale-intensity",
+                "0.5",
             ],
         )
-        assert result.exit_code == 0, f"convert --scale-intensity failed: {result.stdout}"
+        assert result.exit_code == 0, (
+            f"convert --scale-intensity failed: {result.stdout}"
+        )
         assert out.exists()
 
     def test_convert_scene_has_valid_structure(
@@ -498,9 +517,12 @@ class TestRenderCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "render",
-                str(sample_gsplats), str(out),
-                "--shape", "8,8,8",
+                "gsplat",
+                "render",
+                str(sample_gsplats),
+                str(out),
+                "--shape",
+                "8,8,8",
             ],
         )
         assert result.exit_code == 0, f"render failed: {result.stdout}"
@@ -557,9 +579,12 @@ class TestMergeCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "merge",
-                str(sample_gsplats), str(path2),
-                "-o", str(out),
+                "gsplat",
+                "merge",
+                str(sample_gsplats),
+                str(path2),
+                "-o",
+                str(out),
             ],
         )
         assert result.exit_code == 0, f"merge failed: {result.stdout}"
@@ -589,11 +614,15 @@ class TestMergeCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "merge",
-                str(sample_gsplats), str(path2),
-                "-o", str(out),
+                "gsplat",
+                "merge",
+                str(sample_gsplats),
+                str(path2),
+                "-o",
+                str(out),
                 "--as-dimension",
-                "--values", "0,1",
+                "--values",
+                "0,1",
             ],
         )
         assert result.exit_code == 0, f"merge --as-dimension failed: {result.stdout}"
@@ -622,10 +651,14 @@ class TestMergeCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "merge",
-                str(sample_gsplats), str(path2),
-                "-o", str(out),
-                "--channel-colors", "#ff0000,#00ff00",
+                "gsplat",
+                "merge",
+                str(sample_gsplats),
+                str(path2),
+                "-o",
+                str(out),
+                "--channel-colors",
+                "#ff0000,#00ff00",
             ],
         )
         assert result.exit_code == 0, f"merge --channel-colors failed: {result.stdout}"
@@ -641,11 +674,15 @@ class TestMergeCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "merge",
-                str(sample_gsplats), str(sample_gsplats),
-                "-o", str(out),
+                "gsplat",
+                "merge",
+                str(sample_gsplats),
+                str(sample_gsplats),
+                "-o",
+                str(out),
                 "--as-dimension",
-                "--channel-colors", "#ff0000,#00ff00",
+                "--channel-colors",
+                "#ff0000,#00ff00",
             ],
         )
         assert result.exit_code != 0
@@ -657,9 +694,11 @@ class TestMergeCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "merge",
+                "gsplat",
+                "merge",
                 str(sample_gsplats),
-                "-o", str(out),
+                "-o",
+                str(out),
             ],
         )
         assert result.exit_code != 0
@@ -672,10 +711,14 @@ class TestMergeCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "merge",
-                str(sample_gsplats), str(sample_gsplats),
-                "-o", str(out),
-                "--channel-colors", "#ff0000,#00ff00,#0000ff",
+                "gsplat",
+                "merge",
+                str(sample_gsplats),
+                str(sample_gsplats),
+                "-o",
+                str(out),
+                "--channel-colors",
+                "#ff0000,#00ff00,#0000ff",
             ],
         )
         assert result.exit_code != 0
@@ -688,11 +731,15 @@ class TestMergeCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "merge",
-                str(sample_gsplats), str(sample_gsplats),
-                "-o", str(out),
+                "gsplat",
+                "merge",
+                str(sample_gsplats),
+                str(sample_gsplats),
+                "-o",
+                str(out),
                 "--as-dimension",
-                "--values", "0,1,2",
+                "--values",
+                "0,1,2",
             ],
         )
         assert result.exit_code != 0
@@ -719,11 +766,13 @@ class TestMergeCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "merge",
+                "gsplat",
+                "merge",
                 str(sample_gsplats),
                 str(tmp_path / "b.gsplats.zarr"),
                 str(tmp_path / "c.gsplats.zarr"),
-                "-o", str(out),
+                "-o",
+                str(out),
             ],
         )
         assert result.exit_code == 0, f"3-way merge failed: {result.stdout}"
@@ -753,9 +802,17 @@ class TestEndToEndWorkflows:
         r1 = runner.invoke(
             app,
             [
-                "gsplat", "fit",
-                str(small_volume_npy), str(gsplats_path),
-                "--preset", "draft", "--iters", "5", "--seeds", "10", "--quiet",
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(gsplats_path),
+                "--preset",
+                "draft",
+                "--iters",
+                "5",
+                "--seeds",
+                "10",
+                "--quiet",
             ],
         )
         assert r1.exit_code == 0, f"fit step failed: {r1.stdout}"
@@ -784,9 +841,17 @@ class TestEndToEndWorkflows:
         r1 = runner.invoke(
             app,
             [
-                "gsplat", "fit",
-                str(small_volume_npy), str(gsplats_path),
-                "--preset", "draft", "--iters", "5", "--seeds", "10", "--quiet",
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(gsplats_path),
+                "--preset",
+                "draft",
+                "--iters",
+                "5",
+                "--seeds",
+                "10",
+                "--quiet",
             ],
         )
         assert r1.exit_code == 0
@@ -795,9 +860,12 @@ class TestEndToEndWorkflows:
         r2 = runner.invoke(
             app,
             [
-                "gsplat", "render",
-                str(gsplats_path), str(rendered_path),
-                "--shape", "16,16,16",
+                "gsplat",
+                "render",
+                str(gsplats_path),
+                str(rendered_path),
+                "--shape",
+                "16,16,16",
             ],
         )
         assert r2.exit_code == 0, f"render step failed: {r2.stdout}"
@@ -816,9 +884,17 @@ class TestEndToEndWorkflows:
         r1 = runner.invoke(
             app,
             [
-                "gsplat", "fit",
-                str(small_volume_npy), str(gsplats_path),
-                "--preset", "draft", "--iters", "5", "--seeds", "10", "--quiet",
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(gsplats_path),
+                "--preset",
+                "draft",
+                "--iters",
+                "5",
+                "--seeds",
+                "10",
+                "--quiet",
             ],
         )
         assert r1.exit_code == 0
@@ -885,3 +961,414 @@ class TestZipCompression:
         assert loaded.n_splats == 2
         np.testing.assert_allclose(loaded.centers, original.centers, atol=0.1)
         np.testing.assert_allclose(loaded.amplitudes, original.amplitudes, atol=0.1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Filter command tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def sample_gsplats_for_filter(tmp_path: Path) -> Path:
+    """Create a .gsplats.zarr with controlled data for filter tests."""
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    n = 10
+    rng = np.random.RandomState(42)
+    data = GSplatData(
+        centers=rng.rand(n, 3).astype(np.float32) * 100,
+        amplitudes=np.linspace(0.1, 1.0, n, dtype=np.float32),
+        cholesky_factors=np.tile(
+            np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (n, 1)
+        ),
+        sharpnesses=np.full(n, 2.0, dtype=np.float32),
+    )
+    out = tmp_path / "filter_test.gsplats.zarr"
+    data.save(out)
+    return out
+
+
+class TestFilterCommand:
+    """Tests for luxar gsplat filter CLI command."""
+
+    def test_filter_by_amplitude(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "filtered.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "--amplitude-min",
+                "0.5",
+            ],
+        )
+        assert result.exit_code == 0, f"filter failed: {result.stdout}"
+        assert out.exists()
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        filtered = GSplatData.load(out)
+        assert filtered.n_splats < 10
+        assert filtered.n_splats > 0
+        assert np.all(filtered.amplitudes >= 0.5)
+
+    def test_filter_by_bbox(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "filtered.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "--bbox",
+                "0,50,0,50,0,50",
+            ],
+        )
+        assert result.exit_code == 0, f"filter failed: {result.stdout}"
+        assert out.exists()
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        filtered = GSplatData.load(out)
+        assert filtered.n_splats <= 10
+        assert np.all(filtered.centers <= 50)
+
+    def test_filter_combined(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "filtered.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "--amplitude-min",
+                "0.3",
+                "--eccentricity-max",
+                "10.0",
+            ],
+        )
+        assert result.exit_code == 0, f"filter failed: {result.stdout}"
+        assert out.exists()
+
+    def test_filter_no_criteria(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        """No filter flags → all splats pass through."""
+        out = tmp_path / "filtered.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+            ],
+        )
+        assert result.exit_code == 0, f"filter failed: {result.stdout}"
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        filtered = GSplatData.load(out)
+        assert filtered.n_splats == 10
+
+    def test_filter_with_compression(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "filtered.gsplats.zarr.zip"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "--amplitude-min",
+                "0.5",
+                "--compress",
+                "zip",
+            ],
+        )
+        assert result.exit_code == 0, f"filter failed: {result.stdout}"
+        assert out.exists()
+        assert out.is_file()  # zip is a file, not directory
+
+    def test_filter_removes_most(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        """Restrictive criteria remove most splats."""
+        out = tmp_path / "filtered.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "--amplitude-min",
+                "0.9",
+            ],
+        )
+        assert result.exit_code == 0, f"filter failed: {result.stdout}"
+        assert out.exists()
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        filtered = GSplatData.load(out)
+        assert filtered.n_splats < 5
+        assert filtered.n_splats > 0
+
+    def test_filter_normalized_amplitude(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "filtered.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "--amplitude-min",
+                "0.5",
+                "--amplitude-normalized",
+            ],
+        )
+        assert result.exit_code == 0, f"filter failed: {result.stdout}"
+        assert out.exists()
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        filtered = GSplatData.load(out)
+        assert filtered.n_splats < 10
+        assert filtered.n_splats > 0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Split command tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestSplitCommand:
+    """Tests for luxar gsplat split CLI command."""
+
+    def test_split_by_parts(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out_dir = tmp_path / "split_output"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "split",
+                str(sample_gsplats),
+                str(out_dir),
+                "--parts",
+                "3",
+            ],
+        )
+        assert result.exit_code == 0, f"split failed: {result.stdout}"
+        assert out_dir.exists()
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        parts = []
+        for i in range(3):
+            p = out_dir / f"part_{i:03d}.gsplats.zarr"
+            assert p.exists(), f"Missing {p.name}"
+            parts.append(GSplatData.load(p))
+
+        total = sum(p.n_splats for p in parts)
+        assert total == 5  # sample_gsplats has 5 splats
+
+    def test_split_by_indices(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out_dir = tmp_path / "split_output"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "split",
+                str(sample_gsplats),
+                str(out_dir),
+                "--indices",
+                "2,4",
+            ],
+        )
+        assert result.exit_code == 0, f"split failed: {result.stdout}"
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        parts = [
+            GSplatData.load(out_dir / f"part_{i:03d}.gsplats.zarr") for i in range(3)
+        ]
+        assert parts[0].n_splats == 2
+        assert parts[1].n_splats == 2
+        assert parts[2].n_splats == 1
+
+    def test_split_with_compression(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out_dir = tmp_path / "split_output"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "split",
+                str(sample_gsplats),
+                str(out_dir),
+                "--parts",
+                "2",
+                "--compress",
+                "zip",
+            ],
+        )
+        assert result.exit_code == 0, f"split failed: {result.stdout}"
+        assert out_dir.exists()
+
+    def test_split_missing_mode(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Neither --parts nor --indices -> error."""
+        out_dir = tmp_path / "split_output"
+        result = runner.invoke(
+            app,
+            ["gsplat", "split", str(sample_gsplats), str(out_dir)],
+        )
+        assert result.exit_code == 1
+
+    def test_split_roundtrip_with_merge(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Split then merge should preserve total splat count."""
+        split_dir = tmp_path / "split_output"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "split",
+                str(sample_gsplats),
+                str(split_dir),
+                "--parts",
+                "2",
+            ],
+        )
+        assert result.exit_code == 0, f"split failed: {result.stdout}"
+
+        # Merge back
+        merged = tmp_path / "merged.gsplats.zarr"
+        part_paths = [str(split_dir / f"part_{i:03d}.gsplats.zarr") for i in range(2)]
+        result = runner.invoke(
+            app,
+            ["gsplat", "merge"] + part_paths + ["-o", str(merged)],
+        )
+        assert result.exit_code == 0, f"merge failed: {result.stdout}"
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        original = GSplatData.load(sample_gsplats)
+        recombined = GSplatData.load(merged)
+        assert recombined.n_splats == original.n_splats
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Slice command tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestSliceCommand:
+    """Tests for luxar gsplat slice CLI command."""
+
+    def test_slice_basic(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        """Slice with bounded ranges on all dimensions."""
+        out = tmp_path / "sliced.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "slice",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "0:50, 0:50, 0:50",
+            ],
+        )
+        assert result.exit_code == 0, f"slice failed: {result.stdout}"
+        assert out.exists()
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        sliced = GSplatData.load(out)
+        assert sliced.n_splats <= 10
+        assert np.all(sliced.centers <= 50)
+
+    def test_slice_open_ranges(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        """Open-ended ranges: ':50, :, 10:'."""
+        out = tmp_path / "sliced.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "slice",
+                str(sample_gsplats_for_filter),
+                str(out),
+                ":50, :, 10:",
+            ],
+        )
+        assert result.exit_code == 0, f"slice failed: {result.stdout}"
+        assert out.exists()
+
+    def test_slice_all(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        """':, :, :' keeps everything."""
+        out = tmp_path / "sliced.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "slice",
+                str(sample_gsplats_for_filter),
+                str(out),
+                ":, :, :",
+            ],
+        )
+        assert result.exit_code == 0, f"slice failed: {result.stdout}"
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        sliced = GSplatData.load(out)
+        assert sliced.n_splats == 10
+
+    def test_slice_with_compression(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "sliced.gsplats.zarr.zip"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "slice",
+                str(sample_gsplats_for_filter),
+                str(out),
+                ":, :, :",
+                "--compress",
+                "zip",
+            ],
+        )
+        assert result.exit_code == 0, f"slice failed: {result.stdout}"
+        assert out.exists()
+        assert out.is_file()

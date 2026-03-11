@@ -266,6 +266,13 @@ export class RenderingControls {
   private setupThemeControls(): void {
     const themeFolder = this.gui.addFolder('🎨 Theme');
 
+    themeFolder.domElement?.setAttribute(
+      'title',
+      'Theme: Choose the visual appearance of the viewer UI\n\n' +
+        'Themes change the background, panel colors, and overall look.\n' +
+        'Your choice is automatically saved and restored next session.'
+    );
+
     const themeManager = ThemeManager.getInstance();
     const themes = themeManager.getAllThemes();
 
@@ -435,6 +442,16 @@ export class RenderingControls {
 
     // Create Performance folder with adaptive DPR controls
     const performanceFolder = this.gui.addFolder('⚡ Performance');
+
+    performanceFolder.domElement?.setAttribute(
+      'title',
+      'Performance: Controls that trade visual quality for speed\n\n' +
+        '• Adaptive Resolution: Automatically lowers pixel ratio when FPS drops,\n' +
+        '  then gradually restores quality when the GPU catches up.\n' +
+        '• Manual DPR: Set a fixed pixel ratio (lower = faster but blurrier).\n\n' +
+        'Useful for large datasets or lower-end GPUs where smooth interaction\n' +
+        'matters more than pixel-perfect sharpness.'
+    );
 
     // Adaptive Resolution toggle (onChange registered below after manual DPR control is created)
     const adaptiveToggle = performanceFolder

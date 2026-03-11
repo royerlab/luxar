@@ -234,12 +234,12 @@ export const config: AppConfig = {
       globalOffset: 0.0, // Global additive brightness shift
       globalGamma: 1.0, // Global gamma correction (1.0 = linear)
       fxaaEnabled: false, // FXAA disabled by default
-      msaaEnabled: false, // MSAA disabled by default (incompatible with additive blending)
+      msaaEnabled: false, // MSAA disabled by default (enable for fast hardware-accelerated AA)
       msaaSamples: 4, // MSAA sample count (2, 4, 8)
       smaaEnabled: false, // SMAA disabled by default
       smaaThreshold: 0.1, // SMAA edge detection threshold (0.05-0.2)
       smaaSearchSteps: 8, // SMAA search steps for pattern detection (4-32)
-      ssaaEnabled: false, // SSAA disabled by default (has brightness issues with additive blending)
+      ssaaEnabled: false, // SSAA disabled by default (highest quality, heavy performance cost)
       ssaaMultiplier: 2.0, // SSAA resolution multiplier (1.5x, 2x, 4x)
       // New post-processing effects
       toneMapping: 'ACES' as const, // Tone mapping method

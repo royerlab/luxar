@@ -40,7 +40,7 @@ The `luxar-viewer.rendering` package provides advanced WebGL rendering capabilit
 ```typescript
 const composer = new EffectComposer(renderer, {
   frameBufferType: THREE.HalfFloatType, // 16-bit float for HDR
-  multisampling: 0, // MSAA incompatible with additive blending
+  multisampling: 0, // MSAA samples configurable via rendering controls
 });
 ```
 
@@ -885,21 +885,9 @@ const smaaEffect = new SMAAEffect({
 effectPass.addEffect(smaaEffect);
 ```
 
-### 6.3 MSAA (Multisample) - NOT RECOMMENDED
+### 6.3 MSAA (Multisample)
 
-**Problem**: MSAA is **incompatible with additive blending** for points.
-
-**Reason**: MSAA samples are averaged **before** blending, causing incorrect brightness multiplication.
-
-**Example**:
-
-```
-Without MSAA: Point A + Point B = 1.0 + 1.0 = 2.0 (correct)
-With MSAA:    Avg(1.0, 1.0) + Avg(1.0, 1.0) = 1.0 + 1.0 = 2.0 per sample
-              But blending happens per sample, causing 4x brightness
-```
-
-**Recommendation**: Use SMAA or FXAA instead.
+Hardware-accelerated anti-aliasing that smooths geometric edges without blurring. Fast and sharp — a good default choice for most scenes. Works well with additive blending.
 
 ### 6.4 SSAA (Super-Sample)
 
@@ -2029,5 +2017,5 @@ This status is passed to UI components (ResolutionIndicator) via the callback.
   - Sharpness compensation mathematical model
   - Post-processing effects via pmndrs/postprocessing
   - Material caching system
-  - Anti-aliasing recommendations (FXAA, SMAA preferred; MSAA incompatible)
+  - Anti-aliasing options (MSAA, FXAA, SMAA, SSAA)
   - Dynamic pass assignment for effect composition

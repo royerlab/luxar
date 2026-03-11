@@ -171,7 +171,7 @@ function setupNavigationControls(context: SetupContext): SetupResult;
 - Calls `updateNavigationControls()` to set initial folder visibility
 - Auto-rotate triggers continuous animation via `animationController.startAnimation()`
 
-**Lines**: 242
+**Lines**: ~281
 
 ---
 
@@ -295,7 +295,7 @@ const formatExposure = (logValue: number): string => {
 };
 ```
 
-**Lines**: 140
+**Lines**: ~143
 
 ---
 
@@ -316,7 +316,7 @@ function setupAntiAliasingControls(context: SetupContext): SetupResult;
   - SSAA Settings subfolder (conditional)
     - Resolution Multiplier dropdown (1.5, 2.0, 3.0, 4.0)
   - FXAA Enabled checkbox
-  - MSAA Enabled checkbox ⚠️
+  - MSAA Enabled checkbox
   - MSAA Settings subfolder (conditional)
     - Sample Count dropdown (2, 4, 8)
   - SMAA Enabled checkbox
@@ -333,7 +333,6 @@ function setupAntiAliasingControls(context: SetupContext): SetupResult;
 **Special Behavior**:
 
 - **Conditional Subfolders**: SSAA and MSAA settings only visible when enabled
-- **MSAA Warning**: Tooltip warns about brightness issues with additive blending
 - **SMAA Preset-Only**: Fine-grained controls (threshold, search steps) not exposed because pmndrs/postprocessing only supports preset modes
 
 **Initial State**:
@@ -341,7 +340,7 @@ function setupAntiAliasingControls(context: SetupContext): SetupResult;
 - Subfolders hidden if corresponding AA method disabled
 - Called after setup to show/hide based on current settings
 
-**Lines**: 156
+**Lines**: ~213
 
 ---
 
@@ -406,7 +405,7 @@ function setupPostProcessingControls(
 
 **Effect Count**: 7 distinct effects, each with 2-8 parameters
 
-**Lines**: 598
+**Lines**: ~646
 
 ## Control Type Reference
 

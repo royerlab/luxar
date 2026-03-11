@@ -205,6 +205,242 @@ class GSplatData:
             stats=dict(self.stats),
         )
 
+    @staticmethod
+    def _resolve_threshold(
+        val: float | None,
+        normalized: bool,
+        dataset_values: np.ndarray,
+    ) -> float | None:
+        """Map a threshold from [0,1] normalized range to absolute if needed."""
+        if val is None:
+            return None
+        if normalized:
+            dmin, dmax = float(dataset_values.min()), float(dataset_values.max())
+            return dmin + val * (dmax - dmin)
+        return val
+
+    def filter_by(
+        self,
+        *,
+        bbox: list[tuple[float, float]] | None = None,
+        volume_min: float | None = None,
+        volume_max: float | None = None,
+        volume_normalized: bool = False,
+        amplitude_min: float | None = None,
+        amplitude_max: float | None = None,
+        amplitude_normalized: bool = False,
+        eccentricity_min: float | None = None,
+        eccentricity_max: float | None = None,
+        sharpness_min: float | None = None,
+        sharpness_max: float | None = None,
+        mass_min: float | None = None,
+        mass_max: float | None = None,
+        mass_normalized: bool = False,
+        sigma_axis: int | None = None,
+        sigma_min: float | None = None,
+        sigma_max: float | None = None,
+        truncate: float = 3.0,
+    ) -> "GSplatData":
+        """Filter splats by multiple criteria (AND logic).
+
+        All criteria are optional. Only specified criteria are applied.
+        Multiple criteria combine with AND — a splat must satisfy all
+        active criteria to be kept.
+
+        Args:
+            bbox: Bounding box per dimension as [(min0, max0), (min1, max1), ...].
+                  Length must equal ndim. Filters by center position.
+            volume_min: Minimum volume (characteristic length * truncate).
+            volume_max: Maximum volume.
+            volume_normalized: If True, interpret volume thresholds as 0-1
+                mapped to the dataset's [min, max] volume range.
+            amplitude_min: Minimum amplitude.
+            amplitude_max: Maximum amplitude.
+            amplitude_normalized: If True, interpret amplitude thresholds as 0-1
+                mapped to the dataset's [min, max] amplitude range.
+            eccentricity_min: Minimum eccentricity (1.0 = isotropic).
+            eccentricity_max: Maximum eccentricity.
+            sharpness_min: Minimum sharpness value.
+            sharpness_max: Maximum sharpness value.
+            mass_min: Minimum mass (amplitude * volume).
+            mass_max: Maximum mass.
+            mass_normalized: If True, interpret mass thresholds as 0-1
+                mapped to the dataset's [min, max] mass range.
+            sigma_axis: Axis index for per-axis sigma filtering.
+            sigma_min: Minimum marginal sigma on sigma_axis.
+            sigma_max: Maximum marginal sigma on sigma_axis.
+            truncate: Sigma truncation factor for volume computation (default 3.0).
+
+        Returns:
+            New GSplatData with only splats that pass all criteria.
+
+        Raises:
+            ValueError: If bbox length doesn't match ndim, sigma_axis is out
+                of range, or sigma_min/sigma_max given without sigma_axis.
+
+        Examples:
+            >>> # Keep splats with amplitude >= 0.1 and eccentricity <= 5
+            >>> filtered = data.filter_by(amplitude_min=0.1, eccentricity_max=5.0)
+            >>>
+            >>> # Spatial crop to a bounding box (3D)
+            >>> filtered = data.filter_by(bbox=[(0, 50), (0, 50), (0, 50)])
+            >>>
+            >>> # Remove top 10% largest volumes (normalized)
+            >>> filtered = data.filter_by(volume_max=0.9, volume_normalized=True)
+        """
+        # Short-circuit for empty data
+        if self.n_splats == 0:
+            result = self.filter(np.ones(0, dtype=bool))
+            result.stats.update(
+                {
+                    "filtered": True,
+                    "filter_criteria": {},
+                    "n_original": 0,
+                    "n_removed": 0,
+                    "truncate": truncate,
+                }
+            )
+            return result
+
+        # Validate sigma_axis usage
+        if (sigma_min is not None or sigma_max is not None) and sigma_axis is None:
+            raise ValueError("sigma_min/sigma_max require sigma_axis to be specified")
+        if sigma_axis is not None and not (0 <= sigma_axis < self.ndim):
+            raise ValueError(
+                f"sigma_axis={sigma_axis} out of range for {self.ndim}D data"
+            )
+
+        mask = np.ones(self.n_splats, dtype=bool)
+        criteria: dict[str, object] = {}
+
+        # -- Bounding box (center position)
+        if bbox is not None:
+            if len(bbox) != self.ndim:
+                raise ValueError(
+                    f"bbox has {len(bbox)} dimensions, expected {self.ndim}"
+                )
+            criteria["bbox"] = bbox
+            for i, (lo, hi) in enumerate(bbox):
+                mask &= (self.centers[:, i] >= lo) & (self.centers[:, i] <= hi)
+
+        # -- Volume (characteristic length * truncate)
+        if volume_min is not None or volume_max is not None:
+            vols = self.volumes() * truncate
+            vmin = self._resolve_threshold(volume_min, volume_normalized, vols)
+            vmax = self._resolve_threshold(volume_max, volume_normalized, vols)
+            if vmin is not None:
+                mask &= vols >= vmin
+                criteria["volume_min"] = vmin
+            if vmax is not None:
+                mask &= vols <= vmax
+                criteria["volume_max"] = vmax
+            if volume_normalized:
+                criteria["volume_normalized"] = True
+
+        # -- Amplitude
+        if amplitude_min is not None or amplitude_max is not None:
+            amps = self.amplitudes
+            amin = self._resolve_threshold(amplitude_min, amplitude_normalized, amps)
+            amax = self._resolve_threshold(amplitude_max, amplitude_normalized, amps)
+            if amin is not None:
+                mask &= amps >= amin
+                criteria["amplitude_min"] = amin
+            if amax is not None:
+                mask &= amps <= amax
+                criteria["amplitude_max"] = amax
+            if amplitude_normalized:
+                criteria["amplitude_normalized"] = True
+
+        # -- Eccentricity
+        if eccentricity_min is not None or eccentricity_max is not None:
+            ecc = self.eccentricities()
+            if eccentricity_min is not None:
+                mask &= ecc >= eccentricity_min
+                criteria["eccentricity_min"] = eccentricity_min
+            if eccentricity_max is not None:
+                mask &= ecc <= eccentricity_max
+                criteria["eccentricity_max"] = eccentricity_max
+
+        # -- Sharpness
+        if sharpness_min is not None or sharpness_max is not None:
+            sharp = self.sharpnesses
+            if sharpness_min is not None:
+                mask &= sharp >= sharpness_min
+                criteria["sharpness_min"] = sharpness_min
+            if sharpness_max is not None:
+                mask &= sharp <= sharpness_max
+                criteria["sharpness_max"] = sharpness_max
+
+        # -- Mass (amplitude * volume)
+        if mass_min is not None or mass_max is not None:
+            m = self.masses()
+            mmin = self._resolve_threshold(mass_min, mass_normalized, m)
+            mmax = self._resolve_threshold(mass_max, mass_normalized, m)
+            if mmin is not None:
+                mask &= m >= mmin
+                criteria["mass_min"] = mmin
+            if mmax is not None:
+                mask &= m <= mmax
+                criteria["mass_max"] = mmax
+            if mass_normalized:
+                criteria["mass_normalized"] = True
+
+        # -- Per-axis sigma
+        if sigma_axis is not None and (sigma_min is not None or sigma_max is not None):
+            sigmas = self.marginal_sigmas()[:, sigma_axis]
+            criteria["sigma_axis"] = sigma_axis
+            if sigma_min is not None:
+                mask &= sigmas >= sigma_min
+                criteria["sigma_min"] = sigma_min
+            if sigma_max is not None:
+                mask &= sigmas <= sigma_max
+                criteria["sigma_max"] = sigma_max
+
+        # Apply mask
+        result = self.filter(mask)
+        result.stats.update(
+            {
+                "filtered": True,
+                "filter_criteria": criteria,
+                "n_original": self.n_splats,
+                "n_removed": self.n_splats - result.n_splats,
+                "truncate": truncate,
+            }
+        )
+        return result
+
+    def slice_by(self, slices: list[slice]) -> "GSplatData":
+        """Slice splats by coordinate ranges per dimension (numpy-style).
+
+        Each slice specifies a [start, stop] range for that dimension's center
+        coordinate. ``None`` in start/stop means unbounded.
+
+        Args:
+            slices: One slice per dimension. ``slice(lo, hi)`` keeps splats
+                with center in [lo, hi]. ``slice(None, None)`` keeps all.
+
+        Returns:
+            New GSplatData with only splats inside all ranges.
+
+        Raises:
+            ValueError: If number of slices doesn't match ndim.
+
+        Examples:
+            >>> # Keep x in [0,50], all y, z in [10,90]
+            >>> sliced = data.slice_by([slice(0, 50), slice(None, None), slice(10, 90)])
+            >>>
+            >>> # Open-ended: x >= 50
+            >>> sliced = data.slice_by([slice(50, None), slice(None, None), slice(None, None)])
+        """
+        if len(slices) != self.ndim:
+            raise ValueError(f"Expected {self.ndim} slices, got {len(slices)}")
+        bbox = []
+        for s in slices:
+            lo = float(s.start) if s.start is not None else float("-inf")
+            hi = float(s.stop) if s.stop is not None else float("inf")
+            bbox.append((lo, hi))
+        return self.filter_by(bbox=bbox)
+
     # ── Combine / Split / Embed ─────────────────────────────
 
     @classmethod
@@ -336,8 +572,7 @@ class GSplatData:
             )
 
         embedded = [
-            ds.embed_dimension(val, sigma=sigma)
-            for ds, val in zip(datasets, values)
+            ds.embed_dimension(val, sigma=sigma) for ds, val in zip(datasets, values)
         ]
         return cls.concatenate(embedded)
 
@@ -666,6 +901,9 @@ class GSplatData:
                     "n_original",
                     "n_removed",
                     "amplitude_retention",
+                    "filtered",
+                    "filter_criteria",
+                    "truncate",
                 ]
             }
 

@@ -1215,13 +1215,6 @@ export class PostProcessingManager {
           'Float color buffers not fully supported - MSAA may not work with HDR'
         );
       }
-
-      // Warn about additive blending incompatibility
-      log.warning(
-        Modules.POST_PROCESSING,
-        'MSAA enabled - Note: May cause brightness issues with additive blending. ' +
-          'Consider using FXAA or SMAA instead.'
-      );
     }
 
     this.msaaEnabled = enabled;

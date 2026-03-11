@@ -53,6 +53,14 @@ export function setupCameraControls(
   const cameraFolder = gui.addFolder('🎥 Camera');
   cameraFolder.open();
 
+  cameraFolder.domElement?.setAttribute(
+    'title',
+    'Camera: Controls the virtual camera lens and projection\n\n' +
+      '• FOV Preset: Choose a standard lens (28mm wide to 135mm telephoto)\n' +
+      '• Field of View: Fine-tune viewing angle (also Shift+Wheel)\n' +
+      '• Clipping Planes: Control what range of distances is visible'
+  );
+
   // FOV Preset dropdown
   const presetOptions = Object.keys(config.camera.fovPresets);
   const fovPresetControl = cameraFolder
@@ -216,6 +224,15 @@ export function setupCameraControls(
   // Clipping Planes sub-folder
   const clippingFolder = cameraFolder.addFolder('Clipping Planes');
   clippingFolder.close(); // Collapsed by default (advanced setting)
+
+  clippingFolder.domElement?.setAttribute(
+    'title',
+    'Clipping Planes: Define the visible depth range of the camera\n\n' +
+      'Only objects between the near and far planes are rendered.\n' +
+      '• Near plane: Closest visible distance (too low = Z-fighting)\n' +
+      '• Far plane: Furthest visible distance\n' +
+      '• Dynamic mode auto-adjusts both for optimal precision'
+  );
 
   const nearPlaneControl = clippingFolder
     .add(settings, 'near', 0.0001, 10.0, 0.0001)

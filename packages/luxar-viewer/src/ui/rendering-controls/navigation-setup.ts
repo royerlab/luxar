@@ -33,6 +33,17 @@ export function setupNavigationControls(context: SetupContext): SetupResult {
   const navigationFolder = gui.addFolder('🕹️ Navigation');
   navigationFolder.open();
 
+  navigationFolder.domElement?.setAttribute(
+    'title',
+    'Navigation: Controls how you move and look around the 3D scene\n\n' +
+      '• Orbit: Click-drag to rotate around a center point, scroll to zoom.\n' +
+      '  Best for inspecting objects from all angles.\n' +
+      '• Arcball: Like orbit but without gimbal lock — rotates freely in any direction.\n' +
+      '  Best for scientific data that needs unrestricted viewing.\n' +
+      '• Fly: Move freely through the scene like a drone (WASD + arrows).\n' +
+      '  Best for exploring large or spatially complex datasets.'
+  );
+
   // Control type selector
   const controlTypeControl = navigationFolder
     .add(settings, 'controlType', ['orbit', 'arcball', 'fly'])
@@ -60,7 +71,21 @@ export function setupNavigationControls(context: SetupContext): SetupResult {
 
   // Create sub-folders for each control type
   const orbitFolder = navigationFolder.addFolder('Orbit Controls');
+  orbitFolder.domElement?.setAttribute(
+    'title',
+    'Orbit Controls: Settings for orbit and arcball camera modes\n' +
+      '• Auto-rotate for hands-free viewing\n' +
+      '• Adjust rotation speed for presentations'
+  );
+
   const flyFolder = navigationFolder.addFolder('Fly Controls');
+  flyFolder.domElement?.setAttribute(
+    'title',
+    'Fly Controls: Settings for first-person flying camera mode\n' +
+      '• WASD keys to move, arrow keys to look around\n' +
+      '• Alt+W/S for vertical movement\n' +
+      '• Switch between direct and inertial (momentum-based) movement'
+  );
 
   // Auto-rotation controls (for orbit mode)
   const autoRotateControl = orbitFolder

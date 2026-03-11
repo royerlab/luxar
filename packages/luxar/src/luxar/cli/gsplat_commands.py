@@ -894,6 +894,502 @@ def prune_dataset(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# filter — Filter splats by multiple criteria
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _parse_bbox(s: str, ndim: int) -> list[tuple[float, float]]:
+    """Parse a bbox string 'min0,max0,min1,max1,...' into list of (min, max) pairs."""
+    parts = [float(x.strip()) for x in s.split(",")]
+    if len(parts) != 2 * ndim:
+        raise typer.BadParameter(
+            f"bbox needs {2 * ndim} values for {ndim}D data, got {len(parts)}"
+        )
+    return [(parts[2 * i], parts[2 * i + 1]) for i in range(ndim)]
+
+
+@app_gsplat.command("filter")
+def filter_dataset(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr dataset"),
+    # Bounding box
+    bbox: Optional[str] = typer.Option(
+        None, "--bbox", help="Bounding box: 'min0,max0,min1,max1,...' (pairs per dim)"
+    ),
+    # Volume
+    volume_min: Optional[float] = typer.Option(
+        None, "--volume-min", help="Minimum volume threshold"
+    ),
+    volume_max: Optional[float] = typer.Option(
+        None, "--volume-max", help="Maximum volume threshold"
+    ),
+    volume_normalized: bool = typer.Option(
+        False,
+        "--volume-normalized",
+        help="Interpret volume thresholds as 0-1 normalized",
+    ),
+    # Amplitude
+    amplitude_min: Optional[float] = typer.Option(
+        None, "--amplitude-min", help="Minimum amplitude threshold"
+    ),
+    amplitude_max: Optional[float] = typer.Option(
+        None, "--amplitude-max", help="Maximum amplitude threshold"
+    ),
+    amplitude_normalized: bool = typer.Option(
+        False,
+        "--amplitude-normalized",
+        help="Interpret amplitude thresholds as 0-1 normalized",
+    ),
+    # Eccentricity
+    eccentricity_min: Optional[float] = typer.Option(
+        None, "--eccentricity-min", help="Minimum eccentricity (1.0 = sphere)"
+    ),
+    eccentricity_max: Optional[float] = typer.Option(
+        None, "--eccentricity-max", help="Maximum eccentricity"
+    ),
+    # Sharpness
+    sharpness_min: Optional[float] = typer.Option(
+        None, "--sharpness-min", help="Minimum sharpness"
+    ),
+    sharpness_max: Optional[float] = typer.Option(
+        None, "--sharpness-max", help="Maximum sharpness"
+    ),
+    # Mass
+    mass_min: Optional[float] = typer.Option(
+        None, "--mass-min", help="Minimum mass (amplitude * volume)"
+    ),
+    mass_max: Optional[float] = typer.Option(None, "--mass-max", help="Maximum mass"),
+    mass_normalized: bool = typer.Option(
+        False, "--mass-normalized", help="Interpret mass thresholds as 0-1 normalized"
+    ),
+    # Per-axis sigma
+    sigma_axis: Optional[int] = typer.Option(
+        None, "--sigma-axis", help="Axis index for per-axis sigma filtering"
+    ),
+    sigma_min: Optional[float] = typer.Option(
+        None, "--sigma-min", help="Minimum marginal sigma on --sigma-axis"
+    ),
+    sigma_max: Optional[float] = typer.Option(
+        None, "--sigma-max", help="Maximum marginal sigma on --sigma-axis"
+    ),
+    # Truncation
+    truncate: float = typer.Option(
+        3.0, "--truncate", help="Sigma truncation for volume computation"
+    ),
+    # Output options
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode for output"
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
+    ),
+) -> None:
+    """Filter splats by multiple criteria (AND logic).
+
+    All filter options are optional. Only specified criteria are applied.
+    Multiple criteria combine with AND — a splat must satisfy all
+    active criteria to be kept.
+
+    Criteria:
+        --bbox: Spatial bounding box (filter by center position)
+        --amplitude-min/max: Intensity thresholds
+        --volume-min/max: Size thresholds (characteristic length * truncate)
+        --eccentricity-min/max: Shape (1.0 = sphere, higher = elongated)
+        --sharpness-min/max: Sharpness values (2.0 = standard Gaussian)
+        --mass-min/max: Amplitude * volume (physical importance)
+        --sigma-axis + --sigma-min/max: Per-axis standard deviation
+
+    Use --*-normalized flags to interpret thresholds as 0-1 fractions
+    of the dataset's [min, max] range.
+
+    Examples:
+        # Keep only bright splats
+        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr \\
+            --amplitude-min 0.1
+
+        # Crop to a 3D bounding box
+        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr \\
+            --bbox "0,50,0,50,0,50"
+
+        # Remove elongated outliers and large splats
+        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr \\
+            --eccentricity-max 5.0 --volume-max 100
+
+        # Keep top 50% by amplitude (normalized)
+        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr \\
+            --amplitude-min 0.5 --amplitude-normalized
+
+        # With compression
+        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr.zip \\
+            --amplitude-min 0.1 --compress zip
+    """
+    try:
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        encoding_map = {
+            "auto": EncodingMode.AUTO,
+            "precision": EncodingMode.PRECISION,
+            "memory": EncodingMode.MEMORY,
+        }
+        encoding_mode_obj = encoding_map[encoding_mode]
+
+        with asection(f"Filtering: {input_path.name}"):
+            # Load
+            with asection("Loading dataset"):
+                data = GSplatData.load(input_path, include_stats=True)
+                n_original = data.n_splats
+                ndim = data.ndim
+                aprint(f"Loaded {n_original:,} splats ({ndim}D)")
+
+            # Parse bbox
+            bbox_parsed = None
+            if bbox is not None:
+                bbox_parsed = _parse_bbox(bbox, ndim)
+
+            # Show active criteria
+            with asection("Active criteria"):
+                if bbox_parsed is not None:
+                    aprint(f"  bbox: {bbox_parsed}")
+                if amplitude_min is not None or amplitude_max is not None:
+                    norm = " (normalized)" if amplitude_normalized else ""
+                    aprint(f"  amplitude: [{amplitude_min}, {amplitude_max}]{norm}")
+                if volume_min is not None or volume_max is not None:
+                    norm = " (normalized)" if volume_normalized else ""
+                    aprint(
+                        f"  volume: [{volume_min}, {volume_max}]{norm} (truncate={truncate})"
+                    )
+                if eccentricity_min is not None or eccentricity_max is not None:
+                    aprint(f"  eccentricity: [{eccentricity_min}, {eccentricity_max}]")
+                if sharpness_min is not None or sharpness_max is not None:
+                    aprint(f"  sharpness: [{sharpness_min}, {sharpness_max}]")
+                if mass_min is not None or mass_max is not None:
+                    norm = " (normalized)" if mass_normalized else ""
+                    aprint(f"  mass: [{mass_min}, {mass_max}]{norm}")
+                if sigma_axis is not None:
+                    aprint(f"  sigma axis {sigma_axis}: [{sigma_min}, {sigma_max}]")
+
+            # Filter
+            with asection("Filtering"):
+                filtered_data = data.filter_by(
+                    bbox=bbox_parsed,
+                    volume_min=volume_min,
+                    volume_max=volume_max,
+                    volume_normalized=volume_normalized,
+                    amplitude_min=amplitude_min,
+                    amplitude_max=amplitude_max,
+                    amplitude_normalized=amplitude_normalized,
+                    eccentricity_min=eccentricity_min,
+                    eccentricity_max=eccentricity_max,
+                    sharpness_min=sharpness_min,
+                    sharpness_max=sharpness_max,
+                    mass_min=mass_min,
+                    mass_max=mass_max,
+                    mass_normalized=mass_normalized,
+                    sigma_axis=sigma_axis,
+                    sigma_min=sigma_min,
+                    sigma_max=sigma_max,
+                    truncate=truncate,
+                )
+                n_filtered = filtered_data.n_splats
+                n_removed = n_original - n_filtered
+
+                aprint("\nResults:")
+                aprint(f"  Original splats: {n_original:,}")
+                aprint(f"  Filtered splats: {n_filtered:,}")
+                aprint(
+                    f"  Removed:         {n_removed:,} ({100 * n_removed / max(n_original, 1):.1f}%)"
+                )
+
+            # Save
+            with asection(f"Saving to {output_path.name}"):
+                if n_filtered == 0:
+                    aprint("⚠ No splats remain after filtering — skipping save")
+                else:
+                    filtered_data.save(
+                        output_path,
+                        encoding_mode=encoding_mode_obj,
+                        include_fitting_info=True,
+                        compress=compress,
+                    )
+                    aprint(f"Saved filtered dataset: {output_path}")
+
+                    if output_path.exists():
+                        output_size = output_path.stat().st_size
+                        if output_size < 1024 * 1024:
+                            aprint(f"  Size: {output_size / 1024:.1f} KB")
+                        else:
+                            aprint(f"  Size: {output_size / (1024 * 1024):.1f} MB")
+
+    except Exception as e:
+        aprint(f"❌ Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# split — Split dataset into multiple parts
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("split")
+def split_dataset(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    output_dir: Path = typer.Argument(..., help="Output directory for split parts"),
+    # Split mode (exactly one required)
+    parts: Optional[int] = typer.Option(
+        None, "--parts", "-n", help="Split into N roughly equal parts"
+    ),
+    indices: Optional[str] = typer.Option(
+        None, "--indices", help="Split at splat indices: '100,500,1000'"
+    ),
+    # Output options
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode for output"
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
+    ),
+) -> None:
+    """Split a Gaussian splat dataset into multiple parts.
+
+    Two modes (exactly one required):
+
+    1. Equal parts (--parts N): Split into N roughly equal parts.
+
+    2. At indices (--indices): Split at specific splat indices.
+
+    Output files are named part_000.gsplats.zarr, part_001.gsplats.zarr, etc.
+    in the specified output directory.
+
+    Examples:
+        # Split into 4 equal parts
+        luxar gsplat split input.gsplats.zarr output_dir/ --parts 4
+
+        # Split at specific indices (produces 3 parts: [0:100], [100:500], [500:])
+        luxar gsplat split input.gsplats.zarr output_dir/ --indices "100,500"
+
+        # Split with compression
+        luxar gsplat split input.gsplats.zarr output_dir/ --parts 3 --compress zip
+    """
+    try:
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        # Validate mode
+        if parts is None and indices is None:
+            aprint("❌ Error: Specify --parts N or --indices '100,500,...'")
+            raise typer.Exit(1)
+        if parts is not None and indices is not None:
+            aprint("❌ Error: --parts and --indices are mutually exclusive")
+            raise typer.Exit(1)
+
+        encoding_map = {
+            "auto": EncodingMode.AUTO,
+            "precision": EncodingMode.PRECISION,
+            "memory": EncodingMode.MEMORY,
+        }
+        encoding_mode_obj = encoding_map[encoding_mode]
+
+        with asection(f"Splitting: {input_path.name}"):
+            # Load
+            with asection("Loading dataset"):
+                data = GSplatData.load(input_path, include_stats=True)
+                aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+
+            # Split
+            with asection("Splitting"):
+                if parts is not None:
+                    aprint(f"Mode: {parts} equal parts")
+                    split_parts = data.split(parts)
+                else:
+                    idx_list = [int(x.strip()) for x in indices.split(",")]
+                    aprint(f"Mode: split at indices {idx_list}")
+                    split_parts = data.split(idx_list)
+
+                aprint(f"Produced {len(split_parts)} parts:")
+                for i, part in enumerate(split_parts):
+                    aprint(f"  part_{i:03d}: {part.n_splats:,} splats")
+
+            # Filter out empty parts
+            nonempty_parts = [
+                (i, part) for i, part in enumerate(split_parts) if part.n_splats > 0
+            ]
+            if len(nonempty_parts) < len(split_parts):
+                n_empty = len(split_parts) - len(nonempty_parts)
+                aprint(f"  Skipping {n_empty} empty part(s)")
+
+            # Save
+            output_dir.mkdir(parents=True, exist_ok=True)
+            with asection(f"Saving to {output_dir}"):
+                ext = ".gsplats.zarr"
+                for i, part in nonempty_parts:
+                    out_path = output_dir / f"part_{i:03d}{ext}"
+                    part.save(
+                        out_path,
+                        encoding_mode=encoding_mode_obj,
+                        include_fitting_info=True,
+                        compress=compress,
+                    )
+                    aprint(f"  Saved {out_path.name} ({part.n_splats:,} splats)")
+
+    except Exception as e:
+        aprint(f"❌ Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# slice — Slice by coordinate ranges (numpy-style syntax)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _parse_slices(s: str, ndim: int) -> list[slice]:
+    """Parse numpy-style range string into list of slices.
+
+    Format: "lo:hi, :, lo:" where each dimension is separated by comma.
+    Empty start/stop means unbounded (None).
+
+    Examples:
+        "0:50, :, 10:90"  → [slice(0,50), slice(None,None), slice(10,90)]
+        ":50, 20:, :"     → [slice(None,50), slice(20,None), slice(None,None)]
+        "1.5:42.7, :, :"  → [slice(1.5,42.7), slice(None,None), slice(None,None)]
+    """
+    parts = [p.strip() for p in s.split(",")]
+    if len(parts) != ndim:
+        raise typer.BadParameter(
+            f"Expected {ndim} ranges for {ndim}D data, got {len(parts)}"
+        )
+    slices = []
+    for part in parts:
+        if ":" not in part:
+            raise typer.BadParameter(
+                f"Invalid range '{part}': expected 'lo:hi', 'lo:', ':hi', or ':'"
+            )
+        lo_str, hi_str = part.split(":", 1)
+        lo = float(lo_str.strip()) if lo_str.strip() else None
+        hi = float(hi_str.strip()) if hi_str.strip() else None
+        slices.append(slice(lo, hi))
+    return slices
+
+
+@app_gsplat.command("slice")
+def slice_dataset(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr dataset"),
+    ranges: str = typer.Argument(
+        ..., help="Numpy-style ranges per dimension: '0:50, :, 10:90'"
+    ),
+    # Output options
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode for output"
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
+    ),
+) -> None:
+    """Slice splats by coordinate ranges (numpy-style syntax).
+
+    Keeps splats whose center coordinates fall within the specified ranges
+    per dimension. Uses float coordinate values, not integer indices.
+
+    Range syntax (per dimension, comma-separated):
+        lo:hi   — keep centers in [lo, hi]
+        lo:     — keep centers >= lo
+        :hi     — keep centers <= hi
+        :       — keep all (no constraint)
+
+    Examples:
+        # Crop x to [0,50], keep all y, crop z to [10,90]
+        luxar gsplat slice input.gsplats.zarr output.gsplats.zarr "0:50, :, 10:90"
+
+        # Keep only first half of x-range
+        luxar gsplat slice input.gsplats.zarr output.gsplats.zarr ":50, :, :"
+
+        # Float coordinates work
+        luxar gsplat slice input.gsplats.zarr output.gsplats.zarr "1.5:42.7, :, -3.2:100"
+
+        # With compression
+        luxar gsplat slice input.gsplats.zarr output.gsplats.zarr.zip "0:50, :, :" --compress zip
+    """
+    try:
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        encoding_map = {
+            "auto": EncodingMode.AUTO,
+            "precision": EncodingMode.PRECISION,
+            "memory": EncodingMode.MEMORY,
+        }
+        encoding_mode_obj = encoding_map[encoding_mode]
+
+        with asection(f"Slicing: {input_path.name}"):
+            # Load
+            with asection("Loading dataset"):
+                data = GSplatData.load(input_path, include_stats=True)
+                n_original = data.n_splats
+                aprint(f"Loaded {n_original:,} splats ({data.ndim}D)")
+
+            # Parse ranges
+            slices = _parse_slices(ranges, data.ndim)
+            with asection("Ranges"):
+                for i, s in enumerate(slices):
+                    lo = s.start if s.start is not None else "-inf"
+                    hi = s.stop if s.stop is not None else "inf"
+                    aprint(f"  dim {i}: [{lo}, {hi}]")
+
+            # Slice
+            with asection("Slicing"):
+                sliced_data = data.slice_by(slices)
+                n_sliced = sliced_data.n_splats
+                n_removed = n_original - n_sliced
+
+                aprint("\nResults:")
+                aprint(f"  Original splats: {n_original:,}")
+                aprint(f"  Sliced splats:   {n_sliced:,}")
+                aprint(
+                    f"  Removed:         {n_removed:,} ({100 * n_removed / max(n_original, 1):.1f}%)"
+                )
+
+            # Save
+            with asection(f"Saving to {output_path.name}"):
+                if n_sliced == 0:
+                    aprint("⚠ No splats remain after slicing — skipping save")
+                else:
+                    sliced_data.save(
+                        output_path,
+                        encoding_mode=encoding_mode_obj,
+                        include_fitting_info=True,
+                        compress=compress,
+                    )
+                    aprint(f"Saved sliced dataset: {output_path}")
+
+                    if output_path.exists():
+                        output_size = output_path.stat().st_size
+                        if output_size < 1024 * 1024:
+                            aprint(f"  Size: {output_size / 1024:.1f} KB")
+                        else:
+                            aprint(f"  Size: {output_size / (1024 * 1024):.1f} MB")
+
+    except Exception as e:
+        aprint(f"❌ Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # fit — Fit Gaussian splats to a volume
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -908,7 +1404,9 @@ def fit_volume(
     ),
     # Common flags
     seeds: Optional[str] = typer.Option(
-        None, "--seeds", "-s",
+        None,
+        "--seeds",
+        "-s",
         help="Seed count (int), compression ratio (float 0-1), or 'auto'",
     ),
     iters: Optional[int] = typer.Option(
@@ -1149,7 +1647,8 @@ def render_to_file(
     ),
     output_path: Path = typer.Argument(..., help="Output file (.npy or .tiff)"),
     shape: Optional[str] = typer.Option(
-        None, "--shape",
+        None,
+        "--shape",
         help="Output shape as comma-separated ints (e.g., '128,128,128')",
     ),
     device: Optional[str] = typer.Option(
@@ -1188,14 +1687,14 @@ def render_to_file(
             else:
                 mins = data.centers.min(axis=0)
                 maxs = data.centers.max(axis=0)
-                output_shape = tuple(
-                    int(maxs[i] - mins[i]) + 1 for i in range(ndim)
-                )
+                output_shape = tuple(int(maxs[i] - mins[i]) + 1 for i in range(ndim))
                 aprint(f"Auto shape from bounding box: {output_shape}")
 
             with asection(f"Rendering to {output_shape}"):
                 volume = data.render_to_volume(
-                    shape=output_shape, device=device, truncate=truncate,
+                    shape=output_shape,
+                    device=device,
+                    truncate=truncate,
                 )
                 aprint(
                     f"Rendered: {volume.shape}, "
@@ -1258,7 +1757,8 @@ def merge_datasets(
         0.0, "--sigma", help="Sigma in new dimension for --as-dimension (0=discrete)"
     ),
     channel_colors: Optional[str] = typer.Option(
-        None, "--channel-colors",
+        None,
+        "--channel-colors",
         help="Comma-separated hex colors (e.g., '#ff0080,#00ff80')",
     ),
     compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(

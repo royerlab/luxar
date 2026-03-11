@@ -97,7 +97,7 @@ Creates controls for:
 
 - SSAA (Supersampling) with resolution multiplier
 - FXAA (Fast Approximate AA)
-- MSAA (Multisample AA) with sample count ⚠️
+- MSAA (Multisample AA) with sample count
 - SMAA (Subpixel Morphological AA)
 
 Includes dynamic subfolder showing/hiding based on AA enablement.

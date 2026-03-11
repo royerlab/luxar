@@ -26,6 +26,16 @@ export function setupHDRControls(context: SetupContext): SetupResult {
   const hdrFolder = gui.addFolder('☀️ HDR');
   hdrFolder.open();
 
+  hdrFolder.domElement?.setAttribute(
+    'title',
+    'HDR (High Dynamic Range): Global color and brightness controls\n\n' +
+      'These controls adjust how the final image looks, applied in order:\n' +
+      '1. Exposure — scales brightness like a camera (in log2 stops)\n' +
+      '2. Offset — adds/subtracts a flat brightness value\n' +
+      '3. Gamma — reshapes the midtone curve (contrast)\n' +
+      '4. Tone Mapping — compresses HDR values to fit the display'
+  );
+
   // Exposure: log2 stops (-5 to +5)
   // 0 = neutral, +1 = 2x brighter, -1 = half brightness
   const exposureControl = hdrFolder
