@@ -6,23 +6,24 @@ This file tracks known issues, planned features, and improvements for the Luxar 
 
 11 - **Screenshot export**: Add a keyboard shortcut (e.g., `S`) to capture the current viewer canvas as a PNG and trigger a download. Essential for generating paper figures.
 
-12 - **Video export / animation recording**: Record turntable or flythrough animations as frame sequences or video. Auto-rotate already works; the missing piece is exporting frames (e.g., PNG sequence for ffmpeg). Critical for supplementary materials.
+12 - **Video export / animation recording**: Record turntable or flythrough animations as frame sequences or video. Auto-rotate already works; the missing piece is exporting frames (e.g., PNG sequence for ffmpeg). Critical for supplementary materials. Here is a good reference: https://webrtc.github.io/samples/src/content/capture/canvas-record/
 
 13 - **Scale bar overlay**: Render a physical scale bar in the viewer using the `unit` metadata from Dimensions. Every microscopy figure requires one. Implementation: a simple bar with a label rendered as a screen-space overlay.
 
 14 - **Colorbar / channel legend**: Display a legend overlay showing each node's name and color swatch. Required for multi-channel figures and general usability.
 
-16 - **PSNR/SSIM quality metrics in CLI**: Add `luxar gsplat info --compare <original.tiff/npy>` to compute PSNR, SSIM, and other quality metrics against the original volume. Currently only `final_rel_l2` and `final_max_abs_error` are tracked during fitting. This would make quality comparison tables for papers trivial.
+16 - **PSNR/SSIM quality metrics in CLI**: Add `luxar gsplat info --compare <original.tiff/npy>` to compute PSNR, SSIM, and other quality metrics against the original volume. Currently only `final_rel_l2` and `final_max_abs_error` are tracked during fitting. This would make quality comparison tables for papers trivial. Compute round-trip PSNR/SSIM after fitting, controlled by parameter, on by default. 
 
-18 - **Tiled fitting for large volumes**: Fit arbitrarily large volumes by splitting into overlapping 3D tiles with cosine apodization (raised cosine / Hann window), fitting gsplats independently per tile, and concatenating all splats. The cosine window ensures smooth amplitude tapering at tile boundaries, eliminating visible seams. Optional post-merge pruning removes redundant splats in overlap zones. This removes the GPU memory ceiling and enables parallelism (multi-GPU, cluster). Critical for real-world microscopy data (e.g., 2048x2048x500 light-sheet stacks). CLI: `luxar gsplat fit volume.tiff -o splats.gsplats.zarr --tiled --tile-size 256 --overlap 32`.
+18 - **Tiled fitting for large volumes**: Fit arbitrarily large volumes by splitting into overlapping 3D tiles with cosine apodization (raised cosine / Hann window), fitting gsplats independently per tile, and concatenating all splats. The cosine window ensures smooth amplitude tapering at tile boundaries, eliminating visible seams. Optional post-merge pruning removes redundant splats in overlap zones. This removes the GPU memory ceiling and enables parallelism (multi-GPU, cluster). Critical for real-world microscopy data (e.g., 2048x2048x500 light-sheet stacks). CLI: `luxar gsplat fit volume.tiff -o splats.gsplats.zarr --tiled --tile-size 256 --overlap 32`. best to implement this after slurm integration so that tiles can be processed across GPUs.
 
 ## Feature Requests (MEDIUM Priority)
 
 5 - **Layers panel (per-node controllability)**: Expose all scene graph nodes (Groups, Points, Lines, GSplats — except the Scene root) as "layers" in a dedicated UI panel. Each layer provides controls for visibility, brightness, offset, and gamma, applied to the node and its entire sub-tree. Most of the viewer machinery is already in place; the remaining work is the Layers panel itself. Inspired by napari: multi-select layers, show only the intersection of available controls, and propagate setting changes to all selected layers.
 
-6 - **Orthographic projection mode**: Add an orthographic camera option. In this mode the user can pan and zoom but not rotate. Standard expectation for microscopy viewers.
+6 - **Orthographic projection mode**: Add an orthographic camera option. In this mode the user can pan and zoom and only rotate around the view direction. Standard expectation for microscopy viewers of 2D data.
 
-15 - **Viewer-side colormaps**: Support a `colormap` attribute on nodes (e.g., `"green"`, `"magenta"`, `"fire"`, `"viridis"`) with LUT application on the viewer side. Currently all colors must be pre-baked in Python. The microscopy convention is to apply lookup tables at display time, enabling users to change coloring interactively.
+15 - **Viewer-side colormaps**: Support a `colormap` attribute on nodes (e.g., `"green"`, `"magenta"`, `"fire"`, `"viridis"`) with LUT application on the viewer side. Currently all colors must be pre-baked in Python. The microscopy convention is to apply lookup tables at display time, enabling users to change coloring interactively. Right now colors are 'baked' in the scene nodes. but we can add explicit support for LUTs, definitely a gap in the current implementation. There is machinery in the encoding step to handle LUTs but it is only internal to the encoding. Making LUTs explicit makes it possible to implement the corresponding legends. This will probably require to first implement the scene 'domains' and in particular the 'overlay domain' to render the legends in normalized screen space.
+
 
 17 - ~~**OME-Zarr (NGFF) input support**~~: **DONE.** `luxar gsplat fit` supports OME-Zarr with full 5D TCZYX handling via `--channel` and `--timepoint` flags. Auto-detects OME-Zarr layout (key `"0"` for highest resolution). Implemented in `gsplat_config.py:_load_zarr_volume()`.
 
