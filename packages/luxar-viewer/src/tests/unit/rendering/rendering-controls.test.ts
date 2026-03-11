@@ -127,7 +127,9 @@ describe('RenderingControls', () => {
         near: 0.1,
         far: 1000,
       })),
-      updateHDRMultiplier: vi.fn(),
+      updateExposure: vi.fn(),
+      updateGlobalOffset: vi.fn(),
+      updateGlobalGamma: vi.fn(),
       setControlType: vi.fn(),
       setAutoRotate: vi.fn(),
       setAutoRotateSpeed: vi.fn(),
@@ -182,36 +184,34 @@ describe('RenderingControls', () => {
     }
   });
 
-  describe('Bug Fix #1: HDR Shadow Value Sync', () => {
-    it('should sync HDR shadow value when resetting to defaults', () => {
-      // Setup: Change HDR to non-default value
+  describe('Bug Fix #1: Exposure Value Sync', () => {
+    it('should sync exposure value when resetting to defaults', () => {
+      // Setup: Change exposure to non-default value
       const controls = renderingControls as any;
-      controls.settings.hdrMultiplier = 50.0;
-      controls.hdrLogValue.log = Math.log10(50.0);
+      controls.settings.exposure = 3.0;
 
       // Action: Reset to defaults
       controls.resetToDefaults();
 
-      // Verify: HDR shadow value should be synced to default (1.0)
-      expect(controls.hdrLogValue.log).toBeCloseTo(Math.log10(1.0), 5);
-      expect(controls.settings.hdrMultiplier).toBe(1.0);
+      // Verify: Exposure should be synced to default (0.0)
+      expect(controls.settings.exposure).toBe(0.0);
     });
 
-    it('should sync HDR shadow value when loading settings', () => {
-      // Setup: Save settings with custom HDR value
+    it('should sync exposure value when loading settings', () => {
+      // Setup: Save settings with custom exposure value
       const controls = renderingControls as any;
-      controls.settings.hdrMultiplier = 25.0;
+      controls.settings.exposure = 2.5;
       controls.sceneId = 'test-scene';
       controls.saveSettings();
 
-      // Reset shadow value to wrong value
-      controls.hdrLogValue.log = 0;
+      // Reset to different value
+      controls.settings.exposure = 0;
 
       // Action: Load settings
       controls.loadSettings();
 
-      // Verify: HDR shadow value should match loaded hdrMultiplier
-      expect(controls.hdrLogValue.log).toBeCloseTo(Math.log10(25.0), 5);
+      // Verify: Exposure should match loaded value
+      expect(controls.settings.exposure).toBe(2.5);
     });
   });
 
@@ -440,7 +440,7 @@ describe('RenderingControls', () => {
       controls.settings.vignetteEnabled = true;
       controls.settings.controlType = 'fly';
       controls.settings.flyInertialMode = true;
-      controls.hdrLogValue.log = Math.log10(50.0);
+      controls.settings.exposure = 3.0;
 
       // Clear all mock calls
       Object.values(mockSceneManager).forEach((fn: any) => {
@@ -460,8 +460,8 @@ describe('RenderingControls', () => {
       expect(controls.settings.vignetteEnabled).toBe(false);
       expect(controls.settings.controlType).toBe('orbit');
 
-      // Verify: HDR shadow synced to default (1.0)
-      expect(controls.hdrLogValue.log).toBeCloseTo(Math.log10(1.0), 5);
+      // Verify: Exposure synced to default (0.0)
+      expect(controls.settings.exposure).toBe(0.0);
 
       // Verify: Camera settings applied
       expect(mockSceneManager.updateClippingPlanes).toHaveBeenCalledWith(0.1, 1000);
@@ -498,7 +498,7 @@ describe('RenderingControls', () => {
       controls.settings.flyMovementSpeed = 1.0;
       controls.settings.flyRotationSpeed = 1.0;
       controls.settings.bloomStrength = 0.25; // Actual default
-      controls.settings.hdrMultiplier = 16.0; // Actual default
+      controls.settings.exposure = 0.0; // Actual default
       mockCamera.fov = 47;
       mockCamera.near = 0.1;
 

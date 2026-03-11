@@ -267,6 +267,25 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         aprint(f"📝 Created group: {path or '/'}")
 
+    def delete_group_attr(self, path: NodePath, key: str) -> None:
+        """Remove an attribute from a group in the Zarr store.
+
+        Args:
+            path: Path for the group within the store
+            key: Attribute key to remove
+        """
+        if path == "/" or path == "":
+            group = self.store
+        else:
+            path = path.lstrip("/")
+            group = self.store.require_group(path)
+
+        attrs = dict(group.attrs)
+        if key in attrs:
+            del attrs[key]
+            group.attrs.clear()
+            group.attrs.update(attrs)
+
     def write_points(
         self,
         path: NodePath,
@@ -358,7 +377,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # 4. Initialize metadata
         metadata: PointsMetadata = {
             "n_points": n_points,
-            "dims": n_dims,
+            "ndim": n_dims,
             "path": path,
             "has_colors": False,
             "has_radii": False,
@@ -399,11 +418,21 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
             attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
 
+        # 6b. Validate nd_transform if present
+        if "nd_transform" in attrs:
+            from ..validation.nd_transforms import validate_nd_transform
+
+            attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"])
+
         # 7. Set default rendering attributes if not provided
         if "opacity" not in attrs:
             attrs["opacity"] = 1.0
         if "gamma" not in attrs:
             attrs["gamma"] = 1.0
+        if "intensity" not in attrs:
+            attrs["intensity"] = 1.0
+        if "offset" not in attrs:
+            attrs["offset"] = 0.0
         if "blending_mode" not in attrs:
             attrs["blending_mode"] = "additive"
 
@@ -726,6 +755,24 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             from ..core.transforms import prepare_transform_for_zarr
 
             attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
+
+        # Validate nd_transform if present
+        if "nd_transform" in attrs:
+            from ..validation.nd_transforms import validate_nd_transform
+
+            attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"])
+
+        # Set default rendering attributes if not provided (must match write_points/write_gsplats)
+        if "opacity" not in attrs:
+            attrs["opacity"] = 1.0
+        if "gamma" not in attrs:
+            attrs["gamma"] = 1.0
+        if "intensity" not in attrs:
+            attrs["intensity"] = 1.0
+        if "offset" not in attrs:
+            attrs["offset"] = 0.0
+        if "blending_mode" not in attrs:
+            attrs["blending_mode"] = "additive"
 
         # Set attributes (all core metadata per spec Section 6.6)
         group.attrs.update(attrs)
@@ -1070,11 +1117,21 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
             attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
 
+        # Validate nd_transform if present
+        if "nd_transform" in attrs:
+            from ..validation.nd_transforms import validate_nd_transform
+
+            attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"])
+
         # Set rendering defaults (must match write_points defaults)
         if "opacity" not in attrs:
             attrs["opacity"] = 1.0
         if "gamma" not in attrs:
             attrs["gamma"] = 1.0
+        if "intensity" not in attrs:
+            attrs["intensity"] = 1.0
+        if "offset" not in attrs:
+            attrs["offset"] = 0.0
         if "blending_mode" not in attrs:
             attrs["blending_mode"] = "additive"
 

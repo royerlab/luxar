@@ -87,6 +87,12 @@ export interface GSplatsMetadata {
   /** Gamma correction */
   gamma?: number;
 
+  /** Intensity (linear color multiplier / gain) */
+  intensity?: number;
+
+  /** Offset (additive brightness shift / black level subtraction) */
+  offset?: number;
+
   /** Blending mode */
   blending_mode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
 

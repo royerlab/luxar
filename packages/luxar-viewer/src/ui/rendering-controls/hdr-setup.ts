@@ -1,8 +1,10 @@
 /**
  * HDR controls setup for rendering controls UI.
  *
- * Creates controls for HDR and tone mapping:
- * - HDR intensity (logarithmic slider for perceptual linearity)
+ * Creates controls for global Exposure-Offset-Gamma (EOG) and tone mapping:
+ * - Exposure (log2 stops): global brightness in photography-standard units
+ * - Offset: global additive brightness shift (lift/lower composited image)
+ * - Gamma: global midtone curve adjustment
  * - Tone mapping selector (None, Linear, Reinhard, Cineon, ACES, AgX, Neutral)
  */
 
@@ -13,10 +15,9 @@ import type { SetupContext, SetupResult } from './types';
  * Set up HDR controls in the rendering controls GUI.
  *
  * @param context - Setup context with GUI, settings, and callbacks
- * @param hdrLogValue - Shadow object for logarithmic HDR intensity slider
- * @returns Setup result with controller references and shadow object
+ * @returns Setup result with controller references
  */
-export function setupHDRControls(context: SetupContext, hdrLogValue: { log: number }): SetupResult {
+export function setupHDRControls(context: SetupContext): SetupResult {
   const { gui, settings, sceneManager, postProcessing, saveSettings, triggerAnimation } = context;
 
   const controllers: SetupResult['controllers'] = {};
@@ -25,70 +26,68 @@ export function setupHDRControls(context: SetupContext, hdrLogValue: { log: numb
   const hdrFolder = gui.addFolder('☀️ HDR');
   hdrFolder.open();
 
-  // Logarithmic HDR intensity slider
-  // Using shadow property pattern: slider controls log10(value), giving equal
-  // distance for equal perceptual change (orders of magnitude)
-  const logMin = Math.log10(0.01); // -2
-  const logMax = Math.log10(100); // +2
-
-  // Initialize shadow log value from current settings
-  hdrLogValue.log = Math.log10(settings.hdrMultiplier);
-
-  // Helper to format the actual intensity value for display
-  const formatIntensity = (logValue: number): string => {
-    const actual = Math.pow(10, logValue);
-    if (actual >= 10) return actual.toFixed(0);
-    if (actual >= 1) return actual.toFixed(1);
-    if (actual >= 0.1) return actual.toFixed(2);
-    return actual.toFixed(3);
-  };
-
-  const hdrControl = hdrFolder
-    .add(hdrLogValue, 'log', logMin, logMax, 0.01)
-    .name('Intensity')
-    .onChange((logValue: number) => {
-      // Convert log to actual value
-      const actualValue = Math.pow(10, logValue);
-      settings.hdrMultiplier = actualValue;
-      // Update shader config and trigger material updates
-      // HDR multiplier is now handled through material manager
-      sceneManager.updateHDRMultiplier(actualValue);
+  // Exposure: log2 stops (-5 to +5)
+  // 0 = neutral, +1 = 2x brighter, -1 = half brightness
+  const exposureControl = hdrFolder
+    .add(settings, 'exposure', -5.0, 5.0, 0.01)
+    .name('Exposure')
+    .onChange((value: number) => {
+      sceneManager.updateExposure(value);
       saveSettings();
       triggerAnimation();
     });
 
-  // Override updateDisplay to show actual intensity value instead of log value
-  // This is necessary because the GUI doesn't support custom value formatters
-  const originalUpdateDisplay = hdrControl.updateDisplay.bind(hdrControl);
-
-  (hdrControl as any).updateDisplay = () => {
-    originalUpdateDisplay();
-    // After GUI updates the display, override the input value with formatted intensity
-
-    const input = (hdrControl as any).$input as HTMLInputElement | undefined;
-    if (input) {
-      input.value = formatIntensity(hdrLogValue.log);
-    }
-    return hdrControl;
-  };
-
-  // Store controller reference for sync updates
-  controllers.hdrMultiplier = hdrControl;
-
-  // Initial display update to show actual value
-  hdrControl.updateDisplay();
-
-  // Set tooltip on the DOM element
-  hdrControl.domElement.setAttribute(
+  exposureControl.domElement.setAttribute(
     'title',
-    'Intensity: Multiplies point brightness (logarithmic slider)\n' +
-      '• Range: 0.01× (dim) to 100× (bright)\n' +
-      '• 1.0 = neutral (no change)\n' +
-      '• Higher values increase glow/bloom effects\n' +
-      '• Logarithmic scale: equal slider distance = equal perceived change'
+    'Exposure: Global brightness in log2 stops (photography standard)\n' +
+      '• Range: -5 (very dim) to +5 (very bright)\n' +
+      '• 0 = neutral (no change)\n' +
+      '• +1 = 2× brighter, -1 = half brightness\n' +
+      '• Applied before tone mapping in a single shader pass'
   );
+  controllers.exposure = exposureControl;
 
-  // Tone Mapping selector - moved to HDR folder
+  // Offset: additive shift (-1 to +1)
+  const offsetControl = hdrFolder
+    .add(settings, 'globalOffset', -1.0, 1.0, 0.001)
+    .name('Offset')
+    .onChange((value: number) => {
+      sceneManager.updateGlobalOffset(value);
+      saveSettings();
+      triggerAnimation();
+    });
+
+  offsetControl.domElement.setAttribute(
+    'title',
+    'Offset: Global additive brightness shift\n' +
+      '• Range: -1.0 to +1.0\n' +
+      '• 0 = neutral (no change)\n' +
+      '• Negative: darken the entire image\n' +
+      '• Positive: brighten the entire image'
+  );
+  controllers.globalOffset = offsetControl;
+
+  // Gamma: midtone curve (0.1 to 10.0)
+  const gammaControl = hdrFolder
+    .add(settings, 'globalGamma', 0.1, 10.0, 0.01)
+    .name('Gamma')
+    .onChange((value: number) => {
+      sceneManager.updateGlobalGamma(value);
+      saveSettings();
+      triggerAnimation();
+    });
+
+  gammaControl.domElement.setAttribute(
+    'title',
+    'Gamma: Global midtone curve adjustment\n' +
+      '• Range: 0.1 to 10.0\n' +
+      '• 1.0 = linear (no change)\n' +
+      '• < 1.0 = brighten midtones\n' +
+      '• > 1.0 = darken midtones'
+  );
+  controllers.globalGamma = gammaControl;
+
+  // Tone Mapping selector
   const toneMappingControl = hdrFolder
     .add(settings, 'toneMapping', [
       'None',
@@ -130,8 +129,5 @@ export function setupHDRControls(context: SetupContext, hdrLogValue: { log: numb
 
   return {
     controllers,
-    shadowObjects: {
-      hdrLogValue,
-    },
   };
 }

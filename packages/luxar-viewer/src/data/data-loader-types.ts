@@ -185,6 +185,9 @@ export interface SceneNode {
     /** Transformation matrix (16 elements for 4x4 matrix) */
     transform?: number[];
 
+    /** Per-dimension transforms for non-displayed dimensions */
+    nd_transform?: import('../types/zarr').NdTransformMap;
+
     /** Rendering attributes */
     opacity?: number;
     gamma?: number;

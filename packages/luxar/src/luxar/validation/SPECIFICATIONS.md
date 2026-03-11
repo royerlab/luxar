@@ -122,6 +122,19 @@ Error Messages: Distinguish between wrong count vs wrong channels
 - Converts to float
 - Raises ValueError if out of range
 
+**Intensity**:
+- Range: [0.0, +inf) (per-node color multiplier)
+- Accepts: int, float, np.number
+- Converts to float
+- Default: 1.0
+- Raises ValueError if negative
+
+**Offset**:
+- Range: (-inf, +inf) (per-node color offset)
+- Accepts: int, float, np.number
+- Converts to float
+- Default: 0.0
+
 **Blending Mode**:
 - Valid: "normal", "additive", "max", "opaque", "luminous"
 - Must be string

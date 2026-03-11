@@ -459,13 +459,15 @@ class TestTransformCentralization:
         assert result[14] == 3.0
 
     def test_prepare_transform_from_list(self) -> None:
-        """Test that list format is validated and preserved."""
-        # Already in column-major format
-        transform_list = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1]
+        """Test that list format is treated as row-major (NumPy convention)."""
+        # Row-major format: translation at indices [3, 7, 11] (last column)
+        # This is translate(5, 6, 7) flattened in row-major order
+        transform_list = [1, 0, 0, 5, 0, 1, 0, 6, 0, 0, 1, 7, 0, 0, 0, 1]
         result = prepare_transform_for_zarr(transform_list)
 
         assert isinstance(result, list)
         assert len(result) == 16
+        # After row-major → column-major conversion, translations at indices 12, 13, 14
         assert result[12] == 5.0
         assert result[13] == 6.0
         assert result[14] == 7.0

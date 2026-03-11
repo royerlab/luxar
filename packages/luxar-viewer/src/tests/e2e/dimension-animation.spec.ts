@@ -629,11 +629,11 @@ test.describe('Dimension Animation - Animation Behavior', () => {
           isAnimating: mgr?.isAnimating(3),
           state: state
             ? {
-              isPlaying: state.isPlaying,
-              loopMode: state.loopMode,
-              direction: state.direction,
-              targetFPS: state.targetFPS,
-            }
+                isPlaying: state.isPlaying,
+                loopMode: state.loopMode,
+                direction: state.direction,
+                targetFPS: state.targetFPS,
+              }
             : null,
           currentValue: dims?.currentStep?.[3],
           ranges: sceneDims?.getDimensionRanges(),

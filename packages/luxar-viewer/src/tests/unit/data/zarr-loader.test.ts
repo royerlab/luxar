@@ -225,7 +225,6 @@ vi.mock('../rendering/material-manager', () => ({
   materialManager: {
     getPointMaterial: vi.fn().mockReturnValue({
       uniforms: {
-        hdrMultiplier: { value: 1.0 },
         opacity: { value: 1.0 },
         gamma: { value: 1.0 },
         baseAlpha: { value: 0.01 },
@@ -234,10 +233,8 @@ vi.mock('../rendering/material-manager', () => ({
       },
       userData: {},
       updateCameraParams: vi.fn(),
-      updateHDRMultiplier: vi.fn(),
     }),
     updateCameraParams: vi.fn(),
-    updateHDRMultiplier: vi.fn(),
   },
 }));
 

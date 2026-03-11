@@ -80,6 +80,19 @@ class Node:
                 except Exception as e:
                     raise ValueError(f"Invalid transform for node '{name}': {e}") from e
 
+            # Validate nd_transform if present
+            if "nd_transform" in attrs:
+                try:
+                    from ..validation.nd_transforms import validate_nd_transform
+
+                    attrs["nd_transform"] = validate_nd_transform(
+                        attrs["nd_transform"]
+                    )
+                except Exception as e:
+                    raise ValueError(
+                        f"Invalid nd_transform for node '{name}': {e}"
+                    ) from e
+
             # Validate rendering attributes if present
             if "opacity" in attrs:
                 from ..validation.types import validate_opacity
@@ -90,6 +103,16 @@ class Node:
                 from ..validation.types import validate_gamma
 
                 attrs["gamma"] = validate_gamma(attrs["gamma"])
+
+            if "intensity" in attrs:
+                from ..validation.types import validate_intensity
+
+                attrs["intensity"] = validate_intensity(attrs["intensity"])
+
+            if "offset" in attrs:
+                from ..validation.types import validate_offset
+
+                attrs["offset"] = validate_offset(attrs["offset"])
 
             if "blending_mode" in attrs:
                 from ..validation.types import validate_blending_mode
@@ -114,6 +137,17 @@ class Node:
             Dictionary of node attributes from cache
         """
         return self._attrs_cache
+
+    def _persist_attr(self, key: str, value: Any) -> None:
+        """Update an attribute in both the cache and the zarr store.
+
+        Args:
+            key: Attribute key
+            value: Attribute value
+        """
+        self._attrs_cache[key] = value
+        if self._writer is not None:
+            self._writer.write_group(self.path, **{key: value})
 
     # --------------------------------------------------------------- hierarchy
     def add_group(self, name: str, **attrs: Any) -> "Group":
@@ -196,11 +230,36 @@ class Node:
             return read_transform_from_zarr(transform_list)
         return None
 
+    @property
+    def world_transform(self) -> TransformMatrix:
+        """Get the world transformation matrix by composing all parent transforms.
+
+        Walks up the parent chain, collecting local transforms, and composes
+        them in order (root first, this node last).
+
+        Returns:
+            4x4 world transformation matrix. Identity if no transforms are set.
+        """
+        from ..core.transforms import compose, identity
+
+        transforms = []
+        node: Optional[Node] = self
+        while node is not None:
+            if node.transform is not None:
+                transforms.append(node.transform)
+            node = node.parent
+        if not transforms:
+            return identity()
+        # Reverse so root transform is first (applied first)
+        return compose(*reversed(transforms))
+
     @transform.setter
     def transform(
         self, matrix: Optional[Union[TransformMatrix, np.ndarray, list]]
     ) -> None:
         """Set the transformation matrix for this node.
+
+        Changes are persisted to zarr immediately if a writer is available.
 
         Args:
             matrix: 4x4 transformation matrix, flat list of 16 values, or None to remove
@@ -209,14 +268,67 @@ class Node:
             ValueError: If transform is invalid
         """
         if matrix is None:
-            # Remove transform if it exists
-            if "transform" in self.attrs:
-                del self.attrs["transform"]
+            # Remove transform from cache and zarr store
+            if "transform" in self._attrs_cache:
+                del self._attrs_cache["transform"]
+                if self._writer is not None:
+                    self._writer.delete_group_attr(self.path, "transform")
         else:
             from ..core.transforms import prepare_transform_for_zarr
 
-            # Use centralized function for consistent handling
-            self.attrs["transform"] = prepare_transform_for_zarr(matrix)
+            self._persist_attr("transform", prepare_transform_for_zarr(matrix))
+
+    # --------------------------------------------------------- nd_transform
+    @property
+    def nd_transform(self) -> Optional[Dict[str, Any]]:
+        """Get the nD transform for non-displayed dimensions.
+
+        Returns:
+            Dict mapping dimension names to per-dim transforms, or None.
+            Affine entries: {"scale": float, "offset": float}
+            Permutation entries: {"permutation": [int, ...]}
+        """
+        return self.attrs.get("nd_transform")
+
+    @nd_transform.setter
+    def nd_transform(self, value: Optional[Dict[str, Any]]) -> None:
+        """Set the nD transform for non-displayed dimensions.
+
+        Args:
+            value: Dict mapping dim names to transform entries, or None to remove.
+
+        Raises:
+            ValueError: If nd_transform is invalid
+        """
+        if value is None:
+            if "nd_transform" in self._attrs_cache:
+                del self._attrs_cache["nd_transform"]
+                if self._writer is not None:
+                    self._writer.delete_group_attr(self.path, "nd_transform")
+        else:
+            from ..validation.nd_transforms import validate_nd_transform
+
+            self._persist_attr("nd_transform", validate_nd_transform(value))
+
+    @property
+    def world_nd_transform(self) -> Dict[str, Any]:
+        """Get the composed world nD transform by walking the parent chain.
+
+        Returns:
+            Composed nD transform dict. Empty dict means identity.
+        """
+        from ..validation.nd_transforms import compose_nd_transforms
+
+        nd_transforms = []
+        node: Optional[Node] = self
+        while node is not None:
+            if node.nd_transform is not None:
+                nd_transforms.append(node.nd_transform)
+            node = node.parent
+        if not nd_transforms:
+            return {}
+        # Reverse so root is first (applied outermost)
+        return compose_nd_transforms(*reversed(nd_transforms))
 
     @property
     def num_children(self) -> int:
@@ -247,6 +359,8 @@ class Node:
     def opacity(self, value: Any) -> None:
         """Set the opacity value for this node.
 
+        Changes are persisted to zarr immediately if a writer is available.
+
         Args:
             value: Opacity value (0.0 to 1.0)
 
@@ -256,7 +370,7 @@ class Node:
         """
         from ..validation.types import validate_opacity
 
-        self.attrs["opacity"] = validate_opacity(value)
+        self._persist_attr("opacity", validate_opacity(value))
 
     @property
     def gamma(self) -> float:
@@ -271,6 +385,8 @@ class Node:
     def gamma(self, value: Any) -> None:
         """Set the gamma value for this node.
 
+        Changes are persisted to zarr immediately if a writer is available.
+
         Args:
             value: Gamma value (0.1 to 10.0)
 
@@ -280,7 +396,59 @@ class Node:
         """
         from ..validation.types import validate_gamma
 
-        self.attrs["gamma"] = validate_gamma(value)
+        self._persist_attr("gamma", validate_gamma(value))
+
+    @property
+    def intensity(self) -> float:
+        """Get the intensity value for this node.
+
+        Returns:
+            Intensity value (0.0 to 100.0), defaults to 1.0 if not set
+        """
+        return float(self.attrs.get("intensity", 1.0))
+
+    @intensity.setter
+    def intensity(self, value: Any) -> None:
+        """Set the intensity value for this node.
+
+        Changes are persisted to zarr immediately if a writer is available.
+
+        Args:
+            value: Intensity value (0.0 to 100.0)
+
+        Raises:
+            ValueError: If intensity is not in valid range
+            TypeError: If intensity cannot be converted to float
+        """
+        from ..validation.types import validate_intensity
+
+        self._persist_attr("intensity", validate_intensity(value))
+
+    @property
+    def offset(self) -> float:
+        """Get the offset value for this node.
+
+        Returns:
+            Offset value (-10.0 to 10.0), defaults to 0.0 if not set
+        """
+        return float(self.attrs.get("offset", 0.0))
+
+    @offset.setter
+    def offset(self, value: Any) -> None:
+        """Set the offset value for this node.
+
+        Changes are persisted to zarr immediately if a writer is available.
+
+        Args:
+            value: Offset value (-10.0 to 10.0)
+
+        Raises:
+            ValueError: If offset is not in valid range
+            TypeError: If offset cannot be converted to float
+        """
+        from ..validation.types import validate_offset
+
+        self._persist_attr("offset", validate_offset(value))
 
     @property
     def blending_mode(self) -> str:
@@ -296,6 +464,8 @@ class Node:
     def blending_mode(self, value: Any) -> None:
         """Set the blending mode for this node.
 
+        Changes are persisted to zarr immediately if a writer is available.
+
         Args:
             value: Blending mode string. Valid modes:
                 - "normal": Standard alpha blending (semi-transparent)
@@ -310,7 +480,7 @@ class Node:
         """
         from ..validation.types import validate_blending_mode
 
-        self.attrs["blending_mode"] = validate_blending_mode(value)
+        self._persist_attr("blending_mode", validate_blending_mode(value))
 
     def set_opacity(self, value: Any) -> "Node":
         """Set opacity and return self for chaining.
@@ -336,6 +506,30 @@ class Node:
         self.gamma = value
         return self
 
+    def set_intensity(self, value: Any) -> "Node":
+        """Set intensity and return self for chaining.
+
+        Args:
+            value: Intensity value (0.0 to 100.0)
+
+        Returns:
+            Self for method chaining
+        """
+        self.intensity = value
+        return self
+
+    def set_offset(self, value: Any) -> "Node":
+        """Set offset and return self for chaining.
+
+        Args:
+            value: Offset value (-10.0 to 10.0)
+
+        Returns:
+            Self for method chaining
+        """
+        self.offset = value
+        return self
+
     def set_blending_mode(self, value: Any) -> "Node":
         """Set blending mode and return self for chaining.
 
@@ -354,21 +548,39 @@ class Node:
         return self
 
     # --------------------------------------------------------------- equality
+    def _root_id(self) -> int:
+        """Return id() of the root node in this hierarchy.
+
+        Used to distinguish nodes with the same path in different scenes.
+        """
+        node: Optional[Node] = self
+        while node is not None:
+            if node.parent is None:
+                return id(node)
+            node = node.parent
+        return id(self)  # pragma: no cover — unreachable, satisfies type checker
+
     def __eq__(self, other: object) -> bool:
-        """Equality based on path in the scene graph."""
+        """Equality based on path AND root identity in the scene graph.
+
+        Nodes from different scenes with the same path are NOT equal.
+        """
         if not isinstance(other, Node):
             return NotImplemented
         # Root nodes (empty path) use identity to avoid all roots comparing equal
         if self.path == "" and other.path == "":
             return self is other
-        return self.path == other.path
+        return self.path == other.path and self._root_id() == other._root_id()
 
     def __hash__(self) -> int:
-        """Hash based on path in the scene graph."""
+        """Hash based on path AND root identity in the scene graph.
+
+        Nodes from different scenes with the same path hash differently.
+        """
         # Root nodes use identity hash to avoid all roots hashing identically
         if self.path == "":
             return id(self)
-        return hash(self.path)
+        return hash((self.path, self._root_id()))
 
     # --------------------------------------------------------------- repr
     def __repr__(self) -> str:  # pragma: no cover

@@ -91,9 +91,6 @@ export class RenderingControls {
   private orbitFolder?: Folder;
   private flyFolder?: Folder;
 
-  /** Shadow object for logarithmic HDR intensity slider */
-  private hdrLogValue: { log: number } = { log: 0 };
-
   /** Reference to adaptive DPR manager for performance controls */
   private adaptiveDPRManager?: AdaptiveDPRManager;
 
@@ -206,20 +203,17 @@ export class RenderingControls {
     Object.assign(this.controllers, cameraResult.controllers);
 
     // HDR controls
-    const hdrResult = setupHDRControls(
-      {
-        gui: this.gui,
-        settings: this.settings,
-        postProcessing: this.postProcessing,
-        sceneManager: this.sceneManager,
-        animationController: this.animationController,
-        saveSettings: () => this.saveSettings(),
-        triggerAnimation: () => this.triggerAnimation(),
-        updateClippingControlsState: (enabled) => this.updateClippingControlsState(enabled),
-        updateNavigationControls: (controlType) => this.updateNavigationControls(controlType),
-      },
-      this.hdrLogValue
-    );
+    const hdrResult = setupHDRControls({
+      gui: this.gui,
+      settings: this.settings,
+      postProcessing: this.postProcessing,
+      sceneManager: this.sceneManager,
+      animationController: this.animationController,
+      saveSettings: () => this.saveSettings(),
+      triggerAnimation: () => this.triggerAnimation(),
+      updateClippingControlsState: (enabled) => this.updateClippingControlsState(enabled),
+      updateNavigationControls: (controlType) => this.updateNavigationControls(controlType),
+    });
 
     // Store controller references
     Object.assign(this.controllers, hdrResult.controllers);
@@ -336,9 +330,6 @@ export class RenderingControls {
 
     // Update settings object in place to maintain GUI bindings
     Object.assign(this.settings, defaults);
-
-    // Sync logarithmic HDR slider shadow value
-    this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
 
     // Clear saved settings for this scene (before applying, so user sees clean state)
     if (this.sceneId) {
@@ -740,8 +731,6 @@ export class RenderingControls {
     });
 
     // Sync HDR log slider
-    this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
-
     // Apply post-processing and other rendering settings
     this.applySettings();
     log.info(Modules.RENDERER, 'Applied viewer config defaults from zarr');
@@ -970,9 +959,6 @@ export class RenderingControls {
           ...loadedSettings,
         });
 
-        // Sync logarithmic HDR slider shadow value
-        this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
-
         // Update GUI to reflect loaded values
         // Note: HDR controller's updateDisplay is overridden to show actual intensity
         this.gui.controllersRecursive().forEach((controller) => {
@@ -1133,14 +1119,7 @@ export class RenderingControls {
     this.updateClippingControlsState(this.settings.dynamicClippingEnabled);
 
     // Sync logarithmic HDR slider
-    // The shadow log value must be updated to match the actual hdrMultiplier
-    this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
-    if (this.controllers.hdrMultiplier) {
-      // updateDisplay is overridden to show actual intensity value
-      this.controllers.hdrMultiplier.updateDisplay();
-    }
-
-    // Update all other controllers
+    // Update all controllers
     this.gui.controllersRecursive().forEach((controller) => {
       controller.updateDisplay();
     });
@@ -1165,9 +1144,10 @@ export class RenderingControls {
     );
     this.postProcessing.setBloomLevels(this.settings.bloomLevels);
 
-    // Apply HDR multiplier - must update both config AND materials
-    // HDR multiplier is now handled through material manager
-    this.sceneManager.updateHDRMultiplier(this.settings.hdrMultiplier);
+    // Apply global EOG (Exposure-Offset-Gamma) — routed to post-processing
+    this.sceneManager.updateExposure(this.settings.exposure);
+    this.sceneManager.updateGlobalOffset(this.settings.globalOffset);
+    this.sceneManager.updateGlobalGamma(this.settings.globalGamma);
 
     // Apply SSAA settings
     this.postProcessing.setSSAAEnabled(this.settings.ssaaEnabled);

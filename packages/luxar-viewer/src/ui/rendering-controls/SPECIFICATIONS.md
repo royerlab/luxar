@@ -91,7 +91,7 @@ interface SetupResult {
 
   shadowObjects?: {
     // Special UI objects
-    hdrLogValue?: { log: number };
+    exposureLogValue?: { log: number };
     [key: string]: any;
   };
 }
@@ -232,23 +232,25 @@ function setupCameraControls(
 
 ### hdr-setup.ts
 
-**Purpose**: Create HDR intensity and tone mapping controls
+**Purpose**: Create global EOG (Exposure-Offset-Gamma) and tone mapping controls
 
 **Signature**:
 
 ```typescript
-function setupHDRControls(context: SetupContext, hdrLogValue: { log: number }): SetupResult;
+function setupHDRControls(context: SetupContext, exposureLogValue: { log: number }): SetupResult;
 ```
 
 **Parameters**:
 
 - `context`: Standard setup context
-- `hdrLogValue`: Shadow object for logarithmic slider
+- `exposureLogValue`: Shadow object for logarithmic exposure slider
 
 **Creates**:
 
 - HDR folder (open by default)
-  - Intensity slider (logarithmic, range: 0.01-100)
+  - Exposure slider (logarithmic, range: 0.01-100)
+  - Global Offset slider (linear, range: -1.0 to 1.0)
+  - Global Gamma slider (linear, range: 0.1 to 10.0)
   - Tone Mapping dropdown (None, Linear, Reinhard, Cineon, ACES, AgX, Neutral)
 
 **Returns**:
@@ -256,34 +258,35 @@ function setupHDRControls(context: SetupContext, hdrLogValue: { log: number }): 
 ```typescript
 {
   controllers: {
-    hdrMultiplier
+    exposure
   },
   shadowObjects: {
-    hdrLogValue
+    exposureLogValue
   }
 }
 ```
 
 **Special Behavior**:
 
-- **Logarithmic Slider**: Uses shadow object pattern for perceptual linearity
-  - Slider controls `hdrLogValue.log` (linear log10 values)
+- **Logarithmic Exposure Slider**: Uses shadow object pattern for perceptual linearity
+  - Slider controls `exposureLogValue.log` (linear log10 values)
   - onChange converts: `actualValue = 10^logValue`
   - Custom `updateDisplay()` shows actual value, not log value
+- **Global EOG Model**: `adjusted = color * exposure + globalOffset; clip; pow(adjusted, 1/globalGamma)` applied in LuxarToneMappingEffect before tone mapping
 - **Format Helper**: Shows `0.01` (3 decimals) to `10` (0 decimals) to `100` (0 decimals)
 
 **Algorithm**:
 
 ```typescript
 // Initialize
-hdrLogValue.log = Math.log10(settings.hdrMultiplier);
+exposureLogValue.log = Math.log10(settings.exposure);
 
 // On change
 const actualValue = Math.pow(10, logValue);
-settings.hdrMultiplier = actualValue;
+settings.exposure = actualValue;
 
 // Display override
-const formatIntensity = (logValue: number): string => {
+const formatExposure = (logValue: number): string => {
   const actual = Math.pow(10, logValue);
   if (actual >= 10) return actual.toFixed(0);
   if (actual >= 1) return actual.toFixed(1);

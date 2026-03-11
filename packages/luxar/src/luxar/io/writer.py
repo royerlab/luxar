@@ -180,6 +180,15 @@ class ZarrWriterProtocol(Protocol):
         """
         ...
 
+    def delete_group_attr(self, path: NodePath, key: str) -> None:
+        """Remove an attribute from a group in the Zarr store.
+
+        Args:
+            path: Path within the Zarr store for the group
+            key: Attribute key to remove
+        """
+        ...
+
     def finalize(self) -> None:
         """Finalize the Zarr store.
 

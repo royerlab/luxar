@@ -31,6 +31,8 @@ luxar info my_data.zarr --stats
 
 - `__init__.py` - Package initialization, exports the main app
 - `main.py` - Main CLI application with all commands
+- `gsplat_commands.py` - Gaussian splat subcommands (info, view, prune, fit, convert, render, merge)
+- `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `utils.py` - Utility functions for CLI operations
 - `network_simulation.py` - Network simulation middleware and profile definitions
 
@@ -79,6 +81,41 @@ luxar profiles                # Display all network profiles with descriptions
 **Available profiles:** 3g, 4g, 5g, slow-broadband, broadband, fast-broadband, satellite, rural, congested
 
 Use these profiles with `serve`, `viewer`, or `demo` commands via the `--network-profile` option to simulate various network conditions for testing.
+
+
+### GSplat Processing Commands
+
+#### `luxar gsplat fit`
+Fit Gaussian splats to a volume with preset or YAML config.
+```bash
+luxar gsplat fit volume.npy splats.gsplats.zarr --preset standard --seeds 8000
+luxar gsplat fit volume.tiff splats.gsplats.zarr --config params.yaml
+luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config template
+```
+
+**Presets:** `draft` (fast preview), `standard` (balanced), `hifi` (max quality)
+
+#### `luxar gsplat convert`
+Convert .gsplats.zarr to a Luxar scene for the web viewer.
+```bash
+luxar gsplat convert fitted.gsplats.zarr scene.zarr --center
+luxar gsplat convert fitted.gsplats.zarr scene.zarr --scale-intensity 0.1
+```
+
+#### `luxar gsplat render`
+Render gsplats back to a volume for quality comparison.
+```bash
+luxar gsplat render fitted.gsplats.zarr rendered.npy --shape 128,128,128
+luxar gsplat render fitted.gsplats.zarr rendered.tiff --device cuda
+```
+
+#### `luxar gsplat merge`
+Combine multiple gsplat datasets (concatenation, new dimension, or channel colors).
+```bash
+luxar gsplat merge a.zarr b.zarr -o merged.zarr
+luxar gsplat merge t0.zarr t1.zarr t2.zarr -o 4d.zarr --as-dimension --values 0,1,2
+luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00ff00"
+```
 
 
 ## Key Features

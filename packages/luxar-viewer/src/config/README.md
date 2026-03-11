@@ -72,7 +72,7 @@ shader: {
 }
 ```
 
-**Note**: All user-adjustable rendering effect settings (bloom, tone mapping, HDR multiplier, etc.) live in `renderingControls.defaults` as the single source of truth. Post-processing pipeline internals (HalfFloatType, tone mapping modes) are managed directly by the PostProcessingManager.
+**Note**: Per-node color adjustment (intensity, offset, gamma) is configured per-material. Global exposure/offset/gamma are in `renderingControls.defaults` and applied in the `LuxarToneMappingEffect` post-processing pass. Post-processing pipeline internals (HalfFloatType, tone mapping modes) are managed directly by the PostProcessingManager.
 
 ### User Interface Configuration
 
@@ -137,7 +137,10 @@ renderingControls: {
     bloomStrength: 0.5,
     bloomRadius: 0.6,
     bloomLevels: 8,
-    hdrMultiplier: 16.0,
+    // Global EOG (Exposure-Offset-Gamma) in LuxarToneMappingEffect
+    exposure: 1.0,
+    globalOffset: 0.0,
+    globalGamma: 1.0,
     // Anti-aliasing
     fxaaEnabled: false,
     msaaEnabled: false,         // Incompatible with additive blending

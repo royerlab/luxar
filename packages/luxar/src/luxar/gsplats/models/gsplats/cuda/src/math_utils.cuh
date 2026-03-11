@@ -239,28 +239,55 @@ __device__ __forceinline__ float effective_truncation(
  *
  * This eliminates the expensive powf() call from the hot inner loop.
  *
- * For standard Gaussian (s=2): truncate_sq = truncate²
- * For generalized (s≠2): truncate_sq = truncate^(4/s)
+ * Combines two truncation criteria (taking the tighter bound):
+ * 1. Base truncation: D² <= truncate^(4/s)
+ * 2. Amplitude-based: D² where intensity drops below intensity_floor
+ *    Solving a * exp(-0.5 * D^s) = floor => D² = (2*ln(a/floor))^(2/s)
  *
  * OPTIMIZATION: Uses __powf() fast math intrinsic.
  *
- * @param truncate  Base truncation radius (typically 3.0)
- * @param sharpness Sharpness parameter (s)
- * @return          Squared effective truncation distance (in Mahalanobis space)
+ * @param truncate        Base truncation radius (typically 3.0)
+ * @param sharpness       Sharpness parameter (s)
+ * @param amplitude       Splat amplitude (for amplitude-based tightening)
+ * @param intensity_floor Minimum intensity threshold
+ * @return                Squared effective truncation distance (in Mahalanobis space)
  */
 __device__ __forceinline__ float effective_truncate_sq(
     float truncate,
-    float sharpness
+    float sharpness,
+    float amplitude,
+    float intensity_floor
 ) {
+    float t_base_sq;
+
     // Fast path for standard Gaussian (s=2)
     if (fabsf(sharpness - 2.0f) < 1e-4f) {
-        return truncate * truncate;
+        t_base_sq = truncate * truncate;
+    } else {
+        // General case: truncate^(4/s) - use fast math intrinsic
+        // Since we compare D² against this threshold, we need:
+        // D^s <= truncate^2  =>  D² <= (truncate^2)^(2/s) = truncate^(4/s)
+        t_base_sq = __powf(truncate, 4.0f / sharpness);
     }
 
-    // General case: truncate^(4/s) - use fast math intrinsic
-    // Since we compare D² against this threshold, we need:
-    // D^s <= truncate^2  =>  D² <= (truncate^2)^(2/s) = truncate^(4/s)
-    return __powf(truncate, 4.0f / sharpness);
+    // Amplitude-based tightening: find D² where intensity drops below floor
+    // a * exp(-0.5 * D^s) = floor => D^s = 2*ln(a/floor) => D² = (2*ln(a/floor))^(2/s)
+    float ratio = amplitude / fmaxf(intensity_floor, 1e-10f);
+    if (ratio <= 1.0f) {
+        // amplitude <= intensity_floor: splat contributes nothing
+        // (the intensity >= intensity_floor check will reject everything anyway)
+        return 0.0f;
+    }
+
+    float t_amp_sq;
+    if (fabsf(sharpness - 2.0f) < 1e-4f) {
+        // s=2: D² = 2*ln(a/floor)
+        t_amp_sq = 2.0f * __logf(ratio);
+    } else {
+        // General: D² = (2*ln(a/floor))^(2/s)
+        t_amp_sq = __powf(2.0f * __logf(ratio), 2.0f / sharpness);
+    }
+    return fminf(t_base_sq, t_amp_sq);
 }
 
 #endif // CUDA_SPLATTING_MATH_UTILS_CUH

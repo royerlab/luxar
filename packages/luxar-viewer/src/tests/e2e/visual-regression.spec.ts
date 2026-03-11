@@ -54,59 +54,59 @@ test.describe('Visual Regression - Basic Rendering', () => {
 });
 
 test.describe('Visual Regression - HDR & Tone Mapping', () => {
-  test('should render with HDR multiplier = 1.0', async ({ page }) => {
+  test('should render with exposure = 0.0 (neutral)', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.build}&debug`);
     await waitForLuxarReady(page);
 
-    // Check if HDR API is available, skip if not
-    const hasHDRAPI = await page.evaluate(() => {
+    // Check if exposure API is available, skip if not
+    const hasExposureAPI = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      return debug.sceneManager && typeof debug.sceneManager.updateHDRMultiplier === 'function';
+      return debug.sceneManager && typeof debug.sceneManager.updateExposure === 'function';
     });
 
-    if (!hasHDRAPI) {
-      console.log('Skipping: HDR multiplier API not available');
+    if (!hasExposureAPI) {
+      console.log('Skipping: Exposure API not available');
       return;
     }
 
-    // Set HDR multiplier to 1.0
+    // Set exposure to 0.0 (neutral)
     await page.evaluate(() => {
-      (window as any).__luxarDebug.sceneManager.updateHDRMultiplier(1.0);
+      (window as any).__luxarDebug.sceneManager.updateExposure(0.0);
       (window as any).__luxarDebug.renderOnce();
     });
 
     await page.waitForTimeout(1000);
 
-    await expect(page).toHaveScreenshot('hdr-multiplier-1.0.png', {
+    await expect(page).toHaveScreenshot('exposure-0.0.png', {
       maxDiffPixelRatio: 0.08,
       threshold: 0.25,
     });
   });
 
-  test('should render with HDR multiplier = 10.0', async ({ page }) => {
+  test('should render with exposure = 3.32 (10x brighter)', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.build}&debug`);
     await waitForLuxarReady(page);
 
-    // Check if HDR API is available, skip if not
-    const hasHDRAPI = await page.evaluate(() => {
+    // Check if exposure API is available, skip if not
+    const hasExposureAPI = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      return debug.sceneManager && typeof debug.sceneManager.updateHDRMultiplier === 'function';
+      return debug.sceneManager && typeof debug.sceneManager.updateExposure === 'function';
     });
 
-    if (!hasHDRAPI) {
-      console.log('Skipping: HDR multiplier API not available');
+    if (!hasExposureAPI) {
+      console.log('Skipping: Exposure API not available');
       return;
     }
 
-    // Set HDR multiplier to 10.0 (brighter)
+    // Set exposure to ~3.32 stops (equivalent to 10x brighter)
     await page.evaluate(() => {
-      (window as any).__luxarDebug.sceneManager.updateHDRMultiplier(10.0);
+      (window as any).__luxarDebug.sceneManager.updateExposure(3.32);
       (window as any).__luxarDebug.renderOnce();
     });
 
     await page.waitForTimeout(1000);
 
-    await expect(page).toHaveScreenshot('hdr-multiplier-10.0.png', {
+    await expect(page).toHaveScreenshot('exposure-3.32.png', {
       maxDiffPixelRatio: 0.08,
       threshold: 0.25,
     });

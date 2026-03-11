@@ -11,7 +11,6 @@ import { PointMaterial } from './point-material';
 import { LineMaterial } from './line-material';
 import { GSplatMaterial } from './gsplat-material';
 import { log, Modules } from '../utils/log';
-import { config } from '../config';
 
 /**
  * Supported blending modes for materials.
@@ -33,6 +32,8 @@ export interface PointMaterialProperties {
   blendingMode: BlendingMode;
   opacity: number;
   gamma: number;
+  intensity: number;
+  offset: number;
   radiusScale?: number; // Scale factor for radius normalization (e.g., 1/255 for uint8)
   sharpnessScale?: number; // Scale factor for sharpness normalization (e.g., 1/255 for uint8)
 }
@@ -41,14 +42,18 @@ export interface PointMaterialProperties {
 export interface LineMaterialProperties {
   blendingMode: BlendingMode;
   opacity: number;
-  hdrMultiplier?: number;
+  gamma: number;
+  intensity: number;
+  offset: number;
 }
 
 // GSplat material properties
 export interface GSplatMaterialProperties {
   blendingMode: BlendingMode;
   opacity: number;
-  hdrMultiplier?: number;
+  gamma: number;
+  intensity: number;
+  offset: number;
   truncationRadius?: number; // Default 3.0
 }
 
@@ -63,7 +68,7 @@ export class MaterialManager {
   private registeredMaterials = new Set<THREE.Material>();
   private currentFov = (60 * Math.PI) / 180; // Current FOV in radians
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
-  private currentHdrMultiplier = config.renderingControls.defaults.hdrMultiplier; // Current HDR multiplier (default 1.0)
+  // Note: Global HDR multiplier has been replaced by exposure/offset/gamma in post-processing
 
   /**
    * Get or create a point material with caching
@@ -73,7 +78,9 @@ export class MaterialManager {
     // This prevents floating-point precision issues while still grouping similar values
     // Clamp values to valid ranges to handle edge cases gracefully
     const opacityBucket = Math.round(Math.max(0, Math.min(1, props.opacity)) * 100); // 0-100 range
-    const gammaBucket = Math.round(Math.max(0, Math.min(3, props.gamma)) * 10); // 0-30 range
+    const gammaBucket = Math.round(Math.max(0, Math.min(10, props.gamma)) * 10); // 0-100 range
+    const intensityBucket = Math.round(Math.max(0, Math.min(100, props.intensity)) * 10); // 0-1000 range
+    const offsetBucket = Math.round((Math.max(-10, Math.min(10, props.offset)) + 10) * 10); // 0-200 range
     const radiusBucket = props.radiusScale
       ? Math.round(Math.max(0, props.radiusScale) * 1000)
       : 1000;
@@ -81,7 +88,7 @@ export class MaterialManager {
       ? Math.round(Math.max(0, props.sharpnessScale) * 1000)
       : 1000;
 
-    const key = `point_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_r${radiusBucket}_s${sharpnessBucket}`;
+    const key = `point_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_s${sharpnessBucket}`;
 
     // Check cache first
     let material = this.pointMaterialCache.get(key);
@@ -97,6 +104,8 @@ export class MaterialManager {
     material = new PointMaterial({
       opacity: props.opacity,
       gamma: props.gamma,
+      intensity: props.intensity,
+      offset: props.offset,
       blending: this.getThreeBlending(props.blendingMode),
       // Opaque: write depth. All others: no depth write
       depthWrite: isOpaque || (props.blendingMode === 'normal' && props.opacity >= 0.99),
@@ -120,9 +129,6 @@ export class MaterialManager {
     // Update with current camera params
     material.updateCameraParams(this.currentFov, this.currentResolution);
 
-    // Update with current HDR multiplier (critical for settings loaded before material creation)
-    material.updateHDRMultiplier(this.currentHdrMultiplier);
-
     // Debug log the camera params being set
     log.info(
       Modules.RENDERER,
@@ -141,11 +147,13 @@ export class MaterialManager {
    * Get or create a line material with caching
    */
   getLineMaterial(props: LineMaterialProperties): LineMaterial {
-    // Create cache key
+    // Create cache key using integer bucketing for predictable caching behavior
     const opacityBucket = Math.round(Math.max(0, Math.min(1, props.opacity)) * 100);
-    const hdrBucket = props.hdrMultiplier ? Math.round(Math.max(0, props.hdrMultiplier) * 10) : 160; // Default 16.0 → 160
+    const gammaBucket = Math.round(Math.max(0, Math.min(10, props.gamma)) * 10); // 0-100 range
+    const intensityBucket = Math.round(Math.max(0, Math.min(100, props.intensity)) * 10);
+    const offsetBucket = Math.round((Math.max(-10, Math.min(10, props.offset)) + 10) * 10);
 
-    const key = `line_${props.blendingMode}_o${opacityBucket}_h${hdrBucket}`;
+    const key = `line_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}`;
 
     // Check cache first
     let material = this.lineMaterialCache.get(key);
@@ -156,8 +164,10 @@ export class MaterialManager {
     // Create new LineMaterial instance
     material = new LineMaterial({
       opacity: props.opacity,
+      gamma: props.gamma,
+      intensity: props.intensity,
+      offset: props.offset,
       blendingMode: props.blendingMode,
-      hdrMultiplier: props.hdrMultiplier ?? this.currentHdrMultiplier, // Use current if not provided
     });
 
     // Register for global updates
@@ -177,12 +187,14 @@ export class MaterialManager {
    * Get or create a gsplat material with caching
    */
   getGSplatMaterial(props: GSplatMaterialProperties): GSplatMaterial {
-    // Create cache key
+    // Create cache key using integer bucketing for predictable caching behavior
     const opacityBucket = Math.round(Math.max(0, Math.min(1, props.opacity)) * 100);
-    const hdrBucket = props.hdrMultiplier ? Math.round(Math.max(0, props.hdrMultiplier) * 10) : 160;
+    const gammaBucket = Math.round(Math.max(0, Math.min(10, props.gamma)) * 10); // 0-100 range
+    const intensityBucket = Math.round(Math.max(0, Math.min(100, props.intensity)) * 10);
+    const offsetBucket = Math.round((Math.max(-10, Math.min(10, props.offset)) + 10) * 10);
     const truncBucket = Math.round((props.truncationRadius ?? 3.0) * 10);
 
-    const key = `gsplat_${props.blendingMode}_o${opacityBucket}_h${hdrBucket}_t${truncBucket}`;
+    const key = `gsplat_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${truncBucket}`;
 
     // Check cache first
     let material = this.gsplatMaterialCache.get(key);
@@ -193,8 +205,10 @@ export class MaterialManager {
     // Create new GSplatMaterial instance
     material = new GSplatMaterial({
       opacity: props.opacity,
+      gamma: props.gamma,
+      intensity: props.intensity,
+      offset: props.offset,
       blendingMode: props.blendingMode,
-      hdrMultiplier: props.hdrMultiplier ?? this.currentHdrMultiplier,
       truncationRadius: props.truncationRadius ?? 3.0,
     });
 
@@ -238,26 +252,6 @@ export class MaterialManager {
    */
   private isOpaqueMode(mode: BlendingMode): boolean {
     return mode === 'opaque';
-  }
-
-  /**
-   * Update HDR multiplier globally
-   * Stores the value so new materials created after this call will use the updated multiplier
-   */
-  updateHDRMultiplier(multiplier: number): void {
-    // Store current value for future material creation
-    this.currentHdrMultiplier = multiplier;
-
-    // Update all existing materials
-    this.registeredMaterials.forEach((material) => {
-      if (material instanceof PointMaterial) {
-        material.updateHDRMultiplier(multiplier);
-      } else if (material instanceof LineMaterial) {
-        material.updateHDRMultiplier(multiplier);
-      } else if (material instanceof GSplatMaterial) {
-        material.updateHDRMultiplier(multiplier);
-      }
-    });
   }
 
   /**
@@ -334,7 +328,7 @@ export class MaterialManager {
     gsplatMaterials: number;
     totalRegistered: number;
     keys: string[];
-    } {
+  } {
     return {
       pointMaterials: this.pointMaterialCache.size,
       lineMaterials: this.lineMaterialCache.size,

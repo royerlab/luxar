@@ -6,6 +6,17 @@ All notable changes to Luxar are documented in this file.
 
 ### March 2026
 
+#### Major Features
+
+**Per-Node GOG Color Model & Global EOG Controls**
+- **Per-node Gain-Offset-Gamma (GOG)**: Added `intensity` (linear gain), `offset` (black level subtraction), and `gamma` (tonal curve) to all node types (Points, Lines, GSplats)
+- **Use case**: Microscopy background subtraction — negative offset suppresses fluorescence floor per channel
+- **Shader model**: `adjusted = color * intensity + offset; clip; pow(adjusted, 1/gamma)` with early discard for zero-contribution fragments
+- **Global Exposure-Offset-Gamma (EOG)**: Replaced per-shader `hdrMultiplier` with `exposure` (log2 stops), `global_offset`, `global_gamma` applied in post-processing
+- **Vendored tone mapping**: `LuxarToneMappingEffect` extends pmndrs ToneMappingEffect with EOG in a single shader pass (zero extra bandwidth cost)
+- **Full config propagation**: Python `ViewerConfig` → zarr → TypeScript → UI sliders → post-processing uniforms
+- **UI**: HDR folder now has Exposure (-5 to +5 stops), Offset (-1 to +1), Gamma (0.1 to 10.0), and Tone Mapping selector
+
 #### Maintenance
 
 - Added `luxar[gsplats]` optional dependency group and lazy imports for gsplats tooling

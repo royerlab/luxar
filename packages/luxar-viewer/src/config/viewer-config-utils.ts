@@ -17,7 +17,9 @@ import type { RenderingSettings } from './types';
 export const RENDERING_SETTINGS_MAP: Record<string, keyof RenderingSettings> = {
   // Rendering pipeline
   tone_mapping: 'toneMapping',
-  hdr_multiplier: 'hdrMultiplier',
+  exposure: 'exposure',
+  global_offset: 'globalOffset',
+  global_gamma: 'globalGamma',
 
   // Bloom
   bloom_enabled: 'bloomEnabled',

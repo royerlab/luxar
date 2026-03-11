@@ -805,6 +805,8 @@ scene.get_lines(name: str) -> LinesData
         'max_radius': float,     # (if radii present, else not in attrs)
         'opacity': float,        # (default 1.0)
         'gamma': float,          # (default 1.0)
+        'intensity': float,      # (default 1.0, per-node color multiplier)
+        'offset': float,         # (default 0.0, per-node color offset)
         'blending_mode': str,    # (default 'additive')
         'transform': ndarray,    # (4, 4) if present, else None)
         'extend_to_all': List[str],  # (if present, else not in attrs)
@@ -974,7 +976,7 @@ assert len(data['chunk_bounds']) > 0
 - `chunk_size`: int - elements per chunk
 - `max_radius`: Maximum radius
 - `extend_to_all`: Optional list of dimension names for visibility extension
-- `opacity`, `gamma`, `blending_mode`: Rendering attributes
+- `opacity`, `gamma`, `intensity`, `offset`, `blending_mode`: Rendering attributes
 - `transform`: Optional 16-element list (column-major)
 
 **GSplats Group**:

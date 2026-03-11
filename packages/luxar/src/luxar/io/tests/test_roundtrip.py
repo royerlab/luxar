@@ -1080,3 +1080,75 @@ class TestLinesRoundTrip:
 
         with pytest.raises(KeyError):
             scene.get_lines("nonexistent")
+
+
+class TestReaderGroupTransforms:
+    """Tests for reader group transform support."""
+
+    def test_get_group_with_transform(self, tmp_path) -> None:
+        """Test that get_group() returns parsed transform."""
+        output_path = tmp_path / "test.zarr"
+        t = transforms.translate(10, 20, 30)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_group("MyGroup", transform=t)
+
+        reader = LuxarScene.load(output_path)
+        group_meta = reader.get_group("MyGroup")
+
+        assert "transform" in group_meta
+        assert isinstance(group_meta["transform"], np.ndarray)
+        assert group_meta["transform"].shape == (4, 4)
+        assert np.allclose(group_meta["transform"], t, atol=1e-6)
+
+    def test_get_group_without_transform(self, tmp_path) -> None:
+        """Test that get_group() works for groups without transforms."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_group("PlainGroup")
+
+        reader = LuxarScene.load(output_path)
+        group_meta = reader.get_group("PlainGroup")
+
+        assert "transform" not in group_meta
+
+    def test_get_group_type_check(self, tmp_path) -> None:
+        """Test that get_group() rejects non-group nodes."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0, 0, 0]], dtype=np.float32)
+            scene.add_points("MyPoints", positions)
+
+        reader = LuxarScene.load(output_path)
+        with pytest.raises(ValueError):
+            reader.get_group("MyPoints")
+
+    def test_collect_nodes_includes_transforms(self, tmp_path) -> None:
+        """Test that .nodes property includes transforms for all node types."""
+        output_path = tmp_path / "test.zarr"
+        t_group = transforms.translate(1, 0, 0)
+        t_points = transforms.scale(2, 2, 2)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("TGroup", transform=t_group)
+            positions = np.array([[0, 0, 0]], dtype=np.float32)
+            scene.add_points("TPoints", positions, parent=group, transform=t_points)
+
+        reader = LuxarScene.load(output_path)
+        nodes = reader.nodes
+
+        # Find the group node
+        group_node = next(n for n in nodes if n["name"] == "TGroup")
+        assert "transform" in group_node
+        assert np.allclose(group_node["transform"], t_group, atol=1e-6)
+
+        # Find the points node
+        points_node = next(n for n in nodes if n["name"] == "TGroup/TPoints")
+        assert "transform" in points_node
+        assert np.allclose(points_node["transform"], t_points, atol=1e-6)

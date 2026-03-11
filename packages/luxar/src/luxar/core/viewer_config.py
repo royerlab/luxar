@@ -301,7 +301,9 @@ class ViewerConfig:
 
     # Rendering pipeline
     tone_mapping: Optional[str] = None
-    hdr_multiplier: Optional[float] = None
+    exposure: Optional[float] = None  # Log2 stops, default 0.0
+    global_offset: Optional[float] = None  # Additive shift, default 0.0
+    global_gamma: Optional[float] = None  # Midtone curve, default 1.0
 
     # Bloom
     bloom_enabled: Optional[bool] = None
@@ -416,7 +418,9 @@ class ViewerConfig:
         if self.theme is not None and self.theme not in VALID_THEMES:
             raise ValueError(f"theme must be one of {VALID_THEMES}, got '{self.theme}'")
 
-        _validate_min(self.hdr_multiplier, "hdr_multiplier", 0)
+        _validate_range(self.exposure, "exposure", -5.0, 5.0)
+        _validate_range(self.global_offset, "global_offset", -1.0, 1.0)
+        _validate_range(self.global_gamma, "global_gamma", 0.1, 10.0)
         _validate_min(self.bloom_strength, "bloom_strength", 0)
         _validate_min(self.bloom_radius, "bloom_radius", 0)
         _validate_range(self.bloom_threshold, "bloom_threshold", 0, 1)
@@ -448,7 +452,9 @@ class ViewerConfig:
     _SIMPLE_FIELDS = [
         "background_color",
         "tone_mapping",
-        "hdr_multiplier",
+        "exposure",
+        "global_offset",
+        "global_gamma",
         "bloom_enabled",
         "bloom_strength",
         "bloom_radius",

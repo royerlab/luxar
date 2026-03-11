@@ -379,14 +379,13 @@ function fitCameraToBounds(bounds: Box3) {
 
 ### 6.1 Purpose
 
-Controls shader-specific rendering parameters for point rendering, including HDR intensity and alpha blending.
+Controls shader-specific rendering parameters for point rendering, including alpha blending.
 
 ### 6.2 Structure
 
 ```typescript
 interface ShaderConfig {
   points: {
-    hdrMultiplier: number;
     baseAlpha: number;
   };
 }
@@ -394,8 +393,9 @@ interface ShaderConfig {
 
 ### 6.3 Defaults
 
-- **points.hdrMultiplier**: 16.0 (HDR color multiplier for bloom effects)
 - **points.baseAlpha**: 0.01 (base alpha intensity for additive blending)
+
+**Note**: Per-node color adjustment (intensity, offset, gamma) is configured per-material via `MaterialConfig`. Global exposure/offset/gamma are applied in the `LuxarToneMappingEffect` post-processing pass.
 
 ### 6.4 Usage Example
 
@@ -404,14 +404,17 @@ import { config } from '../config';
 
 const pointsMaterial = new THREE.ShaderMaterial({
   uniforms: {
-    uHdrMultiplier: { value: config.renderingControls.defaults.hdrMultiplier },
+    uIntensity: { value: 1.0 }, // Per-node color multiplier
+    uOffset: { value: 0.0 }, // Per-node color offset
     uBaseAlpha: { value: config.shader.points.baseAlpha },
   },
   vertexShader: `...`,
   fragmentShader: `
     void main() {
-      vec3 hdrColor = color * ${config.renderingControls.defaults.hdrMultiplier};
-      gl_FragColor = vec4(hdrColor, ${config.shader.points.baseAlpha});
+      vec3 color = vColor * uIntensity + uOffset;
+      color = clamp(color, 0.0, 1e6);
+      color = pow(color, vec3(1.0 / uGamma));
+      gl_FragColor = vec4(color, ${config.shader.points.baseAlpha});
     }
   `,
   blending: THREE.AdditiveBlending,
@@ -421,7 +424,6 @@ const pointsMaterial = new THREE.ShaderMaterial({
 
 ### 6.5 Validation Rules
 
-- **hdrMultiplier**: Must be >= 0 (typical: 1.0-100.0)
 - **baseAlpha**: Must be 0-1 (typical: 0.001-0.1 for additive)
 
 ---
@@ -1118,7 +1120,10 @@ interface RenderingSettings {
   bloomStrength: number;
   bloomRadius: number;
   bloomLevels: number;
-  hdrMultiplier: number;
+  // Global EOG (Exposure-Offset-Gamma) in LuxarToneMappingEffect
+  exposure: number;
+  globalOffset: number;
+  globalGamma: number;
   // Anti-aliasing
   fxaaEnabled: boolean;
   msaaEnabled: boolean;
@@ -1191,7 +1196,9 @@ interface RenderingSettings {
 - **bloomStrength**: 0.25
 - **bloomRadius**: 1.0
 - **bloomLevels**: 8
-- **hdrMultiplier**: 16.0
+- **exposure**: 1.0 (global color multiplier applied before tone mapping)
+- **globalOffset**: 0.0 (global color offset applied before tone mapping)
+- **globalGamma**: 1.0 (global gamma applied before tone mapping)
 
 **Anti-aliasing**:
 
@@ -1298,7 +1305,9 @@ function onBloomStrengthChange(value: number) {
 - **bloomStrength**: Typical 0-2
 - **bloomRadius**: Typical 0-2
 - **bloomLevels**: 1-12
-- **hdrMultiplier**: >= 0
+- **exposure**: >= 0
+- **globalOffset**: any float
+- **globalGamma**: > 0
 - **dofStrength**: 0-1
 - **vignetteDarkness**: 0-1
 - **vignetteOffset**: 0-1
@@ -1343,7 +1352,7 @@ if (!isValid) {
 **What Gets Validated**:
 
 - Camera: FOV bounds, near/far planes, sensitivity ranges
-- Rendering: HDR multiplier, alpha ranges, bloom settings
+- Rendering: Exposure, alpha ranges, bloom settings
 - Controls: Damping ranges, speed limits, thresholds
 - Data Loading: Network timeouts, memory thresholds, spatial parameters
 - Scene: Background color, fit ratio
@@ -1375,7 +1384,7 @@ if (!isValid) {
 - **v1.1.0** (2025-12-09): Complete specification with all 12 configuration sections
   - **NEW**: Animation configuration (idle timeout, FPS targets)
   - **NEW**: Scene configuration (background color, fit ratio)
-  - **NEW**: Shader configuration (HDR multiplier, base alpha)
+  - **NEW**: Shader configuration (base alpha)
   - **NEW**: PostProcessing configuration (HDR, tone mapping, all effects)
   - **NEW**: UI configuration (z-index, timings, styles, debug console, components)
   - **NEW**: Input configuration (keyboard shortcuts, fly keys, dimension keys, mouse)

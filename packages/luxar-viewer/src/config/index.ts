@@ -110,7 +110,7 @@ export const config: AppConfig = {
   },
 
   // Shader configuration for point rendering
-  // Note: hdrMultiplier lives in renderingControls.defaults as the single source of truth
+  // Note: global exposure/offset/gamma live in renderingControls.defaults (applied in post-processing)
   shader: {
     points: {
       baseAlpha: 0.01, // Base alpha intensity
@@ -230,7 +230,9 @@ export const config: AppConfig = {
       bloomStrength: 0.25, // Bloom intensity multiplier (moved from rendering.bloom)
       bloomRadius: 1.0, // Blur radius for bloom spread (moved from rendering.bloom)
       bloomLevels: 8, // Number of mipmap levels (1-12, lower = coarser/faster, higher = smoother)
-      hdrMultiplier: 1.0, // HDR intensity multiplier (default: neutral 1.0)
+      exposure: 0.0, // Global exposure in log2 stops (0 = neutral, +1 = 2x brighter)
+      globalOffset: 0.0, // Global additive brightness shift
+      globalGamma: 1.0, // Global gamma correction (1.0 = linear)
       fxaaEnabled: false, // FXAA disabled by default
       msaaEnabled: false, // MSAA disabled by default (incompatible with additive blending)
       msaaSamples: 4, // MSAA sample count (2, 4, 8)

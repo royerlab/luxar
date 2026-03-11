@@ -278,6 +278,154 @@ luxar gsplat prune input.gsplats.zarr.zip output.gsplats.zarr.zip \
 
 ---
 
+### `luxar gsplat fit`
+
+**Purpose**: Fit Gaussian splats to a volume with a preset + YAML config system.
+
+**Parameters**:
+- `input_path`: Input volume file (.npy/.npz/.tiff/.zarr) — positional, optional when `--dump-config` is used
+- `output_path`: Output .gsplats.zarr path — positional, optional when `--dump-config` is used
+- `--seeds, -s`: Seed count (int), compression ratio (float 0-1), or "auto"
+- `--iters, -n`: Max optimization iterations
+- `--device, -d`: Device: auto/cpu/cuda/mps
+- `--preset`: Parameter preset: draft/standard/hifi
+- `--loss`: Loss function: l1/mse/poisson
+- `--lr`: Learning rate
+- `--seed-method`: Seed generation method (auto/edges/grid/decomposition)
+- `--config`: Path to YAML config file for full parameter control
+- `--dump-config`: Print default YAML config and exit (no input/output required)
+- `--compress, -c`: Compress output (zip/tar.gz)
+- `--channel`: Channel index for 5D OME-ZARR
+- `--timepoint`: Timepoint index for 5D OME-ZARR
+- `--array-key`: Array key within .npz or .zarr
+- `--verbose/--quiet`: Verbose output
+
+**Presets**:
+
+| Parameter | draft | standard | hifi |
+|---|---|---|---|
+| n_iters | 500 | 3000 | 6000 |
+| early_stop_patience | 100 | 300 | 500 |
+| cull_ratio | 0.05 | 0.01 | 0.005 |
+| max_eccentricity | 10.0 | 10.0 | 15.0 |
+| sharpness_range | 2.0 (fixed) | [1.0, 8.0] | [0.5, 16.0] |
+
+**Config priority chain**: CLI flags > YAML config > preset > function defaults
+
+**Supported input formats**: .npy, .npz, .tiff/.tif (requires `luxar[io]`), .zarr, imageio fallback (requires `luxar[io]`)
+
+**Behavior**:
+1. If `--dump-config`: Print fully-commented YAML config and exit
+2. Load volume via format-specific loader
+3. Build merged config from preset + YAML + CLI overrides
+4. Parse seeds argument
+5. Call `fit_gaussian_splats(volume, seeds=seeds, **config)`
+6. Save result to output path
+
+**Example**:
+```bash
+luxar gsplat fit volume.npy splats.gsplats.zarr --preset standard --seeds 8000
+luxar gsplat fit volume.tiff splats.gsplats.zarr --config params.yaml --device cuda
+luxar gsplat fit --dump-config --preset hifi > config.yaml
+```
+
+---
+
+### `luxar gsplat convert`
+
+**Purpose**: Convert a .gsplats.zarr dataset to a persistent Luxar scene for the web viewer.
+
+**Parameters**:
+- `input_path`: Input .gsplats.zarr dataset (required, positional)
+- `output_path`: Output .zarr scene path (required, positional)
+- `--center/--no-center`: Center at amplitude-weighted centroid (default: True)
+- `--scale-intensity`: Scale amplitudes by factor (e.g., 0.1)
+- `--opacity`: Opacity for the gsplats layer (default: 1.0)
+- `--blending-mode`: Blending mode: additive/normal/max/opaque (default: additive)
+- `--encoding, -e`: Encoding mode: auto/precision/memory (default: auto)
+
+**Behavior**:
+1. Load GSplatData from input
+2. Optionally center at centroid and/or scale intensity
+3. Build Dimensions from bounding box
+4. Create Luxar scene with LuxarZarrCompiler
+5. Add gsplats to scene
+
+**Example**:
+```bash
+luxar gsplat convert fitted.gsplats.zarr scene.zarr --center --scale-intensity 0.1
+```
+
+---
+
+### `luxar gsplat render`
+
+**Purpose**: Render Gaussian splats back to a volume file for quality comparison.
+
+**Parameters**:
+- `input_path`: Input .gsplats.zarr dataset (required, positional)
+- `output_path`: Output file (.npy or .tiff) (required, positional)
+- `--shape`: Output shape as comma-separated ints (auto-computed from bounding box if omitted)
+- `--device, -d`: Device: auto/cpu/cuda/mps
+- `--truncate, -t`: Truncation radius in sigma (default: 3.0)
+
+**Behavior**:
+1. Load GSplatData
+2. Determine output shape (from `--shape` or bounding box)
+3. Call `render_to_volume(shape, device, truncate)`
+4. Save as .npy or .tiff (auto-detected from extension)
+
+**Example**:
+```bash
+luxar gsplat render fitted.gsplats.zarr rendered.npy --shape 128,128,128
+luxar gsplat render fitted.gsplats.zarr rendered.tiff --device cuda
+```
+
+---
+
+### `luxar gsplat merge`
+
+**Purpose**: Combine multiple Gaussian splat datasets into one.
+
+**Parameters**:
+- `inputs`: Input .gsplats.zarr datasets (2+, positional)
+- `--output, -o`: Output .gsplats.zarr path (required)
+- `--as-dimension`: Stack along a new dimension (e.g., time)
+- `--values`: Comma-separated coordinate values for `--as-dimension`
+- `--sigma`: Sigma in new dimension for `--as-dimension` (default: 0.0 = discrete)
+- `--channel-colors`: Comma-separated hex colors for per-dataset coloring
+- `--compress, -c`: Compress output (zip/tar.gz)
+- `--encoding, -e`: Encoding mode: auto/precision/memory
+
+**Modes** (mutually exclusive):
+1. **Concatenation** (default): Simple merge of all splats
+2. **New dimension** (`--as-dimension`): Stack along new dim (e.g., 3D timepoints → 4D)
+3. **Channel colors** (`--channel-colors`): Assign per-dataset colors for multi-channel viz
+
+**Example**:
+```bash
+luxar gsplat merge a.zarr b.zarr -o merged.zarr
+luxar gsplat merge t0.zarr t1.zarr t2.zarr -o 4d.zarr --as-dimension --values 0,1,2
+luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00ff00"
+```
+
+---
+
+### Configuration System
+
+The `luxar gsplat fit` command supports a tiered configuration system:
+
+1. **Presets** (`--preset draft|standard|hifi`): Coherent parameter bundles for common use cases
+2. **YAML config** (`--config params.yaml`): Full control over all ~35 parameters
+3. **CLI flags** (`--iters`, `--lr`, etc.): Quick overrides for common parameters
+4. **`--dump-config`**: Generate a fully-commented YAML template
+
+Priority: CLI flags > YAML config > preset > function defaults
+
+Generate a config template: `luxar gsplat fit --dump-config --preset standard > config.yaml`
+
+---
+
 ## Network Simulation
 
 Luxar CLI provides comprehensive network simulation capabilities for testing viewer performance under various network conditions (3G, 4G, 5G, broadband, satellite, etc.).
@@ -473,6 +621,17 @@ If all fail: return None
 ---
 
 ## Changelog
+
+### v1.3.0 (2026-03-10)
+- Added `luxar gsplat fit` command (volume fitting with presets + YAML config)
+- Added `luxar gsplat convert` command (scene creation from gsplats)
+- Added `luxar gsplat render` command (volume rendering to .npy/.tiff)
+- Added `luxar gsplat merge` command (concatenation, new dimension, channel colors)
+- Added configuration system with draft/standard/hifi presets and YAML config support
+- Added `gsplat_config.py` module (presets, config loading, volume loaders, helpers)
+- Added volume loader supporting .npy/.npz/.tiff/.zarr/imageio formats
+- Added `pyyaml` to base dependencies
+- Added `[io]` optional dependency group (tifffile, imageio)
 
 ### v1.2.0 (2026-02-28)
 - Added `luxar export` command documentation (standalone offline scene export)

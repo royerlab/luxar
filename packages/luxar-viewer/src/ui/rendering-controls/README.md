@@ -76,14 +76,18 @@ Creates controls for:
 
 ### hdr-setup.ts
 
-**HDR intensity and tone mapping**
+**Global EOG (Exposure-Offset-Gamma) and tone mapping**
 
 Creates controls for:
 
-- HDR intensity (logarithmic slider for perceptual linearity)
+- Exposure (logarithmic slider for perceptual linearity)
+- Global Offset (linear slider, -1.0 to 1.0)
+- Global Gamma (linear slider, 0.1 to 10.0)
 - Tone mapping selector (None, Linear, Reinhard, Cineon, ACES, AgX, Neutral)
 
-**Special behavior:** Takes `hdrLogValue` shadow object for the logarithmic slider implementation.
+Global EOG is applied in the vendored `LuxarToneMappingEffect` before tone mapping in a single shader pass.
+
+**Special behavior:** Takes `exposureLogValue` shadow object for the logarithmic slider implementation.
 
 ### anti-aliasing-setup.ts
 
@@ -144,7 +148,7 @@ private setupControls(): void {
   Object.assign(this.controllers, camResult.controllers);
 
   // HDR (needs shadow object for logarithmic slider)
-  const hdrResult = setupHDRControls(context, this.hdrLogValue);
+  const hdrResult = setupHDRControls(context, this.exposureLogValue);
   Object.assign(this.controllers, hdrResult.controllers);
 
   // Anti-aliasing
@@ -167,11 +171,11 @@ When a FOV preset is selected, the camera module updates the corresponding lens 
 - Post-processing module exports lens distortion controller references
 - FOV preset onChange updates both FOV and lens distortion settings
 
-### HDR Logarithmic Slider
+### Exposure Logarithmic Slider
 
-The HDR intensity slider uses a shadow object pattern:
+The exposure slider uses a shadow object pattern:
 
-- Slider controls `hdrLogValue.log` (logarithmic value)
+- Slider controls `exposureLogValue.log` (logarithmic value)
 - onChange converts to actual value: `10^log`
 - Custom `updateDisplay()` shows actual value, not log value
 

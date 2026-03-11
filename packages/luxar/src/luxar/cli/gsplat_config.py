@@ -1,0 +1,507 @@
+"""Configuration system for gsplat CLI commands.
+
+Provides:
+- Fitting presets (draft/standard/hifi)
+- YAML config loading with priority chain
+- Commented YAML config dump
+- Volume file loaders (.npy, .npz, .tiff, .zarr, imageio fallback)
+- Utility parsers for CLI arguments
+"""
+
+from __future__ import annotations
+
+import inspect
+import re
+from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple, Union
+
+import numpy as np
+import yaml
+from arbol import aprint
+
+# ---------------------------------------------------------------------------
+# Presets
+# ---------------------------------------------------------------------------
+
+
+class FitPreset(str, Enum):
+    """Fitting quality presets."""
+
+    DRAFT = "draft"
+    STANDARD = "standard"
+    HIFI = "hifi"
+
+
+PRESETS: Dict[str, Dict[str, Any]] = {
+    "draft": {
+        "n_iters": 500,
+        "early_stop_patience": 100,
+        "cull_ratio": 0.05,
+        "max_eccentricity": 10.0,
+        "sharpness_range": 2.0,
+    },
+    "standard": {
+        "n_iters": 3000,
+        "early_stop_patience": 300,
+        "cull_ratio": 0.01,
+        "max_eccentricity": 10.0,
+        "sharpness_range": [1.0, 8.0],
+    },
+    "hifi": {
+        "n_iters": 6000,
+        "early_stop_patience": 500,
+        "cull_ratio": 0.005,
+        "max_eccentricity": 15.0,
+        "sharpness_range": [0.5, 16.0],
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Config loading
+# ---------------------------------------------------------------------------
+
+
+def get_fit_defaults() -> Dict[str, Any]:
+    """Extract default parameter values from fit_gaussian_splats signature."""
+    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+    sig = inspect.signature(fit_gaussian_splats)
+    defaults = {}
+    for name, param in sig.parameters.items():
+        if name == "V":
+            continue
+        if param.default is not inspect.Parameter.empty:
+            defaults[name] = param.default
+    return defaults
+
+
+def load_fit_config(
+    preset: Optional[str] = None,
+    config_path: Optional[Path] = None,
+    cli_overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build a merged fit config from preset, YAML file, and CLI overrides.
+
+    Priority chain (highest wins):
+        CLI flags > YAML config > preset > function defaults
+
+    Args:
+        preset: Preset name ("draft", "standard", "hifi") or None
+        config_path: Path to YAML config file or None
+        cli_overrides: Dict of CLI-provided values (None values are ignored)
+
+    Returns:
+        Merged config dict ready to pass as **kwargs to fit_gaussian_splats
+    """
+    # Start with function defaults
+    config = get_fit_defaults()
+
+    # Layer preset
+    if preset is not None:
+        if preset not in PRESETS:
+            raise ValueError(
+                f"Unknown preset '{preset}'. Choose from: {list(PRESETS.keys())}"
+            )
+        config.update(PRESETS[preset])
+
+    # Layer YAML config
+    if config_path is not None:
+        yaml_config = _load_yaml_config(config_path)
+        config.update(yaml_config)
+
+    # Layer CLI overrides (skip None values — Typer sentinel for "not provided")
+    if cli_overrides:
+        for key, value in cli_overrides.items():
+            if value is not None:
+                config[key] = value
+
+    # Post-process: convert YAML lists to tuples where needed
+    if isinstance(config.get("sharpness_range"), list):
+        config["sharpness_range"] = tuple(config["sharpness_range"])
+
+    # Remove 'seeds' — handled separately by the CLI.
+    config.pop("seeds", None)
+
+    # Note: we do NOT whitelist to only known params, because
+    # fit_gaussian_splats accepts **seed_kwargs (e.g., num_scales,
+    # percentile_thresh, spacing) which are valid but not in the
+    # explicit parameter list. All config keys pass through.
+
+    return config
+
+
+def _load_yaml_config(path: Path) -> Dict[str, Any]:
+    """Load and validate a YAML config file."""
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+
+    with open(path) as f:
+        data = yaml.safe_load(f)
+
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Config file must contain a YAML mapping, got {type(data)}")
+
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Config dump
+# ---------------------------------------------------------------------------
+
+
+def dump_default_config(preset: str = "standard") -> str:
+    """Generate a fully-commented YAML config with defaults from a preset.
+
+    Args:
+        preset: Base preset to use for default values
+
+    Returns:
+        YAML string with all parameters and comments
+    """
+    p = PRESETS.get(preset, PRESETS["standard"])
+    d = get_fit_defaults()
+    # Merge: preset overrides defaults
+    vals = {**d, **p}
+
+    def _fmt(v: Any) -> str:
+        """Format a Python value as YAML."""
+        if v is None:
+            return "null"
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, (list, tuple)):
+            return "[" + ", ".join(str(x) for x in v) + "]"
+        if isinstance(v, float):
+            return f"{v}"
+        return str(v)
+
+    lines = [
+        "# ============================================================",
+        "# Luxar Gaussian Splat Fitting Configuration",
+        "# ============================================================",
+        f"# Base preset: {preset}",
+        "# Priority: CLI flags > YAML config > preset > function defaults",
+        "#",
+        "# Usage:",
+        "#   luxar gsplat fit volume.npy output.gsplats.zarr --config this_file.yaml",
+        "#   luxar gsplat fit volume.npy output.gsplats.zarr --preset hifi --config overrides.yaml",
+        "#",
+        "# Seed generation kwargs (num_scales, percentile_thresh, spacing, etc.)",
+        "# can also be set here and will be forwarded to the seed generator.",
+        "",
+        "# --- Basic Parameters ---",
+        f"n_iters: {_fmt(vals.get('n_iters'))}            # Max optimization iterations",
+        f"lr: {_fmt(vals.get('lr'))}                      # Adam learning rate",
+        f"loss_type: \"{vals.get('loss_type', 'l1')}\"        # Loss function: l1, mse, or poisson",
+        f"seed_method: \"{vals.get('seed_method', 'auto')}\"  # Seed method: auto, edges, grid, decomposition",
+        "",
+        "# --- Normalization ---",
+        f"norm_percentile: {_fmt(vals.get('norm_percentile'))}  # Percentile clipping (0=full range, >0=robust)",
+        "",
+        "# --- Regularization ---",
+        f"asymmetric_penalty: {_fmt(vals.get('asymmetric_penalty'))}  # Over-prediction penalty (null=disabled)",
+        f"l1_amp: {_fmt(vals.get('l1_amp'))}              # L1 on amplitudes (null=auto: 0.1*lr)",
+        f"l1_diag: {_fmt(vals.get('l1_diag'))}            # L1 on Cholesky diagonals (null=auto: 0.01*lr)",
+        f"l1_sharpness: {_fmt(vals.get('l1_sharpness'))}  # L1 on sharpness (null=auto: 0.01*lr)",
+        "",
+        "# --- Shape Constraints ---",
+        f"sigma_min_diag: {_fmt(vals.get('sigma_min_diag'))}  # Min Cholesky diagonal",
+        f"sigma_max_diag: {_fmt(vals.get('sigma_max_diag'))}  # Max Cholesky diagonal (null=unbounded)",
+        f"amp_max: {_fmt(vals.get('amp_max'))}            # Max amplitude (null=auto: 1.0)",
+        f"max_eccentricity: {_fmt(vals.get('max_eccentricity'))}  # Max axis ratio (null=no constraint)",
+        f"sharpness_range: {_fmt(vals.get('sharpness_range'))}  # float=fixed, [min,max]=range, null=default",
+        f"truncate: {_fmt(vals.get('truncate'))}          # Truncation radius in sigma",
+        "",
+        "# --- Convergence ---",
+        f"max_abs_error: {_fmt(vals.get('max_abs_error'))}  # Absolute error threshold (null=auto: 0.01)",
+        f"rel_l2_target: {_fmt(vals.get('rel_l2_target'))}  # Relative L2 threshold (null=disabled)",
+        f"gradient_clip: {_fmt(vals.get('gradient_clip'))}   # Gradient norm clipping (null=disabled)",
+        f"scheduler_type: \"{vals.get('scheduler_type', 'plateau')}\"  # LR scheduler: plateau or exponential",
+        f"patience: {_fmt(vals.get('patience'))}          # Iterations before LR reduction",
+        f"lr_reduction_factor: {_fmt(vals.get('lr_reduction_factor'))}  # LR multiplier on plateau",
+        f"early_stop_patience: {_fmt(vals.get('early_stop_patience'))}  # Stop after N iters without improvement",
+        "",
+        "# --- Dynamic Operations ---",
+        f"enable_dynamic_ops: {_fmt(vals.get('enable_dynamic_ops'))}  # Enable seeding/pruning during optimization",
+        f"dynamic_ops_verbose: {_fmt(vals.get('dynamic_ops_verbose'))}  # Verbose logging for dynamic ops",
+        "",
+        "# --- Post-Processing ---",
+        f"cull_ratio: {_fmt(vals.get('cull_ratio'))}      # Post-fit culling threshold (0=disabled)",
+        f"voxel_footprint_correction: {_fmt(vals.get('voxel_footprint_correction'))}  # Inflate covariances by voxel footprint",
+        "",
+        "# --- Boundary Containment ---",
+        f"boundary_penalty: {_fmt(vals.get('boundary_penalty'))}  # Boundary penalty weight (null=disabled)",
+        f"clip_to_bounds: {_fmt(vals.get('clip_to_bounds'))}  # Hard clip splats to volume bounds",
+        "",
+        "# --- Anisotropic Voxels ---",
+        f"voxel_size: {_fmt(vals.get('voxel_size'))}      # Physical spacing (null=isotropic)",
+        f"output_space: \"{vals.get('output_space', 'real')}\"  # Output coords: real or voxel",
+        "",
+        "# --- Hardware ---",
+        f"use_metal: {_fmt(vals.get('use_metal'))}        # Metal acceleration (macOS Apple Silicon)",
+        f"use_cuda: {_fmt(vals.get('use_cuda'))}          # Custom CUDA kernels (NVIDIA GPUs)",
+    ]
+
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Volume loading
+# ---------------------------------------------------------------------------
+
+
+def load_volume(
+    path: Path,
+    channel: Optional[int] = None,
+    timepoint: Optional[int] = None,
+    array_key: Optional[str] = None,
+) -> np.ndarray:
+    """Load a volume from various file formats.
+
+    Supported formats:
+        .npy         — NumPy binary (numpy, base dep)
+        .npz         — NumPy compressed (numpy, base dep)
+        .zarr        — Zarr array/group, including OME-ZARR 5D (zarr, base dep)
+        .tiff / .tif — TIFF image (tifffile, optional: pip install luxar[io])
+        other        — Fallback via imageio (optional: pip install luxar[io])
+
+    Args:
+        path: Path to the volume file
+        channel: Channel index for 5D OME-ZARR data (default: 0)
+        timepoint: Timepoint index for 5D OME-ZARR data (default: 0)
+        array_key: Array key within .npz or .zarr files
+
+    Returns:
+        Volume as float32 numpy array (>=2D)
+    """
+    import typer
+
+    suffix = path.suffix.lower()
+
+    if suffix == ".npy":
+        aprint(f"Loading NumPy array: {path.name}")
+        volume = np.load(str(path))
+
+    elif suffix == ".npz":
+        aprint(f"Loading NumPy archive: {path.name}")
+        npz = np.load(str(path))
+        keys = list(npz.keys())
+        if array_key:
+            if array_key not in keys:
+                raise ValueError(
+                    f"Key '{array_key}' not found in {path.name}. "
+                    f"Available keys: {keys}"
+                )
+            volume = npz[array_key]
+        else:
+            volume = npz[keys[0]]
+            if len(keys) > 1:
+                aprint(f"  Using first array '{keys[0]}' (available: {keys})")
+
+    elif suffix == ".zarr":
+        volume = _load_zarr_volume(path, channel, timepoint, array_key)
+
+    elif suffix in (".tiff", ".tif"):
+        try:
+            import tifffile
+        except ImportError:
+            aprint("tifffile not installed.")
+            aprint("Install with: pip install luxar[io]")
+            raise typer.Exit(1)
+        aprint(f"Loading TIFF: {path.name}")
+        volume = tifffile.imread(str(path))
+
+    else:
+        try:
+            import imageio.v3 as iio
+        except ImportError:
+            aprint(f"Cannot load '{suffix}' files — imageio not installed.")
+            aprint("Install with: pip install luxar[io]")
+            raise typer.Exit(1)
+        aprint(f"Loading via imageio: {path.name}")
+        volume = iio.imread(str(path))
+
+    # Post-process
+    volume = np.asarray(volume, dtype=np.float32)
+    volume = np.squeeze(volume)
+
+    if volume.ndim < 2:
+        raise ValueError(
+            f"Volume must be at least 2D after squeezing, got {volume.ndim}D "
+            f"with shape {volume.shape}"
+        )
+
+    aprint(f"  Shape: {volume.shape}, dtype: float32")
+    return volume
+
+
+def _load_zarr_volume(
+    path: Path,
+    channel: Optional[int],
+    timepoint: Optional[int],
+    array_key: Optional[str],
+) -> np.ndarray:
+    """Load a volume from a zarr store, handling OME-ZARR conventions."""
+    import zarr
+
+    aprint(f"Loading Zarr: {path.name}")
+    store = zarr.open(str(path), mode="r")
+
+    # Navigate to the target array
+    if isinstance(store, zarr.Array):
+        arr = store
+    elif isinstance(store, zarr.Group):
+        if array_key:
+            arr = store[array_key]
+        elif "0" in store:
+            # OME-ZARR convention: "0" is highest resolution
+            aprint("  Detected OME-ZARR layout (using resolution level '0')")
+            arr = store["0"]
+        else:
+            # Find first array in group
+            arrays = [k for k in store.keys() if isinstance(store[k], zarr.Array)]
+            if not arrays:
+                raise ValueError(f"No arrays found in zarr group: {path}")
+            arr = store[arrays[0]]
+            aprint(f"  Using array '{arrays[0]}'")
+    else:
+        raise ValueError(f"Unexpected zarr object type: {type(store)}")
+
+    shape = arr.shape
+    ndim = len(shape)
+    aprint(f"  Raw array shape: {shape} ({ndim}D)")
+
+    # Handle multi-dimensional data (OME-ZARR is TCZYX)
+    if ndim == 5:
+        t = timepoint if timepoint is not None else 0
+        c = channel if channel is not None else 0
+        aprint(f"  Slicing 5D (TCZYX): T={t}, C={c}")
+        volume = np.array(arr[t, c, :, :, :])
+    elif ndim == 4:
+        if channel is not None:
+            aprint(f"  Slicing 4D (CZYX): C={channel}")
+            volume = np.array(arr[channel, :, :, :])
+        elif timepoint is not None:
+            aprint(f"  Slicing 4D (TZYX): T={timepoint}")
+            volume = np.array(arr[timepoint, :, :, :])
+        else:
+            aprint("  4D array — using as-is (use --channel or --timepoint to slice)")
+            volume = np.array(arr)
+    else:
+        volume = np.array(arr)
+
+    return volume
+
+
+# ---------------------------------------------------------------------------
+# Dimension building (reused by convert and view)
+# ---------------------------------------------------------------------------
+
+
+def build_dimensions_from_data(
+    centers: np.ndarray,
+) -> Any:
+    """Build Dimensions object from gsplat center bounding box.
+
+    Args:
+        centers: Splat center positions (N, D)
+
+    Returns:
+        Dimensions with ranges matching the data extent
+    """
+    from luxar import Dimension, Dimensions
+
+    ndim = centers.shape[1]
+    mins = centers.min(axis=0)
+    maxs = centers.max(axis=0)
+
+    # Ensure range is valid (min < max) — add epsilon for degenerate dims
+    for i in range(ndim):
+        if maxs[i] <= mins[i]:
+            maxs[i] = mins[i] + 1.0
+
+    if ndim == 2:
+        dims = Dimensions.default_2d()
+        for i, dim in enumerate(dims.dimensions):
+            dim.range = (float(mins[i]), float(maxs[i]))
+        return dims
+
+    if ndim == 3:
+        dims = Dimensions.default_3d()
+        for i, dim in enumerate(dims.dimensions):
+            dim.range = (float(mins[i]), float(maxs[i]))
+        return dims
+
+    # nD: first 3 displayed, rest non-displayed
+    dim_list = []
+    for i in range(ndim):
+        dim_list.append(
+            Dimension(
+                name=f"dim{i}",
+                unit="voxel",
+                range=(float(mins[i]), float(maxs[i])),
+                step=1.0,
+                display=(i < 3),
+            )
+        )
+    return Dimensions(dimensions=dim_list)
+
+
+# ---------------------------------------------------------------------------
+# Argument parsers
+# ---------------------------------------------------------------------------
+
+
+def parse_seeds(value: Optional[str]) -> Union[int, float, None]:
+    """Parse the --seeds CLI argument.
+
+    Args:
+        value: "auto" | None | integer string | float string
+
+    Returns:
+        None (auto), int (exact count), or float (compression ratio)
+    """
+    if value is None or value.lower() == "auto":
+        return None
+    if "." in value:
+        ratio = float(value)
+        if not (0.0 < ratio <= 1.0):
+            raise ValueError(
+                f"Compression ratio must be in (0, 1], got {ratio}"
+            )
+        return ratio
+    return int(value)
+
+
+def parse_hex_color(s: str) -> Tuple[float, float, float]:
+    """Parse a hex color string to RGB floats.
+
+    Args:
+        s: Hex color like "#ff0080" or "ff0080"
+
+    Returns:
+        Tuple of (R, G, B) floats in [0, 1]
+    """
+    s = s.strip().lstrip("#")
+    if not re.match(r"^[0-9a-fA-F]{6}$", s):
+        raise ValueError(f"Invalid hex color: '#{s}'. Expected format: #rrggbb")
+    r = int(s[0:2], 16) / 255.0
+    g = int(s[2:4], 16) / 255.0
+    b = int(s[4:6], 16) / 255.0
+    return (r, g, b)
+
+
+def parse_shape(s: str) -> Tuple[int, ...]:
+    """Parse a comma-separated shape string.
+
+    Args:
+        s: Shape like "128,128,128"
+
+    Returns:
+        Tuple of ints
+    """
+    parts = [p.strip() for p in s.split(",")]
+    return tuple(int(p) for p in parts)

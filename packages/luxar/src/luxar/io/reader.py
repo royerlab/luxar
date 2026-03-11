@@ -214,6 +214,14 @@ class LuxarScene:
                 "type": node_type,
             }
 
+            # Include transform if present (all node types can have transforms)
+            if "transform" in child.attrs:
+                info["transform"] = read_transform_from_zarr(child.attrs["transform"])
+
+            # Include nd_transform if present (dict, no conversion needed)
+            if "nd_transform" in child.attrs:
+                info["nd_transform"] = child.attrs["nd_transform"]
+
             if node_type == "points":
                 info["n_points"] = child.attrs.get("n_points", 0)
                 info["ordering"] = child.attrs.get("ordering", "none")
@@ -267,10 +275,43 @@ class LuxarScene:
         return str(self._root[name].attrs.get("type", "group"))
 
     def get_node_metadata(self, name: str) -> Dict[str, Any]:
-        """Get metadata for a node (no data arrays)."""
+        """Get metadata for a node (no data arrays).
+
+        Note: transforms are returned as raw column-major lists.
+        Use get_group() for automatic transform conversion.
+        """
         if not self.has_node(name):
             raise KeyError(f"Node not found: {name}")
         return dict(self._root[name].attrs)
+
+    def get_group(self, name: str) -> Dict[str, Any]:
+        """Get group node metadata with parsed transform.
+
+        Args:
+            name: Name of the group node
+
+        Returns:
+            Dictionary with group metadata. Transform (if present) is
+            converted from column-major list to a 4x4 NumPy matrix.
+
+        Raises:
+            KeyError: If node doesn't exist
+            ValueError: If node is not a group node
+        """
+        if not self.has_node(name):
+            raise KeyError(f"Group node not found: {name}")
+
+        group = self._root[name]
+        if group.attrs.get("type") not in ("group", None):
+            raise ValueError(f"Node '{name}' is not a group node")
+
+        metadata = dict(group.attrs)
+
+        # Parse transform if present
+        if "transform" in metadata:
+            metadata["transform"] = read_transform_from_zarr(metadata["transform"])
+
+        return metadata
 
     def get_points(self, name: str) -> PointsData:
         """Load points node data with automatic decoding.

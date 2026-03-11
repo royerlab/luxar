@@ -15,6 +15,8 @@ import { materialManager } from './material-manager';
 export interface PointMaterialConfig {
   opacity?: number;
   gamma?: number;
+  intensity?: number; // Linear color multiplier (gain), default 1.0
+  offset?: number; // Additive brightness shift (black level), default 0.0
   blending?: THREE.Blending;
   depthWrite?: boolean;
   depthTest?: boolean; // Whether to test against depth buffer (default true)
@@ -93,10 +95,11 @@ export class PointMaterial extends THREE.ShaderMaterial {
   private static readonly FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
 
-    uniform mediump float hdrMultiplier;
     uniform mediump float opacity;
     uniform mediump float baseAlpha;
     uniform mediump float invGamma; // Pre-computed 1/gamma for performance
+    uniform mediump float uIntensity; // Per-node linear color multiplier (gain)
+    uniform mediump float uOffset; // Per-node additive brightness shift (black level)
 
     in mediump vec3 vColor;
     in mediump float vSharpness;
@@ -126,11 +129,14 @@ export class PointMaterial extends THREE.ShaderMaterial {
       // Simple power function for falloff - modern GPUs optimize pow() well
       mediump float falloff = pow(max(1.0 - normalizedR, 0.0), vSharpness);
 
-      // Apply HDR multiplier
-      mediump vec3 hdrColor = vColor * hdrMultiplier;
+      // Per-node GOG (Gain-Offset-Gamma) color adjustment
+      mediump vec3 adjusted = vColor * uIntensity + uOffset;
+      adjusted = max(adjusted, vec3(0.0));
 
-      // Apply gamma correction using pre-computed inverse
-      mediump vec3 finalColor = pow(hdrColor, vec3(invGamma));
+      // Early discard for zero-contribution fragments after offset
+      if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
+
+      mediump vec3 finalColor = pow(adjusted, vec3(invGamma));
 
       // Calculate alpha (intensity) for additive blending
       mediump float alpha = baseAlpha * falloff * opacity;
@@ -152,11 +158,12 @@ export class PointMaterial extends THREE.ShaderMaterial {
 
     super({
       uniforms: {
-        // HDR and color uniforms
-        hdrMultiplier: { value: config.renderingControls.defaults.hdrMultiplier },
+        // Color uniforms
         baseAlpha: { value: config.shader.points.baseAlpha },
         opacity: { value: materialConfig.opacity ?? 1.0 },
         invGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
+        uIntensity: { value: materialConfig.intensity ?? 1.0 },
+        uOffset: { value: materialConfig.offset ?? 0.0 },
 
         // OPTIMIZED camera uniforms - pre-computed for shader performance
         // pointSizeFactor = 2.0 * resolution.y / tan(fov/2)
@@ -203,13 +210,6 @@ export class PointMaterial extends THREE.ShaderMaterial {
   }
 
   /**
-   * Update HDR multiplier
-   */
-  updateHDRMultiplier(multiplier: number): void {
-    this.uniforms.hdrMultiplier.value = multiplier;
-  }
-
-  /**
    * Update opacity
    */
   updateOpacity(opacity: number): void {
@@ -224,6 +224,20 @@ export class PointMaterial extends THREE.ShaderMaterial {
     const safeGamma = Math.max(0.001, gamma); // Prevent division by zero
     this.userData.gamma = safeGamma; // Store for clone() method
     this.uniforms.invGamma.value = 1.0 / safeGamma;
+  }
+
+  /**
+   * Update intensity (linear color multiplier)
+   */
+  updateIntensity(intensity: number): void {
+    this.uniforms.uIntensity.value = intensity;
+  }
+
+  /**
+   * Update offset (additive brightness shift)
+   */
+  updateOffset(offset: number): void {
+    this.uniforms.uOffset.value = offset;
   }
 
   /**
@@ -250,6 +264,8 @@ export class PointMaterial extends THREE.ShaderMaterial {
     const cloned = new PointMaterial({
       opacity: this.uniforms.opacity.value,
       gamma: this.userData.gamma ?? 1.0, // gamma stored in userData, not uniforms
+      intensity: this.uniforms.uIntensity.value,
+      offset: this.uniforms.uOffset.value,
       blending: this.blending,
       depthWrite: this.depthWrite,
       depthTest: this.userData.depthTest ?? true, // depthTest stored in userData
@@ -264,7 +280,6 @@ export class PointMaterial extends THREE.ShaderMaterial {
     }
 
     // Copy current uniform values
-    cloned.uniforms.hdrMultiplier.value = this.uniforms.hdrMultiplier.value;
     cloned.uniforms.baseAlpha.value = this.uniforms.baseAlpha.value;
     cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;

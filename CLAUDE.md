@@ -144,6 +144,30 @@ luxar info <data.zarr> --stats   # Dataset info
 luxar profiles                   # Network simulation profiles
 ```
 
+### GSplat CLI (fitting, converting, rendering, merging)
+```bash
+# Fit Gaussian splats to a volume (presets: draft/standard/hifi)
+luxar gsplat fit volume.tiff -o splats.gsplats.zarr --preset standard --seeds 8000
+luxar gsplat fit volume.npy -o splats.gsplats.zarr --config params.yaml
+luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config template
+
+# Convert .gsplats.zarr to Luxar scene for web viewer
+luxar gsplat convert splats.gsplats.zarr scene.zarr --center
+
+# Render gsplats back to volume for quality comparison
+luxar gsplat render splats.gsplats.zarr rendered.npy --shape 128,128,128
+
+# Merge multiple datasets
+luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
+luxar gsplat merge t0.zarr t1.zarr -o 4d.zarr --as-dimension --values 0,1
+luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00ff00"
+
+# Inspect and prune (existing commands)
+luxar gsplat info splats.gsplats.zarr          # Dataset statistics
+luxar gsplat prune splats.gsplats.zarr pruned.gsplats.zarr --retention 0.95
+luxar gsplat view splats.gsplats.zarr          # Quick web viewer
+```
+
 ### GPU Acceleration (Seeding & Fitting)
 ```python
 from luxar.gsplats.seeds import generate_seeds
@@ -424,6 +448,15 @@ const viewState: ViewState = {
   dimensions: dims,  // REQUIRED for extend_to_all!
 };
 ```
+
+### nD Transforms on Non-Displayed Dimensions
+`nd_transform` is separate from the 4x4 `transform`. It operates per-dimension on non-displayed dims:
+- Continuous/discrete: `{"scale": float, "offset": float}` (affine)
+- Categorical: `{"permutation": [int, ...]}` (relabeling)
+
+**Viewer design**: Uses **inverse-query** approach — the query (slicePosition + tolerance) is inverse-transformed from world to local space ONCE (O(1)), rather than transforming millions of point coordinates (O(N)). No loader internals change.
+
+See `docs/guides/specs/ND_TRANSFORMS_SPEC.md` for full details.
 
 ---
 

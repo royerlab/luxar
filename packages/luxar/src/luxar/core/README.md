@@ -138,7 +138,7 @@ Base class for all scene graph nodes.
 **Key Features:**
 - Hierarchical parent-child relationships
 - Transform support (4x4 matrices)
-- Rendering properties (opacity, gamma, blending mode)
+- Rendering properties (opacity, gamma, intensity, offset, blending mode)
 - Progressive writing without keeping Zarr groups in memory
 
 **Usage Example:**
@@ -147,6 +147,8 @@ Base class for all scene graph nodes.
 group = scene.add_group('my_group',
                         opacity=0.8,
                         gamma=1.2,
+                        intensity=2.0,
+                        offset=0.0,
                         blending_mode='additive')
 
 # Transforms can be set directly
@@ -160,6 +162,8 @@ group.set_opacity(0.5).set_gamma(1.0)
 - `transform` - 4x4 transformation matrix
 - `opacity` - Rendering opacity (0.0-1.0)
 - `gamma` - Gamma correction (0.1-10.0)
+- `intensity` - Per-node color multiplier (>=0.0, default 1.0)
+- `offset` - Per-node color offset (any float, default 0.0)
 - `blending_mode` - Blending mode ('normal', 'additive')
 - `children` - List of child nodes
 - `parent` - Parent node reference

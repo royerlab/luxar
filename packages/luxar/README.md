@@ -238,7 +238,7 @@ class Scene:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.2-2.0, default 1.0) - Gamma correction
                 blending_mode: str ("normal", "additive", "max", "opaque", "luminous", default "additive")
-                transform: list[float] - 16-element 4x4 transformation matrix (use transforms.to_list())
+                transform: np.ndarray or list[float] - 4x4 transformation matrix (row-major)
         """
 
     def add_points(
@@ -264,7 +264,7 @@ class Scene:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.2-2.0, default 1.0) - Gamma correction
                 blending_mode: str ("normal", "additive", "max", "opaque", "luminous", default "additive")
-                transform: list[float] - 16-element 4x4 transformation matrix (use transforms.to_list())
+                transform: np.ndarray or list[float] - 4x4 transformation matrix (row-major)
         """
 
     # Finalization is handled automatically by the LuxarZarrCompiler context manager
@@ -463,15 +463,11 @@ with LuxarZarrCompiler("transformed_scene.zarr") as compiler:
     combined = transforms.compose(translation, rotation, scaling)
 
     # Apply transforms to groups (via transform attribute)
-    group = scene.add_group("MyGroup", transform=transforms.to_list(combined))
+    group = scene.add_group("MyGroup", transform=combined)
 
     # Hierarchical transforms (child inherits parent transform)
-    parent = scene.add_group("Robot", transform=transforms.to_list(
-        transforms.translate(100, 0, 0)
-    ))
-    scene.add_group("Sensor", parent=parent, transform=transforms.to_list(
-        transforms.rotate_y(90)  # Relative to parent
-    ))
+    parent = scene.add_group("Robot", transform=transforms.translate(100, 0, 0))
+    scene.add_group("Sensor", parent=parent, transform=transforms.rotate_y(90))
 
 # Transform utilities (standalone, no scene needed)
 look_at = transforms.look_at(

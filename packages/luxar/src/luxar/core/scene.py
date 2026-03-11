@@ -394,16 +394,8 @@ class Scene(Group):
         """Get scene-level dimensions.
 
         Returns:
-            Dimensions object (always present - required for scenes)
+            Dimensions object (always present - required at construction)
         """
-        if self._dimensions is None and "scene_dimensions" in self.attrs:
-            dims_dict = self.attrs["scene_dimensions"]
-            self._dimensions = Dimensions.from_dict(dims_dict)
-        if self._dimensions is None:
-            raise ValueError(
-                "Scene dimensions are not set. This should never happen - "
-                "dimensions are required when creating a scene."
-            )
         return self._dimensions
 
     @property

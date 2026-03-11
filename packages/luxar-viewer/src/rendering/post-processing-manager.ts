@@ -11,7 +11,6 @@ import {
   EffectPass,
   BloomEffect,
   DepthOfFieldEffect,
-  ToneMappingEffect,
   ToneMappingMode,
   SMAAEffect,
   SMAAPreset,
@@ -20,6 +19,7 @@ import {
   KernelSize,
   BlendFunction,
 } from 'postprocessing';
+import { LuxarToneMappingEffect } from './luxar-tone-mapping-effect';
 import { DetectorNoiseEffect, isDetectorNoiseEffect } from './detector-noise-effect';
 import { RobustVignetteEffect, isRobustVignetteEffect } from './robust-vignette-effect';
 import {
@@ -31,11 +31,9 @@ import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import {
   BloomEffectTyped,
-  ToneMappingEffectTyped,
   DepthOfFieldEffectTyped,
   PerspectiveDepthMapper,
   isBloomEffectTyped,
-  isToneMappingEffectTyped,
   isDepthOfFieldEffectTyped,
 } from './postprocessing-types';
 
@@ -78,7 +76,7 @@ export class PostProcessingManager {
   // Individual effect references for runtime updates with proper typing
   private bloomEffect?: BloomEffectTyped;
   private dofEffect?: DepthOfFieldEffectTyped;
-  private toneMappingEffect!: ToneMappingEffectTyped;
+  private toneMappingEffect!: LuxarToneMappingEffect;
   private smaaEffect?: SMAAEffect;
   private fxaaEffect?: FXAAEffect;
   private aoEffect?: SSAOEffect;
@@ -211,8 +209,8 @@ export class PostProcessingManager {
       `Bloom initialized with ${config.renderingControls.defaults.bloomLevels} mipmap levels, radius: ${config.renderingControls.defaults.bloomRadius}`
     );
 
-    // Tone mapping for HDR to LDR conversion - using ACES filmic by default
-    this.toneMappingEffect = new ToneMappingEffect({
+    // Tone mapping for HDR to LDR conversion with Luxar EOG (Exposure-Offset-Gamma)
+    this.toneMappingEffect = new LuxarToneMappingEffect({
       mode: ToneMappingMode.ACES_FILMIC,
       resolution: 256,
       whitePoint: 2.0, // Standard white point
@@ -220,7 +218,11 @@ export class PostProcessingManager {
       minLuminance: 0.001, // Lower min for better dark detail
       averageLuminance: 1.0,
       adaptationRate: 1.0,
-    }) as ToneMappingEffectTyped;
+      // EOG defaults: neutral (no change)
+      exposure: 0.0,
+      globalOffset: 0.0,
+      globalGamma: 1.0,
+    });
 
     // SMAA for high-quality anti-aliasing (disabled by default)
     this.smaaEffect = new SMAAEffect({
@@ -618,6 +620,38 @@ export class PostProcessingManager {
     };
 
     return reverseMap[this.toneMappingEffect.mode] ?? THREE.ACESFilmicToneMapping;
+  }
+
+  // ======================================================================
+  // Global EOG (Exposure-Offset-Gamma) controls
+  // ======================================================================
+
+  /**
+   * Update global exposure (log2 stops).
+   * 0 = neutral, +1 = 2x brighter, -1 = half.
+   */
+  updateExposure(value: number): void {
+    if (this.toneMappingEffect) {
+      this.toneMappingEffect.exposure = value;
+    }
+  }
+
+  /**
+   * Update global offset (additive brightness shift).
+   */
+  updateGlobalOffset(value: number): void {
+    if (this.toneMappingEffect) {
+      this.toneMappingEffect.globalOffset = value;
+    }
+  }
+
+  /**
+   * Update global gamma correction.
+   */
+  updateGlobalGamma(value: number): void {
+    if (this.toneMappingEffect) {
+      this.toneMappingEffect.globalGamma = value;
+    }
   }
 
   /**
@@ -1126,7 +1160,7 @@ export class PostProcessingManager {
     ao: boolean;
     lensDistortion: boolean;
     chromaticLensDistortion: boolean;
-    } {
+  } {
     const toneMappingNames: Record<ToneMappingMode, string> = {
       [ToneMappingMode.LINEAR]: 'Linear',
       [ToneMappingMode.REINHARD]: 'Reinhard',
@@ -1316,52 +1350,54 @@ export class PostProcessingManager {
       bloom:
         this.bloomEffect && isBloomEffectTyped(this.bloomEffect)
           ? {
-            intensity: bloom.intensity,
-            luminanceThreshold: bloom.luminanceMaterial?.threshold,
-            radius: bloom.mipmapBlurPass?.radius,
-          }
+              intensity: bloom.intensity,
+              luminanceThreshold: bloom.luminanceMaterial?.threshold,
+              radius: bloom.mipmapBlurPass?.radius,
+            }
           : null,
-      toneMapping:
-        this.toneMappingEffect && isToneMappingEffectTyped(this.toneMappingEffect)
-          ? {
+      toneMapping: this.toneMappingEffect
+        ? {
             mode: this.toneMappingEffect.mode,
-            whitePoint: this.toneMappingEffect.uniforms?.whitePoint?.value,
+            whitePoint: this.toneMappingEffect.whitePoint,
+            exposure: this.toneMappingEffect.exposure,
+            globalOffset: this.toneMappingEffect.globalOffset,
+            globalGamma: this.toneMappingEffect.globalGamma,
           }
-          : null,
+        : null,
       dof:
         this.dofEffect && isDepthOfFieldEffectTyped(this.dofEffect)
           ? {
-            enabled: true,
-            bokehScale: this.dofEffect.bokehScale,
-            focusDistance:
+              enabled: true,
+              bokehScale: this.dofEffect.bokehScale,
+              focusDistance:
                 this.dofEffect.circleOfConfusionMaterial?.uniforms?.focusDistance?.value,
-          }
+            }
           : null,
       vignette:
         this.vignetteEffect && isRobustVignetteEffect(this.vignetteEffect)
           ? {
-            darkness: this.vignetteEffect.darkness,
-            offset: this.vignetteEffect.offset,
-          }
+              darkness: this.vignetteEffect.darkness,
+              offset: this.vignetteEffect.offset,
+            }
           : null,
       chromaticLensDistortion:
         this.chromaticLensDistortionEffect &&
         isChromaticLensDistortionEffect(this.chromaticLensDistortionEffect)
           ? {
-            distortion: this.chromaticLensDistortionEffect.distortion.clone(),
-            principalPoint: this.chromaticLensDistortionEffect.principalPoint.clone(),
-            focalLength: this.chromaticLensDistortionEffect.focalLength.clone(),
-            skew: this.chromaticLensDistortionEffect.skew,
-            dispersion: this.chromaticLensDistortionEffect.dispersion,
-          }
+              distortion: this.chromaticLensDistortionEffect.distortion.clone(),
+              principalPoint: this.chromaticLensDistortionEffect.principalPoint.clone(),
+              focalLength: this.chromaticLensDistortionEffect.focalLength.clone(),
+              skew: this.chromaticLensDistortionEffect.skew,
+              dispersion: this.chromaticLensDistortionEffect.dispersion,
+            }
           : null,
       detectorNoise:
         this.detectorNoiseEffect && isDetectorNoiseEffect(this.detectorNoiseEffect)
           ? {
-            readoutSigma: this.detectorNoiseEffect.readoutSigma,
-            photonGain: this.detectorNoiseEffect.photonGain,
-            fpnSigma: this.detectorNoiseEffect.fpnSigma,
-          }
+              readoutSigma: this.detectorNoiseEffect.readoutSigma,
+              photonGain: this.detectorNoiseEffect.photonGain,
+              fpnSigma: this.detectorNoiseEffect.fpnSigma,
+            }
           : null,
       // Save AA states
       ao: this.aoEffect ? { enabled: true } : null,
@@ -1429,14 +1465,10 @@ export class PostProcessingManager {
       }
     }
 
-    if (
-      savedEffects.toneMapping &&
-      this.toneMappingEffect &&
-      isToneMappingEffectTyped(this.toneMappingEffect)
-    ) {
+    if (savedEffects.toneMapping && this.toneMappingEffect) {
       this.toneMappingEffect.mode = savedEffects.toneMapping.mode;
-      if (savedEffects.toneMapping.whitePoint && this.toneMappingEffect.uniforms?.whitePoint) {
-        this.toneMappingEffect.uniforms.whitePoint.value = savedEffects.toneMapping.whitePoint;
+      if (savedEffects.toneMapping.whitePoint !== undefined) {
+        this.toneMappingEffect.whitePoint = savedEffects.toneMapping.whitePoint;
       }
     }
 

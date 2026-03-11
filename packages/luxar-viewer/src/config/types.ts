@@ -428,7 +428,9 @@ export interface RenderingSettings {
   bloomStrength: number;
   bloomRadius: number;
   bloomLevels: number;
-  hdrMultiplier: number;
+  exposure: number; // Log2 stops, default 0.0
+  globalOffset: number; // Additive shift, default 0.0
+  globalGamma: number; // Midtone curve, default 1.0
   fxaaEnabled: boolean;
   msaaEnabled: boolean;
   msaaSamples: number;

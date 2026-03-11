@@ -500,7 +500,8 @@ __global__ void rasterize_forward_kernel(
 
                 // OPTIMIZATION 1.2: Precompute effective truncation squared
                 // This moves the expensive powf() out of the hot inner loop
-                s_truncate_sq[i] = effective_truncate_sq(truncate, s);
+                // Includes amplitude-based tightening for better early rejection
+                s_truncate_sq[i] = effective_truncate_sq(truncate, s, s_amps[i], intensity_floor);
             }
             __syncthreads();
 
@@ -640,7 +641,10 @@ __global__ void rasterize_backward_kernel(
     // OPTIMIZATION 3.3: Load grad_output into shared memory ONCE per tile
     // This eliminates redundant global memory loads when tiles have many splats.
     // For sparse tiles (few splats), skip the cache to avoid loading overhead.
-    const bool use_grad_cache = (n_splats_in_tile > GRAD_CACHE_THRESHOLD);
+    // SAFETY: Disable cache if tile_pixels exceeds the fixed shared memory buffer.
+    // This can happen when a non-default tile_size is used (e.g., tile_size=4 for DIM=5).
+    const bool use_grad_cache = (n_splats_in_tile > GRAD_CACHE_THRESHOLD) &&
+                                (tile_pixels <= MAX_TILE_PIXELS);
 
     if (use_grad_cache) {
     for (int px = threadIdx.x; px < tile_pixels; px += blockDim.x) {
@@ -711,7 +715,8 @@ __global__ void rasterize_backward_kernel(
             s_sharpness[i] = s;
 
             // OPTIMIZATION 1.2: Precompute effective truncation squared
-            s_truncate_sq[i] = effective_truncate_sq(truncate, s);
+            // Includes amplitude-based tightening for better early rejection
+            s_truncate_sq[i] = effective_truncate_sq(truncate, s, s_amps[i], intensity_floor);
 
             // OPTIMIZATION 3.2: Initialize gradient accumulators for this batch
             s_d_amps_tile[i] = 0.0f;

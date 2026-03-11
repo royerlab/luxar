@@ -72,8 +72,10 @@ export interface RenderingControllers {
   // Dynamic clipping controls
   dynamicClippingEnabled?: Controller;
   clippingAdaptSpeed?: Controller;
-  // HDR controls
-  hdrMultiplier?: Controller;
+  // HDR controls (global EOG)
+  exposure?: Controller;
+  globalOffset?: Controller;
+  globalGamma?: Controller;
   // Chromatic lens distortion controls (replaces old separate lens + chromatic effects)
   chromaticLensDistortionX?: Controller;
   chromaticLensDistortionY?: Controller;

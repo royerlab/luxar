@@ -227,7 +227,7 @@ test.describe('Rendering Controls API', () => {
       if (!settings) return null;
 
       return {
-        hasHdrMultiplier: 'hdrMultiplier' in settings,
+        hasExposure: 'exposure' in settings,
         hasBloomStrength: 'bloomStrength' in settings,
         hasBloomThreshold: 'bloomThreshold' in settings,
         hasFov: 'fov' in settings,
@@ -237,7 +237,7 @@ test.describe('Rendering Controls API', () => {
     });
 
     expect(settingsProps).not.toBeNull();
-    expect(settingsProps?.hasHdrMultiplier).toBe(true);
+    expect(settingsProps?.hasExposure).toBe(true);
     expect(settingsProps?.hasBloomStrength).toBe(true);
     expect(settingsProps?.hasBloomThreshold).toBe(true);
     expect(settingsProps?.hasFov).toBe(true);
@@ -245,16 +245,16 @@ test.describe('Rendering Controls API', () => {
     expect(settingsProps?.hasAoEnabled).toBe(true);
   });
 
-  test('should have HDR multiplier with valid default value', async ({ page }) => {
+  test('should have exposure with valid default value', async ({ page }) => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
 
-    const hdrMultiplier = await page.evaluate(() => {
+    const exposure = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      return debug.renderingControls?.settings?.hdrMultiplier;
+      return debug.renderingControls?.settings?.exposure;
     });
 
-    // Default HDR multiplier is 1.0 (neutral)
-    expect(hdrMultiplier).toBe(1.0);
+    // Default exposure is 0.0 (neutral)
+    expect(exposure).toBe(0.0);
   });
 });

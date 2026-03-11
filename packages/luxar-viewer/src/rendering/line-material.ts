@@ -15,7 +15,6 @@
  */
 
 import * as THREE from 'three';
-import { config } from '../config';
 import { materialManager } from './material-manager';
 
 /**
@@ -24,10 +23,14 @@ import { materialManager } from './material-manager';
 export interface LineMaterialConfig {
   /** Opacity multiplier (0.0 to 1.0) */
   opacity?: number;
+  /** Gamma correction (0.1 to 10.0, default 1.0) */
+  gamma?: number;
+  /** Intensity (linear color multiplier / gain), default 1.0 */
+  intensity?: number;
+  /** Offset (additive brightness shift / black level), default 0.0 */
+  offset?: number;
   /** Blending mode */
   blendingMode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
-  /** HDR intensity multiplier */
-  hdrMultiplier?: number;
   /** Whether material is transparent (default true) */
   transparent?: boolean;
   /** Whether to test against depth buffer (default true; additive sets false) */
@@ -42,10 +45,10 @@ export interface LineMaterialUniforms {
   uFOV: { value: number };
   /** Viewport resolution [width, height] */
   uResolution: { value: THREE.Vector2 };
-  /** HDR intensity multiplier */
-  uHDRMultiplier: { value: number };
   /** Opacity multiplier */
   uOpacity: { value: number };
+  /** Pre-computed 1/gamma for performance */
+  uInvGamma: { value: number };
 }
 
 /**
@@ -188,8 +191,10 @@ export class LineMaterial extends THREE.ShaderMaterial {
   private static readonly FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
 
-    uniform float uHDRMultiplier;
     uniform float uOpacity;
+    uniform float uInvGamma; // Pre-computed 1/gamma for performance
+    uniform float uIntensity; // Per-node linear color multiplier (gain)
+    uniform float uOffset; // Per-node additive brightness shift (black level)
 
     in vec3 vColor;
     in float vSharpness;
@@ -227,9 +232,17 @@ export class LineMaterial extends THREE.ShaderMaterial {
       // Apply cap factor for correct joint intensity
       float intensity = vCapFactor * perpFalloff * edgeAA * widthScale;
 
-      // HDR output (gamma correction in post-processing)
+      // Per-node GOG (Gain-Offset-Gamma) color adjustment
+      vec3 adjusted = vColor * uIntensity + uOffset;
+      adjusted = max(adjusted, vec3(0.0));
+
+      // Early discard for zero-contribution fragments after offset
+      if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
+
+      vec3 gammaColor = pow(adjusted, vec3(uInvGamma));
+
       // Output color with alpha for AdditiveBlending (SrcAlpha, One)
-      vec3 finalColor = vColor * intensity * uHDRMultiplier;
+      vec3 finalColor = gammaColor * intensity;
       fragColor = vec4(finalColor, intensity * uOpacity);
     }
   `;
@@ -243,6 +256,7 @@ export class LineMaterial extends THREE.ShaderMaterial {
     const blendingMode = materialConfig.blendingMode ?? 'additive';
     const isOpaque = blendingMode === 'opaque';
     const isAdditive = blendingMode === 'additive';
+    const gammaValue = Math.max(0.001, materialConfig.gamma ?? 1.0); // Prevent division by zero
 
     // Determine THREE.js blending mode
     // 'additive' and 'luminous' both use AdditiveBlending - only depthTest differs
@@ -261,10 +275,10 @@ export class LineMaterial extends THREE.ShaderMaterial {
       uniforms: {
         uFOV: { value: (60 * Math.PI) / 180 }, // Default 60° FOV
         uResolution: { value: new THREE.Vector2(1, 1) },
-        uHDRMultiplier: {
-          value: materialConfig.hdrMultiplier ?? config.renderingControls.defaults.hdrMultiplier,
-        },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
+        uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
+        uIntensity: { value: materialConfig.intensity ?? 1.0 },
+        uOffset: { value: materialConfig.offset ?? 0.0 },
       },
 
       vertexShader: LineMaterial.VERTEX_SHADER,
@@ -290,8 +304,9 @@ export class LineMaterial extends THREE.ShaderMaterial {
       this.blendDst = THREE.OneFactor;
     }
 
-    // Store blendingMode in userData for clone()
+    // Store blendingMode and gamma in userData for clone()
     this.userData.blendingMode = blendingMode;
+    this.userData.gamma = gammaValue;
     this.userData.depthTest = materialConfig.depthTest ?? !isAdditive;
   }
 
@@ -307,17 +322,34 @@ export class LineMaterial extends THREE.ShaderMaterial {
   }
 
   /**
-   * Update HDR multiplier.
-   */
-  updateHDRMultiplier(multiplier: number): void {
-    this.uniforms.uHDRMultiplier.value = multiplier;
-  }
-
-  /**
    * Update opacity.
    */
   updateOpacity(opacity: number): void {
     this.uniforms.uOpacity.value = opacity;
+  }
+
+  /**
+   * Update gamma correction.
+   * Only invGamma is used in shader; gamma value stored in userData for clone()
+   */
+  updateGamma(gamma: number): void {
+    const safeGamma = Math.max(0.001, gamma); // Prevent division by zero
+    this.userData.gamma = safeGamma;
+    this.uniforms.uInvGamma.value = 1.0 / safeGamma;
+  }
+
+  /**
+   * Update intensity (linear color multiplier)
+   */
+  updateIntensity(intensity: number): void {
+    this.uniforms.uIntensity.value = intensity;
+  }
+
+  /**
+   * Update offset (additive brightness shift)
+   */
+  updateOffset(offset: number): void {
+    this.uniforms.uOffset.value = offset;
   }
 
   /**
@@ -326,10 +358,12 @@ export class LineMaterial extends THREE.ShaderMaterial {
   clone(): this {
     const cloned = new LineMaterial({
       opacity: this.uniforms.uOpacity.value,
-      hdrMultiplier: this.uniforms.uHDRMultiplier.value,
+      gamma: this.userData.gamma ?? 1.0,
+      intensity: this.uniforms.uIntensity.value,
+      offset: this.uniforms.uOffset.value,
       blendingMode: this.userData.blendingMode ?? 'additive',
       transparent: this.transparent,
-      depthTest: this.userData.depthTest ?? true, // depthTest stored in userData
+      depthTest: this.userData.depthTest ?? true,
     });
 
     // Copy blend equation settings for custom blending (max mode)
@@ -341,6 +375,7 @@ export class LineMaterial extends THREE.ShaderMaterial {
 
     cloned.uniforms.uFOV.value = this.uniforms.uFOV.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
+    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
 
     return cloned as this;
   }

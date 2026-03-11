@@ -30,7 +30,6 @@
  */
 
 import * as THREE from 'three';
-import { config } from '../config';
 import { materialManager } from './material-manager';
 
 /**
@@ -39,8 +38,12 @@ import { materialManager } from './material-manager';
 export interface GSplatMaterialConfig {
   /** Opacity multiplier (0.0 to 1.0) */
   opacity?: number;
-  /** HDR intensity multiplier */
-  hdrMultiplier?: number;
+  /** Gamma correction (0.1 to 10.0, default 1.0) */
+  gamma?: number;
+  /** Intensity (linear color multiplier / gain), default 1.0 */
+  intensity?: number;
+  /** Offset (additive brightness shift / black level), default 0.0 */
+  offset?: number;
   /** Truncation radius in sigmas (default 3.0) */
   truncationRadius?: number;
   /** Blending mode */
@@ -63,12 +66,12 @@ export interface GSplatMaterialUniforms {
   uFy: { value: number };
   /** Truncation radius in sigmas */
   uTruncate: { value: number };
-  /** HDR intensity multiplier */
-  uHDRMultiplier: { value: number };
   /** Opacity multiplier */
   uOpacity: { value: number };
   /** Projection mode: 0=sum (additive/normal), 1=max (max blending) */
   uProjectionMode: { value: number };
+  /** Pre-computed 1/gamma for performance */
+  uInvGamma: { value: number };
 }
 
 /**
@@ -346,7 +349,9 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     flat in int vProjectionMode;      // 0=sum (additive), 1=max
 
     uniform mediump float uOpacity;
-    uniform mediump float uHDRMultiplier;
+    uniform mediump float uInvGamma; // Pre-computed 1/gamma for performance
+    uniform mediump float uIntensity; // Per-node linear color multiplier (gain)
+    uniform mediump float uOffset; // Per-node additive brightness shift (black level)
 
     // GLSL ES 3.0 requires explicit fragment output declaration
     out vec4 fragColor;
@@ -434,6 +439,15 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         // Early discard for negligible contribution (raised threshold for performance)
         if (intensity < 1e-4) discard;
 
+        // Per-node GOG (Gain-Offset-Gamma) color adjustment
+        vec3 adjusted = vColor * uIntensity + uOffset;
+        adjusted = max(adjusted, vec3(0.0));
+
+        // Early discard for zero-contribution fragments after offset
+        if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
+
+        vec3 gammaColor = pow(adjusted, vec3(uInvGamma));
+
         // HDR color output for linear additive blending
         // With OneFactor blending (additive/luminous/max modes), alpha is ignored,
         // so apply opacity to RGB directly. This gives correct LINEAR sum projection
@@ -443,7 +457,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         // the background won't show through (effectively opaque). This is a known
         // limitation - proper transparent normal blending for gsplats would require
         // premultiplied alpha with ONE, ONE_MINUS_SRC_ALPHA blend func.
-        vec3 finalColor = vColor * intensity * uHDRMultiplier * uOpacity;
+        vec3 finalColor = gammaColor * intensity * uOpacity;
         fragColor = vec4(finalColor, 1.0);
     }
   `;
@@ -457,6 +471,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     const blendingMode = materialConfig.blendingMode ?? 'additive';
     const isOpaque = blendingMode === 'opaque';
     const isAdditive = blendingMode === 'additive';
+    const gammaValue = Math.max(0.001, materialConfig.gamma ?? 1.0); // Prevent division by zero
 
     // Determine THREE.js blending mode
     // CRITICAL: For sum projection, we need LINEAR addition of intensities.
@@ -482,11 +497,11 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         uFx: { value: 500 }, // Default focal length in pixels
         uFy: { value: 500 },
         uTruncate: { value: materialConfig.truncationRadius ?? 3.0 },
-        uHDRMultiplier: {
-          value: materialConfig.hdrMultiplier ?? config.renderingControls.defaults.hdrMultiplier,
-        },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
         uProjectionMode: { value: blendingMode === 'max' ? 1 : 0 }, // 0=sum, 1=max
+        uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
+        uIntensity: { value: materialConfig.intensity ?? 1.0 },
+        uOffset: { value: materialConfig.offset ?? 0.0 },
       },
 
       vertexShader: GSplatMaterial.VERTEX_SHADER,
@@ -512,14 +527,22 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
       this.blendEquation = THREE.AddEquation;
       this.blendSrc = THREE.OneFactor;
       this.blendDst = THREE.OneFactor;
+      // Prevent alpha accumulation that causes bloom/postprocessing artifacts.
+      // With AddEquation, alpha would sum: 1.0 + 1.0 + ... = N per overlapping splat,
+      // overflowing HalfFloat16 and causing dark halos via premultipliedAlpha compositing.
+      // MaxEquation keeps alpha = max(1.0, existing) = 1.0, preventing accumulation.
+      this.blendEquationAlpha = THREE.MaxEquation;
+      this.blendSrcAlpha = THREE.OneFactor;
+      this.blendDstAlpha = THREE.OneFactor;
     } else if (blendingMode === 'max') {
       this.blendEquation = THREE.MaxEquation; // Max(source, destination)
       this.blendSrc = THREE.OneFactor;
       this.blendDst = THREE.OneFactor;
     }
 
-    // Store blendingMode in userData for clone()
+    // Store blendingMode and gamma in userData for clone()
     this.userData.blendingMode = blendingMode;
+    this.userData.gamma = gammaValue;
     this.userData.depthTest = materialConfig.depthTest ?? !isAdditive;
   }
 
@@ -544,13 +567,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
   }
 
   /**
-   * Update HDR multiplier.
-   */
-  updateHDRMultiplier(multiplier: number): void {
-    this.uniforms.uHDRMultiplier.value = multiplier;
-  }
-
-  /**
    * Update opacity.
    */
   updateOpacity(opacity: number): void {
@@ -565,29 +581,59 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
   }
 
   /**
+   * Update gamma correction.
+   * Only invGamma is used in shader; gamma value stored in userData for clone()
+   */
+  updateGamma(gamma: number): void {
+    const safeGamma = Math.max(0.001, gamma); // Prevent division by zero
+    this.userData.gamma = safeGamma;
+    this.uniforms.uInvGamma.value = 1.0 / safeGamma;
+  }
+
+  /**
+   * Update intensity (linear color multiplier)
+   */
+  updateIntensity(intensity: number): void {
+    this.uniforms.uIntensity.value = intensity;
+  }
+
+  /**
+   * Update offset (additive brightness shift)
+   */
+  updateOffset(offset: number): void {
+    this.uniforms.uOffset.value = offset;
+  }
+
+  /**
    * Clone this material.
    */
   clone(): this {
     const cloned = new GSplatMaterial({
       opacity: this.uniforms.uOpacity.value,
-      hdrMultiplier: this.uniforms.uHDRMultiplier.value,
+      gamma: this.userData.gamma ?? 1.0,
+      intensity: this.uniforms.uIntensity.value,
+      offset: this.uniforms.uOffset.value,
       truncationRadius: this.uniforms.uTruncate.value,
       blendingMode: this.userData.blendingMode ?? 'additive',
       transparent: this.transparent,
       depthTest: this.userData.depthTest ?? true,
     });
 
-    // Copy blend equation settings for custom blending (max mode)
+    // Copy blend equation settings for custom blending (additive/luminous/max modes)
     if (this.blending === THREE.CustomBlending) {
       cloned.blendEquation = this.blendEquation;
       cloned.blendSrc = this.blendSrc;
       cloned.blendDst = this.blendDst;
+      cloned.blendEquationAlpha = this.blendEquationAlpha;
+      cloned.blendSrcAlpha = this.blendSrcAlpha;
+      cloned.blendDstAlpha = this.blendDstAlpha;
     }
 
     cloned.uniforms.uFx.value = this.uniforms.uFx.value;
     cloned.uniforms.uFy.value = this.uniforms.uFy.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
+    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
 
     return cloned as this;
   }

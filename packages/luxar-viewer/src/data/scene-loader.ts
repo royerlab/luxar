@@ -53,6 +53,7 @@ import {
   packCholeskyForShader,
 } from '../rendering/gsplat-material';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
+import { invertNdTransformForQuery, computeWorldNdTransform } from './nd-transform';
 import type { AccumulatorStats } from './data-accumulator';
 import { UpdateProfiler } from '../profiling/update-profiler';
 import { getWorkerPool } from '../workers/worker-pool';
@@ -128,6 +129,7 @@ export class SceneLoader {
   private _updateInProgress = false;
   private _pendingViewState: Partial<ViewState> | null = null;
   private _updateVersion = 0; // For logging/debugging
+  private _sceneGraph: SceneNode | null = null;
 
   constructor(config: LoaderConfig = {}, id?: string, profiler?: UpdateProfiler) {
     this.profiler = profiler ?? null;
@@ -356,6 +358,7 @@ export class SceneLoader {
 
     // Build scene graph
     const sceneGraph = await this.buildSceneGraph(rootLoc, sceneAttrs);
+    this._sceneGraph = sceneGraph;
 
     // Load points
     await this.loadSceneNodes(sceneGraph, this.rootGroup, rootLoc);
@@ -528,6 +531,29 @@ export class SceneLoader {
               pointsViewState = { ...this.viewState, tolerance };
             }
 
+            // Apply nd_transform inverse: convert world query to local coordinates
+            // Uses composed world nd_transform (inherits from parent groups)
+            if (this._sceneGraph && pointsViewState.dimensions?.metadata) {
+              const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
+              if (Object.keys(worldNdT).length > 0) {
+                const dimNames = pointsViewState.dimensions.metadata.map(
+                  (d: { name?: string }) => d.name ?? ''
+                );
+                const inverted = invertNdTransformForQuery(
+                  pointsViewState.slicePosition,
+                  pointsViewState.tolerance,
+                  worldNdT,
+                  dimNames,
+                  pointsViewState.displayDims
+                );
+                pointsViewState = {
+                  ...pointsViewState,
+                  slicePosition: inverted.slicePosition,
+                  tolerance: inverted.tolerance,
+                };
+              }
+            }
+
             const points = await loader.updateView(pointsViewState, session);
             if (points) {
               if (currentVersion <= 1) {
@@ -599,12 +625,36 @@ export class SceneLoader {
               }
             }
 
-            const linesViewState = {
+            let linesViewState: {
+              displayDims: number[];
+              slicePosition: number[];
+              tolerance: number[];
+              dimensions?: import('../types/dims').DimensionMetadata[];
+            } = {
               displayDims: this.viewState.displayDims,
               slicePosition: this.viewState.slicePosition,
               tolerance: this.viewState.tolerance,
               dimensions: this.viewState.dimensions?.metadata,
             };
+
+            // Apply nd_transform inverse for lines query
+            // Uses composed world nd_transform (inherits from parent groups)
+            if (this._sceneGraph && linesViewState.dimensions) {
+              const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
+              if (Object.keys(worldNdT).length > 0) {
+                const dimNames = linesViewState.dimensions.map(
+                  (d: { name?: string }) => d.name ?? ''
+                );
+                const inverted = invertNdTransformForQuery(
+                  linesViewState.slicePosition,
+                  linesViewState.tolerance,
+                  worldNdT,
+                  dimNames,
+                  linesViewState.displayDims
+                );
+                linesViewState = { ...linesViewState, ...inverted };
+              }
+            }
 
             const data = await loader.updateView(linesViewState, session);
             if (data) {
@@ -699,14 +749,28 @@ export class SceneLoader {
                 gsplatsViewState = { ...gsplatsViewState, tolerance };
               }
 
+              // Apply nd_transform inverse for gsplats query
+              // Uses composed world nd_transform (inherits from parent groups)
+              if (this._sceneGraph && gsplatsViewState.dimensions) {
+                const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
+                if (Object.keys(worldNdT).length > 0) {
+                  const dimNames = gsplatsViewState.dimensions.map(
+                    (d: { name?: string }) => d.name ?? ''
+                  );
+                  const inverted = invertNdTransformForQuery(
+                    gsplatsViewState.slicePosition,
+                    gsplatsViewState.tolerance,
+                    worldNdT,
+                    dimNames,
+                    gsplatsViewState.displayDims
+                  );
+                  gsplatsViewState = { ...gsplatsViewState, ...inverted };
+                }
+              }
+
               const data = await loader.updateView(gsplatsViewState, session);
               if (data) {
-                const staged = await this.processGSplatsData(
-                  path,
-                  data,
-                  gsplatsViewState,
-                  session
-                );
+                const staged = await this.processGSplatsData(path, data, gsplatsViewState, session);
                 session.setMetadata({ splats: data.splatCount });
                 this.failedLoaders.delete(path);
                 return staged;
@@ -1388,6 +1452,28 @@ export class SceneLoader {
         pointsViewState = { ...this.viewState, tolerance };
       }
 
+      // Apply nd_transform inverse for initial load (same as update path)
+      if (this._sceneGraph && pointsViewState.dimensions?.metadata) {
+        const worldNdT = computeWorldNdTransform(this._sceneGraph, node.path);
+        if (Object.keys(worldNdT).length > 0) {
+          const dimNames = pointsViewState.dimensions.metadata.map(
+            (d: { name?: string }) => d.name ?? ''
+          );
+          const inverted = invertNdTransformForQuery(
+            pointsViewState.slicePosition,
+            pointsViewState.tolerance,
+            worldNdT,
+            dimNames,
+            pointsViewState.displayDims
+          );
+          pointsViewState = {
+            ...pointsViewState,
+            slicePosition: inverted.slicePosition,
+            tolerance: inverted.tolerance,
+          };
+        }
+      }
+
       const data = await loader.loadPoints(pointsViewState);
 
       // Create THREE.js geometry even if empty (for future updates)
@@ -1471,12 +1557,33 @@ export class SceneLoader {
 
     try {
       // Load lines data
-      const linesViewState = {
+      let linesViewState: {
+        displayDims: number[];
+        slicePosition: number[];
+        tolerance: number[];
+        dimensions?: import('../types/dims').DimensionMetadata[];
+      } = {
         displayDims: this.viewState.displayDims,
         slicePosition: this.viewState.slicePosition,
         tolerance: this.viewState.tolerance,
         dimensions: this.viewState.dimensions?.metadata,
       };
+
+      // Apply nd_transform inverse for initial load
+      if (this._sceneGraph && linesViewState.dimensions) {
+        const worldNdT = computeWorldNdTransform(this._sceneGraph, node.path);
+        if (Object.keys(worldNdT).length > 0) {
+          const dimNames = linesViewState.dimensions.map((d: { name?: string }) => d.name ?? '');
+          const inverted = invertNdTransformForQuery(
+            linesViewState.slicePosition,
+            linesViewState.tolerance,
+            worldNdT,
+            dimNames,
+            linesViewState.displayDims
+          );
+          linesViewState = { ...linesViewState, ...inverted };
+        }
+      }
 
       const data = await loader.loadLines(linesViewState);
 
@@ -1491,8 +1598,8 @@ export class SceneLoader {
       let tolerance = linesViewState.dimensions
         ? computeLinesTolerance(linesViewState.dimensions, linesViewState.displayDims)
         : new Array(attrs.ndim || 3)
-          .fill(0)
-          .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
+            .fill(0)
+            .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
 
       // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
       // This ensures segments aren't clipped when navigating through extended dimensions
@@ -1528,6 +1635,9 @@ export class SceneLoader {
       // Create material
       const material = materialManager.getLineMaterial({
         opacity: attrs.opacity ?? 1.0,
+        gamma: attrs.gamma ?? 1.0,
+        intensity: attrs.intensity ?? 1.0,
+        offset: attrs.offset ?? 0.0,
         blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
       });
 
@@ -1630,6 +1740,22 @@ export class SceneLoader {
         gsplatsViewState = { ...gsplatsViewState, tolerance };
       }
 
+      // Apply nd_transform inverse for initial load
+      if (this._sceneGraph && gsplatsViewState.dimensions) {
+        const worldNdT = computeWorldNdTransform(this._sceneGraph, node.path);
+        if (Object.keys(worldNdT).length > 0) {
+          const dimNames = gsplatsViewState.dimensions.map((d: { name?: string }) => d.name ?? '');
+          const inverted = invertNdTransformForQuery(
+            gsplatsViewState.slicePosition,
+            gsplatsViewState.tolerance,
+            worldNdT,
+            dimNames,
+            gsplatsViewState.displayDims
+          );
+          gsplatsViewState = { ...gsplatsViewState, ...inverted };
+        }
+      }
+
       // Load gsplats data
       const data = await loader.loadGSplats(gsplatsViewState);
 
@@ -1661,6 +1787,9 @@ export class SceneLoader {
       // Create material
       const material = materialManager.getGSplatMaterial({
         opacity: attrs.opacity ?? 1.0,
+        gamma: attrs.gamma ?? 1.0,
+        intensity: attrs.intensity ?? 1.0,
+        offset: attrs.offset ?? 0.0,
         blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
       });
 
@@ -1995,6 +2124,8 @@ export class SceneLoader {
     return materialManager.getPointMaterial({
       opacity: attrs.opacity ?? 1.0,
       gamma: attrs.gamma ?? 1.0,
+      intensity: attrs.intensity ?? 1.0,
+      offset: attrs.offset ?? 0.0,
       blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
       radiusScale: radiusScale,
       sharpnessScale: sharpnessScale,

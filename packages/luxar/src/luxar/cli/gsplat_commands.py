@@ -891,3 +891,490 @@ def prune_dataset(
 
         traceback.print_exc()
         raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# fit — Fit Gaussian splats to a volume
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("fit")
+def fit_volume(
+    input_path: Optional[Path] = typer.Argument(
+        None, help="Input volume (.npy/.npz/.tiff/.zarr)"
+    ),
+    output_path: Optional[Path] = typer.Argument(
+        None, help="Output .gsplats.zarr path"
+    ),
+    # Common flags
+    seeds: Optional[str] = typer.Option(
+        None, "--seeds", "-s",
+        help="Seed count (int), compression ratio (float 0-1), or 'auto'",
+    ),
+    iters: Optional[int] = typer.Option(
+        None, "--iters", "-n", help="Max optimization iterations"
+    ),
+    device: Optional[str] = typer.Option(
+        None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
+    ),
+    preset: Optional[str] = typer.Option(
+        None, "--preset", help="Parameter preset: draft/standard/hifi"
+    ),
+    loss: Optional[str] = typer.Option(
+        None, "--loss", help="Loss function: l1/mse/poisson"
+    ),
+    config: Optional[Path] = typer.Option(
+        None, "--config", help="YAML config file for full parameter control"
+    ),
+    dump_config: bool = typer.Option(
+        False, "--dump-config", help="Print default YAML config and exit"
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", "-c", help="Compress output archive"
+    ),
+    # Input selection for multi-array formats
+    channel: Optional[int] = typer.Option(
+        None, "--channel", help="Channel index for 5D OME-ZARR"
+    ),
+    timepoint: Optional[int] = typer.Option(
+        None, "--timepoint", help="Timepoint index for 5D OME-ZARR"
+    ),
+    array_key: Optional[str] = typer.Option(
+        None, "--array-key", help="Array key within .npz or .zarr"
+    ),
+    # Frequently used fit params
+    lr: Optional[float] = typer.Option(None, "--lr", help="Learning rate"),
+    seed_method: Optional[str] = typer.Option(
+        None, "--seed-method", help="Seed generation method"
+    ),
+    verbose: bool = typer.Option(True, "--verbose/--quiet", help="Verbose output"),
+) -> None:
+    """Fit Gaussian splats to a volume.
+
+    Reconstructs an n-dimensional image/volume as a set of oriented Gaussian
+    splats. Use presets for quick configuration or a YAML config file for
+    full control over all ~35 parameters.
+
+    Presets:
+        draft    - Fast preview (500 iters, aggressive culling)
+        standard - Balanced quality/speed (3000 iters)
+        hifi     - Maximum quality (6000 iters, learnable sharpness)
+
+    Examples:
+        luxar gsplat fit volume.npy splats.gsplats.zarr --preset draft --seeds 1000
+
+        luxar gsplat fit volume.tiff splats.gsplats.zarr --preset standard --seeds 8000
+
+        luxar gsplat fit --dump-config --preset hifi > config.yaml
+        luxar gsplat fit volume.zarr splats.gsplats.zarr --config config.yaml
+
+        luxar gsplat fit data.zarr splats.gsplats.zarr --channel 1 --timepoint 0
+    """
+    from luxar.cli.gsplat_config import (
+        dump_default_config,
+        load_fit_config,
+        load_volume,
+        parse_seeds,
+    )
+
+    # Handle --dump-config: print and exit (no input/output needed)
+    if dump_config:
+        typer.echo(dump_default_config(preset or "standard"))
+        raise typer.Exit(0)
+
+    # Validate required args (optional for --dump-config)
+    if input_path is None:
+        aprint("Error: Missing argument 'INPUT_PATH'")
+        raise typer.Exit(1)
+    if output_path is None:
+        aprint("Error: Missing argument 'OUTPUT_PATH'")
+        raise typer.Exit(1)
+    if not input_path.exists():
+        aprint(f"Error: Input file not found: {input_path}")
+        raise typer.Exit(1)
+
+    try:
+        from luxar.gsplats import fit_gaussian_splats
+
+        with asection(f"Fitting Gaussian Splats: {input_path.name}"):
+            # 1. Load volume
+            with asection("Loading volume"):
+                volume = load_volume(input_path, channel, timepoint, array_key)
+                aprint(f"Volume shape: {volume.shape}")
+
+            # 2. Build merged config
+            cli_overrides = {
+                "n_iters": iters,
+                "device": device,
+                "loss_type": loss,
+                "lr": lr,
+                "seed_method": seed_method,
+                "verbose": verbose,
+            }
+            fit_config = load_fit_config(preset, config, cli_overrides)
+
+            if preset:
+                aprint(f"Preset: {preset}")
+            if config:
+                aprint(f"Config: {config}")
+            aprint(f"Iterations: {fit_config.get('n_iters')}")
+
+            # 3. Parse seeds
+            parsed_seeds = parse_seeds(seeds)
+            if parsed_seeds is not None:
+                aprint(f"Seeds: {parsed_seeds}")
+            else:
+                aprint("Seeds: auto")
+
+            # 4. Fit
+            with asection("Optimization"):
+                result = fit_gaussian_splats(volume, seeds=parsed_seeds, **fit_config)
+
+            # 5. Save
+            with asection(f"Saving to {output_path.name}"):
+                result.save(output_path, compress=compress)
+                n_splats = result.n_splats
+                aprint(f"Saved {n_splats:,} splats")
+                if output_path.exists():
+                    size = output_path.stat().st_size
+                    if size < 1024 * 1024:
+                        aprint(f"File size: {size / 1024:.1f} KB")
+                    else:
+                        aprint(f"File size: {size / (1024 * 1024):.2f} MB")
+
+        time_s = result.stats.get("time_seconds", 0)
+        aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# convert — Convert .gsplats.zarr to Luxar scene
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("convert")
+def convert_to_scene(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    output_path: Path = typer.Argument(..., help="Output .zarr scene path"),
+    center: bool = typer.Option(
+        True, "--center/--no-center", help="Center at amplitude-weighted centroid"
+    ),
+    scale_intensity: Optional[float] = typer.Option(
+        None, "--scale-intensity", help="Scale amplitudes by factor (e.g., 0.1)"
+    ),
+    opacity: float = typer.Option(1.0, "--opacity", help="Opacity (0.0-1.0)"),
+    blending_mode: str = typer.Option(
+        "additive", "--blending-mode", help="Blending: additive/normal/max/opaque"
+    ),
+    encoding: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode"
+    ),
+) -> None:
+    """Convert a .gsplats.zarr dataset to a Luxar scene for the web viewer.
+
+    Creates a persistent Luxar scene zarr that can be served with
+    ``luxar serve``. By default, centers the data at the centroid.
+
+    Examples:
+        luxar gsplat convert fitted.gsplats.zarr scene.zarr
+        luxar gsplat convert fitted.gsplats.zarr scene.zarr --no-center
+        luxar gsplat convert fitted.gsplats.zarr scene.zarr --scale-intensity 0.1
+    """
+    try:
+        from luxar import LuxarZarrCompiler
+        from luxar.cli.gsplat_config import build_dimensions_from_data
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        encoding_map = {
+            "auto": EncodingMode.AUTO,
+            "precision": EncodingMode.PRECISION,
+            "memory": EncodingMode.MEMORY,
+        }
+
+        with asection(f"Converting: {input_path.name} -> {output_path.name}"):
+            with asection("Loading gsplat dataset"):
+                data = GSplatData.load(input_path, include_stats=False)
+                aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+
+            if center:
+                aprint("Centering at amplitude-weighted centroid")
+                data = data.center_at_centroid()
+
+            if scale_intensity is not None:
+                aprint(f"Scaling intensity by {scale_intensity}")
+                data = data.scale_intensity(scale_intensity)
+
+            with asection("Creating Luxar scene"):
+                dims = build_dimensions_from_data(data.centers)
+                with LuxarZarrCompiler(
+                    output_path, encoding_mode=encoding_map[encoding]
+                ) as compiler:
+                    scene = compiler.create_scene(dimensions=dims)
+                    scene.add_gsplats_from_data(
+                        name="gsplats",
+                        result=data,
+                        opacity=opacity,
+                        blending_mode=blending_mode,
+                    )
+
+            aprint(f"\nScene saved: {output_path}")
+            aprint(f"Serve with: luxar serve {output_path} --viewer")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# render — Render gsplats to a volume file
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("render")
+def render_to_file(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    output_path: Path = typer.Argument(..., help="Output file (.npy or .tiff)"),
+    shape: Optional[str] = typer.Option(
+        None, "--shape",
+        help="Output shape as comma-separated ints (e.g., '128,128,128')",
+    ),
+    device: Optional[str] = typer.Option(
+        None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
+    ),
+    truncate: float = typer.Option(
+        3.0, "--truncate", "-t", help="Truncation radius in sigma"
+    ),
+) -> None:
+    """Render Gaussian splats back to a volume.
+
+    Useful for quality comparison with original data. Auto-detects the
+    output format from file extension (.npy or .tiff).
+
+    If --shape is not given, it is auto-computed from the bounding box.
+
+    Examples:
+        luxar gsplat render fitted.gsplats.zarr rendered.npy
+        luxar gsplat render fitted.gsplats.zarr rendered.tiff --shape 256,256,256
+        luxar gsplat render fitted.gsplats.zarr rendered.npy --device cuda
+    """
+    try:
+        import numpy as np
+
+        from luxar.cli.gsplat_config import parse_shape
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        with asection(f"Rendering: {input_path.name}"):
+            with asection("Loading gsplat dataset"):
+                data = GSplatData.load(input_path, include_stats=False)
+                ndim = data.ndim
+                aprint(f"Loaded {data.n_splats:,} splats ({ndim}D)")
+
+            if shape is not None:
+                output_shape = parse_shape(shape)
+            else:
+                mins = data.centers.min(axis=0)
+                maxs = data.centers.max(axis=0)
+                output_shape = tuple(
+                    int(maxs[i] - mins[i]) + 1 for i in range(ndim)
+                )
+                aprint(f"Auto shape from bounding box: {output_shape}")
+
+            with asection(f"Rendering to {output_shape}"):
+                volume = data.render_to_volume(
+                    shape=output_shape, device=device, truncate=truncate,
+                )
+                aprint(
+                    f"Rendered: {volume.shape}, "
+                    f"range [{volume.min():.4f}, {volume.max():.4f}]"
+                )
+
+            suffix = output_path.suffix.lower()
+            with asection(f"Saving to {output_path.name}"):
+                if suffix == ".npy":
+                    np.save(str(output_path), volume)
+                elif suffix in (".tiff", ".tif"):
+                    try:
+                        import tifffile
+                    except ImportError:
+                        aprint("tifffile not installed.")
+                        aprint("Install with: pip install luxar[io]")
+                        raise typer.Exit(1)
+                    tifffile.imwrite(str(output_path), volume)
+                else:
+                    aprint(f"Unknown extension '{suffix}', saving as NumPy .npy")
+                    np.save(str(output_path), volume)
+
+                if output_path.exists():
+                    size = output_path.stat().st_size
+                    if size < 1024 * 1024:
+                        aprint(f"File size: {size / 1024:.1f} KB")
+                    else:
+                        aprint(f"File size: {size / (1024 * 1024):.2f} MB")
+
+        aprint(f"\nSaved: {output_path}")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# merge — Combine multiple gsplat datasets
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("merge")
+def merge_datasets(
+    inputs: list[Path] = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr datasets (2 or more)"
+    ),
+    output_path: Path = typer.Option(
+        ..., "--output", "-o", help="Output .gsplats.zarr path"
+    ),
+    as_dimension: bool = typer.Option(
+        False, "--as-dimension", help="Stack along a new dimension (e.g., time)"
+    ),
+    values: Optional[str] = typer.Option(
+        None, "--values", help="Comma-separated coordinate values for --as-dimension"
+    ),
+    sigma: float = typer.Option(
+        0.0, "--sigma", help="Sigma in new dimension for --as-dimension (0=discrete)"
+    ),
+    channel_colors: Optional[str] = typer.Option(
+        None, "--channel-colors",
+        help="Comma-separated hex colors (e.g., '#ff0080,#00ff80')",
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", "-c", help="Compress output archive"
+    ),
+    encoding: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode"
+    ),
+) -> None:
+    """Merge multiple Gaussian splat datasets into one.
+
+    Three modes (mutually exclusive):
+
+    1. Concatenation (default): Simple merge of all splats.
+
+    2. New dimension (--as-dimension): Stack along new dimension (e.g., time).
+
+    3. Channel colors (--channel-colors): Per-dataset color assignment.
+
+    Examples:
+        luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
+
+        luxar gsplat merge t0.zarr t1.zarr t2.zarr -o 4d.zarr --as-dimension
+
+        luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr \\
+            --channel-colors "#ff0080,#00ff00"
+    """
+    try:
+        from luxar.cli.gsplat_config import parse_hex_color
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        encoding_map = {
+            "auto": EncodingMode.AUTO,
+            "precision": EncodingMode.PRECISION,
+            "memory": EncodingMode.MEMORY,
+        }
+
+        if len(inputs) < 2:
+            aprint("Error: At least 2 input datasets required for merge")
+            raise typer.Exit(1)
+
+        if as_dimension and channel_colors:
+            aprint("Error: --as-dimension and --channel-colors are mutually exclusive")
+            raise typer.Exit(1)
+
+        with asection(f"Merging {len(inputs)} datasets"):
+            datasets: list[GSplatData] = []
+            total_splats = 0
+            for inp in inputs:
+                with asection(f"Loading {inp.name}"):
+                    ds = GSplatData.load(inp, include_stats=False)
+                    aprint(f"{ds.n_splats:,} splats ({ds.ndim}D)")
+                    datasets.append(ds)
+                    total_splats += ds.n_splats
+            aprint(f"Total input splats: {total_splats:,}")
+
+            if channel_colors:
+                color_strs = [c.strip() for c in channel_colors.split(",")]
+                if len(color_strs) != len(datasets):
+                    aprint(
+                        f"Error: {len(color_strs)} colors but {len(datasets)} datasets"
+                    )
+                    raise typer.Exit(1)
+                colors = [parse_hex_color(c) for c in color_strs]
+                with asection("Merging with channel colors"):
+                    merged = GSplatData.merge_with_channel_colors(datasets, colors)
+
+            elif as_dimension:
+                if values is not None:
+                    dim_values: list[float] = [
+                        float(v.strip()) for v in values.split(",")
+                    ]
+                    if len(dim_values) != len(datasets):
+                        aprint(
+                            f"Error: {len(dim_values)} values but "
+                            f"{len(datasets)} datasets"
+                        )
+                        raise typer.Exit(1)
+                else:
+                    dim_values = [float(i) for i in range(len(datasets))]
+                with asection(f"Stacking along new dimension (sigma={sigma})"):
+                    aprint(f"  Values: {dim_values}")
+                    merged = GSplatData.combine_as_new_dimension(
+                        datasets, values=dim_values, sigma=sigma
+                    )
+                    aprint(f"  Result: {merged.ndim}D ({merged.n_splats:,} splats)")
+
+            else:
+                with asection("Concatenating"):
+                    merged = GSplatData.concatenate(datasets)
+
+            with asection(f"Saving to {output_path.name}"):
+                # Determine color_mode for float32 colors
+                save_color_mode = None
+                if merged.colors is not None:
+                    import numpy as np
+
+                    if np.issubdtype(merged.colors.dtype, np.floating):
+                        save_color_mode = (
+                            "hdr" if np.any(merged.colors > 1.0) else "sdr"
+                        )
+
+                merged.save(
+                    output_path,
+                    encoding_mode=encoding_map[encoding],
+                    compress=compress,
+                    color_mode=save_color_mode,
+                )
+                aprint(f"Saved {merged.n_splats:,} splats ({merged.ndim}D)")
+
+        aprint(f"\nDone: {merged.n_splats:,} splats merged")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)

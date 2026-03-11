@@ -48,7 +48,9 @@ function createMockRenderingControls() {
       bloomRadius: 1.0,
       bloomThreshold: 0.01,
       bloomLevels: 8,
-      hdrMultiplier: 2.0,
+      exposure: 1.0,
+      globalOffset: 0.0,
+      globalGamma: 1.0,
       toneMapping: 'ACES' as const,
       controlType: 'orbit' as const,
       autoRotate: false,
@@ -146,7 +148,7 @@ describe('captureViewerState', () => {
 
     expect(state.bloom_enabled).toBe(true);
     expect(state.bloom_strength).toBe(0.5);
-    expect(state.hdr_multiplier).toBe(2.0);
+    expect(state.exposure).toBe(1.0);
     expect(state.tone_mapping).toBe('ACES');
     expect(state.control_type).toBe('orbit');
     expect(state.fxaa_enabled).toBe(true);

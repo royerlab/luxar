@@ -22,19 +22,8 @@ class TestDataNodeNdim:
         with pytest.raises(ValueError, match="no dimensionality metadata"):
             _ = node.ndim
 
-    def test_ndim_works_with_dims_key(self) -> None:
-        """Test that ndim reads from 'dims' key (Points compat)."""
-
-        class _StubDataNode(DataNode):
-            @property
-            def n_elements(self) -> int:
-                return 0
-
-        node = _StubDataNode("test_node", metadata={"dims": 3})
-        assert node.ndim == 3
-
     def test_ndim_works_with_ndim_key(self) -> None:
-        """Test that ndim reads from 'ndim' key (Lines/GSplats)."""
+        """Test that ndim reads from 'ndim' key."""
 
         class _StubDataNode(DataNode):
             @property
@@ -428,8 +417,6 @@ class TestDataNodeAbstraction:
 
             # metadata property should be accessible
             assert "n_points" in points.metadata
-            assert (
-                "dims" in points.metadata
-            )  # Note: it's "dims" not "ndim" in Points metadata
+            assert "ndim" in points.metadata
             assert points.metadata["n_points"] == 1
-            assert points.metadata["dims"] == 3
+            assert points.metadata["ndim"] == 3

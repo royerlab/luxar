@@ -330,15 +330,18 @@ def save_gsplats(
             import zipfile
 
             if compress == "zip":
-                # Create zip archive
-                with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                # Use ZIP_STORED (no compression) because zarr data is already
+                # compressed internally (Blosc/zstd). Double-compressing with
+                # deflate wastes CPU time for negligible size benefit.
+                with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as zipf:
                     for file_path in zarr_path.rglob("*"):
                         if file_path.is_file():
                             arcname = file_path.relative_to(zarr_path.parent)
                             zipf.write(file_path, arcname)
 
             elif compress == "tar.gz":
-                # Create tar.gz archive
+                # tar.gz applies gzip on top of already-compressed zarr chunks,
+                # but the user explicitly chose this format.
                 with tarfile.open(path, "w:gz") as tarf:
                     tarf.add(zarr_path, arcname=zarr_path.name)
 

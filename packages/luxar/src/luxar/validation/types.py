@@ -19,6 +19,10 @@ from ..typing_utils.aliases import PositionArray, TransformMatrix
 from ..typing_utils.constants import (
     GAMMA_MAX,
     GAMMA_MIN,
+    INTENSITY_MAX,
+    INTENSITY_MIN,
+    OFFSET_MAX,
+    OFFSET_MIN,
     OPACITY_MAX,
     OPACITY_MIN,
 )
@@ -177,6 +181,14 @@ def validate_transform(transform: Any) -> TransformMatrix:
     if np.any(np.isinf(transform)):
         raise ValueError("Transform contains Inf values")
 
+    # Verify affine transform: bottom row must be [0, 0, 0, 1]
+    bottom = transform[3, :]
+    if not np.allclose(bottom, [0, 0, 0, 1], atol=1e-6):
+        raise ValueError(
+            f"Invalid affine transform: bottom row must be [0, 0, 0, 1], "
+            f"got {bottom.tolist()}"
+        )
+
     return transform.astype(np.float32, copy=False)
 
 
@@ -269,7 +281,7 @@ def validate_gamma(gamma: Any) -> float:
     """Validate and convert gamma value.
 
     Args:
-        gamma: Value to validate as gamma (0.2 to 2.0)
+        gamma: Value to validate as gamma (0.1 to 10.0)
 
     Returns:
         Valid gamma as float
@@ -291,6 +303,64 @@ def validate_gamma(gamma: Any) -> float:
         )
 
     return gamma_float
+
+
+def validate_intensity(intensity: Any) -> float:
+    """Validate and convert intensity value.
+
+    Args:
+        intensity: Value to validate as intensity (0.0 to 100.0)
+
+    Returns:
+        Valid intensity as float
+
+    Raises:
+        ValueError: If intensity is not within valid range
+        TypeError: If intensity cannot be converted to float
+    """
+    try:
+        intensity_float = float(intensity)
+    except (ValueError, TypeError) as e:
+        raise TypeError(
+            f"Intensity must be convertible to float, got {type(intensity).__name__}"
+        ) from e
+
+    if not INTENSITY_MIN <= intensity_float <= INTENSITY_MAX:
+        raise ValueError(
+            f"Intensity must be between {INTENSITY_MIN} and {INTENSITY_MAX}, "
+            f"got {intensity_float}"
+        )
+
+    return intensity_float
+
+
+def validate_offset(offset: Any) -> float:
+    """Validate and convert offset value.
+
+    Args:
+        offset: Value to validate as offset (-10.0 to 10.0)
+
+    Returns:
+        Valid offset as float
+
+    Raises:
+        ValueError: If offset is not within valid range
+        TypeError: If offset cannot be converted to float
+    """
+    try:
+        offset_float = float(offset)
+    except (ValueError, TypeError) as e:
+        raise TypeError(
+            f"Offset must be convertible to float, got {type(offset).__name__}"
+        ) from e
+
+    if not OFFSET_MIN <= offset_float <= OFFSET_MAX:
+        raise ValueError(
+            f"Offset must be between {OFFSET_MIN} and {OFFSET_MAX}, "
+            f"got {offset_float}"
+        )
+
+    return offset_float
 
 
 def validate_blending_mode(mode: Any) -> BlendingMode:

@@ -59,7 +59,7 @@ This discriminator enables the viewer to determine how to render each node.
 - Nodes form a hierarchical tree structure
 - Each node has: name, parent reference, list of children
 - Each node can have a 4x4 transformation matrix
-- Each node has rendering attributes: opacity (0-1), gamma (0.1-10), blending_mode
+- Each node has rendering attributes: opacity (0-1), gamma (0.1-10), intensity (>=0), offset (any float), blending_mode
 - Container nodes do NOT store array data - only metadata and references
 - Nodes write data immediately through a writer interface (progressive writing)
 
@@ -84,7 +84,7 @@ This discriminator enables the viewer to determine how to render each node.
 **Key Operations**:
 - `add_group(name, **attrs)` - Create child group node
 - `walk()` - Depth-first traversal yielding (depth, node) tuples
-- Property getters/setters for transform, opacity, gamma, blending_mode
+- Property getters/setters for transform, opacity, gamma, intensity, offset, blending_mode
 
 ---
 
@@ -166,7 +166,9 @@ All fields are `Optional` and default to `None`. Only non-None fields are serial
 | `camera` | `Optional[CameraConfig]` | See CameraConfig above |
 | `background_color` | `Optional[str]` | Hex format `#rrggbb` |
 | `tone_mapping` | `Optional[str]` | One of: `"None"`, `"Linear"`, `"Reinhard"`, `"Cineon"`, `"ACES"`, `"AgX"`, `"Neutral"` |
-| `hdr_multiplier` | `Optional[float]` | >= 0 |
+| `exposure` | `Optional[float]` | >= 0 |
+| `global_offset` | `Optional[float]` | any float |
+| `global_gamma` | `Optional[float]` | > 0 |
 | `bloom_enabled` | `Optional[bool]` | -- |
 | `bloom_strength` | `Optional[float]` | >= 0 |
 | `bloom_radius` | `Optional[float]` | >= 0 |
@@ -238,7 +240,7 @@ vc = ViewerConfig(
     background_color="#000000",
     bloom_enabled=True,
     bloom_strength=0.5,
-    hdr_multiplier=3.0,
+    exposure=3.0,
 )
 with LuxarZarrCompiler('output.zarr') as compiler:
     scene = compiler.create_scene(dimensions=dims, viewer_config=vc)
@@ -263,7 +265,7 @@ data-adding methods (`add_points`, `add_lines`, `add_gsplats`, etc.). `Scene` ex
 - `name`: Group identifier
 - `children`: List of child nodes (Groups or DataNodes)
 - `transform`: Optional 4x4 transformation matrix
-- `opacity`, `gamma`, `blending_mode`: Rendering attributes (inherited by children)
+- `opacity`, `gamma`, `intensity`, `offset`, `blending_mode`: Rendering attributes (inherited by children)
 
 **Zarr Attributes**:
 ```
@@ -272,6 +274,8 @@ data-adding methods (`add_points`, `add_lines`, `add_gsplats`, etc.). `Scene` ex
   "transform": [...],         # optional, 16-element column-major
   "opacity": 1.0,             # optional
   "gamma": 1.0,               # optional
+  "intensity": 1.0,           # optional, per-node color multiplier
+  "offset": 0.0,              # optional, per-node color offset
   "blending_mode": "additive" # optional (normal, additive, max, opaque, luminous)
 }
 ```
@@ -455,7 +459,7 @@ class DataNode(Node, ABC):
 | `path` | str | Zarr path (Node attribute, computed from hierarchy) |
 | `type` | str | Node type discriminator (`"points"`, `"lines"`, `"gsplats"`) |
 | `metadata` | dict | Type-specific metadata |
-| Rendering attrs | float/str | opacity, gamma, blending_mode (inherited from Node) |
+| Rendering attrs | float/str | opacity, gamma, intensity, offset, blending_mode (inherited from Node) |
 | Transform | 4x4 matrix | Optional transformation (inherited from Node) |
 
 **Note**: `path` is a Node attribute computed from the hierarchy, not stored in the metadata dict. The metadata dict contains only data-specific information.
@@ -1642,6 +1646,8 @@ User provides data → Node validates → Writer writes to Zarr → Metadata ret
 **Valid Ranges**:
 - `opacity`: 0.0 to 1.0 (float)
 - `gamma`: 0.1 to 10.0 (float)
+- `intensity`: >= 0.0 (float, per-node color multiplier, default 1.0)
+- `offset`: any float (per-node color offset, default 0.0)
 - `blending_mode`: "normal" | "additive" | "max" | "opaque" | "luminous" (string)
   - `"normal"`: Standard alpha blending (semi-transparent), depthTest=true, depthWrite=true when opacity >= 0.99
   - `"additive"`: Classic additive blending, ignores depth entirely (depthTest=false, depthWrite=false)
@@ -1654,9 +1660,18 @@ User provides data → Node validates → Writer writes to Zarr → Metadata ret
 **Hierarchical Composition**: Rendering attributes compose (multiply) through the hierarchy, they do NOT override:
 - `effective_opacity = clamp(parent_opacity × child_opacity, 0.0, 1.0)`
 - `effective_gamma = clamp(parent_gamma × child_gamma, 0.1, 10.0)`
+- `effective_intensity = parent_intensity × child_intensity`
+- `effective_offset = parent_offset + child_offset`
 - `blending_mode`: Child inherits parent's mode if not explicitly set; if set, child's mode is used
 
 Example: If parent has `opacity=0.5` and child has `opacity=0.5`, the effective opacity is `0.25`.
+
+**Per-node GOG Model** (applied in material shaders):
+```
+adjusted = color * intensity + offset
+adjusted = clamp(adjusted, 0.0, 1e6)
+adjusted = pow(adjusted, 1.0 / gamma)
+```
 
 **Clamping**: Effective values are clamped to valid ranges after composition to prevent invalid states.
 
@@ -1665,6 +1680,8 @@ Example: If parent has `opacity=0.5` and child has `opacity=0.5`, the effective 
 **Default Values**:
 - opacity: 1.0
 - gamma: 1.0
+- intensity: 1.0
+- offset: 0.0
 - blending_mode: "additive"
 
 ---

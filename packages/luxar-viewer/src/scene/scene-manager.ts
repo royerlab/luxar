@@ -1328,15 +1328,32 @@ export class SceneManager extends THREE.EventDispatcher<{
     return result;
   }
 
+  // ======================================================================
+  // Global EOG (Exposure-Offset-Gamma) — routed to post-processing
+  // ======================================================================
+
   /**
-   * Update HDR multiplier for all point materials in the scene
-   *
-   * @param multiplier - New HDR multiplier value (1.0 to 20.0)
+   * Update global exposure (log2 stops).
+   * Applied in the vendored tone mapping shader before tone mapping.
    */
-  updateHDRMultiplier(multiplier: number): void {
-    // Material manager updates all registered materials (no scene traversal needed)
-    materialManager.updateHDRMultiplier(multiplier);
-    log.success(Modules.RENDERER, `HDR multiplier updated for all point materials: ${multiplier}`);
+  updateExposure(value: number): void {
+    this.postProcessing.updateExposure(value);
+  }
+
+  /**
+   * Update global offset (additive brightness shift).
+   * Applied in the vendored tone mapping shader before tone mapping.
+   */
+  updateGlobalOffset(value: number): void {
+    this.postProcessing.updateGlobalOffset(value);
+  }
+
+  /**
+   * Update global gamma correction.
+   * Applied in the vendored tone mapping shader before tone mapping.
+   */
+  updateGlobalGamma(value: number): void {
+    this.postProcessing.updateGlobalGamma(value);
   }
 
   /**

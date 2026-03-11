@@ -222,22 +222,18 @@ test.describe('Custom GUI Library', () => {
     expect(fovValue).toBe(50);
   });
 
-  test('should handle logarithmic slider (HDR intensity)', async ({ page }) => {
-    // The HDR intensity slider uses logarithmic scale
-    // Find the HDR folder and intensity slider
+  test('should handle exposure slider (HDR section)', async ({ page }) => {
+    // The exposure slider uses linear scale in log2 stops
+    // Find the HDR folder and exposure slider
     const hdrFolder = page.locator('.luxar-gui__folder').filter({ hasText: 'HDR' });
-    const intensitySlider = hdrFolder.locator('.luxar-gui__slider').first();
+    const exposureSlider = hdrFolder.locator('.luxar-gui__slider').first();
 
-    // Change to max value (log 2 = 100x multiplier)
-    await intensitySlider.fill('2');
+    // Change to max value (5.0 stops)
+    await exposureSlider.fill('5');
     await page.waitForTimeout(100);
 
-    // Verify the actual multiplier is approximately 100 (10^2)
-    const multiplier = await page.evaluate(() => (window as Window).settings.hdrMultiplier);
-    expect(multiplier).toBeCloseTo(100, 0);
-
-    // The display should show the actual value, not the log value
-    const inputValue = await hdrFolder.locator('.luxar-gui__input--number').inputValue();
-    expect(parseFloat(inputValue)).toBeCloseTo(100, 0);
+    // Verify the exposure value
+    const exposure = await page.evaluate(() => (window as Window).settings.exposure);
+    expect(exposure).toBeCloseTo(5, 0);
   });
 });

@@ -657,6 +657,7 @@ class TestTypeGuards:
         assert is_transform_matrix(transform) is True
 
         transform_custom = np.random.rand(4, 4).astype(np.float32)
+        transform_custom[3, :] = [0, 0, 0, 1]  # Valid affine bottom row
         assert is_transform_matrix(transform_custom) is True
 
     def test_is_transform_matrix_invalid(self) -> None:
