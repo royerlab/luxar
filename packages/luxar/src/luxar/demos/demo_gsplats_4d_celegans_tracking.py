@@ -1091,9 +1091,7 @@ def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
                     sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
                 )
             else:
-                shared_centroid = np.mean(
-                    np.concatenate(all_centers, axis=0), axis=0
-                )
+                shared_centroid = np.mean(np.concatenate(all_centers, axis=0), axis=0)
             aprint(f"Shared centroid: {shared_centroid}")
 
         # Process each timepoint: translate, filter, normalise, colour
@@ -1259,10 +1257,7 @@ Navigation:
                 opacity=0.7,
                 blending_mode="additive",
             )
-            aprint(
-                f"Added single 4D gsplats node: "
-                f"{combined_4d.n_splats:,} splats"
-            )
+            aprint(f"Added single 4D gsplats node: {combined_4d.n_splats:,} splats")
 
             # # Add cell track lines (commented out — too visually cluttered)
             # if tracking_data:

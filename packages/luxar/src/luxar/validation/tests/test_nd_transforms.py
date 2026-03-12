@@ -10,9 +10,9 @@ from luxar import (
     Dimensions,
     LuxarScene,
     LuxarZarrCompiler,
+    apply_nd_transform_to_bounds,
     compose_nd_transforms,
     validate_nd_transform,
-    apply_nd_transform_to_bounds,
 )
 
 
@@ -41,10 +41,12 @@ class TestValidateNdTransform:
 
     def test_valid_mixed_dims(self) -> None:
         """Test mixed affine and permutation on different dimensions."""
-        result = validate_nd_transform({
-            "Time": {"scale": 0.001, "offset": 50.0},
-            "Channel": {"permutation": [2, 1, 0]},
-        })
+        result = validate_nd_transform(
+            {
+                "Time": {"scale": 0.001, "offset": 50.0},
+                "Channel": {"permutation": [2, 1, 0]},
+            }
+        )
         assert "Time" in result
         assert "Channel" in result
 
@@ -71,9 +73,7 @@ class TestValidateNdTransform:
     def test_reject_mixed_affine_and_permutation(self) -> None:
         """Test rejection of both affine and permutation on same dim."""
         with pytest.raises(ValueError, match="cannot have both"):
-            validate_nd_transform({
-                "Time": {"scale": 2.0, "permutation": [0, 1]}
-            })
+            validate_nd_transform({"Time": {"scale": 2.0, "permutation": [0, 1]}})
 
     def test_reject_empty_entry(self) -> None:
         """Test rejection of entry with no recognized keys."""
@@ -124,13 +124,17 @@ class TestValidateWithDimensions:
 
     @pytest.fixture
     def dims_5d(self) -> Dimensions:
-        return Dimensions([
-            Dimension("X", display=True),
-            Dimension("Y", display=True),
-            Dimension("Z", display=True),
-            Dimension("Time", display=False, range=(0, 100)),
-            Dimension("Channel", display=False, categories=["DAPI", "GFP", "mCherry"]),
-        ])
+        return Dimensions(
+            [
+                Dimension("X", display=True),
+                Dimension("Y", display=True),
+                Dimension("Z", display=True),
+                Dimension("Time", display=False, range=(0, 100)),
+                Dimension(
+                    "Channel", display=False, categories=["DAPI", "GFP", "mCherry"]
+                ),
+            ]
+        )
 
     def test_valid_with_dimensions(self, dims_5d) -> None:
         result = validate_nd_transform(
@@ -205,7 +209,7 @@ class TestComposeNdTransforms:
     def test_permutation_composition(self) -> None:
         """Test: composed[i] = parent[child[i]]."""
         parent = {"Ch": {"permutation": [2, 0, 1]}}  # 0→2, 1→0, 2→1
-        child = {"Ch": {"permutation": [1, 2, 0]}}   # 0→1, 1→2, 2→0
+        child = {"Ch": {"permutation": [1, 2, 0]}}  # 0→1, 1→2, 2→0
         # composed: 0→child→1→parent→0, 1→child→2→parent→1, 2→child→0→parent→2
         result = compose_nd_transforms(parent, child)
         assert result["Ch"]["permutation"] == [0, 1, 2]  # identity!
@@ -252,12 +256,14 @@ class TestApplyNdTransformToBounds:
 
     @pytest.fixture
     def dims_4d(self) -> Dimensions:
-        return Dimensions([
-            Dimension("X", display=True),
-            Dimension("Y", display=True),
-            Dimension("Z", display=True),
-            Dimension("Time", display=False, range=(0, 100)),
-        ])
+        return Dimensions(
+            [
+                Dimension("X", display=True),
+                Dimension("Y", display=True),
+                Dimension("Z", display=True),
+                Dimension("Time", display=False, range=(0, 100)),
+            ]
+        )
 
     def test_affine_positive_scale(self, dims_4d) -> None:
         bounds = {"min": [0, 0, 0, 0], "max": [10, 10, 10, 50]}
@@ -290,12 +296,14 @@ class TestNodeNdTransformIntegration:
     def test_nd_transform_property(self, tmp_path) -> None:
         """Test set/get/remove nd_transform on nodes."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            dims = Dimensions([
-                Dimension("X", display=True),
-                Dimension("Y", display=True),
-                Dimension("Z", display=True),
-                Dimension("Time", display=False, range=(0, 100)),
-            ])
+            dims = Dimensions(
+                [
+                    Dimension("X", display=True),
+                    Dimension("Y", display=True),
+                    Dimension("Z", display=True),
+                    Dimension("Time", display=False, range=(0, 100)),
+                ]
+            )
             scene = compiler.create_scene(dimensions=dims)
             group = scene.add_group("G")
 
@@ -313,12 +321,14 @@ class TestNodeNdTransformIntegration:
     def test_nd_transform_via_add_group(self, tmp_path) -> None:
         """Test nd_transform passed via add_group kwargs."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            dims = Dimensions([
-                Dimension("X", display=True),
-                Dimension("Y", display=True),
-                Dimension("Z", display=True),
-                Dimension("Time", display=False, range=(0, 100)),
-            ])
+            dims = Dimensions(
+                [
+                    Dimension("X", display=True),
+                    Dimension("Y", display=True),
+                    Dimension("Z", display=True),
+                    Dimension("Time", display=False, range=(0, 100)),
+                ]
+            )
             scene = compiler.create_scene(dimensions=dims)
             group = scene.add_group(
                 "G",
@@ -332,12 +342,14 @@ class TestNodeNdTransformIntegration:
         nd_t = {"Time": {"scale": 0.001, "offset": 50.0}}
 
         with LuxarZarrCompiler(store_path) as compiler:
-            dims = Dimensions([
-                Dimension("X", display=True),
-                Dimension("Y", display=True),
-                Dimension("Z", display=True),
-                Dimension("Time", display=False, range=(0, 100)),
-            ])
+            dims = Dimensions(
+                [
+                    Dimension("X", display=True),
+                    Dimension("Y", display=True),
+                    Dimension("Z", display=True),
+                    Dimension("Time", display=False, range=(0, 100)),
+                ]
+            )
             scene = compiler.create_scene(dimensions=dims)
             scene.add_group("G", nd_transform=nd_t)
 
@@ -350,12 +362,14 @@ class TestNodeNdTransformIntegration:
     def test_world_nd_transform(self, tmp_path) -> None:
         """Test hierarchical composition via world_nd_transform."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            dims = Dimensions([
-                Dimension("X", display=True),
-                Dimension("Y", display=True),
-                Dimension("Z", display=True),
-                Dimension("Time", display=False, range=(0, 100)),
-            ])
+            dims = Dimensions(
+                [
+                    Dimension("X", display=True),
+                    Dimension("Y", display=True),
+                    Dimension("Z", display=True),
+                    Dimension("Time", display=False, range=(0, 100)),
+                ]
+            )
             scene = compiler.create_scene(dimensions=dims)
 
             g1 = scene.add_group("L1", nd_transform={"Time": {"offset": 100.0}})
@@ -379,17 +393,20 @@ class TestNodeNdTransformIntegration:
         """Test nd_transform stored on points node."""
         store_path = tmp_path / "test.zarr"
         with LuxarZarrCompiler(store_path) as compiler:
-            dims = Dimensions([
-                Dimension("X", display=True),
-                Dimension("Y", display=True),
-                Dimension("Z", display=True),
-                Dimension("Time", display=False, range=(0, 100)),
-            ])
+            dims = Dimensions(
+                [
+                    Dimension("X", display=True),
+                    Dimension("Y", display=True),
+                    Dimension("Z", display=True),
+                    Dimension("Time", display=False, range=(0, 100)),
+                ]
+            )
             scene = compiler.create_scene(dimensions=dims)
             positions = np.random.rand(100, 4).astype(np.float32)
             positions[:, 3] *= 50  # Time in [0, 50]
             scene.add_points(
-                "pts", positions,
+                "pts",
+                positions,
                 nd_transform={"Time": {"offset": 25.0}},
             )
 

@@ -345,7 +345,7 @@ export class RenderingControls {
     }
 
     // Apply camera settings to scene manager (before post-processing)
-    const currentFOV = this.sceneManager.camera.fov;
+    const currentFOV = this.sceneManager.currentFov;
     if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
       const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
       this.sceneManager.updateFOV(delta);
@@ -655,7 +655,7 @@ export class RenderingControls {
     // Apply camera settings after loading (fov, near, far)
     // This ensures loaded settings are actually applied to the camera
     // Note: Dynamic clipping is applied later via applySettings()
-    const currentFOV = this.sceneManager.camera.fov;
+    const currentFOV = this.sceneManager.currentFov;
     if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
       const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
       this.sceneManager.updateFOV(delta);
@@ -719,7 +719,7 @@ export class RenderingControls {
 
     // Apply FOV if overridden
     if (zarrOverrides.fov !== undefined) {
-      const currentFOV = this.sceneManager.camera.fov;
+      const currentFOV = this.sceneManager.currentFov;
       if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
         const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
         this.sceneManager.updateFOV(delta);
@@ -885,7 +885,7 @@ export class RenderingControls {
   /**
    * Update navigation controls visibility based on control type
    */
-  private updateNavigationControls(controlType: 'orbit' | 'arcball' | 'fly'): void {
+  private updateNavigationControls(controlType: 'orbit' | 'arcball' | 'fly' | 'ortho'): void {
     const orbitFolder = this.orbitFolder;
     const flyFolder = this.flyFolder;
 
@@ -927,7 +927,7 @@ export class RenderingControls {
           );
         }
       }
-    } else {
+    } else if (controlType === 'fly') {
       // Show fly folder for fly controls
       if (orbitFolder) {
         orbitFolder.close();
@@ -937,6 +937,25 @@ export class RenderingControls {
         flyFolder.show();
         flyFolder.open();
       }
+    } else if (controlType === 'ortho') {
+      // Ortho: hide all control-specific folders (pan + zoom only, no settings)
+      if (orbitFolder) {
+        orbitFolder.close();
+        orbitFolder.hide();
+      }
+      if (flyFolder) {
+        flyFolder.close();
+        flyFolder.hide();
+      }
+    }
+
+    // FOV controls are irrelevant in ortho mode (no perspective projection)
+    const isOrtho = controlType === 'ortho';
+    if (this.controllers.fov) {
+      isOrtho ? this.controllers.fov.hide() : this.controllers.fov.show();
+    }
+    if (this.controllers.fovPreset) {
+      isOrtho ? this.controllers.fovPreset.hide() : this.controllers.fovPreset.show();
     }
   }
 
@@ -1004,7 +1023,7 @@ export class RenderingControls {
    */
   public syncCurrentState(): void {
     // Sync camera settings
-    this.settings.fov = this.sceneManager.camera.fov;
+    this.settings.fov = this.sceneManager.currentFov;
     this.settings.near = this.sceneManager.camera.near;
     this.settings.far = this.sceneManager.camera.far;
 
@@ -1521,7 +1540,7 @@ export class RenderingControls {
     this.postProcessing.endDeferRebuild();
 
     // Apply FOV change to camera
-    const currentFOV = this.sceneManager.camera.fov;
+    const currentFOV = this.sceneManager.currentFov;
     if (Math.abs(currentFOV - targetFOV) > 0.5) {
       const delta = (targetFOV - currentFOV) / config.camera.fovSensitivity;
       this.sceneManager.updateFOV(delta);

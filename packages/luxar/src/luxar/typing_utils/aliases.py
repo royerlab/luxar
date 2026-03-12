@@ -26,7 +26,9 @@ TransformMatrix = Float32Array  # 4x4 matrix
 TransformList = List[float]  # 16-element list
 
 # nD Transform type aliases (per-dimension transforms for non-displayed dimensions)
-NdTransformEntry = Dict[str, Any]  # {"scale": float, "offset": float} or {"permutation": [int]}
+NdTransformEntry = Dict[
+    str, Any
+]  # {"scale": float, "offset": float} or {"permutation": [int]}
 NdTransform = Dict[str, NdTransformEntry]  # Maps dim name → transform entry
 
 # Path-like types

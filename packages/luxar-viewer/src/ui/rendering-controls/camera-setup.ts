@@ -82,7 +82,7 @@ export function setupCameraControls(
         settings.fov = fovValue;
 
         // Calculate delta and apply to camera
-        const currentFOV = sceneManager.camera.fov;
+        const currentFOV = sceneManager.currentFov;
         const delta = (fovValue - currentFOV) / config.camera.fovSensitivity;
         sceneManager.updateFOV(delta);
 
@@ -196,7 +196,7 @@ export function setupCameraControls(
       }
 
       // Calculate the delta needed to reach the target FOV
-      const currentFOV = sceneManager.camera.fov;
+      const currentFOV = sceneManager.currentFov;
       const targetFOV = value;
       const delta = (targetFOV - currentFOV) / config.camera.fovSensitivity;
 

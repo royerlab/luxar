@@ -35,6 +35,7 @@ data/
 ├── array-decoder.ts               # Decodes Python luxar.encoding arrays
 ├── data-monitor-manager.ts        # Singleton manager for monitoring UI instances
 ├── directory-navigator.ts         # Multi-strategy server directory browsing
+├── nd-transform.ts                # nD transform inverse-query for non-displayed dimensions
 ├── effective-radius-calculator.ts # Calculates effective radii for nD slicing
 ├── data-loader-types.ts           # TypeScript interfaces and types
 ├── data-accumulator.ts            # Zero-allocation buffer pooling

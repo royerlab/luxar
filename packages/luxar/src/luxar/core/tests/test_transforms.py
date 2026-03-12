@@ -474,7 +474,10 @@ class TestNodeTransformIntegration:
 
     def test_prepare_transform_roundtrip_from_list(self) -> None:
         """Test that row-major list input round-trips correctly."""
-        from luxar.core.transforms import prepare_transform_for_zarr, read_transform_from_zarr
+        from luxar.core.transforms import (
+            prepare_transform_for_zarr,
+            read_transform_from_zarr,
+        )
 
         # Start with a numpy matrix
         original = compose(translate(1, 2, 3), rotate_z(45))

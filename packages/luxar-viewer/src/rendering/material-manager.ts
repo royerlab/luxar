@@ -66,8 +66,9 @@ export class MaterialManager {
   private lineMaterialCache = new Map<string, LineMaterial>();
   private gsplatMaterialCache = new Map<string, GSplatMaterial>();
   private registeredMaterials = new Set<THREE.Material>();
-  private currentFov = (60 * Math.PI) / 180; // Current FOV in radians
+  private currentFov = (60 * Math.PI) / 180; // Current FOV in radians (or frustumHeight for ortho)
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
+  private currentIsOrtho = false;
   // Note: Global HDR multiplier has been replaced by exposure/offset/gamma in post-processing
 
   /**
@@ -127,7 +128,7 @@ export class MaterialManager {
     this.registeredMaterials.add(material);
 
     // Update with current camera params
-    material.updateCameraParams(this.currentFov, this.currentResolution);
+    material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
 
     // Debug log the camera params being set
     log.info(
@@ -174,7 +175,7 @@ export class MaterialManager {
     this.registeredMaterials.add(material);
 
     // Update with current camera params
-    material.updateCameraParams(this.currentFov, this.currentResolution);
+    material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
 
     // Cache it
     this.lineMaterialCache.set(key, material);
@@ -216,7 +217,7 @@ export class MaterialManager {
     this.registeredMaterials.add(material);
 
     // Update with current camera params
-    material.updateCameraParams(this.currentFov, this.currentResolution);
+    material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
 
     // Cache it
     this.gsplatMaterialCache.set(key, material);
@@ -257,10 +258,11 @@ export class MaterialManager {
   /**
    * Update camera parameters for all registered materials
    */
-  updateCameraParams(fov: number, resolution: THREE.Vector2): void {
+  updateCameraParams(fov: number, resolution: THREE.Vector2, isOrtho: boolean = false): void {
     // Store current values for future material creation
     this.currentFov = fov;
     this.currentResolution.copy(resolution);
+    this.currentIsOrtho = isOrtho;
 
     // Update all registered materials
     this.registeredMaterials.forEach((material) => {
@@ -269,7 +271,7 @@ export class MaterialManager {
         'updateCameraParams' in material &&
         typeof (material as any).updateCameraParams === 'function'
       ) {
-        (material as any).updateCameraParams(fov, resolution);
+        (material as any).updateCameraParams(fov, resolution, isOrtho);
       }
     });
   }

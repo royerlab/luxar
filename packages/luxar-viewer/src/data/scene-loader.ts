@@ -2742,6 +2742,7 @@ export class SceneLoader {
 
     this.store = null;
     this.rootGroup = null;
+    this._sceneGraph = null;
 
     // Note: We don't dispose the monitor here as it's managed by DataMonitorManager
     // The monitor can be reused by other SceneLoader instances

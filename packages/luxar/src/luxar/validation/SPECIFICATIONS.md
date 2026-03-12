@@ -1,11 +1,11 @@
 # luxar.validation - Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2025-11-28
+**Version**: 1.2.0
+**Last Updated**: 2026-03-11
 
 ## Purpose
 
-The `validation` package provides comprehensive validation for all Luxar data structures with helpful, actionable error messages. It's organized into three modules serving different purposes.
+The `validation` package provides comprehensive validation for all Luxar data structures with helpful, actionable error messages. It's organized into four modules serving different purposes.
 
 **Related Specifications**:
 - `luxar.core` - Data structures being validated (see `core/SPECIFICATIONS.md`)
@@ -25,6 +25,11 @@ The `validation` package provides comprehensive validation for all Luxar data st
 **Purpose**: Detailed validation with helpful error messages for data writing
 **Returns**: None or tuple (e.g., n_points, n_dims)
 **Errors**: Custom ValidationError with suggestions
+
+### nd_transforms.py - nD Transform Validation
+**Purpose**: Validate, compose, and apply nD transforms on non-displayed dimensions
+**Returns**: Validated dict, composed dict, or transformed bounds
+**Errors**: ValueError with descriptive messages
 
 ### nd.py - Dimensional Validation
 **Purpose**: Validate dimensional coverage consistency
@@ -195,6 +200,51 @@ When validating point positions against scene dimensions:
 1. Identify which dimensions are categorical
 2. For categorical dimensions, validate that all point values are valid indices
 3. Provide helpful error messages: "point {i} has channel=5, but valid channels are: DAPI (0), GFP (1), mCherry (2)"
+
+---
+
+## nD Transform Validation
+
+### Purpose
+Validate, compose, and transform nD transforms that operate on non-displayed dimensions. These transforms enable alignment, unit conversion, and category remapping across datasets.
+
+### Functions
+
+**`validate_nd_transform(value, dimensions=None)`**:
+- Validates the structure and values of an nD transform dict
+- Without `dimensions`: structural validation only (keys are strings, values have correct shape)
+- With `dimensions`: additionally validates dimension names exist, are non-displayed, and use the correct transform type for their domain
+
+**`compose_nd_transforms(*transforms)`**:
+- Composes multiple nD transforms in root-first order (first argument = outermost/root)
+- Affine composition: `composed_scale = parent_scale * child_scale`, `composed_offset = parent_scale * child_offset + parent_offset`
+- Permutation composition: `composed[i] = parent_perm[child_perm[i]]`
+- Identity entries (scale=1, offset=0) are elided from the result
+
+**`apply_nd_transform_to_bounds(bounds, nd_transform, dimensions)`**:
+- Applies an nD transform to dimension bounds (for bounds expansion)
+- Handles negative scale (swaps min/max)
+
+### Domain Classification
+
+Dimensions are classified into domains that determine valid transform types:
+- **displayed**: Not allowed in nD transform (use 4x4 `transform`)
+- **categorical**: Must use `{"permutation": [int, ...]}`
+- **discrete_ordinal**: Must use `{"scale": float, "offset": float}` (affine)
+- **continuous**: Must use `{"scale": float, "offset": float}` (affine)
+
+### Validation Rules
+
+1. Top-level value must be a dict with string keys
+2. Each entry must be a dict (not a list, int, etc.)
+3. Affine entries: `scale` must be non-zero; both `scale` and `offset` must be numeric
+4. Permutation entries: must be a valid permutation of `[0, 1, ..., n-1]`; length must match category count
+5. No mixing affine and permutation params on a single dimension
+6. No unknown keys within entries (only `scale`, `offset`, `permutation` allowed)
+7. Dimension names must exist in scene dimensions (when dimensions provided)
+8. Only non-displayed dimensions may appear
+
+See `docs/guides/specs/ND_TRANSFORMS_SPEC.md` for the full specification.
 
 ---
 

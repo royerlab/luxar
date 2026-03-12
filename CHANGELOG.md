@@ -14,8 +14,42 @@ All notable changes to Luxar are documented in this file.
 - **Shader model**: `adjusted = color * intensity + offset; clip; pow(adjusted, 1/gamma)` with early discard for zero-contribution fragments
 - **Global Exposure-Offset-Gamma (EOG)**: Replaced per-shader `hdrMultiplier` with `exposure` (log2 stops), `global_offset`, `global_gamma` applied in post-processing
 - **Vendored tone mapping**: `LuxarToneMappingEffect` extends pmndrs ToneMappingEffect with EOG in a single shader pass (zero extra bandwidth cost)
-- **Full config propagation**: Python `ViewerConfig` → zarr → TypeScript → UI sliders → post-processing uniforms
+- **Full config propagation**: Python `ViewerConfig` -> zarr -> TypeScript -> UI sliders -> post-processing uniforms
 - **UI**: HDR folder now has Exposure (-5 to +5 stops), Offset (-1 to +1), Gamma (0.1 to 10.0), and Tone Mapping selector
+
+**nD Transforms on Non-Displayed Dimensions**
+- Per-dimension affine (`scale`, `offset`) and categorical (`permutation`) transforms for non-displayed dimensions
+- Python validation in `nd_transform` property with full round-trip zarr serialization
+- Viewer uses inverse-query approach: transforms the query (slicePosition + tolerance) from world to local space O(1), rather than transforming all point coordinates O(N)
+- No loader internals changed; works transparently with existing spatial indexing
+
+**Recording Panel with Screenshot and Video Export**
+- New recording panel UI (`src/ui/recording-panel.ts`) for capturing viewer output
+- Screenshot export: single-frame capture (PNG, WebP, JPEG) with configurable resolution
+- Video export: record viewport as video for supplementary materials and demos
+- Accessible from viewer UI controls
+
+**Scale Bar Overlay with Physical Units**
+- Scale bar component (`src/ui/components/scale-bar.ts`) rendered as an overlay on the viewport
+- Supports all Luxar physical units (nm, um, mm, cm, m, km, inch, foot, px, au)
+- Automatically adapts to current zoom level and camera projection
+- Essential for microscopy figure generation
+
+**Tiled Fitting for Large Volumes**
+- Cosine-apodized (Hann window) overlapping tiles for fitting arbitrarily large volumes
+- Removes GPU memory ceiling: each tile is fit independently, then splats are concatenated
+- Enables parallel fitting across tiles (and potentially across GPUs)
+- Implementation in `gsplats/fit_tiled_gsplats.py` with tiling utilities in `gsplats/tiling.py`
+
+**GSplat CLI: filter, split, slice, compare Commands**
+- `luxar gsplat filter`: Filter splats by amplitude, eccentricity, bounding box, volume, and more
+- `luxar gsplat split`: Split gsplat datasets into parts by count or explicit indices
+- `luxar gsplat slice`: Slice by coordinate ranges using numpy-style syntax (e.g., `"0:50, :, 10:90"`)
+- `luxar gsplat compare`: PSNR/SSIM quality metrics comparing gsplat reconstruction to original volume
+
+**Camera Utilities**
+- New `camera-utils.ts` module with `PerspectiveCamera | OrthographicCamera` union type
+- Shared utilities for camera setup across perspective and orthographic projections
 
 #### Maintenance
 
@@ -31,9 +65,9 @@ All notable changes to Luxar are documented in this file.
 - **What**: Complete theming system with runtime theme switching, CSS-based architecture, and modern aesthetics
 - **Themes**: 3 production-ready themes (Dark, Light, Frosted Glass)
 - **Components**: All 8 UI components fully themed (error dialogs, help overlay, dimension sliders, debug console, dataset browser, data loading monitor, rendering controls)
-- **Architecture**: Three-layer system (Theme definitions → CSS files → Component logic)
+- **Architecture**: Three-layer system (Theme definitions -> CSS files -> Component logic)
 - **Features**:
-  - Instant theme switching via UI dropdown (R key → 🎨 Theme)
+  - Instant theme switching via UI dropdown (R key -> 🎨 Theme)
   - URL parameter support (`?theme=light`)
   - Automatic persistence via localStorage
   - 130+ CSS utility classes with BEM naming

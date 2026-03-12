@@ -33,8 +33,9 @@ import { ArcballControls } from 'three/examples/jsm/controls/ArcballControls';
 import { LuxarFlyControls } from './luxar-fly-controls';
 import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
+import type { LuxarCamera } from '../scene/camera-utils';
 
-export type ControlType = 'orbit' | 'arcball' | 'fly';
+export type ControlType = 'orbit' | 'arcball' | 'fly' | 'ortho';
 
 export interface ControlsManagerConfig {
   autoRotate?: boolean;
@@ -54,7 +55,7 @@ interface ControlsManagerEventMap {
 }
 
 export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventMap> {
-  private camera: THREE.PerspectiveCamera;
+  private camera: LuxarCamera;
   private domElement: HTMLElement;
   private scene?: THREE.Scene;
   // Current control instance
@@ -92,11 +93,11 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
    * Initializes with orbit controls by default. Starts Three.js Clock for
    * frame-rate independent physics (fly mode).
    *
-   * @param camera - Perspective camera to control
+   * @param camera - Camera to control (perspective or orthographic)
    * @param domElement - DOM element for mouse/touch input (typically canvas)
    * @param scene - Optional scene reference for advanced controls
    */
-  constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement, scene?: THREE.Scene) {
+  constructor(camera: LuxarCamera, domElement: HTMLElement, scene?: THREE.Scene) {
     super();
 
     this.camera = camera;
@@ -105,6 +106,14 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
 
     // Initialize with orbit controls by default
     this.setControlType('orbit');
+  }
+
+  /**
+   * Update internal camera reference (e.g., when swapping between perspective and orthographic).
+   * Must be called BEFORE setControlType when the camera object itself changes.
+   */
+  public setCamera(camera: LuxarCamera): void {
+    this.camera = camera;
   }
 
   /**
@@ -145,6 +154,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
         break;
       case 'fly':
         this.createFlyControls();
+        break;
+      case 'ortho':
+        this.createOrthoControls();
         break;
     }
 
@@ -313,6 +325,57 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
+   * Create orthographic controls (pan + zoom, no rotation).
+   * Uses OrbitControls which natively supports OrthographicCamera.
+   */
+  private createOrthoControls(): void {
+    const controls = new OrbitControls(this.camera, this.domElement);
+
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.screenSpacePanning = true;
+
+    // Disable rotation — ortho is pan + zoom only (Napari/Google Maps convention)
+    controls.enableRotate = false;
+
+    // Remap mouse buttons: left-click = pan (like Napari/Google Maps)
+    controls.mouseButtons = {
+      LEFT: THREE.MOUSE.PAN,
+      MIDDLE: THREE.MOUSE.DOLLY,
+      RIGHT: THREE.MOUSE.PAN,
+    };
+
+    // Zoom maps to camera.zoom for OrthographicCamera (built into OrbitControls)
+    controls.enableZoom = true;
+    controls.zoomSpeed = 1.0;
+
+    // No distance limits for ortho (zoom is via camera.zoom, not dolly distance)
+    controls.minDistance = 0;
+    controls.maxDistance = Infinity;
+
+    // Set zoom limits
+    controls.minZoom = 0.01;
+    controls.maxZoom = 1000;
+
+    // Set target
+    controls.target.copy(this.savedTarget);
+
+    // Event forwarding
+    controls.addEventListener('change', () => {
+      this.dispatchEvent({ type: 'change' });
+    });
+    controls.addEventListener('start', () => {
+      this.dispatchEvent({ type: 'start' });
+    });
+    controls.addEventListener('end', () => {
+      this.dispatchEvent({ type: 'end' });
+    });
+
+    this.currentControls = controls;
+    this.clock.getDelta();
+  }
+
+  /**
    * Save current camera state before switching
    */
   private saveCameraState(): void {
@@ -320,8 +383,11 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     this.savedCameraRotation.copy(this.camera.rotation);
     this.savedCameraUp.copy(this.camera.up); // Save the current up vector
 
-    // Save target if using orbit or arcball controls
-    if (this.currentType === 'orbit' && this.currentControls instanceof OrbitControls) {
+    // Save target if using orbit, arcball, or ortho controls
+    if (
+      (this.currentType === 'orbit' || this.currentType === 'ortho') &&
+      this.currentControls instanceof OrbitControls
+    ) {
       this.savedTarget.copy(this.currentControls.target);
     } else if (this.currentType === 'arcball' && this.currentControls instanceof ArcballControls) {
       this.savedTarget.copy((this.currentControls as any).target);

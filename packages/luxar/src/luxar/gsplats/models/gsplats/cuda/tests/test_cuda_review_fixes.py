@@ -46,9 +46,7 @@ def _make_splat_data(
 
     if centers is None:
         centers_t = (
-            torch.rand(N, d, device=device, dtype=torch.float32)
-            * (min(shape) - 4)
-            + 2
+            torch.rand(N, d, device=device, dtype=torch.float32) * (min(shape) - 4) + 2
         )
     else:
         centers_t = torch.tensor(centers, device=device, dtype=torch.float32)
@@ -66,9 +64,7 @@ def _make_splat_data(
     else:
         amps_t = torch.tensor(amps, device=device, dtype=torch.float32)
 
-    sharpness_t = torch.full(
-        (N,), sharpness_val, device=device, dtype=torch.float32
-    )
+    sharpness_t = torch.full((N,), sharpness_val, device=device, dtype=torch.float32)
 
     conic = cholesky_to_conic(L)
     L_row_norms = compute_L_row_norms(L)
@@ -135,7 +131,9 @@ class TestAmplitudeBasedTruncation:
         )
 
         data = _make_splat_data(N, d, shape, amps=amps)
-        cuda_out, _ = _run_cuda_forward(data, tile_size=8, intensity_floor=intensity_floor)
+        cuda_out, _ = _run_cuda_forward(
+            data, tile_size=8, intensity_floor=intensity_floor
+        )
         pytorch_out = _run_pytorch_reference(data, intensity_floor=intensity_floor)
 
         cuda_cpu = cuda_out.cpu()
@@ -144,12 +142,12 @@ class TestAmplitudeBasedTruncation:
         max_val = max(cuda_cpu.abs().max().item(), pytorch_cpu.abs().max().item())
         if max_val > 1e-6:
             rel_diff = (cuda_cpu - pytorch_cpu).abs() / (max_val + 1e-8)
-            assert (
-                rel_diff.max().item() < Tolerances.COMPARISON_MAX_REL_DIFF
-            ), f"Max relative diff {rel_diff.max().item():.4f} exceeds tolerance"
-            assert (
-                rel_diff.mean().item() < Tolerances.COMPARISON_MEAN_REL_DIFF
-            ), f"Mean relative diff {rel_diff.mean().item():.6f} exceeds tolerance"
+            assert rel_diff.max().item() < Tolerances.COMPARISON_MAX_REL_DIFF, (
+                f"Max relative diff {rel_diff.max().item():.4f} exceeds tolerance"
+            )
+            assert rel_diff.mean().item() < Tolerances.COMPARISON_MEAN_REL_DIFF, (
+                f"Mean relative diff {rel_diff.mean().item():.6f} exceeds tolerance"
+            )
 
     def test_amplitude_near_floor_correctness(self):
         """Splats with amplitude near/below intensity_floor produce correct output.
@@ -181,10 +179,10 @@ class TestAmplitudeBasedTruncation:
         amps_below = np.full(N_below, intensity_floor * 0.99, dtype=np.float32)
         amps = np.concatenate([amps_above, amps_below])
 
-        data = _make_splat_data(
-            N_above + N_below, d, shape, centers=centers, amps=amps
+        data = _make_splat_data(N_above + N_below, d, shape, centers=centers, amps=amps)
+        cuda_out, _ = _run_cuda_forward(
+            data, tile_size=8, intensity_floor=intensity_floor
         )
-        cuda_out, _ = _run_cuda_forward(data, tile_size=8, intensity_floor=intensity_floor)
 
         cuda_cpu = cuda_out.cpu()
 
@@ -221,7 +219,9 @@ class TestAmplitudeBasedTruncation:
         )
 
         data = _make_splat_data(N, d, shape, amps=amps)
-        cuda_out, _ = _run_cuda_forward(data, tile_size=16, intensity_floor=intensity_floor)
+        cuda_out, _ = _run_cuda_forward(
+            data, tile_size=16, intensity_floor=intensity_floor
+        )
         pytorch_out = _run_pytorch_reference(data, intensity_floor=intensity_floor)
 
         cuda_cpu = cuda_out.cpu()
@@ -239,7 +239,9 @@ class TestSharpnessGradientConsistency:
     @pytest.mark.parametrize("sharpness_val", [1.5, 2.0, 3.0])
     def test_backward_various_sharpness(self, sharpness_val):
         """Forward+backward with various sharpness values produce consistent gradients."""
-        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import cholesky_to_conic
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            cholesky_to_conic,
+        )
 
         np.random.seed(77)
         N, d = 10, 3
@@ -329,7 +331,9 @@ class TestSharpnessGradientConsistency:
 
     def test_backward_2d_sharpness_at_center(self):
         """2D backward: splat exactly at pixel center has finite sharpness gradient."""
-        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import cholesky_to_conic
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            cholesky_to_conic,
+        )
 
         N, d = 1, 2
         shape = (32, 32)
@@ -386,10 +390,13 @@ class TestForwardBackwardWithVariousSharpness:
     """Tests ensuring forward/backward consistency with PyTorch reference across sharpness values."""
 
     @pytest.mark.parametrize("sharpness_val", [1.5, 2.0, 3.0])
-    @pytest.mark.parametrize("dim,shape,tile_size", [
-        (2, (32, 32), 16),
-        (3, (16, 16, 16), 8),
-    ])
+    @pytest.mark.parametrize(
+        "dim,shape,tile_size",
+        [
+            (2, (32, 32), 16),
+            (3, (16, 16, 16), 8),
+        ],
+    )
     def test_forward_matches_pytorch_with_sharpness(
         self, sharpness_val, dim, shape, tile_size
     ):
@@ -398,9 +405,7 @@ class TestForwardBackwardWithVariousSharpness:
         N = 15
         intensity_floor = 1e-5
 
-        data = _make_splat_data(
-            N, dim, shape, sharpness_val=sharpness_val, L_scale=1.5
-        )
+        data = _make_splat_data(N, dim, shape, sharpness_val=sharpness_val, L_scale=1.5)
         cuda_out, _ = _run_cuda_forward(
             data, tile_size=tile_size, intensity_floor=intensity_floor
         )
@@ -435,7 +440,9 @@ class TestGradCacheBufferOverflowGuard:
         Before Fix 1, this would write past the s_grad_output[512] buffer.
         After Fix 1, the kernel falls back to global memory reads for grad_output.
         """
-        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import cholesky_to_conic
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            cholesky_to_conic,
+        )
 
         np.random.seed(55)
         N, d = 10, 3

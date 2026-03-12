@@ -12,6 +12,7 @@
 
 import * as THREE from 'three';
 import { config } from '../config';
+import type { LuxarCamera } from '../scene/camera-utils';
 
 export interface LuxarFlyControlsConfig {
   movementSpeed?: number; // Units per second
@@ -70,7 +71,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   private mouseY = 0;
 
   // References
-  private camera: THREE.PerspectiveCamera;
+  private camera: LuxarCamera;
   private domElement: HTMLElement;
 
   // Event listeners to clean up
@@ -79,11 +80,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   // Flag to track if we're using external input management
   private externalInputManagement: boolean = false;
 
-  constructor(
-    camera: THREE.PerspectiveCamera,
-    domElement: HTMLElement,
-    config?: LuxarFlyControlsConfig
-  ) {
+  constructor(camera: LuxarCamera, domElement: HTMLElement, config?: LuxarFlyControlsConfig) {
     super();
 
     this.camera = camera;

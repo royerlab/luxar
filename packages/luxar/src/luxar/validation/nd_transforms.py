@@ -11,7 +11,7 @@ BEFORE slicing in the viewer pipeline.
 from __future__ import annotations
 
 import warnings
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from ..typing_utils.aliases import NdTransform, NdTransformEntry
 
@@ -55,9 +55,7 @@ def validate_nd_transform(
         TypeError: If value is not a dict
     """
     if not isinstance(value, dict):
-        raise TypeError(
-            f"nd_transform must be a dict, got {type(value).__name__}"
-        )
+        raise TypeError(f"nd_transform must be a dict, got {type(value).__name__}")
 
     result: NdTransform = {}
 
@@ -75,8 +73,7 @@ def validate_nd_transform(
 
         if not isinstance(entry, dict):
             raise ValueError(
-                f"nd_transform['{dim_name}'] must be a dict, "
-                f"got {type(entry).__name__}"
+                f"nd_transform['{dim_name}'] must be a dict, got {type(entry).__name__}"
             )
 
         # Context-aware validation if dimensions available
@@ -214,13 +211,11 @@ def _validate_permutation_basic(perm: Any, dim_name: str) -> None:
     if sorted(perm) != list(range(len(perm))):
         raise ValueError(
             f"nd_transform['{dim_name}'].permutation must be a valid "
-            f"permutation of [0..{len(perm)-1}], got {perm}"
+            f"permutation of [0..{len(perm) - 1}], got {perm}"
         )
 
 
-def _validate_permutation(
-    perm: Any, dim_name: str, categories: List[str]
-) -> None:
+def _validate_permutation(perm: Any, dim_name: str, categories: List[str]) -> None:
     """Validate permutation against category list."""
     _validate_permutation_basic(perm, dim_name)
     if len(perm) != len(categories):

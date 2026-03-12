@@ -61,11 +61,6 @@ from .core.transforms import (
     translate,
     translation,
 )
-from .validation.nd_transforms import (
-    apply_nd_transform_to_bounds,
-    compose_nd_transforms,
-    validate_nd_transform,
-)
 from .core.viewer_config import (
     AnimationConfig,
     CameraConfig,
@@ -91,6 +86,11 @@ from .typing_utils.enums import (
     NodeType,
     PhysicalUnit,
     RenderingLimits,
+)
+from .validation.nd_transforms import (
+    apply_nd_transform_to_bounds,
+    compose_nd_transforms,
+    validate_nd_transform,
 )
 
 __version__ = "2025.08.03"

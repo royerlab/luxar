@@ -129,9 +129,7 @@ class TestCompilerIntegration:
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
 
-            vertices = np.array(
-                [[0, 0, 0], [1, 1, 1], [2, 0, 0]], dtype=np.float32
-            )
+            vertices = np.array([[0, 0, 0], [1, 1, 1], [2, 0, 0]], dtype=np.float32)
             # Write lines WITHOUT explicit rendering attributes
             compiler.write_lines("test_lines", vertices, widths=0.1)
 

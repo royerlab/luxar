@@ -23,6 +23,7 @@ scene/
 ├── animation-controller.ts        # Render loop management
 ├── scene-dims-manager.ts         # nD dimension coordination
 ├── dimension-animation-manager.ts # Dimension playback automation
+├── camera-utils.ts              # Camera type union, type guards, projection helpers
 └── README.md                     # This documentation
 ```
 

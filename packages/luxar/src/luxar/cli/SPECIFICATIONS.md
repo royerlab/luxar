@@ -1,7 +1,7 @@
 # luxar.cli - Technical Specification
 
-**Version**: 1.2.0
-**Last Updated**: 2026-02-28
+**Version**: 1.4.0
+**Last Updated**: 2026-03-11
 
 ## Purpose
 
@@ -168,6 +168,14 @@ luxar export my_scene.zarr -o my_export/ --open
 - `luxar gsplat napari` - Open dataset in napari for inspection
 - `luxar gsplat view` - Quick view in the Luxar web viewer
 - `luxar gsplat prune` - Remove low-impact splats to reduce dataset size
+- `luxar gsplat fit` - Fit Gaussian splats to a volume (presets + YAML config)
+- `luxar gsplat convert` - Convert gsplats to Luxar scene for web viewer
+- `luxar gsplat render` - Render gsplats back to volume
+- `luxar gsplat merge` - Combine multiple gsplat datasets
+- `luxar gsplat filter` - Filter splats by multiple criteria
+- `luxar gsplat split` - Split dataset into multiple parts
+- `luxar gsplat slice` - Slice splats by coordinate ranges
+- `luxar gsplat compare` - Compare reconstruction quality against reference
 
 ---
 
@@ -299,6 +307,13 @@ luxar gsplat prune input.gsplats.zarr.zip output.gsplats.zarr.zip \
 - `--timepoint`: Timepoint index for 5D OME-ZARR
 - `--array-key`: Array key within .npz or .zarr
 - `--verbose/--quiet`: Verbose output
+- `--tiled`: Enable tiled fitting for large volumes (default: False)
+- `--tile-size`: Tile size in voxels per axis (default: 256)
+- `--overlap`: Overlap between tiles in voxels (default: 32)
+- `--tile`: Fit single tile N/M, e.g., '3/16' for tile 3 of 16 (Slurm-ready)
+
+**Tiled Fitting**:
+When `--tiled` is enabled, the volume is split into overlapping tiles with Hann cosine apodization to ensure seamless stitching. Use `--tile N/M` to fit a single tile (suitable for HPC/Slurm batch jobs).
 
 **Presets**:
 
@@ -407,6 +422,143 @@ luxar gsplat render fitted.gsplats.zarr rendered.tiff --device cuda
 luxar gsplat merge a.zarr b.zarr -o merged.zarr
 luxar gsplat merge t0.zarr t1.zarr t2.zarr -o 4d.zarr --as-dimension --values 0,1,2
 luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00ff00"
+```
+
+---
+
+### `luxar gsplat filter`
+
+**Purpose**: Filter splats by multiple criteria using AND logic. All criteria must be satisfied for a splat to be retained.
+
+**Parameters**:
+- `input_path`: Input .gsplats.zarr dataset (required, positional)
+- `output_path`: Output .gsplats.zarr dataset (required, positional)
+- `--bbox`: Bounding box as 'min0,max0,min1,max1,...' (pairs per dimension)
+- `--volume-min/--volume-max`: Volume thresholds (3-sigma ellipsoid)
+- `--volume-normalized`: Interpret volume thresholds as 0-1 normalized
+- `--amplitude-min/--amplitude-max`: Amplitude thresholds
+- `--amplitude-normalized`: Interpret amplitude thresholds as 0-1 normalized
+- `--eccentricity-min/--eccentricity-max`: Eccentricity thresholds (1.0 = sphere)
+- `--sharpness-min/--sharpness-max`: Sharpness thresholds
+- `--mass-min/--mass-max`: Mass thresholds (amplitude * volume)
+- `--mass-normalized`: Interpret mass thresholds as 0-1 normalized
+- `--sigma-axis`: Axis index for per-axis sigma filtering
+- `--sigma-min/--sigma-max`: Marginal sigma bounds on the specified axis
+- `--truncate`: Sigma truncation for volume computation (default: 3.0)
+- `--encoding, -e`: Encoding mode: auto/precision/memory (default: auto)
+- `--compress, -c`: Compress output as zip or tar.gz
+
+**Behavior**:
+1. Load input dataset
+2. Compute derived quantities (volume, eccentricity, mass, per-axis sigma) as needed
+3. Apply all specified filters with AND logic
+4. Save filtered subset with optional compression
+5. Report filter statistics (removed count and percentage)
+
+**Example**:
+```bash
+luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --amplitude-min 0.1 --eccentricity-max 5
+luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --bbox "0,50,0,50,0,50" --volume-max 100
+```
+
+---
+
+### `luxar gsplat split`
+
+**Purpose**: Split a Gaussian splat dataset into multiple parts.
+
+**Parameters**:
+- `input_path`: Input .gsplats.zarr dataset (required, positional)
+- `output_dir`: Output directory for split parts (required, positional)
+- `--parts, -n`: Split into N roughly equal parts (mutually exclusive with --indices)
+- `--indices`: Split at specific splat indices as comma-separated string (mutually exclusive with --parts)
+- `--encoding, -e`: Encoding mode: auto/precision/memory (default: auto)
+- `--compress, -c`: Compress output as zip or tar.gz
+
+**Behavior**:
+1. Exactly one of `--parts` or `--indices` must be specified
+2. Load input dataset
+3. Split into parts (equal-size or at specified indices)
+4. Save each part as `part_000.gsplats.zarr`, `part_001.gsplats.zarr`, etc.
+5. Report per-part splat counts
+
+**Example**:
+```bash
+luxar gsplat split input.gsplats.zarr output_dir/ --parts 4
+luxar gsplat split input.gsplats.zarr output_dir/ --indices "100,500"
+```
+
+---
+
+### `luxar gsplat slice`
+
+**Purpose**: Slice splats by coordinate ranges using numpy-style syntax. Keeps splats whose center coordinates fall within the specified ranges per dimension.
+
+**Parameters**:
+- `input_path`: Input .gsplats.zarr dataset (required, positional)
+- `output_path`: Output .gsplats.zarr dataset (required, positional)
+- `ranges`: Numpy-style ranges per dimension as string (required, positional)
+- `--encoding, -e`: Encoding mode: auto/precision/memory (default: auto)
+- `--compress, -c`: Compress output as zip or tar.gz
+
+**Range Syntax** (per dimension, comma-separated):
+- `lo:hi` — keep centers in [lo, hi]
+- `lo:` — keep centers >= lo
+- `:hi` — keep centers <= hi
+- `:` — keep all (no constraint)
+
+Float coordinates are supported (not just integers).
+
+**Behavior**:
+1. Load input dataset
+2. Parse range syntax into per-dimension bounds
+3. Filter splats by center coordinate ranges
+4. Save filtered subset
+5. Report retention statistics
+
+**Example**:
+```bash
+luxar gsplat slice input.gsplats.zarr output.gsplats.zarr "0:50, :, 10:90"
+luxar gsplat slice input.gsplats.zarr output.gsplats.zarr ":50, 20:80, :"
+```
+
+---
+
+### `luxar gsplat compare`
+
+**Purpose**: Compare Gaussian splat reconstruction quality against a reference volume. Renders gsplats back to a volume and computes quality metrics.
+
+**Parameters**:
+- `gsplats_path`: Input .gsplats.zarr dataset (required, positional)
+- `reference_path`: Reference volume file (.npy, .tiff, .zarr, etc.) (required, positional)
+- `--shape`: Output shape as comma-separated ints (overrides reference shape)
+- `--device, -d`: Device: auto/cpu/cuda/mps
+- `--truncate, -t`: Truncation radius in sigma (default: 3.0)
+- `--channel, -c`: Channel index for OME-Zarr reference
+- `--timepoint`: Timepoint index for OME-Zarr reference
+- `--output-json, -j`: Write metrics to JSON file
+- `--quiet, -q`: Suppress terminal output (useful with --output-json)
+
+**Metrics Computed**:
+- **MSE**: Mean Squared Error
+- **PSNR (dB)**: Peak Signal-to-Noise Ratio
+- **SSIM**: Structural Similarity Index
+- **Relative L2 Error**: L2 distance normalized by reference norm
+- **Max Absolute Error**: Maximum pixel-wise difference
+- **Compression Ratio**: Reference size / gsplats file size
+
+**Behavior**:
+1. Load gsplat dataset and reference volume
+2. Determine rendering shape (from --shape or reference)
+3. Render gsplats to volume on specified device
+4. Compute quality metrics (GPU-accelerated when available)
+5. Display results table (unless --quiet)
+6. Write JSON if --output-json specified
+
+**Example**:
+```bash
+luxar gsplat compare fitted.gsplats.zarr original.tiff
+luxar gsplat compare fitted.gsplats.zarr original.npy --device cuda --output-json metrics.json
 ```
 
 ---
@@ -621,6 +773,13 @@ If all fail: return None
 ---
 
 ## Changelog
+
+### v1.4.0 (2026-03-11)
+- Added `luxar gsplat filter` command (multi-criteria splat filtering)
+- Added `luxar gsplat split` command (dataset partitioning)
+- Added `luxar gsplat slice` command (numpy-style coordinate slicing)
+- Added `luxar gsplat compare` command (PSNR/SSIM/MSE quality comparison)
+- Added tiled fitting parameters to `luxar gsplat fit` (--tiled, --tile-size, --overlap, --tile)
 
 ### v1.3.0 (2026-03-10)
 - Added `luxar gsplat fit` command (volume fitting with presets + YAML config)

@@ -96,6 +96,7 @@ export class LineMaterial extends THREE.ShaderMaterial {
     // Uniforms
     uniform float uFOV;
     uniform vec2 uResolution;
+    uniform int uIsOrtho;  // 0 = perspective, 1 = orthographic
 
     // Varyings to fragment shader (smooth interpolation needed)
     out vec3 vColor;
@@ -134,10 +135,17 @@ export class LineMaterial extends THREE.ShaderMaterial {
       vec2 lineDir = pixelLen > 0.0001 ? pixelDir / pixelLen : vec2(1.0, 0.0);
       vec2 perpendicular = vec2(-lineDir.y, lineDir.x);  // Unit vector in pixel space
 
-      // World-space to pixel conversion (perspective-correct)
-      float dist = length((modelViewMatrix * vec4(worldPos, 1.0)).xyz);
-      float tanHalfFov = tan(uFOV * 0.5);
-      float rawPixelWidth = width * uResolution.y / (dist * tanHalfFov);
+      // World-space to pixel conversion
+      float rawPixelWidth;
+      if (uIsOrtho == 1) {
+        // Orthographic: constant screen size regardless of distance
+        // uFOV stores frustumHeight in ortho mode
+        rawPixelWidth = width * uResolution.y / uFOV;
+      } else {
+        float dist = length((modelViewMatrix * vec4(worldPos, 1.0)).xyz);
+        float tanHalfFov = tan(uFOV * 0.5);
+        rawPixelWidth = width * uResolution.y / (dist * tanHalfFov);
+      }
 
       // Enforce minimum pixel width to prevent sub-pixel rendering artifacts
       // Lines thinner than ~1.5 pixels cause severe aliasing due to rasterization gaps
@@ -273,8 +281,9 @@ export class LineMaterial extends THREE.ShaderMaterial {
 
     super({
       uniforms: {
-        uFOV: { value: (60 * Math.PI) / 180 }, // Default 60° FOV
+        uFOV: { value: (60 * Math.PI) / 180 }, // Default 60° FOV (or frustumHeight for ortho)
         uResolution: { value: new THREE.Vector2(1, 1) },
+        uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
         uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
@@ -316,9 +325,10 @@ export class LineMaterial extends THREE.ShaderMaterial {
    * @param fov - Field of view in radians
    * @param resolution - Viewport resolution
    */
-  updateCameraParams(fov: number, resolution: THREE.Vector2): void {
-    this.uniforms.uFOV.value = fov;
+  updateCameraParams(fov: number, resolution: THREE.Vector2, isOrtho: boolean = false): void {
+    this.uniforms.uFOV.value = fov; // FOV in radians (perspective) or frustumHeight (ortho)
     this.uniforms.uResolution.value.copy(resolution);
+    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
   }
 
   /**

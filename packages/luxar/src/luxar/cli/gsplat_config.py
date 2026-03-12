@@ -5,6 +5,7 @@ Provides:
 - YAML config loading with priority chain
 - Commented YAML config dump
 - Volume file loaders (.npy, .npz, .tiff, .zarr, imageio fallback)
+- OME-Zarr shape discovery
 - Utility parsers for CLI arguments
 """
 
@@ -12,9 +13,10 @@ from __future__ import annotations
 
 import inspect
 import re
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import yaml
@@ -195,8 +197,8 @@ def dump_default_config(preset: str = "standard") -> str:
         "# --- Basic Parameters ---",
         f"n_iters: {_fmt(vals.get('n_iters'))}            # Max optimization iterations",
         f"lr: {_fmt(vals.get('lr'))}                      # Adam learning rate",
-        f"loss_type: \"{vals.get('loss_type', 'l1')}\"        # Loss function: l1, mse, or poisson",
-        f"seed_method: \"{vals.get('seed_method', 'auto')}\"  # Seed method: auto, edges, grid, decomposition",
+        f'loss_type: "{vals.get("loss_type", "l1")}"        # Loss function: l1, mse, or poisson',
+        f'seed_method: "{vals.get("seed_method", "auto")}"  # Seed method: auto, edges, grid, decomposition',
         "",
         "# --- Normalization ---",
         f"norm_percentile: {_fmt(vals.get('norm_percentile'))}  # Percentile clipping (0=full range, >0=robust)",
@@ -219,7 +221,7 @@ def dump_default_config(preset: str = "standard") -> str:
         f"max_abs_error: {_fmt(vals.get('max_abs_error'))}  # Absolute error threshold (null=auto: 0.01)",
         f"rel_l2_target: {_fmt(vals.get('rel_l2_target'))}  # Relative L2 threshold (null=disabled)",
         f"gradient_clip: {_fmt(vals.get('gradient_clip'))}   # Gradient norm clipping (null=disabled)",
-        f"scheduler_type: \"{vals.get('scheduler_type', 'plateau')}\"  # LR scheduler: plateau or exponential",
+        f'scheduler_type: "{vals.get("scheduler_type", "plateau")}"  # LR scheduler: plateau or exponential',
         f"patience: {_fmt(vals.get('patience'))}          # Iterations before LR reduction",
         f"lr_reduction_factor: {_fmt(vals.get('lr_reduction_factor'))}  # LR multiplier on plateau",
         f"early_stop_patience: {_fmt(vals.get('early_stop_patience'))}  # Stop after N iters without improvement",
@@ -238,7 +240,7 @@ def dump_default_config(preset: str = "standard") -> str:
         "",
         "# --- Anisotropic Voxels ---",
         f"voxel_size: {_fmt(vals.get('voxel_size'))}      # Physical spacing (null=isotropic)",
-        f"output_space: \"{vals.get('output_space', 'real')}\"  # Output coords: real or voxel",
+        f'output_space: "{vals.get("output_space", "real")}"  # Output coords: real or voxel',
         "",
         "# --- Hardware ---",
         f"use_metal: {_fmt(vals.get('use_metal'))}        # Metal acceleration (macOS Apple Silicon)",
@@ -397,6 +399,233 @@ def _load_zarr_volume(
 
 
 # ---------------------------------------------------------------------------
+# OME-Zarr shape discovery
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class OMEZarrInfo:
+    """Metadata about an OME-Zarr dataset's structure."""
+
+    axes: List[str]
+    """Axis labels, e.g. ``["t", "c", "z", "y", "x"]``."""
+
+    shape: Tuple[int, ...]
+    """Full array shape at highest resolution."""
+
+    n_timepoints: int
+    """Size of the T dimension (1 if absent)."""
+
+    n_channels: int
+    """Size of the C dimension (1 if absent)."""
+
+    spatial_shape: Tuple[int, ...]
+    """ZYX (or YX) portion of the shape."""
+
+    spatial_axes: List[str]
+    """Spatial axis labels, e.g. ``["z", "y", "x"]``."""
+
+    voxel_size: Optional[Tuple[float, ...]] = None
+    """Physical spacing from coordinateTransformations (spatial axes only)."""
+
+    unit: Optional[str] = None
+    """Physical unit string (e.g. ``"micrometer"``)."""
+
+    resolution_levels: int = 1
+    """Number of multiscale levels."""
+
+    path: Optional[Path] = None
+    """Path to the zarr store."""
+
+
+def discover_ome_zarr_shape(path: Path) -> OMEZarrInfo:
+    """Discover the shape and axis structure of an OME-Zarr dataset.
+
+    Parses ``.zattrs`` ``multiscales`` metadata (NGFF v0.4+). Falls back
+    to a shape-based heuristic (5D→TCZYX, 4D→CZYX, 3D→ZYX) for
+    non-NGFF zarr stores.
+
+    Args:
+        path: Path to the ``.zarr`` store.
+
+    Returns:
+        :class:`OMEZarrInfo` with discovered metadata.
+
+    Raises:
+        ValueError: If the zarr store has no arrays or is unreadable.
+    """
+    import zarr
+
+    store = zarr.open(str(path), mode="r")
+
+    # Navigate to the group/array
+    if isinstance(store, zarr.Array):
+        arr = store
+        attrs: Dict[str, Any] = dict(getattr(store, "attrs", {}))
+    elif isinstance(store, zarr.Group):
+        attrs = dict(store.attrs)
+        if "0" in store:
+            arr = store["0"]
+        else:
+            arrays = [k for k in store.keys() if isinstance(store[k], zarr.Array)]
+            if not arrays:
+                raise ValueError(f"No arrays found in zarr group: {path}")
+            arr = store[arrays[0]]
+    else:
+        raise ValueError(f"Unexpected zarr object type: {type(store)}")
+
+    shape = tuple(arr.shape)
+    ndim = len(shape)
+
+    # Try NGFF multiscales metadata
+    multiscales = attrs.get("multiscales")
+    if multiscales and isinstance(multiscales, list) and len(multiscales) > 0:
+        ms = multiscales[0]
+        return _parse_ngff_metadata(ms, shape, path, store)
+
+    # Fallback: heuristic based on ndim
+    return _heuristic_ome_info(shape, ndim, path)
+
+
+def _parse_ngff_metadata(
+    ms: Dict[str, Any],
+    shape: Tuple[int, ...],
+    path: Path,
+    store: Any,
+) -> OMEZarrInfo:
+    """Parse NGFF v0.4+ multiscales metadata."""
+    axes_raw = ms.get("axes", [])
+    axes = [a["name"] if isinstance(a, dict) else str(a) for a in axes_raw]
+
+    # Identify T, C, spatial axes
+    t_idx: Optional[int] = None
+    c_idx: Optional[int] = None
+    spatial_indices: List[int] = []
+    spatial_axes: List[str] = []
+
+    for i, a in enumerate(axes_raw):
+        if isinstance(a, dict):
+            atype = a.get("type", "").lower()
+            aname = a.get("name", "").lower()
+        else:
+            atype = ""
+            aname = str(a).lower()
+
+        if atype == "time" or aname == "t":
+            t_idx = i
+        elif atype == "channel" or aname == "c":
+            c_idx = i
+        elif atype == "space" or aname in ("z", "y", "x"):
+            spatial_indices.append(i)
+            spatial_axes.append(aname)
+        else:
+            # Unknown axis — treat as spatial
+            spatial_indices.append(i)
+            spatial_axes.append(aname)
+
+    n_t = shape[t_idx] if t_idx is not None else 1
+    n_c = shape[c_idx] if c_idx is not None else 1
+    spatial_shape = tuple(shape[i] for i in spatial_indices)
+
+    # Extract voxel_size from coordinateTransformations
+    voxel_size = None
+    unit = None
+    datasets = ms.get("datasets", [])
+    if datasets:
+        transforms = datasets[0].get("coordinateTransformations", [])
+        for t in transforms:
+            if t.get("type") == "scale":
+                scale = t.get("scale", [])
+                # Extract spatial dimensions only
+                if spatial_indices and len(scale) == len(shape):
+                    voxel_size = tuple(float(scale[i]) for i in spatial_indices)
+                elif len(scale) == len(spatial_indices):
+                    voxel_size = tuple(float(s) for s in scale)
+
+    # Extract unit from axes metadata
+    for a in axes_raw:
+        if isinstance(a, dict) and a.get("type") == "space":
+            u = a.get("unit")
+            if u:
+                unit = u
+                break
+
+    # Count resolution levels
+    n_levels = len(datasets) if datasets else 1
+
+    return OMEZarrInfo(
+        axes=axes,
+        shape=shape,
+        n_timepoints=n_t,
+        n_channels=n_c,
+        spatial_shape=spatial_shape,
+        spatial_axes=spatial_axes,
+        voxel_size=voxel_size,
+        unit=unit,
+        resolution_levels=n_levels,
+        path=path,
+    )
+
+
+def _heuristic_ome_info(shape: Tuple[int, ...], ndim: int, path: Path) -> OMEZarrInfo:
+    """Fallback OME info based on shape heuristics."""
+    if ndim == 5:
+        # Assume TCZYX
+        return OMEZarrInfo(
+            axes=["t", "c", "z", "y", "x"],
+            shape=shape,
+            n_timepoints=shape[0],
+            n_channels=shape[1],
+            spatial_shape=shape[2:],
+            spatial_axes=["z", "y", "x"],
+            path=path,
+        )
+    elif ndim == 4:
+        # Assume CZYX (could be TZYX — user can override)
+        return OMEZarrInfo(
+            axes=["c", "z", "y", "x"],
+            shape=shape,
+            n_timepoints=1,
+            n_channels=shape[0],
+            spatial_shape=shape[1:],
+            spatial_axes=["z", "y", "x"],
+            path=path,
+        )
+    elif ndim == 3:
+        return OMEZarrInfo(
+            axes=["z", "y", "x"],
+            shape=shape,
+            n_timepoints=1,
+            n_channels=1,
+            spatial_shape=shape,
+            spatial_axes=["z", "y", "x"],
+            path=path,
+        )
+    elif ndim == 2:
+        return OMEZarrInfo(
+            axes=["y", "x"],
+            shape=shape,
+            n_timepoints=1,
+            n_channels=1,
+            spatial_shape=shape,
+            spatial_axes=["y", "x"],
+            path=path,
+        )
+    else:
+        # Generic nD — all spatial
+        axes = [f"dim{i}" for i in range(ndim)]
+        return OMEZarrInfo(
+            axes=axes,
+            shape=shape,
+            n_timepoints=1,
+            n_channels=1,
+            spatial_shape=shape,
+            spatial_axes=axes,
+            path=path,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Dimension building (reused by convert and view)
 # ---------------------------------------------------------------------------
 
@@ -469,9 +698,7 @@ def parse_seeds(value: Optional[str]) -> Union[int, float, None]:
     if "." in value:
         ratio = float(value)
         if not (0.0 < ratio <= 1.0):
-            raise ValueError(
-                f"Compression ratio must be in (0, 1], got {ratio}"
-            )
+            raise ValueError(f"Compression ratio must be in (0, 1], got {ratio}")
         return ratio
     return int(value)
 

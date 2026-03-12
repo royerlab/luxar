@@ -358,7 +358,7 @@ describe('SceneManager', () => {
       await sceneManager.init();
 
       expect(sceneManager.camera).toBeInstanceOf(THREE.PerspectiveCamera);
-      expect(sceneManager.camera.fov).toBe(47);
+      expect((sceneManager.camera as THREE.PerspectiveCamera).fov).toBe(47);
       expect(sceneManager.camera.near).toBe(0.1);
       expect(sceneManager.camera.far).toBe(1000);
     });
@@ -433,7 +433,7 @@ describe('SceneManager', () => {
 
       sceneManager.updateSize();
 
-      expect(sceneManager.camera.aspect).toBeCloseTo(800 / 600);
+      expect((sceneManager.camera as THREE.PerspectiveCamera).aspect).toBeCloseTo(800 / 600);
     });
   });
 
@@ -563,7 +563,7 @@ describe('SceneManager', () => {
       expect(() => sceneManager.updateSize()).not.toThrow();
 
       // Camera aspect ratio should be set
-      expect(sceneManager.camera.aspect).toBeGreaterThan(0);
+      expect((sceneManager.camera as THREE.PerspectiveCamera).aspect).toBeGreaterThan(0);
     });
   });
 

@@ -356,8 +356,7 @@ def validate_offset(offset: Any) -> float:
 
     if not OFFSET_MIN <= offset_float <= OFFSET_MAX:
         raise ValueError(
-            f"Offset must be between {OFFSET_MIN} and {OFFSET_MAX}, "
-            f"got {offset_float}"
+            f"Offset must be between {OFFSET_MIN} and {OFFSET_MAX}, got {offset_float}"
         )
 
     return offset_float

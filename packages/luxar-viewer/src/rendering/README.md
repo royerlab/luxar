@@ -21,15 +21,20 @@ The Luxar Rendering package provides a modern, high-performance rendering pipeli
 
 ```
 rendering/
-├── post-processing-manager.ts # Post-processing pipeline using pmndrs
-├── point-material.ts          # Custom points shaders
-├── line-material.ts           # Instanced line rendering with semicircle kernel
-├── gsplat-material.ts         # Gaussian splatting with volumetric rendering
-├── material-manager.ts        # Material creation and caching (points + lines)
-├── robust-vignette-effect.ts  # Custom vignette for additive blending
-├── detector-noise-effect.ts   # Physics-based detector noise
-├── postprocessing-types.ts    # Type utilities and depth mapper
-└── README.md                  # This documentation
+├── post-processing-manager.ts          # Post-processing pipeline using pmndrs
+├── point-material.ts                   # Custom points shaders (with per-node GOG)
+├── line-material.ts                    # Instanced line rendering with semicircle kernel
+├── gsplat-material.ts                  # Gaussian splatting with volumetric rendering
+├── material-manager.ts                 # Material creation and caching (points + lines + gsplats)
+├── luxar-tone-mapping-effect.ts        # Vendored tone mapping with EOG (exposure-offset-gamma)
+├── chromatic-lens-distortion-effect.ts # Physically accurate lens distortion + chromatic aberration
+├── robust-vignette-effect.ts           # Custom vignette for additive blending
+├── detector-noise-effect.ts            # Physics-based detector noise
+├── gpu-buffer-pool.ts                  # Geometry reuse with size-based bucketing and LRU eviction
+├── adaptive-dpr-manager.ts             # Dynamic resolution scaling based on real-time FPS
+├── postprocessing-types.ts             # Type utilities and depth mapper
+├── SPECIFICATIONS.md                   # Technical specification
+└── README.md                           # This documentation
 ```
 
 ---
@@ -247,6 +252,38 @@ materialManager.updateCameraParams(newFov, newResolution);
 - Global uniform updates affect all materials simultaneously
 - Disposal is automatic - no manual material cleanup needed
 - Thread-safe caching prevents duplicate material creation
+
+### 6. GPU Buffer Pool
+
+The `GPUBufferPool` manages geometry reuse for Points, Lines, and GSplats, eliminating per-frame GPU allocations.
+
+**Key Features:**
+
+- Size-based bucketing: reuses geometries when size AND type match (0ms GPU allocation)
+- In-place attribute updates via `TypedArray.set()`
+- LRU eviction after 300 frames of non-use
+- Multi-type support: Points (Float32), Lines (Float32 + Uint8), GSplats (Float32)
+
+### 7. Adaptive DPR Manager
+
+The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-time FPS, trading resolution for frame rate when needed.
+
+**Algorithm:**
+
+- Samples FPS using a 1-second sliding window, evaluated every 500ms
+- Scales DPR down when FPS drops below `minFPS`
+- Scales DPR up when FPS exceeds `maxFPS` for `hysteresisSeconds`
+- DPR clamped between `minDPR` and `window.devicePixelRatio`
+
+### 8. Luxar Tone Mapping Effect
+
+Vendored from pmndrs/postprocessing with injected Exposure-Offset-Gamma (EOG) uniforms applied in a single shader pass before tone mapping. Zero extra bandwidth cost.
+
+**EOG Uniforms:**
+
+- `exposure`: Log2 stops (`color * 2^exposure`)
+- `global_offset`: Additive shift (`color + offset`)
+- `global_gamma`: Power curve (`pow(color, 1/gamma)`)
 
 ---
 

@@ -86,6 +86,50 @@ This discriminator enables the viewer to determine how to render each node.
 - `walk()` - Depth-first traversal yielding (depth, node) tuples
 - Property getters/setters for transform, opacity, gamma, intensity, offset, blending_mode
 
+**nD Transform** (`nd_transform`):
+
+In addition to the 4x4 spatial transform, nodes can carry an `nd_transform` that operates on non-displayed dimensions (Time, Channel, Depth, etc.). This enables alignment, unit conversion, and category remapping across datasets in the same scene.
+
+*Property: `nd_transform`* (getter/setter):
+- **Type**: `Optional[Dict[str, Any]]`
+- **Keys**: Dimension names (must match `Dimension.name` in scene dimensions)
+- **Values**: Per-dimension transform entries:
+  - Continuous/discrete ordinal dimensions: `{"scale": float, "offset": float}` (affine)
+  - Categorical dimensions: `{"permutation": [int, ...]}` (index remapping)
+- **Default**: `None` (identity on all non-displayed dimensions)
+- Setting to `None` removes the attribute from Zarr
+- Setting a value triggers validation and persists immediately
+
+*Property: `world_nd_transform`* (read-only):
+- **Type**: `Dict[str, Any]`
+- Returns the composed nD transform by walking the parent chain (root to leaf)
+- Empty dict means identity (no nD transforms in the chain)
+- Composition rules per dimension:
+  - Affine: `composed_scale = parent_scale * child_scale`, `composed_offset = parent_scale * child_offset + parent_offset`
+  - Permutation: `composed[i] = parent_perm[child_perm[i]]` (child applied first)
+- Missing entries in any node contribute identity for that dimension
+
+*Validation Rules* (enforced on setter):
+- Dimension names must exist in scene dimensions
+- Only non-displayed dimensions may appear (displayed dims use the 4x4 `transform`)
+- Continuous/discrete dims must use affine params (`scale`, `offset`), not `permutation`
+- Categorical dims must use `permutation`, not affine params
+- Permutation must be valid: correct length matching category count, each index exactly once
+- Scale must be non-zero
+- No mixing of affine and permutation params on a single dimension
+
+*Zarr Storage*:
+```json
+{
+  "nd_transform": {
+    "Time": {"scale": 0.001, "offset": 50.0},
+    "Channel": {"permutation": [2, 1, 0]}
+  }
+}
+```
+
+See `docs/guides/specs/ND_TRANSFORMS_SPEC.md` for the full specification including composition algebra, bounds expansion, and viewer implementation details.
+
 ---
 
 ### 2. Scene (Root Container)
@@ -272,6 +316,7 @@ data-adding methods (`add_points`, `add_lines`, `add_gsplats`, etc.). `Scene` ex
 {
   "type": "group",
   "transform": [...],         # optional, 16-element column-major
+  "nd_transform": {...},      # optional, per-dimension transforms for non-displayed dims
   "opacity": 1.0,             # optional
   "gamma": 1.0,               # optional
   "intensity": 1.0,           # optional, per-node color multiplier
@@ -1552,7 +1597,13 @@ These conventions ensure that transforms created in Python render correctly in t
 - Non-displayed dimensions are unaffected by transforms
 - This is a fundamental limitation of 4x4 homogeneous matrices
 
-This design choice keeps transforms simple and compatible with standard 3D graphics. Higher-dimensional transforms would require (d+1)×(d+1) matrices and significantly more complexity.
+This design choice keeps transforms simple and compatible with standard 3D graphics. Higher-dimensional transforms would require (d+1)x(d+1) matrices and significantly more complexity.
+
+**nD Transforms for Non-Displayed Dimensions**: While the 4x4 matrix is limited to displayed dimensions, the `nd_transform` attribute (see Node section above) provides per-dimension affine transforms and category permutations for non-displayed dimensions. This separates the two transform domains:
+- **4x4 `transform`**: Spatial transform for the 3 displayed dimensions (matrix multiplication)
+- **`nd_transform`**: Per-dimension transforms for non-displayed dimensions (affine composition or permutation composition)
+
+Both compose hierarchically through the scene graph parent chain.
 
 #### Storage Conversion
 **NumPy (row-major) → Storage (column-major)**:

@@ -978,6 +978,7 @@ assert len(data['chunk_bounds']) > 0
 - `extend_to_all`: Optional list of dimension names for visibility extension
 - `opacity`, `gamma`, `intensity`, `offset`, `blending_mode`: Rendering attributes
 - `transform`: Optional 16-element list (column-major)
+- `nd_transform`: Optional dict of per-dimension transforms for non-displayed dimensions (see `ND_TRANSFORMS_SPEC.md`)
 
 **GSplats Group**:
 - `centers`: (N, D) float32 array, compound-sorted

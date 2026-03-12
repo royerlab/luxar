@@ -13,7 +13,7 @@ import type { LuxarFlyControls } from './luxar-fly-controls';
 /**
  * Available control types
  */
-export type ControlType = 'orbit' | 'arcball' | 'fly';
+export type ControlType = 'orbit' | 'arcball' | 'fly' | 'ortho';
 
 /**
  * Complete control state for both orbit and fly modes

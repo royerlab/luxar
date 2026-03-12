@@ -395,10 +395,47 @@ def finalize_results(
     else:
         stats["movie_frames"] = None
 
-    return GSplatData(
+    result = GSplatData(
         centers=centers_np.astype(np.float32),
         amplitudes=amps_np.astype(np.float32),
         cholesky_factors=cholesky_packed.astype(np.float32),
         sharpnesses=sharpness_np.astype(np.float32),
         stats=stats,
     )
+
+    # Compute round-trip quality metrics (PSNR, SSIM, MSE).
+    # Skip when output_space="real" — the GSplatData is in physical coordinates
+    # which don't match config.V.shape (voxel grid).
+    is_voxel_space = not (
+        config.output_space == "real" and config.voxel_size is not None
+    )
+    if is_voxel_space:
+        try:
+            import torch
+
+            from luxar.gsplats.metrics import compute_quality_metrics
+            from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+
+            with torch.no_grad():
+                device = str(preprocessed_data.V_tensor.device)
+                rendered = render_to_volume_tensor(
+                    result,
+                    shape=config.V.shape,
+                    device=device,
+                    truncate=config.truncate,
+                )
+                ref = torch.from_numpy(config.V.astype(np.float32)).to(rendered.device)
+                quality = compute_quality_metrics(rendered, ref)
+            stats["mse"] = quality["mse"]
+            stats["psnr_db"] = quality["psnr_db"]
+            stats["ssim"] = quality["ssim"]
+            if config.verbose:
+                aprint(
+                    f"Quality: PSNR={quality['psnr_db']:.1f} dB, "
+                    f"SSIM={quality['ssim']:.4f}, MSE={quality['mse']:.2e}"
+                )
+        except Exception as exc:
+            if config.verbose:
+                aprint(f"Note: post-fit quality metrics skipped ({exc})")
+
+    return result

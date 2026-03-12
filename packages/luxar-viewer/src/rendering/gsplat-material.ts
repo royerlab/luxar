@@ -121,6 +121,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     uniform float uFx, uFy;           // Focal lengths in pixels
     uniform float uTruncate;          // Truncation radius (in sigmas)
     uniform int uProjectionMode;      // 0 = sum projection (additive), 1 = max projection (max blending)
+    uniform int uIsOrtho;             // 0 = perspective, 1 = orthographic
 
     // Varyings to fragment - all per-instance varyings use "flat" (no interpolation needed)
     // OPTIMIZATION: flat qualifier skips GPU interpolation hardware for constant values
@@ -200,20 +201,27 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
             }
         }
 
-        // Perspective projection Jacobian at splat center
+        // Precompute depth reciprocals (used by perspective Jacobian and screen projection)
         float z = -centerCam.z;  // Positive depth (camera looks down -Z)
-        // OPTIMIZATION: Precompute reciprocals to replace 6 divisions with 2 divisions + 6 multiplications
         float invZ = 1.0 / z;
         float invZ2 = invZ * invZ;
 
-        // Jacobian J = d(screen)/d(camera) at splat center
-        // For camera looking down -Z, with z = -centerCam.z (positive depth):
-        // x_s = fx * centerCam.x / z, y_s = fy * centerCam.y / z
-        // ∂x_s/∂(centerCam.z) = fx * centerCam.x / z² (since z = -centerCam.z)
+        // Projection Jacobian at splat center
         mat3x2 J;
-        J[0] = vec2(uFx * invZ, 0.0);
-        J[1] = vec2(0.0, uFy * invZ);
-        J[2] = vec2(uFx * centerCam.x * invZ2, uFy * centerCam.y * invZ2);
+        if (uIsOrtho == 1) {
+            // Orthographic: no depth dependence (parallel projection)
+            J[0] = vec2(uFx, 0.0);
+            J[1] = vec2(0.0, uFy);
+            J[2] = vec2(0.0, 0.0);
+        } else {
+            // Perspective projection Jacobian
+            // For camera looking down -Z, with z = -centerCam.z (positive depth):
+            // x_s = fx * centerCam.x / z, y_s = fy * centerCam.y / z
+            // ∂x_s/∂(centerCam.z) = fx * centerCam.x / z² (since z = -centerCam.z)
+            J[0] = vec2(uFx * invZ, 0.0);
+            J[1] = vec2(0.0, uFy * invZ);
+            J[2] = vec2(uFx * centerCam.x * invZ2, uFy * centerCam.y * invZ2);
+        }
 
         // Project covariance to 2D: Σ_2D = J · Σ_cam · Jᵀ
         // Compute J * Sigma_cam first
@@ -239,7 +247,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         float sigmaRay = 1.0;  // Default for max mode (no ray integration)
         if (uProjectionMode == 0) {
             // Sum projection: compute ray integration boost
-            vec3 rayDir = normalize(centerCam);
+            vec3 rayDir = (uIsOrtho == 1) ? vec3(0.0, 0.0, -1.0) : normalize(centerCam);
             float sigmaRaySq = dot(rayDir, Sigma_cam * rayDir);
             sigmaRay = sqrt(max(sigmaRaySq, 1e-8));
             float c_s = sharpnessIntegralFactor(aSharpness);
@@ -291,11 +299,19 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         float extent2 = effectiveTruncate * sqrt(lambda2);
 
         // Project center to screen (pixels)
-        // OPTIMIZATION: Reuse invZ from earlier computation
-        vCenterScreen = vec2(
-            uFx * centerCam.x * invZ + uResolution.x * 0.5,
-            uFy * centerCam.y * invZ + uResolution.y * 0.5
-        );
+        if (uIsOrtho == 1) {
+            // Orthographic: direct linear mapping (no depth division)
+            vCenterScreen = vec2(
+                uFx * centerCam.x + uResolution.x * 0.5,
+                uFy * centerCam.y + uResolution.y * 0.5
+            );
+        } else {
+            // Perspective: reuse invZ from earlier computation
+            vCenterScreen = vec2(
+                uFx * centerCam.x * invZ + uResolution.x * 0.5,
+                uFy * centerCam.y * invZ + uResolution.y * 0.5
+            );
+        }
 
         // Expand quad vertex in screen space (oriented)
         vec2 quadOffset = aQuadCorner.x * majorAxis * extent1
@@ -502,6 +518,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
         uOffset: { value: materialConfig.offset ?? 0.0 },
+        uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
       },
 
       vertexShader: GSplatMaterial.VERTEX_SHADER,
@@ -552,18 +569,23 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
    * @param fov - Field of view in radians
    * @param resolution - Viewport resolution
    */
-  updateCameraParams(fov: number, resolution: THREE.Vector2): void {
+  updateCameraParams(fov: number, resolution: THREE.Vector2, isOrtho: boolean = false): void {
     this.uniforms.uResolution.value.copy(resolution);
+    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
 
-    // Compute focal lengths in pixels from FOV
-    // f = height / (2 * tan(fov/2)) for vertical FOV
-    const tanHalfFov = Math.tan(fov / 2);
-    const fy = resolution.y / (2 * tanHalfFov);
-    // Assume square pixels (fx = fy based on aspect ratio)
-    const fx = fy;
-
-    this.uniforms.uFx.value = fx;
-    this.uniforms.uFy.value = fy;
+    if (isOrtho) {
+      // fov = frustumHeight in world units; direct linear mapping
+      const fy = resolution.y / fov;
+      this.uniforms.uFx.value = fy;
+      this.uniforms.uFy.value = fy;
+    } else {
+      // Compute focal lengths in pixels from FOV
+      // f = height / (2 * tan(fov/2)) for vertical FOV
+      const tanHalfFov = Math.tan(fov / 2);
+      const fy = resolution.y / (2 * tanHalfFov);
+      this.uniforms.uFx.value = fy;
+      this.uniforms.uFy.value = fy;
+    }
   }
 
   /**

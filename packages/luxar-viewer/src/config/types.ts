@@ -175,6 +175,7 @@ export interface InputConfig {
       toggleDatasetBrowser: string;
       togglePerformance: string;
       toggleRendering: string;
+      toggleScaleBar: string;
       toggleDebugConsole: string;
       recenterCamera: string;
       toggleControlMode: string;
@@ -279,6 +280,7 @@ export interface UIConfig {
     error: number;
     help: number;
     renderingControls: number;
+    recordingPanel: number;
     // Top layer
     statsMonitor: number;
   };
@@ -293,6 +295,10 @@ export interface UIConfig {
   // NOTE: styles property removed - all styling now uses CSS variables
   debugConsole: DebugConsoleConfig;
   components: UIComponentsConfig;
+  scaleBar: {
+    targetWidthPx: number;
+    position: 'bottom-left' | 'bottom-right';
+  };
 }
 
 /**
@@ -466,7 +472,7 @@ export interface RenderingSettings {
   chromaticLensFocalLengthY: number;
   chromaticLensSkew: number;
   // Navigation controls
-  controlType: 'orbit' | 'arcball' | 'fly';
+  controlType: 'orbit' | 'arcball' | 'fly' | 'ortho';
   autoRotate: boolean;
   autoRotateSpeed: number;
   // Fly controls - these are added at runtime from config.controls.fly

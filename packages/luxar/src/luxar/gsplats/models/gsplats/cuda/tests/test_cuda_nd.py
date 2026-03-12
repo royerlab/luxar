@@ -1120,6 +1120,8 @@ class Test5DAnd6DDimensions:
 
         np.random.seed(42)
         torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+        torch.cuda.empty_cache()
 
         N, d = 15, 6
         shape = (4, 4, 4, 4, 4, 4)  # 4K voxels
@@ -1150,7 +1152,13 @@ class Test5DAnd6DDimensions:
             device="cuda",
         )
 
-        with torch.no_grad():
+        # Guard against autocast context leak from other tests (e.g., FP16 tests)
+        # which would cause FP16 kernels to run with FP32 data, producing wrong results
+        autocast_leaked = torch.is_autocast_enabled()
+        if autocast_leaked:
+            print("\n6D WARNING: autocast was leaked from a prior test!")
+
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=False):
             cpu_output = cpu_model()
             cuda_output = cuda_model().cpu()
 
@@ -1176,7 +1184,7 @@ class Test5DAnd6DDimensions:
         denom = cpu_output[mask]
 
         rms_rel = (diff.pow(2).mean().sqrt() / (denom.abs().mean() + 1e-8)).item()
-        print(f"\n6D forward: rms_rel={rms_rel:.4f}, n={mask.sum().item()}")
+        print(f"6D forward: rms_rel={rms_rel:.4f}, n={mask.sum().item()}")
 
         assert rms_rel < 0.25, f"6D RMS relative error {rms_rel:.4f} too large"
 

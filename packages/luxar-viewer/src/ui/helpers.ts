@@ -358,6 +358,9 @@ export function showHelpOverlay() {
       expanded: false,
       items: [
         'R: Rendering controls panel',
+        'T: Recording panel (screenshot/video)',
+        'G: Quick screenshot',
+        'B: Toggle scale bar',
         'P: Performance monitor',
         'M: Cycle data monitor (mini/expanded/off)',
         'C: Toggle cinematic mode (noise/vignette/CA/lens)',

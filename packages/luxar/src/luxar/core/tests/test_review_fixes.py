@@ -28,9 +28,7 @@ class TestPointsMetadataNdimKey:
     def test_points_metadata_has_ndim_key(self, tmp_path: Path) -> None:
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            pts = scene.add_points(
-                "pts", np.zeros((5, 3), dtype=np.float32)
-            )
+            pts = scene.add_points("pts", np.zeros((5, 3), dtype=np.float32))
             assert "ndim" in pts.metadata
             assert pts.metadata["ndim"] == 3
 
@@ -38,18 +36,14 @@ class TestPointsMetadataNdimKey:
         """The old 'dims' key must not be present."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            pts = scene.add_points(
-                "pts", np.zeros((5, 3), dtype=np.float32)
-            )
+            pts = scene.add_points("pts", np.zeros((5, 3), dtype=np.float32))
             assert "dims" not in pts.metadata
 
     def test_points_ndim_property_works(self, tmp_path: Path) -> None:
         """DataNode.ndim property should work for Points."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            pts = scene.add_points(
-                "pts", np.zeros((5, 3), dtype=np.float32)
-            )
+            pts = scene.add_points("pts", np.zeros((5, 3), dtype=np.float32))
             assert pts.ndim == 3
 
     def test_lines_and_gsplats_also_use_ndim(self, tmp_path: Path) -> None:
@@ -66,9 +60,7 @@ class TestPointsMetadataNdimKey:
             assert lines.ndim == 3
 
             # 3D packed Cholesky has k=6 elements: [L00, L10, L11, L20, L21, L22]
-            chol = np.array(
-                [[1, 0, 1, 0, 0, 1], [1, 0, 1, 0, 0, 1]], dtype=np.float32
-            )
+            chol = np.array([[1, 0, 1, 0, 0, 1], [1, 0, 1, 0, 0, 1]], dtype=np.float32)
             gsplats = scene.add_gsplats(
                 "splats",
                 np.zeros((2, 3), dtype=np.float32),
@@ -133,9 +125,7 @@ class TestPropertySettersPersistToZarr:
         store_path = tmp_path / "test.zarr"
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            pts = scene.add_points(
-                "pts", np.zeros((3, 3), dtype=np.float32)
-            )
+            pts = scene.add_points("pts", np.zeros((3, 3), dtype=np.float32))
 
             pts.opacity = 0.75
 

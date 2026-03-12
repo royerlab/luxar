@@ -523,7 +523,7 @@ describe('Encoded Array Range Extraction', () => {
     it('should correctly extract ranges from quantized sharpness', async () => {
       const { array, attrs, rootLoc } = await loadArrayWithAttrs(
         'test_sharpness_range.zarr',
-        'sharpness_test/sharpness'
+        'sharpness_test/sharpnesses'
       );
 
       // Sharpness uses bounded_scalar_uint8 encoding
@@ -566,7 +566,7 @@ describe('Encoded Array Range Extraction', () => {
     it('should verify full sharpness range [1, 31] is preserved after decoding', async () => {
       const { array, attrs, rootLoc } = await loadArrayWithAttrs(
         'test_sharpness_range.zarr',
-        'sharpness_test/sharpness'
+        'sharpness_test/sharpnesses'
       );
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());

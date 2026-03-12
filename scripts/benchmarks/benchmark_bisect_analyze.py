@@ -12,7 +12,6 @@ Usage:
 import json
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).parent.parent.parent
 RESULTS_DIR = REPO_ROOT / "docs" / "benchmarks" / "bisection"
 OUTPUT_MD = REPO_ROOT / "docs" / "benchmarks" / "cuda_bisection_report.md"

@@ -18,6 +18,9 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 - **⌨️ Keyboard Controls**: Intuitive keyboard navigation for dimension selection and stepping
 - **⚙️ Advanced Anti-Aliasing**: Multiple AA techniques (FXAA, SMAA, MSAA, SSAA) with known compatibility notes
 - **🧩 Unified Configuration**: Centralized config system in `src/config/` with TypeScript types
+- **📸 Recording Panel**: Screenshot (PNG/WebP/JPEG) and video capture (WebM) with turntable mode
+- **📏 Scale Bar**: Physical scale bar overlay using dimension unit metadata
+- **🔄 nD Transforms**: Inverse-query transforms for non-displayed dimensions (affine and categorical)
 - **🎯 Material Caching**: Optimized material management with intelligent caching strategy
 
 ## 🚀 Quick Start
@@ -230,13 +233,15 @@ src/
 ├── scene/
 │   ├── scene-manager.ts           # 3D scene and renderer setup
 │   ├── scene-dims-manager.ts      # Scene-level dimension state management
-│   └── animation-controller.ts    # Render loop and performance
+│   ├── animation-controller.ts    # Render loop and performance
+│   └── camera-utils.ts            # Camera type union, type guards, and projection helpers
 ├── rendering/
 │   ├── post-processing.ts         # HDR pipeline and bloom effects
 │   ├── shader-manager.ts          # Custom GLSL shaders
 │   └── material-manager.ts        # Material caching and optimization
 ├── data/
-│   └── zarr-loader.ts            # Zarr dataset loading with nD support
+│   ├── zarr-loader.ts            # Zarr dataset loading with nD support
+│   └── nd-transform.ts           # nD transform inverse-query for non-displayed dimensions
 ├── input/
 │   ├── input-handler.ts           # User interaction handling
 │   └── input-context-manager.ts   # Keyboard conflict resolution
@@ -244,7 +249,10 @@ src/
 │   ├── dimension-sliders.ts       # nD navigation UI components
 │   ├── performance-monitor.ts     # FPS and timing metrics
 │   ├── rendering-controls.ts      # Advanced rendering controls panel
-│   └── debug-console.ts           # In-app debug console (Ctrl+L)
+│   ├── debug-console.ts           # In-app debug console (Ctrl+L)
+│   ├── recording-panel.ts         # Screenshot and video capture panel
+│   └── components/
+│       └── scale-bar.ts           # Physical scale bar overlay
 ├── tests/
 │   ├── controls-manager.test.ts   # Control system unit tests
 │   ├── luxar-fly-controls.test.ts # Fly controls unit tests

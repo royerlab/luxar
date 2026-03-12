@@ -76,7 +76,8 @@ Scene (root)
 ```
 
 Each node can have:
-- **Transform**: 4x4 transformation matrix
+- **Transform**: 4x4 transformation matrix (displayed spatial dimensions)
+- **nD Transform**: Per-dimension affine or permutation transforms (non-displayed dimensions)
 - **Attributes**: Arbitrary metadata
 - **Datasets**: Geometry-specific data arrays
 
@@ -181,6 +182,49 @@ Points in nD space are treated as hyperspheres. When viewing a 3D slice:
 - Point visibility depends on hypersphere intersection with viewing hyperplane
 - Larger radius = visible across more dimension slices
 - Natural representation of uncertainty or spread in higher dimensions
+
+### nD Transforms
+
+Non-displayed dimensions (Time, Channel, etc.) support per-dimension transforms for dataset alignment:
+
+```python
+# Align a dataset captured in milliseconds to a scene using seconds
+group = scene.add_group(
+    "DatasetB",
+    transform=transforms.translate(10, 0, 0),     # spatial alignment
+    nd_transform={
+        "Time": {"scale": 0.001, "offset": 50.0}, # ms to seconds, shifted
+        "Channel": {"permutation": [2, 1, 0]},     # remap categories
+    },
+)
+```
+
+- **Continuous/discrete dimensions**: affine transforms (`scale` + `offset`)
+- **Categorical dimensions**: permutation maps (index remapping)
+- Compose hierarchically through the scene graph, just like spatial transforms
+- Viewer uses inverse-query approach (O(1) per dimension, not O(N) per point)
+
+### Gaussian Splatting
+
+Luxar includes a complete Gaussian splatting pipeline for volumetric data:
+
+- **Tiled fitting**: Split large volumes into overlapping tiles, fit independently, merge results
+- **Quality metrics**: PSNR, SSIM, and normalized cross-correlation for comparing fitted splats against source volumes
+- **CLI tools**: `luxar gsplat fit`, `luxar gsplat render`, `luxar gsplat merge`, `luxar gsplat filter`, `luxar gsplat slice`
+
+```python
+import torch
+from luxar.gsplats import fit_gaussian_splats
+from luxar.gsplats.metrics import compute_psnr, compute_ssim
+
+result = fit_gaussian_splats(volume, device='cuda')
+rendered = result.render_to_volume(volume.shape)
+# Metrics require torch tensors
+vol_t = torch.as_tensor(volume, dtype=torch.float32)
+ren_t = torch.as_tensor(rendered, dtype=torch.float32)
+print(f"PSNR: {compute_psnr(ren_t, vol_t):.1f} dB")
+print(f"SSIM: {compute_ssim(ren_t, vol_t):.4f}")
+```
 
 ## 📖 API Reference
 

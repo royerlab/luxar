@@ -85,9 +85,7 @@ class Node:
                 try:
                     from ..validation.nd_transforms import validate_nd_transform
 
-                    attrs["nd_transform"] = validate_nd_transform(
-                        attrs["nd_transform"]
-                    )
+                    attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"])
                 except Exception as e:
                     raise ValueError(
                         f"Invalid nd_transform for node '{name}': {e}"

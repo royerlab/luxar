@@ -904,6 +904,9 @@ class GSplatData:
                     "filtered",
                     "filter_criteria",
                     "truncate",
+                    "psnr_db",
+                    "ssim",
+                    "mse",
                 ]
             }
 

@@ -1372,3 +1372,108 @@ class TestSliceCommand:
         assert result.exit_code == 0, f"slice failed: {result.stdout}"
         assert out.exists()
         assert out.is_file()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Compare command tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestCompareCommand:
+    def test_compare_basic(
+        self,
+        runner: CliRunner,
+        sample_gsplats: Path,
+        small_volume_npy: Path,
+    ) -> None:
+        """Compare gsplats against a reference volume."""
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "compare",
+                str(sample_gsplats),
+                str(small_volume_npy),
+                "--shape",
+                "16,16,16",
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"compare failed: {result.stdout}"
+        assert "PSNR" in result.stdout
+        assert "SSIM" in result.stdout
+        assert "MSE" in result.stdout
+
+    def test_compare_json_output(
+        self,
+        runner: CliRunner,
+        sample_gsplats: Path,
+        small_volume_npy: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Verify JSON output contains expected keys."""
+        import json
+
+        json_path = tmp_path / "metrics.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "compare",
+                str(sample_gsplats),
+                str(small_volume_npy),
+                "--shape",
+                "16,16,16",
+                "--device",
+                "cpu",
+                "--output-json",
+                str(json_path),
+            ],
+        )
+        assert result.exit_code == 0, f"compare failed: {result.stdout}"
+        assert json_path.exists()
+
+        with open(json_path) as f:
+            data = json.load(f)
+
+        for key in [
+            "mse",
+            "psnr_db",
+            "ssim",
+            "rel_l2",
+            "max_abs_error",
+            "n_splats",
+            "ndim",
+            "shape",
+        ]:
+            assert key in data, f"Missing key: {key}"
+
+    def test_compare_quiet(
+        self,
+        runner: CliRunner,
+        sample_gsplats: Path,
+        small_volume_npy: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Quiet mode should suppress terminal table."""
+        json_path = tmp_path / "metrics.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "compare",
+                str(sample_gsplats),
+                str(small_volume_npy),
+                "--shape",
+                "16,16,16",
+                "--device",
+                "cpu",
+                "--quiet",
+                "--output-json",
+                str(json_path),
+            ],
+        )
+        assert result.exit_code == 0, f"compare failed: {result.stdout}"
+        assert "QUALITY COMPARISON" not in result.stdout
+        assert json_path.exists()

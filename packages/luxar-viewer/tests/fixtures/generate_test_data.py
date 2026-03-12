@@ -714,6 +714,86 @@ def generate_sharpness_range_test():
         aprint("  CRITICAL: Verifies TypeScript uses scale factor 31.0 (not 15.0)")
 
 
+def generate_nd_transforms_test():
+    """Test dataset with nd_transforms for verifying inverse-query in viewer.
+
+    Creates a 4D scene (X, Y, Z, Time) with two groups:
+    - GroupA: no nd_transform (baseline). 50 points at time=0 only.
+    - GroupB: nd_transform={"Time": {"offset": 5}}. 50 points at local time=0,
+      which should appear at world time=5 in the viewer.
+
+    At world time=0: only GroupA points visible.
+    At world time=5: only GroupB points visible (due to offset).
+    """
+    with asection("Generating nD Transforms Test"):
+        output = FIXTURES_DIR / "test_nd_transforms.zarr"
+
+        dims = Dimensions(
+            [
+                Dimension("X", unit="u", range=(-10, 10), display=True),
+                Dimension("Y", unit="u", range=(-10, 10), display=True),
+                Dimension("Z", unit="u", range=(-10, 10), display=True),
+                Dimension(
+                    "Time",
+                    unit="frame",
+                    range=(0, 10),
+                    display=False,
+                    discrete=True,
+                    step=1.0,
+                ),
+            ]
+        )
+
+        rng = np.random.default_rng(42)
+
+        # GroupA: 50 points at time=0, no nd_transform
+        pos_a = np.zeros((50, 4), dtype=np.float32)
+        pos_a[:, :3] = rng.uniform(-5, 5, (50, 3)).astype(np.float32)
+        pos_a[:, 3] = 0  # time = 0
+        col_a = np.tile([1.0, 0.0, 0.0], (50, 1)).astype(np.float32)  # Red
+
+        # GroupB: 50 points at local time=0, with nd_transform offset=5
+        # So these should appear at world time=5
+        pos_b = np.zeros((50, 4), dtype=np.float32)
+        pos_b[:, :3] = rng.uniform(-5, 5, (50, 3)).astype(np.float32)
+        pos_b[:, 3] = 0  # local time = 0 (world time = 5 after offset)
+        col_b = np.tile([0.0, 0.0, 1.0], (50, 1)).astype(np.float32)  # Blue
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            group_a = scene.add_group("GroupA")
+            group_a.add_points(
+                "points_a",
+                pos_a,
+                colors=col_a,
+                radii=0.5,
+                extend_to_all=[],
+            )
+
+            group_b = scene.add_group(
+                "GroupB",
+                nd_transform={"Time": {"offset": 5.0}},
+            )
+            group_b.add_points(
+                "points_b",
+                pos_b,
+                colors=col_b,
+                radii=0.5,
+                extend_to_all=[],
+            )
+
+        aprint(f"  Generated: {output}")
+        aprint("  GroupA: 50 red points at time=0 (no nd_transform)")
+        aprint("  GroupB: 50 blue points at local time=0 (nd_transform offset=5)")
+        aprint("  Expected: time=0 → 50 red, time=5 → 50 blue")
+
+
 def main():
     """Generate all test datasets."""
     aprint("=" * 70)
@@ -758,6 +838,9 @@ def main():
         generate_uint16_quantization_test()
         aprint("")
 
+        generate_nd_transforms_test()
+        aprint("")
+
         aprint("=" * 70)
         aprint("✓ ALL TEST DATASETS GENERATED")
         aprint("=" * 70)
@@ -775,6 +858,7 @@ def main():
         aprint(f"  {FIXTURES_DIR}/test_log_scalar.zarr")
         aprint(f"  {FIXTURES_DIR}/test_4d_scalar_lut.zarr")
         aprint(f"  {FIXTURES_DIR}/test_uint16_quantization.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_nd_transforms.zarr")
         aprint("")
         aprint("Run TypeScript tests with:")
         aprint("  cd packages/luxar-viewer && pnpm test array-decoder")

@@ -131,6 +131,7 @@ export const config: AppConfig = {
       error: 1000, // Error messages
       help: 1001, // Help overlay (above errors)
       renderingControls: 1999, // Rendering controls panel (top of mid-layer)
+      recordingPanel: 1500, // Recording panel (screenshot/video capture)
 
       // Top layer (2000+)
       statsMonitor: 2000, // Three.js stats monitor (always on top)
@@ -171,6 +172,10 @@ export const config: AppConfig = {
         backdropBlur: 10,
         boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
       },
+    },
+    scaleBar: {
+      targetWidthPx: 150,
+      position: 'bottom-left' as const,
     },
     // UI component-specific configuration for consistent styling
     components: {
@@ -335,6 +340,7 @@ export const config: AppConfig = {
         toggleDatasetBrowser: 'o',
         togglePerformance: 'p',
         toggleRendering: 'r',
+        toggleScaleBar: 'b',
         toggleDebugConsole: 'ctrl+l',
         recenterCamera: 'f',
         toggleControlMode: 'v',

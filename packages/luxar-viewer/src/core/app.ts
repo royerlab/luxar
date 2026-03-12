@@ -12,6 +12,8 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import { ResolutionIndicator } from '../ui/components/resolution-indicator';
 import { SceneLoaderManager } from '../data/scene-loader-manager';
+import { ScaleBar } from '../ui/components/scale-bar';
+import { RecordingPanel } from '../ui/recording-panel';
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
@@ -21,6 +23,8 @@ export class LuxarApp {
   private adaptiveDPRManager!: AdaptiveDPRManager;
   private resolutionIndicator!: ResolutionIndicator;
   private datasetBrowser?: DatasetBrowser;
+  private scaleBar?: ScaleBar;
+  private recordingPanel?: RecordingPanel;
   private isInitialized = false;
   private boundCleanup: (() => void) | null = null;
   private boundFocusHandler: (() => void) | null = null;
@@ -161,6 +165,15 @@ export class LuxarApp {
 
       // Connect rendering controls to input handler
       this.inputHandler.setRenderingControls(this.renderingControls);
+
+      // Initialize recording panel (screenshot/video capture)
+      this.recordingPanel = new RecordingPanel(this.sceneManager, this.animationController);
+      this.recordingPanel.setPanelStateCallbacks(
+        () => this.getPanelVisibilityStates(),
+        (states) => this.restorePanelVisibilityStates(states)
+      );
+      this.recordingPanel.setAdaptiveDPRManager(this.adaptiveDPRManager);
+      this.inputHandler.setRecordingPanel(this.recordingPanel);
 
       // Start animation loop first to ensure background is rendered
       this.animationController.startAnimation();
@@ -310,8 +323,40 @@ export class LuxarApp {
     // Initialize dimension sliders for nD data
     this.inputHandler.initDimensionSliders();
 
+    // Initialize or update scale bar overlay
+    this.initScaleBar();
+
     // Trigger animation to ensure scene is rendered immediately
     this.animationController.startAnimation();
+  }
+
+  /**
+   * Initialize or recreate the scale bar overlay.
+   * Creates a ScaleBar component and registers a per-frame callback
+   * to update it as the camera moves.
+   */
+  private initScaleBar(): void {
+    // Dispose previous instance if reloading
+    if (this.scaleBar) {
+      this.animationController.removePerFrameCallback('scale-bar');
+      this.scaleBar.dispose();
+    }
+
+    this.scaleBar = new ScaleBar({
+      camera: this.sceneManager.camera,
+      controls: this.sceneManager.controls,
+      canvas: this.sceneManager.renderer.domElement,
+      targetWidthPx: config.ui.scaleBar.targetWidthPx,
+      position: config.ui.scaleBar.position,
+    });
+
+    // Register per-frame update for live camera tracking
+    this.animationController.addPerFrameCallback('scale-bar', () => {
+      this.scaleBar?.update();
+    });
+
+    // Wire to input handler for keyboard toggle
+    this.inputHandler.setScaleBar(this.scaleBar);
   }
 
   /**
@@ -396,6 +441,7 @@ export class LuxarApp {
       animationController: this.animationController,
       inputHandler: this.inputHandler,
       renderingControls: this.renderingControls,
+      recordingPanel: this.recordingPanel,
       sceneDimsManager: sceneDimsManager,
       app: this,
 
@@ -451,7 +497,7 @@ export class LuxarApp {
               y: this.sceneManager.camera.position.y,
               z: this.sceneManager.camera.position.z,
             },
-            fov: this.sceneManager.camera.fov,
+            fov: this.sceneManager.currentFov,
           },
           // Keep legacy cameraPosition for backward compatibility
           cameraPosition: {
@@ -459,7 +505,7 @@ export class LuxarApp {
             y: this.sceneManager.camera.position.y,
             z: this.sceneManager.camera.position.z,
           },
-          cameraFov: this.sceneManager.camera.fov,
+          cameraFov: this.sceneManager.currentFov,
           isAnimating: this.animationController.isActive,
           initialized: this.isInitialized,
         };
@@ -630,6 +676,18 @@ export class LuxarApp {
         this.resolutionIndicator.dispose();
       }
 
+      // Clean up scale bar
+      if (this.scaleBar) {
+        this.scaleBar.dispose();
+        this.scaleBar = undefined;
+      }
+
+      // Clean up recording panel
+      if (this.recordingPanel) {
+        this.recordingPanel.dispose();
+        this.recordingPanel = undefined;
+      }
+
       // Clean up input handlers
       if (this.inputHandler) {
         this.inputHandler.dispose();
@@ -671,6 +729,32 @@ export class LuxarApp {
       this.isInitialized = false;
     } catch (error) {
       log.error(Modules.LUXAR, 'Error during cleanup:', error);
+    }
+  }
+
+  /**
+   * Get visibility states of all UI panels for save/restore during recording.
+   */
+  private getPanelVisibilityStates(): Map<string, boolean> {
+    const states = new Map<string, boolean>();
+    states.set('renderingControls', this.renderingControls?.isVisible() ?? false);
+    states.set('recordingPanel', this.recordingPanel?.isVisible() ?? false);
+    return states;
+  }
+
+  /**
+   * Restore UI panel visibility from a saved state map.
+   */
+  private restorePanelVisibilityStates(states: Map<string, boolean>): void {
+    if (states.get('renderingControls')) {
+      this.renderingControls?.show();
+    } else {
+      if (this.renderingControls?.isVisible()) this.renderingControls.hide();
+    }
+    if (states.get('recordingPanel')) {
+      this.recordingPanel?.show();
+    } else {
+      if (this.recordingPanel?.isVisible()) this.recordingPanel.hide();
     }
   }
 }

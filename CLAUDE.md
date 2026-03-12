@@ -147,15 +147,23 @@ luxar profiles                   # Network simulation profiles
 ### GSplat CLI (fitting, converting, rendering, merging)
 ```bash
 # Fit Gaussian splats to a volume (presets: draft/standard/hifi)
-luxar gsplat fit volume.tiff -o splats.gsplats.zarr --preset standard --seeds 8000
-luxar gsplat fit volume.npy -o splats.gsplats.zarr --config params.yaml
+luxar gsplat fit volume.tiff splats.gsplats.zarr --preset standard --seeds 8000
+luxar gsplat fit volume.npy splats.gsplats.zarr --config params.yaml
 luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config template
+
+# Tiled fitting for large volumes (Hann cosine apodization, seamless stitching)
+luxar gsplat fit large.zarr splats.gsplats.zarr --tiled --tile-size 256 --overlap 32
+luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32  # Single tile (Slurm-ready)
 
 # Convert .gsplats.zarr to Luxar scene for web viewer
 luxar gsplat convert splats.gsplats.zarr scene.zarr --center
 
 # Render gsplats back to volume for quality comparison
 luxar gsplat render splats.gsplats.zarr rendered.npy --shape 128,128,128
+
+# Compare reconstruction quality against original (PSNR, SSIM, MSE)
+luxar gsplat compare fitted.gsplats.zarr original.tiff
+luxar gsplat compare fitted.gsplats.zarr original.npy --output-json metrics.json --device cuda
 
 # Split into parts
 luxar gsplat split splats.gsplats.zarr output_dir/ --parts 4

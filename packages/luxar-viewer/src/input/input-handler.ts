@@ -38,6 +38,8 @@ import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { DimensionAnimationManager } from '../scene/dimension-animation-manager';
 import { RenderingControls } from '../ui/rendering-controls';
+import type { RecordingPanel } from '../ui/recording-panel';
+import type { ScaleBar } from '../ui/components/scale-bar';
 import { showHelpOverlay, hideHelpOverlay, clearError, showToast } from '../ui/helpers';
 import { captureViewerState } from '../config/viewer-state-capture';
 import { SimpleDims } from '../types/dims';
@@ -65,6 +67,12 @@ export class InputHandler {
 
   /** Optional reference to advanced rendering controls */
   private renderingControls?: RenderingControls;
+
+  /** Optional reference to scale bar overlay */
+  private scaleBar?: ScaleBar;
+
+  /** Optional reference to recording panel */
+  private recordingPanel?: RecordingPanel;
 
   /** Index of currently selected dimension for keyboard navigation */
   private selectedDimension: number = 0;
@@ -144,6 +152,14 @@ export class InputHandler {
    */
   setRenderingControls(controls: RenderingControls): void {
     this.renderingControls = controls;
+  }
+
+  setScaleBar(scaleBar: ScaleBar): void {
+    this.scaleBar = scaleBar;
+  }
+
+  setRecordingPanel(panel: RecordingPanel): void {
+    this.recordingPanel = panel;
   }
 
   /**
@@ -294,9 +310,10 @@ export class InputHandler {
     // Initialize animation manager and register keyboard shortcuts
     this.initAnimationManager();
 
-    // Pass animation manager to dimension sliders for UI controls
-    if (this.dimensionSliders && this.animationManager) {
-      this.dimensionSliders.setAnimationManager(this.animationManager);
+    // Pass animation manager to dimension sliders and recording panel
+    if (this.animationManager) {
+      this.dimensionSliders?.setAnimationManager(this.animationManager);
+      this.recordingPanel?.setAnimationManager(this.animationManager);
     }
 
     // Listen for dimension changes (returns Promise for animation synchronization)
@@ -772,6 +789,30 @@ export class InputHandler {
       description: 'Toggle rendering controls',
     });
 
+    // Scale bar overlay
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'b',
+      handler: () => this.scaleBar?.toggle(),
+      preventDefault: true,
+      description: 'Toggle scale bar',
+    });
+
+    // Recording panel toggle
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 't',
+      handler: () => this.recordingPanel?.toggle(),
+      preventDefault: true,
+      description: 'Toggle recording panel',
+    });
+
+    // Quick screenshot
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'g',
+      handler: () => this.recordingPanel?.captureScreenshot(),
+      preventDefault: true,
+      description: 'Quick screenshot',
+    });
+
     // Debug console (Ctrl+L)
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
       key: 'l',
@@ -1149,11 +1190,11 @@ export class InputHandler {
    */
   private toggleControlMode(): void {
     const currentType = this.sceneManager.controls.getControlType();
-    let newType: 'orbit' | 'arcball' | 'fly';
+    let newType: 'orbit' | 'arcball' | 'fly' | 'ortho';
 
     log.custom(LogEmoji.CONTROLS, Modules.INPUT, `toggleControlMode called: ${currentType} → ?`);
 
-    // Cycle through: orbit -> arcball -> fly -> orbit
+    // Cycle through: orbit -> arcball -> fly -> ortho -> orbit
     switch (currentType) {
       case 'orbit':
         newType = 'arcball';
@@ -1162,13 +1203,17 @@ export class InputHandler {
         newType = 'fly';
         break;
       case 'fly':
+        newType = 'ortho';
+        break;
+      case 'ortho':
         newType = 'orbit';
         break;
       default:
         newType = 'orbit';
     }
 
-    this.sceneManager.controls.setControlType(newType);
+    // Use sceneManager.setControlType for ortho (handles camera swap)
+    this.sceneManager.setControlType(newType);
 
     // Update input context based on control mode
     if (newType === 'fly') {
@@ -1382,6 +1427,12 @@ export class InputHandler {
    * @private
    */
   private handleEscapeKey(): void {
+    // If recording video, stop recording first (takes priority)
+    if (this.recordingPanel?.isCurrentlyRecording()) {
+      this.recordingPanel.stopVideoRecording();
+      return;
+    }
+
     // Only close panels if we're NOT in fullscreen
     // When in fullscreen, the browser handles ESC to exit fullscreen
     if (!document.fullscreenElement) {
@@ -1435,6 +1486,11 @@ export class InputHandler {
     // Close debug console
     if (this.debugConsole.getIsVisible()) {
       this.debugConsole.hide();
+    }
+
+    // Close recording panel
+    if (this.recordingPanel?.isVisible()) {
+      this.recordingPanel.hide();
     }
 
     // Close performance stats

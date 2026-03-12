@@ -80,10 +80,8 @@ describe('PointMaterial', () => {
       // Check for correct world-space sizing formula with radius scaling
       expect(material.vertexShader).toContain('float normalizedRadius = radius * radiusScale');
 
-      // OPTIMIZATION: Check for inversesqrt (native GPU instruction, faster than length+divide)
-      expect(material.vertexShader).toContain(
-        'float invDistance = inversesqrt(dot(mvPosition.xyz, mvPosition.xyz))'
-      );
+      // OPTIMIZATION: Check for inversesqrt with ortho branching
+      expect(material.vertexShader).toContain('inversesqrt(dot(mvPosition.xyz, mvPosition.xyz))');
 
       // OPTIMIZATION: Check for pre-computed pointSizeFactor uniform
       expect(material.vertexShader).toContain('uniform float pointSizeFactor');

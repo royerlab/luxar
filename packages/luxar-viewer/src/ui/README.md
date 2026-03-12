@@ -15,6 +15,8 @@ The Luxar UI package provides a comprehensive set of user interface components f
 - **Data Loading Monitor**: Real-time monitoring of spatial index-based data loading
 - **Debug Console**: In-app console for development
 - **Helper Overlays**: Keyboard shortcuts and tips
+- **Recording Panel**: Screenshot and video capture with turntable mode
+- **Scale Bar**: Physical scale bar overlay using dimension units
 - **Responsive Design**: Mobile and desktop friendly
 
 ### Package Architecture
@@ -36,9 +38,11 @@ ui/
 ├── data-monitor-types.ts        # Type definitions for monitoring
 ├── debug-console.ts             # Developer console overlay
 ├── helpers.ts                   # Help overlays and tooltips
+├── recording-panel.ts           # Screenshot and video capture panel
 ├── components/                  # Reusable UI components
 │   ├── loading-advisor.ts       # Smart recommendations engine
-│   └── hierarchical-timing-panel.ts  # Hierarchical timing breakdown UI
+│   ├── hierarchical-timing-panel.ts  # Hierarchical timing breakdown UI
+│   └── scale-bar.ts            # Physical scale bar overlay
 └── README.md                    # This documentation
 ```
 
@@ -459,6 +463,40 @@ Context-sensitive help and keyboard shortcuts.
 - First-time user hints
 - Loading indicators
 
+### 8. Recording Panel
+
+Screenshot and video capture panel with multiple export options.
+
+**Features:**
+
+- Screenshot export (PNG, WebP, JPEG) with configurable resolution
+- Video recording (WebM) with turntable rotation mode
+- Transparent background support for compositing
+- Dimension slider synchronization during recording
+- Resolution multiplier for high-DPI exports
+
+**Keyboard Shortcuts:**
+
+- `T`: Toggle recording panel
+- `G`: Quick screenshot
+
+**CSS:** `styles/components/recording-panel.css`
+
+### 9. Scale Bar
+
+Physical scale bar overlay that automatically computes width from camera distance, FOV, and dimension units.
+
+**Features:**
+
+- Automatic width computation from camera/viewport parameters
+- Physical unit display using scene dimension metadata
+- Supports all Luxar physical units (nm, um, mm, cm, m, etc.)
+- Auto-hide when no unit information is available
+
+**Keyboard Shortcut:** `B` to toggle visibility
+
+**CSS:** `styles/components/scale-bar.css`
+
 ---
 
 ## Theming System
@@ -541,7 +579,9 @@ src/styles/
     ├── dimension-sliders.css
     ├── debug-console.css
     ├── dataset-browser.css
-    └── data-loading-monitor.css
+    ├── data-loading-monitor.css
+    ├── recording-panel.css
+    └── scale-bar.css
 ```
 
 **BEM Naming Convention**:
@@ -675,6 +715,9 @@ Global keyboard shortcuts managed by the UI system:
 | `R`       | Toggle rendering controls  | Global                   |
 | `N`       | Toggle dimension sliders   | When nD data loaded      |
 | `M`       | Cycle data loading monitor | Global                   |
+| `T`       | Toggle recording panel     | Global                   |
+| `G`       | Quick screenshot           | Global                   |
+| `B`       | Toggle scale bar           | Global                   |
 | `Ctrl+L`  | Toggle debug console       | Development mode         |
 | `Esc`     | Close active panel         | Any panel open           |
 | `K`       | Toggle dimension animation | When dimension selected  |

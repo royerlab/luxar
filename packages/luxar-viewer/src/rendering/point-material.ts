@@ -40,10 +40,11 @@ export class PointMaterial extends THREE.ShaderMaterial {
 
     in float radius;
     in float sharpness;
-    uniform float pointSizeFactor; // Pre-computed: 2.0 * resolution.y / tanHalfFov
+    uniform float pointSizeFactor; // Pre-computed: 2.0 * resolution.y / tanHalfFov (or resolution.y / frustumHeight for ortho)
     uniform float maxPointSize;    // Pre-computed: resolution.y * 0.5
     uniform float radiusScale;
     uniform float sharpnessScale;
+    uniform int uIsOrtho;          // 0 = perspective, 1 = orthographic
 
     out mediump vec3 vColor;
     out mediump float vSharpness;
@@ -68,7 +69,7 @@ export class PointMaterial extends THREE.ShaderMaterial {
       // OPTIMIZED world-space point sizing:
       // - inversesqrt is a native GPU instruction (faster than sqrt + divide)
       // - pointSizeFactor pre-computed in JS: 2.0 * resolution.y / tanHalfFov
-      float invDistance = inversesqrt(dot(mvPosition.xyz, mvPosition.xyz));
+      float invDistance = (uIsOrtho == 1) ? 1.0 : inversesqrt(dot(mvPosition.xyz, mvPosition.xyz));
       float basePointSize = normalizedRadius * pointSizeFactor * invDistance;
 
       // Sharpness compensation based on visibility threshold
@@ -173,6 +174,9 @@ export class PointMaterial extends THREE.ShaderMaterial {
         // Radius and sharpness scaling for dtype normalization
         radiusScale: { value: materialConfig.radiusScale ?? 1.0 }, // Default 1.0 (no scaling)
         sharpnessScale: { value: materialConfig.sharpnessScale ?? 1.0 }, // Default 1.0 (no scaling)
+
+        // Projection mode
+        uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
       },
 
       // Shader source
@@ -200,11 +204,16 @@ export class PointMaterial extends THREE.ShaderMaterial {
    * Update camera parameters for world-space point sizing
    * Pre-computes pointSizeFactor and maxPointSize for shader performance
    */
-  updateCameraParams(fov: number, resolution: THREE.Vector2): void {
-    const tanHalfFov = Math.tan(fov / 2);
-    // Pre-compute values that were previously computed per-vertex in shader
-    // pointSizeFactor = 2.0 * resolution.y / tan(fov/2)
-    this.uniforms.pointSizeFactor.value = (2.0 * resolution.y) / tanHalfFov;
+  updateCameraParams(fov: number, resolution: THREE.Vector2, isOrtho: boolean = false): void {
+    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
+    if (isOrtho) {
+      // fov carries frustumHeight in world units for ortho
+      this.uniforms.pointSizeFactor.value = resolution.y / fov;
+    } else {
+      const tanHalfFov = Math.tan(fov / 2);
+      // pointSizeFactor = 2.0 * resolution.y / tan(fov/2)
+      this.uniforms.pointSizeFactor.value = (2.0 * resolution.y) / tanHalfFov;
+    }
     // maxPointSize = resolution.y * 0.5 (hardware limit)
     this.uniforms.maxPointSize.value = resolution.y * 0.5;
   }

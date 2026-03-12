@@ -550,7 +550,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
 
       const { array, attrs } = await loadArrayWithAttrs(
         'test_sharpness_range.zarr',
-        'sharpness_test/sharpness'
+        'sharpness_test/sharpnesses'
       );
 
       // Verify metadata indicates uint8 quantization with min/max [0, 31]
@@ -982,7 +982,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       );
       const { attrs: boundedAttrs } = await loadArrayWithAttrs(
         'test_sharpness_range.zarr',
-        'sharpness_test/sharpness'
+        'sharpness_test/sharpnesses'
       );
       const { attrs: broadcastAttrs } = await loadArrayWithAttrs(
         'test_broadcasting.zarr',
@@ -1010,7 +1010,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       );
       const { attrs: boundedAttrs } = await loadArrayWithAttrs(
         'test_sharpness_range.zarr',
-        'sharpness_test/sharpness'
+        'sharpness_test/sharpnesses'
       );
 
       const rgbMeta = ArrayDecoder.getQuantizationMetadata(rgbAttrs);

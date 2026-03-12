@@ -270,6 +270,19 @@ export class PostProcessingManager {
   }
 
   /**
+   * Replace the active camera (e.g., when switching between perspective and orthographic).
+   * Updates the render pass and rebuilds effect passes that hold camera references.
+   */
+  setCamera(camera: THREE.Camera): void {
+    this.camera = camera;
+    if (this.renderPass) {
+      (this.renderPass as any).mainCamera = camera;
+    }
+    // Effect passes capture the camera at construction — rebuild them
+    this.rebuildEffectPass();
+  }
+
+  /**
    * Safely dispose an effect, handling any errors
    * Effects from pmndrs/postprocessing have a dispose() method to free GPU resources
    */

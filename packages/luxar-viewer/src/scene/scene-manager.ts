@@ -32,6 +32,15 @@ import {
 } from './scene-manager-utils';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { sceneDimsManager } from './scene-dims-manager';
+import {
+  type LuxarCamera,
+  isPerspectiveCamera,
+  isOrthographicCamera,
+  getCameraFovRadians,
+  updateCameraAspect,
+  getOrthoFrustumHeight,
+} from './camera-utils';
+import type { ControlType } from '../controls/controls-manager';
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering
@@ -62,8 +71,8 @@ export class SceneManager extends THREE.EventDispatcher<{
   /** Three.js scene graph - container for all 3D objects and lights */
   public scene!: THREE.Scene;
 
-  /** Perspective camera - provides realistic 3D viewing with depth */
-  public camera!: THREE.PerspectiveCamera;
+  /** Camera for 3D viewing (perspective or orthographic) */
+  public camera!: LuxarCamera;
 
   /** ControlsManager - manages different camera control types (orbit, arcball, fly) */
   public controls!: ControlsManager;
@@ -89,12 +98,22 @@ export class SceneManager extends THREE.EventDispatcher<{
   private contextLostHandler: ((event: Event) => void) | null = null;
   private contextRestoredHandler: ((event: Event) => void) | null = null;
 
+  /** Cached ortho zoom level to avoid redundant material updates during panning */
+  private lastOrthoZoom: number = 1;
+
   /** Dynamic clipping planes state */
   private dynamicClippingEnabled: boolean =
     config.renderingControls.defaults.dynamicClippingEnabled;
   private clippingAdaptSpeed: number = config.renderingControls.defaults.clippingAdaptSpeed;
   private smoothedNear: number = config.renderingControls.defaults.near;
   private smoothedFar: number = config.renderingControls.defaults.far;
+
+  /** Current FOV in degrees (perspective) or the default FOV (orthographic). */
+  get currentFov(): number {
+    return isPerspectiveCamera(this.camera)
+      ? this.camera.fov
+      : config.renderingControls.defaults.fov;
+  }
 
   /**
    * Create a new scene manager instance.
@@ -383,6 +402,12 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Listen for control changes to trigger renders
     this.controls.addEventListener('change', () => {
+      // Ortho zoom changes camera.zoom, which affects material frustum height.
+      // Only update materials if zoom actually changed (skip during panning).
+      if (isOrthographicCamera(this.camera) && this.camera.zoom !== this.lastOrthoZoom) {
+        this.lastOrthoZoom = this.camera.zoom;
+        this.updateMaterialsForCurrentCamera();
+      }
       this.dispatchEvent({ type: 'change' });
     });
 
@@ -462,9 +487,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
       // Update material manager BEFORE loading scene so materials are created with correct params
       if (this.camera && this.renderer) {
-        const fovRadians = (this.camera.fov * Math.PI) / 180;
-        const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
-        materialManager.updateCameraParams(fovRadians, drawingBufferSize);
+        this.updateMaterialsForCurrentCamera();
       }
 
       const root = await loadScene(src);
@@ -954,8 +977,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Only update camera if it exists (might be called during init)
     if (this.camera) {
-      this.camera.aspect = width / height;
-      this.camera.updateProjectionMatrix();
+      updateCameraAspect(this.camera, width, height);
     }
 
     this.updateRendererSize(width, height);
@@ -981,10 +1003,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Update material uniforms for world-space point sizing (only if camera exists)
     if (this.camera) {
-      const fovRadians = (this.camera.fov * Math.PI) / 180;
-      const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
-      // Material manager updates all registered materials (no scene traversal needed)
-      materialManager.updateCameraParams(fovRadians, drawingBufferSize);
+      this.updateMaterialsForCurrentCamera();
     }
   }
 
@@ -1024,9 +1043,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Update material uniforms for world-space point sizing
     if (this.camera) {
-      const fovRadians = (this.camera.fov * Math.PI) / 180;
-      const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
-      materialManager.updateCameraParams(fovRadians, drawingBufferSize);
+      this.updateMaterialsForCurrentCamera();
     }
 
     log.update(
@@ -1039,6 +1056,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Update camera FOV with bounds checking
    */
   updateFOV(deltaY: number): void {
+    if (!isPerspectiveCamera(this.camera)) return; // No FOV in orthographic mode
     const fovChange = deltaY * config.camera.fovSensitivity;
     this.camera.fov = validateFOV(
       this.camera.fov + fovChange,
@@ -1048,10 +1066,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.camera.updateProjectionMatrix();
 
     // Update material uniforms for world-space point sizing
-    const fovRadians = (this.camera.fov * Math.PI) / 180;
-    const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
-    // Material manager updates all registered materials (no scene traversal needed)
-    materialManager.updateCameraParams(fovRadians, drawingBufferSize);
+    this.updateMaterialsForCurrentCamera();
   }
 
   /**
@@ -1474,18 +1489,110 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Switch camera control type
-   * @param type - Control type ('orbit', 'arcball', or 'fly')
+   * Switch camera control type. Handles camera swap for ortho mode.
+   * @param type - Control type ('orbit', 'arcball', 'fly', or 'ortho')
    */
-  setControlType(type: 'orbit' | 'arcball' | 'fly'): void {
+  setControlType(type: ControlType): void {
+    const needsOrtho = type === 'ortho';
+    const hasOrtho = isOrthographicCamera(this.camera);
+
+    // Swap camera if projection mode changes
+    if (needsOrtho && !hasOrtho) {
+      this.swapToOrthographic();
+    } else if (!needsOrtho && hasOrtho) {
+      this.swapToPerspective();
+    }
+
+    // Update controls with new camera reference (may have changed)
+    this.controls.setCamera(this.camera);
     this.controls.setControlType(type);
+
+    // Update materials for new projection mode
+    this.updateMaterialsForCurrentCamera();
   }
 
   /**
    * Get current control type
    */
-  getControlType(): 'orbit' | 'arcball' | 'fly' {
+  getControlType(): ControlType {
     return this.controls.getControlType();
+  }
+
+  /**
+   * Swap from perspective to orthographic camera, matching the current view.
+   * Frustum is computed to show the same visible area at the target distance.
+   */
+  private swapToOrthographic(): void {
+    if (!isPerspectiveCamera(this.camera)) return;
+
+    const target = this.controls.getFocusTarget();
+    const distance = Math.max(this.camera.position.distanceTo(target), 0.001);
+    const fovRad = (this.camera.fov * Math.PI) / 180;
+    const frustumHeight = 2 * distance * Math.tan(fovRad / 2);
+    const aspect = this.camera.aspect || 1;
+
+    const ortho = new THREE.OrthographicCamera(
+      (-frustumHeight * aspect) / 2,
+      (frustumHeight * aspect) / 2,
+      frustumHeight / 2,
+      -frustumHeight / 2,
+      this.camera.near,
+      this.camera.far
+    );
+
+    ortho.position.copy(this.camera.position);
+    ortho.rotation.copy(this.camera.rotation);
+    ortho.up.copy(this.camera.up);
+    ortho.updateMatrixWorld();
+
+    this.camera = ortho;
+    this.lastOrthoZoom = ortho.zoom;
+    this.postProcessing.setCamera(ortho);
+  }
+
+  /**
+   * Swap from orthographic back to perspective camera.
+   * Restores the default FOV.
+   */
+  private swapToPerspective(): void {
+    if (isPerspectiveCamera(this.camera)) return;
+
+    const canvas = this.renderer.domElement;
+    const aspect =
+      (canvas.clientWidth || window.innerWidth) / (canvas.clientHeight || window.innerHeight);
+
+    const persp = new THREE.PerspectiveCamera(
+      config.renderingControls.defaults.fov,
+      aspect,
+      this.camera.near,
+      this.camera.far
+    );
+
+    persp.position.copy(this.camera.position);
+    persp.rotation.copy(this.camera.rotation);
+    persp.up.copy(this.camera.up);
+    persp.updateMatrixWorld();
+
+    this.camera = persp;
+    this.postProcessing.setCamera(persp);
+  }
+
+  /**
+   * Update all materials with current camera projection parameters.
+   * Handles both perspective (FOV-based) and orthographic (frustum-based) modes.
+   */
+  private updateMaterialsForCurrentCamera(): void {
+    const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    if (isOrthographicCamera(this.camera)) {
+      const frustumHeight = getOrthoFrustumHeight(this.camera);
+      materialManager.updateCameraParams(frustumHeight, drawingBufferSize, true);
+    } else {
+      materialManager.updateCameraParams(
+        getCameraFovRadians(this.camera),
+        drawingBufferSize,
+        false
+      );
+    }
   }
 
   /**

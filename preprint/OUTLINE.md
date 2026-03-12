@@ -16,7 +16,7 @@ Gaussian splats provide a powerful, compact, and interactive representation for 
 
 ### Python Pipeline
 - **Fitting**: Per-splat Adam with dynamic relocation, 3 presets (draft/standard/hifi), GPU acceleration (CUDA/MPS)
-- **Tiled fitting** (planned): Cosine-apodized overlapping tiles for arbitrarily large volumes, enabling parallel fitting and removing GPU memory ceiling
+- **Tiled fitting** (implemented): Cosine-apodized overlapping tiles for arbitrarily large volumes, enabling parallel fitting and removing GPU memory ceiling
 - **Slurm batch fitting** (planned): `luxar gsplat batch` for HPC cluster fitting of 3D+t OME-Zarr via Slurm array jobs, with auto-merge
 - **Generalized Gaussians**: Learnable sharpness parameter s in exp(-1/2 ||y||^s), where s=2 is the standard Gaussian (draft/standard presets use fixed s=2.0; hifi enables learnable s)
 - **Loss functions**: L1, MSE, Poisson (with asymmetric penalties)
@@ -54,15 +54,15 @@ Gaussian splats provide a powerful, compact, and interactive representation for 
 ### Paper-Blocking
 | Gap                    | Status   | Impact                                |
 |------------------------|----------|---------------------------------------|
-| Screenshot export      | TODO #11 | Cannot generate figures without it    |
-| Scale bar overlay      | TODO #13 | Every microscopy figure requires one  |
-| PSNR/SSIM `--compare`  | TODO #16 | Quantitative backbone of the paper    |
-| Tiled fitting          | TODO #18 | Credible "handles real data" claim    |
+| Screenshot export      | DONE #11 | Cannot generate figures without it    |
+| Scale bar overlay      | DONE #13 | Every microscopy figure requires one  |
+| PSNR/SSIM `--compare`  | DONE #16 | Quantitative backbone of the paper    |
+| Tiled fitting          | DONE #18 | Credible "handles real data" claim    |
 
 ### Strongly Recommended
 | Gap                            | Status   | Impact                          |
 |--------------------------------|----------|---------------------------------|
-| Video export                   | TODO #12 | Supplementary materials         |
+| Video export                   | DONE #12 | Supplementary materials         |
 | Colorbar / channel legend      | TODO #14 | Multi-channel figures need labels |
 | Orthographic projection        | TODO #6  | Microscopists expect ortho      |
 | Layers panel (per-node toggles)| TODO #5  | Multi-channel UX                |
@@ -104,7 +104,7 @@ Gaussian splats provide a powerful, compact, and interactive representation for 
 
 **Point**: "It's quantitatively good" — the evidence figure. Reviewers will scrutinize this most.
 
-**Requires**: TODO #16 (`luxar gsplat info --compare`)
+**Requires**: `luxar gsplat info --compare` (DONE #16)
 
 ### Fig 3: 4D Time-Lapse — Zebrafish Embryo
 **Demo**: `demo_gsplats_4d_zebrafish_timelapse.py`
@@ -142,21 +142,21 @@ Gaussian splats provide a powerful, compact, and interactive representation for 
 
 **Panels**:
 - (a) Schematic: volume split into overlapping tiles with cosine apodization windows
-- (b) Per-tile fitting (independent, parallelizable) → concatenated splats
+- (b) Per-tile fitting (independent, parallelizable) -> concatenated splats
 - (c) Seamless reconstruction: close-up of tile boundary region showing no visible seams
 - (d) Quality vs tile size: PSNR curves for different tile sizes (128, 256, 512) and overlap fractions
 - (e) Scaling: fitting time vs volume size (tiled vs monolithic), memory usage comparison
 
 **Point**: "It scales to real microscopy data" — the practical scalability story. Without tiling, fitting is limited by GPU memory (volume + splat parameters + optimizer state + gradients must all fit); for large seed counts on consumer GPUs, this can cap out well below full light-sheet resolution. With tiled fitting, arbitrarily large volumes (2048x2048x500 light-sheet stacks) become tractable, and tiles can be fit in parallel across GPUs.
 
-**Requires**: TODO #18 (tiled fitting implementation)
+**Requires**: Tiled fitting implementation (DONE #18)
 
 ### Fig 7: Architecture & Pipeline Diagram
 **Not a demo — a schematic**
 
 **Panels**:
-- (a) Pipeline: Volume data → Seed generation → GSplat fitting → .gsplats.zarr → Convert to Luxar scene → HTTP serve → Web viewer
-- (b) Data flow: Python (fitting, encoding) → HTTP (chunked streaming) → Browser (WASM decode, WebGL render)
+- (a) Pipeline: Volume data -> Seed generation -> GSplat fitting -> .gsplats.zarr -> Convert to Luxar scene -> HTTP serve -> Web viewer
+- (b) Data flow: Python (fitting, encoding) -> HTTP (chunked streaming) -> Browser (WASM decode, WebGL render)
 - (c) Scene graph structure: Scene > Groups > (Points, Lines, GSplats) with transforms and dimensions
 
 **Point**: "Here's how it works" — system architecture for the methods section.
@@ -164,7 +164,7 @@ Gaussian splats provide a powerful, compact, and interactive representation for 
 ### Supplementary Figures
 
 **Supp 1: Web Delivery & Performance**
-- Loading time vs dataset size (100K → 10M splats)
+- Loading time vs dataset size (100K -> 10M splats)
 - Cache hit rates (L0/L1/L2) over repeated navigation
 - Network simulation: performance under 3G, 4G, WiFi conditions
 - Comparison: downloading raw volume vs streaming gsplats
@@ -208,9 +208,9 @@ Gaussian splats provide a powerful, compact, and interactive representation for 
 ### New Demos Needed
 | Demo | Figure | Description | Effort |
 |------|--------|-------------|--------|
-| **Quality benchmark script** | Fig 2 | Systematic PSNR/SSIM across presets, seed counts, and tissue types. Generates comparison tables and curves. | Medium (needs TODO #16) |
+| **Quality benchmark script** | Fig 2 | Systematic PSNR/SSIM across presets, seed counts, and tissue types. Generates comparison tables and curves. | Medium (uses `luxar gsplat compare`, DONE #16) |
 | **Filament/membrane dataset** | Fig 2 | Need a volumetric dataset with thin structures (actin, microtubules) to test quality on challenging morphologies. The kidney Phalloidin channel (actin filaments) could serve, or source a dedicated filament volume from a public repository (e.g., STORM microtubules from OpenCell, Allen Cell Explorer). | Small (data sourcing) |
-| **Tiled fitting demo** | Fig 6 | Large volume fit with cosine-apodized tiling. Show seamless reconstruction, scaling curves, and tile boundary quality. The Tribolium embryo (965x1871x991) is already large enough, or use a cleared tissue / whole-brain dataset. | Large (needs TODO #18) |
+| **Tiled fitting demo** | Fig 6 | Large volume fit with cosine-apodized tiling. Show seamless reconstruction, scaling curves, and tile boundary quality. The Tribolium embryo (965x1871x991) is already large enough, or use a cleared tissue / whole-brain dataset. | Medium (tiled fitting DONE #18, needs demo script) |
 | **Sharpness ablation** | Supp 3 | Fit same data with fixed s=2.0 vs learnable sharpness, compare quality. | Small |
 | **Dynamic ops ablation** | Supp 4 | Fit with and without dynamic relocation, compare convergence and quality. | Small |
 | **GPU benchmark script** | Supp 5 | Systematic timing across devices and volume sizes. | Small |
@@ -246,11 +246,11 @@ Gaussian splats provide a powerful, compact, and interactive representation for 
 - **Fig 6**: Tiled fitting for large volumes (the scalability story)
 
 ### Methods
-- **Fitting pipeline**: Seeds → Adam optimization → dynamic relocation → post-processing
+- **Fitting pipeline**: Seeds -> Adam optimization -> dynamic relocation -> post-processing
 - **Generalized Gaussians**: a * exp(-1/2 ||Sigma^(-1/2)(x-mu)||^s) with learnable sharpness s
-- **Tiled fitting**: Cosine-apodized overlapping tiles → independent fitting → seamless concatenation
+- **Tiled fitting**: Cosine-apodized overlapping tiles -> independent fitting -> seamless concatenation
 - **nD representation**: Discrete dimensions (time, channel) + continuous (spatial)
-- **Web architecture**: Zarr encoding → spatial indexing → chunked HTTP → WASM decode → WebGL render
+- **Web architecture**: Zarr encoding -> spatial indexing -> chunked HTTP -> WASM decode -> WebGL render
 - **Scene graph**: Hierarchical transforms, per-node rendering attributes
 
 ### Discussion
@@ -267,10 +267,10 @@ Gaussian splats provide a powerful, compact, and interactive representation for 
 
 ## Implementation Priority (What to Build First)
 
-1. **TODO #18**: Tiled fitting for large volumes (unlocks Fig 6, credibility for real data)
-2. **TODO #16**: PSNR/SSIM `--compare` in CLI (unlocks Fig 2)
-3. **TODO #11**: Screenshot export (unlocks all figures)
-4. **TODO #13**: Scale bar overlay (required for all microscopy figures)
+1. **DONE #18**: Tiled fitting for large volumes (unlocks Fig 6, credibility for real data)
+2. **DONE #16**: PSNR/SSIM `--compare` in CLI (unlocks Fig 2)
+3. **DONE #11**: Screenshot export (unlocks all figures)
+4. **DONE #13**: Scale bar overlay (required for all microscopy figures)
 5. **Quality benchmark script** (generates Fig 2 data)
 6. **Tiled fitting demo on large volume** (generates Fig 6 data)
 7. **TODO #12**: Video export (supplementary materials)

@@ -312,4 +312,69 @@ describe('ControlsManager', () => {
       expect(stopSpy).toHaveBeenCalled();
     });
   });
+
+  describe('ortho controls', () => {
+    it('should switch to ortho controls using OrbitControls', () => {
+      // Ortho needs an OrthographicCamera — create one and set it
+      const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+      orthoCam.position.copy(camera.position);
+      controlsManager.setCamera(orthoCam);
+      controlsManager.setControlType('ortho');
+
+      expect(controlsManager.getControlType()).toBe('ortho');
+      expect(controlsManager.getControls()).toBeInstanceOf(OrbitControls);
+    });
+
+    it('should disable rotation in ortho mode', () => {
+      const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+      orthoCam.position.copy(camera.position);
+      controlsManager.setCamera(orthoCam);
+      controlsManager.setControlType('ortho');
+
+      const controls = controlsManager.getControls() as OrbitControls;
+      expect(controls.enableRotate).toBe(false);
+      expect(controls.enableZoom).toBe(true);
+      expect(controls.screenSpacePanning).toBe(true);
+    });
+
+    it('should preserve camera target when switching to ortho and back', () => {
+      // Set a specific target in orbit mode
+      const controls = controlsManager.getControls() as OrbitControls;
+      controls.target.set(1, 2, 3);
+
+      // Switch to ortho
+      const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+      orthoCam.position.copy(camera.position);
+      controlsManager.setCamera(orthoCam);
+      controlsManager.setControlType('ortho');
+
+      // Switch back to orbit
+      controlsManager.setCamera(camera);
+      controlsManager.setControlType('orbit');
+
+      const orbitControls = controlsManager.getControls() as OrbitControls;
+      expect(orbitControls.target.x).toBeCloseTo(1);
+      expect(orbitControls.target.y).toBeCloseTo(2);
+      expect(orbitControls.target.z).toBeCloseTo(3);
+    });
+
+    it('should update camera reference via setCamera', () => {
+      const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+      controlsManager.setCamera(orthoCam);
+
+      // Internal camera should be updated
+      expect((controlsManager as any).camera).toBe(orthoCam);
+    });
+
+    it('should dispatch change event when switching to ortho', () => {
+      const changeHandler = vi.fn();
+      controlsManager.addEventListener('change', changeHandler);
+
+      const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+      controlsManager.setCamera(orthoCam);
+      controlsManager.setControlType('ortho');
+
+      expect(changeHandler).toHaveBeenCalledWith(expect.objectContaining({ controlType: 'ortho' }));
+    });
+  });
 });

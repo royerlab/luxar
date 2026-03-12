@@ -110,6 +110,9 @@ describe('RenderingControls', () => {
     // Setup mock scene manager
     mockSceneManager = {
       camera: mockCamera,
+      get currentFov() {
+        return mockCamera.fov;
+      },
       controls: mockControls,
       renderer: { domElement: document.createElement('canvas') },
       updateFOV: vi.fn((delta) => {

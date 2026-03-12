@@ -82,6 +82,13 @@ describe('rendering-controls-utils', () => {
       expect(result.aoQuality).toBe(defaults.aoQuality);
     });
 
+    it('should accept ortho as a valid control type', () => {
+      const result = validateRenderingSettings({
+        controlType: 'ortho' as any,
+      });
+      expect(result.controlType).toBe('ortho');
+    });
+
     it('should round bloomLevels to integer', () => {
       const result = validateRenderingSettings({ bloomLevels: 5.7 });
       expect(result.bloomLevels).toBe(6);

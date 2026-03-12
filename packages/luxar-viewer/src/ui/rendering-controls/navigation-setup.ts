@@ -41,14 +41,16 @@ export function setupNavigationControls(context: SetupContext): SetupResult {
       '• Arcball: Like orbit but without gimbal lock — rotates freely in any direction.\n' +
       '  Best for scientific data that needs unrestricted viewing.\n' +
       '• Fly: Move freely through the scene like a drone (WASD + arrows).\n' +
-      '  Best for exploring large or spatially complex datasets.'
+      '  Best for exploring large or spatially complex datasets.\n' +
+      '• Ortho: Orthographic projection with pan and zoom (no perspective).\n' +
+      '  Best for 2D microscopy data and precise measurements.'
   );
 
   // Control type selector
   const controlTypeControl = navigationFolder
-    .add(settings, 'controlType', ['orbit', 'arcball', 'fly'])
+    .add(settings, 'controlType', ['orbit', 'arcball', 'fly', 'ortho'])
     .name('Control Type')
-    .onChange((value: 'orbit' | 'arcball' | 'fly') => {
+    .onChange((value: 'orbit' | 'arcball' | 'fly' | 'ortho') => {
       sceneManager.setControlType(value);
       saveSettings();
       triggerAnimation();
@@ -66,7 +68,8 @@ export function setupNavigationControls(context: SetupContext): SetupResult {
     'Camera Control Type\n' +
       '• Orbit: Traditional 3D viewer controls with gimbal lock at poles\n' +
       '• Arcball: Quaternion-based controls with unlimited rotation freedom\n' +
-      '• Fly: First-person flying controls (WASD to move, arrows to look)'
+      '• Fly: First-person flying controls (WASD to move, arrows to look)\n' +
+      '• Ortho: Orthographic projection with pan and zoom (ideal for 2D microscopy data)'
   );
 
   // Create sub-folders for each control type

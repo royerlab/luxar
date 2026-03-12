@@ -8,6 +8,7 @@ try:
     from luxar.gsplats import clahe, seeds
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
     from luxar.gsplats.fit_multiscale_gsplats import fit_multiscale_gaussian_splats
+    from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.seeds import (
@@ -16,6 +17,9 @@ try:
         seed_from_edges,
         seed_from_grid,
     )
+    from luxar.gsplats.tiling import TileSpec, compute_tile_specs, cosine_window
+
+    fit_tiled_gaussian_splats = fit_tiled
 except ImportError as exc:
     _GSPLATS_IMPORT_ERROR = exc
 
@@ -55,14 +59,39 @@ except ImportError as exc:
     def seed_from_edges(*_args: Any, **_kwargs: Any) -> Any:
         _raise_gsplats_import_error()
 
+    def fit_tile(*_args: Any, **_kwargs: Any) -> Any:
+        _raise_gsplats_import_error()
+
+    def fit_tiled(*_args: Any, **_kwargs: Any) -> Any:
+        _raise_gsplats_import_error()
+
+    fit_tiled_gaussian_splats = fit_tiled
+
+    def compute_tile_specs(*_args: Any, **_kwargs: Any) -> Any:
+        _raise_gsplats_import_error()
+
+    def cosine_window(*_args: Any, **_kwargs: Any) -> Any:
+        _raise_gsplats_import_error()
+
+    class TileSpec:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            _raise_gsplats_import_error()
+
 
 __all__ = [
     # Fitting functions
     "fit_gaussian_splats",
     "fit_multiscale_gaussian_splats",
+    "fit_tiled_gaussian_splats",
+    "fit_tile",
+    "fit_tiled",
     "GaussianSplatFitter",
     "GSplatData",
     "DynamicOpsConfig",
+    # Tiling
+    "TileSpec",
+    "compute_tile_specs",
+    "cosine_window",
     # Seeding functions
     "generate_seeds",
     "seed_from_decomposition",

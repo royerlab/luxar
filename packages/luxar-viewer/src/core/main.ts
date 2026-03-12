@@ -17,6 +17,7 @@ import { config } from '../config';
 import { validateAndLog } from '../config/validation';
 import { showError } from '../ui/helpers';
 import { ThemeManager } from '../themes/theme-manager';
+import type { LuxarCamera } from '../scene/camera-utils';
 
 // Validate configuration at startup
 const configValid = validateAndLog(config);
@@ -66,7 +67,7 @@ declare global {
 
       // Runtime properties (added by app.ts after initialization)
       scene?: THREE.Scene;
-      camera?: THREE.PerspectiveCamera;
+      camera?: LuxarCamera;
       renderer?: THREE.WebGLRenderer;
       controls?: any; // ControlsManager not imported here
       postProcessing?: any; // PostProcessingManager not imported here
