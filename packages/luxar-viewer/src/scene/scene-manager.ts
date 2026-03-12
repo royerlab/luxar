@@ -1518,8 +1518,8 @@ export class SceneManager extends THREE.EventDispatcher<{
   private swapToOrthographic(): void {
     if (!isPerspectiveCamera(this.camera)) return;
 
-    const target = this.controls.getFocusTarget();
-    const distance = Math.max(this.camera.position.distanceTo(target), 0.001);
+    const focusTarget = this.controls.getFocusTarget();
+    const distance = Math.max(this.camera.position.distanceTo(focusTarget), 0.001);
     const fovRad = (this.camera.fov * Math.PI) / 180;
     const frustumHeight = 2 * distance * Math.tan(fovRad / 2);
     const aspect = this.camera.aspect || 1;
@@ -1533,9 +1533,11 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.camera.far
     );
 
-    ortho.position.copy(this.camera.position);
-    ortho.rotation.copy(this.camera.rotation);
-    ortho.up.copy(this.camera.up);
+    // Reset to a clean front view (looking along -Z, up = Y)
+    // Ortho is for 2D viewing — carrying over a tilted 3D orientation is confusing
+    ortho.position.set(focusTarget.x, focusTarget.y, focusTarget.z + distance);
+    ortho.up.set(0, 1, 0);
+    ortho.lookAt(focusTarget);
     ortho.updateMatrixWorld();
 
     this.camera = ortho;

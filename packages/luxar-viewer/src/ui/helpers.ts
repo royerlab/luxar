@@ -366,7 +366,7 @@ export function showHelpOverlay() {
         'P: Performance monitor',
         'M: Cycle data monitor (mini/expanded/off)',
         'C: Toggle cinematic mode (noise/vignette/CA/lens)',
-        '⇧ + Wheel: Roll view axis (Orbit/Ortho)',
+        'Ctrl + Wheel: Adjust field of view',
         'Ctrl+L: Debug console',
       ],
     },

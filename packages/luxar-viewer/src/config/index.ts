@@ -19,7 +19,7 @@ export const config: AppConfig = {
     initialPosition: { x: 0, y: 0, z: 8 }, // Initial camera position in 3D space (world coordinates)
     fovMin: 10, // Minimum field of view for zoom limits - prevents excessive zoom-in
     fovMax: 170, // Maximum field of view for zoom limits - must be <180° (fish-eye territory)
-    fovSensitivity: 0.05, // FOV change sensitivity for Shift+wheel input - lower = finer control
+    fovSensitivity: 0.05, // FOV change sensitivity for Ctrl+wheel input - lower = finer control
     // FOV presets based on 35mm equivalent focal lengths (horizontal FOV - photography standard)
     fovPresets: {
       '28mm Wide': 75, // Wide angle - 75° horizontal FOV, good for large scenes and landscapes
