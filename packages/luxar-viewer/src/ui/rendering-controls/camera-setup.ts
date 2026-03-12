@@ -168,7 +168,7 @@ export function setupCameraControls(
       '• 50mm Normal (47°): Natural human vision + no distortion\n' +
       '• 85mm Portrait (29°): Telephoto + slight pincushion\n' +
       '• 135mm Tele (18°): Strong telephoto + pincushion distortion\n' +
-      '• Custom: Manual FOV control via slider or Shift+Wheel\n' +
+      '• Custom: Manual FOV control via slider or Ctrl+Wheel\n' +
       '• Note: Also applies realistic lens distortion when enabled'
   );
 

@@ -17,7 +17,7 @@
  * - [ ] keys navigate through dimensions with adaptive step sizes
  * - Number keys (1-9) select which dimension to control
  * - Space bar toggles fullscreen mode
- * - Shift+wheel adjusts field of view
+ * - Ctrl+wheel adjusts field of view, Shift+wheel rolls the view axis
  * - P key toggles performance statistics
  * - M key cycles data loading monitor
  * - R key toggles rendering controls
@@ -505,7 +505,7 @@ export class InputHandler {
    *
    * Registers listeners for:
    * - Window resize: Updates canvas size and camera aspect ratio
-   * - Mouse wheel: Zoom and FOV control (Shift+wheel for FOV)
+   * - Mouse wheel: Zoom and FOV control (Ctrl+wheel for FOV, Shift+wheel for roll)
    * - Keyboard: All keyboard shortcuts and navigation
    * - Fullscreen changes: Adjusts canvas styling for fullscreen mode
    *
@@ -653,7 +653,8 @@ export class InputHandler {
    * Handle mouse wheel events for zoom and FOV control.
    *
    * Normal wheel: Zoom in/out via orbit controls
-   * Shift+wheel: Adjust field of view (wide angle vs telephoto)
+   * Ctrl+wheel: Adjust field of view (wide angle vs telephoto)
+   * (Shift+wheel is used for view-axis rotation in orbit/ortho modes)
    *
    * FOV changes update rendering controls display if active, switching
    * preset to "Custom" since FOV was manually adjusted.
@@ -664,13 +665,13 @@ export class InputHandler {
   private onWheel(event: WheelEvent): void {
     this.animationController.startAnimation();
 
-    if (event.shiftKey) {
+    if (event.ctrlKey || event.metaKey) {
       event.preventDefault();
       this.sceneManager.updateFOV(event.deltaY);
 
       // Update rendering controls display if available
       if (this.renderingControls) {
-        // Shift+wheel FOV change should switch to Custom preset
+        // Ctrl+wheel FOV change should switch to Custom preset
         (this.renderingControls as any).settings.fovPreset = 'Custom';
         this.renderingControls.syncCurrentState();
       }
@@ -706,12 +707,12 @@ export class InputHandler {
     // ===== NAVIGATION CONTEXT BINDINGS =====
     // These work in the default orbit navigation mode
 
-    // Shift key - dual purpose: zoom control + fly speed boost
+    // Ctrl key - disable zoom while held so Ctrl+scroll only adjusts FOV
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'Shift',
+      key: 'Control',
       handler: () => this.sceneManager.controls.setEnableZoom(false),
       keyupHandler: () => this.sceneManager.controls.setEnableZoom(true),
-      description: 'Zoom control (hold to adjust FOV with wheel)',
+      description: 'FOV control (hold Ctrl + scroll to adjust field of view)',
     });
 
     // Dimension navigation

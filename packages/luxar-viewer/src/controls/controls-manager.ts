@@ -154,7 +154,6 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     const m = config.controls.scaleMultipliers;
     const controls = new LuxarOrbitControls(this.camera, this.domElement, {
       enableDamping: true,
-      dampingFactor: 0.05,
       screenSpacePanning: true,
       autoRotate: this.config.autoRotate || false,
       autoRotateSpeed: this.config.autoRotateSpeed || 0.25,
@@ -204,7 +203,6 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private createOrthoControls(): void {
     const controls = new LuxarOrbitControls(this.camera, this.domElement, {
       enableDamping: true,
-      dampingFactor: 0.05,
       screenSpacePanning: true,
       enableRotate: false,
       minZoom: 0.01,
