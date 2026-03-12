@@ -707,13 +707,15 @@ export class InputHandler {
     // ===== NAVIGATION CONTEXT BINDINGS =====
     // These work in the default orbit navigation mode
 
-    // Ctrl key - disable zoom while held so Ctrl+scroll only adjusts FOV
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'Control',
-      handler: () => this.sceneManager.controls.setEnableZoom(false),
-      keyupHandler: () => this.sceneManager.controls.setEnableZoom(true),
-      description: 'FOV control (hold Ctrl + scroll to adjust field of view)',
-    });
+    // Ctrl/Cmd key - disable zoom while held so Ctrl+scroll only adjusts FOV
+    for (const key of ['Control', 'Meta']) {
+      this.contextManager.registerBinding(InputContext.NAVIGATION, {
+        key,
+        handler: () => this.sceneManager.controls.setEnableZoom(false),
+        keyupHandler: () => this.sceneManager.controls.setEnableZoom(true),
+        description: 'FOV control (hold Ctrl/Cmd + scroll to adjust field of view)',
+      });
+    }
 
     // Dimension navigation
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
