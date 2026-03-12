@@ -167,7 +167,7 @@ export class InputHandler {
    *
    * Sets up the complete input handling system including:
    * - Window events (resize, wheel, keyboard, fullscreen)
-   * - Control events (orbit/arcball/fly control integration)
+   * - Control events (orbit/fly control integration)
    * - User interaction events (mousedown, touchstart)
    * - Context-specific key bindings
    *
@@ -541,7 +541,7 @@ export class InputHandler {
   }
 
   /**
-   * Set up event listeners for THREE.js orbit/arcball controls.
+   * Set up event listeners for THREE.js orbit controls.
    *
    * Registers listeners on the controls object to trigger animation
    * when user interacts with camera controls (orbit, pan, zoom).
@@ -694,7 +694,7 @@ export class InputHandler {
    *
    * This method registers all keyboard shortcuts using the binding registration
    * system. Bindings are organized by input context:
-   * - NAVIGATION: Default orbit/arcball mode shortcuts
+   * - NAVIGATION: Default orbit mode shortcuts
    * - FLY_CONTROLS: WASD movement keys for fly mode
    * - All contexts: Passthrough allows global shortcuts to work everywhere
    *
@@ -704,7 +704,7 @@ export class InputHandler {
    */
   private registerAllKeyBindings(): void {
     // ===== NAVIGATION CONTEXT BINDINGS =====
-    // These work in the default orbit/arcball navigation mode
+    // These work in the default orbit navigation mode
 
     // Shift key - dual purpose: zoom control + fly speed boost
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
@@ -864,7 +864,7 @@ export class InputHandler {
         }
       },
       preventDefault: false,
-      description: 'Cycle control mode (orbit/arcball/fly)',
+      description: 'Cycle control mode (orbit/fly/ortho)',
     });
 
     // Toggle inertial mode (I key, no modifiers)
@@ -1102,7 +1102,7 @@ export class InputHandler {
    * Shows or hides the rendering controls UI providing access to:
    * - Post-processing effects (bloom, HDR, vignette, chromatic aberration)
    * - Camera settings (FOV presets)
-   * - Control mode selection (orbit, arcball, fly)
+   * - Control mode selection (orbit, fly, ortho)
    * - Point rendering parameters
    *
    * Triggered by R key. Only functional if rendering controls have been
@@ -1176,12 +1176,12 @@ export class InputHandler {
   }
 
   /**
-   * Cycle through camera control modes: Orbit → Arcball → Fly → Orbit.
+   * Cycle through camera control modes: Orbit → Fly → Ortho → Orbit.
    *
    * Triggered by V key. Control modes provide different camera interaction styles:
-   * - Orbit: Traditional orbit camera (drag to rotate around target)
-   * - Arcball: Virtual trackball (more intuitive for scientific data)
+   * - Orbit: Quaternion-based rotation with no gimbal lock (drag to rotate around target)
    * - Fly: First-person WASD movement (for exploring inside datasets)
+   * - Ortho: Orthographic pan + zoom (for 2D viewing)
    *
    * Updates input context when switching to fly mode to enable WASD keys.
    * Syncs rendering controls display if active.
@@ -1190,16 +1190,13 @@ export class InputHandler {
    */
   private toggleControlMode(): void {
     const currentType = this.sceneManager.controls.getControlType();
-    let newType: 'orbit' | 'arcball' | 'fly' | 'ortho';
+    let newType: 'orbit' | 'fly' | 'ortho';
 
     log.custom(LogEmoji.CONTROLS, Modules.INPUT, `toggleControlMode called: ${currentType} → ?`);
 
-    // Cycle through: orbit -> arcball -> fly -> ortho -> orbit
+    // Cycle through: orbit -> fly -> ortho -> orbit
     switch (currentType) {
       case 'orbit':
-        newType = 'arcball';
-        break;
-      case 'arcball':
         newType = 'fly';
         break;
       case 'fly':
@@ -1506,7 +1503,7 @@ export class InputHandler {
    * Triggered by F key. Computes bounding box of all visible point clouds
    * and repositions camera to look at the center. Behavior adapts to control mode:
    * - Fly controls: Smooth animated transition over ~1 second
-   * - Orbit/Arcball: Immediate target update
+   * - Orbit/Ortho: Immediate target update
    *
    * Useful for recovering from lost orientation or framing scene after loading
    * new data. Falls back to origin (0,0,0) if no visible objects found.
@@ -1574,7 +1571,7 @@ export class InputHandler {
         smoothRecenter();
         log.custom(LogEmoji.TARGET, Modules.CONTROLS, 'Recentering camera on scene (smooth)');
       } else {
-        // For orbit/arcball controls, just update the target
+        // For orbit controls, just update the target
         controlsManager.lookAt(center, false);
         log.custom(LogEmoji.TARGET, Modules.CONTROLS, 'Recentered camera on scene');
       }

@@ -1,10 +1,10 @@
 # Luxar Rendering Package
 
-> Advanced WebGL rendering pipeline using pmndrs/postprocessing for high-quality points visualization
+> Advanced WebGL rendering pipeline using pmndrs/postprocessing for high-quality nD scientific visualization
 
 ## Overview
 
-The Luxar Rendering package provides a modern, high-performance rendering pipeline powered by the pmndrs/postprocessing library. It delivers professional-grade visual effects with optimized performance for large-scale points visualization.
+The Luxar Rendering package provides a modern, high-performance rendering pipeline powered by the pmndrs/postprocessing library. It delivers professional-grade visual effects with optimized performance for large-scale nD scientific visualization.
 
 ### Key Features
 

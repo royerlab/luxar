@@ -5,7 +5,7 @@
 
 ## Purpose
 
-The `io` package implements progressive writing to Zarr stores and spatial indexing for efficient nD point cloud queries. It enables handling of arbitrarily large datasets by writing data immediately without keeping it in memory.
+The `io` package implements progressive writing to Zarr stores and spatial indexing for efficient nD spatial queries. It enables handling of arbitrarily large datasets by writing data immediately without keeping it in memory.
 
 **Related Specifications**:
 - `luxar.core` - Data structures and scene graph (see `core/SPECIFICATIONS.md`)
@@ -338,7 +338,7 @@ sort_indices, metadata = sort_splats_spatial(
 
 **Concrete Example: 5D Dataset (X, Y, Z, Time, Channel)**
 
-Consider a 5D point cloud with dimensions:
+Consider a 5D dataset with dimensions:
 ```python
 Dimensions:
 - X (dim 0): displayed, spatial

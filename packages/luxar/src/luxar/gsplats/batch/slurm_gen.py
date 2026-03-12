@@ -73,7 +73,7 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
 
     # Build the fit command
     fit_cmd_parts = [
-        f"luxar gsplat fit {shlex.quote(manifest.input_path)} \"$OUTPUT\"",
+        f'luxar gsplat fit {shlex.quote(manifest.input_path)} "$OUTPUT"',
         f"    --tile $K/{manifest.n_tiles}",
         f"    --tile-size {manifest.tile_size}",
         f"    --overlap {manifest.tile_overlap}",

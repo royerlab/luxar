@@ -584,7 +584,7 @@ All data-bearing nodes inherit from DataNode:
 ```
 Node (base class)
  └── DataNode (abstract base for data nodes)
-      ├── Points (point cloud data)
+      ├── Points (point data)
       ├── Lines (curve/line data)
       └── GSplats (Gaussian splat data)
 ```

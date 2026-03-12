@@ -2,6 +2,8 @@
 
 Guidance for Claude Code when working with this repository.
 
+**Luxar** is a high-performance system for compiling and visualizing arbitrary-sized nD scientific scenes. It supports three first-class geometry types — **Points**, **Lines**, and **Gaussian Splats** — with more planned.
+
 ## Quick Reference
 
 ### Python (use Hatch)
@@ -541,11 +543,10 @@ import { PointMaterial } from '../rendering/point-material';
 ### Physical Units
 Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 
-### Point Attributes
-- **positions**: Required (Float32, nD)
-- **colors**: Optional (Uint8 or Float32 for HDR)
-- **radii**: Optional (Float32)
-- **sharpness**: Optional (Float32)
+### Geometry Types & Attributes
+- **Points**: positions (Float32, nD, required), colors (Uint8/Float32 HDR), radii (Float32), sharpness (Float32)
+- **Lines**: vertices (Float32, nD, required), widths (Float32, required), segments (Uint32, auto-generated), colors (Uint8/Float32), sharpness (Float32)
+- **GSplats**: centers (Float32, nD, required), amplitudes (Float32, required), cholesky_factors (Float32, required), colors (Uint8/Float32), sharpness (Float32)
 
 ### Transforms
 - 4x4 matrices stored as 16-element lists
@@ -559,7 +560,7 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 
 ### nD Navigation
 - Keyboard: 1-9 selects dimension, `[`/`]` navigates
-- Radius-based slicing: points visible based on nD hypersphere intersection
+- Radius-based slicing: geometry visible based on nD hypersphere intersection
 
 ---
 
@@ -622,10 +623,10 @@ Python Data -> Luxar Core -> Zarr Archive -> Luxar Viewer -> WebGL -> Display
 ```
 
 ### Scene Graph
-- Scene (root) contains Groups and Points
+- Scene (root) contains Groups, Points, Lines, and GSplats
 - Groups can nest (hierarchical)
 - Transforms compose hierarchically (parent -> child)
-- Points have positions (nD), colors, radii, sharpness
+- Three geometry types: Points (soft-edged spheres), Lines (width-tapered curves), GSplats (oriented Gaussians)
 
 ### Performance Targets
 - 100K-10M elements for smooth interaction

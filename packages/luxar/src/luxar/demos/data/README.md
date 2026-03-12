@@ -207,9 +207,9 @@ luxar gsplat prune input.gsplats.zarr.zip output.gsplats.zarr.zip \
     --method cumulative --retention 0.95
 ```
 
-### `.zarr.zip` Files (Point Clouds)
+### `.zarr.zip` Files (Scene Archives)
 
-Compressed Zarr stores for large point cloud datasets. Extract and serve with:
+Compressed Zarr stores for large scene datasets. Extract and serve with:
 
 ```bash
 luxar serve my_data.zarr.zip --viewer

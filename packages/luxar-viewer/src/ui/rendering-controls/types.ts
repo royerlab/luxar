@@ -43,7 +43,7 @@ export interface SetupContext {
   updateClippingControlsState: (dynamicEnabled: boolean) => void;
 
   /** Callback to update navigation controls visibility based on control type */
-  updateNavigationControls: (controlType: 'orbit' | 'arcball' | 'fly' | 'ortho') => void;
+  updateNavigationControls: (controlType: 'orbit' | 'fly' | 'ortho') => void;
 }
 
 /**

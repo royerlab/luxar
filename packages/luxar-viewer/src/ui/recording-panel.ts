@@ -15,6 +15,12 @@ import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 
 type RecordingMode = 'image' | 'video' | 'turntable';
 
+/** Video quality presets — maps to bits-per-pixel multiplier */
+type VideoQuality = 'low' | 'medium' | 'high' | 'max';
+
+/** Video resolution presets — 0 means native canvas size */
+type VideoResolution = 0 | 1080 | 1440 | 2160;
+
 /** Recording options for image and video capture */
 interface RecordingOptions {
   // Image options
@@ -26,6 +32,8 @@ interface RecordingOptions {
   videoDurationLimit: number; // 0 = unlimited, else seconds
   videoFPS: number;
   videoCodec: 'vp9' | 'vp8';
+  videoQuality: VideoQuality;
+  videoResolution: VideoResolution; // target height in pixels, 0 = native
   syncToSlider: boolean;
   syncDimensionIndex: number; // -1 = none
   // Turntable options
@@ -59,6 +67,8 @@ export class RecordingPanel {
     videoDurationLimit: 0,
     videoFPS: 30,
     videoCodec: 'vp9',
+    videoQuality: 'high',
+    videoResolution: 0,
     syncToSlider: false,
     syncDimensionIndex: -1,
     turntableSpeed: 36,
@@ -102,6 +112,9 @@ export class RecordingPanel {
   private qualityController: Controller | null = null;
   private syncToggleController: Controller | null = null;
   private syncDimensionController: Controller | null = null;
+
+  // Saved renderer state for resolution scaling restore
+  private savedRendererSize: { width: number; height: number } | null = null;
 
   constructor(sceneManager: SceneManager, animationController: AnimationController) {
     this.sceneManager = sceneManager;
@@ -283,19 +296,35 @@ export class RecordingPanel {
     const confirmed = await this.showConfirmationDialog();
     if (!confirmed) return;
 
+    this.hideAllPanels();
+
+    // Apply resolution scaling if requested
+    if (this.options.videoResolution > 0) {
+      const renderer = this.sceneManager.renderer;
+      const currentSize = renderer.getSize(new THREE.Vector2());
+      this.savedRendererSize = { width: currentSize.x, height: currentSize.y };
+      const targetH = this.options.videoResolution;
+      const aspect = currentSize.x / currentSize.y;
+      const targetW = Math.round(targetH * aspect);
+      renderer.setPixelRatio(1); // Use exact pixel dimensions
+      renderer.setSize(targetW, targetH, false); // false = don't change CSS
+      this.sceneManager.postProcessing.resize(targetW, targetH);
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+
+    const canvas = this.sceneManager.renderer.domElement;
+    const videoBitsPerSecond = this.computeVideoBitrate(canvas.width, canvas.height);
+
     log.info(
       Modules.RECORDING,
-      `Starting video recording (${mimeType}, ${this.options.videoFPS} FPS)`
+      `Starting video recording (${mimeType}, ${this.options.videoFPS} FPS, ${Math.round(videoBitsPerSecond / 1_000_000)}Mbps, ${canvas.width}x${canvas.height})`
     );
 
-    this.hideAllPanels();
     this.animationController.startAnimation();
     this.animationController.addPerFrameCallback(this.keepAliveCallbackId, () => {});
 
-    const canvas = this.sceneManager.renderer.domElement;
     const stream = canvas.captureStream(this.options.videoFPS);
-
-    this.mediaRecorder = new MediaRecorder(stream, { mimeType });
+    this.mediaRecorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond });
     this.recordedChunks = [];
 
     this.mediaRecorder.ondataavailable = (event) => {
@@ -316,6 +345,18 @@ export class RecordingPanel {
       this.hideRecordingIndicator();
 
       if (!this.disposed) {
+        // Restore resolution if scaled
+        if (this.savedRendererSize) {
+          const renderer = this.sceneManager.renderer;
+          renderer.setPixelRatio(window.devicePixelRatio);
+          renderer.setSize(this.savedRendererSize.width, this.savedRendererSize.height);
+          this.sceneManager.postProcessing.resize(
+            this.savedRendererSize.width,
+            this.savedRendererSize.height
+          );
+          this.savedRendererSize = null;
+        }
+
         this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
         this.animationController.removePerFrameCallback(this.turntableCallbackId);
         this.cleanupSyncListener();
@@ -425,20 +466,7 @@ export class RecordingPanel {
   // ========== GUI Construction ==========
 
   private buildGUI(): void {
-    // Capture/Record button at the top
-    const actions = {
-      capture: () => {
-        if (this.mode === 'image') {
-          this.captureScreenshot();
-        } else {
-          this.startVideoRecording();
-        }
-      },
-    };
-    const captureBtn = this.gui.add(actions, 'capture').name('Capture');
-    captureBtn.domElement.closest('.luxar-gui__controller')?.classList.add('luxar-recording-btn');
-
-    // Mode toggle
+    // Mode toggle — at the top
     const modeObj = { mode: this.mode };
     this.gui
       .add(modeObj, 'mode', { Image: 'image', Video: 'video', Turntable: 'turntable' })
@@ -448,10 +476,14 @@ export class RecordingPanel {
         this.updateControlVisibility();
       });
 
-    // Show panels toggle
-    const panelSettings = { showPanels: this.options.showPanels };
-    const showPanelsCtrl = this.gui
-      .add(panelSettings, 'showPanels')
+    // Advanced Options folder (starts closed)
+    const advanced = this.gui.addFolder('Advanced Options');
+    advanced.close();
+
+    // ── General options (inside Advanced) ──
+    const generalSettings = { showPanels: this.options.showPanels };
+    const showPanelsCtrl = advanced
+      .add(generalSettings, 'showPanels')
       .name('Show Panels')
       .onChange((val: boolean) => {
         this.options.showPanels = val;
@@ -459,10 +491,6 @@ export class RecordingPanel {
     showPanelsCtrl.domElement
       .closest('.luxar-gui__controller')
       ?.setAttribute('title', 'Keep other panels visible during capture');
-
-    // Advanced Options folder (starts closed)
-    const advanced = this.gui.addFolder('Advanced Options');
-    advanced.close();
 
     // ── Image options ──
     const imgSettings = {
@@ -521,9 +549,36 @@ export class RecordingPanel {
       duration: this.options.videoDurationLimit,
       fps: this.options.videoFPS,
       codec: this.options.videoCodec,
+      quality: this.options.videoQuality,
+      resolution: this.options.videoResolution,
       syncToSlider: this.options.syncToSlider,
       syncDim: this.options.syncDimensionIndex,
     };
+
+    const videoQualityCtrl = advanced
+      .add(vidSettings, 'quality', { Low: 'low', Medium: 'medium', High: 'high', Max: 'max' })
+      .name('Video Quality')
+      .onChange((val: string) => {
+        this.options.videoQuality = val as VideoQuality;
+      });
+    videoQualityCtrl.domElement
+      .closest('.luxar-gui__controller')
+      ?.setAttribute(
+        'title',
+        'Video bitrate quality (Low ~2.5Mbps, Medium ~5Mbps, High ~9Mbps, Max ~19Mbps at 1080p)'
+      );
+    this.videoControllers.push(videoQualityCtrl);
+
+    const resolutionCtrl = advanced
+      .add(vidSettings, 'resolution', { Native: 0, '1080p': 1080, '1440p': 1440, '4K': 2160 })
+      .name('Resolution')
+      .onChange((val: number) => {
+        this.options.videoResolution = val as VideoResolution;
+      });
+    resolutionCtrl.domElement
+      .closest('.luxar-gui__controller')
+      ?.setAttribute('title', 'Output video resolution (Native = current canvas size)');
+    this.videoControllers.push(resolutionCtrl);
 
     const durationCtrl = advanced
       .add(vidSettings, 'duration', 0, 300, 1)
@@ -574,7 +629,7 @@ export class RecordingPanel {
     this.videoControllers.push(syncCtrl);
     this.syncToggleController = syncCtrl;
 
-    // Sync dimension dropdown — populated dynamically from scene dims
+    // Sync dimension dropdown
     const dimNames = this.getNavigableDimensionOptions();
     const syncDimCtrl = advanced
       .add(vidSettings, 'syncDim', dimNames)
@@ -598,6 +653,19 @@ export class RecordingPanel {
       .closest('.luxar-gui__controller')
       ?.setAttribute('title', 'Rotation speed in degrees per second (36 = 10s for 360°)');
     this.turntableControllers.push(speedCtrl);
+
+    // Capture/Record button — at the bottom, prominent
+    const actions = {
+      capture: () => {
+        if (this.mode === 'image') {
+          this.captureScreenshot();
+        } else {
+          this.startVideoRecording();
+        }
+      },
+    };
+    const captureBtn = this.gui.add(actions, 'capture').name('Capture');
+    captureBtn.domElement.closest('.luxar-gui__controller')?.classList.add('luxar-recording-btn');
 
     this.updateControlVisibility();
   }
@@ -787,6 +855,20 @@ export class RecordingPanel {
   }
 
   // ========== Utilities ==========
+
+  /** Compute video bitrate based on canvas size, FPS, and quality preset */
+  private computeVideoBitrate(width: number, height: number): number {
+    // Bits-per-pixel multipliers for single-pass VP9 encoding.
+    // The default MediaRecorder bitrate (~2.5 Mbps) is far too low for HD content.
+    const bppMap: Record<VideoQuality, number> = {
+      low: 0.04, // ~2.5 Mbps at 1080p30 (comparable to default)
+      medium: 0.08, // ~5 Mbps at 1080p30
+      high: 0.15, // ~9.3 Mbps at 1080p30 — good quality
+      max: 0.3, // ~18.7 Mbps at 1080p30 — near-lossless
+    };
+    const bpp = bppMap[this.options.videoQuality] ?? bppMap.high;
+    return Math.round(width * height * this.options.videoFPS * bpp);
+  }
 
   private getSupportedMimeType(): string | null {
     const codec = this.options.videoCodec;

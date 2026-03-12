@@ -5,7 +5,7 @@
 
 ## Purpose
 
-The `luxar-viewer.controls` package provides comprehensive 3D navigation systems for point cloud visualization, including orbit controls, arcball controls, and quaternion-based fly controls with 6 degrees of freedom.
+The `luxar-viewer.controls` package provides comprehensive 3D navigation systems for nD scientific visualization, including orbit controls, arcball controls, and quaternion-based fly controls with 6 degrees of freedom.
 
 **Core Responsibility**: Enable intuitive camera navigation through multiple control paradigms (orbit, arcball, fly) with seamless mode switching, physics-based movement, and gimbal-lock-free rotation.
 

@@ -33,7 +33,7 @@ import { extractRenderingOverrides } from '../config/viewer-config-utils';
  * - Post-processing effects (bloom, noise, vignette, chromatic aberration, lens distortion)
  * - HDR intensity and tone mapping
  * - Anti-aliasing options (FXAA, SMAA, MSAA, SSAA)
- * - Camera controls (orbit, arcball, fly modes with physics parameters)
+ * - Camera controls (orbit, fly, ortho modes with physics parameters)
  * - Point rendering (base size, near/far size, sharpness, saturation)
  * - Dynamic clipping planes for nD visualization
  *
@@ -885,12 +885,12 @@ export class RenderingControls {
   /**
    * Update navigation controls visibility based on control type
    */
-  private updateNavigationControls(controlType: 'orbit' | 'arcball' | 'fly' | 'ortho'): void {
+  private updateNavigationControls(controlType: 'orbit' | 'fly' | 'ortho'): void {
     const orbitFolder = this.orbitFolder;
     const flyFolder = this.flyFolder;
 
-    if (controlType === 'orbit' || controlType === 'arcball') {
-      // Show orbit folder for both orbit and arcball (they share similar settings)
+    if (controlType === 'orbit') {
+      // Show orbit folder with auto-rotate controls
       if (orbitFolder) {
         orbitFolder.show();
         orbitFolder.open();
@@ -898,34 +898,6 @@ export class RenderingControls {
       if (flyFolder) {
         flyFolder.close();
         flyFolder.hide();
-      }
-
-      // Hide auto-rotate controls for arcball mode (not supported)
-      if (controlType === 'arcball') {
-        if (this.controllers.autoRotate) {
-          this.controllers.autoRotate.domElement.parentElement?.parentElement?.style.setProperty(
-            'display',
-            'none'
-          );
-        }
-        if (this.controllers.autoRotateSpeed) {
-          this.controllers.autoRotateSpeed.domElement.parentElement?.parentElement?.style.setProperty(
-            'display',
-            'none'
-          );
-        }
-      } else {
-        // Show auto-rotate controls for orbit mode
-        if (this.controllers.autoRotate) {
-          this.controllers.autoRotate.domElement.parentElement?.parentElement?.style.removeProperty(
-            'display'
-          );
-        }
-        if (this.controllers.autoRotateSpeed) {
-          this.controllers.autoRotateSpeed.domElement.parentElement?.parentElement?.style.removeProperty(
-            'display'
-          );
-        }
       }
     } else if (controlType === 'fly') {
       // Show fly folder for fly controls

@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Luxar Controls package provides a sophisticated, extensible control system for navigating and interacting with 3D points visualizations. It implements multiple control paradigms, seamless mode switching, and a robust input management system designed for both scientific exploration and cinematic presentation.
+The Luxar Controls package provides a sophisticated, extensible control system for navigating and interacting with nD scientific visualizations. It implements multiple control paradigms, seamless mode switching, and a robust input management system designed for both scientific exploration and cinematic presentation.
 
 ### Key Features
 

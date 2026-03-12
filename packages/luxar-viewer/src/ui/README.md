@@ -1,6 +1,6 @@
 # Luxar UI Package
 
-> Beautiful, responsive user interface components for 3D visualization and control
+> Beautiful, responsive user interface components for nD visualization and control
 
 ## Overview
 

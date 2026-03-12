@@ -1166,6 +1166,95 @@ def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
     return combined
 
 
+# -- Specific-brightness threshold for background rejection ----------------
+# Specific brightness = amplitude / spatial_volume (3D only, ignoring time).
+# After per-timepoint normalisation (max amplitude → 0.1), nuclei have
+# sb ~0.05-1.5 while diffuse background splats have sb ~0.001-0.004.
+# A threshold of 0.005 sits at the knee between the two populations,
+# removing ~14% of splats that contribute only diffuse haze.
+SPEC_BRIGHTNESS_THRESHOLD = 0.005
+
+
+def filter_background_splats(
+    combined: GSplatData,
+    n_spatial_dims: int = 3,
+) -> GSplatData:
+    """Remove diffuse background splats from the combined 4D dataset.
+
+    Uses *specific brightness* (amplitude / characteristic volume) to
+    distinguish compact, bright nuclei from diffuse, dim background.
+    Only the spatial dimensions are used for the volume computation
+    (the time dimension has sigma=0, which would collapse the
+    determinant).  The result is cached so repeated runs with the same
+    threshold skip the filtering step.
+
+    Args:
+        combined: Combined 4D GSplatData (output of ``combine_timepoints_to_4d``).
+        n_spatial_dims: Number of leading spatial dimensions (default 3).
+
+    Returns:
+        Filtered GSplatData with background splats removed.
+    """
+    if combined.ndim <= n_spatial_dims:
+        raise ValueError(
+            f"Expected >{n_spatial_dims}D data (spatial + extra dims), "
+            f"got {combined.ndim}D"
+        )
+
+    # Cache key encodes splat count (ties to specific combine output)
+    # and the brightness threshold.
+    sb_str = f"{SPEC_BRIGHTNESS_THRESHOLD:.4f}".replace(".", "p")
+    cache_file = CACHE_DIR / (
+        f"celegans_s{SAMPLE_INDEX}_filtered_4d_{combined.n_splats}n_sb{sb_str}"
+        f".gsplats.zarr.zip"
+    )
+
+    if _is_cached(cache_file):
+        result = _load_cached(cache_file, "filtered 4D")
+        if result is not None:
+            return result
+
+    with asection("Filtering background splats (specific brightness)"):
+        n_before = combined.n_splats
+
+        # Compute spatial-only volumes — the full nD volumes() method
+        # includes the time dimension (sigma=0) which collapses det(Σ)
+        # to near-zero.  The first k packed Cholesky elements are the
+        # spatial block (time is appended as the last dimension by
+        # combine_as_new_dimension).
+        n_chol_spatial = n_spatial_dims * (n_spatial_dims + 1) // 2
+        spatial_chol = combined.cholesky_factors[:, :n_chol_spatial]
+        diag_indices = np.cumsum(np.arange(1, n_spatial_dims + 1)) - 1
+        det_L = np.prod(spatial_chol[:, diag_indices], axis=1)
+        spatial_vols = np.abs(det_L**2) ** (1.0 / n_spatial_dims)
+
+        spec_brightness = combined.amplitudes / np.clip(spatial_vols, 1e-8, None)
+        keep = spec_brightness > SPEC_BRIGHTNESS_THRESHOLD
+        filtered = combined.filter(keep)
+        n_after = filtered.n_splats
+        aprint(
+            f"Removed {n_before - n_after:,} background splats "
+            f"(sb <= {SPEC_BRIGHTNESS_THRESHOLD}), "
+            f"{n_after:,} remain ({100 * n_after / n_before:.1f}%)"
+        )
+
+        # Cache the filtered result
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_file = cache_file.with_suffix(cache_file.suffix + ".tmp")
+        tmp_file.touch()
+        filtered.save(
+            cache_file,
+            encoding_mode=EncodingMode.MEMORY,
+            include_fitting_info=True,
+            color_mode="sdr",
+            compress="zip",
+        )
+        tmp_file.unlink(missing_ok=True)
+        aprint(f"Cached filtered 4D dataset: {cache_file.name}")
+
+    return filtered
+
+
 def create_luxar_scene(
     combined_4d: GSplatData,
     tracking_data: dict | None = None,
@@ -1328,6 +1417,12 @@ def main():
     with asection("Combined 4D Summary"):
         aprint(f"Total 4D splats: {combined_4d.n_splats:,}")
         aprint(f"Dimensions: {combined_4d.ndim}D")
+
+    # Filter diffuse background splats by specific brightness (cached)
+    combined_4d = filter_background_splats(combined_4d)
+
+    with asection("Filtered 4D Summary"):
+        aprint(f"Splats after filtering: {combined_4d.n_splats:,}")
 
     # Create 4D scene from the single combined dataset
     scene_path = create_luxar_scene(combined_4d, tracking_data)

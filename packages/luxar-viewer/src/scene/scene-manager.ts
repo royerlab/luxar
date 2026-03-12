@@ -3,7 +3,7 @@
 // This module handles all Three.js setup and 3D graphics configuration:
 // - WebGL renderer initialization with optimal settings
 // - Camera setup with proper projection and positioning
-// - ArcballControls for intuitive 3D navigation
+// - Camera controls for intuitive 3D navigation
 // - Scene graph management and Zarr data loading
 // - Resource disposal for memory management
 
@@ -57,7 +57,7 @@ import type { ControlType } from '../controls/controls-manager';
  *
  * Technical Details:
  * - Uses perspective camera for realistic 3D projection
- * - ArcballControls provide constraint-based camera movement
+ * - LuxarOrbitControls provide quaternion-based camera movement (no gimbal lock)
  * - HDR post-processing with ACES tone mapping and bloom
  * - Custom Gaussian point shaders for enhanced visual quality
  * - Automatic canvas resizing for responsive design
@@ -74,7 +74,7 @@ export class SceneManager extends THREE.EventDispatcher<{
   /** Camera for 3D viewing (perspective or orthographic) */
   public camera!: LuxarCamera;
 
-  /** ControlsManager - manages different camera control types (orbit, arcball, fly) */
+  /** ControlsManager - manages different camera control types (orbit, fly, ortho) */
   public controls!: ControlsManager;
 
   /** HDR post-processing manager for bloom and tone mapping effects */
@@ -141,7 +141,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * 3. WebGL context loss handling
    * 4. Scene graph
    * 5. Perspective camera
-   * 6. Camera controls (orbit/arcball/fly)
+   * 6. Camera controls (orbit/fly/ortho)
    * 7. Post-processing (bloom, HDR tone mapping)
    * 8. Initial canvas sizing
    *
@@ -544,7 +544,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     }
 
     // target_node takes precedence over explicit target coordinates.
-    // Use controls.lookAt() so that orbit/arcball controls pivot around the
+    // Use controls.lookAt() so that orbit controls pivot around the
     // correct point, not just the camera orientation.
     if (camOverrides.targetNode) {
       const resolved = this.resolveTargetNode(root, camOverrides.targetNode);
@@ -804,14 +804,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.camera.updateMatrixWorld(true);
 
       // Update controls to orbit around the center
-      // Note: ArcballControls doesn't have full TypeScript definitions, so we use type assertion
-      const controlsAny = this.controls as any;
-
-      // Set the new target position
-      controlsAny.target.copy(center);
-
-      // CRITICAL: Force the controls to recalculate internal state after target change
-      // ArcballControls maintains internal gizmos that need to be synchronized
+      this.controls.lookAt(center);
       this.controls.update();
 
       // Save the new centered state as the default
@@ -849,7 +842,7 @@ export class SceneManager extends THREE.EventDispatcher<{
   /**
    * Get controls manager for camera interaction.
    *
-   * Provides access to orbit, arcball, and fly controls for advanced
+   * Provides access to orbit, fly, and ortho controls for advanced
    * camera manipulation.
    *
    * @returns ControlsManager instance managing camera controls
@@ -1490,7 +1483,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
   /**
    * Switch camera control type. Handles camera swap for ortho mode.
-   * @param type - Control type ('orbit', 'arcball', 'fly', or 'ortho')
+   * @param type - Control type ('orbit', 'fly', or 'ortho')
    */
   setControlType(type: ControlType): void {
     const needsOrtho = type === 'ortho';

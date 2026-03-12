@@ -7,7 +7,7 @@ A Python library for compiling n-dimensional scientific datasets into optimized 
 Luxar Core is built on the principle that **data compilation should never be the bottleneck**. Whether you're working with thousands or billions of data points, in 3D or higher dimensions, Luxar Core scales with your ambitions:
 
 - **Dimension-agnostic**: Built to handle 3D, 4D, and beyond
-- **Geometry-flexible**: Extensible architecture for points, lines, surfaces, volumes
+- **Geometry-flexible**: Extensible architecture for points, lines, Gaussian splats, and more
 - **Scale-unlimited**: Performance bounded by storage, not architecture
 - **Stream-ready**: Chunked Zarr format enables progressive loading
 
@@ -86,10 +86,11 @@ Each node can have:
 #### Currently Implemented
 - **Scene**: Root node managing the Zarr store
 - **Group**: Organizational nodes with transforms
-- **Points**: Point cloud geometry with positions and colors
+- **Points**: Point geometry with positions, colors, radii, sharpness
+- **Lines**: Line/curve geometry with vertices, widths, colors, sharpness
+- **GSplats**: Gaussian splat geometry with centers, amplitudes, cholesky factors, colors
 
 #### Planned Geometry Types
-- **Lines**: Connected line segments with per-vertex attributes
 - **Surfaces**: Triangulated meshes with normals and textures
 - **Volumes**: Volumetric data with transfer functions
 - **Tensors**: Higher-dimensional data with projections
@@ -148,7 +149,7 @@ with LuxarZarrCompiler("multidimensional.zarr") as compiler:
 
 ### Point Attributes
 
-Enhanced points visualization with per-point attributes:
+Enhanced point rendering with per-point attributes:
 
 ```python
 # Generate 5D data (time, z, x, y, channel)
@@ -332,7 +333,7 @@ class Node:
 
 ```python
 class Points(Node):
-    """Point cloud geometry node."""
+    """Point geometry node."""
 
     # Created automatically via Scene.add_points()
     # Manages positions, colors, radii, and sharpness datasets in Zarr

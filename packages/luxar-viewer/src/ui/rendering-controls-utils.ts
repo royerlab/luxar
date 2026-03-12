@@ -26,7 +26,7 @@ export function getDefaultRenderingSettings(): RenderingSettings {
 const VALID_TONE_MAPPINGS = ['None', 'Linear', 'Reinhard', 'Cineon', 'ACES', 'AgX', 'Neutral'];
 
 /** Valid control types */
-const VALID_CONTROL_TYPES = ['orbit', 'arcball', 'fly', 'ortho'];
+const VALID_CONTROL_TYPES = ['orbit', 'fly', 'ortho'];
 
 /** Valid AO quality levels */
 const VALID_AO_QUALITIES = ['low', 'medium', 'high', 'ultra'];

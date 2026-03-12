@@ -157,7 +157,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py
 
 ### Points
 
-The primary geometry type for point cloud visualization.
+Render collections of nD points as soft-edged spheres.
 
 ```python
 scene.add_points(

@@ -145,9 +145,9 @@ export interface OrbitControlsConfig {
  * the actual control parameter value.
  */
 export interface ScaleMultipliers {
-  /** orbit/arcball minDistance = diagonal * factor (default: 0.001) */
+  /** orbit minDistance = diagonal * factor (default: 0.001) */
   minDistanceFactor: number;
-  /** orbit/arcball maxDistance = diagonal * factor (default: 10) */
+  /** orbit maxDistance = diagonal * factor (default: 10) */
   maxDistanceFactor: number;
   /** fly movementSpeed = diagonal * factor (default: 0.05) */
   flySpeedFactor: number;
@@ -472,7 +472,7 @@ export interface RenderingSettings {
   chromaticLensFocalLengthY: number;
   chromaticLensSkew: number;
   // Navigation controls
-  controlType: 'orbit' | 'arcball' | 'fly' | 'ortho';
+  controlType: 'orbit' | 'fly' | 'ortho';
   autoRotate: boolean;
   autoRotateSpeed: number;
   // Fly controls - these are added at runtime from config.controls.fly

@@ -2,7 +2,7 @@
  * Navigation controls setup for rendering controls UI.
  *
  * Creates controls for camera movement and rotation:
- * - Control type selector (orbit, arcball, fly)
+ * - Control type selector (orbit, fly, ortho)
  * - Orbit controls (auto-rotate, rotation speed)
  * - Fly controls (movement speed, rotation speed, inertial mode, damping)
  */
@@ -36,21 +36,19 @@ export function setupNavigationControls(context: SetupContext): SetupResult {
   navigationFolder.domElement?.setAttribute(
     'title',
     'Navigation: Controls how you move and look around the 3D scene\n\n' +
-      '• Orbit: Click-drag to rotate around a center point, scroll to zoom.\n' +
-      '  Best for inspecting objects from all angles.\n' +
-      '• Arcball: Like orbit but without gimbal lock — rotates freely in any direction.\n' +
-      '  Best for scientific data that needs unrestricted viewing.\n' +
+      '• Orbit: Drag to pan, right-drag to rotate freely (no gimbal lock), scroll to zoom.\n' +
+      '  Best for inspecting objects from any angle.\n' +
       '• Fly: Move freely through the scene like a drone (WASD + arrows).\n' +
       '  Best for exploring large or spatially complex datasets.\n' +
       '• Ortho: Orthographic projection with pan and zoom (no perspective).\n' +
-      '  Best for 2D microscopy data and precise measurements.'
+      '  Best for 2D data and precise measurements.'
   );
 
   // Control type selector
   const controlTypeControl = navigationFolder
-    .add(settings, 'controlType', ['orbit', 'arcball', 'fly', 'ortho'])
+    .add(settings, 'controlType', ['orbit', 'fly', 'ortho'])
     .name('Control Type')
-    .onChange((value: 'orbit' | 'arcball' | 'fly' | 'ortho') => {
+    .onChange((value: 'orbit' | 'fly' | 'ortho') => {
       sceneManager.setControlType(value);
       saveSettings();
       triggerAnimation();
@@ -66,17 +64,16 @@ export function setupNavigationControls(context: SetupContext): SetupResult {
   controlTypeControl.domElement.setAttribute(
     'title',
     'Camera Control Type\n' +
-      '• Orbit: Traditional 3D viewer controls with gimbal lock at poles\n' +
-      '• Arcball: Quaternion-based controls with unlimited rotation freedom\n' +
+      '• Orbit: Drag to pan, right-drag to rotate (no gimbal lock), Shift+scroll to roll\n' +
       '• Fly: First-person flying controls (WASD to move, arrows to look)\n' +
-      '• Ortho: Orthographic projection with pan and zoom (ideal for 2D microscopy data)'
+      '• Ortho: Orthographic projection with pan and zoom (no perspective distortion)'
   );
 
   // Create sub-folders for each control type
   const orbitFolder = navigationFolder.addFolder('Orbit Controls');
   orbitFolder.domElement?.setAttribute(
     'title',
-    'Orbit Controls: Settings for orbit and arcball camera modes\n' +
+    'Orbit Controls: Settings for orbit camera mode\n' +
       '• Auto-rotate for hands-free viewing\n' +
       '• Adjust rotation speed for presentations'
   );
