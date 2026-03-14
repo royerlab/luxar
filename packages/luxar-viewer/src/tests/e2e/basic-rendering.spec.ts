@@ -90,10 +90,10 @@ test.describe('Luxar Basic Rendering', () => {
         hasControls: !!debug.controls,
         cameraPosition: debug.camera
           ? {
-              x: debug.camera.position.x,
-              y: debug.camera.position.y,
-              z: debug.camera.position.z,
-            }
+            x: debug.camera.position.x,
+            y: debug.camera.position.y,
+            z: debug.camera.position.z,
+          }
           : null,
       };
     });
