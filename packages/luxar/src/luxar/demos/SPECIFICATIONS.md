@@ -282,9 +282,8 @@ if __name__ == "__main__":
 
 | File | Description |
 |------|-------------|
-| `demo_gsplats_3d_organoid_dapi_nuclei_from_idr.py` | 3D organoid DAPI nuclei from IDR microscopy data |
-| `demo_gsplats_3d_organoid_multichannel_from_idr.py` | Multi-channel 3D organoid from IDR (full compute pipeline) |
-| `demo_gsplats_3d_organoid_multichannel_precomputed.py` | Multi-channel 3D organoid (quick start with precomputed splats) |
+| `demo_gsplats_3d_organoid_dapi_nuclei.py` | 3D organoid DAPI nuclei from IDR microscopy data |
+| `demo_gsplats_3d_organoid_multichannel.py` | Multi-channel 3D organoid from IDR microscopy data |
 | `demo_gsplats_3d_tribolium_embryo.py` | 3D Tribolium beetle embryo light-sheet volume |
 | `demo_gsplats_4d_zebrafish_timelapse.py` | 4D zebrafish embryo time-lapse confocal with time slider |
 | `demo_gsplats_4d_cells3d_multichannel.py` | 4D multi-channel cells using dim_order feature |

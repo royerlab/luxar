@@ -63,11 +63,15 @@ USAGE:
     python demo_gsplats_4d_celegans_tracking.py [options]
 
 Options:
-    --no-cache:      Force re-processing (ignore all caches: preprocessing + GSplats)
+    --recompute:     Force re-processing from scratch (download + preprocess + GPU fitting)
     --no-serve:      Generate scene without launching viewer
     --serve-only:    Just serve a previously generated scene
     --timepoints=N:  Number of timepoints to process (default: 400, max: 400)
     --sample=N:      Which sample to use: 1, 2, or 3 (default: 1)
+
+By default, precomputed per-timepoint GSplats are loaded from package data (Git LFS).
+Tracking lines require a Zenodo download even in default mode.
+Use --recompute to re-fit from scratch (requires network + CUDA GPU).
 
 Requirements:
     - CUDA GPU strongly recommended (fitting is ~100x slower on CPU)
@@ -91,7 +95,12 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.clahe import apply_clahe
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
+from luxar.utils.demos import (
+    launch_viewer,
+    load_precomputed_bundle,
+    parse_demo_flags,
+    warn_if_no_cuda_gpu,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -119,9 +128,10 @@ PREPROCESS_NLM_PATCH_SIZE = 3
 PREPROCESS_NLM_PATCH_DISTANCE = 5
 
 # Parse command-line flags
-NO_CACHE = "--no-cache" in sys.argv
-NO_SERVE = "--no-serve" in sys.argv
-SERVE_ONLY = "--serve-only" in sys.argv
+FLAGS = parse_demo_flags()
+NO_SERVE = FLAGS["no_serve"]
+SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
 
 DEFAULT_TIMEPOINTS = 400
 MAX_TIMEPOINTS = 400
@@ -580,7 +590,7 @@ def _is_cached(cache_file: Path) -> bool:
     Returns True only when the file exists AND is not a leftover partial
     write (indicated by a corresponding .tmp file still present).
     """
-    if NO_CACHE:
+    if RECOMPUTE:
         return False
     if not cache_file.exists():
         return False
@@ -1363,7 +1373,6 @@ Navigation:
 
 def main():
     """Main demo execution."""
-    warn_if_no_cuda_gpu()
     aprint("=" * 70)
     aprint("GSplats Demo: 4D C. elegans Embryo — Nuclei Tracking")
     aprint("=" * 70)
@@ -1382,25 +1391,48 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Download
-    zip_path = download_celegans_data()
+    # Try loading precomputed per-timepoint GSplats from Git LFS bundle
+    n_use = TIMEPOINTS
+    file_names = [
+        f"celegans_s{SAMPLE_INDEX}_t{t:04d}.gsplats.zarr.zip"
+        for t in range(n_use)
+    ]
+    precomputed = load_precomputed_bundle(
+        "gsplats_celegans",
+        "celegans_s1_gsplats.zip",
+        file_names,
+        recompute=RECOMPUTE,
+    )
 
-    # Extract sample data
-    tiff_files, csv_files, nuclei_dirs = extract_sample_data(zip_path)
+    tracking_data = None
 
-    if not tiff_files:
-        aprint("ERROR: No TIFF files found for sample. Aborting.")
-        return
+    if precomputed is not None:
+        gsplats_list = precomputed
+        aprint(f"Loaded {len(gsplats_list)} precomputed timepoints")
+        aprint("Note: Tracking lines require --recompute (Zenodo download)")
+    else:
+        # --recompute path: download, preprocess, fit from scratch
+        warn_if_no_cuda_gpu()
 
-    n_available = len(tiff_files)
-    n_use = min(n_available, TIMEPOINTS)
-    aprint(f"Available timepoints: {n_available}, using: {n_use}")
+        # Download
+        zip_path = download_celegans_data()
 
-    # Load tracking data
-    tracking_data = load_tracking_data(csv_files, nuclei_dirs, n_use)
+        # Extract sample data
+        tiff_files, csv_files, nuclei_dirs = extract_sample_data(zip_path)
 
-    # Preprocess + fit GSplats per timepoint
-    gsplats_list = preprocess_and_fit_all_timepoints(tiff_files[:n_use])
+        if not tiff_files:
+            aprint("ERROR: No TIFF files found for sample. Aborting.")
+            return
+
+        n_available = len(tiff_files)
+        n_use = min(n_available, TIMEPOINTS)
+        aprint(f"Available timepoints: {n_available}, using: {n_use}")
+
+        # Load tracking data
+        tracking_data = load_tracking_data(csv_files, nuclei_dirs, n_use)
+
+        # Preprocess + fit GSplats per timepoint
+        gsplats_list = preprocess_and_fit_all_timepoints(tiff_files[:n_use])
 
     # Report per-timepoint fitting
     with asection("Fitting Summary"):

@@ -51,12 +51,15 @@ WORKFLOW:
 
 USAGE:
 ======
-    python demo_gsplats_4d_cells3d_multichannel_toggles.py [--no-cache] [--no-serve] [--serve-only]
+    python demo_gsplats_4d_cells3d_multichannel_toggles.py [--recompute] [--no-serve] [--serve-only]
 
 Options:
-    --no-cache:   Force re-fitting (ignore cached results)
+    --recompute:  Force re-fitting from scratch (requires GPU)
     --no-serve:   Don't auto-launch viewer after scene creation
     --serve-only: Skip loading/fitting, just serve existing scene
+
+By default, precomputed GSplats are loaded from package data (Git LFS).
+Use --recompute to re-fit from scratch.
 
 Output:
     - Scene saved to: demos/gsplats_5d_cells3d_multichannel_toggles.zarr
@@ -64,7 +67,6 @@ Output:
 
 """
 
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -72,8 +74,12 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
-from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
+from luxar.utils.demos import (
+    launch_viewer,
+    load_precomputed_gsplats,
+    parse_demo_flags,
+    warn_if_no_cuda_gpu,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -98,9 +104,10 @@ CHANNELS = [
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_cells3d"
 
 # Parse command-line flags
-NO_CACHE = "--no-cache" in sys.argv
-NO_SERVE = "--no-serve" in sys.argv
-SERVE_ONLY = "--serve-only" in sys.argv
+FLAGS = parse_demo_flags()
+NO_SERVE = FLAGS["no_serve"]
+SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
 
 # Setup
 Arbol.max_depth = 5
@@ -158,7 +165,7 @@ def load_cells3d():
 
 
 def fit_channel(volume, channel_name, cache_file):
-    """Fit gsplats to a single channel, using cache if available.
+    """Fit gsplats to a single channel (always fits — caller handles precomputed).
 
     Args:
         volume: 3D volume (Z, Y, X), float32 [0, 1]
@@ -168,16 +175,6 @@ def fit_channel(volume, channel_name, cache_file):
     Returns:
         GSplatData with fitted 3D splats
     """
-    # Check cache
-    if cache_file.exists() and not NO_CACHE:
-        aprint(f"Loading cached fit for {channel_name}")
-        try:
-            result = GSplatData.load(cache_file, include_stats=False)
-            aprint(f"  Loaded {len(result.amplitudes):,} cached splats")
-            return result
-        except Exception as e:
-            aprint(f"  Cache load failed: {e}, re-fitting...")
-
     # Auto-detect device
     global DEVICE
     if DEVICE is None:
@@ -383,7 +380,6 @@ Navigation:
 
 def main():
     """Main demo execution."""
-    warn_if_no_cuda_gpu()
     aprint("=" * 70)
     aprint("GSplats Demo: 5D Multi-Channel Cells (boolean toggle dimensions)")
     aprint("=" * 70)
@@ -403,11 +399,20 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Load data
-    volumes = load_cells3d()
+    # Try loading precomputed data (from Git LFS / local cache)
+    precomputed = load_precomputed_gsplats(
+        "gsplats_cells3d",
+        ["cells3d_ch0.gsplats.zarr.zip", "cells3d_ch1.gsplats.zarr.zip"],
+        recompute=RECOMPUTE,
+    )
 
-    # Fit gsplats per channel (with caching)
-    gsplats_list = fit_all_channels(volumes)
+    if precomputed is not None:
+        gsplats_list = precomputed
+    else:
+        # --recompute path: load raw data, fit from scratch
+        warn_if_no_cuda_gpu()
+        volumes = load_cells3d()
+        gsplats_list = fit_all_channels(volumes)
 
     # Report
     with asection("Fitting Summary"):

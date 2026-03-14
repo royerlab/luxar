@@ -95,17 +95,20 @@ Typical results for 128³ volume:
 
 USAGE:
 ======
-    python demo_gsplats_3d_organoid_dapi_nuclei_from_idr.py [--no-cache] [--no-serve] [--no-napari]
+    python demo_gsplats_3d_organoid_dapi_nuclei.py [--recompute] [--no-serve] [--no-napari]
 
 Options:
-    --no-cache:  Force re-fitting even if cached result exists
+    --recompute: Force re-fitting from scratch (download + GPU fitting)
     --no-serve:  Don't auto-launch viewer after scene creation
     --no-napari: Skip napari visualization (useful for headless/CI)
     --serve-only: Skip fitting, just serve existing scene
 
+By default, precomputed GSplats are loaded from package data (Git LFS).
+Use --recompute to re-fit from scratch (requires network + GPU).
+
 Output:
-    - Scene saved to: demos/gsplats_3d_organoid_dapi_nuclei_from_idr.zarr
-    - Cache saved to: ~/.cache/luxar/gsplats_dapi/gsplats_dapi_fit.npz
+    - Scene saved to: demos/gsplats_3d_organoid_dapi_nuclei.zarr
+    - Cache saved to: ~/.cache/luxar/gsplats_dapi/dapi_gsplats.gsplats.zarr.zip
     - Automatically opens in browser at http://localhost:8000
 
 Controls:
@@ -119,7 +122,12 @@ Controls:
 # Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
 
-from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
+from luxar.utils.demos import (
+    launch_viewer,
+    load_precomputed_gsplats,
+    parse_demo_flags,
+    warn_if_no_cuda_gpu,
+)
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
@@ -134,7 +142,6 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.utils.paths import get_demos_output_dir
 
@@ -154,13 +161,14 @@ DEVICE = None  # Auto-detect (cuda/mps/cpu)
 
 # Cache paths (use user cache directory for intermediate fit results)
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_dapi"
-CACHE_FILE = CACHE_DIR / "gsplats_dapi_fit.npz"
+CACHE_FILE = CACHE_DIR / "dapi_gsplats.gsplats.zarr.zip"
 
 # Parse command line flags
-NO_CACHE = "--no-cache" in sys.argv
-NO_SERVE = "--no-serve" in sys.argv
+FLAGS = parse_demo_flags()
+NO_SERVE = FLAGS["no_serve"]
+SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
 NO_NAPARI = "--no-napari" in sys.argv
-SERVE_ONLY = "--serve-only" in sys.argv
 
 # Setup
 Arbol.max_depth = 3
@@ -251,28 +259,9 @@ def load_dapi_data():
 # =============================================================================
 
 
-def fit_or_load_gsplats(volume):
-    """Fit gsplats to volume, using cache if available."""
+def fit_dapi_gsplats(volume):
+    """Fit gsplats to DAPI volume (no cache check — caller handles that)."""
     with asection("GSplats Fitting"):
-        # Check cache
-        if CACHE_FILE.exists() and not NO_CACHE:
-            aprint(f"📦 Loading cached fit from: {CACHE_FILE.name}")
-            try:
-                cache = np.load(CACHE_FILE)
-                # Reconstruct GSplatData from cache
-                result = GSplatData(
-                    centers=cache["centers"],
-                    cholesky_factors=cache["cholesky_factors"],
-                    amplitudes=cache["amplitudes"],
-                    sharpnesses=cache["sharpnesses"],
-                    stats={},  # Empty stats for cached data
-                )
-                aprint(f"✓ Loaded {len(result.amplitudes)} cached splats")
-                return result
-            except Exception as e:
-                aprint(f"⚠ Cache load failed: {e}")
-                aprint("Re-fitting...")
-
         # Auto-detect best device (Metal on Apple Silicon for 5-7x speedup!)
         global DEVICE
         if DEVICE is None:
@@ -281,9 +270,9 @@ def fit_or_load_gsplats(volume):
             if is_metal_available() and torch.backends.mps.is_available():
                 DEVICE = "mps"
                 aprint(
-                    "🚀 Metal acceleration detected - will use MPS device for 5-7x speedup!"
+                    "Metal acceleration detected - will use MPS device for 5-7x speedup!"
                 )
-                aprint("   (MPS→CPU fallback enabled for unsupported PyTorch ops)")
+                aprint("   (MPS->CPU fallback enabled for unsupported PyTorch ops)")
             elif torch.cuda.is_available():
                 DEVICE = "cuda"
                 aprint("Using CUDA device")
@@ -302,26 +291,23 @@ def fit_or_load_gsplats(volume):
             n_iters=N_ITERS,
             device=DEVICE,
             verbose=True,
-            napari_movie=False,  # No visualization during fitting
-            # sigma_min_diag=(0.5,0.5,0.5),
+            napari_movie=False,
             max_eccentricity=8.0,
-            # sharpness_range=2.0,  # Enforce standard Gaussian (no sharpness learning)
-            # voxel_footprint_correction=True,
         )
 
         n_splats = len(result.amplitudes)
-        aprint(f"✓ Fitted {n_splats} splats")
+        aprint(f"Fitted {n_splats} splats")
         aprint(f"  Centers: {result.centers.shape}")
         aprint(f"  Cholesky: {result.cholesky_factors.shape}")
 
-        # Cache result
-        aprint(f"💾 Caching fit to: {CACHE_FILE.name}")
-        np.savez(
+        # Cache result in gsplats.zarr.zip format
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        aprint(f"Caching fit to: {CACHE_FILE.name}")
+        result.save(
             CACHE_FILE,
-            centers=result.centers,
-            cholesky_factors=result.cholesky_factors,
-            amplitudes=result.amplitudes,
-            sharpnesses=result.sharpnesses,
+            encoding_mode=EncodingMode.MEMORY,
+            include_fitting_info=True,
+            compress="zip",
         )
 
         return result
@@ -336,7 +322,7 @@ def create_luxar_scene(gsplats_data, output_path: Path | None = None):
     """Create Luxar scene with gsplats."""
     if output_path is None:
         output_path = (
-            get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei_from_idr.zarr"
+            get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei.zarr"
         )
 
     with asection("Creating Luxar Scene"):
@@ -508,7 +494,6 @@ def serve_scene(scene_path):
 
 def main():
     """Main demo execution."""
-    warn_if_no_cuda_gpu()
     aprint("=" * 70)
     aprint("GSplats Demo: 3D Organoid DAPI-Stained Nuclei")
     aprint("=" * 70)
@@ -517,7 +502,7 @@ def main():
 
     # Determine output path
     output_path = (
-        get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei_from_idr.zarr"
+        get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei.zarr"
     )
 
     # Serve only mode
@@ -531,29 +516,23 @@ def main():
             aprint("Run without --serve-only to generate first")
             return
 
-    # Check cache before loading the (large) volume
+    # Try loading precomputed data (from Git LFS / local cache)
     volume = None
     gsplats_data_original = None
 
-    if CACHE_FILE.exists() and not NO_CACHE:
-        with asection("Loading cached GSplats"):
-            try:
-                cache = np.load(CACHE_FILE)
-                gsplats_data_original = GSplatData(
-                    centers=cache["centers"],
-                    cholesky_factors=cache["cholesky_factors"],
-                    amplitudes=cache["amplitudes"],
-                    sharpnesses=cache["sharpnesses"],
-                    stats={},
-                )
-                aprint(f"Loaded {len(gsplats_data_original.amplitudes)} cached splats")
-            except Exception as e:
-                aprint(f"Cache load failed: {e}, will re-fit...")
+    precomputed = load_precomputed_gsplats(
+        "gsplats_dapi",
+        ["dapi_gsplats.gsplats.zarr.zip"],
+        recompute=RECOMPUTE,
+    )
 
-    if gsplats_data_original is None:
-        # Load data only when we need to fit
+    if precomputed is not None:
+        gsplats_data_original = precomputed[0]
+    else:
+        # --recompute path: download raw data, fit from scratch
+        warn_if_no_cuda_gpu()
         volume = load_dapi_data()
-        gsplats_data_original = fit_or_load_gsplats(volume)
+        gsplats_data_original = fit_dapi_gsplats(volume)
 
     # Apply transformations for web viewer
     with asection("Applying transformations for web viewer"):

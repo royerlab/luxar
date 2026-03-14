@@ -56,10 +56,10 @@ WORKFLOW:
 
 USAGE:
 ======
-    python demo_gsplats_4d_kidney_multichannel_toggles.py [--no-cache] [--no-serve] [--serve-only]
+    python demo_gsplats_4d_kidney_multichannel_toggles.py [--recompute] [--no-serve] [--serve-only]
 
 Options:
-    --no-cache:   Force re-fitting (ignore cached results)
+    --recompute:  Force re-fitting from scratch (ignore precomputed/cached results)
     --no-serve:   Don't auto-launch viewer after scene creation
     --serve-only: Skip loading/fitting, just serve existing scene
 
@@ -69,7 +69,6 @@ Output:
 
 """
 
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -78,7 +77,12 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
+from luxar.utils.demos import (
+    launch_viewer,
+    load_precomputed_gsplats,
+    parse_demo_flags,
+    warn_if_no_cuda_gpu,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -120,10 +124,19 @@ CHANNELS = [
 # Cache directory
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_kidney"
 
+# Precomputed data configuration
+_PRECOMPUTED_DEMO_NAME = "gsplats_kidney"
+_PRECOMPUTED_FILE_NAMES = [
+    "kidney_ch0.gsplats.zarr.zip",
+    "kidney_ch1.gsplats.zarr.zip",
+    "kidney_ch2.gsplats.zarr.zip",
+]
+
 # Parse command-line flags
-NO_CACHE = "--no-cache" in sys.argv
-NO_SERVE = "--no-serve" in sys.argv
-SERVE_ONLY = "--serve-only" in sys.argv
+FLAGS = parse_demo_flags()
+NO_SERVE = FLAGS["no_serve"]
+SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
 
 # Setup
 Arbol.max_depth = 5
@@ -203,7 +216,7 @@ def fit_channel(volume, channel_name, cache_file):
         GSplatData with fitted 3D splats
     """
     # Check cache
-    if cache_file.exists() and not NO_CACHE:
+    if cache_file.exists() and not RECOMPUTE:
         aprint(f"Loading cached fit for {channel_name}")
         try:
             result = GSplatData.load(cache_file, include_stats=False)
@@ -426,7 +439,6 @@ Navigation:
 
 def main():
     """Main demo execution."""
-    warn_if_no_cuda_gpu()
     aprint("=" * 70)
     aprint("GSplats Demo: 6D Multi-Channel Kidney (boolean toggle dimensions)")
     aprint("=" * 70)
@@ -445,11 +457,22 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Load data
-    volumes = load_kidney()
+    # Try loading precomputed data from Git LFS / local cache
+    gsplats_list = load_precomputed_gsplats(
+        _PRECOMPUTED_DEMO_NAME,
+        _PRECOMPUTED_FILE_NAMES,
+        recompute=RECOMPUTE,
+    )
 
-    # Fit gsplats per channel (with caching)
-    gsplats_list = fit_all_channels(volumes)
+    if gsplats_list is None:
+        # Recompute path: warn about GPU requirements, load data, fit
+        warn_if_no_cuda_gpu()
+
+        # Load data
+        volumes = load_kidney()
+
+        # Fit gsplats per channel (with caching)
+        gsplats_list = fit_all_channels(volumes)
 
     # Report
     with asection("Fitting Summary"):
