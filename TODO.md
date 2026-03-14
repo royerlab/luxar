@@ -18,7 +18,7 @@ This file tracks known issues, planned features, and improvements for the Luxar 
 
 ## Feature Requests (MEDIUM Priority)
 
-5 - **Layers panel (per-node controllability)**: Expose all scene graph nodes (Groups, Points, Lines, GSplats — except the Scene root) as "layers" in a dedicated UI panel. Each layer provides controls for visibility, brightness, offset, and gamma, applied to the node and its entire sub-tree. Most of the viewer machinery is already in place; the remaining work is the Layers panel itself. Inspired by napari: multi-select layers, show only the intersection of available controls, and propagate setting changes to all selected layers.
+5 - **Layers panel (per-node controllability)**: Expose a selection (decided at scene construction time with the python API) of scene graph nodes (Groups, Points, Lines, GSplats — except the Scene root) as "layers" in a dedicated UI panel. Each layer provides controls for visibility, brightness, offset, and gamma, applied to the node and its entire sub-tree. Most of the viewer machinery is already in place; the remaining work is the Layers panel itself. Inspired by napari: multi-select layers, show only the intersection of available controls, and propagate setting changes to all selected layers. Ideally, to match scientific visualisation software, instead of exposing brightness and offset, expose (parametrise) instead [min, max] intensity 
 
 6 - **Orthographic projection mode**: Add an orthographic camera option. In this mode the user can pan and zoom and only rotate around the view direction. Standard expectation for microscopy viewers of 2D data.
 

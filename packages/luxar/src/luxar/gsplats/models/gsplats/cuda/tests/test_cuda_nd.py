@@ -1118,19 +1118,17 @@ class Test5DAnd6DDimensions:
         )
         from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
-        np.random.seed(42)
+        rng = np.random.RandomState(42)
         torch.manual_seed(42)
-        torch.cuda.manual_seed_all(42)
-        torch.cuda.empty_cache()
 
         N, d = 15, 6
         shape = (4, 4, 4, 4, 4, 4)  # 4K voxels
 
-        centers0 = np.random.rand(N, d).astype(np.float32) * 2 + 1
+        centers0 = rng.rand(N, d).astype(np.float32) * 2 + 1
         L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0)
         for i in range(N):
-            L0[i] *= np.random.uniform(0.3, 0.8)
-        amps0 = np.random.rand(N).astype(np.float32) * 0.5 + 0.5
+            L0[i] *= rng.uniform(0.3, 0.8)
+        amps0 = rng.rand(N).astype(np.float32) * 0.5 + 0.5
 
         # CPU reference
         cpu_model = GaussianSplatModel(
@@ -1152,13 +1150,11 @@ class Test5DAnd6DDimensions:
             device="cuda",
         )
 
-        # Guard against autocast context leak from other tests (e.g., FP16 tests)
-        # which would cause FP16 kernels to run with FP32 data, producing wrong results
-        autocast_leaked = torch.is_autocast_enabled()
-        if autocast_leaked:
-            print("\n6D WARNING: autocast was leaked from a prior test!")
+        # Clear CUDA caching allocator to prevent stale buffer reuse from prior tests
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
 
-        with torch.no_grad(), torch.amp.autocast("cuda", enabled=False):
+        with torch.no_grad():
             cpu_output = cpu_model()
             cuda_output = cuda_model().cpu()
 

@@ -423,89 +423,91 @@ __global__ void rasterize_forward_kernel(
     const bool use_fast_path_2d = (DIM == 2) && (tile_size == 16) &&
         (tile_extent[0] == 16) && (tile_extent[1] == 16);
 
-    // Each thread processes one or more pixels
-    for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels; local_px_idx += blockDim.x) {
-        // Convert local pixel index to voxel coordinates
-        int voxel_coords[DIM];
-        compute_voxel_coords<DIM>(local_px_idx, tile_origin, tile_extent,
-                                  use_fast_path_3d, use_fast_path_2d, voxel_coords);
+    // Per-thread intensity accumulators for each pixel this thread handles.
+    // We accumulate across all splat batches, then write outputs at the end.
+    // Each thread handles ceil(tile_pixels / blockDim.x) pixels.
+    // We process batches of splats in the outer loop (with __syncthreads for
+    // cooperative shared memory loading), and pixels in the inner loop.
+    // This ensures ALL threads in the block participate in every __syncthreads(),
+    // regardless of how many pixels each thread is assigned.
 
-        // Convert to float for computation - use integer coordinates to match PyTorch reference
-        float px[DIM];
-        #pragma unroll
-        for (int d = 0; d < DIM; d++) {
-            px[d] = (float)voxel_coords[d];
-        }
+    // Process splats in batches (outer loop — all threads participate in sync)
+    for (int batch_start = 0; batch_start < n_splats_in_tile; batch_start += BATCH_SIZE) {
+        int batch_size = min(BATCH_SIZE, n_splats_in_tile - batch_start);
 
-        // Accumulate intensity
-        float intensity_sum = 0.0f;
+        // Cooperative load of splat batch into shared memory
+        // All threads participate in __syncthreads() regardless of pixel assignment
+        __syncthreads();
+        for (int i = threadIdx.x; i < batch_size; i += blockDim.x) {
+            int splat_idx = __ldg(&tile_content[tile_offset + batch_start + i]);
 
-        // Process splats in batches
-        for (int batch_start = 0; batch_start < n_splats_in_tile; batch_start += BATCH_SIZE) {
-            int batch_size = min(BATCH_SIZE, n_splats_in_tile - batch_start);
-
-            // Cooperative load of splat batch into shared memory
-            // OPTIMIZATION: Use DTypeTraits for dtype-aware loading (supports FP16->FP32 conversion)
-            // This improves memory throughput for scattered reads by ~15-20%
-            __syncthreads();
-            for (int i = threadIdx.x; i < batch_size; i += blockDim.x) {
-                int splat_idx = __ldg(&tile_content[tile_offset + batch_start + i]);
-
-                // Load centers with dtype conversion (using padded stride for 3D)
-                // OPTIMIZATION: Use vectorized loads for FP16 (reduces memory transactions)
-                if constexpr (DIM == 3) {
-                    float tmp_centers[3];
-                    load_centers_3d<InputDType>(centers, splat_idx, tmp_centers);
-                    s_centers[i * CENTER_STRIDE + 0] = tmp_centers[0];
-                    s_centers[i * CENTER_STRIDE + 1] = tmp_centers[1];
-                    s_centers[i * CENTER_STRIDE + 2] = tmp_centers[2];
-                } else if constexpr (DIM == 2) {
-                    float tmp_centers[2];
-                    load_centers_2d<InputDType>(centers, splat_idx, tmp_centers);
-                    s_centers[i * CENTER_STRIDE + 0] = tmp_centers[0];
-                    s_centers[i * CENTER_STRIDE + 1] = tmp_centers[1];
-                } else {
-                    #pragma unroll
-                    for (int d = 0; d < DIM; d++) {
-                        s_centers[i * CENTER_STRIDE + d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
-                    }
+            // Load centers with dtype conversion (using padded stride for 3D)
+            if constexpr (DIM == 3) {
+                float tmp_centers[3];
+                load_centers_3d<InputDType>(centers, splat_idx, tmp_centers);
+                s_centers[i * CENTER_STRIDE + 0] = tmp_centers[0];
+                s_centers[i * CENTER_STRIDE + 1] = tmp_centers[1];
+                s_centers[i * CENTER_STRIDE + 2] = tmp_centers[2];
+            } else if constexpr (DIM == 2) {
+                float tmp_centers[2];
+                load_centers_2d<InputDType>(centers, splat_idx, tmp_centers);
+                s_centers[i * CENTER_STRIDE + 0] = tmp_centers[0];
+                s_centers[i * CENTER_STRIDE + 1] = tmp_centers[1];
+            } else {
+                #pragma unroll
+                for (int d = 0; d < DIM; d++) {
+                    s_centers[i * CENTER_STRIDE + d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
                 }
-
-                // Load conic with dtype conversion
-                // OPTIMIZATION: Use vectorized loads for FP16 (reduces memory transactions)
-                if constexpr (DIM == 3) {
-                    float tmp_conic[6];
-                    load_conic_3d<InputDType>(conic, splat_idx, tmp_conic);
-                    #pragma unroll
-                    for (int c = 0; c < 6; c++) {
-                        s_conic[i * CONIC_SIZE + c] = tmp_conic[c];
-                    }
-                } else if constexpr (DIM == 2) {
-                    float tmp_conic[3];
-                    load_conic_2d<InputDType>(conic, splat_idx, tmp_conic);
-                    s_conic[i * CONIC_SIZE + 0] = tmp_conic[0];
-                    s_conic[i * CONIC_SIZE + 1] = tmp_conic[1];
-                    s_conic[i * CONIC_SIZE + 2] = tmp_conic[2];
-                } else {
-                    #pragma unroll
-                    for (int c = 0; c < CONIC_SIZE; c++) {
-                        s_conic[i * CONIC_SIZE + c] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + c);
-                    }
-                }
-
-                // Load scalars with dtype conversion
-                float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
-                s_amps[i] = DTypeTraits<InputDType>::load(amps, splat_idx);
-                s_sharpness[i] = s;
-
-                // OPTIMIZATION 1.2: Precompute effective truncation squared
-                // This moves the expensive powf() out of the hot inner loop
-                // Includes amplitude-based tightening for better early rejection
-                s_truncate_sq[i] = effective_truncate_sq(truncate, s, s_amps[i], intensity_floor);
             }
-            __syncthreads();
 
-            // Process loaded splats
+            // Load conic with dtype conversion
+            if constexpr (DIM == 3) {
+                float tmp_conic[6];
+                load_conic_3d<InputDType>(conic, splat_idx, tmp_conic);
+                #pragma unroll
+                for (int c = 0; c < 6; c++) {
+                    s_conic[i * CONIC_SIZE + c] = tmp_conic[c];
+                }
+            } else if constexpr (DIM == 2) {
+                float tmp_conic[3];
+                load_conic_2d<InputDType>(conic, splat_idx, tmp_conic);
+                s_conic[i * CONIC_SIZE + 0] = tmp_conic[0];
+                s_conic[i * CONIC_SIZE + 1] = tmp_conic[1];
+                s_conic[i * CONIC_SIZE + 2] = tmp_conic[2];
+            } else {
+                #pragma unroll
+                for (int c = 0; c < CONIC_SIZE; c++) {
+                    s_conic[i * CONIC_SIZE + c] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + c);
+                }
+            }
+
+            // Load scalars with dtype conversion
+            float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
+            s_amps[i] = DTypeTraits<InputDType>::load(amps, splat_idx);
+            s_sharpness[i] = s;
+
+            // OPTIMIZATION 1.2: Precompute effective truncation squared
+            s_truncate_sq[i] = effective_truncate_sq(truncate, s, s_amps[i], intensity_floor);
+        }
+        __syncthreads();
+
+        // Each thread processes its assigned pixels against the loaded splat batch
+        // (inner loop — no __syncthreads inside, safe for varying iteration counts)
+        for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels; local_px_idx += blockDim.x) {
+            // Convert local pixel index to voxel coordinates
+            int voxel_coords[DIM];
+            compute_voxel_coords<DIM>(local_px_idx, tile_origin, tile_extent,
+                                      use_fast_path_3d, use_fast_path_2d, voxel_coords);
+
+            // Convert to float for computation
+            float px[DIM];
+            #pragma unroll
+            for (int d = 0; d < DIM; d++) {
+                px[d] = (float)voxel_coords[d];
+            }
+
+            // Process loaded splats for this pixel
+            float pixel_intensity = 0.0f;
             for (int i = 0; i < batch_size; i++) {
                 // Compute displacement d = px - mu (using padded stride)
                 float d[DIM];
@@ -517,8 +519,7 @@ __global__ void rasterize_forward_kernel(
                 // Compute Mahalanobis distance squared
                 float dist_sq = mahalanobis_distance_sq<DIM>(d, &s_conic[i * CONIC_SIZE]);
 
-                // OPTIMIZATION 1.2: Early rejection based on precomputed truncation
-                // Skip expensive gaussian_intensity computation for distant pixels
+                // Early rejection based on precomputed truncation
                 if (dist_sq > s_truncate_sq[i]) continue;
 
                 // Compute intensity (only for pixels within truncation radius)
@@ -526,20 +527,19 @@ __global__ void rasterize_forward_kernel(
 
                 // Skip if below threshold
                 if (intensity >= intensity_floor) {
-                    intensity_sum += intensity;
+                    pixel_intensity += intensity;
                 }
             }
-        }
 
-        // Write accumulated intensity to output
-        // Note: We use direct assignment (not atomicAdd) because:
-        // 1. Each pixel belongs to exactly one tile
-        // 2. Each thread in this block processes distinct pixels (different local_px_idx)
-        // The global splat kernel uses atomicAdd to add to these values.
-        // OPTIMIZATION: Skip write for zero-intensity pixels (output is zero-initialized)
-        if (local_px_idx < tile_pixels && intensity_sum != 0.0f) {
-            int64_t global_px_idx = voxel_to_linear<DIM>(voxel_coords, shape);
-            output[global_px_idx] = intensity_sum;
+            // Accumulate this batch's contribution to output
+            // Use atomicAdd since the same pixel may be written across multiple
+            // iterations of the outer pixel loop — NO: each local_px_idx is unique
+            // per thread per iteration, but we need to accumulate across batches.
+            // Since output was zero-initialized, we atomicAdd each batch's contribution.
+            if (pixel_intensity != 0.0f) {
+                int64_t global_px_idx = voxel_to_linear<DIM>(voxel_coords, shape);
+                atomicAdd(&output[global_px_idx], pixel_intensity);
+            }
         }
     }
 }

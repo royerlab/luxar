@@ -24,8 +24,10 @@ import {
 import {
   validateFOV,
   calculateClippingPlanes,
+  calculateCameraDistance,
   calculateDistancesToBoundingBox,
   getBoundingBoxDiagonal,
+  getBoundingBoxCenter,
   BoundingBox,
   CLIPPING_SAFETY_MARGIN,
   MIN_NEAR_PLANE,
@@ -501,14 +503,25 @@ export class SceneManager extends THREE.EventDispatcher<{
       // Apply viewer config from zarr (camera position, background color)
       this.applyZarrViewerConfig(root);
 
+      // Auto-frame camera to fit scene contents, unless the zarr author specified a camera position.
+      // Only an explicit position suppresses auto-framing — a target/targetNode alone means the
+      // author wants the orbit pivot set but still expects the camera to be at a sensible distance.
+      const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
+      const camOverrides = viewerConfig ? extractCameraOverrides(viewerConfig) : {};
+      const hasAuthorTarget = !!(camOverrides.target || camOverrides.targetNode);
+
+      if (!camOverrides.position) {
+        // No author camera position — auto-frame using metadata bounds.
+        // If the author set a target, preserve it as the look-at point
+        // instead of overwriting with bounding box center.
+        this.autoFrameCamera(hasAuthorTarget);
+      }
+
       // Auto-adjust clipping planes using scene bounds from metadata
-      // This uses position_bounds stored in zarr, which represents the full dataset extent
-      // and doesn't require waiting for point data to load
+      // (must run AFTER autoFrameCamera since camera position affects clipping)
       this.autoAdjustClippingPlanes();
 
-      // Don't automatically center - let the scene designer's positioning take precedence
-      // User can press 'F' to center on bounding box if desired
-      log.info(Modules.SCENE_MANAGER, 'Scene loaded. Press F to toggle centering on bounding box.');
+      log.info(Modules.SCENE_MANAGER, 'Scene loaded. Press F to re-center camera on bounding box.');
     } catch (error) {
       hideLoadingIndicator();
       log.error(Modules.SCENE_MANAGER, 'Failed to load scene:', error);
@@ -768,21 +781,9 @@ export class SceneManager extends THREE.EventDispatcher<{
       }
     });
 
-    // Only center camera if we have a reasonable scene
-    if (!box.isEmpty()) {
+    // Only center camera if we have geometry
+    if (!box.isEmpty() && totalPrimitiveCount > 0) {
       const size = box.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z);
-
-      // Don't center if bounding box is too small or too few primitives
-      // This prevents awkward camera positioning on edge cases
-      if (maxDim < 1.0 || totalPrimitiveCount < 100) {
-        // Keep default camera position for better user experience
-        log.warning(
-          Modules.SCENE_MANAGER,
-          `Scene too small for auto-centering (size: ${maxDim.toFixed(2)}, primitives: ${totalPrimitiveCount})`
-        );
-        return;
-      }
 
       // Update scale-aware controls from geometry bounding box
       const diagonal = size.length();
@@ -795,9 +796,34 @@ export class SceneManager extends THREE.EventDispatcher<{
       // Store the center for later use
       this.lastBoundingBoxCenter.copy(center);
 
-      // Position camera to see the entire scene
-      const distance = maxDim * 1.2; // Closer for better visibility
-      this.camera.position.set(center.x, center.y, center.z + distance);
+      // Compute optimal distance using FOV-aware calculation
+      const geoBounds: BoundingBox = {
+        min: { x: box.min.x, y: box.min.y, z: box.min.z },
+        max: { x: box.max.x, y: box.max.y, z: box.max.z },
+      };
+
+      if (isPerspectiveCamera(this.camera)) {
+        const cameraConfig = {
+          fov: this.camera.fov,
+          aspect: this.camera.aspect,
+          near: this.camera.near,
+          far: this.camera.far,
+        };
+        const distance = calculateCameraDistance(geoBounds, cameraConfig);
+        this.camera.position.set(center.x, center.y, center.z + distance);
+      } else if (isOrthographicCamera(this.camera)) {
+        const frustumHeight = this.camera.top - this.camera.bottom;
+        const frustumWidth = this.camera.right - this.camera.left;
+        const maxDim = Math.max(size.x, size.y, size.z);
+        if (maxDim > 0 && frustumHeight > 0 && frustumWidth > 0) {
+          const fitRatio = config.scene.defaultFitRatio;
+          const zoomH = frustumHeight / (maxDim / fitRatio);
+          const zoomW = frustumWidth / (maxDim / fitRatio);
+          this.camera.zoom = Math.min(zoomH, zoomW);
+          this.camera.updateProjectionMatrix();
+        }
+        this.camera.position.set(center.x, center.y, center.z + diagonal);
+      }
 
       // Point camera at the center
       this.camera.lookAt(center);
@@ -816,7 +842,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
       log.success(
         Modules.SCENE_MANAGER,
-        `Camera centered on scene (center: [${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}], distance: ${distance.toFixed(2)})`
+        `Camera centered on scene (center: [${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}])`
       );
     } else {
       log.warning(Modules.SCENE_MANAGER, 'No visible geometry found to center camera on');
@@ -1165,6 +1191,93 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.updateClippingPlanes(near, far);
 
     return { near, far };
+  }
+
+  /**
+   * Auto-frame the camera to fit the scene contents using metadata bounds.
+   *
+   * Uses position_bounds from zarr metadata (available immediately, no geometry load needed)
+   * to compute the optimal camera distance via FOV-aware calculation. This ensures
+   * the initial view fits the scene regardless of its physical scale.
+   *
+   * For orthographic cameras, adjusts zoom instead of distance.
+   *
+   * @param preserveTarget - If true, keep the current controls target (set by zarr viewer_config)
+   *   instead of overwriting it with the bounding box center.
+   */
+  private autoFrameCamera(preserveTarget: boolean = false): void {
+    const bounds = this.getSceneBoundsFromMetadata();
+    if (!bounds) {
+      log.warning(Modules.SCENE_MANAGER, 'No metadata bounds available for auto-framing');
+      return;
+    }
+
+    const center = getBoundingBoxCenter(bounds);
+    const diagonal = getBoundingBoxDiagonal(bounds);
+
+    if (diagonal <= 0) {
+      log.warning(Modules.SCENE_MANAGER, 'Scene bounds have zero extent, skipping auto-frame');
+      return;
+    }
+
+    // Adapt control speeds to scene scale
+    this.controls.setSceneScale(diagonal);
+
+    // Determine the look-at target: author's target if set, otherwise bounding box center
+    const lookAtTarget = preserveTarget
+      ? this.controls.getFocusTarget()
+      : new THREE.Vector3(center.x, center.y, center.z);
+
+    if (isPerspectiveCamera(this.camera)) {
+      // Compute optimal distance using FOV, aspect ratio, and fitRatio
+      const cameraConfig = {
+        fov: this.camera.fov,
+        aspect: this.camera.aspect,
+        near: this.camera.near,
+        far: this.camera.far,
+      };
+      const distance = calculateCameraDistance(bounds, cameraConfig);
+
+      this.camera.position.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z + distance);
+    } else if (isOrthographicCamera(this.camera)) {
+      // For ortho, compute zoom to fit the scene in the frustum
+      const frustumHeight = this.camera.top - this.camera.bottom;
+      const frustumWidth = this.camera.right - this.camera.left;
+      const maxDim = Math.max(
+        bounds.max.x - bounds.min.x,
+        bounds.max.y - bounds.min.y,
+        bounds.max.z - bounds.min.z
+      );
+      if (maxDim > 0 && frustumHeight > 0 && frustumWidth > 0) {
+        const fitRatio = config.scene.defaultFitRatio;
+        const zoomH = frustumHeight / (maxDim / fitRatio);
+        const zoomW = frustumWidth / (maxDim / fitRatio);
+        this.camera.zoom = Math.min(zoomH, zoomW);
+        this.camera.updateProjectionMatrix();
+      }
+      // Position along Z for correct depth ordering
+      this.camera.position.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z + diagonal);
+    }
+
+    // Point camera at the look-at target
+    this.camera.lookAt(lookAtTarget);
+    this.camera.updateMatrixWorld(true);
+
+    // Update controls to orbit around the target (skip if author already set it)
+    if (!preserveTarget) {
+      this.controls.lookAt(lookAtTarget, false);
+    }
+    this.controls.update();
+    this.controls.saveState();
+
+    // Track centering state
+    this.isCenteredOnBoundingBox = !preserveTarget;
+    this.lastBoundingBoxCenter.set(center.x, center.y, center.z);
+
+    log.success(
+      Modules.SCENE_MANAGER,
+      `Auto-framed camera on scene (target: [${lookAtTarget.x.toFixed(2)}, ${lookAtTarget.y.toFixed(2)}, ${lookAtTarget.z.toFixed(2)}], diagonal: ${diagonal.toFixed(2)})`
+    );
   }
 
   /**

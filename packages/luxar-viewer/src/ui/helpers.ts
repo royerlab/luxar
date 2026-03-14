@@ -344,6 +344,17 @@ export function showHelpOverlay() {
       ],
     },
     {
+      title: '📐 Ortho Mode Controls',
+      expanded: false,
+      items: [
+        '🖱️ Drag: Pan camera',
+        '🖱️ Wheel: Zoom in/out',
+        '🖱️ ⇧+Wheel: Roll (rotate around view axis)',
+        'No rotation — 2D viewing mode',
+        'Note: Press V to cycle to ortho mode',
+      ],
+    },
+    {
       title: '📐 nD Navigation',
       expanded: false,
       items: [
@@ -366,7 +377,7 @@ export function showHelpOverlay() {
         'P: Performance monitor',
         'M: Cycle data monitor (mini/expanded/off)',
         'C: Toggle cinematic mode (noise/vignette/CA/lens)',
-        'Ctrl + Wheel: Adjust field of view',
+        'Ctrl/⌘ + Wheel: Adjust field of view (perspective only)',
         'Ctrl+L: Debug console',
       ],
     },

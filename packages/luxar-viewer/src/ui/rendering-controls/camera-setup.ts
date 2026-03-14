@@ -57,7 +57,7 @@ export function setupCameraControls(
     'title',
     'Camera: Controls the virtual camera lens and projection\n\n' +
       '• FOV Preset: Choose a standard lens (28mm wide to 135mm telephoto)\n' +
-      '• Field of View: Fine-tune viewing angle (also Shift+Wheel)\n' +
+      '• Field of View: Fine-tune viewing angle (also Ctrl+Wheel)\n' +
       '• Clipping Planes: Control what range of distances is visible'
   );
 
@@ -217,7 +217,7 @@ export function setupCameraControls(
       '• Lower values: Telephoto lens effect (narrow view)\n' +
       '• Higher values: Wide-angle lens effect (broader view)\n' +
       '• 47° (50mm Normal) provides natural human-like viewing angle\n' +
-      '• Also controllable with Shift+Wheel for fine adjustment\n' +
+      '• Also controllable with Ctrl+Wheel for fine adjustment\n' +
       '• Maintains world-space point sizing (points stay same physical size)'
   );
 

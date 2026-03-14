@@ -132,7 +132,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     // Apply configuration with defaults
     this.enableDamping = config?.enableDamping ?? true;
     this.dampingFactor = config?.dampingFactor ?? 0.25;
-    this.rotateSpeed = config?.rotateSpeed ?? 1.0;
+    this.rotateSpeed = config?.rotateSpeed ?? 3.0;
     this.panSpeed = config?.panSpeed ?? 1.0;
     this.zoomSpeed = config?.zoomSpeed ?? 1.0;
     this.enableRotate = config?.enableRotate ?? true;
@@ -347,6 +347,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.domElement.removeEventListener('pointerdown', this.boundOnPointerDown);
     this.domElement.removeEventListener('pointermove', this.boundOnPointerMove);
     this.domElement.removeEventListener('pointerup', this.boundOnPointerUp);
+    this.domElement.removeEventListener('pointercancel', this.boundOnPointerUp);
     this.domElement.removeEventListener('wheel', this.boundOnWheel);
     this.domElement.removeEventListener('contextmenu', this.boundOnContextMenu);
 
@@ -546,6 +547,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       this.domElement.setPointerCapture(event.pointerId);
       this.domElement.addEventListener('pointermove', this.boundOnPointerMove);
       this.domElement.addEventListener('pointerup', this.boundOnPointerUp);
+      this.domElement.addEventListener('pointercancel', this.boundOnPointerUp);
     }
 
     this.pointers.push(event);
@@ -618,9 +620,14 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.pointerPositions.delete(event.pointerId);
 
     if (this.pointers.length === 0) {
-      this.domElement.releasePointerCapture(event.pointerId);
+      try {
+        this.domElement.releasePointerCapture(event.pointerId);
+      } catch {
+        /* pointer capture may already be released on cancel */
+      }
       this.domElement.removeEventListener('pointermove', this.boundOnPointerMove);
       this.domElement.removeEventListener('pointerup', this.boundOnPointerUp);
+      this.domElement.removeEventListener('pointercancel', this.boundOnPointerUp);
     }
 
     this.state = 'none';

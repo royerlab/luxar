@@ -189,6 +189,61 @@ describe('scene-manager-utils', () => {
       // Tall camera needs more distance to fit same object
       expect(tallDistance).toBeGreaterThan(wideDistance);
     });
+
+    it('should scale distance proportionally with scene size', () => {
+      const camera: CameraConfig = { fov: 47, aspect: 16 / 9, near: 0.1, far: 1000 };
+
+      const smallBox: BoundingBox = {
+        min: { x: 0, y: 0, z: 0 },
+        max: { x: 1, y: 1, z: 1 },
+      };
+      const largeBox: BoundingBox = {
+        min: { x: 0, y: 0, z: 0 },
+        max: { x: 500, y: 500, z: 500 },
+      };
+
+      const smallDist = calculateCameraDistance(smallBox, camera);
+      const largeDist = calculateCameraDistance(largeBox, camera);
+
+      // Distance should scale linearly with scene size
+      expect(largeDist / smallDist).toBeCloseTo(500, 0);
+    });
+
+    it('should return 0 for zero-size bounding box', () => {
+      const camera: CameraConfig = { fov: 60, aspect: 1, near: 0.1, far: 1000 };
+      const zeroBox: BoundingBox = {
+        min: { x: 5, y: 5, z: 5 },
+        max: { x: 5, y: 5, z: 5 },
+      };
+
+      const distance = calculateCameraDistance(zeroBox, camera);
+      expect(distance).toBe(0);
+    });
+
+    it('should handle very small scenes (nanometer scale)', () => {
+      const camera: CameraConfig = { fov: 47, aspect: 16 / 9, near: 0.001, far: 100 };
+      const nanoBox: BoundingBox = {
+        min: { x: 0, y: 0, z: 0 },
+        max: { x: 0.001, y: 0.001, z: 0.001 },
+      };
+
+      const distance = calculateCameraDistance(nanoBox, camera);
+      expect(distance).toBeGreaterThan(0);
+      expect(distance).toBeLessThan(0.01);
+      expect(Number.isFinite(distance)).toBe(true);
+    });
+
+    it('should handle very large scenes', () => {
+      const camera: CameraConfig = { fov: 47, aspect: 16 / 9, near: 1, far: 100000 };
+      const hugeBox: BoundingBox = {
+        min: { x: -5000, y: -5000, z: -5000 },
+        max: { x: 5000, y: 5000, z: 5000 },
+      };
+
+      const distance = calculateCameraDistance(hugeBox, camera);
+      expect(distance).toBeGreaterThan(5000);
+      expect(Number.isFinite(distance)).toBe(true);
+    });
   });
 
   describe('validateFOV', () => {
