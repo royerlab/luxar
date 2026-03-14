@@ -76,7 +76,17 @@ def check_batch_status(output_dir: Path) -> BatchStatus:
 
     # 3. Check merge status
     merged_dir = output_dir / "merged"
-    final_path = merged_dir / "final.gsplats.zarr"
+    # The final output depends on dataset shape:
+    #   C>1: merged/final.gsplats.zarr
+    #   C==1, T>1: merged/c00_4d.gsplats.zarr
+    #   C==1, T==1: merged/t00_c00.gsplats.zarr
+    if manifest.n_channels > 1:
+        final_path = merged_dir / "final.gsplats.zarr"
+    elif manifest.n_timepoints > 1:
+        final_path = merged_dir / "c00_4d.gsplats.zarr"
+    else:
+        final_path = merged_dir / "t00_c00.gsplats.zarr"
+
     if final_path.exists():
         status.merge_status = "completed"
     elif manifest.merge_job_id is not None:
@@ -199,7 +209,7 @@ def _query_single_job_state(job_id: int) -> Optional[str]:
         )
         if result.returncode != 0:
             return None
-        lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
+        lines = [ln.strip() for ln in result.stdout.strip().split("\n") if ln.strip()]
         return lines[0] if lines else None
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None

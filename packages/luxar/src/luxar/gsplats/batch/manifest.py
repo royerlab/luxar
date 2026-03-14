@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -113,11 +114,17 @@ def load_manifest(output_dir: Path) -> BatchManifest:
         data = json.load(f)
 
     # Reconstruct BatchJob objects
-    jobs = [BatchJob(**j) for j in data.pop("jobs", [])]
+    job_fields = {f.name for f in dataclasses.fields(BatchJob)}
+    jobs = [
+        BatchJob(**{k: v for k, v in j.items() if k in job_fields})
+        for j in data.pop("jobs", [])
+    ]
     # Convert spatial_shape back to tuple
     data["spatial_shape"] = tuple(data.get("spatial_shape", ()))
 
-    manifest = BatchManifest(**data)
+    # Filter to known fields (forward-compatible with newer manifests)
+    known_fields = {f.name for f in dataclasses.fields(BatchManifest)}
+    manifest = BatchManifest(**{k: v for k, v in data.items() if k in known_fields})
     manifest.jobs = jobs
     return manifest
 

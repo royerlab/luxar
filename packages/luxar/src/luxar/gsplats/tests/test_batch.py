@@ -67,6 +67,44 @@ class TestManifest:
         assert decode_task_id(12, manifest) == (1, 0, 0)
         assert decode_task_id(17, manifest) == (1, 1, 1)
 
+    def test_load_with_unknown_fields(self, tmp_path: Path) -> None:
+        """Manifest should load even if JSON has extra fields from a newer version."""
+        import json
+
+        from luxar.gsplats.batch.manifest import load_manifest
+
+        manifest_data = {
+            "version": 1,
+            "input_path": "/data/test.zarr",
+            "output_dir": str(tmp_path),
+            "n_timepoints": 1,
+            "n_channels": 1,
+            "spatial_shape": [64, 64, 64],
+            "tile_size": 64,
+            "n_tiles": 1,
+            "total_tasks": 1,
+            "slurm_partition": "gpu",
+            "unknown_future_field": "should be ignored",
+            "another_new_field": 42,
+            "jobs": [
+                {
+                    "task_id": 0,
+                    "timepoint": 0,
+                    "channel": 0,
+                    "tile_index": 0,
+                    "output_filename": "t00_c00_tile000.gsplats.zarr",
+                    "estimated_wall_seconds": 60.0,
+                    "new_job_field": "ignored",
+                }
+            ],
+        }
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest_data))
+
+        loaded = load_manifest(tmp_path)
+        assert loaded.n_timepoints == 1
+        assert len(loaded.jobs) == 1
+        assert loaded.jobs[0].task_id == 0
+
     def test_output_filename(self) -> None:
         from luxar.gsplats.batch.manifest import output_filename
 
@@ -312,6 +350,30 @@ class TestSlurmGen:
         assert "rm -rf" not in script or "'" in script
         # Verify the value appears quoted
         assert "'edges" in script
+
+
+# ====================================================================
+# Tiling integration tests
+# ====================================================================
+
+
+class TestTilingIntegration:
+    def test_tile_count_matches_compute_tile_specs(self) -> None:
+        """Verify that batch plan always uses compute_tile_specs for tile count,
+        even when volume_shape == tile_size (overlap creates extra tiles)."""
+        from luxar.gsplats.tiling import compute_tile_specs
+
+        # Volume exactly equal to tile size — overlap still creates a 2x2x2 grid
+        specs = compute_tile_specs((128, 128, 128), 128, 32)
+        assert len(specs) > 1, f"Expected >1 tiles due to overlap, got {len(specs)}"
+
+        # Volume smaller than tile size — always 1 tile
+        specs = compute_tile_specs((64, 64, 64), 128, 32)
+        assert len(specs) == 1
+
+        # Volume much larger — many tiles
+        specs = compute_tile_specs((512, 512, 512), 128, 32)
+        assert len(specs) > 1
 
 
 # ====================================================================

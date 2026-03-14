@@ -2508,15 +2508,12 @@ def batch_plan(
                 else:
                     tile_size = 256
 
-        needs_tiling = any(s > tile_size for s in spatial)
-
-        # 4. Compute tile grid
-        if needs_tiling:
-            specs = compute_tile_specs(spatial, tile_size, tile_overlap)
-            n_tiles = len(specs)
-        else:
-            specs = []
-            n_tiles = 1
+        # 4. Compute tile grid — always use compute_tile_specs to get the
+        # authoritative tile count (overlap can create extra tiles even when
+        # volume_shape == tile_size).
+        specs = compute_tile_specs(spatial, tile_size, tile_overlap)
+        n_tiles = len(specs)
+        needs_tiling = n_tiles > 1
 
         total_tasks = n_t * n_c * n_tiles
 
@@ -2524,7 +2521,7 @@ def batch_plan(
         if needs_tiling:
             tile_voxels = tile_size ** len(spatial)
         else:
-            # No tiling — the whole volume is a single task
+            # Single tile — use the actual volume size
             tile_voxels = 1
             for s in spatial:
                 tile_voxels *= s
