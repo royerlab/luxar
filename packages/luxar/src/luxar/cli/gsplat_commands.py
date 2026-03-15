@@ -68,7 +68,7 @@ def _compute_splat_volumes(cholesky_factors: "np.ndarray", ndim: int) -> "np.nda
     # Volume of nD ellipsoid at 3-sigma
     # V = (2π)^(n/2) * det(Σ)^(1/2) * 3^n / Γ(n/2 + 1)
     # For simplicity, use det(Σ)^(1/2) * 3^n as proxy
-    volumes = np.abs(det_Sigma) ** 0.5 * (3**ndim)
+    volumes: np.ndarray = np.abs(det_Sigma) ** 0.5 * (3**ndim)
 
     return volumes
 
@@ -1212,6 +1212,7 @@ def split_dataset(
                     aprint(f"Mode: {parts} equal parts")
                     split_parts = data.split(parts)
                 else:
+                    assert indices is not None  # ensured by mutual exclusivity check above
                     idx_list = [int(x.strip()) for x in indices.split(",")]
                     aprint(f"Mode: split at indices {idx_list}")
                     split_parts = data.split(idx_list)
@@ -1533,8 +1534,8 @@ def fit_volume(
             # 2. Parse downscale option
             parsed_downscale = None
             if downscale is not None:
-                parts = [int(x.strip()) for x in downscale.split(",")]
-                parsed_downscale = parts[0] if len(parts) == 1 else tuple(parts)
+                ds_parts = [int(x.strip()) for x in downscale.split(",")]
+                parsed_downscale = ds_parts[0] if len(ds_parts) == 1 else tuple(ds_parts)
 
             # 3. Build merged config
             cli_overrides = {
@@ -1594,12 +1595,12 @@ def fit_volume(
                 from luxar.gsplats.fit_tiled_gsplats import fit_tile
                 from luxar.gsplats.tiling import compute_tile_specs
 
-                parts = tile.split("/")
-                if len(parts) != 2:
+                tile_parts = tile.split("/")
+                if len(tile_parts) != 2:
                     aprint("Error: --tile must be N/M format (e.g., '3/16')")
                     raise typer.Exit(1)
                 try:
-                    tile_idx, tile_total = int(parts[0]), int(parts[1])
+                    tile_idx, tile_total = int(tile_parts[0]), int(tile_parts[1])
                 except ValueError:
                     aprint("Error: --tile N/M requires integer values")
                     raise typer.Exit(1)
@@ -2193,7 +2194,7 @@ def merge_datasets(
 
             with asection(f"Saving to {output_path.name}"):
                 # Determine color_mode for float32 colors
-                save_color_mode = None
+                save_color_mode: Optional[Literal["sdr", "hdr"]] = None
                 if merged.colors is not None:
                     import numpy as np
 
@@ -2572,6 +2573,8 @@ def batch_plan(
                     tile_size = min(tile_size, *spatial)
                 else:
                     tile_size = 256
+
+        assert tile_size is not None  # narrowed by branches above
 
         # 4. Compute tile grid — always use compute_tile_specs to get the
         # authoritative tile count (overlap can create extra tiles even when

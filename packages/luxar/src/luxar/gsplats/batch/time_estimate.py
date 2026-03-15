@@ -96,19 +96,19 @@ def _interpolate_train_ms(
         # Single data point — scale linearly
         v0, ms0 = entries[0]
         if v0 > 0:
-            return ms0 * (tile_voxels / v0)
-        return ms0
+            return float(ms0 * (tile_voxels / v0))
+        return float(ms0)
 
     # Check bounds
     v_min, ms_min = entries[0]
     v_max, ms_max = entries[-1]
 
     if tile_voxels <= v_min:
-        return ms_min
+        return float(ms_min)
     if tile_voxels >= v_max:
         # Extrapolate with 2x safety
         ratio = tile_voxels / v_max
-        return ms_max * ratio * 2.0
+        return float(ms_max * ratio * 2.0)
 
     # Find bracketing pair
     for i in range(len(entries) - 1):
@@ -124,11 +124,11 @@ def _interpolate_train_ms(
                 log_ms_hi = math.log(ms_hi)
                 frac = (log_v - log_v_lo) / (log_v_hi - log_v_lo)
                 log_ms = log_ms_lo + frac * (log_ms_hi - log_ms_lo)
-                return math.exp(log_ms)
+                return float(math.exp(log_ms))
             else:
                 # Linear fallback
                 frac = (tile_voxels - v_lo) / (v_hi - v_lo) if v_hi != v_lo else 0
-                return ms_lo + frac * (ms_hi - ms_lo)
+                return float(ms_lo + frac * (ms_hi - ms_lo))
 
     # Should not reach here, but just in case
-    return ms_max
+    return float(ms_max)

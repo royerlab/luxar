@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 import numpy as np
 import torch
@@ -134,7 +134,7 @@ class GaussianSplatFitter:
         clip_to_bounds: bool = False,
         voxel_size: Optional[Sequence[float] | float] = None,
         output_space: str = "real",
-        **seed_kwargs,
+        **seed_kwargs: Any,
     ) -> GSplatData:
         """
         Fit Gaussian splats using per-splat Adam optimizer.
@@ -175,33 +175,33 @@ class GaussianSplatFitter:
             V,
             seeds,
             norm_percentile,
-            downscale,
-            init_sigma_vox,
-            n_iters,
-            lr,
-            loss_type,
-            asymmetric_penalty,
-            l1_amp,
-            l1_diag,
-            l1_sharpness,
-            sigma_min_diag,
-            sigma_max_diag,
-            amp_max,
-            max_eccentricity,
-            sharpness_range,
-            truncate,
-            verbose,
-            max_abs_error,
-            rel_l2_target,
-            gradient_clip,
-            napari_movie,
-            movie_every,
-            movie_max_frames,
-            scheduler_type,
-            patience,
-            lr_reduction_factor,
-            early_stop_patience,
-            dynamic_ops_verbose,
+            downscale=seed_kwargs.pop("downscale", None),
+            init_sigma_vox=init_sigma_vox,
+            n_iters=n_iters,
+            lr=lr,
+            loss_type=loss_type,
+            asymmetric_penalty=asymmetric_penalty,
+            l1_amp=l1_amp,
+            l1_diag=l1_diag,
+            l1_sharpness=l1_sharpness,
+            sigma_min_diag=sigma_min_diag,
+            sigma_max_diag=sigma_max_diag,
+            amp_max=amp_max,
+            max_eccentricity=max_eccentricity,
+            sharpness_range=sharpness_range,
+            truncate=truncate,
+            verbose=verbose,
+            max_abs_error=max_abs_error,
+            rel_l2_target=rel_l2_target,
+            gradient_clip=gradient_clip,
+            napari_movie=napari_movie,
+            movie_every=movie_every,
+            movie_max_frames=movie_max_frames,
+            scheduler_type=scheduler_type,
+            patience=patience,
+            lr_reduction_factor=lr_reduction_factor,
+            early_stop_patience=early_stop_patience,
+            dynamic_ops_verbose=dynamic_ops_verbose,
             seed_method=seed_method,
             cull_ratio=cull_ratio,
             voxel_footprint_correction=voxel_footprint_correction,
@@ -245,7 +245,6 @@ def fit_gaussian_splats(
     V: np.ndarray,
     seeds: Optional[np.ndarray | int | float] = None,
     norm_percentile: float = 0.0,
-    downscale: Optional[int | Sequence[int]] = None,
     init_sigma_vox: Optional[float] = None,
     n_iters: int = 1000,
     lr: float = 0.01,
@@ -291,7 +290,7 @@ def fit_gaussian_splats(
     # Anisotropic voxel spacing
     voxel_size: Optional[Sequence[float] | float] = None,
     output_space: str = "real",
-    **seed_kwargs,
+    **seed_kwargs: Any,
 ) -> GSplatData:
     """
     Fit n-dimensional oriented Gaussian splats to reconstruct input image/volume.
@@ -329,14 +328,6 @@ def fit_gaussian_splats(
         - 0.0: Full min-max range (maximum dynamic range, sensitive to outliers)
         - >0: Percentile clipping (e.g., 1.0 uses 1%-99% range, robust to outliers)
         Higher values provide more outlier robustness but may clip important data.
-    downscale : int, sequence of int, or None, default=None
-        Downsample the volume by integer factor(s) before fitting.
-        Useful for band-limited data where high-frequency voxels contain only noise.
-        A Gaussian anti-alias filter (sigma = factor/2) is applied before decimation.
-        - If int: Isotropic downscale (e.g., ``downscale=4`` reduces all axes by 4x).
-        - If sequence: Per-axis factors (e.g., ``downscale=(1, 4, 4)`` for anisotropic).
-        - If None: No downscaling (default).
-        Fitted splat parameters are automatically rescaled to original coordinates.
     init_sigma_vox : float or None, default=None
         Initial isotropic standard deviation for Gaussian splats (in voxels).
         If None, uses scale-informed initialization from seeding methods.
@@ -555,7 +546,6 @@ def fit_gaussian_splats(
             V=V,
             seeds=seeds,
             norm_percentile=norm_percentile,
-            downscale=downscale,
             init_sigma_vox=init_sigma_vox,
             n_iters=n_iters,
             lr=lr,  # Note: gradient dilution compensation applied automatically in fit() method

@@ -4,7 +4,7 @@ Optimizer integration for Gaussian splat fitting.
 Uses standard PyTorch Adam optimizer with gradient dilution compensation.
 """
 
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import torch
 
@@ -12,7 +12,7 @@ from luxar.gsplats.utils.trils import calculate_gradient_dilution_factor
 
 
 def create_optimizer_and_scheduler(
-    model,
+    model: Any,
     lr: float = 1e-3,
     scheduler_type: Optional[str] = "plateau",
     # Optimizer-specific arguments
@@ -27,7 +27,7 @@ def create_optimizer_and_scheduler(
     cooldown: int = 0,
     min_lr: float = 1e-8,
     gamma: float = 0.95,
-    **extra_kwargs,
+    **extra_kwargs: Any,
 ) -> Tuple[torch.optim.Optimizer, Optional[torch.optim.lr_scheduler.LRScheduler]]:
     """
     Create optimizer and scheduler for Gaussian splat fitting.
@@ -72,6 +72,7 @@ def create_optimizer_and_scheduler(
     )
 
     # Create scheduler
+    scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None
     if scheduler_type == "plateau":
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,

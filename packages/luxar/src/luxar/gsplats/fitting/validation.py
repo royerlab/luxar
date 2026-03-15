@@ -4,7 +4,7 @@ Input validation and configuration preparation for Gaussian splat fitting.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 import numpy as np
 
@@ -57,7 +57,7 @@ def prepare_fit_config(
     clip_to_bounds: bool = False,
     voxel_size: Optional[Sequence[float] | float] = None,
     output_space: str = "real",
-    **seed_kwargs,
+    **seed_kwargs: Any,
 ) -> FitConfig:
     """
     Validate input parameters and prepare configuration for fitting.

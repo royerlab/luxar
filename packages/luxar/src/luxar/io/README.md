@@ -146,7 +146,7 @@ sort_indices, metadata = sort_points_compound(
     method="hilbert",  # or "morton"
 )
 
-# Compute chunk bounds
+# Compute chunk bounds (radii can be per-point array or scalar)
 chunk_bounds = compute_chunk_bounds_points(
     sorted_positions,
     sorted_radii,

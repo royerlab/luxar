@@ -14,7 +14,7 @@ SCRIPT_DIR = Path(__file__).parent.absolute()
 SRC_DIR = SCRIPT_DIR / "src"
 
 
-def build():
+def build() -> None:
     """Build the CUDA extension in-place."""
     try:
         import torch

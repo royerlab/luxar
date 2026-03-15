@@ -47,8 +47,9 @@ class _DictCompatMixin:
 
     def items(self) -> Iterator[tuple[str, Any]]:
         return iter(
-            (f.name, getattr(self, f.name)) for f in self.__dataclass_fields__.values()
-        )  # type: ignore[attr-defined]
+            (f.name, getattr(self, f.name))
+            for f in self.__dataclass_fields__.values()  # type: ignore[attr-defined]
+        )
 
     def __iter__(self) -> Iterator[str]:
         return self.keys()
@@ -337,6 +338,7 @@ class LuxarScene:
 
         # Decode arrays
         positions = self._decode_array(group, "positions")
+        assert positions is not None, "Points node missing required 'positions' array"
         colors = self._decode_array(group, "colors")
         radii = self._decode_array(group, "radii")
         # Try plural name first (current format), fall back to singular (legacy)
@@ -389,8 +391,11 @@ class LuxarScene:
 
         # Decode arrays
         centers = self._decode_array(group, "centers")
+        assert centers is not None, "GSplats node missing required 'centers' array"
         amplitudes = self._decode_array(group, "amplitudes")
+        assert amplitudes is not None, "GSplats node missing required 'amplitudes' array"
         cholesky_factors = self._decode_array(group, "cholesky_factors")
+        assert cholesky_factors is not None, "GSplats node missing required 'cholesky_factors' array"
         colors = self._decode_array(group, "colors")
         # Try plural name first (current format), fall back to singular (legacy)
         sharpness = self._decode_array(group, "sharpnesses")
@@ -443,7 +448,9 @@ class LuxarScene:
 
         # Decode arrays
         vertices = self._decode_array(group, "vertices")
+        assert vertices is not None, "Lines node missing required 'vertices' array"
         widths = self._decode_array(group, "widths")
+        assert widths is not None, "Lines node missing required 'widths' array"
         colors = self._decode_array(group, "colors")
         # Try plural name first (current format), fall back to singular (legacy)
         sharpness = self._decode_array(group, "sharpnesses")

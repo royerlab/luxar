@@ -669,7 +669,7 @@ The implementation uses a pure ASGI wrapper approach (wrapping the complete Fast
 
 ### Port Management
 - `check_port_available(port, host="127.0.0.1")` - Test if port is free
-- `find_available_port(start_port, max_attempts=100)` - Find next available port
+- `find_available_port(start_port, max_attempts=100)` - Find next available port (if max_attempts > start_port, treated as end_port)
 
 **Algorithm**:
 ```

@@ -5,6 +5,7 @@ Model and optimizer initialization for Gaussian splat fitting.
 from __future__ import annotations
 
 import warnings
+from typing import Any, Optional, Sequence
 
 import numpy as np
 
@@ -42,7 +43,7 @@ def initialize_optimization(
         # Return minimal components - this will be handled by caller
         return ModelComponents(
             model=None,
-            optimizer=None,
+            optimizer=None,  # type: ignore[arg-type]
             scheduler=None,
         )
 
@@ -82,6 +83,7 @@ def initialize_optimization(
         L0 = np.zeros((N, d, d), dtype=np.float32)
         if init_sigma_phys is not None:
             # Physical sigma → per-axis voxel-space L_diag
+            assert config.voxel_size is not None  # set when init_sigma_phys is set
             for i in range(d):
                 L0[:, i, i] = init_sigma_phys / config.voxel_size[i]
         else:
@@ -132,8 +134,16 @@ def initialize_optimization(
         if config.verbose:
             aprint(f"Using auto amp_max={amp_max} (prevents amplitude explosion)")
 
+    # Resolve sigma constraints: pass empty list when None (model uses defaults)
+    _sigma_min: Sequence[float] = config.sigma_min_diag if config.sigma_min_diag is not None else []
+    _sigma_max: Optional[Sequence[float]] = (
+        list(config.sigma_max_diag) if isinstance(config.sigma_max_diag, (list, tuple)) else
+        [config.sigma_max_diag] * d if isinstance(config.sigma_max_diag, (int, float)) else
+        None
+    )
+
     # Build model - use hardware acceleration when available
-    model = None
+    model: Any = None
 
     # Try Metal acceleration (macOS + MPS)
     use_metal = (
@@ -161,8 +171,8 @@ def initialize_optimization(
                     centers0=preprocessed_data.seed_centers,
                     L0=L0,
                     amps0=amps0,
-                    sigma_min_diag=config.sigma_min_diag,
-                    sigma_max_diag=config.sigma_max_diag,
+                    sigma_min_diag=_sigma_min,
+                    sigma_max_diag=_sigma_max,
                     amp_max=amp_max,
                     max_eccentricity=config.max_eccentricity,
                     sharpness_range=config.sharpness_range,
@@ -207,8 +217,8 @@ def initialize_optimization(
                     centers0=preprocessed_data.seed_centers,
                     L0=L0,
                     amps0=amps0,
-                    sigma_min_diag=config.sigma_min_diag,
-                    sigma_max_diag=config.sigma_max_diag,
+                    sigma_min_diag=_sigma_min,
+                    sigma_max_diag=_sigma_max,
                     amp_max=amp_max,
                     max_eccentricity=config.max_eccentricity,
                     sharpness_range=config.sharpness_range,
@@ -249,8 +259,8 @@ def initialize_optimization(
             centers0=preprocessed_data.seed_centers,
             L0=L0,
             amps0=amps0,
-            sigma_min_diag=config.sigma_min_diag,
-            sigma_max_diag=config.sigma_max_diag,
+            sigma_min_diag=_sigma_min,
+            sigma_max_diag=_sigma_max,
             amp_max=amp_max,
             max_eccentricity=config.max_eccentricity,
             sharpness_range=config.sharpness_range,

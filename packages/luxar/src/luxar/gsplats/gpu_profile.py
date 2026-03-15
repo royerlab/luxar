@@ -75,7 +75,7 @@ def load_profiles(path: Path = PROFILE_PATH) -> Dict[str, Any]:
             f"`luxar gsplat benchmark`."
         )
 
-    return data
+    return dict(data)
 
 
 def save_profiles(profiles: Dict[str, Any], path: Path = PROFILE_PATH) -> None:
@@ -341,12 +341,16 @@ def get_gpu_summary(
 
     if gpu_name is not None:
         entry = gpus.get(gpu_name)
-        return entry["summary"] if entry else None
+        if entry is None:
+            return None
+        summary: Dict[str, Any] = entry["summary"]
+        return summary
 
     # Auto-detect from current CUDA device
     detected_name = _detect_gpu_name()
     if detected_name and detected_name in gpus:
-        return gpus[detected_name]["summary"]
+        detected_summary: Dict[str, Any] = gpus[detected_name]["summary"]
+        return detected_summary
 
     # Match by GPU memory
     if gpu_mem is not None:
@@ -359,11 +363,13 @@ def get_gpu_summary(
                 best_diff = diff
                 best_name = name
         if best_name:
-            return gpus[best_name]["summary"]
+            mem_summary: Dict[str, Any] = gpus[best_name]["summary"]
+            return mem_summary
 
     # If only one GPU profiled, use it
     if len(gpus) == 1:
-        return next(iter(gpus.values()))["summary"]
+        single_summary: Dict[str, Any] = next(iter(gpus.values()))["summary"]
+        return single_summary
 
     return None
 

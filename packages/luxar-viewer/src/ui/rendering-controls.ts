@@ -26,6 +26,84 @@ import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { extractRenderingOverrides } from '../config/viewer-config-utils';
 
+/** String-to-THREE.ToneMapping map (shared between applySettings and cinematic toggle) */
+const TONE_MAPPING_MAP: Record<string, THREE.ToneMapping> = {
+  None: THREE.NoToneMapping,
+  Linear: THREE.LinearToneMapping,
+  Reinhard: THREE.ReinhardToneMapping,
+  Cineon: THREE.CineonToneMapping,
+  ACES: THREE.ACESFilmicToneMapping,
+  AgX: THREE.AgXToneMapping,
+  Neutral: THREE.NeutralToneMapping,
+};
+
+/** Keys of RenderingSettings that cinematic mode touches */
+type CinematicSnapshotKeys =
+  | 'toneMapping'
+  | 'detectorNoiseEnabled'
+  | 'detectorNoiseReadoutSigma'
+  | 'detectorNoisePhotonGain'
+  | 'detectorNoiseFpnSigma'
+  | 'vignetteEnabled'
+  | 'chromaticLensDistortionEnabled'
+  | 'chromaticLensDistortionX'
+  | 'chromaticLensDistortionY'
+  | 'chromaticLensDispersion'
+  | 'chromaticLensPrincipalPointX'
+  | 'chromaticLensPrincipalPointY'
+  | 'chromaticLensFocalLengthX'
+  | 'chromaticLensFocalLengthY'
+  | 'chromaticLensSkew'
+  | 'fov'
+  | 'fovPreset';
+
+type CinematicSnapshot = Pick<RenderingSettings, CinematicSnapshotKeys>;
+
+/** All snapshot keys as an array for iteration */
+const CINEMATIC_SNAPSHOT_KEYS: CinematicSnapshotKeys[] = [
+  'toneMapping',
+  'detectorNoiseEnabled',
+  'detectorNoiseReadoutSigma',
+  'detectorNoisePhotonGain',
+  'detectorNoiseFpnSigma',
+  'vignetteEnabled',
+  'chromaticLensDistortionEnabled',
+  'chromaticLensDistortionX',
+  'chromaticLensDistortionY',
+  'chromaticLensDispersion',
+  'chromaticLensPrincipalPointX',
+  'chromaticLensPrincipalPointY',
+  'chromaticLensFocalLengthX',
+  'chromaticLensFocalLengthY',
+  'chromaticLensSkew',
+  'fov',
+  'fovPreset',
+];
+
+/** Build the known cinematic-ON values (used for apply and dirty-check on restore) */
+function buildCinematicValues(): CinematicSnapshot {
+  const lens35 = config.camera.lensDistortionPresets['35mm'];
+  return {
+    toneMapping: 'ACES',
+    detectorNoiseEnabled: true,
+    detectorNoiseReadoutSigma: 0.002,
+    detectorNoisePhotonGain: 0.002,
+    detectorNoiseFpnSigma: 0.001,
+    vignetteEnabled: true,
+    chromaticLensDistortionEnabled: true,
+    chromaticLensDistortionX: lens35.distortionX,
+    chromaticLensDistortionY: lens35.distortionY,
+    chromaticLensDispersion: lens35.dispersion,
+    chromaticLensPrincipalPointX: lens35.principalPointX,
+    chromaticLensPrincipalPointY: lens35.principalPointY,
+    chromaticLensFocalLengthX: lens35.focalLengthX,
+    chromaticLensFocalLengthY: lens35.focalLengthY,
+    chromaticLensSkew: lens35.skew,
+    fov: config.camera.fovPresets['35mm'],
+    fovPreset: '35mm',
+  };
+}
+
 /**
  * Advanced rendering parameters GUI for real-time visual control.
  *
@@ -99,6 +177,9 @@ export class RenderingControls {
 
   /** Timer ID for periodic clipping display updates when dynamic clipping is enabled */
   private clippingDisplayUpdateInterval: ReturnType<typeof setInterval> | null = null;
+
+  /** Snapshot of settings before cinematic mode was enabled (null when cinematic is off) */
+  private cinematicSnapshot: CinematicSnapshot | null = null;
 
   /**
    * Create rendering controls UI with complete parameter access.
@@ -947,6 +1028,9 @@ export class RenderingControls {
   private loadSettings(): void {
     if (!this.sceneId) return;
 
+    // Snapshot is session-only; clear it when loading persisted settings
+    this.cinematicSnapshot = null;
+
     const key = generateSettingsKey(this.sceneId);
     const stored = localStorage.getItem(key);
     this.hasStoredLocalSettings = !!stored;
@@ -1175,16 +1259,7 @@ export class RenderingControls {
     }
 
     // Apply tone mapping
-    const toneMappingMap: { [key: string]: THREE.ToneMapping } = {
-      None: THREE.NoToneMapping,
-      Linear: THREE.LinearToneMapping,
-      Reinhard: THREE.ReinhardToneMapping,
-      Cineon: THREE.CineonToneMapping,
-      ACES: THREE.ACESFilmicToneMapping,
-      AgX: THREE.AgXToneMapping,
-      Neutral: THREE.NeutralToneMapping,
-    };
-    this.postProcessing.setToneMapping(toneMappingMap[this.settings.toneMapping]);
+    this.postProcessing.setToneMapping(TONE_MAPPING_MAP[this.settings.toneMapping]);
 
     // Apply DOF settings
     this.postProcessing.setDOF(
@@ -1377,11 +1452,12 @@ export class RenderingControls {
    * Called after toggleCinematicMode or when 'C' key is pressed
    */
   private updateCinematicModeCheckbox(): void {
-    // Determine cinematic mode state based on majority of effects
+    // Determine cinematic mode state based on majority of effects (including ACES tone mapping)
     const cinematicEffects = [
       this.settings.detectorNoiseEnabled,
       this.settings.vignetteEnabled,
       this.settings.chromaticLensDistortionEnabled,
+      this.settings.toneMapping === 'ACES',
     ];
 
     const enabledCount = cinematicEffects.filter(Boolean).length;
@@ -1403,10 +1479,15 @@ export class RenderingControls {
    * - If >= 50% effects enabled: Turn ALL off
    *
    * Cinematic mode affects:
+   * - Tone mapping (ACES Filmic for cinematic look)
    * - Detector noise (subtle film grain)
    * - Vignette (darkened corners)
    * - Chromatic lens distortion (wavelength-dependent lens distortion + color fringing)
    * - FOV (35mm wide-angle for cinematic, 50mm normal for regular)
+   *
+   * On enable: snapshots all affected settings before overwriting.
+   * On disable: restores each setting from the snapshot, unless the user
+   * manually changed it while cinematic was active (dirty-check).
    *
    * Uses deferred rebuild to apply all changes in single pass (performance).
    *
@@ -1421,67 +1502,67 @@ export class RenderingControls {
    * ```
    */
   toggleCinematicMode(): void {
-    // Get current state of cinematic effects
+    // Majority vote now includes tone mapping as a 4th signal
     const cinematicEffects = [
       this.settings.detectorNoiseEnabled,
       this.settings.vignetteEnabled,
       this.settings.chromaticLensDistortionEnabled,
+      this.settings.toneMapping === 'ACES',
     ];
 
-    // Count how many effects are currently enabled
     const enabledCount = cinematicEffects.filter(Boolean).length;
-    const totalEffects = cinematicEffects.length;
+    const shouldEnableAll = enabledCount < cinematicEffects.length / 2;
 
-    // Use majority vote to decide direction (>= 50% enabled = turn all off, < 50% = turn all on)
-    const shouldEnableAll = enabledCount < totalEffects / 2;
+    const cinematicValues = buildCinematicValues();
 
-    // Apply cinematic mode settings
-    this.settings.detectorNoiseEnabled = shouldEnableAll;
-    this.settings.vignetteEnabled = shouldEnableAll;
-    this.settings.chromaticLensDistortionEnabled = shouldEnableAll;
-
-    // Set cinematic detector noise parameters when turning ON cinematic mode
-    // Uses subtle physics-based noise for film-like look
     if (shouldEnableAll) {
-      this.settings.detectorNoiseReadoutSigma = 0.002; // Subtle temporal noise
-      this.settings.detectorNoisePhotonGain = 0.002; // Low shot noise
-      this.settings.detectorNoiseFpnSigma = 0.001; // Subtle fixed pattern
-    }
+      // --- ENABLE: snapshot current settings, then apply cinematic values ---
+      const snapshot = {} as CinematicSnapshot;
+      for (const key of CINEMATIC_SNAPSHOT_KEYS) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (snapshot as any)[key] = this.settings[key];
+      }
+      this.cinematicSnapshot = snapshot;
 
-    // FOV switching: 35mm for cinematic, 50mm Normal for regular
-    const targetFOV = shouldEnableAll
-      ? config.camera.fovPresets['35mm'] // 63° - Wide angle for cinematic
-      : config.camera.fovPresets['50mm Normal']; // 47° - Normal for regular use
-
-    this.settings.fov = targetFOV;
-    this.settings.fovPreset = shouldEnableAll ? '35mm' : '50mm Normal';
-
-    // Apply appropriate chromatic lens distortion preset based on cinematic mode
-    if (shouldEnableAll) {
-      const lensPreset = config.camera.lensDistortionPresets['35mm'];
-      this.settings.chromaticLensDistortionX = lensPreset.distortionX;
-      this.settings.chromaticLensDistortionY = lensPreset.distortionY;
-      this.settings.chromaticLensDispersion = lensPreset.dispersion;
-      this.settings.chromaticLensPrincipalPointX = lensPreset.principalPointX;
-      this.settings.chromaticLensPrincipalPointY = lensPreset.principalPointY;
-      this.settings.chromaticLensFocalLengthX = lensPreset.focalLengthX;
-      this.settings.chromaticLensFocalLengthY = lensPreset.focalLengthY;
-      this.settings.chromaticLensSkew = lensPreset.skew;
+      Object.assign(this.settings, cinematicValues);
     } else {
-      // Return to 50mm Normal preset when disabling cinematic mode
-      const lensPreset = config.camera.lensDistortionPresets['50mm Normal'];
-      this.settings.chromaticLensDistortionX = lensPreset.distortionX;
-      this.settings.chromaticLensDistortionY = lensPreset.distortionY;
-      this.settings.chromaticLensDispersion = lensPreset.dispersion;
-      this.settings.chromaticLensPrincipalPointX = lensPreset.principalPointX;
-      this.settings.chromaticLensPrincipalPointY = lensPreset.principalPointY;
-      this.settings.chromaticLensFocalLengthX = lensPreset.focalLengthX;
-      this.settings.chromaticLensFocalLengthY = lensPreset.focalLengthY;
-      this.settings.chromaticLensSkew = lensPreset.skew;
+      // --- DISABLE: restore from snapshot (dirty-check per setting) ---
+      if (this.cinematicSnapshot) {
+        for (const key of CINEMATIC_SNAPSHOT_KEYS) {
+          // Only restore if user hasn't manually changed this setting since cinematic was enabled
+          if (this.settings[key] === cinematicValues[key]) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (this.settings as any)[key] = this.cinematicSnapshot[key];
+          }
+        }
+        this.cinematicSnapshot = null;
+      } else {
+        // No snapshot (e.g., loaded from localStorage with cinematic already on).
+        // Fall back to non-cinematic defaults.
+        this.settings.toneMapping = config.renderingControls.defaults.toneMapping;
+        this.settings.detectorNoiseEnabled = false;
+        this.settings.vignetteEnabled = false;
+        this.settings.chromaticLensDistortionEnabled = false;
+        const lens50 = config.camera.lensDistortionPresets['50mm Normal'];
+        this.settings.chromaticLensDistortionX = lens50.distortionX;
+        this.settings.chromaticLensDistortionY = lens50.distortionY;
+        this.settings.chromaticLensDispersion = lens50.dispersion;
+        this.settings.chromaticLensPrincipalPointX = lens50.principalPointX;
+        this.settings.chromaticLensPrincipalPointY = lens50.principalPointY;
+        this.settings.chromaticLensFocalLengthX = lens50.focalLengthX;
+        this.settings.chromaticLensFocalLengthY = lens50.focalLengthY;
+        this.settings.chromaticLensSkew = lens50.skew;
+        this.settings.fov = config.camera.fovPresets['50mm Normal'];
+        this.settings.fovPreset = '50mm Normal';
+      }
     }
 
-    // Apply the changes to post-processing using deferred rebuild to prevent multiple rebuilds
+    // Apply all changes to post-processing using deferred rebuild
     this.postProcessing.startDeferRebuild();
+
+    this.postProcessing.setToneMapping(
+      TONE_MAPPING_MAP[this.settings.toneMapping]
+    );
 
     this.postProcessing.setDetectorNoiseEnabled(
       this.settings.detectorNoiseEnabled,
@@ -1508,10 +1589,10 @@ export class RenderingControls {
       this.settings.chromaticLensSkew
     );
 
-    // End deferred mode and trigger single rebuild with all effects
     this.postProcessing.endDeferRebuild();
 
     // Apply FOV change to camera
+    const targetFOV = this.settings.fov;
     const currentFOV = this.sceneManager.currentFov;
     if (Math.abs(currentFOV - targetFOV) > 0.5) {
       const delta = (targetFOV - currentFOV) / config.camera.fovSensitivity;
@@ -1537,11 +1618,11 @@ export class RenderingControls {
 
     // Log the action
     const modeText = shouldEnableAll ? 'enabled' : 'disabled';
-    const fovText = shouldEnableAll ? '35mm (63°)' : '50mm Normal (47°)';
     log.info(
       Modules.RENDERER,
-      `Cinematic mode ${modeText}: detector noise=${shouldEnableAll}, vignette=${shouldEnableAll}, ` +
-        `chromatic lens distortion=${shouldEnableAll}, FOV=${fovText}`
+      `Cinematic mode ${modeText}: tone=${this.settings.toneMapping}, ` +
+        `noise=${this.settings.detectorNoiseEnabled}, vignette=${this.settings.vignetteEnabled}, ` +
+        `lens=${this.settings.chromaticLensDistortionEnabled}, FOV=${this.settings.fovPreset}`
     );
   }
 

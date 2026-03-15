@@ -218,6 +218,45 @@ describe('PointSpatialIndexLoader', () => {
       testLoader.dispose();
     });
 
+    it('should preserve zero tolerance for non-displayed dims', async () => {
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0],
+      };
+
+      await loader.loadPoints(viewState);
+
+      expect(queryChunksForView).toHaveBeenCalled();
+      const [, , queryTolerance] = (queryChunksForView as any).mock.calls[0];
+      expect(queryTolerance[3]).toBe(0);
+    });
+
+    it('should respect max_radius=0 when tolerance is missing', async () => {
+      const nodeWithZeroRadius: SceneNode = {
+        ...mockNode,
+        attrs: { ...mockNode.attrs, max_radius: 0 },
+      };
+      const zeroRadiusLoader = new PointSpatialIndexLoader(
+        mockZarrLocation,
+        nodeWithZeroRadius
+      );
+
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [],
+      };
+
+      await zeroRadiusLoader.loadPoints(viewState);
+
+      expect(queryChunksForView).toHaveBeenCalled();
+      const [, , queryTolerance] = (queryChunksForView as any).mock.calls[0];
+      expect(queryTolerance[3]).toBe(0);
+
+      zeroRadiusLoader.dispose();
+    });
+
     it('should only initialize once with concurrent calls', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],

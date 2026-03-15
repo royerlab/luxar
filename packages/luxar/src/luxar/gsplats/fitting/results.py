@@ -4,7 +4,7 @@ Result finalization for Gaussian splat fitting.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 if TYPE_CHECKING:
     import torch
@@ -210,7 +210,8 @@ def _clip_to_bounds(
     scale = np.sqrt(np.minimum(ratio, 1.0))  # (N, d)
 
     # Scale each row of L: Ls_clipped[k,i,j] = Ls[k,i,j] * scale[k,i]
-    return Ls * scale[:, :, np.newaxis]  # (N,d,d) * (N,d,1) -> broadcast
+    clipped: np.ndarray = Ls * scale[:, :, np.newaxis]  # (N,d,d) * (N,d,1) -> broadcast
+    return clipped
 
 
 def finalize_results(
@@ -392,7 +393,7 @@ def finalize_results(
         }
 
     # Compute statistics reflecting best state (not final state)
-    stats = {
+    stats: dict[str, Any] = {
         "time_seconds": optimization_results.end_time - optimization_results.start_time,
         "iterations": optimization_results.actual_iters,
         "best_iteration": optimization_results.best_iteration,  # Iteration that achieved best quality

@@ -19,8 +19,8 @@ from luxar.typing_utils import TARGET_CHUNK_BYTES
 
 # Get luxar.gsplats version
 try:
-    from luxar.gsplats import (
-        __version__ as GSPLATS_VERSION,  # type: ignore[attr-defined]
+    from luxar.gsplats import (  # type: ignore[attr-defined]
+        __version__ as GSPLATS_VERSION,
     )
 except ImportError:
     GSPLATS_VERSION: str = "unknown"  # type: ignore[no-redef]

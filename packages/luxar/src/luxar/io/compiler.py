@@ -150,12 +150,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             flexibility for multi-dimensional data.
         """
         # Handle store path
+        self._tmpdir: Optional[tempfile.TemporaryDirectory[str]] = None
         if store_path is None:
             self._tmpdir = tempfile.TemporaryDirectory()
             self._store_path = Path(self._tmpdir.name) / "scene.zarr"
             aprint(f"📁 Using temporary directory: {self._store_path}")
         else:
-            self._tmpdir = None
             self._store_path = Path(store_path)
             aprint(f"📁 Creating scene at: {self._store_path}")
 
@@ -278,7 +278,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             group = self.store
         else:
             path = path.lstrip("/")
-            group = self.store.require_group(path)
+            try:
+                group = self.store[path]
+            except KeyError:
+                return
+            if not isinstance(group, zarr.Group):
+                return
 
         attrs = dict(group.attrs)
         if key in attrs:
@@ -286,7 +291,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             group.attrs.clear()
             group.attrs.update(attrs)
 
-    def write_points(
+    def write_points(  # type: ignore[override]
         self,
         path: NodePath,
         positions: NDArray[np.float32],
@@ -342,11 +347,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             aprint(f"  → Uniform color RGB{list(colors)} for all points")
 
         # 3. Apply spatial ordering if enabled (reorders arrays only)
-        # Note: Spatial ordering requires radii to compute chunk_bounds
-        # If radii is scalar, create temp array just for ordering
+        # Note: Spatial ordering uses radii to compute chunk_bounds.
+        # Scalar/broadcasted radii are handled without expanding to full arrays.
         radii_for_ordering = radii
-        if radii is not None and isinstance(radii, (int, float)):
-            radii_for_ordering = np.full(n_points, float(radii), dtype=np.float32)
 
         ordering_data = self._build_spatial_ordering_if_enabled(
             positions, n_points, n_dims, radii_for_ordering
@@ -461,7 +464,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         return metadata
 
-    def write_lines(
+    def write_lines(  # type: ignore[override]
         self,
         path: NodePath,
         vertices: NDArray[np.float32],
@@ -674,6 +677,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Write optional datasets
         if colors is not None:
             # Handle both scalar/tuple and array inputs
+            color_mode: Optional[Literal["sdr", "hdr"]] = None
             if isinstance(colors, (tuple, list)):
                 # Scalar color input - detect HDR vs SDR
                 max_val = max(colors)
@@ -691,7 +695,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 n_elems_color = None
 
                 # Detect color_mode for arrays
-                color_mode = None
                 if np.issubdtype(colors.dtype, np.floating):
                     color_mode = "hdr" if np.any(colors > 1.0) else "sdr"
             else:
@@ -818,7 +821,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         return metadata
 
-    def write_gsplats(
+    def write_gsplats(  # type: ignore[override]
         self,
         path: NodePath,
         centers: NDArray[np.float32],
@@ -1051,6 +1054,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Write optional datasets
         if colors is not None:
             # Handle scalar/tuple vs array
+            color_mode: Optional[Literal["sdr", "hdr"]] = None
             if isinstance(colors, (tuple, list)):
                 # Detect HDR vs SDR from values
                 max_val = max(colors)
@@ -1065,7 +1069,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 n_elems_color = None
 
                 # Detect color_mode
-                color_mode = None
                 if np.issubdtype(colors.dtype, np.floating):
                     color_mode = "hdr" if np.any(colors > 1.0) else "sdr"
             else:
@@ -1257,7 +1260,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         positions: NDArray[np.float32],
         n_points: int,
         n_dims: int,
-        radii: Optional[NDArray[np.float32]],
+        radii: Optional[Union[NDArray[np.float32], float]],
     ) -> Optional[Dict[str, Any]]:
         """Apply spatial ordering using Morton/Hilbert curves.
 
@@ -1315,14 +1318,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if isinstance(radii, np.ndarray):
                 # Check if radii are broadcasted (shape (1,) or (1, k))
                 if radii.shape[0] == 1:
-                    # Broadcasted radii - replicate to all points (no reordering needed)
-                    sorted_radii = np.full(n_points, radii.flat[0], dtype=np.float32)
+                    # Broadcasted radii - keep scalar to avoid large allocations
+                    sorted_radii = float(radii.flat[0])
                 else:
                     # Regular array radii - apply reordering
                     sorted_radii = radii[sort_indices]
             else:
                 # Scalar radii - no reordering needed
-                sorted_radii = np.full(n_points, float(radii), dtype=np.float32)
+                sorted_radii = float(radii)
         else:
             sorted_radii = None
         chunk_bounds = compute_chunk_bounds_points(
@@ -1606,6 +1609,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             spatial_index_data: Optional spatial index for chunk optimization
         """
         # Handle scalar vs array
+        color_mode: Optional[Literal["sdr", "hdr"]] = None
         if isinstance(colors, (tuple, list)):
             # Detect HDR vs SDR from values
             max_val = max(colors)
@@ -1621,7 +1625,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             )
 
             # Detect color_mode for float arrays
-            color_mode = None
             if np.issubdtype(colors.dtype, np.floating):
                 # Float colors require explicit color_mode
                 if np.any(colors > 1.0):

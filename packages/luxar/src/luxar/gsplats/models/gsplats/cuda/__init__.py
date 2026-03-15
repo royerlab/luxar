@@ -32,7 +32,7 @@ if str(_cuda_dir) not in sys.path:
     sys.path.insert(0, str(_cuda_dir))
 
 try:
-    import cuda_splatting_backend  # noqa: F401
+    import cuda_splatting_backend  # type: ignore[import-not-found]  # noqa: F401
 
     CUDA_BACKEND_AVAILABLE = True
 except ImportError:

@@ -5,12 +5,15 @@ Configuration dataclasses for Gaussian splat fitting pipeline.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence
 
 import numpy as np
 import torch
 
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
+
+if TYPE_CHECKING:
+    from luxar.gsplats.gsplat_data import GSplatData
 
 
 @dataclass(frozen=True)
@@ -85,7 +88,7 @@ class FitConfig:
 
     # Input data (required)
     V: np.ndarray
-    seeds: Optional[np.ndarray | int | float | "GSplatData"]  # noqa: F821 - Array, int, compression ratio, or GSplatData
+    seeds: Optional[np.ndarray | int | float | "GSplatData"]  # Array, int, compression ratio, or GSplatData
 
     # Normalization
     norm_percentile: float

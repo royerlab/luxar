@@ -63,6 +63,29 @@ class TestChunkBoundsPoints:
         assert bounds[0, 1, 0] == pytest.approx(-0.5, abs=0.01)  # Y min
         assert bounds[0, 1, 1] == pytest.approx(1.5, abs=0.01)  # Y max
 
+    def test_chunk_bounds_scalar_radii(self) -> None:
+        """Test chunk bounds with scalar radii (no full array expansion)."""
+        positions = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 1.0],
+                [2.0, 2.0],
+                [3.0, 3.0],
+            ],
+            dtype=np.float32,
+        )
+
+        bounds = compute_chunk_bounds_points(positions, radii=0.5, chunk_size=2)
+
+        # Should have 2 chunks
+        assert bounds.shape == (2, 2, 2)
+
+        # First chunk: points [0,0] and [1,1], with radii 0.5
+        assert bounds[0, 0, 0] == pytest.approx(-0.5, abs=0.01)  # X min
+        assert bounds[0, 0, 1] == pytest.approx(1.5, abs=0.01)  # X max
+        assert bounds[0, 1, 0] == pytest.approx(-0.5, abs=0.01)  # Y min
+        assert bounds[0, 1, 1] == pytest.approx(1.5, abs=0.01)  # Y max
+
     def test_chunk_bounds_discrete_dimensions_no_expansion(self) -> None:
         """CRITICAL TEST: Discrete dimensions should NOT expand by radius.
 

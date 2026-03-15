@@ -307,6 +307,7 @@ def serve(
         if actual_port != port:
             aprint(f"⚠️  Port {port} busy, using {actual_port} instead")
 
+        viewer_served = False
         if viewer:
             actual_viewer_port = find_available_port(viewer_port)
             if actual_viewer_port is None:
@@ -413,6 +414,7 @@ def serve(
                 )
                 viewer_thread.start()
                 time.sleep(1)  # Give viewer time to start
+                viewer_served = True
         else:
             aprint(
                 f"📊 Viewer URL: http://localhost:5173/?src=http://{host}:{actual_port}"
@@ -420,11 +422,15 @@ def serve(
 
         # Open browser if requested
         if open_browser:
-            # Construct URL without trailing slash on data URL (prevents double-slash in path joining)
-            data_url = f"http://{host}:{actual_port}"
-            viewer_url = f"http://{host}:{actual_viewer_port if viewer else 5173}/?src={data_url}"
-            time.sleep(1)  # Give servers time to start
-            open_browser_func(viewer_url)
+            if viewer and not viewer_served:
+                aprint("⚠️  Viewer not served; skipping --open.")
+            else:
+                # Construct URL without trailing slash on data URL (prevents double-slash in path joining)
+                data_url = f"http://{host}:{actual_port}"
+                viewer_port_to_use = actual_viewer_port if viewer_served else 5173
+                viewer_url = f"http://{host}:{viewer_port_to_use}/?src={data_url}"
+                time.sleep(1)  # Give servers time to start
+                open_browser_func(viewer_url)
 
         # Wrap the complete ASGI app with network simulation (if enabled)
         asgi_app: ASGIApp = api

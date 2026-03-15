@@ -233,29 +233,6 @@ class Node:
             return read_transform_from_zarr(transform_list)
         return None
 
-    @property
-    def world_transform(self) -> TransformMatrix:
-        """Get the world transformation matrix by composing all parent transforms.
-
-        Walks up the parent chain, collecting local transforms, and composes
-        them in order (root first, this node last).
-
-        Returns:
-            4x4 world transformation matrix. Identity if no transforms are set.
-        """
-        from ..core.transforms import compose, identity
-
-        transforms = []
-        node: Optional[Node] = self
-        while node is not None:
-            if node.transform is not None:
-                transforms.append(node.transform)
-            node = node.parent
-        if not transforms:
-            return identity()
-        # Reverse so root transform is first (applied first)
-        return compose(*reversed(transforms))
-
     @transform.setter
     def transform(
         self, matrix: Optional[Union[TransformMatrix, np.ndarray, list]]
@@ -280,6 +257,29 @@ class Node:
             from ..core.transforms import prepare_transform_for_zarr
 
             self._persist_attr("transform", prepare_transform_for_zarr(matrix))
+
+    @property
+    def world_transform(self) -> TransformMatrix:
+        """Get the world transformation matrix by composing all parent transforms.
+
+        Walks up the parent chain, collecting local transforms, and composes
+        them in order (root first, this node last).
+
+        Returns:
+            4x4 world transformation matrix. Identity if no transforms are set.
+        """
+        from ..core.transforms import compose, identity
+
+        transforms = []
+        node: Optional[Node] = self
+        while node is not None:
+            if node.transform is not None:
+                transforms.append(node.transform)
+            node = node.parent
+        if not transforms:
+            return identity()
+        # Reverse so root transform is first (applied first)
+        return compose(*reversed(transforms))
 
     # --------------------------------------------------------- nd_transform
     @property

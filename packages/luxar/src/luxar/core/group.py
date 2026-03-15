@@ -7,7 +7,18 @@ the root Scene for dimension validation and writer access.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
+from pathlib import Path
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+    cast,
+)
 
 import numpy as np
 from arbol import aprint
@@ -16,10 +27,11 @@ from ..core.gsplats import GSplats
 from ..core.lines import Lines
 from ..core.node import Node
 from ..core.points import Points
-from ..typing_utils.protocols import ColorArray, PositionArray
+from ..typing_utils.aliases import ColorArray, PositionArray
 
 if TYPE_CHECKING:
     from ..core.scene import Scene
+    from ..gsplats.gsplat_data import GSplatData
 
 # Default radius used when radii are not provided
 DEFAULT_POINT_RADIUS = 0.5
@@ -201,26 +213,29 @@ class Group(Node):
         try:
             scene = self._find_scene()
 
-            if not hasattr(positions, "shape"):
-                positions = np.asarray(positions)
-            if positions.ndim != 2:
+            pos_arr: np.ndarray = (
+                positions
+                if isinstance(positions, np.ndarray)
+                else np.asarray(positions)
+            )
+            if pos_arr.ndim != 2:
                 raise ValueError(
-                    f"Positions must have shape (N, D), got shape {positions.shape}"
+                    f"Positions must have shape (N, D), got shape {pos_arr.shape}"
                 )
 
             # Apply dim_order before validation
-            positions, extend_to_all = self._apply_dim_order_positions(
-                positions, scene, dim_order, fill, extend_to_all
+            pos_arr, extend_to_all = self._apply_dim_order_positions(
+                pos_arr, scene, dim_order, fill, extend_to_all
             )
 
-            n_points = positions.shape[0]
-            ndim = positions.shape[1]
+            n_points = pos_arr.shape[0]
+            ndim = pos_arr.shape[1]
             aprint(f"Adding points node '{name}' with {n_points:,} points in {ndim}D.")
 
-            scene._validate_data_dimensions(positions, name, data_type="positions")
+            scene._validate_data_dimensions(pos_arr, name, data_type="positions")
 
             final_extend_dims = scene._resolve_extend_to_all(
-                extend_to_all, positions, "points"
+                extend_to_all, pos_arr, "points"
             )
             if final_extend_dims:
                 attrs["extend_to_all"] = final_extend_dims
@@ -232,11 +247,13 @@ class Group(Node):
                 radii = DEFAULT_POINT_RADIUS
                 aprint(f"  📐 Using default radius: {DEFAULT_POINT_RADIUS}")
 
+            writer = scene._writer
+            assert writer is not None, "Scene writer is not initialized"
             path = f"{parent_node.path}/{name}" if parent_node.path else name
-            metadata = scene._writer.write_points(
+            metadata = writer.write_points(
                 path,
-                positions.astype(np.float32),
-                colors=colors,
+                pos_arr.astype(np.float32),
+                colors=cast(Any, colors),
                 radii=radii,
                 sharpness=sharpness,
                 grid_shape=grid_shape,
@@ -246,8 +263,8 @@ class Group(Node):
             return Points(
                 name,
                 metadata=metadata,
-                parent=parent_node,
-                writer=scene._writer,
+                parent=cast(Any, parent_node),
+                writer=writer,
                 **attrs,
             )
         except (ValueError, TypeError) as e:
@@ -297,28 +314,31 @@ class Group(Node):
         try:
             scene = self._find_scene()
 
-            if not hasattr(vertices, "shape"):
-                vertices = np.asarray(vertices)
-            if vertices.ndim != 2:
+            vert_arr: np.ndarray = (
+                vertices
+                if isinstance(vertices, np.ndarray)
+                else np.asarray(vertices)
+            )
+            if vert_arr.ndim != 2:
                 raise ValueError(
-                    f"Vertices must have shape (N, D), got shape {vertices.shape}"
+                    f"Vertices must have shape (N, D), got shape {vert_arr.shape}"
                 )
 
             # Apply dim_order before validation
-            vertices, extend_to_all = self._apply_dim_order_positions(
-                vertices, scene, dim_order, fill, extend_to_all
+            vert_arr, extend_to_all = self._apply_dim_order_positions(
+                vert_arr, scene, dim_order, fill, extend_to_all
             )
 
-            n_vertices = vertices.shape[0]
-            ndim = vertices.shape[1]
+            n_vertices = vert_arr.shape[0]
+            ndim = vert_arr.shape[1]
             aprint(
                 f"Adding lines node '{name}' with {n_vertices:,} vertices in {ndim}D."
             )
 
-            scene._validate_data_dimensions(vertices, name, data_type="vertices")
+            scene._validate_data_dimensions(vert_arr, name, data_type="vertices")
 
             final_extend_dims = scene._resolve_extend_to_all(
-                extend_to_all, vertices, "lines"
+                extend_to_all, vert_arr, "lines"
             )
             if final_extend_dims:
                 attrs["extend_to_all"] = final_extend_dims
@@ -326,12 +346,14 @@ class Group(Node):
 
             parent_node = parent or self
 
+            writer = scene._writer
+            assert writer is not None, "Scene writer is not initialized"
             path = f"{parent_node.path}/{name}" if parent_node.path else name
-            metadata = scene._writer.write_lines(
+            metadata = writer.write_lines(
                 path,
-                vertices.astype(np.float32),
+                vert_arr.astype(np.float32),
                 widths=widths,
-                colors=colors,
+                colors=cast(Any, colors),
                 sharpness=sharpness,
                 indices=indices,
                 line_type=line_type,
@@ -341,8 +363,8 @@ class Group(Node):
             return Lines(
                 name,
                 metadata=metadata,
-                parent=parent_node,
-                writer=scene._writer,
+                parent=cast(Any, parent_node),
+                writer=writer,
                 **attrs,
             )
         except (ValueError, TypeError) as e:
@@ -397,32 +419,41 @@ class Group(Node):
         try:
             scene = self._find_scene()
 
-            if not hasattr(centers, "shape"):
-                centers = np.asarray(centers)
-            if centers.ndim != 2:
+            ctr_arr: np.ndarray = (
+                centers
+                if isinstance(centers, np.ndarray)
+                else np.asarray(centers)
+            )
+            if ctr_arr.ndim != 2:
                 raise ValueError(
-                    f"Centers must have shape (N, D), got shape {centers.shape}"
+                    f"Centers must have shape (N, D), got shape {ctr_arr.shape}"
                 )
 
-            d_data = centers.shape[1]
+            d_data = ctr_arr.shape[1]
+
+            chol_arr: np.ndarray = (
+                cholesky_factors
+                if isinstance(cholesky_factors, np.ndarray)
+                else np.asarray(cholesky_factors)
+            )
 
             # Apply dim_order: transform both centers and cholesky_factors
             if dim_order is not None:
-                centers, extend_to_all = self._apply_dim_order_positions(
-                    centers, scene, dim_order, fill, extend_to_all
+                ctr_arr, extend_to_all = self._apply_dim_order_positions(
+                    ctr_arr, scene, dim_order, fill, extend_to_all
                 )
-                cholesky_factors = self._apply_dim_order_cholesky(
-                    cholesky_factors, d_data, scene, dim_order, fill_sigma
+                chol_arr = self._apply_dim_order_cholesky(
+                    chol_arr, d_data, scene, dim_order, fill_sigma
                 )
 
-            n_splats = centers.shape[0]
-            ndim = centers.shape[1]
+            n_splats = ctr_arr.shape[0]
+            ndim = ctr_arr.shape[1]
             aprint(f"Adding gsplats node '{name}' with {n_splats:,} splats in {ndim}D.")
 
-            scene._validate_data_dimensions(centers, name, data_type="centers")
+            scene._validate_data_dimensions(ctr_arr, name, data_type="centers")
 
             final_extend_dims = scene._resolve_extend_to_all(
-                extend_to_all, centers, "splats"
+                extend_to_all, ctr_arr, "splats"
             )
             if final_extend_dims:
                 attrs["extend_to_all"] = final_extend_dims
@@ -433,13 +464,15 @@ class Group(Node):
             if sharpness is None:
                 sharpness = 2.0
 
+            writer = scene._writer
+            assert writer is not None, "Scene writer is not initialized"
             path = f"{parent_node.path}/{name}" if parent_node.path else name
-            metadata = scene._writer.write_gsplats(
+            metadata = writer.write_gsplats(
                 path,
-                centers.astype(np.float32),
+                ctr_arr.astype(np.float32),
                 amplitudes=amplitudes,
-                cholesky_factors=cholesky_factors,
-                colors=colors,
+                cholesky_factors=chol_arr,
+                colors=cast(Any, colors),
                 sharpness=sharpness,
                 **attrs,
             )
@@ -447,8 +480,8 @@ class Group(Node):
             return GSplats(
                 name,
                 metadata=metadata,
-                parent=parent_node,
-                writer=scene._writer,
+                parent=cast(Any, parent_node),
+                writer=writer,
                 **attrs,
             )
         except (ValueError, TypeError) as e:
@@ -458,7 +491,7 @@ class Group(Node):
     def add_gsplats_from_data(
         self,
         name: str,
-        result: "GSplatData",  # noqa: F821
+        result: GSplatData,
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
         dim_order: Optional[List[str]] = None,
@@ -507,7 +540,7 @@ class Group(Node):
     def add_gsplats_from_file(
         self,
         name: str,
-        path: Union[str, "Path"],  # noqa: F821
+        path: Union[str, Path],
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
         dim_order: Optional[List[str]] = None,

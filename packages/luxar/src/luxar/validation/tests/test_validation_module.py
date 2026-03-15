@@ -354,7 +354,7 @@ class TestValidateZarrAttributes:
 
     def test_valid_types(self) -> None:
         """Test all valid node types."""
-        for node_type in ["scene", "group", "points"]:
+        for node_type in ["scene", "group", "points", "lines", "gsplats"]:
             attrs = {"type": node_type}
             if node_type == "scene":
                 attrs["luxar_version"] = "0.1"

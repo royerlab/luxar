@@ -248,7 +248,7 @@ export const config: AppConfig = {
       ssaaEnabled: false, // SSAA disabled by default (highest quality, heavy performance cost)
       ssaaMultiplier: 2.0, // SSAA resolution multiplier (1.5x, 2x, 4x)
       // New post-processing effects
-      toneMapping: 'ACES' as const, // Tone mapping method
+      toneMapping: 'Neutral' as const, // Tone mapping method (Neutral preserves hue fidelity for scientific data)
       dofEnabled: false, // Depth of field disabled by default
       dofFocus: 10, // DOF focus distance
       dofStrength: 0.5, // DOF blur strength (0-1)

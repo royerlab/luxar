@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 import zarr
 
 from luxar.cli.utils import (
@@ -76,7 +77,10 @@ class TestCheckPortAvailable:
         import socket
 
         # Bind to a port, then check it's unavailable
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        except PermissionError:
+            pytest.skip("Socket operations not permitted in this environment")
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(("127.0.0.1", 59998))
@@ -84,6 +88,18 @@ class TestCheckPortAvailable:
             assert result is False
         finally:
             sock.close()
+
+    def test_socket_closed_on_error(self) -> None:
+        """Test check_port_available closes socket after bind failure."""
+        with patch("luxar.cli.utils.socket.socket") as mock_socket:
+            mock_sock = MagicMock()
+            mock_sock.bind.side_effect = OSError("in use")
+            mock_socket.return_value = mock_sock
+
+            result = check_port_available(12345)
+
+            assert result is False
+            mock_sock.close.assert_called_once()
 
 
 class TestFindAvailablePort:
@@ -103,6 +119,13 @@ class TestFindAvailablePort:
             result = find_available_port(start_port=8000, max_attempts=3)
             assert result is None
             assert mock_check.call_count == 3
+
+    def test_find_available_port_with_end_port(self) -> None:
+        """Test find_available_port accepts end_port as second argument."""
+        with patch("luxar.cli.utils.check_port_available") as mock_check:
+            mock_check.side_effect = [False, True]
+            result = find_available_port(9000, 9001)
+            assert result == 9001
 
 
 class TestCheckViewerBuilt:

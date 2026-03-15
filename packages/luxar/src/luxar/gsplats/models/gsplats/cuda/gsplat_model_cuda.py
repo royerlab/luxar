@@ -9,7 +9,7 @@ See SPECIFICATIONS.md for implementation details and algorithm descriptions.
 
 from __future__ import annotations
 
-from typing import Optional, Sequence, Tuple
+from typing import Any, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -18,7 +18,7 @@ from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
 # Import CUDA extension when available
 try:
-    import cuda_splatting_backend
+    import cuda_splatting_backend  # type: ignore[import-not-found]
 
     CUDA_BACKEND_AVAILABLE = True
 except ImportError:
@@ -101,7 +101,8 @@ def cholesky_to_conic(L: torch.Tensor) -> torch.Tensor:
 
         # Extract upper triangle in row-major order
         indices = torch.triu_indices(d, d, device=device)
-        return Sigma_inv[:, indices[0], indices[1]]
+        result: torch.Tensor = Sigma_inv[:, indices[0], indices[1]]
+        return result
 
 
 class CUDASplatFunction(torch.autograd.Function):
@@ -109,7 +110,7 @@ class CUDASplatFunction(torch.autograd.Function):
 
     @staticmethod
     def forward(
-        ctx,
+        ctx: Any,
         centers: torch.Tensor,  # (N, d)
         Ls: torch.Tensor,  # (N, d, d)
         amps: torch.Tensor,  # (N,)
@@ -224,10 +225,11 @@ class CUDASplatFunction(torch.autograd.Function):
         ctx.use_fp16 = use_fp16_kernel  # Actual kernel mode
         ctx.explicit_fp16 = use_fp16  # Original flag (FP16 params, unsafe for train)
 
-        return output
+        output_tensor: torch.Tensor = output
+        return output_tensor
 
     @staticmethod
-    def backward(ctx, grad_output: torch.Tensor):
+    def backward(ctx: Any, grad_output: torch.Tensor) -> tuple[torch.Tensor | None, ...]:
         """
         Backward pass: compute gradients.
 
@@ -427,8 +429,8 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         tile_size: Optional[int] = None,
         use_fp16: bool = False,
         voxel_size: Optional[np.ndarray] = None,
-        device: Optional[torch.device] = None,
-    ):
+        device: Optional[torch.device | str] = None,
+    ) -> None:
         super().__init__()
 
         # Dimension validation
@@ -440,14 +442,17 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             )
 
         # Device validation
+        resolved_device: torch.device
         if device is None:
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            resolved_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        elif isinstance(device, str):
+            resolved_device = torch.device(device)
         else:
-            device = torch.device(device) if isinstance(device, str) else device
+            resolved_device = device
 
-        if device.type != "cuda":
+        if resolved_device.type != "cuda":
             raise ValueError(
-                f"CUDA backend requires CUDA device (got {device}). "
+                f"CUDA backend requires CUDA device (got {resolved_device}). "
                 f"For CPU or MPS, use GaussianSplatModel or GaussianSplatModelMetal."
             )
 
@@ -464,11 +469,11 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             sharpness_range=sharpness_range,
             truncate=truncate,
             voxel_size=voxel_size,
-            device=device,
+            device=resolved_device,
         )
 
         # Cache GPU capabilities for dynamic parameter computation
-        self._device = device
+        self._device = resolved_device
         self._gpu_caps = self._get_gpu_capabilities()
 
         # Auto-select tile size based on dimension and GPU capabilities
@@ -485,7 +490,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         if use_fp16:
             self._convert_base_to_fp16()
 
-    def _convert_base_to_fp16(self):
+    def _convert_base_to_fp16(self) -> None:
         """Convert all base model parameters to FP16 for bandwidth optimization."""
         for param in self._base.parameters():
             param.data = param.data.half()
@@ -497,7 +502,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         if hasattr(base, "sigma_max_diag") and base.sigma_max_diag is not None:
             base.sigma_max_diag = base.sigma_max_diag.half()
 
-    def _get_gpu_capabilities(self) -> dict:
+    def _get_gpu_capabilities(self) -> dict[str, Any]:
         """
         Query actual GPU capabilities at runtime.
 
@@ -668,7 +673,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         # Get optimal batch size based on GPU capabilities
         batch_size = self._get_splat_batch_size(len(self._shape))
 
-        output = CUDASplatFunction.apply(
+        output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call]
             centers,
             Ls,
             amps,
@@ -688,7 +693,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         return output
 
     # Delegate all other methods to base model
-    def current_params(self):
+    def current_params(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Get current parameter values.
 
@@ -706,7 +711,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             sharpness = sharpness.half()
         return centers, Ls, amps, sharpness
 
-    def prune_(self, mask: torch.Tensor):
+    def prune_(self, mask: torch.Tensor) -> None:
         """Remove splats according to boolean mask."""
         self._base.prune_(mask)
         # Re-convert to FP16 if enabled (pruning may reset dtypes)
@@ -719,7 +724,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         Ls: torch.Tensor,
         amps: torch.Tensor,
         sharpness: torch.Tensor,
-    ):
+    ) -> None:
         """Add new splats to the model."""
         self._base.append_(centers, Ls, amps, sharpness)
         # Re-convert to FP16 if enabled (new params from append are FP32)
@@ -732,7 +737,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         Ls: torch.Tensor,
         amps: torch.Tensor,
         sharpness: torch.Tensor,
-    ):
+    ) -> None:
         """Replace all splats with new values."""
         self._base.replace_with(centers, Ls, amps, sharpness)
         # Re-convert to FP16 if enabled (new params from replace_with are FP32)
@@ -743,19 +748,19 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         """Return number of splats."""
         return self._base.n_splats()
 
-    def parameters(self, recurse: bool = True):
+    def parameters(self, recurse: bool = True) -> Any:
         """Return iterator over model parameters."""
         return self._base.parameters(recurse=recurse)
 
-    def named_parameters(self, prefix: str = "", recurse: bool = True):
+    def named_parameters(self, prefix: str = "", recurse: bool = True) -> Any:  # type: ignore[override]
         """Return iterator over (name, parameter) pairs."""
         return self._base.named_parameters(prefix=prefix, recurse=recurse)
 
-    def state_dict(self, *args, **kwargs):
+    def state_dict(self, *args: Any, **kwargs: Any) -> Any:
         """Return state dict for serialization."""
         return self._base.state_dict(*args, **kwargs)
 
-    def load_state_dict(self, state_dict, *args, **kwargs):
+    def load_state_dict(self, state_dict: Any, *args: Any, **kwargs: Any) -> Any:
         """Load state dict from serialization."""
         result = self._base.load_state_dict(state_dict, *args, **kwargs)
         # Re-convert to FP16 if enabled (loaded params are FP32)
@@ -763,66 +768,66 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             self._convert_base_to_fp16()
         return result
 
-    def to(self, device):
+    def to(self, device: Any) -> GaussianSplatModelCUDA:  # type: ignore[override]
         """Move model to device."""
         self._base = self._base.to(device)
         return super().to(device)
 
     # Expose base model attributes needed by optimizer and utilities
     @property
-    def shape(self):
+    def shape(self) -> tuple[int, ...]:
         return self._base.shape
 
     @property
-    def dim(self):
+    def dim(self) -> int:
         return self._base.dim
 
     @property
-    def truncate(self):
+    def truncate(self) -> float:
         return self._base.truncate
 
     @property
-    def raw_mu(self):
+    def raw_mu(self) -> torch.nn.Parameter:
         return self._base.raw_mu
 
     @property
-    def raw_L_diag(self):
+    def raw_L_diag(self) -> torch.nn.Parameter:
         return self._base.raw_L_diag
 
     @property
-    def L_off(self):
+    def L_off(self) -> torch.nn.Parameter:
         return self._base.L_off
 
     @property
-    def raw_a(self):
+    def raw_a(self) -> torch.nn.Parameter:
         return self._base.raw_a
 
     @property
-    def sharpness_offsets_raw(self):
+    def sharpness_offsets_raw(self) -> torch.nn.Parameter:
         return self._base.sharpness_offsets_raw
 
     @property
-    def sigma_min_diag(self):
+    def sigma_min_diag(self) -> torch.Tensor:
         return self._base.sigma_min_diag
 
     @property
-    def sigma_max_diag(self):
+    def sigma_max_diag(self) -> torch.Tensor | None:
         return self._base.sigma_max_diag
 
     @property
-    def amp_max(self):
+    def amp_max(self) -> float | None:
         return self._base.amp_max
 
     @property
-    def voxel_size(self):
+    def voxel_size(self) -> torch.Tensor | None:
         return self._base.voxel_size
 
     @property
-    def use_fp16(self):
+    def use_fp16(self) -> bool:
         """Whether FP16 precision is enabled for CUDA kernels."""
         return self._use_fp16
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         fp16_str = ", fp16=True" if self._use_fp16 else ""
         return (
             f"GaussianSplatModelCUDA("

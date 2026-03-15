@@ -184,7 +184,7 @@ Custom static file handler that provides:
 - `open_browser()` - Cross-platform browser opening
 - `check_viewer_built()` - Verify viewer dist exists
 - `build_viewer()` - Build viewer using pnpm
-- `find_available_port()` - Find free ports for servers
+- `find_available_port()` - Find free ports for servers (supports end_port shorthand)
 - `format_tree_node()` - Format hierarchical displays
 - `get_zarr_info()` - Extract comprehensive zarr metadata
 

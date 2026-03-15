@@ -221,7 +221,8 @@ def _compute_nd_sobel_magnitude(
         grad = ndi.sobel(V, axis=axis, mode="nearest")
         grad_sq_sum += grad**2
 
-    return np.sqrt(grad_sq_sum)
+    result: np.ndarray = np.sqrt(grad_sq_sum)
+    return result
 
 
 def _sample_amplitudes(

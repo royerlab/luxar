@@ -6,7 +6,7 @@ Performance-optimized implementation using batched tensor operations.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 from arbol import aprint, asection
@@ -65,7 +65,7 @@ class RecentlyRelocatedTracker:
 
         # Track which splats are being relocated for the first time
         first_time_mask = self.last_relocation_step[splat_indices] == -1
-        self.unique_splats_relocated += first_time_mask.sum().item()
+        self.unique_splats_relocated += int(first_time_mask.sum().item())
 
         # Update last relocation step for all relocated splats
         self.last_relocation_step[splat_indices] = self.current_step
@@ -112,7 +112,7 @@ class RecentlyRelocatedTracker:
         steps_since = self.current_step - self.last_relocation_step
 
         # On cooldown: relocated AND within cooldown window
-        currently_on_cooldown = (
+        currently_on_cooldown = int(
             (relocated_mask & (steps_since < self.cooldown_steps)).sum().item()
         )
 
@@ -124,7 +124,7 @@ class RecentlyRelocatedTracker:
 
 
 def apply_dynamic_operations(
-    model,
+    model: Any,
     V_target: torch.Tensor,
     V_pred: torch.Tensor,
     cfg: DynamicOpsConfig,
@@ -175,7 +175,7 @@ def apply_dynamic_operations(
             cfg.k_max_residuals,
             cfg.nms_radius_vox,
             enable_tiled=cfg.enable_tiled_seeding,
-            num_tiles_per_dim=cfg.num_tiles_per_dim,
+            num_tiles_per_dim=cfg.num_tiles_per_dim if cfg.num_tiles_per_dim is not None else 8,
         )
 
         if len(peak_locations) == 0:
@@ -268,8 +268,8 @@ def apply_dynamic_operations(
                 # Show sample of relocations (not all to avoid spam)
                 sample_size = min(5, n_relocated)
                 for i in range(sample_size):
-                    splat_idx = matched_splat_indices[i].item()
-                    peak_idx = matched_peak_indices[i].item()
+                    splat_idx = int(matched_splat_indices[i].item())
+                    peak_idx = int(matched_peak_indices[i].item())
                     peak_coords = peak_locations[peak_idx]
                     aprint(
                         f"Splat {splat_idx} → {peak_coords} "
@@ -691,7 +691,7 @@ def _reset_optimizer_state_batch(
 
 
 def _relocate_splats_batch(
-    model,
+    model: Any,
     splat_indices: torch.Tensor,
     peak_coords: torch.Tensor,
     residual: torch.Tensor,

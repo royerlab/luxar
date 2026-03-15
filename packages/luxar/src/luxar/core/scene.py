@@ -398,6 +398,24 @@ class Scene(Group):
         """
         return self._dimensions
 
+    @dimensions.setter
+    def dimensions(self, dims: Dimensions) -> None:
+        """Set scene-level dimensions.
+
+        Args:
+            dims: Dimensions object (REQUIRED - cannot be None)
+
+        Raises:
+            ValueError: If dims is None
+        """
+        if dims is None:
+            raise ValueError(
+                "dimensions cannot be None. Scene dimensions are required and "
+                "define the coordinate system for all data in the scene."
+            )
+        self.attrs["scene_dimensions"] = dims.to_dict()
+        self._dimensions = dims
+
     @property
     def viewer_config(self) -> Optional[ViewerConfig]:
         """Get viewer configuration hints.
@@ -425,24 +443,6 @@ class Scene(Group):
                 self._writer.write_group("/", viewer_config=vc.to_dict())
         elif "viewer_config" in self.attrs:
             del self.attrs["viewer_config"]
-
-    @dimensions.setter
-    def dimensions(self, dims: Dimensions) -> None:
-        """Set scene-level dimensions.
-
-        Args:
-            dims: Dimensions object (REQUIRED - cannot be None)
-
-        Raises:
-            ValueError: If dims is None
-        """
-        if dims is None:
-            raise ValueError(
-                "dimensions cannot be None. Scene dimensions are required and "
-                "define the coordinate system for all data in the scene."
-            )
-        self.attrs["scene_dimensions"] = dims.to_dict()
-        self._dimensions = dims
 
     def to_zarr(self, path: PathLike) -> None:
         """Export scene to a new Zarr store location.

@@ -133,4 +133,5 @@ def rescale_cholesky_packed(
     d = len(factors)
     fv = np.array(factors, dtype=np.float32)
     tril_scales = np.concatenate([[fv[i]] * (i + 1) for i in range(d)])
-    return cholesky_packed * tril_scales
+    result: np.ndarray = cholesky_packed * tril_scales
+    return result

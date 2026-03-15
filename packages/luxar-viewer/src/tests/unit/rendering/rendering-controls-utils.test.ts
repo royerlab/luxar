@@ -23,7 +23,7 @@ describe('rendering-controls-utils', () => {
       const result = validateRenderingSettings({});
 
       expect(result.bloomThreshold).toBe(0.01);
-      expect(result.toneMapping).toBe('ACES');
+      expect(result.toneMapping).toBe('Neutral');
       expect(result.controlType).toBe('orbit');
     });
 
@@ -108,7 +108,7 @@ describe('rendering-controls-utils', () => {
       });
 
       expect(result.bloomThreshold).toBe(0.05);
-      expect(result.toneMapping).toBe('ACES');
+      expect(result.toneMapping).toBe('Neutral');
     });
   });
 

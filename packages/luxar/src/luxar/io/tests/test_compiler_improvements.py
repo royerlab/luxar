@@ -513,6 +513,18 @@ class TestTransformCentralization:
             assert attrs["transform"][13] == 20.0
             assert attrs["transform"][14] == 30.0
 
+    def test_delete_group_attr_missing_path_no_group_created(self) -> None:
+        """Deleting attributes from missing groups should not create groups."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            with LuxarZarrCompiler(zarr_path) as compiler:
+                compiler.delete_group_attr("missing/group", "transform")
+
+            store = zarr.open_group(zarr_path, mode="r")
+            with pytest.raises(KeyError):
+                _ = store["missing"]
+
 
 class TestSpatialOrdering:
     """Test spatial ordering with Morton/Hilbert curves."""

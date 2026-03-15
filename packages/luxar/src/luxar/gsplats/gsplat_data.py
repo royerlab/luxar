@@ -81,12 +81,12 @@ class GSplatData:
     @property
     def n_splats(self) -> int:
         """Number of splats."""
-        return self.centers.shape[0]
+        return int(self.centers.shape[0])
 
     @property
     def ndim(self) -> int:
         """Number of spatial dimensions."""
-        return self.centers.shape[1] if self.centers.ndim >= 2 else 0
+        return int(self.centers.shape[1]) if self.centers.ndim >= 2 else 0
 
     def __len__(self) -> int:
         """Return number of splats."""
@@ -133,7 +133,8 @@ class GSplatData:
             return np.empty(0, dtype=np.float64)
         diag = self._cholesky_diag_elements()
         det_L = np.prod(diag, axis=1)
-        return np.abs(det_L**2) ** (1.0 / self.ndim)
+        result: np.ndarray = np.abs(det_L**2) ** (1.0 / self.ndim)
+        return result
 
     def masses(self) -> np.ndarray:
         """Per-splat mass: amplitude * volume.
@@ -141,7 +142,8 @@ class GSplatData:
         Returns:
             shape (N,) float array.
         """
-        return self.amplitudes * self.volumes()
+        result: np.ndarray = self.amplitudes * self.volumes()
+        return result
 
     def marginal_sigmas(self) -> np.ndarray:
         """Per-dimension standard deviation: sqrt(Sigma_ii).
@@ -156,7 +158,8 @@ class GSplatData:
         from luxar.gsplats.utils.trils import unpack_tril
 
         L = unpack_tril(self.cholesky_factors.astype(np.float64), self.ndim)
-        return np.sqrt(np.sum(L**2, axis=2))
+        result: np.ndarray = np.sqrt(np.sum(L**2, axis=2))
+        return result
 
     def eccentricities(self) -> np.ndarray:
         """Per-splat eccentricity: max marginal sigma / min marginal sigma.
