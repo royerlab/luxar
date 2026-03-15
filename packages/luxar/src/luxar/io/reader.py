@@ -83,11 +83,7 @@ class LinesData(_DictCompatMixin):
     sharpness: Optional[np.ndarray]
     segments: Optional[np.ndarray]
     metadata: Dict[str, Any]
-
-    @property
-    def indices(self) -> Optional[np.ndarray]:
-        """Backward-compatible alias for segments."""
-        return self.segments
+    indices: Optional[np.ndarray] = None
 
 
 @dataclass(frozen=True)
@@ -485,6 +481,7 @@ class LuxarScene:
             colors=colors,
             sharpness=sharpness,
             segments=segments,
+            indices=segments,
             metadata=metadata,
         )
 

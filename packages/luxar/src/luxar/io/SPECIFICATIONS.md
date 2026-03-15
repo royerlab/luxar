@@ -871,6 +871,7 @@ scene.get_lines(name: str) -> LinesData
     'colors': ndarray,       # (N, 3) float32 (if present)
     'sharpness': ndarray,    # (N,) float32 (if present)
     'segments': ndarray,     # (S, 2) uint32 (connectivity pairs)
+    'indices': ndarray,      # Alias for segments (legacy compatibility)
 
     # Metadata
     'metadata': {

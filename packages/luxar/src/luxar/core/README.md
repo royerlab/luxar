@@ -319,7 +319,8 @@ print(f"Max width: {lines.max_width}")
 - `widths` - Shape (N,) line widths (or scalar broadcast)
 - `colors` - Shape (N, 3) per-vertex colors (optional)
 - `sharpness` - Shape (N,) edge sharpness (optional)
-- `indices` - Vertex indices for indexed line type (optional)
+- `segments` - Shape (S, 2) connectivity pairs (stored form)
+- `indices` - Vertex indices for indexed line type input (optional)
 
 ### 6. GSplats (`gsplats.py`)
 
