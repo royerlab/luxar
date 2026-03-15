@@ -243,6 +243,67 @@ describe('SceneDimsManager', () => {
       expect(ranges![0]).toEqual([0, 1]); // Default range
       expect(ranges![1]).toEqual([10, 20]);
     });
+
+    it('should use positionBounds for auto-ranging when dim.range is not set', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', step: 1, display: true }, // No range
+          { name: 'y', unit: '', step: 1, display: true }, // No range
+          { name: 'z', unit: '', step: 1, display: true }, // No range
+          { name: 'time', unit: 's', step: 1, display: false }, // No range
+        ],
+      };
+      scene.userData.positionBounds = {
+        min: [0, 0, 0, 5],
+        max: [100, 200, 300, 50],
+      };
+
+      manager.initFromScene(scene);
+      const ranges = manager.getDimensionRanges();
+
+      // All dims should use positionBounds since no range specified
+      expect(ranges![0]).toEqual([0, 100]);
+      expect(ranges![1]).toEqual([0, 200]);
+      expect(ranges![2]).toEqual([0, 300]);
+      expect(ranges![3]).toEqual([5, 50]);
+    });
+
+    it('should prefer explicit dim.range over positionBounds', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [10, 20], step: 1, display: true },
+          { name: 'time', unit: 's', range: [0, 100], step: 1, display: false },
+        ],
+      };
+      scene.userData.positionBounds = {
+        min: [0, 0],
+        max: [500, 500],
+      };
+
+      manager.initFromScene(scene);
+      const ranges = manager.getDimensionRanges();
+
+      // Explicit range wins over positionBounds
+      expect(ranges![0]).toEqual([10, 20]);
+      expect(ranges![1]).toEqual([0, 100]);
+    });
+
+    it('should fall back to [0, 1] when neither range nor positionBounds available', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', step: 1, display: true }, // No range, no bounds
+        ],
+      };
+      // No positionBounds on scene
+
+      manager.initFromScene(scene);
+      const ranges = manager.getDimensionRanges();
+
+      expect(ranges![0]).toEqual([0, 1]);
+    });
   });
 
   describe('scene traversal', () => {

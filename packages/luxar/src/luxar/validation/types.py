@@ -362,6 +362,25 @@ def validate_offset(offset: Any) -> float:
     return offset_float
 
 
+def validate_layer(value: Any) -> bool:
+    """Validate and convert layer flag.
+
+    Args:
+        value: Value to validate as a boolean layer flag
+
+    Returns:
+        Valid layer flag as bool
+
+    Raises:
+        TypeError: If value cannot be interpreted as a boolean
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    raise TypeError(f"Layer must be a boolean, got {type(value).__name__}")
+
+
 def validate_blending_mode(mode: Any) -> BlendingMode:
     """Validate blending mode string.
 

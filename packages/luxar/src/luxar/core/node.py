@@ -117,6 +117,11 @@ class Node:
 
                 attrs["blending_mode"] = validate_blending_mode(attrs["blending_mode"])
 
+            if "layer" in attrs:
+                from ..validation.types import validate_layer
+
+                attrs["layer"] = validate_layer(attrs["layer"])
+
             # Store attributes
             if self._writer is not None:
                 # Write via writer interface and cache
@@ -342,6 +347,16 @@ class Node:
     def is_root(self) -> bool:
         """Check if this node is the root (has no parent)."""
         return self.parent is None
+
+    # --------------------------------------------------------------- layer flag
+    @property
+    def layer(self) -> bool:
+        """Whether this node is exposed as a layer in the viewer's Layers panel.
+
+        Returns:
+            True if this node should appear in the Layers panel, False otherwise
+        """
+        return bool(self.attrs.get("layer", False))
 
     # --------------------------------------------------------------- rendering
     @property

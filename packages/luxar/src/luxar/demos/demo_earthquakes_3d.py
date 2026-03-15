@@ -1329,6 +1329,7 @@ def generate_earthquake_scene(
                 sharpness=earth_sharpness,
                 opacity=1.0,
                 blending_mode="opaque",
+                layer=True,
             )
 
             # Add cloud layer with luminous blending - subtle atmospheric glow
@@ -1342,6 +1343,7 @@ def generate_earthquake_scene(
                     sharpness=cloud_sharpness,
                     opacity=0.15,  # Very subtle - don't overwhelm the visualization
                     blending_mode="luminous",
+                    layer=True,
                 )
 
             # Add earthquake lines with luminous blending - glowing additive effect
@@ -1356,6 +1358,7 @@ def generate_earthquake_scene(
                     sharpness=line_sharp,
                     line_type="segments",
                     blending_mode="luminous",
+                    layer=True,
                 )
 
         aprint(f"✓ Written to {output_path}")

@@ -132,6 +132,7 @@ export const config: AppConfig = {
       help: 1001, // Help overlay (above errors)
       renderingControls: 1999, // Rendering controls panel (top of mid-layer)
       recordingPanel: 1500, // Recording panel (screenshot/video capture)
+      layersPanel: 1500, // Layers panel (per-node controls)
 
       // Top layer (2000+)
       statsMonitor: 2000, // Three.js stats monitor (always on top)
@@ -287,8 +288,8 @@ export const config: AppConfig = {
   // Control system configuration (migrated from control-config.ts)
   controls: {
     scaleMultipliers: {
-      minDistanceFactor: 0.001,
-      maxDistanceFactor: 10,
+      minDistanceFactor: 0.01,
+      maxDistanceFactor: 100,
       flySpeedFactor: 0.05,
     },
     fly: {
@@ -342,6 +343,7 @@ export const config: AppConfig = {
         toggleRendering: 'r',
         toggleScaleBar: 'b',
         toggleDebugConsole: 'ctrl+l',
+        toggleLayers: 'l',
         recenterCamera: 'f',
         toggleControlMode: 'v',
         toggleInertialMode: 'i',

@@ -1449,6 +1449,14 @@ def fit_volume(
         None, "--seed-method", help="Seed generation method"
     ),
     verbose: bool = typer.Option(True, "--verbose/--quiet", help="Verbose output"),
+    # Downscaling
+    downscale: Optional[str] = typer.Option(
+        None,
+        "--downscale",
+        help="Downsample volume by integer factor before fitting. "
+        "Single value (e.g., '4') or per-axis comma-separated (e.g., '1,4,4'). "
+        "Anti-alias Gaussian blur applied before decimation.",
+    ),
     # Tiled fitting
     tiled: bool = typer.Option(
         False, "--tiled", help="Enable tiled fitting for large volumes"
@@ -1522,7 +1530,13 @@ def fit_volume(
                 volume = load_volume(input_path, channel, timepoint, array_key)
                 aprint(f"Volume shape: {volume.shape}")
 
-            # 2. Build merged config
+            # 2. Parse downscale option
+            parsed_downscale = None
+            if downscale is not None:
+                parts = [int(x.strip()) for x in downscale.split(",")]
+                parsed_downscale = parts[0] if len(parts) == 1 else tuple(parts)
+
+            # 3. Build merged config
             cli_overrides = {
                 "n_iters": iters,
                 "device": device,
@@ -1539,14 +1553,42 @@ def fit_volume(
                 aprint(f"Config: {config}")
             aprint(f"Iterations: {fit_config.get('n_iters')}")
 
-            # 3. Parse seeds
+            # 4. Parse seeds
             parsed_seeds = parse_seeds(seeds)
             if parsed_seeds is not None:
                 aprint(f"Seeds: {parsed_seeds}")
             else:
                 aprint("Seeds: auto")
 
-            # 4. Fit
+            # 5. Apply downscaling
+            # Pop downscale from fit_config to avoid "multiple values" conflict
+            # (get_fit_defaults extracts it from the fit_gaussian_splats signature)
+            fc_downscale = fit_config.pop("downscale", None)
+            # CLI --downscale flag takes priority over YAML/preset config
+            effective_downscale = (
+                parsed_downscale if parsed_downscale is not None else fc_downscale
+            )
+
+            # For tiled modes, downscale the volume before tiling
+            tiled_downscale_factors = None
+            if effective_downscale is not None and (tile is not None or tiled):
+                from luxar.gsplats.fitting.downscale import (
+                    downscale_volume,
+                    normalize_downscale,
+                )
+
+                tiled_downscale_factors = normalize_downscale(
+                    effective_downscale, volume.ndim
+                )
+                if tiled_downscale_factors is not None:
+                    original_shape = volume.shape
+                    volume = downscale_volume(volume, tiled_downscale_factors)
+                    aprint(
+                        f"Downscaled volume: {original_shape} -> {volume.shape} "
+                        f"(factors={tiled_downscale_factors})"
+                    )
+
+            # 6. Fit
             if tile is not None:
                 # Single-tile mode (Slurm-ready)
                 from luxar.gsplats.fit_tiled_gsplats import fit_tile
@@ -1615,13 +1657,36 @@ def fit_volume(
                 )
 
             else:
-                # Original path (unchanged)
+                # Standard fitting (downscale handled inside fit_gaussian_splats)
                 with asection("Optimization"):
                     result = fit_gaussian_splats(
-                        volume, seeds=parsed_seeds, **fit_config
+                        volume,
+                        seeds=parsed_seeds,
+                        downscale=effective_downscale,
+                        **fit_config,
                     )
 
-            # 5. Save
+            # Rescale tiled results back to original coordinates if downscaled
+            if tiled_downscale_factors is not None and result.n_splats > 0:
+                from luxar.gsplats.fitting.downscale import (
+                    rescale_centers,
+                    rescale_cholesky_packed,
+                )
+                from luxar.gsplats.gsplat_data import GSplatData
+
+                result = GSplatData(
+                    centers=rescale_centers(result.centers, tiled_downscale_factors),
+                    amplitudes=result.amplitudes,
+                    cholesky_factors=rescale_cholesky_packed(
+                        result.cholesky_factors, tiled_downscale_factors
+                    ),
+                    sharpnesses=result.sharpnesses,
+                    colors=result.colors,
+                    stats=result.stats,
+                )
+                aprint(f"Rescaled {result.n_splats} splats to original coordinates")
+
+            # 7. Save
             with asection(f"Saving to {output_path.name}"):
                 result.save(output_path, compress=compress)
                 n_splats = result.n_splats

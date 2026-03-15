@@ -4,7 +4,6 @@ Tests for fitting validation module.
 
 import numpy as np
 import pytest
-import torch
 
 try:
     import torch

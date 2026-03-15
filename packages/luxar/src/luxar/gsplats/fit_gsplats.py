@@ -100,6 +100,7 @@ class GaussianSplatFitter:
         V: np.ndarray,
         seeds: Optional[np.ndarray | int | float] = None,
         norm_percentile: float = 0.0,
+        downscale: Optional[int | Sequence[int]] = None,
         init_sigma_vox: Optional[float] = None,
         n_iters: int = 1000,
         lr: float = 0.01,
@@ -174,6 +175,7 @@ class GaussianSplatFitter:
             V,
             seeds,
             norm_percentile,
+            downscale,
             init_sigma_vox,
             n_iters,
             lr,
@@ -243,6 +245,7 @@ def fit_gaussian_splats(
     V: np.ndarray,
     seeds: Optional[np.ndarray | int | float] = None,
     norm_percentile: float = 0.0,
+    downscale: Optional[int | Sequence[int]] = None,
     init_sigma_vox: Optional[float] = None,
     n_iters: int = 1000,
     lr: float = 0.01,
@@ -326,6 +329,14 @@ def fit_gaussian_splats(
         - 0.0: Full min-max range (maximum dynamic range, sensitive to outliers)
         - >0: Percentile clipping (e.g., 1.0 uses 1%-99% range, robust to outliers)
         Higher values provide more outlier robustness but may clip important data.
+    downscale : int, sequence of int, or None, default=None
+        Downsample the volume by integer factor(s) before fitting.
+        Useful for band-limited data where high-frequency voxels contain only noise.
+        A Gaussian anti-alias filter (sigma = factor/2) is applied before decimation.
+        - If int: Isotropic downscale (e.g., ``downscale=4`` reduces all axes by 4x).
+        - If sequence: Per-axis factors (e.g., ``downscale=(1, 4, 4)`` for anisotropic).
+        - If None: No downscaling (default).
+        Fitted splat parameters are automatically rescaled to original coordinates.
     init_sigma_vox : float or None, default=None
         Initial isotropic standard deviation for Gaussian splats (in voxels).
         If None, uses scale-informed initialization from seeding methods.
@@ -544,6 +555,7 @@ def fit_gaussian_splats(
             V=V,
             seeds=seeds,
             norm_percentile=norm_percentile,
+            downscale=downscale,
             init_sigma_vox=init_sigma_vox,
             n_iters=n_iters,
             lr=lr,  # Note: gradient dilution compensation applied automatically in fit() method

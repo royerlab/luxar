@@ -45,6 +45,12 @@ import {
 import type { ControlType } from '../controls/controls-manager';
 
 /**
+ * How far the user can zoom in or out relative to the "scene fits in view" distance/zoom.
+ * A value of 100 means 100x zoom-in and 100x zoom-out from the auto-framed view.
+ */
+const ZOOM_RANGE_FACTOR = 100;
+
+/**
  * SceneManager orchestrates all Three.js components for 3D rendering
  *
  * Responsibilities:
@@ -557,12 +563,12 @@ export class SceneManager extends THREE.EventDispatcher<{
     }
 
     // target_node takes precedence over explicit target coordinates.
-    // Use controls.lookAt() so that orbit controls pivot around the
-    // correct point, not just the camera orientation.
+    // Use setTarget() (not lookAt()) to avoid an intermediate update() that
+    // would snap the camera back before reinitialize() derives the new orbit state.
     if (camOverrides.targetNode) {
       const resolved = this.resolveTargetNode(root, camOverrides.targetNode);
       if (resolved) {
-        this.controls.lookAt(resolved, false);
+        this.controls.setTarget(resolved);
         log.info(
           Modules.SCENE_MANAGER,
           `Resolved target_node '${camOverrides.targetNode}' to (${resolved.x.toFixed(2)}, ${resolved.y.toFixed(2)}, ${resolved.z.toFixed(2)})`
@@ -579,11 +585,15 @@ export class SceneManager extends THREE.EventDispatcher<{
         camOverrides.target.y,
         camOverrides.target.z
       );
-      this.controls.lookAt(targetVec, false);
+      this.controls.setTarget(targetVec);
     }
 
     if (camOverrides.up) {
       this.camera.up.set(camOverrides.up.x, camOverrides.up.y, camOverrides.up.z);
+      // Sync camera.quaternion with the new up vector so that
+      // reinitialize() (which reads quaternion, not camera.up) picks up the
+      // author's roll.  Use the current orbit target as the look-at point.
+      this.camera.lookAt(this.controls.getFocusTarget());
     }
     if (
       camOverrides.position ||
@@ -592,6 +602,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       camOverrides.up
     ) {
       this.camera.updateMatrixWorld(true);
+      this.controls.reinitialize();
       this.controls.update();
       log.info(Modules.SCENE_MANAGER, 'Applied camera config from zarr viewer_config');
     }
@@ -811,6 +822,9 @@ export class SceneManager extends THREE.EventDispatcher<{
         };
         const distance = calculateCameraDistance(geoBounds, cameraConfig);
         this.camera.position.set(center.x, center.y, center.z + distance);
+
+        // Set distance limits relative to the scene-fitting distance
+        this.controls.setDistanceLimits(distance / ZOOM_RANGE_FACTOR, distance * ZOOM_RANGE_FACTOR);
       } else if (isOrthographicCamera(this.camera)) {
         const frustumHeight = this.camera.top - this.camera.bottom;
         const frustumWidth = this.camera.right - this.camera.left;
@@ -821,6 +835,12 @@ export class SceneManager extends THREE.EventDispatcher<{
           const zoomW = frustumWidth / (maxDim / fitRatio);
           this.camera.zoom = Math.min(zoomH, zoomW);
           this.camera.updateProjectionMatrix();
+
+          // Set zoom limits relative to the scene-fitting zoom (100x in each direction)
+          this.controls.setZoomLimits(
+            this.camera.zoom / ZOOM_RANGE_FACTOR,
+            this.camera.zoom * ZOOM_RANGE_FACTOR
+          );
         }
         this.camera.position.set(center.x, center.y, center.z + diagonal);
       }
@@ -829,8 +849,11 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.camera.lookAt(center);
       this.camera.updateMatrixWorld(true);
 
-      // Update controls to orbit around the center
-      this.controls.lookAt(center);
+      // Sync orbit controls with the new camera state.
+      // CRITICAL: Set target first, then reinitialize() so the controls re-derive
+      // their internal distance from the camera position we just set.
+      this.controls.setTarget(center);
+      this.controls.reinitialize();
       this.controls.update();
 
       // Save the new centered state as the default
@@ -1239,6 +1262,9 @@ export class SceneManager extends THREE.EventDispatcher<{
       const distance = calculateCameraDistance(bounds, cameraConfig);
 
       this.camera.position.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z + distance);
+
+      // Set distance limits relative to the scene-fitting distance
+      this.controls.setDistanceLimits(distance / ZOOM_RANGE_FACTOR, distance * ZOOM_RANGE_FACTOR);
     } else if (isOrthographicCamera(this.camera)) {
       // For ortho, compute zoom to fit the scene in the frustum
       const frustumHeight = this.camera.top - this.camera.bottom;
@@ -1254,6 +1280,12 @@ export class SceneManager extends THREE.EventDispatcher<{
         const zoomW = frustumWidth / (maxDim / fitRatio);
         this.camera.zoom = Math.min(zoomH, zoomW);
         this.camera.updateProjectionMatrix();
+
+        // Set zoom limits relative to the scene-fitting zoom (100x in each direction)
+        this.controls.setZoomLimits(
+          this.camera.zoom / ZOOM_RANGE_FACTOR,
+          this.camera.zoom * ZOOM_RANGE_FACTOR
+        );
       }
       // Position along Z for correct depth ordering
       this.camera.position.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z + diagonal);
@@ -1263,10 +1295,15 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.camera.lookAt(lookAtTarget);
     this.camera.updateMatrixWorld(true);
 
-    // Update controls to orbit around the target (skip if author already set it)
+    // Sync orbit controls with the new camera state.
+    // CRITICAL: We must set the target first, then reinitialize() so the controls
+    // re-derive their internal distance from the camera position we just set.
+    // Without reinitialize(), the next update() would snap the camera back to the
+    // old distance (e.g., the default 8 units from resetControls).
     if (!preserveTarget) {
-      this.controls.lookAt(lookAtTarget, false);
+      this.controls.setTarget(lookAtTarget);
     }
+    this.controls.reinitialize();
     this.controls.update();
     this.controls.saveState();
 

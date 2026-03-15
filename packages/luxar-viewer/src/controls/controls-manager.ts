@@ -64,6 +64,11 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   // 0 = not yet set, use hardcoded config defaults.
   private sceneScale: number = 0;
 
+  // Stored zoom/distance limits (set by auto-frame, persisted across mode switches).
+  // null = not yet set, use defaults from config.
+  private storedDistanceLimits: { min: number; max: number } | null = null;
+  private storedZoomLimits: { min: number; max: number } | null = null;
+
   // Saved camera state for switching
   private savedCameraPosition = new THREE.Vector3();
   private savedCameraRotation = new THREE.Euler();
@@ -152,19 +157,27 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
 
   private createOrbitControls(): void {
     const m = config.controls.scaleMultipliers;
+
+    // Use stored limits (from auto-frame) if available, then scale-derived,
+    // then hardcoded config defaults.
+    const minDist =
+      this.storedDistanceLimits?.min ??
+      (this.sceneScale > 0
+        ? this.sceneScale * m.minDistanceFactor
+        : config.controls.orbit.zoom.minDistance);
+    const maxDist =
+      this.storedDistanceLimits?.max ??
+      (this.sceneScale > 0
+        ? this.sceneScale * m.maxDistanceFactor
+        : config.controls.orbit.zoom.maxDistance);
+
     const controls = new LuxarOrbitControls(this.camera, this.domElement, {
       enableDamping: true,
       screenSpacePanning: true,
       autoRotate: this.config.autoRotate || false,
       autoRotateSpeed: this.config.autoRotateSpeed || 0.25,
-      minDistance:
-        this.sceneScale > 0
-          ? this.sceneScale * m.minDistanceFactor
-          : config.controls.orbit.zoom.minDistance,
-      maxDistance:
-        this.sceneScale > 0
-          ? this.sceneScale * m.maxDistanceFactor
-          : config.controls.orbit.zoom.maxDistance,
+      minDistance: minDist,
+      maxDistance: maxDist,
     });
 
     // Shift+scroll = view-axis rotation (roll)
@@ -201,12 +214,18 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   private createOrthoControls(): void {
+    const m = config.controls.scaleMultipliers;
+
+    // Use stored zoom limits (from auto-frame) if available, else wide defaults.
+    const minZoom = this.storedZoomLimits?.min ?? m.minDistanceFactor;
+    const maxZoom = this.storedZoomLimits?.max ?? 1.0 / m.minDistanceFactor;
+
     const controls = new LuxarOrbitControls(this.camera, this.domElement, {
       enableDamping: true,
       screenSpacePanning: true,
       enableRotate: false,
-      minZoom: 0.01,
-      maxZoom: 1000,
+      minZoom,
+      maxZoom,
       minDistance: 0,
       maxDistance: Infinity,
     });
@@ -239,9 +258,18 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     this.savedCameraRotation.copy(this.camera.rotation);
     this.savedCameraUp.copy(this.camera.up);
 
-    // Save target from orbit/ortho controls
+    // Save target for all control types.
+    // For orbit/ortho: use the explicit orbit target.
+    // For fly: derive from camera look direction so switching to orbit/ortho
+    // gets a sensible pivot point (not a stale target from a previous mode).
     if (this.currentControls instanceof LuxarOrbitControls) {
       this.savedTarget.copy(this.currentControls.target);
+    } else {
+      const forward = new THREE.Vector3();
+      this.camera.getWorldDirection(forward);
+      this.savedTarget
+        .copy(this.camera.position)
+        .add(forward.multiplyScalar(this.sceneScale || 10));
     }
   }
 
@@ -362,6 +390,30 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     }
   }
 
+  /**
+   * Set the orbit target without triggering an update.
+   * Use this when you also need to reinitialize() afterward (e.g., after auto-frame).
+   * For fly controls, instantly orients the camera toward the target.
+   */
+  public setTarget(target: THREE.Vector3): void {
+    if (this.currentControls instanceof LuxarOrbitControls) {
+      this.currentControls.target.copy(target);
+    } else if (this.currentControls instanceof LuxarFlyControls) {
+      this.currentControls.lookAtSmooth(target, 0);
+    }
+  }
+
+  /**
+   * Re-derive internal orbit state (distance, orientation) from the current camera
+   * position and target. Must be called after externally setting camera.position
+   * to avoid the next update() snapping the camera back to the old distance.
+   */
+  public reinitialize(): void {
+    if (this.currentControls instanceof LuxarOrbitControls) {
+      this.currentControls.reinitialize();
+    }
+  }
+
   public lookAt(target: THREE.Vector3, smooth: boolean = true): void {
     if (this.currentControls instanceof LuxarOrbitControls) {
       this.currentControls.target.copy(target);
@@ -420,8 +472,11 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     const minDist = diagonal * m.minDistanceFactor;
     const maxDist = diagonal * m.maxDistanceFactor;
 
-    // Update active orbit/ortho controls
-    if (this.currentControls instanceof LuxarOrbitControls) {
+    // Update active orbit/ortho controls with scale-derived distance limits,
+    // but only if auto-frame hasn't set precise limits yet.
+    // Once setDistanceLimits/setZoomLimits have been called (by autoFrameCamera),
+    // those take precedence over the rough scale-derived approximation.
+    if (this.currentControls instanceof LuxarOrbitControls && !this.storedDistanceLimits) {
       this.currentControls.minDistance = minDist;
       this.currentControls.maxDistance = maxDist;
     }
@@ -443,6 +498,34 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
 
   public getSceneScale(): number {
     return this.sceneScale;
+  }
+
+  /**
+   * Set orbit distance limits (perspective camera zoom range).
+   * Called after auto-framing with the scene-fitting distance to give
+   * symmetric zoom range (e.g. 100x in, 100x out).
+   * Persisted across mode switches so limits survive control recreation.
+   */
+  public setDistanceLimits(min: number, max: number): void {
+    this.storedDistanceLimits = { min, max };
+    if (this.currentControls instanceof LuxarOrbitControls) {
+      this.currentControls.minDistance = min;
+      this.currentControls.maxDistance = max;
+    }
+  }
+
+  /**
+   * Set ortho zoom limits (orthographic camera zoom range).
+   * Called after auto-framing with the scene-fitting zoom to give
+   * symmetric zoom range (e.g. 100x in, 100x out).
+   * Persisted across mode switches so limits survive control recreation.
+   */
+  public setZoomLimits(min: number, max: number): void {
+    this.storedZoomLimits = { min, max };
+    if (this.currentControls instanceof LuxarOrbitControls) {
+      this.currentControls.minZoom = min;
+      this.currentControls.maxZoom = max;
+    }
   }
 
   public dispose(): void {

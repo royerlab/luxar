@@ -247,9 +247,7 @@ scene_bounds[dim] = union(scene_bounds[dim], (transformed_min, transformed_max))
 **For categorical permutations:**
 Bounds don't change — the range is still `[0, n_categories - 1]`.
 
-**Current status:** Bounds expansion is NOT yet wired into the compiler. Position bounds in zarr are stored in **local (raw) space**. This is consistent with the inverse-query viewer approach (which queries in local space). The viewer's dimension slider range comes from `Dimension(range=...)`, not from position_bounds, so users should set the range to cover the world-space extent.
-
-**Future enhancement:** Call `apply_nd_transform_to_bounds()` in the compiler to store world-space bounds, which could inform auto-ranging of dimension sliders.
+**Status:** Implemented. During `finalize()`, the compiler walks the zarr tree, composes world nd_transforms for each leaf node, applies `apply_nd_transform_to_bounds()`, and stores the union of all world-space bounds as `position_bounds` in root attrs. Per-node bounds remain in local space. The viewer's `SceneDimsManager` uses these scene-level bounds as automatic slider ranges when `Dimension.range` is not explicitly set.
 
 ## 9. Viewer Implementation (TypeScript) — Inverse-Query Approach
 

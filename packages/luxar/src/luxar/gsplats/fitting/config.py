@@ -191,6 +191,12 @@ class FitConfig:
     # Adds a differentiable penalty for splats whose effective support extends beyond bounds.
     boundary_penalty: Optional[float] = None
 
+    # Volume downscaling (preprocessing)
+    # Per-axis integer factors, e.g. (1, 4, 4). None = no downscaling.
+    # Volume is anti-alias filtered (Gaussian, sigma=factor/2) and decimated before fitting.
+    # Splat parameters are automatically rescaled to original coordinates after fitting.
+    downscale: Optional[tuple[int, ...]] = None
+
 
 @dataclass
 class PreprocessedData:
@@ -231,6 +237,9 @@ class PreprocessedData:
     init_L: Optional[np.ndarray] = None  # Shape (N, d, d) - Cholesky factors
     init_amps: Optional[np.ndarray] = None  # Shape (N,) - amplitudes
     init_sharpness: Optional[np.ndarray] = None  # Shape (N,) - sharpness values
+
+    # Downscale factors applied during preprocessing (for rescaling in finalize_results)
+    downscale_factors: Optional[tuple[int, ...]] = None
 
 
 @dataclass

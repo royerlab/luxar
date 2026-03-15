@@ -39,8 +39,10 @@ import { AnimationController } from '../scene/animation-controller';
 import { DimensionAnimationManager } from '../scene/dimension-animation-manager';
 import { RenderingControls } from '../ui/rendering-controls';
 import type { RecordingPanel } from '../ui/recording-panel';
+import type { LayersPanel } from '../ui/layers';
 import type { ScaleBar } from '../ui/components/scale-bar';
 import { showHelpOverlay, hideHelpOverlay, clearError, showToast } from '../ui/helpers';
+import { config } from '../config';
 import { captureViewerState } from '../config/viewer-state-capture';
 import { SimpleDims } from '../types/dims';
 import { DimensionSliders } from '../ui/dimension-sliders';
@@ -73,6 +75,9 @@ export class InputHandler {
 
   /** Optional reference to recording panel */
   private recordingPanel?: RecordingPanel;
+
+  /** Optional reference to layers panel */
+  private layersPanel?: LayersPanel;
 
   /** Index of currently selected dimension for keyboard navigation */
   private selectedDimension: number = 0;
@@ -160,6 +165,10 @@ export class InputHandler {
 
   setRecordingPanel(panel: RecordingPanel): void {
     this.recordingPanel = panel;
+  }
+
+  setLayersPanel(panel: LayersPanel): void {
+    this.layersPanel = panel;
   }
 
   /**
@@ -824,6 +833,19 @@ export class InputHandler {
       handler: () => this.recordingPanel?.captureScreenshot(),
       preventDefault: true,
       description: 'Quick screenshot',
+    });
+
+    // Layers panel (L key without modifiers)
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: config.input.keyboard.shortcuts.toggleLayers,
+      handler: (event) => {
+        if (!event.metaKey && !event.ctrlKey && !event.shiftKey) {
+          event.preventDefault();
+          this.layersPanel?.toggle();
+        }
+      },
+      preventDefault: false,
+      description: 'Toggle layers panel',
     });
 
     // Debug console (Ctrl+L)
@@ -1511,84 +1533,23 @@ export class InputHandler {
   }
 
   /**
-   * Recenter camera on scene's bounding box center.
+   * Frame camera to fit the entire scene.
    *
-   * Triggered by F key. Computes bounding box of all visible point clouds
-   * and repositions camera to look at the center. Behavior adapts to control mode:
-   * - Fly controls: Smooth animated transition over ~1 second
-   * - Orbit/Ortho: Immediate target update
-   *
-   * Useful for recovering from lost orientation or framing scene after loading
-   * new data. Falls back to origin (0,0,0) if no visible objects found.
+   * Triggered by F key. Computes bounding box of all visible geometry
+   * and repositions camera at the optimal distance to see everything.
+   * Works for both perspective (distance) and orthographic (zoom) cameras.
    *
    * @private
    */
   private recenterCamera(): void {
-    // Compute bounding box center of all visible objects
-    const box = new THREE.Box3();
+    // Use the scene manager's centerCameraOnScene() which properly computes
+    // optimal camera distance AND orbit target (not just the pivot point).
+    // This ensures F key actually zooms to fit the whole scene, not just
+    // re-centers the orbit pivot at the same distance.
+    this.sceneManager.centerCameraOnScene();
 
-    this.sceneManager.scene.traverse((object) => {
-      if (object instanceof THREE.Points && object.visible) {
-        const geometry = object.geometry;
-
-        // For points, compute bounding box from position attribute
-        const positions = geometry.attributes.position;
-        if (positions && positions.count > 0) {
-          // Compute the bounding box if needed
-          if (!geometry.boundingBox) {
-            geometry.computeBoundingBox();
-          }
-
-          if (geometry.boundingBox) {
-            const tempBox = geometry.boundingBox.clone();
-            // Apply object's world transform
-            tempBox.applyMatrix4(object.matrixWorld);
-            // Expand our overall box
-            box.expandByObject(object);
-          }
-        }
-      }
-    });
-
-    // Get the center of the bounding box
-    const center = new THREE.Vector3();
-
-    // Check if box is valid (has content)
-    if (!box.isEmpty()) {
-      box.getCenter(center);
-    } else {
-      // Fallback to origin if no objects found
-      center.set(0, 0, 0);
-    }
-
-    // Get the controls manager if it exists
-    const controlsManager = this.sceneManager.getControlsManager();
-
-    if (controlsManager) {
-      // Start animation for smooth transition
-      this.animationController.startAnimation();
-
-      // For fly controls, we need to call this repeatedly for smooth animation
-      if (controlsManager.getControlType() === 'fly') {
-        let iterations = 0;
-        const maxIterations = 60; // About 1 second at 60fps
-
-        const smoothRecenter = () => {
-          if (iterations < maxIterations) {
-            controlsManager.lookAt(center, true);
-            iterations++;
-            requestAnimationFrame(smoothRecenter);
-          }
-        };
-
-        smoothRecenter();
-        log.custom(LogEmoji.TARGET, Modules.CONTROLS, 'Recentering camera on scene (smooth)');
-      } else {
-        // For orbit controls, just update the target
-        controlsManager.lookAt(center, false);
-        log.custom(LogEmoji.TARGET, Modules.CONTROLS, 'Recentered camera on scene');
-      }
-    }
+    // Ensure a render happens after reframing
+    this.animationController.startAnimation();
   }
 
   /**

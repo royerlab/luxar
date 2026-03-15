@@ -34,6 +34,9 @@ def initialize_optimization(
     d = preprocessed_data.d
     N = preprocessed_data.N
 
+    # Use the optimization volume shape (may differ from config.V.shape if downscaled)
+    opt_shape = tuple(preprocessed_data.V_tensor.shape)
+
     # Handle edge case of no candidates
     if N == 0:
         # Return minimal components - this will be handled by caller
@@ -58,9 +61,7 @@ def initialize_optimization(
         if init_sigma is None:
             if config.voxel_size is not None:
                 # Physical-space auto: use physical extents
-                phys_dims = (
-                    np.array(config.V.shape, dtype=np.float32) * config.voxel_size
-                )
+                phys_dims = np.array(opt_shape, dtype=np.float32) * config.voxel_size
                 min_phys_dim = float(phys_dims.min())
                 min_vs = float(config.voxel_size.min())
                 init_sigma_phys = max(1.5 * min_vs, min_phys_dim * 0.05)
@@ -71,7 +72,7 @@ def initialize_optimization(
                     )
             else:
                 # Voxel-space auto: ~5% of smallest dimension, min 1.5
-                min_dim = float(min(config.V.shape))
+                min_dim = float(min(opt_shape))
                 init_sigma = max(1.5, min_dim * 0.05)
                 if config.verbose:
                     aprint(
@@ -109,7 +110,7 @@ def initialize_optimization(
         idx = np.clip(
             np.round(preprocessed_data.seed_centers).astype(int),
             0,
-            np.array(config.V.shape) - 1,
+            np.array(opt_shape) - 1,
         )
         amps0 = preprocessed_data.V_normalized[tuple(idx.T)]
 
@@ -156,7 +157,7 @@ def initialize_optimization(
 
             if metal_available:
                 model = GaussianSplatModelMetal(
-                    shape=config.V.shape,
+                    shape=opt_shape,
                     centers0=preprocessed_data.seed_centers,
                     L0=L0,
                     amps0=amps0,
@@ -202,7 +203,7 @@ def initialize_optimization(
 
             if CUDA_BACKEND_AVAILABLE:
                 model = GaussianSplatModelCUDA(
-                    shape=config.V.shape,
+                    shape=opt_shape,
                     centers0=preprocessed_data.seed_centers,
                     L0=L0,
                     amps0=amps0,
@@ -244,7 +245,7 @@ def initialize_optimization(
     # Fall back to standard PyTorch model
     if model is None:
         model = GaussianSplatModel(
-            shape=config.V.shape,
+            shape=opt_shape,
             centers0=preprocessed_data.seed_centers,
             L0=L0,
             amps0=amps0,

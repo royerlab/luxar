@@ -252,6 +252,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 radii=radii,
                 opacity=0.9,
                 blending_mode="additive",
+                layer=True,
             )
 
             # Add reference markers for famous stars
@@ -275,6 +276,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 radii=marker_radius,
                 opacity=1.0,
                 blending_mode="normal",
+                layer=True,
             )
             aprint(f"  ✓ Sun at ({-r0_kpc * SCALE:.1f}, 0, 0)")
 
@@ -292,6 +294,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 radii=marker_radius,
                 opacity=1.0,
                 blending_mode="normal",
+                layer=True,
             )
             aprint("  ✓ Betelgeuse (red supergiant, 168 pc)")
 
@@ -309,6 +312,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 radii=marker_radius,
                 opacity=1.0,
                 blending_mode="normal",
+                layer=True,
             )
             aprint("  ✓ Rigel (blue supergiant, 265 pc)")
 

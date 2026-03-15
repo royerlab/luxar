@@ -321,9 +321,7 @@ def fit_dapi_gsplats(volume):
 def create_luxar_scene(gsplats_data, output_path: Path | None = None):
     """Create Luxar scene with gsplats."""
     if output_path is None:
-        output_path = (
-            get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei.zarr"
-        )
+        output_path = get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei.zarr"
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -372,6 +370,7 @@ Controls:
                 result=gsplats_data,
                 opacity=1.0,
                 blending_mode="additive",
+                layer=True,
             )
 
         aprint(f"Scene saved: {output_path}")
@@ -409,6 +408,7 @@ def add_reference_points(scene, volume, sample_rate=0.01):
         sharpness=np.full(n_sample, 8.0, dtype=np.float32),
         opacity=0.3,
         blending_mode="max",
+        layer=True,
     )
 
     aprint(f"✓ Added {n_sample:,} reference points")
@@ -501,9 +501,7 @@ def main():
     aprint("")
 
     # Determine output path
-    output_path = (
-        get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei.zarr"
-    )
+    output_path = get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei.zarr"
 
     # Serve only mode
     if SERVE_ONLY:

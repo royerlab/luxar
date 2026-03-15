@@ -19,6 +19,7 @@
 [data-theme='liquid-glass'] .luxar-debug-console,
 [data-theme='liquid-glass'] .luxar-data-monitor,
 [data-theme='liquid-glass'] .luxar-dimension-sliders,
+[data-theme='liquid-glass'] .luxar-layers-panel,
 [data-theme='liquid-glass'] .luxar-gui {
   /* Create stacking context for layers */
   isolation: isolate;

@@ -321,7 +321,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
    * Uses capture phase to intercept before other wheel handlers (zoom, FOV).
    * Works in both orbit and ortho modes.
    */
-  public enableViewAxisRotation(speed: number = 0.002): void {
+  public enableViewAxisRotation(speed: number = 0.0005): void {
     if (this.viewAxisRotationHandler) return; // Already enabled
 
     this.viewAxisRotationHandler = (event: WheelEvent) => {
@@ -491,11 +491,13 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     const offset = new THREE.Vector3().subVectors(this.camera.position, this.target);
     this.distance = Math.max(offset.length(), 0.001);
 
-    // Compute orientation from camera state.
+    // Derive up from camera quaternion rather than camera.up — the quaternion
+    // is always authoritative, whereas camera.up may be stale (fly controls
+    // only update quaternion, not up). Prevents roll loss on fly→orbit switch.
     // lookAt() has a singularity when the view direction is parallel to the up vector.
     // Detect this and use a fallback up vector to prevent NaN.
     const viewDir = offset.clone().normalize();
-    let up = this.camera.up.clone();
+    let up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
     const upDot = Math.abs(viewDir.dot(up));
     if (upDot > 0.999) {
       // Near singularity: pick a fallback up vector perpendicular to view direction

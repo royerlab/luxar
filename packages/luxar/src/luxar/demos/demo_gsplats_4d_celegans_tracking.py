@@ -1033,6 +1033,7 @@ def add_cell_tracks(
             colors=colors,
             line_type="segments",
             extend_to_all=["time"],
+            layer=True,
         )
 
         aprint(f"  Added cell_tracks node ({total_segments:,} segments)")
@@ -1355,6 +1356,7 @@ Navigation:
                 extend_to_all=[],
                 opacity=0.7,
                 blending_mode="additive",
+                layer=True,
             )
             aprint(f"Added single 4D gsplats node: {combined_4d.n_splats:,} splats")
 
@@ -1394,8 +1396,7 @@ def main():
     # Try loading precomputed per-timepoint GSplats from Git LFS bundle
     n_use = TIMEPOINTS
     file_names = [
-        f"celegans_s{SAMPLE_INDEX}_t{t:04d}.gsplats.zarr.zip"
-        for t in range(n_use)
+        f"celegans_s{SAMPLE_INDEX}_t{t:04d}.gsplats.zarr.zip" for t in range(n_use)
     ]
     precomputed = load_precomputed_bundle(
         "gsplats_celegans",

@@ -160,6 +160,7 @@ group.set_opacity(0.5).set_gamma(1.0)
 
 **Key Properties:**
 - `transform` - 4x4 transformation matrix
+- `nd_transform` - Per-dimension transforms on non-displayed dimensions (see below)
 - `opacity` - Rendering opacity (0.0-1.0)
 - `gamma` - Gamma correction (0.1-10.0)
 - `intensity` - Per-node color multiplier (>=0.0, default 1.0)
@@ -172,6 +173,27 @@ group.set_opacity(0.5).set_gamma(1.0)
 - Transforms are automatically transposed for THREE.js compatibility when stored
 - Nodes use writer interface for progressive writing without keeping data in memory
 - All rendering attributes are validated on assignment
+
+**nD Transforms (`nd_transform`):**
+
+Separate from the 4x4 spatial `transform`, nodes can carry an `nd_transform` dict
+that applies per-dimension affine (scale/offset) or permutation transforms on
+**non-displayed dimensions** (e.g., time, channel). This enables time alignment,
+unit conversion, and channel remapping between datasets in the same scene.
+
+```python
+# Affine: shift time by 5 units
+group.nd_transform = {"Time": {"scale": 1.0, "offset": 5.0}}
+
+# Permutation: remap channels
+group.nd_transform = {"Channel": {"permutation": [2, 0, 1]}}
+```
+
+- Composes hierarchically: `node.world_nd_transform` collects transforms from root to leaf
+- Validated by `luxar.validation.nd_transforms`
+- The compiler applies world nd_transforms to position bounds during finalization,
+  so scene-level bounds reflect world-space ranges for non-displayed dimensions
+- See `docs/guides/specs/ND_TRANSFORMS_SPEC.md` for full specification
 
 ### 3. DataNode (`datanode.py`)
 

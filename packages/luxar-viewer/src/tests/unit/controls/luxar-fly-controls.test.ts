@@ -134,15 +134,15 @@ describe('LuxarFlyControls', () => {
   });
 
   describe('mouse input handling', () => {
-    it('should handle mouse drag for camera rotation', () => {
+    it('should handle right-drag for camera rotation', () => {
       const mouseDown = new MouseEvent('mousedown', {
-        button: 0,
+        button: 2,
         clientX: 100,
         clientY: 100,
       });
       (controls as any).onMouseDown(mouseDown);
 
-      expect((controls as any).isMouseDown).toBe(true);
+      expect((controls as any).activeMouseAction).toBe('rotate');
 
       const mouseMove = new MouseEvent('mousemove', {
         clientX: 150,
@@ -150,19 +150,18 @@ describe('LuxarFlyControls', () => {
       });
       (controls as any).onMouseMove(mouseMove);
 
-      // Should update look angles
-      expect((controls as any).lon).not.toBe(0);
-      expect((controls as any).lat).not.toBe(0);
+      // Should apply angular velocity for rotation
+      expect((controls as any).angularVelocity.length()).toBeGreaterThan(0);
 
-      const mouseUp = new MouseEvent('mouseup', { button: 0 });
+      const mouseUp = new MouseEvent('mouseup', { button: 2 });
       (controls as any).onMouseUp(mouseUp);
 
-      expect((controls as any).isMouseDown).toBe(false);
+      expect((controls as any).activeMouseAction).toBe('none');
     });
 
-    it('should apply angular velocity on mouse movement', () => {
-      // Set up mouse drag state
-      (controls as any).isMouseDown = true;
+    it('should apply angular velocity on right-drag mouse movement', () => {
+      // Set up right-drag state for rotation
+      (controls as any).activeMouseAction = 'rotate';
       (controls as any).mouseX = 100;
       (controls as any).mouseY = 100;
 
@@ -177,6 +176,22 @@ describe('LuxarFlyControls', () => {
       expect((controls as any).angularVelocity.length()).toBeGreaterThan(0);
     });
 
+    it('should handle left-drag for strafing', () => {
+      const mouseDown = new MouseEvent('mousedown', {
+        button: 0,
+        clientX: 100,
+        clientY: 100,
+      });
+      (controls as any).onMouseDown(mouseDown);
+
+      expect((controls as any).activeMouseAction).toBe('strafe');
+
+      const mouseUp = new MouseEvent('mouseup', { button: 0 });
+      (controls as any).onMouseUp(mouseUp);
+
+      expect((controls as any).activeMouseAction).toBe('none');
+    });
+
     it('should dispatch events for mouse interaction', () => {
       const startHandler = vi.fn();
       const endHandler = vi.fn();
@@ -186,7 +201,8 @@ describe('LuxarFlyControls', () => {
       controls.addEventListener('end', endHandler);
       controls.addEventListener('change', changeHandler);
 
-      const mouseDown = new MouseEvent('mousedown', { button: 0, clientX: 100, clientY: 100 });
+      // Right-drag for rotation dispatches events
+      const mouseDown = new MouseEvent('mousedown', { button: 2, clientX: 100, clientY: 100 });
       (controls as any).onMouseDown(mouseDown);
       expect(startHandler).toHaveBeenCalled();
 
@@ -194,7 +210,7 @@ describe('LuxarFlyControls', () => {
       (controls as any).onMouseMove(mouseMove);
       expect(changeHandler).toHaveBeenCalled();
 
-      const mouseUp = new MouseEvent('mouseup', { button: 0 });
+      const mouseUp = new MouseEvent('mouseup', { button: 2 });
       (controls as any).onMouseUp(mouseUp);
       expect(endHandler).toHaveBeenCalled();
     });

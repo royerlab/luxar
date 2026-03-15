@@ -23,6 +23,7 @@
 @import './components/resolution-indicator.css';
 @import './components/scale-bar.css';
 @import './components/recording-panel.css';
+@import './components/layers-panel.css';
 /* (More components will be added as they are migrated) */
 /* @import './components/performance-monitor.css'; */
 

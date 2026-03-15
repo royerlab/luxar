@@ -191,9 +191,20 @@ export interface SceneNode {
     /** Rendering attributes */
     opacity?: number;
     gamma?: number;
+    intensity?: number;
+    offset?: number;
     blending_mode?: string;
     max_radius?: number;
     n_points?: number;
+
+    /** Whether this node is exposed as a layer in the Layers panel */
+    layer?: boolean;
+
+    /** Min/max of color data, computed at encoding time */
+    color_data_range?: [number, number];
+
+    /** Min/max of amplitude data (GSplats), computed at encoding time */
+    amplitude_data_range?: [number, number];
 
     /** Dimensions to extend visibility across (points visible at all values) */
     extend_to_all?: string[];

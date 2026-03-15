@@ -118,7 +118,7 @@ Gaussian splats provide a powerful, compact, and interactive representation for 
 **Point**: "It handles time-lapse data" — the nD story. Storing 50+ timepoints as volumes is massive; as gsplats with `sigma=0` on the time dimension, dramatically smaller.
 
 ### Fig 4: Multi-Channel with Toggles — Kidney or Cells3D
-**Demo**: `demo_gsplats_4d_kidney_multichannel_toggles.py` or `demo_gsplats_4d_cells3d_multichannel_toggles.py`
+**Demo**: `demo_gsplats_3d_kidney_multichannel_toggles.py` or `demo_gsplats_3d_cells3d_multichannel_toggles.py`
 
 **Panels**:
 - (a) Composite view (all channels)
@@ -201,8 +201,8 @@ Gaussian splats provide a powerful, compact, and interactive representation for 
 | `demo_gsplats_3d_organoid_dapi_nuclei_from_idr.py` | Fig 2 (nuclei) | Single-channel DAPI |
 | `demo_gsplats_3d_tribolium_embryo.py` | Fig 2 (alt) / Fig 6 | Light-sheet volume (965x1871x991, 0.381 um isotropic) — also a natural candidate for tiled fitting |
 | `demo_gsplats_4d_zebrafish_timelapse.py` | Fig 3 | Confocal time-lapse |
-| `demo_gsplats_4d_cells3d_multichannel_toggles.py` | Fig 4 (alt) | 5D with toggles |
-| `demo_gsplats_4d_kidney_multichannel_toggles.py` | Fig 4 | 6D kidney |
+| `demo_gsplats_3d_cells3d_multichannel_toggles.py` | Fig 4 (alt) | 5D with toggles |
+| `demo_gsplats_3d_kidney_multichannel_toggles.py` | Fig 4 | 6D kidney |
 | `demo_gsplats_4d_celegans_tracking.py` | Fig 5 | Tracking + polylines |
 
 ### New Demos Needed

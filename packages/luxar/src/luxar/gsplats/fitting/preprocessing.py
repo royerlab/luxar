@@ -128,6 +128,19 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
             f"Clean the data before fitting (e.g., np.nan_to_num(V))."
         )
 
+    # Downscale volume if requested (before seed generation and normalization)
+    downscale_factors = config.downscale
+    if downscale_factors is not None:
+        from luxar.gsplats.fitting.downscale import downscale_volume
+
+        original_shape = V.shape
+        V = downscale_volume(V, downscale_factors)
+        if config.verbose:
+            aprint(
+                f"Downscaled volume: {original_shape} → {V.shape} "
+                f"(factors={downscale_factors})"
+            )
+
     seeds = config.seeds
     seed_kwargs = config.seed_kwargs or {}  # Default to empty dict if None
 
@@ -147,9 +160,22 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
 
     # Handle GSplatData seeds specially
     if isinstance(seeds, GSplatData):
-        seed_centers = seeds.centers
+        seed_centers = seeds.centers.copy()
         # Extract pre-initialized parameters from GSplatData
         _extract_gsplatdata_init(init_ctx, seeds)
+        # Rescale seed centers to downscaled coordinates if downscaling is active
+        if downscale_factors is not None:
+            scale = np.array([1.0 / f for f in downscale_factors], dtype=np.float32)
+            seed_centers = seed_centers * scale
+            # Also rescale pre-initialized Cholesky factors (L[i,j] /= factor[i])
+            if init_ctx.init_L is not None:
+                for i, f in enumerate(downscale_factors):
+                    init_ctx.init_L[:, i, :] /= f
+            if config.verbose:
+                aprint(
+                    f"Rescaled GSplatData seeds to downscaled coordinates "
+                    f"(factors={downscale_factors})"
+                )
         if config.verbose:
             aprint(
                 f"Using GSplatData seeds: {len(seed_centers)} splats with pre-initialized parameters"
@@ -200,7 +226,22 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
             )
     else:
         # User-provided array of seed centers
-        seed_centers = seeds
+        seed_centers = (
+            seeds.copy() if isinstance(seeds, np.ndarray) else np.array(seeds)
+        )
+        # Rescale seed centers to downscaled coordinates if downscaling is active
+        if downscale_factors is not None:
+            scale = np.array([1.0 / f for f in downscale_factors], dtype=np.float32)
+            seed_centers = seed_centers * scale
+            # Also rescale pre-initialized Cholesky factors if provided via config
+            if init_ctx.init_L is not None:
+                for i, f in enumerate(downscale_factors):
+                    init_ctx.init_L[:, i, :] /= f
+            if config.verbose:
+                aprint(
+                    f"Rescaled explicit seed centers to downscaled coordinates "
+                    f"(factors={downscale_factors})"
+                )
 
     # Normalize input data
     with asection("Normalizing input data"):
@@ -271,6 +312,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         init_L=init_ctx.init_L,
         init_amps=init_ctx.init_amps,
         init_sharpness=init_ctx.init_sharpness,
+        downscale_factors=downscale_factors,
     )
 
 

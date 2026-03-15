@@ -454,14 +454,20 @@ describe('SceneManager', () => {
       expect(postDisposeSpy).toHaveBeenCalled();
     });
 
-    it('should clear scene on dispose', () => {
-      const mesh = new THREE.Mesh();
+    it('should dispose geometry and material resources on dispose', () => {
+      const geometry = new THREE.BufferGeometry();
+      const material = new THREE.MeshBasicMaterial();
+      const geometryDisposeSpy = vi.spyOn(geometry, 'dispose');
+      const materialDisposeSpy = vi.spyOn(material, 'dispose');
+
+      const mesh = new THREE.Mesh(geometry, material);
       sceneManager.scene.add(mesh);
 
       sceneManager.dispose();
 
-      // Scene might have default lights or other objects after dispose
-      expect(sceneManager.scene.children.length).toBeGreaterThanOrEqual(0);
+      // dispose() traverses the scene graph and disposes all geometry/material GPU resources
+      expect(geometryDisposeSpy).toHaveBeenCalled();
+      expect(materialDisposeSpy).toHaveBeenCalled();
     });
 
     it('should handle multiple dispose calls safely', () => {

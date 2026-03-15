@@ -59,15 +59,18 @@ controls/
 
 **Controls:**
 
-| Input      | Action                       |
-| ---------- | ---------------------------- |
-| WASD       | Move forward/back/left/right |
-| Alt+W/S    | Move up/down                 |
-| Q/E        | Roll left/right              |
-| Shift      | 2x speed boost               |
-| Arrow keys | Look up/down/left/right      |
-| Mouse drag | Free look                    |
-| I          | Toggle inertial mode         |
+| Input          | Action                          |
+| -------------- | ------------------------------- |
+| Left drag      | Strafe (screen-space translate) |
+| Right drag     | Rotate (free look)              |
+| Scroll         | Move forward/backward           |
+| Shift + scroll | Roll (rotate around view axis)  |
+| WASD           | Move forward/back/left/right    |
+| Alt+W/S        | Move up/down                    |
+| Q/E            | Roll left/right                 |
+| Shift          | 2x speed boost                  |
+| Arrow keys     | Look up/down/left/right         |
+| I              | Toggle inertial mode            |
 
 ### 3. Ortho Controls
 
@@ -207,8 +210,8 @@ controls: {
     zoom: { minDistance: 0.1, maxDistance: 1000 },
   },
   scaleMultipliers: {
-    minDistanceFactor: 0.001,
-    maxDistanceFactor: 10,
+    minDistanceFactor: 0.01,
+    maxDistanceFactor: 100,
     flySpeedFactor: 0.05,
   },
 }

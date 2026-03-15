@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GSplats Demo: 6D Multi-Channel Kidney with Boolean Toggles (scikit-image kidney)
+"""GSplats Demo: 3D Multi-Channel Kidney with Boolean Toggles (scikit-image kidney)
 
 Variant of the multichannel toggle demo adapted for the napari/scikit-image
 kidney sample dataset — a 3-channel confocal fluorescence microscopy volume
@@ -109,7 +109,7 @@ WORKFLOW:
 
 USAGE:
 ======
-    python demo_gsplats_4d_kidney_multichannel_toggles.py [--recompute] [--no-serve] [--serve-only]
+    python demo_gsplats_3d_kidney_multichannel_toggles.py [--recompute] [--no-serve] [--serve-only]
 
 Options:
     --recompute:  Force re-fitting from scratch (ignore precomputed/cached results)
@@ -401,7 +401,9 @@ def create_luxar_scene(gsplats_list, output_path=None):
                 dimensions=dims,
             )
 
-            scene.attrs["title"] = "GSplats: 6D Kidney (boolean toggle demo)"
+            scene.attrs["title"] = (
+                "GSplats: 3D Kidney Multi-Channel (boolean toggle demo)"
+            )
             scene.attrs["description"] = """
 6D Multi-Channel Gaussian Splatting — Boolean Toggle Dimensions
 ================================================================

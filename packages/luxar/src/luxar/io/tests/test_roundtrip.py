@@ -48,6 +48,15 @@ class TestBasicRoundTrip:
         assert data["positions"].shape == positions.shape
         assert data["positions"].dtype == np.float32
 
+        # Compare actual position values (sort both arrays to account for
+        # spatial reordering that the compiler may apply)
+        original_sorted = np.sort(positions, axis=0)
+        loaded_sorted = np.sort(data["positions"], axis=0)
+        np.testing.assert_allclose(
+            loaded_sorted, original_sorted, rtol=1e-6, atol=1e-6,
+            err_msg="Position values differ after round-trip"
+        )
+
         # Verify metadata
         assert data["metadata"]["type"] == "points"
         assert data["metadata"]["n_points"] == n_points

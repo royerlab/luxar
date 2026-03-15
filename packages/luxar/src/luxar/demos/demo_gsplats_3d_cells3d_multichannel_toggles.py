@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GSplats Demo: 5D Multi-Channel Cells with Boolean Toggles (scikit-image cells3d)
+"""GSplats Demo: 3D Multi-Channel Cells with Boolean Toggles (scikit-image cells3d)
 
 Variant of the multichannel demo that uses two independent boolean dimensions
 instead of a single categorical Channel slider. This lets you toggle each
@@ -51,7 +51,7 @@ WORKFLOW:
 
 USAGE:
 ======
-    python demo_gsplats_4d_cells3d_multichannel_toggles.py [--recompute] [--no-serve] [--serve-only]
+    python demo_gsplats_3d_cells3d_multichannel_toggles.py [--recompute] [--no-serve] [--serve-only]
 
 Options:
     --recompute:  Force re-fitting from scratch (requires GPU)
@@ -291,7 +291,9 @@ def create_luxar_scene(gsplats_list, output_path=None):
                 dimensions=dims,
             )
 
-            scene.attrs["title"] = "GSplats: 5D Cells (boolean toggle demo)"
+            scene.attrs["title"] = (
+                "GSplats: 3D Cells Multi-Channel (boolean toggle demo)"
+            )
             scene.attrs["description"] = """
 5D Multi-Channel Gaussian Splatting — Boolean Toggle Dimensions
 ================================================================

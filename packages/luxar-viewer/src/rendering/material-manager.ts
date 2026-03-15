@@ -277,6 +277,25 @@ export class MaterialManager {
   }
 
   /**
+   * Register a material for global camera parameter updates.
+   * Use this for cloned materials that need to receive updateCameraParams() calls.
+   */
+  register(material: THREE.Material): void {
+    this.registeredMaterials.add(material);
+    // Immediately update with current camera params so the material is in sync
+    if (
+      'updateCameraParams' in material &&
+      typeof (material as any).updateCameraParams === 'function'
+    ) {
+      (material as any).updateCameraParams(
+        this.currentFov,
+        this.currentResolution,
+        this.currentIsOrtho
+      );
+    }
+  }
+
+  /**
    * Unregister a material from global updates
    * This should be called when a material is disposed to prevent memory leaks
    */

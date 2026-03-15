@@ -12,6 +12,7 @@ from luxar.validation import (
     validate_radii_for_writing,
     validate_sharpness_for_writing,
 )
+from luxar.validation.base import validate_zarr_attributes
 
 
 class TestValidationError:
@@ -273,3 +274,112 @@ class TestContextParameter:
             validate_sharpness_for_writing(sharpness, 100, context="point sharpness")
 
         assert "point sharpness:" in str(exc_info.value)
+
+
+class TestValidationErrorExtended:
+    """Additional ValidationError tests merged from test_base_validation.py."""
+
+    def test_validation_error_can_be_caught_as_value_error(self) -> None:
+        """Test that ValidationError is a ValueError subclass."""
+        with pytest.raises(ValueError):
+            raise ValidationError("test error")
+
+    def test_validation_error_preserves_suggestion(self) -> None:
+        """Test that suggestion is accessible in error message."""
+        try:
+            raise ValidationError("problem", "try this fix")
+        except ValidationError as e:
+            assert "problem" in str(e)
+            assert "try this fix" in str(e)
+
+
+class TestValidateZarrAttributes:
+    """Test validate_zarr_attributes function (merged from test_base_validation.py)."""
+
+    def test_valid_attributes(self) -> None:
+        """Test valid attributes pass validation."""
+        attrs = {
+            "type": "points",
+        }
+        # Should not raise
+        validate_zarr_attributes(attrs, is_root=False)
+
+    def test_valid_attributes_with_optional(self) -> None:
+        """Test valid attributes with optional rendering attributes."""
+        attrs = {
+            "type": "points",
+            "opacity": 1.0,
+            "gamma": 1.0,
+            "blending_mode": "normal",
+        }
+        # Should not raise
+        validate_zarr_attributes(attrs, is_root=False)
+
+    def test_root_attributes_with_version(self) -> None:
+        """Test root-specific attributes with version."""
+        attrs = {
+            "type": "scene",
+            "luxar_version": "0.1",
+        }
+        # Should not raise
+        validate_zarr_attributes(attrs, is_root=True)
+
+    def test_root_missing_type(self) -> None:
+        """Test root missing type attribute raises error."""
+        attrs = {"luxar_version": "0.1.0"}
+
+        with pytest.raises(ValidationError, match="type"):
+            validate_zarr_attributes(attrs, is_root=True)
+
+    def test_root_missing_version(self) -> None:
+        """Test root missing version attribute raises error."""
+        attrs = {"type": "scene"}
+
+        with pytest.raises(ValidationError, match="luxar_version"):
+            validate_zarr_attributes(attrs, is_root=True)
+
+    def test_missing_type(self) -> None:
+        """Test missing type attribute raises error."""
+        attrs = {"opacity": 1.0}
+
+        with pytest.raises(ValidationError, match="type"):
+            validate_zarr_attributes(attrs, is_root=False)
+
+    def test_invalid_type_value(self) -> None:
+        """Test invalid type value raises error."""
+        attrs = {"type": "invalid_type"}
+
+        with pytest.raises(ValidationError, match="Invalid node type"):
+            validate_zarr_attributes(attrs, is_root=False)
+
+    def test_valid_types(self) -> None:
+        """Test all valid node types."""
+        for node_type in ["scene", "group", "points"]:
+            attrs = {"type": node_type}
+            if node_type == "scene":
+                attrs["luxar_version"] = "0.1"
+                validate_zarr_attributes(attrs, is_root=True)
+            else:
+                validate_zarr_attributes(attrs, is_root=False)
+
+    def test_unsupported_version(self) -> None:
+        """Test unsupported version raises error."""
+        from luxar.typing_utils.config import SUPPORTED_VERSIONS
+
+        attrs = {
+            "type": "scene",
+            "luxar_version": "999.999.999",
+        }
+
+        if "999.999.999" not in SUPPORTED_VERSIONS:
+            with pytest.raises(ValidationError, match="Unsupported"):
+                validate_zarr_attributes(attrs, is_root=True)
+
+    def test_validation_error_has_suggestions(self) -> None:
+        """Test that ValidationErrors include helpful suggestions."""
+        attrs_missing_type: dict[str, object] = {}
+
+        try:
+            validate_zarr_attributes(attrs_missing_type, is_root=False)
+        except ValidationError as e:
+            assert "type" in str(e)

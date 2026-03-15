@@ -4,7 +4,6 @@ Tests for fitting configuration dataclasses.
 
 import numpy as np
 import pytest
-import torch
 
 try:
     import torch

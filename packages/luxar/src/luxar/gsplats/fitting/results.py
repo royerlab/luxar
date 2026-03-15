@@ -311,9 +311,17 @@ def finalize_results(
         )
 
     # Clip splats to volume bounds if enabled (before voxel footprint correction)
+    # When downscaling is active, splats are still in downscaled coords here,
+    # so use the downscaled shape for clipping.
     if config.clip_to_bounds:
+        clip_shape = config.V.shape
+        if preprocessed_data.downscale_factors is not None:
+            clip_shape = tuple(
+                -(-s // f)  # ceil division: equivalent to math.ceil(s / f)
+                for s, f in zip(config.V.shape, preprocessed_data.downscale_factors)
+            )
         Ls_np = _clip_to_bounds(
-            centers_np, Ls_np, config.V.shape, config.truncate, sharpness_np
+            centers_np, Ls_np, clip_shape, config.truncate, sharpness_np
         )
         if config.verbose:
             aprint(f"Clipped splats to volume bounds (truncate={config.truncate:.1f})")
@@ -334,6 +342,21 @@ def finalize_results(
 
     # Pack Cholesky factors (without sharpness)
     cholesky_packed = pack_tril(Ls_np)
+
+    # Rescale from downscaled coords to original coords (before voxel_size conversion)
+    if preprocessed_data.downscale_factors is not None:
+        from luxar.gsplats.fitting.downscale import (
+            rescale_centers,
+            rescale_cholesky_packed,
+        )
+
+        factors = preprocessed_data.downscale_factors
+        centers_np = rescale_centers(centers_np, factors)
+        cholesky_packed = rescale_cholesky_packed(cholesky_packed, factors)
+        if config.verbose:
+            aprint(
+                f"Rescaled splats to original coordinates (downscale factors={factors})"
+            )
 
     # Convert to physical coordinates if requested
     if config.output_space == "real" and config.voxel_size is not None:

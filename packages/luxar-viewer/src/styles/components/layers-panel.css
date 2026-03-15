@@ -1,0 +1,389 @@
+/**
+ * Layers Panel Component Styles
+ *
+ * Napari-inspired per-layer controls for visibility, display range, gamma,
+ * and blending mode. Used by LayersPanel in ui/layers/layers-panel.ts.
+ *
+ * Follows the same theming patterns as dimension-sliders.css and gui.css:
+ * - All colors via --luxar-* CSS variables (injected by ThemeManager)
+ * - Spacing via --luxar-spacing-* tokens
+ * - Typography via --luxar-text-* and --luxar-font-* tokens
+ * - Theme-specific overrides via [data-theme='...'] selectors
+ */
+
+/* ========== Main Container ========== */
+
+.luxar-layers-panel {
+  /* Positioning */
+  position: fixed;
+  top: var(--luxar-spacing-6);
+  left: var(--luxar-spacing-6);
+  width: 260px;
+  max-height: 70vh;
+
+  /* Layout */
+  display: flex;
+  flex-direction: column;
+
+  /* Theming — matches .luxar-gui and .luxar-dimension-sliders */
+  background: var(--luxar-bg-secondary);
+  border: 1px solid var(--luxar-border-subtle);
+  border-radius: var(--luxar-radius-md);
+  backdrop-filter: var(--luxar-blur-md);
+  box-shadow: var(--luxar-shadow-lg);
+  color: var(--luxar-text-primary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-base);
+
+  /* Behavior */
+  user-select: none;
+
+  /* NO overflow: hidden — allows pseudo-elements for glass themes */
+  overflow: visible;
+}
+
+/* ========== Header ========== */
+
+.luxar-layers-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--luxar-spacing-4) var(--luxar-spacing-5);
+  border-bottom: 1px solid var(--luxar-border-subtle);
+  flex-shrink: 0;
+}
+
+.luxar-layers-panel__title {
+  font-size: var(--luxar-text-sm);
+  font-weight: var(--luxar-font-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--luxar-text-secondary);
+}
+
+.luxar-layers-panel__close {
+  background: none;
+  border: none;
+  color: var(--luxar-text-secondary);
+  font-size: var(--luxar-text-lg);
+  cursor: pointer;
+  padding: 0 var(--luxar-spacing-2);
+  line-height: 1;
+  border-radius: var(--luxar-radius-sm);
+  transition:
+    color var(--luxar-transition-fast),
+    background var(--luxar-transition-fast);
+}
+
+.luxar-layers-panel__close:hover {
+  color: var(--luxar-text-primary);
+  background: var(--luxar-interactive-hover);
+}
+
+/* ========== Layer List ========== */
+
+.luxar-layers-panel__list {
+  overflow-y: auto;
+  max-height: 200px;
+  flex-shrink: 0;
+
+  /* Scrollbar — matches .luxar-gui__scroll */
+  scrollbar-width: thin;
+  scrollbar-color: var(--luxar-success) transparent;
+}
+
+/* ========== Individual Layer Row ========== */
+
+.luxar-layer-row {
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-3);
+  padding: var(--luxar-spacing-3) var(--luxar-spacing-5);
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition:
+    background var(--luxar-transition-fast),
+    border-color var(--luxar-transition-fast);
+}
+
+.luxar-layer-row:hover {
+  background: var(--luxar-interactive-hover);
+}
+
+.luxar-layer-row--selected {
+  background: color-mix(in srgb, var(--luxar-info) 15%, transparent);
+  border-left-color: var(--luxar-info);
+}
+
+.luxar-layer-row--hidden {
+  opacity: var(--luxar-opacity-disabled);
+}
+
+/* ========== Eye Toggle ========== */
+
+.luxar-layer-row__eye {
+  background: none;
+  border: none;
+  font-size: var(--luxar-text-md);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: opacity var(--luxar-transition-fast);
+}
+
+.luxar-layer-row__eye:hover {
+  opacity: var(--luxar-opacity-hover);
+}
+
+/* ========== Layer Name ========== */
+
+.luxar-layer-row__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--luxar-text-primary);
+  font-size: var(--luxar-text-base);
+}
+
+/* ========== Type Badge ========== */
+
+.luxar-layer-row__badge {
+  font-size: var(--luxar-text-xs);
+  padding: var(--luxar-spacing-1) var(--luxar-spacing-3);
+  border-radius: var(--luxar-radius-sm);
+  background: var(--luxar-interactive-default);
+  color: var(--luxar-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+
+/* ========== Controls Section ========== */
+
+.luxar-layers-panel__controls {
+  padding: var(--luxar-spacing-4) var(--luxar-spacing-5);
+  border-top: 1px solid var(--luxar-border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: var(--luxar-spacing-4);
+}
+
+.luxar-layers-panel__control-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--luxar-spacing-2);
+}
+
+.luxar-layers-panel__control-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.luxar-layers-panel__control-value {
+  font-family: var(--luxar-font-mono);
+  color: var(--luxar-success);
+}
+
+/* ========== Gamma Slider ========== */
+
+.luxar-layers-panel__slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--luxar-interactive-default);
+  outline: none;
+  cursor: pointer;
+}
+
+.luxar-layers-panel__slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--luxar-success);
+  cursor: pointer;
+  border: none;
+  box-shadow: var(--luxar-shadow-sm);
+}
+
+.luxar-layers-panel__slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--luxar-success);
+  cursor: pointer;
+  border: none;
+  box-shadow: var(--luxar-shadow-sm);
+}
+
+/* ========== Blend Mode Dropdown ========== */
+
+.luxar-layers-panel__select {
+  width: 100%;
+  padding: var(--luxar-spacing-2) var(--luxar-spacing-3);
+  background: var(--luxar-interactive-default);
+  border: 1px solid var(--luxar-border-strong);
+  border-radius: var(--luxar-radius-sm);
+  color: var(--luxar-text-primary);
+  font-size: var(--luxar-text-sm);
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-layers-panel__select:hover {
+  background: var(--luxar-interactive-hover);
+  border-color: color-mix(in srgb, var(--luxar-success) 50%, transparent);
+}
+
+.luxar-layers-panel__select:focus {
+  border-color: var(--luxar-success);
+  background: var(--luxar-interactive-hover);
+}
+
+/**
+ * Select Option Elements
+ * Explicit styling to ensure contrast on all platforms (matches dimension-sliders).
+ */
+.luxar-layers-panel__select option {
+  background-color: #1e1e1e;
+  color: #e0e0e0;
+  padding: 4px 8px;
+}
+
+.luxar-layers-panel__select option:hover,
+.luxar-layers-panel__select option:focus,
+.luxar-layers-panel__select option:checked {
+  background-color: #2a2a2a;
+  color: #ffffff;
+}
+
+/* ========== Range Slider Component ========== */
+
+.luxar-range-slider {
+  display: flex;
+  flex-direction: column;
+  gap: var(--luxar-spacing-2);
+}
+
+.luxar-range-slider__label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: var(--luxar-text-xs);
+}
+
+.luxar-range-slider__label {
+  color: var(--luxar-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.luxar-range-slider__values {
+  font-family: var(--luxar-font-mono);
+  color: var(--luxar-success);
+}
+
+.luxar-range-slider__value {
+  min-width: 2ch;
+}
+
+.luxar-range-slider__track-container {
+  position: relative;
+  height: 16px;
+}
+
+.luxar-range-slider__track {
+  position: absolute;
+  top: 6px;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--luxar-interactive-default);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.luxar-range-slider__track-fill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: var(--luxar-success);
+  opacity: 0.4;
+  border-radius: 2px;
+}
+
+.luxar-range-slider__input {
+  -webkit-appearance: none;
+  appearance: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 16px;
+  background: transparent;
+  pointer-events: none;
+  margin: 0;
+  outline: none;
+}
+
+.luxar-range-slider__input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--luxar-success);
+  cursor: pointer;
+  pointer-events: all;
+  border: none;
+  box-shadow: var(--luxar-shadow-sm);
+  position: relative;
+  z-index: 1;
+}
+
+.luxar-range-slider__input::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--luxar-success);
+  cursor: pointer;
+  pointer-events: all;
+  border: none;
+  box-shadow: var(--luxar-shadow-sm);
+}
+
+/* High thumb above low thumb */
+.luxar-range-slider__input--high::-webkit-slider-thumb {
+  z-index: 2;
+}
+
+/* ========== Theme Overrides ========== */
+
+/* Light Theme */
+[data-theme='light'] .luxar-layers-panel {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+[data-theme='light'] .luxar-layers-panel__select option {
+  background-color: #ffffff;
+  color: #1e1e1e;
+}
+
+[data-theme='light'] .luxar-layers-panel__select option:hover,
+[data-theme='light'] .luxar-layers-panel__select option:focus,
+[data-theme='light'] .luxar-layers-panel__select option:checked {
+  background-color: #f0f0f0;
+  color: #000000;
+}

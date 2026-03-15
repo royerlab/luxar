@@ -1,5 +1,6 @@
 // Main application class for the Luxar scene player
 
+import * as THREE from 'three';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { InputHandler } from '../input/input-handler';
@@ -11,9 +12,10 @@ import { log, Modules } from '../utils/log';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import { ResolutionIndicator } from '../ui/components/resolution-indicator';
-import { SceneLoaderManager } from '../data/scene-loader-manager';
+import { SceneLoaderManager, getSceneLoader } from '../data/scene-loader-manager';
 import { ScaleBar } from '../ui/components/scale-bar';
 import { RecordingPanel } from '../ui/recording-panel';
+import { LayersPanel } from '../ui/layers';
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
@@ -25,6 +27,7 @@ export class LuxarApp {
   private datasetBrowser?: DatasetBrowser;
   private scaleBar?: ScaleBar;
   private recordingPanel?: RecordingPanel;
+  private layersPanel?: LayersPanel;
   private isInitialized = false;
   private boundCleanup: (() => void) | null = null;
   private boundFocusHandler: (() => void) | null = null;
@@ -174,6 +177,10 @@ export class LuxarApp {
       );
       this.recordingPanel.setAdaptiveDPRManager(this.adaptiveDPRManager);
       this.inputHandler.setRecordingPanel(this.recordingPanel);
+
+      // Initialize layers panel (per-node controls)
+      this.layersPanel = new LayersPanel(document.body, this.animationController);
+      this.inputHandler.setLayersPanel(this.layersPanel);
 
       // Start animation loop first to ensure background is rendered
       this.animationController.startAnimation();
@@ -325,6 +332,15 @@ export class LuxarApp {
 
     // Initialize or update scale bar overlay
     this.initScaleBar();
+
+    // Initialize layers panel from loaded scene
+    const sceneLoader = getSceneLoader('default');
+    if (sceneLoader?.sceneGraph && this.layersPanel) {
+      const root = this.sceneManager.scene.children.find((c) => c.name === 'LuxarScene');
+      if (root) {
+        this.layersPanel.initFromScene(root as THREE.Group, sceneLoader.sceneGraph);
+      }
+    }
 
     // Trigger animation to ensure scene is rendered immediately
     this.animationController.startAnimation();
@@ -686,6 +702,12 @@ export class LuxarApp {
       if (this.recordingPanel) {
         this.recordingPanel.dispose();
         this.recordingPanel = undefined;
+      }
+
+      // Clean up layers panel
+      if (this.layersPanel) {
+        this.layersPanel.dispose();
+        this.layersPanel = undefined;
       }
 
       // Clean up input handlers

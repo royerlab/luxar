@@ -1,13 +1,22 @@
 /**
  * Custom fly controls for Luxar with quaternion-based rotation and inertial physics
  *
- * Features:
- * - WASD keys for movement (forward/back/strafe)
- * - Alt+W/S for vertical movement
- * - Arrow keys and mouse drag for camera rotation
- * - Quaternion-based rotation (no gimbal lock, unlimited freedom)
- * - Unified physics model with configurable damping
- * - Smooth inertial physics for both translation and rotation
+ * Mouse mapping (consistent with orbit/ortho modes):
+ * - Left drag: strafe (screen-space translation)
+ * - Right drag: rotate (look around)
+ * - Scroll: move forward/backward (velocity impulse)
+ * - Shift+scroll: roll (rotate around viewing axis)
+ * - Ctrl+scroll: FOV change (handled by InputHandler, not here)
+ *
+ * Keyboard:
+ * - WASD: movement (forward/back/strafe)
+ * - Alt+W/S: vertical movement
+ * - Arrow keys: camera rotation
+ * - Q/E: roll
+ * - Shift: speed boost
+ *
+ * Quaternion-based rotation (no gimbal lock, unlimited freedom).
+ * Unified physics model with configurable damping.
  */
 
 import * as THREE from 'three';
@@ -65,8 +74,9 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   // Quaternion-based orientation
   private orientation = new THREE.Quaternion();
 
-  // Mouse state for looking
-  private isMouseDown = false;
+  // Mouse state — tracks which button is down for different drag actions
+  // Left drag = strafe (translate), Right drag = rotate (look)
+  private activeMouseAction: 'none' | 'strafe' | 'rotate' = 'none';
   private mouseX = 0;
   private mouseY = 0;
 
@@ -111,6 +121,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.boundHandlers.mousedown = this.onMouseDown.bind(this);
     this.boundHandlers.mouseup = this.onMouseUp.bind(this);
     this.boundHandlers.mousemove = this.onMouseMove.bind(this);
+    this.boundHandlers.wheel = this.onWheel.bind(this);
     this.boundHandlers.contextmenu = (e: Event) => e.preventDefault();
   }
 
@@ -122,10 +133,10 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     }
 
     // Mouse events are always handled internally
-    // These are critical for fly controls' free-look feature
     this.domElement.addEventListener('mousedown', this.boundHandlers.mousedown);
     window.addEventListener('mouseup', this.boundHandlers.mouseup);
     window.addEventListener('mousemove', this.boundHandlers.mousemove);
+    this.domElement.addEventListener('wheel', this.boundHandlers.wheel, { passive: false });
     this.domElement.addEventListener('contextmenu', this.boundHandlers.contextmenu);
   }
 
@@ -141,6 +152,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.domElement.removeEventListener('mousedown', this.boundHandlers.mousedown);
     window.removeEventListener('mouseup', this.boundHandlers.mouseup);
     window.removeEventListener('mousemove', this.boundHandlers.mousemove);
+    this.domElement.removeEventListener('wheel', this.boundHandlers.wheel);
     this.domElement.removeEventListener('contextmenu', this.boundHandlers.contextmenu);
   }
 
@@ -314,15 +326,18 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   private onMouseDown(event: MouseEvent): void {
     if (!this.enabled) return;
 
-    // Only respond to left mouse button
+    // Left button (0) = strafe, Right button (2) = rotate
     if (event.button === 0) {
-      this.isMouseDown = true;
+      this.activeMouseAction = 'strafe';
       this.mouseX = event.clientX;
       this.mouseY = event.clientY;
-
-      // Prevent text selection
       event.preventDefault();
-
+      this.dispatchEvent({ type: 'start' });
+    } else if (event.button === 2) {
+      this.activeMouseAction = 'rotate';
+      this.mouseX = event.clientX;
+      this.mouseY = event.clientY;
+      event.preventDefault();
       this.dispatchEvent({ type: 'start' });
     }
   }
@@ -330,15 +345,17 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   private onMouseUp(event: MouseEvent): void {
     if (!this.enabled) return;
 
-    if (event.button === 0) {
-      this.isMouseDown = false;
-
+    if (
+      (event.button === 0 && this.activeMouseAction === 'strafe') ||
+      (event.button === 2 && this.activeMouseAction === 'rotate')
+    ) {
+      this.activeMouseAction = 'none';
       this.dispatchEvent({ type: 'end' });
     }
   }
 
   private onMouseMove(event: MouseEvent): void {
-    if (!this.enabled || !this.isMouseDown) return;
+    if (!this.enabled || this.activeMouseAction === 'none') return;
 
     const deltaX = event.clientX - this.mouseX;
     const deltaY = event.clientY - this.mouseY;
@@ -346,19 +363,82 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.mouseX = event.clientX;
     this.mouseY = event.clientY;
 
-    // Apply angular impulse based on current camera orientation
-    // Note: deltaY is positive when moving down, negative when moving up
-    // We want to pitch down (positive rotation) when dragging down
-    const torquePitch = -deltaY * this.lookSpeed * 10; // Pitch (up/down) - inverted for natural feel
-    const torqueYaw = -deltaX * this.lookSpeed * 10; // Yaw (left/right)
+    if (this.activeMouseAction === 'rotate') {
+      // Right-drag: apply angular impulse for rotation (look around)
+      const torquePitch = -deltaY * this.lookSpeed * 2.5;
+      const torqueYaw = -deltaX * this.lookSpeed * 2.5;
 
-    // Get camera's local axes for consistent airplane-like controls
-    const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(this.orientation);
-    const cameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.orientation);
+      const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(this.orientation);
+      const cameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.orientation);
 
-    // Add impulse to world-space angular velocity
-    this.angularVelocity.addScaledVector(cameraRight, torquePitch);
-    this.angularVelocity.addScaledVector(cameraUp, torqueYaw);
+      this.angularVelocity.addScaledVector(cameraRight, torquePitch);
+      this.angularVelocity.addScaledVector(cameraUp, torqueYaw);
+    } else if (this.activeMouseAction === 'strafe') {
+      // Left-drag: screen-space translation (strafe up/down/left/right)
+      // Drag direction matches on-screen movement, consistent with pan in orbit/ortho.
+      const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(this.orientation);
+      const cameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.orientation);
+
+      // Scale by movementSpeed for scene-appropriate sensitivity.
+      // The 0.005 factor converts pixel deltas to reasonable world-space distances.
+      const strafeScale = this.movementSpeed * 0.005;
+
+      if (this.inertialMode) {
+        // Inertial: add velocity impulse
+        this.velocity.addScaledVector(cameraRight, -deltaX * strafeScale);
+        this.velocity.addScaledVector(cameraUp, deltaY * strafeScale);
+      } else {
+        // Non-inertial: move directly
+        this.camera.position.addScaledVector(cameraRight, -deltaX * strafeScale);
+        this.camera.position.addScaledVector(cameraUp, deltaY * strafeScale);
+      }
+    }
+
+    this.dispatchEvent({ type: 'change' });
+  }
+
+  /**
+   * Handle mouse wheel for forward/back movement and roll.
+   * - Plain scroll: forward/backward velocity impulse
+   * - Shift+scroll: roll (rotate around viewing axis)
+   * - Ctrl/Meta+scroll: FOV (handled by InputHandler, not intercepted here)
+   */
+  private onWheel(event: WheelEvent): void {
+    if (!this.enabled) return;
+
+    // Let Ctrl/Meta+scroll pass through to InputHandler for FOV control
+    if (event.ctrlKey || event.metaKey) return;
+
+    event.preventDefault();
+
+    // Normalize deltaY across browsers (line vs pixel vs page scrolling)
+    const delta = -Math.sign(event.deltaY);
+
+    if (event.shiftKey) {
+      // Shift+scroll: roll around viewing axis
+      const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation);
+      const rollImpulse = delta * this.rotationSpeed * 0.06;
+
+      if (this.inertialMode) {
+        this.angularVelocity.addScaledVector(cameraForward, rollImpulse);
+      } else {
+        // Non-inertial: apply rotation directly
+        const rollQuat = new THREE.Quaternion().setFromAxisAngle(cameraForward, rollImpulse);
+        this.orientation.premultiply(rollQuat);
+        this.orientation.normalize();
+      }
+    } else {
+      // Plain scroll: move forward/backward
+      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation);
+      const impulse = delta * this.movementSpeed * 0.3;
+
+      if (this.inertialMode) {
+        this.velocity.addScaledVector(forward, impulse);
+      } else {
+        // Non-inertial: move directly
+        this.camera.position.addScaledVector(forward, impulse * 0.2);
+      }
+    }
 
     this.dispatchEvent({ type: 'change' });
   }
@@ -599,8 +679,9 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.lookState.vertical = 0;
     this.lookState.roll = 0;
 
-    // Reset speed boost
+    // Reset speed boost and mouse state
     this.speedBoost = false;
+    this.activeMouseAction = 'none';
 
     // Reset to identity quaternion (looking forward)
     this.orientation.set(0, 0, 0, 1);

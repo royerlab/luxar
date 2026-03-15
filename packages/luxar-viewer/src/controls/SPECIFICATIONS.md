@@ -29,9 +29,10 @@ The `luxar-viewer.controls` package provides comprehensive 3D navigation systems
 
 **Features**:
 
-- Rotate: Left mouse drag
-- Pan: Right mouse drag or arrow keys
+- Pan: Left mouse drag
+- Rotate: Right mouse drag (or Shift+left drag)
 - Zoom: Scroll wheel
+- Roll: Shift+scroll
 
 **Limitations**:
 
@@ -62,13 +63,21 @@ The `luxar-viewer.controls` package provides comprehensive 3D navigation systems
 
 **Type**: Free-flight 6DOF navigation with physics simulation
 
-**Features**:
+**Mouse mapping** (consistent with orbit/ortho):
+
+- Strafe: Left mouse drag (screen-space translation)
+- Rotate: Right mouse drag (free look)
+- Forward/back: Scroll wheel (velocity impulse)
+- Roll: Shift+scroll (view-axis rotation)
+
+**Keyboard**:
 
 - WASD movement in camera-local frame
 - Q/E for roll
-- Mouse drag for free look
-- Inertial physics with momentum
-- Speed boost (Shift)
+- Arrow keys for rotation
+- Shift for speed boost
+
+**Physics**: Inertial mode (momentum + damping) or non-inertial mode (direct response)
 
 **Use Cases**: Exploring data from inside, cinematic camera paths
 

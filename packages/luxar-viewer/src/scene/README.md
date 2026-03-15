@@ -540,6 +540,14 @@ Navigate through dimensions with keyboard:
 - Continuous dims: 1% of range
 ```
 
+### nD Transform Inverse-Query
+
+The viewer uses an **inverse-query** approach for `nd_transform`: instead of transforming millions of point coordinates forward (O(N)), the query (slicePosition + tolerance) is inverse-transformed from world to local space once (O(1)). This is implemented in `data/nd-transform.ts` and applied transparently during geometry slicing. No loader internals change.
+
+### Auto-Ranging from Position Bounds
+
+When `Dimension.range` is not explicitly set, `SceneDimsManager.initFromScene()` uses `positionBounds` from the zarr root attrs as the slider range for that dimension. These bounds are pre-computed by the Python compiler with nd_transform expansion applied, so non-displayed dimensions reflect world-space extents. Fallback order: explicit `Dimension.range` > `positionBounds` > `[0, 1]`.
+
 ---
 
 ## Performance Monitoring

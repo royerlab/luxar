@@ -131,6 +131,11 @@ export class SceneLoader {
   private _updateVersion = 0; // For logging/debugging
   private _sceneGraph: SceneNode | null = null;
 
+  /** Public accessor for the scene graph built during loadScene(). */
+  get sceneGraph(): SceneNode | null {
+    return this._sceneGraph;
+  }
+
   constructor(config: LoaderConfig = {}, id?: string, profiler?: UpdateProfiler) {
     this.profiler = profiler ?? null;
     this.config = config;

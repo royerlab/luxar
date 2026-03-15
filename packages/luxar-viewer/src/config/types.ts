@@ -145,9 +145,9 @@ export interface OrbitControlsConfig {
  * the actual control parameter value.
  */
 export interface ScaleMultipliers {
-  /** orbit minDistance = diagonal * factor (default: 0.001) */
+  /** orbit minDistance = diagonal * factor (default: 0.01) */
   minDistanceFactor: number;
-  /** orbit maxDistance = diagonal * factor (default: 10) */
+  /** orbit maxDistance = diagonal * factor (default: 100) */
   maxDistanceFactor: number;
   /** fly movementSpeed = diagonal * factor (default: 0.05) */
   flySpeedFactor: number;
@@ -177,6 +177,7 @@ export interface InputConfig {
       toggleRendering: string;
       toggleScaleBar: string;
       toggleDebugConsole: string;
+      toggleLayers: string;
       recenterCamera: string;
       toggleControlMode: string;
       toggleInertialMode: string;
@@ -281,6 +282,7 @@ export interface UIConfig {
     help: number;
     renderingControls: number;
     recordingPanel: number;
+    layersPanel: number;
     // Top layer
     statsMonitor: number;
   };

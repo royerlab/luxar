@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GSplats Demo: 4D Multi-Channel Cells (scikit-image cells3d)
+"""GSplats Demo: 3D Multi-Channel Cells (scikit-image cells3d)
 
 Demonstrates the ``dim_order`` feature: fitting 3D Gaussian splats per channel,
 then embedding them into a 4D scene with a categorical Channel dimension.
@@ -43,7 +43,7 @@ WORKFLOW:
 
 USAGE:
 ======
-    python demo_gsplats_4d_cells3d_multichannel.py [--recompute] [--no-serve] [--serve-only]
+    python demo_gsplats_3d_cells3d_multichannel.py [--recompute] [--no-serve] [--serve-only]
 
 Options:
     --recompute:  Force re-fitting from scratch (requires GPU)
@@ -54,7 +54,7 @@ By default, precomputed GSplats are loaded from package data (Git LFS).
 Use --recompute to re-fit from scratch.
 
 Output:
-    - Scene saved to: demos/gsplats_4d_cells3d_multichannel.zarr
+    - Scene saved to: demos/gsplats_3d_cells3d_multichannel.zarr
     - Automatically opens in browser at http://localhost:8000
 
 """
@@ -234,7 +234,7 @@ def create_luxar_scene(gsplats_list, output_path=None):
     assign each channel's splats to their Channel index.
     """
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_4d_cells3d_multichannel.zarr"
+        output_path = get_demos_output_dir() / "gsplats_3d_cells3d_multichannel.zarr"
 
     with asection("Creating 4D Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -265,7 +265,7 @@ def create_luxar_scene(gsplats_list, output_path=None):
                 dimensions=dims,
             )
 
-            scene.attrs["title"] = "GSplats: 4D Cells (dim_order demo)"
+            scene.attrs["title"] = "GSplats: 3D Cells Multi-Channel (dim_order demo)"
             scene.attrs["description"] = """
 4D Multi-Channel Gaussian Splatting — cells3d (scikit-image)
 ============================================================
@@ -355,7 +355,7 @@ def main():
     aprint("3D per-channel fitting + dim_order embedding into 4D scene")
     aprint("")
 
-    output_path = get_demos_output_dir() / "gsplats_4d_cells3d_multichannel.zarr"
+    output_path = get_demos_output_dir() / "gsplats_3d_cells3d_multichannel.zarr"
 
     # Serve-only mode
     if SERVE_ONLY:

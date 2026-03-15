@@ -385,9 +385,7 @@ def view_with_napari(volumes, gsplats_list, channel_configs):
 def create_luxar_scene(merged_gsplats, output_path: Path | None = None):
     """Create Luxar scene with merged multi-channel gsplats."""
     if output_path is None:
-        output_path = (
-            get_demos_output_dir() / "gsplats_3d_organoid_multichannel.zarr"
-        )
+        output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel.zarr"
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -454,9 +452,7 @@ def main():
     aprint("")
 
     # Determine output path
-    output_path = (
-        get_demos_output_dir() / "gsplats_3d_organoid_multichannel.zarr"
-    )
+    output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel.zarr"
 
     # Serve only mode
     if SERVE_ONLY:
@@ -472,7 +468,10 @@ def main():
     # Try loading precomputed data (from Git LFS / local cache)
     precomputed = load_precomputed_gsplats(
         "gsplats_multichannel",
-        ["organoids_gsplats_ch0.gsplats.zarr.zip", "organoids_gsplats_ch1.gsplats.zarr.zip"],
+        [
+            "organoids_gsplats_ch0.gsplats.zarr.zip",
+            "organoids_gsplats_ch1.gsplats.zarr.zip",
+        ],
         recompute=RECOMPUTE,
     )
 

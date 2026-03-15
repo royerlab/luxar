@@ -21,6 +21,7 @@ vi.mock('../../../ui/recording-panel');
 vi.mock('../../../ui/components/scale-bar');
 vi.mock('../../../ui/dataset-browser');
 vi.mock('../../../ui/helpers');
+vi.mock('../../../ui/layers');
 vi.mock('../../../scene/scene-dims-manager');
 
 // Setup global mocks
@@ -106,6 +107,7 @@ describe('LuxarApp', () => {
       setRenderingControls: vi.fn(),
       setScaleBar: vi.fn(),
       setRecordingPanel: vi.fn(),
+      setLayersPanel: vi.fn(),
       clearDimensionUI: vi.fn(),
       initDimensionSliders: vi.fn(),
       dispose: vi.fn(),
