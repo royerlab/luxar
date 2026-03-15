@@ -1562,9 +1562,7 @@ export class RenderingControls {
     // Apply all changes to post-processing using deferred rebuild
     this.postProcessing.startDeferRebuild();
 
-    this.postProcessing.setToneMapping(
-      TONE_MAPPING_MAP[this.settings.toneMapping]
-    );
+    this.postProcessing.setToneMapping(TONE_MAPPING_MAP[this.settings.toneMapping]);
 
     this.postProcessing.setDetectorNoiseEnabled(
       this.settings.detectorNoiseEnabled,

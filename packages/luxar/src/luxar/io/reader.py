@@ -81,8 +81,13 @@ class LinesData(_DictCompatMixin):
     widths: np.ndarray
     colors: Optional[np.ndarray]
     sharpness: Optional[np.ndarray]
-    indices: Optional[np.ndarray]
+    segments: Optional[np.ndarray]
     metadata: Dict[str, Any]
+
+    @property
+    def indices(self) -> Optional[np.ndarray]:
+        """Backward-compatible alias for segments."""
+        return self.segments
 
 
 @dataclass(frozen=True)
@@ -229,7 +234,9 @@ class LuxarScene:
                 # Check if arrays exist
                 info["has_colors"] = "colors" in child
                 info["has_radii"] = "radii" in child
-                info["has_sharpness"] = "sharpness" in child
+                info["has_sharpness"] = (
+                    "sharpnesses" in child or "sharpness" in child
+                )
             elif node_type == "gsplats":
                 info["n_splats"] = child.attrs.get("n_splats", 0)
                 info["ndim"] = child.attrs.get("ndim", 3)
@@ -238,7 +245,10 @@ class LuxarScene:
             elif node_type == "lines":
                 info["n_vertices"] = child.attrs.get("n_vertices", 0)
                 info["n_segments"] = child.attrs.get("n_segments", 0)
-                info["line_type"] = child.attrs.get("line_type", "segments")
+                info["line_type"] = child.attrs.get(
+                    "original_line_type",
+                    child.attrs.get("line_type", "segments"),
+                )
             elif node_type == "group":
                 # Recursively collect children
                 self._collect_nodes(child, full_name, nodes)
@@ -432,7 +442,7 @@ class LuxarScene:
 
         Returns:
             LinesData with fields: vertices, widths, colors, sharpness,
-            indices, metadata.  Supports dict-style access for backward
+            segments, metadata.  Supports dict-style access for backward
             compatibility.
 
         Raises:
@@ -456,7 +466,11 @@ class LuxarScene:
         sharpness = self._decode_array(group, "sharpnesses")
         if sharpness is None:
             sharpness = self._decode_array(group, "sharpness")
-        indices = self._decode_array(group, "indices")
+        segments = self._decode_array(group, "segments")
+        if segments is None:
+            segments = self._decode_array(group, "indices")
+            if segments is not None and segments.ndim == 1 and len(segments) % 2 == 0:
+                segments = segments.reshape(-1, 2)
 
         # Build metadata
         metadata = dict(group.attrs)
@@ -470,7 +484,7 @@ class LuxarScene:
             widths=widths,
             colors=colors,
             sharpness=sharpness,
-            indices=indices,
+            segments=segments,
             metadata=metadata,
         )
 

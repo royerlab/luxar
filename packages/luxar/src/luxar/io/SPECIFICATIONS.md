@@ -870,14 +870,14 @@ scene.get_lines(name: str) -> LinesData
     'widths': ndarray,       # (N,) float32
     'colors': ndarray,       # (N, 3) float32 (if present)
     'sharpness': ndarray,    # (N,) float32 (if present)
-    'indices': ndarray,      # (M,) uint32 (if indexed line type)
+    'segments': ndarray,     # (S, 2) uint32 (connectivity pairs)
 
     # Metadata
     'metadata': {
         'n_vertices': int,
         'n_segments': int,
         'ndim': int,
-        'line_type': str,  # 'segments', 'polyline', 'loop', 'indexed'
+        'original_line_type': str,  # 'segments', 'polyline', 'loop', 'indexed'
         'has_colors': bool,
         'has_sharpness': bool,
         'max_width': float,
@@ -886,6 +886,8 @@ scene.get_lines(name: str) -> LinesData
     }
 }
 ```
+Legacy note: if an older file stores connectivity as a flat `indices` array,
+the reader reshapes it into `(S, 2)` `segments` when possible.
 
 ### Usage Examples
 

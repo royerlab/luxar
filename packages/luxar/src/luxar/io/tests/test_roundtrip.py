@@ -1015,6 +1015,8 @@ class TestLinesRoundTrip:
         assert data["vertices"].shape == vertices.shape
         assert data["widths"].shape == widths.shape
         assert data["colors"].shape == colors.shape
+        assert data["segments"] is not None
+        assert data["segments"].shape[1] == 2
 
         # Verify metadata
         assert data["metadata"]["type"] == "lines"
@@ -1063,6 +1065,26 @@ class TestLinesRoundTrip:
         assert "lines2" in line_names
         assert len(line_names) == 2
 
+    def test_nodes_metadata_flags(self, tmp_path) -> None:
+        """Test nodes metadata flags for lines and points."""
+        output_path = tmp_path / "test.zarr"
+
+        positions = np.random.randn(5, 3).astype(np.float32)
+        sharpness = np.ones(5, dtype=np.float32) * 2.0
+        vertices = np.random.randn(6, 3).astype(np.float32)
+        widths = np.ones(6, dtype=np.float32) * 0.1
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points("pts", positions, sharpness=sharpness)
+            compiler.write_lines("lines", vertices, widths, line_type="segments")
+
+        scene = LuxarScene.load(output_path)
+        nodes = {node["name"]: node for node in scene.nodes}
+
+        assert nodes["pts"]["has_sharpness"] is True
+        assert nodes["lines"]["line_type"] == "segments"
+
     def test_get_lines_wrong_type(self, tmp_path) -> None:
         """Test error when getting lines from non-lines node."""
         output_path = tmp_path / "test.zarr"
@@ -1089,6 +1111,95 @@ class TestLinesRoundTrip:
 
         with pytest.raises(KeyError):
             scene.get_lines("nonexistent")
+
+
+class TestBroadcastedArraysRoundTrip:
+    """Tests for broadcasted array inputs (shape (1, ...))."""
+
+    def test_points_broadcasted_arrays(self, tmp_path) -> None:
+        """Broadcasted point attributes should decode to full length."""
+        output_path = tmp_path / "test.zarr"
+        n_points = 25
+
+        positions = np.random.randn(n_points, 3).astype(np.float32)
+        colors = np.array([[0.2, 0.4, 0.6]], dtype=np.float32)
+        radii = np.array([0.5], dtype=np.float32)
+        sharpness = np.array([2.0], dtype=np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points(
+                "points",
+                positions,
+                colors=colors,
+                radii=radii,
+                sharpness=sharpness,
+            )
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_points("points")
+
+        assert data["colors"].shape == (n_points, 3)
+        assert data["radii"].shape == (n_points,)
+        assert data["sharpness"].shape == (n_points,)
+
+    def test_lines_broadcasted_arrays(self, tmp_path) -> None:
+        """Broadcasted line attributes should decode to full length."""
+        output_path = tmp_path / "test.zarr"
+        n_vertices = 10
+
+        vertices = np.random.randn(n_vertices, 3).astype(np.float32)
+        widths = 0.1
+        colors = np.array([[1.0, 0.0, 0.0]], dtype=np.float32)
+        sharpness = np.array([2.0], dtype=np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_lines(
+                "lines",
+                vertices=vertices,
+                widths=widths,
+                colors=colors,
+                sharpness=sharpness,
+                line_type="segments",
+            )
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_lines("lines")
+
+        assert data["colors"].shape == (n_vertices, 3)
+        assert data["sharpness"].shape == (n_vertices,)
+
+    def test_gsplats_broadcasted_arrays(self, tmp_path) -> None:
+        """Broadcasted gsplats attributes should decode to full length."""
+        output_path = tmp_path / "test.zarr"
+        n_splats = 8
+
+        centers = np.random.randn(n_splats, 3).astype(np.float32)
+        amplitudes = 1.0
+        cholesky = np.tile(
+            np.array([1.0, 0.0, 1.0, 0.0, 0.0, 1.0], dtype=np.float32),
+            (n_splats, 1),
+        )
+        colors = np.array([[0.5, 0.5, 0.5]], dtype=np.float32)
+        sharpness = np.array([2.0], dtype=np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_gsplats(
+                "splats",
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+                sharpness=sharpness,
+            )
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_gsplats("splats")
+
+        assert data["colors"].shape == (n_splats, 3)
+        assert data["sharpness"].shape == (n_splats,)
 
 
 class TestReaderGroupTransforms:

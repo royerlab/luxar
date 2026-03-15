@@ -425,7 +425,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if "nd_transform" in attrs:
             from ..validation.nd_transforms import validate_nd_transform
 
-            attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"])
+            dims = None
+            if "scene_dimensions" in self.store.attrs:
+                dims = Dimensions.from_dict(self.store.attrs["scene_dimensions"])
+            attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"], dims)
 
         # 7. Set default rendering attributes if not provided
         if "opacity" not in attrs:
@@ -644,13 +647,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             n_elems = n_vertices
             chunks_1d = None  # Scalar doesn't need chunks
         else:
-            n_elems = None  # Array already has correct size
-            chunks_1d = _calculate_intelligent_chunks(
-                (n_vertices,),
-                spatial_index_data=ordering_data.get("vertex_ordering")
-                if ordering_data
-                else None,
-            )
+            if widths.shape[0] == 1:
+                n_elems = n_vertices
+                chunks_1d = None
+            else:
+                n_elems = None  # Array already has correct size
+                chunks_1d = _calculate_intelligent_chunks(
+                    (n_vertices,),
+                    spatial_index_data=ordering_data.get("vertex_ordering")
+                    if ordering_data
+                    else None,
+                )
 
         self._encoder.encode(
             data=widths,
@@ -686,13 +693,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 chunks_colors = None
             elif isinstance(colors, np.ndarray):
                 validate_colors_for_writing(colors, n_vertices)
-                chunks_colors = _calculate_intelligent_chunks(
-                    colors.shape,
-                    spatial_index_data=ordering_data.get("vertex_ordering")
-                    if ordering_data
-                    else None,
-                )
-                n_elems_color = None
+                if colors.shape[0] == 1:
+                    n_elems_color = n_vertices
+                    chunks_colors = None
+                else:
+                    chunks_colors = _calculate_intelligent_chunks(
+                        colors.shape,
+                        spatial_index_data=ordering_data.get("vertex_ordering")
+                        if ordering_data
+                        else None,
+                    )
+                    n_elems_color = None
 
                 # Detect color_mode for arrays
                 if np.issubdtype(colors.dtype, np.floating):
@@ -734,13 +745,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 chunks_sharp = None
             else:
                 validate_sharpness_for_writing(sharpness, n_vertices)
-                n_elems_sharp = None
-                chunks_sharp = _calculate_intelligent_chunks(
-                    (n_vertices,),
-                    spatial_index_data=ordering_data.get("vertex_ordering")
-                    if ordering_data
-                    else None,
-                )
+                if sharpness.shape[0] == 1:
+                    n_elems_sharp = n_vertices
+                    chunks_sharp = None
+                else:
+                    n_elems_sharp = None
+                    chunks_sharp = _calculate_intelligent_chunks(
+                        (n_vertices,),
+                        spatial_index_data=ordering_data.get("vertex_ordering")
+                        if ordering_data
+                        else None,
+                    )
 
             self._encoder.encode(
                 data=sharpness,
@@ -775,7 +790,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if "nd_transform" in attrs:
             from ..validation.nd_transforms import validate_nd_transform
 
-            attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"])
+            dims = None
+            if "scene_dimensions" in self.store.attrs:
+                dims = Dimensions.from_dict(self.store.attrs["scene_dimensions"])
+            attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"], dims)
 
         # Set default rendering attributes if not provided (must match write_points/write_gsplats)
         if "opacity" not in attrs:
@@ -912,9 +930,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if isinstance(amplitudes, np.ndarray):
                 amplitudes = amplitudes[sort_indices]
             if colors is not None and isinstance(colors, np.ndarray):
-                colors = colors[sort_indices]
+                if colors.shape[0] > 1:
+                    colors = colors[sort_indices]
             if sharpness is not None and isinstance(sharpness, np.ndarray):
-                sharpness = sharpness[sort_indices]
+                if sharpness.shape[0] > 1:
+                    sharpness = sharpness[sort_indices]
 
             # Compute chunk size
             from ..typing_utils import TARGET_CHUNK_BYTES
@@ -1063,10 +1083,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 chunks_colors = None
             elif isinstance(colors, np.ndarray):
                 validate_colors_for_writing(colors, n_splats)
-                chunks_colors = _calculate_intelligent_chunks(
-                    colors.shape, spatial_index_data=ordering_data
-                )
-                n_elems_color = None
+                if colors.shape[0] == 1:
+                    n_elems_color = n_splats
+                    chunks_colors = None
+                else:
+                    chunks_colors = _calculate_intelligent_chunks(
+                        colors.shape, spatial_index_data=ordering_data
+                    )
+                    n_elems_color = None
 
                 # Detect color_mode
                 if np.issubdtype(colors.dtype, np.floating):
@@ -1109,10 +1133,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 sharpness_min = sharpness_max = float(sharpness)
             else:
                 validate_sharpness_for_writing(sharpness, n_splats)
-                n_elems_sharp = None
-                chunks_sharp = _calculate_intelligent_chunks(
-                    (n_splats,), spatial_index_data=ordering_data
-                )
+                if sharpness.shape[0] == 1:
+                    n_elems_sharp = n_splats
+                    chunks_sharp = None
+                else:
+                    n_elems_sharp = None
+                    chunks_sharp = _calculate_intelligent_chunks(
+                        (n_splats,), spatial_index_data=ordering_data
+                    )
                 sharpness_min = float(np.min(sharpness))
                 sharpness_max = float(np.max(sharpness))
 
@@ -1155,7 +1183,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if "nd_transform" in attrs:
             from ..validation.nd_transforms import validate_nd_transform
 
-            attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"])
+            dims = None
+            if "scene_dimensions" in self.store.attrs:
+                dims = Dimensions.from_dict(self.store.attrs["scene_dimensions"])
+            attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"], dims)
 
         # Set rendering defaults (must match write_points defaults)
         if "opacity" not in attrs:
@@ -1619,10 +1650,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             n_elems = group["positions"].shape[0]
             color_chunks = None
         else:
-            n_elems = None
-            color_chunks = _calculate_intelligent_chunks(
-                colors.shape, spatial_index_data=spatial_index_data
-            )
+            if colors.shape[0] == 1:
+                n_elems = group["positions"].shape[0]
+                color_chunks = None
+            else:
+                n_elems = None
+                color_chunks = _calculate_intelligent_chunks(
+                    colors.shape, spatial_index_data=spatial_index_data
+                )
 
             # Detect color_mode for float arrays
             if np.issubdtype(colors.dtype, np.floating):
@@ -1699,10 +1734,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             radii_chunks = None
         else:
             max_radius = float(np.max(radii))
-            n_elems = None
-            radii_chunks = _calculate_intelligent_chunks(
-                radii.shape, spatial_index_data=spatial_index_data
-            )
+            if radii.shape[0] == 1:
+                n_elems = group["positions"].shape[0]
+                radii_chunks = None
+            else:
+                n_elems = None
+                radii_chunks = _calculate_intelligent_chunks(
+                    radii.shape, spatial_index_data=spatial_index_data
+                )
 
         aprint(f"  ✓ Max radius: {max_radius:.3f}")
 
@@ -1755,10 +1794,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             sharp_chunks = None
         else:
             max_sharpness = float(np.max(sharpness))
-            n_elems = None
-            sharp_chunks = _calculate_intelligent_chunks(
-                sharpness.shape, spatial_index_data=spatial_index_data
-            )
+            if sharpness.shape[0] == 1:
+                n_elems = group["positions"].shape[0]
+                sharp_chunks = None
+            else:
+                n_elems = None
+                sharp_chunks = _calculate_intelligent_chunks(
+                    sharpness.shape, spatial_index_data=spatial_index_data
+                )
 
         aprint(f"  ✓ Max sharpness: {max_sharpness:.3f}")
 
