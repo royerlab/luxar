@@ -24,6 +24,59 @@ allowing all eight visibility combinations:
 Each channel's splats use ``extend_to_all`` on the *other* channels' dimensions
 so they remain visible regardless of those toggles' positions.
 
+================================================================================
+MULTIDIMENSIONAL TOGGLES vs. LAYERS PANEL — DESIGN TRADEOFFS
+================================================================================
+
+Luxar offers two ways to control per-channel visibility. This demo uses the
+**multidimensional toggle** approach. A companion demo uses the **Layers panel**
+approach (see ``demo_gsplats_3d_kidney_multichannel_layers.py``).
+
+MULTIDIMENSIONAL TOGGLES (this demo):
+
+  Channel visibility is encoded as **data** — each channel gets its own boolean
+  coordinate dimension, making the scene 6D (X, Y, Z, Nuclei, WGA, Actin).
+  The viewer's nD navigation machinery treats these like any other dimension:
+  keyboard shortcuts, sliders, URL serialization, and dimension animation all
+  work without any special UI code.
+
+  This approach is a general-purpose **data modeling technique**. It works for
+  any discrete parameter, not just channels — you could use it for timepoints,
+  experimental conditions, replicates, staining protocols, or any categorical
+  variable. The combinatorial state space is navigable through the same uniform
+  nD interface.
+
+  The tradeoff: the scene becomes higher-dimensional, the ``fill`` +
+  ``extend_to_all`` plumbing requires understanding the nD data model, and the
+  control is binary (on/off) — no continuous intensity adjustment, gamma, or
+  blending mode changes per channel.
+
+LAYERS PANEL (companion demo):
+
+  Channel visibility is encoded as **presentation** — the scene stays 3D, and
+  each channel's node is marked ``layer=True``. The viewer's Layers panel
+  (press L) provides per-channel controls: visibility toggle, continuous
+  [min, max] display range, gamma, and blending mode.
+
+  This approach is a **viewer UI feature** designed for the specific use case
+  of adjusting per-node visual properties. It provides richer controls than
+  binary toggles, but these controls are viewer-side only — they are not part
+  of the data model, cannot be animated via the dimension system, and are not
+  serialized in URLs.
+
+WHEN TO USE WHICH:
+
+  - Use **multidimensional toggles** when channel state is part of the data
+    semantics (e.g., comparing conditions), when you need to animate through
+    combinations, or when composing with other nD features (time + channels).
+
+  - Use **layers** when you need fine-grained visual control per channel
+    (intensity windowing, gamma, blending), when keeping dimensionality low
+    matters, or when the channels are purely a display concern.
+
+  - Use **both** together when you want nD navigation for some dimensions
+    (time, z-slicing) and layers for per-channel visual tuning.
+
 DATA SOURCE & CITATIONS:
 ========================
 

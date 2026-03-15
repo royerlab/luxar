@@ -84,7 +84,7 @@ def make_5d_data(
     time_steps: list[int],
     channel: int,
     rng: np.random.Generator,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Replicate 3D positions into 5D (X, Y, Z, Time, Channel) with variation."""
     all_pos = []
     all_rad = []
