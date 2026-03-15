@@ -399,6 +399,9 @@ export class RenderingControls {
    * Reset all rendering settings to their default values
    */
   private resetToDefaults(): void {
+    // Clear cinematic snapshot since we're resetting all settings
+    this.cinematicSnapshot = null;
+
     // Get fresh defaults from config, including fly control defaults
     const defaults = {
       ...config.renderingControls.defaults,
@@ -692,6 +695,7 @@ export class RenderingControls {
     cinematicModeControl.domElement.setAttribute(
       'title',
       'Cinematic Mode: Film-like visual preset (C key)\n' +
+        '• Switches to ACES Filmic tone mapping\n' +
         '• Enables detector noise (film grain)\n' +
         '• Enables vignette (darkened corners)\n' +
         '• Enables chromatic lens distortion\n' +
@@ -1519,7 +1523,6 @@ export class RenderingControls {
       // --- ENABLE: snapshot current settings, then apply cinematic values ---
       const snapshot = {} as CinematicSnapshot;
       for (const key of CINEMATIC_SNAPSHOT_KEYS) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (snapshot as any)[key] = this.settings[key];
       }
       this.cinematicSnapshot = snapshot;
@@ -1531,7 +1534,6 @@ export class RenderingControls {
         for (const key of CINEMATIC_SNAPSHOT_KEYS) {
           // Only restore if user hasn't manually changed this setting since cinematic was enabled
           if (this.settings[key] === cinematicValues[key]) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (this.settings as any)[key] = this.cinematicSnapshot[key];
           }
         }

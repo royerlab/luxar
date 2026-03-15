@@ -63,11 +63,11 @@ Scene Rendering (per-node GOG) → HDR Buffer (LinearSRGB) → Effects → EOG +
 
 | Operator        | Description                 | Characteristics                 |
 | --------------- | --------------------------- | ------------------------------- |
-| **ACES Filmic** | Industry standard (default) | Smooth highlights, natural look |
+| **Neutral**     | Default                     | Minimal color shift, hue-preserving |
+| **ACES Filmic** | Cinematic mode              | Smooth highlights, filmic look  |
 | **AgX**         | Modern alternative          | Balanced, film-like             |
 | **Reinhard**    | Classic operator            | Simple, local adaptation        |
 | **Linear**      | No mapping                  | Raw HDR (clips >1)              |
-| **Neutral**     | Balanced                    | Minimal color shift             |
 
 **Implementation** (vendored LuxarToneMappingEffect):
 

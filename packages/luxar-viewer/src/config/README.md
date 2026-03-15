@@ -147,7 +147,7 @@ renderingControls: {
     msaaSamples: 4,
     smaaEnabled: false,
     ssaaEnabled: false,
-    toneMapping: 'ACES',
+    toneMapping: 'Neutral',
     dofEnabled: false,          // Depth of field
     // Detector noise (physics-based: Poisson + Gaussian + FPN)
     detectorNoiseEnabled: false,

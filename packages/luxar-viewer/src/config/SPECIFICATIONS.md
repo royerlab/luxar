@@ -1213,7 +1213,7 @@ interface RenderingSettings {
 
 **Tone Mapping**:
 
-- **toneMapping**: 'ACES' (cinematic look)
+- **toneMapping**: 'Neutral' (preserves hue fidelity for scientific data; ACES used in cinematic mode)
 
 **Depth of Field**:
 

@@ -305,11 +305,11 @@ Professional bloom effect with HDR support:
 
 Multiple tone mapping operators:
 
-- ACES Filmic (default) - Industry standard
+- Neutral (default) - Minimal color shift, preserves hue fidelity for scientific data
+- ACES Filmic - Industry standard cinematic look (used in cinematic mode)
 - AgX - Modern alternative
 - Reinhard - Classic operator
 - Linear - No tone mapping
-- Neutral - Balanced look
 
 #### Ambient Occlusion (SSAO)
 
