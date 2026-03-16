@@ -345,7 +345,7 @@ def get_metal_status() -> str:
     """
     if sys.platform != "darwin":
         return "Metal backend only available on macOS"
-    if not _mps_interop_valid:
+    if not _mps_interop_valid:  # type: ignore[unreachable]  # reachable on macOS
         return "MPS-Metal interop validation failed. PyTorch MPS may not be available."
     if _metal_available:
         return "Metal backend available and loaded"

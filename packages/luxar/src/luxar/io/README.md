@@ -146,7 +146,7 @@ sort_indices, metadata = sort_points_compound(
     method="hilbert",  # or "morton"
 )
 
-# Compute chunk bounds
+# Compute chunk bounds (radii can be per-point array or scalar)
 chunk_bounds = compute_chunk_bounds_points(
     sorted_positions,
     sorted_radii,
@@ -261,6 +261,21 @@ Zarr Store → LuxarScene → ArrayDecoder → Decoded Arrays → User Code
 3. Build node index from zarr groups
 4. On `get_*()` call: load arrays with automatic decoding
 5. Return decoded data with proper numpy shapes/dtypes
+
+### nD Transforms and Bounds Expansion
+
+When nodes have `nd_transform` attributes (affine scale/offset or categorical permutations on non-displayed dimensions), the compiler stores them in each node's zarr group attrs. During `finalize()`, the compiler:
+
+1. Walks the zarr tree to compose world nd_transforms (root to leaf)
+2. Applies `apply_nd_transform_to_bounds()` to each leaf node's local position bounds
+3. Computes the union of all world-space bounds
+4. Stores the result as `position_bounds` in root attrs
+
+This means scene-level `position_bounds` has:
+- **Displayed dims**: local-space bounds (for camera auto-framing)
+- **Non-displayed dims**: world-space bounds (for slider auto-ranging)
+
+Per-node `position_bounds` remain in local space. See `docs/guides/specs/ND_TRANSFORMS_SPEC.md` for the full specification.
 
 ### Memory Management
 

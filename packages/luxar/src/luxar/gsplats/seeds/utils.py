@@ -388,13 +388,13 @@ def _dedupe_simple(
 
     # Convert to arrays
     deduped_coords = np.array(selected, dtype=float)
-    selected_sorted_indices = np.array(selected_sorted_indices, dtype=np.intp)
+    selected_sorted_indices_arr = np.array(selected_sorted_indices, dtype=np.intp)
 
     # Map back to original indices if we sorted by intensity
     if sort_indices is not None:
-        kept_indices = sort_indices[selected_sorted_indices]
+        kept_indices = sort_indices[selected_sorted_indices_arr]
     else:
-        kept_indices = selected_sorted_indices
+        kept_indices = selected_sorted_indices_arr
 
     return deduped_coords, kept_indices
 

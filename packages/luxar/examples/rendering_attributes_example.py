@@ -157,7 +157,7 @@ def main():
 
             # Test gamma validation
             try:
-                points1.gamma = 0.1  # Should fail - gamma must be >= 0.2
+                points1.gamma = 0.05  # Should fail - gamma must be >= 0.1
                 aprint("  ERROR: Gamma validation failed!")
             except ValueError as e:
                 aprint(f"  ✓ Gamma validation working: {e}")

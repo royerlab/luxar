@@ -1132,6 +1132,7 @@ def generate_animated_detector_scene(
                 sharpness=det_sharp,
                 line_type="segments",
                 extend_to_all=["time"],  # Extend to all time values!
+                layer=True,
             )
             n_det = len(det_verts) // 2
             aprint(
@@ -1336,6 +1337,7 @@ def generate_animated_detector_scene(
                         sharpness=1.5,
                         line_type="segments",
                         # NOTE: NOT using extend_to_all - tracks should only be visible at their birth time
+                        layer=True,
                     )
 
                     total_verts = len(all_positions)
@@ -1405,6 +1407,7 @@ def generate_animated_detector_scene(
                         colors=all_colors,
                         radii=all_radii,
                         sharpness=all_sharp,
+                        layer=True,
                     )
 
                     total_pts = len(all_positions)
@@ -1470,6 +1473,7 @@ def generate_animated_detector_scene(
                 colors=vertex_colors_4d,
                 radii=vertex_radii_4d,
                 sharpness=0.8,
+                layer=True,
             )
             aprint(f"  Vertex markers: {n_vertex_points} points x {n_frames} frames")
             total_points += n_vertex_points * n_frames

@@ -34,6 +34,91 @@ def auto_detect_device() -> str:
     return "cpu"
 
 
+def render_to_volume_tensor(
+    gsplat_data: GSplatData,
+    shape: Tuple[int, ...],
+    device: str | None = None,
+    truncate: float = 3.0,
+    intensity_floor: float = 1e-5,
+    chunk_size: int | None = None,
+) -> torch.Tensor:
+    """Render Gaussian splats to a volume, returning a GPU tensor.
+
+    Same as :func:`render_to_volume` but returns a ``torch.Tensor`` on the
+    rendering device instead of a NumPy array.  This avoids an unnecessary
+    GPU → CPU copy when the result will be consumed by further GPU operations
+    (e.g. quality-metric computation).
+
+    Parameters
+    ----------
+    gsplat_data : GSplatData
+        The Gaussian splat data to render.
+    shape : Tuple[int, ...]
+        Output volume shape (e.g., (128, 128, 128) for 3D).
+    device : str, optional
+        Device to use for rendering. If None, auto-detects the best device.
+    truncate : float, default=3.0
+        Truncation radius in standard deviations.
+    intensity_floor : float, default=1e-5
+        Minimum intensity threshold for amplitude-aware culling.
+    chunk_size : int, optional
+        Chunk size for memory management when processing large volumes.
+
+    Returns
+    -------
+    torch.Tensor
+        Rendered volume on the rendering device.
+    """
+    # Auto-detect device if not specified
+    if device is None:
+        device = auto_detect_device()
+
+    # Convert to PyTorch tensors
+    centers_t = torch.from_numpy(gsplat_data.centers).to(device)
+    amps_t = torch.from_numpy(gsplat_data.amplitudes).to(device)
+    sharpness_t = torch.from_numpy(gsplat_data.sharpnesses).to(device)
+
+    # Unpack Cholesky factors from packed format (N, d*(d+1)/2) to (N, d, d) lower-triangular
+    chol = gsplat_data.cholesky_factors
+    ndim = gsplat_data.centers.shape[1]
+
+    Ls_t = torch.zeros((len(chol), ndim, ndim), device=device, dtype=torch.float32)
+
+    # Unpack based on dimensionality
+    if ndim == 2:
+        # 2D: [L00, L10, L11]
+        Ls_t[:, 0, 0] = torch.from_numpy(chol[:, 0]).to(device)
+        Ls_t[:, 1, 0] = torch.from_numpy(chol[:, 1]).to(device)
+        Ls_t[:, 1, 1] = torch.from_numpy(chol[:, 2]).to(device)
+    elif ndim == 3:
+        # 3D: [L00, L10, L11, L20, L21, L22]
+        Ls_t[:, 0, 0] = torch.from_numpy(chol[:, 0]).to(device)
+        Ls_t[:, 1, 0] = torch.from_numpy(chol[:, 1]).to(device)
+        Ls_t[:, 1, 1] = torch.from_numpy(chol[:, 2]).to(device)
+        Ls_t[:, 2, 0] = torch.from_numpy(chol[:, 3]).to(device)
+        Ls_t[:, 2, 1] = torch.from_numpy(chol[:, 4]).to(device)
+        Ls_t[:, 2, 2] = torch.from_numpy(chol[:, 5]).to(device)
+    else:
+        # nD: Generic unpacking (row-major lower triangular)
+        idx = 0
+        for i in range(ndim):
+            for j in range(i + 1):
+                Ls_t[:, i, j] = torch.from_numpy(chol[:, idx]).to(device)
+                idx += 1
+
+    # Render using GPU-accelerated renderer
+    return render_gaussians(
+        shape=shape,
+        centers=centers_t,
+        Ls=Ls_t,
+        amps=amps_t,
+        sharpness=sharpness_t,
+        truncate=truncate,
+        intensity_floor=intensity_floor,
+        chunk_size=chunk_size,
+    )
+
+
 def render_to_volume(
     gsplat_data: GSplatData,
     shape: Tuple[int, ...],
@@ -84,54 +169,15 @@ def render_to_volume(
     - Supports nD rendering with automatic chunking to prevent OOM
     - Sharpness values control falloff: exp(-0.5 * ||y||^s) where s is sharpness
     """
-    # Auto-detect device if not specified
-    if device is None:
-        device = auto_detect_device()
-
-    # Convert to PyTorch tensors
-    centers_t = torch.from_numpy(gsplat_data.centers).to(device)
-    amps_t = torch.from_numpy(gsplat_data.amplitudes).to(device)
-    sharpness_t = torch.from_numpy(gsplat_data.sharpnesses).to(device)
-
-    # Unpack Cholesky factors from packed format (N, d*(d+1)/2) to (N, d, d) lower-triangular
-    chol = gsplat_data.cholesky_factors
-    ndim = gsplat_data.centers.shape[1]
-
-    Ls_t = torch.zeros((len(chol), ndim, ndim), device=device, dtype=torch.float32)
-
-    # Unpack based on dimensionality
-    if ndim == 2:
-        # 2D: [L00, L10, L11]
-        Ls_t[:, 0, 0] = torch.from_numpy(chol[:, 0]).to(device)
-        Ls_t[:, 1, 0] = torch.from_numpy(chol[:, 1]).to(device)
-        Ls_t[:, 1, 1] = torch.from_numpy(chol[:, 2]).to(device)
-    elif ndim == 3:
-        # 3D: [L00, L10, L11, L20, L21, L22]
-        Ls_t[:, 0, 0] = torch.from_numpy(chol[:, 0]).to(device)
-        Ls_t[:, 1, 0] = torch.from_numpy(chol[:, 1]).to(device)
-        Ls_t[:, 1, 1] = torch.from_numpy(chol[:, 2]).to(device)
-        Ls_t[:, 2, 0] = torch.from_numpy(chol[:, 3]).to(device)
-        Ls_t[:, 2, 1] = torch.from_numpy(chol[:, 4]).to(device)
-        Ls_t[:, 2, 2] = torch.from_numpy(chol[:, 5]).to(device)
-    else:
-        # nD: Generic unpacking (row-major lower triangular)
-        idx = 0
-        for i in range(ndim):
-            for j in range(i + 1):
-                Ls_t[:, i, j] = torch.from_numpy(chol[:, idx]).to(device)
-                idx += 1
-
-    # Render using GPU-accelerated renderer
-    rendered_t = render_gaussians(
-        shape=shape,
-        centers=centers_t,
-        Ls=Ls_t,
-        amps=amps_t,
-        sharpness=sharpness_t,
-        truncate=truncate,
-        intensity_floor=intensity_floor,
-        chunk_size=chunk_size,
+    return (
+        render_to_volume_tensor(
+            gsplat_data,
+            shape=shape,
+            device=device,
+            truncate=truncate,
+            intensity_floor=intensity_floor,
+            chunk_size=chunk_size,
+        )
+        .cpu()
+        .numpy()
     )
-
-    # Convert back to NumPy
-    return rendered_t.cpu().numpy()

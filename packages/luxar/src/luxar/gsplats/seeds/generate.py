@@ -20,7 +20,7 @@ from luxar.gsplats.seeds.multiscale_decomposition import seed_from_decomposition
 def generate_seeds(
     V: np.ndarray,
     method: str = "auto",
-    **kwargs,
+    **kwargs: Any,
 ) -> GSplatData:
     """
     Generate seed Gaussian splats using specified method(s).

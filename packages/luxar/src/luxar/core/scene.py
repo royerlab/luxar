@@ -394,17 +394,27 @@ class Scene(Group):
         """Get scene-level dimensions.
 
         Returns:
-            Dimensions object (always present - required for scenes)
+            Dimensions object (always present - required at construction)
         """
-        if self._dimensions is None and "scene_dimensions" in self.attrs:
-            dims_dict = self.attrs["scene_dimensions"]
-            self._dimensions = Dimensions.from_dict(dims_dict)
-        if self._dimensions is None:
-            raise ValueError(
-                "Scene dimensions are not set. This should never happen - "
-                "dimensions are required when creating a scene."
-            )
         return self._dimensions
+
+    @dimensions.setter
+    def dimensions(self, dims: Dimensions) -> None:
+        """Set scene-level dimensions.
+
+        Args:
+            dims: Dimensions object (REQUIRED - cannot be None)
+
+        Raises:
+            ValueError: If dims is None
+        """
+        if dims is None:
+            raise ValueError(
+                "dimensions cannot be None. Scene dimensions are required and "
+                "define the coordinate system for all data in the scene."
+            )
+        self.attrs["scene_dimensions"] = dims.to_dict()
+        self._dimensions = dims
 
     @property
     def viewer_config(self) -> Optional[ViewerConfig]:
@@ -433,24 +443,6 @@ class Scene(Group):
                 self._writer.write_group("/", viewer_config=vc.to_dict())
         elif "viewer_config" in self.attrs:
             del self.attrs["viewer_config"]
-
-    @dimensions.setter
-    def dimensions(self, dims: Dimensions) -> None:
-        """Set scene-level dimensions.
-
-        Args:
-            dims: Dimensions object (REQUIRED - cannot be None)
-
-        Raises:
-            ValueError: If dims is None
-        """
-        if dims is None:
-            raise ValueError(
-                "dimensions cannot be None. Scene dimensions are required and "
-                "define the coordinate system for all data in the scene."
-            )
-        self.attrs["scene_dimensions"] = dims.to_dict()
-        self._dimensions = dims
 
     def to_zarr(self, path: PathLike) -> None:
         """Export scene to a new Zarr store location.

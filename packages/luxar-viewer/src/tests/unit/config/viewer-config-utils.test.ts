@@ -22,7 +22,9 @@ describe('extractRenderingOverrides', () => {
     const zarrConfig: ZarrViewerConfig = {
       bloom_enabled: true,
       bloom_strength: 0.5,
-      hdr_multiplier: 2.0,
+      exposure: 1.0,
+      global_offset: 0.1,
+      global_gamma: 1.5,
       tone_mapping: 'ACES',
       control_type: 'fly',
       auto_rotate: true,
@@ -33,7 +35,9 @@ describe('extractRenderingOverrides', () => {
 
     expect(overrides.bloomEnabled).toBe(true);
     expect(overrides.bloomStrength).toBe(0.5);
-    expect(overrides.hdrMultiplier).toBe(2.0);
+    expect(overrides.exposure).toBe(1.0);
+    expect(overrides.globalOffset).toBe(0.1);
+    expect(overrides.globalGamma).toBe(1.5);
     expect(overrides.toneMapping).toBe('ACES');
     expect(overrides.controlType).toBe('fly');
     expect(overrides.autoRotate).toBe(true);
@@ -287,13 +291,17 @@ describe('renderingSettingsToZarr', () => {
     const result = renderingSettingsToZarr({
       bloomEnabled: true,
       bloomStrength: 0.5,
-      hdrMultiplier: 2.0,
+      exposure: 1.0,
+      globalOffset: 0.1,
+      globalGamma: 1.5,
       toneMapping: 'ACES',
     });
 
     expect(result.bloom_enabled).toBe(true);
     expect(result.bloom_strength).toBe(0.5);
-    expect(result.hdr_multiplier).toBe(2.0);
+    expect(result.exposure).toBe(1.0);
+    expect(result.global_offset).toBe(0.1);
+    expect(result.global_gamma).toBe(1.5);
     expect(result.tone_mapping).toBe('ACES');
   });
 
@@ -341,7 +349,9 @@ describe('RENDERING_SETTINGS_MAP completeness', () => {
       'bloom_radius',
       'bloom_threshold',
       'bloom_levels',
-      'hdr_multiplier',
+      'exposure',
+      'global_offset',
+      'global_gamma',
       'tone_mapping',
       'control_type',
       'auto_rotate',

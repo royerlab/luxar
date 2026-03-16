@@ -25,9 +25,10 @@ import { waitForLuxarReady, getLuxarState, getConsoleMessages } from './helpers'
 // Base URL for example zarr outputs (served by HTTP server on port 9000)
 const EXAMPLES_BASE = 'http://localhost:9000/datasets/examples';
 
-// Project root (4 levels up from this file)
+// Project root (5 levels up from this file: src/tests/e2e -> tests -> src -> luxar-viewer -> packages -> root)
 const PROJECT_ROOT = path.resolve(__dirname, '../../../../..');
-const EXAMPLES_DIR = path.join(PROJECT_ROOT, 'packages/luxar/examples');
+const SCRIPTS_DIR = path.join(PROJECT_ROOT, 'packages/luxar/examples');
+const EXAMPLES_DIR = path.join(PROJECT_ROOT, 'datasets/examples');
 
 // All Python demo scripts
 const DEMO_SCRIPTS = [
@@ -83,7 +84,7 @@ const ND_SCRIPTS_ALLOW_ZERO_POINTS = [
  * Run a Python demo script and return execution info
  */
 function runDemoScript(scriptName: string): { success: boolean; output: string; duration: number } {
-  const scriptPath = path.join(EXAMPLES_DIR, scriptName);
+  const scriptPath = path.join(SCRIPTS_DIR, scriptName);
   const startTime = Date.now();
 
   try {
@@ -202,7 +203,7 @@ test.describe('Python Demo Scripts - Full Pipeline E2E', () => {
       if (!fs.existsSync(zarrPath)) {
         console.error(`[${script}] Dataset not found: ${zarrPath}`);
         console.error(
-          'Run the script manually: hatch run python ' + path.join(EXAMPLES_DIR, script)
+          'Run the script manually: hatch run python ' + path.join(SCRIPTS_DIR, script)
         );
         throw new Error(`Dataset ${zarrName} not found - script may have failed`);
       }
@@ -325,7 +326,7 @@ test.describe('Demo Script Validation', () => {
     for (const script of DEMO_SCRIPTS) {
       if (SKIP_SCRIPTS[script]) continue;
 
-      const scriptPath = path.join(EXAMPLES_DIR, script);
+      const scriptPath = path.join(SCRIPTS_DIR, script);
 
       if (!fs.existsSync(scriptPath)) {
         errors.push(`${script}: File not found`);

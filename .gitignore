@@ -140,10 +140,12 @@ datasets/
 
 # Benchmarking
 .benchmarks/
+benchmarks/
 
 # Profiling
 *.prof
 *.lprof
+gpu_benchmark_profile.yaml
 
 # Local development
 .local/

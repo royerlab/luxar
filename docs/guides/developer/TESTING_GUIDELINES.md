@@ -1,5 +1,14 @@
 # TypeScript Testing Guidelines - Luxar Viewer
 
+## Python Testing Note
+
+Some environments auto-load pytest plugins from installed packages (e.g., napari/numba),
+which can fail during collection. If you hit a plugin auto-load error, run pytest with:
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 hatch run pytest path/to/test.py
+```
+
 ## Problem: Over-Mocking Antipattern
 
 ### What is Over-Mocking?

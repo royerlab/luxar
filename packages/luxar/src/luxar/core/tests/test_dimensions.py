@@ -307,26 +307,8 @@ class TestSceneIntegration:
     # Test removed: Scene dimension validation was removed in new flexible API
     # The Scene class now accepts any dimension values without validation
 
-    def test_scene_dimension_persistence(self, tmp_path) -> None:
-        """Test dimensions are saved and loaded correctly."""
-        import zarr
-
-        from luxar import LuxarZarrCompiler
-
-        # Create scene with dimensions
-        dims = Dimensions.default_timeseries()
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            compiler.create_scene(dimensions=dims)
-            # Context manager handles finalization
-
-        # Load and check
-        root = zarr.open_group(tmp_path / "test.zarr", mode="r")
-        assert "scene_dimensions" in root.attrs
-
-        # Recreate from saved data
-        loaded_dims = Dimensions.from_dict(root.attrs["scene_dimensions"])
-        assert loaded_dims.ndim == 4
-        assert loaded_dims.names == ["t", "x", "y", "z"]
+    # test_scene_dimension_persistence moved to test_dimension_metadata.py
+    # (TestSceneDimensionMetadata has a more thorough version with field-level checks)
 
 
 class TestCategoricalDimensions:

@@ -15,7 +15,7 @@ import numpy as np
 from luxar.core import Dimension
 
 
-def morton_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:  # type: ignore[return]
+def morton_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
     """Encode nD integer coordinates to Morton codes via bit interleaving.
 
     Args:
@@ -47,8 +47,8 @@ def hilbert_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
         Hilbert indices, shape (N,), dtype uint64
     """
     try:
-        from hilbertcurve.hilbertcurve import (
-            HilbertCurve,  # type: ignore[import-untyped]
+        from hilbertcurve.hilbertcurve import (  # type: ignore[import-untyped]
+            HilbertCurve,
         )
     except ImportError:
         raise ImportError(
@@ -72,7 +72,7 @@ def hilbert_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
 
 def normalize_coords_to_grid(
     coords: np.ndarray, min_coords: np.ndarray, max_coords: np.ndarray, resolution: int
-) -> np.ndarray:  # type: ignore[return]
+) -> np.ndarray:
     """Normalize float coordinates to integer grid [0, resolution-1].
 
     Args:
@@ -96,7 +96,7 @@ def normalize_coords_to_grid(
     # Scale to [0, resolution-1]
     grid_coords = (normalized * (resolution - 1)).astype(np.uint32)
 
-    return grid_coords
+    return np.asarray(grid_coords)
 
 
 def compute_auto_resolution(coords: np.ndarray, max_resolution: int = 2**16) -> int:
@@ -119,7 +119,7 @@ def compute_auto_resolution(coords: np.ndarray, max_resolution: int = 2**16) -> 
     resolution = min(max_resolution, max(256, target_resolution))
 
     # Round to nearest power of 2
-    resolution = 2 ** int(np.log2(resolution))
+    resolution = int(2 ** int(np.log2(resolution)))
 
     return resolution
 
@@ -268,10 +268,10 @@ def sort_splats_spatial(
 
 def compute_chunk_bounds_points(
     positions: np.ndarray,
-    radii: Optional[np.ndarray],
+    radii: Optional[np.ndarray | float],
     chunk_size: int,
     slice_dims: Optional[list[int]] = None,
-) -> np.ndarray:  # type: ignore[return]
+) -> np.ndarray:
     """Compute chunk bounding boxes for Points (includes radius extent).
 
     CRITICAL: Radius expansion is only applied to SPATIAL dimensions, not discrete
@@ -304,7 +304,15 @@ def compute_chunk_bounds_points(
         chunk_positions = positions[start_idx:end_idx]
 
         if radii is not None:
-            chunk_radii = radii[start_idx:end_idx]
+            radii_scalar: Optional[float] = None
+            chunk_radii: Optional[np.ndarray] = None
+            if isinstance(radii, np.ndarray):
+                if radii.shape[0] == 1:
+                    radii_scalar = float(radii.flat[0])
+                else:
+                    chunk_radii = radii[start_idx:end_idx]
+            else:
+                radii_scalar = float(radii)
 
             # Compute bounds for each dimension separately
             for d in range(ndim):
@@ -316,8 +324,13 @@ def compute_chunk_bounds_points(
                     maxs_d = chunk_positions[:, d].max() + 0.5
                 else:
                     # SPATIAL dimension: Include radius extent
-                    mins_d = (chunk_positions[:, d] - chunk_radii).min()
-                    maxs_d = (chunk_positions[:, d] + chunk_radii).max()
+                    if radii_scalar is not None:
+                        mins_d = chunk_positions[:, d].min() - radii_scalar
+                        maxs_d = chunk_positions[:, d].max() + radii_scalar
+                    else:
+                        assert chunk_radii is not None
+                        mins_d = (chunk_positions[:, d] - chunk_radii).min()
+                        maxs_d = (chunk_positions[:, d] + chunk_radii).max()
 
                 chunk_bounds[chunk_idx, d, 0] = mins_d
                 chunk_bounds[chunk_idx, d, 1] = maxs_d
@@ -351,7 +364,7 @@ def compute_chunk_bounds_gsplats(
     cholesky_factors: np.ndarray,
     chunk_size: int,
     coverage_sigma: float = 3.0,
-) -> np.ndarray:  # type: ignore[return]
+) -> np.ndarray:
     """Compute chunk bounding boxes for GSplats (includes ellipsoidal extent).
 
     Args:
@@ -540,6 +553,7 @@ def sort_segments_compound(
         use_128bit = False
 
     # Extract ordering dimension coordinates
+    spatial_codes: tuple[np.ndarray, np.ndarray] | np.ndarray
     if ordering_dims_2d:
         ordering_coords = segment_coords_2d[:, ordering_dims_2d]
         ordering_min = ordering_coords.min(axis=0)
@@ -685,7 +699,7 @@ def compute_vertex_chunk_bounds(
     chunk_size: int,
     slice_dims: Optional[list[int]] = None,
     dimensions: Optional[list] = None,
-) -> np.ndarray:  # type: ignore[return]
+) -> np.ndarray:
     """Compute chunk bounding boxes for vertices (no radius/width expansion).
 
     Args:
@@ -733,7 +747,7 @@ def compute_segment_chunk_bounds(
     chunk_size: int,
     slice_dims: Optional[list[int]] = None,
     dimensions: Optional[list] = None,
-) -> np.ndarray:  # type: ignore[return]
+) -> np.ndarray:
     """Compute chunk bounding boxes for segments (includes line width).
 
     Segment bounds are in D-dimensional space (not 2×D) for view frustum

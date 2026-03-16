@@ -976,10 +976,14 @@ class ArrayEncoder:
             if encoding_type == "log":
                 # Logarithmic encoding
                 bits = 8
-                max_log = float(np.log1p(max_val))
-                log_vals = np.log1p(data)
-                normalized = log_vals / max_log
-                encoded_data = np.clip(normalized * 255, 0, 255).astype(np.uint8)
+                if max_val == 0:
+                    encoded_data = np.zeros_like(data, dtype=np.uint8)
+                    max_log = 0.0
+                else:
+                    max_log = float(np.log1p(max_val))
+                    log_vals = np.log1p(data)
+                    normalized = log_vals / max_log
+                    encoded_data = np.clip(normalized * 255, 0, 255).astype(np.uint8)
 
                 encoder_name = "log_scalar_uint8"
                 metadata = {

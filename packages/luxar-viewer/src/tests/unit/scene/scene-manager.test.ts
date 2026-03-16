@@ -30,6 +30,7 @@ vi.mock('three', async () => {
     setSize() {}
     setPixelRatio() {}
     setClearColor() {}
+    clear() {}
     render() {}
     dispose() {}
     getContext() {
@@ -358,7 +359,7 @@ describe('SceneManager', () => {
       await sceneManager.init();
 
       expect(sceneManager.camera).toBeInstanceOf(THREE.PerspectiveCamera);
-      expect(sceneManager.camera.fov).toBe(47);
+      expect((sceneManager.camera as THREE.PerspectiveCamera).fov).toBe(47);
       expect(sceneManager.camera.near).toBe(0.1);
       expect(sceneManager.camera.far).toBe(1000);
     });
@@ -433,7 +434,7 @@ describe('SceneManager', () => {
 
       sceneManager.updateSize();
 
-      expect(sceneManager.camera.aspect).toBeCloseTo(800 / 600);
+      expect((sceneManager.camera as THREE.PerspectiveCamera).aspect).toBeCloseTo(800 / 600);
     });
   });
 
@@ -454,14 +455,20 @@ describe('SceneManager', () => {
       expect(postDisposeSpy).toHaveBeenCalled();
     });
 
-    it('should clear scene on dispose', () => {
-      const mesh = new THREE.Mesh();
+    it('should dispose geometry and material resources on dispose', () => {
+      const geometry = new THREE.BufferGeometry();
+      const material = new THREE.MeshBasicMaterial();
+      const geometryDisposeSpy = vi.spyOn(geometry, 'dispose');
+      const materialDisposeSpy = vi.spyOn(material, 'dispose');
+
+      const mesh = new THREE.Mesh(geometry, material);
       sceneManager.scene.add(mesh);
 
       sceneManager.dispose();
 
-      // Scene might have default lights or other objects after dispose
-      expect(sceneManager.scene.children.length).toBeGreaterThanOrEqual(0);
+      // dispose() traverses the scene graph and disposes all geometry/material GPU resources
+      expect(geometryDisposeSpy).toHaveBeenCalled();
+      expect(materialDisposeSpy).toHaveBeenCalled();
     });
 
     it('should handle multiple dispose calls safely', () => {
@@ -563,7 +570,7 @@ describe('SceneManager', () => {
       expect(() => sceneManager.updateSize()).not.toThrow();
 
       // Camera aspect ratio should be set
-      expect(sceneManager.camera.aspect).toBeGreaterThan(0);
+      expect((sceneManager.camera as THREE.PerspectiveCamera).aspect).toBeGreaterThan(0);
     });
   });
 

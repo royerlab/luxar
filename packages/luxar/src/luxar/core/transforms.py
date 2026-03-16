@@ -393,11 +393,18 @@ def prepare_transform_for_zarr(transform: Any) -> list[float]:
     by the Zarr storage and THREE.js viewer. The transform is validated and
     converted to a 16-element list in column-major order.
 
+    All inputs are interpreted as **row-major** (NumPy convention):
+    - 4x4 numpy array: standard NumPy row-major matrix
+    - 16-element list: flattened row-major (same as ``matrix.ravel().tolist()``)
+    - 16-element flat numpy array: flattened row-major
+
+    The output is always column-major (THREE.js convention) for zarr storage.
+
     Args:
         transform: Transform in any supported format:
             - 4x4 numpy array (row-major)
-            - 16-element list (already in column-major)
-            - 16-element numpy array (flat)
+            - 16-element list (row-major, flattened)
+            - 16-element numpy array (row-major, flat)
 
     Returns:
         16-element list in column-major order for THREE.js
@@ -408,20 +415,15 @@ def prepare_transform_for_zarr(transform: Any) -> list[float]:
     See Also:
         read_transform_from_zarr: Reverse operation to read from storage
     """
-    if isinstance(transform, list) and len(transform) == 16:
-        # Already a list, validate by converting to matrix and back
-        matrix = np.array(transform, dtype=np.float32).reshape(4, 4).T
-        validated = validate_transform(matrix)
-        result: list[float] = validated.T.ravel().tolist()
-        return result
-
     # Convert to numpy array
     transform_array = np.array(transform, dtype=np.float32)
 
     if transform_array.size != 16:
         raise ValueError(f"Transform must have 16 elements, got {transform_array.size}")
 
-    # Reshape to 4x4 if flat
+    # Reshape to 4x4 if flat — always row-major (NumPy convention)
+    # Both lists and flat numpy arrays are treated as row-major.
+    # Column-major (THREE.js/zarr) interpretation is only in read_transform_from_zarr().
     if transform_array.ndim == 1:
         transform_matrix = transform_array.reshape(4, 4)
     elif transform_array.shape == (4, 4):

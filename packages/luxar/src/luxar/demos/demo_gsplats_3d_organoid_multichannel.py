@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """GSplats Demo: Multi-Channel 3D Organoid Microscopy - Full Compute Pipeline from IDR
 
-FULL COMPUTE VERSION - Fetches data from IDR and fits Gaussian splats from scratch.
-This is the complete workflow but takes time to run (network download + GPU fitting).
-
-For a QUICK START demo using precomputed gsplats, use:
-    python demo_gsplats_3d_organoid_multichannel_precomputed.py
+Visualises multi-channel 3D microscopy data as Gaussian splats.
+By default, uses precomputed gsplats from Git LFS (fast).
+Use --recompute to fetch data from IDR and fit from scratch (slow, needs GPU).
 
 ================================================================================
 MULTI-CHANNEL GAUSSIAN SPLATTING - FULL PIPELINE
@@ -76,17 +74,16 @@ WORKFLOW:
 
 USAGE:
 ======
-    python demo_gsplats_3d_organoid_multichannel_from_idr.py [--no-cache] [--no-serve] [--no-napari]
+    python demo_gsplats_3d_organoid_multichannel.py [--recompute] [--no-serve] [--no-napari]
 
 Options:
-    --no-cache:  Force re-fitting even if cached results exist
+    --recompute: Force re-fitting from scratch (download + GPU fitting)
     --no-serve:  Don't auto-launch viewer after scene creation
     --no-napari: Skip napari visualization (useful for headless/CI)
     --serve-only: Skip fitting, just serve existing scene
 
-Note: This demo fetches data from IDR and performs full GSplat fitting (slow).
-For a quick demo with precomputed gsplats, use:
-    python demo_gsplats_3d_organoid_multichannel_precomputed.py
+By default, precomputed GSplats are loaded from package data (Git LFS).
+Use --recompute to re-fit from scratch (requires network + GPU).
 
 """
 
@@ -108,7 +105,12 @@ from luxar.encoding import EncodingMode
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.metal import is_metal_available
-from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
+from luxar.utils.demos import (
+    launch_viewer,
+    load_precomputed_gsplats,
+    parse_demo_flags,
+    warn_if_no_cuda_gpu,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -133,11 +135,12 @@ DEVICE = None  # Auto-detect (cuda/mps/cpu)
 # Cache paths
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_multichannel"
 
-# Parse command line flags
-NO_CACHE = "--no-cache" in sys.argv
-NO_SERVE = "--no-serve" in sys.argv
+# Parse command-line flags
+FLAGS = parse_demo_flags()
+NO_SERVE = FLAGS["no_serve"]
+SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
 NO_NAPARI = "--no-napari" in sys.argv
-SERVE_ONLY = "--serve-only" in sys.argv
 
 # Setup
 Arbol.max_depth = 10
@@ -248,18 +251,7 @@ def load_multichannel_data():
 
 
 def fit_channel(volume, channel_name, cache_file):
-    """Fit gsplats to a single channel, using cache if available."""
-    # Check cache
-    if cache_file.exists() and not NO_CACHE:
-        aprint(f"Loading cached fit for {channel_name}")
-        try:
-            # Load from zarr.zip format
-            result = GSplatData.load(cache_file, include_stats=False)
-            aprint(f"  Loaded {len(result.amplitudes)} cached splats")
-            return result
-        except Exception as e:
-            aprint(f"  Cache load failed: {e}, re-fitting...")
-
+    """Fit gsplats to a single channel (always fits — caller handles precomputed)."""
     # Auto-detect best device
     global DEVICE
     if DEVICE is None:
@@ -393,9 +385,7 @@ def view_with_napari(volumes, gsplats_list, channel_configs):
 def create_luxar_scene(merged_gsplats, output_path: Path | None = None):
     """Create Luxar scene with merged multi-channel gsplats."""
     if output_path is None:
-        output_path = (
-            get_demos_output_dir() / "gsplats_3d_organoid_multichannel_from_idr.zarr"
-        )
+        output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel.zarr"
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -455,7 +445,6 @@ Controls:
 
 def main():
     """Main demo execution."""
-    warn_if_no_cuda_gpu()
     aprint("=" * 70)
     aprint("GSplats Demo: Multi-Channel 3D Organoid Microscopy")
     aprint("=" * 70)
@@ -463,9 +452,7 @@ def main():
     aprint("")
 
     # Determine output path
-    output_path = (
-        get_demos_output_dir() / "gsplats_3d_organoid_multichannel_from_idr.zarr"
-    )
+    output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel.zarr"
 
     # Serve only mode
     if SERVE_ONLY:
@@ -478,33 +465,23 @@ def main():
             aprint("Run without --serve-only to generate first")
             return
 
-    # Check if all channels are cached before loading volumes
+    # Try loading precomputed data (from Git LFS / local cache)
+    precomputed = load_precomputed_gsplats(
+        "gsplats_multichannel",
+        [
+            "organoids_gsplats_ch0.gsplats.zarr.zip",
+            "organoids_gsplats_ch1.gsplats.zarr.zip",
+        ],
+        recompute=RECOMPUTE,
+    )
+
     volumes = None
-    gsplats_list = None
 
-    if not NO_CACHE:
-        cache_files = [
-            CACHE_DIR / f"organoids_gsplats_ch{i}.gsplats.zarr.zip"
-            for i in range(len(CHANNELS))
-        ]
-        if all(f.exists() for f in cache_files):
-            with asection("Loading cached GSplats for all channels"):
-                try:
-                    gsplats_list = []
-                    for i, (cache_file, ch_config) in enumerate(
-                        zip(cache_files, CHANNELS)
-                    ):
-                        result = GSplatData.load(cache_file, include_stats=False)
-                        aprint(
-                            f"  {ch_config['name']}: {len(result.amplitudes)} cached splats"
-                        )
-                        gsplats_list.append(result)
-                except Exception as e:
-                    aprint(f"Cache load failed: {e}, will re-fit...")
-                    gsplats_list = None
-
-    if gsplats_list is None:
-        # Load data only when we need to fit
+    if precomputed is not None:
+        gsplats_list = precomputed
+    else:
+        # --recompute path: download raw data, fit from scratch
+        warn_if_no_cuda_gpu()
         volumes = load_multichannel_data()
 
         if len(volumes) < 2:

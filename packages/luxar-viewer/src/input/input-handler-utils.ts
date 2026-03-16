@@ -639,7 +639,7 @@ export function isNavigationKey(event: KeyboardEvent): boolean {
  *
  * Converts mouse wheel delta to FOV adjustment with configurable sensitivity.
  * FOV is clamped to reasonable range (10°-120°) to prevent extreme distortion.
- * Used for Shift+wheel FOV control, allowing users to adjust perspective
+ * Used for Ctrl+wheel FOV control, allowing users to adjust perspective
  * from telephoto (narrow FOV) to wide-angle (wide FOV) views.
  *
  * Positive delta increases FOV (zoom out), negative delta decreases FOV

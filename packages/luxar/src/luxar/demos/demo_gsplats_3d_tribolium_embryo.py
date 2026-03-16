@@ -52,13 +52,16 @@ WORKFLOW:
 
 USAGE:
 ======
-    python demo_gsplats_3d_tribolium_embryo.py [--no-cache] [--no-serve] [--serve-only] [--downsample=N]
+    python demo_gsplats_3d_tribolium_embryo.py [--recompute] [--no-serve] [--serve-only] [--downsample=N]
 
 Options:
-    --no-cache:      Force re-fitting (ignore cached GSplats)
+    --recompute:     Force re-fitting from scratch (download + GPU fitting)
     --no-serve:      Generate scene without launching viewer
     --serve-only:    Just serve a previously generated scene
     --downsample=N:  Downsample factor for fitting (default: 2)
+
+By default, precomputed GSplats are loaded from package data (Git LFS).
+Use --recompute to re-fit from scratch (requires network + GPU).
 
 Output:
     - Scene saved to:  datasets/demos/gsplats_3d_tribolium_embryo.zarr
@@ -75,7 +78,12 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
+from luxar.utils.demos import (
+    launch_viewer,
+    load_precomputed_gsplats,
+    parse_demo_flags,
+    warn_if_no_cuda_gpu,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -98,9 +106,10 @@ N_ITERS = 10_000
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_tribolium"
 
 # Parse command-line flags
-NO_CACHE = "--no-cache" in sys.argv
-NO_SERVE = "--no-serve" in sys.argv
-SERVE_ONLY = "--serve-only" in sys.argv
+FLAGS = parse_demo_flags()
+NO_SERVE = FLAGS["no_serve"]
+SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
 
 DOWNSAMPLE_FACTOR = 2
 for _arg in sys.argv:
@@ -408,7 +417,6 @@ Navigation:
 
 def main():
     """Main demo execution."""
-    warn_if_no_cuda_gpu()
     aprint("=" * 70)
     aprint("GSplats Demo: 3D Tribolium castaneum Embryo (Light-Sheet)")
     aprint("=" * 70)
@@ -426,20 +434,18 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Check cache before loading the (large) volume
-    cache_file = CACHE_DIR / "tribolium_gsplats.gsplats.zarr.zip"
-    gsplats_data = None
+    # Try loading precomputed data (from Git LFS / local cache)
+    precomputed = load_precomputed_gsplats(
+        "gsplats_tribolium",
+        ["tribolium_gsplats.gsplats.zarr.zip"],
+        recompute=RECOMPUTE,
+    )
 
-    if cache_file.exists() and not NO_CACHE:
-        with asection("Loading cached GSplats"):
-            try:
-                gsplats_data = GSplatData.load(cache_file, include_stats=False)
-                aprint(f"Loaded {len(gsplats_data.amplitudes):,} cached splats")
-            except Exception as e:
-                aprint(f"Cache load failed: {e}, will re-fit...")
-
-    if gsplats_data is None:
-        # Load data only when we need to fit
+    if precomputed is not None:
+        gsplats_data = precomputed[0]
+    else:
+        # --recompute path: download raw data, fit from scratch
+        warn_if_no_cuda_gpu()
         volume = load_tribolium_volume()
         gsplats_data = fit_tribolium(volume)
 

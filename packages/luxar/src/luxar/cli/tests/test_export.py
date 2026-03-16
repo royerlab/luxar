@@ -30,6 +30,13 @@ from luxar.cli.export import (
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
 
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text."""
+    import re
+
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
 @pytest.fixture
 def runner():
     """CLI test runner fixture."""
@@ -440,9 +447,10 @@ class TestCLIExportCommand:
         """Verify --help shows export command info."""
         result = runner.invoke(app, ["export", "--help"])
         assert result.exit_code == 0
-        assert "export" in result.stdout.lower()
-        assert "--output" in result.stdout
-        assert "--overwrite" in result.stdout
+        plain = _strip_ansi(result.stdout)
+        assert "export" in plain.lower()
+        assert "--output" in plain
+        assert "--overwrite" in plain
 
     def test_nonexistent_source(self, runner: CliRunner, tmp_path: Path) -> None:
         """Exit code != 0 for nonexistent source."""
@@ -509,7 +517,7 @@ class TestCLIExportCommand:
             ["export", str(sample_scene), "-o", str(output)],
         )
         assert result.exit_code == 1
-        assert "already exists" in result.stdout
+        assert "already exists" in _strip_ansi(result.stdout)
 
     def test_existing_output_with_overwrite(
         self,

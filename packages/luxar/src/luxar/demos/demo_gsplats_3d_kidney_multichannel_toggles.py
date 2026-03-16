@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GSplats Demo: 6D Multi-Channel Kidney with Boolean Toggles (scikit-image kidney)
+"""GSplats Demo: 3D Multi-Channel Kidney with Boolean Toggles (scikit-image kidney)
 
 Variant of the multichannel toggle demo adapted for the napari/scikit-image
 kidney sample dataset — a 3-channel confocal fluorescence microscopy volume
@@ -23,6 +23,59 @@ allowing all eight visibility combinations:
 
 Each channel's splats use ``extend_to_all`` on the *other* channels' dimensions
 so they remain visible regardless of those toggles' positions.
+
+================================================================================
+MULTIDIMENSIONAL TOGGLES vs. LAYERS PANEL — DESIGN TRADEOFFS
+================================================================================
+
+Luxar offers two ways to control per-channel visibility. This demo uses the
+**multidimensional toggle** approach. A companion demo uses the **Layers panel**
+approach (see ``demo_gsplats_3d_kidney_multichannel_layers.py``).
+
+MULTIDIMENSIONAL TOGGLES (this demo):
+
+  Channel visibility is encoded as **data** — each channel gets its own boolean
+  coordinate dimension, making the scene 6D (X, Y, Z, Nuclei, WGA, Actin).
+  The viewer's nD navigation machinery treats these like any other dimension:
+  keyboard shortcuts, sliders, URL serialization, and dimension animation all
+  work without any special UI code.
+
+  This approach is a general-purpose **data modeling technique**. It works for
+  any discrete parameter, not just channels — you could use it for timepoints,
+  experimental conditions, replicates, staining protocols, or any categorical
+  variable. The combinatorial state space is navigable through the same uniform
+  nD interface.
+
+  The tradeoff: the scene becomes higher-dimensional, the ``fill`` +
+  ``extend_to_all`` plumbing requires understanding the nD data model, and the
+  control is binary (on/off) — no continuous intensity adjustment, gamma, or
+  blending mode changes per channel.
+
+LAYERS PANEL (companion demo):
+
+  Channel visibility is encoded as **presentation** — the scene stays 3D, and
+  each channel's node is marked ``layer=True``. The viewer's Layers panel
+  (press L) provides per-channel controls: visibility toggle, continuous
+  [min, max] display range, gamma, and blending mode.
+
+  This approach is a **viewer UI feature** designed for the specific use case
+  of adjusting per-node visual properties. It provides richer controls than
+  binary toggles, but these controls are viewer-side only — they are not part
+  of the data model, cannot be animated via the dimension system, and are not
+  serialized in URLs.
+
+WHEN TO USE WHICH:
+
+  - Use **multidimensional toggles** when channel state is part of the data
+    semantics (e.g., comparing conditions), when you need to animate through
+    combinations, or when composing with other nD features (time + channels).
+
+  - Use **layers** when you need fine-grained visual control per channel
+    (intensity windowing, gamma, blending), when keeping dimensionality low
+    matters, or when the channels are purely a display concern.
+
+  - Use **both** together when you want nD navigation for some dimensions
+    (time, z-slicing) and layers for per-channel visual tuning.
 
 DATA SOURCE & CITATIONS:
 ========================
@@ -56,10 +109,10 @@ WORKFLOW:
 
 USAGE:
 ======
-    python demo_gsplats_4d_kidney_multichannel_toggles.py [--no-cache] [--no-serve] [--serve-only]
+    python demo_gsplats_3d_kidney_multichannel_toggles.py [--recompute] [--no-serve] [--serve-only]
 
 Options:
-    --no-cache:   Force re-fitting (ignore cached results)
+    --recompute:  Force re-fitting from scratch (ignore precomputed/cached results)
     --no-serve:   Don't auto-launch viewer after scene creation
     --serve-only: Skip loading/fitting, just serve existing scene
 
@@ -69,7 +122,6 @@ Output:
 
 """
 
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -78,7 +130,12 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
+from luxar.utils.demos import (
+    launch_viewer,
+    load_precomputed_gsplats,
+    parse_demo_flags,
+    warn_if_no_cuda_gpu,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -120,10 +177,19 @@ CHANNELS = [
 # Cache directory
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_kidney"
 
+# Precomputed data configuration
+_PRECOMPUTED_DEMO_NAME = "gsplats_kidney"
+_PRECOMPUTED_FILE_NAMES = [
+    "kidney_ch0.gsplats.zarr.zip",
+    "kidney_ch1.gsplats.zarr.zip",
+    "kidney_ch2.gsplats.zarr.zip",
+]
+
 # Parse command-line flags
-NO_CACHE = "--no-cache" in sys.argv
-NO_SERVE = "--no-serve" in sys.argv
-SERVE_ONLY = "--serve-only" in sys.argv
+FLAGS = parse_demo_flags()
+NO_SERVE = FLAGS["no_serve"]
+SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
 
 # Setup
 Arbol.max_depth = 5
@@ -203,7 +269,7 @@ def fit_channel(volume, channel_name, cache_file):
         GSplatData with fitted 3D splats
     """
     # Check cache
-    if cache_file.exists() and not NO_CACHE:
+    if cache_file.exists() and not RECOMPUTE:
         aprint(f"Loading cached fit for {channel_name}")
         try:
             result = GSplatData.load(cache_file, include_stats=False)
@@ -335,7 +401,9 @@ def create_luxar_scene(gsplats_list, output_path=None):
                 dimensions=dims,
             )
 
-            scene.attrs["title"] = "GSplats: 6D Kidney (boolean toggle demo)"
+            scene.attrs["title"] = (
+                "GSplats: 3D Kidney Multi-Channel (boolean toggle demo)"
+            )
             scene.attrs["description"] = """
 6D Multi-Channel Gaussian Splatting — Boolean Toggle Dimensions
 ================================================================
@@ -426,7 +494,6 @@ Navigation:
 
 def main():
     """Main demo execution."""
-    warn_if_no_cuda_gpu()
     aprint("=" * 70)
     aprint("GSplats Demo: 6D Multi-Channel Kidney (boolean toggle dimensions)")
     aprint("=" * 70)
@@ -445,11 +512,22 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Load data
-    volumes = load_kidney()
+    # Try loading precomputed data from Git LFS / local cache
+    gsplats_list = load_precomputed_gsplats(
+        _PRECOMPUTED_DEMO_NAME,
+        _PRECOMPUTED_FILE_NAMES,
+        recompute=RECOMPUTE,
+    )
 
-    # Fit gsplats per channel (with caching)
-    gsplats_list = fit_all_channels(volumes)
+    if gsplats_list is None:
+        # Recompute path: warn about GPU requirements, load data, fit
+        warn_if_no_cuda_gpu()
+
+        # Load data
+        volumes = load_kidney()
+
+        # Fit gsplats per channel (with caching)
+        gsplats_list = fit_all_channels(volumes)
 
     # Report
     with asection("Fitting Summary"):

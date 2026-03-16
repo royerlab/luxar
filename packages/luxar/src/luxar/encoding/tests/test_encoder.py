@@ -236,6 +236,29 @@ class TestCoordinateEncoding:
             assert arr.dtype == np.float16
 
 
+class TestPositiveScalarEncoding:
+    """Tests for POSITIVE_SCALAR encoding edge cases."""
+
+    def test_log_encoding_all_zeros(self):
+        """Log encoding should handle all-zero data without NaNs."""
+        data = np.zeros(128, dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(
+                data,
+                group,
+                "amps",
+                SemanticType.POSITIVE_SCALAR,
+                positive_scalar_encoding="log",
+            )
+
+            enc = group["amps"].attrs["encoding"]
+            assert enc["name"] == "broadcasted"
+            assert enc["n_elements"] == data.shape[0]
+
+
 class TestColorEncoding:
     """Test COLOR semantic type encoding."""
 
@@ -337,8 +360,8 @@ class TestBoundedScalarEncoding:
             assert enc["max"] == 31.0
 
 
-class TestPositiveScalarEncoding:
-    """Test POSITIVE_SCALAR semantic type encoding."""
+class TestPositiveScalarEncodingDynamicRange:
+    """Test POSITIVE_SCALAR semantic type encoding dynamic range selection."""
 
     def test_positive_scalar_narrow_dynamic_range(self):
         """Test positive scalar with narrow dynamic range uses uint8."""

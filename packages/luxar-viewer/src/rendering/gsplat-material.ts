@@ -30,7 +30,6 @@
  */
 
 import * as THREE from 'three';
-import { config } from '../config';
 import { materialManager } from './material-manager';
 
 /**
@@ -39,8 +38,12 @@ import { materialManager } from './material-manager';
 export interface GSplatMaterialConfig {
   /** Opacity multiplier (0.0 to 1.0) */
   opacity?: number;
-  /** HDR intensity multiplier */
-  hdrMultiplier?: number;
+  /** Gamma correction (0.1 to 10.0, default 1.0) */
+  gamma?: number;
+  /** Intensity (linear color multiplier / gain), default 1.0 */
+  intensity?: number;
+  /** Offset (additive brightness shift / black level), default 0.0 */
+  offset?: number;
   /** Truncation radius in sigmas (default 3.0) */
   truncationRadius?: number;
   /** Blending mode */
@@ -63,12 +66,12 @@ export interface GSplatMaterialUniforms {
   uFy: { value: number };
   /** Truncation radius in sigmas */
   uTruncate: { value: number };
-  /** HDR intensity multiplier */
-  uHDRMultiplier: { value: number };
   /** Opacity multiplier */
   uOpacity: { value: number };
   /** Projection mode: 0=sum (additive/normal), 1=max (max blending) */
   uProjectionMode: { value: number };
+  /** Pre-computed 1/gamma for performance */
+  uInvGamma: { value: number };
 }
 
 /**
@@ -118,6 +121,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     uniform float uFx, uFy;           // Focal lengths in pixels
     uniform float uTruncate;          // Truncation radius (in sigmas)
     uniform int uProjectionMode;      // 0 = sum projection (additive), 1 = max projection (max blending)
+    uniform int uIsOrtho;             // 0 = perspective, 1 = orthographic
 
     // Varyings to fragment - all per-instance varyings use "flat" (no interpolation needed)
     // OPTIMIZATION: flat qualifier skips GPU interpolation hardware for constant values
@@ -197,20 +201,27 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
             }
         }
 
-        // Perspective projection Jacobian at splat center
+        // Precompute depth reciprocals (used by perspective Jacobian and screen projection)
         float z = -centerCam.z;  // Positive depth (camera looks down -Z)
-        // OPTIMIZATION: Precompute reciprocals to replace 6 divisions with 2 divisions + 6 multiplications
         float invZ = 1.0 / z;
         float invZ2 = invZ * invZ;
 
-        // Jacobian J = d(screen)/d(camera) at splat center
-        // For camera looking down -Z, with z = -centerCam.z (positive depth):
-        // x_s = fx * centerCam.x / z, y_s = fy * centerCam.y / z
-        // ∂x_s/∂(centerCam.z) = fx * centerCam.x / z² (since z = -centerCam.z)
+        // Projection Jacobian at splat center
         mat3x2 J;
-        J[0] = vec2(uFx * invZ, 0.0);
-        J[1] = vec2(0.0, uFy * invZ);
-        J[2] = vec2(uFx * centerCam.x * invZ2, uFy * centerCam.y * invZ2);
+        if (uIsOrtho == 1) {
+            // Orthographic: no depth dependence (parallel projection)
+            J[0] = vec2(uFx, 0.0);
+            J[1] = vec2(0.0, uFy);
+            J[2] = vec2(0.0, 0.0);
+        } else {
+            // Perspective projection Jacobian
+            // For camera looking down -Z, with z = -centerCam.z (positive depth):
+            // x_s = fx * centerCam.x / z, y_s = fy * centerCam.y / z
+            // ∂x_s/∂(centerCam.z) = fx * centerCam.x / z² (since z = -centerCam.z)
+            J[0] = vec2(uFx * invZ, 0.0);
+            J[1] = vec2(0.0, uFy * invZ);
+            J[2] = vec2(uFx * centerCam.x * invZ2, uFy * centerCam.y * invZ2);
+        }
 
         // Project covariance to 2D: Σ_2D = J · Σ_cam · Jᵀ
         // Compute J * Sigma_cam first
@@ -236,7 +247,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         float sigmaRay = 1.0;  // Default for max mode (no ray integration)
         if (uProjectionMode == 0) {
             // Sum projection: compute ray integration boost
-            vec3 rayDir = normalize(centerCam);
+            vec3 rayDir = (uIsOrtho == 1) ? vec3(0.0, 0.0, -1.0) : normalize(centerCam);
             float sigmaRaySq = dot(rayDir, Sigma_cam * rayDir);
             sigmaRay = sqrt(max(sigmaRaySq, 1e-8));
             float c_s = sharpnessIntegralFactor(aSharpness);
@@ -288,11 +299,19 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         float extent2 = effectiveTruncate * sqrt(lambda2);
 
         // Project center to screen (pixels)
-        // OPTIMIZATION: Reuse invZ from earlier computation
-        vCenterScreen = vec2(
-            uFx * centerCam.x * invZ + uResolution.x * 0.5,
-            uFy * centerCam.y * invZ + uResolution.y * 0.5
-        );
+        if (uIsOrtho == 1) {
+            // Orthographic: direct linear mapping (no depth division)
+            vCenterScreen = vec2(
+                uFx * centerCam.x + uResolution.x * 0.5,
+                uFy * centerCam.y + uResolution.y * 0.5
+            );
+        } else {
+            // Perspective: reuse invZ from earlier computation
+            vCenterScreen = vec2(
+                uFx * centerCam.x * invZ + uResolution.x * 0.5,
+                uFy * centerCam.y * invZ + uResolution.y * 0.5
+            );
+        }
 
         // Expand quad vertex in screen space (oriented)
         vec2 quadOffset = aQuadCorner.x * majorAxis * extent1
@@ -346,7 +365,9 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     flat in int vProjectionMode;      // 0=sum (additive), 1=max
 
     uniform mediump float uOpacity;
-    uniform mediump float uHDRMultiplier;
+    uniform mediump float uInvGamma; // Pre-computed 1/gamma for performance
+    uniform mediump float uIntensity; // Per-node linear color multiplier (gain)
+    uniform mediump float uOffset; // Per-node additive brightness shift (black level)
 
     // GLSL ES 3.0 requires explicit fragment output declaration
     out vec4 fragColor;
@@ -434,6 +455,15 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         // Early discard for negligible contribution (raised threshold for performance)
         if (intensity < 1e-4) discard;
 
+        // Per-node GOG (Gain-Offset-Gamma) color adjustment
+        vec3 adjusted = vColor * uIntensity + uOffset;
+        adjusted = max(adjusted, vec3(0.0));
+
+        // Early discard for zero-contribution fragments after offset
+        if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
+
+        vec3 gammaColor = pow(adjusted, vec3(uInvGamma));
+
         // HDR color output for linear additive blending
         // With OneFactor blending (additive/luminous/max modes), alpha is ignored,
         // so apply opacity to RGB directly. This gives correct LINEAR sum projection
@@ -443,7 +473,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         // the background won't show through (effectively opaque). This is a known
         // limitation - proper transparent normal blending for gsplats would require
         // premultiplied alpha with ONE, ONE_MINUS_SRC_ALPHA blend func.
-        vec3 finalColor = vColor * intensity * uHDRMultiplier * uOpacity;
+        vec3 finalColor = gammaColor * intensity * uOpacity;
         fragColor = vec4(finalColor, 1.0);
     }
   `;
@@ -457,6 +487,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     const blendingMode = materialConfig.blendingMode ?? 'additive';
     const isOpaque = blendingMode === 'opaque';
     const isAdditive = blendingMode === 'additive';
+    const gammaValue = Math.max(0.001, materialConfig.gamma ?? 1.0); // Prevent division by zero
 
     // Determine THREE.js blending mode
     // CRITICAL: For sum projection, we need LINEAR addition of intensities.
@@ -482,11 +513,12 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         uFx: { value: 500 }, // Default focal length in pixels
         uFy: { value: 500 },
         uTruncate: { value: materialConfig.truncationRadius ?? 3.0 },
-        uHDRMultiplier: {
-          value: materialConfig.hdrMultiplier ?? config.renderingControls.defaults.hdrMultiplier,
-        },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
         uProjectionMode: { value: blendingMode === 'max' ? 1 : 0 }, // 0=sum, 1=max
+        uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
+        uIntensity: { value: materialConfig.intensity ?? 1.0 },
+        uOffset: { value: materialConfig.offset ?? 0.0 },
+        uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
       },
 
       vertexShader: GSplatMaterial.VERTEX_SHADER,
@@ -512,14 +544,22 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
       this.blendEquation = THREE.AddEquation;
       this.blendSrc = THREE.OneFactor;
       this.blendDst = THREE.OneFactor;
+      // Prevent alpha accumulation that causes bloom/postprocessing artifacts.
+      // With AddEquation, alpha would sum: 1.0 + 1.0 + ... = N per overlapping splat,
+      // overflowing HalfFloat16 and causing dark halos via premultipliedAlpha compositing.
+      // MaxEquation keeps alpha = max(1.0, existing) = 1.0, preventing accumulation.
+      this.blendEquationAlpha = THREE.MaxEquation;
+      this.blendSrcAlpha = THREE.OneFactor;
+      this.blendDstAlpha = THREE.OneFactor;
     } else if (blendingMode === 'max') {
       this.blendEquation = THREE.MaxEquation; // Max(source, destination)
       this.blendSrc = THREE.OneFactor;
       this.blendDst = THREE.OneFactor;
     }
 
-    // Store blendingMode in userData for clone()
+    // Store blendingMode and gamma in userData for clone()
     this.userData.blendingMode = blendingMode;
+    this.userData.gamma = gammaValue;
     this.userData.depthTest = materialConfig.depthTest ?? !isAdditive;
   }
 
@@ -529,25 +569,23 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
    * @param fov - Field of view in radians
    * @param resolution - Viewport resolution
    */
-  updateCameraParams(fov: number, resolution: THREE.Vector2): void {
+  updateCameraParams(fov: number, resolution: THREE.Vector2, isOrtho: boolean = false): void {
     this.uniforms.uResolution.value.copy(resolution);
+    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
 
-    // Compute focal lengths in pixels from FOV
-    // f = height / (2 * tan(fov/2)) for vertical FOV
-    const tanHalfFov = Math.tan(fov / 2);
-    const fy = resolution.y / (2 * tanHalfFov);
-    // Assume square pixels (fx = fy based on aspect ratio)
-    const fx = fy;
-
-    this.uniforms.uFx.value = fx;
-    this.uniforms.uFy.value = fy;
-  }
-
-  /**
-   * Update HDR multiplier.
-   */
-  updateHDRMultiplier(multiplier: number): void {
-    this.uniforms.uHDRMultiplier.value = multiplier;
+    if (isOrtho) {
+      // fov = frustumHeight in world units; direct linear mapping
+      const fy = resolution.y / fov;
+      this.uniforms.uFx.value = fy;
+      this.uniforms.uFy.value = fy;
+    } else {
+      // Compute focal lengths in pixels from FOV
+      // f = height / (2 * tan(fov/2)) for vertical FOV
+      const tanHalfFov = Math.tan(fov / 2);
+      const fy = resolution.y / (2 * tanHalfFov);
+      this.uniforms.uFx.value = fy;
+      this.uniforms.uFy.value = fy;
+    }
   }
 
   /**
@@ -565,29 +603,59 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
   }
 
   /**
+   * Update gamma correction.
+   * Only invGamma is used in shader; gamma value stored in userData for clone()
+   */
+  updateGamma(gamma: number): void {
+    const safeGamma = Math.max(0.001, gamma); // Prevent division by zero
+    this.userData.gamma = safeGamma;
+    this.uniforms.uInvGamma.value = 1.0 / safeGamma;
+  }
+
+  /**
+   * Update intensity (linear color multiplier)
+   */
+  updateIntensity(intensity: number): void {
+    this.uniforms.uIntensity.value = intensity;
+  }
+
+  /**
+   * Update offset (additive brightness shift)
+   */
+  updateOffset(offset: number): void {
+    this.uniforms.uOffset.value = offset;
+  }
+
+  /**
    * Clone this material.
    */
   clone(): this {
     const cloned = new GSplatMaterial({
       opacity: this.uniforms.uOpacity.value,
-      hdrMultiplier: this.uniforms.uHDRMultiplier.value,
+      gamma: this.userData.gamma ?? 1.0,
+      intensity: this.uniforms.uIntensity.value,
+      offset: this.uniforms.uOffset.value,
       truncationRadius: this.uniforms.uTruncate.value,
       blendingMode: this.userData.blendingMode ?? 'additive',
       transparent: this.transparent,
       depthTest: this.userData.depthTest ?? true,
     });
 
-    // Copy blend equation settings for custom blending (max mode)
+    // Copy blend equation settings for custom blending (additive/luminous/max modes)
     if (this.blending === THREE.CustomBlending) {
       cloned.blendEquation = this.blendEquation;
       cloned.blendSrc = this.blendSrc;
       cloned.blendDst = this.blendDst;
+      cloned.blendEquationAlpha = this.blendEquationAlpha;
+      cloned.blendSrcAlpha = this.blendSrcAlpha;
+      cloned.blendDstAlpha = this.blendDstAlpha;
     }
 
     cloned.uniforms.uFx.value = this.uniforms.uFx.value;
     cloned.uniforms.uFy.value = this.uniforms.uFy.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
+    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
 
     return cloned as this;
   }

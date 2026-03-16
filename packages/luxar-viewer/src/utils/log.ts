@@ -164,6 +164,7 @@ export const Modules = {
   DEBUG_CONSOLE: 'DebugConsole',
   DATA_LOADING_MONITOR: 'DataLoadingMonitor',
   RENDERING_CONTROLS: 'RenderingControls',
+  RECORDING: 'Recording',
   ANIMATION: 'DimAnimation',
 
   // Utils

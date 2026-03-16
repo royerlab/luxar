@@ -18,6 +18,9 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 - **⌨️ Keyboard Controls**: Intuitive keyboard navigation for dimension selection and stepping
 - **⚙️ Advanced Anti-Aliasing**: Multiple AA techniques (FXAA, SMAA, MSAA, SSAA) with known compatibility notes
 - **🧩 Unified Configuration**: Centralized config system in `src/config/` with TypeScript types
+- **📸 Recording Panel**: Screenshot (PNG/WebP/JPEG) and video capture (WebM) with turntable mode
+- **📏 Scale Bar**: Physical scale bar overlay using dimension unit metadata
+- **🔄 nD Transforms**: Inverse-query transforms for non-displayed dimensions (affine and categorical)
 - **🎯 Material Caching**: Optimized material management with intelligent caching strategy
 
 ## 🚀 Quick Start
@@ -230,13 +233,15 @@ src/
 ├── scene/
 │   ├── scene-manager.ts           # 3D scene and renderer setup
 │   ├── scene-dims-manager.ts      # Scene-level dimension state management
-│   └── animation-controller.ts    # Render loop and performance
+│   ├── animation-controller.ts    # Render loop and performance
+│   └── camera-utils.ts            # Camera type union, type guards, and projection helpers
 ├── rendering/
 │   ├── post-processing.ts         # HDR pipeline and bloom effects
 │   ├── shader-manager.ts          # Custom GLSL shaders
 │   └── material-manager.ts        # Material caching and optimization
 ├── data/
-│   └── zarr-loader.ts            # Zarr dataset loading with nD support
+│   ├── zarr-loader.ts            # Zarr dataset loading with nD support
+│   └── nd-transform.ts           # nD transform inverse-query for non-displayed dimensions
 ├── input/
 │   ├── input-handler.ts           # User interaction handling
 │   └── input-context-manager.ts   # Keyboard conflict resolution
@@ -244,7 +249,10 @@ src/
 │   ├── dimension-sliders.ts       # nD navigation UI components
 │   ├── performance-monitor.ts     # FPS and timing metrics
 │   ├── rendering-controls.ts      # Advanced rendering controls panel
-│   └── debug-console.ts           # In-app debug console (Ctrl+L)
+│   ├── debug-console.ts           # In-app debug console (Ctrl+L)
+│   ├── recording-panel.ts         # Screenshot and video capture panel
+│   └── components/
+│       └── scale-bar.ts           # Physical scale bar overlay
 ├── tests/
 │   ├── controls-manager.test.ts   # Control system unit tests
 │   ├── luxar-fly-controls.test.ts # Fly controls unit tests
@@ -301,8 +309,8 @@ export const config: AppConfig = {
   renderingControls: {
     defaults: {
       fxaaEnabled: true,        // FXAA anti-aliasing (recommended)
-      msaaEnabled: false,       // MSAA (has brightness issues with additive blending)
-      ssaaEnabled: false,       // SSAA (has brightness issues with additive blending)
+      msaaEnabled: false,       // MSAA (hardware-accelerated, fast and sharp)
+      ssaaEnabled: false,       // SSAA (supersampling, highest quality, heavy cost)
       // ... more rendering options
     },
   },
@@ -377,18 +385,18 @@ Luxar Player supports multiple anti-aliasing techniques with important compatibi
 renderingControls: {
   defaults: {
     fxaaEnabled: true,          // FXAA: Works well with additive blending
-    msaaEnabled: false,         // MSAA: Causes brightness issues with additive blending
-    ssaaEnabled: false,         // SSAA: Causes dimming with additive blending
+    msaaEnabled: false,         // MSAA: Hardware-accelerated, fast and sharp
+    ssaaEnabled: false,         // SSAA: Supersampling, highest quality, heavy cost
     smaaEnabled: false,         // SMAA: Advanced edge-detection AA
   },
 },
 ```
 
-**Anti-Aliasing Compatibility Notes:**
-- **FXAA**: Recommended for additive blending - no brightness issues
-- **MSAA**: Causes brightness increase with additive blending due to sample accumulation
-- **SSAA**: Causes dimming due to downsampling averaging bright additive contributions
-- **SMAA**: Advanced technique with preset quality levels (LOW/MEDIUM/HIGH/ULTRA)
+**Anti-Aliasing Notes:**
+- **MSAA**: Hardware-accelerated, fast and sharp — great default for most scenes
+- **FXAA**: Fastest post-process AA, may slightly blur the image
+- **SMAA**: Advanced edge detection with preset quality levels (LOW/MEDIUM/HIGH/ULTRA)
+- **SSAA**: Highest quality (supersampling), significant performance cost
 
 ### Performance Optimization
 
@@ -448,10 +456,10 @@ const frameTime = monitor.getAverageFrameTime();
 - Ensure proper Zarr metadata (.zarray files)
 - Verify scene dimensions are defined for nD datasets
 
-**Anti-aliasing brightness issues**
-- MSAA causes brightness increase with additive blending - disable if too bright
-- SSAA causes dimming with additive blending - adjust exposure compensation
-- Use FXAA for best compatibility with additive point rendering
+**Anti-aliasing selection**
+- Try MSAA first (fast, sharp, hardware-accelerated)
+- Use FXAA or SMAA for lightweight post-process smoothing
+- Use SSAA only for final renders (heavy performance cost)
 
 **nD navigation not working**
 - Verify `sceneDimensions` are defined in dataset `.zattrs`

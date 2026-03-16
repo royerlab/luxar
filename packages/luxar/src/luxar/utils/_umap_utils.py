@@ -8,10 +8,13 @@ mouse, zebrahub).
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Union
 
 import numpy as np
 from arbol import aprint, asection
 from PIL import Image, ImageDraw, ImageFont
+from PIL.ImageFont import FreeTypeFont
+from PIL.ImageFont import ImageFont as PILImageFont
 
 # ============================================================================
 # Color Palettes
@@ -201,6 +204,8 @@ def generate_legend_image(
     n_items = len(labels)
 
     # Try to load a nice sans-serif font, fall back to default
+    font: Union[FreeTypeFont, PILImageFont]
+    title_font: Union[FreeTypeFont, PILImageFont]
     try:
         font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
         title_font = ImageFont.truetype(
@@ -226,12 +231,12 @@ def generate_legend_image(
     max_text_width = 0
     for label in labels:
         bbox = temp_draw.textbbox((0, 0), label, font=font)
-        text_width = bbox[2] - bbox[0]
+        text_width = int(bbox[2] - bbox[0])
         max_text_width = max(max_text_width, text_width)
 
     title_bbox = temp_draw.textbbox((0, 0), title, font=title_font)
-    title_width = title_bbox[2] - title_bbox[0]
-    title_height = title_bbox[3] - title_bbox[1]
+    title_width = int(title_bbox[2] - title_bbox[0])
+    title_height = int(title_bbox[3] - title_bbox[1])
 
     # Calculate total dimensions
     content_width = swatch_size + spacing + max_text_width
@@ -240,8 +245,8 @@ def generate_legend_image(
         title_height + spacing * 2 + n_items * (swatch_size + spacing) - spacing
     )
 
-    img_width = content_width + padding * 2
-    img_height = content_height + padding * 2
+    img_width = int(content_width + padding * 2)
+    img_height = int(content_height + padding * 2)
 
     # Create transparent image
     img = Image.new("RGBA", (img_width, img_height), (0, 0, 0, 0))

@@ -17,7 +17,7 @@
  * - [ ] keys navigate through dimensions with adaptive step sizes
  * - Number keys (1-9) select which dimension to control
  * - Space bar toggles fullscreen mode
- * - Shift+wheel adjusts field of view
+ * - Ctrl+wheel adjusts field of view, Shift+wheel rolls the view axis
  * - P key toggles performance statistics
  * - M key cycles data loading monitor
  * - R key toggles rendering controls
@@ -38,7 +38,11 @@ import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { DimensionAnimationManager } from '../scene/dimension-animation-manager';
 import { RenderingControls } from '../ui/rendering-controls';
+import type { RecordingPanel } from '../ui/recording-panel';
+import type { LayersPanel } from '../ui/layers';
+import type { ScaleBar } from '../ui/components/scale-bar';
 import { showHelpOverlay, hideHelpOverlay, clearError, showToast } from '../ui/helpers';
+import { config } from '../config';
 import { captureViewerState } from '../config/viewer-state-capture';
 import { SimpleDims } from '../types/dims';
 import { DimensionSliders } from '../ui/dimension-sliders';
@@ -65,6 +69,15 @@ export class InputHandler {
 
   /** Optional reference to advanced rendering controls */
   private renderingControls?: RenderingControls;
+
+  /** Optional reference to scale bar overlay */
+  private scaleBar?: ScaleBar;
+
+  /** Optional reference to recording panel */
+  private recordingPanel?: RecordingPanel;
+
+  /** Optional reference to layers panel */
+  private layersPanel?: LayersPanel;
 
   /** Index of currently selected dimension for keyboard navigation */
   private selectedDimension: number = 0;
@@ -146,12 +159,24 @@ export class InputHandler {
     this.renderingControls = controls;
   }
 
+  setScaleBar(scaleBar: ScaleBar): void {
+    this.scaleBar = scaleBar;
+  }
+
+  setRecordingPanel(panel: RecordingPanel): void {
+    this.recordingPanel = panel;
+  }
+
+  setLayersPanel(panel: LayersPanel): void {
+    this.layersPanel = panel;
+  }
+
   /**
    * Initialize all event listeners for user interaction.
    *
    * Sets up the complete input handling system including:
    * - Window events (resize, wheel, keyboard, fullscreen)
-   * - Control events (orbit/arcball/fly control integration)
+   * - Control events (orbit/fly control integration)
    * - User interaction events (mousedown, touchstart)
    * - Context-specific key bindings
    *
@@ -294,9 +319,10 @@ export class InputHandler {
     // Initialize animation manager and register keyboard shortcuts
     this.initAnimationManager();
 
-    // Pass animation manager to dimension sliders for UI controls
-    if (this.dimensionSliders && this.animationManager) {
-      this.dimensionSliders.setAnimationManager(this.animationManager);
+    // Pass animation manager to dimension sliders and recording panel
+    if (this.animationManager) {
+      this.dimensionSliders?.setAnimationManager(this.animationManager);
+      this.recordingPanel?.setAnimationManager(this.animationManager);
     }
 
     // Listen for dimension changes (returns Promise for animation synchronization)
@@ -315,6 +341,14 @@ export class InputHandler {
     // This ensures data loads at the correct initial slice position
     this.updateAllNDNodes();
     this.animationController.startAnimation();
+  }
+
+  /**
+   * Show the dimension sliders panel (if it exists).
+   * Called from viewer_config application.
+   */
+  showDimensionSliders(): void {
+    this.dimensionSliders?.setVisible(true);
   }
 
   /**
@@ -488,7 +522,7 @@ export class InputHandler {
    *
    * Registers listeners for:
    * - Window resize: Updates canvas size and camera aspect ratio
-   * - Mouse wheel: Zoom and FOV control (Shift+wheel for FOV)
+   * - Mouse wheel: Zoom and FOV control (Ctrl+wheel for FOV, Shift+wheel for roll)
    * - Keyboard: All keyboard shortcuts and navigation
    * - Fullscreen changes: Adjusts canvas styling for fullscreen mode
    *
@@ -524,7 +558,7 @@ export class InputHandler {
   }
 
   /**
-   * Set up event listeners for THREE.js orbit/arcball controls.
+   * Set up event listeners for THREE.js orbit controls.
    *
    * Registers listeners on the controls object to trigger animation
    * when user interacts with camera controls (orbit, pan, zoom).
@@ -636,7 +670,8 @@ export class InputHandler {
    * Handle mouse wheel events for zoom and FOV control.
    *
    * Normal wheel: Zoom in/out via orbit controls
-   * Shift+wheel: Adjust field of view (wide angle vs telephoto)
+   * Ctrl+wheel: Adjust field of view (wide angle vs telephoto)
+   * (Shift+wheel is used for view-axis rotation in orbit/ortho modes)
    *
    * FOV changes update rendering controls display if active, switching
    * preset to "Custom" since FOV was manually adjusted.
@@ -647,13 +682,13 @@ export class InputHandler {
   private onWheel(event: WheelEvent): void {
     this.animationController.startAnimation();
 
-    if (event.shiftKey) {
+    if (event.ctrlKey || event.metaKey) {
       event.preventDefault();
       this.sceneManager.updateFOV(event.deltaY);
 
       // Update rendering controls display if available
       if (this.renderingControls) {
-        // Shift+wheel FOV change should switch to Custom preset
+        // Ctrl+wheel FOV change should switch to Custom preset
         (this.renderingControls as any).settings.fovPreset = 'Custom';
         this.renderingControls.syncCurrentState();
       }
@@ -677,7 +712,7 @@ export class InputHandler {
    *
    * This method registers all keyboard shortcuts using the binding registration
    * system. Bindings are organized by input context:
-   * - NAVIGATION: Default orbit/arcball mode shortcuts
+   * - NAVIGATION: Default orbit mode shortcuts
    * - FLY_CONTROLS: WASD movement keys for fly mode
    * - All contexts: Passthrough allows global shortcuts to work everywhere
    *
@@ -687,15 +722,27 @@ export class InputHandler {
    */
   private registerAllKeyBindings(): void {
     // ===== NAVIGATION CONTEXT BINDINGS =====
-    // These work in the default orbit/arcball navigation mode
+    // These work in the default orbit navigation mode
 
-    // Shift key - dual purpose: zoom control + fly speed boost
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'Shift',
-      handler: () => this.sceneManager.controls.setEnableZoom(false),
-      keyupHandler: () => this.sceneManager.controls.setEnableZoom(true),
-      description: 'Zoom control (hold to adjust FOV with wheel)',
-    });
+    // Ctrl/Cmd key - disable zoom while held so Ctrl+scroll only adjusts FOV.
+    // Use a counter so releasing one key while the other is held doesn't re-enable zoom.
+    let fovKeyHeldCount = 0;
+    for (const key of ['Control', 'Meta']) {
+      this.contextManager.registerBinding(InputContext.NAVIGATION, {
+        key,
+        handler: () => {
+          fovKeyHeldCount++;
+          this.sceneManager.controls.setEnableZoom(false);
+        },
+        keyupHandler: () => {
+          fovKeyHeldCount = Math.max(0, fovKeyHeldCount - 1);
+          if (fovKeyHeldCount === 0) {
+            this.sceneManager.controls.setEnableZoom(true);
+          }
+        },
+        description: 'FOV control (hold Ctrl/Cmd + scroll to adjust field of view)',
+      });
+    }
 
     // Dimension navigation
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
@@ -772,6 +819,43 @@ export class InputHandler {
       description: 'Toggle rendering controls',
     });
 
+    // Scale bar overlay
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'b',
+      handler: () => this.scaleBar?.toggle(),
+      preventDefault: true,
+      description: 'Toggle scale bar',
+    });
+
+    // Recording panel toggle
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 't',
+      handler: () => this.recordingPanel?.toggle(),
+      preventDefault: true,
+      description: 'Toggle recording panel',
+    });
+
+    // Quick screenshot
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'g',
+      handler: () => this.recordingPanel?.captureScreenshot(),
+      preventDefault: true,
+      description: 'Quick screenshot',
+    });
+
+    // Layers panel (L key without modifiers)
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: config.input.keyboard.shortcuts.toggleLayers,
+      handler: (event) => {
+        if (!event.metaKey && !event.ctrlKey && !event.shiftKey) {
+          event.preventDefault();
+          this.layersPanel?.toggle();
+        }
+      },
+      preventDefault: false,
+      description: 'Toggle layers panel',
+    });
+
     // Debug console (Ctrl+L)
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
       key: 'l',
@@ -823,7 +907,7 @@ export class InputHandler {
         }
       },
       preventDefault: false,
-      description: 'Cycle control mode (orbit/arcball/fly)',
+      description: 'Cycle control mode (orbit/fly/ortho)',
     });
 
     // Toggle inertial mode (I key, no modifiers)
@@ -1061,7 +1145,7 @@ export class InputHandler {
    * Shows or hides the rendering controls UI providing access to:
    * - Post-processing effects (bloom, HDR, vignette, chromatic aberration)
    * - Camera settings (FOV presets)
-   * - Control mode selection (orbit, arcball, fly)
+   * - Control mode selection (orbit, fly, ortho)
    * - Point rendering parameters
    *
    * Triggered by R key. Only functional if rendering controls have been
@@ -1135,12 +1219,12 @@ export class InputHandler {
   }
 
   /**
-   * Cycle through camera control modes: Orbit → Arcball → Fly → Orbit.
+   * Cycle through camera control modes: Orbit → Fly → Ortho → Orbit.
    *
    * Triggered by V key. Control modes provide different camera interaction styles:
-   * - Orbit: Traditional orbit camera (drag to rotate around target)
-   * - Arcball: Virtual trackball (more intuitive for scientific data)
+   * - Orbit: Quaternion-based rotation with no gimbal lock (drag to rotate around target)
    * - Fly: First-person WASD movement (for exploring inside datasets)
+   * - Ortho: Orthographic pan + zoom (for 2D viewing)
    *
    * Updates input context when switching to fly mode to enable WASD keys.
    * Syncs rendering controls display if active.
@@ -1149,26 +1233,27 @@ export class InputHandler {
    */
   private toggleControlMode(): void {
     const currentType = this.sceneManager.controls.getControlType();
-    let newType: 'orbit' | 'arcball' | 'fly';
+    let newType: 'orbit' | 'fly' | 'ortho';
 
     log.custom(LogEmoji.CONTROLS, Modules.INPUT, `toggleControlMode called: ${currentType} → ?`);
 
-    // Cycle through: orbit -> arcball -> fly -> orbit
+    // Cycle through: orbit -> fly -> ortho -> orbit
     switch (currentType) {
       case 'orbit':
-        newType = 'arcball';
-        break;
-      case 'arcball':
         newType = 'fly';
         break;
       case 'fly':
+        newType = 'ortho';
+        break;
+      case 'ortho':
         newType = 'orbit';
         break;
       default:
         newType = 'orbit';
     }
 
-    this.sceneManager.controls.setControlType(newType);
+    // Use sceneManager.setControlType for ortho (handles camera swap)
+    this.sceneManager.setControlType(newType);
 
     // Update input context based on control mode
     if (newType === 'fly') {
@@ -1382,6 +1467,12 @@ export class InputHandler {
    * @private
    */
   private handleEscapeKey(): void {
+    // If recording video, stop recording first (takes priority)
+    if (this.recordingPanel?.isCurrentlyRecording()) {
+      this.recordingPanel.stopVideoRecording();
+      return;
+    }
+
     // Only close panels if we're NOT in fullscreen
     // When in fullscreen, the browser handles ESC to exit fullscreen
     if (!document.fullscreenElement) {
@@ -1437,6 +1528,11 @@ export class InputHandler {
       this.debugConsole.hide();
     }
 
+    // Close recording panel
+    if (this.recordingPanel?.isVisible()) {
+      this.recordingPanel.hide();
+    }
+
     // Close performance stats
     const statsElement = document.querySelector('.stats') as HTMLElement;
     if (statsElement && statsElement.style.display !== 'none') {
@@ -1445,84 +1541,23 @@ export class InputHandler {
   }
 
   /**
-   * Recenter camera on scene's bounding box center.
+   * Frame camera to fit the entire scene.
    *
-   * Triggered by F key. Computes bounding box of all visible point clouds
-   * and repositions camera to look at the center. Behavior adapts to control mode:
-   * - Fly controls: Smooth animated transition over ~1 second
-   * - Orbit/Arcball: Immediate target update
-   *
-   * Useful for recovering from lost orientation or framing scene after loading
-   * new data. Falls back to origin (0,0,0) if no visible objects found.
+   * Triggered by F key. Computes bounding box of all visible geometry
+   * and repositions camera at the optimal distance to see everything.
+   * Works for both perspective (distance) and orthographic (zoom) cameras.
    *
    * @private
    */
   private recenterCamera(): void {
-    // Compute bounding box center of all visible objects
-    const box = new THREE.Box3();
+    // Use the scene manager's centerCameraOnScene() which properly computes
+    // optimal camera distance AND orbit target (not just the pivot point).
+    // This ensures F key actually zooms to fit the whole scene, not just
+    // re-centers the orbit pivot at the same distance.
+    this.sceneManager.centerCameraOnScene();
 
-    this.sceneManager.scene.traverse((object) => {
-      if (object instanceof THREE.Points && object.visible) {
-        const geometry = object.geometry;
-
-        // For points, compute bounding box from position attribute
-        const positions = geometry.attributes.position;
-        if (positions && positions.count > 0) {
-          // Compute the bounding box if needed
-          if (!geometry.boundingBox) {
-            geometry.computeBoundingBox();
-          }
-
-          if (geometry.boundingBox) {
-            const tempBox = geometry.boundingBox.clone();
-            // Apply object's world transform
-            tempBox.applyMatrix4(object.matrixWorld);
-            // Expand our overall box
-            box.expandByObject(object);
-          }
-        }
-      }
-    });
-
-    // Get the center of the bounding box
-    const center = new THREE.Vector3();
-
-    // Check if box is valid (has content)
-    if (!box.isEmpty()) {
-      box.getCenter(center);
-    } else {
-      // Fallback to origin if no objects found
-      center.set(0, 0, 0);
-    }
-
-    // Get the controls manager if it exists
-    const controlsManager = this.sceneManager.getControlsManager();
-
-    if (controlsManager) {
-      // Start animation for smooth transition
-      this.animationController.startAnimation();
-
-      // For fly controls, we need to call this repeatedly for smooth animation
-      if (controlsManager.getControlType() === 'fly') {
-        let iterations = 0;
-        const maxIterations = 60; // About 1 second at 60fps
-
-        const smoothRecenter = () => {
-          if (iterations < maxIterations) {
-            controlsManager.lookAt(center, true);
-            iterations++;
-            requestAnimationFrame(smoothRecenter);
-          }
-        };
-
-        smoothRecenter();
-        log.custom(LogEmoji.TARGET, Modules.CONTROLS, 'Recentering camera on scene (smooth)');
-      } else {
-        // For orbit/arcball controls, just update the target
-        controlsManager.lookAt(center, false);
-        log.custom(LogEmoji.TARGET, Modules.CONTROLS, 'Recentered camera on scene');
-      }
-    }
+    // Ensure a render happens after reframing
+    this.animationController.startAnimation();
   }
 
   /**

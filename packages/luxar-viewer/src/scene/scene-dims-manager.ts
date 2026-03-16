@@ -113,12 +113,36 @@ export class SceneDimsManager {
 
     const ndim = metadata.length;
 
+    // Step 4b: Find positionBounds for auto-ranging fallback
+    // Uses same 3-step search as sceneDimensions above
+    let positionBounds: { min: number[]; max: number[] } | null = null;
+    if (scene.userData.positionBounds) {
+      positionBounds = scene.userData.positionBounds;
+    } else {
+      for (const child of scene.children) {
+        if (child.userData.positionBounds) {
+          positionBounds = child.userData.positionBounds;
+          break;
+        }
+      }
+      if (!positionBounds) {
+        const luxarScene = scene.getObjectByName('LuxarScene');
+        if (luxarScene?.userData.positionBounds) {
+          positionBounds = luxarScene.userData.positionBounds;
+        }
+      }
+    }
+
     // Step 5: Establish dimension ranges for navigation bounds
-    this.dimensionRanges = metadata.map((meta) => {
+    this.dimensionRanges = metadata.map((meta, i) => {
       if (meta.range) {
         return meta.range as [number, number];
       }
-      // Fallback: provide unit range if no bounds specified
+      // Fallback: use positionBounds from zarr metadata (world-space)
+      if (positionBounds && i < positionBounds.min.length && i < positionBounds.max.length) {
+        return [positionBounds.min[i], positionBounds.max[i]] as [number, number];
+      }
+      // Last resort: unit range
       return [0, 1];
     });
 

@@ -160,7 +160,10 @@ export class ArrayDecoder {
     // Broadcasting detection: name="broadcasted" AND (shape[0]==1 OR scalar input)
     // IMPORTANT: Only handle broadcasting when expectedElements is provided AND broadcasting
     // is actually needed. Otherwise, fall through to dtype/quantization handlers below.
-    if (enc?.name === 'broadcasted' && expectedElements) {
+    if (enc?.name === 'broadcasted' && expectedElements !== undefined) {
+      if (expectedElements === 0) {
+        return new Float32Array(0);
+      }
       // Load the single value
       const rawData = await get(zarrArray);
       const rawArray = rawData.data;
@@ -186,7 +189,7 @@ export class ArrayDecoder {
     }
 
     // PRIORITY 2: Check for array reference (second priority per spec)
-    if (enc?.name === 'array_ref' && enc?.target) {
+    if (enc?.target) {
       // Early warning if zarrRootLoc missing (will fail later if not cached)
       if (!zarrRootLoc && !enc.hash) {
         log.warning(
@@ -391,10 +394,19 @@ export class ArrayDecoder {
       log.info(Modules.ZARR_LOADER, `LUT (scalar): ${n} indices → ${n} elements`);
       log.info(Modules.ZARR_LOADER, `  LUT size: ${flatLUT.length} unique scalar values`);
 
+      if (flatLUT.length === 0) {
+        throw new Error('LUT (scalar) is empty');
+      }
+
       const result = new Float32Array(n);
 
       for (let i = 0; i < n; i++) {
         const idx = Math.round(indices[i]);
+        if (!Number.isFinite(idx) || idx < 0 || idx >= flatLUT.length) {
+          throw new Error(
+            `LUT (scalar) index out of range: idx=${idx}, lutSize=${flatLUT.length}`
+          );
+        }
         result[i] = flatLUT[idx];
       }
 
@@ -408,10 +420,24 @@ export class ArrayDecoder {
         `  LUT size: ${flatLUT.length} values (${flatLUT.length / k} unique vectors)`
       );
 
+      if (k <= 0) {
+        throw new Error(`LUT (row) has invalid feature dimension k=${k}`);
+      }
+      if (flatLUT.length % k !== 0) {
+        log.warning(
+          Modules.ZARR_LOADER,
+          `LUT (row) size ${flatLUT.length} is not divisible by k=${k}`
+        );
+      }
+
       const result = new Float32Array(n * k);
+      const lutRows = Math.floor(flatLUT.length / k);
 
       for (let i = 0; i < n; i++) {
         const idx = Math.round(indices[i]);
+        if (!Number.isFinite(idx) || idx < 0 || idx >= lutRows) {
+          throw new Error(`LUT (row) index out of range: idx=${idx}, lutRows=${lutRows}`);
+        }
 
         for (let j = 0; j < k; j++) {
           result[i * k + j] = flatLUT[idx * k + j];
@@ -483,6 +509,8 @@ export class ArrayDecoder {
     );
 
     const result = new Float32Array(data.length);
+    let minValue = Number.POSITIVE_INFINITY;
+    let maxValue = Number.NEGATIVE_INFINITY;
 
     for (let i = 0; i < data.length; i++) {
       // Normalize to [0, 1]
@@ -490,13 +518,18 @@ export class ArrayDecoder {
 
       // Apply inverse log1p transform: expm1(normalized * max_log)
       // This reverses: log1p(value) / max_log → normalized
-      result[i] = Math.expm1(normalized * maxLog);
+      const value = Math.expm1(normalized * maxLog);
+      result[i] = value;
+      if (value < minValue) minValue = value;
+      if (value > maxValue) maxValue = value;
     }
 
-    log.info(
-      Modules.ZARR_LOADER,
-      `  Decoded range: [${Math.min(...result).toFixed(4)}, ${Math.max(...result).toFixed(4)}]`
-    );
+    if (result.length > 0) {
+      log.info(
+        Modules.ZARR_LOADER,
+        `  Decoded range: [${minValue.toFixed(4)}, ${maxValue.toFixed(4)}]`
+      );
+    }
 
     return result;
   }
@@ -645,7 +678,8 @@ export class ArrayDecoder {
     if (!attrs) return false;
     const enc = attrs.encoding;
     if (!enc) return false;
-    return !!(enc.target && enc.hash);
+    if (enc.name && enc.name !== 'array_ref') return false;
+    return !!enc.target;
   }
 
   /**

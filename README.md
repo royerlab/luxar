@@ -157,7 +157,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py
 
 ### Points
 
-The primary geometry type for point cloud visualization.
+Render collections of nD points as soft-edged spheres.
 
 ```python
 scene.add_points(
@@ -298,7 +298,7 @@ s = transforms.scale(2, 2, 2)
 combined = transforms.compose(t, r, s)
 
 # Apply to groups
-group = scene.add_group("Cluster", transform=transforms.to_list(combined))
+group = scene.add_group("Cluster", transform=combined)
 scene.add_points("Points", positions, parent=group)
 
 # Hierarchical transforms

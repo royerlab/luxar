@@ -47,8 +47,9 @@ class _DictCompatMixin:
 
     def items(self) -> Iterator[tuple[str, Any]]:
         return iter(
-            (f.name, getattr(self, f.name)) for f in self.__dataclass_fields__.values()
-        )  # type: ignore[attr-defined]
+            (f.name, getattr(self, f.name))
+            for f in self.__dataclass_fields__.values()  # type: ignore[attr-defined]
+        )
 
     def __iter__(self) -> Iterator[str]:
         return self.keys()
@@ -80,8 +81,9 @@ class LinesData(_DictCompatMixin):
     widths: np.ndarray
     colors: Optional[np.ndarray]
     sharpness: Optional[np.ndarray]
-    indices: Optional[np.ndarray]
+    segments: Optional[np.ndarray]
     metadata: Dict[str, Any]
+    indices: Optional[np.ndarray] = None
 
 
 @dataclass(frozen=True)
@@ -214,13 +216,21 @@ class LuxarScene:
                 "type": node_type,
             }
 
+            # Include transform if present (all node types can have transforms)
+            if "transform" in child.attrs:
+                info["transform"] = read_transform_from_zarr(child.attrs["transform"])
+
+            # Include nd_transform if present (dict, no conversion needed)
+            if "nd_transform" in child.attrs:
+                info["nd_transform"] = child.attrs["nd_transform"]
+
             if node_type == "points":
                 info["n_points"] = child.attrs.get("n_points", 0)
                 info["ordering"] = child.attrs.get("ordering", "none")
                 # Check if arrays exist
                 info["has_colors"] = "colors" in child
                 info["has_radii"] = "radii" in child
-                info["has_sharpness"] = "sharpness" in child
+                info["has_sharpness"] = "sharpnesses" in child or "sharpness" in child
             elif node_type == "gsplats":
                 info["n_splats"] = child.attrs.get("n_splats", 0)
                 info["ndim"] = child.attrs.get("ndim", 3)
@@ -229,7 +239,10 @@ class LuxarScene:
             elif node_type == "lines":
                 info["n_vertices"] = child.attrs.get("n_vertices", 0)
                 info["n_segments"] = child.attrs.get("n_segments", 0)
-                info["line_type"] = child.attrs.get("line_type", "segments")
+                info["line_type"] = child.attrs.get(
+                    "original_line_type",
+                    child.attrs.get("line_type", "segments"),
+                )
             elif node_type == "group":
                 # Recursively collect children
                 self._collect_nodes(child, full_name, nodes)
@@ -267,10 +280,43 @@ class LuxarScene:
         return str(self._root[name].attrs.get("type", "group"))
 
     def get_node_metadata(self, name: str) -> Dict[str, Any]:
-        """Get metadata for a node (no data arrays)."""
+        """Get metadata for a node (no data arrays).
+
+        Note: transforms are returned as raw column-major lists.
+        Use get_group() for automatic transform conversion.
+        """
         if not self.has_node(name):
             raise KeyError(f"Node not found: {name}")
         return dict(self._root[name].attrs)
+
+    def get_group(self, name: str) -> Dict[str, Any]:
+        """Get group node metadata with parsed transform.
+
+        Args:
+            name: Name of the group node
+
+        Returns:
+            Dictionary with group metadata. Transform (if present) is
+            converted from column-major list to a 4x4 NumPy matrix.
+
+        Raises:
+            KeyError: If node doesn't exist
+            ValueError: If node is not a group node
+        """
+        if not self.has_node(name):
+            raise KeyError(f"Group node not found: {name}")
+
+        group = self._root[name]
+        if group.attrs.get("type") not in ("group", None):
+            raise ValueError(f"Node '{name}' is not a group node")
+
+        metadata = dict(group.attrs)
+
+        # Parse transform if present
+        if "transform" in metadata:
+            metadata["transform"] = read_transform_from_zarr(metadata["transform"])
+
+        return metadata
 
     def get_points(self, name: str) -> PointsData:
         """Load points node data with automatic decoding.
@@ -296,6 +342,8 @@ class LuxarScene:
 
         # Decode arrays
         positions = self._decode_array(group, "positions")
+        if positions is None:
+            raise ValueError(f"Points node '{name}' missing required 'positions' array")
         colors = self._decode_array(group, "colors")
         radii = self._decode_array(group, "radii")
         # Try plural name first (current format), fall back to singular (legacy)
@@ -348,8 +396,18 @@ class LuxarScene:
 
         # Decode arrays
         centers = self._decode_array(group, "centers")
+        if centers is None:
+            raise ValueError(f"GSplats node '{name}' missing required 'centers' array")
         amplitudes = self._decode_array(group, "amplitudes")
+        if amplitudes is None:
+            raise ValueError(
+                f"GSplats node '{name}' missing required 'amplitudes' array"
+            )
         cholesky_factors = self._decode_array(group, "cholesky_factors")
+        if cholesky_factors is None:
+            raise ValueError(
+                f"GSplats node '{name}' missing required 'cholesky_factors' array"
+            )
         colors = self._decode_array(group, "colors")
         # Try plural name first (current format), fall back to singular (legacy)
         sharpness = self._decode_array(group, "sharpnesses")
@@ -386,7 +444,7 @@ class LuxarScene:
 
         Returns:
             LinesData with fields: vertices, widths, colors, sharpness,
-            indices, metadata.  Supports dict-style access for backward
+            segments, metadata.  Supports dict-style access for backward
             compatibility.
 
         Raises:
@@ -402,13 +460,21 @@ class LuxarScene:
 
         # Decode arrays
         vertices = self._decode_array(group, "vertices")
+        if vertices is None:
+            raise ValueError(f"Lines node '{name}' missing required 'vertices' array")
         widths = self._decode_array(group, "widths")
+        if widths is None:
+            raise ValueError(f"Lines node '{name}' missing required 'widths' array")
         colors = self._decode_array(group, "colors")
         # Try plural name first (current format), fall back to singular (legacy)
         sharpness = self._decode_array(group, "sharpnesses")
         if sharpness is None:
             sharpness = self._decode_array(group, "sharpness")
-        indices = self._decode_array(group, "indices")
+        segments = self._decode_array(group, "segments")
+        if segments is None:
+            segments = self._decode_array(group, "indices")
+            if segments is not None and segments.ndim == 1 and len(segments) % 2 == 0:
+                segments = segments.reshape(-1, 2)
 
         # Build metadata
         metadata = dict(group.attrs)
@@ -422,7 +488,8 @@ class LuxarScene:
             widths=widths,
             colors=colors,
             sharpness=sharpness,
-            indices=indices,
+            segments=segments,
+            indices=segments,
             metadata=metadata,
         )
 
