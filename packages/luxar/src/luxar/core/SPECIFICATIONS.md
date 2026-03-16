@@ -218,7 +218,7 @@ All fields are `Optional` and default to `None`. Only non-None fields are serial
 | `bloom_radius` | `Optional[float]` | >= 0 |
 | `bloom_threshold` | `Optional[float]` | 0 to 1 |
 | `bloom_levels` | `Optional[int]` | >= 1 |
-| `control_type` | `Optional[str]` | One of: `"orbit"`, `"arcball"`, `"fly"` |
+| `control_type` | `Optional[str]` | One of: `"orbit"`, `"fly"`, `"ortho"` |
 | `auto_rotate` | `Optional[bool]` | -- |
 | `auto_rotate_speed` | `Optional[float]` | -- |
 | `cinematic_mode` | `Optional[bool]` | Activates vignette, DOF, and bloom as a preset |
@@ -259,7 +259,7 @@ All fields are `Optional` and default to `None`. Only non-None fields are serial
 | `dynamic_clipping_enabled` | `Optional[bool]` | -- |
 | `clipping_adapt_speed` | `Optional[float]` | -- |
 | `adaptive_dpr_enabled` | `Optional[bool]` | -- |
-| `ui` | `Optional[UIConfig]` | Nested: `show_help`, `show_rendering_controls`, `show_performance_monitor`, `show_dimensions` |
+| `ui` | `Optional[UIConfig]` | Nested: `show_help`, `show_rendering_controls`, `show_performance_monitor`, `show_dimensions`, `show_scale_bar`, `show_layers` |
 | `theme` | `Optional[str]` | One of: `"dark"`, `"light"`, `"frosted-glass"`, `"liquid-glass"` |
 | `dimensions` | `Optional[DimensionsConfig]` | Nested: `current_step`, `selected_dimension` |
 | `animation` | `Optional[List[AnimationConfig]]` | Per-dimension: `playing`, `target_fps`, `loop` (`"once"`, `"loop"`, `"bounce"`), `direction` (`"forward"`, `"backward"`) |

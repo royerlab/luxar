@@ -344,6 +344,14 @@ export class InputHandler {
   }
 
   /**
+   * Show the dimension sliders panel (if it exists).
+   * Called from viewer_config application.
+   */
+  showDimensionSliders(): void {
+    this.dimensionSliders?.setVisible(true);
+  }
+
+  /**
    * Initialize animation manager and register keyboard shortcuts
    * Called from initDimensionSliders() after scene loads
    * @private

@@ -17,6 +17,7 @@ import { ScaleBar } from '../ui/components/scale-bar';
 import { RecordingPanel } from '../ui/recording-panel';
 import { LayersPanel } from '../ui/layers';
 import { ThemeManager } from '../themes/theme-manager';
+import type { ZarrViewerConfig } from '../types/zarr';
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
@@ -357,9 +358,7 @@ export class LuxarApp {
    * Only explicitly set fields (not undefined) are applied — unset fields
    * preserve the viewer's built-in defaults.
    */
-  private applyViewerConfigState(
-    viewerConfig: import('../types/zarr').ZarrViewerConfig | undefined,
-  ): void {
+  private applyViewerConfigState(viewerConfig: ZarrViewerConfig | undefined): void {
     if (!viewerConfig) return;
 
     // --- UI panel visibility ---
@@ -543,17 +542,14 @@ export class LuxarApp {
 
         // Get dimensions from sceneDimsManager
         const dims = sceneDimsManager.getDims();
+        const dimensionsInfo = dims
+          ? { ndim: dims.ndim, displayed: dims.displayed, currentStep: dims.currentStep }
+          : null;
 
         return {
           totalPoints,
           pointClouds,
-          dimensions: dims
-            ? {
-              ndim: dims.ndim,
-              displayed: dims.displayed,
-              currentStep: dims.currentStep,
-            }
-            : null,
+          dimensions: dimensionsInfo,
           camera: {
             position: {
               x: this.sceneManager.camera.position.x,

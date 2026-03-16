@@ -338,7 +338,10 @@ export function showHelpOverlay() {
         '⇧ Shift: 2x speed boost',
         '↑↓←→: Look up/down/left/right',
         'Q/E: Roll left/right (barrel roll)',
-        '🖱️ Drag: Free look (rotate view)',
+        '🖱️ Drag: Strafe (pan camera)',
+        '🖱️ Right drag: Free look (rotate view)',
+        '🖱️ Wheel: Move forward/backward',
+        '🖱️ ⇧+Wheel: Roll (rotate around view axis)',
         'I: Toggle inertial mode',
         'Note: Press V to enter fly mode',
       ],
@@ -355,7 +358,7 @@ export function showHelpOverlay() {
       ],
     },
     {
-      title: '📐 nD Navigation',
+      title: '🧭 nD Navigation',
       expanded: false,
       items: [
         '1-9: Select dimension to control',
@@ -378,7 +381,9 @@ export function showHelpOverlay() {
         'M: Cycle data monitor (mini/expanded/off)',
         'C: Toggle cinematic mode (noise/vignette/CA/lens)',
         'Ctrl/⌘ + Wheel: Adjust field of view (perspective only)',
+        'L: Layers panel',
         'Ctrl+L: Debug console',
+        'Ctrl+⇧+S: Export viewer state to clipboard',
       ],
     },
     {

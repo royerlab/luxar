@@ -343,13 +343,8 @@ export class MaterialManager {
   /**
    * Get cache statistics
    */
-  getCacheStats(): {
-    pointMaterials: number;
-    lineMaterials: number;
-    gsplatMaterials: number;
-    totalRegistered: number;
-    keys: string[];
-  } {
+  getCacheStats() {
+    // Returns { pointMaterials, lineMaterials, gsplatMaterials, totalRegistered, keys }
     return {
       pointMaterials: this.pointMaterialCache.size,
       lineMaterials: this.lineMaterialCache.size,
