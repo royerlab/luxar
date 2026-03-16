@@ -15,7 +15,7 @@ This module is preserved for research/experimentation purposes.
 
 import time
 import warnings
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 import numpy as np
 from arbol import aprint, asection
@@ -214,7 +214,7 @@ def fit_multiscale_gaussian_splats(
     movie_max_frames: Optional[int] = None,
     visualize_per_scale: bool = False,
     return_intermediate: bool = False,
-    **fit_kwargs,
+    **fit_kwargs: Any,
 ) -> GSplatData:
     """
     Fit Gaussian splats using multi-scale decomposition (EXPERIMENTAL).
@@ -431,7 +431,7 @@ def fit_multiscale_gaussian_splats(
     all_params = []
     all_amps = []
     all_sharpness = []
-    per_scale_stats = []
+    per_scale_stats: list[dict[str, Any]] = []
     per_scale_visualizations: Optional[list] = [] if visualize_per_scale else None
     intermediate_results: Optional[list] = [] if return_intermediate else None
 
@@ -578,7 +578,7 @@ def fit_multiscale_gaussian_splats(
             )
 
         # Store per-scale visualization data if requested
-        if visualize_per_scale:
+        if visualize_per_scale and per_scale_visualizations is not None:
             # Render reconstruction at full resolution using only this scale's splats
             # Get truncate parameter from fit_kwargs if present
             truncate = fit_kwargs.get("truncate", 3.0)
@@ -662,7 +662,9 @@ def fit_multiscale_gaussian_splats(
     # Baseline: fitting at full resolution for all scales: len(scales) * V.size
     # Actual: sum of downsampled volumes processed: sum(V_scale.size)
     baseline_voxel_cost = len(scales) * V.size
-    actual_voxel_cost = sum(stat["n_voxels"] for stat in per_scale_stats)
+    actual_voxel_cost = sum(
+        int(stat["n_voxels"]) for stat in per_scale_stats
+    )
     computational_speedup = (
         baseline_voxel_cost / actual_voxel_cost if actual_voxel_cost > 0 else 1.0
     )

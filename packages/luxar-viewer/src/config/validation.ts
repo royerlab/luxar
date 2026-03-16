@@ -95,9 +95,15 @@ function validateRendering(config: AppConfig, errors: string[], _warnings: strin
   const { shader } = config;
   const defaults = config.renderingControls.defaults;
 
-  // HDR multiplier validation (lives in renderingControls.defaults)
-  if (defaults.hdrMultiplier < 0) {
-    errors.push(`Invalid HDR multiplier: ${defaults.hdrMultiplier} (must be >= 0)`);
+  // Global EOG validation (lives in renderingControls.defaults)
+  if (defaults.exposure < -5 || defaults.exposure > 5) {
+    errors.push(`Invalid exposure: ${defaults.exposure} (must be -5 to 5)`);
+  }
+  if (defaults.globalOffset < -1 || defaults.globalOffset > 1) {
+    errors.push(`Invalid globalOffset: ${defaults.globalOffset} (must be -1 to 1)`);
+  }
+  if (defaults.globalGamma < 0.1 || defaults.globalGamma > 10) {
+    errors.push(`Invalid globalGamma: ${defaults.globalGamma} (must be 0.1 to 10)`);
   }
   if (shader.points.baseAlpha < 0 || shader.points.baseAlpha > 1) {
     errors.push(`Invalid base alpha: ${shader.points.baseAlpha} (must be between 0 and 1)`);

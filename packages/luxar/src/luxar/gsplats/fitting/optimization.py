@@ -5,7 +5,7 @@ Optimization loop logic for Gaussian splat fitting.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any, Callable, Dict
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 import torch
 from arbol import aprint
@@ -102,7 +102,7 @@ def run_optimization_loop(
     best_loss = float("inf")
 
     # Movie recording setup (only if enabled)
-    movie_frames = None
+    movie_frames: Optional[Dict[str, Any]] = None
     if config.napari_movie:
         movie_frames = {
             "target": [],
@@ -140,7 +140,7 @@ def run_optimization_loop(
         relocation_tracker = RecentlyRelocatedTracker(
             n_splats=n_splats,
             cooldown_steps=config.dynamic_config.relocation_cooldown_steps,
-            device=V_t.device,
+            device=str(V_t.device),
         )
         if config.verbose:
             aprint(
@@ -390,7 +390,7 @@ def _record_movie_frame(
     """Record a frame for the optimization movie."""
     with torch.no_grad():
         # Memory-bounded recording: remove oldest frames if limit exceeded
-        if len(movie_frames["target"]) >= config.movie_max_frames:
+        if config.movie_max_frames is not None and len(movie_frames["target"]) >= config.movie_max_frames:
             # Remove oldest frame (FIFO)
             for key in [
                 "target",

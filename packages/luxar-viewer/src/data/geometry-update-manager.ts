@@ -270,6 +270,8 @@ export class GeometryUpdateManager {
     return materialManager.getPointMaterial({
       opacity: attrs.opacity ?? 1.0,
       gamma: attrs.gamma ?? 1.0,
+      intensity: attrs.intensity ?? 1.0,
+      offset: attrs.offset ?? 0.0,
       blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
       radiusScale: radiusScale,
       sharpnessScale: sharpnessScale,

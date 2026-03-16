@@ -1092,6 +1092,7 @@ def generate_detector_scene(
                 colors=det_colors,
                 sharpness=det_sharp,
                 line_type="segments",
+                layer=True,
             )
             n_det = len(det_verts) // 2
             aprint(f"Detector geometry: {n_det:,} segments")
@@ -1153,6 +1154,7 @@ def generate_detector_scene(
                     colors=track_colors,
                     sharpness=1.5,
                     line_type="segments",
+                    layer=True,
                 )
                 n_tracks = len(track_vertices) // 2
                 aprint(f"Particle tracks: {n_tracks:,} segments")
@@ -1172,6 +1174,7 @@ def generate_detector_scene(
                     colors=deposit_colors,
                     radii=deposit_radii,
                     sharpness=deposit_sharpness,
+                    layer=True,
                 )
                 aprint(f"Calorimeter deposits: {len(deposit_positions):,} points")
                 total_points += len(deposit_positions)
@@ -1197,6 +1200,7 @@ def generate_detector_scene(
                 colors=np.array(vertex_colors, dtype=np.float32),
                 radii=np.array(vertex_radii, dtype=np.float32),
                 sharpness=0.8,
+                layer=True,
             )
             aprint(f"Vertex markers: {n_vertex_points} points")
             total_points += n_vertex_points

@@ -789,7 +789,7 @@ drives best-state selection and early stopping for stable progress tracking.
 
 ### Stage 6: Result Finalization (`results.py`)
 
-**Purpose**: Extract parameters, rescale amplitudes, compile statistics.
+**Purpose**: Extract parameters, cull low-impact splats, rescale amplitudes, compute quality metrics, compile statistics.
 
 **Main Function**:
 ```python
@@ -803,11 +803,13 @@ def finalize_results(
 
     Steps:
     1. Extract parameters from OptimizationResults (already contains best tensors)
-    2. Convert tensors to numpy
-    3. Pack Cholesky factors (lower triangular only)
-    4. Rescale amplitudes to original intensity range
-    5. Compile comprehensive statistics
-    6. Return GSplatData dataclass
+    2. Post-fit culling: remove splats below noise floor (cull_ratio × max_abs_error)
+    3. Convert tensors to numpy
+    4. Pack Cholesky factors (lower triangular only)
+    5. Rescale amplitudes to original intensity range
+    6. Compute quality metrics (PSNR, SSIM, MSE) in voxel space
+    7. Compile comprehensive statistics
+    8. Return GSplatData dataclass
     """
 ```
 
@@ -819,6 +821,15 @@ Ls_np = optimization_results.Ls.cpu().numpy()                # Shape: (N, d, d)
 amps_np = optimization_results.amps.cpu().numpy()            # Shape: (N,)
 sharpness_np = optimization_results.sharpness.cpu().numpy()  # Shape: (N,)
 ```
+
+**Post-fit Culling**:
+After extracting parameters, splats with amplitude below a noise floor are removed:
+```python
+threshold = cull_ratio * max_abs_error  # e.g., 0.01 * max_abs_error for "standard" preset
+mask = amps > threshold
+# Apply mask to all arrays (centers, Ls, amps, sharpness)
+```
+This removes splats that contribute negligibly to the reconstruction, reducing file size and rendering cost.
 
 **Cholesky Factor Packing**:
 ```python
@@ -881,9 +892,16 @@ stats = {
     "optimization_time": optimization_results.end_time - optimization_results.start_time,
 
     # Device
-    "device": str(config.device)
+    "device": str(config.device),
+
+    # Quality metrics (computed in voxel space only, skipped for output_space="real")
+    "mse": float,       # Mean squared error vs. original volume
+    "psnr_db": float,   # Peak signal-to-noise ratio in dB
+    "ssim": float,      # Structural similarity index
 }
 ```
+
+Quality metrics are computed by rendering the fitted splats back to a volume via `render_to_volume_tensor()` and comparing against the original input using `compute_quality_metrics()`. They are only computed when `output_space != "real"` (i.e., voxel coordinate space) because physical-space splats cannot be directly compared pixel-by-pixel against the original voxel grid. If metric computation fails (e.g., out of memory), it is silently skipped.
 
 **Return Value**:
 ```python

@@ -12,6 +12,7 @@
 [data-theme='frosted-glass'] .luxar-debug-console,
 [data-theme='frosted-glass'] .luxar-data-monitor,
 [data-theme='frosted-glass'] .luxar-dimension-sliders,
+[data-theme='frosted-glass'] .luxar-layers-panel,
 [data-theme='frosted-glass'] .luxar-gui {
   isolation: isolate; /* Create stacking context for proper backdrop-filter */
   box-sizing: border-box; /* Ensure consistent sizing */

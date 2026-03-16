@@ -57,7 +57,7 @@ class TestProgressiveWriting:
 
                 # Check metadata
                 assert metadata["n_points"] == n_points
-                assert metadata["dims"] == 3
+                assert metadata["ndim"] == 3
                 assert metadata["has_colors"] is True
 
                 # Verify data is in Zarr store

@@ -1,97 +1,79 @@
 # Luxar TODO List
 
-This file tracks known issues, bugs, and improvements needed in the Luxar project.
+This file tracks known issues, planned features, and improvements for the Luxar project.
 
-## TODO List:
+## Paper-Blocking (HIGH Priority)
 
-0- ✅ FIXED: The point spatial index-based loading system now correctly handles point radius for slicing. The effective radius calculation takes into account the point radius when determining which points are visible in the current slice. This was addressed by the new PointSpatialIndexLoader and effective-radius-calculator modules that replaced the lazy loading system.
-   - **Status**: RESOLVED
-   - **Priority**: High
+11 - ~~**Screenshot export**~~: **DONE.** Press `G` for quick screenshot or `T` to open the Recording panel. Supports PNG/WebP/JPEG with quality slider, transparent background (alpha channel), and automatic max-DPR for highest resolution capture. Uses `canvas.toBlob()` with `preserveDrawingBuffer: false` safety (synchronous pixel read). Implemented in `packages/luxar-viewer/src/ui/recording-panel.ts`.
 
-1- ✅ FIXED: Coverage files are now centralized in a `coverage/` folder at the root. Python coverage goes to `coverage/python/` and TypeScript coverage goes to `coverage/typescript/`. The folder is properly configured in `.gitignore` and both test configurations have been updated accordingly.
-   - **Status**: RESOLVED
-   - **Priority**: Medium
+12 - ~~**Video export / animation recording**~~: **DONE.** Recording panel (`T` key) supports three modes: **Image** (screenshot), **Video** (canvas recording via `MediaRecorder` + `captureStream`), and **Turntable** (auto-rotate camera 360° then stop). Video mode includes: confirmation dialog, pulsing REC indicator with elapsed time, duration limit slider, FPS/codec selection, and **Sync to Slider** (record synced to a dimension animation — auto-stops at end). All browser-native, zero npm dependencies. Implemented in `packages/luxar-viewer/src/ui/recording-panel.ts` with 32 unit tests and 8 E2E tests.
 
-2- ✅ COMPLETED: Example sharpness_compensation_example.zarr is very dim when opened, then I touch the HDR intensity slider in rendering control, and it gets much brighter although the effective value has barely changed!
-   - **Status**: Open
-   - **Priority**: Medium
+13 - ~~**Scale bar overlay**~~: **DONE.** Press `B` to toggle a physical scale bar overlay. Computes bar width from camera distance and FOV at the orbit target depth, snaps to nice numbers (1/2/5 × 10^n), and displays the unit from dimension metadata (e.g., "10 μm"). Implemented in `packages/luxar-viewer/src/ui/components/scale-bar.ts`. Now pixel-exact in orthographic mode (TODO #6 completed).
 
-3- ✅ COMPLETED: Added support for lower bit-depth data types in zarr with automatic conversion for Three.js compatibility. Implementation includes:
-   - Python: DataTypeConfig with AUTO, PRECISION, MEMORY, and CUSTOM modes
-   - Intelligent dtype selection based on data ranges (uint8 for SDR colors, float32 for HDR)
-   - TypeScript: Support for Uint8Array and Uint16Array with WebGL normalization
-   - Memory savings of 30-65% demonstrated in memory_optimization_example.py
-   - Full backward compatibility (float32 remains default)
-   - **Status**: COMPLETED
-   - **Priority**: Medium
+14 - **Colorbar / channel legend**: Display a legend overlay showing each node's name and color swatch. Required for multi-channel figures and general usability.
 
-4- ✅ COMPLETED: Improve CLI commands so that: (i) there is a command to generate examples, serve them and open them in a browser, (ii) there is a command to serve a folder and its content, (iii) there is a command to serve the viewer itself, (iv) there is a command to serve a zarr file and serve the viewer with it shown, with the option, by default on to open the browser (v) there is command to provide detailed information and stats about a luxar zarr and display its contents (and info and stats of each object) as a tree. Make sure all CLI commands are tested and have tests that cover them.
-   - **Status**: Open
-   - **Priority**: Medium
+16 - ~~**PSNR/SSIM quality metrics in CLI**~~: **DONE.** New `luxar gsplat compare fitted.gsplats.zarr original.tiff` command computes PSNR, SSIM, MSE, relative L2, and max absolute error. All metrics computed on GPU via PyTorch (SSIM uses `F.conv2d`/`F.conv3d`). Supports `--output-json` for paper tables and `--quiet` for scripting. Post-fit metrics (PSNR, SSIM, MSE) are now computed automatically after fitting and stored in the `.gsplats.zarr` metadata, visible via `luxar gsplat info`. Implemented in `gsplats/metrics.py` (PyTorch SSIM/PSNR), `cli/gsplat_commands.py` (compare command), and `fitting/results.py` (post-fit metrics).
 
-5- ✅ COMPLETED: Remove 'substraction' blending mode from the Python API (completely, do not leave dead code!), it is not useful and does not work well with the current implementation of the viewer. Same for minimum and maximum blending modes. Make sure to remove all three modes from all tests and examples.
-    - **Status**: RESOLVED
-    - **Priority**: Medium
+18 - ~~**Tiled fitting for large volumes**~~: **DONE.** Fit arbitrarily large volumes by splitting into overlapping tiles with Hann cosine apodization (partition-of-unity windowing), fitting gsplats independently per tile, and concatenating. No post-merge pruning needed — the Hann window guarantees seamless blending. CLI: `luxar gsplat fit volume.tiff -o splats.gsplats.zarr --tiled --tile-size 256 --overlap 32` (all-in-one) or `luxar gsplat fit volume.tiff -o tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32` (single-tile, Slurm-ready). Python API: `fit_tiled(volume, tile_size=256, overlap=32)` and `fit_tile(volume, spec)`. Supports zarr lazy loading for out-of-core processing. Implemented in `gsplats/tiling.py` (tile geometry + cosine windows), `gsplats/fit_tiled_gsplats.py` (fitting orchestration), and CLI options on `fit_volume()`.
 
-7- ✅ COMPLETED: Migrated post-processing system to pmndrs/postprocessing library
-    - Replaced custom implementation with industry-standard library
-    - Added new effects: SSAO, Vignette, improved Chromatic Aberration
-    - Improved performance with single-pass effect composition
-    - Extended UI controls with new effect options
-    - Maintained HDR pipeline with 16-bit float buffers
-    - Bloom and DOF working correctly
-    - **Status**: RESOLVED
-    - **Priority**: LOW
+## Feature Requests (MEDIUM Priority)
 
-8- ✅ COMPLETED: Cleanup of AA modes, we need to decide what we keep and what we trash...
-    - **Status**: Open
-    - **Priority**: LOW (do not fix yet!)
+5 - ~~**Layers panel (per-node controllability)**~~: **DONE.** Napari-inspired per-layer control panel. Nodes marked with `layer=True` in the Python API are exposed as controllable layers in the viewer (press `L` to toggle). Each layer provides: **visibility toggle** (eye icon), **display range** [min, max] mapped to shader intensity/offset uniforms, **gamma** correction, and **blending mode** (additive, normal, max, opaque, luminous). Material cloning ensures independent per-layer rendering. Python side: `layer` attribute on `Node` with validation. Viewer side: `layers-panel.ts` (panel UI), `layer-state.ts` (state management), `range-slider.ts` (custom dual-handle slider). Includes CSS styling for all themes, 217+ unit tests for layer state, and demo `demo_gsplats_3d_kidney_multichannel_layers.py`. Implemented in `packages/luxar-viewer/src/ui/layers/` and `packages/luxar/src/luxar/core/node.py`.
 
-10- Implement Ray Casting: specific strings can be associated to objects, when picking an object the associated string is displayed on the screen at a fixed position. This is useful for providing visualisation context.
-    - **Status**: Open
-    - **Priority**: LOW (do not fix yet!)
+6 - ~~**Orthographic projection mode**~~: **DONE.** Toggle via rendering controls or keyboard shortcut. Uses `THREE.OrthographicCamera` with `LuxarCamera` type union (`camera-utils.ts`). In ortho mode: pan and zoom only, rotation restricted to view-axis roll (Shift+wheel). Custom `LuxarOrbitControls` (quaternion-based, no gimbal lock) handles both perspective and ortho modes. Scene-manager tracks ortho zoom level for material frustum updates. Clean front-view alignment for 2D microscopy data. Auto-framing computes correct camera distance from bounding-box diagonal. Implemented across `camera-utils.ts`, `luxar-orbit-controls.ts`, `scene-manager.ts`, and `controls-manager.ts`.
 
-11- Introduce the notion of "scene domain". The main domain is the 'main' domain that of nD space visualised in a 3D 'slice', another domain is 'overlay' which is that for a specific set of non-visible dimensions from main, we can associate a scene that is rendered as a transparent overlay on top of the main rendering, this overlay is fixed, and its frame of reference is in normalised canvas coordinates ([0, 1]x[0, 1]). The viewer controls do not affect that scene since it is fixed and not in the main domain. Finally another important domain is that of 'sound' which allows to associate sound to a scene, and have it played when the scene is loaded. This is useful for providing context to the visualisation.
-    - **Status**: Open
-    - **Priority**: LOW (do not fix yet!)
+15 - **Viewer-side colormaps**: Support a `colormap` attribute on nodes (e.g., `"green"`, `"magenta"`, `"fire"`, `"viridis"`) with LUT application on the viewer side. Currently all colors must be pre-baked in Python. The microscopy convention is to apply lookup tables at display time, enabling users to change coloring interactively. Right now colors are 'baked' in the scene nodes. but we can add explicit support for LUTs, definitely a gap in the current implementation. There is machinery in the encoding step to handle LUTs but it is only internal to the encoding. Making LUTs explicit makes it possible to implement the corresponding legends. This will probably require to first implement the scene 'domains' and in particular the 'overlay domain' to render the legends in normalized screen space.
 
-12- VR/AR Add the possibility to activate VR/AR mode.
-    - **Status**: Open
-    - **Priority**: LOW (do not fix yet!)
-
-13- ✅ Rename luxar-player to luxar-viewer everywhere.
-    - **Status**: COMPLETED
-    - **Priority**: LOW
-
-14- ✅ In the viewer, we should not use 'point cloud' terminology, we should use 'points' instead. A 'Point Cloud' should be a 'Points' 'object' in Luxar terminology.
-    - **Status**: COMPLETED
-    - Updated all TypeScript types: PointCloudData → PointsData
-    - Updated all function names: loadPointCloud → loadPoints
-    - Updated Python protocol: PointCloudProtocol → PointsProtocol
-    - Updated all documentation and comments
-    - All tests passing (484 TypeScript, 374 Python)
+20 - ~~**nD Transforms on non-displayed dimensions**~~: **DONE.** Per-dimension affine (scale/offset) and permutation transforms on non-displayed dimensions, separate from the 4x4 spatial transform. Enables time alignment, unit conversion, and channel remapping between datasets in the same scene. Uses **inverse-query** approach in the viewer: the query (slicePosition + tolerance) is inverse-transformed from world to local space once (O(1)), leaving all loader internals untouched. Hierarchical composition works on Python side (`world_nd_transform`); viewer reads composed transforms from scene graph (`computeWorldNdTransform`). Full stack: Python (validation, Node property, compiler, reader — 41 tests), TypeScript (types, inverse-query utility, scene-loader integration — 18 unit tests), E2E Playwright test (3 tests verifying time-shifted visibility). Spec: `docs/guides/specs/ND_TRANSFORMS_SPEC.md`. Demo: `demo_nd_transforms.py`. **Bounds expansion** wired into compiler `finalize()` — scene-level `position_bounds` now reflects world-space ranges for non-displayed dimensions. Viewer auto-ranges dimension sliders from these bounds when `Dimension.range` is not set. Documentation propagated to core, io, scene, and data READMEs.
 
 
+17 - ~~**OME-Zarr (NGFF) input support**~~: **DONE.** `luxar gsplat fit` supports OME-Zarr with full 5D TCZYX handling via `--channel` and `--timepoint` flags. Auto-detects OME-Zarr layout (key `"0"` for highest resolution). Implemented in `gsplat_config.py:_load_zarr_volume()`.
 
-15- ✅ FIXED: Zero-radius points (from nD slicing) are now properly handled:
-    - **Fragment shader discard**: Points with radius < 0.0001 are discarded in the fragment shader
-    - **CPU-side filtering**: Points with effective radius < 0.0001 are filtered out before sending to GPU
-    - **Empty cloud handling**: When ALL points have zero radius (e.g., viewing outside hypersphere), returns empty point cloud instead of showing ultrathin points
-    - This correctly shows no points when viewing outside the 4D hypersphere bounds
-    - **Status**: RESOLVED
-    - **Priority**: HIGH
+19 - ~~**Slurm batch fitting for 3D+t OME-ZARR**~~: **DONE.** `luxar gsplat batch` CLI command converts entire 3D+t OME-ZARR datasets to splats via Slurm array jobs. Full implementation: `batch plan` (generates Slurm scripts with GPU profiling and time estimation), `batch status` (checks job completion), `batch merge` (combines fitted tiles/timepoints with channel color support). Includes environment capture (`env_capture.py`), manifest tracking (`manifest.py`), merge orchestration (`merge_orchestrator.py`), Slurm script generation (`slurm_gen.py`), and time estimation (`time_estimate.py`). Supports tiled fitting with `--tile-size`/`--overlap` flags. CLI: `luxar gsplat batch data.ome.zarr output/ --partition gpu --submit`. Implemented in `gsplats/batch/` module and `cli/gsplat_commands.py` with tests in `gsplats/tests/test_batch.py`.
 
-16- Clarify cache eviction policy (I don't see eviction happening when I expect it to happen)
-    - **Status**: Open
-    - **Priority**: Medium
+21 - ~~**Transform model review & fixes**~~: **DONE.** Systematic review of the 4x4 transform pipeline (Python → zarr → TypeScript). Fixed: flat array ambiguity in `prepare_transform_for_zarr` (lists now row-major), `transform=None` persistence via `delete_group_attr` protocol method, bottom-row `[0,0,0,1]` affine validation, reader group transform support (`get_group()`), `world_transform` property. Added `nd_transform` support (see #20). All 1197 Python tests + 18 TS unit tests + 3 E2E tests passing.
 
-17- Check Shader code for AlphaBlending mode, it seems to be broken
-    - **Status**: Open
-    - **Priority**: Medium
+## Infrastructure & Polish
+
+4 - **Cache eviction policy**: Clarify and verify the cache eviction behavior — eviction does not appear to trigger when expected.
+
+7 - **Theme layout consistency**: All Luxar UI themes should differ only in colors, transparency, and visual effects — never in the size or layout of panels and their components. This ensures a consistent user experience across themes.
+
+8 - **Panel visibility configuration**: Allow configuring which panels are visible (Logs, Rendering Controls, Data Monitor, Dimensions, etc.) from the Python side. Optionally lock panel visibility to enforce a particular look and prevent user modifications.
+
+9 - **UI ergonomics**: The current UI relies heavily on hidden keyboard shortcuts to reveal panels, which is poor discoverability. Improve with visible affordances (buttons, menus, or indicators).
+
+10 - **Retire sharpness from the viewer**: Remove or hide the sharpness parameter from the viewer UI. Keep it in the data model and rendering pipeline, but do not expose it as a user-facing control.
+
+## Rendering & Performance (MEDIUM Priority)
+
+22 - **Level-of-Detail (LOD) with SplitNode**: Two new composable scene graph node types for scalable rendering of large datasets:
+    - **LODNode**: Contains children at different detail levels (e.g., full-res and merged/coarse gsplats). Selects active LOD based on **screen-space projected size** of the node's bounding box. Uses **per-splat opacity crossfade** during transitions — each splat's opacity is modulated by the LOD transition factor, avoiding brightness doubling from overlapping semi-transparent layers.
+    - **SplitNode**: Spatially partitions a single logical node into sub-nodes (appears as one node to the user). Enables **frustum culling** per region — off-screen regions are not rendered at all. The writer decides the spatial split strategy (octree, axis-aligned tiles, irregular regions).
+    - **Composition**: `SplitNode > LODNode > GSplats` gives per-region LOD selection through composition. Nearby regions render at full resolution, distant regions at coarse resolution, off-screen regions are culled entirely.
+    - **Decimation**: Merge nearby splats — cluster and re-fit fewer, larger Gaussians. Done offline via CLI tooling (e.g., `luxar gsplat decimate`).
+    - **Open questions**: nD LOD metric for non-displayed dimensions, split seam handling at LOD boundaries, optimal split granularity (8-64 regions), zarr format for LODNode/SplitNode metadata, LOD for lines (connectivity-preserving simplification), hysteresis thresholds.
+    - **Advanced — Recursive composition**: SplitNode and LODNode can be alternated recursively (`SplitNode > LODNode > SplitNode > LODNode > ... > GSplats`) to form a hierarchical LOD tree (similar to 3D Tiles / Nanite). The viewer traverses the tree top-down: at each LODNode, if the coarse child is sufficient (screen-space error below threshold), it renders the coarse summary and **stops traversal** — never loading or rendering the finer splits below. This gives: (1) view-adaptive memory usage — only fine-grained data for nearby regions is loaded, (2) adaptive draw call count — zoomed-out views render few coarse nodes, close-ups render many fine nodes, (3) natural progressive streaming — coarse LODs load first, fine LODs on demand. Key requirement: each LODNode's coarse child must be a faithful summary of the entire subtree below it, not just one level down.
+    - **Advanced — Lessons from Nanite (UE5)**:
+        - **Monotonic error guarantee**: Each LODNode must store its simplification error (e.g., max amplitude difference, spatial displacement vs. fine level). The hierarchy must guarantee `parent_error >= child_error` at every level so traversal always converges. Without this, a coarse LOD might look "sufficient" while hiding a region where it's actually terrible.
+        - **Pixel-error metric, not just size**: LOD selection should be based on "how many pixels of screen-space error would this simplification introduce" — not just projected bounding box size. A flat region with 1M splats may have near-zero simplification error (coarse is fine), while a detailed region at the same screen size may need fine LOD. Store the error, project it to pixels at runtime.
+        - **Density-adaptive splitting**: SplitNode should partition based on splat density / detail, not a uniform grid. Dense regions get more splits, empty regions fewer (k-d tree at median, or cluster by density). Avoids wasting splits on empty space.
+        - **Virtual residency via zarr chunks**: Zarr's chunked storage maps naturally to Nanite's virtual memory model — coarse LOD chunks (small) stay resident, fine LOD chunks are fetched on demand and evicted when the camera moves away.
+        - **Blending may be minimal**: Nanite avoids blending entirely via seamless DAG cuts (mesh-specific, not transferable). However, overlapping Gaussians at region boundaries provide natural continuity — test whether per-splat crossfade can use a very narrow transition or be skipped entirely for well-constructed LODs.
+
+## Future / Exploratory (LOW Priority)
+
+1 - **Ray casting with object labels**: Associate descriptive strings with scene objects. When the user picks an object via ray casting, display the associated label at a fixed screen position. Useful for providing context during exploration.
+
+2 - **Scene domains**: Introduce the concept of rendering "domains" beyond the main nD-to-3D slice:
+    - **Overlay domain**: For a given set of non-visible dimensions, render an associated scene as a transparent overlay in normalized canvas coordinates ([0,1] x [0,1]), unaffected by camera controls.
+    - **Sound domain**: Associate audio with a scene, played back on load to provide auditory context.
+
+3 - **VR/AR mode**: Add the ability to activate VR/AR rendering for immersive exploration of 3D scenes.
 
 ## Notes
 
-- This TODO list should be reviewed and updated regularly
-- Issues marked as "Critical" should be addressed first
-- Consider creating GitHub issues for tracking progress
-- Update CLAUDE.md when implementing significant changes
+- Review and update this list regularly.
+- Items marked HIGH priority should be addressed before the first preprint.
+- Consider creating GitHub issues for tracking progress on individual items.
+- Update CLAUDE.md when implementing significant changes.

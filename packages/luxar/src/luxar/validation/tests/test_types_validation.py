@@ -14,7 +14,10 @@ from luxar.validation.types import (
     validate_category_indices,
     validate_colors,
     validate_gamma,
+    validate_intensity,
+    validate_layer,
     validate_node_type,
+    validate_offset,
     validate_opacity,
     validate_physical_unit,
     validate_positions,
@@ -228,6 +231,8 @@ class TestBlendingModeValidation:
         assert validate_blending_mode("normal") == "normal"
         assert validate_blending_mode("additive") == "additive"
         assert validate_blending_mode("max") == "max"
+        assert validate_blending_mode("opaque") == "opaque"
+        assert validate_blending_mode("luminous") == "luminous"
 
     def test_invalid_blending_mode(self) -> None:
         """Test that invalid blending modes raise ValueError."""
@@ -657,6 +662,7 @@ class TestTypeGuards:
         assert is_transform_matrix(transform) is True
 
         transform_custom = np.random.rand(4, 4).astype(np.float32)
+        transform_custom[3, :] = [0, 0, 0, 1]  # Valid affine bottom row
         assert is_transform_matrix(transform_custom) is True
 
     def test_is_transform_matrix_invalid(self) -> None:
@@ -793,3 +799,129 @@ class TestCategoryIndicesValidation:
         values = np.array([0, 1])
         with pytest.raises(ValueError, match="cannot be empty"):
             validate_category_indices(values, [])
+
+
+class TestIntensityValidation:
+    """Test validate_intensity function."""
+
+    def test_valid_intensity(self) -> None:
+        """Test that valid intensity values are accepted."""
+        assert validate_intensity(0.0) == 0.0
+        assert validate_intensity(1.0) == 1.0
+        assert validate_intensity(50.0) == 50.0
+        assert validate_intensity(100.0) == 100.0
+
+    def test_intensity_boundary_values(self) -> None:
+        """Test intensity at exact boundary values."""
+        assert validate_intensity(0.0) == 0.0
+        assert validate_intensity(100.0) == 100.0
+
+    def test_intensity_type_conversion(self) -> None:
+        """Test that intensity values are converted to float."""
+        assert validate_intensity(1) == 1.0
+        assert validate_intensity(0) == 0.0
+        assert validate_intensity("50.0") == 50.0
+        assert validate_intensity(np.float32(2.5)) == pytest.approx(2.5)
+
+    def test_invalid_intensity_out_of_range(self) -> None:
+        """Test that out-of-range intensity values raise ValueError."""
+        with pytest.raises(ValueError, match="Intensity must be between 0.0 and 100.0"):
+            validate_intensity(-0.1)
+
+        with pytest.raises(ValueError, match="Intensity must be between 0.0 and 100.0"):
+            validate_intensity(100.1)
+
+        with pytest.raises(ValueError, match="Intensity must be between 0.0 and 100.0"):
+            validate_intensity(200.0)
+
+    def test_invalid_intensity_type(self) -> None:
+        """Test that non-convertible types raise TypeError."""
+        with pytest.raises(TypeError, match="Intensity must be convertible to float"):
+            validate_intensity("not_a_number")
+
+        with pytest.raises(TypeError, match="Intensity must be convertible to float"):
+            validate_intensity(None)
+
+        with pytest.raises(TypeError, match="Intensity must be convertible to float"):
+            validate_intensity([1.0])
+
+
+class TestOffsetValidation:
+    """Test validate_offset function."""
+
+    def test_valid_offset(self) -> None:
+        """Test that valid offset values are accepted."""
+        assert validate_offset(0.0) == 0.0
+        assert validate_offset(5.0) == 5.0
+        assert validate_offset(-5.0) == -5.0
+        assert validate_offset(1.5) == 1.5
+
+    def test_offset_boundary_values(self) -> None:
+        """Test offset at exact boundary values."""
+        assert validate_offset(-10.0) == -10.0
+        assert validate_offset(10.0) == 10.0
+
+    def test_offset_type_conversion(self) -> None:
+        """Test that offset values are converted to float."""
+        assert validate_offset(0) == 0.0
+        assert validate_offset(5) == 5.0
+        assert validate_offset("-3.5") == -3.5
+        assert validate_offset(np.float32(1.2)) == pytest.approx(1.2)
+
+    def test_invalid_offset_out_of_range(self) -> None:
+        """Test that out-of-range offset values raise ValueError."""
+        with pytest.raises(ValueError, match="Offset must be between -10.0 and 10.0"):
+            validate_offset(-10.1)
+
+        with pytest.raises(ValueError, match="Offset must be between -10.0 and 10.0"):
+            validate_offset(10.1)
+
+        with pytest.raises(ValueError, match="Offset must be between -10.0 and 10.0"):
+            validate_offset(50.0)
+
+    def test_invalid_offset_type(self) -> None:
+        """Test that non-convertible types raise TypeError."""
+        with pytest.raises(TypeError, match="Offset must be convertible to float"):
+            validate_offset("not_a_number")
+
+        with pytest.raises(TypeError, match="Offset must be convertible to float"):
+            validate_offset(None)
+
+        with pytest.raises(TypeError, match="Offset must be convertible to float"):
+            validate_offset([0.0])
+
+
+class TestLayerValidation:
+    """Test validate_layer function."""
+
+    def test_valid_bool_values(self) -> None:
+        """Test that boolean values are accepted."""
+        assert validate_layer(True) is True
+        assert validate_layer(False) is False
+
+    def test_int_coercion(self) -> None:
+        """Test that integer values are coerced to bool."""
+        assert validate_layer(1) is True
+        assert validate_layer(0) is False
+        assert validate_layer(42) is True
+
+    def test_float_coercion(self) -> None:
+        """Test that float values are coerced to bool."""
+        assert validate_layer(1.0) is True
+        assert validate_layer(0.0) is False
+        assert validate_layer(0.5) is True
+
+    def test_invalid_type_string(self) -> None:
+        """Test that string values raise TypeError."""
+        with pytest.raises(TypeError, match="Layer must be a boolean, got str"):
+            validate_layer("true")
+
+    def test_invalid_type_none(self) -> None:
+        """Test that None raises TypeError."""
+        with pytest.raises(TypeError, match="Layer must be a boolean, got NoneType"):
+            validate_layer(None)
+
+    def test_invalid_type_list(self) -> None:
+        """Test that list values raise TypeError."""
+        with pytest.raises(TypeError, match="Layer must be a boolean, got list"):
+            validate_layer([True])

@@ -19,7 +19,7 @@ export const config: AppConfig = {
     initialPosition: { x: 0, y: 0, z: 8 }, // Initial camera position in 3D space (world coordinates)
     fovMin: 10, // Minimum field of view for zoom limits - prevents excessive zoom-in
     fovMax: 170, // Maximum field of view for zoom limits - must be <180° (fish-eye territory)
-    fovSensitivity: 0.05, // FOV change sensitivity for Shift+wheel input - lower = finer control
+    fovSensitivity: 0.05, // FOV change sensitivity for Ctrl+wheel input - lower = finer control
     // FOV presets based on 35mm equivalent focal lengths (horizontal FOV - photography standard)
     fovPresets: {
       '28mm Wide': 75, // Wide angle - 75° horizontal FOV, good for large scenes and landscapes
@@ -110,7 +110,7 @@ export const config: AppConfig = {
   },
 
   // Shader configuration for point rendering
-  // Note: hdrMultiplier lives in renderingControls.defaults as the single source of truth
+  // Note: global exposure/offset/gamma live in renderingControls.defaults (applied in post-processing)
   shader: {
     points: {
       baseAlpha: 0.01, // Base alpha intensity
@@ -131,6 +131,8 @@ export const config: AppConfig = {
       error: 1000, // Error messages
       help: 1001, // Help overlay (above errors)
       renderingControls: 1999, // Rendering controls panel (top of mid-layer)
+      recordingPanel: 1500, // Recording panel (screenshot/video capture)
+      layersPanel: 1500, // Layers panel (per-node controls)
 
       // Top layer (2000+)
       statsMonitor: 2000, // Three.js stats monitor (always on top)
@@ -171,6 +173,10 @@ export const config: AppConfig = {
         backdropBlur: 10,
         boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
       },
+    },
+    scaleBar: {
+      targetWidthPx: 150,
+      position: 'bottom-left' as const,
     },
     // UI component-specific configuration for consistent styling
     components: {
@@ -230,17 +236,19 @@ export const config: AppConfig = {
       bloomStrength: 0.25, // Bloom intensity multiplier (moved from rendering.bloom)
       bloomRadius: 1.0, // Blur radius for bloom spread (moved from rendering.bloom)
       bloomLevels: 8, // Number of mipmap levels (1-12, lower = coarser/faster, higher = smoother)
-      hdrMultiplier: 1.0, // HDR intensity multiplier (default: neutral 1.0)
+      exposure: 0.0, // Global exposure in log2 stops (0 = neutral, +1 = 2x brighter)
+      globalOffset: 0.0, // Global additive brightness shift
+      globalGamma: 1.0, // Global gamma correction (1.0 = linear)
       fxaaEnabled: false, // FXAA disabled by default
-      msaaEnabled: false, // MSAA disabled by default (incompatible with additive blending)
+      msaaEnabled: false, // MSAA disabled by default (enable for fast hardware-accelerated AA)
       msaaSamples: 4, // MSAA sample count (2, 4, 8)
       smaaEnabled: false, // SMAA disabled by default
       smaaThreshold: 0.1, // SMAA edge detection threshold (0.05-0.2)
       smaaSearchSteps: 8, // SMAA search steps for pattern detection (4-32)
-      ssaaEnabled: false, // SSAA disabled by default (has brightness issues with additive blending)
+      ssaaEnabled: false, // SSAA disabled by default (highest quality, heavy performance cost)
       ssaaMultiplier: 2.0, // SSAA resolution multiplier (1.5x, 2x, 4x)
       // New post-processing effects
-      toneMapping: 'ACES' as const, // Tone mapping method
+      toneMapping: 'Neutral' as const, // Tone mapping method (Neutral preserves hue fidelity for scientific data)
       dofEnabled: false, // Depth of field disabled by default
       dofFocus: 10, // DOF focus distance
       dofStrength: 0.5, // DOF blur strength (0-1)
@@ -280,8 +288,8 @@ export const config: AppConfig = {
   // Control system configuration (migrated from control-config.ts)
   controls: {
     scaleMultipliers: {
-      minDistanceFactor: 0.001,
-      maxDistanceFactor: 10,
+      minDistanceFactor: 0.01,
+      maxDistanceFactor: 100,
       flySpeedFactor: 0.05,
     },
     fly: {
@@ -333,7 +341,9 @@ export const config: AppConfig = {
         toggleDatasetBrowser: 'o',
         togglePerformance: 'p',
         toggleRendering: 'r',
+        toggleScaleBar: 'b',
         toggleDebugConsole: 'ctrl+l',
+        toggleLayers: 'l',
         recenterCamera: 'f',
         toggleControlMode: 'v',
         toggleInertialMode: 'i',

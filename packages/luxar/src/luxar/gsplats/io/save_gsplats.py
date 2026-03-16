@@ -19,8 +19,8 @@ from luxar.typing_utils import TARGET_CHUNK_BYTES
 
 # Get luxar.gsplats version
 try:
-    from luxar.gsplats import (
-        __version__ as GSPLATS_VERSION,  # type: ignore[attr-defined]
+    from luxar.gsplats import (  # type: ignore[attr-defined]
+        __version__ as GSPLATS_VERSION,
     )
 except ImportError:
     GSPLATS_VERSION: str = "unknown"  # type: ignore[no-redef]
@@ -330,15 +330,18 @@ def save_gsplats(
             import zipfile
 
             if compress == "zip":
-                # Create zip archive
-                with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                # Use ZIP_STORED (no compression) because zarr data is already
+                # compressed internally (Blosc/zstd). Double-compressing with
+                # deflate wastes CPU time for negligible size benefit.
+                with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as zipf:
                     for file_path in zarr_path.rglob("*"):
                         if file_path.is_file():
                             arcname = file_path.relative_to(zarr_path.parent)
                             zipf.write(file_path, arcname)
 
             elif compress == "tar.gz":
-                # Create tar.gz archive
+                # tar.gz applies gzip on top of already-compressed zarr chunks,
+                # but the user explicitly chose this format.
                 with tarfile.open(path, "w:gz") as tarf:
                     tarf.add(zarr_path, arcname=zarr_path.name)
 

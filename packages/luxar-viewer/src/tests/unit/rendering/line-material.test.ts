@@ -57,15 +57,27 @@ describe('LineMaterial', () => {
       expect(material.side).toBe(2); // DoubleSide
     });
 
+    it('should default invGamma to 1.0', () => {
+      const material = new LineMaterial();
+
+      expect(material.uniforms.uInvGamma.value).toBe(1.0);
+      expect(material.userData.gamma).toBe(1.0);
+    });
+
+    it('should accept custom gamma', () => {
+      const material = new LineMaterial({ gamma: 2.2 });
+
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(material.userData.gamma).toBe(2.2);
+    });
+
     it('should accept custom configuration', () => {
       const material = new LineMaterial({
         opacity: 0.5,
         blendingMode: 'normal',
-        hdrMultiplier: 20.0,
       });
 
       expect(material.uniforms.uOpacity.value).toBe(0.5);
-      expect(material.uniforms.uHDRMultiplier.value).toBe(20.0);
       expect(material.blending).toBe('NormalBlending');
       // depthWrite is only true for normal blending when opacity >= 0.99
       expect(material.depthWrite).toBe(false); // opacity 0.5 < 0.99, so no depth write
@@ -126,8 +138,12 @@ describe('LineMaterial', () => {
       const material = new LineMaterial();
 
       // Check for uniforms
-      expect(material.fragmentShader).toContain('uniform float uHDRMultiplier');
       expect(material.fragmentShader).toContain('uniform float uOpacity');
+      expect(material.fragmentShader).toContain('uniform float uInvGamma');
+
+      // Check for GOG model (gain-offset-gamma)
+      expect(material.fragmentShader).toContain('vColor * uIntensity + uOffset');
+      expect(material.fragmentShader).toContain('pow(adjusted, vec3(uInvGamma))');
 
       // Check for parabolic falloff formula
       expect(material.fragmentShader).toContain('1.0 - p * p');
@@ -162,14 +178,6 @@ describe('LineMaterial', () => {
       expect(material.uniforms.uResolution.value.y).toBe(1080);
     });
 
-    it('should update HDR multiplier', () => {
-      const material = new LineMaterial();
-
-      material.updateHDRMultiplier(32.0);
-
-      expect(material.uniforms.uHDRMultiplier.value).toBe(32.0);
-    });
-
     it('should update opacity', () => {
       const material = new LineMaterial();
 
@@ -178,16 +186,35 @@ describe('LineMaterial', () => {
       expect(material.uniforms.uOpacity.value).toBe(0.75);
     });
 
+    it('should update gamma', () => {
+      const material = new LineMaterial();
+
+      material.updateGamma(2.2);
+
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(material.userData.gamma).toBe(2.2);
+    });
+
+    it('should clamp gamma to prevent division by zero', () => {
+      const material = new LineMaterial();
+
+      material.updateGamma(0);
+
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 0.001);
+      expect(material.userData.gamma).toBe(0.001);
+    });
+
     it('should clone material with current values', () => {
       const original = new LineMaterial({
         opacity: 0.5,
-        hdrMultiplier: 24.0,
+        gamma: 2.2,
       });
 
       const cloned = original.clone();
 
       expect(cloned.uniforms.uOpacity.value).toBe(0.5);
-      expect(cloned.uniforms.uHDRMultiplier.value).toBe(24.0);
+      expect(cloned.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(cloned.userData.gamma).toBe(2.2);
 
       // Ensure it's a new instance
       expect(cloned).not.toBe(original);

@@ -10,7 +10,7 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--luxar-bg-primary);
+  background: var(--luxar-bg-primary, #111111);
 }
 
 /* Ensure canvas fills viewport */

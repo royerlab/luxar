@@ -53,6 +53,14 @@ export function setupCameraControls(
   const cameraFolder = gui.addFolder('🎥 Camera');
   cameraFolder.open();
 
+  cameraFolder.domElement?.setAttribute(
+    'title',
+    'Camera: Controls the virtual camera lens and projection\n\n' +
+      '• FOV Preset: Choose a standard lens (28mm wide to 135mm telephoto)\n' +
+      '• Field of View: Fine-tune viewing angle (also Ctrl+Wheel)\n' +
+      '• Clipping Planes: Control what range of distances is visible'
+  );
+
   // FOV Preset dropdown
   const presetOptions = Object.keys(config.camera.fovPresets);
   const fovPresetControl = cameraFolder
@@ -74,7 +82,7 @@ export function setupCameraControls(
         settings.fov = fovValue;
 
         // Calculate delta and apply to camera
-        const currentFOV = sceneManager.camera.fov;
+        const currentFOV = sceneManager.currentFov;
         const delta = (fovValue - currentFOV) / config.camera.fovSensitivity;
         sceneManager.updateFOV(delta);
 
@@ -160,7 +168,7 @@ export function setupCameraControls(
       '• 50mm Normal (47°): Natural human vision + no distortion\n' +
       '• 85mm Portrait (29°): Telephoto + slight pincushion\n' +
       '• 135mm Tele (18°): Strong telephoto + pincushion distortion\n' +
-      '• Custom: Manual FOV control via slider or Shift+Wheel\n' +
+      '• Custom: Manual FOV control via slider or Ctrl+Wheel\n' +
       '• Note: Also applies realistic lens distortion when enabled'
   );
 
@@ -188,7 +196,7 @@ export function setupCameraControls(
       }
 
       // Calculate the delta needed to reach the target FOV
-      const currentFOV = sceneManager.camera.fov;
+      const currentFOV = sceneManager.currentFov;
       const targetFOV = value;
       const delta = (targetFOV - currentFOV) / config.camera.fovSensitivity;
 
@@ -209,13 +217,22 @@ export function setupCameraControls(
       '• Lower values: Telephoto lens effect (narrow view)\n' +
       '• Higher values: Wide-angle lens effect (broader view)\n' +
       '• 47° (50mm Normal) provides natural human-like viewing angle\n' +
-      '• Also controllable with Shift+Wheel for fine adjustment\n' +
+      '• Also controllable with Ctrl+Wheel for fine adjustment\n' +
       '• Maintains world-space point sizing (points stay same physical size)'
   );
 
   // Clipping Planes sub-folder
   const clippingFolder = cameraFolder.addFolder('Clipping Planes');
   clippingFolder.close(); // Collapsed by default (advanced setting)
+
+  clippingFolder.domElement?.setAttribute(
+    'title',
+    'Clipping Planes: Define the visible depth range of the camera\n\n' +
+      'Only objects between the near and far planes are rendered.\n' +
+      '• Near plane: Closest visible distance (too low = Z-fighting)\n' +
+      '• Far plane: Furthest visible distance\n' +
+      '• Dynamic mode auto-adjusts both for optimal precision'
+  );
 
   const nearPlaneControl = clippingFolder
     .add(settings, 'near', 0.0001, 10.0, 0.0001)

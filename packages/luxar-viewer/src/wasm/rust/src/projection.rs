@@ -1,7 +1,7 @@
 //! nD to 3D projection and bounds calculation.
 //!
 //! These functions extract 3D coordinates from nD data and compute bounding boxes.
-//! Optimized for large point clouds.
+//! Optimized for large datasets.
 
 use wasm_bindgen::prelude::*;
 

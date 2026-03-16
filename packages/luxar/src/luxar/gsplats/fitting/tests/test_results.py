@@ -1340,3 +1340,96 @@ class TestVoxelSizeOutputConversion:
         np.testing.assert_allclose(
             result_real.centers, result_vox.centers * vs, rtol=1e-5
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Post-fit quality metrics (PSNR, SSIM, MSE)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_postfit_metrics_present(
+    basic_optimization_results, basic_config, basic_preprocessed_data
+) -> None:
+    """Post-fit quality metrics should be stored in stats dict."""
+    result = finalize_results(
+        basic_optimization_results, basic_config, basic_preprocessed_data
+    )
+    for key in ("psnr_db", "ssim", "mse"):
+        assert key in result.stats, f"Missing post-fit metric: {key}"
+    assert result.stats["psnr_db"] > 0
+    # SSIM ranges from -1 to 1 (can be negative for anti-correlated signals)
+    assert -1.0 <= result.stats["ssim"] <= 1.0
+    assert result.stats["mse"] >= 0.0
+
+
+def test_postfit_metrics_skipped_for_physical_coords() -> None:
+    """Post-fit metrics should be skipped when output is in physical coordinates."""
+    V = np.random.rand(16, 16).astype(np.float32)
+    config = FitConfig(
+        V=V,
+        seeds=None,
+        norm_percentile=0.0,
+        init_sigma_vox=2.0,
+        sigma_min_diag=[0.5, 0.5],
+        sigma_max_diag=[10.0, 10.0],
+        truncate=3.0,
+        n_iters=100,
+        lr=0.01,
+        max_abs_error=0.01,
+        rel_l2_target=None,
+        gradient_clip=None,
+        loss_type="mse",
+        asymmetric_penalty=None,
+        l1_amp=None,
+        l1_diag=None,
+        l1_sharpness=None,
+        scheduler_type="plateau",
+        patience=10,
+        lr_reduction_factor=0.5,
+        early_stop_patience=None,
+        enable_dynamic_ops=False,
+        dynamic_config=DynamicOpsConfig(),
+        dynamic_ops_verbose=False,
+        napari_movie=False,
+        movie_every=1,
+        movie_max_frames=100,
+        device=torch.device("cpu"),
+        verbose=False,
+        output_space="real",
+        voxel_size=np.array([0.5, 0.5]),
+    )
+
+    opt = OptimizationResults(
+        centers=torch.rand(5, 2),
+        Ls=torch.eye(2).unsqueeze(0).expand(5, -1, -1),
+        amps=torch.rand(5),
+        sharpness=torch.full((5,), 2.0),
+        converged_early=False,
+        early_stopped=False,
+        actual_iters=10,
+        best_iteration=5,
+        best_loss=0.01,
+        best_max_abs_error=0.05,
+        best_rel_l2=0.1,
+        movie_frames=None,
+        start_time=0.0,
+        end_time=1.0,
+    )
+
+    ppd = PreprocessedData(
+        d=2,
+        N=5,
+        seed_centers=np.random.rand(5, 2).astype(np.float32),
+        V_normalized=np.random.rand(16, 16).astype(np.float32),
+        V_tensor=torch.rand(16, 16),
+        image_min=0.0,
+        image_max=1.0,
+        intensity_range=1.0,
+        max_abs_error=0.01,
+    )
+
+    result = finalize_results(opt, config, ppd)
+    # Should NOT have PSNR/SSIM/MSE since output is in physical space
+    assert "psnr_db" not in result.stats
+    assert "ssim" not in result.stats
+    assert "mse" not in result.stats

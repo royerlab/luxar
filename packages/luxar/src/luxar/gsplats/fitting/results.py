@@ -4,7 +4,7 @@ Result finalization for Gaussian splat fitting.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 if TYPE_CHECKING:
     import torch
@@ -210,7 +210,8 @@ def _clip_to_bounds(
     scale = np.sqrt(np.minimum(ratio, 1.0))  # (N, d)
 
     # Scale each row of L: Ls_clipped[k,i,j] = Ls[k,i,j] * scale[k,i]
-    return Ls * scale[:, :, np.newaxis]  # (N,d,d) * (N,d,1) -> broadcast
+    clipped: np.ndarray = Ls * scale[:, :, np.newaxis]  # (N,d,d) * (N,d,1) -> broadcast
+    return clipped
 
 
 def finalize_results(
@@ -311,9 +312,17 @@ def finalize_results(
         )
 
     # Clip splats to volume bounds if enabled (before voxel footprint correction)
+    # When downscaling is active, splats are still in downscaled coords here,
+    # so use the downscaled shape for clipping.
     if config.clip_to_bounds:
+        clip_shape = config.V.shape
+        if preprocessed_data.downscale_factors is not None:
+            clip_shape = tuple(
+                -(-s // f)  # ceil division: equivalent to math.ceil(s / f)
+                for s, f in zip(config.V.shape, preprocessed_data.downscale_factors)
+            )
         Ls_np = _clip_to_bounds(
-            centers_np, Ls_np, config.V.shape, config.truncate, sharpness_np
+            centers_np, Ls_np, clip_shape, config.truncate, sharpness_np
         )
         if config.verbose:
             aprint(f"Clipped splats to volume bounds (truncate={config.truncate:.1f})")
@@ -334,6 +343,21 @@ def finalize_results(
 
     # Pack Cholesky factors (without sharpness)
     cholesky_packed = pack_tril(Ls_np)
+
+    # Rescale from downscaled coords to original coords (before voxel_size conversion)
+    if preprocessed_data.downscale_factors is not None:
+        from luxar.gsplats.fitting.downscale import (
+            rescale_centers,
+            rescale_cholesky_packed,
+        )
+
+        factors = preprocessed_data.downscale_factors
+        centers_np = rescale_centers(centers_np, factors)
+        cholesky_packed = rescale_cholesky_packed(cholesky_packed, factors)
+        if config.verbose:
+            aprint(
+                f"Rescaled splats to original coordinates (downscale factors={factors})"
+            )
 
     # Convert to physical coordinates if requested
     if config.output_space == "real" and config.voxel_size is not None:
@@ -369,7 +393,7 @@ def finalize_results(
         }
 
     # Compute statistics reflecting best state (not final state)
-    stats = {
+    stats: dict[str, Any] = {
         "time_seconds": optimization_results.end_time - optimization_results.start_time,
         "iterations": optimization_results.actual_iters,
         "best_iteration": optimization_results.best_iteration,  # Iteration that achieved best quality
@@ -395,10 +419,47 @@ def finalize_results(
     else:
         stats["movie_frames"] = None
 
-    return GSplatData(
+    result = GSplatData(
         centers=centers_np.astype(np.float32),
         amplitudes=amps_np.astype(np.float32),
         cholesky_factors=cholesky_packed.astype(np.float32),
         sharpnesses=sharpness_np.astype(np.float32),
         stats=stats,
     )
+
+    # Compute round-trip quality metrics (PSNR, SSIM, MSE).
+    # Skip when output_space="real" — the GSplatData is in physical coordinates
+    # which don't match config.V.shape (voxel grid).
+    is_voxel_space = not (
+        config.output_space == "real" and config.voxel_size is not None
+    )
+    if is_voxel_space:
+        try:
+            import torch
+
+            from luxar.gsplats.metrics import compute_quality_metrics
+            from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+
+            with torch.no_grad():
+                device = str(preprocessed_data.V_tensor.device)
+                rendered = render_to_volume_tensor(
+                    result,
+                    shape=config.V.shape,
+                    device=device,
+                    truncate=config.truncate,
+                )
+                ref = torch.from_numpy(config.V.astype(np.float32)).to(rendered.device)
+                quality = compute_quality_metrics(rendered, ref)
+            stats["mse"] = quality["mse"]
+            stats["psnr_db"] = quality["psnr_db"]
+            stats["ssim"] = quality["ssim"]
+            if config.verbose:
+                aprint(
+                    f"Quality: PSNR={quality['psnr_db']:.1f} dB, "
+                    f"SSIM={quality['ssim']:.4f}, MSE={quality['mse']:.2e}"
+                )
+        except Exception as exc:
+            if config.verbose:
+                aprint(f"Note: post-fit quality metrics skipped ({exc})")
+
+    return result

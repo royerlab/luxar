@@ -185,7 +185,9 @@ class TestViewerConfig:
             camera=CameraConfig(position=(0, 5, 20)),
             background_color="#1a1a2e",
             tone_mapping="ACES",
-            hdr_multiplier=2.0,
+            exposure=1.0,
+            global_offset=0.0,
+            global_gamma=1.0,
             bloom_enabled=True,
             bloom_strength=0.5,
             bloom_threshold=0.01,
@@ -238,15 +240,21 @@ class TestViewerConfig:
             ViewerConfig(control_type="trackball")
 
     def test_valid_control_types(self) -> None:
-        for ct in ("orbit", "arcball", "fly"):
+        for ct in ("orbit", "fly", "ortho"):
             ViewerConfig(control_type=ct)
 
-    def test_invalid_hdr_multiplier_negative(self) -> None:
-        with pytest.raises(ValueError, match="hdr_multiplier must be >= 0"):
-            ViewerConfig(hdr_multiplier=-1)
+    def test_invalid_exposure_out_of_range(self) -> None:
+        with pytest.raises(ValueError, match="exposure"):
+            ViewerConfig(exposure=-6.0)
+        with pytest.raises(ValueError, match="exposure"):
+            ViewerConfig(exposure=6.0)
 
-    def test_hdr_multiplier_zero(self) -> None:
-        ViewerConfig(hdr_multiplier=0)  # should pass
+    def test_exposure_zero(self) -> None:
+        ViewerConfig(exposure=0.0)  # should pass
+
+    def test_invalid_global_gamma(self) -> None:
+        with pytest.raises(ValueError, match="global_gamma"):
+            ViewerConfig(global_gamma=0.05)
 
     def test_invalid_bloom_threshold(self) -> None:
         with pytest.raises(ValueError, match="bloom_threshold must be between 0 and 1"):
@@ -341,9 +349,9 @@ class TestViewerConfig:
     # -- Serialization tests --
 
     def test_to_dict_sparse(self) -> None:
-        vc = ViewerConfig(bloom_enabled=True, hdr_multiplier=2.0)
+        vc = ViewerConfig(bloom_enabled=True, exposure=1.0)
         d = vc.to_dict()
-        assert d == {"bloom_enabled": True, "hdr_multiplier": 2.0}
+        assert d == {"bloom_enabled": True, "exposure": 1.0}
         assert "camera" not in d
         assert "background_color" not in d
 
@@ -505,7 +513,9 @@ class TestViewerConfig:
                 "bloom_radius": 1.0,
                 "bloom_threshold": 0.01,
                 "bloom_levels": 8,
-                "hdr_multiplier": 2.0,
+                "exposure": 1.0,
+                "global_offset": 0.0,
+                "global_gamma": 1.0,
                 "tone_mapping": "ACES",
                 "control_type": "orbit",
                 "auto_rotate": True,

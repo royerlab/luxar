@@ -35,7 +35,7 @@ interface VideoDemoConfig {
   datasetPath: string;
   filename: string; // Base filename without extension
   zoomClicks?: number;
-  hdrMultiplier?: number;
+  exposure?: number; // Log2 stops
   rotationAxis?: 'y' | 'x' | 'both';
 }
 
@@ -45,7 +45,7 @@ const VIDEO_DEMOS: VideoDemoConfig[] = [
     datasetPath: 'datasets/demos/lorenz.zarr',
     filename: 'lorenz-demo',
     zoomClicks: 3,
-    hdrMultiplier: 2.5,
+    exposure: 1.3, // ~2.5x
     rotationAxis: 'y',
   },
   {
@@ -53,7 +53,7 @@ const VIDEO_DEMOS: VideoDemoConfig[] = [
     datasetPath: 'datasets/demos/spiral_galaxy.zarr',
     filename: 'spiral-galaxy-demo',
     zoomClicks: 4,
-    hdrMultiplier: 3.0,
+    exposure: 1.6, // ~3x
     rotationAxis: 'y',
   },
   {
@@ -61,7 +61,7 @@ const VIDEO_DEMOS: VideoDemoConfig[] = [
     datasetPath: 'datasets/demos/rainbow_sphere.zarr',
     filename: 'rainbow-sphere-demo',
     zoomClicks: 17,
-    hdrMultiplier: 25.0,
+    exposure: 4.6, // ~25x
     rotationAxis: 'y',
   },
 ];
@@ -129,19 +129,19 @@ async function zoom(page: any, clicks: number): Promise<void> {
 }
 
 /**
- * Set HDR multiplier
+ * Set exposure (log2 stops)
  */
-async function setHDRMultiplier(page: any, multiplier: number): Promise<void> {
-  await page.evaluate((mult: number) => {
+async function setExposure(page: any, exposureStops: number): Promise<void> {
+  await page.evaluate((stops: number) => {
     const debug = (window as any).__luxarDebug;
     const sceneManager = debug?.app?.sceneManager;
-    if (sceneManager?.updateHDRMultiplier) {
-      sceneManager.updateHDRMultiplier(mult);
+    if (sceneManager?.updateExposure) {
+      sceneManager.updateExposure(stops);
     }
     if (debug?.renderOnce) {
       debug.renderOnce();
     }
-  }, multiplier);
+  }, exposureStops);
   await page.waitForTimeout(500);
 }
 
@@ -269,10 +269,10 @@ for (const demo of VIDEO_DEMOS) {
     // Hide UI
     await hideUI(page);
 
-    // Set HDR
-    if (demo.hdrMultiplier) {
-      await setHDRMultiplier(page, demo.hdrMultiplier);
-      console.log(`[${demo.name}] HDR set to ${demo.hdrMultiplier}`);
+    // Set exposure
+    if (demo.exposure) {
+      await setExposure(page, demo.exposure);
+      console.log(`[${demo.name}] Exposure set to ${demo.exposure} stops`);
     }
 
     // Wait a moment for everything to settle

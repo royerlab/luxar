@@ -1,10 +1,10 @@
 # Luxar Rendering Package
 
-> Advanced WebGL rendering pipeline using pmndrs/postprocessing for high-quality points visualization
+> Advanced WebGL rendering pipeline using pmndrs/postprocessing for high-quality nD scientific visualization
 
 ## Overview
 
-The Luxar Rendering package provides a modern, high-performance rendering pipeline powered by the pmndrs/postprocessing library. It delivers professional-grade visual effects with optimized performance for large-scale points visualization.
+The Luxar Rendering package provides a modern, high-performance rendering pipeline powered by the pmndrs/postprocessing library. It delivers professional-grade visual effects with optimized performance for large-scale nD scientific visualization.
 
 ### Key Features
 
@@ -21,15 +21,20 @@ The Luxar Rendering package provides a modern, high-performance rendering pipeli
 
 ```
 rendering/
-├── post-processing-manager.ts # Post-processing pipeline using pmndrs
-├── point-material.ts          # Custom points shaders
-├── line-material.ts           # Instanced line rendering with semicircle kernel
-├── gsplat-material.ts         # Gaussian splatting with volumetric rendering
-├── material-manager.ts        # Material creation and caching (points + lines)
-├── robust-vignette-effect.ts  # Custom vignette for additive blending
-├── detector-noise-effect.ts   # Physics-based detector noise
-├── postprocessing-types.ts    # Type utilities and depth mapper
-└── README.md                  # This documentation
+├── post-processing-manager.ts          # Post-processing pipeline using pmndrs
+├── point-material.ts                   # Custom points shaders (with per-node GOG)
+├── line-material.ts                    # Instanced line rendering with semicircle kernel
+├── gsplat-material.ts                  # Gaussian splatting with volumetric rendering
+├── material-manager.ts                 # Material creation and caching (points + lines + gsplats)
+├── luxar-tone-mapping-effect.ts        # Vendored tone mapping with EOG (exposure-offset-gamma)
+├── chromatic-lens-distortion-effect.ts # Physically accurate lens distortion + chromatic aberration
+├── robust-vignette-effect.ts           # Custom vignette for additive blending
+├── detector-noise-effect.ts            # Physics-based detector noise
+├── gpu-buffer-pool.ts                  # Geometry reuse with size-based bucketing and LRU eviction
+├── adaptive-dpr-manager.ts             # Dynamic resolution scaling based on real-time FPS
+├── postprocessing-types.ts             # Type utilities and depth mapper
+├── SPECIFICATIONS.md                   # Technical specification
+└── README.md                           # This documentation
 ```
 
 ---
@@ -151,7 +156,7 @@ Advanced shader material for points rendering with custom vertex and fragment sh
 **Fragment Shader Features:**
 
 - Power-based falloff for smooth edges
-- HDR color support with multiplier
+- Per-node GOG (Gain-Offset-Gamma) color adjustment: `color * intensity + offset; clip; pow(color, 1/gamma)`
 - Per-point sharpness control
 - Optimized with pre-computed uniforms
 
@@ -210,12 +215,12 @@ const pointMaterial = materialManager.getPointMaterial({
 const lineMaterial = materialManager.getLineMaterial({
   blendingMode: 'additive',
   opacity: 1.0,
-  hdrMultiplier: 16.0,
+  intensity: 1.0,
+  offset: 0.0,
 });
 
 // Update global parameters (updates both point and line materials)
 materialManager.updateCameraParams(fov, resolution);
-materialManager.updateHDRMultiplier(16.0);
 ```
 
 #### Material Lifecycle and Memory Management
@@ -232,22 +237,53 @@ points.geometry.dispose(); // Frees GPU buffers
 // Material manager keeps material alive if other objects use it
 ```
 
-**Global Updates**: When camera or HDR settings change, MaterialManager automatically updates ALL registered materials - no manual scene traversal needed.
+**Global Updates**: When camera settings change, MaterialManager automatically updates ALL registered materials - no manual scene traversal needed. Global exposure/offset/gamma are handled by the LuxarToneMappingEffect post-processing pass, not per-material.
 
 ```typescript
 // Updates all materials in the scene automatically
 materialManager.updateCameraParams(newFov, newResolution);
-materialManager.updateHDRMultiplier(newIntensity);
 ```
 
 **Memory Leak Prevention**: Always dispose geometries and points when done. The material system handles cleanup automatically.
 
 **Key Points**:
 
-- Materials are cached by properties (opacity, gamma, blending mode)
+- Materials are cached by properties (opacity, gamma, intensity, offset, blending mode)
 - Global uniform updates affect all materials simultaneously
 - Disposal is automatic - no manual material cleanup needed
 - Thread-safe caching prevents duplicate material creation
+
+### 6. GPU Buffer Pool
+
+The `GPUBufferPool` manages geometry reuse for Points, Lines, and GSplats, eliminating per-frame GPU allocations.
+
+**Key Features:**
+
+- Size-based bucketing: reuses geometries when size AND type match (0ms GPU allocation)
+- In-place attribute updates via `TypedArray.set()`
+- LRU eviction after 300 frames of non-use
+- Multi-type support: Points (Float32), Lines (Float32 + Uint8), GSplats (Float32)
+
+### 7. Adaptive DPR Manager
+
+The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-time FPS, trading resolution for frame rate when needed.
+
+**Algorithm:**
+
+- Samples FPS using a 1-second sliding window, evaluated every 500ms
+- Scales DPR down when FPS drops below `minFPS`
+- Scales DPR up when FPS exceeds `maxFPS` for `hysteresisSeconds`
+- DPR clamped between `minDPR` and `window.devicePixelRatio`
+
+### 8. Luxar Tone Mapping Effect
+
+Vendored from pmndrs/postprocessing with injected Exposure-Offset-Gamma (EOG) uniforms applied in a single shader pass before tone mapping. Zero extra bandwidth cost.
+
+**EOG Uniforms:**
+
+- `exposure`: Log2 stops (`color * 2^exposure`)
+- `global_offset`: Additive shift (`color + offset`)
+- `global_gamma`: Power curve (`pow(color, 1/gamma)`)
 
 ---
 
@@ -269,11 +305,11 @@ Professional bloom effect with HDR support:
 
 Multiple tone mapping operators:
 
-- ACES Filmic (default) - Industry standard
+- Neutral (default) - Minimal color shift, preserves hue fidelity for scientific data
+- ACES Filmic - Industry standard cinematic look (used in cinematic mode)
 - AgX - Modern alternative
 - Reinhard - Classic operator
 - Linear - No tone mapping
-- Neutral - Balanced look
 
 #### Ambient Occlusion (SSAO)
 
@@ -624,7 +660,7 @@ function animate() {
 **Problem: Colors look wrong**
 
 - Verify tone mapping operator: try 'AgX' or 'ACES Filmic' instead of 'Reinhard'
-- Check HDR multiplier value (typical range: 8-32)
+- Check exposure value in HDR controls
 - Ensure proper color space: `renderer.outputColorSpace = THREE.SRGBColorSpace`
 - Verify bloom threshold isn't too low (washing out colors)
 - Check gamma correction in materials (should be 1.0 for linear workflow)

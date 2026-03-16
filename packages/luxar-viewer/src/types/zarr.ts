@@ -6,6 +6,39 @@
  */
 
 /**
+ * Per-dimension affine transform for continuous/discrete dimensions.
+ * Applied as: effective_value = scale * original_value + offset
+ */
+export interface NdTransformAffine {
+  /** Multiplicative factor (default 1.0) */
+  scale?: number;
+  /** Additive shift (default 0.0) */
+  offset?: number;
+}
+
+/**
+ * Per-dimension permutation for categorical dimensions.
+ * Maps original category index to new index.
+ */
+export interface NdTransformPermutation {
+  /** Permutation array: permutation[old_index] = new_index */
+  permutation: number[];
+}
+
+/** Single dimension transform entry (affine or permutation) */
+export type NdTransformEntry = NdTransformAffine | NdTransformPermutation;
+
+/** nD transform map: dimension name → per-dim transform */
+export type NdTransformMap = Record<string, NdTransformEntry>;
+
+/**
+ * Type guard to check if an nd_transform entry is a permutation
+ */
+export function isPermutation(entry: NdTransformEntry): entry is NdTransformPermutation {
+  return 'permutation' in entry;
+}
+
+/**
  * nD bounding box (min/max per dimension)
  */
 export interface PositionBounds {
@@ -62,7 +95,9 @@ export interface ZarrViewerConfig {
 
   // Rendering pipeline
   tone_mapping?: string;
-  hdr_multiplier?: number;
+  exposure?: number;
+  global_offset?: number;
+  global_gamma?: number;
 
   // Bloom
   bloom_enabled?: boolean;
@@ -140,6 +175,8 @@ export interface ZarrViewerConfig {
     show_rendering_controls?: boolean;
     show_performance_monitor?: boolean;
     show_dimensions?: boolean;
+    show_scale_bar?: boolean;
+    show_layers?: boolean;
   };
 
   // Theme
@@ -196,9 +233,14 @@ export interface ZarrNodeAttrs {
   /** Transformation matrix (16 elements for 4x4 matrix) */
   transform?: number[];
 
+  /** Per-dimension transforms for non-displayed dimensions */
+  nd_transform?: NdTransformMap;
+
   /** Rendering attributes */
   opacity?: number;
   gamma?: number;
+  intensity?: number;
+  offset?: number;
   blending_mode?: string;
   point_size?: number;
   depth_test?: boolean;
@@ -255,6 +297,19 @@ export function hasTransform(
 ): attrs is ZarrNodeAttrs & { transform: number[] } {
   return (
     attrs.transform !== undefined && Array.isArray(attrs.transform) && attrs.transform.length === 16
+  );
+}
+
+/**
+ * Type guard to check if attributes contain an nD transform
+ */
+export function hasNdTransform(
+  attrs: ZarrNodeAttrs
+): attrs is ZarrNodeAttrs & { nd_transform: NdTransformMap } {
+  return (
+    attrs.nd_transform !== undefined &&
+    typeof attrs.nd_transform === 'object' &&
+    !Array.isArray(attrs.nd_transform)
   );
 }
 

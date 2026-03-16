@@ -7,7 +7,7 @@
 
 The `luxar-viewer.types` package provides the foundational type system for nD data visualization in the Luxar client. It defines type-safe interfaces for representing high-dimensional datasets, managing dimension navigation state, and handling coordinate system transformations.
 
-**Core Responsibility**: Provide precise, well-documented types that capture the mathematical and conceptual structure of high-dimensional point cloud visualization while ensuring compile-time safety and runtime reliability.
+**Core Responsibility**: Provide precise, well-documented types that capture the mathematical and conceptual structure of high-dimensional scientific visualization while ensuring compile-time safety and runtime reliability.
 
 **Related Specifications**:
 

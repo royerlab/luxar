@@ -125,7 +125,7 @@ Load all zarr chunks for a visible node, then use `chunk_bounds` client-side to 
 
 This bug was discovered while testing the `demo_gsplats_4d_zebrafish_timelapse.py` demo, which creates a 4D scene with 64 gsplats nodes (one per timepoint of a zebrafish embryo confocal recording). The same bug would affect any scene with gsplats nodes that have more spatial partitions than zarr chunks — which happens whenever the splat count is small enough to fit in a single zarr chunk but the Morton/Hilbert ordering creates multiple partitions.
 
-The existing `demo_gsplats_4d_cells3d_multichannel.py` works because it has only 2 channel nodes with ~15,000 splats each — likely producing chunk counts that match partition counts. The zebrafish demo has 64 nodes with 1,200–7,000 splats each, which consistently triggers the mismatch.
+The existing `demo_gsplats_3d_cells3d_multichannel.py` works because it has only 2 channel nodes with ~15,000 splats each — likely producing chunk counts that match partition counts. The zebrafish demo has 64 nodes with 1,200–7,000 splats each, which consistently triggers the mismatch.
 
 ## Resolution
 

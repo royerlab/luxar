@@ -4,7 +4,7 @@ Input validation and configuration preparation for Gaussian splat fitting.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 import numpy as np
 
@@ -23,6 +23,7 @@ def prepare_fit_config(
     V: np.ndarray,
     seeds: Optional[np.ndarray | int | float] = None,
     norm_percentile: float = 0.0,
+    downscale: Optional[int | Sequence[int]] = None,
     init_sigma_vox: Optional[float] = None,
     n_iters: int = 1000,
     lr: float = 0.01,
@@ -56,7 +57,7 @@ def prepare_fit_config(
     clip_to_bounds: bool = False,
     voxel_size: Optional[Sequence[float] | float] = None,
     output_space: str = "real",
-    **seed_kwargs,
+    **seed_kwargs: Any,
 ) -> FitConfig:
     """
     Validate input parameters and prepare configuration for fitting.
@@ -97,6 +98,11 @@ def prepare_fit_config(
         raise ValueError("Input image V cannot be empty")
     if V.ndim == 0:
         raise ValueError("Input image V must have at least 1 dimension")
+
+    # Normalize and validate downscale parameter
+    from luxar.gsplats.fitting.downscale import normalize_downscale
+
+    downscale_normalized = normalize_downscale(downscale, V.ndim)
 
     # Validate seeds if provided
     if seeds is not None:
@@ -319,4 +325,6 @@ def prepare_fit_config(
         # Anisotropic voxel spacing
         voxel_size=voxel_size_arr,
         output_space=output_space,
+        # Volume downscaling
+        downscale=downscale_normalized,
     )

@@ -66,9 +66,8 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       const { array, attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points/colors');
 
       // Verify metadata indicates broadcasting (nested under "encoding")
-      // NOTE: n_elements stores the source array size, not the target count
-      // The decoder uses nPoints parameter for the actual expansion
-      expect(attrs.encoding?.n_elements).toBe(1);
+      // n_elements stores the target count (how many times to replicate)
+      expect(attrs.encoding?.n_elements).toBe(1000);
       expect(attrs.encoding?.name).toBe('broadcasted');
       expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
 
@@ -99,9 +98,8 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       const { array, attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points/radii');
 
       // Verify metadata (nested under "encoding")
-      // NOTE: n_elements stores the source array size, not the target count
-      // The decoder uses nPoints parameter for the actual expansion
-      expect(attrs.encoding?.n_elements).toBe(1);
+      // n_elements stores the target count (how many times to replicate)
+      expect(attrs.encoding?.n_elements).toBe(1000);
       expect(attrs.encoding?.name).toBe('broadcasted');
       expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
 
@@ -120,6 +118,15 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
 
       // Verify expected uniform radius: 0.5 (from generate_test_data.py)
       expect(firstRadius).toBeCloseTo(0.5, 5);
+    });
+
+    it('should return empty array for broadcasted data when expectedElements=0', async () => {
+      const { array, attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points/radii');
+
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const decoded = await decoder.decode(array, attrs, 0);
+
+      expect(decoded.length).toBe(0);
     });
 
     it('should detect non-broadcasted positions as not encoded', async () => {
@@ -326,6 +333,27 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(decoded2).toBe(cachedArray);
       expect(decoded2.length).toBe(decoded1.length);
     });
+
+    it('should resolve array_ref when encoding name is missing', async () => {
+      const {
+        array: array2,
+        attrs: attrs2,
+        rootLoc,
+      } = await loadArrayWithAttrs('test_array_refs.zarr', 'points2/colors');
+
+      const attrsNoName: ArrayMetadata = {
+        ...attrs2,
+        encoding: {
+          ...attrs2.encoding,
+          name: undefined,
+        },
+      };
+
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const decoded = await decoder.decode(array2, attrsNoName, 500, rootLoc);
+
+      expect(decoded.length).toBe(500 * 3);
+    });
   });
 
   describe('Mixed Encoding Modes', () => {
@@ -482,6 +510,20 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       // Should throw error when trying to decode non-existent ref
       await expect(async () => await decoder.decode(null as any, fakeAttrs, 100)).rejects.toThrow();
     });
+
+    it('should throw on out-of-range LUT indices', () => {
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+
+      const lutMetadata = {
+        lut: [0, 1],
+        lutMode: 'scalar',
+        k: 1,
+      };
+
+      expect(() =>
+        decoder.decodeLUTIndices(new Uint8Array([0, 2]), lutMetadata)
+      ).toThrow(/out of range/i);
+    });
   });
 
   describe('Performance and Edge Cases', () => {
@@ -550,7 +592,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
 
       const { array, attrs } = await loadArrayWithAttrs(
         'test_sharpness_range.zarr',
-        'sharpness_test/sharpness'
+        'sharpness_test/sharpnesses'
       );
 
       // Verify metadata indicates uint8 quantization with min/max [0, 31]
@@ -982,7 +1024,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       );
       const { attrs: boundedAttrs } = await loadArrayWithAttrs(
         'test_sharpness_range.zarr',
-        'sharpness_test/sharpness'
+        'sharpness_test/sharpnesses'
       );
       const { attrs: broadcastAttrs } = await loadArrayWithAttrs(
         'test_broadcasting.zarr',
@@ -1010,7 +1052,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       );
       const { attrs: boundedAttrs } = await loadArrayWithAttrs(
         'test_sharpness_range.zarr',
-        'sharpness_test/sharpness'
+        'sharpness_test/sharpnesses'
       );
 
       const rgbMeta = ArrayDecoder.getQuantizationMetadata(rgbAttrs);
@@ -1107,6 +1149,11 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
           hash: 'abc123',
         },
       };
+      const arrayRefNoHash: ArrayMetadata = {
+        encoding: {
+          target: '/SharedNode/positions',
+        },
+      };
 
       const quantizedAttrs: ArrayMetadata = {
         encoding: {
@@ -1116,6 +1163,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
 
       // Array ref should be detected
       expect(ArrayDecoder.isArrayRef(arrayRefAttrs)).toBe(true);
+      expect(ArrayDecoder.isArrayRef(arrayRefNoHash)).toBe(true);
 
       // Non array_ref should NOT be detected
       expect(ArrayDecoder.isArrayRef(quantizedAttrs)).toBe(false);

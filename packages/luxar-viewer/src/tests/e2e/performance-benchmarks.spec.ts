@@ -13,7 +13,7 @@
 import { test, expect } from '@playwright/test';
 import { waitForLuxarReady, getLuxarState } from './helpers';
 
-// Dataset paths (served from Python HTTP server on port 8001)
+// Dataset paths (served from Python HTTP server on port 9000)
 const DATASETS = {
   nav: 'http://localhost:9000/datasets/examples/dimension_navigation_example.zarr',
   grid5D: 'http://localhost:9000/datasets/examples/dense_grid_5d_example.zarr',

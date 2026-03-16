@@ -519,8 +519,14 @@ describe('Data Loading Integration', () => {
 
       await Promise.all(updates);
 
-      // All should complete without error
-      expect(true).toBe(true);
+      // Verify all three updateView calls were forwarded to the loader
+      const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
+      const mockManager = SceneLoaderManager.getInstance() as any;
+      const mockLoader = mockManager.getDefaultLoader() as any;
+      expect(mockLoader.updateView).toHaveBeenCalledTimes(3);
+      expect(mockLoader.updateView).toHaveBeenCalledWith({ displayDims: [0, 1, 2] });
+      expect(mockLoader.updateView).toHaveBeenCalledWith({ slicePosition: [0, 0, 0, 5] });
+      expect(mockLoader.updateView).toHaveBeenCalledWith({ tolerance: [0.1, 0.1, 0.1, 0.2] });
     });
   });
 

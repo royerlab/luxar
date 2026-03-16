@@ -72,7 +72,7 @@ def render_gaussians_numpy(
 
     # Render using the PyTorch function
     with torch.no_grad():
-        result = render_gaussians(
+        rendered = render_gaussians(
             shape,
             centers_torch,
             ls_torch,
@@ -82,7 +82,7 @@ def render_gaussians_numpy(
             chunk_size=chunk_size,
         )
 
-    return result.cpu().numpy()
+    return rendered.cpu().numpy()
 
 
 def render_gaussians_pytorch(

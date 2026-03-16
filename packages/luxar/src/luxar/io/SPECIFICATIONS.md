@@ -5,7 +5,7 @@
 
 ## Purpose
 
-The `io` package implements progressive writing to Zarr stores and spatial indexing for efficient nD point cloud queries. It enables handling of arbitrarily large datasets by writing data immediately without keeping it in memory.
+The `io` package implements progressive writing to Zarr stores and spatial indexing for efficient nD spatial queries. It enables handling of arbitrarily large datasets by writing data immediately without keeping it in memory.
 
 **Related Specifications**:
 - `luxar.core` - Data structures and scene graph (see `core/SPECIFICATIONS.md`)
@@ -338,7 +338,7 @@ sort_indices, metadata = sort_splats_spatial(
 
 **Concrete Example: 5D Dataset (X, Y, Z, Time, Channel)**
 
-Consider a 5D point cloud with dimensions:
+Consider a 5D dataset with dimensions:
 ```python
 Dimensions:
 - X (dim 0): displayed, spatial
@@ -805,6 +805,8 @@ scene.get_lines(name: str) -> LinesData
         'max_radius': float,     # (if radii present, else not in attrs)
         'opacity': float,        # (default 1.0)
         'gamma': float,          # (default 1.0)
+        'intensity': float,      # (default 1.0, per-node color multiplier)
+        'offset': float,         # (default 0.0, per-node color offset)
         'blending_mode': str,    # (default 'additive')
         'transform': ndarray,    # (4, 4) if present, else None)
         'extend_to_all': List[str],  # (if present, else not in attrs)
@@ -868,14 +870,15 @@ scene.get_lines(name: str) -> LinesData
     'widths': ndarray,       # (N,) float32
     'colors': ndarray,       # (N, 3) float32 (if present)
     'sharpness': ndarray,    # (N,) float32 (if present)
-    'indices': ndarray,      # (M,) uint32 (if indexed line type)
+    'segments': ndarray,     # (S, 2) uint32 (connectivity pairs)
+    'indices': ndarray,      # Alias for segments (legacy compatibility)
 
     # Metadata
     'metadata': {
         'n_vertices': int,
         'n_segments': int,
         'ndim': int,
-        'line_type': str,  # 'segments', 'polyline', 'loop', 'indexed'
+        'original_line_type': str,  # 'segments', 'polyline', 'loop', 'indexed'
         'has_colors': bool,
         'has_sharpness': bool,
         'max_width': float,
@@ -884,6 +887,8 @@ scene.get_lines(name: str) -> LinesData
     }
 }
 ```
+Legacy note: if an older file stores connectivity as a flat `indices` array,
+the reader reshapes it into `(S, 2)` `segments` when possible.
 
 ### Usage Examples
 
@@ -974,8 +979,9 @@ assert len(data['chunk_bounds']) > 0
 - `chunk_size`: int - elements per chunk
 - `max_radius`: Maximum radius
 - `extend_to_all`: Optional list of dimension names for visibility extension
-- `opacity`, `gamma`, `blending_mode`: Rendering attributes
+- `opacity`, `gamma`, `intensity`, `offset`, `blending_mode`: Rendering attributes
 - `transform`: Optional 16-element list (column-major)
+- `nd_transform`: Optional dict of per-dimension transforms for non-displayed dimensions (see `ND_TRANSFORMS_SPEC.md`)
 
 **GSplats Group**:
 - `centers`: (N, D) float32 array, compound-sorted

@@ -311,7 +311,7 @@ class TestSceneMethods:
 
             # Verify metadata dict has all expected keys
             assert "n_points" in points.metadata, "n_points missing from metadata"
-            assert "dims" in points.metadata, "dims missing from metadata"
+            assert "ndim" in points.metadata, "ndim missing from metadata"
             assert "has_colors" in points.metadata, "has_colors missing"
             assert "has_radii" in points.metadata, "has_radii missing"
             assert "has_sharpness" in points.metadata, "has_sharpness missing"
@@ -319,7 +319,7 @@ class TestSceneMethods:
 
             # Verify values
             assert points.n_points == n_points
-            assert points.metadata["dims"] == 3
+            assert points.metadata["ndim"] == 3
             assert 0.14 < points.metadata["max_radius"] < 0.16, "max_radius incorrect"
 
     def test_points_metadata_without_optional_attributes(self, tmp_path) -> None:
@@ -335,7 +335,7 @@ class TestSceneMethods:
 
             # Should have basic metadata
             assert points.n_points == 50
-            assert points.metadata["dims"] == 3
+            assert points.metadata["ndim"] == 3
 
             # Colors and sharpness are not provided
             assert not points.has_colors

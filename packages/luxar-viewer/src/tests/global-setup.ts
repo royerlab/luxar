@@ -24,6 +24,7 @@ const EXPECTED_FIXTURES = [
   'test_4d_scalar_lut.zarr',
   'test_uint16_quantization.zarr',
   'test_sharpness_range.zarr',
+  'test_nd_transforms.zarr',
 ];
 
 // Use import.meta.url for reliable path resolution in vitest global setup

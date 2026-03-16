@@ -9,7 +9,6 @@ Usage:
     python benchmark_bisect_runner.py <worktree_path> <commit_sha> <output_json>
 """
 
-import importlib
 import json
 import sys
 import time

@@ -19,6 +19,14 @@ GAMMA_MIN: Final[float] = 0.1  # Symmetric: gamma and 1/gamma have equal range
 GAMMA_MAX: Final[float] = 10.0  # Symmetric: gamma and 1/gamma have equal range
 DEFAULT_GAMMA: Final[float] = 1.0
 
+INTENSITY_MIN: Final[float] = 0.0
+INTENSITY_MAX: Final[float] = 100.0
+DEFAULT_INTENSITY: Final[float] = 1.0
+
+OFFSET_MIN: Final[float] = -10.0
+OFFSET_MAX: Final[float] = 10.0
+DEFAULT_OFFSET: Final[float] = 0.0
+
 # Blending modes
 DEFAULT_BLENDING_MODE: Final[str] = "additive"
 
