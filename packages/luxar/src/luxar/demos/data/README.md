@@ -16,6 +16,9 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 | `gsplats_cells3d/` | 4D cells3d multi-channel | 2 channel files (~1.0 MB total) |
 | `gsplats_kidney/` | 4D kidney multi-channel | 3 channel files (~4.9 MB total) |
 | `gsplats_zebrafish/` | 4D zebrafish timelapse | 1 bundle zip with 64 frames (~11 MB) |
+| `gsplats_acto3d_heart/` | 3D mouse embryo heart (Acto3D) | 3 channel files (~3.5 MB total) |
+| `gsplats_opencell_map4/` | 3D OpenCell MAP4 (cytoskeleton) | 2 channel files (~4.0 MB total) |
+| `gsplats_cmu1_pathology/` | 2D CMU-1 pathology (H&E) | 3 channel files (pending) |
 | `gsplats_celegans/` | 4D C. elegans tracking | 1 bundle zip with 400 timepoints (~64 MB) |
 
 ### Other Data Files (top level)

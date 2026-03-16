@@ -79,8 +79,8 @@ export class MaterialManager {
     // This prevents floating-point precision issues while still grouping similar values
     // Clamp values to valid ranges to handle edge cases gracefully
     const opacityBucket = Math.round(Math.max(0, Math.min(1, props.opacity)) * 100); // 0-100 range
-    const gammaBucket = Math.round(Math.max(0, Math.min(10, props.gamma)) * 10); // 0-100 range
-    const intensityBucket = Math.round(Math.max(0, Math.min(100, props.intensity)) * 10); // 0-1000 range
+    const gammaBucket = Math.round(Math.max(0, Math.min(10, props.gamma)) * 100); // 0-1000 range
+    const intensityBucket = Math.round(Math.max(0, Math.min(100, props.intensity)) * 100); // 0-10000 range
     const offsetBucket = Math.round((Math.max(-10, Math.min(10, props.offset)) + 10) * 10); // 0-200 range
     const radiusBucket = props.radiusScale
       ? Math.round(Math.max(0, props.radiusScale) * 1000)
@@ -150,8 +150,8 @@ export class MaterialManager {
   getLineMaterial(props: LineMaterialProperties): LineMaterial {
     // Create cache key using integer bucketing for predictable caching behavior
     const opacityBucket = Math.round(Math.max(0, Math.min(1, props.opacity)) * 100);
-    const gammaBucket = Math.round(Math.max(0, Math.min(10, props.gamma)) * 10); // 0-100 range
-    const intensityBucket = Math.round(Math.max(0, Math.min(100, props.intensity)) * 10);
+    const gammaBucket = Math.round(Math.max(0, Math.min(10, props.gamma)) * 100); // 0-1000 range
+    const intensityBucket = Math.round(Math.max(0, Math.min(100, props.intensity)) * 100);
     const offsetBucket = Math.round((Math.max(-10, Math.min(10, props.offset)) + 10) * 10);
 
     const key = `line_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}`;
@@ -190,8 +190,8 @@ export class MaterialManager {
   getGSplatMaterial(props: GSplatMaterialProperties): GSplatMaterial {
     // Create cache key using integer bucketing for predictable caching behavior
     const opacityBucket = Math.round(Math.max(0, Math.min(1, props.opacity)) * 100);
-    const gammaBucket = Math.round(Math.max(0, Math.min(10, props.gamma)) * 10); // 0-100 range
-    const intensityBucket = Math.round(Math.max(0, Math.min(100, props.intensity)) * 10);
+    const gammaBucket = Math.round(Math.max(0, Math.min(10, props.gamma)) * 100); // 0-1000 range
+    const intensityBucket = Math.round(Math.max(0, Math.min(100, props.intensity)) * 100);
     const offsetBucket = Math.round((Math.max(-10, Math.min(10, props.offset)) + 10) * 10);
     const truncBucket = Math.round((props.truncationRadius ?? 3.0) * 10);
 
@@ -349,7 +349,7 @@ export class MaterialManager {
     gsplatMaterials: number;
     totalRegistered: number;
     keys: string[];
-    } {
+  } {
     return {
       pointMaterials: this.pointMaterialCache.size,
       lineMaterials: this.lineMaterialCache.size,

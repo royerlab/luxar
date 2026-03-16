@@ -230,9 +230,7 @@ class LuxarScene:
                 # Check if arrays exist
                 info["has_colors"] = "colors" in child
                 info["has_radii"] = "radii" in child
-                info["has_sharpness"] = (
-                    "sharpnesses" in child or "sharpness" in child
-                )
+                info["has_sharpness"] = "sharpnesses" in child or "sharpness" in child
             elif node_type == "gsplats":
                 info["n_splats"] = child.attrs.get("n_splats", 0)
                 info["ndim"] = child.attrs.get("ndim", 3)
@@ -344,7 +342,8 @@ class LuxarScene:
 
         # Decode arrays
         positions = self._decode_array(group, "positions")
-        assert positions is not None, "Points node missing required 'positions' array"
+        if positions is None:
+            raise ValueError(f"Points node '{name}' missing required 'positions' array")
         colors = self._decode_array(group, "colors")
         radii = self._decode_array(group, "radii")
         # Try plural name first (current format), fall back to singular (legacy)
@@ -397,11 +396,18 @@ class LuxarScene:
 
         # Decode arrays
         centers = self._decode_array(group, "centers")
-        assert centers is not None, "GSplats node missing required 'centers' array"
+        if centers is None:
+            raise ValueError(f"GSplats node '{name}' missing required 'centers' array")
         amplitudes = self._decode_array(group, "amplitudes")
-        assert amplitudes is not None, "GSplats node missing required 'amplitudes' array"
+        if amplitudes is None:
+            raise ValueError(
+                f"GSplats node '{name}' missing required 'amplitudes' array"
+            )
         cholesky_factors = self._decode_array(group, "cholesky_factors")
-        assert cholesky_factors is not None, "GSplats node missing required 'cholesky_factors' array"
+        if cholesky_factors is None:
+            raise ValueError(
+                f"GSplats node '{name}' missing required 'cholesky_factors' array"
+            )
         colors = self._decode_array(group, "colors")
         # Try plural name first (current format), fall back to singular (legacy)
         sharpness = self._decode_array(group, "sharpnesses")
@@ -454,9 +460,11 @@ class LuxarScene:
 
         # Decode arrays
         vertices = self._decode_array(group, "vertices")
-        assert vertices is not None, "Lines node missing required 'vertices' array"
+        if vertices is None:
+            raise ValueError(f"Lines node '{name}' missing required 'vertices' array")
         widths = self._decode_array(group, "widths")
-        assert widths is not None, "Lines node missing required 'widths' array"
+        if widths is None:
+            raise ValueError(f"Lines node '{name}' missing required 'widths' array")
         colors = self._decode_array(group, "colors")
         # Try plural name first (current format), fall back to singular (legacy)
         sharpness = self._decode_array(group, "sharpnesses")

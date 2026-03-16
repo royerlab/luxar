@@ -1690,6 +1690,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     ortho.lookAt(focusTarget);
     ortho.updateMatrixWorld();
 
+    // Old camera not disposed — THREE.js cameras hold no GPU resources
     this.camera = ortho;
     this.lastOrthoZoom = ortho.zoom;
     this.postProcessing.setCamera(ortho);
@@ -1718,6 +1719,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     persp.up.copy(this.camera.up);
     persp.updateMatrixWorld();
 
+    // Old camera not disposed — THREE.js cameras hold no GPU resources
     this.camera = persp;
     this.postProcessing.setCamera(persp);
   }

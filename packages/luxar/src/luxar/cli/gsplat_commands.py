@@ -908,7 +908,11 @@ def _parse_bbox(s: str, ndim: int) -> list[tuple[float, float]]:
         raise typer.BadParameter(
             f"bbox needs {2 * ndim} values for {ndim}D data, got {len(parts)}"
         )
-    return [(parts[2 * i], parts[2 * i + 1]) for i in range(ndim)]
+    pairs = [(parts[2 * i], parts[2 * i + 1]) for i in range(ndim)]
+    for i, (lo, hi) in enumerate(pairs):
+        if lo > hi:
+            raise typer.BadParameter(f"bbox dimension {i} has min ({lo}) > max ({hi})")
+    return pairs
 
 
 @app_gsplat.command("filter")
@@ -1212,7 +1216,9 @@ def split_dataset(
                     aprint(f"Mode: {parts} equal parts")
                     split_parts = data.split(parts)
                 else:
-                    assert indices is not None  # ensured by mutual exclusivity check above
+                    assert (
+                        indices is not None
+                    )  # ensured by mutual exclusivity check above
                     idx_list = [int(x.strip()) for x in indices.split(",")]
                     aprint(f"Mode: split at indices {idx_list}")
                     split_parts = data.split(idx_list)
@@ -1535,7 +1541,9 @@ def fit_volume(
             parsed_downscale = None
             if downscale is not None:
                 ds_parts = [int(x.strip()) for x in downscale.split(",")]
-                parsed_downscale = ds_parts[0] if len(ds_parts) == 1 else tuple(ds_parts)
+                parsed_downscale = (
+                    ds_parts[0] if len(ds_parts) == 1 else tuple(ds_parts)
+                )
 
             # 3. Build merged config
             cli_overrides = {

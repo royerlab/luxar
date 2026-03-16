@@ -67,6 +67,9 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   // Speed boost state
   private speedBoost: boolean = false;
 
+  // Track whether keyboard listeners are currently attached
+  private keyListenersAttached = false;
+
   // Velocity vectors for physics
   private velocity = new THREE.Vector3(0, 0, 0); // Translational velocity in world space
   private angularVelocity = new THREE.Vector3(0, 0, 0); // Angular velocity in world space (rad/s)
@@ -130,6 +133,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     if (!this.externalInputManagement) {
       window.addEventListener('keydown', this.boundHandlers.keydown);
       window.addEventListener('keyup', this.boundHandlers.keyup);
+      this.keyListenersAttached = true;
     }
 
     // Mouse events are always handled internally
@@ -144,9 +148,12 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
    * Remove event listeners
    */
   private removeEventListeners(): void {
-    // Remove keyboard listeners
-    window.removeEventListener('keydown', this.boundHandlers.keydown);
-    window.removeEventListener('keyup', this.boundHandlers.keyup);
+    // Remove keyboard listeners (only if currently attached)
+    if (this.keyListenersAttached) {
+      window.removeEventListener('keydown', this.boundHandlers.keydown);
+      window.removeEventListener('keyup', this.boundHandlers.keyup);
+      this.keyListenersAttached = false;
+    }
 
     // Remove mouse listeners
     this.domElement.removeEventListener('mousedown', this.boundHandlers.mousedown);
@@ -167,12 +174,18 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
       if (external) {
         // Remove only keyboard event listeners
-        window.removeEventListener('keydown', this.boundHandlers.keydown);
-        window.removeEventListener('keyup', this.boundHandlers.keyup);
+        if (this.keyListenersAttached) {
+          window.removeEventListener('keydown', this.boundHandlers.keydown);
+          window.removeEventListener('keyup', this.boundHandlers.keyup);
+          this.keyListenersAttached = false;
+        }
       } else {
         // Add keyboard event listeners back
-        window.addEventListener('keydown', this.boundHandlers.keydown);
-        window.addEventListener('keyup', this.boundHandlers.keyup);
+        if (!this.keyListenersAttached) {
+          window.addEventListener('keydown', this.boundHandlers.keydown);
+          window.addEventListener('keyup', this.boundHandlers.keyup);
+          this.keyListenersAttached = true;
+        }
       }
     }
   }

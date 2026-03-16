@@ -17,7 +17,7 @@ import {
   waitForSpatialQuery,
 } from './helpers';
 
-// Test datasets (served from Python HTTP server on port 8001)
+// Test datasets (served from Python HTTP server on port 9000)
 const DATASETS = {
   nav4D: 'http://localhost:9000/datasets/examples/dimension_navigation_example.zarr',
   sliders5D: 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.zarr',

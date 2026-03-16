@@ -290,19 +290,19 @@ def load_volume(
 
     elif suffix == ".npz":
         aprint(f"Loading NumPy archive: {path.name}")
-        npz = np.load(str(path))
-        keys = list(npz.keys())
-        if array_key:
-            if array_key not in keys:
-                raise ValueError(
-                    f"Key '{array_key}' not found in {path.name}. "
-                    f"Available keys: {keys}"
-                )
-            volume = npz[array_key]
-        else:
-            volume = npz[keys[0]]
-            if len(keys) > 1:
-                aprint(f"  Using first array '{keys[0]}' (available: {keys})")
+        with np.load(str(path)) as npz:
+            keys = list(npz.keys())
+            if array_key:
+                if array_key not in keys:
+                    raise ValueError(
+                        f"Key '{array_key}' not found in {path.name}. "
+                        f"Available keys: {keys}"
+                    )
+                volume = np.array(npz[array_key])
+            else:
+                volume = np.array(npz[keys[0]])
+                if len(keys) > 1:
+                    aprint(f"  Using first array '{keys[0]}' (available: {keys})")
 
     elif suffix == ".zarr":
         volume = _load_zarr_volume(path, channel, timepoint, array_key)

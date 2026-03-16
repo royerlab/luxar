@@ -176,28 +176,60 @@ def _download_from_google_drive(file_id: str, output_path: Path) -> Path:
         aprint(f"File ID: {file_id}")
         aprint(f"Expected size: ~{EXPECTED_FILE_SIZE / (1024**3):.2f} GB")
 
-        # First request — may get a confirmation page for large files
-        response = session.get(url, stream=True, timeout=60)
+        # Strategy 1: Direct download with confirm=t (works for many large files)
+        response = session.get(url, params={"confirm": "t"}, stream=True, timeout=60)
 
-        # Check for virus-scan confirmation token
-        confirm_token = None
-        for key, value in response.cookies.items():
-            if key.startswith("download_warning"):
-                confirm_token = value
-                break
-
-        if confirm_token:
-            aprint("Handling virus-scan confirmation...")
-            response = session.get(
-                url, params={"confirm": confirm_token}, stream=True, timeout=60
-            )
-
-        # Also try the confirm=t approach (newer Google Drive)
+        # Strategy 2: Check cookies for download_warning token
         if response.headers.get("content-type", "").startswith("text/html"):
-            aprint("Retrying with confirm=t...")
-            response = session.get(
-                url, params={"confirm": "t"}, stream=True, timeout=60
+            aprint("Trying cookie-based confirmation...")
+            confirm_token = None
+            for key, value in response.cookies.items():
+                if key.startswith("download_warning"):
+                    confirm_token = value
+                    break
+            if confirm_token:
+                response = session.get(
+                    url,
+                    params={"confirm": confirm_token},
+                    stream=True,
+                    timeout=60,
+                )
+
+        # Strategy 3: Parse the HTML confirmation page for form action + inputs
+        if response.headers.get("content-type", "").startswith("text/html"):
+            import html as html_mod
+            import re
+
+            aprint("Parsing confirmation page for download form...")
+            page_html = response.text
+
+            # Extract form action URL
+            action_match = re.search(r'action="([^"]*)"', page_html)
+            # Extract hidden form inputs (id, export, confirm, uuid)
+            form_inputs = dict(
+                re.findall(
+                    r'<input[^>]*name="([^"]*)"[^>]*value="([^"]*)"',
+                    page_html,
+                )
             )
+
+            if action_match and form_inputs:
+                action_url = html_mod.unescape(action_match.group(1))
+                aprint(f"Found download form with {len(form_inputs)} params")
+                response = session.get(
+                    action_url,
+                    params=form_inputs,
+                    stream=True,
+                    timeout=60,
+                )
+            else:
+                # Strategy 4: Try the usercontent endpoint directly
+                aprint("Trying usercontent endpoint...")
+                uc_url = (
+                    f"https://drive.usercontent.google.com/download"
+                    f"?id={file_id}&export=download&confirm=t"
+                )
+                response = session.get(uc_url, stream=True, timeout=60)
 
         response.raise_for_status()
 
