@@ -95,6 +95,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import UIConfig, ViewerConfig
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -412,7 +413,12 @@ def create_luxar_scene(
                     Dimension("y", unit="px", display=True),
                 ]
             )
-            scene = compiler.create_scene(dimensions=dims)
+            # 2D data: start in orthographic mode with scale bar visible
+            viewer_config = ViewerConfig(
+                control_type="ortho",
+                ui=UIConfig(show_scale_bar=True),
+            )
+            scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)
 
             scene.attrs["title"] = "GSplats 2D: Whole-Slide Pathology (CMU-1, H&E)"
             scene.attrs["description"] = f"""

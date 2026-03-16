@@ -5,7 +5,7 @@ import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { InputHandler } from '../input/input-handler';
 import { RenderingControls } from '../ui/rendering-controls';
-import { cleanupUI, clearError } from '../ui/helpers';
+import { cleanupUI, clearError, showHelpOverlay } from '../ui/helpers';
 import { config } from '../config';
 import { DatasetBrowser } from '../ui/dataset-browser';
 import { log, Modules } from '../utils/log';
@@ -16,6 +16,7 @@ import { SceneLoaderManager, getSceneLoader } from '../data/scene-loader-manager
 import { ScaleBar } from '../ui/components/scale-bar';
 import { RecordingPanel } from '../ui/recording-panel';
 import { LayersPanel } from '../ui/layers';
+import { ThemeManager } from '../themes/theme-manager';
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
@@ -327,13 +328,10 @@ export class LuxarApp {
     // Update fly speed slider range and value based on scene scale
     this.renderingControls.updateSceneScale();
 
-    // Initialize dimension sliders for nD data
+    // Initialize UI components that depend on loaded scene data
     this.inputHandler.initDimensionSliders();
-
-    // Initialize or update scale bar overlay
     this.initScaleBar();
 
-    // Initialize layers panel from loaded scene
     const sceneLoader = getSceneLoader('default');
     if (sceneLoader?.sceneGraph && this.layersPanel) {
       const root = this.sceneManager.scene.children.find((c) => c.name === 'LuxarScene');
@@ -342,8 +340,57 @@ export class LuxarApp {
       }
     }
 
+    // Apply zarr viewer_config: UI visibility, theme, dimension state, animation
+    this.applyViewerConfigState(viewerConfig);
+
     // Trigger animation to ensure scene is rendered immediately
     this.animationController.startAnimation();
+  }
+
+  /**
+   * Apply zarr viewer_config state that isn't handled by RenderingControls.
+   *
+   * RenderingControls handles the 47 rendering settings (bloom, AO, AA, etc.).
+   * This method handles everything else: UI panel visibility, theme,
+   * dimension navigation state, and animation state.
+   *
+   * Only explicitly set fields (not undefined) are applied — unset fields
+   * preserve the viewer's built-in defaults.
+   */
+  private applyViewerConfigState(
+    viewerConfig: import('../types/zarr').ZarrViewerConfig | undefined,
+  ): void {
+    if (!viewerConfig) return;
+
+    // --- UI panel visibility ---
+    const ui = viewerConfig.ui;
+    if (ui) {
+      if (ui.show_help === true) showHelpOverlay();
+      if (ui.show_rendering_controls === true) this.renderingControls.show();
+      if (ui.show_rendering_controls === false) this.renderingControls.hide();
+      if (ui.show_performance_monitor === true) {
+        this.animationController.performanceStats?.show();
+      }
+      if (ui.show_dimensions === true) {
+        this.inputHandler.showDimensionSliders();
+      }
+      if (ui.show_scale_bar === true && this.scaleBar) this.scaleBar.show();
+      if (ui.show_scale_bar === false && this.scaleBar) this.scaleBar.hide();
+      if (ui.show_layers === true && this.layersPanel) this.layersPanel.show();
+      if (ui.show_layers === false && this.layersPanel) this.layersPanel.hide();
+    }
+
+    // --- Theme ---
+    if (viewerConfig.theme) {
+      ThemeManager.getInstance().setTheme(viewerConfig.theme);
+    }
+
+    // --- Dimension navigation state ---
+    if (viewerConfig.dimensions?.current_step) {
+      for (let i = 0; i < viewerConfig.dimensions.current_step.length; i++) {
+        sceneDimsManager.setDimensionValue(i, viewerConfig.dimensions.current_step[i]);
+      }
+    }
   }
 
   /**

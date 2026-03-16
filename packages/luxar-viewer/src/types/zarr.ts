@@ -175,6 +175,8 @@ export interface ZarrViewerConfig {
     show_rendering_controls?: boolean;
     show_performance_monitor?: boolean;
     show_dimensions?: boolean;
+    show_scale_bar?: boolean;
+    show_layers?: boolean;
   };
 
   // Theme

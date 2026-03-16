@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Valid enum values (must match TypeScript RenderingSettings union types)
 VALID_TONE_MAPPINGS = ("None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral")
-VALID_CONTROL_TYPES = ("orbit", "arcball", "fly")
+VALID_CONTROL_TYPES = ("orbit", "arcball", "fly", "ortho")
 VALID_FOV_PRESETS = (
     "28mm Wide",
     "35mm",
@@ -140,16 +140,23 @@ class UIConfig:
     show_rendering_controls: Optional[bool] = None
     show_performance_monitor: Optional[bool] = None
     show_dimensions: Optional[bool] = None
+    show_scale_bar: Optional[bool] = None
+    show_layers: Optional[bool] = None
+
+    # All field names for sparse serialization (alphabetical after show_)
+    _FIELDS = (
+        "show_dimensions",
+        "show_help",
+        "show_layers",
+        "show_performance_monitor",
+        "show_rendering_controls",
+        "show_scale_bar",
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary, omitting None fields."""
         result: Dict[str, Any] = {}
-        for field_name in (
-            "show_help",
-            "show_rendering_controls",
-            "show_performance_monitor",
-            "show_dimensions",
-        ):
+        for field_name in self._FIELDS:
             value = getattr(self, field_name)
             if value is not None:
                 result[field_name] = value
@@ -158,12 +165,7 @@ class UIConfig:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> UIConfig:
         """Create from dictionary."""
-        return cls(
-            show_help=data.get("show_help"),
-            show_rendering_controls=data.get("show_rendering_controls"),
-            show_performance_monitor=data.get("show_performance_monitor"),
-            show_dimensions=data.get("show_dimensions"),
-        )
+        return cls(**{f: data.get(f) for f in cls._FIELDS})
 
 
 @dataclass
