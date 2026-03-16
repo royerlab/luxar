@@ -161,23 +161,26 @@ describe('validateConfig', () => {
   });
 
   describe('rendering validation', () => {
-    it('should error when hdrMultiplier is negative', () => {
+    it('should error when exposure is out of range', () => {
       const cfg = cloneConfig();
-      cfg.renderingControls.defaults.hdrMultiplier = -1;
+      cfg.renderingControls.defaults.exposure = -6;
 
       const result = validateConfig(cfg);
 
       expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(expect.stringContaining('Invalid HDR multiplier'));
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid exposure'));
     });
 
-    it('should accept hdrMultiplier of zero', () => {
+    it('should accept exposure within valid range', () => {
       const cfg = cloneConfig();
-      cfg.renderingControls.defaults.hdrMultiplier = 0;
+      cfg.renderingControls.defaults.exposure = 0;
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('exposure'))).toHaveLength(0);
 
-      const result = validateConfig(cfg);
+      cfg.renderingControls.defaults.exposure = 5;
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('exposure'))).toHaveLength(0);
 
-      expect(result.errors.filter((e) => e.includes('HDR multiplier'))).toHaveLength(0);
+      cfg.renderingControls.defaults.exposure = -5;
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('exposure'))).toHaveLength(0);
     });
 
     it('should error when baseAlpha is less than 0', () => {
@@ -695,7 +698,7 @@ describe('validateConfig', () => {
     it('should accumulate multiple errors from different categories', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.fov = 0; // camera error
-      cfg.renderingControls.defaults.hdrMultiplier = -1; // rendering error
+      cfg.renderingControls.defaults.exposure = -10; // rendering error
       cfg.dataLoading.network.timeoutMs = -1; // data loading error
 
       const result = validateConfig(cfg);

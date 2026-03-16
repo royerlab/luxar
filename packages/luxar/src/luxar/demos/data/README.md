@@ -1,48 +1,45 @@
 # Demo Data Files
 
-This directory contains precomputed data files for Luxar demos. Some files are stored using **Git Large File Storage (Git LFS)** to keep the repository size manageable.
+This directory contains precomputed data files for Luxar GSplat demos. All files are stored using **Git Large File Storage (Git LFS)** to keep the repository size manageable.
 
-## Files in This Directory
+## Directory Structure
 
 ### Precomputed Gaussian Splats (Git LFS)
 
-These `.gsplats.zarr.zip` files contain pre-fitted Gaussian splats from real microscopy data in compressed zarr format:
+Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 
-- **organoids_gsplats_ch0.gsplats.zarr.zip** (~609 KB)
-  - Channel 0 from IDR dataset 6001240 (intestinal organoid)
-  - Fluorescent marker channel (magenta in demo)
-  - Pre-fitted using full compute pipeline
-  - ~20,000 splats compressed with Hilbert ordering
+| Directory | Demo | Contents |
+|-----------|------|----------|
+| `gsplats_multichannel/` | 3D organoid multi-channel | 2 channel files (~1.1 MB total) |
+| `gsplats_dapi/` | 3D organoid DAPI nuclei | 1 file (~365 KB) |
+| `gsplats_tribolium/` | 3D Tribolium embryo | 1 file (~1.7 MB) |
+| `gsplats_cells3d/` | 4D cells3d multi-channel | 2 channel files (~1.0 MB total) |
+| `gsplats_kidney/` | 4D kidney multi-channel | 3 channel files (~4.9 MB total) |
+| `gsplats_zebrafish/` | 4D zebrafish timelapse | 1 bundle zip with 64 frames (~11 MB) |
+| `gsplats_acto3d_heart/` | 3D mouse embryo heart (Acto3D) | 3 channel files (~3.5 MB total) |
+| `gsplats_opencell_map4/` | 3D OpenCell MAP4 (cytoskeleton) | 2 channel files (~4.0 MB total) |
+| `gsplats_cmu1_pathology/` | 2D CMU-1 pathology (H&E) | 3 channel files (pending) |
+| `gsplats_celegans/` | 4D C. elegans tracking | 1 bundle zip with 400 timepoints (~64 MB) |
 
-- **organoids_gsplats_ch1.gsplats.zarr.zip** (~630 KB)
-  - Channel 1 from IDR dataset 6001240 (intestinal organoid)
-  - DAPI nuclear stain channel (cyan in demo)
-  - Pre-fitted using full compute pipeline
-  - ~20,000 splats compressed with Hilbert ordering
+### Other Data Files (top level)
 
-**Data Source:** Image Data Resource (IDR) study idr0062, Image 6001240
-**Original Authors:** Prisca Liberali lab, FMI
-**Citation:** Blin et al. (2019) + Williams et al. (2017) Nature Methods 14(8):775-781
+- `milky_way_gaia_3m.zarr.zip` — Gaia DR3 star catalog (3M stars)
+- `milky_way_gaia_8m.zarr.zip` — Gaia DR3 star catalog (8M stars)
+- `3d_umap_coords_human.parquet` — Human cell UMAP coordinates
+- `3d_umap_coords_mouse.parquet` — Mouse cell UMAP coordinates
 
-### Milky Way Data (Git LFS)
+## How Demos Use This Data
 
-- **milky_way_gaia_3m.zarr.zip** (~133 bytes)
-  - Gaia DR3 star catalog subset (3 million stars)
+All GSplat demos follow a unified pattern:
 
-- **milky_way_gaia_8m.zarr.zip** (~134 bytes)
-  - Gaia DR3 star catalog subset (8 million stars)
+1. **Default**: Load precomputed data from this directory (fast, no GPU needed)
+2. **`--recompute`**: Fetch raw data and fit from scratch (slow, needs GPU)
+
+The precomputed data is automatically copied to `~/.cache/luxar/` on first use, so subsequent runs are even faster.
 
 ## Git LFS Setup
 
-### What is Git LFS?
-
-Git Large File Storage (LFS) replaces large files with lightweight pointers in the Git repository, storing the actual file contents on a remote server. This keeps the repository fast to clone while still providing access to large files.
-
 ### Installing Git LFS
-
-If you don't have Git LFS installed, you'll see small pointer files instead of the actual data.
-
-**Install Git LFS:**
 
 ```bash
 # macOS (Homebrew)
@@ -50,176 +47,44 @@ brew install git-lfs
 
 # Ubuntu/Debian
 sudo apt-get install git-lfs
-
-# Other systems: https://git-lfs.github.com/
-```
-
-**Initialize Git LFS** (one-time setup):
-
-```bash
-git lfs install
 ```
 
 ### Pulling LFS Files
 
-After installing Git LFS, pull the actual data files:
-
 ```bash
-# Pull LFS files for the entire repository
-git lfs pull
-
-# Or pull specific files only
-git lfs pull --include="packages/luxar/src/luxar/demos/data/*.gsplats.zarr.zip"
+git lfs install          # One-time setup
+git lfs pull             # Download all LFS files
 ```
 
 ### Verifying LFS Files
 
-Check if you have the actual files (not pointers):
+If demo files are very small (< 1 KB), they're pointer files — run `git lfs pull`.
 
 ```bash
-# Should show ~609-630 KB for .gsplats.zarr.zip files
-ls -lh packages/luxar/src/luxar/demos/data/*.gsplats.zarr.zip
-
-# Check LFS status
-git lfs ls-files
+# Should show actual file sizes, not ~130 bytes
+ls -lh packages/luxar/src/luxar/demos/data/tribolium/
 ```
 
-If the files are very small (< 1 KB), they're pointer files and you need to run `git lfs pull`.
+## File Formats
 
-## Using Precomputed Data
+### `.gsplats.zarr.zip`
+Compressed Gaussian splat datasets containing centers, amplitudes, Cholesky factors, and metadata. Load with:
 
-### Quick Start Demo (Recommended)
-
-Use precomputed data for fast demos without network/compute overhead:
-
-```bash
-cd packages/luxar/src/luxar/demos
-python demo_gsplats_3d_organoid_multichannel_precomputed.py
-```
-
-This demo:
-- Loads precomputed gsplats from `.gsplats.zarr.zip` files
-- No network required (after Git LFS pull)
-- No GPU computation required
-- Fast visualization (~2-3 seconds)
-
-### Full Compute Pipeline
-
-To recompute gsplats from scratch (requires network + GPU):
-
-```bash
-python demo_gsplats_3d_organoid_multichannel_from_idr.py
-```
-
-This demo:
-- Fetches raw data from IDR (requires internet)
-- Performs full GSplat fitting (requires GPU, ~5-15 min)
-- Saves results to cache for reuse
-
-## Troubleshooting
-
-### "Precomputed gsplat file not found"
-
-You need to pull Git LFS files:
-
-```bash
-git lfs install
-git lfs pull
-```
-
-### "git: 'lfs' is not a git command"
-
-Install Git LFS first (see installation instructions above).
-
-### Files are Small Pointers (~133 bytes)
-
-You have pointer files, not the actual data. Run:
-
-```bash
-git lfs pull
-```
-
-### Large Clone Size
-
-If cloning is slow, you can clone without LFS files initially:
-
-```bash
-# Clone without LFS files
-GIT_LFS_SKIP_SMUDGE=1 git clone <repo>
-
-# Later, pull only what you need
-cd luxar
-git lfs pull --include="packages/luxar/src/luxar/demos/data/*.gsplats.zarr.zip"
-```
-
-## Adding New LFS Files
-
-If you're adding new large data files to this directory:
-
-1. **Update `.gitattributes`** (at repository root):
-   ```
-   packages/luxar/src/luxar/demos/data/*.npz filter=lfs diff=lfs merge=lfs -text
-   ```
-
-2. **Add the file**:
-   ```bash
-   git add packages/luxar/src/luxar/demos/data/my_data.npz
-   git commit -m "Add precomputed data for demo"
-   ```
-
-3. **Verify LFS tracking**:
-   ```bash
-   git lfs ls-files  # Should show your file
-   ```
-
-## File Format Details
-
-### `.gsplats.zarr.zip` Files
-
-Compressed Gaussian splat datasets in Luxar's native zarr format. Contains:
-
-- Splat centers, amplitudes, covariance matrices (Cholesky factors), sharpness
-- Spatially ordered for efficient streaming (Hilbert curve ordering)
-- Quantized encoding for compact storage
-- Metadata including fitting statistics and provenance
-
-**Load programmatically:**
 ```python
 from luxar.gsplats.gsplat_data import GSplatData
-
-# Automatically extracts and loads compressed archive
-data = GSplatData.load("organoids_gsplats_ch0.gsplats.zarr.zip")
-
-print(f"Loaded {len(data.amplitudes):,} splats")
-print(f"Dimensions: {data.centers.shape[1]}D")
+data = GSplatData.load("file.gsplats.zarr.zip")
 ```
 
-**Quick view with CLI:**
-```bash
-# View in Luxar web viewer
-luxar gsplat view organoids_gsplats_ch0.gsplats.zarr.zip
+### Bundle `.zip` (timelapse demos)
+Outer zip containing many per-frame `.gsplats.zarr.zip` files. Automatically extracted to cache on first use.
 
-# Inspect in napari
-luxar gsplat napari organoids_gsplats_ch0.gsplats.zarr.zip
+## Data Sources & Citations
 
-# Prune to reduce size
-luxar gsplat prune input.gsplats.zarr.zip output.gsplats.zarr.zip \
-    --method cumulative --retention 0.95
-```
-
-### `.zarr.zip` Files (Point Clouds)
-
-Compressed Zarr stores for large point cloud datasets. Extract and serve with:
-
-```bash
-luxar serve my_data.zarr.zip --viewer
-```
-
-## License & Attribution
-
-The organoid microscopy data is from:
-- **Source:** Image Data Resource (IDR), study idr0062, Image 6001240
-- **Original Research:** Prisca Liberali lab, FMI
-- **Citation:** Please cite both Blin et al. (2019) and Williams et al. (2017) Nature Methods
+- **Organoid data**: IDR study idr0062, Image 6001240 (Liberali lab, FMI)
+  - Blin et al. (2019) + Williams et al. (2017) Nature Methods 14(8):775-781
+- **Tribolium data**: Cell Tracking Challenge, Zenodo record 5270323
+  - Yin et al. (2022) J. Cell Sci. 135(5), jcs259022
+- **C. elegans data**: Zenodo record 6460303
+  - Hirsch et al. (2022) DOI: 10.5281/zenodo.6460303
 
 See individual demo scripts for full citation information.

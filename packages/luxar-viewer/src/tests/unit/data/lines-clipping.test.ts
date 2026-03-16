@@ -216,6 +216,19 @@ describe('clipSegmentToSlice', () => {
       expect(result.t1).toBeGreaterThan(0);
       expect(result.t2).toBeLessThan(1);
     });
+
+    it('should treat missing tolerance entries as zero', () => {
+      const displayDims = [0, 1, 2];
+      const slicePos = [0, 0, 0, 0];
+      const tolerance = [1e10, 1e10, 1e10]; // No entry for dim 3
+
+      const p1 = [0, 0, 0, 0];
+      const p2 = [10, 10, 10, 0];
+
+      const result = clipSegmentToSlice(p1, p2, slicePos, tolerance, displayDims);
+
+      expect(result.visible).toBe(true);
+    });
   });
 });
 

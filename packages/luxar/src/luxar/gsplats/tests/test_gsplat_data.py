@@ -894,6 +894,318 @@ class TestFilter:
         assert filtered.n_splats == 0
 
 
+# ── FilterBy (multi-criteria) ──────────────────────────
+
+
+class TestFilterBy:
+    """Tests for filter_by() multi-criteria filtering."""
+
+    def test_bbox(self):
+        """Filter by bounding box keeps only splats inside."""
+        gs = GSplatData(
+            centers=np.array(
+                [[10, 10, 10], [50, 50, 50], [90, 90, 90]], dtype=np.float32
+            ),
+            amplitudes=np.ones(3, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
+            ),
+            sharpnesses=np.full(3, 2.0, dtype=np.float32),
+        )
+        filtered = gs.filter_by(bbox=[(0, 60), (0, 60), (0, 60)])
+        assert filtered.n_splats == 2
+        assert np.all(filtered.centers[:, 0] <= 60)
+
+    def test_volume_absolute(self):
+        """Filter by absolute volume range."""
+        # Create splats with different Cholesky diagonals → different volumes
+        chol_small = np.array([0.5, 0, 0.5, 0, 0, 0.5], dtype=np.float32)
+        chol_big = np.array([5.0, 0, 5.0, 0, 0, 5.0], dtype=np.float32)
+        gs = GSplatData(
+            centers=np.zeros((4, 3), dtype=np.float32),
+            amplitudes=np.ones(4, dtype=np.float32),
+            cholesky_factors=np.array(
+                [chol_small, chol_small, chol_big, chol_big], dtype=np.float32
+            ),
+            sharpnesses=np.full(4, 2.0, dtype=np.float32),
+        )
+        # volume = det(Sigma)^(1/d) * truncate
+        # small: det(L)=0.125, det(Sigma)=0.015625, vol^(1/3)=0.25, *3=0.75
+        # big: det(L)=125, det(Sigma)=15625, vol^(1/3)=25.0, *3=75.0
+        filtered = gs.filter_by(volume_max=10.0)
+        assert filtered.n_splats == 2  # Only the small ones
+
+    def test_volume_normalized(self):
+        """Normalized volume threshold maps to dataset range."""
+        chol_small = np.array([1, 0, 1, 0, 0, 1], dtype=np.float32)
+        chol_big = np.array([10, 0, 10, 0, 0, 10], dtype=np.float32)
+        gs = GSplatData(
+            centers=np.zeros((4, 3), dtype=np.float32),
+            amplitudes=np.ones(4, dtype=np.float32),
+            cholesky_factors=np.array(
+                [chol_small, chol_small, chol_big, chol_big], dtype=np.float32
+            ),
+            sharpnesses=np.full(4, 2.0, dtype=np.float32),
+        )
+        # With normalized=True, 0.5 should be the midpoint of volume range
+        filtered = gs.filter_by(volume_max=0.5, volume_normalized=True)
+        assert filtered.n_splats == 2  # Only the small ones
+
+    def test_amplitude_absolute(self):
+        """Filter by amplitude range."""
+        gs = GSplatData(
+            centers=np.zeros((5, 3), dtype=np.float32),
+            amplitudes=np.array([0.1, 0.3, 0.5, 0.7, 0.9], dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (5, 1)
+            ),
+            sharpnesses=np.full(5, 2.0, dtype=np.float32),
+        )
+        filtered = gs.filter_by(amplitude_min=0.4, amplitude_max=0.8)
+        assert filtered.n_splats == 2  # 0.5 and 0.7
+
+    def test_amplitude_normalized(self):
+        """Normalized amplitude: 0.5 maps to midpoint of dataset range."""
+        gs = GSplatData(
+            centers=np.zeros((4, 3), dtype=np.float32),
+            amplitudes=np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (4, 1)
+            ),
+            sharpnesses=np.full(4, 2.0, dtype=np.float32),
+        )
+        # normalized 0.5 → 0.0 + 0.5*(3.0-0.0) = 1.5
+        filtered = gs.filter_by(amplitude_min=0.5, amplitude_normalized=True)
+        assert filtered.n_splats == 2  # 2.0 and 3.0
+
+    def test_eccentricity(self):
+        """Filter by eccentricity."""
+        # Isotropic: diag = [1,1,1], eccentricity ≈ 1
+        chol_iso = np.array([1, 0, 1, 0, 0, 1], dtype=np.float32)
+        # Elongated: diag = [10, 0, 1, 0, 0, 1] → sigma_0 >> sigma_1,2
+        chol_elong = np.array([10, 0, 1, 0, 0, 1], dtype=np.float32)
+        gs = GSplatData(
+            centers=np.zeros((4, 3), dtype=np.float32),
+            amplitudes=np.ones(4, dtype=np.float32),
+            cholesky_factors=np.array(
+                [chol_iso, chol_iso, chol_elong, chol_elong], dtype=np.float32
+            ),
+            sharpnesses=np.full(4, 2.0, dtype=np.float32),
+        )
+        filtered = gs.filter_by(eccentricity_max=2.0)
+        assert filtered.n_splats == 2  # Only isotropic
+
+    def test_sharpness(self):
+        """Filter by sharpness range."""
+        gs = GSplatData(
+            centers=np.zeros((4, 3), dtype=np.float32),
+            amplitudes=np.ones(4, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (4, 1)
+            ),
+            sharpnesses=np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32),
+        )
+        filtered = gs.filter_by(sharpness_min=1.5, sharpness_max=3.5)
+        assert filtered.n_splats == 2  # 2.0 and 3.0
+
+    def test_mass(self):
+        """Filter by mass (amplitude * volume)."""
+        gs = _make_3d_gsplat(n=10)
+        masses = gs.masses()
+        median_mass = float(np.median(masses))
+        filtered = gs.filter_by(mass_min=median_mass)
+        assert filtered.n_splats <= 10
+        assert filtered.n_splats > 0
+
+    def test_sigma_axis(self):
+        """Filter by marginal sigma on a specific axis."""
+        # axis 0 has large sigma, axes 1,2 have small sigma
+        chol = np.array([10, 0, 1, 0, 0, 1], dtype=np.float32)
+        gs = GSplatData(
+            centers=np.zeros((3, 3), dtype=np.float32),
+            amplitudes=np.ones(3, dtype=np.float32),
+            cholesky_factors=np.tile(chol, (3, 1)),
+            sharpnesses=np.full(3, 2.0, dtype=np.float32),
+        )
+        # sigma on axis 0 should be large (10), sigma on axis 1 should be ~1
+        filtered = gs.filter_by(sigma_axis=0, sigma_max=5.0)
+        assert filtered.n_splats == 0  # All have sigma_0 = 10 > 5
+
+        filtered2 = gs.filter_by(sigma_axis=1, sigma_max=5.0)
+        assert filtered2.n_splats == 3  # All pass
+
+    def test_combined_criteria(self):
+        """Multiple criteria combine with AND logic."""
+        gs = GSplatData(
+            centers=np.array(
+                [[10, 10, 10], [50, 50, 50], [90, 90, 90]], dtype=np.float32
+            ),
+            amplitudes=np.array([0.1, 0.5, 0.9], dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
+            ),
+            sharpnesses=np.full(3, 2.0, dtype=np.float32),
+        )
+        # bbox keeps first two, amplitude keeps last two → AND keeps only [50,50,50]
+        filtered = gs.filter_by(
+            bbox=[(0, 60), (0, 60), (0, 60)],
+            amplitude_min=0.3,
+        )
+        assert filtered.n_splats == 1
+        assert np.allclose(filtered.centers[0], [50, 50, 50])
+
+    def test_empty_result(self):
+        """Restrictive criteria can produce 0 splats."""
+        gs = _make_3d_gsplat(n=5)
+        filtered = gs.filter_by(amplitude_min=999.0)
+        assert filtered.n_splats == 0
+
+    def test_all_pass(self):
+        """No criteria → all splats pass."""
+        gs = _make_3d_gsplat(n=5)
+        filtered = gs.filter_by()
+        assert filtered.n_splats == 5
+
+    def test_empty_input(self):
+        """Empty input returns empty output."""
+        gs = _make_empty_gsplat()
+        filtered = gs.filter_by(amplitude_min=0.1)
+        assert filtered.n_splats == 0
+
+    def test_stats_updated(self):
+        """Stats contain filtering metadata."""
+        gs = _make_3d_gsplat(n=5)
+        filtered = gs.filter_by(amplitude_min=0.3)
+        assert filtered.stats["filtered"] is True
+        assert filtered.stats["n_original"] == 5
+        assert "n_removed" in filtered.stats
+        assert "filter_criteria" in filtered.stats
+
+    def test_preserves_colors(self):
+        """Colors array is filtered when present."""
+        gs = GSplatData(
+            centers=np.array(
+                [[0, 0, 0], [50, 50, 50], [100, 100, 100]], dtype=np.float32
+            ),
+            amplitudes=np.ones(3, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
+            ),
+            sharpnesses=np.full(3, 2.0, dtype=np.float32),
+            colors=np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]], dtype=np.uint8),
+        )
+        filtered = gs.filter_by(bbox=[(0, 60), (0, 60), (0, 60)])
+        assert filtered.n_splats == 2
+        assert filtered.colors is not None
+        assert np.array_equal(filtered.colors[0], [255, 0, 0])
+        assert np.array_equal(filtered.colors[1], [0, 255, 0])
+
+    def test_invalid_bbox_length(self):
+        """Wrong bbox length raises ValueError."""
+        gs = _make_3d_gsplat(n=3)
+        with pytest.raises(ValueError, match="bbox has 2 dimensions"):
+            gs.filter_by(bbox=[(0, 10), (0, 10)])  # 2 dims for 3D data
+
+    def test_sigma_without_axis(self):
+        """sigma_min without sigma_axis raises ValueError."""
+        gs = _make_3d_gsplat(n=3)
+        with pytest.raises(ValueError, match="sigma_min/sigma_max require sigma_axis"):
+            gs.filter_by(sigma_min=1.0)
+
+
+# ── SliceBy ────────────────────────────────────────────
+
+
+class TestSliceBy:
+    """Tests for slice_by() coordinate-based slicing."""
+
+    def test_basic_slice(self):
+        gs = GSplatData(
+            centers=np.array(
+                [[10, 10, 10], [50, 50, 50], [90, 90, 90]], dtype=np.float32
+            ),
+            amplitudes=np.ones(3, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
+            ),
+            sharpnesses=np.full(3, 2.0, dtype=np.float32),
+        )
+        sliced = gs.slice_by([slice(0, 60), slice(0, 60), slice(0, 60)])
+        assert sliced.n_splats == 2
+
+    def test_open_start(self):
+        """slice(None, 50) keeps centers <= 50."""
+        gs = GSplatData(
+            centers=np.array([[10, 0, 0], [50, 0, 0], [90, 0, 0]], dtype=np.float32),
+            amplitudes=np.ones(3, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
+            ),
+            sharpnesses=np.full(3, 2.0, dtype=np.float32),
+        )
+        sliced = gs.slice_by([slice(None, 50), slice(None, None), slice(None, None)])
+        assert sliced.n_splats == 2  # 10 and 50
+
+    def test_open_end(self):
+        """slice(50, None) keeps centers >= 50."""
+        gs = GSplatData(
+            centers=np.array([[10, 0, 0], [50, 0, 0], [90, 0, 0]], dtype=np.float32),
+            amplitudes=np.ones(3, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
+            ),
+            sharpnesses=np.full(3, 2.0, dtype=np.float32),
+        )
+        sliced = gs.slice_by([slice(50, None), slice(None, None), slice(None, None)])
+        assert sliced.n_splats == 2  # 50 and 90
+
+    def test_float_values(self):
+        """Float coordinate ranges work."""
+        gs = GSplatData(
+            centers=np.array([[1.5, 0, 0], [2.7, 0, 0], [4.2, 0, 0]], dtype=np.float32),
+            amplitudes=np.ones(3, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
+            ),
+            sharpnesses=np.full(3, 2.0, dtype=np.float32),
+        )
+        sliced = gs.slice_by([slice(2.0, 3.0), slice(None, None), slice(None, None)])
+        assert sliced.n_splats == 1
+        assert np.isclose(sliced.centers[0, 0], 2.7)
+
+    def test_all_pass(self):
+        gs = _make_3d_gsplat(n=5)
+        sliced = gs.slice_by([slice(None, None)] * 3)
+        assert sliced.n_splats == 5
+
+    def test_empty_result(self):
+        gs = _make_3d_gsplat(n=5)
+        sliced = gs.slice_by([slice(9999, 10000), slice(None, None), slice(None, None)])
+        assert sliced.n_splats == 0
+
+    def test_wrong_ndim(self):
+        gs = _make_3d_gsplat(n=3)
+        with pytest.raises(ValueError, match="Expected 3 slices"):
+            gs.slice_by([slice(0, 10), slice(0, 10)])  # 2 slices for 3D
+
+    def test_preserves_colors(self):
+        gs = GSplatData(
+            centers=np.array(
+                [[0, 0, 0], [50, 50, 50], [100, 100, 100]], dtype=np.float32
+            ),
+            amplitudes=np.ones(3, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
+            ),
+            sharpnesses=np.full(3, 2.0, dtype=np.float32),
+            colors=np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]], dtype=np.uint8),
+        )
+        sliced = gs.slice_by([slice(0, 60), slice(0, 60), slice(0, 60)])
+        assert sliced.n_splats == 2
+        assert sliced.colors is not None
+        assert np.array_equal(sliced.colors[1], [0, 255, 0])
+
+
 # ── Concatenate ─────────────────────────────────────────
 
 
@@ -1091,9 +1403,7 @@ class TestCombineAsNewDimension:
     def test_explicit_values(self):
         """Custom coordinate values for the new dimension."""
         datasets = [_make_3d_gsplat(n=2, seed=i) for i in range(2)]
-        result = GSplatData.combine_as_new_dimension(
-            datasets, values=[10.0, 20.0]
-        )
+        result = GSplatData.combine_as_new_dimension(datasets, values=[10.0, 20.0])
         time_col = result.centers[:, 3]
         assert np.allclose(time_col[:2], 10.0)
         assert np.allclose(time_col[2:4], 20.0)

@@ -331,7 +331,7 @@ def validate_zarr_attributes(attrs: dict, is_root: bool = False) -> None:
 
     # Validate type attribute
     if "type" in attrs:
-        valid_types = {"scene", "group", "points"}
+        valid_types = {"scene", "group", "points", "lines", "gsplats"}
         if attrs["type"] not in valid_types:
             raise ValidationError(
                 f"Invalid node type: '{attrs['type']}'",

@@ -26,6 +26,84 @@ import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { extractRenderingOverrides } from '../config/viewer-config-utils';
 
+/** String-to-THREE.ToneMapping map (shared between applySettings and cinematic toggle) */
+const TONE_MAPPING_MAP: Record<string, THREE.ToneMapping> = {
+  None: THREE.NoToneMapping,
+  Linear: THREE.LinearToneMapping,
+  Reinhard: THREE.ReinhardToneMapping,
+  Cineon: THREE.CineonToneMapping,
+  ACES: THREE.ACESFilmicToneMapping,
+  AgX: THREE.AgXToneMapping,
+  Neutral: THREE.NeutralToneMapping,
+};
+
+/** Keys of RenderingSettings that cinematic mode touches */
+type CinematicSnapshotKeys =
+  | 'toneMapping'
+  | 'detectorNoiseEnabled'
+  | 'detectorNoiseReadoutSigma'
+  | 'detectorNoisePhotonGain'
+  | 'detectorNoiseFpnSigma'
+  | 'vignetteEnabled'
+  | 'chromaticLensDistortionEnabled'
+  | 'chromaticLensDistortionX'
+  | 'chromaticLensDistortionY'
+  | 'chromaticLensDispersion'
+  | 'chromaticLensPrincipalPointX'
+  | 'chromaticLensPrincipalPointY'
+  | 'chromaticLensFocalLengthX'
+  | 'chromaticLensFocalLengthY'
+  | 'chromaticLensSkew'
+  | 'fov'
+  | 'fovPreset';
+
+type CinematicSnapshot = Pick<RenderingSettings, CinematicSnapshotKeys>;
+
+/** All snapshot keys as an array for iteration */
+const CINEMATIC_SNAPSHOT_KEYS: CinematicSnapshotKeys[] = [
+  'toneMapping',
+  'detectorNoiseEnabled',
+  'detectorNoiseReadoutSigma',
+  'detectorNoisePhotonGain',
+  'detectorNoiseFpnSigma',
+  'vignetteEnabled',
+  'chromaticLensDistortionEnabled',
+  'chromaticLensDistortionX',
+  'chromaticLensDistortionY',
+  'chromaticLensDispersion',
+  'chromaticLensPrincipalPointX',
+  'chromaticLensPrincipalPointY',
+  'chromaticLensFocalLengthX',
+  'chromaticLensFocalLengthY',
+  'chromaticLensSkew',
+  'fov',
+  'fovPreset',
+];
+
+/** Build the known cinematic-ON values (used for apply and dirty-check on restore) */
+function buildCinematicValues(): CinematicSnapshot {
+  const lens35 = config.camera.lensDistortionPresets['35mm'];
+  return {
+    toneMapping: 'ACES',
+    detectorNoiseEnabled: true,
+    detectorNoiseReadoutSigma: 0.002,
+    detectorNoisePhotonGain: 0.002,
+    detectorNoiseFpnSigma: 0.001,
+    vignetteEnabled: true,
+    chromaticLensDistortionEnabled: true,
+    chromaticLensDistortionX: lens35.distortionX,
+    chromaticLensDistortionY: lens35.distortionY,
+    chromaticLensDispersion: lens35.dispersion,
+    chromaticLensPrincipalPointX: lens35.principalPointX,
+    chromaticLensPrincipalPointY: lens35.principalPointY,
+    chromaticLensFocalLengthX: lens35.focalLengthX,
+    chromaticLensFocalLengthY: lens35.focalLengthY,
+    chromaticLensSkew: lens35.skew,
+    fov: config.camera.fovPresets['35mm'],
+    fovPreset: '35mm',
+  };
+}
+
 /**
  * Advanced rendering parameters GUI for real-time visual control.
  *
@@ -33,7 +111,7 @@ import { extractRenderingOverrides } from '../config/viewer-config-utils';
  * - Post-processing effects (bloom, noise, vignette, chromatic aberration, lens distortion)
  * - HDR intensity and tone mapping
  * - Anti-aliasing options (FXAA, SMAA, MSAA, SSAA)
- * - Camera controls (orbit, arcball, fly modes with physics parameters)
+ * - Camera controls (orbit, fly, ortho modes with physics parameters)
  * - Point rendering (base size, near/far size, sharpness, saturation)
  * - Dynamic clipping planes for nD visualization
  *
@@ -91,9 +169,6 @@ export class RenderingControls {
   private orbitFolder?: Folder;
   private flyFolder?: Folder;
 
-  /** Shadow object for logarithmic HDR intensity slider */
-  private hdrLogValue: { log: number } = { log: 0 };
-
   /** Reference to adaptive DPR manager for performance controls */
   private adaptiveDPRManager?: AdaptiveDPRManager;
 
@@ -102,6 +177,9 @@ export class RenderingControls {
 
   /** Timer ID for periodic clipping display updates when dynamic clipping is enabled */
   private clippingDisplayUpdateInterval: ReturnType<typeof setInterval> | null = null;
+
+  /** Snapshot of settings before cinematic mode was enabled (null when cinematic is off) */
+  private cinematicSnapshot: CinematicSnapshot | null = null;
 
   /**
    * Create rendering controls UI with complete parameter access.
@@ -206,20 +284,17 @@ export class RenderingControls {
     Object.assign(this.controllers, cameraResult.controllers);
 
     // HDR controls
-    const hdrResult = setupHDRControls(
-      {
-        gui: this.gui,
-        settings: this.settings,
-        postProcessing: this.postProcessing,
-        sceneManager: this.sceneManager,
-        animationController: this.animationController,
-        saveSettings: () => this.saveSettings(),
-        triggerAnimation: () => this.triggerAnimation(),
-        updateClippingControlsState: (enabled) => this.updateClippingControlsState(enabled),
-        updateNavigationControls: (controlType) => this.updateNavigationControls(controlType),
-      },
-      this.hdrLogValue
-    );
+    const hdrResult = setupHDRControls({
+      gui: this.gui,
+      settings: this.settings,
+      postProcessing: this.postProcessing,
+      sceneManager: this.sceneManager,
+      animationController: this.animationController,
+      saveSettings: () => this.saveSettings(),
+      triggerAnimation: () => this.triggerAnimation(),
+      updateClippingControlsState: (enabled) => this.updateClippingControlsState(enabled),
+      updateNavigationControls: (controlType) => this.updateNavigationControls(controlType),
+    });
 
     // Store controller references
     Object.assign(this.controllers, hdrResult.controllers);
@@ -272,6 +347,13 @@ export class RenderingControls {
   private setupThemeControls(): void {
     const themeFolder = this.gui.addFolder('🎨 Theme');
 
+    themeFolder.domElement?.setAttribute(
+      'title',
+      'Theme: Choose the visual appearance of the viewer UI\n\n' +
+        'Themes change the background, panel colors, and overall look.\n' +
+        'Your choice is automatically saved and restored next session.'
+    );
+
     const themeManager = ThemeManager.getInstance();
     const themes = themeManager.getAllThemes();
 
@@ -317,6 +399,9 @@ export class RenderingControls {
    * Reset all rendering settings to their default values
    */
   private resetToDefaults(): void {
+    // Clear cinematic snapshot since we're resetting all settings
+    this.cinematicSnapshot = null;
+
     // Get fresh defaults from config, including fly control defaults
     const defaults = {
       ...config.renderingControls.defaults,
@@ -337,9 +422,6 @@ export class RenderingControls {
     // Update settings object in place to maintain GUI bindings
     Object.assign(this.settings, defaults);
 
-    // Sync logarithmic HDR slider shadow value
-    this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
-
     // Clear saved settings for this scene (before applying, so user sees clean state)
     if (this.sceneId) {
       const key = generateSettingsKey(this.sceneId);
@@ -347,7 +429,7 @@ export class RenderingControls {
     }
 
     // Apply camera settings to scene manager (before post-processing)
-    const currentFOV = this.sceneManager.camera.fov;
+    const currentFOV = this.sceneManager.currentFov;
     if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
       const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
       this.sceneManager.updateFOV(delta);
@@ -444,6 +526,16 @@ export class RenderingControls {
 
     // Create Performance folder with adaptive DPR controls
     const performanceFolder = this.gui.addFolder('⚡ Performance');
+
+    performanceFolder.domElement?.setAttribute(
+      'title',
+      'Performance: Controls that trade visual quality for speed\n\n' +
+        '• Adaptive Resolution: Automatically lowers pixel ratio when FPS drops,\n' +
+        '  then gradually restores quality when the GPU catches up.\n' +
+        '• Manual DPR: Set a fixed pixel ratio (lower = faster but blurrier).\n\n' +
+        'Useful for large datasets or lower-end GPUs where smooth interaction\n' +
+        'matters more than pixel-perfect sharpness.'
+    );
 
     // Adaptive Resolution toggle (onChange registered below after manual DPR control is created)
     const adaptiveToggle = performanceFolder
@@ -603,6 +695,7 @@ export class RenderingControls {
     cinematicModeControl.domElement.setAttribute(
       'title',
       'Cinematic Mode: Film-like visual preset (C key)\n' +
+        '• Switches to ACES Filmic tone mapping\n' +
         '• Enables detector noise (film grain)\n' +
         '• Enables vignette (darkened corners)\n' +
         '• Enables chromatic lens distortion\n' +
@@ -647,7 +740,7 @@ export class RenderingControls {
     // Apply camera settings after loading (fov, near, far)
     // This ensures loaded settings are actually applied to the camera
     // Note: Dynamic clipping is applied later via applySettings()
-    const currentFOV = this.sceneManager.camera.fov;
+    const currentFOV = this.sceneManager.currentFov;
     if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
       const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
       this.sceneManager.updateFOV(delta);
@@ -711,7 +804,7 @@ export class RenderingControls {
 
     // Apply FOV if overridden
     if (zarrOverrides.fov !== undefined) {
-      const currentFOV = this.sceneManager.camera.fov;
+      const currentFOV = this.sceneManager.currentFov;
       if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
         const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
         this.sceneManager.updateFOV(delta);
@@ -740,8 +833,6 @@ export class RenderingControls {
     });
 
     // Sync HDR log slider
-    this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
-
     // Apply post-processing and other rendering settings
     this.applySettings();
     log.info(Modules.RENDERER, 'Applied viewer config defaults from zarr');
@@ -879,12 +970,12 @@ export class RenderingControls {
   /**
    * Update navigation controls visibility based on control type
    */
-  private updateNavigationControls(controlType: 'orbit' | 'arcball' | 'fly'): void {
+  private updateNavigationControls(controlType: 'orbit' | 'fly' | 'ortho'): void {
     const orbitFolder = this.orbitFolder;
     const flyFolder = this.flyFolder;
 
-    if (controlType === 'orbit' || controlType === 'arcball') {
-      // Show orbit folder for both orbit and arcball (they share similar settings)
+    if (controlType === 'orbit') {
+      // Show orbit folder with auto-rotate controls
       if (orbitFolder) {
         orbitFolder.show();
         orbitFolder.open();
@@ -893,35 +984,7 @@ export class RenderingControls {
         flyFolder.close();
         flyFolder.hide();
       }
-
-      // Hide auto-rotate controls for arcball mode (not supported)
-      if (controlType === 'arcball') {
-        if (this.controllers.autoRotate) {
-          this.controllers.autoRotate.domElement.parentElement?.parentElement?.style.setProperty(
-            'display',
-            'none'
-          );
-        }
-        if (this.controllers.autoRotateSpeed) {
-          this.controllers.autoRotateSpeed.domElement.parentElement?.parentElement?.style.setProperty(
-            'display',
-            'none'
-          );
-        }
-      } else {
-        // Show auto-rotate controls for orbit mode
-        if (this.controllers.autoRotate) {
-          this.controllers.autoRotate.domElement.parentElement?.parentElement?.style.removeProperty(
-            'display'
-          );
-        }
-        if (this.controllers.autoRotateSpeed) {
-          this.controllers.autoRotateSpeed.domElement.parentElement?.parentElement?.style.removeProperty(
-            'display'
-          );
-        }
-      }
-    } else {
+    } else if (controlType === 'fly') {
       // Show fly folder for fly controls
       if (orbitFolder) {
         orbitFolder.close();
@@ -931,6 +994,25 @@ export class RenderingControls {
         flyFolder.show();
         flyFolder.open();
       }
+    } else if (controlType === 'ortho') {
+      // Ortho: hide all control-specific folders (pan + zoom only, no settings)
+      if (orbitFolder) {
+        orbitFolder.close();
+        orbitFolder.hide();
+      }
+      if (flyFolder) {
+        flyFolder.close();
+        flyFolder.hide();
+      }
+    }
+
+    // FOV controls are irrelevant in ortho mode (no perspective projection)
+    const isOrtho = controlType === 'ortho';
+    if (this.controllers.fov) {
+      isOrtho ? this.controllers.fov.hide() : this.controllers.fov.show();
+    }
+    if (this.controllers.fovPreset) {
+      isOrtho ? this.controllers.fovPreset.hide() : this.controllers.fovPreset.show();
     }
   }
 
@@ -949,6 +1031,9 @@ export class RenderingControls {
    */
   private loadSettings(): void {
     if (!this.sceneId) return;
+
+    // Snapshot is session-only; clear it when loading persisted settings
+    this.cinematicSnapshot = null;
 
     const key = generateSettingsKey(this.sceneId);
     const stored = localStorage.getItem(key);
@@ -969,9 +1054,6 @@ export class RenderingControls {
           flyRotationDamping: config.controls.fly.rotation.damping.default,
           ...loadedSettings,
         });
-
-        // Sync logarithmic HDR slider shadow value
-        this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
 
         // Update GUI to reflect loaded values
         // Note: HDR controller's updateDisplay is overridden to show actual intensity
@@ -1001,7 +1083,7 @@ export class RenderingControls {
    */
   public syncCurrentState(): void {
     // Sync camera settings
-    this.settings.fov = this.sceneManager.camera.fov;
+    this.settings.fov = this.sceneManager.currentFov;
     this.settings.near = this.sceneManager.camera.near;
     this.settings.far = this.sceneManager.camera.far;
 
@@ -1133,14 +1215,7 @@ export class RenderingControls {
     this.updateClippingControlsState(this.settings.dynamicClippingEnabled);
 
     // Sync logarithmic HDR slider
-    // The shadow log value must be updated to match the actual hdrMultiplier
-    this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
-    if (this.controllers.hdrMultiplier) {
-      // updateDisplay is overridden to show actual intensity value
-      this.controllers.hdrMultiplier.updateDisplay();
-    }
-
-    // Update all other controllers
+    // Update all controllers
     this.gui.controllersRecursive().forEach((controller) => {
       controller.updateDisplay();
     });
@@ -1165,9 +1240,10 @@ export class RenderingControls {
     );
     this.postProcessing.setBloomLevels(this.settings.bloomLevels);
 
-    // Apply HDR multiplier - must update both config AND materials
-    // HDR multiplier is now handled through material manager
-    this.sceneManager.updateHDRMultiplier(this.settings.hdrMultiplier);
+    // Apply global EOG (Exposure-Offset-Gamma) — routed to post-processing
+    this.sceneManager.updateExposure(this.settings.exposure);
+    this.sceneManager.updateGlobalOffset(this.settings.globalOffset);
+    this.sceneManager.updateGlobalGamma(this.settings.globalGamma);
 
     // Apply SSAA settings
     this.postProcessing.setSSAAEnabled(this.settings.ssaaEnabled);
@@ -1187,16 +1263,7 @@ export class RenderingControls {
     }
 
     // Apply tone mapping
-    const toneMappingMap: { [key: string]: THREE.ToneMapping } = {
-      None: THREE.NoToneMapping,
-      Linear: THREE.LinearToneMapping,
-      Reinhard: THREE.ReinhardToneMapping,
-      Cineon: THREE.CineonToneMapping,
-      ACES: THREE.ACESFilmicToneMapping,
-      AgX: THREE.AgXToneMapping,
-      Neutral: THREE.NeutralToneMapping,
-    };
-    this.postProcessing.setToneMapping(toneMappingMap[this.settings.toneMapping]);
+    this.postProcessing.setToneMapping(TONE_MAPPING_MAP[this.settings.toneMapping]);
 
     // Apply DOF settings
     this.postProcessing.setDOF(
@@ -1389,11 +1456,12 @@ export class RenderingControls {
    * Called after toggleCinematicMode or when 'C' key is pressed
    */
   private updateCinematicModeCheckbox(): void {
-    // Determine cinematic mode state based on majority of effects
+    // Determine cinematic mode state based on majority of effects (including ACES tone mapping)
     const cinematicEffects = [
       this.settings.detectorNoiseEnabled,
       this.settings.vignetteEnabled,
       this.settings.chromaticLensDistortionEnabled,
+      this.settings.toneMapping === 'ACES',
     ];
 
     const enabledCount = cinematicEffects.filter(Boolean).length;
@@ -1415,10 +1483,15 @@ export class RenderingControls {
    * - If >= 50% effects enabled: Turn ALL off
    *
    * Cinematic mode affects:
+   * - Tone mapping (ACES Filmic for cinematic look)
    * - Detector noise (subtle film grain)
    * - Vignette (darkened corners)
    * - Chromatic lens distortion (wavelength-dependent lens distortion + color fringing)
    * - FOV (35mm wide-angle for cinematic, 50mm normal for regular)
+   *
+   * On enable: snapshots all affected settings before overwriting.
+   * On disable: restores each setting from the snapshot, unless the user
+   * manually changed it while cinematic was active (dirty-check).
    *
    * Uses deferred rebuild to apply all changes in single pass (performance).
    *
@@ -1433,67 +1506,63 @@ export class RenderingControls {
    * ```
    */
   toggleCinematicMode(): void {
-    // Get current state of cinematic effects
+    // Majority vote now includes tone mapping as a 4th signal
     const cinematicEffects = [
       this.settings.detectorNoiseEnabled,
       this.settings.vignetteEnabled,
       this.settings.chromaticLensDistortionEnabled,
+      this.settings.toneMapping === 'ACES',
     ];
 
-    // Count how many effects are currently enabled
     const enabledCount = cinematicEffects.filter(Boolean).length;
-    const totalEffects = cinematicEffects.length;
+    const shouldEnableAll = enabledCount < cinematicEffects.length / 2;
 
-    // Use majority vote to decide direction (>= 50% enabled = turn all off, < 50% = turn all on)
-    const shouldEnableAll = enabledCount < totalEffects / 2;
+    const cinematicValues = buildCinematicValues();
 
-    // Apply cinematic mode settings
-    this.settings.detectorNoiseEnabled = shouldEnableAll;
-    this.settings.vignetteEnabled = shouldEnableAll;
-    this.settings.chromaticLensDistortionEnabled = shouldEnableAll;
-
-    // Set cinematic detector noise parameters when turning ON cinematic mode
-    // Uses subtle physics-based noise for film-like look
     if (shouldEnableAll) {
-      this.settings.detectorNoiseReadoutSigma = 0.002; // Subtle temporal noise
-      this.settings.detectorNoisePhotonGain = 0.002; // Low shot noise
-      this.settings.detectorNoiseFpnSigma = 0.001; // Subtle fixed pattern
-    }
+      // --- ENABLE: snapshot current settings, then apply cinematic values ---
+      const snapshot = {} as CinematicSnapshot;
+      for (const key of CINEMATIC_SNAPSHOT_KEYS) {
+        (snapshot as any)[key] = this.settings[key];
+      }
+      this.cinematicSnapshot = snapshot;
 
-    // FOV switching: 35mm for cinematic, 50mm Normal for regular
-    const targetFOV = shouldEnableAll
-      ? config.camera.fovPresets['35mm'] // 63° - Wide angle for cinematic
-      : config.camera.fovPresets['50mm Normal']; // 47° - Normal for regular use
-
-    this.settings.fov = targetFOV;
-    this.settings.fovPreset = shouldEnableAll ? '35mm' : '50mm Normal';
-
-    // Apply appropriate chromatic lens distortion preset based on cinematic mode
-    if (shouldEnableAll) {
-      const lensPreset = config.camera.lensDistortionPresets['35mm'];
-      this.settings.chromaticLensDistortionX = lensPreset.distortionX;
-      this.settings.chromaticLensDistortionY = lensPreset.distortionY;
-      this.settings.chromaticLensDispersion = lensPreset.dispersion;
-      this.settings.chromaticLensPrincipalPointX = lensPreset.principalPointX;
-      this.settings.chromaticLensPrincipalPointY = lensPreset.principalPointY;
-      this.settings.chromaticLensFocalLengthX = lensPreset.focalLengthX;
-      this.settings.chromaticLensFocalLengthY = lensPreset.focalLengthY;
-      this.settings.chromaticLensSkew = lensPreset.skew;
+      Object.assign(this.settings, cinematicValues);
     } else {
-      // Return to 50mm Normal preset when disabling cinematic mode
-      const lensPreset = config.camera.lensDistortionPresets['50mm Normal'];
-      this.settings.chromaticLensDistortionX = lensPreset.distortionX;
-      this.settings.chromaticLensDistortionY = lensPreset.distortionY;
-      this.settings.chromaticLensDispersion = lensPreset.dispersion;
-      this.settings.chromaticLensPrincipalPointX = lensPreset.principalPointX;
-      this.settings.chromaticLensPrincipalPointY = lensPreset.principalPointY;
-      this.settings.chromaticLensFocalLengthX = lensPreset.focalLengthX;
-      this.settings.chromaticLensFocalLengthY = lensPreset.focalLengthY;
-      this.settings.chromaticLensSkew = lensPreset.skew;
+      // --- DISABLE: restore from snapshot (dirty-check per setting) ---
+      if (this.cinematicSnapshot) {
+        for (const key of CINEMATIC_SNAPSHOT_KEYS) {
+          // Only restore if user hasn't manually changed this setting since cinematic was enabled
+          if (this.settings[key] === cinematicValues[key]) {
+            (this.settings as any)[key] = this.cinematicSnapshot[key];
+          }
+        }
+        this.cinematicSnapshot = null;
+      } else {
+        // No snapshot (e.g., loaded from localStorage with cinematic already on).
+        // Fall back to non-cinematic defaults.
+        this.settings.toneMapping = config.renderingControls.defaults.toneMapping;
+        this.settings.detectorNoiseEnabled = false;
+        this.settings.vignetteEnabled = false;
+        this.settings.chromaticLensDistortionEnabled = false;
+        const lens50 = config.camera.lensDistortionPresets['50mm Normal'];
+        this.settings.chromaticLensDistortionX = lens50.distortionX;
+        this.settings.chromaticLensDistortionY = lens50.distortionY;
+        this.settings.chromaticLensDispersion = lens50.dispersion;
+        this.settings.chromaticLensPrincipalPointX = lens50.principalPointX;
+        this.settings.chromaticLensPrincipalPointY = lens50.principalPointY;
+        this.settings.chromaticLensFocalLengthX = lens50.focalLengthX;
+        this.settings.chromaticLensFocalLengthY = lens50.focalLengthY;
+        this.settings.chromaticLensSkew = lens50.skew;
+        this.settings.fov = config.camera.fovPresets['50mm Normal'];
+        this.settings.fovPreset = '50mm Normal';
+      }
     }
 
-    // Apply the changes to post-processing using deferred rebuild to prevent multiple rebuilds
+    // Apply all changes to post-processing using deferred rebuild
     this.postProcessing.startDeferRebuild();
+
+    this.postProcessing.setToneMapping(TONE_MAPPING_MAP[this.settings.toneMapping]);
 
     this.postProcessing.setDetectorNoiseEnabled(
       this.settings.detectorNoiseEnabled,
@@ -1520,11 +1589,11 @@ export class RenderingControls {
       this.settings.chromaticLensSkew
     );
 
-    // End deferred mode and trigger single rebuild with all effects
     this.postProcessing.endDeferRebuild();
 
     // Apply FOV change to camera
-    const currentFOV = this.sceneManager.camera.fov;
+    const targetFOV = this.settings.fov;
+    const currentFOV = this.sceneManager.currentFov;
     if (Math.abs(currentFOV - targetFOV) > 0.5) {
       const delta = (targetFOV - currentFOV) / config.camera.fovSensitivity;
       this.sceneManager.updateFOV(delta);
@@ -1549,11 +1618,11 @@ export class RenderingControls {
 
     // Log the action
     const modeText = shouldEnableAll ? 'enabled' : 'disabled';
-    const fovText = shouldEnableAll ? '35mm (63°)' : '50mm Normal (47°)';
     log.info(
       Modules.RENDERER,
-      `Cinematic mode ${modeText}: detector noise=${shouldEnableAll}, vignette=${shouldEnableAll}, ` +
-        `chromatic lens distortion=${shouldEnableAll}, FOV=${fovText}`
+      `Cinematic mode ${modeText}: tone=${this.settings.toneMapping}, ` +
+        `noise=${this.settings.detectorNoiseEnabled}, vignette=${this.settings.vignetteEnabled}, ` +
+        `lens=${this.settings.chromaticLensDistortionEnabled}, FOV=${this.settings.fovPreset}`
     );
   }
 

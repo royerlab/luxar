@@ -323,9 +323,9 @@ class TestNodeTransformIntegration:
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
-            # Valid transform
+            # Valid transform - pass numpy matrix directly (row-major)
             t = translate(5, 0, 0)
-            group = scene.add_group("ValidTransform", transform=to_list(t))
+            group = scene.add_group("ValidTransform", transform=t)
             assert "transform" in group.attrs
 
             # Invalid transform - wrong size
@@ -354,8 +354,8 @@ class TestNodeTransformIntegration:
             assert retrieved is not None
             assert np.allclose(retrieved, t)
 
-            # Set from list
-            group.transform = to_list(scale(2, 2, 2))
+            # Set from numpy matrix
+            group.transform = scale(2, 2, 2)
             assert np.allclose(group.transform, scale(2, 2, 2))
 
             # Remove transform
@@ -368,10 +368,10 @@ class TestNodeTransformIntegration:
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
-            # Create hierarchy with transforms
-            g1 = scene.add_group("Level1", transform=to_list(translate(5, 0, 0)))
-            g2 = g1.add_group("Level2", transform=to_list(rotate_z(45)))
-            g3 = g2.add_group("Level3", transform=to_list(scale(2, 2, 2)))
+            # Create hierarchy with transforms (pass numpy matrices)
+            g1 = scene.add_group("Level1", transform=translate(5, 0, 0))
+            g2 = g1.add_group("Level2", transform=rotate_z(45))
+            g3 = g2.add_group("Level3", transform=scale(2, 2, 2))
 
             # Verify each has its own transform
             assert g1.transform is not None
@@ -386,9 +386,9 @@ class TestNodeTransformIntegration:
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
-            # Create transformed group
+            # Create transformed group (pass numpy matrix directly)
             t = compose(translate(10, 0, 0), scale(uniform=0.5))
-            group = scene.add_group("TransformedPoints", transform=to_list(t))
+            group = scene.add_group("TransformedPoints", transform=t)
 
             # Add points
             positions = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
@@ -399,3 +399,98 @@ class TestNodeTransformIntegration:
             assert group.transform is not None
             assert len(group.children) == 1
             assert group.children[0].name == "Points"
+
+    def test_world_transform(self, tmp_path) -> None:
+        """Test world_transform property composes parent chain correctly."""
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            # Node with no transform → identity
+            g_no_xform = scene.add_group("NoTransform")
+            assert np.allclose(g_no_xform.world_transform, identity())
+
+            # Single transform → equals local transform
+            t1 = translate(5, 0, 0)
+            g1 = scene.add_group("Level1", transform=t1)
+            assert np.allclose(g1.world_transform, t1)
+
+            # Chain: translate → rotate → scale
+            t2 = rotate_z(45)
+            t3 = scale(2, 2, 2)
+            g2 = g1.add_group("Level2", transform=t2)
+            g3 = g2.add_group("Level3", transform=t3)
+
+            # world_transform = compose(root_first, ..., leaf_last)
+            expected_g2 = compose(t1, t2)
+            expected_g3 = compose(t1, t2, t3)
+            assert np.allclose(g2.world_transform, expected_g2, atol=1e-6)
+            assert np.allclose(g3.world_transform, expected_g3, atol=1e-6)
+
+            # Mixed: parent has no transform, child does
+            g_plain = scene.add_group("Plain")
+            g_child = g_plain.add_group("Child", transform=t1)
+            assert np.allclose(g_child.world_transform, t1)
+
+    def test_world_transform_matches_manual_compose(self, tmp_path) -> None:
+        """Test world_transform gives same result as manual point transformation."""
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            t1 = translate(10, 0, 0)
+            t2 = rotate_z(90)
+            g1 = scene.add_group("Parent", transform=t1)
+            g2 = g1.add_group("Child", transform=t2)
+
+            # Apply world_transform to a point
+            point = np.array([1, 0, 0, 1])
+            world = g2.world_transform
+            result = world @ point
+
+            # Manual: translate first, then rotate
+            p1 = t1 @ point  # (11, 0, 0, 1)
+            expected = t2 @ p1  # (0, 11, 0, 1)
+            assert np.allclose(result[:3], expected[:3], atol=1e-5)
+
+    def test_transform_removal_persists_to_zarr(self, tmp_path) -> None:
+        """Test that setting transform=None actually removes it from zarr store."""
+        store_path = tmp_path / "test.zarr"
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("TestGroup", transform=translate(1, 2, 3))
+
+            # Verify transform is in cache
+            assert "transform" in group.attrs
+
+            # Remove it
+            group.transform = None
+            assert group.transform is None
+            assert "transform" not in group.attrs
+
+        # Reopen zarr store and verify attribute is gone from disk
+        import zarr
+
+        reopened = zarr.open_group(store_path, mode="r")
+        assert "transform" not in reopened["TestGroup"].attrs
+
+    def test_prepare_transform_roundtrip_from_list(self) -> None:
+        """Test that row-major list input round-trips correctly."""
+        from luxar.core.transforms import (
+            prepare_transform_for_zarr,
+            read_transform_from_zarr,
+        )
+
+        # Start with a numpy matrix
+        original = compose(translate(1, 2, 3), rotate_z(45))
+
+        # Convert to zarr format and back
+        zarr_list = prepare_transform_for_zarr(original)
+        recovered = read_transform_from_zarr(zarr_list)
+
+        assert np.allclose(original, recovered, atol=1e-6)
+
+        # Also test with a row-major flattened list
+        flat_list = original.ravel().tolist()
+        zarr_list2 = prepare_transform_for_zarr(flat_list)
+        recovered2 = read_transform_from_zarr(zarr_list2)
+
+        assert np.allclose(original, recovered2, atol=1e-6)

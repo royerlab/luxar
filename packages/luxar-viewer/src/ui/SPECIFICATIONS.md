@@ -589,47 +589,44 @@ function deserializeSettings(json: string): RenderingSettings | null {
 
 ### 5.5 Cinematic Mode Algorithm
 
-**Purpose**: Toggle multiple effects intelligently using majority vote.
+**Purpose**: Toggle multiple effects intelligently using majority vote, with snapshot-restore
+to preserve user customizations.
+
+**Effects controlled**: ACES tone mapping, detector noise, vignette, chromatic lens distortion, FOV/lens preset.
 
 **Algorithm**:
 
 ```typescript
 function toggleCinematicMode(): void {
-  // 1. Check current state of all cinematic effects
-  const effects = [detectorNoiseEnabled, vignetteEnabled, chromaticLensDistortionEnabled];
+  // 1. Check current state of all cinematic effects (4 signals)
+  const effects = [
+    detectorNoiseEnabled, vignetteEnabled,
+    chromaticLensDistortionEnabled, toneMapping === 'ACES',
+  ];
 
-  // 2. Count enabled effects
-  const enabledCount = effects.filter(Boolean).length;
-
-  // 3. Majority vote (>= 50% enabled = turn all off, < 50% = turn all on)
+  // 2. Majority vote (>= 50% enabled = turn all off, < 50% = turn all on)
   const shouldEnableAll = enabledCount < effects.length / 2;
 
-  // 4. Apply to all effects
-  detectorNoiseEnabled = shouldEnableAll;
-  vignetteEnabled = shouldEnableAll;
-  chromaticLensDistortionEnabled = shouldEnableAll;
-
-  // 5. Set cinematic parameters if enabling
   if (shouldEnableAll) {
-    detectorNoiseReadoutSigma = 0.002;
-    detectorNoisePhotonGain = 0.002;
-    detectorNoiseFpnSigma = 0.001;
-  }
-
-  // 6. Switch FOV: 35mm for cinematic, 50mm Normal for regular
-  fov = shouldEnableAll ? 63 : 47; // degrees
-  fovPreset = shouldEnableAll ? '35mm' : '50mm Normal';
-
-  // 7. Apply corresponding chromatic lens distortion preset
-  if (shouldEnableAll) {
-    applyLensPreset('35mm'); // Barrel distortion
+    // 3a. ENABLE: snapshot current settings, then apply cinematic values
+    cinematicSnapshot = snapshotCurrentSettings();
+    Object.assign(settings, buildCinematicValues()); // ACES, noise, vignette, 35mm lens
   } else {
-    applyLensPreset('50mm Normal'); // No distortion
+    // 3b. DISABLE: restore each setting from snapshot (dirty-check)
+    // Only restore if user hasn't manually changed it while cinematic was on
+    for (key of snapshotKeys) {
+      if (settings[key] === cinematicValues[key]) {
+        settings[key] = cinematicSnapshot[key]; // Untouched → restore
+      }
+      // else: user changed it → keep their value
+    }
+    cinematicSnapshot = null;
   }
 
-  // 8. Batch apply using deferred rebuild
+  // 4. Batch apply using deferred rebuild
   postProcessing.startDeferRebuild();
-  // ... apply all effects ...
+  postProcessing.setToneMapping(settings.toneMapping);
+  // ... apply noise, vignette, lens distortion ...
   postProcessing.endDeferRebuild();
 }
 ```

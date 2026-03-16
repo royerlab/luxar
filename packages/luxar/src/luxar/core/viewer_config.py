@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Valid enum values (must match TypeScript RenderingSettings union types)
 VALID_TONE_MAPPINGS = ("None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral")
-VALID_CONTROL_TYPES = ("orbit", "arcball", "fly")
+VALID_CONTROL_TYPES = ("orbit", "fly", "ortho")
 VALID_FOV_PRESETS = (
     "28mm Wide",
     "35mm",
@@ -140,16 +140,23 @@ class UIConfig:
     show_rendering_controls: Optional[bool] = None
     show_performance_monitor: Optional[bool] = None
     show_dimensions: Optional[bool] = None
+    show_scale_bar: Optional[bool] = None
+    show_layers: Optional[bool] = None
+
+    # All field names for sparse serialization (alphabetical after show_)
+    _FIELDS = (
+        "show_dimensions",
+        "show_help",
+        "show_layers",
+        "show_performance_monitor",
+        "show_rendering_controls",
+        "show_scale_bar",
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary, omitting None fields."""
         result: Dict[str, Any] = {}
-        for field_name in (
-            "show_help",
-            "show_rendering_controls",
-            "show_performance_monitor",
-            "show_dimensions",
-        ):
+        for field_name in self._FIELDS:
             value = getattr(self, field_name)
             if value is not None:
                 result[field_name] = value
@@ -158,12 +165,7 @@ class UIConfig:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> UIConfig:
         """Create from dictionary."""
-        return cls(
-            show_help=data.get("show_help"),
-            show_rendering_controls=data.get("show_rendering_controls"),
-            show_performance_monitor=data.get("show_performance_monitor"),
-            show_dimensions=data.get("show_dimensions"),
-        )
+        return cls(**{f: data.get(f) for f in cls._FIELDS})
 
 
 @dataclass
@@ -301,7 +303,9 @@ class ViewerConfig:
 
     # Rendering pipeline
     tone_mapping: Optional[str] = None
-    hdr_multiplier: Optional[float] = None
+    exposure: Optional[float] = None  # Log2 stops, default 0.0
+    global_offset: Optional[float] = None  # Additive shift, default 0.0
+    global_gamma: Optional[float] = None  # Midtone curve, default 1.0
 
     # Bloom
     bloom_enabled: Optional[bool] = None
@@ -416,7 +420,9 @@ class ViewerConfig:
         if self.theme is not None and self.theme not in VALID_THEMES:
             raise ValueError(f"theme must be one of {VALID_THEMES}, got '{self.theme}'")
 
-        _validate_min(self.hdr_multiplier, "hdr_multiplier", 0)
+        _validate_range(self.exposure, "exposure", -5.0, 5.0)
+        _validate_range(self.global_offset, "global_offset", -1.0, 1.0)
+        _validate_range(self.global_gamma, "global_gamma", 0.1, 10.0)
         _validate_min(self.bloom_strength, "bloom_strength", 0)
         _validate_min(self.bloom_radius, "bloom_radius", 0)
         _validate_range(self.bloom_threshold, "bloom_threshold", 0, 1)
@@ -448,7 +454,9 @@ class ViewerConfig:
     _SIMPLE_FIELDS = [
         "background_color",
         "tone_mapping",
-        "hdr_multiplier",
+        "exposure",
+        "global_offset",
+        "global_gamma",
         "bloom_enabled",
         "bloom_strength",
         "bloom_radius",

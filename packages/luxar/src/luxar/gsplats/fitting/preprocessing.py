@@ -7,7 +7,7 @@ Handles normalization, seed generation, and gradient dilution compensation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 import torch
@@ -15,6 +15,9 @@ from arbol import aprint, asection
 from scipy.spatial import distance
 
 from luxar.gsplats.fitting.config import FitConfig, PreprocessedData
+
+if TYPE_CHECKING:
+    from luxar.gsplats.gsplat_data import GSplatData
 
 
 def _compute_floats_per_splat(ndim: int) -> int:
@@ -128,6 +131,19 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
             f"Clean the data before fitting (e.g., np.nan_to_num(V))."
         )
 
+    # Downscale volume if requested (before seed generation and normalization)
+    downscale_factors = config.downscale
+    if downscale_factors is not None:
+        from luxar.gsplats.fitting.downscale import downscale_volume
+
+        original_shape = V.shape
+        V = downscale_volume(V, downscale_factors)
+        if config.verbose:
+            aprint(
+                f"Downscaled volume: {original_shape} → {V.shape} "
+                f"(factors={downscale_factors})"
+            )
+
     seeds = config.seeds
     seed_kwargs = config.seed_kwargs or {}  # Default to empty dict if None
 
@@ -147,9 +163,22 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
 
     # Handle GSplatData seeds specially
     if isinstance(seeds, GSplatData):
-        seed_centers = seeds.centers
+        seed_centers = seeds.centers.copy()
         # Extract pre-initialized parameters from GSplatData
         _extract_gsplatdata_init(init_ctx, seeds)
+        # Rescale seed centers to downscaled coordinates if downscaling is active
+        if downscale_factors is not None:
+            scale = np.array([1.0 / f for f in downscale_factors], dtype=np.float32)
+            seed_centers = seed_centers * scale
+            # Also rescale pre-initialized Cholesky factors (L[i,j] /= factor[i])
+            if init_ctx.init_L is not None:
+                for i, f in enumerate(downscale_factors):
+                    init_ctx.init_L[:, i, :] /= f
+            if config.verbose:
+                aprint(
+                    f"Rescaled GSplatData seeds to downscaled coordinates "
+                    f"(factors={downscale_factors})"
+                )
         if config.verbose:
             aprint(
                 f"Using GSplatData seeds: {len(seed_centers)} splats with pre-initialized parameters"
@@ -200,7 +229,22 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
             )
     else:
         # User-provided array of seed centers
-        seed_centers = seeds
+        seed_centers = (
+            seeds.copy() if isinstance(seeds, np.ndarray) else np.array(seeds)
+        )
+        # Rescale seed centers to downscaled coordinates if downscaling is active
+        if downscale_factors is not None:
+            scale = np.array([1.0 / f for f in downscale_factors], dtype=np.float32)
+            seed_centers = seed_centers * scale
+            # Also rescale pre-initialized Cholesky factors if provided via config
+            if init_ctx.init_L is not None:
+                for i, f in enumerate(downscale_factors):
+                    init_ctx.init_L[:, i, :] /= f
+            if config.verbose:
+                aprint(
+                    f"Rescaled explicit seed centers to downscaled coordinates "
+                    f"(factors={downscale_factors})"
+                )
 
     # Normalize input data
     with asection("Normalizing input data"):
@@ -271,6 +315,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         init_L=init_ctx.init_L,
         init_amps=init_ctx.init_amps,
         init_sharpness=init_ctx.init_sharpness,
+        downscale_factors=downscale_factors,
     )
 
 
@@ -280,8 +325,8 @@ def _generate_seeds(
     target_count: int | None,
     seed_method: str,
     verbose: bool,
-    init_ctx: "_InitContext | None" = None,
-    **seed_kwargs,
+    init_ctx: _InitContext | None = None,
+    **seed_kwargs: Any,
 ) -> np.ndarray:
     """
     Generate seed centers using specified detection method(s).
@@ -344,7 +389,7 @@ def _generate_seeds(
                 aprint("Using scale-informed initialization from seeding method")
     else:
         # Fallback for any legacy return type
-        seed_centers = seeds_result
+        seed_centers = seeds_result  # type: ignore[unreachable]
 
     # Log initial generation
     if verbose:
@@ -371,13 +416,17 @@ def _generate_seeds(
             has_init_arrays = init_ctx is not None and init_ctx.init_L is not None
 
             if has_init_arrays:
-                seed_centers, selected_indices = _subsample_seeds_spatially_diverse(
+                assert init_ctx is not None
+                assert init_ctx.init_L is not None
+                subsample_with_idx = _subsample_seeds_spatially_diverse(
                     seed_centers,
                     intensities,
                     target_count,
                     verbose,
                     return_indices=True,
                 )
+                assert isinstance(subsample_with_idx, tuple)
+                seed_centers, selected_indices = subsample_with_idx
                 # Slice the pre-initialized arrays to match subsampled seeds
                 init_ctx.init_L = init_ctx.init_L[selected_indices]
                 if init_ctx.init_amps is not None:
@@ -385,9 +434,11 @@ def _generate_seeds(
                 if init_ctx.init_sharpness is not None:
                     init_ctx.init_sharpness = init_ctx.init_sharpness[selected_indices]
             else:
-                seed_centers = _subsample_seeds_spatially_diverse(
+                result = _subsample_seeds_spatially_diverse(
                     seed_centers, intensities, target_count, verbose
                 )
+                assert isinstance(result, np.ndarray)
+                seed_centers = result
 
             if verbose:
                 actual_proportion = len(seed_centers) / V.size * 100
@@ -512,8 +563,8 @@ def _subsample_seeds_spatially_diverse(
             top_candidates, size=target_count, replace=False
         )
 
-        result = valid_seeds[selected_from_candidates]
-        original_indices = valid_indices[selected_from_candidates]
+        result: np.ndarray = valid_seeds[selected_from_candidates]
+        original_indices: np.ndarray = valid_indices[selected_from_candidates]
 
         if verbose:
             aprint(
@@ -526,12 +577,13 @@ def _subsample_seeds_spatially_diverse(
 
     # Farthest-first selection with intensity priority (for smaller selections)
     # Start with highest intensity seed
-    selected_indices = [np.argmax(valid_intensities)]
-    selected = [valid_seeds[selected_indices[0]]]
+    first_idx: int = int(np.argmax(valid_intensities))
+    selected_indices_list: list[int] = [first_idx]
+    selected_list: list[np.ndarray] = [valid_seeds[first_idx]]
 
     # Build remaining candidates
     remaining_indices = list(range(len(valid_seeds)))
-    remaining_indices.remove(selected_indices[0])
+    remaining_indices.remove(first_idx)
 
     # Iteratively select farthest seed using batch distance computation
     # For medium selections (1000-10000), use GPU if available for 10-100x speedup
@@ -550,7 +602,7 @@ def _subsample_seeds_spatially_diverse(
         # GPU-accelerated farthest-first selection
         valid_seeds_gpu = torch.tensor(valid_seeds, device=device, dtype=torch.float32)
         selected_mask = torch.zeros(len(valid_seeds), dtype=torch.bool, device=device)
-        selected_mask[selected_indices[0]] = True
+        selected_mask[first_idx] = True
 
         for _ in range(target_count - 1):
             # Get remaining and selected coordinates
@@ -573,35 +625,39 @@ def _subsample_seeds_spatially_diverse(
             selected_mask[farthest_global] = True
 
         # Extract final selection
-        selected_indices_final = torch.where(selected_mask)[0].cpu().numpy()
-        selected = valid_seeds[selected_indices_final]
+        selected_indices_final: np.ndarray = (
+            torch.where(selected_mask)[0].cpu().numpy()
+        )
+        selected_arr = valid_seeds[selected_indices_final]
     else:
         # CPU fallback: original algorithm
         # Complexity: O(n² d) - slow for large selections
-        while len(selected) < target_count and remaining_indices:
+        while len(selected_list) < target_count and remaining_indices:
             # Compute pairwise distances between remaining and selected seeds
             remaining_coords = valid_seeds[remaining_indices]
-            selected_coords = np.array(selected)
+            selected_coords_arr = np.array(selected_list)
 
             # cdist computes all pairwise distances at once: (n_remaining, n_selected)
-            pairwise_dists = distance.cdist(remaining_coords, selected_coords)
+            pairwise_dists_cpu = distance.cdist(
+                remaining_coords, selected_coords_arr
+            )
 
             # For each remaining point, find distance to nearest selected point
-            min_dists_to_selected = pairwise_dists.min(axis=1)
+            min_dists_to_selected = pairwise_dists_cpu.min(axis=1)
 
             # Select point with maximum minimum distance (farthest from any selected)
-            farthest_idx_in_remaining = np.argmax(min_dists_to_selected)
+            farthest_idx_in_remaining = int(np.argmax(min_dists_to_selected))
             farthest_idx_global = remaining_indices[farthest_idx_in_remaining]
 
             # Add to selection
-            selected.append(valid_seeds[farthest_idx_global])
-            selected_indices.append(farthest_idx_global)
+            selected_list.append(valid_seeds[farthest_idx_global])
+            selected_indices_list.append(farthest_idx_global)
             remaining_indices.remove(farthest_idx_global)
 
-        selected_indices_final = selected_indices
-        selected = valid_seeds[selected_indices_final]
+        selected_indices_final = np.array(selected_indices_list)
+        selected_arr = valid_seeds[selected_indices_final]
 
-    result = np.array(selected)
+    result = np.array(selected_arr)
     # Map selected_indices (within valid_seeds) back to original indices
     original_indices = valid_indices[selected_indices_final]
 
@@ -609,8 +665,9 @@ def _subsample_seeds_spatially_diverse(
         # Calculate spatial distribution metric (average nearest-neighbor distance)
         if len(result) > 1:
             tree = cKDTree(result)
-            distances, _ = tree.query(result, k=2)  # k=2 to get nearest neighbor
-            avg_spacing = np.mean(distances[:, 1])  # nearest neighbor dist
+            nn_distances, _ = tree.query(result, k=2)  # k=2 to get nearest neighbor
+            nn_dist_arr = np.asarray(nn_distances)
+            avg_spacing = float(np.mean(nn_dist_arr[:, 1]))  # nearest neighbor dist
             aprint(
                 f"Spatial diversity: avg nearest-neighbor distance = "
                 f"{avg_spacing:.1f} voxels"
@@ -627,7 +684,7 @@ def _ensure_minimum_seeds(
     initial_seeds: np.ndarray,
     seed_method: str,
     verbose: bool,
-    **seed_kwargs,
+    **seed_kwargs: Any,
 ) -> tuple[np.ndarray, float]:
     """
     Ensure minimum seed count by adding grid-based seeds.
@@ -686,9 +743,11 @@ def _ensure_minimum_seeds(
             np.array(V.shape) - 1,
         )
         intensities = V[tuple(idx.T)]
-        current_seeds = _subsample_seeds_spatially_diverse(
+        subsample_result = _subsample_seeds_spatially_diverse(
             current_seeds, intensities, target_count, verbose
         )
+        assert isinstance(subsample_result, np.ndarray)
+        current_seeds = subsample_result
 
         if verbose:
             aprint(
@@ -741,15 +800,15 @@ def _add_grid_fallback_seeds(
     spacing = max(spacing, 1)  # Allow minimum spacing of 1 (dense grid)
 
     # Generate grid points
-    grid_coords = []
+    grid_coords_list: list[tuple[Any, ...]] = []
     ranges = [np.arange(spacing // 2, s, spacing) for s in shape]
 
     import itertools
 
     for coords in itertools.product(*ranges):
-        grid_coords.append(coords)
+        grid_coords_list.append(coords)
 
-    grid_coords = np.array(grid_coords, dtype=float)
+    grid_coords: np.ndarray = np.array(grid_coords_list, dtype=float)
 
     # Remove grid points too close to existing seeds (if any exist)
     # But be less aggressive about filtering to ensure we get enough
@@ -777,7 +836,7 @@ def _add_grid_fallback_seeds(
         spacing_dense = max(1, int((volume / (needed * 2)) ** (1.0 / ndim)))
         final_spacing = float(spacing_dense)  # Update to denser spacing
         ranges_dense = [np.arange(0, s, spacing_dense) for s in shape]
-        grid_coords_dense = []
+        grid_coords_dense: list[tuple[Any, ...]] = []
         for coords in itertools.product(*ranges_dense):
             grid_coords_dense.append(coords)
         grid_coords = np.array(grid_coords_dense, dtype=float)
@@ -816,8 +875,8 @@ def _normalize_data(
             aprint("Normalization: full min-max range")
     else:
         # Percentile-based robust normalization
-        image_min = np.percentile(V, norm_percentile)
-        image_max = np.percentile(V, 100.0 - norm_percentile)
+        image_min = float(np.percentile(V, norm_percentile))
+        image_max = float(np.percentile(V, 100.0 - norm_percentile))
         if verbose:
             aprint(
                 f"Normalization: {norm_percentile:.1f}%-"
@@ -854,7 +913,7 @@ def _set_convergence_threshold(max_abs_error: float | None, verbose: bool) -> fl
     return max_abs_error
 
 
-def _extract_gsplatdata_init(init_ctx: _InitContext, gsplat_data: "GSplatData") -> None:  # noqa: F821
+def _extract_gsplatdata_init(init_ctx: _InitContext, gsplat_data: GSplatData) -> None:
     """
     Extract pre-initialized parameters from GSplatData.
 
@@ -874,22 +933,13 @@ def _extract_gsplatdata_init(init_ctx: _InitContext, gsplat_data: "GSplatData") 
     ndim = gsplat_data.centers.shape[1]
 
     # Extract Cholesky factors (convert from packed to matrix form)
-    if gsplat_data.cholesky_factors is not None:
-        init_ctx.init_L = unpack_tril(gsplat_data.cholesky_factors, ndim)
-    else:
-        init_ctx.init_L = None
+    init_ctx.init_L = unpack_tril(gsplat_data.cholesky_factors, ndim)
 
     # Extract amplitudes
-    if gsplat_data.amplitudes is not None:
-        init_ctx.init_amps = gsplat_data.amplitudes.copy()
-    else:
-        init_ctx.init_amps = None
+    init_ctx.init_amps = gsplat_data.amplitudes.copy()
 
     # Extract sharpness
-    if gsplat_data.sharpnesses is not None:
-        init_ctx.init_sharpness = gsplat_data.sharpnesses.copy()
-    else:
-        init_ctx.init_sharpness = None
+    init_ctx.init_sharpness = gsplat_data.sharpnesses.copy()
 
 
 def _extend_init_arrays_for_grid_seeds(

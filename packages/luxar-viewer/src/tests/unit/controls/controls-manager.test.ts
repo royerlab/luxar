@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { ControlsManager } from '../../../controls/controls-manager';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { LuxarOrbitControls } from '../../../controls/luxar-orbit-controls';
 import { LuxarFlyControls } from '../../../controls/luxar-fly-controls';
 import { createTestCamera } from '../../test-config';
 
@@ -45,7 +45,7 @@ describe('ControlsManager', () => {
   describe('initialization', () => {
     it('should initialize with orbit controls by default', () => {
       expect(controlsManager.getControlType()).toBe('orbit');
-      expect(controlsManager.getControls()).toBeInstanceOf(OrbitControls);
+      expect(controlsManager.getControls()).toBeInstanceOf(LuxarOrbitControls);
     });
 
     it('should have correct initial configuration', () => {
@@ -66,7 +66,7 @@ describe('ControlsManager', () => {
       controlsManager.setControlType('fly');
       controlsManager.setControlType('orbit');
       expect(controlsManager.getControlType()).toBe('orbit');
-      expect(controlsManager.getControls()).toBeInstanceOf(OrbitControls);
+      expect(controlsManager.getControls()).toBeInstanceOf(LuxarOrbitControls);
     });
 
     it('should not recreate controls if already using the same type', () => {
@@ -110,13 +110,13 @@ describe('ControlsManager', () => {
 
     it('should set auto-rotation speed', () => {
       controlsManager.setAutoRotateSpeed(2.5);
-      const controls = controlsManager.getControls() as OrbitControls;
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
       expect(controls.autoRotateSpeed).toBe(2.5);
     });
 
     it('should enable/disable zoom', () => {
       controlsManager.setEnableZoom(false);
-      const controls = controlsManager.getControls() as OrbitControls;
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
       expect(controls.enableZoom).toBe(false);
 
       controlsManager.setEnableZoom(true);
@@ -193,7 +193,7 @@ describe('ControlsManager', () => {
       const target = new THREE.Vector3(1, 2, 3);
       controlsManager.lookAt(target);
 
-      const controls = controlsManager.getControls() as OrbitControls;
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
       expect(controls.target.x).toBe(1);
       expect(controls.target.y).toBe(2);
       expect(controls.target.z).toBe(3);
@@ -275,7 +275,7 @@ describe('ControlsManager', () => {
 
   describe('focus target', () => {
     it('should return orbit target for orbit controls', () => {
-      const controls = controlsManager.getControls() as OrbitControls;
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
       controls.target.set(5, 10, 15);
 
       const target = controlsManager.getFocusTarget();
@@ -310,6 +310,71 @@ describe('ControlsManager', () => {
 
       controlsManager.dispose();
       expect(stopSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('ortho controls', () => {
+    it('should switch to ortho controls using LuxarOrbitControls', () => {
+      // Ortho needs an OrthographicCamera — create one and set it
+      const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+      orthoCam.position.copy(camera.position);
+      controlsManager.setCamera(orthoCam);
+      controlsManager.setControlType('ortho');
+
+      expect(controlsManager.getControlType()).toBe('ortho');
+      expect(controlsManager.getControls()).toBeInstanceOf(LuxarOrbitControls);
+    });
+
+    it('should disable rotation in ortho mode', () => {
+      const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+      orthoCam.position.copy(camera.position);
+      controlsManager.setCamera(orthoCam);
+      controlsManager.setControlType('ortho');
+
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.enableRotate).toBe(false);
+      expect(controls.enableZoom).toBe(true);
+      expect(controls.screenSpacePanning).toBe(true);
+    });
+
+    it('should preserve camera target when switching to ortho and back', () => {
+      // Set a specific target in orbit mode
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      controls.target.set(1, 2, 3);
+
+      // Switch to ortho
+      const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+      orthoCam.position.copy(camera.position);
+      controlsManager.setCamera(orthoCam);
+      controlsManager.setControlType('ortho');
+
+      // Switch back to orbit
+      controlsManager.setCamera(camera);
+      controlsManager.setControlType('orbit');
+
+      const orbitControls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(orbitControls.target.x).toBeCloseTo(1);
+      expect(orbitControls.target.y).toBeCloseTo(2);
+      expect(orbitControls.target.z).toBeCloseTo(3);
+    });
+
+    it('should update camera reference via setCamera', () => {
+      const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+      controlsManager.setCamera(orthoCam);
+
+      // Internal camera should be updated
+      expect((controlsManager as any).camera).toBe(orthoCam);
+    });
+
+    it('should dispatch change event when switching to ortho', () => {
+      const changeHandler = vi.fn();
+      controlsManager.addEventListener('change', changeHandler);
+
+      const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+      controlsManager.setCamera(orthoCam);
+      controlsManager.setControlType('ortho');
+
+      expect(changeHandler).toHaveBeenCalledWith(expect.objectContaining({ controlType: 'ortho' }));
     });
   });
 });

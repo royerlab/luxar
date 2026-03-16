@@ -2,8 +2,8 @@
 
 Tests cover uncovered lines in scene.py:
 - Scene initialization error handling
-- add_points with extend_to_all variations
-- add_lines validation
+- add_points input handling (extend_to_all tests are in test_extend_to_all.py)
+- add_lines validation and extend_to_all
 - add_gsplats validation
 - _analyze_extend_candidates method
 - get_store_path method
@@ -12,7 +12,6 @@ Tests cover uncovered lines in scene.py:
 """
 
 import tempfile
-import warnings
 from pathlib import Path
 from typing import Any, cast
 
@@ -33,147 +32,11 @@ class TestSceneInitialization:
             Scene(writer=cast(Any, None), dimensions=Dimensions.default_3d())
 
 
-class TestAddPointsExtendToAll:
-    """Tests for add_points with various extend_to_all options."""
+class TestAddPointsInputHandling:
+    """Tests for add_points input handling (non-extend_to_all).
 
-    def test_extend_to_all_with_warning(self) -> None:
-        """Test add_points with extend_to_all=None triggers warning when candidates exist."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
-
-            dims = Dimensions(
-                [
-                    Dimension("x", unit="um", display=True),
-                    Dimension("y", unit="um", display=True),
-                    Dimension("z", unit="um", display=True),
-                    Dimension(
-                        "time", unit="s", display=False, discrete=True, range=(0, 9)
-                    ),
-                ]
-            )
-
-            with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene(dimensions=dims)
-
-                # Create 4D positions with only one unique time value
-                # This should trigger warning
-                positions = np.random.rand(100, 4).astype(np.float32)
-                positions[:, 3] = 0  # All at time=0
-
-                with pytest.warns(UserWarning, match="time"):
-                    points = scene.add_points(
-                        "test_points",
-                        positions,
-                        # extend_to_all=None (default)
-                    )
-                assert points is not None
-
-    def test_extend_to_all_all(self) -> None:
-        """Test add_points with extend_to_all='all'."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
-
-            dims = Dimensions(
-                [
-                    Dimension("x", unit="um", display=True),
-                    Dimension("y", unit="um", display=True),
-                    Dimension("z", unit="um", display=True),
-                    Dimension(
-                        "time", unit="s", display=False, discrete=True, range=(0, 9)
-                    ),
-                ]
-            )
-
-            with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene(dimensions=dims)
-
-                # 4D positions
-                positions = np.random.rand(100, 4).astype(np.float32)
-
-                points = scene.add_points(
-                    "test_points",
-                    positions,
-                    extend_to_all="all",
-                )
-                assert points is not None
-
-    def test_extend_to_all_explicit_list(self) -> None:
-        """Test add_points with explicit extend_to_all list."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
-
-            dims = Dimensions(
-                [
-                    Dimension("x", unit="um", display=True),
-                    Dimension("y", unit="um", display=True),
-                    Dimension("z", unit="um", display=True),
-                    Dimension(
-                        "time", unit="s", display=False, discrete=True, range=(0, 9)
-                    ),
-                ]
-            )
-
-            with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene(dimensions=dims)
-
-                positions = np.random.rand(100, 4).astype(np.float32)
-
-                points = scene.add_points(
-                    "test_points",
-                    positions,
-                    extend_to_all=["time"],
-                )
-                assert points is not None
-
-    def test_extend_to_all_empty_list_silences_warning(self) -> None:
-        """Test add_points with extend_to_all=[] silences warning."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
-
-            dims = Dimensions(
-                [
-                    Dimension("x", unit="um", display=True),
-                    Dimension("y", unit="um", display=True),
-                    Dimension("z", unit="um", display=True),
-                    Dimension(
-                        "time", unit="s", display=False, discrete=True, range=(0, 9)
-                    ),
-                ]
-            )
-
-            with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene(dimensions=dims)
-
-                # Create 4D positions with only one unique time value
-                positions = np.random.rand(100, 4).astype(np.float32)
-                positions[:, 3] = 0  # All at time=0
-
-                # Using empty list should NOT trigger warning
-                with warnings.catch_warnings():
-                    warnings.simplefilter("error")  # Turn warnings into errors
-                    points = scene.add_points(
-                        "test_points",
-                        positions,
-                        extend_to_all=[],  # Explicitly no extension
-                    )
-                assert points is not None
-
-    def test_extend_to_all_invalid_value(self) -> None:
-        """Test add_points with invalid extend_to_all value."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
-
-            with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-
-                positions = np.random.rand(100, 3).astype(np.float32)
-
-                with pytest.raises(ValueError, match="Invalid extend_to_all"):
-                    scene.add_points(
-                        "test_points",
-                        positions,
-                        extend_to_all="invalid_value",
-                    )
+    Note: extend_to_all tests live in test_extend_to_all.py.
+    """
 
     def test_add_points_1d_positions_error(self) -> None:
         """Test add_points with 1D positions raises error."""

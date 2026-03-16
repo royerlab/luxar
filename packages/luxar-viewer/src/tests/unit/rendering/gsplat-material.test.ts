@@ -7,7 +7,6 @@ import {
   packCholeskyForShader,
   updateInstancedGSplatsMesh,
 } from '../../../rendering/gsplat-material';
-import { config } from '../../../config';
 
 // Mock THREE.ShaderMaterial
 vi.mock('three', async () => {
@@ -47,9 +46,6 @@ describe('GSplatMaterial', () => {
     it('should create a material with default values', () => {
       const material = new GSplatMaterial();
 
-      expect(material.uniforms.uHDRMultiplier.value).toBe(
-        config.renderingControls.defaults.hdrMultiplier
-      );
       expect(material.uniforms.uOpacity.value).toBe(1.0);
       expect(material.uniforms.uTruncate.value).toBe(3.0);
       expect(material.uniforms.uResolution.value).toBeInstanceOf(THREE.Vector2);
@@ -62,22 +58,41 @@ describe('GSplatMaterial', () => {
       // Default 'additive' mode uses CustomBlending with OneFactor for correct linear sum
       // (AdditiveBlending uses SrcAlpha which would incorrectly square the intensity)
       expect(material.blending).toBe('CustomBlending');
+      expect(material.blendEquation).toBe('AddEquation');
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe('OneFactor');
+      // Alpha uses MaxEquation to prevent accumulation (bloom/postprocessing artifacts)
+      expect(material.blendEquationAlpha).toBe('MaxEquation');
+      expect(material.blendSrcAlpha).toBe('OneFactor');
+      expect(material.blendDstAlpha).toBe('OneFactor');
       expect(material.side).toBe('DoubleSide');
       expect(material.uniforms.uProjectionMode.value).toBe(0); // Default additive uses sum projection
       // 'additive' ignores depth (depthTest=false)
       expect(material.userData.depthTest).toBe(false);
     });
 
+    it('should default invGamma to 1.0', () => {
+      const material = new GSplatMaterial();
+
+      expect(material.uniforms.uInvGamma.value).toBe(1.0);
+      expect(material.userData.gamma).toBe(1.0);
+    });
+
+    it('should accept custom gamma', () => {
+      const material = new GSplatMaterial({ gamma: 2.2 });
+
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(material.userData.gamma).toBe(2.2);
+    });
+
     it('should accept custom configuration', () => {
       const material = new GSplatMaterial({
         opacity: 0.5,
-        hdrMultiplier: 32.0,
         truncationRadius: 4.0,
         blendingMode: 'normal',
       });
 
       expect(material.uniforms.uOpacity.value).toBe(0.5);
-      expect(material.uniforms.uHDRMultiplier.value).toBe(32.0);
       expect(material.uniforms.uTruncate.value).toBe(4.0);
       expect(material.blending).toBe('NormalBlending');
       // depthWrite is only true for normal blending when opacity >= 0.99
@@ -91,8 +106,24 @@ describe('GSplatMaterial', () => {
       });
 
       expect(material.blending).toBe('CustomBlending');
+      expect(material.blendEquation).toBe('MaxEquation');
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe('OneFactor');
       expect(material.depthWrite).toBe(false); // Max blending disables depth write
       expect(material.uniforms.uProjectionMode.value).toBe(1); // Max projection
+    });
+
+    it('should configure luminous mode with alpha accumulation prevention', () => {
+      const material = new GSplatMaterial({ blendingMode: 'luminous' });
+
+      expect(material.blending).toBe('CustomBlending');
+      expect(material.blendEquation).toBe('AddEquation');
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe('OneFactor');
+      // Alpha uses MaxEquation to prevent accumulation (same fix as additive)
+      expect(material.blendEquationAlpha).toBe('MaxEquation');
+      expect(material.blendSrcAlpha).toBe('OneFactor');
+      expect(material.blendDstAlpha).toBe('OneFactor');
     });
   });
 
@@ -196,7 +227,11 @@ describe('GSplatMaterial', () => {
 
       // Check for uniforms (mediump for GPU optimization)
       expect(material.fragmentShader).toContain('uniform mediump float uOpacity');
-      expect(material.fragmentShader).toContain('uniform mediump float uHDRMultiplier');
+      expect(material.fragmentShader).toContain('uniform mediump float uInvGamma');
+
+      // Check for GOG model (gain-offset-gamma)
+      expect(material.fragmentShader).toContain('vColor * uIntensity + uOffset');
+      expect(material.fragmentShader).toContain('pow(adjusted, vec3(uInvGamma))');
 
       // Check for forward substitution to solve L·y = d
       // OPTIMIZATION: Uses multiplication with precomputed reciprocals instead of division
@@ -251,14 +286,6 @@ describe('GSplatMaterial', () => {
       expect(material.uniforms.uFx.value).toBeCloseTo(expectedFy, 5); // Same for square pixels
     });
 
-    it('should update HDR multiplier', () => {
-      const material = new GSplatMaterial();
-
-      material.updateHDRMultiplier(32.0);
-
-      expect(material.uniforms.uHDRMultiplier.value).toBe(32.0);
-    });
-
     it('should update opacity', () => {
       const material = new GSplatMaterial();
 
@@ -275,19 +302,42 @@ describe('GSplatMaterial', () => {
       expect(material.uniforms.uTruncate.value).toBe(5.0);
     });
 
-    it('should clone material with current values', () => {
+    it('should update gamma', () => {
+      const material = new GSplatMaterial();
+
+      material.updateGamma(2.2);
+
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(material.userData.gamma).toBe(2.2);
+    });
+
+    it('should clamp gamma to prevent division by zero', () => {
+      const material = new GSplatMaterial();
+
+      material.updateGamma(0);
+
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 0.001);
+      expect(material.userData.gamma).toBe(0.001);
+    });
+
+    it('should clone material with current values including gamma', () => {
       const original = new GSplatMaterial({
         opacity: 0.5,
+        gamma: 2.2,
         truncationRadius: 4.0,
       });
-
-      original.updateHDRMultiplier(24.0);
 
       const cloned = original.clone();
 
       expect(cloned.uniforms.uOpacity.value).toBe(0.5);
       expect(cloned.uniforms.uTruncate.value).toBe(4.0);
-      expect(cloned.uniforms.uHDRMultiplier.value).toBe(24.0);
+      expect(cloned.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(cloned.userData.gamma).toBe(2.2);
+
+      // Clone preserves alpha blend properties (prevents alpha accumulation)
+      expect(cloned.blendEquationAlpha).toBe('MaxEquation');
+      expect(cloned.blendSrcAlpha).toBe('OneFactor');
+      expect(cloned.blendDstAlpha).toBe('OneFactor');
 
       // Ensure it's a new instance
       expect(cloned).not.toBe(original);
@@ -329,8 +379,9 @@ describe('GSplatMaterial', () => {
 
       // With OneFactor blending, opacity is applied directly to RGB (alpha is ignored)
       // This ensures correct linear sum projection without squaring intensity
+      // Gamma correction is applied before intensity multiplication
       expect(material.fragmentShader).toContain(
-        'vec3 finalColor = vColor * intensity * uHDRMultiplier * uOpacity'
+        'vec3 finalColor = gammaColor * intensity * uOpacity'
       );
       expect(material.fragmentShader).toContain('fragColor = vec4(finalColor, 1.0)');
     });

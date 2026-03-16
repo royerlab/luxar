@@ -135,7 +135,7 @@ include_dirs = [
 # CUB is bundled with CUDA Toolkit 11+, no extra include needed
 
 ext_modules = [
-    CUDAExtension(
+    CUDAExtension(  # type: ignore[no-untyped-call]
         name="cuda_splatting_backend",
         sources=sources,
         include_dirs=include_dirs,

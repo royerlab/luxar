@@ -225,7 +225,6 @@ vi.mock('../rendering/material-manager', () => ({
   materialManager: {
     getPointMaterial: vi.fn().mockReturnValue({
       uniforms: {
-        hdrMultiplier: { value: 1.0 },
         opacity: { value: 1.0 },
         gamma: { value: 1.0 },
         baseAlpha: { value: 0.01 },
@@ -234,10 +233,8 @@ vi.mock('../rendering/material-manager', () => ({
       },
       userData: {},
       updateCameraParams: vi.fn(),
-      updateHDRMultiplier: vi.fn(),
     }),
     updateCameraParams: vi.fn(),
-    updateHDRMultiplier: vi.fn(),
   },
 }));
 
@@ -582,99 +579,13 @@ describe('zarr-loader', () => {
   // =========================================================================
 
   describe('loadScene - Attributes', () => {
-    it('should extract opacity from attrs', async () => {
-      mockStoreContents = [
-        { path: '/', kind: 'group' },
-        { path: '/Points1', kind: 'group' },
-      ];
-
-      const mockRoot = {
-        attrs: { type: 'scene' },
-        contents: new Map([['Points1', { type: 'group' }]]),
-      };
-
-      const mockPoints = {
-        attrs: {
-          type: 'points',
-          n_points: 100,
-          opacity: 0.5, // Semi-transparent
-        },
-        contents: new Map([['positions', { type: 'array' }]]),
-      };
-
-      mockOpenResult = mockRoot;
-      mockGetResult = (item: any) => {
-        if (item?.path === '/') return mockRoot;
-        if (item?.path === '/Points1') return mockPoints;
-        return null;
-      };
-
-      await loadScene('http://localhost:8000/opacity.zarr');
-
-      // Opacity should be passed to material
-    });
-
-    it('should extract blending_mode from attrs', async () => {
-      mockStoreContents = [
-        { path: '/', kind: 'group' },
-        { path: '/Points1', kind: 'group' },
-      ];
-
-      const mockRoot = {
-        attrs: { type: 'scene' },
-        contents: new Map([['Points1', { type: 'group' }]]),
-      };
-
-      const mockPoints = {
-        attrs: {
-          type: 'points',
-          n_points: 100,
-          blending_mode: 'additive',
-        },
-        contents: new Map([['positions', { type: 'array' }]]),
-      };
-
-      mockOpenResult = mockRoot;
-      mockGetResult = (item: any) => {
-        if (item?.path === '/') return mockRoot;
-        if (item?.path === '/Points1') return mockPoints;
-        return null;
-      };
-
-      await loadScene('http://localhost:8000/additive.zarr');
-
-      // Blending mode should affect material creation
-    });
-
-    it('should extract gamma from attrs', async () => {
-      mockStoreContents = [
-        { path: '/', kind: 'group' },
-        { path: '/Points1', kind: 'group' },
-      ];
-
-      const mockRoot = {
-        attrs: { type: 'scene' },
-        contents: new Map([['Points1', { type: 'group' }]]),
-      };
-
-      const mockPoints = {
-        attrs: {
-          type: 'points',
-          n_points: 100,
-          gamma: 2.2, // Gamma correction
-        },
-        contents: new Map([['positions', { type: 'array' }]]),
-      };
-
-      mockOpenResult = mockRoot;
-      mockGetResult = (item: any) => {
-        if (item?.path === '/') return mockRoot;
-        if (item?.path === '/Points1') return mockPoints;
-        return null;
-      };
-
-      await loadScene('http://localhost:8000/gamma.zarr');
-    });
+    // Tests for opacity, blending_mode, and gamma extraction were removed because:
+    // The mock zarrita pipeline (mockStoreContents + mockGetResult) does not produce
+    // actual THREE.Points objects — SceneLoader sees 0 store items and never calls
+    // materialManager.getPointMaterial. These attrs are tested indirectly via E2E tests
+    // (data-loading.spec.ts) where the full pipeline runs with real zarr data.
+    // To unit-test attribute extraction, the SceneLoader.createMaterial method should
+    // be tested directly with a focused unit test rather than through the full pipeline.
 
     it('should use default values for missing attrs', async () => {
       mockStoreContents = [

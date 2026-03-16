@@ -4,7 +4,6 @@
  * This test suite verifies:
  * - Material creation and caching
  * - Camera parameter updates across all materials
- * - HDR multiplier updates
  * - Material disposal and cleanup
  *
  * IMPORTANT: We test the REAL PointMaterial class (not mocked) to ensure
@@ -75,6 +74,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       };
 
       const material = manager.getPointMaterial(props);
@@ -90,7 +91,6 @@ describe('MaterialManager', () => {
       expect(material.vertexShader).toContain('out mediump vec3 vColor');
 
       // Test REAL fragment shader content (GLSL ES 3.0 uses "out vec4 fragColor")
-      expect(material.fragmentShader).toContain('uniform mediump float hdrMultiplier');
       expect(material.fragmentShader).toContain('uniform mediump float opacity');
       expect(material.fragmentShader).toContain('uniform mediump float invGamma');
       expect(material.fragmentShader).toContain('out vec4 fragColor');
@@ -98,7 +98,6 @@ describe('MaterialManager', () => {
       // Test REAL uniforms initialized (with pre-computed pointSizeFactor)
       expect(material.uniforms.pointSizeFactor).toBeDefined();
       expect(material.uniforms.maxPointSize).toBeDefined();
-      expect(material.uniforms.hdrMultiplier).toBeDefined();
       expect(material.uniforms.opacity).toBeDefined();
       expect(material.uniforms.invGamma).toBeDefined();
     });
@@ -108,6 +107,8 @@ describe('MaterialManager', () => {
         blendingMode: 'normal',
         opacity: 0.5,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(material.uniforms.opacity.value).toBe(0.5);
@@ -118,6 +119,8 @@ describe('MaterialManager', () => {
         blendingMode: 'normal',
         opacity: 1.0,
         gamma: 2.2,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(material.userData.gamma).toBe(2.2); // gamma stored in userData
@@ -129,12 +132,16 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       const normal = manager.getPointMaterial({
         blendingMode: 'normal',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       // additive uses classic THREE.AdditiveBlending (SrcAlpha, One)
@@ -147,6 +154,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
         radiusScale: 1.0 / 255.0, // For uint8 radii
       });
 
@@ -158,6 +167,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
         sharpnessScale: 1.0 / 255.0, // For uint8 sharpness
       });
 
@@ -175,6 +186,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       };
 
       const material1 = manager.getPointMaterial(props);
@@ -193,12 +206,16 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       const material2 = manager.getPointMaterial({
         blendingMode: 'additive',
         opacity: 0.5, // Different!
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(material1).not.toBe(material2);
@@ -212,12 +229,16 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       const material2 = manager.getPointMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 2.2, // Different!
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(material1).not.toBe(material2);
@@ -228,12 +249,16 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       const normal = manager.getPointMaterial({
         blendingMode: 'normal', // Different!
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(additive).not.toBe(normal);
@@ -244,6 +269,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
         radiusScale: 1.0,
       });
 
@@ -251,6 +278,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
         radiusScale: 1.0 / 255.0, // Different!
       });
 
@@ -269,12 +298,16 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       const material2 = manager.getPointMaterial({
         blendingMode: 'normal',
         opacity: 0.5,
         gamma: 2.2,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       // Update camera params globally
@@ -292,27 +325,6 @@ describe('MaterialManager', () => {
       expect(material2.uniforms.maxPointSize.value).toBe(1080 * 0.5);
     });
 
-    it('should update HDR multiplier for all materials', () => {
-      const material1 = manager.getPointMaterial({
-        blendingMode: 'additive',
-        opacity: 1.0,
-        gamma: 1.0,
-      });
-
-      const material2 = manager.getPointMaterial({
-        blendingMode: 'normal',
-        opacity: 0.5,
-        gamma: 1.0,
-      });
-
-      // Update HDR multiplier globally
-      manager.updateHDRMultiplier(32.0);
-
-      // Both materials should be updated
-      expect(material1.uniforms.hdrMultiplier.value).toBe(32.0);
-      expect(material2.uniforms.hdrMultiplier.value).toBe(32.0);
-    });
-
     it('should store current camera params for new materials', () => {
       // Update params before creating material
       const fov = Math.PI / 4; // 45 degrees
@@ -325,53 +337,14 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       // Should have current params (with pre-computed pointSizeFactor and maxPointSize)
       const expectedPointSizeFactor = (2.0 * 1440) / Math.tan(fov / 2);
       expect(material.uniforms.pointSizeFactor.value).toBeCloseTo(expectedPointSizeFactor, 5);
       expect(material.uniforms.maxPointSize.value).toBe(1440 * 0.5);
-    });
-
-    it('should store current HDR multiplier for new materials (Bug Fix #11)', () => {
-      // This tests the critical bug fix: materials created AFTER updateHDRMultiplier()
-      // must receive the updated HDR value, not the config default.
-      // This is essential for settings loaded from localStorage before scene loading.
-
-      // Update HDR multiplier BEFORE creating material (simulates settings loaded from localStorage)
-      manager.updateHDRMultiplier(25.0);
-
-      // Create new material AFTER HDR update
-      const material = manager.getPointMaterial({
-        blendingMode: 'additive',
-        opacity: 1.0,
-        gamma: 1.0,
-      });
-
-      // Material should have the updated HDR value, not the config default (16.0)
-      expect(material.uniforms.hdrMultiplier.value).toBe(25.0);
-    });
-
-    it('should apply stored HDR multiplier to multiple new materials', () => {
-      // Update HDR multiplier
-      manager.updateHDRMultiplier(50.0);
-
-      // Create multiple materials after HDR update
-      const material1 = manager.getPointMaterial({
-        blendingMode: 'additive',
-        opacity: 1.0,
-        gamma: 1.0,
-      });
-
-      const material2 = manager.getPointMaterial({
-        blendingMode: 'normal',
-        opacity: 0.5,
-        gamma: 2.2,
-      });
-
-      // Both materials should have the updated HDR value
-      expect(material1.uniforms.hdrMultiplier.value).toBe(50.0);
-      expect(material2.uniforms.hdrMultiplier.value).toBe(50.0);
     });
   });
 
@@ -386,12 +359,16 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       const mat2 = manager.getPointMaterial({
         blendingMode: 'normal',
         opacity: 0.5,
         gamma: 2.2,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       // Dispose manager
@@ -412,6 +389,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(manager.getCacheStats().pointMaterials).toBe(1);
@@ -438,12 +417,16 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       manager.getPointMaterial({
         blendingMode: 'normal',
         opacity: 0.5,
         gamma: 2.2,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       const stats2 = manager.getCacheStats();
@@ -457,6 +440,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       const stats = manager.getCacheStats();
@@ -476,6 +461,8 @@ describe('MaterialManager', () => {
         blendingMode: 'normal',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(material.blending).toBe(THREE.NormalBlending);
@@ -486,6 +473,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       // additive uses classic THREE.AdditiveBlending (SrcAlpha, One)
@@ -497,6 +486,8 @@ describe('MaterialManager', () => {
         blendingMode: 'normal',
         opacity: 0.99, // Opaque threshold
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(material.depthWrite).toBe(true);
@@ -507,6 +498,8 @@ describe('MaterialManager', () => {
         blendingMode: 'normal',
         opacity: 0.5, // Transparent
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(material.depthWrite).toBe(false);
@@ -517,6 +510,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0, // Even if opaque
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(material.depthWrite).toBe(false);
@@ -527,6 +522,8 @@ describe('MaterialManager', () => {
         blendingMode: 'max',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(material.blending).toBe(THREE.CustomBlending);
@@ -538,6 +535,8 @@ describe('MaterialManager', () => {
         blendingMode: 'opaque',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(material.blending).toBe(THREE.NormalBlending);
@@ -550,6 +549,8 @@ describe('MaterialManager', () => {
         blendingMode: 'luminous',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       // Luminous uses same blending as additive (AdditiveBlending = SrcAlpha, One)
@@ -565,6 +566,8 @@ describe('MaterialManager', () => {
         blendingMode: 'luminous',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(material.userData.depthTest).toBe(true);
@@ -575,6 +578,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       // 'additive' ignores depth entirely (renders on top of everything)
@@ -586,6 +591,8 @@ describe('MaterialManager', () => {
         blendingMode: 'opaque',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(material.userData.depthTest).toBe(true);
@@ -602,6 +609,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       // Verify optimized world-space sizing formula using inversesqrt and pre-computed pointSizeFactor
@@ -609,22 +618,13 @@ describe('MaterialManager', () => {
       expect(material.vertexShader).toContain('inversesqrt(dot(mvPosition.xyz, mvPosition.xyz))');
     });
 
-    it('should generate shaders with HDR support', () => {
-      const material = manager.getPointMaterial({
-        blendingMode: 'additive',
-        opacity: 1.0,
-        gamma: 1.0,
-      });
-
-      // Verify HDR is applied before gamma
-      expect(material.fragmentShader).toContain('vColor * hdrMultiplier');
-    });
-
     it('should generate shaders with sharpness compensation', () => {
       const material = manager.getPointMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       // Verify sharpness compensation exists
@@ -637,10 +637,13 @@ describe('MaterialManager', () => {
         blendingMode: 'normal',
         opacity: 1.0,
         gamma: 2.2,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
-      // Verify gamma correction in fragment shader
-      expect(material.fragmentShader).toContain('pow(hdrColor, vec3(invGamma))');
+      // Verify GOG model in fragment shader
+      expect(material.fragmentShader).toContain('vColor * uIntensity + uOffset');
+      expect(material.fragmentShader).toContain('pow(adjusted, vec3(invGamma))');
       expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.2);
     });
   });
@@ -661,6 +664,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       // Should have current params (with pre-computed pointSizeFactor and maxPointSize)
@@ -674,6 +679,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       const initialPointSizeFactor = material.uniforms.pointSizeFactor.value;
@@ -699,6 +706,8 @@ describe('MaterialManager', () => {
         blendingMode: 'normal',
         opacity: 0.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(material.uniforms.opacity.value).toBe(0.0);
@@ -710,6 +719,8 @@ describe('MaterialManager', () => {
         blendingMode: 'normal',
         opacity: 1.0,
         gamma: 10.0, // Extreme value
+        intensity: 1.0,
+        offset: 0.0,
       });
 
       expect(material.userData.gamma).toBe(10.0); // gamma stored in userData
@@ -721,6 +732,8 @@ describe('MaterialManager', () => {
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
         radiusScale: 0.00001,
       });
 

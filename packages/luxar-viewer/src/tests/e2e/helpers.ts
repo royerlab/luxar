@@ -342,7 +342,10 @@ export async function getConsoleMessages(page: Page): Promise<{
  *
  * @param page - Playwright page
  * @param allowedPatterns - Optional patterns to ignore (e.g., expected warnings)
+ *
+ * NOTE: assertNoConsoleErrors is defined below getWebGLErrors.
  */
+
 /**
  * Get WebGL errors from the rendering context
  *

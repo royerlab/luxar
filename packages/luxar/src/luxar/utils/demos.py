@@ -1,18 +1,21 @@
-"""luxar.demos – Demo scene generators for Luxar.
+"""luxar.demos – Demo scene generators and precomputed-data helpers for Luxar.
 
 This module provides functions to generate various demo scenes for testing
-and demonstration purposes.
+and demonstration purposes, plus helpers for loading precomputed GSplat data
+from Git LFS (shipped with the package) or a local cache.
 """
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 from typing import Optional, Union
 
 import numpy as np
-from arbol import aprint
+from arbol import aprint, asection
 
 from ..core.dimensions import Dimension, Dimensions
 from ..io.compiler import LuxarZarrCompiler
@@ -83,6 +86,201 @@ def warn_if_no_cuda_gpu() -> None:
     aprint("  - Use --serve-only if a scene was already generated")
     aprint("=" * 70)
     aprint("")
+
+
+# =============================================================================
+# Precomputed Data Helpers
+# =============================================================================
+
+# Directory containing precomputed data shipped with the package (via Git LFS)
+_DEMOS_DATA_DIR = Path(__file__).resolve().parent.parent / "demos" / "data"
+
+# Default user-level cache
+_DEFAULT_CACHE_ROOT = Path.home() / ".cache" / "luxar"
+
+
+def is_lfs_pointer(path: Path) -> bool:
+    """Check whether *path* is an unpulled Git LFS pointer file.
+
+    LFS pointers are small text files (< 1 KB) whose first line is
+    ``version https://git-lfs.github.com/spec/v1``.
+    """
+    if not path.exists():
+        return False
+    if path.stat().st_size > 1024:
+        return False
+    try:
+        with open(path, "r") as f:
+            first_line = f.readline()
+        return first_line.startswith("version https://git-lfs.github.com/spec/v1")
+    except (UnicodeDecodeError, OSError):
+        return False
+
+
+def _validate_lfs_files(paths: list[Path]) -> None:
+    """Raise a helpful error if any *paths* are missing or are LFS pointers."""
+    missing = [p for p in paths if not p.exists()]
+    pointers = [p for p in paths if p.exists() and is_lfs_pointer(p)]
+
+    if missing:
+        names = ", ".join(p.name for p in missing)
+        raise FileNotFoundError(
+            f"Precomputed data files not found: {names}\n"
+            "Run 'git lfs pull' to download the data files.\n"
+            "Alternatively, use --recompute to fit from scratch (requires GPU)."
+        )
+    if pointers:
+        names = ", ".join(p.name for p in pointers)
+        raise FileNotFoundError(
+            f"Precomputed data files are Git LFS pointers (not pulled): {names}\n"
+            "Run 'git lfs pull' to download the actual data files.\n"
+            "Alternatively, use --recompute to fit from scratch (requires GPU)."
+        )
+
+
+def parse_demo_flags() -> dict:
+    """Parse common GSplat demo command-line flags from ``sys.argv``.
+
+    Returns a dict with keys: ``recompute``, ``no_serve``, ``serve_only``.
+
+    Handles the ``--no-cache`` → ``--recompute`` deprecation.
+    """
+    recompute = "--recompute" in sys.argv
+    if "--no-cache" in sys.argv:
+        aprint(
+            "WARNING: --no-cache is deprecated, use --recompute instead. "
+            "Treating as --recompute."
+        )
+        recompute = True
+
+    return {
+        "recompute": recompute,
+        "no_serve": "--no-serve" in sys.argv,
+        "serve_only": "--serve-only" in sys.argv,
+    }
+
+
+def load_precomputed_gsplats(
+    demo_name: str,
+    file_names: list[str],
+    *,
+    recompute: bool = False,
+) -> list | None:
+    """Load precomputed GSplat data from Git LFS / local cache.
+
+    Resolution order (per file):
+      1. If ``recompute`` is True, return ``None`` immediately.
+      2. Check the local cache ``~/.cache/luxar/<demo_name>/``.
+      3. Copy from ``demos/data/<demo_name>/`` (LFS) to local cache.
+      4. Load from local cache.
+
+    Args:
+        demo_name: Subdirectory name under ``demos/data/`` (e.g. ``"tribolium"``).
+        file_names: File basenames to load (e.g. ``["tribolium_gsplats.gsplats.zarr.zip"]``).
+        recompute: If True, skip precomputed data entirely and return None.
+
+    Returns:
+        List of :class:`GSplatData` in the same order as *file_names*,
+        or ``None`` when the caller should recompute.
+    """
+    from ..gsplats.gsplat_data import GSplatData
+
+    if recompute:
+        return None
+
+    cache_dir = _DEFAULT_CACHE_ROOT / demo_name
+    lfs_dir = _DEMOS_DATA_DIR / demo_name
+
+    with asection(f"Loading precomputed GSplats ({demo_name})"):
+        # Ensure cache dir exists
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy any missing files from LFS source to cache
+        for fname in file_names:
+            cache_file = cache_dir / fname
+            if not cache_file.exists():
+                lfs_file = lfs_dir / fname
+                _validate_lfs_files([lfs_file])
+                aprint(f"Copying {fname} from package data to cache")
+                shutil.copy2(lfs_file, cache_file)
+
+        # Load all
+        results = []
+        for fname in file_names:
+            cache_file = cache_dir / fname
+            gsplats = GSplatData.load(cache_file, include_stats=False)
+            aprint(f"Loaded {fname}: {len(gsplats.amplitudes):,} splats")
+            results.append(gsplats)
+
+        return results
+
+
+def load_precomputed_bundle(
+    demo_name: str,
+    bundle_name: str,
+    file_names: list[str],
+    *,
+    recompute: bool = False,
+) -> list | None:
+    """Load precomputed GSplat data from a bundled zip archive in Git LFS.
+
+    For timelapse demos where many per-frame ``.gsplats.zarr.zip`` files are
+    bundled into a single outer ``.zip`` stored via Git LFS.
+
+    Args:
+        demo_name: Subdirectory name under ``demos/data/`` (e.g. ``"zebrafish"``).
+        bundle_name: Filename of the outer bundle zip (e.g. ``"zebrafish_gsplats.zip"``).
+        file_names: Basenames of per-frame files *inside* the bundle to load,
+            in the desired order.
+        recompute: If True, return None.
+
+    Returns:
+        List of :class:`GSplatData`, or ``None`` when the caller should recompute.
+    """
+    from ..gsplats.gsplat_data import GSplatData
+
+    if recompute:
+        return None
+
+    cache_dir = _DEFAULT_CACHE_ROOT / demo_name
+    bundle_path = _DEMOS_DATA_DIR / demo_name / bundle_name
+
+    with asection(f"Loading precomputed GSplats bundle ({demo_name})"):
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Check if all files already in cache
+        missing = [f for f in file_names if not (cache_dir / f).exists()]
+
+        if missing:
+            # Extract from bundle
+            _validate_lfs_files([bundle_path])
+            aprint(f"Extracting {len(missing)} files from {bundle_name}")
+            with zipfile.ZipFile(bundle_path, "r") as zf:
+                members = zf.namelist()
+                for fname in missing:
+                    # Files may be at top level or inside a directory in the zip
+                    matching = [m for m in members if m.endswith(fname)]
+                    if not matching:
+                        raise FileNotFoundError(
+                            f"{fname} not found in bundle {bundle_name}. "
+                            f"Available: {members[:5]}..."
+                        )
+                    zf.extract(matching[0], cache_dir)
+                    # If extracted into a subdirectory, move to cache root
+                    extracted = cache_dir / matching[0]
+                    target = cache_dir / fname
+                    if extracted != target:
+                        shutil.move(str(extracted), str(target))
+
+        # Load all
+        results = []
+        for fname in file_names:
+            cache_file = cache_dir / fname
+            gsplats = GSplatData.load(cache_file, include_stats=False)
+            aprint(f"Loaded {fname}: {len(gsplats.amplitudes):,} splats")
+            results.append(gsplats)
+
+        return results
 
 
 def launch_viewer(output_path: Union[str, Path], open_browser: bool = True) -> None:

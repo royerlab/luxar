@@ -33,9 +33,34 @@ export function setupPostProcessingControls(
   const effectsFolder = gui.addFolder('🎬 Post-Processing');
   effectsFolder.close(); // Closed by default
 
+  effectsFolder.domElement?.setAttribute(
+    'title',
+    'Post-Processing: Visual effects applied after the scene is rendered\n\n' +
+      'Each effect is independent and can be toggled on/off:\n' +
+      '• Bloom — glow around bright areas (great for HDR data)\n' +
+      '• Detector Noise — physics-based noise (shot, readout, FPN)\n' +
+      '• Depth of Field — focus blur simulating a camera lens\n' +
+      '• Ambient Occlusion — darkens corners for depth perception\n' +
+      '• Vignette — darkened edges for cinematic framing\n' +
+      '• Chromatic Lens Distortion — barrel/pincushion + color fringing\n\n' +
+      'Tip: Enable multiple effects for cinematic results, or use\n' +
+      'Cinematic Mode (C key) to enable a curated preset.'
+  );
+
   // Bloom subfolder - moved here from top level
   const bloomFolder = effectsFolder.addFolder('Bloom');
   bloomFolder.close(); // Closed by default like all other effects
+
+  bloomFolder.domElement?.setAttribute(
+    'title',
+    'Bloom: Simulates light bleeding from bright areas\n\n' +
+      'Creates a soft glow halo around pixels above the brightness threshold.\n' +
+      'Works best with HDR color data where some points are much brighter.\n' +
+      '• Threshold — which brightness level starts glowing\n' +
+      '• Strength — how intense the glow appears\n' +
+      '• Radius — how far the glow spreads\n' +
+      '• Mipmap Levels — quality of the blur (more = smoother)'
+  );
 
   const bloomEnabledControl = bloomFolder
     .add(settings, 'bloomEnabled')
@@ -137,6 +162,16 @@ export function setupPostProcessingControls(
   const detectorNoiseFolder = effectsFolder.addFolder('Detector Noise');
   detectorNoiseFolder.close();
 
+  detectorNoiseFolder.domElement?.setAttribute(
+    'title',
+    'Detector Noise: Physics-based noise simulating a real camera sensor\n\n' +
+      'Three independent noise sources, each modeling a real physical effect:\n' +
+      '• Shot Noise — Poisson noise from photon statistics (signal-dependent)\n' +
+      '• Readout Noise — Gaussian noise from electronics (temporal, per-frame)\n' +
+      '• Fixed Pattern Noise — static per-pixel offset (sensor non-uniformity)\n\n' +
+      'Useful for scientific visualization aesthetics or testing denoising.'
+  );
+
   const detectorNoiseEnabledControl = detectorNoiseFolder
     .add(settings, 'detectorNoiseEnabled')
     .name('Enabled')
@@ -229,6 +264,15 @@ export function setupPostProcessingControls(
   const dofFolder = effectsFolder.addFolder('Depth of Field');
   dofFolder.close();
 
+  dofFolder.domElement?.setAttribute(
+    'title',
+    'Depth of Field: Simulates the focus behavior of a real camera lens\n\n' +
+      'Objects at the focal distance appear sharp; everything else blurs.\n' +
+      '• Focus Distance — sets where the sharp plane is in the scene\n' +
+      '• Blur Strength — controls how blurry out-of-focus areas become\n\n' +
+      'Great for drawing attention to a specific region of your data.'
+  );
+
   const dofEnabledControl = dofFolder
     .add(settings, 'dofEnabled')
     .name('Enabled')
@@ -290,6 +334,15 @@ export function setupPostProcessingControls(
   const aoFolder = effectsFolder.addFolder('Ambient Occlusion');
   aoFolder.close();
 
+  aoFolder.domElement?.setAttribute(
+    'title',
+    'Ambient Occlusion (AO): Darkens areas where surfaces are close together\n\n' +
+      'Simulates how ambient light is blocked in corners, crevices, and\n' +
+      'between nearby objects, adding a sense of depth and contact shadows.\n' +
+      '• Quality controls the number of samples (more = smoother but slower)\n' +
+      '• Most noticeable in dense point clouds with nearby structures'
+  );
+
   const aoEnabledControl = aoFolder
     .add(settings, 'aoEnabled')
     .name('Enabled')
@@ -330,6 +383,15 @@ export function setupPostProcessingControls(
   // Vignette subfolder
   const vignetteFolder = effectsFolder.addFolder('Vignette');
   vignetteFolder.close();
+
+  vignetteFolder.domElement?.setAttribute(
+    'title',
+    'Vignette: Gradually darkens the edges and corners of the image\n\n' +
+      'A classic photographic effect that draws the eye toward the center.\n' +
+      '• Darkness — how dark the edges become\n' +
+      '• Offset — how far from center the darkening starts\n' +
+      '• Very low performance cost'
+  );
 
   const vignetteEnabledControl = vignetteFolder
     .add(settings, 'vignetteEnabled')
@@ -389,6 +451,17 @@ export function setupPostProcessingControls(
   // Chromatic Lens Distortion subfolder (combined effect - replaces old separate effects)
   const chromaticLensDistortionFolder = effectsFolder.addFolder('Chromatic Lens Distortion');
   chromaticLensDistortionFolder.close();
+
+  chromaticLensDistortionFolder.domElement?.setAttribute(
+    'title',
+    'Chromatic Lens Distortion: Simulates real camera lens imperfections\n\n' +
+      'Combines two optical effects in a single efficient pass:\n' +
+      '• Lens Distortion — barrel (wide-angle) or pincushion (telephoto) warping\n' +
+      '• Chromatic Aberration — color fringing where R/G/B refract differently\n\n' +
+      'FOV presets auto-apply matching distortion when this effect is enabled.\n' +
+      'Advanced controls (principal point, focal length, skew) model a full\n' +
+      'pinhole camera for physically accurate results.'
+  );
 
   const chromaticLensDistortionEnabledControl = chromaticLensDistortionFolder
     .add(settings, 'chromaticLensDistortionEnabled')

@@ -2,6 +2,8 @@
 
 Guidance for Claude Code when working with this repository.
 
+**Luxar** is a high-performance system for compiling and visualizing arbitrary-sized nD scientific scenes. It supports three first-class geometry types — **Points**, **Lines**, and **Gaussian Splats** — with more planned.
+
 ## Quick Reference
 
 ### Python (use Hatch)
@@ -142,6 +144,48 @@ luxar demo                       # Quick demo with viewer
 luxar serve <data.zarr> --viewer # Serve with viewer
 luxar info <data.zarr> --stats   # Dataset info
 luxar profiles                   # Network simulation profiles
+```
+
+### GSplat CLI (fitting, converting, rendering, merging)
+```bash
+# Fit Gaussian splats to a volume (presets: draft/standard/hifi)
+luxar gsplat fit volume.tiff splats.gsplats.zarr --preset standard --seeds 8000
+luxar gsplat fit volume.npy splats.gsplats.zarr --config params.yaml
+luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config template
+
+# Tiled fitting for large volumes (Hann cosine apodization, seamless stitching)
+luxar gsplat fit large.zarr splats.gsplats.zarr --tiled --tile-size 256 --overlap 32
+luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32  # Single tile (Slurm-ready)
+
+# Convert .gsplats.zarr to Luxar scene for web viewer
+luxar gsplat convert splats.gsplats.zarr scene.zarr --center
+
+# Render gsplats back to volume for quality comparison
+luxar gsplat render splats.gsplats.zarr rendered.npy --shape 128,128,128
+
+# Compare reconstruction quality against original (PSNR, SSIM, MSE)
+luxar gsplat compare fitted.gsplats.zarr original.tiff
+luxar gsplat compare fitted.gsplats.zarr original.npy --output-json metrics.json --device cuda
+
+# Split into parts
+luxar gsplat split splats.gsplats.zarr output_dir/ --parts 4
+luxar gsplat split splats.gsplats.zarr output_dir/ --indices "1000,5000"
+
+# Merge multiple datasets
+luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
+luxar gsplat merge t0.zarr t1.zarr -o 4d.zarr --as-dimension --values 0,1
+luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00ff00"
+
+# Slice by coordinate ranges (numpy-style)
+luxar gsplat slice input.gsplats.zarr output.gsplats.zarr "0:50, :, 10:90"
+luxar gsplat slice input.gsplats.zarr output.gsplats.zarr ":50, 20:80, :"
+
+# Inspect, prune, and filter
+luxar gsplat info splats.gsplats.zarr          # Dataset statistics
+luxar gsplat prune splats.gsplats.zarr pruned.gsplats.zarr --retention 0.95
+luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --amplitude-min 0.1 --eccentricity-max 5
+luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --bbox "0,50,0,50,0,50" --volume-max 100
+luxar gsplat view splats.gsplats.zarr          # Quick web viewer
 ```
 
 ### GPU Acceleration (Seeding & Fitting)
@@ -425,6 +469,15 @@ const viewState: ViewState = {
 };
 ```
 
+### nD Transforms on Non-Displayed Dimensions
+`nd_transform` is separate from the 4x4 `transform`. It operates per-dimension on non-displayed dims:
+- Continuous/discrete: `{"scale": float, "offset": float}` (affine)
+- Categorical: `{"permutation": [int, ...]}` (relabeling)
+
+**Viewer design**: Uses **inverse-query** approach — the query (slicePosition + tolerance) is inverse-transformed from world to local space ONCE (O(1)), rather than transforming millions of point coordinates (O(N)). No loader internals change.
+
+See `docs/guides/specs/ND_TRANSFORMS_SPEC.md` for full details.
+
 ---
 
 ## Common Pitfalls and Solutions
@@ -490,11 +543,10 @@ import { PointMaterial } from '../rendering/point-material';
 ### Physical Units
 Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 
-### Point Attributes
-- **positions**: Required (Float32, nD)
-- **colors**: Optional (Uint8 or Float32 for HDR)
-- **radii**: Optional (Float32)
-- **sharpness**: Optional (Float32)
+### Geometry Types & Attributes
+- **Points**: positions (Float32, nD, required), colors (Uint8/Float32 HDR), radii (Float32), sharpness (Float32)
+- **Lines**: vertices (Float32, nD, required), widths (Float32, required), segments (Uint32, auto-generated), colors (Uint8/Float32), sharpness (Float32)
+- **GSplats**: centers (Float32, nD, required), amplitudes (Float32, required), cholesky_factors (Float32, required), colors (Uint8/Float32), sharpness (Float32)
 
 ### Transforms
 - 4x4 matrices stored as 16-element lists
@@ -508,7 +560,7 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 
 ### nD Navigation
 - Keyboard: 1-9 selects dimension, `[`/`]` navigates
-- Radius-based slicing: points visible based on nD hypersphere intersection
+- Radius-based slicing: geometry visible based on nD hypersphere intersection
 
 ---
 
@@ -571,10 +623,10 @@ Python Data -> Luxar Core -> Zarr Archive -> Luxar Viewer -> WebGL -> Display
 ```
 
 ### Scene Graph
-- Scene (root) contains Groups and Points
+- Scene (root) contains Groups, Points, Lines, and GSplats
 - Groups can nest (hierarchical)
 - Transforms compose hierarchically (parent -> child)
-- Points have positions (nD), colors, radii, sharpness
+- Three geometry types: Points (soft-edged spheres), Lines (width-tapered curves), GSplats (oriented Gaussians)
 
 ### Performance Targets
 - 100K-10M elements for smooth interaction

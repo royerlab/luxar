@@ -150,12 +150,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             flexibility for multi-dimensional data.
         """
         # Handle store path
+        self._tmpdir: Optional[tempfile.TemporaryDirectory[str]] = None
         if store_path is None:
             self._tmpdir = tempfile.TemporaryDirectory()
             self._store_path = Path(self._tmpdir.name) / "scene.zarr"
             aprint(f"📁 Using temporary directory: {self._store_path}")
         else:
-            self._tmpdir = None
             self._store_path = Path(store_path)
             aprint(f"📁 Creating scene at: {self._store_path}")
 
@@ -267,7 +267,31 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         aprint(f"📝 Created group: {path or '/'}")
 
-    def write_points(
+    def delete_group_attr(self, path: NodePath, key: str) -> None:
+        """Remove an attribute from a group in the Zarr store.
+
+        Args:
+            path: Path for the group within the store
+            key: Attribute key to remove
+        """
+        if path == "/" or path == "":
+            group = self.store
+        else:
+            path = path.lstrip("/")
+            try:
+                group = self.store[path]
+            except KeyError:
+                return
+            if not isinstance(group, zarr.Group):
+                return
+
+        attrs = dict(group.attrs)
+        if key in attrs:
+            del attrs[key]
+            group.attrs.clear()
+            group.attrs.update(attrs)
+
+    def write_points(  # type: ignore[override]
         self,
         path: NodePath,
         positions: NDArray[np.float32],
@@ -323,11 +347,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             aprint(f"  → Uniform color RGB{list(colors)} for all points")
 
         # 3. Apply spatial ordering if enabled (reorders arrays only)
-        # Note: Spatial ordering requires radii to compute chunk_bounds
-        # If radii is scalar, create temp array just for ordering
+        # Note: Spatial ordering uses radii to compute chunk_bounds.
+        # Scalar/broadcasted radii are handled without expanding to full arrays.
         radii_for_ordering = radii
-        if radii is not None and isinstance(radii, (int, float)):
-            radii_for_ordering = np.full(n_points, float(radii), dtype=np.float32)
 
         ordering_data = self._build_spatial_ordering_if_enabled(
             positions, n_points, n_dims, radii_for_ordering
@@ -358,7 +380,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # 4. Initialize metadata
         metadata: PointsMetadata = {
             "n_points": n_points,
-            "dims": n_dims,
+            "ndim": n_dims,
             "path": path,
             "has_colors": False,
             "has_radii": False,
@@ -399,11 +421,24 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
             attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
 
+        # 6b. Validate nd_transform if present
+        if "nd_transform" in attrs:
+            from ..validation.nd_transforms import validate_nd_transform
+
+            dims = None
+            if "scene_dimensions" in self.store.attrs:
+                dims = Dimensions.from_dict(self.store.attrs["scene_dimensions"])
+            attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"], dims)
+
         # 7. Set default rendering attributes if not provided
         if "opacity" not in attrs:
             attrs["opacity"] = 1.0
         if "gamma" not in attrs:
             attrs["gamma"] = 1.0
+        if "intensity" not in attrs:
+            attrs["intensity"] = 1.0
+        if "offset" not in attrs:
+            attrs["offset"] = 0.0
         if "blending_mode" not in attrs:
             attrs["blending_mode"] = "additive"
 
@@ -432,7 +467,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         return metadata
 
-    def write_lines(
+    def write_lines(  # type: ignore[override]
         self,
         path: NodePath,
         vertices: NDArray[np.float32],
@@ -612,13 +647,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             n_elems = n_vertices
             chunks_1d = None  # Scalar doesn't need chunks
         else:
-            n_elems = None  # Array already has correct size
-            chunks_1d = _calculate_intelligent_chunks(
-                (n_vertices,),
-                spatial_index_data=ordering_data.get("vertex_ordering")
-                if ordering_data
-                else None,
-            )
+            if widths.shape[0] == 1:
+                n_elems = n_vertices
+                chunks_1d = None
+            else:
+                n_elems = None  # Array already has correct size
+                chunks_1d = _calculate_intelligent_chunks(
+                    (n_vertices,),
+                    spatial_index_data=ordering_data.get("vertex_ordering")
+                    if ordering_data
+                    else None,
+                )
 
         self._encoder.encode(
             data=widths,
@@ -645,6 +684,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Write optional datasets
         if colors is not None:
             # Handle both scalar/tuple and array inputs
+            color_mode: Optional[Literal["sdr", "hdr"]] = None
             if isinstance(colors, (tuple, list)):
                 # Scalar color input - detect HDR vs SDR
                 max_val = max(colors)
@@ -653,16 +693,19 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 chunks_colors = None
             elif isinstance(colors, np.ndarray):
                 validate_colors_for_writing(colors, n_vertices)
-                chunks_colors = _calculate_intelligent_chunks(
-                    colors.shape,
-                    spatial_index_data=ordering_data.get("vertex_ordering")
-                    if ordering_data
-                    else None,
-                )
-                n_elems_color = None
+                if colors.shape[0] == 1:
+                    n_elems_color = n_vertices
+                    chunks_colors = None
+                else:
+                    chunks_colors = _calculate_intelligent_chunks(
+                        colors.shape,
+                        spatial_index_data=ordering_data.get("vertex_ordering")
+                        if ordering_data
+                        else None,
+                    )
+                    n_elems_color = None
 
                 # Detect color_mode for arrays
-                color_mode = None
                 if np.issubdtype(colors.dtype, np.floating):
                     color_mode = "hdr" if np.any(colors > 1.0) else "sdr"
             else:
@@ -681,6 +724,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             )
             metadata["has_colors"] = True
 
+            # Store color data range for layer controls
+            if isinstance(colors, np.ndarray) and colors.size > 0:
+                group.attrs["color_data_range"] = [
+                    float(colors.min()),
+                    float(colors.max()),
+                ]
+            elif isinstance(colors, (tuple, list)):
+                group.attrs["color_data_range"] = [
+                    float(min(colors)),
+                    float(max(colors)),
+                ]
+
         if sharpness is not None:
             from ..validation.base import validate_sharpness_for_writing
 
@@ -690,13 +745,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 chunks_sharp = None
             else:
                 validate_sharpness_for_writing(sharpness, n_vertices)
-                n_elems_sharp = None
-                chunks_sharp = _calculate_intelligent_chunks(
-                    (n_vertices,),
-                    spatial_index_data=ordering_data.get("vertex_ordering")
-                    if ordering_data
-                    else None,
-                )
+                if sharpness.shape[0] == 1:
+                    n_elems_sharp = n_vertices
+                    chunks_sharp = None
+                else:
+                    n_elems_sharp = None
+                    chunks_sharp = _calculate_intelligent_chunks(
+                        (n_vertices,),
+                        spatial_index_data=ordering_data.get("vertex_ordering")
+                        if ordering_data
+                        else None,
+                    )
 
             self._encoder.encode(
                 data=sharpness,
@@ -726,6 +785,27 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             from ..core.transforms import prepare_transform_for_zarr
 
             attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
+
+        # Validate nd_transform if present
+        if "nd_transform" in attrs:
+            from ..validation.nd_transforms import validate_nd_transform
+
+            dims = None
+            if "scene_dimensions" in self.store.attrs:
+                dims = Dimensions.from_dict(self.store.attrs["scene_dimensions"])
+            attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"], dims)
+
+        # Set default rendering attributes if not provided (must match write_points/write_gsplats)
+        if "opacity" not in attrs:
+            attrs["opacity"] = 1.0
+        if "gamma" not in attrs:
+            attrs["gamma"] = 1.0
+        if "intensity" not in attrs:
+            attrs["intensity"] = 1.0
+        if "offset" not in attrs:
+            attrs["offset"] = 0.0
+        if "blending_mode" not in attrs:
+            attrs["blending_mode"] = "additive"
 
         # Set attributes (all core metadata per spec Section 6.6)
         group.attrs.update(attrs)
@@ -759,7 +839,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         return metadata
 
-    def write_gsplats(
+    def write_gsplats(  # type: ignore[override]
         self,
         path: NodePath,
         centers: NDArray[np.float32],
@@ -850,9 +930,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if isinstance(amplitudes, np.ndarray):
                 amplitudes = amplitudes[sort_indices]
             if colors is not None and isinstance(colors, np.ndarray):
-                colors = colors[sort_indices]
+                if colors.shape[0] > 1:
+                    colors = colors[sort_indices]
             if sharpness is not None and isinstance(sharpness, np.ndarray):
-                sharpness = sharpness[sort_indices]
+                if sharpness.shape[0] > 1:
+                    sharpness = sharpness[sort_indices]
 
             # Compute chunk size
             from ..typing_utils import TARGET_CHUNK_BYTES
@@ -930,6 +1012,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor=self.compressor,
         )
 
+        # Store amplitude data range for layer controls
+        if isinstance(amplitudes, np.ndarray) and amplitudes.size > 0:
+            group.attrs["amplitude_data_range"] = [
+                float(amplitudes.min()),
+                float(amplitudes.max()),
+            ]
+
         # Write cholesky_factors using ArrayEncoder (CHOLESKY)
         if cholesky_is_uniform:
             # Pass (1, k) array with n_elements for broadcasting
@@ -985,6 +1074,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Write optional datasets
         if colors is not None:
             # Handle scalar/tuple vs array
+            color_mode: Optional[Literal["sdr", "hdr"]] = None
             if isinstance(colors, (tuple, list)):
                 # Detect HDR vs SDR from values
                 max_val = max(colors)
@@ -993,13 +1083,16 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 chunks_colors = None
             elif isinstance(colors, np.ndarray):
                 validate_colors_for_writing(colors, n_splats)
-                chunks_colors = _calculate_intelligent_chunks(
-                    colors.shape, spatial_index_data=ordering_data
-                )
-                n_elems_color = None
+                if colors.shape[0] == 1:
+                    n_elems_color = n_splats
+                    chunks_colors = None
+                else:
+                    chunks_colors = _calculate_intelligent_chunks(
+                        colors.shape, spatial_index_data=ordering_data
+                    )
+                    n_elems_color = None
 
                 # Detect color_mode
-                color_mode = None
                 if np.issubdtype(colors.dtype, np.floating):
                     color_mode = "hdr" if np.any(colors > 1.0) else "sdr"
             else:
@@ -1018,6 +1111,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             )
             metadata["has_colors"] = True
 
+            # Store color data range for layer controls
+            if isinstance(colors, np.ndarray) and colors.size > 0:
+                group.attrs["color_data_range"] = [
+                    float(colors.min()),
+                    float(colors.max()),
+                ]
+            elif isinstance(colors, (tuple, list)):
+                group.attrs["color_data_range"] = [
+                    float(min(colors)),
+                    float(max(colors)),
+                ]
+
         if sharpness is not None:
             from ..validation.base import validate_sharpness_for_writing
 
@@ -1028,10 +1133,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 sharpness_min = sharpness_max = float(sharpness)
             else:
                 validate_sharpness_for_writing(sharpness, n_splats)
-                n_elems_sharp = None
-                chunks_sharp = _calculate_intelligent_chunks(
-                    (n_splats,), spatial_index_data=ordering_data
-                )
+                if sharpness.shape[0] == 1:
+                    n_elems_sharp = n_splats
+                    chunks_sharp = None
+                else:
+                    n_elems_sharp = None
+                    chunks_sharp = _calculate_intelligent_chunks(
+                        (n_splats,), spatial_index_data=ordering_data
+                    )
                 sharpness_min = float(np.min(sharpness))
                 sharpness_max = float(np.max(sharpness))
 
@@ -1070,11 +1179,24 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
             attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
 
+        # Validate nd_transform if present
+        if "nd_transform" in attrs:
+            from ..validation.nd_transforms import validate_nd_transform
+
+            dims = None
+            if "scene_dimensions" in self.store.attrs:
+                dims = Dimensions.from_dict(self.store.attrs["scene_dimensions"])
+            attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"], dims)
+
         # Set rendering defaults (must match write_points defaults)
         if "opacity" not in attrs:
             attrs["opacity"] = 1.0
         if "gamma" not in attrs:
             attrs["gamma"] = 1.0
+        if "intensity" not in attrs:
+            attrs["intensity"] = 1.0
+        if "offset" not in attrs:
+            attrs["offset"] = 0.0
         if "blending_mode" not in attrs:
             attrs["blending_mode"] = "additive"
 
@@ -1169,7 +1291,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         positions: NDArray[np.float32],
         n_points: int,
         n_dims: int,
-        radii: Optional[NDArray[np.float32]],
+        radii: Optional[Union[NDArray[np.float32], float]],
     ) -> Optional[Dict[str, Any]]:
         """Apply spatial ordering using Morton/Hilbert curves.
 
@@ -1227,14 +1349,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if isinstance(radii, np.ndarray):
                 # Check if radii are broadcasted (shape (1,) or (1, k))
                 if radii.shape[0] == 1:
-                    # Broadcasted radii - replicate to all points (no reordering needed)
-                    sorted_radii = np.full(n_points, radii.flat[0], dtype=np.float32)
+                    # Broadcasted radii - keep scalar to avoid large allocations
+                    sorted_radii = float(radii.flat[0])
                 else:
                     # Regular array radii - apply reordering
                     sorted_radii = radii[sort_indices]
             else:
                 # Scalar radii - no reordering needed
-                sorted_radii = np.full(n_points, float(radii), dtype=np.float32)
+                sorted_radii = float(radii)
         else:
             sorted_radii = None
         chunk_bounds = compute_chunk_bounds_points(
@@ -1376,6 +1498,95 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     stacklevel=3,
                 )
 
+    def _expand_bounds_with_nd_transforms(self, store: zarr.Group) -> None:
+        """Expand scene-level position bounds using nD transforms.
+
+        Walks the zarr tree, composes world nd_transforms for each leaf node,
+        applies them to per-node position bounds, and stores the union of all
+        world-space bounds as the scene-level position_bounds.
+
+        Only non-displayed dimensions are affected — displayed dimensions stay
+        in local space (correct for camera auto-framing), while non-displayed
+        dimensions become world-space (correct for slider auto-ranging).
+
+        Args:
+            store: The opened zarr store (in r+ mode)
+        """
+        # Guard: need both scene_dimensions and scene_bounds
+        if self._scene_bounds is None:
+            return
+        if "scene_dimensions" not in store.attrs:
+            return
+
+        from ..core.dimensions import Dimensions
+        from ..validation.nd_transforms import (
+            apply_nd_transform_to_bounds,
+            compose_nd_transforms,
+        )
+
+        dimensions = Dimensions.from_dict(store.attrs["scene_dimensions"])
+
+        # Collect all world-space bounds from leaf nodes
+        all_world_bounds: list[dict[str, list[float]]] = []
+
+        def walk(group: zarr.Group, parent_chain: list[dict]) -> None:
+            """Recursively walk zarr tree, composing nd_transforms."""
+            attrs = dict(group.attrs)
+            chain = list(parent_chain)
+            nd_t = attrs.get("nd_transform", None)
+            if nd_t:
+                chain.append(nd_t)
+
+            node_type = attrs.get("type", None)
+            if node_type in ("points", "lines", "gsplats"):
+                # Leaf node with geometry
+                local_bounds = attrs.get("position_bounds", None)
+                if local_bounds:
+                    if chain:
+                        world_nd_t = compose_nd_transforms(*chain)
+                        transformed = apply_nd_transform_to_bounds(
+                            local_bounds, world_nd_t, dimensions
+                        )
+                    else:
+                        transformed = local_bounds
+                    all_world_bounds.append(transformed)
+
+            # Recurse into child groups
+            for child_name in sorted(group.group_keys()):
+                walk(group[child_name], chain)
+
+        walk(store, [])
+
+        # If no leaf nodes found, nothing to do
+        if not all_world_bounds:
+            return
+
+        # Union all world-space bounds (same logic as _update_scene_bounds)
+        world_scene_bounds: dict[str, list[float]] = {
+            "min": list(all_world_bounds[0]["min"]),
+            "max": list(all_world_bounds[0]["max"]),
+        }
+        for bounds in all_world_bounds[1:]:
+            node_ndim = len(bounds["min"])
+            scene_ndim = len(world_scene_bounds["min"])
+
+            if node_ndim > scene_ndim:
+                world_scene_bounds["min"].extend(bounds["min"][scene_ndim:])
+                world_scene_bounds["max"].extend(bounds["max"][scene_ndim:])
+                scene_ndim = node_ndim
+
+            for i in range(min(node_ndim, scene_ndim)):
+                world_scene_bounds["min"][i] = min(
+                    world_scene_bounds["min"][i], bounds["min"][i]
+                )
+                world_scene_bounds["max"][i] = max(
+                    world_scene_bounds["max"][i], bounds["max"][i]
+                )
+
+        # Overwrite scene-level bounds with world-space bounds
+        store.attrs["position_bounds"] = world_scene_bounds
+        self._scene_bounds = world_scene_bounds
+
     def _write_positions_dataset(
         self,
         group: zarr.Group,
@@ -1429,6 +1640,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             spatial_index_data: Optional spatial index for chunk optimization
         """
         # Handle scalar vs array
+        color_mode: Optional[Literal["sdr", "hdr"]] = None
         if isinstance(colors, (tuple, list)):
             # Detect HDR vs SDR from values
             max_val = max(colors)
@@ -1438,13 +1650,16 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             n_elems = group["positions"].shape[0]
             color_chunks = None
         else:
-            n_elems = None
-            color_chunks = _calculate_intelligent_chunks(
-                colors.shape, spatial_index_data=spatial_index_data
-            )
+            if colors.shape[0] == 1:
+                n_elems = group["positions"].shape[0]
+                color_chunks = None
+            else:
+                n_elems = None
+                color_chunks = _calculate_intelligent_chunks(
+                    colors.shape, spatial_index_data=spatial_index_data
+                )
 
             # Detect color_mode for float arrays
-            color_mode = None
             if np.issubdtype(colors.dtype, np.floating):
                 # Float colors require explicit color_mode
                 if np.any(colors > 1.0):
@@ -1484,6 +1699,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         else:
             aprint(f"  ✓ Wrote colors ({enc_name})")
 
+        # Store color data range for layer controls (min/max of original data)
+        if isinstance(colors, np.ndarray) and colors.size > 0:
+            group.attrs["color_data_range"] = [
+                float(colors.min()),
+                float(colors.max()),
+            ]
+        elif isinstance(colors, (tuple, list)):
+            group.attrs["color_data_range"] = [
+                float(min(colors)),
+                float(max(colors)),
+            ]
+
     def _write_radii_dataset(
         self,
         group: zarr.Group,
@@ -1507,10 +1734,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             radii_chunks = None
         else:
             max_radius = float(np.max(radii))
-            n_elems = None
-            radii_chunks = _calculate_intelligent_chunks(
-                radii.shape, spatial_index_data=spatial_index_data
-            )
+            if radii.shape[0] == 1:
+                n_elems = group["positions"].shape[0]
+                radii_chunks = None
+            else:
+                n_elems = None
+                radii_chunks = _calculate_intelligent_chunks(
+                    radii.shape, spatial_index_data=spatial_index_data
+                )
 
         aprint(f"  ✓ Max radius: {max_radius:.3f}")
 
@@ -1563,10 +1794,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             sharp_chunks = None
         else:
             max_sharpness = float(np.max(sharpness))
-            n_elems = None
-            sharp_chunks = _calculate_intelligent_chunks(
-                sharpness.shape, spatial_index_data=spatial_index_data
-            )
+            if sharpness.shape[0] == 1:
+                n_elems = group["positions"].shape[0]
+                sharp_chunks = None
+            else:
+                n_elems = None
+                sharp_chunks = _calculate_intelligent_chunks(
+                    sharpness.shape, spatial_index_data=spatial_index_data
+                )
 
         aprint(f"  ✓ Max sharpness: {max_sharpness:.3f}")
 
@@ -1865,8 +2100,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if self._scene_bounds is not None:
                 store.attrs["position_bounds"] = self._scene_bounds
                 aprint(
-                    f"📦 Scene bounds: min={self._scene_bounds['min']}, max={self._scene_bounds['max']}"
+                    f"📦 Scene bounds (local): min={self._scene_bounds['min']}, max={self._scene_bounds['max']}"
                 )
+
+            # Expand bounds with nD transforms (world-space for non-displayed dims)
+            self._expand_bounds_with_nd_transforms(store)
 
             # Validate discrete dimension ranges against actual data
             self._validate_discrete_dimension_ranges(store)

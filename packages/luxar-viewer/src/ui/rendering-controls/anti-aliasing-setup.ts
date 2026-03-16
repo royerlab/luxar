@@ -4,7 +4,7 @@
  * Creates controls for various AA techniques:
  * - SSAA (Supersampling) with resolution multiplier
  * - FXAA (Fast Approximate AA)
- * - MSAA (Multisample AA) with sample count ⚠️
+ * - MSAA (Multisample AA) with sample count
  * - SMAA (Subpixel Morphological AA)
  */
 
@@ -25,10 +25,29 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
   const aaFolder = gui.addFolder('✨ Anti-Aliasing');
   aaFolder.close(); // Collapsed by default
 
+  // Set tooltip on the folder title to guide users on AA choices
+  aaFolder.domElement?.setAttribute(
+    'title',
+    'Anti-Aliasing: Smooths jagged edges in the rendered image\n\n' +
+      'Different scenes benefit from different AA methods:\n' +
+      '• Point clouds with fine detail → FXAA or SMAA (fast, preserves detail)\n' +
+      '• Dense scenes with overlapping points → MSAA (hardware-accelerated, sharp)\n' +
+      '• Final renders or screenshots → SSAA (best quality, highest cost)\n' +
+      '• Sparse scenes with large points → SMAA (clean edges, low cost)\n\n' +
+      'You can combine methods (e.g., MSAA + FXAA) but watch for diminishing\n' +
+      'returns and increased GPU cost. Start with one and add more only if needed.'
+  );
+
   // SSAA settings (collapsible) - First because it's the highest quality
   const ssaaFolder = aaFolder.addFolder('SSAA Settings (Supersampling)');
 
-  aaFolder
+  ssaaFolder.domElement?.setAttribute(
+    'title',
+    'SSAA Settings: Configure the supersampling resolution multiplier\n' +
+      '• Higher multiplier = better quality but heavier on the GPU'
+  );
+
+  const ssaaControl = aaFolder
     .add(settings, 'ssaaEnabled')
     .name('SSAA Enabled')
     .onChange((value: boolean) => {
@@ -45,7 +64,18 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
       }
     });
 
-  ssaaFolder
+  // Set tooltip for SSAA
+  ssaaControl.domElement.setAttribute(
+    'title',
+    'SSAA (Supersampling Anti-Aliasing)\n' +
+      '• Renders the scene at a higher resolution, then downscales\n' +
+      '• Highest quality AA — smooths edges, textures, and shading\n' +
+      '• Significant performance cost (scales with multiplier)\n' +
+      '• Works with all blending modes including additive\n' +
+      '• Best used for final renders or screenshots'
+  );
+
+  const ssaaMultiplierControl = ssaaFolder
     .add(settings, 'ssaaMultiplier', [1.5, 2.0, 3.0, 4.0])
     .name('Resolution Multiplier')
     .onChange((value: number) => {
@@ -53,6 +83,17 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
       saveSettings();
       triggerAnimation();
     });
+
+  // Set tooltip for SSAA multiplier
+  ssaaMultiplierControl.domElement.setAttribute(
+    'title',
+    'SSAA Resolution Multiplier: How many times larger to render\n' +
+      '• 1.5× = Mild improvement, moderate cost\n' +
+      '• 2.0× = Good quality (renders 4× more pixels)\n' +
+      '• 3.0× = High quality (renders 9× more pixels)\n' +
+      '• 4.0× = Maximum quality (renders 16× more pixels)\n' +
+      '• Higher values use proportionally more GPU memory and time'
+  );
 
   // FXAA toggle
   const fxaaControl = aaFolder
@@ -75,7 +116,13 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
   );
 
   // MSAA settings (collapsible)
-  const msaaFolder = aaFolder.addFolder('MSAA Settings ⚠️');
+  const msaaFolder = aaFolder.addFolder('MSAA Settings');
+
+  msaaFolder.domElement?.setAttribute(
+    'title',
+    'MSAA Settings: Configure the multisample count\n' +
+      '• More samples = smoother edges but more GPU work'
+  );
 
   const msaaControl = aaFolder
     .add(settings, 'msaaEnabled')
@@ -94,17 +141,17 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
       }
     });
 
-  // Set tooltip for MSAA with warning
+  // Set tooltip for MSAA
   msaaControl.domElement.setAttribute(
     'title',
-    'MSAA (Multisample Anti-Aliasing) ⚠️\n' +
-      '• Hardware-accelerated anti-aliasing\n' +
-      '• WARNING: Causes brightness issues with additive blending\n' +
-      '• Points will appear brighter with more samples\n' +
-      '• Consider using FXAA or SMAA instead'
+    'MSAA (Multisample Anti-Aliasing)\n' +
+      '• Hardware-accelerated anti-aliasing (runs on the GPU)\n' +
+      '• Fast and sharp — great default choice for most scenes\n' +
+      '• Smooths geometric edges without blurring the image\n' +
+      '• Works well with additive blending'
   );
 
-  msaaFolder
+  const msaaSamplesControl = msaaFolder
     .add(settings, 'msaaSamples', [2, 4, 8])
     .name('Sample Count')
     .onChange((value: number) => {
@@ -112,6 +159,16 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
       saveSettings();
       triggerAnimation();
     });
+
+  // Set tooltip for MSAA sample count
+  msaaSamplesControl.domElement.setAttribute(
+    'title',
+    'MSAA Sample Count: Number of samples per pixel\n' +
+      '• 2 = Minimal smoothing, lowest cost\n' +
+      '• 4 = Good balance (default for most GPUs)\n' +
+      '• 8 = Best quality, highest cost\n' +
+      '• More samples = smoother edges but more GPU work'
+  );
 
   // SMAA anti-aliasing (no subfolder needed - only on/off toggle)
   const smaaControl = aaFolder

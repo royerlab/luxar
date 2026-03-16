@@ -85,7 +85,9 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 │ ┌─────────────────────────────────────────────────────────────────┐ │
 │ │ results.py: finalize_results()                                  │ │
 │ │ • Extracts final parameters from best state                     │ │
+│ │ • Post-fit culling (removes splats below noise floor)           │ │
 │ │ • Rescales amplitudes to original intensity range               │ │
+│ │ • Computes quality metrics (PSNR, SSIM, MSE) in voxel space    │ │
 │ │ • Compiles optimization statistics                              │ │
 │ │ • Stores movie frames for visualization                         │ │
 │ │ • Returns GSplatData dataclass                         │ │
@@ -196,14 +198,16 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 
 **Operations:**
 1. Extracts parameters from best state (not final state)
-2. Converts tensors to numpy arrays with separate fields:
+2. Post-fit culling: removes splats with amplitude below `cull_ratio × max_abs_error` noise floor
+3. Converts tensors to numpy arrays with separate fields:
    - `centers`: Shape `(N, d)` - splat center positions
    - `cholesky_factors`: Shape `(N, d*(d+1)//2)` - packed lower-triangular Cholesky factors
    - `sharpnesses`: Shape `(N,)` - per-splat sharpness values
    - `amplitudes`: Shape `(N,)` - rescaled to original intensity range
-3. Compiles comprehensive statistics (including sharpness statistics)
-4. Stores movie frames for visualization
-5. Returns `GSplatData` dataclass containing all results
+4. Computes quality metrics (PSNR, SSIM, MSE) by rendering splats back to a volume and comparing against the original input. Only computed in voxel space (skipped when `output_space="real"`)
+5. Compiles comprehensive statistics (including sharpness statistics and quality metrics)
+6. Stores movie frames for visualization
+7. Returns `GSplatData` dataclass containing all results
 
 **Critical Details:**
 - Returns a structured dataclass (not a tuple) with named fields for clarity

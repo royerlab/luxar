@@ -5,12 +5,15 @@ Configuration dataclasses for Gaussian splat fitting pipeline.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence
 
 import numpy as np
 import torch
 
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
+
+if TYPE_CHECKING:
+    from luxar.gsplats.gsplat_data import GSplatData
 
 
 @dataclass(frozen=True)
@@ -85,7 +88,7 @@ class FitConfig:
 
     # Input data (required)
     V: np.ndarray
-    seeds: Optional[np.ndarray | int | float | "GSplatData"]  # noqa: F821 - Array, int, compression ratio, or GSplatData
+    seeds: Optional[np.ndarray | int | float | "GSplatData"]  # Array, int, compression ratio, or GSplatData
 
     # Normalization
     norm_percentile: float
@@ -191,6 +194,12 @@ class FitConfig:
     # Adds a differentiable penalty for splats whose effective support extends beyond bounds.
     boundary_penalty: Optional[float] = None
 
+    # Volume downscaling (preprocessing)
+    # Per-axis integer factors, e.g. (1, 4, 4). None = no downscaling.
+    # Volume is anti-alias filtered (Gaussian, sigma=factor/2) and decimated before fitting.
+    # Splat parameters are automatically rescaled to original coordinates after fitting.
+    downscale: Optional[tuple[int, ...]] = None
+
 
 @dataclass
 class PreprocessedData:
@@ -231,6 +240,9 @@ class PreprocessedData:
     init_L: Optional[np.ndarray] = None  # Shape (N, d, d) - Cholesky factors
     init_amps: Optional[np.ndarray] = None  # Shape (N,) - amplitudes
     init_sharpness: Optional[np.ndarray] = None  # Shape (N,) - sharpness values
+
+    # Downscale factors applied during preprocessing (for rescaling in finalize_results)
+    downscale_factors: Optional[tuple[int, ...]] = None
 
 
 @dataclass

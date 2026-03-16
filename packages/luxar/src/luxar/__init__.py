@@ -1,13 +1,13 @@
-"""Luxar - High-dimensional points visualization and analysis toolkit.
+"""Luxar - High-dimensional scientific visualization and analysis toolkit.
 
 Luxar provides a powerful Python API for creating, manipulating, and visualizing
-massive points datasets with arbitrary dimensions. The system is designed
+massive nD datasets (points, lines, Gaussian splats) with arbitrary dimensions. The system is designed
 for memory-efficient progressive writing, enabling processing of TB-scale datasets
 on GB-scale machines.
 
 Key Features:
     - Progressive writing to Zarr for memory-efficient processing
-    - Support for nD points (not limited to 3D)
+    - Support for nD data (not limited to 3D)
     - Morton/Hilbert spatial ordering for better compression
     - HDR color support with float32 precision
     - Hierarchical scene graphs with transforms
@@ -87,16 +87,22 @@ from .typing_utils.enums import (
     PhysicalUnit,
     RenderingLimits,
 )
+from .validation.nd_transforms import (
+    apply_nd_transform_to_bounds,
+    compose_nd_transforms,
+    validate_nd_transform,
+)
 
 __version__ = "2025.08.03"
 
-# Backward compatibility - import submodules for direct access
-# This allows "from luxar.array_utils import ..." to work
+# Backward compatibility and optional re-exports.
+# gsplats always provides names (real or stub that raises on use if torch is missing).
 import sys
 
 from . import core, io, typing_utils, utils
 from . import validation as validation_module
 from .core import dimensions, node, points, scene
+from .gsplats import GSplatData, fit_gaussian_splats
 from .io import compiler, writer
 from .utils import array as array_utils
 from .utils import demos
@@ -168,6 +174,13 @@ __all__: list[str] = [
     "from_list",
     "prepare_transform_for_zarr",
     "read_transform_from_zarr",
+    # nD Transforms
+    "validate_nd_transform",
+    "compose_nd_transforms",
+    "apply_nd_transform_to_bounds",
+    # Gaussian Splatting (optional)
+    "GSplatData",
+    "fit_gaussian_splats",
     # Version
     "__version__",
 ]

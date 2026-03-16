@@ -59,7 +59,7 @@ This discriminator enables the viewer to determine how to render each node.
 - Nodes form a hierarchical tree structure
 - Each node has: name, parent reference, list of children
 - Each node can have a 4x4 transformation matrix
-- Each node has rendering attributes: opacity (0-1), gamma (0.1-10), blending_mode
+- Each node has rendering attributes: opacity (0-1), gamma (0.1-10), intensity (>=0), offset (any float), blending_mode
 - Container nodes do NOT store array data - only metadata and references
 - Nodes write data immediately through a writer interface (progressive writing)
 
@@ -84,7 +84,51 @@ This discriminator enables the viewer to determine how to render each node.
 **Key Operations**:
 - `add_group(name, **attrs)` - Create child group node
 - `walk()` - Depth-first traversal yielding (depth, node) tuples
-- Property getters/setters for transform, opacity, gamma, blending_mode
+- Property getters/setters for transform, opacity, gamma, intensity, offset, blending_mode
+
+**nD Transform** (`nd_transform`):
+
+In addition to the 4x4 spatial transform, nodes can carry an `nd_transform` that operates on non-displayed dimensions (Time, Channel, Depth, etc.). This enables alignment, unit conversion, and category remapping across datasets in the same scene.
+
+*Property: `nd_transform`* (getter/setter):
+- **Type**: `Optional[Dict[str, Any]]`
+- **Keys**: Dimension names (must match `Dimension.name` in scene dimensions)
+- **Values**: Per-dimension transform entries:
+  - Continuous/discrete ordinal dimensions: `{"scale": float, "offset": float}` (affine)
+  - Categorical dimensions: `{"permutation": [int, ...]}` (index remapping)
+- **Default**: `None` (identity on all non-displayed dimensions)
+- Setting to `None` removes the attribute from Zarr
+- Setting a value triggers validation and persists immediately
+
+*Property: `world_nd_transform`* (read-only):
+- **Type**: `Dict[str, Any]`
+- Returns the composed nD transform by walking the parent chain (root to leaf)
+- Empty dict means identity (no nD transforms in the chain)
+- Composition rules per dimension:
+  - Affine: `composed_scale = parent_scale * child_scale`, `composed_offset = parent_scale * child_offset + parent_offset`
+  - Permutation: `composed[i] = parent_perm[child_perm[i]]` (child applied first)
+- Missing entries in any node contribute identity for that dimension
+
+*Validation Rules* (enforced on setter):
+- Dimension names must exist in scene dimensions
+- Only non-displayed dimensions may appear (displayed dims use the 4x4 `transform`)
+- Continuous/discrete dims must use affine params (`scale`, `offset`), not `permutation`
+- Categorical dims must use `permutation`, not affine params
+- Permutation must be valid: correct length matching category count, each index exactly once
+- Scale must be non-zero
+- No mixing of affine and permutation params on a single dimension
+
+*Zarr Storage*:
+```json
+{
+  "nd_transform": {
+    "Time": {"scale": 0.001, "offset": 50.0},
+    "Channel": {"permutation": [2, 1, 0]}
+  }
+}
+```
+
+See `docs/guides/specs/ND_TRANSFORMS_SPEC.md` for the full specification including composition algebra, bounds expansion, and viewer implementation details.
 
 ---
 
@@ -166,13 +210,15 @@ All fields are `Optional` and default to `None`. Only non-None fields are serial
 | `camera` | `Optional[CameraConfig]` | See CameraConfig above |
 | `background_color` | `Optional[str]` | Hex format `#rrggbb` |
 | `tone_mapping` | `Optional[str]` | One of: `"None"`, `"Linear"`, `"Reinhard"`, `"Cineon"`, `"ACES"`, `"AgX"`, `"Neutral"` |
-| `hdr_multiplier` | `Optional[float]` | >= 0 |
+| `exposure` | `Optional[float]` | >= 0 |
+| `global_offset` | `Optional[float]` | any float |
+| `global_gamma` | `Optional[float]` | > 0 |
 | `bloom_enabled` | `Optional[bool]` | -- |
 | `bloom_strength` | `Optional[float]` | >= 0 |
 | `bloom_radius` | `Optional[float]` | >= 0 |
 | `bloom_threshold` | `Optional[float]` | 0 to 1 |
 | `bloom_levels` | `Optional[int]` | >= 1 |
-| `control_type` | `Optional[str]` | One of: `"orbit"`, `"arcball"`, `"fly"` |
+| `control_type` | `Optional[str]` | One of: `"orbit"`, `"fly"`, `"ortho"` |
 | `auto_rotate` | `Optional[bool]` | -- |
 | `auto_rotate_speed` | `Optional[float]` | -- |
 | `cinematic_mode` | `Optional[bool]` | Activates vignette, DOF, and bloom as a preset |
@@ -213,7 +259,7 @@ All fields are `Optional` and default to `None`. Only non-None fields are serial
 | `dynamic_clipping_enabled` | `Optional[bool]` | -- |
 | `clipping_adapt_speed` | `Optional[float]` | -- |
 | `adaptive_dpr_enabled` | `Optional[bool]` | -- |
-| `ui` | `Optional[UIConfig]` | Nested: `show_help`, `show_rendering_controls`, `show_performance_monitor`, `show_dimensions` |
+| `ui` | `Optional[UIConfig]` | Nested: `show_help`, `show_rendering_controls`, `show_performance_monitor`, `show_dimensions`, `show_scale_bar`, `show_layers` |
 | `theme` | `Optional[str]` | One of: `"dark"`, `"light"`, `"frosted-glass"`, `"liquid-glass"` |
 | `dimensions` | `Optional[DimensionsConfig]` | Nested: `current_step`, `selected_dimension` |
 | `animation` | `Optional[List[AnimationConfig]]` | Per-dimension: `playing`, `target_fps`, `loop` (`"once"`, `"loop"`, `"bounce"`), `direction` (`"forward"`, `"backward"`) |
@@ -238,7 +284,7 @@ vc = ViewerConfig(
     background_color="#000000",
     bloom_enabled=True,
     bloom_strength=0.5,
-    hdr_multiplier=3.0,
+    exposure=3.0,
 )
 with LuxarZarrCompiler('output.zarr') as compiler:
     scene = compiler.create_scene(dimensions=dims, viewer_config=vc)
@@ -263,15 +309,18 @@ data-adding methods (`add_points`, `add_lines`, `add_gsplats`, etc.). `Scene` ex
 - `name`: Group identifier
 - `children`: List of child nodes (Groups or DataNodes)
 - `transform`: Optional 4x4 transformation matrix
-- `opacity`, `gamma`, `blending_mode`: Rendering attributes (inherited by children)
+- `opacity`, `gamma`, `intensity`, `offset`, `blending_mode`: Rendering attributes (inherited by children)
 
 **Zarr Attributes**:
 ```
 {
   "type": "group",
   "transform": [...],         # optional, 16-element column-major
+  "nd_transform": {...},      # optional, per-dimension transforms for non-displayed dims
   "opacity": 1.0,             # optional
   "gamma": 1.0,               # optional
+  "intensity": 1.0,           # optional, per-node color multiplier
+  "offset": 0.0,              # optional, per-node color offset
   "blending_mode": "additive" # optional (normal, additive, max, opaque, luminous)
 }
 ```
@@ -455,7 +504,7 @@ class DataNode(Node, ABC):
 | `path` | str | Zarr path (Node attribute, computed from hierarchy) |
 | `type` | str | Node type discriminator (`"points"`, `"lines"`, `"gsplats"`) |
 | `metadata` | dict | Type-specific metadata |
-| Rendering attrs | float/str | opacity, gamma, blending_mode (inherited from Node) |
+| Rendering attrs | float/str | opacity, gamma, intensity, offset, blending_mode (inherited from Node) |
 | Transform | 4x4 matrix | Optional transformation (inherited from Node) |
 
 **Note**: `path` is a Node attribute computed from the hierarchy, not stored in the metadata dict. The metadata dict contains only data-specific information.
@@ -1548,7 +1597,13 @@ These conventions ensure that transforms created in Python render correctly in t
 - Non-displayed dimensions are unaffected by transforms
 - This is a fundamental limitation of 4x4 homogeneous matrices
 
-This design choice keeps transforms simple and compatible with standard 3D graphics. Higher-dimensional transforms would require (d+1)×(d+1) matrices and significantly more complexity.
+This design choice keeps transforms simple and compatible with standard 3D graphics. Higher-dimensional transforms would require (d+1)x(d+1) matrices and significantly more complexity.
+
+**nD Transforms for Non-Displayed Dimensions**: While the 4x4 matrix is limited to displayed dimensions, the `nd_transform` attribute (see Node section above) provides per-dimension affine transforms and category permutations for non-displayed dimensions. This separates the two transform domains:
+- **4x4 `transform`**: Spatial transform for the 3 displayed dimensions (matrix multiplication)
+- **`nd_transform`**: Per-dimension transforms for non-displayed dimensions (affine composition or permutation composition)
+
+Both compose hierarchically through the scene graph parent chain.
 
 #### Storage Conversion
 **NumPy (row-major) → Storage (column-major)**:
@@ -1642,6 +1697,8 @@ User provides data → Node validates → Writer writes to Zarr → Metadata ret
 **Valid Ranges**:
 - `opacity`: 0.0 to 1.0 (float)
 - `gamma`: 0.1 to 10.0 (float)
+- `intensity`: >= 0.0 (float, per-node color multiplier, default 1.0)
+- `offset`: any float (per-node color offset, default 0.0)
 - `blending_mode`: "normal" | "additive" | "max" | "opaque" | "luminous" (string)
   - `"normal"`: Standard alpha blending (semi-transparent), depthTest=true, depthWrite=true when opacity >= 0.99
   - `"additive"`: Classic additive blending, ignores depth entirely (depthTest=false, depthWrite=false)
@@ -1654,9 +1711,18 @@ User provides data → Node validates → Writer writes to Zarr → Metadata ret
 **Hierarchical Composition**: Rendering attributes compose (multiply) through the hierarchy, they do NOT override:
 - `effective_opacity = clamp(parent_opacity × child_opacity, 0.0, 1.0)`
 - `effective_gamma = clamp(parent_gamma × child_gamma, 0.1, 10.0)`
+- `effective_intensity = parent_intensity × child_intensity`
+- `effective_offset = parent_offset + child_offset`
 - `blending_mode`: Child inherits parent's mode if not explicitly set; if set, child's mode is used
 
 Example: If parent has `opacity=0.5` and child has `opacity=0.5`, the effective opacity is `0.25`.
+
+**Per-node GOG Model** (applied in material shaders):
+```
+adjusted = color * intensity + offset
+adjusted = clamp(adjusted, 0.0, 1e6)
+adjusted = pow(adjusted, 1.0 / gamma)
+```
 
 **Clamping**: Effective values are clamped to valid ranges after composition to prevent invalid states.
 
@@ -1665,6 +1731,8 @@ Example: If parent has `opacity=0.5` and child has `opacity=0.5`, the effective 
 **Default Values**:
 - opacity: 1.0
 - gamma: 1.0
+- intensity: 1.0
+- offset: 0.0
 - blending_mode: "additive"
 
 ---

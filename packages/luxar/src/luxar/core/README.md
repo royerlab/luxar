@@ -138,7 +138,7 @@ Base class for all scene graph nodes.
 **Key Features:**
 - Hierarchical parent-child relationships
 - Transform support (4x4 matrices)
-- Rendering properties (opacity, gamma, blending mode)
+- Rendering properties (opacity, gamma, intensity, offset, blending mode)
 - Progressive writing without keeping Zarr groups in memory
 
 **Usage Example:**
@@ -147,6 +147,8 @@ Base class for all scene graph nodes.
 group = scene.add_group('my_group',
                         opacity=0.8,
                         gamma=1.2,
+                        intensity=2.0,
+                        offset=0.0,
                         blending_mode='additive')
 
 # Transforms can be set directly
@@ -158,8 +160,11 @@ group.set_opacity(0.5).set_gamma(1.0)
 
 **Key Properties:**
 - `transform` - 4x4 transformation matrix
+- `nd_transform` - Per-dimension transforms on non-displayed dimensions (see below)
 - `opacity` - Rendering opacity (0.0-1.0)
 - `gamma` - Gamma correction (0.1-10.0)
+- `intensity` - Per-node color multiplier (>=0.0, default 1.0)
+- `offset` - Per-node color offset (any float, default 0.0)
 - `blending_mode` - Blending mode ('normal', 'additive')
 - `children` - List of child nodes
 - `parent` - Parent node reference
@@ -168,6 +173,27 @@ group.set_opacity(0.5).set_gamma(1.0)
 - Transforms are automatically transposed for THREE.js compatibility when stored
 - Nodes use writer interface for progressive writing without keeping data in memory
 - All rendering attributes are validated on assignment
+
+**nD Transforms (`nd_transform`):**
+
+Separate from the 4x4 spatial `transform`, nodes can carry an `nd_transform` dict
+that applies per-dimension affine (scale/offset) or permutation transforms on
+**non-displayed dimensions** (e.g., time, channel). This enables time alignment,
+unit conversion, and channel remapping between datasets in the same scene.
+
+```python
+# Affine: shift time by 5 units
+group.nd_transform = {"Time": {"scale": 1.0, "offset": 5.0}}
+
+# Permutation: remap channels
+group.nd_transform = {"Channel": {"permutation": [2, 0, 1]}}
+```
+
+- Composes hierarchically: `node.world_nd_transform` collects transforms from root to leaf
+- Validated by `luxar.validation.nd_transforms`
+- The compiler applies world nd_transforms to position bounds during finalization,
+  so scene-level bounds reflect world-space ranges for non-displayed dimensions
+- See `docs/guides/specs/ND_TRANSFORMS_SPEC.md` for full specification
 
 ### 3. DataNode (`datanode.py`)
 
@@ -293,7 +319,8 @@ print(f"Max width: {lines.max_width}")
 - `widths` - Shape (N,) line widths (or scalar broadcast)
 - `colors` - Shape (N, 3) per-vertex colors (optional)
 - `sharpness` - Shape (N,) edge sharpness (optional)
-- `indices` - Vertex indices for indexed line type (optional)
+- `segments` - Shape (S, 2) connectivity pairs (stored form)
+- `indices` - Vertex indices for indexed line type input (optional)
 
 ### 6. GSplats (`gsplats.py`)
 
@@ -580,7 +607,7 @@ All data-bearing nodes inherit from DataNode:
 ```
 Node (base class)
  └── DataNode (abstract base for data nodes)
-      ├── Points (point cloud data)
+      ├── Points (point data)
       ├── Lines (curve/line data)
       └── GSplats (Gaussian splat data)
 ```

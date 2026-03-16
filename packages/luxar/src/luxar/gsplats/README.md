@@ -11,7 +11,7 @@ This package implements a sophisticated Gaussian splatting system that fits coll
 Gaussian splatting requires optional dependencies:
 
 ```bash
-pip install \"luxar[gsplats]\"
+pip install "luxar[gsplats]"
 ```
 
 ## Key Features
@@ -28,6 +28,8 @@ pip install \"luxar[gsplats]\"
 - **GPU Acceleration**: CUDA support with batched operations, improved MPS compatibility
 - **Robust Initialization**: Multiscale candidate detection with DoG and peak finding
 - **Memory Efficient**: Truncated rendering, optional mixed precision, pre-allocated buffers
+- **Tiled Fitting**: Overlapping tiles with Hann cosine apodization for volumes that exceed GPU memory
+- **Quality Metrics**: Built-in PSNR, SSIM, and MSE computation on GPU tensors
 
 ## Quick Example
 
@@ -147,7 +149,7 @@ The result can be directly passed to `render_gaussians_numpy()` or `render_gauss
 
 ### Multi-Scale Fitting for Large Datasets
 
-For large images and volumes, multi-scale fitting provides 10-100× speedup by leveraging multi-scale decomposition:
+For large images and volumes, multi-scale fitting provides 10-100x speedup by leveraging multi-scale decomposition:
 
 ```python
 from luxar.gsplats import fit_multiscale_gaussian_splats
@@ -165,7 +167,7 @@ result = fit_multiscale_gaussian_splats(
 )
 
 # Access speedup statistics from result.stats
-print(f"Computational speedup: {result.stats['computational_speedup']:.1f}×")
+print(f"Computational speedup: {result.stats['computational_speedup']:.1f}x")
 print(f"Splats per scale: {result.stats['n_splats_per_scale']}")
 print(f"Total time: {result.stats['total_time_seconds']:.2f}s")
 ```
@@ -177,16 +179,16 @@ print(f"Total time: {result.stats['total_time_seconds']:.2f}s")
 4. **Combine** all splats from all scales
 
 **Key benefits:**
-- **Massive speedup**: 8× scale in 3D = 512× fewer voxels per scale
+- **Massive speedup**: 8x scale in 3D = 512x fewer voxels per scale
 - **Hierarchical**: Coarse scales capture large structures, fine scales capture details
 - **Quality**: Similar or better reconstruction than single-scale
-- **Scalable**: Enables fitting on very large volumes (1024³+)
+- **Scalable**: Enables fitting on very large volumes (1024^3+)
 
 **When to use:**
 - Large 3D/4D datasets where single-scale is slow
 - Data with hierarchical structure (coarse + fine features)
 - Need explicit scale separation
-- Want 10-100× speedup without quality loss
+- Want 10-100x speedup without quality loss
 
 **Visualization options:**
 ```python
@@ -205,8 +207,60 @@ for vis in result.stats['per_scale_visualizations']:
     centers = vis['centers']           # Splat locations at full resolution
     recon = vis['reconstruction']      # Full resolution reconstruction
     residual = vis['residual']         # Full resolution error map
-    print(f"Scale {scale}×: {vis['n_splats']} splats, MSE={vis['error_mse']:.6e}")
+    print(f"Scale {scale}x: {vis['n_splats']} splats, MSE={vis['error_mse']:.6e}")
 ```
+
+### Tiled Fitting for Large Volumes
+
+For volumes that exceed GPU memory, tiled fitting splits the data into overlapping tiles with cosine (Hann) apodization and fits each tile independently:
+
+```python
+from luxar.gsplats import fit_tiled
+
+# Fit a large volume using tiles
+result = fit_tiled(
+    large_volume,            # np.ndarray or zarr.Array (lazy loading supported)
+    tile_size=256,           # Tile size per axis (int or per-axis tuple)
+    overlap=32,              # Overlap width for cosine blending
+    n_iters=1000,            # Forwarded to fit_gaussian_splats per tile
+    device="cuda",           # GPU for each tile
+    verbose=True,            # Per-tile progress logging
+)
+
+# Result is a single GSplatData with all splats in global coordinates
+print(f"Total splats: {result.n_splats:,}")
+print(f"Tiles fitted: {result.stats['num_tiles']}")
+print(f"Splats per tile: {result.stats['splats_per_tile']}")
+
+result.save("tiled_output.gsplats.zarr")
+```
+
+**Individual tile fitting** (for Slurm or distributed workflows):
+
+```python
+from luxar.gsplats import compute_tile_specs, fit_tile
+
+# 1. Compute tile grid (deterministic, identical on all workers)
+specs = compute_tile_specs(volume.shape, tile_size=256, overlap=32)
+
+# 2. Fit a single tile (e.g., on a Slurm job array)
+tile_result = fit_tile(volume, specs[tile_index], device="cuda")
+
+# 3. Merge results from all tiles
+merged = GSplatData.concatenate(all_tile_results)
+```
+
+**Tiling module** (`tiling.py`):
+
+- `TileSpec` -- Frozen dataclass describing one tile: grid index, slices, origin, shape, border flags, and actual per-axis overlap with neighbors.
+- `compute_tile_specs(volume_shape, tile_size, overlap)` -- Deterministic grid of overlapping tiles in row-major order. Edge tiles are clamped to volume boundaries.
+- `cosine_window(spec)` -- Builds an nD separable Hann apodization window from a `TileSpec`. Two adjacent windows sum to exactly 1.0 in the overlap zone (partition-of-unity property).
+
+**Key properties:**
+- Overlap must satisfy `overlap <= tile_size // 2` to avoid triple tile overlap.
+- Cosine windows guarantee seamless blending without post-merge pruning.
+- `fit_tile` rejects explicit seed arrays (use int count, float ratio, or None).
+- zarr arrays are supported for out-of-core processing -- only one tile is materialized at a time.
 
 ### Advanced Usage: Custom Candidates
 
@@ -560,6 +614,95 @@ print(f"Converged: {result.stats['converged']}")
 print(f"Final loss: {result.stats['final_loss']:.5g}")
 ```
 
+## Quality Metrics
+
+The `metrics` module provides GPU-accelerated quality metrics for evaluating Gaussian splat reconstructions. All heavy computation stays on the input device (CUDA/MPS/CPU); only scalar results are moved to CPU.
+
+### Available Metrics
+
+```python
+from luxar.gsplats.metrics import compute_quality_metrics, compute_psnr, compute_ssim
+
+# Compute all metrics at once
+metrics = compute_quality_metrics(pred_tensor, target_tensor)
+print(f"PSNR: {metrics['psnr_db']:.2f} dB")
+print(f"SSIM: {metrics['ssim']:.4f}")
+print(f"MSE:  {metrics['mse']:.6e}")
+print(f"Relative L2: {metrics['rel_l2']:.4f}")
+print(f"Max absolute error: {metrics['max_abs_error']:.4f}")
+
+# Or compute individual metrics
+psnr = compute_psnr(pred_tensor, target_tensor)
+ssim = compute_ssim(pred_tensor, target_tensor, window_size=11)
+```
+
+### Functions
+
+- `compute_psnr(pred, target, data_range=None)` -- Peak Signal-to-Noise Ratio in dB. Returns `float('inf')` when MSE is zero.
+- `compute_ssim(pred, target, window_size=11, data_range=None)` -- Structural Similarity Index using nD Gaussian-weighted convolution. Supports 2D, 3D, and higher (averages over 3D sub-volumes for >3D).
+- `compute_quality_metrics(pred, target, data_range=None, ssim_window_size=11)` -- Computes all metrics in one call. Returns a dict with keys: `mse`, `psnr_db`, `ssim`, `rel_l2`, `max_abs_error`.
+
+### Quality Metrics in GSplatData.stats
+
+When fitting completes, quality metrics may be stored in the `stats` dict of the returned `GSplatData`:
+
+- `stats['psnr_db']` -- PSNR of the reconstruction vs. original volume (dB)
+- `stats['ssim']` -- SSIM of the reconstruction vs. original volume
+- `stats['mse']` -- Mean squared error of the reconstruction
+
+These fields are populated automatically when metrics are computed during or after fitting, enabling easy comparison across fitting runs.
+
+### Typical Usage with Rendering
+
+```python
+from luxar.gsplats import fit_gaussian_splats
+from luxar.gsplats.rendering import render_to_volume_tensor
+from luxar.gsplats.metrics import compute_quality_metrics
+
+# Fit and render back to a tensor (stays on GPU)
+result = fit_gaussian_splats(volume, n_iters=1000, device="cuda")
+rendered = render_to_volume_tensor(result, shape=volume.shape, device="cuda")
+
+# Compute metrics without GPU-CPU round-trip
+import torch
+target = torch.from_numpy(volume).to("cuda")
+metrics = compute_quality_metrics(rendered, target)
+print(f"PSNR={metrics['psnr_db']:.1f} dB, SSIM={metrics['ssim']:.4f}")
+```
+
+## Rendering
+
+The `rendering` module provides GPU-accelerated volume rendering with automatic backend selection (CUDA > MPS > CPU).
+
+### render_to_volume
+
+Renders splats to a NumPy array:
+
+```python
+from luxar.gsplats.rendering import render_to_volume
+
+volume = render_to_volume(gsplat_data, shape=(128, 128, 128))
+```
+
+### render_to_volume_tensor
+
+Renders splats to a `torch.Tensor` on the rendering device, avoiding an unnecessary GPU-to-CPU copy when the result feeds into further GPU operations (e.g., quality metric computation):
+
+```python
+from luxar.gsplats.rendering import render_to_volume_tensor
+
+tensor = render_to_volume_tensor(gsplat_data, shape=(128, 128, 128), device="cuda")
+# tensor is on CUDA -- pass directly to metrics or further processing
+```
+
+**Parameters** (shared by both functions):
+- `gsplat_data`: GSplatData to render
+- `shape`: Output volume shape, e.g. `(128, 128, 128)`
+- `device`: `"cuda"`, `"mps"`, `"cpu"`, or `None` (auto-detect)
+- `truncate`: Truncation radius in standard deviations (default 3.0)
+- `intensity_floor`: Amplitude-aware culling threshold (default 1e-5)
+- `chunk_size`: Optional chunk size for memory management on large volumes
+
 ## Saving, Loading, and Scene Integration
 
 ### Saving GSplatData
@@ -693,6 +836,25 @@ Main fitting function with automatic optimizations.
 - `params`: (N, d + d*(d+1)/2) array of [centers, packed_cholesky]
 - `amps`: (N,) array of amplitudes
 
+#### `fit_tiled(volume, tile_size=256, overlap=32, **fit_kwargs)`
+Tiled fitting for large volumes that exceed GPU memory. Splits the volume into
+overlapping tiles with Hann cosine apodization, fits each tile independently,
+and concatenates results. The partition-of-unity property eliminates seam artifacts.
+
+**Key Parameters:**
+- `tile_size`: Tile size per axis (int or tuple). Must satisfy `overlap <= tile_size // 2`.
+- `overlap`: Overlap width per axis for cosine blending.
+- `voxel_size`: Physical voxel spacing (optional), forwarded to per-tile fitting.
+- `output_space`: `"real"` or `"voxel"` coordinate space for output centers.
+- `verbose`: Print per-tile progress (default: True).
+- `**fit_kwargs`: All parameters from `fit_gaussian_splats` (seeds, n_iters, device, etc.)
+
+**Returns:** `GSplatData` with all splats in global coordinates. Hilbert curve resorting happens automatically on `save()`.
+
+#### `fit_tile(volume, spec, **fit_kwargs)`
+Fit a single tile (Slurm-ready). Takes a `TileSpec` from `compute_tile_specs()` and
+returns `GSplatData` with centers already in global coordinates.
+
 #### `generate_seeds(V, method="auto", **kwargs)`
 Unified entry point for all seed generation methods.
 Returns `GSplatData` with scale-informed Gaussian shapes.
@@ -709,6 +871,36 @@ Uniform grid seeding for spatial coverage with optional jitter.
 
 #### `seed_from_decomposition(V, scales=..., ignore_finest_k=1, ...)`
 Scale-hierarchical detection via optimized image decomposition.
+
+### Tiling Functions
+
+#### `compute_tile_specs(volume_shape, tile_size, overlap)`
+Compute a deterministic grid of overlapping tiles covering a volume. Returns a list of `TileSpec` in row-major order (identical inputs always produce identical output).
+
+#### `cosine_window(spec)`
+Build an nD cosine (Hann) apodization window for a tile. Boundary faces stay at 1.0; interior faces are tapered over the actual overlap with the neighboring tile.
+
+#### `TileSpec`
+Frozen dataclass with fields: `index`, `grid_index`, `slices`, `origin`, `shape`, `border_low`, `border_high`, `overlap_low`, `overlap_high`.
+
+### Quality Metrics Functions
+
+#### `compute_quality_metrics(pred, target, data_range=None, ssim_window_size=11)`
+Compute all quality metrics (MSE, PSNR, SSIM, relative L2, max absolute error) between two tensors. Returns a dict.
+
+#### `compute_psnr(pred, target, data_range=None)`
+Peak Signal-to-Noise Ratio in dB. Returns `float('inf')` when MSE is zero.
+
+#### `compute_ssim(pred, target, window_size=11, data_range=None)`
+Structural Similarity Index via nD Gaussian-weighted convolution. Supports 2D, 3D, and higher dimensions.
+
+### Rendering Functions
+
+#### `render_to_volume(gsplat_data, shape, device=None, truncate=3.0, intensity_floor=1e-5, chunk_size=None)`
+Render Gaussian splats to a NumPy array.
+
+#### `render_to_volume_tensor(gsplat_data, shape, device=None, truncate=3.0, intensity_floor=1e-5, chunk_size=None)`
+Render Gaussian splats to a `torch.Tensor` on the rendering device. Avoids GPU-to-CPU copy for downstream GPU operations.
 
 ## Device Support and Performance
 
@@ -741,7 +933,7 @@ fitter = GaussianSplatFitter(device="cpu")    # Force CPU
 
 ### Metal Backend (Apple Silicon GPU Acceleration)
 
-For 3D volumes on Apple Silicon, a native **Metal compute shader** backend is available that provides **10-50× speedup** over CPU rendering:
+For 3D volumes on Apple Silicon, a native **Metal compute shader** backend is available that provides **10-50x speedup** over CPU rendering:
 
 ```python
 from luxar.gsplats.models.gsplats.metal import GaussianSplatModelMetal
@@ -778,7 +970,10 @@ See [metal/README.md](models/gsplats/metal/README.md) for detailed installation 
 ```
 gsplats/
 ├── fit_gsplats.py              # Main fitting interface (refactored to use modular pipeline)
-├── fit_multiscale_gsplats.py   # Multi-scale fitting for large datasets (NEW)
+├── fit_tiled_gsplats.py        # Tiled fitting for large volumes (fit_tile, fit_tiled)
+├── fit_multiscale_gsplats.py   # Multi-scale fitting for large datasets
+├── tiling.py                   # Tile geometry and cosine apodization (TileSpec, cosine_window)
+├── metrics.py                  # Quality metrics (PSNR, SSIM, MSE, relative L2)
 ├── seeds.py               # Multiscale candidate detection
 ├── dynamic_ops.py              # Adaptive topology operations (prune, seed, merge, split)
 ├── fitting/                    # Modular fitting pipeline (NEW - refactored components)
@@ -791,6 +986,9 @@ gsplats/
 │   ├── optimization.py        # Main optimization loop and convergence logic
 │   ├── results.py             # Result finalization and statistics
 │   └── visualization.py       # Movie recording and compression analysis
+├── rendering/                  # Volume rendering module
+│   ├── __init__.py            # Exports render_to_volume, render_to_volume_tensor
+│   └── volume_rendering.py   # GPU-accelerated rendering with auto backend selection
 ├── optim/                      # Optimizer utilities
 │   └── integration.py         # Standard Adam with gradient dilution compensation
 ├── models/
@@ -807,6 +1005,7 @@ gsplats/
 │   ├── demo_basic_fitting.py      # Simple API introduction with standard optimizer
 │   ├── demo_performance_metrics.py # Detailed convergence and quality metrics
 │   ├── demo_multiscale_fitting.py # Multi-scale vs single-scale performance comparison
+│   ├── demo_tiled_fitting.py      # Tiled fitting for large volumes
 │   ├── demo_2d_synthetic_blobs.py # 2D compression analysis with oriented ellipses
 │   ├── demo_3d_synthetic_phantom.py # 3D volumetric compression with ellipsoid wireframes
 │   ├── demo_3d_dapi_microscopy.py # Real DAPI microscopy from IDR (remote zarr)
@@ -817,6 +1016,8 @@ gsplats/
 │   └── demo_splats_mitosis_intgrad.py # CLAHE seeding test with intensity gradient
 └── tests/
     ├── test_multiscale_fitting.py   # Multi-scale fitting tests (NEW)
+    ├── test_tiled_fitting.py        # Tiled fitting tests
+    ├── test_metrics.py              # Quality metrics tests
     └── test_gsplats_integration.py  # Comprehensive tests
 ```
 
@@ -837,6 +1038,9 @@ The fitting pipeline has been refactored from a monolithic 480+ line method into
 ```bash
 # Multi-scale fitting comparison (NEW)
 hatch run python packages/luxar/src/luxar/gsplats/demos/demo_multiscale_fitting.py
+
+# Tiled fitting for large volumes
+hatch run python packages/luxar/src/luxar/gsplats/demos/demo_tiled_fitting.py
 
 # Getting started - simple API demos
 hatch run python packages/luxar/src/luxar/gsplats/demos/demo_basic_fitting.py
@@ -865,13 +1069,13 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_4d_hypercube.py --n
 The `demo_4d_hypercube.py` demonstrates complete nD algorithm validation:
 
 **4D Test Results:**
-- **Hypercube data**: (8×64×64×64) = 262K hypervoxels with synthetic 4D Gaussian blobs
+- **Hypercube data**: (8x64x64x64) = 262K hypervoxels with synthetic 4D Gaussian blobs
 - **Auto-candidate generation**: Volume-proportional scaling (262K → 524 peaks/scale, perfect 0.2% density)
 - **4D splat fitting**: Successfully generates 787 4D splats (15 parameters each)
 - **Outstanding compression**: 95.5% bit reduction (8.3M → 377K bits)
 - **Best state tracking**: Quality guarantee with restoration from optimal iteration
 - **Interactive 4D visualization**: Full napari navigation with dimension sliders
-- **✅ nD algorithms validated**: All features working correctly in 4D space
+- **nD algorithms validated**: All features working correctly in 4D space
 
 ## Testing
 
@@ -886,6 +1090,12 @@ hatch run pytest packages/luxar/src/luxar/gsplats/tests/ -v
 
 # Run fitting pipeline unit tests
 hatch run pytest packages/luxar/src/luxar/gsplats/fitting/tests/ -v
+
+# Run quality metrics tests
+hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_metrics.py -v
+
+# Run tiled fitting tests
+hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_tiled_fitting.py -v
 ```
 
 **Test Organization:**
@@ -895,12 +1105,15 @@ hatch run pytest packages/luxar/src/luxar/gsplats/fitting/tests/ -v
 - `multiscale/tests/` - 30 tests for multiscale decomposition
 - `tests/` - 131 integration tests for complete pipelines
   - Includes 11 new tests for multi-scale fitting
+  - Includes tests for quality metrics and tiled fitting
 
 **Coverage:**
 - Unit tests for all pipeline components (validation, preprocessing, losses, optimization, etc.)
 - 2D/3D/nD reconstruction pipelines
 - Loss functions (MSE, Poisson, L1) with asymmetric penalties
 - Dynamic operations (seeding, pruning, merging, splitting)
+- Quality metrics (PSNR, SSIM, MSE) for 2D and 3D data
+- Tiled fitting with cosine apodization and tile merging
 - Device compatibility (CPU, CUDA, MPS)
 - Edge cases and error handling
 - No interactive windows during tests (napari properly mocked)
@@ -913,6 +1126,8 @@ hatch run pytest packages/luxar/src/luxar/gsplats/fitting/tests/ -v
 4. **Loss Function**: Use Poisson for photon/count data, MSE for general
 5. **Regularization**: Add L1 penalty for sparser, faster solutions
 6. **Compilation**: Enable on CUDA for additional 20-30% speedup
+7. **Tiled Fitting**: Use `fit_tiled()` for volumes exceeding GPU memory
+8. **GPU Tensor Rendering**: Use `render_to_volume_tensor()` instead of `render_to_volume()` when feeding results into further GPU operations (avoids GPU-CPU round-trip)
 
 ## Troubleshooting
 
@@ -930,12 +1145,14 @@ hatch run pytest packages/luxar/src/luxar/gsplats/fitting/tests/ -v
 - Reduce `peaks_per_scale` in candidate generation
 - Enable `use_mixed_precision=True` on CUDA
 - Use smaller images or downsample
+- Use `fit_tiled()` to process the volume in overlapping tiles
 
 **Poor Reconstruction Quality**
 - Increase `n_iters` or disable early stopping for maximum quality
 - Add more candidates (increase `peaks_per_scale`)
 - Adjust learning rate (`lr`)
 - Try different `loss_type` for your data
+- Check quality with `compute_quality_metrics()` to get PSNR/SSIM numbers
 
 ## Implementation Details
 

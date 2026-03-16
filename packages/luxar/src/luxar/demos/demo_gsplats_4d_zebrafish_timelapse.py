@@ -52,10 +52,10 @@ WORKFLOW:
 
 USAGE:
 ======
-    python demo_gsplats_4d_zebrafish_timelapse.py [--no-cache] [--no-serve] [--serve-only] [--max-timepoints=N]
+    python demo_gsplats_4d_zebrafish_timelapse.py [--recompute] [--no-serve] [--serve-only] [--max-timepoints=N]
 
 Options:
-    --no-cache:          Force re-fitting (ignore cached GSplats)
+    --recompute:         Force re-fitting from scratch (ignore precomputed/cached results)
     --no-serve:          Generate scene without launching viewer
     --serve-only:        Just serve a previously generated scene
     --max-timepoints=N:  Max number of timepoints to process (default: 64)
@@ -75,7 +75,12 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.demos import launch_viewer, warn_if_no_cuda_gpu
+from luxar.utils.demos import (
+    launch_viewer,
+    load_precomputed_bundle,
+    parse_demo_flags,
+    warn_if_no_cuda_gpu,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -92,10 +97,18 @@ N_ITERS = 6000
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_zebrafish"
 
+# Precomputed data configuration
+_PRECOMPUTED_DEMO_NAME = "gsplats_zebrafish"
+_PRECOMPUTED_BUNDLE_NAME = "zebrafish_gsplats.zip"
+# Precomputed bundle contains 64 frames at step 2: 0, 2, 4, ..., 126
+_PRECOMPUTED_FRAME_INDICES = list(range(0, 128, 2))  # 64 frames
+_PRECOMPUTED_VOXEL_SIZE_ZYX = (3.99, 0.91, 0.91)  # µm
+
 # Parse command-line flags
-NO_CACHE = "--no-cache" in sys.argv
-NO_SERVE = "--no-serve" in sys.argv
-SERVE_ONLY = "--serve-only" in sys.argv
+FLAGS = parse_demo_flags()
+NO_SERVE = FLAGS["no_serve"]
+SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
 
 MAX_TIMEPOINTS = 64
 DOWNSAMPLE_XY = 2
@@ -294,7 +307,7 @@ def fit_timepoint(
         Fitted GSplatData.
     """
     # Check cache
-    if cache_file.exists() and not NO_CACHE:
+    if cache_file.exists() and not RECOMPUTE:
         try:
             result = GSplatData.load(cache_file, include_stats=False)
             aprint(f"  Loaded {len(result.amplitudes):,} cached splats ({label})")
@@ -516,7 +529,6 @@ Navigation:
 
 def main():
     """Main demo execution."""
-    warn_if_no_cuda_gpu()
     aprint("=" * 70)
     aprint("GSplats Demo: 4D Zebrafish Embryo Time-Lapse (Confocal)")
     aprint("=" * 70)
@@ -534,15 +546,39 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Load data — per-timepoint cache checks happen inside fit_all_timepoints().
-    # We can't skip the load here because the time_indices (which frames to use)
-    # depend on the stride computed from the data's total frame count.
-    volumes, voxel_size_zyx, time_indices = load_zebrafish_volumes()
+    # Try loading precomputed data from Git LFS bundle
+    # The bundle contains 64 frames (indices 0, 2, 4, ..., 126)
+    # If MAX_TIMEPOINTS < 64, subsample from the precomputed set
+    precomputed_indices = _PRECOMPUTED_FRAME_INDICES
+    if MAX_TIMEPOINTS < len(precomputed_indices):
+        # Subsample evenly from the precomputed set
+        stride = max(1, len(precomputed_indices) // MAX_TIMEPOINTS)
+        precomputed_indices = precomputed_indices[::stride][:MAX_TIMEPOINTS]
 
-    # Fit GSplats per timepoint (with per-frame caching)
-    gsplats_list = fit_all_timepoints(
-        volumes, voxel_size=voxel_size_zyx, time_indices=time_indices
+    precomputed_file_names = [
+        f"zebrafish_frame{idx:04d}.gsplats.zarr.zip" for idx in precomputed_indices
+    ]
+
+    gsplats_list = load_precomputed_bundle(
+        _PRECOMPUTED_DEMO_NAME,
+        _PRECOMPUTED_BUNDLE_NAME,
+        precomputed_file_names,
+        recompute=RECOMPUTE,
     )
+
+    if gsplats_list is None:
+        # Recompute path: warn about GPU requirements, load data, fit
+        warn_if_no_cuda_gpu()
+
+        # Load data — per-timepoint cache checks happen inside fit_all_timepoints().
+        # We can't skip the load here because the time_indices (which frames to use)
+        # depend on the stride computed from the data's total frame count.
+        volumes, voxel_size_zyx, time_indices = load_zebrafish_volumes()
+
+        # Fit GSplats per timepoint (with per-frame caching)
+        gsplats_list = fit_all_timepoints(
+            volumes, voxel_size=voxel_size_zyx, time_indices=time_indices
+        )
 
     # Report
     with asection("Fitting Summary"):

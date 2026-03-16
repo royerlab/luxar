@@ -40,15 +40,20 @@ The `luxar-viewer.rendering` package provides advanced WebGL rendering capabilit
 ```typescript
 const composer = new EffectComposer(renderer, {
   frameBufferType: THREE.HalfFloatType, // 16-bit float for HDR
-  multisampling: 0, // MSAA incompatible with additive blending
+  multisampling: 0, // MSAA samples configurable via rendering controls
 });
 ```
 
 **Color Space Pipeline**:
 
 ```
-Scene Rendering → HDR Buffer (LinearSRGB) → Effects → Tone Mapping → Output (SRGB)
+Scene Rendering (per-node GOG) → HDR Buffer (LinearSRGB) → Effects → EOG + Tone Mapping (LuxarToneMappingEffect) → Output (SRGB)
 ```
+
+**Two-Level Color Adjustment**:
+
+- **Per-node GOG** (in material shaders): `adjusted = color * intensity + offset; clip; pow(adjusted, 1/gamma)` -- per-node artistic control
+- **Global EOG** (in LuxarToneMappingEffect): `adjusted = color * exposure + globalOffset; clip; pow(adjusted, 1/globalGamma)` -- scene-wide exposure control before tone mapping
 
 ### 1.2 Tone Mapping
 
@@ -58,21 +63,35 @@ Scene Rendering → HDR Buffer (LinearSRGB) → Effects → Tone Mapping → Out
 
 | Operator        | Description                 | Characteristics                 |
 | --------------- | --------------------------- | ------------------------------- |
-| **ACES Filmic** | Industry standard (default) | Smooth highlights, natural look |
+| **Neutral**     | Default                     | Minimal color shift, hue-preserving |
+| **ACES Filmic** | Cinematic mode              | Smooth highlights, filmic look  |
 | **AgX**         | Modern alternative          | Balanced, film-like             |
 | **Reinhard**    | Classic operator            | Simple, local adaptation        |
 | **Linear**      | No mapping                  | Raw HDR (clips >1)              |
-| **Neutral**     | Balanced                    | Minimal color shift             |
 
-**Implementation** (via pmndrs/postprocessing):
+**Implementation** (vendored LuxarToneMappingEffect):
+
+The tone mapping pipeline uses a vendored `LuxarToneMappingEffect` that extends the pmndrs `ToneMappingEffect` with a global EOG (Exposure-Offset-Gamma) stage applied before the tone mapping operator in a single shader pass:
+
+```glsl
+// EOG applied before tone mapping
+color *= exposure;
+color += globalOffset;
+color = clamp(color, 0.0, 1e6);
+color = pow(color, vec3(1.0 / globalGamma));
+// Then apply tone mapping operator (ACES, AgX, etc.)
+```
 
 ```typescript
-// Tone mapping applied as final pass
-const toneMappingEffect = new ToneMappingEffect({
+const toneMappingEffect = new LuxarToneMappingEffect({
   mode: ToneMappingMode.ACES_FILMIC,
   resolution: 256,
   adaptive: false,
 });
+// Global EOG uniforms
+toneMappingEffect.exposure = 1.0;
+toneMappingEffect.globalOffset = 0.0;
+toneMappingEffect.globalGamma = 1.0;
 ```
 
 ### 1.3 Effect Composition Strategy
@@ -147,7 +166,8 @@ function buildEffectPasses(enabledEffects: Effect[]): Pass[] {
 
 - `uFOV`: float - Camera field of view (radians)
 - `uResolution`: vec2 - Framebuffer resolution [width, height]
-- `uHDRMultiplier`: float - HDR boost factor (typ. 16.0)
+- `uIntensity`: float - Per-node color multiplier (default 1.0)
+- `uOffset`: float - Per-node color offset (default 0.0)
 - `uOpacity`: float - Global opacity multiplier
 - `uGamma`: float - Gamma correction factor
 
@@ -213,7 +233,8 @@ void main() {
 varying vec3 vColor;
 varying float vSharpness;
 
-uniform float uHDRMultiplier;
+uniform float uIntensity;
+uniform float uOffset;
 uniform float uOpacity;
 uniform float uGamma;
 
@@ -228,10 +249,9 @@ void main() {
     // Power-based falloff: intensity = (1 - r^sharpness)
     float intensity = pow(1.0 - r, vSharpness);
 
-    // Apply HDR multiplier for bloom
-    vec3 color = vColor * uHDRMultiplier;
-
-    // Apply gamma correction
+    // Per-node GOG (Gain-Offset-Gamma) model
+    vec3 color = vColor * uIntensity + uOffset;
+    color = clamp(color, 0.0, 1e6);
     color = pow(color, vec3(1.0 / uGamma));
 
     // Apply intensity falloff
@@ -820,29 +840,9 @@ materialManager.updateGlobalParams(
 );
 ```
 
-**HDR Multiplier Initialization**:
+**Global EOG (Exposure-Offset-Gamma) Updates**:
 
-When HDR multiplier is updated via `updateHDRMultiplier()`, the MaterialManager stores the current value. New materials created after an HDR update automatically receive the current HDR multiplier value, ensuring consistent brightness across all materials regardless of creation order.
-
-```typescript
-// MaterialManager stores current HDR value
-private currentHDRMultiplier: number = config.renderingControls.defaults.hdrMultiplier;
-
-updateHDRMultiplier(value: number): void {
-  this.currentHDRMultiplier = value;
-  // Update all existing materials
-  for (const material of this.registeredMaterials) {
-    material.uniforms.hdrMultiplier.value = value;
-  }
-}
-
-getPointMaterial(config: MaterialConfig): PointMaterial {
-  // New materials get current HDR value, not config default
-  const material = new PointMaterial(config);
-  material.uniforms.hdrMultiplier.value = this.currentHDRMultiplier;
-  return material;
-}
-```
+Global exposure, offset, and gamma are applied in the vendored `LuxarToneMappingEffect` post-processing pass (not per-material). The MaterialManager no longer manages a global HDR multiplier uniform. Instead, per-node `intensity` and `offset` uniforms are set on each material individually at creation time.
 
 ---
 
@@ -885,21 +885,9 @@ const smaaEffect = new SMAAEffect({
 effectPass.addEffect(smaaEffect);
 ```
 
-### 6.3 MSAA (Multisample) - NOT RECOMMENDED
+### 6.3 MSAA (Multisample)
 
-**Problem**: MSAA is **incompatible with additive blending** for points.
-
-**Reason**: MSAA samples are averaged **before** blending, causing incorrect brightness multiplication.
-
-**Example**:
-
-```
-Without MSAA: Point A + Point B = 1.0 + 1.0 = 2.0 (correct)
-With MSAA:    Avg(1.0, 1.0) + Avg(1.0, 1.0) = 1.0 + 1.0 = 2.0 per sample
-              But blending happens per sample, causing 4x brightness
-```
-
-**Recommendation**: Use SMAA or FXAA instead.
+Hardware-accelerated anti-aliasing that smooths geometric edges without blurring. Fast and sharp — a good default choice for most scenes. Works well with additive blending.
 
 ### 6.4 SSAA (Super-Sample)
 
@@ -933,6 +921,8 @@ interface MaterialConfig {
   blendingMode: 'additive' | 'normal' | 'max';
   opacity: number; // 0.0 to 1.0
   gamma: number; // Typically 1.0 (no correction)
+  intensity: number; // Per-node color multiplier (default 1.0)
+  offset: number; // Per-node color offset (default 0.0)
 }
 ```
 
@@ -942,7 +932,8 @@ interface MaterialConfig {
 interface PointMaterialUniforms {
   uFOV: { value: number }; // Radians
   uResolution: { value: THREE.Vector2 }; // [width, height]
-  uHDRMultiplier: { value: number }; // Typically 16.0
+  uIntensity: { value: number }; // Per-node color multiplier (default 1.0)
+  uOffset: { value: number }; // Per-node color offset (default 0.0)
   uOpacity: { value: number }; // 0.0 to 1.0
   uGamma: { value: number }; // Gamma correction
 }
@@ -1118,7 +1109,8 @@ Normalized: I(p) / I(0) = 1 - p²/R²
 
 - `uFOV`: float - Camera field of view (radians)
 - `uResolution`: vec2 - Framebuffer resolution [width, height]
-- `uHDRMultiplier`: float - HDR boost factor (typ. 16.0)
+- `uIntensity`: float - Per-node color multiplier (default 1.0)
+- `uOffset`: float - Per-node color offset (default 0.0)
 - `uOpacity`: float - Global opacity multiplier
 
 ### 7.4 Line Vertex Shader
@@ -1226,7 +1218,8 @@ void main() {
 
 ```glsl
 // Line Fragment Shader with Semicircle Kernel Convolution Profile and Edge AA
-uniform float uHDRMultiplier;
+uniform float uIntensity;
+uniform float uOffset;
 uniform float uOpacity;
 
 varying vec3 vColor;
@@ -1262,8 +1255,11 @@ void main() {
     // Apply cap factor for correct joint intensity
     float intensity = vCapFactor * perpFalloff * edgeAA * widthScale;
 
-    // HDR output (gamma correction in post-processing)
-    vec3 finalColor = vColor * intensity * uHDRMultiplier;
+    // Per-node GOG (Gain-Offset-Gamma) model
+    vec3 finalColor = vColor * uIntensity + uOffset;
+    finalColor = clamp(finalColor, 0.0, 1e6);
+    // Note: gamma correction applied per-node in material shader
+    finalColor *= intensity;
 
     gl_FragColor = vec4(finalColor, intensity * uOpacity);
 }
@@ -1449,7 +1445,8 @@ instancedGeometry.setAttribute('aEndPos', new THREE.InstancedBufferAttribute(end
 interface LineMaterialConfig {
   blendingMode: 'additive' | 'normal' | 'max';
   opacity: number; // 0.0 to 1.0
-  hdrMultiplier: number; // Typically 16.0
+  intensity: number; // Per-node color multiplier (default 1.0)
+  offset: number; // Per-node color offset (default 0.0)
 }
 ```
 
@@ -1461,12 +1458,13 @@ interface LineMaterialConfig {
 interface LineMaterialUniforms {
   uFOV: { value: number }; // Radians
   uResolution: { value: THREE.Vector2 }; // [width, height]
-  uHDRMultiplier: { value: number }; // Typically 16.0
+  uIntensity: { value: number }; // Per-node color multiplier (default 1.0)
+  uOffset: { value: number }; // Per-node color offset (default 0.0)
   uOpacity: { value: number }; // 0.0 to 1.0
 }
 ```
 
-**Note**: No gamma or sharpness uniforms - gamma correction handled in post-processing pipeline (same as points), and sharpness is per-vertex (aStartSharpness/aEndSharpness).
+**Note**: No gamma or sharpness uniforms - per-node GOG (intensity, offset, gamma) is applied in the material shader (same model as points), and sharpness is per-vertex (aStartSharpness/aEndSharpness).
 
 ---
 
@@ -1682,7 +1680,8 @@ this.blendEquation = THREE.MaxEquation;
 ```typescript
 interface GSplatMaterialConfig {
   opacity?: number; // 0.0 to 1.0
-  hdrMultiplier?: number; // Typically 16.0
+  intensity?: number; // Per-node color multiplier (default 1.0)
+  offset?: number; // Per-node color offset (default 0.0)
   truncationRadius?: number; // In sigmas (default 3.0)
   blendingMode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
   transparent?: boolean;
@@ -1698,7 +1697,8 @@ interface GSplatMaterialUniforms {
   uFx: { value: number }; // Focal length X (pixels)
   uFy: { value: number }; // Focal length Y (pixels)
   uTruncate: { value: number }; // Truncation radius (sigmas)
-  uHDRMultiplier: { value: number }; // HDR intensity boost
+  uIntensity: { value: number }; // Per-node color multiplier (default 1.0)
+  uOffset: { value: number }; // Per-node color offset (default 0.0)
   uOpacity: { value: number }; // Global opacity
   uProjectionMode: { value: number }; // 0=sum, 1=max
 }
@@ -2017,5 +2017,5 @@ This status is passed to UI components (ResolutionIndicator) via the callback.
   - Sharpness compensation mathematical model
   - Post-processing effects via pmndrs/postprocessing
   - Material caching system
-  - Anti-aliasing recommendations (FXAA, SMAA preferred; MSAA incompatible)
+  - Anti-aliasing options (MSAA, FXAA, SMAA, SSAA)
   - Dynamic pass assignment for effect composition

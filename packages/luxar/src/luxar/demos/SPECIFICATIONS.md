@@ -282,14 +282,13 @@ if __name__ == "__main__":
 
 | File | Description |
 |------|-------------|
-| `demo_gsplats_3d_organoid_dapi_nuclei_from_idr.py` | 3D organoid DAPI nuclei from IDR microscopy data |
-| `demo_gsplats_3d_organoid_multichannel_from_idr.py` | Multi-channel 3D organoid from IDR (full compute pipeline) |
-| `demo_gsplats_3d_organoid_multichannel_precomputed.py` | Multi-channel 3D organoid (quick start with precomputed splats) |
+| `demo_gsplats_3d_organoid_dapi_nuclei.py` | 3D organoid DAPI nuclei from IDR microscopy data |
+| `demo_gsplats_3d_organoid_multichannel.py` | Multi-channel 3D organoid from IDR microscopy data |
 | `demo_gsplats_3d_tribolium_embryo.py` | 3D Tribolium beetle embryo light-sheet volume |
 | `demo_gsplats_4d_zebrafish_timelapse.py` | 4D zebrafish embryo time-lapse confocal with time slider |
-| `demo_gsplats_4d_cells3d_multichannel.py` | 4D multi-channel cells using dim_order feature |
-| `demo_gsplats_4d_cells3d_multichannel_toggles.py` | 5D multi-channel cells with independent boolean toggles |
-| `demo_gsplats_4d_kidney_multichannel_toggles.py` | 6D multi-channel kidney with boolean toggles |
+| `demo_gsplats_3d_cells3d_multichannel.py` | 3D multi-channel cells using dim_order feature |
+| `demo_gsplats_3d_cells3d_multichannel_toggles.py` | 3D multi-channel cells with independent boolean toggles |
+| `demo_gsplats_3d_kidney_multichannel_toggles.py` | 3D multi-channel kidney with boolean toggles |
 | `demo_gsplats_4d_celegans_tracking.py` | 4D C. elegans nuclei tracking with gsplats and polylines |
 
 ---

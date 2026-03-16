@@ -86,7 +86,7 @@ def benchmark_forward(
         # Warmup
         for _ in range(n_warmup):
             if use_amp:
-                with torch.amp.autocast("cuda"):
+                with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
                     _ = model()
             else:
                 _ = model()
@@ -97,7 +97,7 @@ def benchmark_forward(
         start = time.perf_counter()
         for _ in range(n_iters):
             if use_amp:
-                with torch.amp.autocast("cuda"):
+                with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
                     _ = model()
             else:
                 _ = model()
@@ -130,7 +130,7 @@ def benchmark_training(
     # Warmup with full forward+backward
     for _ in range(n_warmup):
         if use_amp:
-            with torch.amp.autocast("cuda"):
+            with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
                 output = model()
                 loss = output.sum()
             loss.backward()
@@ -146,7 +146,7 @@ def benchmark_training(
     start = time.perf_counter()
     for _ in range(n_iters):
         if use_amp:
-            with torch.amp.autocast("cuda"):
+            with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
                 output = model()
         else:
             output = model()
@@ -158,7 +158,7 @@ def benchmark_training(
     start = time.perf_counter()
     for _ in range(n_iters):
         if use_amp:
-            with torch.amp.autocast("cuda"):
+            with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
                 output = model()
                 loss = output.sum()
             loss.backward()
@@ -177,11 +177,11 @@ def benchmark_training(
 
 
 def run_benchmark(
-    configs: List[Tuple[int, Tuple[int, ...], str]] = None,
+    configs: Optional[List[Tuple[int, Tuple[int, ...], str]]] = None,
     include_cpu: bool = True,
     include_vanilla: bool = True,
     verbose: bool = True,
-) -> dict:
+) -> Dict[str, Any]:
     """
     Run comprehensive benchmark suite.
 
@@ -290,7 +290,7 @@ def run_benchmark(
         if verbose:
             print(f"[{i + 1}/{len(configs)}] {label} (N={N:,}, shape={shape})")
 
-        result = {
+        result: Dict[str, Any] = {
             "N": N,
             "shape": shape,
             "dim": dim,
@@ -307,7 +307,7 @@ def run_benchmark(
                     L0=L,
                     amps0=amps,
                     sigma_min_diag=sigma_min,
-                    device="cpu",
+                    device=torch.device("cpu"),
                 )
                 cpu_time = benchmark_forward(cpu_model, sync_cuda=False, n_iters=5)
                 result["cpu_ms"] = cpu_time
@@ -328,7 +328,7 @@ def run_benchmark(
                     L0=L,
                     amps0=amps,
                     sigma_min_diag=sigma_min,
-                    device="cuda",
+                    device=torch.device("cuda"),
                 )
                 vanilla_time = benchmark_forward(
                     cuda_vanilla_model, sync_cuda=True, n_iters=10
@@ -350,7 +350,7 @@ def run_benchmark(
                 L0=L,
                 amps0=amps,
                 sigma_min_diag=sigma_min,
-                device="cuda",
+                device=torch.device("cuda"),
                 use_fp16=False,
             )
             fp32_time = benchmark_forward(cuda_fp32_model, sync_cuda=True)
@@ -395,7 +395,7 @@ def run_benchmark(
                     L0=L,
                     amps0=amps,
                     sigma_min_diag=sigma_min,
-                    device="cuda",
+                    device=torch.device("cuda"),
                     use_fp16=False,
                 )
                 amp_time = benchmark_forward(
@@ -432,7 +432,7 @@ def run_benchmark(
                     L0=L,
                     amps0=amps,
                     sigma_min_diag=sigma_min,
-                    device="cuda",
+                    device=torch.device("cuda"),
                     use_fp16=True,
                 )
                 fp16_time = benchmark_forward(cuda_fp16_model, sync_cuda=True)
@@ -449,56 +449,56 @@ def run_benchmark(
                 _oom_cleanup()
 
         # Calculate speedups and throughput only if we have valid timings
-        fp32_time = result.get("fp32_ms")
-        amp_time = result.get("amp_ms")
-        fp16_time = result.get("fp16_ms")
-        fp32_total = result.get("fp32_train_ms")
-        amp_total = result.get("amp_train_ms")
+        r_fp32: Any = result.get("fp32_ms")
+        r_amp: Any = result.get("amp_ms")
+        r_fp16: Any = result.get("fp16_ms")
+        r_fp32_total: Any = result.get("fp32_train_ms")
+        r_amp_total: Any = result.get("amp_train_ms")
 
-        if result["cpu_ms"] is not None and fp32_time is not None:
-            result["fp32_vs_cpu"] = result["cpu_ms"] / fp32_time
+        if result["cpu_ms"] is not None and r_fp32 is not None:
+            result["fp32_vs_cpu"] = result["cpu_ms"] / r_fp32
         else:
             result["fp32_vs_cpu"] = None
 
-        if result["vanilla_ms"] is not None and fp32_time is not None:
-            result["fp32_vs_vanilla"] = result["vanilla_ms"] / fp32_time
+        if result["vanilla_ms"] is not None and r_fp32 is not None:
+            result["fp32_vs_vanilla"] = result["vanilla_ms"] / r_fp32
         else:
             result["fp32_vs_vanilla"] = None
 
-        if fp32_time is not None and amp_time is not None:
-            result["amp_vs_fp32"] = fp32_time / amp_time
+        if r_fp32 is not None and r_amp is not None:
+            result["amp_vs_fp32"] = r_fp32 / r_amp
         else:
             result["amp_vs_fp32"] = None
 
-        if fp32_time is not None and fp16_time is not None:
-            result["fp16_vs_fp32"] = fp32_time / fp16_time
+        if r_fp32 is not None and r_fp16 is not None:
+            result["fp16_vs_fp32"] = r_fp32 / r_fp16
         else:
             result["fp16_vs_fp32"] = None
 
-        if fp32_total is not None and amp_total is not None:
-            result["amp_train_vs_fp32_train"] = fp32_total / amp_total
+        if r_fp32_total is not None and r_amp_total is not None:
+            result["amp_train_vs_fp32_train"] = r_fp32_total / r_amp_total
         else:
             result["amp_train_vs_fp32_train"] = None
 
         # Throughput metrics (helps identify GPU saturation)
         # GVoxel/s = Giga-voxels per second for inference
-        if fp32_time is not None:
-            result["gvoxel_per_s_fp32"] = (voxels / fp32_time) / 1e6  # GV/s
-            result["splats_per_ms_fp32"] = N / fp32_time
+        if r_fp32 is not None:
+            result["gvoxel_per_s_fp32"] = (voxels / r_fp32) / 1e6  # GV/s
+            result["splats_per_ms_fp32"] = N / r_fp32
         else:
             result["gvoxel_per_s_fp32"] = None
             result["splats_per_ms_fp32"] = None
 
-        if amp_time is not None:
-            result["gvoxel_per_s_amp"] = (voxels / amp_time) / 1e6
-            result["splats_per_ms_amp"] = N / amp_time
+        if r_amp is not None:
+            result["gvoxel_per_s_amp"] = (voxels / r_amp) / 1e6
+            result["splats_per_ms_amp"] = N / r_amp
         else:
             result["gvoxel_per_s_amp"] = None
             result["splats_per_ms_amp"] = None
 
-        if fp16_time is not None:
-            result["gvoxel_per_s_fp16"] = (voxels / fp16_time) / 1e6
-            result["splats_per_ms_fp16"] = N / fp16_time
+        if r_fp16 is not None:
+            result["gvoxel_per_s_fp16"] = (voxels / r_fp16) / 1e6
+            result["splats_per_ms_fp16"] = N / r_fp16
         else:
             result["gvoxel_per_s_fp16"] = None
             result["splats_per_ms_fp16"] = None
@@ -512,12 +512,12 @@ def run_benchmark(
                 parts.append(f"CPU={result['cpu_ms']:.1f}ms")
             if result["vanilla_ms"] is not None:
                 parts.append(f"Vanilla={result['vanilla_ms']:.1f}ms")
-            if fp32_time is not None:
-                parts.append(f"FP32={fp32_time:.2f}ms")
-            if amp_time is not None and result["amp_vs_fp32"] is not None:
-                parts.append(f"AMP={amp_time:.2f}ms ({result['amp_vs_fp32']:.2f}x)")
-            if fp16_time is not None and result["fp16_vs_fp32"] is not None:
-                parts.append(f"FP16={fp16_time:.2f}ms ({result['fp16_vs_fp32']:.2f}x)")
+            if r_fp32 is not None:
+                parts.append(f"FP32={r_fp32:.2f}ms")
+            if r_amp is not None and result["amp_vs_fp32"] is not None:
+                parts.append(f"AMP={r_amp:.2f}ms ({result['amp_vs_fp32']:.2f}x)")
+            if r_fp16 is not None and result["fp16_vs_fp32"] is not None:
+                parts.append(f"FP16={r_fp16:.2f}ms ({result['fp16_vs_fp32']:.2f}x)")
             if parts:
                 print(f"    Inference: {', '.join(parts)}")
             # Throughput line (helps identify GPU saturation)
@@ -536,17 +536,17 @@ def run_benchmark(
                     )
                 )
             # Training line (forward + backward)
-            fp32_fwd = result.get("fp32_fwd_ms")
-            fp32_bwd = result.get("fp32_bwd_ms")
-            amp_fwd = result.get("amp_fwd_ms")
-            amp_bwd = result.get("amp_bwd_ms")
-            if fp32_fwd is not None and fp32_total is not None:
+            r_fp32_fwd: Any = result.get("fp32_fwd_ms")
+            r_fp32_bwd: Any = result.get("fp32_bwd_ms")
+            r_amp_fwd: Any = result.get("amp_fwd_ms")
+            r_amp_bwd: Any = result.get("amp_bwd_ms")
+            if r_fp32_fwd is not None and r_fp32_total is not None:
                 train_parts = [
-                    f"FP32=[fwd={fp32_fwd:.2f}+bwd={fp32_bwd:.2f}={fp32_total:.2f}ms]"
+                    f"FP32=[fwd={r_fp32_fwd:.2f}+bwd={r_fp32_bwd:.2f}={r_fp32_total:.2f}ms]"
                 ]
-                if amp_fwd is not None and amp_total is not None:
+                if r_amp_fwd is not None and r_amp_total is not None:
                     train_parts.append(
-                        f"AMP=[fwd={amp_fwd:.2f}+bwd={amp_bwd:.2f}={amp_total:.2f}ms]"
+                        f"AMP=[fwd={r_amp_fwd:.2f}+bwd={r_amp_bwd:.2f}={r_amp_total:.2f}ms]"
                         + (
                             f" ({result['amp_train_vs_fp32_train']:.2f}x)"
                             if result.get("amp_train_vs_fp32_train")
@@ -782,7 +782,7 @@ def run_splat_sweep(
                 L0=L,
                 amps0=amps,
                 sigma_min_diag=sigma_min,
-                device="cuda",
+                device=torch.device("cuda"),
                 use_fp16=False,
             )
             fp32_ms = benchmark_forward(model, sync_cuda=True, n_iters=15)
@@ -856,33 +856,26 @@ def _luxar_config_dir() -> Path:
     return config_dir
 
 
-def generate_profile(
+def build_profile_data(
     benchmark_results: dict,
     sweep_results: Optional[dict] = None,
     sweep_shape: Optional[Tuple[int, ...]] = None,
-    output_path: Optional[Path] = None,
-) -> Path:
-    """
-    Generate a machine-readable YAML benchmark profile.
+) -> Dict[str, Any]:
+    """Build a benchmark profile data dict from raw results.
 
-    The profile captures GPU capabilities, throughput characteristics, OOM
-    boundaries, and recommended operating points that downstream code can
-    query to make informed decisions about tile sizes, splat budgets, etc.
+    This is the pure-data counterpart of the old ``generate_profile()`` —
+    it computes all throughput tables, OOM boundaries, and recommendations
+    but does **not** write anything to disk.
 
     Args:
-        benchmark_results: Results from run_benchmark().
-        sweep_results: Optional results from run_splat_sweep().
-        sweep_shape: Shape used for the sweep.
-        output_path: Where to write. Default: ~/.luxar/gpu_benchmark_profile.yaml.
+        benchmark_results: Results from :func:`run_benchmark`.
+        sweep_results: Optional results from :func:`run_splat_sweep`.
+        sweep_shape: Volume shape used for the sweep.
 
     Returns:
-        Path to the written YAML file.
+        Profile dict with keys ``gpu``, ``timestamp``, ``throughput``,
+        ``oom_boundaries``, ``splat_sweep`` (optional), ``recommendations``.
     """
-    import yaml
-
-    if output_path is None:
-        output_path = _luxar_config_dir() / "gpu_benchmark_profile.yaml"
-
     profile: Dict[str, Any] = {}
 
     # -- GPU info --
@@ -1000,10 +993,8 @@ def generate_profile(
         profile["splat_sweep"] = sweep_data
 
     # -- Recommended operating points --
-    # These are the computed recommendations that downstream code can consume
     recommendations: Dict[str, Any] = {}
 
-    # Best 3D shape for peak throughput
     if peak_shape_3d:
         recommendations["peak_throughput_3d"] = {
             "shape": peak_shape_3d,
@@ -1011,14 +1002,11 @@ def generate_profile(
             "splats": peak_splats_3d,
         }
 
-    # For each successfully benchmarked 3D volume size, compute max recommended splats
-    # (splats where throughput stays above 80% of peak for that volume)
     if sweep_results and sweep_shape:
         sorted_sweep = sorted(sweep_results.values(), key=lambda r: r["N"])
         if sorted_sweep:
             local_peak = max(sr["gvoxel_per_s"] for sr in sorted_sweep)
             threshold_80 = local_peak * 0.80
-            # Last splat count where throughput >= 80% of peak
             max_splats_80pct = sorted_sweep[0]["N"]
             for sr in sorted_sweep:
                 if sr["gvoxel_per_s"] >= threshold_80:
@@ -1030,49 +1018,66 @@ def generate_profile(
                 "note": "Max splats keeping >=80% of peak throughput at this volume size",
             }
 
-    # Memory-safe max volume (leave 20% headroom)
     if torch.cuda.is_available():
         free_gb, total_gb = _gpu_mem_info()
-        # Conservative estimate: output tensor + ~2x overhead for model params + intermediates
-        safe_voxels_fp32 = int((free_gb * 0.6) * 1e9 / 4)  # 60% of free, 4 bytes/voxel
+        safe_voxels_fp32 = int((free_gb * 0.6) * 1e9 / 4)
         recommendations["memory_safe_max_voxels_fp32"] = safe_voxels_fp32
-        # Equivalent cube side length
         safe_side = int(safe_voxels_fp32 ** (1.0 / 3.0))
         recommendations["memory_safe_max_cube_side_3d"] = safe_side
 
     profile["recommendations"] = recommendations
 
-    # -- Write YAML --
-    # Use a custom dumper that avoids YAML anchors/aliases for readability
-    class _NoAliasDumper(yaml.SafeDumper):
-        def ignore_aliases(self, data: Any) -> bool:
-            return True
-
-    with open(output_path, "w") as f:
-        f.write(
-            "# GPU Benchmark Profile - auto-generated by luxar CUDA benchmark\n"
-            "# This file is machine-readable and consumed by luxar to choose\n"
-            "# optimal tile sizes, splat budgets, and batch configurations.\n"
-            f"# Generated: {profile['timestamp']}\n"
-            f"# GPU: {gpu_info.get('name', 'unknown')}\n"
-            "#\n"
-            "# Re-generate with: make benchmark-cuda\n"
-            "#   or: hatch run python -m luxar.gsplats.models.gsplats.cuda.benchmark"
-            " --sweep\n\n"
-        )
-        yaml.dump(
-            profile,
-            f,
-            Dumper=_NoAliasDumper,
-            default_flow_style=False,
-            sort_keys=False,
-            allow_unicode=True,
-        )
-
-    return output_path
+    return profile
 
 
-def main():
+def generate_profile(
+    benchmark_results: dict,
+    sweep_results: Optional[dict] = None,
+    sweep_shape: Optional[Tuple[int, ...]] = None,
+    output_path: Optional[Path] = None,
+) -> Path:
+    """Build profile data and save to the multi-GPU profile registry.
+
+    This is the top-level function that both builds the profile data and
+    persists it via :mod:`luxar.gsplats.gpu_profile`.
+
+    Returns:
+        Path to the written YAML file.
+    """
+    from luxar.gsplats.gpu_profile import PROFILE_PATH, append_run
+
+    profile = build_profile_data(benchmark_results, sweep_results, sweep_shape)
+
+    gpu_info_raw = profile.get("gpu", {})
+    gpu_name = gpu_info_raw.get("name", "unknown")
+
+    # Build static gpu_info (hardware-only fields)
+    gpu_info = {
+        k: v
+        for k, v in gpu_info_raw.items()
+        if k in ("total_memory_gb", "compute_capability", "sm_count")
+    }
+
+    # Build run_data (per-run fields)
+    run_data = {
+        "timestamp": profile["timestamp"],
+        "cuda_version": gpu_info_raw.get("cuda_version", "unknown"),
+        "pytorch_version": gpu_info_raw.get("pytorch_version", "unknown"),
+        "free_memory_gb": gpu_info_raw.get("free_memory_gb", 0),
+        "throughput": profile.get("throughput", {}),
+        "oom_boundaries": profile.get("oom_boundaries", {}),
+        "recommendations": profile.get("recommendations", {}),
+    }
+    if "splat_sweep" in profile:
+        run_data["splat_sweep"] = profile["splat_sweep"]
+
+    target_path = output_path if output_path is not None else PROFILE_PATH
+    append_run(gpu_name, run_data, gpu_info, path=target_path)
+
+    return target_path
+
+
+def main() -> None:
     """Main entry point."""
     import argparse
     import sys
@@ -1083,7 +1088,7 @@ def main():
         sys.exit(1)
 
     try:
-        import cuda_splatting_backend  # noqa: F401
+        import cuda_splatting_backend  # type: ignore[import-not-found]  # noqa: F401
     except ImportError:
         print("ERROR: CUDA splatting backend is not compiled.")
         print("Please build it first:")
@@ -1169,7 +1174,7 @@ def main():
             verbose=True,
         )
 
-    # Generate YAML profile
+    # Generate YAML profile (multi-GPU registry at ~/.luxar/gpu_profiles.yaml)
     if results or sweep_results:
         try:
             profile_path = generate_profile(
@@ -1177,11 +1182,11 @@ def main():
                 sweep_results=sweep_results,
                 sweep_shape=sweep_shape,
             )
-            print(f"\nProfile written to: {profile_path}")
+            print(f"\nProfile saved to: {profile_path}")
         except ImportError:
             print(
                 "\nNote: Install PyYAML (pip install pyyaml) to generate"
-                " gpu_benchmark_profile.yaml"
+                " the GPU benchmark profile."
             )
 
 

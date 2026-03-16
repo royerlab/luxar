@@ -61,6 +61,18 @@ vi.mock('postprocessing', () => ({
     mode: 4, // ToneMappingMode.ACES_FILMIC = 4
     uniforms: { whitePoint: { value: 4.0 } },
   })),
+  LuminancePass: vi.fn().mockImplementation(() => ({
+    resolution: { width: 256, setPreferredSize: vi.fn() },
+    texture: {},
+    render: vi.fn(),
+  })),
+  AdaptiveLuminancePass: vi.fn().mockImplementation(() => ({
+    enabled: false,
+    texture: {},
+    fullscreenMaterial: { mipLevel1x1: 0, adaptationRate: 1.0 },
+    render: vi.fn(),
+    initialize: vi.fn(),
+  })),
   DepthOfFieldEffect: vi.fn().mockImplementation(() => ({
     bokehScale: 2.0,
   })),
@@ -101,10 +113,14 @@ vi.mock('postprocessing', () => ({
   ToneMappingMode: {
     LINEAR: 0,
     REINHARD: 1,
-    OPTIMIZED_CINEON: 2,
-    ACES_FILMIC: 4,
-    AGX: 5,
-    NEUTRAL: 6,
+    REINHARD2: 2,
+    REINHARD2_ADAPTIVE: 3,
+    UNCHARTED2: 4,
+    OPTIMIZED_CINEON: 5,
+    CINEON: 6,
+    ACES_FILMIC: 7,
+    AGX: 8,
+    NEUTRAL: 9,
   },
   SMAAPreset: {
     LOW: 0,
@@ -112,6 +128,21 @@ vi.mock('postprocessing', () => ({
     HIGH: 2,
     ULTRA: 3,
   },
+}));
+
+// Mock LuxarToneMappingEffect (vendored tone mapping with EOG)
+vi.mock('../../../rendering/luxar-tone-mapping-effect', () => ({
+  LuxarToneMappingEffect: vi.fn().mockImplementation(() => ({
+    mode: 7, // ToneMappingMode.ACES_FILMIC
+    whitePoint: 2.0,
+    middleGrey: 0.4,
+    exposure: 0.0,
+    globalOffset: 0.0,
+    globalGamma: 1.0,
+    defines: new Map([['TONE_MAPPING_MODE', '7']]),
+    setChanged: vi.fn(),
+    uniforms: new Map([['whitePoint', { value: 2.0 }]]),
+  })),
 }));
 
 describe('PostProcessingManager', () => {

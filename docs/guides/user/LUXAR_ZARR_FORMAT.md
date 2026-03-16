@@ -197,8 +197,14 @@ Group nodes organize the scene hierarchy and can contain child nodes.
 {
   "type": "group",
   "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],  // 4x4 matrix as 16-element array
+  "nd_transform": {                                        // Optional, per-dimension transforms
+    "Time": {"scale": 0.001, "offset": 50.0},             //   for non-displayed dimensions
+    "Channel": {"permutation": [2, 1, 0]}
+  },
   "opacity": 1.0,           // 0.0-1.0, inherited by children
-  "gamma": 1.0,            // 0.2-2.0, gamma correction
+  "gamma": 1.0,            // 0.1-10.0, per-node gamma correction
+  "intensity": 1.0,        // 0.0-100.0, per-node linear color multiplier (gain)
+  "offset": 0.0,           // -10.0-10.0, per-node additive brightness shift (black level)
   "blending_mode": "additive"  // normal, additive, max (default: additive)
 }
 ```
@@ -212,8 +218,13 @@ Points nodes contain the actual point data.
 {
   "type": "points",
   "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
+  "nd_transform": {                                        // Optional, per-dimension transforms
+    "Time": {"scale": 0.001, "offset": 50.0}              //   for non-displayed dimensions
+  },
   "opacity": 1.0,
   "gamma": 1.0,
+  "intensity": 1.0,
+  "offset": 0.0,
   "blending_mode": "additive",  // or "normal", "max"
   "n_points": 10000,
   "max_radius": 2.5,
@@ -450,6 +461,65 @@ Where:
 - Bottom row is always `[0, 0, 0, 1]`
 
 **CRITICAL**: Python transposes matrices from NumPy row-major to THREE.js column-major format before storage. TypeScript consumes them directly using `Matrix4.fromArray()`.
+
+## nD Transform System
+
+In addition to the 4x4 spatial `transform`, nodes can carry an `nd_transform` attribute for per-dimension transforms on non-displayed dimensions. This enables time alignment, unit conversion, and category remapping without modifying stored point data.
+
+### Storage Format
+
+`nd_transform` is stored as a JSON object in the node's `.zattrs`, alongside the existing `transform` attribute:
+
+```json
+{
+  "nd_transform": {
+    "Time": {"scale": 0.001, "offset": 50.0},
+    "Channel": {"permutation": [2, 1, 0]}
+  }
+}
+```
+
+**Rules:**
+- `nd_transform` is optional. Absence means identity on all non-displayed dimensions.
+- Keys are dimension **names** (matching `Dimension.name` in scene dimensions).
+- Only non-displayed dimensions may appear as keys. Displayed dimensions are handled by the 4x4 `transform`.
+- Omitted dimensions are identity-transformed.
+
+### Affine Entry (Continuous / Discrete Ordinal Dimensions)
+
+```json
+{
+  "scale": 1.0,
+  "offset": 0.0
+}
+```
+
+Both fields are optional (default to `1.0` and `0.0` respectively). The effective value is computed as: `effective_value = scale * original_value + offset`. For discrete ordinal dimensions, the result is rounded to the nearest integer.
+
+### Permutation Entry (Categorical Dimensions)
+
+```json
+{
+  "permutation": [2, 1, 0]
+}
+```
+
+Array of integers mapping old category indices to new indices. Length must equal the number of categories defined for that dimension. The effective index is: `effective_index = permutation[original_index]`.
+
+### Hierarchical Composition
+
+nD transforms compose through the parent chain, per-dimension:
+
+- **Affine**: `composed_scale = parent_scale * child_scale`, `composed_offset = parent_scale * child_offset + parent_offset`
+- **Permutation**: `composed[i] = parent_perm[child_perm[i]]` (child applied first, then parent)
+
+Nodes without `nd_transform` (or without an entry for a specific dimension) contribute identity.
+
+### Viewer Behavior
+
+The viewer uses an **inverse-query** approach: instead of transforming millions of point coordinates, the slice query (position + tolerance) is inverse-transformed from world to local space once per node update. This is O(1) per dimension, not O(N) per point. No changes to loader internals are required.
+
+See `docs/guides/specs/ND_TRANSFORMS_SPEC.md` for the full specification.
 
 ## Dimension System
 

@@ -56,4 +56,4 @@ def solve_lower_triangular(L: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
         # Legacy PyTorch (1.12-1.13): use deprecated torch.triangular_solve
         # Note: triangular_solve returns (solution, cloned_L_matrix) tuple
         X, _ = torch.triangular_solve(B, L, upper=False)
-        return cast(torch.Tensor, X)
+        return X

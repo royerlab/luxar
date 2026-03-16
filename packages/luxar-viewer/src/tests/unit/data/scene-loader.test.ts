@@ -197,7 +197,6 @@ vi.mock('../../../rendering/material-manager', () => ({
       fragmentShader: '',
       userData: {},
       updateCameraParams: vi.fn(),
-      updateHDRMultiplier: vi.fn(),
     }),
   },
 }));

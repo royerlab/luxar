@@ -39,7 +39,7 @@ The spatial index enables efficient queries for points within a spatial region w
 
 - nD dimension navigation (loading only visible slice)
 - Progressive loading of massive datasets
-- Real-time interaction with billion-point clouds
+- Real-time interaction with billion-element datasets
 
 **Design**: Luxar uses **chunk-based spatial indexing** via Morton/Hilbert space-filling curves with per-chunk bounding boxes.
 

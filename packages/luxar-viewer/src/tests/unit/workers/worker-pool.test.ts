@@ -28,7 +28,12 @@ describe.skipIf(!hasWorkerAPI)('WorkerPool', () => {
     const pool = getWorkerPool();
     const worker1 = await pool.getWorker();
     const worker2 = await pool.getWorker();
-    expect(worker1).toBe(worker2);
+    const { workerCount } = pool.getStats();
+    if (workerCount <= 1) {
+      expect(worker1).toBe(worker2);
+    } else {
+      expect(worker1).not.toBe(worker2);
+    }
   });
 
   it('should handle concurrent initialization requests', async () => {
@@ -36,9 +41,13 @@ describe.skipIf(!hasWorkerAPI)('WorkerPool', () => {
     // Start multiple initialization requests simultaneously
     const workers = await Promise.all([pool.getWorker(), pool.getWorker(), pool.getWorker()]);
 
-    // All should return the same worker
-    expect(workers[0]).toBe(workers[1]);
-    expect(workers[1]).toBe(workers[2]);
+    const { workerCount } = pool.getStats();
+    if (workerCount <= 1) {
+      expect(workers[0]).toBe(workers[1]);
+      expect(workers[1]).toBe(workers[2]);
+    } else {
+      expect(workers[0]).not.toBe(workers[1]);
+    }
   });
 
   it('should dispose worker properly', async () => {

@@ -313,17 +313,19 @@ class TestEnhancedInfoCommand:
 class TestEnhancedServeCommand:
     """Test the enhanced serve command."""
 
+    @patch("luxar.cli.main.find_available_port", return_value=8000)
     @patch("luxar.cli.main.uvicorn.run")
-    def test_serve_basic(self, mock_uvicorn, runner, sample_scene) -> None:
+    def test_serve_basic(self, mock_uvicorn, _mock_port, runner, sample_scene) -> None:
         """Test basic serve command (existing functionality)."""
         result = runner.invoke(app, ["serve", str(sample_scene)])
         assert result.exit_code == 0
         mock_uvicorn.assert_called_once()
 
+    @patch("luxar.cli.main.find_available_port", return_value=8000)
     @patch("luxar.cli.main.uvicorn.run")
     @patch("luxar.cli.main.check_viewer_built")
     def test_serve_with_viewer(
-        self, mock_check, mock_uvicorn, runner, sample_scene
+        self, mock_check, mock_uvicorn, _mock_port, runner, sample_scene
     ) -> None:
         """Test serve with viewer option."""
         mock_check.return_value = True
@@ -332,19 +334,38 @@ class TestEnhancedServeCommand:
         assert result.exit_code == 0
         mock_check.assert_called()
 
+    @patch("luxar.cli.main.find_available_port", return_value=8000)
     @patch("luxar.cli.main.uvicorn.run")
     @patch("luxar.cli.main.open_browser_func")
     def test_serve_with_open(
-        self, mock_browser, mock_uvicorn, runner, sample_scene
+        self, mock_browser, mock_uvicorn, _mock_port, runner, sample_scene
     ) -> None:
         """Test serve with open browser option."""
         result = runner.invoke(app, ["serve", str(sample_scene), "--open"])
         # Browser open might be called depending on timing
         assert result.exit_code == 0
 
+    @patch("luxar.cli.main.find_available_port", return_value=8000)
+    @patch("luxar.cli.main.uvicorn.run")
+    @patch("luxar.cli.main.open_browser_func")
+    @patch("luxar.cli.main.check_viewer_built")
+    def test_serve_with_viewer_not_built_skips_open(
+        self, mock_check, mock_browser, mock_uvicorn, _mock_port, runner, sample_scene
+    ) -> None:
+        """Test serve with viewer requested but not built skips --open."""
+        mock_check.return_value = False
+
+        result = runner.invoke(app, ["serve", str(sample_scene), "--viewer", "--open"])
+
+        assert result.exit_code == 0
+        mock_browser.assert_not_called()
+
+    @patch("luxar.cli.main.find_available_port", return_value=8000)
     @patch("luxar.cli.main.check_viewer_built")
     @patch("luxar.cli.main._serve_viewer")
-    def test_serve_viewer_only(self, mock_serve, mock_check, runner) -> None:
+    def test_serve_viewer_only(
+        self, mock_serve, mock_check, _mock_port, runner
+    ) -> None:
         """Test serve viewer only."""
         mock_check.return_value = True
 

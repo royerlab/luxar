@@ -164,7 +164,7 @@ def _cubic_upsample_recursive(
             mode=mode,
             align_corners=False if mode != "nearest" else None,
         )
-        return upsampled[0, 0]  # type: ignore[no-any-return]
+        return upsampled[0, 0]
     else:
         raise ValueError(f"Cannot upsample {current_shape} to {target_shape}")
 
@@ -360,8 +360,8 @@ def _downsample_to_scale(
                 result = result.reshape(new_shape).mean(dim=ax + 1)
         else:
             # Nearest-neighbor downsampling: stride along each axis
-            slices = tuple(slice(None, None, scale) for _ in range(ndim))
-            result = img[slices]
+            stride_slices = tuple(slice(None, None, scale) for _ in range(ndim))
+            result = img[stride_slices]
         downsampled = result[None, None, ...]
 
     # Remove batch and channel dimensions

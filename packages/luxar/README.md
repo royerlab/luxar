@@ -7,7 +7,7 @@ A Python library for compiling n-dimensional scientific datasets into optimized 
 Luxar Core is built on the principle that **data compilation should never be the bottleneck**. Whether you're working with thousands or billions of data points, in 3D or higher dimensions, Luxar Core scales with your ambitions:
 
 - **Dimension-agnostic**: Built to handle 3D, 4D, and beyond
-- **Geometry-flexible**: Extensible architecture for points, lines, surfaces, volumes
+- **Geometry-flexible**: Extensible architecture for points, lines, Gaussian splats, and more
 - **Scale-unlimited**: Performance bounded by storage, not architecture
 - **Stream-ready**: Chunked Zarr format enables progressive loading
 
@@ -76,7 +76,8 @@ Scene (root)
 ```
 
 Each node can have:
-- **Transform**: 4x4 transformation matrix
+- **Transform**: 4x4 transformation matrix (displayed spatial dimensions)
+- **nD Transform**: Per-dimension affine or permutation transforms (non-displayed dimensions)
 - **Attributes**: Arbitrary metadata
 - **Datasets**: Geometry-specific data arrays
 
@@ -85,10 +86,11 @@ Each node can have:
 #### Currently Implemented
 - **Scene**: Root node managing the Zarr store
 - **Group**: Organizational nodes with transforms
-- **Points**: Point cloud geometry with positions and colors
+- **Points**: Point geometry with positions, colors, radii, sharpness
+- **Lines**: Line/curve geometry with vertices, widths, colors, sharpness
+- **GSplats**: Gaussian splat geometry with centers, amplitudes, cholesky factors, colors
 
 #### Planned Geometry Types
-- **Lines**: Connected line segments with per-vertex attributes
 - **Surfaces**: Triangulated meshes with normals and textures
 - **Volumes**: Volumetric data with transfer functions
 - **Tensors**: Higher-dimensional data with projections
@@ -147,7 +149,7 @@ with LuxarZarrCompiler("multidimensional.zarr") as compiler:
 
 ### Point Attributes
 
-Enhanced points visualization with per-point attributes:
+Enhanced point rendering with per-point attributes:
 
 ```python
 # Generate 5D data (time, z, x, y, channel)
@@ -181,6 +183,49 @@ Points in nD space are treated as hyperspheres. When viewing a 3D slice:
 - Point visibility depends on hypersphere intersection with viewing hyperplane
 - Larger radius = visible across more dimension slices
 - Natural representation of uncertainty or spread in higher dimensions
+
+### nD Transforms
+
+Non-displayed dimensions (Time, Channel, etc.) support per-dimension transforms for dataset alignment:
+
+```python
+# Align a dataset captured in milliseconds to a scene using seconds
+group = scene.add_group(
+    "DatasetB",
+    transform=transforms.translate(10, 0, 0),     # spatial alignment
+    nd_transform={
+        "Time": {"scale": 0.001, "offset": 50.0}, # ms to seconds, shifted
+        "Channel": {"permutation": [2, 1, 0]},     # remap categories
+    },
+)
+```
+
+- **Continuous/discrete dimensions**: affine transforms (`scale` + `offset`)
+- **Categorical dimensions**: permutation maps (index remapping)
+- Compose hierarchically through the scene graph, just like spatial transforms
+- Viewer uses inverse-query approach (O(1) per dimension, not O(N) per point)
+
+### Gaussian Splatting
+
+Luxar includes a complete Gaussian splatting pipeline for volumetric data:
+
+- **Tiled fitting**: Split large volumes into overlapping tiles, fit independently, merge results
+- **Quality metrics**: PSNR, SSIM, and normalized cross-correlation for comparing fitted splats against source volumes
+- **CLI tools**: `luxar gsplat fit`, `luxar gsplat render`, `luxar gsplat merge`, `luxar gsplat filter`, `luxar gsplat slice`
+
+```python
+import torch
+from luxar.gsplats import fit_gaussian_splats
+from luxar.gsplats.metrics import compute_psnr, compute_ssim
+
+result = fit_gaussian_splats(volume, device='cuda')
+rendered = result.render_to_volume(volume.shape)
+# Metrics require torch tensors
+vol_t = torch.as_tensor(volume, dtype=torch.float32)
+ren_t = torch.as_tensor(rendered, dtype=torch.float32)
+print(f"PSNR: {compute_psnr(ren_t, vol_t):.1f} dB")
+print(f"SSIM: {compute_ssim(ren_t, vol_t):.4f}")
+```
 
 ## 📖 API Reference
 
@@ -238,7 +283,7 @@ class Scene:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.2-2.0, default 1.0) - Gamma correction
                 blending_mode: str ("normal", "additive", "max", "opaque", "luminous", default "additive")
-                transform: list[float] - 16-element 4x4 transformation matrix (use transforms.to_list())
+                transform: np.ndarray or list[float] - 4x4 transformation matrix (row-major)
         """
 
     def add_points(
@@ -264,7 +309,7 @@ class Scene:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.2-2.0, default 1.0) - Gamma correction
                 blending_mode: str ("normal", "additive", "max", "opaque", "luminous", default "additive")
-                transform: list[float] - 16-element 4x4 transformation matrix (use transforms.to_list())
+                transform: np.ndarray or list[float] - 4x4 transformation matrix (row-major)
         """
 
     # Finalization is handled automatically by the LuxarZarrCompiler context manager
@@ -288,7 +333,7 @@ class Node:
 
 ```python
 class Points(Node):
-    """Point cloud geometry node."""
+    """Point geometry node."""
 
     # Created automatically via Scene.add_points()
     # Manages positions, colors, radii, and sharpness datasets in Zarr
@@ -463,15 +508,11 @@ with LuxarZarrCompiler("transformed_scene.zarr") as compiler:
     combined = transforms.compose(translation, rotation, scaling)
 
     # Apply transforms to groups (via transform attribute)
-    group = scene.add_group("MyGroup", transform=transforms.to_list(combined))
+    group = scene.add_group("MyGroup", transform=combined)
 
     # Hierarchical transforms (child inherits parent transform)
-    parent = scene.add_group("Robot", transform=transforms.to_list(
-        transforms.translate(100, 0, 0)
-    ))
-    scene.add_group("Sensor", parent=parent, transform=transforms.to_list(
-        transforms.rotate_y(90)  # Relative to parent
-    ))
+    parent = scene.add_group("Robot", transform=transforms.translate(100, 0, 0))
+    scene.add_group("Sensor", parent=parent, transform=transforms.rotate_y(90))
 
 # Transform utilities (standalone, no scene needed)
 look_at = transforms.look_at(

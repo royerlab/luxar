@@ -71,13 +71,13 @@ export class RangeLoader {
    * Detect encoding type from array metadata
    */
   static detectEncoding(attrs: ArrayMetadata | undefined): EncodingType {
-    if (!attrs?.encoding?.name) return 'direct';
+    if (!attrs?.encoding) return 'direct';
 
     const enc = attrs.encoding;
 
     // Priority order (must match Python spec)
     if (enc.name === 'broadcasted') return 'broadcasted';
-    if (enc.name === 'array_ref' && enc.target) return 'array_ref';
+    if (enc.target) return 'array_ref';
     if (enc.name?.startsWith('lut') && enc.lut) return 'lut';
     if (
       enc.name?.startsWith('log_scalar') ||

@@ -221,7 +221,8 @@ def _compute_nd_sobel_magnitude(
         grad = ndi.sobel(V, axis=axis, mode="nearest")
         grad_sq_sum += grad**2
 
-    return np.sqrt(grad_sq_sum)
+    result: np.ndarray = np.sqrt(grad_sq_sum)
+    return result
 
 
 def _sample_amplitudes(
@@ -279,9 +280,10 @@ def _sample_amplitudes(
 
     # CPU path (default)
     coords_for_interp = coords.T
-    return ndi.map_coordinates(V, coords_for_interp, order=1, mode="nearest").astype(
-        np.float32
-    )
+    result: np.ndarray = ndi.map_coordinates(
+        V, coords_for_interp, order=1, mode="nearest"
+    ).astype(np.float32)
+    return result
 
 
 def _poisson_disk_sample_weighted(

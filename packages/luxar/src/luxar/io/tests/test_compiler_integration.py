@@ -122,6 +122,25 @@ class TestCompilerIntegration:
         assert store["hdr_points"].attrs["gamma"] == 1.2
         assert store["hdr_points"].attrs["blending_mode"] == "additive"
 
+    def test_write_lines_rendering_attribute_defaults(self, tmp_path) -> None:
+        """Test that write_lines sets default rendering attributes (opacity, gamma, blending_mode)."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            vertices = np.array([[0, 0, 0], [1, 1, 1], [2, 0, 0]], dtype=np.float32)
+            # Write lines WITHOUT explicit rendering attributes
+            compiler.write_lines("test_lines", vertices, widths=0.1)
+
+        store = zarr.open_group(output_path, mode="r")
+        attrs = dict(store["test_lines"].attrs)
+
+        # Verify defaults are set (matching write_points/write_gsplats behavior)
+        assert attrs["opacity"] == 1.0
+        assert attrs["gamma"] == 1.0
+        assert attrs["blending_mode"] == "additive"
+
     # Legacy API compatibility test removed - we no longer support the old API
 
     def test_memory_efficiency(self, tmp_path) -> None:

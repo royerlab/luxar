@@ -34,12 +34,12 @@ interface DemoConfig {
   extraWaitMs?: number;
   // For 4D+ demos: dimension key and steps to navigate
   dimensionNav?: { key: string; steps: number };
-  // HDR multiplier boost (default: 2.0 for all screenshots)
-  hdrMultiplier?: number;
+  // Exposure in log2 stops (default: 1.0 for all screenshots)
+  exposure?: number;
 }
 
-// Default HDR boost for better screenshot visibility
-const DEFAULT_HDR_MULTIPLIER = 2.0;
+// Default exposure boost for better screenshot visibility (log2 stops)
+const DEFAULT_EXPOSURE = 1.0;
 
 const DEMOS: DemoConfig[] = [
   {
@@ -48,7 +48,7 @@ const DEMOS: DemoConfig[] = [
     filename: 'lorenz-demo.png',
     zoomClicks: 3, // Zoom out
     extraWaitMs: 1000,
-    hdrMultiplier: 2.5, // Boost slightly more for vibrant colors
+    exposure: 1.3, // ~2.5x boost for vibrant colors
   },
   {
     name: 'Mandelbulb',
@@ -56,7 +56,7 @@ const DEMOS: DemoConfig[] = [
     filename: 'mandelbulb-demo.png',
     zoomClicks: -22, // Zoom IN 2x more
     extraWaitMs: 2000,
-    hdrMultiplier: 12.0, // Reduced 2x
+    exposure: 3.6, // ~12x boost
   },
   {
     name: 'Spiral Galaxy',
@@ -64,7 +64,7 @@ const DEMOS: DemoConfig[] = [
     filename: 'spiral-galaxy-demo.png',
     zoomClicks: 4, // Zoom out
     extraWaitMs: 1500,
-    hdrMultiplier: 3.0, // Galaxy needs more boost for star visibility
+    exposure: 1.6, // ~3x boost for star visibility
   },
   {
     name: 'Zebrahub Multiome UMAP',
@@ -72,7 +72,7 @@ const DEMOS: DemoConfig[] = [
     filename: 'zebrahub-umap-demo.png',
     zoomClicks: 0,
     extraWaitMs: 2000,
-    hdrMultiplier: 25.0, // Reduced 4x
+    exposure: 4.6, // ~25x boost
   },
   {
     name: 'Rainbow Sphere',
@@ -80,7 +80,7 @@ const DEMOS: DemoConfig[] = [
     filename: 'rainbow-sphere-demo.png',
     zoomClicks: 17, // Zoom out more to see full sphere
     extraWaitMs: 1500,
-    hdrMultiplier: 25.0, // 5x brighter
+    exposure: 4.6, // ~25x boost
   },
 ];
 
@@ -186,27 +186,27 @@ async function renderAndWait(page: any, frames = 10): Promise<void> {
 }
 
 /**
- * Set HDR multiplier for brighter screenshots
+ * Set exposure for brighter screenshots (log2 stops)
  */
-async function setHDRMultiplier(page: any, multiplier: number): Promise<void> {
-  await page.evaluate((mult: number) => {
+async function setExposure(page: any, exposureStops: number): Promise<void> {
+  await page.evaluate((stops: number) => {
     const debug = (window as any).__luxarDebug;
 
     // Access sceneManager via app (debug.sceneManager is not exposed directly)
     const sceneManager = debug?.app?.sceneManager;
-    if (sceneManager?.updateHDRMultiplier) {
-      sceneManager.updateHDRMultiplier(mult);
+    if (sceneManager?.updateExposure) {
+      sceneManager.updateExposure(stops);
     }
 
-    // Trigger render to apply HDR changes
+    // Trigger render to apply exposure changes
     if (debug?.renderOnce) {
       debug.renderOnce();
     }
-  }, multiplier);
+  }, exposureStops);
 
-  // Wait for HDR changes to propagate
+  // Wait for exposure changes to propagate
   await page.waitForTimeout(1000);
-  // Render multiple frames to ensure HDR is fully applied
+  // Render multiple frames to ensure exposure is fully applied
   await renderAndWait(page, 10);
 }
 
@@ -262,10 +262,10 @@ for (const demo of DEMOS) {
       await page.waitForTimeout(demo.extraWaitMs);
     }
 
-    // Boost HDR for brighter screenshots - do this LAST before screenshot
-    const hdrMultiplier = demo.hdrMultiplier ?? DEFAULT_HDR_MULTIPLIER;
-    await setHDRMultiplier(page, hdrMultiplier);
-    console.log(`[${demo.name}] HDR multiplier set to ${hdrMultiplier}`);
+    // Boost exposure for brighter screenshots - do this LAST before screenshot
+    const exposure = demo.exposure ?? DEFAULT_EXPOSURE;
+    await setExposure(page, exposure);
+    console.log(`[${demo.name}] Exposure set to ${exposure} stops`);
 
     // Render frames after HDR change
     await renderAndWait(page, 15);

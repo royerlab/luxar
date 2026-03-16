@@ -23,21 +23,25 @@ describe('rendering-controls-utils', () => {
       const result = validateRenderingSettings({});
 
       expect(result.bloomThreshold).toBe(0.01);
-      expect(result.toneMapping).toBe('ACES');
+      expect(result.toneMapping).toBe('Neutral');
       expect(result.controlType).toBe('orbit');
     });
 
     it('should preserve valid values', () => {
       const input = {
         bloomThreshold: 0.5,
-        hdrMultiplier: 20.0,
+        exposure: 2.0,
+        globalOffset: 0.1,
+        globalGamma: 1.5,
         controlType: 'fly' as const,
       };
 
       const result = validateRenderingSettings(input);
 
       expect(result.bloomThreshold).toBe(0.5);
-      expect(result.hdrMultiplier).toBe(20.0);
+      expect(result.exposure).toBe(2.0);
+      expect(result.globalOffset).toBe(0.1);
+      expect(result.globalGamma).toBe(1.5);
       expect(result.controlType).toBe('fly');
     });
 
@@ -78,6 +82,13 @@ describe('rendering-controls-utils', () => {
       expect(result.aoQuality).toBe(defaults.aoQuality);
     });
 
+    it('should accept ortho as a valid control type', () => {
+      const result = validateRenderingSettings({
+        controlType: 'ortho' as any,
+      });
+      expect(result.controlType).toBe('ortho');
+    });
+
     it('should round bloomLevels to integer', () => {
       const result = validateRenderingSettings({ bloomLevels: 5.7 });
       expect(result.bloomLevels).toBe(6);
@@ -97,7 +108,7 @@ describe('rendering-controls-utils', () => {
       });
 
       expect(result.bloomThreshold).toBe(0.05);
-      expect(result.toneMapping).toBe('ACES');
+      expect(result.toneMapping).toBe('Neutral');
     });
   });
 

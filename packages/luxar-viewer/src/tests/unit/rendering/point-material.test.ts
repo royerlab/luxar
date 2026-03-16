@@ -39,9 +39,6 @@ describe('PointMaterial', () => {
     it('should create a material with default values', () => {
       const material = new PointMaterial();
 
-      expect(material.uniforms.hdrMultiplier.value).toBe(
-        config.renderingControls.defaults.hdrMultiplier
-      );
       expect(material.uniforms.baseAlpha.value).toBe(config.shader.points.baseAlpha);
       expect(material.uniforms.opacity.value).toBe(1.0);
       expect(material.uniforms.invGamma.value).toBe(1.0);
@@ -83,10 +80,8 @@ describe('PointMaterial', () => {
       // Check for correct world-space sizing formula with radius scaling
       expect(material.vertexShader).toContain('float normalizedRadius = radius * radiusScale');
 
-      // OPTIMIZATION: Check for inversesqrt (native GPU instruction, faster than length+divide)
-      expect(material.vertexShader).toContain(
-        'float invDistance = inversesqrt(dot(mvPosition.xyz, mvPosition.xyz))'
-      );
+      // OPTIMIZATION: Check for inversesqrt with ortho branching
+      expect(material.vertexShader).toContain('inversesqrt(dot(mvPosition.xyz, mvPosition.xyz))');
 
       // OPTIMIZATION: Check for pre-computed pointSizeFactor uniform
       expect(material.vertexShader).toContain('uniform float pointSizeFactor');
@@ -132,9 +127,6 @@ describe('PointMaterial', () => {
     it('should have correct fragment shader with HDR handling and optimizations', () => {
       const material = new PointMaterial();
 
-      // Check HDR is applied BEFORE gamma correction (with mediump precision)
-      expect(material.fragmentShader).toContain('mediump vec3 hdrColor = vColor * hdrMultiplier');
-
       // Check for optimizations in the shader
       expect(material.fragmentShader).toContain('vec2 centered = gl_PointCoord - 0.5');
       expect(material.fragmentShader).toContain('float r2 = dot(centered, centered)');
@@ -143,7 +135,6 @@ describe('PointMaterial', () => {
       expect(material.fragmentShader).toContain('mediump float normalizedR = sqrt(4.0 * r2)');
 
       // Check for uniforms (gamma removed from fragment shader, only invGamma used)
-      expect(material.fragmentShader).toContain('uniform mediump float hdrMultiplier');
       expect(material.fragmentShader).toContain('uniform mediump float opacity');
       expect(material.fragmentShader).toContain('uniform mediump float baseAlpha');
       expect(material.fragmentShader).toContain('uniform mediump float invGamma');
@@ -153,8 +144,10 @@ describe('PointMaterial', () => {
       expect(material.fragmentShader).toContain(
         'mediump float falloff = pow(max(1.0 - normalizedR, 0.0), vSharpness)'
       );
+      // GOG model: intensity * color + offset, clip, gamma
+      expect(material.fragmentShader).toContain('vColor * uIntensity + uOffset');
       expect(material.fragmentShader).toContain(
-        'mediump vec3 finalColor = pow(hdrColor, vec3(invGamma))'
+        'mediump vec3 finalColor = pow(adjusted, vec3(invGamma))'
       );
     });
   });
@@ -174,14 +167,6 @@ describe('PointMaterial', () => {
 
       // Verify maxPointSize is resolution.y * 0.5
       expect(material.uniforms.maxPointSize.value).toBe(1080 * 0.5);
-    });
-
-    it('should update HDR multiplier', () => {
-      const material = new PointMaterial();
-
-      material.updateHDRMultiplier(32.0);
-
-      expect(material.uniforms.hdrMultiplier.value).toBe(32.0);
     });
 
     it('should update opacity', () => {
@@ -207,14 +192,11 @@ describe('PointMaterial', () => {
         gamma: 2.0,
       });
 
-      original.updateHDRMultiplier(24.0);
-
       const cloned = original.clone();
 
       expect(cloned.uniforms.opacity.value).toBe(0.5);
       expect(cloned.userData.gamma).toBe(2.0); // gamma stored in userData
       expect(cloned.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.0);
-      expect(cloned.uniforms.hdrMultiplier.value).toBe(24.0);
 
       // Ensure it's a new instance
       expect(cloned).not.toBe(original);

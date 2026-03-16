@@ -98,7 +98,7 @@ __global__ void rasterize_global_forward_kernel(
         float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, c);
 
         // Early culling based on effective truncation
-        float eff_trunc_sq = effective_truncate_sq(truncate, s);
+        float eff_trunc_sq = effective_truncate_sq(truncate, s, amp, intensity_floor);
         if (dist_sq > eff_trunc_sq) continue;
 
         // Compute intensity
@@ -219,7 +219,7 @@ __global__ void rasterize_global_backward_kernel(
             float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, c);
 
             // Compute gradients only if within truncation and above intensity floor
-            float eff_trunc_sq = effective_truncate_sq(truncate, s);
+            float eff_trunc_sq = effective_truncate_sq(truncate, s, amp, intensity_floor);
             if (dist_sq <= eff_trunc_sq) {
                 float intensity = gaussian_intensity(dist_sq, amp, s);
                 if (intensity >= intensity_floor) {
@@ -262,8 +262,8 @@ __global__ void rasterize_global_backward_kernel(
                         }
                     }
 
-                    // d_sharpness
-                    if (dist_sq > 1e-6f) {
+                    // d_sharpness: uses clamped dist_sq_safe (consistent with tile-based path)
+                    {
                         float dist_pow_s = __powf(dist_sq_safe, s * 0.5f);
                         float log_dist_sq = __logf(dist_sq_safe);
                         local_d_sharpness = grad_out * intensity * (-0.25f) * dist_pow_s * log_dist_sq;

@@ -41,13 +41,17 @@ def check_port_available(port: int, host: str = "127.0.0.1") -> bool:
     Returns:
         True if port is available, False if in use.
     """
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    except OSError:
+        return False
     try:
         sock.bind((host, port))
-        sock.close()
         return True
     except OSError:
         return False
+    finally:
+        sock.close()
 
 
 def find_available_port(
@@ -57,13 +61,26 @@ def find_available_port(
 
     Args:
         start_port: Port to start searching from.
-        max_attempts: Maximum number of ports to try.
+        max_attempts: Maximum number of ports to try. If max_attempts is
+            greater than start_port, it is treated as an end_port to search
+            inclusively (e.g., find_available_port(9000, 9100)).
 
     Returns:
         Available port number, or None if none found.
     """
+    end_port: Optional[int] = None
+    if max_attempts > start_port:
+        end_port = max_attempts
+        if end_port > 65535:
+            end_port = 65535
+        if end_port < start_port:
+            return None
+        max_attempts = end_port - start_port + 1
+
     for i in range(max_attempts):
         port = start_port + i
+        if end_port is not None and port > end_port:
+            return None
         if check_port_available(port):
             return port
     return None

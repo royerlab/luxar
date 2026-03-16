@@ -145,9 +145,9 @@ export interface OrbitControlsConfig {
  * the actual control parameter value.
  */
 export interface ScaleMultipliers {
-  /** orbit/arcball minDistance = diagonal * factor (default: 0.001) */
+  /** orbit minDistance = diagonal * factor (default: 0.01) */
   minDistanceFactor: number;
-  /** orbit/arcball maxDistance = diagonal * factor (default: 10) */
+  /** orbit maxDistance = diagonal * factor (default: 100) */
   maxDistanceFactor: number;
   /** fly movementSpeed = diagonal * factor (default: 0.05) */
   flySpeedFactor: number;
@@ -175,7 +175,9 @@ export interface InputConfig {
       toggleDatasetBrowser: string;
       togglePerformance: string;
       toggleRendering: string;
+      toggleScaleBar: string;
       toggleDebugConsole: string;
+      toggleLayers: string;
       recenterCamera: string;
       toggleControlMode: string;
       toggleInertialMode: string;
@@ -279,6 +281,8 @@ export interface UIConfig {
     error: number;
     help: number;
     renderingControls: number;
+    recordingPanel: number;
+    layersPanel: number;
     // Top layer
     statsMonitor: number;
   };
@@ -293,6 +297,10 @@ export interface UIConfig {
   // NOTE: styles property removed - all styling now uses CSS variables
   debugConsole: DebugConsoleConfig;
   components: UIComponentsConfig;
+  scaleBar: {
+    targetWidthPx: number;
+    position: 'bottom-left' | 'bottom-right';
+  };
 }
 
 /**
@@ -428,7 +436,9 @@ export interface RenderingSettings {
   bloomStrength: number;
   bloomRadius: number;
   bloomLevels: number;
-  hdrMultiplier: number;
+  exposure: number; // Log2 stops, default 0.0
+  globalOffset: number; // Additive shift, default 0.0
+  globalGamma: number; // Midtone curve, default 1.0
   fxaaEnabled: boolean;
   msaaEnabled: boolean;
   msaaSamples: number;
@@ -464,7 +474,7 @@ export interface RenderingSettings {
   chromaticLensFocalLengthY: number;
   chromaticLensSkew: number;
   // Navigation controls
-  controlType: 'orbit' | 'arcball' | 'fly';
+  controlType: 'orbit' | 'fly' | 'ortho';
   autoRotate: boolean;
   autoRotateSpeed: number;
   // Fly controls - these are added at runtime from config.controls.fly

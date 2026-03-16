@@ -1068,9 +1068,10 @@ export function clipSegmentToSlice(
   for (let dim = 0; dim < p1.length; dim++) {
     if (displayDims.includes(dim)) continue; // Skip displayed dimensions
 
-    const tol = tolerance[dim];
-    const sliceMin = slicePosition[dim] - tol;
-    const sliceMax = slicePosition[dim] + tol;
+    const tol = Number.isFinite(tolerance[dim]) ? tolerance[dim] : 0;
+    const slicePos = slicePosition[dim] ?? 0;
+    const sliceMin = slicePos - tol;
+    const sliceMax = slicePos + tol;
 
     const v1 = p1[dim];
     const v2 = p2[dim];

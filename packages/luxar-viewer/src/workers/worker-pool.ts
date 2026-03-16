@@ -19,6 +19,7 @@ interface WorkerInstance {
 class WorkerPool {
   private workers: WorkerInstance[] = [];
   private initPromise: Promise<void> | null = null;
+  private nextWorkerIndex = 0;
 
   /**
    * Get the configured worker count, capped by hardware concurrency
@@ -98,6 +99,7 @@ class WorkerPool {
           );
         }
 
+        this.nextWorkerIndex = 0;
         log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
       } catch (e) {
         // Clean up any workers that were partially pushed during this attempt
@@ -126,23 +128,10 @@ class WorkerPool {
       throw new Error('[WorkerPool] No workers available after initialization');
     }
 
-    // Single worker - fast path
-    if (this.workers.length === 1) {
-      return this.workers[0].api;
-    }
-
-    // Find worker with least active queries (least-busy selection)
-    let leastBusyIndex = 0;
-    let minQueries = this.workers[0].activeQueries;
-
-    for (let i = 1; i < this.workers.length; i++) {
-      if (this.workers[i].activeQueries < minQueries) {
-        minQueries = this.workers[i].activeQueries;
-        leastBusyIndex = i;
-      }
-    }
-
-    return this.workers[leastBusyIndex].api;
+    // Round-robin selection for untracked callers
+    const worker = this.workers[this.nextWorkerIndex];
+    this.nextWorkerIndex = (this.nextWorkerIndex + 1) % this.workers.length;
+    return worker.api;
   }
 
   /**
@@ -221,6 +210,7 @@ class WorkerPool {
       }
       this.workers = [];
       this.initPromise = null;
+      this.nextWorkerIndex = 0;
     }
   }
 }

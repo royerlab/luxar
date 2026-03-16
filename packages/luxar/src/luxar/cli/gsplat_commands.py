@@ -68,7 +68,7 @@ def _compute_splat_volumes(cholesky_factors: "np.ndarray", ndim: int) -> "np.nda
     # Volume of nD ellipsoid at 3-sigma
     # V = (2π)^(n/2) * det(Σ)^(1/2) * 3^n / Γ(n/2 + 1)
     # For simplicity, use det(Σ)^(1/2) * 3^n as proxy
-    volumes = np.abs(det_Sigma) ** 0.5 * (3**ndim)
+    volumes: np.ndarray = np.abs(det_Sigma) ** 0.5 * (3**ndim)
 
     return volumes
 
@@ -295,6 +295,9 @@ def info_dataset(
                 "fitter_name",
                 "n_iters",
                 "final_loss",
+                "psnr_db",
+                "ssim",
+                "mse",
                 "convergence_time",
                 "pruned",
                 "pruning_method",
@@ -887,6 +890,1962 @@ def prune_dataset(
 
     except Exception as e:
         aprint(f"❌ Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# filter — Filter splats by multiple criteria
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _parse_bbox(s: str, ndim: int) -> list[tuple[float, float]]:
+    """Parse a bbox string 'min0,max0,min1,max1,...' into list of (min, max) pairs."""
+    parts = [float(x.strip()) for x in s.split(",")]
+    if len(parts) != 2 * ndim:
+        raise typer.BadParameter(
+            f"bbox needs {2 * ndim} values for {ndim}D data, got {len(parts)}"
+        )
+    pairs = [(parts[2 * i], parts[2 * i + 1]) for i in range(ndim)]
+    for i, (lo, hi) in enumerate(pairs):
+        if lo > hi:
+            raise typer.BadParameter(f"bbox dimension {i} has min ({lo}) > max ({hi})")
+    return pairs
+
+
+@app_gsplat.command("filter")
+def filter_dataset(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr dataset"),
+    # Bounding box
+    bbox: Optional[str] = typer.Option(
+        None, "--bbox", help="Bounding box: 'min0,max0,min1,max1,...' (pairs per dim)"
+    ),
+    # Volume
+    volume_min: Optional[float] = typer.Option(
+        None, "--volume-min", help="Minimum volume threshold"
+    ),
+    volume_max: Optional[float] = typer.Option(
+        None, "--volume-max", help="Maximum volume threshold"
+    ),
+    volume_normalized: bool = typer.Option(
+        False,
+        "--volume-normalized",
+        help="Interpret volume thresholds as 0-1 normalized",
+    ),
+    # Amplitude
+    amplitude_min: Optional[float] = typer.Option(
+        None, "--amplitude-min", help="Minimum amplitude threshold"
+    ),
+    amplitude_max: Optional[float] = typer.Option(
+        None, "--amplitude-max", help="Maximum amplitude threshold"
+    ),
+    amplitude_normalized: bool = typer.Option(
+        False,
+        "--amplitude-normalized",
+        help="Interpret amplitude thresholds as 0-1 normalized",
+    ),
+    # Eccentricity
+    eccentricity_min: Optional[float] = typer.Option(
+        None, "--eccentricity-min", help="Minimum eccentricity (1.0 = sphere)"
+    ),
+    eccentricity_max: Optional[float] = typer.Option(
+        None, "--eccentricity-max", help="Maximum eccentricity"
+    ),
+    # Sharpness
+    sharpness_min: Optional[float] = typer.Option(
+        None, "--sharpness-min", help="Minimum sharpness"
+    ),
+    sharpness_max: Optional[float] = typer.Option(
+        None, "--sharpness-max", help="Maximum sharpness"
+    ),
+    # Mass
+    mass_min: Optional[float] = typer.Option(
+        None, "--mass-min", help="Minimum mass (amplitude * volume)"
+    ),
+    mass_max: Optional[float] = typer.Option(None, "--mass-max", help="Maximum mass"),
+    mass_normalized: bool = typer.Option(
+        False, "--mass-normalized", help="Interpret mass thresholds as 0-1 normalized"
+    ),
+    # Per-axis sigma
+    sigma_axis: Optional[int] = typer.Option(
+        None, "--sigma-axis", help="Axis index for per-axis sigma filtering"
+    ),
+    sigma_min: Optional[float] = typer.Option(
+        None, "--sigma-min", help="Minimum marginal sigma on --sigma-axis"
+    ),
+    sigma_max: Optional[float] = typer.Option(
+        None, "--sigma-max", help="Maximum marginal sigma on --sigma-axis"
+    ),
+    # Truncation
+    truncate: float = typer.Option(
+        3.0, "--truncate", help="Sigma truncation for volume computation"
+    ),
+    # Output options
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode for output"
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
+    ),
+) -> None:
+    """Filter splats by multiple criteria (AND logic).
+
+    All filter options are optional. Only specified criteria are applied.
+    Multiple criteria combine with AND — a splat must satisfy all
+    active criteria to be kept.
+
+    Criteria:
+        --bbox: Spatial bounding box (filter by center position)
+        --amplitude-min/max: Intensity thresholds
+        --volume-min/max: Size thresholds (characteristic length * truncate)
+        --eccentricity-min/max: Shape (1.0 = sphere, higher = elongated)
+        --sharpness-min/max: Sharpness values (2.0 = standard Gaussian)
+        --mass-min/max: Amplitude * volume (physical importance)
+        --sigma-axis + --sigma-min/max: Per-axis standard deviation
+
+    Use --*-normalized flags to interpret thresholds as 0-1 fractions
+    of the dataset's [min, max] range.
+
+    Examples:
+        # Keep only bright splats
+        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr \\
+            --amplitude-min 0.1
+
+        # Crop to a 3D bounding box
+        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr \\
+            --bbox "0,50,0,50,0,50"
+
+        # Remove elongated outliers and large splats
+        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr \\
+            --eccentricity-max 5.0 --volume-max 100
+
+        # Keep top 50% by amplitude (normalized)
+        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr \\
+            --amplitude-min 0.5 --amplitude-normalized
+
+        # With compression
+        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr.zip \\
+            --amplitude-min 0.1 --compress zip
+    """
+    try:
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        encoding_map = {
+            "auto": EncodingMode.AUTO,
+            "precision": EncodingMode.PRECISION,
+            "memory": EncodingMode.MEMORY,
+        }
+        encoding_mode_obj = encoding_map[encoding_mode]
+
+        with asection(f"Filtering: {input_path.name}"):
+            # Load
+            with asection("Loading dataset"):
+                data = GSplatData.load(input_path, include_stats=True)
+                n_original = data.n_splats
+                ndim = data.ndim
+                aprint(f"Loaded {n_original:,} splats ({ndim}D)")
+
+            # Parse bbox
+            bbox_parsed = None
+            if bbox is not None:
+                bbox_parsed = _parse_bbox(bbox, ndim)
+
+            # Show active criteria
+            with asection("Active criteria"):
+                if bbox_parsed is not None:
+                    aprint(f"  bbox: {bbox_parsed}")
+                if amplitude_min is not None or amplitude_max is not None:
+                    norm = " (normalized)" if amplitude_normalized else ""
+                    aprint(f"  amplitude: [{amplitude_min}, {amplitude_max}]{norm}")
+                if volume_min is not None or volume_max is not None:
+                    norm = " (normalized)" if volume_normalized else ""
+                    aprint(
+                        f"  volume: [{volume_min}, {volume_max}]{norm} (truncate={truncate})"
+                    )
+                if eccentricity_min is not None or eccentricity_max is not None:
+                    aprint(f"  eccentricity: [{eccentricity_min}, {eccentricity_max}]")
+                if sharpness_min is not None or sharpness_max is not None:
+                    aprint(f"  sharpness: [{sharpness_min}, {sharpness_max}]")
+                if mass_min is not None or mass_max is not None:
+                    norm = " (normalized)" if mass_normalized else ""
+                    aprint(f"  mass: [{mass_min}, {mass_max}]{norm}")
+                if sigma_axis is not None:
+                    aprint(f"  sigma axis {sigma_axis}: [{sigma_min}, {sigma_max}]")
+
+            # Filter
+            with asection("Filtering"):
+                filtered_data = data.filter_by(
+                    bbox=bbox_parsed,
+                    volume_min=volume_min,
+                    volume_max=volume_max,
+                    volume_normalized=volume_normalized,
+                    amplitude_min=amplitude_min,
+                    amplitude_max=amplitude_max,
+                    amplitude_normalized=amplitude_normalized,
+                    eccentricity_min=eccentricity_min,
+                    eccentricity_max=eccentricity_max,
+                    sharpness_min=sharpness_min,
+                    sharpness_max=sharpness_max,
+                    mass_min=mass_min,
+                    mass_max=mass_max,
+                    mass_normalized=mass_normalized,
+                    sigma_axis=sigma_axis,
+                    sigma_min=sigma_min,
+                    sigma_max=sigma_max,
+                    truncate=truncate,
+                )
+                n_filtered = filtered_data.n_splats
+                n_removed = n_original - n_filtered
+
+                aprint("\nResults:")
+                aprint(f"  Original splats: {n_original:,}")
+                aprint(f"  Filtered splats: {n_filtered:,}")
+                aprint(
+                    f"  Removed:         {n_removed:,} ({100 * n_removed / max(n_original, 1):.1f}%)"
+                )
+
+            # Save
+            with asection(f"Saving to {output_path.name}"):
+                if n_filtered == 0:
+                    aprint("⚠ No splats remain after filtering — skipping save")
+                else:
+                    filtered_data.save(
+                        output_path,
+                        encoding_mode=encoding_mode_obj,
+                        include_fitting_info=True,
+                        compress=compress,
+                    )
+                    aprint(f"Saved filtered dataset: {output_path}")
+
+                    if output_path.exists():
+                        output_size = output_path.stat().st_size
+                        if output_size < 1024 * 1024:
+                            aprint(f"  Size: {output_size / 1024:.1f} KB")
+                        else:
+                            aprint(f"  Size: {output_size / (1024 * 1024):.1f} MB")
+
+    except Exception as e:
+        aprint(f"❌ Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# split — Split dataset into multiple parts
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("split")
+def split_dataset(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    output_dir: Path = typer.Argument(..., help="Output directory for split parts"),
+    # Split mode (exactly one required)
+    parts: Optional[int] = typer.Option(
+        None, "--parts", "-n", help="Split into N roughly equal parts"
+    ),
+    indices: Optional[str] = typer.Option(
+        None, "--indices", help="Split at splat indices: '100,500,1000'"
+    ),
+    # Output options
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode for output"
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
+    ),
+) -> None:
+    """Split a Gaussian splat dataset into multiple parts.
+
+    Two modes (exactly one required):
+
+    1. Equal parts (--parts N): Split into N roughly equal parts.
+
+    2. At indices (--indices): Split at specific splat indices.
+
+    Output files are named part_000.gsplats.zarr, part_001.gsplats.zarr, etc.
+    in the specified output directory.
+
+    Examples:
+        # Split into 4 equal parts
+        luxar gsplat split input.gsplats.zarr output_dir/ --parts 4
+
+        # Split at specific indices (produces 3 parts: [0:100], [100:500], [500:])
+        luxar gsplat split input.gsplats.zarr output_dir/ --indices "100,500"
+
+        # Split with compression
+        luxar gsplat split input.gsplats.zarr output_dir/ --parts 3 --compress zip
+    """
+    try:
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        # Validate mode
+        if parts is None and indices is None:
+            aprint("❌ Error: Specify --parts N or --indices '100,500,...'")
+            raise typer.Exit(1)
+        if parts is not None and indices is not None:
+            aprint("❌ Error: --parts and --indices are mutually exclusive")
+            raise typer.Exit(1)
+
+        encoding_map = {
+            "auto": EncodingMode.AUTO,
+            "precision": EncodingMode.PRECISION,
+            "memory": EncodingMode.MEMORY,
+        }
+        encoding_mode_obj = encoding_map[encoding_mode]
+
+        with asection(f"Splitting: {input_path.name}"):
+            # Load
+            with asection("Loading dataset"):
+                data = GSplatData.load(input_path, include_stats=True)
+                aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+
+            # Split
+            with asection("Splitting"):
+                if parts is not None:
+                    aprint(f"Mode: {parts} equal parts")
+                    split_parts = data.split(parts)
+                else:
+                    assert (
+                        indices is not None
+                    )  # ensured by mutual exclusivity check above
+                    idx_list = [int(x.strip()) for x in indices.split(",")]
+                    aprint(f"Mode: split at indices {idx_list}")
+                    split_parts = data.split(idx_list)
+
+                aprint(f"Produced {len(split_parts)} parts:")
+                for i, part in enumerate(split_parts):
+                    aprint(f"  part_{i:03d}: {part.n_splats:,} splats")
+
+            # Filter out empty parts
+            nonempty_parts = [
+                (i, part) for i, part in enumerate(split_parts) if part.n_splats > 0
+            ]
+            if len(nonempty_parts) < len(split_parts):
+                n_empty = len(split_parts) - len(nonempty_parts)
+                aprint(f"  Skipping {n_empty} empty part(s)")
+
+            # Save
+            output_dir.mkdir(parents=True, exist_ok=True)
+            with asection(f"Saving to {output_dir}"):
+                ext = ".gsplats.zarr"
+                for i, part in nonempty_parts:
+                    out_path = output_dir / f"part_{i:03d}{ext}"
+                    part.save(
+                        out_path,
+                        encoding_mode=encoding_mode_obj,
+                        include_fitting_info=True,
+                        compress=compress,
+                    )
+                    aprint(f"  Saved {out_path.name} ({part.n_splats:,} splats)")
+
+    except Exception as e:
+        aprint(f"❌ Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# slice — Slice by coordinate ranges (numpy-style syntax)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _parse_slices(s: str, ndim: int) -> list[slice]:
+    """Parse numpy-style range string into list of slices.
+
+    Format: "lo:hi, :, lo:" where each dimension is separated by comma.
+    Empty start/stop means unbounded (None).
+
+    Examples:
+        "0:50, :, 10:90"  → [slice(0,50), slice(None,None), slice(10,90)]
+        ":50, 20:, :"     → [slice(None,50), slice(20,None), slice(None,None)]
+        "1.5:42.7, :, :"  → [slice(1.5,42.7), slice(None,None), slice(None,None)]
+    """
+    parts = [p.strip() for p in s.split(",")]
+    if len(parts) != ndim:
+        raise typer.BadParameter(
+            f"Expected {ndim} ranges for {ndim}D data, got {len(parts)}"
+        )
+    slices = []
+    for part in parts:
+        if ":" not in part:
+            raise typer.BadParameter(
+                f"Invalid range '{part}': expected 'lo:hi', 'lo:', ':hi', or ':'"
+            )
+        lo_str, hi_str = part.split(":", 1)
+        lo = float(lo_str.strip()) if lo_str.strip() else None
+        hi = float(hi_str.strip()) if hi_str.strip() else None
+        slices.append(slice(lo, hi))
+    return slices
+
+
+@app_gsplat.command("slice")
+def slice_dataset(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr dataset"),
+    ranges: str = typer.Argument(
+        ..., help="Numpy-style ranges per dimension: '0:50, :, 10:90'"
+    ),
+    # Output options
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode for output"
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
+    ),
+) -> None:
+    """Slice splats by coordinate ranges (numpy-style syntax).
+
+    Keeps splats whose center coordinates fall within the specified ranges
+    per dimension. Uses float coordinate values, not integer indices.
+
+    Range syntax (per dimension, comma-separated):
+        lo:hi   — keep centers in [lo, hi]
+        lo:     — keep centers >= lo
+        :hi     — keep centers <= hi
+        :       — keep all (no constraint)
+
+    Examples:
+        # Crop x to [0,50], keep all y, crop z to [10,90]
+        luxar gsplat slice input.gsplats.zarr output.gsplats.zarr "0:50, :, 10:90"
+
+        # Keep only first half of x-range
+        luxar gsplat slice input.gsplats.zarr output.gsplats.zarr ":50, :, :"
+
+        # Float coordinates work
+        luxar gsplat slice input.gsplats.zarr output.gsplats.zarr "1.5:42.7, :, -3.2:100"
+
+        # With compression
+        luxar gsplat slice input.gsplats.zarr output.gsplats.zarr.zip "0:50, :, :" --compress zip
+    """
+    try:
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        encoding_map = {
+            "auto": EncodingMode.AUTO,
+            "precision": EncodingMode.PRECISION,
+            "memory": EncodingMode.MEMORY,
+        }
+        encoding_mode_obj = encoding_map[encoding_mode]
+
+        with asection(f"Slicing: {input_path.name}"):
+            # Load
+            with asection("Loading dataset"):
+                data = GSplatData.load(input_path, include_stats=True)
+                n_original = data.n_splats
+                aprint(f"Loaded {n_original:,} splats ({data.ndim}D)")
+
+            # Parse ranges
+            slices = _parse_slices(ranges, data.ndim)
+            with asection("Ranges"):
+                for i, s in enumerate(slices):
+                    lo = s.start if s.start is not None else "-inf"
+                    hi = s.stop if s.stop is not None else "inf"
+                    aprint(f"  dim {i}: [{lo}, {hi}]")
+
+            # Slice
+            with asection("Slicing"):
+                sliced_data = data.slice_by(slices)
+                n_sliced = sliced_data.n_splats
+                n_removed = n_original - n_sliced
+
+                aprint("\nResults:")
+                aprint(f"  Original splats: {n_original:,}")
+                aprint(f"  Sliced splats:   {n_sliced:,}")
+                aprint(
+                    f"  Removed:         {n_removed:,} ({100 * n_removed / max(n_original, 1):.1f}%)"
+                )
+
+            # Save
+            with asection(f"Saving to {output_path.name}"):
+                if n_sliced == 0:
+                    aprint("⚠ No splats remain after slicing — skipping save")
+                else:
+                    sliced_data.save(
+                        output_path,
+                        encoding_mode=encoding_mode_obj,
+                        include_fitting_info=True,
+                        compress=compress,
+                    )
+                    aprint(f"Saved sliced dataset: {output_path}")
+
+                    if output_path.exists():
+                        output_size = output_path.stat().st_size
+                        if output_size < 1024 * 1024:
+                            aprint(f"  Size: {output_size / 1024:.1f} KB")
+                        else:
+                            aprint(f"  Size: {output_size / (1024 * 1024):.1f} MB")
+
+    except Exception as e:
+        aprint(f"❌ Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# fit — Fit Gaussian splats to a volume
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("fit")
+def fit_volume(
+    input_path: Optional[Path] = typer.Argument(
+        None, help="Input volume (.npy/.npz/.tiff/.zarr)"
+    ),
+    output_path: Optional[Path] = typer.Argument(
+        None, help="Output .gsplats.zarr path"
+    ),
+    # Common flags
+    seeds: Optional[str] = typer.Option(
+        None,
+        "--seeds",
+        "-s",
+        help="Seed count (int), compression ratio (float 0-1), or 'auto'",
+    ),
+    iters: Optional[int] = typer.Option(
+        None, "--iters", "-n", help="Max optimization iterations"
+    ),
+    device: Optional[str] = typer.Option(
+        None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
+    ),
+    preset: Optional[str] = typer.Option(
+        None, "--preset", help="Parameter preset: draft/standard/hifi"
+    ),
+    loss: Optional[str] = typer.Option(
+        None, "--loss", help="Loss function: l1/mse/poisson"
+    ),
+    config: Optional[Path] = typer.Option(
+        None, "--config", help="YAML config file for full parameter control"
+    ),
+    dump_config: bool = typer.Option(
+        False, "--dump-config", help="Print default YAML config and exit"
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", "-c", help="Compress output archive"
+    ),
+    # Input selection for multi-array formats
+    channel: Optional[int] = typer.Option(
+        None, "--channel", help="Channel index for 5D OME-ZARR"
+    ),
+    timepoint: Optional[int] = typer.Option(
+        None, "--timepoint", help="Timepoint index for 5D OME-ZARR"
+    ),
+    array_key: Optional[str] = typer.Option(
+        None, "--array-key", help="Array key within .npz or .zarr"
+    ),
+    # Frequently used fit params
+    lr: Optional[float] = typer.Option(None, "--lr", help="Learning rate"),
+    seed_method: Optional[str] = typer.Option(
+        None, "--seed-method", help="Seed generation method"
+    ),
+    verbose: bool = typer.Option(True, "--verbose/--quiet", help="Verbose output"),
+    # Downscaling
+    downscale: Optional[str] = typer.Option(
+        None,
+        "--downscale",
+        help="Downsample volume by integer factor before fitting. "
+        "Single value (e.g., '4') or per-axis comma-separated (e.g., '1,4,4'). "
+        "Anti-alias Gaussian blur applied before decimation.",
+    ),
+    # Tiled fitting
+    tiled: bool = typer.Option(
+        False, "--tiled", help="Enable tiled fitting for large volumes"
+    ),
+    tile_size: int = typer.Option(
+        256, "--tile-size", help="Tile size in voxels (per axis)"
+    ),
+    tile_overlap: int = typer.Option(
+        32, "--overlap", help="Overlap between tiles in voxels"
+    ),
+    tile: Optional[str] = typer.Option(
+        None,
+        "--tile",
+        help="Fit single tile N/M (e.g., '3/16' = tile index 3 of 16 total)",
+    ),
+) -> None:
+    """Fit Gaussian splats to a volume.
+
+    Reconstructs an n-dimensional image/volume as a set of oriented Gaussian
+    splats. Use presets for quick configuration or a YAML config file for
+    full control over all ~35 parameters.
+
+    Presets:
+        draft    - Fast preview (500 iters, aggressive culling)
+        standard - Balanced quality/speed (3000 iters)
+        hifi     - Maximum quality (6000 iters, learnable sharpness)
+
+    Examples:
+        luxar gsplat fit volume.npy splats.gsplats.zarr --preset draft --seeds 1000
+
+        luxar gsplat fit volume.tiff splats.gsplats.zarr --preset standard --seeds 8000
+
+        luxar gsplat fit --dump-config --preset hifi > config.yaml
+        luxar gsplat fit volume.zarr splats.gsplats.zarr --config config.yaml
+
+        luxar gsplat fit data.zarr splats.gsplats.zarr --channel 1 --timepoint 0
+
+        luxar gsplat fit large.zarr splats.gsplats.zarr --tiled --tile-size 256 --overlap 32
+
+        luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32
+    """
+    from luxar.cli.gsplat_config import (
+        dump_default_config,
+        load_fit_config,
+        load_volume,
+        parse_seeds,
+    )
+
+    # Handle --dump-config: print and exit (no input/output needed)
+    if dump_config:
+        typer.echo(dump_default_config(preset or "standard"))
+        raise typer.Exit(0)
+
+    # Validate required args (optional for --dump-config)
+    if input_path is None:
+        aprint("Error: Missing argument 'INPUT_PATH'")
+        raise typer.Exit(1)
+    if output_path is None:
+        aprint("Error: Missing argument 'OUTPUT_PATH'")
+        raise typer.Exit(1)
+    if not input_path.exists():
+        aprint(f"Error: Input file not found: {input_path}")
+        raise typer.Exit(1)
+
+    try:
+        from luxar.gsplats import fit_gaussian_splats
+
+        with asection(f"Fitting Gaussian Splats: {input_path.name}"):
+            # 1. Load volume
+            with asection("Loading volume"):
+                volume = load_volume(input_path, channel, timepoint, array_key)
+                aprint(f"Volume shape: {volume.shape}")
+
+            # 2. Parse downscale option
+            parsed_downscale = None
+            if downscale is not None:
+                ds_parts = [int(x.strip()) for x in downscale.split(",")]
+                parsed_downscale = (
+                    ds_parts[0] if len(ds_parts) == 1 else tuple(ds_parts)
+                )
+
+            # 3. Build merged config
+            cli_overrides = {
+                "n_iters": iters,
+                "device": device,
+                "loss_type": loss,
+                "lr": lr,
+                "seed_method": seed_method,
+                "verbose": verbose,
+            }
+            fit_config = load_fit_config(preset, config, cli_overrides)
+
+            if preset:
+                aprint(f"Preset: {preset}")
+            if config:
+                aprint(f"Config: {config}")
+            aprint(f"Iterations: {fit_config.get('n_iters')}")
+
+            # 4. Parse seeds
+            parsed_seeds = parse_seeds(seeds)
+            if parsed_seeds is not None:
+                aprint(f"Seeds: {parsed_seeds}")
+            else:
+                aprint("Seeds: auto")
+
+            # 5. Apply downscaling
+            # Pop downscale from fit_config to avoid "multiple values" conflict
+            # (get_fit_defaults extracts it from the fit_gaussian_splats signature)
+            fc_downscale = fit_config.pop("downscale", None)
+            # CLI --downscale flag takes priority over YAML/preset config
+            effective_downscale = (
+                parsed_downscale if parsed_downscale is not None else fc_downscale
+            )
+
+            # For tiled modes, downscale the volume before tiling
+            tiled_downscale_factors = None
+            if effective_downscale is not None and (tile is not None or tiled):
+                from luxar.gsplats.fitting.downscale import (
+                    downscale_volume,
+                    normalize_downscale,
+                )
+
+                tiled_downscale_factors = normalize_downscale(
+                    effective_downscale, volume.ndim
+                )
+                if tiled_downscale_factors is not None:
+                    original_shape = volume.shape
+                    volume = downscale_volume(volume, tiled_downscale_factors)
+                    aprint(
+                        f"Downscaled volume: {original_shape} -> {volume.shape} "
+                        f"(factors={tiled_downscale_factors})"
+                    )
+
+            # 6. Fit
+            if tile is not None:
+                # Single-tile mode (Slurm-ready)
+                from luxar.gsplats.fit_tiled_gsplats import fit_tile
+                from luxar.gsplats.tiling import compute_tile_specs
+
+                tile_parts = tile.split("/")
+                if len(tile_parts) != 2:
+                    aprint("Error: --tile must be N/M format (e.g., '3/16')")
+                    raise typer.Exit(1)
+                try:
+                    tile_idx, tile_total = int(tile_parts[0]), int(tile_parts[1])
+                except ValueError:
+                    aprint("Error: --tile N/M requires integer values")
+                    raise typer.Exit(1)
+
+                specs = compute_tile_specs(volume.shape, tile_size, tile_overlap)
+                if tile_total != len(specs):
+                    aprint(
+                        f"Note: --tile specifies {tile_total} tiles but "
+                        f"grid has {len(specs)} tiles for this volume. "
+                        f"Using actual grid count."
+                    )
+                if tile_idx < 0 or tile_idx >= len(specs):
+                    aprint(
+                        f"Error: tile index {tile_idx} out of range [0, {len(specs)})"
+                    )
+                    raise typer.Exit(1)
+
+                # Extract params that are explicit in fit_tile to avoid
+                # "got multiple values" conflicts with **fit_config
+                fc_voxel_size = fit_config.pop("voxel_size", None)
+                fc_output_space = fit_config.pop("output_space", "real")
+
+                with asection(
+                    f"Fitting tile {tile_idx}/{len(specs)} "
+                    f"grid={specs[tile_idx].grid_index}"
+                ):
+                    result = fit_tile(
+                        volume,
+                        specs[tile_idx],
+                        voxel_size=fc_voxel_size,
+                        output_space=fc_output_space,
+                        seeds=parsed_seeds,
+                        **fit_config,
+                    )
+
+            elif tiled:
+                # Full tiled fitting
+                from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+
+                # Extract params that are explicit in fit_tiled to avoid
+                # "got multiple values" conflicts with **fit_config
+                fc_voxel_size = fit_config.pop("voxel_size", None)
+                fc_output_space = fit_config.pop("output_space", "real")
+                fc_verbose = fit_config.pop("verbose", True)
+
+                result = fit_tiled(
+                    volume,
+                    tile_size=tile_size,
+                    overlap=tile_overlap,
+                    voxel_size=fc_voxel_size,
+                    output_space=fc_output_space,
+                    verbose=fc_verbose,
+                    seeds=parsed_seeds,
+                    **fit_config,
+                )
+
+            else:
+                # Standard fitting (downscale handled inside fit_gaussian_splats)
+                with asection("Optimization"):
+                    result = fit_gaussian_splats(
+                        volume,
+                        seeds=parsed_seeds,
+                        downscale=effective_downscale,
+                        **fit_config,
+                    )
+
+            # Rescale tiled results back to original coordinates if downscaled
+            if tiled_downscale_factors is not None and result.n_splats > 0:
+                from luxar.gsplats.fitting.downscale import (
+                    rescale_centers,
+                    rescale_cholesky_packed,
+                )
+                from luxar.gsplats.gsplat_data import GSplatData
+
+                result = GSplatData(
+                    centers=rescale_centers(result.centers, tiled_downscale_factors),
+                    amplitudes=result.amplitudes,
+                    cholesky_factors=rescale_cholesky_packed(
+                        result.cholesky_factors, tiled_downscale_factors
+                    ),
+                    sharpnesses=result.sharpnesses,
+                    colors=result.colors,
+                    stats=result.stats,
+                )
+                aprint(f"Rescaled {result.n_splats} splats to original coordinates")
+
+            # 7. Save
+            with asection(f"Saving to {output_path.name}"):
+                result.save(output_path, compress=compress)
+                n_splats = result.n_splats
+                aprint(f"Saved {n_splats:,} splats")
+                if output_path.exists():
+                    size = output_path.stat().st_size
+                    if size < 1024 * 1024:
+                        aprint(f"File size: {size / 1024:.1f} KB")
+                    else:
+                        aprint(f"File size: {size / (1024 * 1024):.2f} MB")
+
+        time_s = result.stats.get("time_seconds", 0)
+        aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# convert — Convert .gsplats.zarr to Luxar scene
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("convert")
+def convert_to_scene(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    output_path: Path = typer.Argument(..., help="Output .zarr scene path"),
+    center: bool = typer.Option(
+        True, "--center/--no-center", help="Center at amplitude-weighted centroid"
+    ),
+    scale_intensity: Optional[float] = typer.Option(
+        None, "--scale-intensity", help="Scale amplitudes by factor (e.g., 0.1)"
+    ),
+    opacity: float = typer.Option(1.0, "--opacity", help="Opacity (0.0-1.0)"),
+    blending_mode: str = typer.Option(
+        "additive", "--blending-mode", help="Blending: additive/normal/max/opaque"
+    ),
+    encoding: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode"
+    ),
+) -> None:
+    """Convert a .gsplats.zarr dataset to a Luxar scene for the web viewer.
+
+    Creates a persistent Luxar scene zarr that can be served with
+    ``luxar serve``. By default, centers the data at the centroid.
+
+    Examples:
+        luxar gsplat convert fitted.gsplats.zarr scene.zarr
+        luxar gsplat convert fitted.gsplats.zarr scene.zarr --no-center
+        luxar gsplat convert fitted.gsplats.zarr scene.zarr --scale-intensity 0.1
+    """
+    try:
+        from luxar import LuxarZarrCompiler
+        from luxar.cli.gsplat_config import build_dimensions_from_data
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        encoding_map = {
+            "auto": EncodingMode.AUTO,
+            "precision": EncodingMode.PRECISION,
+            "memory": EncodingMode.MEMORY,
+        }
+
+        with asection(f"Converting: {input_path.name} -> {output_path.name}"):
+            with asection("Loading gsplat dataset"):
+                data = GSplatData.load(input_path, include_stats=False)
+                aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+
+            if center:
+                aprint("Centering at amplitude-weighted centroid")
+                data = data.center_at_centroid()
+
+            if scale_intensity is not None:
+                aprint(f"Scaling intensity by {scale_intensity}")
+                data = data.scale_intensity(scale_intensity)
+
+            with asection("Creating Luxar scene"):
+                dims = build_dimensions_from_data(data.centers)
+                with LuxarZarrCompiler(
+                    output_path, encoding_mode=encoding_map[encoding]
+                ) as compiler:
+                    scene = compiler.create_scene(dimensions=dims)
+                    scene.add_gsplats_from_data(
+                        name="gsplats",
+                        result=data,
+                        opacity=opacity,
+                        blending_mode=blending_mode,
+                    )
+
+            aprint(f"\nScene saved: {output_path}")
+            aprint(f"Serve with: luxar serve {output_path} --viewer")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# render — Render gsplats to a volume file
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("render")
+def render_to_file(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    output_path: Path = typer.Argument(..., help="Output file (.npy or .tiff)"),
+    shape: Optional[str] = typer.Option(
+        None,
+        "--shape",
+        help="Output shape as comma-separated ints (e.g., '128,128,128')",
+    ),
+    device: Optional[str] = typer.Option(
+        None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
+    ),
+    truncate: float = typer.Option(
+        3.0, "--truncate", "-t", help="Truncation radius in sigma"
+    ),
+) -> None:
+    """Render Gaussian splats back to a volume.
+
+    Useful for quality comparison with original data. Auto-detects the
+    output format from file extension (.npy or .tiff).
+
+    If --shape is not given, it is auto-computed from the bounding box.
+
+    Examples:
+        luxar gsplat render fitted.gsplats.zarr rendered.npy
+        luxar gsplat render fitted.gsplats.zarr rendered.tiff --shape 256,256,256
+        luxar gsplat render fitted.gsplats.zarr rendered.npy --device cuda
+    """
+    try:
+        import numpy as np
+
+        from luxar.cli.gsplat_config import parse_shape
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        with asection(f"Rendering: {input_path.name}"):
+            with asection("Loading gsplat dataset"):
+                data = GSplatData.load(input_path, include_stats=False)
+                ndim = data.ndim
+                aprint(f"Loaded {data.n_splats:,} splats ({ndim}D)")
+
+            if shape is not None:
+                output_shape = parse_shape(shape)
+            else:
+                mins = data.centers.min(axis=0)
+                maxs = data.centers.max(axis=0)
+                output_shape = tuple(int(maxs[i] - mins[i]) + 1 for i in range(ndim))
+                aprint(f"Auto shape from bounding box: {output_shape}")
+
+            with asection(f"Rendering to {output_shape}"):
+                volume = data.render_to_volume(
+                    shape=output_shape,
+                    device=device,
+                    truncate=truncate,
+                )
+                aprint(
+                    f"Rendered: {volume.shape}, "
+                    f"range [{volume.min():.4f}, {volume.max():.4f}]"
+                )
+
+            suffix = output_path.suffix.lower()
+            with asection(f"Saving to {output_path.name}"):
+                if suffix == ".npy":
+                    np.save(str(output_path), volume)
+                elif suffix in (".tiff", ".tif"):
+                    try:
+                        import tifffile
+                    except ImportError:
+                        aprint("tifffile not installed.")
+                        aprint("Install with: pip install luxar[io]")
+                        raise typer.Exit(1)
+                    tifffile.imwrite(str(output_path), volume)
+                else:
+                    aprint(f"Unknown extension '{suffix}', saving as NumPy .npy")
+                    np.save(str(output_path), volume)
+
+                if output_path.exists():
+                    size = output_path.stat().st_size
+                    if size < 1024 * 1024:
+                        aprint(f"File size: {size / 1024:.1f} KB")
+                    else:
+                        aprint(f"File size: {size / (1024 * 1024):.2f} MB")
+
+        aprint(f"\nSaved: {output_path}")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# compare — Quality metrics against a reference volume
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("compare")
+def compare_quality(
+    gsplats_path: Path = typer.Argument(
+        ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    reference_path: Path = typer.Argument(
+        ..., exists=True, help="Reference volume (.npy, .tiff, .zarr, etc.)"
+    ),
+    shape: Optional[str] = typer.Option(
+        None,
+        "--shape",
+        help="Output shape as comma-separated ints (overrides reference shape)",
+    ),
+    device: Optional[str] = typer.Option(
+        None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
+    ),
+    truncate: float = typer.Option(
+        3.0, "--truncate", "-t", help="Truncation radius in sigma"
+    ),
+    channel: Optional[int] = typer.Option(
+        None, "--channel", "-c", help="Channel index for OME-Zarr reference"
+    ),
+    timepoint: Optional[int] = typer.Option(
+        None, "--timepoint", help="Timepoint index for OME-Zarr reference"
+    ),
+    output_json: Optional[Path] = typer.Option(
+        None, "--output-json", "-j", help="Write metrics to JSON file"
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress terminal output (useful with --output-json)",
+    ),
+) -> None:
+    """Compare Gaussian splat reconstruction quality against a reference volume.
+
+    Renders the gsplats back to a volume and computes PSNR, SSIM, MSE,
+    relative L2 error, and maximum absolute error.  All heavy computation
+    runs on GPU when available.
+
+    Examples:
+        luxar gsplat compare fitted.gsplats.zarr original.tiff
+        luxar gsplat compare fitted.gsplats.zarr original.npy --device cuda
+        luxar gsplat compare fitted.gsplats.zarr original.zarr --output-json metrics.json
+        luxar gsplat compare fitted.gsplats.zarr original.zarr -j metrics.json -q
+    """
+    try:
+        import json
+
+        import torch
+
+        from luxar.cli.gsplat_config import load_volume, parse_shape
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.metrics import compute_quality_metrics
+        from luxar.gsplats.rendering.volume_rendering import (
+            auto_detect_device,
+            render_to_volume_tensor,
+        )
+
+        with asection("Quality Comparison"):
+            # Load gsplat dataset
+            with asection("Loading gsplat dataset"):
+                data = GSplatData.load(gsplats_path, include_stats=False)
+                n_splats = data.n_splats
+                ndim = data.ndim
+                aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
+
+            # Load reference volume
+            with asection("Loading reference volume"):
+                ref_np = load_volume(
+                    reference_path, channel=channel, timepoint=timepoint
+                )
+                ref_shape = ref_np.shape
+
+            # Determine rendering shape
+            if shape is not None:
+                render_shape = parse_shape(shape)
+            else:
+                render_shape = ref_shape
+            aprint(f"Comparison shape: {render_shape}")
+
+            if len(render_shape) != ndim:
+                aprint(
+                    f"Dimension mismatch: gsplats are {ndim}D but "
+                    f"reference/shape is {len(render_shape)}D"
+                )
+                raise typer.Exit(1)
+
+            if shape is not None and tuple(render_shape) != tuple(ref_shape):
+                aprint(
+                    f"Error: --shape {render_shape} does not match "
+                    f"reference shape {ref_shape}. "
+                    f"Omit --shape to use the reference shape."
+                )
+                raise typer.Exit(1)
+
+            # Select device
+            dev = device if device else auto_detect_device()
+
+            # Render gsplats to tensor (stays on GPU)
+            with torch.no_grad():
+                with asection(f"Rendering on {dev}"):
+                    rendered_t = render_to_volume_tensor(
+                        data, shape=render_shape, device=dev, truncate=truncate
+                    )
+                    aprint(
+                        f"Rendered: {rendered_t.shape}, "
+                        f"range [{rendered_t.min().item():.4f}, {rendered_t.max().item():.4f}]"
+                    )
+
+                # Upload reference to same device
+                ref_t = torch.from_numpy(ref_np).to(rendered_t.device)
+
+                # Compute metrics (all on GPU)
+                with asection("Computing metrics"):
+                    metrics = compute_quality_metrics(rendered_t, ref_t)
+
+            # Compression ratio (handle zarr directories and archives)
+            def _total_size(p: Path) -> int:
+                if p.is_file():
+                    return p.stat().st_size
+                # Directory: sum all file sizes recursively
+                return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+
+            gsplats_size = _total_size(gsplats_path)
+            ref_size = _total_size(reference_path)
+            if ref_size > 0 and gsplats_size > 0:
+                metrics["compression_ratio"] = ref_size / gsplats_size
+
+        # Print table
+        if not quiet:
+            aprint("\n" + "=" * 50)
+            aprint("QUALITY COMPARISON")
+            aprint("=" * 50)
+            aprint(f"\nReference:  {reference_path.name} {ref_shape}")
+            aprint(f"GSplats:    {gsplats_path.name} ({n_splats:,} splats)")
+            aprint("")
+            aprint(f"  MSE:             {metrics['mse']:.6g}")
+            aprint(f"  PSNR:            {metrics['psnr_db']:.2f} dB")
+            aprint(f"  SSIM:            {metrics['ssim']:.4f}")
+            aprint(f"  Rel L2:          {metrics['rel_l2']:.6g}")
+            aprint(f"  Max Abs Error:   {metrics['max_abs_error']:.6g}")
+            if "compression_ratio" in metrics:
+                aprint(f"  Compression:     {metrics['compression_ratio']:.1f}x")
+            aprint("=" * 50)
+
+        # JSON output
+        if output_json is not None:
+            import math
+
+            # Replace non-finite floats (inf/nan) with None for valid JSON
+            safe_metrics = {
+                k: (v if isinstance(v, (int, str)) or math.isfinite(v) else None)
+                for k, v in metrics.items()
+            }
+            json_data = {
+                "gsplats": str(gsplats_path),
+                "reference": str(reference_path),
+                "n_splats": n_splats,
+                "ndim": ndim,
+                "shape": list(render_shape),
+                **safe_metrics,
+            }
+            with open(output_json, "w") as f:
+                json.dump(json_data, f, indent=2)
+            if not quiet:
+                aprint(f"\nMetrics written to: {output_json}")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# merge — Combine multiple gsplat datasets
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("merge")
+def merge_datasets(
+    inputs: list[Path] = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr datasets (2 or more)"
+    ),
+    output_path: Path = typer.Option(
+        ..., "--output", "-o", help="Output .gsplats.zarr path"
+    ),
+    as_dimension: bool = typer.Option(
+        False, "--as-dimension", help="Stack along a new dimension (e.g., time)"
+    ),
+    values: Optional[str] = typer.Option(
+        None, "--values", help="Comma-separated coordinate values for --as-dimension"
+    ),
+    sigma: float = typer.Option(
+        0.0, "--sigma", help="Sigma in new dimension for --as-dimension (0=discrete)"
+    ),
+    channel_colors: Optional[str] = typer.Option(
+        None,
+        "--channel-colors",
+        help="Comma-separated hex colors (e.g., '#ff0080,#00ff80')",
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", "-c", help="Compress output archive"
+    ),
+    encoding: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode"
+    ),
+) -> None:
+    """Merge multiple Gaussian splat datasets into one.
+
+    Three modes (mutually exclusive):
+
+    1. Concatenation (default): Simple merge of all splats.
+
+    2. New dimension (--as-dimension): Stack along new dimension (e.g., time).
+
+    3. Channel colors (--channel-colors): Per-dataset color assignment.
+
+    Examples:
+        luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
+
+        luxar gsplat merge t0.zarr t1.zarr t2.zarr -o 4d.zarr --as-dimension
+
+        luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr \\
+            --channel-colors "#ff0080,#00ff00"
+    """
+    try:
+        from luxar.cli.gsplat_config import parse_hex_color
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        encoding_map = {
+            "auto": EncodingMode.AUTO,
+            "precision": EncodingMode.PRECISION,
+            "memory": EncodingMode.MEMORY,
+        }
+
+        if len(inputs) < 2:
+            aprint("Error: At least 2 input datasets required for merge")
+            raise typer.Exit(1)
+
+        if as_dimension and channel_colors:
+            aprint("Error: --as-dimension and --channel-colors are mutually exclusive")
+            raise typer.Exit(1)
+
+        with asection(f"Merging {len(inputs)} datasets"):
+            datasets: list[GSplatData] = []
+            total_splats = 0
+            for inp in inputs:
+                with asection(f"Loading {inp.name}"):
+                    ds = GSplatData.load(inp, include_stats=False)
+                    aprint(f"{ds.n_splats:,} splats ({ds.ndim}D)")
+                    datasets.append(ds)
+                    total_splats += ds.n_splats
+            aprint(f"Total input splats: {total_splats:,}")
+
+            if channel_colors:
+                color_strs = [c.strip() for c in channel_colors.split(",")]
+                if len(color_strs) != len(datasets):
+                    aprint(
+                        f"Error: {len(color_strs)} colors but {len(datasets)} datasets"
+                    )
+                    raise typer.Exit(1)
+                colors = [parse_hex_color(c) for c in color_strs]
+                with asection("Merging with channel colors"):
+                    merged = GSplatData.merge_with_channel_colors(datasets, colors)
+
+            elif as_dimension:
+                if values is not None:
+                    dim_values: list[float] = [
+                        float(v.strip()) for v in values.split(",")
+                    ]
+                    if len(dim_values) != len(datasets):
+                        aprint(
+                            f"Error: {len(dim_values)} values but "
+                            f"{len(datasets)} datasets"
+                        )
+                        raise typer.Exit(1)
+                else:
+                    dim_values = [float(i) for i in range(len(datasets))]
+                with asection(f"Stacking along new dimension (sigma={sigma})"):
+                    aprint(f"  Values: {dim_values}")
+                    merged = GSplatData.combine_as_new_dimension(
+                        datasets, values=dim_values, sigma=sigma
+                    )
+                    aprint(f"  Result: {merged.ndim}D ({merged.n_splats:,} splats)")
+
+            else:
+                with asection("Concatenating"):
+                    merged = GSplatData.concatenate(datasets)
+
+            with asection(f"Saving to {output_path.name}"):
+                # Determine color_mode for float32 colors
+                save_color_mode: Optional[Literal["sdr", "hdr"]] = None
+                if merged.colors is not None:
+                    import numpy as np
+
+                    if np.issubdtype(merged.colors.dtype, np.floating):
+                        save_color_mode = (
+                            "hdr" if np.any(merged.colors > 1.0) else "sdr"
+                        )
+
+                merged.save(
+                    output_path,
+                    encoding_mode=encoding_map[encoding],
+                    compress=compress,
+                    color_mode=save_color_mode,
+                )
+                aprint(f"Saved {merged.n_splats:,} splats ({merged.ndim}D)")
+
+        aprint(f"\nDone: {merged.n_splats:,} splats merged")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# benchmark — GPU performance profiling
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("benchmark")
+def benchmark_gpu(
+    force: bool = typer.Option(
+        False, "--force", help="Re-run even if a profile exists for this GPU"
+    ),
+    list_gpus: bool = typer.Option(False, "--list", help="List profiled GPUs and exit"),
+    sweep: bool = typer.Option(
+        True, "--sweep/--no-sweep", help="Include splat count sweep"
+    ),
+    shape: Optional[str] = typer.Option(
+        None, "--shape", help="Sweep volume shape (e.g., '512,512,512')"
+    ),
+    slurm: bool = typer.Option(False, "--slurm", help="Submit as a one-shot Slurm job"),
+    partition: Optional[str] = typer.Option(
+        None, "--partition", help="Slurm partition (for --slurm)"
+    ),
+    verbose: bool = typer.Option(True, "--verbose/--quiet", help="Verbose output"),
+) -> None:
+    """Benchmark CUDA kernels and build a GPU performance profile.
+
+    Runs the CUDA benchmark suite to characterize GPU throughput, OOM
+    boundaries, and optimal operating points. Results are stored in
+    ~/.luxar/gpu_profiles.yaml for use by `luxar gsplat batch`.
+
+    Multiple runs on the same GPU are aggregated (averaged throughput,
+    conservative OOM boundaries).
+
+    Examples:
+        luxar gsplat benchmark
+        luxar gsplat benchmark --list
+        luxar gsplat benchmark --force
+        luxar gsplat benchmark --slurm --partition gpu
+    """
+    from luxar.gsplats.gpu_profile import (
+        PROFILE_PATH,
+        load_profiles,
+    )
+
+    # --list mode
+    if list_gpus:
+        profiles = load_profiles()
+        gpus = profiles.get("gpus", {})
+        if not gpus:
+            aprint("No GPU profiles found.")
+            aprint("Run `luxar gsplat benchmark` to create one.")
+            raise typer.Exit(0)
+
+        with asection("Profiled GPUs"):
+            for name, entry in gpus.items():
+                info = entry.get("info", {})
+                summary = entry.get("summary", {})
+                n_runs = len(entry.get("runs", []))
+                recs = summary.get("recommendations", {})
+                peak = recs.get("peak_throughput_3d", {})
+
+                aprint(f"\n{name}")
+                aprint(f"  Memory: {info.get('total_memory_gb', '?')} GB")
+                aprint(f"  Compute: sm_{info.get('compute_capability', '?')}")
+                aprint(f"  Benchmark runs: {n_runs}")
+                if peak:
+                    shape_str = "x".join(str(s) for s in peak.get("shape", []))
+                    aprint(
+                        f"  Peak 3D: {peak.get('gvoxel_per_s', '?')} GV/s "
+                        f"at {shape_str}"
+                    )
+                oom = summary.get("oom_boundaries", {}).get("3d", {})
+                if oom.get("max_successful_shape"):
+                    shape_str = "x".join(str(s) for s in oom["max_successful_shape"])
+                    aprint(f"  Max safe 3D: {shape_str}")
+
+        raise typer.Exit(0)
+
+    # --slurm mode: submit a one-shot job
+    if slurm:
+        if not partition:
+            aprint("Error: --partition is required with --slurm")
+            raise typer.Exit(1)
+
+        import subprocess
+        import tempfile
+
+        from luxar.gsplats.batch.env_capture import (
+            capture_environment,
+            generate_env_preamble,
+        )
+
+        env = capture_environment()
+        preamble = generate_env_preamble(env)
+
+        script = (
+            "#!/bin/bash\n"
+            f"#SBATCH --job-name=luxar-benchmark\n"
+            f"#SBATCH --partition={partition}\n"
+            "#SBATCH --gpus-per-task=1\n"
+            "#SBATCH --cpus-per-task=4\n"
+            "#SBATCH --mem=32G\n"
+            "#SBATCH --time=00:30:00\n"
+            "#SBATCH --output=luxar-benchmark.out\n"
+            "#SBATCH --error=luxar-benchmark.err\n\n"
+            f"{preamble}\n\n"
+            "luxar gsplat benchmark --force"
+            f"{' --no-sweep' if not sweep else ''}"
+            f"{' --shape ' + shape if shape else ''}\n"
+        )
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sbatch", delete=False) as f:
+            f.write(script)
+            script_path = f.name
+
+        try:
+            aprint(f"Submitting benchmark job to partition '{partition}'...")
+            result = subprocess.run(
+                ["sbatch", script_path],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                aprint(f"Error submitting job: {result.stderr}")
+                raise typer.Exit(1)
+            aprint(result.stdout.strip())
+            aprint(f"Profile will be saved to: {PROFILE_PATH}")
+        finally:
+            import os
+
+            os.unlink(script_path)
+        raise typer.Exit(0)
+
+    # Direct benchmark run
+    try:
+        import torch
+    except ImportError:
+        aprint("Error: PyTorch is required for GPU benchmarking.")
+        raise typer.Exit(1)
+
+    if not torch.cuda.is_available():
+        aprint("Error: CUDA is not available on this system.")
+        aprint("Run `luxar gsplat benchmark --slurm` to benchmark on a GPU node.")
+        raise typer.Exit(1)
+
+    gpu_name_detected = torch.cuda.get_device_properties(0).name
+
+    # Check if profile already exists
+    if not force:
+        profiles = load_profiles()
+        if gpu_name_detected in profiles.get("gpus", {}):
+            n_runs = len(profiles["gpus"][gpu_name_detected].get("runs", []))
+            aprint(f"Profile already exists for {gpu_name_detected} ({n_runs} runs).")
+            aprint("Use --force to add another run, or --list to view.")
+            raise typer.Exit(0)
+
+    try:
+        from luxar.gsplats.models.gsplats.cuda.benchmark import (
+            generate_profile,
+            run_benchmark,
+            run_splat_sweep,
+        )
+    except ImportError:
+        aprint("Error: CUDA splatting backend is not compiled.")
+        aprint("Build it with: make build-cuda")
+        raise typer.Exit(1)
+
+    with asection(f"Benchmarking GPU: {gpu_name_detected}"):
+        results = run_benchmark(verbose=verbose)
+
+        sweep_results = None
+        sweep_shape_parsed = None
+        if sweep:
+            if shape:
+                sweep_shape_parsed = tuple(int(s) for s in shape.split(","))
+            elif results:
+                best_gvs = 0.0
+                for _label, r in results.items():
+                    if r["dim"] == 3 and r.get("gvoxel_per_s_fp32") is not None:
+                        if r["gvoxel_per_s_fp32"] > best_gvs:
+                            best_gvs = r["gvoxel_per_s_fp32"]
+                            sweep_shape_parsed = r["shape"]
+            if sweep_shape_parsed is None:
+                sweep_shape_parsed = (512, 512, 512)
+
+            sweep_results = run_splat_sweep(shape=sweep_shape_parsed, verbose=verbose)
+
+        profile_path = generate_profile(
+            benchmark_results=results or {},
+            sweep_results=sweep_results,
+            sweep_shape=sweep_shape_parsed,
+        )
+
+    aprint(f"\nProfile saved to: {profile_path}")
+    aprint("View with: luxar gsplat benchmark --list")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# batch — HPC batch fitting via Slurm
+# ═══════════════════════════════════════════════════════════════════════
+
+app_batch = typer.Typer(help="HPC batch fitting for large OME-Zarr datasets")
+app_gsplat.add_typer(app_batch, name="batch")
+
+
+@app_batch.command("plan")
+def batch_plan(
+    input_path: Path = typer.Argument(..., exists=True, help="Input OME-Zarr dataset"),
+    output_dir: Path = typer.Argument(..., help="Output directory for batch results"),
+    # Tiling
+    tile_size: Optional[int] = typer.Option(
+        None,
+        "--tile-size",
+        help="Tile size in voxels (auto from GPU profile if omitted)",
+    ),
+    tile_overlap: int = typer.Option(32, "--overlap", help="Tile overlap in voxels"),
+    # Fit params
+    preset: str = typer.Option("standard", "--preset", help="Fitting preset"),
+    config: Optional[Path] = typer.Option(None, "--config", help="YAML fit config"),
+    seeds: Optional[str] = typer.Option(None, "--seeds", help="Seed count or ratio"),
+    # Slurm params
+    partition: Optional[str] = typer.Option(
+        None, "--partition", "-p", help="Slurm partition"
+    ),
+    account: Optional[str] = typer.Option(None, "--account", "-A"),
+    qos: Optional[str] = typer.Option(None, "--qos"),
+    gpus: int = typer.Option(1, "--gpus", help="GPUs per task"),
+    cpus: int = typer.Option(4, "--cpus", help="CPUs per task"),
+    mem: int = typer.Option(32, "--mem", help="Memory per task (GB)"),
+    time_limit: Optional[str] = typer.Option(
+        None, "--time", help="Wall time per task override (HH:MM:SS)"
+    ),
+    gpu_name_opt: Optional[str] = typer.Option(
+        None, "--gpu", help="GPU name from profile (auto-detect if omitted)"
+    ),
+    gpu_mem: Optional[int] = typer.Option(
+        None, "--gpu-mem", help="Target GPU memory in GB (picks closest profile)"
+    ),
+    # Merge
+    channel_colors: Optional[str] = typer.Option(
+        None, "--channel-colors", help="Hex colors for per-channel merge"
+    ),
+    # Control
+    submit: bool = typer.Option(
+        False, "--submit", help="Actually submit to Slurm (default: dry-run)"
+    ),
+) -> None:
+    """Plan and optionally submit a batch Gaussian splat fitting job.
+
+    Discovers T/C/spatial structure from OME-Zarr metadata, loads a GPU
+    profile to auto-select tile size, and generates Slurm array + merge
+    jobs.
+
+    By default shows the plan without submitting. Pass --submit to submit.
+
+    Requires a GPU profile from `luxar gsplat benchmark`.
+
+    Examples:
+        luxar gsplat batch data.ome.zarr output/ --partition gpu
+
+        luxar gsplat batch data.ome.zarr output/ --partition gpu --submit
+
+        luxar gsplat batch data.ome.zarr output/ -p gpu --tile-size 256 --preset hifi
+    """
+    if partition is None:
+        aprint("Error: --partition is required")
+        raise typer.Exit(1)
+
+    try:
+        import datetime
+        import subprocess
+
+        from luxar.cli.gsplat_config import (
+            PRESETS,
+            discover_ome_zarr_shape,
+        )
+        from luxar.gsplats.batch.env_capture import (
+            capture_environment,
+            generate_env_preamble,
+        )
+        from luxar.gsplats.batch.manifest import (
+            BatchJob,
+            BatchManifest,
+            output_filename,
+            save_manifest,
+        )
+        from luxar.gsplats.batch.slurm_gen import (
+            generate_fit_sbatch,
+            generate_merge_sbatch,
+        )
+        from luxar.gsplats.batch.time_estimate import (
+            estimate_slurm_time_limit,
+            estimate_tile_wall_seconds,
+        )
+        from luxar.gsplats.gpu_profile import (
+            get_gpu_summary,
+            get_gpu_throughput_table,
+            load_profiles,
+        )
+        from luxar.gsplats.tiling import compute_tile_specs
+
+        # 1. Load GPU profile
+        summary = get_gpu_summary(
+            gpu_name=gpu_name_opt,
+            gpu_mem=float(gpu_mem) if gpu_mem else None,
+        )
+        if summary is None:
+            aprint("Error: No GPU benchmark profile found.")
+            aprint("")
+            aprint("Run `luxar gsplat benchmark` on a GPU node first.")
+            aprint("Or: luxar gsplat benchmark --slurm --partition <partition>")
+            raise typer.Exit(1)
+
+        recs = summary.get("recommendations", {})
+        peak = recs.get("peak_throughput_3d", {})
+
+        # Resolve GPU name for display
+        profiles = load_profiles()
+        resolved_gpu = gpu_name_opt
+        if resolved_gpu is None:
+            for name, entry in profiles.get("gpus", {}).items():
+                if entry.get("summary") == summary:
+                    resolved_gpu = name
+                    break
+        if resolved_gpu is None and profiles.get("gpus"):
+            resolved_gpu = next(iter(profiles["gpus"]))
+        resolved_gpu = resolved_gpu or "unknown"
+
+        # 2. Discover dataset shape
+        with asection("Discovering dataset shape"):
+            ome_info = discover_ome_zarr_shape(input_path)
+            n_t = ome_info.n_timepoints
+            n_c = ome_info.n_channels
+            spatial = ome_info.spatial_shape
+            aprint(f"Axes: {ome_info.axes}")
+            aprint(f"Shape: {ome_info.shape}")
+            aprint(f"T={n_t}, C={n_c}, spatial={'x'.join(str(s) for s in spatial)}")
+
+        # 3. Pick tile size
+        auto_tile = tile_size is None
+        if auto_tile:
+            peak_shape = peak.get("shape", [])
+            if peak_shape:
+                tile_size = peak_shape[0]
+                tile_size = min(tile_size, *spatial)
+            else:
+                oom = summary.get("oom_boundaries", {}).get("3d", {})
+                max_shape = oom.get("max_successful_shape")
+                if max_shape:
+                    tile_size = max_shape[0]
+                    tile_size = min(tile_size, *spatial)
+                else:
+                    tile_size = 256
+
+        assert tile_size is not None  # narrowed by branches above
+
+        # 4. Compute tile grid — always use compute_tile_specs to get the
+        # authoritative tile count (overlap can create extra tiles even when
+        # volume_shape == tile_size).
+        specs = compute_tile_specs(spatial, tile_size, tile_overlap)
+        n_tiles = len(specs)
+        needs_tiling = n_tiles > 1
+
+        total_tasks = n_t * n_c * n_tiles
+
+        # 5. Estimate wall time per task
+        if needs_tiling:
+            tile_voxels = tile_size ** len(spatial)
+        else:
+            # Single tile — use the actual volume size
+            tile_voxels = 1
+            for s in spatial:
+                tile_voxels *= s
+
+        throughput_table = get_gpu_throughput_table(gpu_name=resolved_gpu)
+
+        preset_config = PRESETS.get(preset, PRESETS["standard"])
+        n_iters = preset_config.get("n_iters", 3000)
+
+        if throughput_table:
+            est_seconds = estimate_tile_wall_seconds(
+                tile_voxels, n_iters, throughput_table
+            )
+        else:
+            est_seconds = 600.0
+
+        slurm_time = time_limit or estimate_slurm_time_limit(est_seconds)
+        total_gpu_hours = est_seconds * total_tasks / 3600.0
+
+        # 6. Build manifest
+        fit_args = {}
+        if seeds:
+            fit_args["seeds"] = seeds
+        if config:
+            fit_args["config"] = str(config)
+
+        colors_list = None
+        if channel_colors:
+            colors_list = [c.strip() for c in channel_colors.split(",")]
+
+        manifest = BatchManifest(
+            version=1,
+            created=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            input_path=str(input_path.resolve()),
+            output_dir=str(output_dir.resolve()),
+            n_timepoints=n_t,
+            n_channels=n_c,
+            spatial_shape=spatial,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
+            n_tiles=n_tiles,
+            total_tasks=total_tasks,
+            preset=preset,
+            fit_args=fit_args,
+            gpu_name=resolved_gpu,
+            estimated_seconds_per_task=est_seconds,
+            slurm_time_limit=slurm_time,
+            slurm_partition=partition,
+            slurm_account=account,
+            slurm_qos=qos,
+            slurm_gpus=gpus,
+            slurm_cpus=cpus,
+            slurm_mem_gb=mem,
+            channel_colors=colors_list,
+        )
+
+        # Build job list
+        jobs = []
+        for task_id in range(total_tasks):
+            t = task_id // (n_c * n_tiles)
+            r = task_id % (n_c * n_tiles)
+            c = r // n_tiles
+            k = r % n_tiles
+            jobs.append(
+                BatchJob(
+                    task_id=task_id,
+                    timepoint=t,
+                    channel=c,
+                    tile_index=k,
+                    output_filename=output_filename(t, c, k),
+                    estimated_wall_seconds=est_seconds,
+                )
+            )
+        manifest.jobs = jobs
+
+        # 7. Capture environment + generate scripts
+        env = capture_environment()
+        preamble = generate_env_preamble(env)
+        fit_script = generate_fit_sbatch(manifest, preamble)
+        merge_script = generate_merge_sbatch(manifest, preamble)
+
+        # 8. Print plan (always)
+        spatial_str = "x".join(str(s) for s in spatial)
+        peak_gvs = peak.get("gvoxel_per_s", "?")
+        peak_shape_str = "x".join(str(s) for s in peak.get("shape", []))
+
+        aprint("")
+        aprint("=" * 60)
+        aprint("BATCH PLAN")
+        aprint("=" * 60)
+        aprint(f"  Input: {input_path.name} (T={n_t}, C={n_c}, spatial={spatial_str})")
+        aprint(f"  GPU: {resolved_gpu} (peak: {peak_gvs} GV/s at {peak_shape_str})")
+        if needs_tiling:
+            aprint(
+                f"  Tile: {tile_size}^{len(spatial)}"
+                f" ({'auto' if auto_tile else 'manual'})"
+                f", overlap={tile_overlap}, {n_tiles} tiles/volume"
+            )
+        else:
+            aprint("  Tile: not needed (volume fits in GPU memory)")
+        aprint(f"  Jobs: {n_t} x {n_c} x {n_tiles} = {total_tasks} array tasks")
+        aprint(
+            f"  Est. time/task: ~{est_seconds / 60:.0f} min"
+            f" (preset: {preset}, {n_iters} iters)"
+        )
+        aprint(f"  Est. total GPU-hours: {total_gpu_hours:.0f} h")
+        aprint(f"  Slurm --time: {slurm_time}")
+        aprint(f"  Partition: {partition}, GPUs: {gpus}, CPUs: {cpus}, Mem: {mem}G")
+        aprint(f"  Output: {output_dir}")
+        aprint("")
+
+        if not submit:
+            aprint("Dry run -- pass --submit to actually submit.")
+            raise typer.Exit(0)
+
+        # 9. Submit
+        out = output_dir.resolve()
+        (out / "tiles").mkdir(parents=True, exist_ok=True)
+        (out / "merged").mkdir(parents=True, exist_ok=True)
+        (out / "logs").mkdir(parents=True, exist_ok=True)
+
+        fit_path = out / "fit_array.sbatch"
+        merge_path = out / "merge.sbatch"
+        env_path = out / "env_snapshot.sh"
+
+        fit_path.write_text(fit_script)
+        merge_path.write_text(merge_script)
+        env_path.write_text(preamble)
+        save_manifest(manifest, out)
+
+        aprint("Submitting fitting array job...")
+        result = subprocess.run(
+            ["sbatch", str(fit_path)], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            aprint(f"Error submitting fit job: {result.stderr}")
+            raise typer.Exit(1)
+
+        fit_job_id = None
+        for word in result.stdout.strip().split():
+            if word.isdigit():
+                fit_job_id = int(word)
+        aprint(f"  Fitting array job: {fit_job_id} ({total_tasks} tasks)")
+
+        merge_cmd = ["sbatch"]
+        if fit_job_id:
+            merge_cmd.append(f"--dependency=afterok:{fit_job_id}")
+        merge_cmd.append(str(merge_path))
+
+        result = subprocess.run(merge_cmd, capture_output=True, text=True)
+        merge_job_id = None
+        if result.returncode == 0:
+            for word in result.stdout.strip().split():
+                if word.isdigit():
+                    merge_job_id = int(word)
+            aprint(f"  Merge job: {merge_job_id} (depends on {fit_job_id})")
+        else:
+            aprint(f"  Warning: merge job submission failed: {result.stderr}")
+
+        manifest.array_job_id = fit_job_id
+        manifest.merge_job_id = merge_job_id
+        save_manifest(manifest, out)
+
+        aprint(f"\nManifest: {out / 'manifest.json'}")
+        aprint(f"Check status: luxar gsplat batch status {out}")
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+@app_batch.command("status")
+def batch_status_cmd(
+    output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Check status of a batch fitting job.
+
+    Reads the manifest, checks for output files, and queries sacct/squeue
+    for job states.
+
+    Examples:
+        luxar gsplat batch status output_dir/
+    """
+    try:
+        from luxar.gsplats.batch.manifest import load_manifest
+        from luxar.gsplats.batch.status import (
+            check_batch_status,
+            format_status_report,
+        )
+
+        manifest = load_manifest(output_dir)
+        status = check_batch_status(output_dir)
+        aprint(format_status_report(status, manifest, verbose=verbose))
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        raise typer.Exit(1)
+
+
+@app_batch.command("merge")
+def batch_merge_cmd(
+    output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
+    channel_colors: Optional[str] = typer.Option(
+        None, "--channel-colors", help="Hex colors for channel merge"
+    ),
+    force: bool = typer.Option(False, "--force", help="Re-merge even if outputs exist"),
+) -> None:
+    """Run the merge step for a completed batch job.
+
+    Normally runs as a dependent Slurm job, but this command allows
+    running it manually or re-running if the merge job failed.
+
+    Examples:
+        luxar gsplat batch merge output_dir/
+
+        luxar gsplat batch merge output_dir/ --channel-colors "#ff0080,#00ff00"
+    """
+    try:
+        from luxar.cli.gsplat_config import parse_hex_color
+        from luxar.gsplats.batch.manifest import load_manifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        manifest = load_manifest(output_dir)
+
+        colors = None
+        color_source = channel_colors or (
+            ",".join(manifest.channel_colors) if manifest.channel_colors else None
+        )
+        if color_source:
+            colors = [parse_hex_color(c.strip()) for c in color_source.split(",")]
+
+        with asection(f"Merging batch results: {output_dir}"):
+            final_path = merge_batch_results(
+                manifest=manifest,
+                output_dir=output_dir,
+                channel_colors=colors,
+                force=force,
+            )
+            aprint(f"\nFinal output: {final_path}")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
         import traceback
 
         traceback.print_exc()

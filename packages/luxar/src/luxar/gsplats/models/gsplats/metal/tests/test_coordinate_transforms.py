@@ -151,39 +151,45 @@ class TestConicReordering:
             f"Conic reordering failed: got {conic_metal}, expected {expected}"
         )
 
-    @pytest.mark.skip(
-        reason="Mathematical property doesn't hold: permuting L then computing conic "
-        "is not equivalent to computing conic then permuting packed elements, "
-        "because permuting L breaks the lower-triangular structure."
-    )
     def test_conic_from_L(self):
-        """Test that conic reordering matches L reordering."""
+        """Document that permuting L then computing conic is NOT equivalent to
+        computing conic then permuting the packed elements.
+
+        This is because ``cholesky_to_conic`` assumes its input is
+        lower-triangular.  Permuting both rows and columns of a
+        lower-triangular matrix (``L[:, perm, :][:, :, perm]``) generally
+        breaks the lower-triangular structure, so feeding the permuted matrix
+        into ``cholesky_to_conic`` produces an incorrect result.
+
+        The correct approach (tested in ``test_lower_triangular_L``) is:
+          1. Compute Σ = L @ Lᵀ in the original coordinate order.
+          2. Permute Σ to the new coordinate order.
+          3. Re-factorise with ``torch.linalg.cholesky``.
+        """
         from luxar.gsplats.models.gsplats.metal.gsplat_model_metal import (
             cholesky_to_conic,
         )
 
-        # L in [Z,Y,X]
+        # L in [Z,Y,X] – a non-trivial lower-triangular matrix
         L_pytorch = torch.tensor(
             [[[2.0, 0.0, 0.0], [1.0, 1.5, 0.0], [0.5, 0.3, 1.0]]], dtype=torch.float32
         )
 
-        # Compute conic in [Z,Y,X]
+        # Path A: compute conic in [Z,Y,X], then reorder packed elements
         conic_pytorch = cholesky_to_conic(L_pytorch)
+        conic_reordered = conic_pytorch[:, [5, 4, 2, 3, 1, 0]]
 
-        # Reorder L to [X,Y,Z]
-        L_metal = L_pytorch[:, [2, 1, 0], :][:, :, [2, 1, 0]]
+        # Path B: naively permute L to [X,Y,Z], then compute conic
+        L_permuted = L_pytorch[:, [2, 1, 0], :][:, :, [2, 1, 0]]
+        conic_from_permuted_L = cholesky_to_conic(L_permuted)
 
-        # Compute conic in [X,Y,Z]
-        conic_metal_from_L = cholesky_to_conic(L_metal)
-
-        # Also reorder the original conic
-        conic_metal_reordered = conic_pytorch[:, [5, 4, 2, 3, 1, 0]]
-
-        # These should match!
-        assert torch.allclose(conic_metal_from_L, conic_metal_reordered, atol=1e-5), (
-            f"Conic reordering doesn't match recomputation:\n"
-            f"  From reordered L: {conic_metal_from_L}\n"
-            f"  From reordering:  {conic_metal_reordered}"
+        # The two paths must NOT agree – permuting L breaks the
+        # lower-triangular invariant that cholesky_to_conic relies on.
+        assert not torch.allclose(conic_from_permuted_L, conic_reordered, atol=1e-5), (
+            "Expected the two paths to disagree because permuting L breaks "
+            "lower-triangular structure, but they unexpectedly matched:\n"
+            f"  From permuted L:        {conic_from_permuted_L}\n"
+            f"  From reordered conic:   {conic_reordered}"
         )
 
 

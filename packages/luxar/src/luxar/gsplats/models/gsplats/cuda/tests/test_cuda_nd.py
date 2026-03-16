@@ -1118,17 +1118,17 @@ class Test5DAnd6DDimensions:
         )
         from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
-        np.random.seed(42)
+        rng = np.random.RandomState(42)
         torch.manual_seed(42)
 
         N, d = 15, 6
         shape = (4, 4, 4, 4, 4, 4)  # 4K voxels
 
-        centers0 = np.random.rand(N, d).astype(np.float32) * 2 + 1
+        centers0 = rng.rand(N, d).astype(np.float32) * 2 + 1
         L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0)
         for i in range(N):
-            L0[i] *= np.random.uniform(0.3, 0.8)
-        amps0 = np.random.rand(N).astype(np.float32) * 0.5 + 0.5
+            L0[i] *= rng.uniform(0.3, 0.8)
+        amps0 = rng.rand(N).astype(np.float32) * 0.5 + 0.5
 
         # CPU reference
         cpu_model = GaussianSplatModel(
@@ -1176,7 +1176,7 @@ class Test5DAnd6DDimensions:
         denom = cpu_output[mask]
 
         rms_rel = (diff.pow(2).mean().sqrt() / (denom.abs().mean() + 1e-8)).item()
-        print(f"\n6D forward: rms_rel={rms_rel:.4f}, n={mask.sum().item()}")
+        print(f"6D forward: rms_rel={rms_rel:.4f}, n={mask.sum().item()}")
 
         assert rms_rel < 0.25, f"6D RMS relative error {rms_rel:.4f} too large"
 
@@ -1213,6 +1213,135 @@ class Test5DAnd6DDimensions:
                 assert torch.isfinite(param.grad).all(), (
                     f"6D gradient {name} has non-finite values"
                 )
+
+
+@pytest.mark.skipif(not CUDA_BACKEND_AVAILABLE, reason="CUDA backend not compiled")
+class TestSyncthreadsDivergenceRegression:
+    """Regression tests for the __syncthreads() divergence bug.
+
+    The bug occurred when tile_pixels != blockDim.x, causing some threads to
+    execute fewer iterations of the pixel loop and skip __syncthreads() calls.
+    This is undefined behavior in CUDA and caused stale shared memory reads
+    in the forward kernel.
+
+    The fix restructured the forward kernel to place the splat batch loop
+    (with __syncthreads) as the outer loop, and the pixel loop as the inner
+    loop, ensuring ALL threads in the block participate in every barrier.
+
+    Affected dimensions: any where tile_pixels != blockDim.x:
+      - 5D: tile_size=3, 3^5=243 pixels, 256 threads (243 < 256)
+      - 6D: tile_size=3, 3^6=729 pixels, 256 threads (729 % 256 != 0)
+      - 7D: tile_size=2, 2^7=128 pixels, 256 threads (128 < 256)
+
+    The bug only manifested when the CUDA caching allocator reused buffers
+    with stale data from prior kernel launches (i.e., full test suite, not
+    isolated runs).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _warm_cuda_allocator(self):
+        """Run a throwaway CUDA allocation to warm up the caching allocator.
+
+        This makes the allocator reuse buffers (with stale data), which is
+        the condition that triggers the __syncthreads() divergence bug.
+        Without this, freshly allocated memory is zeroed and the bug is hidden.
+        """
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        # Allocate and fill a buffer to pollute the caching allocator
+        dummy = torch.ones(100_000, device="cuda") * 999.0
+        del dummy
+        # Do NOT call empty_cache() — we want stale data in the allocator
+
+    def _run_forward_comparison(self, d: int, shape: tuple, n_splats: int):
+        """Helper: compare CUDA vs CPU forward for given dimensionality."""
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            GaussianSplatModelCUDA,
+        )
+        from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+
+        rng = np.random.RandomState(12345)
+
+        centers0 = rng.rand(n_splats, d).astype(np.float32) * 2 + 0.5
+        L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(n_splats, axis=0)
+        for i in range(n_splats):
+            L0[i] *= rng.uniform(0.3, 0.8)
+        amps0 = rng.rand(n_splats).astype(np.float32) * 0.5 + 0.5
+
+        cpu_model = GaussianSplatModel(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.3,) * d,
+            device="cpu",
+        )
+
+        cuda_model = GaussianSplatModelCUDA(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.3,) * d,
+            device="cuda",
+        )
+
+        with torch.no_grad():
+            cpu_output = cpu_model()
+            cuda_output = cuda_model().cpu()
+
+        if cuda_output.shape != cpu_output.shape:
+            cuda_output = cuda_output.reshape(cpu_output.shape)
+
+        # Check that outputs are not wildly different
+        # (the bug caused CUDA max to be 10-100x larger than CPU max)
+        cpu_max = cpu_output.abs().max().item()
+        cuda_max = cuda_output.abs().max().item()
+        if cpu_max > 0:
+            max_ratio = cuda_max / cpu_max
+            assert max_ratio < 2.0, (
+                f"{d}D: CUDA max ({cuda_max:.4f}) is {max_ratio:.1f}x larger "
+                f"than CPU max ({cpu_max:.4f}) — likely __syncthreads divergence bug"
+            )
+
+        # Also check RMS relative error
+        cpu_abs = cpu_output.abs()
+        scale = cpu_abs.max().item()
+        if scale > 0:
+            mask = cpu_abs > (1e-3 * scale)
+            if mask.sum().item() > 0:
+                diff = (cpu_output - cuda_output)[mask]
+                denom = cpu_output[mask]
+                rms_rel = (
+                    diff.pow(2).mean().sqrt() / (denom.abs().mean() + 1e-8)
+                ).item()
+                assert rms_rel < 0.5, (
+                    f"{d}D: RMS relative error {rms_rel:.4f} too large"
+                )
+
+    def test_5d_syncthreads_regression(self):
+        """5D: 243 pixels < 256 threads — some threads skip pixel loop entirely."""
+        self._run_forward_comparison(d=5, shape=(3, 3, 3, 3, 3), n_splats=20)
+
+    def test_6d_syncthreads_regression(self):
+        """6D: 729 pixels, 256 threads — uneven iteration counts (3 vs 2)."""
+        self._run_forward_comparison(d=6, shape=(4, 4, 4, 4, 4, 4), n_splats=15)
+
+    def test_7d_syncthreads_regression(self):
+        """7D: 128 pixels < 256 threads — half the threads idle."""
+        self._run_forward_comparison(d=7, shape=(2, 2, 2, 2, 2, 2, 2), n_splats=10)
+
+    def test_4d_edge_tile_syncthreads(self):
+        """4D: with shape not divisible by tile_size, edge tiles have fewer pixels."""
+        # Shape 5^4 with tile_size=4 → edge tiles have 1 voxel per clipped dim
+        # tile_pixels for edge tiles = 1*1*1*1 = 1 (much less than blockDim=256)
+        self._run_forward_comparison(d=4, shape=(5, 5, 5, 5), n_splats=20)
+
+    def test_6d_many_splat_batches(self):
+        """6D with many splats — tests multiple splat batch iterations with atomicAdd."""
+        # With 200 splats and BATCH_SIZE=128, we get 2 batches, each needing
+        # correct atomicAdd accumulation across batches.
+        self._run_forward_comparison(d=6, shape=(4, 4, 4, 4, 4, 4), n_splats=200)
 
 
 @pytest.mark.skipif(not CUDA_BACKEND_AVAILABLE, reason="CUDA backend not compiled")

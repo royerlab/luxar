@@ -31,6 +31,8 @@ luxar info my_data.zarr --stats
 
 - `__init__.py` - Package initialization, exports the main app
 - `main.py` - Main CLI application with all commands
+- `gsplat_commands.py` - Gaussian splat subcommands (info, view, prune, fit, convert, render, merge, filter, split, slice, compare)
+- `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `utils.py` - Utility functions for CLI operations
 - `network_simulation.py` - Network simulation middleware and profile definitions
 
@@ -81,6 +83,80 @@ luxar profiles                # Display all network profiles with descriptions
 Use these profiles with `serve`, `viewer`, or `demo` commands via the `--network-profile` option to simulate various network conditions for testing.
 
 
+### GSplat Processing Commands
+
+#### `luxar gsplat fit`
+Fit Gaussian splats to a volume with preset or YAML config.
+```bash
+luxar gsplat fit volume.npy splats.gsplats.zarr --preset standard --seeds 8000
+luxar gsplat fit volume.tiff splats.gsplats.zarr --config params.yaml
+luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config template
+```
+
+**Presets:** `draft` (fast preview), `standard` (balanced), `hifi` (max quality)
+
+#### `luxar gsplat convert`
+Convert .gsplats.zarr to a Luxar scene for the web viewer.
+```bash
+luxar gsplat convert fitted.gsplats.zarr scene.zarr --center
+luxar gsplat convert fitted.gsplats.zarr scene.zarr --scale-intensity 0.1
+```
+
+#### `luxar gsplat render`
+Render gsplats back to a volume for quality comparison.
+```bash
+luxar gsplat render fitted.gsplats.zarr rendered.npy --shape 128,128,128
+luxar gsplat render fitted.gsplats.zarr rendered.tiff --device cuda
+```
+
+#### `luxar gsplat merge`
+Combine multiple gsplat datasets (concatenation, new dimension, or channel colors).
+```bash
+luxar gsplat merge a.zarr b.zarr -o merged.zarr
+luxar gsplat merge t0.zarr t1.zarr t2.zarr -o 4d.zarr --as-dimension --values 0,1,2
+luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00ff00"
+```
+
+#### `luxar gsplat filter`
+Filter splats by multiple criteria (AND logic).
+```bash
+luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --amplitude-min 0.1 --eccentricity-max 5
+luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --bbox "0,50,0,50,0,50" --volume-max 100
+luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --mass-min 0.01 --sharpness-min 1.0
+```
+
+**Criteria**: `--bbox`, `--amplitude-min/max`, `--volume-min/max`, `--eccentricity-min/max`, `--sharpness-min/max`, `--mass-min/max`, `--sigma-axis`/`--sigma-min/max`. Supports `--*-normalized` flags.
+
+#### `luxar gsplat split`
+Split a dataset into multiple parts.
+```bash
+luxar gsplat split input.gsplats.zarr output_dir/ --parts 4
+luxar gsplat split input.gsplats.zarr output_dir/ --indices "100,500"
+luxar gsplat split input.gsplats.zarr output_dir/ --parts 3 --compress zip
+```
+
+#### `luxar gsplat slice`
+Slice splats by coordinate ranges (numpy-style syntax).
+```bash
+luxar gsplat slice input.gsplats.zarr output.gsplats.zarr "0:50, :, 10:90"
+luxar gsplat slice input.gsplats.zarr output.gsplats.zarr ":50, 20:80, :"
+```
+
+#### `luxar gsplat compare`
+Compare reconstruction quality against a reference volume (PSNR, SSIM, MSE).
+```bash
+luxar gsplat compare fitted.gsplats.zarr original.tiff
+luxar gsplat compare fitted.gsplats.zarr original.npy --device cuda --output-json metrics.json
+```
+
+#### Tiled Fitting
+For large volumes, use tiled fitting with Hann cosine apodization:
+```bash
+luxar gsplat fit large.zarr splats.gsplats.zarr --tiled --tile-size 256 --overlap 32
+luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32
+```
+
+
 ## Key Features
 
 - **Browser Integration**: Automatic browser opening for viewer commands
@@ -108,7 +184,7 @@ Custom static file handler that provides:
 - `open_browser()` - Cross-platform browser opening
 - `check_viewer_built()` - Verify viewer dist exists
 - `build_viewer()` - Build viewer using pnpm
-- `find_available_port()` - Find free ports for servers
+- `find_available_port()` - Find free ports for servers (supports end_port shorthand)
 - `format_tree_node()` - Format hierarchical displays
 - `get_zarr_info()` - Extract comprehensive zarr metadata
 

@@ -26,7 +26,7 @@ export function getDefaultRenderingSettings(): RenderingSettings {
 const VALID_TONE_MAPPINGS = ['None', 'Linear', 'Reinhard', 'Cineon', 'ACES', 'AgX', 'Neutral'];
 
 /** Valid control types */
-const VALID_CONTROL_TYPES = ['orbit', 'arcball', 'fly'];
+const VALID_CONTROL_TYPES = ['orbit', 'fly', 'ortho'];
 
 /** Valid AO quality levels */
 const VALID_AO_QUALITIES = ['low', 'medium', 'high', 'ultra'];
@@ -65,7 +65,9 @@ export function validateRenderingSettings(settings: Partial<RenderingSettings>):
   merged.bloomRadius = clampOrDefault(merged.bloomRadius, defaults.bloomRadius, 0, 10);
   merged.bloomLevels = clampOrDefault(merged.bloomLevels, defaults.bloomLevels, 1, 12);
   merged.bloomLevels = Math.round(merged.bloomLevels);
-  merged.hdrMultiplier = clampOrDefault(merged.hdrMultiplier, defaults.hdrMultiplier, 0, Infinity);
+  merged.exposure = clampOrDefault(merged.exposure, defaults.exposure, -5, 5);
+  merged.globalOffset = clampOrDefault(merged.globalOffset, defaults.globalOffset, -1, 1);
+  merged.globalGamma = clampOrDefault(merged.globalGamma, defaults.globalGamma, 0.1, 10);
   merged.msaaSamples = clampMSAASamples(merged.msaaSamples);
   merged.dofStrength = clampOrDefault(merged.dofStrength, defaults.dofStrength, 0, 1);
   merged.vignetteDarkness = clampOrDefault(
