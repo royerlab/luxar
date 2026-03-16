@@ -81,7 +81,8 @@ def downscale_volume(
     sigma = tuple(f / 2.0 if f > 1 else 0.0 for f in factors)
     blurred = gaussian_filter(V.astype(np.float32), sigma=sigma)
     slices = tuple(slice(None, None, f) for f in factors)
-    return blurred[slices]
+    result: np.ndarray = blurred[slices]
+    return result
 
 
 def rescale_centers(
