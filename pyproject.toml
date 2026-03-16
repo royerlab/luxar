@@ -269,6 +269,8 @@ module = [
     "napari",
     "napari.*",
     "numpy.*",
+    "scipy",
+    "scipy.*",
     "metal_splatting_backend",
     "setuptools",
     "torch.utils.cpp_extension",
