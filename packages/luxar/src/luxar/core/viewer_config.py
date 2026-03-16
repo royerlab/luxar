@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Valid enum values (must match TypeScript RenderingSettings union types)
 VALID_TONE_MAPPINGS = ("None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral")
-VALID_CONTROL_TYPES = ("orbit", "arcball", "fly", "ortho")
+VALID_CONTROL_TYPES = ("orbit", "fly", "ortho")
 VALID_FOV_PRESETS = (
     "28mm Wide",
     "35mm",
