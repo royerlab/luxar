@@ -326,6 +326,16 @@ source = ["packages/luxar/src/luxar"]
 omit = [
     "*/tests/*",
     "*/__init__.py",
+    "*/demos/*",
+    "*/utils/demos.py",
+    "*/utils/download.py",
+    "*/utils/paths.py",
+    "*/utils/_umap_utils.py",
+    "*/gsplats/batch/*",
+    "*/gsplats/gpu_profile.py",
+    "*/gsplats/demos/*",
+    "*/gsplats/models/gsplats/cuda/*",
+    "*/gsplats/models/gsplats/metal/*",
 ]
 
 [tool.coverage.report]
