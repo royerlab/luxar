@@ -240,7 +240,7 @@ class TestViewerConfig:
             ViewerConfig(control_type="trackball")
 
     def test_valid_control_types(self) -> None:
-        for ct in ("orbit", "arcball", "fly"):
+        for ct in ("orbit", "fly", "ortho"):
             ViewerConfig(control_type=ct)
 
     def test_invalid_exposure_out_of_range(self) -> None:

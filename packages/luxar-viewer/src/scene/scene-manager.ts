@@ -270,6 +270,11 @@ export class SceneManager extends THREE.EventDispatcher<{
     const hdrCapabilities = detectHDRCapabilities(this.renderer);
     logHDRCapabilities(hdrCapabilities);
     configureHDRRenderer(this.renderer, hdrCapabilities);
+
+    // Immediately clear to the scene background color to avoid a white flash
+    // before the first frame renders (alpha:false makes the canvas opaque white by default)
+    this.renderer.setClearColor(config.scene.backgroundColor);
+    this.renderer.clear();
   }
 
   /**

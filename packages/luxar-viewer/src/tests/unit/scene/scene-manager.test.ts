@@ -30,6 +30,7 @@ vi.mock('three', async () => {
     setSize() {}
     setPixelRatio() {}
     setClearColor() {}
+    clear() {}
     render() {}
     dispose() {}
     getContext() {
