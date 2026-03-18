@@ -69,7 +69,6 @@ class FitConfig:
     asymmetric_penalty: Optional[float]      # Over-prediction penalty factor (default 10.0)
     l1_amp: Optional[float]                  # L1 regularization on amplitudes (default: 0.1 * lr)
     l1_diag: Optional[float]                 # L1 regularization on diagonal elements (default: 0.01 * lr)
-    l1_sharpness: Optional[float]            # L1 regularization on sharpness offsets (default: 0.01 * lr)
 
     # Scheduler parameters
     scheduler_type: str                      # "plateau" or "exponential"
@@ -180,7 +179,6 @@ class OptimizationResults:
     centers: torch.Tensor                  # Best centers, shape (N, d)
     Ls: torch.Tensor                       # Best Cholesky factors, shape (N, d, d)
     amps: torch.Tensor                     # Best amplitudes, shape (N,)
-    sharpness: torch.Tensor                # Best sharpness values, shape (N,)
 
     # Optimization metadata
     converged_early: bool                  # True if convergence criterion met before n_iters
@@ -219,7 +217,6 @@ def prepare_fit_config(
     asymmetric_penalty: Optional[float] = 10.0,
     l1_amp: Optional[float] = None,
     l1_diag: Optional[float] = None,
-    l1_sharpness: Optional[float] = None,
     sigma_min_diag: Optional[Sequence[float] | float] = None,  # Per-dimension (float is broadcast)
     sigma_max_diag: Optional[Sequence[float]] = None,  # Per-dimension
     truncate: float = 3.0,
@@ -355,7 +352,6 @@ be immediately clamped to 1.0, causing poor reconstruction.
 # Default: proportional to base learning rate for consistent sparsity pressure
 l1_amp_final = l1_amp if l1_amp is not None else (0.1 * lr)  # 10% of base LR
 l1_diag_final = l1_diag if l1_diag is not None else (0.01 * lr)  # 1% of base LR
-l1_sharpness_final = l1_sharpness if l1_sharpness is not None else (0.01 * lr)  # 1% of base LR
 ```
 
 **Rationale**: L1 regularization proportional to LR ensures consistent sparsity pressure across different learning rate choices and works correctly with gradient dilution compensation.
@@ -428,7 +424,7 @@ model = GaussianSplatModel(
 )
 ```
 
-**Note**: GaussianSplatModel internally handles parameter transformations (logit for centers, inverse softplus for amplitudes/diagonals, zero initialization for sharpness offsets).
+**Note**: GaussianSplatModel internally handles parameter transformations (logit for centers, inverse softplus for amplitudes/diagonals).
 
 **GaussianSplatModel Initialization Logic**:
 1. **Centers**: Transform to logit space
@@ -460,11 +456,6 @@ model = GaussianSplatModel(
 
    # Transform to raw space
    raw_a = stable_inverse_softplus(torch.tensor(intensities, dtype=torch.float32, device=device))
-   ```
-
-5. **Sharpness Offsets**: Initialize to zero (standard Gaussian, s=2)
-   ```python
-   sharpness_offsets_raw = torch.zeros(N, dtype=torch.float32, device=device)
    ```
 
 **Optimizer Setup**:
@@ -539,10 +530,6 @@ def loss_fn(pred: torch.Tensor) -> torch.Tensor:
     # 3. Add L1 regularization on diagonal elements (if enabled)
     if l1_diag is not None and l1_diag > 0:
         data = data + l1_diag * torch.mean(torch.abs(F.softplus(model.raw_L_diag)))
-
-    # 4. Add L1 regularization on sharpness offsets (if enabled)
-    if l1_sharpness is not None and l1_sharpness > 0:
-        data = data + l1_sharpness * torch.mean(torch.abs(model.sharpness_offsets_raw))
 
     return data  # Returns loss only, not statistics
 ```
@@ -661,7 +648,6 @@ best_max_abs_error = float('inf')
 best_centers = None
 best_Ls = None
 best_amps = None
-best_sharpness = None
 best_iteration = 0
 best_loss = float('inf')
 converged_early = False
@@ -713,11 +699,10 @@ for iteration in range(n_iters):
         best_iteration = iteration
 
         # Save current parameters (deep copy of tensors directly)
-        centers, Ls, amps, sharpness = components.model.current_params()
+        centers, Ls, amps = components.model.current_params()
         best_centers = centers.detach().clone()
         best_Ls = Ls.detach().clone()
         best_amps = amps.detach().clone()
-        best_sharpness = sharpness.detach().clone()
 
     # 8. Convergence check
     if max_abs_error < convergence_threshold:
@@ -759,7 +744,6 @@ return OptimizationResults(
     centers=best_centers,
     Ls=best_Ls,
     amps=best_amps,
-    sharpness=best_sharpness,
     converged_early=converged_early,
     early_stopped=early_stopped,
     actual_iters=iteration + 1,
@@ -819,7 +803,6 @@ def finalize_results(
 centers_np = optimization_results.centers.cpu().numpy()      # Shape: (N, d)
 Ls_np = optimization_results.Ls.cpu().numpy()                # Shape: (N, d, d)
 amps_np = optimization_results.amps.cpu().numpy()            # Shape: (N,)
-sharpness_np = optimization_results.sharpness.cpu().numpy()  # Shape: (N,)
 ```
 
 **Post-fit Culling**:
@@ -827,7 +810,7 @@ After extracting parameters, splats with amplitude below a noise floor are remov
 ```python
 threshold = cull_ratio * max_abs_error  # e.g., 0.01 * max_abs_error for "standard" preset
 mask = amps > threshold
-# Apply mask to all arrays (centers, Ls, amps, sharpness)
+# Apply mask to all arrays (centers, Ls, amps)
 ```
 This removes splats that contribute negligibly to the reconstruction, reducing file size and rendering cost.
 
@@ -870,19 +853,11 @@ stats = {
     "n_splats": len(amps_np),
     "n_seeds": preprocessed_data.N,  # Number of initial seeds
 
-    # Sharpness statistics
-    "sharpness_mean": float(np.mean(sharpness_np)),
-    "sharpness_std": float(np.std(sharpness_np)),
-    "sharpness_min": float(np.min(sharpness_np)),
-    "sharpness_max": float(np.max(sharpness_np)),
-    "sharpness_median": float(np.median(sharpness_np)),
-
     # Configuration
     "loss_type": config.loss_type,
     "asymmetric_penalty": config.asymmetric_penalty,
     "l1_amp": config.l1_amp,
     "l1_diag": config.l1_diag,
-    "l1_sharpness": config.l1_sharpness,
     "convergence_threshold": preprocessed_data.max_abs_error,
 
     # Movie frames
@@ -911,7 +886,6 @@ return GSplatData(
     centers=centers_np,
     amplitudes=amplitudes_rescaled,
     cholesky_factors=cholesky_factors_packed,
-    sharpnesses=sharpness_np,
     stats=stats
 )
 ```
@@ -939,7 +913,7 @@ def display_compression_analysis(
     V : np.ndarray
         Original input image/volume
     params : np.ndarray
-        Fitted parameters [centers, packed_cholesky, sharpness]
+        Fitted parameters [centers, packed_cholesky]
     amps : np.ndarray
         Fitted amplitudes
     """
@@ -1086,7 +1060,6 @@ effective_lr = base_lr * gradient_dilution_factor
 ```python
 l1_amp = 0.1 * lr      # 10% of base LR
 l1_diag = 0.01 * lr    # 1% of base LR
-l1_sharpness = 0.01 * lr  # 1% of base LR
 ```
 
 **Benefits**:

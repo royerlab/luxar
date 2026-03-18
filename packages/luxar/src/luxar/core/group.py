@@ -384,9 +384,6 @@ class Group(Node):
         colors: Optional[
             Union[ColorArray, np.ndarray[Any, Any], Sequence[float | int]]
         ] = None,
-        sharpness: Optional[
-            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float]
-        ] = None,
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
         dim_order: Optional[List[str]] = None,
@@ -402,7 +399,6 @@ class Group(Node):
             amplitudes: (N,) array or scalar for intensities
             cholesky_factors: (N, k) packed Cholesky factors, k=D*(D+1)/2
             colors: Optional (N, 3) array, RGB tuple, or None
-            sharpness: Optional (N,) array, scalar, or None
             parent: Parent node (default: this group)
             extend_to_all: Visibility extension across non-displayed dimensions
             dim_order: Map data columns to scene dimensions by name.
@@ -461,9 +457,6 @@ class Group(Node):
 
             parent_node = parent or self
 
-            if sharpness is None:
-                sharpness = 2.0
-
             writer = scene._writer
             assert writer is not None, "Scene writer is not initialized"
             path = f"{parent_node.path}/{name}" if parent_node.path else name
@@ -473,7 +466,6 @@ class Group(Node):
                 amplitudes=amplitudes,
                 cholesky_factors=chol_arr,
                 colors=cast(Any, colors),
-                sharpness=sharpness,
                 **attrs,
             )
 
@@ -528,7 +520,6 @@ class Group(Node):
             amplitudes=result.amplitudes,
             cholesky_factors=result.cholesky_factors,
             colors=result.colors,
-            sharpness=result.sharpnesses,
             parent=parent,
             extend_to_all=extend_to_all,
             dim_order=dim_order,

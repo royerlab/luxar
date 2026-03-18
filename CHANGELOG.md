@@ -6,6 +6,15 @@ All notable changes to Luxar are documented in this file.
 
 ### March 2026
 
+#### Breaking Changes
+
+**Removed sharpness from GSplats**
+- Removed `sharpness` attribute from Gaussian Splats (GSplats) geometry type
+- Points and Lines retain their sharpness attribute
+- GSplats now use the standard Gaussian falloff (equivalent to sharpness=2.0) without per-splat configurability
+- Affected formats: `.gsplats.zarr` standalone format and embedded Luxar scene format
+- Migration: existing `.gsplats.zarr` files with sharpness arrays will ignore the sharpness data on load
+
 #### Major Features
 
 **Per-Node GOG Color Model & Global EOG Controls**

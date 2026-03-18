@@ -218,13 +218,12 @@ class TestParameterRetrieval:
         setup = simple_2d_setup
         model = GaussianSplatModel(**setup)
 
-        centers, L, amps, sharpness = model.current_params()
+        centers, L, amps = model.current_params()
 
         # Check shapes
         assert centers.shape == (3, 2)
         assert L.shape == (3, 2, 2)
         assert amps.shape == (3,)
-        assert sharpness.shape == (3,)
 
         # Check data types
         assert centers.dtype == torch.float32
@@ -252,7 +251,7 @@ class TestParameterRetrieval:
         setup = simple_2d_setup
         model = GaussianSplatModel(**setup)
 
-        centers, L, amps, sharpness = model.current_params()
+        centers, L, amps = model.current_params()
 
         # Check diagonal constraints
         L_np = L.detach().cpu().numpy()
@@ -267,7 +266,7 @@ class TestParameterRetrieval:
         setup = simple_2d_setup
         model = GaussianSplatModel(**setup)
 
-        centers, L, amps, sharpness = model.current_params()
+        centers, L, amps = model.current_params()
 
         # Test static method
         sigma_diag = model._sigma_diag_from_L(L[0])  # Single matrix

@@ -87,7 +87,6 @@ with asection("GSplats 3D Viewer Test"):
         aprint(f"  Centers shape: {result.centers.shape}")
         aprint(f"  Cholesky shape: {result.cholesky_factors.shape}")
         aprint(f"  Amplitudes shape: {result.amplitudes.shape}")
-        aprint(f"  Sharpness shape: {result.sharpnesses.shape}")
 
     with asection("Creating Luxar scene"):
         # Create scene with LuxarZarrCompiler
@@ -102,7 +101,6 @@ with asection("GSplats 3D Viewer Test"):
                 centers=result.centers,
                 cholesky_factors=result.cholesky_factors,
                 amplitudes=result.amplitudes,
-                sharpness=result.sharpnesses,
                 colors=None,  # Default white color
                 opacity=1.0,
                 blending_mode="additive",

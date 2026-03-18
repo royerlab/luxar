@@ -164,7 +164,7 @@ def apply_dynamic_operations(
     """
     with torch.no_grad():
         # === Cache model parameters once (avoid repeated current_params() calls) ===
-        centers, Ls, amps, _ = model.current_params()
+        centers, Ls, amps = model.current_params()
 
         # Compute residual image
         residual = V_target - V_pred
@@ -671,7 +671,6 @@ def _reset_optimizer_state_batch(
         model.raw_L_diag,
         model.L_off,
         model.raw_a,
-        model.sharpness_offsets_raw,
     ]
 
     for param in params_to_reset:
@@ -772,18 +771,12 @@ def _relocate_splats_batch(
         (n_relocations, n_off_diag), device=device, dtype=torch.float32
     )
 
-    # === BATCH 5: Reset sharpness ===
-    sharpness_offset_new = torch.zeros(
-        n_relocations, device=device, dtype=torch.float32
-    )
-
     # === BATCH UPDATE: Update all model parameters at once ===
     # Single indexing operation per parameter (much faster than loop)
     model.raw_mu.data[splat_indices_t] = raw_mu_new
     model.raw_L_diag.data[splat_indices_t] = raw_L_diag_new
     model.L_off.data[splat_indices_t] = L_off_new
     model.raw_a.data[splat_indices_t] = raw_a_new
-    model.sharpness_offsets_raw.data[splat_indices_t] = sharpness_offset_new
 
     # === OPTIMIZER STATE RESET: Zero out Adam momentum/variance for relocated splats ===
     if optimizer is not None:

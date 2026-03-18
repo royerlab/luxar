@@ -766,7 +766,6 @@ async function projectGSplatsTo3D(params: {
     choleskyFactors,
     amplitudes,
     colors,
-    sharpness,
     displayDims,
     slicePosition,
     ndim,
@@ -802,15 +801,6 @@ async function projectGSplatsTo3D(params: {
   // Minimum amplitude threshold
   const minAmplitude = 1e-6;
 
-  // Prepare sharpness array (default to 2.0 if not provided)
-  let sharpnessF32: Float32Array;
-  if (sharpness) {
-    sharpnessF32 = sharpness;
-  } else {
-    sharpnessF32 = new Float32Array(splatCount);
-    sharpnessF32.fill(2.0);
-  }
-
   // Step 0: Pre-filter discrete dimensions (TypeScript, before WASM).
   // Splats whose center is more than half a step away in any discrete dim are invisible.
   const discreteVisibility = new Uint8Array(splatCount);
@@ -841,7 +831,6 @@ async function projectGSplatsTo3D(params: {
     positions,
     choleskyFactors,
     amplitudes,
-    sharpnessF32,
     slicePosF32,
     continuousHiddenDimsU32,
     ndim,
@@ -907,11 +896,7 @@ async function projectGSplatsTo3D(params: {
     outAmplitudes
   );
 
-  // Step 5: Compact sharpness using WASM
-  const outSharpness = new Float32Array(visibleCount);
-  wasmModule.compact_by_mask(sharpnessF32, visibility, splatCount, 1, outSharpness);
-
-  // Step 6: Handle colors
+  // Step 5: Handle colors
   const outColors = new Float32Array(visibleCount * 3);
   if (colors) {
     // Convert to Float32Array if needed
@@ -941,7 +926,6 @@ async function projectGSplatsTo3D(params: {
     choleskyFactors3D.buffer as ArrayBuffer,
     outAmplitudes.buffer as ArrayBuffer,
     outColors.buffer as ArrayBuffer,
-    outSharpness.buffer as ArrayBuffer,
   ];
 
   return transfer(
@@ -950,7 +934,7 @@ async function projectGSplatsTo3D(params: {
       choleskyFactors3D,
       amplitudes: outAmplitudes,
       colors: outColors,
-      sharpness: outSharpness,
+      sharpness: new Float32Array(0), // Kept for API compatibility but unused
       visibleCount,
     },
     transferables

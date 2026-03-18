@@ -237,27 +237,6 @@ def info_dataset(
             )
 
         # ================================================================
-        # Sharpness Statistics
-        # ================================================================
-        aprint("\n" + "─" * 70)
-        aprint("SHARPNESS ANALYSIS")
-        aprint("─" * 70)
-
-        _print_statistics_table(data.sharpnesses, "Sharpness")
-
-        # Count standard Gaussians (s=2.0)
-        n_standard = np.sum(np.abs(data.sharpnesses - 2.0) < 1e-5)
-        pct_standard = (n_standard / n_splats) * 100
-        aprint(f"\nStandard Gaussians (s=2.0): {n_standard:,} ({pct_standard:.1f}%)")
-
-        if show_histograms and n_standard < n_splats:  # Only if there's variation
-            aprint(
-                _ascii_histogram(
-                    data.sharpnesses, bins=bins, title="Sharpness Distribution"
-                )
-            )
-
-        # ================================================================
         # Color Information
         # ================================================================
         if data.colors is not None:
@@ -956,13 +935,6 @@ def filter_dataset(
     eccentricity_max: Optional[float] = typer.Option(
         None, "--eccentricity-max", help="Maximum eccentricity"
     ),
-    # Sharpness
-    sharpness_min: Optional[float] = typer.Option(
-        None, "--sharpness-min", help="Minimum sharpness"
-    ),
-    sharpness_max: Optional[float] = typer.Option(
-        None, "--sharpness-max", help="Maximum sharpness"
-    ),
     # Mass
     mass_min: Optional[float] = typer.Option(
         None, "--mass-min", help="Minimum mass (amplitude * volume)"
@@ -1004,7 +976,6 @@ def filter_dataset(
         --amplitude-min/max: Intensity thresholds
         --volume-min/max: Size thresholds (characteristic length * truncate)
         --eccentricity-min/max: Shape (1.0 = sphere, higher = elongated)
-        --sharpness-min/max: Sharpness values (2.0 = standard Gaussian)
         --mass-min/max: Amplitude * volume (physical importance)
         --sigma-axis + --sigma-min/max: Per-axis standard deviation
 
@@ -1070,8 +1041,6 @@ def filter_dataset(
                     )
                 if eccentricity_min is not None or eccentricity_max is not None:
                     aprint(f"  eccentricity: [{eccentricity_min}, {eccentricity_max}]")
-                if sharpness_min is not None or sharpness_max is not None:
-                    aprint(f"  sharpness: [{sharpness_min}, {sharpness_max}]")
                 if mass_min is not None or mass_max is not None:
                     norm = " (normalized)" if mass_normalized else ""
                     aprint(f"  mass: [{mass_min}, {mass_max}]{norm}")
@@ -1090,8 +1059,6 @@ def filter_dataset(
                     amplitude_normalized=amplitude_normalized,
                     eccentricity_min=eccentricity_min,
                     eccentricity_max=eccentricity_max,
-                    sharpness_min=sharpness_min,
-                    sharpness_max=sharpness_max,
                     mass_min=mass_min,
                     mass_max=mass_max,
                     mass_normalized=mass_normalized,
@@ -1489,7 +1456,7 @@ def fit_volume(
     Presets:
         draft    - Fast preview (500 iters, aggressive culling)
         standard - Balanced quality/speed (3000 iters)
-        hifi     - Maximum quality (6000 iters, learnable sharpness)
+        hifi     - Maximum quality (6000 iters)
 
     Examples:
         luxar gsplat fit volume.npy splats.gsplats.zarr --preset draft --seeds 1000
@@ -1689,7 +1656,6 @@ def fit_volume(
                     cholesky_factors=rescale_cholesky_packed(
                         result.cholesky_factors, tiled_downscale_factors
                     ),
-                    sharpnesses=result.sharpnesses,
                     colors=result.colors,
                     stats=result.stats,
                 )

@@ -66,7 +66,7 @@ Each Gaussian splat is parameterized using covariance matrix representation:
 - **Amplitudes (a)**: Softplus activation for non-negativity
 - **Sharpness (s)**: Exponential mapping `s = 2 * exp(s')` controls edge falloff (default s=2 for standard Gaussian)
 
-Mathematical form: `f(x) = a * exp(-0.5 * ||y||^s)` where `y = Σ^(-1/2) @ (x-μ)` and s controls edge sharpness
+Mathematical form: `f(x) = a * exp(-0.5 * ||y||^2)` where `y = Σ^(-1/2) @ (x-μ)` (standard Gaussian)
 
 The implementation avoids explicit matrix inversion by solving the triangular system `L @ y = (x-μ)`
 and computing the quadratic form as `||y||²`.
@@ -127,12 +127,12 @@ result = fit_gaussian_splats(
     # max_abs_error auto-set to 0.01 (1% of normalized range)
     # l1_amp auto-set to 0.1 * lr for proportional amplitude regularization
     # l1_diag auto-set to 0.01 * lr for mild diagonal regularization
-    # l1_sharpness auto-set to 0.01 * lr for standard Gaussian regularization (1% of base LR = 2% of sharpness LR)
+    # Standard Gaussian (s=2) is hardcoded
     # enable_dynamic_ops=True by default for optimal results
 )
 
 # 2. Access results and render directly - clean and simple!
-# Result contains: centers, amplitudes, cholesky_factors, sharpnesses, stats
+# Result contains: centers, amplitudes, cholesky_factors, stats
 reconstruction = render_gaussians_numpy(image.shape, result, truncate=3.0)
 
 ```
@@ -141,7 +141,6 @@ reconstruction = render_gaussians_numpy(image.shape, result, truncate=3.0)
 - `centers`: np.ndarray, shape (N, d) - Splat center positions
 - `amplitudes`: np.ndarray, shape (N,) - Non-negative amplitudes
 - `cholesky_factors`: np.ndarray, shape (N, d*(d+1)//2) - Packed Cholesky factors
-- `sharpnesses`: np.ndarray, shape (N,) - Per-splat sharpness values
 - `colors`: Optional[np.ndarray], shape (N, 3) - RGB colors (uint8 or float32 for HDR)
 - `stats`: Dict[str, Any] - Optimization statistics
 
@@ -736,7 +735,7 @@ result = load_gsplats('fitted.gsplats.zarr')
 # Access all fields
 print(f"Loaded {result.centers.shape[0]} splats")
 print(f"Has colors: {result.colors is not None}")
-print(f"Has sharpness: {result.sharpnesses is not None}")
+print(f"Has colors: {result.colors is not None}")
 
 # Render loaded splats
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
@@ -777,7 +776,7 @@ with LuxarZarrCompiler('scene.zarr') as compiler:
 
 **Benefits:**
 - Seamless integration with Luxar's scene graph system
-- Preserves all splat data (centers, amplitudes, covariance, colors, sharpness)
+- Preserves all splat data (centers, amplitudes, covariance, colors)
 - Enables hierarchical organization with transforms
 - Works with Luxar viewer for interactive visualization
 
@@ -791,7 +790,6 @@ result = GSplatData(
     centers=centers,
     amplitudes=amplitudes,
     cholesky_factors=cholesky_factors,
-    sharpnesses=sharpnesses,
     colors=np.random.rand(n_splats, 3).astype(np.float32),  # Add colors
     stats={}
 )

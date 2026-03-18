@@ -179,13 +179,12 @@ export function extract_cholesky_submatrix(
  * For each splat, computes:
  * 1. Difference vector in hidden dimensions
  * 2. Mahalanobis distance using hidden Cholesky submatrix
- * 3. Attenuation = exp(-0.5 * mahal^sharpness)
+ * 3. Attenuation = exp(-0.5 * mahal²) (standard Gaussian)
  * 4. Visibility = (amplitude * attenuation) >= threshold
  *
  * @param positions - Splat centers [splatCount * ndim]
  * @param cholesky - Packed Cholesky factors [splatCount * packedSize]
  * @param amplitudes - Splat amplitudes [splatCount]
- * @param sharpness - Per-splat sharpness values [splatCount]
  * @param slicePosition - Current slice position [ndim]
  * @param hiddenDims - Indices of hidden dimensions (sorted) [numHidden]
  * @param ndim - Total dimensionality
@@ -199,7 +198,6 @@ export function compute_gsplats_attenuation(
   positions: Float32Array,
   cholesky: Float32Array,
   amplitudes: Float32Array,
-  sharpness: Float32Array,
   slicePosition: Float32Array,
   hiddenDims: Uint32Array,
   ndim: number,
@@ -222,7 +220,6 @@ export function compute_gsplats_attenuation(
   for (let i = 0; i < splatCount; i++) {
     const centerOffset = i * ndim;
     const choleskyOffset = i * fullPackedSize;
-    const splatSharpness = sharpness[i];
 
     let attenuation: number;
 
@@ -242,8 +239,8 @@ export function compute_gsplats_attenuation(
       // Compute Mahalanobis distance (reuses pre-allocated y buffer)
       const mahalDist = mahalanobisDistanceInternal(diff, hiddenCholesky, numHidden, y);
 
-      // Attenuation = exp(-0.5 * mahal^sharpness)
-      attenuation = Math.exp(-0.5 * Math.pow(mahalDist, splatSharpness));
+      // Standard Gaussian attenuation (sharpness=2 hardcoded)
+      attenuation = Math.exp(-0.5 * mahalDist * mahalDist);
     }
 
     outputAttenuation[i] = attenuation;

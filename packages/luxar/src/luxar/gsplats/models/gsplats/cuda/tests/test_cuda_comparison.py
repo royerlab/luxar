@@ -68,11 +68,7 @@ class TestCUDAVsPyTorchReference:
             scale = torch.rand(1, device="cuda").item() * 1.5 + 0.5
             L[i] *= scale
 
-        # Amplitudes and sharpness
         amps = torch.rand(N, device="cuda", dtype=torch.float32) * 0.5 + 0.5
-        sharpness = (
-            torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
-        )  # Standard Gaussian
 
         # Compute conic for CUDA backend
         conic = cholesky_to_conic(L)
@@ -83,7 +79,6 @@ class TestCUDAVsPyTorchReference:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             truncate,
@@ -94,7 +89,7 @@ class TestCUDAVsPyTorchReference:
 
         # Run PyTorch reference
         pytorch_output = render_gaussians(
-            shape, centers, L, amps, sharpness, truncate, intensity_floor
+            shape, centers, L, amps, truncate, intensity_floor
         )
 
         # Move to CPU for comparison
@@ -165,9 +160,7 @@ class TestCUDAVsPyTorchReference:
             scale = torch.rand(1, device="cuda").item() * 2.0 + 0.5
             L[i] *= scale
 
-        # Amplitudes and sharpness
         amps = torch.rand(N, device="cuda", dtype=torch.float32) * 0.5 + 0.5
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         # Compute conic for CUDA backend
         conic = cholesky_to_conic(L)
@@ -178,7 +171,6 @@ class TestCUDAVsPyTorchReference:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             truncate,
@@ -189,7 +181,7 @@ class TestCUDAVsPyTorchReference:
 
         # Run PyTorch reference
         pytorch_output = render_gaussians(
-            shape, centers, L, amps, sharpness, truncate, intensity_floor
+            shape, centers, L, amps, truncate, intensity_floor
         )
 
         # Move to CPU for comparison
@@ -243,7 +235,6 @@ class TestCUDAVsPyTorchReference:
         centers = torch.tensor([center_pos], device="cuda", dtype=torch.float32)
         L = torch.eye(d, device="cuda", dtype=torch.float32).unsqueeze(0) * 2.0
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
-        sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -253,7 +244,6 @@ class TestCUDAVsPyTorchReference:
             centers,
             conic,
             amps,
-            sharpness,
             L_row_norms.contiguous(),
             list(shape),
             3.0,
@@ -263,7 +253,7 @@ class TestCUDAVsPyTorchReference:
         cuda_output = cuda_result[0].reshape(shape)
 
         # PyTorch output
-        pytorch_output = render_gaussians(shape, centers, L, amps, sharpness, 3.0, 1e-5)
+        pytorch_output = render_gaussians(shape, centers, L, amps, 3.0, 1e-5)
 
         cuda_cpu = cuda_output.cpu()
         pytorch_cpu = pytorch_output.cpu()
@@ -302,7 +292,7 @@ class TestCUDAVsPyTorchComprehensive:
     """Comprehensive CUDA vs PyTorch comparison tests.
 
     Tests ensure numerical correctness against PyTorch reference for:
-    2D/3D/4D, various splat shapes/sizes/sharpness, forward & backward.
+    2D/3D/4D, various splat shapes/sizes, forward & backward.
     """
 
     # =========================================================================
@@ -351,7 +341,6 @@ class TestCUDAVsPyTorchComprehensive:
 
         # Standard parameters
         amps = torch.ones(N, device="cuda", dtype=torch.float32) * 0.5
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
         truncate = 3.0
         intensity_floor = 1e-5
 
@@ -362,7 +351,6 @@ class TestCUDAVsPyTorchComprehensive:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             truncate,
@@ -373,7 +361,7 @@ class TestCUDAVsPyTorchComprehensive:
 
         # PyTorch reference
         pytorch_output = render_gaussians(
-            shape, centers, L, amps, sharpness, truncate, intensity_floor
+            shape, centers, L, amps, truncate, intensity_floor
         )
 
         # Compare with strict tolerances
@@ -412,7 +400,6 @@ class TestCUDAVsPyTorchComprehensive:
         )
 
         amps = torch.ones(N, device="cuda", dtype=torch.float32) * 0.5
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -420,7 +407,6 @@ class TestCUDAVsPyTorchComprehensive:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             3.0,
@@ -429,7 +415,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         cuda_output = cuda_result[0].reshape(shape)
 
-        pytorch_output = render_gaussians(shape, centers, L, amps, sharpness, 3.0, 1e-5)
+        pytorch_output = render_gaussians(shape, centers, L, amps, 3.0, 1e-5)
 
         # Strict tolerance - this will fail, flagging need for investigation
         self._assert_outputs_match(cuda_output, pytorch_output, "4D isotropic")
@@ -472,7 +458,6 @@ class TestCUDAVsPyTorchComprehensive:
                 L[i, j, 0] = np.random.uniform(-0.3, 0.3)
 
         amps = torch.rand(N, device="cuda", dtype=torch.float32) * 0.5 + 0.3
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
         truncate = 3.0
         intensity_floor = 1e-5
 
@@ -482,7 +467,6 @@ class TestCUDAVsPyTorchComprehensive:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             truncate,
@@ -492,7 +476,7 @@ class TestCUDAVsPyTorchComprehensive:
         cuda_output = cuda_result[0].reshape(shape)
 
         pytorch_output = render_gaussians(
-            shape, centers, L, amps, sharpness, truncate, intensity_floor
+            shape, centers, L, amps, truncate, intensity_floor
         )
 
         self._assert_outputs_match(cuda_output, pytorch_output, f"{dim}D anisotropic")
@@ -527,7 +511,6 @@ class TestCUDAVsPyTorchComprehensive:
                 L[i, j, 0] = np.random.uniform(-0.3, 0.3)
 
         amps = torch.rand(N, device="cuda", dtype=torch.float32) * 0.5 + 0.3
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -535,7 +518,6 @@ class TestCUDAVsPyTorchComprehensive:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             3.0,
@@ -544,7 +526,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         cuda_output = cuda_result[0].reshape(shape)
 
-        pytorch_output = render_gaussians(shape, centers, L, amps, sharpness, 3.0, 1e-5)
+        pytorch_output = render_gaussians(shape, centers, L, amps, 3.0, 1e-5)
 
         self._assert_outputs_match(cuda_output, pytorch_output, "4D anisotropic")
 
@@ -587,7 +569,6 @@ class TestCUDAVsPyTorchComprehensive:
                     L[i, j, j] = np.random.uniform(0.5, 1.0)  # Narrow
 
         amps = torch.ones(N, device="cuda", dtype=torch.float32) * 0.7
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
         truncate = 3.0
         intensity_floor = 1e-5
 
@@ -597,7 +578,6 @@ class TestCUDAVsPyTorchComprehensive:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             truncate,
@@ -607,7 +587,7 @@ class TestCUDAVsPyTorchComprehensive:
         cuda_output = cuda_result[0].reshape(shape)
 
         pytorch_output = render_gaussians(
-            shape, centers, L, amps, sharpness, truncate, intensity_floor
+            shape, centers, L, amps, truncate, intensity_floor
         )
 
         self._assert_outputs_match(cuda_output, pytorch_output, f"{dim}D elongated")
@@ -644,7 +624,6 @@ class TestCUDAVsPyTorchComprehensive:
                     L[i, j, j] = np.random.uniform(0.5, 1.0)
 
         amps = torch.ones(N, device="cuda", dtype=torch.float32) * 0.7
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -652,7 +631,6 @@ class TestCUDAVsPyTorchComprehensive:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             3.0,
@@ -661,7 +639,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         cuda_output = cuda_result[0].reshape(shape)
 
-        pytorch_output = render_gaussians(shape, centers, L, amps, sharpness, 3.0, 1e-5)
+        pytorch_output = render_gaussians(shape, centers, L, amps, 3.0, 1e-5)
 
         self._assert_outputs_match(cuda_output, pytorch_output, "4D elongated")
 
@@ -720,7 +698,6 @@ class TestCUDAVsPyTorchComprehensive:
         )
 
         amps = torch.ones(N, device="cuda", dtype=torch.float32) * 0.5
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
         truncate = 3.0
         intensity_floor = 1e-5
 
@@ -730,7 +707,6 @@ class TestCUDAVsPyTorchComprehensive:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             truncate,
@@ -740,7 +716,7 @@ class TestCUDAVsPyTorchComprehensive:
         cuda_output = cuda_result[0].reshape(shape)
 
         pytorch_output = render_gaussians(
-            shape, centers, L, amps, sharpness, truncate, intensity_floor
+            shape, centers, L, amps, truncate, intensity_floor
         )
 
         self._assert_outputs_match(
@@ -751,146 +727,7 @@ class TestCUDAVsPyTorchComprehensive:
     # Forward Pass Tests - Parametrized by Sharpness
     # =========================================================================
 
-    @pytest.mark.parametrize("dim", [2, 3])
-    @pytest.mark.parametrize("sharpness_val", [1.0, 1.5, 2.0, 2.5, 3.0, 4.0])
-    def test_forward_various_sharpness(self, dim: int, sharpness_val: float):
-        """Test forward pass with various sharpness values.
 
-        Sharpness controls the falloff profile:
-        - s < 2: Sub-gaussian (softer, wider tails)
-        - s = 2: Standard Gaussian
-        - s > 2: Super-gaussian (sharper, more compact)
-        """
-        import cuda_splatting_backend  # noqa: F401
-
-        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
-            cholesky_to_conic,
-        )
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
-
-        np.random.seed(321 + dim + int(sharpness_val * 10))
-        N = 12
-
-        if dim == 2:
-            shape = (48, 48)
-            tile_size = 16
-        else:
-            shape = (24, 24, 24)
-            tile_size = 8
-
-        margin = 4
-        max_coord = min(shape) - margin
-        centers = (
-            torch.rand(N, dim, device="cuda", dtype=torch.float32)
-            * (max_coord - margin)
-            + margin
-        )
-
-        # Standard size splats
-        L = (
-            torch.eye(dim, device="cuda", dtype=torch.float32)
-            .unsqueeze(0)
-            .expand(N, -1, -1)
-            .clone()
-            * 1.5
-        )
-
-        amps = torch.ones(N, device="cuda", dtype=torch.float32) * 0.6
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * sharpness_val
-        truncate = 3.0
-        intensity_floor = 1e-5
-
-        conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
-        cuda_result = cuda_splatting_backend.forward(
-            centers.contiguous(),
-            conic.contiguous(),
-            amps.contiguous(),
-            sharpness.contiguous(),
-            L_row_norms.contiguous(),
-            list(shape),
-            truncate,
-            intensity_floor,
-            tile_size,
-        )
-        cuda_output = cuda_result[0].reshape(shape)
-
-        pytorch_output = render_gaussians(
-            shape, centers, L, amps, sharpness, truncate, intensity_floor
-        )
-
-        # Sub-gaussian sharpness (s < 2) has slightly higher numerical differences
-        atol = 0.015 if sharpness_val < 1.5 else 0.01
-        self._assert_outputs_match(
-            cuda_output, pytorch_output, f"{dim}D sharpness={sharpness_val}", atol=atol
-        )
-
-    @pytest.mark.parametrize("dim", [2, 3])
-    def test_forward_mixed_sharpness(self, dim: int):
-        """Test forward pass with mixed sharpness values per splat."""
-        import cuda_splatting_backend  # noqa: F401
-
-        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
-            cholesky_to_conic,
-        )
-        from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
-
-        np.random.seed(654 + dim)
-        N = 20
-
-        if dim == 2:
-            shape = (48, 48)
-            tile_size = 16
-        else:
-            shape = (24, 24, 24)
-            tile_size = 8
-
-        margin = 4
-        max_coord = min(shape) - margin
-        centers = (
-            torch.rand(N, dim, device="cuda", dtype=torch.float32)
-            * (max_coord - margin)
-            + margin
-        )
-
-        L = (
-            torch.eye(dim, device="cuda", dtype=torch.float32)
-            .unsqueeze(0)
-            .expand(N, -1, -1)
-            .clone()
-            * 1.5
-        )
-
-        amps = torch.rand(N, device="cuda", dtype=torch.float32) * 0.5 + 0.3
-        # Mix of sharpness values: some sub-gaussian, some standard, some super-gaussian
-        sharpness = torch.tensor(
-            [1.0, 1.5, 2.0, 2.5, 3.0, 4.0] * 4, device="cuda", dtype=torch.float32
-        )[:N]
-        truncate = 3.0
-        intensity_floor = 1e-5
-
-        conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
-        cuda_result = cuda_splatting_backend.forward(
-            centers.contiguous(),
-            conic.contiguous(),
-            amps.contiguous(),
-            sharpness.contiguous(),
-            L_row_norms.contiguous(),
-            list(shape),
-            truncate,
-            intensity_floor,
-            tile_size,
-        )
-        cuda_output = cuda_result[0].reshape(shape)
-
-        pytorch_output = render_gaussians(
-            shape, centers, L, amps, sharpness, truncate, intensity_floor
-        )
-
-        self._assert_outputs_match(
-            cuda_output, pytorch_output, f"{dim}D mixed sharpness"
-        )
 
     # =========================================================================
     # Backward Pass Tests
@@ -1022,7 +859,7 @@ class TestCUDAVsPyTorchComprehensive:
     def test_backward_with_various_scales(self, dim: int, scale: float):
         """Test backward pass produces finite gradients for various splat scales.
 
-        Note: GaussianSplatModelCUDA uses default sharpness s=2 (standard Gaussian).
+        Note: GaussianSplatModelCUDA uses standard Gaussian (s=2).
         This test verifies gradients are correct for different covariance scales.
         """
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
@@ -1162,7 +999,6 @@ class TestCUDAVsPyTorchComprehensive:
         )
         L = torch.eye(dim, device="cuda", dtype=torch.float32).unsqueeze(0) * 2.0
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
-        sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -1170,7 +1006,6 @@ class TestCUDAVsPyTorchComprehensive:
             center,
             conic,
             amps,
-            sharpness,
             L_row_norms.contiguous(),
             list(shape),
             3.0,
@@ -1179,7 +1014,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         cuda_output = cuda_result[0].reshape(shape)
 
-        pytorch_output = render_gaussians(shape, center, L, amps, sharpness, 3.0, 1e-5)
+        pytorch_output = render_gaussians(shape, center, L, amps, 3.0, 1e-5)
 
         # Peak should be at center for both
         cuda_peak = cuda_output.argmax()
@@ -1217,7 +1052,6 @@ class TestCUDAVsPyTorchComprehensive:
         )
         L = torch.eye(dim, device="cuda", dtype=torch.float32).unsqueeze(0) * 2.0
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
-        sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -1225,7 +1059,6 @@ class TestCUDAVsPyTorchComprehensive:
             center,
             conic,
             amps,
-            sharpness,
             L_row_norms.contiguous(),
             list(shape),
             3.0,
@@ -1234,7 +1067,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         cuda_output = cuda_result[0].reshape(shape)
 
-        render_gaussians(shape, center, L, amps, sharpness, 3.0, 1e-5)
+        render_gaussians(shape, center, L, amps, 3.0, 1e-5)
 
         # Verify CUDA output is non-zero (basic sanity check)
         assert cuda_output.max() > 0, "4D CUDA output is all zeros - rendering failed"
@@ -1290,7 +1123,6 @@ class TestCUDAVsPyTorchComprehensive:
         amps = (
             torch.ones(N, device="cuda", dtype=torch.float32) * 0.1
         )  # Small amplitudes that sum
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -1298,7 +1130,6 @@ class TestCUDAVsPyTorchComprehensive:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             3.0,
@@ -1307,7 +1138,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         cuda_output = cuda_result[0].reshape(shape)
 
-        pytorch_output = render_gaussians(shape, centers, L, amps, sharpness, 3.0, 1e-5)
+        pytorch_output = render_gaussians(shape, centers, L, amps, 3.0, 1e-5)
 
         self._assert_outputs_match(cuda_output, pytorch_output, f"{dim}D overlapping")
 
@@ -1346,7 +1177,6 @@ class TestCUDAVsPyTorchComprehensive:
             * 1.5
         )
         amps = torch.ones(N, device="cuda", dtype=torch.float32) * 0.5
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -1354,7 +1184,6 @@ class TestCUDAVsPyTorchComprehensive:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             3.0,
@@ -1363,7 +1192,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         cuda_output = cuda_result[0].reshape(shape)
 
-        pytorch_output = render_gaussians(shape, centers, L, amps, sharpness, 3.0, 1e-5)
+        pytorch_output = render_gaussians(shape, centers, L, amps, 3.0, 1e-5)
 
         self._assert_outputs_match(
             cuda_output, pytorch_output, f"{dim}D boundaries", rtol=0.2

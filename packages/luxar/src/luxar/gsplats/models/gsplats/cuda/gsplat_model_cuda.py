@@ -114,7 +114,6 @@ class CUDASplatFunction(torch.autograd.Function):
         centers: torch.Tensor,  # (N, d)
         Ls: torch.Tensor,  # (N, d, d)
         amps: torch.Tensor,  # (N,)
-        sharpness: torch.Tensor,  # (N,)
         shape: Tuple[int, ...],
         truncate: float,
         intensity_floor: float,
@@ -155,13 +154,11 @@ class CUDASplatFunction(torch.autograd.Function):
             centers_kernel = centers.half().contiguous()
             conic_kernel = conic.half().contiguous()
             amps_kernel = amps.half().contiguous()
-            sharpness_kernel = sharpness.half().contiguous()
             L_row_norms_kernel = L_row_norms.half().contiguous()
         else:
             centers_kernel = centers.contiguous()
             conic_kernel = conic.contiguous()
             amps_kernel = amps.contiguous()
-            sharpness_kernel = sharpness.contiguous()
             L_row_norms_kernel = L_row_norms.float().contiguous()
 
         if CUDA_BACKEND_AVAILABLE:
@@ -170,7 +167,6 @@ class CUDASplatFunction(torch.autograd.Function):
                 centers_kernel,
                 conic_kernel,
                 amps_kernel,
-                sharpness_kernel,
                 L_row_norms_kernel,
                 list(shape),
                 truncate,
@@ -194,7 +190,7 @@ class CUDASplatFunction(torch.autograd.Function):
             from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
             output = render_gaussians(
-                shape, centers, Ls, amps, sharpness, truncate, intensity_floor
+                shape, centers, Ls, amps, truncate, intensity_floor
             )
             tile_counts = None
             tile_offsets = None
@@ -204,12 +200,11 @@ class CUDASplatFunction(torch.autograd.Function):
             tile_dims_tensor_cached = None
 
         # Save for backward (keep FP16 tensors for backward pass if enabled)
-        ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps, sharpness)
+        ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps)
         # Cache FP16 tensors for backward to avoid re-conversion
         ctx.centers_kernel = centers_kernel
         ctx.conic_kernel = conic_kernel
         ctx.amps_kernel = amps_kernel
-        ctx.sharpness_kernel = sharpness_kernel
         ctx.shape = shape
         ctx.truncate = truncate
         ctx.intensity_floor = intensity_floor
@@ -233,7 +228,7 @@ class CUDASplatFunction(torch.autograd.Function):
         """
         Backward pass: compute gradients.
 
-        CUDA computes: d_centers, d_conic, d_amps, d_sharpness
+        CUDA computes: d_centers, d_conic, d_amps
         PyTorch handles: d_conic → d_Ls (chain rule)
         """
         # Block training with FP16 params (use_fp16=True) - causes numerical overflow
@@ -253,7 +248,7 @@ class CUDASplatFunction(torch.autograd.Function):
                 "use_fp16=True is only for inference with pre-trained models."
             )
 
-        centers, Ls, Ls_for_conic, conic, amps, sharpness = ctx.saved_tensors
+        centers, Ls, Ls_for_conic, conic, amps = ctx.saved_tensors
         shape = ctx.shape
         truncate = ctx.truncate
         intensity_floor = ctx.intensity_floor
@@ -271,12 +266,11 @@ class CUDASplatFunction(torch.autograd.Function):
             if ctx.tile_dims_tensor_cached is not None:
                 cached_kwargs["tile_dims_tensor_cached"] = ctx.tile_dims_tensor_cached
 
-            d_centers, d_conic, d_amps, d_sharpness = cuda_splatting_backend.backward(
+            d_centers, d_conic, d_amps = cuda_splatting_backend.backward(
                 grad_output.contiguous(),
                 ctx.centers_kernel,  # Use cached FP16 or FP32 tensor
                 ctx.conic_kernel,
                 ctx.amps_kernel,
-                ctx.sharpness_kernel,
                 ctx.tile_offsets,
                 ctx.tile_counts,
                 ctx.tile_content,
@@ -313,14 +307,12 @@ class CUDASplatFunction(torch.autograd.Function):
                 centers_grad = centers.detach().clone().requires_grad_(True)
                 Ls_grad = Ls.detach().clone().requires_grad_(True)
                 amps_grad = amps.detach().clone().requires_grad_(True)
-                sharpness_grad = sharpness.detach().clone().requires_grad_(True)
 
                 output = render_gaussians(
                     shape,
                     centers_grad,
                     Ls_grad,
                     amps_grad,
-                    sharpness_grad,
                     truncate,
                     intensity_floor,
                 )
@@ -328,7 +320,7 @@ class CUDASplatFunction(torch.autograd.Function):
             # Compute gradients via PyTorch autograd
             grads = torch.autograd.grad(
                 outputs=output,
-                inputs=[centers_grad, Ls_grad, amps_grad, sharpness_grad],
+                inputs=[centers_grad, Ls_grad, amps_grad],
                 grad_outputs=grad_output,
                 retain_graph=False,
                 create_graph=False,
@@ -338,13 +330,10 @@ class CUDASplatFunction(torch.autograd.Function):
             d_centers = grads[0] if grads[0] is not None else torch.zeros_like(centers)
             d_Ls = grads[1] if grads[1] is not None else torch.zeros_like(Ls)
             d_amps = grads[2] if grads[2] is not None else torch.zeros_like(amps)
-            d_sharpness = (
-                grads[3] if grads[3] is not None else torch.zeros_like(sharpness)
-            )
 
-        # Return grads for: centers, Ls, amps, sharpness + non-diff params
-        # Order: centers, Ls, amps, sharpness, shape, truncate, intensity_floor, tile_size, batch_size, use_fp16
-        return d_centers, d_Ls, d_amps, d_sharpness, None, None, None, None, None, None
+        # Return grads for: centers, Ls, amps + non-diff params
+        # Order: centers, Ls, amps, shape, truncate, intensity_floor, tile_size, batch_size, use_fp16
+        return d_centers, d_Ls, d_amps, None, None, None, None, None, None
 
 
 class GaussianSplatModelCUDA(torch.nn.Module):
@@ -423,7 +412,6 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         sigma_max_diag: Optional[Sequence[float]] = None,
         amp_max: Optional[float] = None,
         max_eccentricity: Optional[float] = None,
-        sharpness_range: Optional[tuple[float, float] | float] = None,
         truncate: float = 3.0,
         intensity_floor: float = 1e-5,
         tile_size: Optional[int] = None,
@@ -466,7 +454,6 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             sigma_max_diag=sigma_max_diag,
             amp_max=amp_max,
             max_eccentricity=max_eccentricity,
-            sharpness_range=sharpness_range,
             truncate=truncate,
             voxel_size=voxel_size,
             device=resolved_device,
@@ -588,7 +575,6 @@ class GaussianSplatModelCUDA(torch.nn.Module):
                 center_stride * 4  # s_centers
                 + conic_size * 4  # s_conic
                 + 4  # s_amps
-                + 4  # s_sharpness
                 + 4  # s_splat_ids (int)
                 + 4  # s_truncate_sq
             )
@@ -598,7 +584,6 @@ class GaussianSplatModelCUDA(torch.nn.Module):
                 center_stride * 4  # s_d_centers_tile
                 + conic_size * 4  # s_d_conic_tile
                 + 4  # s_d_amps_tile
-                + 4  # s_d_sharpness_tile
             )
 
             # grad_output cache
@@ -668,7 +653,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             Rendered volume with shape matching initialization.
             Always FP32 regardless of use_fp16 setting.
         """
-        centers, Ls, amps, sharpness = self.current_params()
+        centers, Ls, amps = self.current_params()
 
         # Get optimal batch size based on GPU capabilities
         batch_size = self._get_splat_batch_size(len(self._shape))
@@ -677,7 +662,6 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             centers,
             Ls,
             amps,
-            sharpness,
             self._shape,
             self._truncate,
             self._intensity_floor,
@@ -693,7 +677,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         return output
 
     # Delegate all other methods to base model
-    def current_params(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def current_params(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Get current parameter values.
 
@@ -701,15 +685,14 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         current_params() may return FP32 due to type promotion with hardcoded
         constants, so we convert here.
         """
-        centers, Ls, amps, sharpness = self._base.current_params()
+        centers, Ls, amps = self._base.current_params()
         if self._use_fp16:
             # Ensure all outputs are FP16 for kernel input
             # Note: .half() on already-FP16 tensors is fast (~5x faster than FP32->FP16)
             centers = centers.half()
             Ls = Ls.half()
             amps = amps.half()
-            sharpness = sharpness.half()
-        return centers, Ls, amps, sharpness
+        return centers, Ls, amps
 
     def prune_(self, mask: torch.Tensor) -> None:
         """Remove splats according to boolean mask."""
@@ -723,10 +706,9 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         centers: torch.Tensor,
         Ls: torch.Tensor,
         amps: torch.Tensor,
-        sharpness: torch.Tensor,
     ) -> None:
         """Add new splats to the model."""
-        self._base.append_(centers, Ls, amps, sharpness)
+        self._base.append_(centers, Ls, amps)
         # Re-convert to FP16 if enabled (new params from append are FP32)
         if self._use_fp16:
             self._convert_base_to_fp16()
@@ -736,10 +718,9 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         centers: torch.Tensor,
         Ls: torch.Tensor,
         amps: torch.Tensor,
-        sharpness: torch.Tensor,
     ) -> None:
         """Replace all splats with new values."""
-        self._base.replace_with(centers, Ls, amps, sharpness)
+        self._base.replace_with(centers, Ls, amps)
         # Re-convert to FP16 if enabled (new params from replace_with are FP32)
         if self._use_fp16:
             self._convert_base_to_fp16()
@@ -801,10 +782,6 @@ class GaussianSplatModelCUDA(torch.nn.Module):
     @property
     def raw_a(self) -> torch.nn.Parameter:
         return self._base.raw_a
-
-    @property
-    def sharpness_offsets_raw(self) -> torch.nn.Parameter:
-        return self._base.sharpness_offsets_raw
 
     @property
     def sigma_min_diag(self) -> torch.Tensor:

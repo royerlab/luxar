@@ -470,7 +470,6 @@ Navigation:
                         amplitudes=gsplats.amplitudes,
                         cholesky_factors=gsplats.cholesky_factors,
                         colors=colors,
-                        sharpness=gsplats.sharpnesses,
                         dim_order=["z", "y", "x"],
                         fill={own_dim: 1.0},
                         fill_sigma={own_dim: 0},

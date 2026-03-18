@@ -600,8 +600,10 @@ to preserve user customizations.
 function toggleCinematicMode(): void {
   // 1. Check current state of all cinematic effects (4 signals)
   const effects = [
-    detectorNoiseEnabled, vignetteEnabled,
-    chromaticLensDistortionEnabled, toneMapping === 'ACES',
+    detectorNoiseEnabled,
+    vignetteEnabled,
+    chromaticLensDistortionEnabled,
+    toneMapping === 'ACES',
   ];
 
   // 2. Majority vote (>= 50% enabled = turn all off, < 50% = turn all on)
