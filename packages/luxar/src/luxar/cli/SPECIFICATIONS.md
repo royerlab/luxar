@@ -190,12 +190,11 @@ luxar export my_scene.zarr -o my_export/ --open
 
 **Behavior**:
 1. Load the `.gsplats.zarr` dataset (supports `.zip` and `.tar.gz`)
-2. Display basic info: file size, splat count, dimensionality, color/sharpness presence
+2. Display basic info: file size, splat count, dimensionality, color presence
 3. Display bounding box per dimension with ranges
 4. Display amplitude statistics with percentile distribution and cumulative contribution analysis
 5. Display volume statistics (3-sigma ellipsoid volumes from Cholesky factors)
-6. Display sharpness statistics (identify standard Gaussians with s=2.0)
-7. Display color channel statistics (if colors present)
+6. Display color channel statistics (if colors present)
 8. Display metadata (fitting info, provenance, format version)
 9. Provide pruning recommendation if significant splats are low-contribution
 
@@ -323,7 +322,6 @@ When `--tiled` is enabled, the volume is split into overlapping tiles with Hann 
 | early_stop_patience | 100 | 300 | 500 |
 | cull_ratio | 0.05 | 0.01 | 0.005 |
 | max_eccentricity | 10.0 | 10.0 | 15.0 |
-| sharpness_range | 2.0 (fixed) | [1.0, 8.0] | [0.5, 16.0] |
 
 **Config priority chain**: CLI flags > YAML config > preset > function defaults
 
@@ -439,7 +437,6 @@ luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00
 - `--amplitude-min/--amplitude-max`: Amplitude thresholds
 - `--amplitude-normalized`: Interpret amplitude thresholds as 0-1 normalized
 - `--eccentricity-min/--eccentricity-max`: Eccentricity thresholds (1.0 = sphere)
-- `--sharpness-min/--sharpness-max`: Sharpness thresholds
 - `--mass-min/--mass-max`: Mass thresholds (amplitude * volume)
 - `--mass-normalized`: Interpret mass thresholds as 0-1 normalized
 - `--sigma-axis`: Axis index for per-axis sigma filtering

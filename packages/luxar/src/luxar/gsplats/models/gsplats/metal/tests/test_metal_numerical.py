@@ -355,14 +355,13 @@ class TestMetalGradients:
         centers = torch.tensor([[20.0, 18.0, 14.0]], device="mps", requires_grad=True)
         L = torch.tensor([[[2.0, 0, 0], [0, 2.0, 0], [0, 0, 2.0]]], device="mps")
         amps = torch.tensor([1.0], device="mps")
-        sharpness = torch.tensor([2.0], device="mps")
 
         target = torch.zeros(shape, device="mps")
         target[16, 16, 16] = 1.0
 
         # Forward and backward
         output = MetalSplatFunction.apply(
-            centers, L, amps, sharpness, shape, 3.0, 1e-5, 4, False
+            centers, L, amps, shape, 3.0, 1e-5, 4, False
         )
         loss = ((output - target) ** 2).sum()
         loss.backward()
@@ -390,7 +389,6 @@ class TestMetalGradients:
         centers_np = np.array([[20.0, 18.0, 14.0]], dtype=np.float32)
         L_np = (np.eye(3) * 2.0)[np.newaxis, :, :].astype(np.float32)
         amps_np = np.array([1.0], dtype=np.float32)
-        sharpness_val = 2.0
 
         target = torch.zeros(shape)
         target[16, 16, 16] = 1.0
@@ -399,14 +397,12 @@ class TestMetalGradients:
         centers_cpu = torch.tensor(centers_np, requires_grad=True)
         L_cpu = torch.tensor(L_np, requires_grad=True)
         amps_cpu = torch.tensor(amps_np, requires_grad=True)
-        sharpness_cpu = torch.ones(1, requires_grad=True) * sharpness_val
 
         output_cpu = render_gaussians(
             shape,
             centers_cpu,
             L_cpu,
             amps_cpu,
-            sharpness_cpu,
             truncate=3.0,
             intensity_floor=1e-5,
         )
@@ -418,15 +414,11 @@ class TestMetalGradients:
         centers_metal = torch.tensor(centers_np, requires_grad=True, device="mps")
         L_metal = torch.tensor(L_np, requires_grad=True, device="mps")
         amps_metal = torch.tensor(amps_np, requires_grad=True, device="mps")
-        sharpness_metal = (
-            torch.ones(1, requires_grad=True, device="mps") * sharpness_val
-        )
 
         output_metal = MetalSplatFunction.apply(
             centers_metal,
             L_metal,
             amps_metal,
-            sharpness_metal,
             shape,
             3.0,
             1e-5,
@@ -465,7 +457,6 @@ class TestMetalGradients:
         centers = torch.tensor([[20.0, 18.0, 14.0]], device="mps", requires_grad=True)
         L = torch.tensor([[[2.0, 0, 0], [0, 2.0, 0], [0, 0, 2.0]]], device="mps")
         amps = torch.tensor([1.0], device="mps")
-        sharpness = torch.tensor([2.0], device="mps")
 
         target = torch.zeros(shape, device="mps")
         target[16, 16, 16] = 1.0
@@ -477,7 +468,7 @@ class TestMetalGradients:
         lr = 0.5
         for _ in range(30):
             output = MetalSplatFunction.apply(
-                centers, L, amps, sharpness, shape, 3.0, 1e-5, 4, False
+                centers, L, amps, shape, 3.0, 1e-5, 4, False
             )
             loss = ((output - target) ** 2).sum()
             loss.backward()

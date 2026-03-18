@@ -11,7 +11,6 @@ from luxar.gsplats.utils.trils import (
     unpack_tril,
 )
 
-
 class TestCalculateGradientDilutionFactor:
     """Test calculate_gradient_dilution_factor function."""
 
@@ -89,7 +88,6 @@ class TestCalculateGradientDilutionFactor:
             factor = calculate_gradient_dilution_factor(d)
             assert isinstance(factor, float), f"Expected float, got {type(factor)}"
 
-
 class TestTrilSize:
     """Test tril_size function."""
 
@@ -116,7 +114,6 @@ class TestTrilSize:
     def test_tril_size_zero_dimension(self) -> None:
         """Test edge case of zero dimension."""
         assert tril_size(0) == 0
-
 
 class TestPackTril:
     """Test pack_tril function."""
@@ -188,7 +185,6 @@ class TestPackTril:
         packed = pack_tril(L)
         assert packed.shape == (0, 3)
 
-
 class TestUnpackTril:
     """Test unpack_tril function."""
 
@@ -238,7 +234,6 @@ class TestUnpackTril:
         v = np.zeros((0, 3))
         L = unpack_tril(v, d=2)
         assert L.shape == (0, 2, 2)
-
 
 class TestPackUnpackRoundTrip:
     """Test that pack_tril and unpack_tril are inverse operations."""
@@ -296,7 +291,6 @@ class TestPackUnpackRoundTrip:
 
         np.testing.assert_array_equal(L_recovered, expected)
 
-
 class TestEdgeCases:
     """Test edge cases and error conditions."""
 
@@ -330,7 +324,6 @@ class TestEdgeCases:
             np.testing.assert_array_equal(
                 packed[0], numpy_packed, err_msg=f"Inconsistency with numpy for d={d}"
             )
-
 
 class TestValidateCholeskShape:
     """Test validate_cholesky_shape function."""

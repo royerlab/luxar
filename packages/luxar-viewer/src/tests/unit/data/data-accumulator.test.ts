@@ -49,7 +49,6 @@ describe('LoadedPointsDataAccumulator', () => {
       positions: new Float32Array([1, 2, 3]),
       colors: new Uint8Array([255, 128, 0]), // Native Uint8 RGB
       radii: new Float32Array([0.5]),
-      sharpness: new Float32Array([2.0]),
     });
 
     const data = accumulator.getData(1);
@@ -63,7 +62,6 @@ describe('LoadedPointsDataAccumulator', () => {
     expect(data.colors![1]).toBe(128);
     expect(data.colors![2]).toBe(0);
     expect(data.radii![0]).toBe(0.5);
-    expect(data.sharpness![0]).toBe(2.0);
     expect(data.metadata.dtypes!.colors).toBe('uint8');
   });
 
@@ -72,7 +70,6 @@ describe('LoadedPointsDataAccumulator', () => {
       positions: new Float32Array([1, 2, 3, 4, 5, 6]), // 2 points
       colors: new Uint8Array([255, 0, 0, 0, 255, 0]), // RGB
       radii: new Float32Array([0.5, 0.6]),
-      sharpness: new Float32Array([2.0, 2.5]),
     });
 
     const data = accumulator.getData(2);
@@ -100,7 +97,6 @@ describe('LoadedPointsDataAccumulator', () => {
       positions: new Float32Array([1, 2, 3]),
       colors: new Float32Array([2.5, 1.8, 0.9]), // HDR values > 1.0
       radii: new Float32Array([0.5]),
-      sharpness: new Float32Array([2.0]),
     });
 
     const data = accumulator.getData(1);
@@ -115,7 +111,6 @@ describe('LoadedPointsDataAccumulator', () => {
       positions: new Float32Array([1, 2, 3]),
       colors: new Uint16Array([65535, 32768, 0]), // Uint16 range
       radii: new Float32Array([0.5]),
-      sharpness: new Float32Array([2.0]),
     });
 
     const data = accumulator.getData(1);
@@ -152,7 +147,6 @@ describe('LoadedPointsDataAccumulator', () => {
       positions: new Float32Array([1, 2, 3]),
       colors: new Uint8Array([255, 0, 0]),
       radii: new Float32Array([0.5]),
-      sharpness: new Float32Array([2.0]),
     });
 
     accumulator.dispose();
@@ -208,7 +202,6 @@ describe('LinesDataAccumulator', () => {
       segments: new Uint32Array([0, 1]), // 1 segment
       widths: new Float32Array([0.1, 0.1]), // PER-VERTEX widths
       colors: new Float32Array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]), // RGB Float32
-      sharpness: new Float32Array([2.0, 2.0]), // per-vertex
     });
 
     const data = accumulator.getData(1, 2); // 1 segment, 2 vertices
@@ -222,8 +215,6 @@ describe('LinesDataAccumulator', () => {
     expect(data.widths.length).toBe(2); // PER-VERTEX!
     expect(data.colors).not.toBeNull();
     expect(data.colors!.length).toBe(6); // 2 vertices * RGB
-    expect(data.sharpness).not.toBeNull();
-    expect(data.sharpness!.length).toBe(2); // per-vertex
   });
 
   it('should handle nullable colors and sharpness', () => {
@@ -236,7 +227,6 @@ describe('LinesDataAccumulator', () => {
 
     const data = accumulator.getData(1, 2);
     expect(data.colors).toBeNull(); // Not set, should be null
-    expect(data.sharpness).toBeNull(); // Not set, should be null
   });
 
   it('should track colors/sharpness presence', () => {
@@ -268,7 +258,6 @@ describe('LinesDataAccumulator', () => {
       segments: new Uint32Array([0, 1, 1, 2]), // 2 segments
       widths: new Float32Array([0.1, 0.2, 0.3]), // 3 widths (PER-VERTEX!)
       colors: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
-      sharpness: new Float32Array([2.0, 2.5, 3.0]),
     });
 
     const data = accumulator.getData(2, 3); // 2 segments, 3 vertices
@@ -318,7 +307,6 @@ describe('GSplatsDataAccumulator', () => {
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]), // 3D: 6 elements
       colors: new Float32Array([1.0, 0.0, 0.0]), // RGB Float32
-      sharpness: new Float32Array([2.0]),
     });
 
     const data = accumulator.getData(1);
@@ -328,34 +316,30 @@ describe('GSplatsDataAccumulator', () => {
     expect(data.ndim).toBe(3);
   });
 
-  it('should handle nullable colors and sharpness', () => {
+  it('should handle nullable colors', () => {
     accumulator.fill(0, {
       positions: new Float32Array([0, 0, 0]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
-      // No colors or sharpness
+      // No colors
     });
 
     const data = accumulator.getData(1);
     expect(data.colors).toBeNull();
-    expect(data.sharpness).toBeNull();
   });
 
-  it('should track colors/sharpness presence', () => {
+  it('should track colors presence', () => {
     // Fill with colors
     accumulator.fill(0, {
       positions: new Float32Array([0, 0, 0]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       colors: new Float32Array([1.0, 0.0, 0.0]),
-      sharpness: new Float32Array([2.0]),
     });
 
     const data = accumulator.getData(1);
     expect(data.colors).not.toBeNull();
     expect(data.colors!.length).toBe(3); // RGB
-    expect(data.sharpness).not.toBeNull();
-    expect(data.sharpness![0]).toBe(2.0);
   });
 
   it('should handle 4D cholesky factors', () => {
@@ -367,7 +351,6 @@ describe('GSplatsDataAccumulator', () => {
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1]), // 10 elements
       colors: new Float32Array([1.0, 0.0, 0.0]),
-      sharpness: new Float32Array([2.0]),
     });
 
     const data = accumulator4D.getData(1);
@@ -377,8 +360,8 @@ describe('GSplatsDataAccumulator', () => {
 
   it('should calculate memory usage correctly', () => {
     const stats = accumulator.getStats();
-    // 3D: ndim(3)*4 + amp(4) + cholesky(6)*4 + color(3)*4 + sharpness(4) = 12 + 4 + 24 + 12 + 4 = 56 bytes per splat
-    const expectedMB = (1000 * 56) / 1024 / 1024;
+    // 3D: ndim(3)*4 + amp(4) + cholesky(6)*4 + color(3)*4 = 12 + 4 + 24 + 12 = 52 bytes per splat
+    const expectedMB = (1000 * 52) / 1024 / 1024;
     expect(stats.memoryMB).toBeCloseTo(expectedMB, 4);
   });
 
@@ -388,7 +371,6 @@ describe('GSplatsDataAccumulator', () => {
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       colors: new Float32Array([1.0, 0.0, 0.0]),
-      sharpness: new Float32Array([2.0]),
     });
 
     accumulator.dispose();

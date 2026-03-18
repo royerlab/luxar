@@ -157,14 +157,13 @@ kernel void rasterize_fwd_3d(
     device const float* centers [[buffer(0)]],
     device const float* conic   [[buffer(1)]],
     device const float* amps    [[buffer(2)]],
-    device const float* sharpness [[buffer(3)]],
-    device const int* tile_offsets [[buffer(4)]],
-    device const int* tile_counts [[buffer(5)]],
-    device const int* tile_content [[buffer(6)]],
-    device float* output [[buffer(7)]],
-    constant uint3& img_size [[buffer(8)]],
-    constant uint3& grid_dims [[buffer(9)]],
-    constant float& truncate_val [[buffer(10)]],
+    device const int* tile_offsets [[buffer(3)]],
+    device const int* tile_counts [[buffer(4)]],
+    device const int* tile_content [[buffer(5)]],
+    device float* output [[buffer(6)]],
+    constant uint3& img_size [[buffer(7)]],
+    constant uint3& grid_dims [[buffer(8)]],
+    constant float& truncate_val [[buffer(9)]],
     uint3 gid [[thread_position_in_grid]],
     uint3 group_id [[threadgroup_position_in_grid]]
 ) {
@@ -190,7 +189,7 @@ kernel void rasterize_fwd_3d(
                       + 2.0f*(d.x*d.y*conic[cb+1] + d.x*d.z*conic[cb+2] + d.y*d.z*conic[cb+4]);
 
         if (dist_sq <= trunc_sq) {
-            float val = amps[id] * exp(-0.5f * pow(dist_sq, sharpness[id] * 0.5f));
+            float val = amps[id] * exp(-0.5f * dist_sq);
             accum += val;
         }
     }
@@ -203,17 +202,15 @@ kernel void rasterize_bwd_3d(
     device const float* centers [[buffer(1)]],
     device const float* conic [[buffer(2)]],
     device const float* amps [[buffer(3)]],
-    device const float* sharpness [[buffer(4)]],
-    device const int* tile_offsets [[buffer(5)]],
-    device const int* tile_counts [[buffer(6)]],
-    device const int* tile_content [[buffer(7)]],
-    device atomic_float* d_centers [[buffer(8)]],
-    device atomic_float* d_conic   [[buffer(9)]],
-    device atomic_float* d_amps    [[buffer(10)]],
-    device atomic_float* d_sharpness [[buffer(11)]],
-    constant uint3& img_size [[buffer(12)]],
-    constant uint3& grid_dims [[buffer(13)]],
-    constant float& truncate_val [[buffer(14)]],
+    device const int* tile_offsets [[buffer(4)]],
+    device const int* tile_counts [[buffer(5)]],
+    device const int* tile_content [[buffer(6)]],
+    device atomic_float* d_centers [[buffer(7)]],
+    device atomic_float* d_conic   [[buffer(8)]],
+    device atomic_float* d_amps    [[buffer(9)]],
+    constant uint3& img_size [[buffer(10)]],
+    constant uint3& grid_dims [[buffer(11)]],
+    constant float& truncate_val [[buffer(12)]],
     uint3 gid [[thread_position_in_grid]],
     uint3 group_id [[threadgroup_position_in_grid]]
 ) {
@@ -240,34 +237,21 @@ kernel void rasterize_bwd_3d(
                       + 2.0f*(d.x*d.y*conic[cb+1] + d.x*d.z*conic[cb+2] + d.y*d.z*conic[cb+4]);
 
         if (dist_sq <= trunc_sq) {
-            float s = sharpness[id];
             float a = amps[id];
 
-            // Standard: I = a * exp(inner)
-            // inner = -0.5 * dist_sq^(s/2)
-            float half_s = s * 0.5f;
-            float inner = -0.5f * pow(dist_sq, half_s);
-            float intensity = a * exp(inner);
+            // Standard Gaussian: I = a * exp(-0.5 * dist_sq)
+            float inner = -0.5f * dist_sq;
+            float exp_val = exp(inner);
+            float intensity = a * exp_val;
             float d_common = intensity * d_L_d_I; // I * dL/dI
 
             // 1. Amp Gradient
-            // dI/da = I/a
-            atomic_add_float(&d_amps[id], exp(inner) * d_L_d_I);
+            // dI/da = exp(inner)
+            atomic_add_float(&d_amps[id], exp_val * d_L_d_I);
 
-            // 2. Sharpness Gradient
-            // d(inner)/ds = -0.5 * d/ds(pow(D2, s/2))
-            //             = -0.5 * pow(D2, s/2) * ln(D2) * 0.5
-            //             = inner * 0.5 * ln(D2)
-            // Note: log(dist_sq) can be -inf if dist_sq=0, clamp it.
-            float d_s = d_common * inner * 0.5f * log(dist_sq + 1e-9f);
-            atomic_add_float(&d_sharpness[id], d_s);
-
-            // 3. Distance Gradients
-            // dI/d(D2) = I * d(inner)/d(D2)
-            //          = I * (-0.5 * s/2 * D2^(s/2 - 1))
-            //          = I * (-0.25 * s * D2^(half_s - 1))
-            float d_inner_d_D2 = -0.25f * s * pow(dist_sq, half_s - 1.0f);
-            float grad_dist = d_common * d_inner_d_D2;
+            // 2. Distance Gradients
+            // dI/d(D2) = I * (-0.5)
+            float grad_dist = d_common * (-0.5f);
 
             // d(D2)/d(center) = -2 * Sigma^-1 * d
             // d(D2)/d(conic)  = d * d^T (elements)
@@ -301,12 +285,11 @@ kernel void rasterize_fwd_nd(
     device const float* centers [[buffer(0)]], // (N, dim)
     device const float* Ls      [[buffer(1)]], // (N, dim, dim)
     device const float* amps    [[buffer(2)]],
-    device const float* sharpness [[buffer(3)]],
-    device float* output        [[buffer(4)]],
-    constant uint& n_splats     [[buffer(5)]],
-    constant uint& dim          [[buffer(6)]],
-    constant uint* shape        [[buffer(7)]],
-    constant float& truncate    [[buffer(8)]],
+    device float* output        [[buffer(3)]],
+    constant uint& n_splats     [[buffer(4)]],
+    constant uint& dim          [[buffer(5)]],
+    constant uint* shape        [[buffer(6)]],
+    constant float& truncate    [[buffer(7)]],
     uint gid [[thread_position_in_grid]]
 ) {
     // 1. Unpack Coordinates
@@ -365,7 +348,7 @@ kernel void rasterize_fwd_nd(
         for(uint d=0; d<dim; ++d) dist_sq += y[d]*y[d];
 
         if (dist_sq <= trunc_sq) {
-            accum += amps[i] * exp(-0.5f * pow(dist_sq, sharpness[i] * 0.5f));
+            accum += amps[i] * exp(-0.5f * dist_sq);
         }
     }
     output[gid] = accum;
@@ -377,15 +360,13 @@ kernel void rasterize_bwd_nd(
     device const float* centers [[buffer(1)]],
     device const float* Ls [[buffer(2)]],
     device const float* amps [[buffer(3)]],
-    device const float* sharpness [[buffer(4)]],
-    device atomic_float* d_centers [[buffer(5)]],
-    device atomic_float* d_Ls      [[buffer(6)]],
-    device atomic_float* d_amps    [[buffer(7)]],
-    device atomic_float* d_sharpness [[buffer(8)]],
-    constant uint& n_splats [[buffer(9)]],
-    constant uint& dim [[buffer(10)]],
-    constant uint* shape [[buffer(11)]],
-    constant float& truncate [[buffer(12)]],
+    device atomic_float* d_centers [[buffer(4)]],
+    device atomic_float* d_Ls      [[buffer(5)]],
+    device atomic_float* d_amps    [[buffer(6)]],
+    constant uint& n_splats [[buffer(7)]],
+    constant uint& dim [[buffer(8)]],
+    constant uint* shape [[buffer(9)]],
+    constant float& truncate [[buffer(10)]],
     uint gid [[thread_position_in_grid]]
 ) {
     float d_L_d_I = grad_output[gid];
@@ -430,21 +411,18 @@ kernel void rasterize_bwd_nd(
         for(uint d=0; d<dim; ++d) dist_sq += y[d]*y[d];
 
         if (dist_sq <= trunc_sq) {
-            float s = sharpness[i];
             float a = amps[i];
-            float half_s = s * 0.5f;
-            float inner = -0.5f * pow(dist_sq, half_s);
-            float intensity = a * exp(inner);
+
+            // Standard Gaussian: I = a * exp(-0.5 * dist_sq)
+            float inner = -0.5f * dist_sq;
+            float exp_val = exp(inner);
+            float intensity = a * exp_val;
             float d_common = intensity * d_L_d_I;
 
             // Gradients
-            atomic_add_float(&d_amps[i], exp(inner) * d_L_d_I);
+            atomic_add_float(&d_amps[i], exp_val * d_L_d_I);
 
-            float d_s = d_common * inner * 0.5f * log(dist_sq + 1e-9f);
-            atomic_add_float(&d_sharpness[i], d_s);
-
-            float d_inner_d_D2 = -0.25f * s * pow(dist_sq, half_s - 1.0f);
-            float grad_dist = d_common * d_inner_d_D2;
+            float grad_dist = d_common * (-0.5f);
 
             // Backprop through ||y||^2 -> y -> L, centers
             // d(dist)/dy_k = 2 * y_k
@@ -498,7 +476,7 @@ This handles the robust dispatch, including initializing the atomic counters for
 
 ```python
     @staticmethod
-    def forward(ctx, centers, Ls, amps, sharpness, shape, truncate):
+    def forward(ctx, centers, Ls, amps, shape, truncate):
         # ... (Setup) ...
         dim = len(shape)
 
@@ -512,7 +490,7 @@ This handles the robust dispatch, including initializing the atomic counters for
             # 4. Rasterize Fwd
 
             # Save for backward: Conic is needed!
-            ctx.save_for_backward(centers, conic, amps, sharpness, offsets, counts, content)
+            ctx.save_for_backward(centers, conic, amps, offsets, counts, content)
 
         else:
             # 4D+ Path
@@ -523,7 +501,7 @@ This handles the robust dispatch, including initializing the atomic counters for
     def backward(ctx, grad_output):
         if ctx.dim == 3:
             # 1. Rasterize Bwd (Metal)
-            # Returns d_conic, d_centers, d_amps...
+            # Returns d_conic, d_centers, d_amps
 
             # 2. Chain Rule: d_conic -> d_L (PyTorch)
             # (As discussed previously)
@@ -648,24 +626,24 @@ def safe_conic_backward(d_conic, Ls):
 
 class MetalSplatFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, centers, Ls, amps, sharpness, shape, truncate):
+    def forward(ctx, centers, Ls, amps, shape, truncate):
         # ... Run Metal Forward ...
         # IMPORTANT: Metal must return the 'conic' buffer it computed!
         # Do not discard it.
         results = metal_backend.forward(...)
         output, conic_metal = results[0], results[1]
 
-        ctx.save_for_backward(centers, Ls, conic_metal, amps, sharpness)
+        ctx.save_for_backward(centers, Ls, conic_metal, amps)
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
-        centers, Ls, conic_metal, amps, sharpness = ctx.saved_tensors
+        centers, Ls, conic_metal, amps = ctx.saved_tensors
 
         # 1. Run Metal Backward
         # We pass 'conic_metal' so the backward pass uses the EXACT values
         # that generated the image.
-        d_centers, d_conic, d_amps, d_s = metal_backend.backward(
+        d_centers, d_conic, d_amps = metal_backend.backward(
             grad_output, centers, conic_metal, ...
         )
 
@@ -673,7 +651,7 @@ class MetalSplatFunction(torch.autograd.Function):
         # We use the Python helper to propagate d_conic to d_Ls
         d_Ls = safe_conic_backward(d_conic, Ls)
 
-        return d_centers, d_Ls, d_amps, d_s, None, None
+        return d_centers, d_Ls, d_amps, None, None
 
 ```
 
@@ -740,19 +718,17 @@ kernel void rasterize_bwd_3d(
     device const float* centers [[buffer(1)]],
     device const float* conic [[buffer(2)]],
     device const float* amps [[buffer(3)]],
-    device const float* sharpness [[buffer(4)]],
-    device const int* tile_offsets [[buffer(5)]],
-    device const int* tile_counts [[buffer(6)]],
-    device const int* tile_content [[buffer(7)]],
+    device const int* tile_offsets [[buffer(4)]],
+    device const int* tile_counts [[buffer(5)]],
+    device const int* tile_content [[buffer(6)]],
     // Gradients Accumulators
-    device atomic_float* d_centers [[buffer(8)]],
-    device atomic_float* d_conic   [[buffer(9)]],
-    device atomic_float* d_amps    [[buffer(10)]],
-    device atomic_float* d_sharpness [[buffer(11)]],
+    device atomic_float* d_centers [[buffer(7)]],
+    device atomic_float* d_conic   [[buffer(8)]],
+    device atomic_float* d_amps    [[buffer(9)]],
 
-    constant uint3& img_size [[buffer(12)]],
-    constant uint3& grid_dims [[buffer(13)]],
-    constant float& truncate_val [[buffer(14)]],
+    constant uint3& img_size [[buffer(10)]],
+    constant uint3& grid_dims [[buffer(11)]],
+    constant float& truncate_val [[buffer(12)]],
 
     uint3 gid [[thread_position_in_grid]],
     uint3 group_id [[threadgroup_position_in_grid]],
@@ -778,7 +754,6 @@ kernel void rasterize_bwd_3d(
         // --- A. Compute Local Gradients (Per Thread) ---
         // Initialize local gradients to 0
         float val_amps = 0.0f;
-        float val_sharpness = 0.0f;
         float3 val_centers = 0.0f;
         float val_conic[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
@@ -796,10 +771,10 @@ kernel void rasterize_bwd_3d(
                            + 2.0f*(d.x*d.y*c1 + d.x*d.z*c2 + d.y*d.z*c4);
 
              if (dist_sq <= trunc_sq) {
-                 float s = sharpness[id];
                  float a = amps[id];
-                 float half_s = s * 0.5f;
-                 float inner = -0.5f * pow(dist_sq, half_s);
+
+                 // Standard Gaussian: I = a * exp(-0.5 * dist_sq)
+                 float inner = -0.5f * dist_sq;
                  float exp_val = exp(inner);
                  float intensity = a * exp_val;
                  float d_common = intensity * d_L_d_I;
@@ -807,13 +782,8 @@ kernel void rasterize_bwd_3d(
                  // 1. Amp
                  val_amps = exp_val * d_L_d_I;
 
-                 // 2. Sharpness
-                 // Safe log: clamp to epsilon
-                 val_sharpness = d_common * inner * 0.5f * log(max(dist_sq, 1e-9f));
-
-                 // 3. Center
-                 float d_inner_d_D2 = -0.25f * s * pow(max(dist_sq, 1e-9f), half_s - 1.0f);
-                 float grad_dist = d_common * d_inner_d_D2; // scalar
+                 // 2. Center
+                 float grad_dist = d_common * (-0.5f); // scalar
 
                  float3 d_D2_d_d;
                  d_D2_d_d.x = 2.0f*(d.x*c0 + d.y*c1 + d.z*c2);
@@ -836,7 +806,6 @@ kernel void rasterize_bwd_3d(
         // Sum values across all 32 threads in the warp
 
         float sum_amps = simd_sum(val_amps);
-        float sum_sharp = simd_sum(val_sharpness);
         float3 sum_centers;
         sum_centers.x = simd_sum(val_centers.x);
         sum_centers.y = simd_sum(val_centers.y);
@@ -855,7 +824,6 @@ kernel void rasterize_bwd_3d(
 
             // Check for non-zero contribution to avoid useless locks
             if (abs(sum_amps) > 1e-12f) atomic_add_float(&d_amps[id], sum_amps);
-            if (abs(sum_sharp) > 1e-12f) atomic_add_float(&d_sharpness[id], sum_sharp);
 
             atomic_add_float(&d_centers[id*3+0], sum_centers.x);
             atomic_add_float(&d_centers[id*3+1], sum_centers.y);

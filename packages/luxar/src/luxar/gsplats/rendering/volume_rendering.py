@@ -76,7 +76,6 @@ def render_to_volume_tensor(
     # Convert to PyTorch tensors
     centers_t = torch.from_numpy(gsplat_data.centers).to(device)
     amps_t = torch.from_numpy(gsplat_data.amplitudes).to(device)
-    sharpness_t = torch.from_numpy(gsplat_data.sharpnesses).to(device)
 
     # Unpack Cholesky factors from packed format (N, d*(d+1)/2) to (N, d, d) lower-triangular
     chol = gsplat_data.cholesky_factors
@@ -112,7 +111,6 @@ def render_to_volume_tensor(
         centers=centers_t,
         Ls=Ls_t,
         amps=amps_t,
-        sharpness=sharpness_t,
         truncate=truncate,
         intensity_floor=intensity_floor,
         chunk_size=chunk_size,
@@ -136,7 +134,7 @@ def render_to_volume(
     ----------
     gsplat_data : GSplatData
         The Gaussian splat data to render, containing centers, Cholesky factors,
-        amplitudes, and sharpnesses.
+        and amplitudes.
     shape : Tuple[int, ...]
         Output volume shape (e.g., (128, 128, 128) for 3D).
     device : str, optional
@@ -167,7 +165,7 @@ def render_to_volume(
     - The rendering uses the fast PyTorch renderer with specialized 2D/3D fast paths
     - For 8K splats on 128³ volume: ~100-1000x faster than NumPy implementation
     - Supports nD rendering with automatic chunking to prevent OOM
-    - Sharpness values control falloff: exp(-0.5 * ||y||^s) where s is sharpness
+    - Uses standard Gaussian falloff: exp(-0.5 * ||y||^2)
     """
     return (
         render_to_volume_tensor(

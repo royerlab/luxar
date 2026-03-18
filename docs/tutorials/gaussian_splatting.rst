@@ -29,7 +29,7 @@ Where:
 * ``(μ_x, μ_y)`` = center position
 * ``(σ_x, σ_y)`` = width (standard deviation)
 * ``A`` = amplitude (brightness)
-* Optional: rotation, color, sharpness
+* Optional: rotation, color
 
 When to Use Gaussian Splats
 ----------------------------

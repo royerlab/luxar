@@ -238,7 +238,6 @@ class TestDimOrderGSplats:
             centers=np.array([[1, 2, 3]], dtype=np.float32),
             amplitudes=np.array([1.0], dtype=np.float32),
             cholesky_factors=pack_tril(np.eye(3, dtype=np.float32).reshape(1, 3, 3)),
-            sharpnesses=np.array([2.0], dtype=np.float32),
         )
 
         with LuxarZarrCompiler(output) as compiler:

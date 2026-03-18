@@ -136,7 +136,6 @@ with asection("Human Mitosis Demo with Explicit Seeding"):
         aprint(
             f"  amplitudes range: [{seeds.amplitudes.min():.4f}, {seeds.amplitudes.max():.4f}]"
         )
-        aprint(f"  sharpnesses: all {seeds.sharpnesses[0]:.1f} (standard Gaussian)")
 
         # Show scale distribution from Cholesky factors
         L_seeds = unpack_tril(seeds.cholesky_factors, 2)  # (N, 2, 2)
@@ -197,9 +196,9 @@ stack_recon = np.zeros((len(keep_counts),) + V.shape, dtype=np.float32)
 stack_resid = np.zeros_like(stack_recon)
 rel_err_frames = np.zeros(len(keep_counts), dtype=np.float32)
 
-# Bit accounting (float32 for centers + packed L + sharpness + amplitude)
+# Bit accounting (float32 for centers + packed L + amplitude)
 FLOAT_BITS = 32
-FLOATS_PER_SPLAT = d + tril_size(d) + 1 + 1  # centers(d) + packed L + sharpness + amp
+FLOATS_PER_SPLAT = d + tril_size(d) + 1  # centers(d) + packed L + amp
 BITS_PER_SPLAT = FLOATS_PER_SPLAT * FLOAT_BITS
 IMAGE_BITS = V.size * FLOAT_BITS
 NUM_PIXELS = V.size
@@ -219,7 +218,6 @@ for i, K in enumerate(keep_counts):
         centers=result.centers[idx],
         amplitudes=result.amplitudes[idx],
         cholesky_factors=result.cholesky_factors[idx],
-        sharpnesses=result.sharpnesses[idx],
         stats={},  # Empty stats for rendering subset
     )
 

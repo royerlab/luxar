@@ -90,9 +90,7 @@ def count_out_of_bounds(result: GSplatData, shape, truncate: float = 3.0):
     d = result.centers.shape[1]
     L_full = unpack_tril(result.cholesky_factors, d)
     sigma_diag = np.sum(L_full * L_full, axis=2)  # (N, d)
-    # Sharpness-adjusted truncation: truncate^(2/s), s=2 → truncate
-    eff_truncate = truncate ** (2.0 / result.sharpnesses)  # (N,)
-    radii = eff_truncate[:, np.newaxis] * np.sqrt(sigma_diag)  # (N, d)
+    radii = truncate * np.sqrt(sigma_diag)  # (N, d)
 
     shape_arr = np.array(shape, dtype=np.float32)
     overflow_lo = np.maximum(radii - result.centers, 0)
