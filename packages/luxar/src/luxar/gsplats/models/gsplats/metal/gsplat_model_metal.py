@@ -128,7 +128,6 @@ class MetalSplatFunction(torch.autograd.Function):
         centers: torch.Tensor,  # (N, d)
         Ls: torch.Tensor,  # (N, d, d)
         amps: torch.Tensor,  # (N,)
-        sharpness: torch.Tensor,  # (N,)
         shape: Tuple[int, ...],
         truncate: float,
         intensity_floor: float = 1e-5,  # For early culling of invisible contributions
@@ -179,7 +178,6 @@ class MetalSplatFunction(torch.autograd.Function):
             # Centers and L stay in [Z,Y,X] order
             centers_mps = centers.contiguous().to("mps")
             amps_mps = amps.contiguous().to("mps")
-            sharpness_mps = sharpness.contiguous().to("mps")
             Ls_mps = Ls.contiguous().to("mps")  # Needed for sigma_diag in binning
 
             # Forward returns: [output, tile_counts, tile_offsets, tile_content]
@@ -187,7 +185,6 @@ class MetalSplatFunction(torch.autograd.Function):
                 centers_mps,
                 conic_mps,
                 amps_mps,
-                sharpness_mps,
                 Ls_mps,
                 list(shape),
                 truncate,
@@ -205,7 +202,7 @@ class MetalSplatFunction(torch.autograd.Function):
             from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
             output = render_gaussians(
-                shape, centers, Ls, amps, sharpness, truncate, intensity_floor
+                shape, centers, Ls, amps, truncate, intensity_floor
             )
             # No tile data for PyTorch path
             tile_counts = None
@@ -213,7 +210,7 @@ class MetalSplatFunction(torch.autograd.Function):
             tile_content = None
 
         # Save for backward - include tile data for Metal backward
-        ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps, sharpness)
+        ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps)
 
         # Save non-tensor data and tile buffers separately
         ctx.shape = shape
@@ -235,13 +232,13 @@ class MetalSplatFunction(torch.autograd.Function):
         """
         Backward pass: compute gradients.
 
-        Metal computes: d_centers, d_conic, d_amps, d_sharpness
+        Metal computes: d_centers, d_conic, d_amps
         PyTorch handles: d_conic → d_Ls (chain rule)
 
         CRITICAL: Uses saved tile_counts/offsets/content from forward pass
         to avoid recomputing binning (saves time and ensures determinism).
         """
-        (centers, Ls, Ls_for_conic, conic, amps, sharpness) = ctx.saved_tensors
+        (centers, Ls, Ls_for_conic, conic, amps) = ctx.saved_tensors
         shape = ctx.shape
         truncate = ctx.truncate
         intensity_floor = ctx.intensity_floor
@@ -261,16 +258,14 @@ class MetalSplatFunction(torch.autograd.Function):
             centers_mps = centers.contiguous().to("mps")
             conic_mps = conic_reordered.contiguous().to("mps")  # Use reordered conic!
             amps_mps = amps.contiguous().to("mps")
-            sharpness_mps = sharpness.contiguous().to("mps")
 
             # Reuse tile data from forward pass (CRITICAL for performance)
-            (d_centers, d_conic, d_amps, d_sharpness) = (
+            (d_centers, d_conic, d_amps) = (
                 metal_splatting_backend.backward_3d(
                     grad_mps,
                     centers_mps,
                     conic_mps,
                     amps_mps,
-                    sharpness_mps,
                     ctx.tile_offsets,
                     ctx.tile_counts,
                     ctx.tile_content,
@@ -341,7 +336,6 @@ class MetalSplatFunction(torch.autograd.Function):
                 aprint()
 
             d_amps = d_amps.to(device)
-            d_sharpness = d_sharpness.to(device)
 
             # === PyTorch: Chain rule d_conic → d_Ls ===
             # CRITICAL: Custom autograd.Function.backward runs with grad mode disabled!
@@ -400,10 +394,10 @@ class MetalSplatFunction(torch.autograd.Function):
             # Just return None for all outputs (Autograd will handle it)
             # NOTE: This should never be called if forward used PyTorch fallback,
             # because render_gaussians is already tracked by Autograd
-            return (None, None, None, None, None, None, None, None, None)
+            return (None, None, None, None, None, None, None, None)
 
-        # Return gradients: (centers, Ls, amps, sharpness, shape, truncate, intensity_floor, tile_size, use_metal_conic)
-        return d_centers, d_Ls, d_amps, d_sharpness, None, None, None, None, None
+        # Return gradients: (centers, Ls, amps, shape, truncate, intensity_floor, tile_size, use_metal_conic)
+        return d_centers, d_Ls, d_amps, None, None, None, None, None
 
 
 class GaussianSplatModelMetal(torch.nn.Module):
@@ -429,7 +423,6 @@ class GaussianSplatModelMetal(torch.nn.Module):
         sigma_max_diag: Optional[Sequence[float]] = None,
         amp_max: Optional[float] = None,
         max_eccentricity: Optional[float] = None,
-        sharpness_range: Optional[tuple[float, float] | float] = None,
         truncate: float = 3.0,
         intensity_floor: float = 1e-5,
         tile_size: int = 4,  # Tile size for 3D binning (4 is optimal)
@@ -463,7 +456,7 @@ class GaussianSplatModelMetal(torch.nn.Module):
         import inspect
 
         base_params = inspect.signature(GaussianSplatModel.__init__).parameters
-        if len(base_params) > 14:  # Expected: ~13 parameters (self + 12 init params)
+        if len(base_params) > 13:  # Expected: ~12 parameters (self + 11 init params)
             import warnings
 
             warnings.warn(
@@ -484,7 +477,6 @@ class GaussianSplatModelMetal(torch.nn.Module):
             sigma_max_diag=sigma_max_diag,
             amp_max=amp_max,
             max_eccentricity=max_eccentricity,
-            sharpness_range=sharpness_range,
             truncate=truncate,
             voxel_size=voxel_size,
             device=base_device,
@@ -512,7 +504,7 @@ class GaussianSplatModelMetal(torch.nn.Module):
         Overrides base model's forward() to use MetalSplatFunction.
         """
         # Get current parameters from base model
-        centers, Ls, amps, sharpness = self._base.current_params()
+        centers, Ls, amps = self._base.current_params()
 
         # Use Metal-accelerated forward pass
         output = cast(
@@ -521,7 +513,6 @@ class GaussianSplatModelMetal(torch.nn.Module):
                 centers,
                 Ls,
                 amps,
-                sharpness,
                 self._shape,
                 self._truncate,
                 self._intensity_floor,
@@ -535,7 +526,7 @@ class GaussianSplatModelMetal(torch.nn.Module):
     # Delegate all other methods to base model
     def current_params(
         self,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Get current parameter values."""
         return self._base.current_params()
 
@@ -548,20 +539,18 @@ class GaussianSplatModelMetal(torch.nn.Module):
         centers: torch.Tensor,
         Ls: torch.Tensor,
         amps: torch.Tensor,
-        sharpness: torch.Tensor,
     ) -> None:
         """Add new splats to the model."""
-        self._base.append_(centers, Ls, amps, sharpness)
+        self._base.append_(centers, Ls, amps)
 
     def replace_with(
         self,
         centers: torch.Tensor,
         Ls: torch.Tensor,
         amps: torch.Tensor,
-        sharpness: torch.Tensor,
     ) -> None:
         """Replace all splats with new values."""
-        self._base.replace_with(centers, Ls, amps, sharpness)
+        self._base.replace_with(centers, Ls, amps)
 
     def n_splats(self) -> int:
         """Return number of splats."""
@@ -663,11 +652,6 @@ class GaussianSplatModelMetal(torch.nn.Module):
     def raw_a(self) -> torch.Tensor:
         """Delegate to base model (required by optimizer)."""
         return self._base.raw_a
-
-    @property
-    def sharpness_offsets_raw(self) -> torch.Tensor:
-        """Delegate to base model (required by optimizer)."""
-        return self._base.sharpness_offsets_raw
 
     @property
     def sigma_min_diag(self) -> torch.Tensor:

@@ -28,7 +28,6 @@ def _make_isotropic_3d(sigma: float, amplitude: float, center=None) -> GSplatDat
         centers=np.array([center], dtype=np.float32),
         amplitudes=np.array([amplitude], dtype=np.float32),
         cholesky_factors=chol.reshape(1, -1),
-        sharpnesses=np.array([2.0], dtype=np.float32),
     )
 
 
@@ -106,7 +105,6 @@ class TestSpatialVolumeExtraction:
             centers=np.array([[0, 0, 0]], dtype=np.float32),
             amplitudes=np.array([1.0], dtype=np.float32),
             cholesky_factors=chol_3d,
-            sharpnesses=np.array([2.0], dtype=np.float32),
         )
         vol_3d = g3.volumes()
 

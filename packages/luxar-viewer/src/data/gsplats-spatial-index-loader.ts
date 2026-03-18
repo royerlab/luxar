@@ -43,7 +43,7 @@ import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache
  * Key features:
  * - Chunk-based loading using spatial index
  * - Handles all array encoding types (broadcasted, quantized, LUT, etc.)
- * - Support for optional arrays (colors, sharpness)
+ * - Support for optional arrays (colors)
  */
 export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   private chunkIndex: GSplatsChunkSpatialIndex | null = null;
@@ -71,7 +71,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     amplitudes?: zarr.Array<zarr.DataType, zarr.Readable>;
     cholesky_factors?: zarr.Array<zarr.DataType, zarr.Readable>;
     colors?: zarr.Array<zarr.DataType, zarr.Readable>;
-    sharpness?: zarr.Array<zarr.DataType, zarr.Readable>;
   } = {};
 
   constructor(
@@ -180,34 +179,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       log.info(Modules.SPATIAL_INDEX_LOADER, 'No colors array found (using default white)');
     }
 
-    try {
-      // Try plural name first (current format), fall back to singular (legacy)
-      let sharpnessArray: zarr.Array<zarr.DataType, zarr.Readable>;
-      let sharpnessName: string;
-      try {
-        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
-          kind: 'array',
-        });
-        sharpnessName = 'sharpnesses';
-      } catch {
-        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
-          kind: 'array',
-        });
-        sharpnessName = 'sharpness';
-      }
-      this.registerBounds(sharpnessName, sharpnessArray);
-      if (this.l0Cache) {
-        sharpnessArray = wrapWithCache(
-          sharpnessArray,
-          this.l0Cache,
-          `${this.node.path}/${sharpnessName}`
-        );
-      }
-      this.arrays.sharpness = sharpnessArray;
-    } catch {
-      log.info(Modules.SPATIAL_INDEX_LOADER, 'No sharpnesses array found (using default 2.0)');
-    }
-
     // Initialize data accumulator for object pooling (Phase 1 optimization)
     // NOTE: Infrastructure-only for Phase 1. Full hot path integration deferred to Phase 2.
     // See src/data/DATA_ACCUMULATOR_STATUS.md for details.
@@ -313,7 +284,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
           amplitudes: new Float32Array(1),
           choleskyFactors: new Float32Array(choleskyPackedSize(attrs.ndim)),
           colors: sampleColors,
-          sharpness: this.arrays.sharpness ? new Float32Array(1) : undefined,
         });
       }
 
@@ -355,10 +325,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
               loadedColors;
           }
         }
-        if (this.arrays.sharpness) {
-          const sharpnessBuffer = this._accumulator['sharpnessBuffer'] as Float32Array;
-          await this.loadArrayRanges('sharpness', splatRanges, 1, sharpnessBuffer);
-        }
       } finally {
         loadSession?.end();
       }
@@ -373,7 +339,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     let amplitudes: Float32Array;
     let choleskyFactors: Float32Array;
     let colors: Float32Array | Uint8Array | Uint16Array | null = null;
-    let sharpness: Float32Array | null = null;
 
     if (session) {
       const loadSession = session.begin('Load Arrays');
@@ -388,9 +353,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
         // Use multi-type loadColorRanges for colors
         colors = this.arrays.colors ? await this.loadColorRanges(splatRanges) : null;
-        sharpness = this.arrays.sharpness
-          ? await this.loadArrayRanges('sharpness', splatRanges, 1)
-          : null;
       } finally {
         loadSession.end();
       }
@@ -405,9 +367,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
       // Use multi-type loadColorRanges for colors
       colors = this.arrays.colors ? await this.loadColorRanges(splatRanges) : null;
-      sharpness = this.arrays.sharpness
-        ? await this.loadArrayRanges('sharpness', splatRanges, 1)
-        : null;
     }
 
     return {
@@ -415,7 +374,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       amplitudes,
       choleskyFactors,
       colors,
-      sharpness,
       splatCount: totalSplats,
       ndim: attrs.ndim,
     };
@@ -829,7 +787,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       amplitudes: new Float32Array(0),
       choleskyFactors: new Float32Array(0),
       colors: null,
-      sharpness: null,
       splatCount: 0,
       ndim: attrs.ndim,
     };

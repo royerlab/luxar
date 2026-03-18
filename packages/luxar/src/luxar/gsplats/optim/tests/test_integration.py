@@ -10,7 +10,6 @@ import torch
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.optim.integration import create_optimizer_and_scheduler
 
-
 @pytest.fixture
 def simple_model():
     """Create a simple test model."""
@@ -27,7 +26,6 @@ def simple_model():
         sigma_min_diag=[0.5, 0.5],
         device=torch.device("cpu"),
     )
-
 
 class TestOptimizerCreation:
     """Test optimizer and scheduler creation."""
@@ -74,7 +72,6 @@ class TestOptimizerCreation:
                 simple_model, lr=0.1, scheduler_type="invalid_scheduler"
             )
 
-
 class TestSchedulerParameters:
     """Test scheduler parameter passing."""
 
@@ -110,7 +107,6 @@ class TestSchedulerParameters:
         assert isinstance(scheduler, torch.optim.lr_scheduler.ExponentialLR)
         assert scheduler.gamma == 0.92
 
-
 class TestOptimizerParameters:
     """Test optimizer parameter passing."""
 
@@ -131,7 +127,6 @@ class TestOptimizerParameters:
         assert param_group["eps"] == 1e-6
         assert param_group["weight_decay"] == 0.01
         assert param_group["amsgrad"] is True
-
 
 class TestGradientDilution:
     """Test gradient dilution compensation."""
@@ -173,7 +168,6 @@ class TestGradientDilution:
         actual_lr = optimizer.param_groups[0]["lr"]
         assert actual_lr > 0.1  # Should be scaled up
 
-
 class TestTrainingIntegration:
     """Test optimizer works in training loop."""
 
@@ -214,7 +208,6 @@ class TestTrainingIntegration:
 
         final_lr = optimizer.param_groups[0]["lr"]
         assert final_lr == pytest.approx(initial_lr * 0.9)
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

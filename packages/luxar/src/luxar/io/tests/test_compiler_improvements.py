@@ -122,8 +122,6 @@ class TestChunkBoundsZarrAlignment:
                 amplitudes = np.random.rand(n_splats).astype(np.float32)
                 cholesky = np.random.randn(n_splats, k).astype(np.float32)
                 colors = np.random.rand(n_splats, 3).astype(np.float32)
-                # Use non-uniform sharpness so the encoder doesn't broadcast it
-                sharpness = np.random.uniform(1.5, 3.0, n_splats).astype(np.float32)
 
                 scene.add_gsplats(
                     "splats",
@@ -131,7 +129,6 @@ class TestChunkBoundsZarrAlignment:
                     amplitudes=amplitudes,
                     cholesky_factors=cholesky,
                     colors=colors,
-                    sharpness=sharpness,
                 )
 
             store = zarr.open_group(zarr_path, mode="r")
@@ -151,9 +148,6 @@ class TestChunkBoundsZarrAlignment:
             )
             assert g["colors"].chunks[0] == chunk_size, (
                 f"colors chunks[0]={g['colors'].chunks[0]} != chunk_size={chunk_size}"
-            )
-            assert g["sharpnesses"].chunks[0] == chunk_size, (
-                f"sharpnesses chunks[0]={g['sharpnesses'].chunks[0]} != chunk_size={chunk_size}"
             )
 
             # chunk_bounds partitions must match number of zarr chunks

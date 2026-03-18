@@ -184,7 +184,7 @@ with asection("3D C. elegans Confocal — Gaussian Splatting Demo"):
 
         n_final = len(result.amplitudes)
         d = 3
-        floats_per_splat = d + tril_size(d) + 1 + 1  # centers + chol + amp + sharpness
+        floats_per_splat = d + tril_size(d) + 1  # centers + chol + amp
         model_bits = n_final * floats_per_splat * 32
         image_bits = V.size * 32
         fold = image_bits / max(model_bits, 1)
@@ -217,7 +217,6 @@ with asection("3D C. elegans Confocal — Gaussian Splatting Demo"):
                 centers=result.centers[idx],
                 amplitudes=result.amplitudes[idx],
                 cholesky_factors=result.cholesky_factors[idx],
-                sharpnesses=result.sharpnesses[idx],
                 stats={},
             )
             Vk = render_gaussians_numpy(V.shape, sub, truncate=3.0)

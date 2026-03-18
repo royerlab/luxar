@@ -345,7 +345,6 @@ class TestFitTiled:
                 cholesky_factors=np.eye(3, dtype=np.float32)[
                     np.tril_indices(3)
                 ].reshape(1, -1),
-                sharpnesses=np.full((1,), 2.0, dtype=np.float32),
                 stats={"time_seconds": 0.0},
             )
 

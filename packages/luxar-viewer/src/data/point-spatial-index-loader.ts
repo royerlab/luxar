@@ -717,8 +717,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const { slicePosition, tolerance } = viewState;
 
     // Use max radius from node attributes if available
-    const maxRadius =
-      this.node.attrs.max_radius ?? appConfig.dataLoading.spatial.defaultMaxRadius;
+    const maxRadius = this.node.attrs.max_radius ?? appConfig.dataLoading.spatial.defaultMaxRadius;
 
     // Get full dimension count from index metadata or default to 3D
     const fullDim = this.chunkIndex?.metadata.ndim || 3;

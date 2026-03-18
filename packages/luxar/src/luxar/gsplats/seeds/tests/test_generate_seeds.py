@@ -69,7 +69,6 @@ def validate_gsplatdata(
 
     N = len(result.centers)
     assert len(result.amplitudes) == N, "Amplitudes should match centers count"
-    assert len(result.sharpnesses) == N, "Sharpnesses should match centers count"
 
     tril_size = expected_ndim * (expected_ndim + 1) // 2
     assert result.cholesky_factors.shape == (N, tril_size), (

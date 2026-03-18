@@ -25,10 +25,6 @@ class GSplatData:
     cholesky_factors : np.ndarray, shape (N, d*(d+1)//2)
         Packed lower-triangular Cholesky factors (L) where Σ = L @ L.T.
         The packing order follows: [L00, L10, L11, L20, L21, L22, ...]
-    sharpnesses : np.ndarray, shape (N,)
-        Per-splat sharpness values (s=2.0 is standard Gaussian).
-        Lower values (s<2) create heavy-tailed Gaussians.
-        Higher values (s>2) create sharper, more compact splats.
     colors : Optional[np.ndarray], shape (N, 3)
         Optional RGB colors per splat. Can be uint8 [0, 255] for SDR or
         float32 for HDR. None if colors are not present.
@@ -37,7 +33,6 @@ class GSplatData:
         - time_seconds: Total optimization time
         - iterations: Number of iterations completed
         - converged: Whether convergence criteria were met
-        - sharpness_min/max/mean/std/median: Sharpness statistics
         - best_iteration: Iteration where best state was found
         - final_max_abs_error: Maximum absolute error in best state
         - final_rel_l2: Relative L2 error in best state
@@ -47,7 +42,6 @@ class GSplatData:
     centers: np.ndarray
     amplitudes: np.ndarray
     cholesky_factors: np.ndarray
-    sharpnesses: np.ndarray
     colors: Optional[np.ndarray] = None
     stats: Dict[str, Any] = field(default_factory=dict)
 
@@ -57,11 +51,6 @@ class GSplatData:
         if self.amplitudes.shape != (n,):
             raise ValueError(
                 f"Amplitudes shape {self.amplitudes.shape} doesn't match "
-                f"centers count ({n},)"
-            )
-        if self.sharpnesses.shape != (n,):
-            raise ValueError(
-                f"Sharpnesses shape {self.sharpnesses.shape} doesn't match "
                 f"centers count ({n},)"
             )
         if self.colors is not None and self.colors.shape[0] != n:
@@ -98,14 +87,12 @@ class GSplatData:
         ndim = self.ndim
         if n > 0:
             amp_range = f"[{float(self.amplitudes.min()):.4g}, {float(self.amplitudes.max()):.4g}]"
-            sharp_range = f"[{float(self.sharpnesses.min()):.4g}, {float(self.sharpnesses.max()):.4g}]"
         else:
             amp_range = "[]"
-            sharp_range = "[]"
         colors = "yes" if self.colors is not None else "no"
         return (
             f"GSplatData({n:,} splats, {ndim}D, "
-            f"amplitudes={amp_range}, sharpness={sharp_range}, colors={colors})"
+            f"amplitudes={amp_range}, colors={colors})"
         )
 
     # ── Computed properties ─────────────────────────────────
@@ -203,7 +190,6 @@ class GSplatData:
             centers=self.centers[mask],
             amplitudes=self.amplitudes[mask],
             cholesky_factors=self.cholesky_factors[mask],
-            sharpnesses=self.sharpnesses[mask],
             colors=self.colors[mask] if self.colors is not None else None,
             stats=dict(self.stats),
         )
@@ -234,8 +220,6 @@ class GSplatData:
         amplitude_normalized: bool = False,
         eccentricity_min: float | None = None,
         eccentricity_max: float | None = None,
-        sharpness_min: float | None = None,
-        sharpness_max: float | None = None,
         mass_min: float | None = None,
         mass_max: float | None = None,
         mass_normalized: bool = False,
@@ -263,8 +247,6 @@ class GSplatData:
                 mapped to the dataset's [min, max] amplitude range.
             eccentricity_min: Minimum eccentricity (1.0 = isotropic).
             eccentricity_max: Maximum eccentricity.
-            sharpness_min: Minimum sharpness value.
-            sharpness_max: Maximum sharpness value.
             mass_min: Minimum mass (amplitude * volume).
             mass_max: Maximum mass.
             mass_normalized: If True, interpret mass thresholds as 0-1
@@ -363,16 +345,6 @@ class GSplatData:
             if eccentricity_max is not None:
                 mask &= ecc <= eccentricity_max
                 criteria["eccentricity_max"] = eccentricity_max
-
-        # -- Sharpness
-        if sharpness_min is not None or sharpness_max is not None:
-            sharp = self.sharpnesses
-            if sharpness_min is not None:
-                mask &= sharp >= sharpness_min
-                criteria["sharpness_min"] = sharpness_min
-            if sharpness_max is not None:
-                mask &= sharp <= sharpness_max
-                criteria["sharpness_max"] = sharpness_max
 
         # -- Mass (amplitude * volume)
         if mass_min is not None or mass_max is not None:
@@ -480,8 +452,6 @@ class GSplatData:
         all_centers = np.concatenate([d.centers for d in non_empty], axis=0)
         all_amplitudes = np.concatenate([d.amplitudes for d in non_empty])
         all_cholesky = np.concatenate([d.cholesky_factors for d in non_empty], axis=0)
-        all_sharpnesses = np.concatenate([d.sharpnesses for d in non_empty])
-
         has_colors = [d.colors is not None for d in non_empty]
         if all(has_colors):
             all_colors = np.concatenate([d.colors for d in non_empty], axis=0)
@@ -508,7 +478,6 @@ class GSplatData:
             centers=all_centers,
             amplitudes=all_amplitudes,
             cholesky_factors=all_cholesky,
-            sharpnesses=all_sharpnesses,
             colors=all_colors,
             stats=merged_stats,
         )
@@ -609,7 +578,6 @@ class GSplatData:
                         cholesky_factors=np.empty(
                             (0, k), dtype=self.cholesky_factors.dtype
                         ),
-                        sharpnesses=np.empty(0, dtype=self.sharpnesses.dtype),
                         colors=np.empty((0, 3), dtype=np.float32)
                         if self.colors is not None
                         else None,
@@ -622,7 +590,6 @@ class GSplatData:
                         centers=self.centers[idx],
                         amplitudes=self.amplitudes[idx],
                         cholesky_factors=self.cholesky_factors[idx],
-                        sharpnesses=self.sharpnesses[idx],
                         colors=self.colors[idx] if self.colors is not None else None,
                         stats=dict(self.stats),
                     )
@@ -680,7 +647,6 @@ class GSplatData:
             centers=new_centers,
             amplitudes=self.amplitudes,
             cholesky_factors=new_cholesky,
-            sharpnesses=self.sharpnesses,
             colors=self.colors,
             stats=dict(self.stats),
         )
@@ -690,8 +656,8 @@ class GSplatData:
     def transform(self, matrix: np.ndarray) -> "GSplatData":
         """Apply affine transformation to all splats.
 
-        Transforms centers and covariance matrices. Amplitudes, sharpnesses,
-        and colors are unchanged.
+        Transforms centers and covariance matrices. Amplitudes and colors
+        are unchanged.
 
         Args:
             matrix: Either (d, d) for linear-only transform or
@@ -737,7 +703,7 @@ class GSplatData:
                 centers=self.centers.copy(),
                 amplitudes=self.amplitudes,
                 cholesky_factors=self.cholesky_factors.copy(),
-                sharpnesses=self.sharpnesses,
+
                 colors=self.colors,
                 stats=dict(self.stats),
             )
@@ -756,7 +722,7 @@ class GSplatData:
             centers=new_centers,
             amplitudes=self.amplitudes,
             cholesky_factors=new_cholesky,
-            sharpnesses=self.sharpnesses,
+
             colors=self.colors,
             stats=dict(self.stats),
         )
@@ -777,7 +743,7 @@ class GSplatData:
             centers=self.centers,
             amplitudes=self.amplitudes * scale + offset,
             cholesky_factors=self.cholesky_factors,
-            sharpnesses=self.sharpnesses,
+
             colors=self.colors,
             stats=dict(self.stats),
         )
@@ -797,7 +763,7 @@ class GSplatData:
                 centers=self.centers,
                 amplitudes=self.amplitudes.copy(),
                 cholesky_factors=self.cholesky_factors,
-                sharpnesses=self.sharpnesses,
+
                 colors=self.colors,
                 stats=dict(self.stats),
             )
@@ -826,7 +792,7 @@ class GSplatData:
             centers=self.centers,
             amplitudes=new_amps,
             cholesky_factors=self.cholesky_factors,
-            sharpnesses=self.sharpnesses,
+
             colors=self.colors,
             stats=dict(self.stats),
         )
@@ -928,7 +894,6 @@ class GSplatData:
             amplitudes=self.amplitudes,
             cholesky_factors=self.cholesky_factors,
             colors=self.colors,
-            sharpnesses=self.sharpnesses,
             ordering=ordering,
             encoding_mode=encoding_mode,
             color_mode=color_mode,
@@ -957,7 +922,6 @@ class GSplatData:
             centers=self.centers + offset,  # NEW array
             amplitudes=self.amplitudes,  # REFERENCE (no copy needed)
             cholesky_factors=self.cholesky_factors,  # REFERENCE
-            sharpnesses=self.sharpnesses,  # REFERENCE
             colors=self.colors,  # REFERENCE (None-safe)
             stats=dict(self.stats),
         )
@@ -1009,7 +973,6 @@ class GSplatData:
             centers=self.centers,  # REFERENCE (no copy needed)
             amplitudes=self.amplitudes * factor,  # NEW array
             cholesky_factors=self.cholesky_factors,  # REFERENCE
-            sharpnesses=self.sharpnesses,  # REFERENCE
             colors=self.colors,  # REFERENCE (None-safe)
             stats=dict(self.stats),
         )
@@ -1279,10 +1242,6 @@ class GSplatData:
         all_cholesky = np.concatenate(
             [g.cholesky_factors for g in gsplats_per_channel], axis=0
         )
-        all_sharpnesses = np.concatenate(
-            [g.sharpnesses for g in gsplats_per_channel], axis=0
-        )
-
         # Build colors array: each splat gets the color of its source channel
         color_arrays = []
         for gsplat, color in zip(gsplats_per_channel, channel_colors):
@@ -1310,7 +1269,6 @@ class GSplatData:
             centers=all_centers,
             amplitudes=all_amplitudes,
             cholesky_factors=all_cholesky,
-            sharpnesses=all_sharpnesses,
             colors=all_colors,
             stats=merged_stats,
         )

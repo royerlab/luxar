@@ -32,7 +32,7 @@ describe('processGSplats3DOnly', () => {
         1, // Anisotropic
       ]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
-      sharpness: new Float32Array([2.0, 1.5, 2.5]),
+
       splatCount: 3,
       ndim: 3,
     };
@@ -44,31 +44,26 @@ describe('processGSplats3DOnly', () => {
     expect(result.amplitudes.length).toBe(3);
     expect(result.choleskyFactors3D.length).toBe(18);
     expect(result.colors.length).toBe(9);
-    expect(result.sharpness.length).toBe(3);
 
     // Check values are copied correctly
     expect(result.centers3D[0]).toBe(0);
     expect(result.centers3D[3]).toBe(1);
     expect(result.amplitudes[0]).toBe(1.0);
     expect(result.amplitudes[1]).toBe(0.5);
-    expect(result.sharpness[0]).toBe(2.0);
-    expect(result.sharpness[1]).toBe(1.5);
   });
 
-  it('should default sharpness to 2.0 if not present', () => {
+  it('should handle data without colors', () => {
     const loaded: LoadedGSplatsData = {
       positions: new Float32Array([0, 0, 0]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       colors: null,
-      sharpness: null,
       splatCount: 1,
       ndim: 3,
     };
 
     const result = processGSplats3DOnly(loaded);
-
-    expect(result.sharpness[0]).toBe(2.0);
+    expect(result.splatCount).toBe(1);
   });
 
   it('should default colors to white if not present', () => {
@@ -77,7 +72,7 @@ describe('processGSplats3DOnly', () => {
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       colors: null,
-      sharpness: null,
+
       splatCount: 1,
       ndim: 3,
     };
@@ -95,7 +90,7 @@ describe('processGSplats3DOnly', () => {
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1]),
       colors: null,
-      sharpness: null,
+
       splatCount: 1,
       ndim: 4,
     };
@@ -111,7 +106,7 @@ describe('processGSplatsTo3D', () => {
       amplitudes: new Float32Array([1.0, 0.5]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0]),
-      sharpness: new Float32Array([2.0, 2.0]),
+
       splatCount: 2,
       ndim: 3,
     };
@@ -161,7 +156,7 @@ describe('processGSplatsTo3D', () => {
         1, // Second splat: identity
       ]),
       colors: new Float32Array([1, 1, 1, 1, 1, 1]),
-      sharpness: new Float32Array([2.0, 2.0]),
+
       splatCount: 2,
       ndim: 4,
     };
@@ -204,7 +199,7 @@ describe('processGSplatsTo3D', () => {
         1, // L33
       ]),
       colors: null,
-      sharpness: null,
+
       splatCount: 1,
       ndim: 4,
     };
@@ -234,7 +229,7 @@ describe('processGSplatsTo3D', () => {
       // Minimal valid Cholesky for 5D (15 elements)
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
       colors: new Float32Array([1, 0, 0]),
-      sharpness: new Float32Array([2.0]),
+
       splatCount: 1,
       ndim: 5,
     };
@@ -261,7 +256,7 @@ describe('processGSplats', () => {
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       colors: null,
-      sharpness: null,
+
       splatCount: 1,
       ndim: 3,
     };
@@ -275,7 +270,6 @@ describe('processGSplats', () => {
     const result = processGSplats(loaded, viewState);
 
     expect(result.splatCount).toBe(1);
-    expect(result.sharpness[0]).toBe(2.0); // Default sharpness
   });
 
   it('should use general path for non-standard display dims', () => {
@@ -284,7 +278,7 @@ describe('processGSplats', () => {
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       colors: new Float32Array([1, 0, 0]),
-      sharpness: new Float32Array([2.0]),
+
       splatCount: 1,
       ndim: 3,
     };
@@ -312,7 +306,7 @@ describe('processGSplats', () => {
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1]),
       colors: null,
-      sharpness: null,
+
       splatCount: 1,
       ndim: 4,
     };
@@ -336,7 +330,7 @@ describe('edge cases', () => {
       amplitudes: new Float32Array(0),
       choleskyFactors: new Float32Array(0),
       colors: null,
-      sharpness: null,
+
       splatCount: 0,
       ndim: 3,
     };
@@ -359,7 +353,7 @@ describe('edge cases', () => {
       amplitudes: new Float32Array([1.0, 0.0]), // Second has zero amplitude
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1]),
       colors: null,
-      sharpness: null,
+
       splatCount: 2,
       ndim: 3,
     };
@@ -378,13 +372,12 @@ describe('edge cases', () => {
     expect(result.centers3D[2]).toBe(0);
   });
 
-  it('should use default sharpness 2.0 when not provided', () => {
+  it('should use standard Gaussian falloff', () => {
     const loaded: LoadedGSplatsData = {
       positions: new Float32Array([0, 0, 0]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       colors: null,
-      sharpness: null, // No sharpness
       splatCount: 1,
       ndim: 3,
     };
@@ -396,8 +389,7 @@ describe('edge cases', () => {
     };
 
     const result = processGSplatsTo3D(loaded, viewState);
-
-    expect(result.sharpness[0]).toBe(2.0);
+    expect(result.splatCount).toBe(1);
   });
 });
 
@@ -410,7 +402,7 @@ describe('workspace reuse safety', () => {
       // 4D identity Cholesky (10 elements)
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1]),
       colors: null,
-      sharpness: new Float32Array([2.0]),
+
       splatCount: 1,
       ndim: 4,
     };
@@ -428,7 +420,7 @@ describe('workspace reuse safety', () => {
       // 5D identity Cholesky (15 elements)
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
       colors: null,
-      sharpness: new Float32Array([2.0]),
+
       splatCount: 1,
       ndim: 5,
     };
@@ -445,7 +437,7 @@ describe('workspace reuse safety', () => {
       amplitudes: new Float32Array([0.8]),
       choleskyFactors: new Float32Array([2, 0, 2, 0, 0, 2]),
       colors: null,
-      sharpness: new Float32Array([2.0]),
+
       splatCount: 1,
       ndim: 3,
     };
@@ -505,7 +497,7 @@ describe('workspace reuse safety', () => {
         1, // L30, L31, L32, L33 - cross-correlations!
       ]),
       colors: null,
-      sharpness: new Float32Array([2.0]),
+
       splatCount: 1,
       ndim: 4,
     };
@@ -604,7 +596,7 @@ describe('workspace reuse safety', () => {
         1,
         0, // yellow (should be filtered)
       ]),
-      sharpness: new Float32Array([2.0, 2.0, 2.0, 2.0]),
+
       splatCount: 4,
       ndim: 4,
     };
@@ -646,7 +638,7 @@ describe('discrete dimension handling', () => {
       // 4D Cholesky: identity in spatial, tiny sigma=0.3 in time (L[3,3]=0.3)
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 0.3]),
       colors: null,
-      sharpness: new Float32Array([2.0]),
+
       splatCount: 1,
       ndim: 4,
     };
@@ -677,7 +669,7 @@ describe('discrete dimension handling', () => {
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 0.3]),
       colors: null,
-      sharpness: new Float32Array([2.0]),
+
       splatCount: 1,
       ndim: 4,
     };
@@ -708,7 +700,7 @@ describe('discrete dimension handling', () => {
       // 5D identity Cholesky (15 elements)
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
       colors: null,
-      sharpness: new Float32Array([2.0]),
+
       splatCount: 1,
       ndim: 5,
     };
@@ -746,7 +738,7 @@ describe('discrete dimension handling', () => {
       // 5D identity Cholesky (15 elements)
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
       colors: null,
-      sharpness: new Float32Array([2.0]),
+
       splatCount: 1,
       ndim: 5,
     };
@@ -778,7 +770,7 @@ describe('discrete dimension handling', () => {
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1]),
       colors: null,
-      sharpness: new Float32Array([2.0]),
+
       splatCount: 1,
       ndim: 4,
     };
@@ -793,7 +785,7 @@ describe('discrete dimension handling', () => {
     const result = processGSplatsTo3D(loaded, viewState);
 
     expect(result.splatCount).toBe(1);
-    // Gaussian attenuation: mahal=0.5, sharpness=2 → exp(-0.5 * 0.25) ≈ 0.8825
+    // Gaussian attenuation: mahal=0.5 → exp(-0.5 * 0.25) ≈ 0.8825
     const expected = Math.exp(-0.5 * 0.25);
     expect(result.amplitudes[0]).toBeCloseTo(expected, 4);
   });

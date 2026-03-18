@@ -51,7 +51,6 @@ class LossConfig:
     asymmetric_penalty: Optional[float] = 10.0
     l1_amp: Optional[float] = None
     l1_diag: Optional[float] = None
-    l1_sharpness: Optional[float] = None
     boundary_penalty: Optional[float] = None
 
 
@@ -70,7 +69,6 @@ class ConstraintConfig:
     sigma_max_diag: Optional[Sequence[float] | float] = None
     amp_max: Optional[float] = None
     max_eccentricity: Optional[float] = 10.0
-    sharpness_range: Optional[tuple[float, float] | float] = 2.0
     truncate: float = 3.0
     voxel_size: Optional[Sequence[float] | float] = None
     output_space: str = "real"
@@ -111,7 +109,6 @@ class FitConfig:
     asymmetric_penalty: Optional[float]
     l1_amp: Optional[float]
     l1_diag: Optional[float]
-    l1_sharpness: Optional[float]  # L1 regularization on sharpness offsets (s')
 
     # Scheduler parameters
     scheduler_type: str
@@ -155,16 +152,12 @@ class FitConfig:
     # If set, these override the default initialization
     init_L: Optional[np.ndarray] = None  # Shape (N, d, d) - Cholesky factors
     init_amps: Optional[np.ndarray] = None  # Shape (N,) - amplitudes
-    init_sharpness: Optional[np.ndarray] = None  # Shape (N,) - sharpness values
 
     # Amplitude constraint (prevents explosion with few splats)
     amp_max: Optional[float] = None  # Maximum amplitude value if specified
 
     # Constraint parameters
     max_eccentricity: Optional[float] = None  # Limit ratio of longest to shortest axis
-    sharpness_range: Optional[tuple[float, float] | float] = (
-        None  # (min, max) tuple or fixed value
-    )
 
     # Post-fit culling ratio: threshold = cull_ratio * max_abs_error
     # Splats with amplitude below this threshold are removed after fitting.
@@ -233,13 +226,11 @@ class PreprocessedData:
     # These are stored here instead of mutating FitConfig
     l1_amp: Optional[float] = None
     l1_diag: Optional[float] = None
-    l1_sharpness: Optional[float] = None
 
     # Pre-initialized model parameters (set during preprocessing)
     # These are processed copies - FitConfig is not mutated
     init_L: Optional[np.ndarray] = None  # Shape (N, d, d) - Cholesky factors
     init_amps: Optional[np.ndarray] = None  # Shape (N,) - amplitudes
-    init_sharpness: Optional[np.ndarray] = None  # Shape (N,) - sharpness values
 
     # Downscale factors applied during preprocessing (for rescaling in finalize_results)
     downscale_factors: Optional[tuple[int, ...]] = None
@@ -257,7 +248,6 @@ class OptimizationResults:
     centers: torch.Tensor
     Ls: torch.Tensor
     amps: torch.Tensor
-    sharpness: torch.Tensor
 
     # Optimization metadata
     converged_early: bool
