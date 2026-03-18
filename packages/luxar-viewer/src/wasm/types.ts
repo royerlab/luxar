@@ -292,7 +292,6 @@ export interface WasmModule {
     positions: Float32Array,
     cholesky: Float32Array,
     amplitudes: Float32Array,
-    sharpness: Float32Array,
     slicePosition: Float32Array,
     hiddenDims: Uint32Array,
     ndim: number,

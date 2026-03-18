@@ -5,7 +5,6 @@ import pytest
 
 from luxar.gsplats.gsplat_data import GSplatData
 
-
 def _make_3d_gsplat(n=5, seed=42):
     """Helper: create a simple 3D GSplatData with n splats."""
     rng = np.random.RandomState(seed)
@@ -15,9 +14,7 @@ def _make_3d_gsplat(n=5, seed=42):
         cholesky_factors=np.tile(
             np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
         ),
-        sharpnesses=np.full(n, 2.0, dtype=np.float32),
     )
-
 
 def _make_empty_gsplat(ndim=3):
     """Helper: create an empty GSplatData."""
@@ -26,12 +23,9 @@ def _make_empty_gsplat(ndim=3):
         centers=np.zeros((0, ndim), dtype=np.float32),
         amplitudes=np.zeros(0, dtype=np.float32),
         cholesky_factors=np.zeros((0, tril), dtype=np.float32),
-        sharpnesses=np.zeros(0, dtype=np.float32),
     )
 
-
 # ── Properties and basic interface ──────────────────────────
-
 
 class TestProperties:
     """Tests for n_splats, ndim, __len__, __repr__."""
@@ -49,7 +43,6 @@ class TestProperties:
             centers=np.zeros((2, 2), dtype=np.float32),
             amplitudes=np.zeros(2, dtype=np.float32),
             cholesky_factors=np.zeros((2, 3), dtype=np.float32),
-            sharpnesses=np.zeros(2, dtype=np.float32),
         )
         assert gs.ndim == 2
 
@@ -88,9 +81,7 @@ class TestProperties:
         gs1.stats["foo"] = "bar"
         assert "foo" not in gs2.stats
 
-
 # ── Validation ──────────────────────────────────────────────
-
 
 class TestValidation:
     """Tests for __post_init__ shape validation."""
@@ -109,16 +100,6 @@ class TestValidation:
                 centers=np.zeros((3, 3), dtype=np.float32),
                 amplitudes=np.zeros(5, dtype=np.float32),  # wrong count
                 cholesky_factors=np.zeros((3, 6), dtype=np.float32),
-                sharpnesses=np.zeros(3, dtype=np.float32),
-            )
-
-    def test_mismatched_sharpnesses(self):
-        with pytest.raises(ValueError, match="Sharpnesses shape"):
-            GSplatData(
-                centers=np.zeros((3, 3), dtype=np.float32),
-                amplitudes=np.zeros(3, dtype=np.float32),
-                cholesky_factors=np.zeros((3, 6), dtype=np.float32),
-                sharpnesses=np.zeros(5, dtype=np.float32),  # wrong count
             )
 
     def test_mismatched_colors(self):
@@ -127,7 +108,6 @@ class TestValidation:
                 centers=np.zeros((3, 3), dtype=np.float32),
                 amplitudes=np.zeros(3, dtype=np.float32),
                 cholesky_factors=np.zeros((3, 6), dtype=np.float32),
-                sharpnesses=np.zeros(3, dtype=np.float32),
                 colors=np.zeros((5, 3), dtype=np.float32),  # wrong count
             )
 
@@ -138,7 +118,6 @@ class TestValidation:
                 centers=np.zeros((3, 3), dtype=np.float32),  # 3D → expect k=6
                 amplitudes=np.zeros(3, dtype=np.float32),
                 cholesky_factors=np.zeros((3, 3), dtype=np.float32),  # k=3 (2D size)
-                sharpnesses=np.zeros(3, dtype=np.float32),
             )
 
     def test_wrong_cholesky_splat_count(self):
@@ -148,7 +127,6 @@ class TestValidation:
                 centers=np.zeros((3, 3), dtype=np.float32),
                 amplitudes=np.zeros(3, dtype=np.float32),
                 cholesky_factors=np.zeros((5, 6), dtype=np.float32),  # N=5, not 3
-                sharpnesses=np.zeros(3, dtype=np.float32),
             )
 
     def test_valid_with_colors(self):
@@ -157,7 +135,6 @@ class TestValidation:
             centers=np.zeros((3, 3), dtype=np.float32),
             amplitudes=np.zeros(3, dtype=np.float32),
             cholesky_factors=np.zeros((3, 6), dtype=np.float32),
-            sharpnesses=np.zeros(3, dtype=np.float32),
             colors=np.zeros((3, 3), dtype=np.float32),
         )
 
@@ -167,12 +144,9 @@ class TestValidation:
             centers=np.zeros((4, 2), dtype=np.float32),
             amplitudes=np.zeros(4, dtype=np.float32),
             cholesky_factors=np.zeros((4, 3), dtype=np.float32),
-            sharpnesses=np.zeros(4, dtype=np.float32),
         )
 
-
 # ── Translate ───────────────────────────────────────────────
-
 
 class TestTranslate:
     def test_basic_translate(self):
@@ -185,10 +159,9 @@ class TestTranslate:
         gs = _make_3d_gsplat(n=3)
         gs.stats["key"] = "value"
         translated = gs.translate(np.zeros(3))
-        # Amplitudes, cholesky, sharpness should be same objects (references)
+        # Amplitudes, cholesky should be same objects (references)
         assert translated.amplitudes is gs.amplitudes
         assert translated.cholesky_factors is gs.cholesky_factors
-        assert translated.sharpnesses is gs.sharpnesses
         # Stats should be a copy
         assert translated.stats == gs.stats
         assert translated.stats is not gs.stats
@@ -199,15 +172,12 @@ class TestTranslate:
             centers=gs.centers,
             amplitudes=gs.amplitudes,
             cholesky_factors=gs.cholesky_factors,
-            sharpnesses=gs.sharpnesses,
             colors=np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32),
         )
         translated = gs_with_colors.translate(np.array([1, 2, 3]))
         assert translated.colors is gs_with_colors.colors
 
-
 # ── Center at centroid ──────────────────────────────────────
-
 
 class TestCenterAtCentroid:
     def test_uniform_amplitudes(self):
@@ -216,7 +186,6 @@ class TestCenterAtCentroid:
             centers=np.array([[0, 0, 0], [10, 10, 10]], dtype=np.float32),
             amplitudes=np.array([1.0, 1.0], dtype=np.float32),
             cholesky_factors=np.zeros((2, 6), dtype=np.float32),
-            sharpnesses=np.array([2.0, 2.0], dtype=np.float32),
         )
         centered = gs.center_at_centroid()
         centroid = centered.centers.mean(axis=0)
@@ -228,7 +197,6 @@ class TestCenterAtCentroid:
             centers=np.array([[0, 0, 0], [10, 0, 0]], dtype=np.float32),
             amplitudes=np.array([3.0, 1.0], dtype=np.float32),  # weighted toward first
             cholesky_factors=np.zeros((2, 6), dtype=np.float32),
-            sharpnesses=np.array([2.0, 2.0], dtype=np.float32),
         )
         centered = gs.center_at_centroid()
         total = centered.amplitudes.sum()
@@ -241,14 +209,11 @@ class TestCenterAtCentroid:
             centers=np.array([[0, 0, 0], [10, 10, 10]], dtype=np.float32),
             amplitudes=np.array([0.0, 0.0], dtype=np.float32),
             cholesky_factors=np.zeros((2, 6), dtype=np.float32),
-            sharpnesses=np.array([2.0, 2.0], dtype=np.float32),
         )
         centered = gs.center_at_centroid()
         assert np.allclose(centered.centers.mean(axis=0), 0.0, atol=1e-5)
 
-
 # ── Scale intensity ─────────────────────────────────────────
-
 
 class TestScaleIntensity:
     def test_double(self):
@@ -261,16 +226,13 @@ class TestScaleIntensity:
         scaled = gs.scale_intensity(0.5)
         assert scaled.centers is gs.centers
         assert scaled.cholesky_factors is gs.cholesky_factors
-        assert scaled.sharpnesses is gs.sharpnesses
 
     def test_zero_factor(self):
         gs = _make_3d_gsplat()
         scaled = gs.scale_intensity(0.0)
         assert np.allclose(scaled.amplitudes, 0.0)
 
-
 # ── Prune ───────────────────────────────────────────────────
-
 
 class TestPrune:
     def test_cumulative_retains_signal(self):
@@ -311,7 +273,6 @@ class TestPrune:
             centers=np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32),
             amplitudes=np.array([0.0, 0.0], dtype=np.float32),
             cholesky_factors=np.zeros((2, 6), dtype=np.float32),
-            sharpnesses=np.array([2.0, 2.0], dtype=np.float32),
         )
         pruned = gs.prune(method="cumulative", target_retention=0.95)
         # With zero retention request, should keep all
@@ -336,7 +297,6 @@ class TestPrune:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (2, 1)
             ),
-            sharpnesses=np.array([2.0, 2.0], dtype=np.float32),
             colors=np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32),
         )
         pruned = gs.prune(method="cumulative", target_retention=0.5)
@@ -348,9 +308,7 @@ class TestPrune:
         with pytest.raises(ValueError, match="Unknown pruning method"):
             gs.prune(method="invalid")
 
-
 # ── Save whitelist ──────────────────────────────────────────
-
 
 class TestSaveWhitelist:
     """Verify save() preserves quality metrics in fitting_info."""
@@ -361,7 +319,6 @@ class TestSaveWhitelist:
             centers=np.array([[0, 0, 0]], dtype=np.float32),
             amplitudes=np.array([1.0], dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.array([2.0], dtype=np.float32),
             stats={
                 "time_seconds": 10.0,
                 "iterations": 500,
@@ -430,7 +387,6 @@ class TestSaveWhitelist:
         # movie_frames should NOT be saved
         assert "movie_frames" not in fitting_info
 
-
 class TestMergeWithChannelColors:
     """Tests for GSplatData.merge_with_channel_colors() class method."""
 
@@ -442,7 +398,6 @@ class TestMergeWithChannelColors:
             cholesky_factors=np.array(
                 [[1, 0, 1, 0, 0, 1], [1, 0, 1, 0, 0, 1]], dtype=np.float32
             ),
-            sharpnesses=np.array([2.0, 2.0], dtype=np.float32),
             stats={"time_seconds": 1.5},
         )
 
@@ -450,7 +405,6 @@ class TestMergeWithChannelColors:
             centers=np.array([[7.0, 8.0, 9.0]], dtype=np.float32),
             amplitudes=np.array([0.9], dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.array([2.5], dtype=np.float32),
             stats={"time_seconds": 2.0},
         )
 
@@ -462,7 +416,6 @@ class TestMergeWithChannelColors:
         assert merged.centers.shape == (3, 3)
         assert merged.amplitudes.shape == (3,)
         assert merged.cholesky_factors.shape == (3, 6)
-        assert merged.sharpnesses.shape == (3,)
         assert merged.colors.shape == (3, 3)
 
     def test_colors_assigned_correctly(self):
@@ -473,14 +426,12 @@ class TestMergeWithChannelColors:
             cholesky_factors=np.array(
                 [[1, 0, 1, 0, 0, 1], [1, 0, 1, 0, 0, 1]], dtype=np.float32
             ),
-            sharpnesses=np.array([2.0, 2.0], dtype=np.float32),
         )
 
         gs2 = GSplatData(
             centers=np.array([[2.0, 2.0, 2.0]], dtype=np.float32),
             amplitudes=np.array([1.0], dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.array([2.0], dtype=np.float32),
         )
 
         red = (1.0, 0.0, 0.0)
@@ -502,14 +453,12 @@ class TestMergeWithChannelColors:
             centers=np.array([[1.0, 2.0, 3.0]], dtype=np.float32),
             amplitudes=np.array([0.5], dtype=np.float32),
             cholesky_factors=np.array([[1, 2, 3, 4, 5, 6]], dtype=np.float32),
-            sharpnesses=np.array([2.0], dtype=np.float32),
         )
 
         gs2 = GSplatData(
             centers=np.array([[4.0, 5.0, 6.0]], dtype=np.float32),
             amplitudes=np.array([0.9], dtype=np.float32),
             cholesky_factors=np.array([[7, 8, 9, 10, 11, 12]], dtype=np.float32),
-            sharpnesses=np.array([3.0], dtype=np.float32),
         )
 
         merged = GSplatData.merge_with_channel_colors(
@@ -527,16 +476,12 @@ class TestMergeWithChannelColors:
         assert np.allclose(merged.cholesky_factors[0], [1, 2, 3, 4, 5, 6])
         assert np.allclose(merged.cholesky_factors[1], [7, 8, 9, 10, 11, 12])
 
-        # Check sharpness
-        assert np.allclose(merged.sharpnesses, [2.0, 3.0])
-
     def test_stats_aggregation(self):
         """Test that stats are properly aggregated."""
         gs1 = GSplatData(
             centers=np.array([[0, 0, 0]], dtype=np.float32),
             amplitudes=np.array([1.0], dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.array([2.0], dtype=np.float32),
             stats={"time_seconds": 1.5},
         )
 
@@ -546,7 +491,6 @@ class TestMergeWithChannelColors:
             cholesky_factors=np.array(
                 [[1, 0, 1, 0, 0, 1], [1, 0, 1, 0, 0, 1]], dtype=np.float32
             ),
-            sharpnesses=np.array([2.0, 2.0], dtype=np.float32),
             stats={"time_seconds": 2.5},
         )
 
@@ -565,7 +509,6 @@ class TestMergeWithChannelColors:
                 centers=np.array([[i, i, i]], dtype=np.float32),
                 amplitudes=np.array([float(i + 1)], dtype=np.float32),
                 cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-                sharpnesses=np.array([2.0], dtype=np.float32),
             )
             for i in range(3)
         ]
@@ -586,7 +529,6 @@ class TestMergeWithChannelColors:
             centers=np.array([[0, 0, 0]], dtype=np.float32),
             amplitudes=np.array([1.0], dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.array([2.0], dtype=np.float32),
         )
 
         with pytest.raises(ValueError, match="must match"):
@@ -606,14 +548,12 @@ class TestMergeWithChannelColors:
             centers=np.array([[0, 0, 0]], dtype=np.float32),  # 3D
             amplitudes=np.array([1.0], dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.array([2.0], dtype=np.float32),
         )
 
         gs_2d = GSplatData(
             centers=np.array([[0, 0]], dtype=np.float32),  # 2D
             amplitudes=np.array([1.0], dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1]], dtype=np.float32),
-            sharpnesses=np.array([2.0], dtype=np.float32),
         )
 
         with pytest.raises(ValueError, match="Dimensionality mismatch"):
@@ -627,7 +567,6 @@ class TestMergeWithChannelColors:
             centers=np.array([[0, 0, 0]], dtype=np.float32),
             amplitudes=np.array([1.0], dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.array([2.0], dtype=np.float32),
         )
 
         merged = GSplatData.merge_with_channel_colors(
@@ -644,7 +583,6 @@ class TestMergeWithChannelColors:
             cholesky_factors=np.array(
                 [[1, 0, 1, 0, 0, 1], [1, 0, 1, 0, 0, 1]], dtype=np.float32
             ),
-            sharpnesses=np.array([2.0, 2.0], dtype=np.float32),
         )
 
         merged = GSplatData.merge_with_channel_colors(
@@ -661,14 +599,12 @@ class TestMergeWithChannelColors:
             centers=np.zeros((0, 3), dtype=np.float32),
             amplitudes=np.zeros((0,), dtype=np.float32),
             cholesky_factors=np.zeros((0, 6), dtype=np.float32),
-            sharpnesses=np.zeros((0,), dtype=np.float32),
         )
 
         gs_nonempty = GSplatData(
             centers=np.array([[1, 2, 3]], dtype=np.float32),
             amplitudes=np.array([1.0], dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.array([2.0], dtype=np.float32),
         )
 
         merged = GSplatData.merge_with_channel_colors(
@@ -689,7 +625,6 @@ class TestMergeWithChannelColors:
             centers=np.array([[0, 0, 0]], dtype=np.float32),
             amplitudes=np.array([1.0], dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.array([2.0], dtype=np.float32),
             colors=np.array(
                 [[0.0, 0.0, 0.0]], dtype=np.float32
             ),  # Black - should be ignored
@@ -703,9 +638,7 @@ class TestMergeWithChannelColors:
         # Output should be white, not black
         assert np.allclose(merged.colors[0], [1.0, 1.0, 1.0])
 
-
 # ── Computed properties ─────────────────────────────────
-
 
 def _make_2d_gsplat(n=5, seed=42):
     """Helper: create a 2D GSplatData."""
@@ -714,9 +647,7 @@ def _make_2d_gsplat(n=5, seed=42):
         centers=rng.rand(n, 2).astype(np.float32) * 100,
         amplitudes=rng.rand(n).astype(np.float32),
         cholesky_factors=np.tile(np.array([1, 0, 1], dtype=np.float32), (n, 1)),
-        sharpnesses=np.full(n, 2.0, dtype=np.float32),
     )
-
 
 class TestVolumes:
     def test_isotropic_identity_3d(self):
@@ -733,7 +664,6 @@ class TestVolumes:
             centers=np.zeros((1, 3), dtype=np.float32),
             amplitudes=np.ones(1, dtype=np.float32),
             cholesky_factors=np.array([[2, 0, 3, 0, 0, 4]], dtype=np.float32),
-            sharpnesses=np.ones(1, dtype=np.float32),
         )
         vols = gs.volumes()
         expected = abs(24**2) ** (1.0 / 3)
@@ -747,7 +677,6 @@ class TestVolumes:
     def test_empty(self):
         gs = _make_empty_gsplat()
         assert gs.volumes().shape == (0,)
-
 
 class TestMasses:
     def test_basic(self):
@@ -763,10 +692,8 @@ class TestMasses:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (2, 1)
             ),
-            sharpnesses=np.ones(2, dtype=np.float32),
         )
         assert np.allclose(gs.masses(), 0.0)
-
 
 class TestMarginalSigmas:
     def test_identity(self):
@@ -775,7 +702,6 @@ class TestMarginalSigmas:
             centers=np.zeros((1, 3), dtype=np.float32),
             amplitudes=np.ones(1, dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.ones(1, dtype=np.float32),
         )
         sigmas = gs.marginal_sigmas()
         assert sigmas.shape == (1, 3)
@@ -787,7 +713,6 @@ class TestMarginalSigmas:
             centers=np.zeros((1, 3), dtype=np.float32),
             amplitudes=np.ones(1, dtype=np.float32),
             cholesky_factors=np.array([[2, 0, 3, 0, 0, 4]], dtype=np.float32),
-            sharpnesses=np.ones(1, dtype=np.float32),
         )
         assert np.allclose(gs.marginal_sigmas()[0], [2, 3, 4])
 
@@ -797,7 +722,6 @@ class TestMarginalSigmas:
             centers=np.zeros((1, 3), dtype=np.float32),
             amplitudes=np.ones(1, dtype=np.float32),
             cholesky_factors=np.array([[2, 1, 3, 0, 0, 4]], dtype=np.float32),
-            sharpnesses=np.ones(1, dtype=np.float32),
         )
         sigmas = gs.marginal_sigmas()[0]
         assert np.allclose(sigmas[0], 2.0)
@@ -812,14 +736,12 @@ class TestMarginalSigmas:
         gs = _make_2d_gsplat(n=2)
         assert gs.marginal_sigmas().shape == (2, 2)
 
-
 class TestEccentricities:
     def test_isotropic_is_one(self):
         gs = GSplatData(
             centers=np.zeros((1, 3), dtype=np.float32),
             amplitudes=np.ones(1, dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.ones(1, dtype=np.float32),
         )
         assert np.allclose(gs.eccentricities(), 1.0)
 
@@ -828,7 +750,6 @@ class TestEccentricities:
             centers=np.zeros((1, 3), dtype=np.float32),
             amplitudes=np.ones(1, dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 4]], dtype=np.float32),
-            sharpnesses=np.ones(1, dtype=np.float32),
         )
         ecc = gs.eccentricities()
         assert ecc[0] == pytest.approx(4.0)  # max_sigma=4, min_sigma=1
@@ -837,9 +758,7 @@ class TestEccentricities:
         gs = _make_empty_gsplat()
         assert gs.eccentricities().shape == (0,)
 
-
 # ── Filter ──────────────────────────────────────────────
-
 
 class TestFilter:
     def test_basic(self):
@@ -865,7 +784,6 @@ class TestFilter:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
             ),
-            sharpnesses=np.ones(3, dtype=np.float32),
             colors=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32),
         )
         filtered = gs.filter(np.array([True, False, True]))
@@ -893,9 +811,7 @@ class TestFilter:
         filtered = gs.filter(np.ones(0, dtype=bool))
         assert filtered.n_splats == 0
 
-
 # ── FilterBy (multi-criteria) ──────────────────────────
-
 
 class TestFilterBy:
     """Tests for filter_by() multi-criteria filtering."""
@@ -910,7 +826,6 @@ class TestFilterBy:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
             ),
-            sharpnesses=np.full(3, 2.0, dtype=np.float32),
         )
         filtered = gs.filter_by(bbox=[(0, 60), (0, 60), (0, 60)])
         assert filtered.n_splats == 2
@@ -927,7 +842,6 @@ class TestFilterBy:
             cholesky_factors=np.array(
                 [chol_small, chol_small, chol_big, chol_big], dtype=np.float32
             ),
-            sharpnesses=np.full(4, 2.0, dtype=np.float32),
         )
         # volume = det(Sigma)^(1/d) * truncate
         # small: det(L)=0.125, det(Sigma)=0.015625, vol^(1/3)=0.25, *3=0.75
@@ -945,7 +859,6 @@ class TestFilterBy:
             cholesky_factors=np.array(
                 [chol_small, chol_small, chol_big, chol_big], dtype=np.float32
             ),
-            sharpnesses=np.full(4, 2.0, dtype=np.float32),
         )
         # With normalized=True, 0.5 should be the midpoint of volume range
         filtered = gs.filter_by(volume_max=0.5, volume_normalized=True)
@@ -959,7 +872,6 @@ class TestFilterBy:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (5, 1)
             ),
-            sharpnesses=np.full(5, 2.0, dtype=np.float32),
         )
         filtered = gs.filter_by(amplitude_min=0.4, amplitude_max=0.8)
         assert filtered.n_splats == 2  # 0.5 and 0.7
@@ -972,7 +884,6 @@ class TestFilterBy:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (4, 1)
             ),
-            sharpnesses=np.full(4, 2.0, dtype=np.float32),
         )
         # normalized 0.5 → 0.0 + 0.5*(3.0-0.0) = 1.5
         filtered = gs.filter_by(amplitude_min=0.5, amplitude_normalized=True)
@@ -990,23 +901,9 @@ class TestFilterBy:
             cholesky_factors=np.array(
                 [chol_iso, chol_iso, chol_elong, chol_elong], dtype=np.float32
             ),
-            sharpnesses=np.full(4, 2.0, dtype=np.float32),
         )
         filtered = gs.filter_by(eccentricity_max=2.0)
         assert filtered.n_splats == 2  # Only isotropic
-
-    def test_sharpness(self):
-        """Filter by sharpness range."""
-        gs = GSplatData(
-            centers=np.zeros((4, 3), dtype=np.float32),
-            amplitudes=np.ones(4, dtype=np.float32),
-            cholesky_factors=np.tile(
-                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (4, 1)
-            ),
-            sharpnesses=np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32),
-        )
-        filtered = gs.filter_by(sharpness_min=1.5, sharpness_max=3.5)
-        assert filtered.n_splats == 2  # 2.0 and 3.0
 
     def test_mass(self):
         """Filter by mass (amplitude * volume)."""
@@ -1025,7 +922,6 @@ class TestFilterBy:
             centers=np.zeros((3, 3), dtype=np.float32),
             amplitudes=np.ones(3, dtype=np.float32),
             cholesky_factors=np.tile(chol, (3, 1)),
-            sharpnesses=np.full(3, 2.0, dtype=np.float32),
         )
         # sigma on axis 0 should be large (10), sigma on axis 1 should be ~1
         filtered = gs.filter_by(sigma_axis=0, sigma_max=5.0)
@@ -1044,7 +940,6 @@ class TestFilterBy:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
             ),
-            sharpnesses=np.full(3, 2.0, dtype=np.float32),
         )
         # bbox keeps first two, amplitude keeps last two → AND keeps only [50,50,50]
         filtered = gs.filter_by(
@@ -1091,7 +986,6 @@ class TestFilterBy:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
             ),
-            sharpnesses=np.full(3, 2.0, dtype=np.float32),
             colors=np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]], dtype=np.uint8),
         )
         filtered = gs.filter_by(bbox=[(0, 60), (0, 60), (0, 60)])
@@ -1112,9 +1006,7 @@ class TestFilterBy:
         with pytest.raises(ValueError, match="sigma_min/sigma_max require sigma_axis"):
             gs.filter_by(sigma_min=1.0)
 
-
 # ── SliceBy ────────────────────────────────────────────
-
 
 class TestSliceBy:
     """Tests for slice_by() coordinate-based slicing."""
@@ -1128,7 +1020,6 @@ class TestSliceBy:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
             ),
-            sharpnesses=np.full(3, 2.0, dtype=np.float32),
         )
         sliced = gs.slice_by([slice(0, 60), slice(0, 60), slice(0, 60)])
         assert sliced.n_splats == 2
@@ -1141,7 +1032,6 @@ class TestSliceBy:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
             ),
-            sharpnesses=np.full(3, 2.0, dtype=np.float32),
         )
         sliced = gs.slice_by([slice(None, 50), slice(None, None), slice(None, None)])
         assert sliced.n_splats == 2  # 10 and 50
@@ -1154,7 +1044,6 @@ class TestSliceBy:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
             ),
-            sharpnesses=np.full(3, 2.0, dtype=np.float32),
         )
         sliced = gs.slice_by([slice(50, None), slice(None, None), slice(None, None)])
         assert sliced.n_splats == 2  # 50 and 90
@@ -1167,7 +1056,6 @@ class TestSliceBy:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
             ),
-            sharpnesses=np.full(3, 2.0, dtype=np.float32),
         )
         sliced = gs.slice_by([slice(2.0, 3.0), slice(None, None), slice(None, None)])
         assert sliced.n_splats == 1
@@ -1197,7 +1085,6 @@ class TestSliceBy:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
             ),
-            sharpnesses=np.full(3, 2.0, dtype=np.float32),
             colors=np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]], dtype=np.uint8),
         )
         sliced = gs.slice_by([slice(0, 60), slice(0, 60), slice(0, 60)])
@@ -1205,9 +1092,7 @@ class TestSliceBy:
         assert sliced.colors is not None
         assert np.array_equal(sliced.colors[1], [0, 255, 0])
 
-
 # ── Concatenate ─────────────────────────────────────────
-
 
 class TestConcatenate:
     def test_two_datasets(self):
@@ -1229,14 +1114,12 @@ class TestConcatenate:
             centers=np.zeros((1, 3), dtype=np.float32),
             amplitudes=np.ones(1, dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.ones(1, dtype=np.float32),
             colors=np.array([[1, 0, 0]], dtype=np.float32),
         )
         gs2 = GSplatData(
             centers=np.zeros((1, 3), dtype=np.float32),
             amplitudes=np.ones(1, dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.ones(1, dtype=np.float32),
             colors=np.array([[0, 0, 1]], dtype=np.float32),
         )
         result = GSplatData.concatenate([gs1, gs2])
@@ -1255,7 +1138,6 @@ class TestConcatenate:
             centers=np.zeros((1, 3), dtype=np.float32),
             amplitudes=np.ones(1, dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.ones(1, dtype=np.float32),
             colors=np.array([[1, 0, 0]], dtype=np.float32),
         )
         gs_without = _make_3d_gsplat(n=1, seed=1)
@@ -1278,9 +1160,7 @@ class TestConcatenate:
         result = GSplatData.concatenate([gs])
         assert result.n_splats == 5
 
-
 # ── Split ───────────────────────────────────────────────
-
 
 class TestSplit:
     def test_equal_parts(self):
@@ -1319,7 +1199,6 @@ class TestSplit:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (4, 1)
             ),
-            sharpnesses=np.ones(4, dtype=np.float32),
             colors=np.array(
                 [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0]], dtype=np.float32
             ),
@@ -1328,9 +1207,7 @@ class TestSplit:
         assert parts[0].colors is not None
         assert np.allclose(parts[0].colors[0], [1, 0, 0])
 
-
 # ── Embed dimension ─────────────────────────────────────
-
 
 class TestEmbedDimension:
     def test_scalar_value(self):
@@ -1374,9 +1251,7 @@ class TestEmbedDimension:
         assert result.ndim == 4
         assert result.n_splats == 0
 
-
 # ── Combine as new dimension ─────────────────────────────
-
 
 class TestCombineAsNewDimension:
     """Tests for GSplatData.combine_as_new_dimension()."""
@@ -1433,15 +1308,6 @@ class TestCombineAsNewDimension:
         result = GSplatData.combine_as_new_dimension([gs], values=[7.0])
         assert np.allclose(result.centers[:, :3], gs.centers)
 
-    def test_preserves_amplitudes_and_sharpnesses(self):
-        gs1 = _make_3d_gsplat(n=3, seed=1)
-        gs2 = _make_3d_gsplat(n=4, seed=2)
-        result = GSplatData.combine_as_new_dimension([gs1, gs2])
-        assert np.allclose(result.amplitudes[:3], gs1.amplitudes)
-        assert np.allclose(result.amplitudes[3:], gs2.amplitudes)
-        assert np.allclose(result.sharpnesses[:3], gs1.sharpnesses)
-        assert np.allclose(result.sharpnesses[3:], gs2.sharpnesses)
-
     def test_preserves_colors(self):
         """Colors are correctly concatenated."""
         gs1 = GSplatData(
@@ -1450,14 +1316,12 @@ class TestCombineAsNewDimension:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (2, 1)
             ),
-            sharpnesses=np.ones(2, dtype=np.float32),
             colors=np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32),
         )
         gs2 = GSplatData(
             centers=np.ones((1, 3), dtype=np.float32),
             amplitudes=np.ones(1, dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
-            sharpnesses=np.ones(1, dtype=np.float32),
             colors=np.array([[0, 0, 1]], dtype=np.float32),
         )
         result = GSplatData.combine_as_new_dimension([gs1, gs2])
@@ -1501,9 +1365,7 @@ class TestCombineAsNewDimension:
         with pytest.raises(TypeError, match="must be a list"):
             GSplatData.combine_as_new_dimension(datasets, values=5.0)
 
-
 # ── Transform ───────────────────────────────────────────
-
 
 class TestTransform:
     def test_identity(self):
@@ -1529,7 +1391,6 @@ class TestTransform:
             centers=np.array([[1.0, 0.0]], dtype=np.float32),
             amplitudes=np.ones(1, dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1]], dtype=np.float32),
-            sharpnesses=np.ones(1, dtype=np.float32),
         )
         theta = np.pi / 2
         R = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
@@ -1544,7 +1405,6 @@ class TestTransform:
             centers=np.zeros((1, 2), dtype=np.float32),
             amplitudes=np.ones(1, dtype=np.float32),
             cholesky_factors=np.array([[2.0, 0.5, 1.5]], dtype=np.float32),
-            sharpnesses=np.ones(1, dtype=np.float32),
         )
         A = np.array([[2.0, 0.0], [0.0, 3.0]])
         result = gs.transform(A)
@@ -1579,9 +1439,7 @@ class TestTransform:
         result = gs.transform(np.eye(3))
         assert result.n_splats == 0
 
-
 # ── Intensity transforms ────────────────────────────────
-
 
 class TestAffineIntensity:
     def test_scale_only(self):
@@ -1604,7 +1462,6 @@ class TestAffineIntensity:
         result = gs.affine_intensity(scale=3.0)
         assert result.centers is gs.centers
 
-
 class TestNormalizeIntensity:
     def test_basic(self):
         gs = _make_3d_gsplat()
@@ -1623,11 +1480,9 @@ class TestNormalizeIntensity:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (2, 1)
             ),
-            sharpnesses=np.ones(2, dtype=np.float32),
         )
         result = gs.normalize_intensity()
         assert np.allclose(result.amplitudes, 0.0)
-
 
 class TestClampIntensity:
     def test_min(self):

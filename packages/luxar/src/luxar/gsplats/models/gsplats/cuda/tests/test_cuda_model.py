@@ -943,8 +943,8 @@ class TestSpecializedVsGenericImplementations:
         The code has optimized paths for s=2 that avoid powf() calls.
         This test verifies the output matches expected Gaussian distribution.
 
-        Since the model uses s=2 by default (and doesn't expose a sharpness
-        parameter), we verify correctness by checking:
+        Since the model uses standard Gaussian (s=2), we verify correctness
+        by checking:
         1. Peak at splat center with expected intensity
         2. Exponential decay away from center (characteristic of s=2)
         """

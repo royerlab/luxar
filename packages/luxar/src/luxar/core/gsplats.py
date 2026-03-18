@@ -85,11 +85,6 @@ class GSplats(DataNode):
         return bool(self._metadata.get("has_colors", False))
 
     @property
-    def has_sharpness(self) -> bool:
-        """Check if splats have sharpness."""
-        return bool(self._metadata.get("has_sharpness", False))
-
-    @property
     def ordering(self) -> str:
         """Get spatial ordering type."""
         return str(self._metadata.get("ordering", "none"))

@@ -14,13 +14,11 @@ HAS_SCIPY = importlib.util.find_spec("scipy") is not None
 
 pytestmark = pytest.mark.skipif(not HAS_SCIPY, reason="SciPy not available")
 
-
 @pytest.fixture
 def simple_2d_image():
     """Create a simple 2D image with varying intensity."""
     x, y = np.meshgrid(np.linspace(0, 1, 51), np.linspace(0, 1, 51))
     return (x + y) / 2  # Gradient image
-
 
 @pytest.fixture
 def simple_3d_image():
@@ -30,12 +28,10 @@ def simple_3d_image():
     )
     return (x + y + z) / 3
 
-
 @pytest.fixture
 def uniform_image():
     """Create a uniform intensity image."""
     return np.ones((50, 50), dtype=float) * 5.0
-
 
 def validate_gsplatdata(result: GSplatData, expected_ndim: int) -> None:
     """Validate GSplatData output format."""
@@ -47,13 +43,11 @@ def validate_gsplatdata(result: GSplatData, expected_ndim: int) -> None:
 
     N = len(result.centers)
     assert len(result.amplitudes) == N, "Amplitudes should match centers count"
-    assert len(result.sharpnesses) == N, "Sharpnesses should match centers count"
 
     tril_size = expected_ndim * (expected_ndim + 1) // 2
     assert result.cholesky_factors.shape == (N, tril_size), (
         f"Cholesky factors should be (N, {tril_size})"
     )
-
 
 class TestBasicFunctionality:
     """Test basic grid seeding functionality."""
@@ -90,7 +84,6 @@ class TestBasicFunctionality:
             assert np.all(result.centers < np.array(simple_2d_image.shape)), (
                 "Coordinates should be within bounds"
             )
-
 
 class TestSpacing:
     """Test spacing parameter."""
@@ -134,7 +127,6 @@ class TestSpacing:
         validate_gsplatdata(result, 2)
         # Auto spacing should produce a reasonable number of seeds
         assert 10 < len(result.centers) < 5000
-
 
 class TestAnisotropicSpacing:
     """Test aspect-ratio-aware spacing (respects anisotropy)."""
@@ -202,7 +194,6 @@ class TestAnisotropicSpacing:
         assert y_coords.max() - y_coords.min() > 180, "Seeds should span height"
         assert x_coords.max() - x_coords.min() > 15, "Seeds should span width"
 
-
 class TestJitter:
     """Test jitter parameter."""
 
@@ -240,7 +231,6 @@ class TestJitter:
             assert np.all(result.centers >= 0)
             assert np.all(result.centers < np.array(simple_2d_image.shape))
 
-
 class TestSigma:
     """Test sigma parameter.
 
@@ -274,7 +264,6 @@ class TestSigma:
             # Auto sigma = spacing / 2 for coverage
             expected_sigma = spacing / 2.0
             assert np.allclose(result.cholesky_factors[:, 0], expected_sigma)
-
 
 class TestIntensityFiltering:
     """Test intensity threshold parameters."""
@@ -313,7 +302,6 @@ class TestIntensityFiltering:
                 simple_2d_image, exclude_below=0.5, exclude_below_percentile=50.0
             )
 
-
 class TestEdgeCases:
     """Test edge cases."""
 
@@ -348,7 +336,6 @@ class TestEdgeCases:
         validate_gsplatdata(result, 2)
         assert len(result.centers) == 0
 
-
 class TestOutputFormat:
     """Test output format consistency."""
 
@@ -358,13 +345,6 @@ class TestOutputFormat:
         assert result.centers.dtype == np.float32
         assert result.amplitudes.dtype == np.float32
         assert result.cholesky_factors.dtype == np.float32
-        assert result.sharpnesses.dtype == np.float32
-
-    def test_sharpness_value(self, simple_2d_image) -> None:
-        """Test that sharpness is 2.0 (standard Gaussian)."""
-        result = seed_from_grid(simple_2d_image)
-        if len(result.sharpnesses) > 0:
-            assert np.all(result.sharpnesses == 2.0)
 
     def test_positive_amplitudes(self, simple_2d_image) -> None:
         """Test that amplitudes match sampled values."""
@@ -389,7 +369,6 @@ class TestOutputFormat:
             expected_sigma = spacing / 2.0
             assert np.allclose(result.cholesky_factors[:, 0], expected_sigma)
 
-
 class TestReproducibility:
     """Test reproducibility."""
 
@@ -403,7 +382,6 @@ class TestReproducibility:
         np.testing.assert_array_equal(
             result1.cholesky_factors, result2.cholesky_factors
         )
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

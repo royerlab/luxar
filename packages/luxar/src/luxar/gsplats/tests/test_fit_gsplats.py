@@ -103,7 +103,6 @@ class TestFitGaussianSplatsBasic:
 
         assert result.centers.shape == (N, d)
         assert result.cholesky_factors.shape == (N, tril_size(d))
-        assert result.sharpnesses.shape == (N,)
         assert result.amplitudes.shape == (N,)
 
         # Check data types
@@ -136,7 +135,6 @@ class TestFitGaussianSplatsBasic:
 
         assert result.centers.shape == (N, d)
         assert result.cholesky_factors.shape == (N, tril_size(d))
-        assert result.sharpnesses.shape == (N,)
         assert result.amplitudes.shape == (N,)
 
         # Check basic validity
@@ -161,7 +159,6 @@ class TestFitGaussianSplatsBasic:
 
         assert result.centers.shape == (0, d)
         assert result.cholesky_factors.shape == (0, tril_size(d))
-        assert result.sharpnesses.shape == (0,)
         assert result.amplitudes.shape == (0,)
 
     def test_single_candidate(self, simple_2d_blob) -> None:
@@ -179,7 +176,6 @@ class TestFitGaussianSplatsBasic:
 
         assert result.centers.shape == (1, 2)
         assert result.cholesky_factors.shape == (1, 3)  # 2D tril elements
-        assert result.sharpnesses.shape == (1,)
         assert result.amplitudes.shape == (1,)
         assert result.amplitudes[0] > 0  # Should have positive amplitude
 
@@ -317,11 +313,9 @@ class TestUniformImageHandling:
         # Should return valid results
         assert result.centers.shape == (3, 2)
         assert result.cholesky_factors.shape == (3, 3)
-        assert result.sharpnesses.shape == (3,)
         assert result.amplitudes.shape == (3,)
         assert np.all(np.isfinite(result.centers))
         assert np.all(np.isfinite(result.cholesky_factors))
-        assert np.all(np.isfinite(result.sharpnesses))
         assert np.all(np.isfinite(result.amplitudes))
 
     def test_nearly_uniform_image(self, simple_candidates_2d) -> None:
@@ -340,7 +334,6 @@ class TestUniformImageHandling:
 
         assert np.all(np.isfinite(result.centers))
         assert np.all(np.isfinite(result.cholesky_factors))
-        assert np.all(np.isfinite(result.sharpnesses))
         assert np.all(np.isfinite(result.amplitudes))
 
 
@@ -361,7 +354,6 @@ class TestLossTypes:
 
         assert result.centers.shape == (3, 2)
         assert result.cholesky_factors.shape == (3, 3)
-        assert result.sharpnesses.shape == (3,)
         assert result.amplitudes.shape == (3,)
         assert np.all(result.amplitudes >= 0)
 
@@ -379,7 +371,6 @@ class TestLossTypes:
 
         assert result.centers.shape == (3, 2)
         assert result.cholesky_factors.shape == (3, 3)
-        assert result.sharpnesses.shape == (3,)
         assert result.amplitudes.shape == (3,)
         assert np.all(result.amplitudes >= 0)
 
@@ -397,7 +388,6 @@ class TestLossTypes:
 
         assert result.centers.shape == (3, 2)
         assert result.cholesky_factors.shape == (3, 3)
-        assert result.sharpnesses.shape == (3,)
         assert result.amplitudes.shape == (3,)
         assert np.all(result.amplitudes >= 0)
 
@@ -567,7 +557,6 @@ class TestDeviceSupport:
 
         assert result.centers.shape == (3, 2)
         assert result.cholesky_factors.shape == (3, 3)
-        assert result.sharpnesses.shape == (3,)
         assert result.amplitudes.shape == (3,)
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -585,7 +574,6 @@ class TestDeviceSupport:
 
         assert result.centers.shape == (3, 2)
         assert result.cholesky_factors.shape == (3, 3)
-        assert result.sharpnesses.shape == (3,)
         assert result.amplitudes.shape == (3,)
 
 
@@ -648,11 +636,11 @@ class TestConvergence:
         assert len(result.amplitudes) > 0
         # Reconstruct params_full to check shape
         params_full = np.column_stack(
-            [result.centers, result.cholesky_factors, result.sharpnesses]
+            [result.centers, result.cholesky_factors]
         )
         assert (
-            params_full.shape[1] == 10
-        )  # 3D centers (3) + 3x3 packed L (6) + sharpness (1) = 10
+            params_full.shape[1] == 9
+        )  # 3D centers (3) + 3x3 packed L (6) = 9
 
     def test_volume_proportional_scaling(self) -> None:
         """Test that candidate count scales with image volume."""
@@ -790,11 +778,10 @@ class TestConvergence:
             [
                 result_short.centers,
                 result_short.cholesky_factors,
-                result_short.sharpnesses,
             ]
         )
         params_long = np.column_stack(
-            [result_long.centers, result_long.cholesky_factors, result_long.sharpnesses]
+            [result_long.centers, result_long.cholesky_factors]
         )
 
         # Results should be different (optimization should progress)
@@ -833,14 +820,12 @@ class TestConvergence:
             [
                 result_low_lr.centers,
                 result_low_lr.cholesky_factors,
-                result_low_lr.sharpnesses,
             ]
         )
         params_high_lr = np.column_stack(
             [
                 result_high_lr.centers,
                 result_high_lr.cholesky_factors,
-                result_high_lr.sharpnesses,
             ]
         )
 

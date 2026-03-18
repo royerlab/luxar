@@ -1138,7 +1138,6 @@ def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
                         centers=gsplats.centers,
                         amplitudes=amps,
                         cholesky_factors=gsplats.cholesky_factors,
-                        sharpnesses=gsplats.sharpnesses,
                         colors=np.tile(
                             np.array([0.4, 1.0, 0.5], dtype=np.float32),
                             (n_after, 1),

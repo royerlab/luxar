@@ -5,7 +5,7 @@
  * handling of Gaussian splat data throughout the viewer.
  *
  * GSplats are volumetric primitives representing oriented, anisotropic
- * Gaussian density functions with a generalized falloff exponent (sharpness).
+ * Gaussian density functions with standard Gaussian falloff.
  *
  * @module types/gsplats
  */
@@ -51,17 +51,11 @@ export interface GSplatsMetadata {
   /** Whether colors array is present */
   has_colors: boolean;
 
-  /** Whether sharpness array is present */
-  has_sharpness: boolean;
-
   /** Elements per chunk */
   chunk_size: number;
 
   /** Amplitude value range */
   amplitude_range: ValueRange;
-
-  /** Sharpness value bounds */
-  sharpness_bounds: ValueRange;
 
   /** Center coordinate bounds */
   center_bounds: CoordinateBounds;
@@ -172,9 +166,6 @@ export interface LoadedGSplatsData {
    * Supports Float32Array (HDR), Uint8Array (SDR), or Uint16Array */
   colors: Float32Array | Uint8Array | Uint16Array | null;
 
-  /** Splat sharpness (N,), null if not present (defaults to 2.0 = standard Gaussian) */
-  sharpness: Float32Array | null;
-
   /** Number of splats loaded */
   splatCount: number;
 
@@ -206,9 +197,6 @@ export interface ProcessedGSplatsData {
 
   /** Splat colors RGB (M * 3) */
   colors: Float32Array;
-
-  /** Splat sharpness values (M,) */
-  sharpness: Float32Array;
 
   /** Number of visible splats after nD clipping */
   splatCount: number;

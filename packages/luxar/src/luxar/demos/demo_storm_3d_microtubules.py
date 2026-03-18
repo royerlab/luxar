@@ -635,7 +635,6 @@ def create_storm_scene(
                 all_centers = np.zeros((n_splats * 2, 4), dtype=np.float32)
                 all_cholesky = np.zeros((n_splats * 2, 10), dtype=np.float32)
                 all_amplitudes = np.zeros(n_splats * 2, dtype=np.float32)
-                all_sharpnesses = np.full(n_splats * 2, 2.0, dtype=np.float32)
                 all_colors = np.zeros((n_splats * 2, 3), dtype=np.float32)
 
                 # Widefield view (indices 0 to n_splats-1)
@@ -657,7 +656,6 @@ def create_storm_scene(
                     centers=all_centers,
                     cholesky_factors=all_cholesky,
                     amplitudes=all_amplitudes,
-                    sharpnesses=all_sharpnesses,
                     colors=all_colors,
                 )
 

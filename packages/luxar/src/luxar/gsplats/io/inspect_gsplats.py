@@ -53,7 +53,6 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
     info["n_splats"] = splats_attrs.get("n_splats")
     info["ndim"] = splats_attrs.get("ndim")
     info["has_colors"] = splats_attrs.get("has_colors", False)
-    info["has_sharpness"] = splats_attrs.get("has_sharpness", False)
     info["ordering"] = splats_attrs.get("ordering", "none")
     info["chunk_size"] = splats_attrs.get("chunk_size")
 
@@ -79,7 +78,6 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
 
     # Ranges
     info["amplitude_range"] = splats_attrs.get("amplitude_range")
-    info["sharpness_bounds"] = splats_attrs.get("sharpness_bounds")
     info["center_bounds"] = splats_attrs.get("center_bounds")
 
     # Fitting info (optional)
@@ -120,7 +118,6 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
             + 4  # amplitudes
             + chol_size * 4  # cholesky_factors
             + (12 if info["has_colors"] else 0)  # colors (float32)
-            + (4 if info["has_sharpness"] else 0)  # sharpness
         )
 
         compression_ratio = uncompressed_bytes / total_bytes if total_bytes > 0 else 1.0
@@ -162,14 +159,8 @@ def format_gsplats_info(info: Dict[str, Any]) -> str:
         lines.append("Ordering: none")
 
     # Optional arrays
-    optional_arrays = []
     if info["has_colors"]:
-        optional_arrays.append("colors")
-    if info["has_sharpness"]:
-        optional_arrays.append("sharpness")
-
-    if optional_arrays:
-        lines.append(f"Optional arrays: {', '.join(optional_arrays)}")
+        lines.append("Optional arrays: colors")
 
     # Storage
     if info.get("storage_mb") is not None:
@@ -202,7 +193,6 @@ def render_gsplats_to_volume(
     cholesky_factors: np.ndarray,
     amplitudes: np.ndarray,
     volume_shape: Tuple[int, int, int],
-    sharpness: np.ndarray | None = None,
 ) -> np.ndarray:
     """Render Gaussian splats into a 3D volume for visualization.
 
@@ -220,7 +210,6 @@ def render_gsplats_to_volume(
         cholesky_factors: Packed Cholesky factors (N, 6) [L00, L10, L11, L20, L21, L22]
         amplitudes: Splat amplitudes (N,)
         volume_shape: Output volume shape (Z, Y, X)
-        sharpness: Optional sharpness values (N,). If None, uses s=2.0 (standard Gaussian)
 
     Returns:
         3D volume (Z, Y, X) with accumulated splat contributions
@@ -243,16 +232,11 @@ def render_gsplats_to_volume(
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.rendering.volume_rendering import render_to_volume
 
-    # Default sharpness to 2.0 (standard Gaussian)
-    if sharpness is None:
-        sharpness = np.full(len(centers), 2.0, dtype=np.float32)
-
     # Wrap in GSplatData and use new renderer
     gsplat_data = GSplatData(
         centers=centers,
         amplitudes=amplitudes,
         cholesky_factors=cholesky_factors,
-        sharpnesses=sharpness,
         colors=None,
         stats={},
     )

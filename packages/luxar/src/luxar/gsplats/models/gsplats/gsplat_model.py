@@ -30,7 +30,6 @@ class GaussianSplatModel(nn.Module):
     1. **Center position**: Constrained to image domain via sigmoid parameterization
     2. **Covariance matrix**: Represented via Cholesky decomposition L where Σ = L @ L^T
     3. **Amplitude**: Non-negative scalar via softplus activation
-    4. **Sharpness**: Generalized Gaussian falloff via exponential mapping s = 2 * exp(s')
 
     Mathematical formulation:
         Each splat k contributes: a_k * exp(-0.5 * (x-μ_k)^T @ Σ_k^{-1} @ (x-μ_k))
@@ -64,10 +63,6 @@ class GaussianSplatModel(nn.Module):
         elongation of the Gaussian splats. For example, max_eccentricity=4.0
         means the longest axis can be at most 2x the shortest (since
         eccentricity is the variance ratio, axis ratio = sqrt(eccentricity)).
-    sharpness_range : tuple[float, float] | float, optional
-        Range for sharpness values. If a tuple (min, max), sharpness is clamped
-        to this range. If a single float, sharpness is fixed to that value.
-        Sharpness of 2.0 is standard Gaussian; higher values give sharper edges.
     truncate : float, default=3.0
         Truncation radius in standard deviations for computational efficiency.
     device : torch.device, optional
@@ -84,9 +79,6 @@ class GaussianSplatModel(nn.Module):
         sigma_max_diag: Optional[Sequence[float]] = None,
         amp_max: Optional[float] = None,  # Maximum amplitude (prevents explosion)
         max_eccentricity: Optional[float] = None,  # Max ratio of longest/shortest axis
-        sharpness_range: Optional[
-            tuple[float, float] | float
-        ] = None,  # Sharpness constraints
         truncate: float = 3.0,
         voxel_size: Optional[np.ndarray] = None,
         device: Optional[torch.device] = None,
@@ -134,10 +126,6 @@ class GaussianSplatModel(nn.Module):
 
         # Store eccentricity constraint (limits ratio of longest to shortest axis)
         self.max_eccentricity: float | None = max_eccentricity
-
-        # Store sharpness range constraint
-        # Can be tuple (min, max) or fixed float value
-        self.sharpness_range: tuple[float, float] | float | None = sharpness_range
 
         # ---- Cholesky factor parameterization: ensure positive definiteness ----
         self.sigma_max_diag: torch.Tensor | None
@@ -193,15 +181,6 @@ class GaussianSplatModel(nn.Module):
         raw_a0 = stable_inverse_softplus(np.maximum(amps0, 1e-6))  # Avoid log(0)
         self.raw_a = nn.Parameter(
             torch.tensor(raw_a0, dtype=torch.float32, device=device)
-        )
-
-        # ---- Sharpness parameterization: exponential mapping s = 2 * exp(s') ----
-        # Initialize to 0, which gives s = 2 * exp(0) = 2 (standard Gaussian)
-        # s' > 0 → sharper edges, s' < 0 → softer edges
-        # This allows symmetric exploration around standard Gaussian with L1 regularization
-        sharpness_offsets0 = np.zeros(N, dtype=np.float32)
-        self.sharpness_offsets_raw = nn.Parameter(
-            torch.tensor(sharpness_offsets0, dtype=torch.float32, device=device)
         )
 
     def _build_L(self) -> torch.Tensor:
@@ -302,7 +281,7 @@ class GaussianSplatModel(nn.Module):
 
     def current_params(
         self,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Extract current parameter values from the model's learnable parameters.
 
@@ -310,7 +289,6 @@ class GaussianSplatModel(nn.Module):
         - Centers: sigmoid transformation to ensure bounds
         - Cholesky factors: reconstruction from diagonal/off-diagonal components
         - Amplitudes: softplus transformation to ensure non-negativity
-        - Sharpness: exponential mapping s = 2 * exp(s') to ensure positivity
 
         Returns
         -------
@@ -320,9 +298,6 @@ class GaussianSplatModel(nn.Module):
             Lower-triangular Cholesky factors where covariance Σ = L @ L^T.
         amps : torch.Tensor, shape (N,)
             Non-negative amplitude values for each splat.
-        sharpness : torch.Tensor, shape (N,)
-            Sharpness values for each splat (s = 2 * exp(s')).
-            s = 2 is standard Gaussian, s > 2 is sharper, s < 2 is softer.
         """
         # Transform raw parameters to normalized coordinates [0,1]
         u = torch.sigmoid(self.raw_mu)
@@ -339,27 +314,7 @@ class GaussianSplatModel(nn.Module):
         if self.amp_max is not None:
             amps = torch.clamp(amps, max=self.amp_max)
 
-        # Apply exponential mapping for sharpness: s = 2 * exp(s')
-        # This ensures s > 0 always, with s = 2 when s' = 0 (standard Gaussian)
-        # Clamp s' to [-2.5, 2.5] for numerical stability: gives s in range [0.16, 24.5]
-        # This provides wide sharpness variation while preventing numerical overflow
-        sharpness_clamped = torch.clamp(self.sharpness_offsets_raw, min=-2.5, max=2.5)
-        sharpness = 2.0 * torch.exp(sharpness_clamped)
-
-        # Apply sharpness range constraint if specified
-        if self.sharpness_range is not None:
-            if isinstance(self.sharpness_range, (int, float)):
-                # Fixed sharpness value
-                sharpness = torch.full_like(sharpness, float(self.sharpness_range))
-            else:
-                # Tuple (min, max) - clamp to range
-                sharpness = torch.clamp(
-                    sharpness,
-                    min=float(self.sharpness_range[0]),
-                    max=float(self.sharpness_range[1]),
-                )
-
-        return centers, L, amps, sharpness
+        return centers, L, amps
 
     # ===== Dynamic Management Methods =========================================
 
@@ -369,9 +324,8 @@ class GaussianSplatModel(nn.Module):
         centers: torch.Tensor,  # (N,d)
         Ls: torch.Tensor,  # (N,d,d)
         amps: torch.Tensor,  # (N,)
-        sharpness: torch.Tensor,  # (N,) required
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Convert external (μ, L, a, s) to raw learnable params (raw_mu, L_diag_raw, L_off, amp_raw, sharpness_raw)."""
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Convert external (μ, L, a) to raw learnable params (raw_mu, L_diag_raw, L_off, amp_raw)."""
         device = self.raw_mu.device
         d = centers.shape[1]
 
@@ -412,12 +366,7 @@ class GaussianSplatModel(nn.Module):
             dtype=torch.float32,
         )
 
-        # sharpness -> sharpness_raw (inverse of s = 2 * exp(s'))
-        # s' = log(s / 2)
-        sharpness = torch.clamp(sharpness, min=1e-6)  # Avoid log(0)
-        sharpness_raw = torch.log(sharpness / 2.0)
-
-        return raw_mu, L_diag_raw, L_off, amp_raw, sharpness_raw
+        return raw_mu, L_diag_raw, L_off, amp_raw
 
     @torch.no_grad()
     def replace_with(
@@ -425,17 +374,15 @@ class GaussianSplatModel(nn.Module):
         centers: torch.Tensor,
         Ls: torch.Tensor,
         amps: torch.Tensor,
-        sharpness: torch.Tensor,
     ) -> None:
         """Hard replace the whole parameter set."""
-        raw_mu, L_diag_raw, L_off, amp_raw, sharpness_raw = self._to_internal_params(
-            centers, Ls, amps, sharpness
+        raw_mu, L_diag_raw, L_off, amp_raw = self._to_internal_params(
+            centers, Ls, amps
         )
         self.raw_mu = torch.nn.Parameter(raw_mu)
         self.raw_L_diag = torch.nn.Parameter(L_diag_raw)
         self.L_off = torch.nn.Parameter(L_off)
         self.raw_a = torch.nn.Parameter(amp_raw)
-        self.sharpness_offsets_raw = torch.nn.Parameter(sharpness_raw)
 
     @torch.no_grad()
     def prune_(self, keep_mask: torch.Tensor) -> None:
@@ -444,9 +391,6 @@ class GaussianSplatModel(nn.Module):
         self.raw_L_diag = torch.nn.Parameter(self.raw_L_diag[keep_mask])
         self.L_off = torch.nn.Parameter(self.L_off[keep_mask])
         self.raw_a = torch.nn.Parameter(self.raw_a[keep_mask])
-        self.sharpness_offsets_raw = torch.nn.Parameter(
-            self.sharpness_offsets_raw[keep_mask]
-        )
 
     @torch.no_grad()
     def append_(
@@ -454,13 +398,12 @@ class GaussianSplatModel(nn.Module):
         centers_new: torch.Tensor,
         Ls_new: torch.Tensor,
         amps_new: torch.Tensor,
-        sharpness_new: torch.Tensor,
     ) -> None:
         """Append new splats to the tail."""
         if centers_new.numel() == 0:
             return
-        raw_mu, L_diag_raw, L_off, amp_raw, sharpness_raw = self._to_internal_params(
-            centers_new, Ls_new, amps_new, sharpness_new
+        raw_mu, L_diag_raw, L_off, amp_raw = self._to_internal_params(
+            centers_new, Ls_new, amps_new
         )
         self.raw_mu = torch.nn.Parameter(torch.cat([self.raw_mu, raw_mu], dim=0))
         self.raw_L_diag = torch.nn.Parameter(
@@ -468,9 +411,6 @@ class GaussianSplatModel(nn.Module):
         )
         self.L_off = torch.nn.Parameter(torch.cat([self.L_off, L_off], dim=0))
         self.raw_a = torch.nn.Parameter(torch.cat([self.raw_a, amp_raw], dim=0))
-        self.sharpness_offsets_raw = torch.nn.Parameter(
-            torch.cat([self.sharpness_offsets_raw, sharpness_raw], dim=0)
-        )
 
     def n_splats(self) -> int:
         """Return current number of splats."""
@@ -490,17 +430,16 @@ class GaussianSplatModel(nn.Module):
     def forward(self) -> torch.Tensor:
         """
         Render all splats using AABB truncation at 'truncate' sigmas.
-        Avoids explicit Σ^{-1} by solving L y = (x-μ) and using ||y||^2.
-        Applies per-splat sharpness via generalized Gaussian: exp(-0.5 * ||y||^s).
+        Avoids explicit Sigma^{-1} by solving L y = (x-mu) and using ||y||^2.
+        Standard Gaussian falloff: exp(-0.5 * ||y||^2).
         """
-        centers, Ls, amps, sharpness = self.current_params()
+        centers, Ls, amps = self.current_params()
 
         return render_gaussians(
             self.shape,
             centers,
             Ls,
             amps,
-            sharpness,
             truncate=self.truncate,
             intensity_floor=1e-5,
         )

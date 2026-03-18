@@ -390,11 +390,11 @@ stack_recon = np.zeros((len(keep_counts),) + V.shape, dtype=np.float32)
 stack_resid = np.zeros_like(stack_recon)
 rel_err_frames = np.zeros(len(keep_counts), dtype=np.float32)
 
-# Bit accounting (float32 for centers + packed L + sharpness + amplitude)
+# Bit accounting (float32 for centers + packed L + amplitude)
 FLOAT_BITS = 32
 FLOATS_PER_SPLAT = (
-    d + tril_size(d) + 1 + 1
-)  # centers(3) + packed L(6) + sharpness(1) + amp(1) = 11
+    d + tril_size(d) + 1
+)  # centers(3) + packed L(6) + amp(1) = 10
 BITS_PER_SPLAT = FLOATS_PER_SPLAT * FLOAT_BITS
 IMAGE_BITS = V.size * FLOAT_BITS
 NUM_VOXELS = V.size
@@ -416,7 +416,6 @@ with asection("Computing 3D reconstruction quality at different compression leve
             centers=result.centers[idx],
             amplitudes=result.amplitudes[idx],
             cholesky_factors=result.cholesky_factors[idx],
-            sharpnesses=result.sharpnesses[idx],
             stats={},  # Empty stats for rendering subset
         )
 

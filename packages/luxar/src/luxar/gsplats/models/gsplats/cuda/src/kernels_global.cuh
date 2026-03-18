@@ -35,7 +35,6 @@ __global__ void rasterize_global_forward_kernel(
     const InputDType* __restrict__ centers,
     const InputDType* __restrict__ conic,
     const InputDType* __restrict__ amps,
-    const InputDType* __restrict__ sharpness,
     const int* __restrict__ global_splat_ids,  // Array of global splat indices
     int n_global_splats,                        // Number of global splats
     const int* __restrict__ shape,
@@ -85,7 +84,6 @@ __global__ void rasterize_global_forward_kernel(
             c[ci] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + ci);
         }
         float amp = DTypeTraits<InputDType>::load(amps, splat_idx);
-        float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
 
         // Compute displacement
         float d_vec[DIM];
@@ -98,11 +96,11 @@ __global__ void rasterize_global_forward_kernel(
         float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, c);
 
         // Early culling based on effective truncation
-        float eff_trunc_sq = effective_truncate_sq(truncate, s, amp, intensity_floor);
+        float eff_trunc_sq = effective_truncate_sq(truncate, amp, intensity_floor);
         if (dist_sq > eff_trunc_sq) continue;
 
         // Compute intensity
-        float intensity = gaussian_intensity(dist_sq, amp, s);
+        float intensity = gaussian_intensity(dist_sq, amp);
 
         // Skip if below threshold (must match tile-based kernel behavior)
         if (intensity >= intensity_floor) {
@@ -137,7 +135,6 @@ __global__ void rasterize_global_backward_kernel(
     const InputDType* __restrict__ centers,
     const InputDType* __restrict__ conic,
     const InputDType* __restrict__ amps,
-    const InputDType* __restrict__ sharpness,
     const int* __restrict__ global_splat_ids,
     int n_global_splats,
     const int* __restrict__ shape,
@@ -146,7 +143,6 @@ __global__ void rasterize_global_backward_kernel(
     float* __restrict__ d_centers,
     float* __restrict__ d_conic,
     float* __restrict__ d_amps,
-    float* __restrict__ d_sharpness,
     int64_t num_pixels
 ) {
     int64_t pixel_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -184,7 +180,6 @@ __global__ void rasterize_global_backward_kernel(
 
         // Initialize local gradients to 0 (non-contributing threads add 0 to warp sum)
         float local_d_amp = 0.0f;
-        float local_d_sharpness = 0.0f;
         float local_d_centers[DIM];
         float local_d_conic[CONIC_SIZE];
         #pragma unroll
@@ -206,7 +201,6 @@ __global__ void rasterize_global_backward_kernel(
                 c[ci] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + ci);
             }
             float amp = DTypeTraits<InputDType>::load(amps, splat_idx);
-            float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
 
             // Compute displacement
             float d_vec[DIM];
@@ -219,22 +213,15 @@ __global__ void rasterize_global_backward_kernel(
             float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, c);
 
             // Compute gradients only if within truncation and above intensity floor
-            float eff_trunc_sq = effective_truncate_sq(truncate, s, amp, intensity_floor);
+            float eff_trunc_sq = effective_truncate_sq(truncate, amp, intensity_floor);
             if (dist_sq <= eff_trunc_sq) {
-                float intensity = gaussian_intensity(dist_sq, amp, s);
+                float intensity = gaussian_intensity(dist_sq, amp);
                 if (intensity >= intensity_floor) {
                     // d_amp = grad_out * (I / a)
                     local_d_amp = grad_out * (intensity / fmaxf(amp, 1e-10f));
 
-                    // Gradient w.r.t. dist_sq
-                    float dist_sq_safe = fmaxf(dist_sq, 1e-12f);
-                    float dI_dD_sq;
-                    if (fabsf(s - 2.0f) < 1e-4f) {
-                        dI_dD_sq = -0.5f * intensity;
-                    } else {
-                        float dist_pow_s_minus_1 = __powf(dist_sq_safe, s * 0.5f - 1.0f);
-                        dI_dD_sq = intensity * (-0.25f * s) * dist_pow_s_minus_1;
-                    }
+                    // Gradient w.r.t. dist_sq: dI/dD² = -0.5 * I
+                    float dI_dD_sq = -0.5f * intensity;
 
                     float outer_grad = grad_out * dI_dD_sq;
 
@@ -262,12 +249,6 @@ __global__ void rasterize_global_backward_kernel(
                         }
                     }
 
-                    // d_sharpness: uses clamped dist_sq_safe (consistent with tile-based path)
-                    {
-                        float dist_pow_s = __powf(dist_sq_safe, s * 0.5f);
-                        float log_dist_sq = __logf(dist_sq_safe);
-                        local_d_sharpness = grad_out * intensity * (-0.25f) * dist_pow_s * log_dist_sq;
-                    }
                 }
             }
         }
@@ -275,7 +256,6 @@ __global__ void rasterize_global_backward_kernel(
         // Warp-aggregated atomic adds: all threads in the warp participate,
         // non-contributing threads add 0. Reduces global atomics by ~32x.
         warp_aggregated_atomic_add(&d_amps[splat_idx], local_d_amp);
-        warp_aggregated_atomic_add(&d_sharpness[splat_idx], local_d_sharpness);
 
         #pragma unroll
         for (int d = 0; d < DIM; d++) {

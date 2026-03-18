@@ -12,7 +12,6 @@ import pytest
 
 from luxar.gsplats import fit_multiscale_gaussian_splats
 
-
 class TestMultiScaleFitting:
     """Tests for fit_multiscale_gaussian_splats function."""
 
@@ -33,7 +32,6 @@ class TestMultiScaleFitting:
         assert result.centers.ndim == 2
         assert result.centers.shape[0] == len(result.amplitudes)
         assert result.cholesky_factors.shape[1] == 3  # 2D cholesky (3 elements)
-        assert result.sharpnesses.shape[0] == len(result.amplitudes)
         assert "decomposition_stats" in result.stats
         assert "per_scale_stats" in result.stats
         assert "total_splats" in result.stats
@@ -49,7 +47,6 @@ class TestMultiScaleFitting:
         d = 2
         assert result_2d.centers.shape[1] == d
         assert result_2d.cholesky_factors.shape[1] == d * (d + 1) // 2
-        assert result_2d.sharpnesses.shape[0] == result_2d.centers.shape[0]
         assert result_2d.centers.shape[0] == len(result_2d.amplitudes)
 
         # 3D case
@@ -60,7 +57,6 @@ class TestMultiScaleFitting:
         d = 3
         assert result_3d.centers.shape[1] == d
         assert result_3d.cholesky_factors.shape[1] == d * (d + 1) // 2
-        assert result_3d.sharpnesses.shape[0] == result_3d.centers.shape[0]
         assert result_3d.centers.shape[0] == len(result_3d.amplitudes)
 
     def test_multiple_scales(self) -> None:
@@ -222,25 +218,8 @@ class TestMultiScaleFitting:
         # For 3D: d=3
         assert result.centers.shape[1] == 3
         assert result.cholesky_factors.shape[1] == 6
-        assert result.sharpnesses.shape[0] == len(result.amplitudes)
         assert result.centers.shape[0] == len(result.amplitudes)
         assert result.stats["total_splats"] > 0
-
-    def test_sharpness_preservation(self) -> None:
-        """Test that sharpness is preserved (not scaled)."""
-        V = np.random.rand(32, 32).astype(np.float32)
-
-        result = fit_multiscale_gaussian_splats(
-            V, scales=[1, 2, 4], n_iters_decomp=20, n_iters_per_scale=20, verbose=False
-        )
-
-        # Extract sharpness column (last column)
-        sharpness = result.sharpnesses
-
-        # All sharpness values should be reasonable (close to default 2.0)
-        # Since we use default initialization and few iterations
-        assert np.all(sharpness > 0)  # Must be positive
-        assert np.all(sharpness < 100)  # Should be reasonable
 
     def test_verbose_output(self, capsys) -> None:
         """Test that verbose mode produces output."""
@@ -627,7 +606,6 @@ class TestMultiScaleFitting:
             f"from expected center ({center_y}, {center_x}). "
             f"Possible half-pixel offset issue in coordinate transformation."
         )
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
