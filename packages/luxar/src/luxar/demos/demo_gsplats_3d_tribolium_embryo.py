@@ -400,7 +400,6 @@ Navigation:
                     amplitudes=gsplats_data.amplitudes,
                     cholesky_factors=gsplats_data.cholesky_factors,
                     colors=colors,
-                    sharpness=gsplats_data.sharpnesses,
                     opacity=1.0,
                     blending_mode="additive",
                 )

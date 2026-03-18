@@ -33,7 +33,7 @@ result = fit_gaussian_splats(
     max_abs_error=0.01,  # Convergence threshold
     verbose=True         # Show progress
 )
-# Access via result.centers, result.amplitudes, result.cholesky_factors, result.sharpnesses, result.stats
+# Access via result.centers, result.amplitudes, result.cholesky_factors, result.stats
 
 # Transform the result
 centered = result.center_at_centroid()  # Center at origin
@@ -51,7 +51,6 @@ Container for Gaussian splat fitting results with transformation methods.
 - `centers`: (N, d) array of splat center positions
 - `amplitudes`: (N,) array of non-negative splat amplitudes
 - `cholesky_factors`: (N, d*(d+1)//2) packed Cholesky factors L where Σ = L @ L.T
-- `sharpnesses`: (N,) per-splat sharpness values (s=2.0 is standard Gaussian)
 - `colors`: Optional (N, 3) RGB colors (uint8 or float32)
 - `stats`: Dictionary of optimization statistics
 
@@ -138,49 +137,39 @@ All seeding methods accept an optional `device` parameter (`'cuda'`, `'mps'`, `'
 - `raw_L_diag`: Unconstrained diagonal parameters, shape (N, d)
 - `L_off`: Off-diagonal elements, shape (N, tril_size(d)-d)
 - `raw_a`: Unconstrained amplitude parameters, shape (N,)
-- `sharpness_offsets_raw`: Sharpness offset parameters, shape (N,) - controls edge falloff
-
 **Parameterization:**
-- Centers: `� = sigmoid(raw_�) * clamp(shape - 1, min=1)`
-- Diagonal: `L_diag = �_min_diag + softplus(raw_L_diag)`
+- Centers: `mu = sigmoid(raw_mu) * clamp(shape - 1, min=1)`
+- Diagonal: `L_diag = min_diag + softplus(raw_L_diag)`
 - Off-diagonal: `L_off = raw_L_off` (unconstrained)
 - Amplitudes: `a = softplus(raw_a)`
-- Sharpness: `s = 2 * exp(sharpness_offsets_raw)` (exponential mapping, default s=2)
 
 **Initialization:**
-- Transform initial centers to logit space: `raw_� = log(u) - log(1-u)` where `u = centers/max(shape-1, 1)`
+- Transform initial centers to logit space: `raw_mu = log(u) - log(1-u)` where `u = centers/max(shape-1, 1)`
 - Use `stable_inverse_softplus` for diagonal and amplitude initialization
 - Clamp normalized coordinates to [1e-6, 1-1e-6] to avoid sigmoid saturation
-- Initialize sharpness offsets to 0: `sharpness_offsets_raw = 0` (gives s = 2, standard Gaussian)
 
 **Key Methods:**
-- `current_params()`: Return transformed (centers, L_matrices, amplitudes, sharpness) as 4-tuple
+- `current_params()`: Return transformed (centers, L_matrices, amplitudes) as 3-tuple
 - `_build_L()`: Reconstruct lower-triangular matrices from parameters
-- `forward()`: Render all splats using main rendering function with sharpness
+- `forward()`: Render all splats using main rendering function
 - `n_splats()`: Return current number of splats
-- `prune_(keep_mask)`: Remove splats by boolean mask (including sharpness)
-- `append_(centers, Ls, amps, sharpness)`: Add new splats (sharpness required)
-- `replace_with(centers, Ls, amps, sharpness)`: Replace all parameters (sharpness required)
-- `_to_internal_params(centers, Ls, amps, sharpness)`: Convert external to internal parameterization (sharpness required)
+- `prune_(keep_mask)`: Remove splats by boolean mask
+- `append_(centers, Ls, amps)`: Add new splats
+- `replace_with(centers, Ls, amps)`: Replace all parameters
+- `_to_internal_params(centers, Ls, amps)`: Convert external to internal parameterization
 
-### Rendering Function: `render_gaussians(shape, centers, Ls, amps, sharpness, truncate=3.0, intensity_floor=1e-5, chunk_size=None)`
+### Rendering Function: `render_gaussians(shape, centers, Ls, amps, truncate=3.0, intensity_floor=1e-5, chunk_size=None)`
 
 **Algorithm:**
-1. **Compute sharpness-adjusted AABB per splat**:
-   - For generalized Gaussian `exp(-0.5 * ||y||^s)`, the effective radius is adjusted: `effective_truncate = truncate^(2/s)`
-   - **Rationale**: For same threshold as standard Gaussian (s=2), solve `r^s = truncate²` → `r = truncate^(2/s)`
-   - Compute radii: `radii = ceil(effective_truncate * sqrt(diag(Σ)))`
-   - **Examples**: s=2.0 → 3^1 = 3 (unchanged), s=1.5 → 3^1.33 ≈ 4.73 (larger for soft splats), s=3.0 → 3^0.67 ≈ 2.08 (smaller for sharp splats)
-2. **Optional amplitude-aware shrinking**: if `a * exp(-0.5 * t^s) < intensity_floor`, reduce radius using sharpness-adjusted threshold
+1. **Compute AABB per splat**:
+   - Compute radii: `radii = ceil(truncate * sqrt(diag(Sigma)))`
+2. **Optional amplitude-aware shrinking**: if `a * exp(-0.5 * t^2) < intensity_floor`, reduce radius
 3. Group splats by box dimensions for grid reuse: `{(h1,h2,...): [indices]}`
 4. For each group:
    - Generate coordinate grid using `meshgrid`
    - Process in memory chunks to prevent OOM
-   - Solve `L * y = (x - �)` for all points (avoid matrix inversion)
-   - **Apply generalized Gaussian**: Compute `exp(-0.5 * ||y||�^(s/2)) * amplitude`
-     - Standard case (s=2): `exp(-0.5 * ||y||�)`
-     - Sharper case (s>2): `exp(-0.5 * ||y||�^(s/2))` - faster decay, sharper edges
-     - Softer case (s<2): `exp(-0.5 * ||y||�^(s/2))` - slower decay, heavier tails
+   - Solve `L * y = (x - mu)` for all points (avoid matrix inversion)
+   - **Apply standard Gaussian**: Compute `exp(-0.5 * ||y||^2) * amplitude`
    - Accumulate into output using `index_add_`
 
 **Fast paths for 2D/3D:**
@@ -194,122 +183,7 @@ All seeding methods accept an optional `device` parameter (`'cuda'`, `'mps'`, `'
 - Account for tensor memory: `K * (2*d + 2) * bytes_per_element * 1.5`
 - Clamp chunk sizes to [1024, 1048576]
 
-### 2.1 Per-Splat Sharpness Feature
-
-**Overview:**
-Per-splat sharpness extends standard Gaussian splatting to **generalized Gaussian distributions**, enabling adaptive edge control for better sparse approximations. Each splat can learn its optimal sharpness parameter independently.
-
-**Mathematical Formulation:**
-- **Standard Gaussian**: `I(x) = a * exp(-0.5 * ||y||²)`
-- **Generalized Gaussian**: `I(x) = a * exp(-0.5 * ||y||^s)` where s is sharpness
-- **Computational form**: `exp(-0.5 * expo^(s/2))` where `expo = ||y||²` (Mahalanobis distance squared)
-
-**Sharpness Parameter s:**
-- `s = 2`: Standard Gaussian (smooth exponential falloff, infinite support)
-- `s > 2`: Sharper edges, more compact support → **better sparse representations**
-- `s < 2`: Softer edges, heavier tails (Laplacian-like for s=1)
-- `s → ∞`: Approaches box function (hard edges)
-- `s → 0`: Approaches uniform (very soft)
-
-**Exponential Parameterization:**
-```
-s = 2 * exp(s')
-```
-where `s'` is the learned **sharpness offset** parameter.
-
-**Benefits of exponential parameterization:**
-1. **Zero-centered learning**: `s' = 0` → `s = 2` (standard Gaussian is natural default)
-2. **Symmetric exploration**: Can increase/decrease sharpness from sensible baseline
-3. **Always positive**: `s > 0` guaranteed for all `s' ∈ ℝ`
-4. **L1 regularization friendly**: Pushing `s' → 0` encourages standard Gaussians
-5. **Smooth gradients**: Exponential provides stable optimization dynamics
-
-**Inverse transformation:**
-```
-s' = log(s / 2)
-```
-Used when initializing from existing sharpness values.
-
-**Optimization Strategy:**
-1. **Initialization**: All splats start at `s' = 0` (standard Gaussian, s=2)
-2. **L1 regularization**: `loss += l1_sharpness * mean(|s'|)`
-   - Encourages splats to remain at standard Gaussian unless beneficial
-   - Promotes sparsity in sharpness parameter space
-   - Default: `l1_sharpness = 0.01 * lr` (1% of base LR)
-3. **Differential learning rate**: Sharpness parameters use fixed slower learning rate
-   - Fixed: `sharpness_lr = 0.5 * base_lr` (hardcoded, not gradient-dilution-compensated)
-   - Rationale: Sharpness is dimensionality-independent (always 1 scalar), so no gradient dilution applied
-   - Moderate learning speed (0.5×) for conservative shape parameter updates
-   - Prevents instability from rapid sharpness changes
-4. **Adaptive learning**: Splats learn optimal sharpness based on local structure
-   - Sharp features → learn s > 2
-   - Smooth regions → stay near s = 2
-   - Noisy areas → may learn s < 2 for robustness
-
-**Implementation Details:**
-
-**Model parameter:**
-```python
-self.sharpness_offsets_raw = nn.Parameter(
-    torch.zeros(N, dtype=torch.float32, device=device)
-)
-```
-
-**Forward transformation:**
-```python
-sharpness = 2.0 * torch.exp(self.sharpness_offsets_raw)  # s = 2 * exp(s')
-```
-
-**Rendering integration:**
-```python
-# Compute Mahalanobis distance squared
-expo = torch.sum(y * y, dim=1)  # ||y||² where y = L^(-1) * (x - μ)
-
-# Apply generalized Gaussian falloff
-vals = torch.exp(-0.5 * torch.pow(expo, sharpness[:, None] / 2.0)) * amplitude[:, None]
-```
-
-**Dynamic operations:**
-- `prune_()`: Remove sharpness parameters for pruned splats
-- `append_()`: Initialize new splats with `s' = 0` (or inherit from parent)
-- `replace_with()`: Accept optional sharpness parameter
-
-**Benefits for Gaussian Splatting:**
-1. **Better sparse approximations**: Sharper splats reduce overlap, fewer splats needed
-2. **Sharp feature preservation**: Edges and boundaries represented more accurately
-3. **Adaptive support**: Each splat learns optimal spatial extent
-4. **Improved compression**: More efficient tiling of spatial domain
-5. **Backward compatible**: Default `s=2` recovers standard Gaussian behavior
-
-**Configuration Parameters:**
-- `l1_sharpness`: L1 regularization strength on `s'` (default 0.01 * lr, 1% of base learning rate)
-
-**Sharpness Bounds**:
-- **Official range**: [0, 31] (BOUNDED_SCALAR semantic type, encoding layer)
-- **Fitting implementation range**: [0.164, 24.47] (due to `s' ∈ [-2.5, 2.5]` clamping in `current_params()`)
-- **Rationale**:
-  - The [0, 31] bounds are the maximum theoretical range supported by the encoding layer
-  - The fitting package uses a narrower range for numerical stability during optimization
-  - Other fitters or manual splat creation can use the full [0, 31] range
-  - The clamping in `current_params()` is an implementation detail, not a format constraint
-
-**Example sharpness values:**
-- Smooth blobs: `s ≈ 1.5-2.0` (soft Gaussian-like)
-- Medium features: `s ≈ 2.0-3.0` (standard to slightly sharp)
-- Sharp edges: `s ≈ 3.0-6.0` (compact, efficient)
-- Very sharp boundaries: `s ≈ 6.0+` (nearly box-like)
-
-**Visualization of falloff:**
-For 1D profile at distance r from center:
-- `s=1`: Linear-like decay, heavy tails
-- `s=2`: Classic Gaussian bell curve
-- `s=4`: Flatter center, rapid edge decay
-- `s=8`: Nearly flat center, very sharp drop
-
-**Trade-offs:**
-- Higher sharpness → sharper reconstruction, but harder optimization
-- Lower sharpness → smoother reconstruction, more robust to noise
-- L1 regularization balances these by encouraging standard Gaussian unless needed
+**Note:** GSplats use the standard Gaussian falloff `I(x) = a * exp(-0.5 * ||y||^2)`. Per-splat sharpness has been removed as of March 2026. All splats use s=2 (standard Gaussian).
 
 ## 3. Standard Optimizer Integration (`optim/`)
 
@@ -464,7 +338,7 @@ The implementation uses a **modular 6-stage pipeline** (see [fitting/SPECIFICATI
 This modular design separates concerns, improves testability, and makes the codebase maintainable.
 The root-level functions delegate to the `fitting/` sub-package for actual implementation.
 
-### Primary Function: `fit_gaussian_splats(V, seeds=None, norm_percentile=0.0, init_sigma_vox=0.5, n_iters=1000, lr=0.01, loss_type="l1", asymmetric_penalty=10.0, l1_amp=None, l1_diag=None, l1_sharpness=None, max_abs_error=None, seed_method="both", ...)`
+### Primary Function: `fit_gaussian_splats(V, seeds=None, norm_percentile=0.0, init_sigma_vox=0.5, n_iters=1000, lr=0.01, loss_type="l1", asymmetric_penalty=10.0, l1_amp=None, l1_diag=None, max_abs_error=None, seed_method="both", ...)`
 
 **Functional Signature**:
 ```python
@@ -480,7 +354,6 @@ def fit_gaussian_splats(
     l1_amp: Optional[float] = None,
     seed_method: str = "both",  # DEFAULT: hybrid decomposition + Gaussian for best convergence
     l1_diag: Optional[float] = None,
-    l1_sharpness: Optional[float] = None,
     # ... additional parameters
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]
 ```
@@ -581,7 +454,6 @@ def fit_gaussian_splats(
 **Return Statistics Structure**:
 The `stats` dictionary returned by `fit_gaussian_splats()` includes:
 - **Core metrics**: `time_seconds`, `iterations`, `converged`, `final_error`, `best_iteration`
-- **Sharpness statistics**: `sharpness_min`, `sharpness_max`, `sharpness_mean`, `sharpness_std`, `sharpness_median`
 - **Optimization trajectory**: `loss_history`, `error_history` (if tracking enabled)
 - **Movie data**: `movie_frames`, `movie_shape` (if `napari_movie=True`)
 - **Best state info**: All statistics reflect the best state encountered during optimization
@@ -603,7 +475,6 @@ The `stats` dictionary returned by `fit_gaussian_splats()` includes:
 When `verbose=True`, the function displays:
 - **Optimization progress**: Iteration-by-iteration metrics via arbol sections
 - **Compression analysis**: Comparing splat representation size to original data
-- **Sharpness statistics**: Distribution of per-splat sharpness values with interpretation
 - **Termination summary**: Final timing, iteration count, and convergence status
 - **Optimization movie**: Interactive napari visualization (if `napari_movie=True`)
 
@@ -620,11 +491,9 @@ The verbose output uses the `arbol` library for hierarchical console logging.
 - **Proportional L1 Regularization**:
   - **Amplitude regularization**: `+ l1_amp * mean(|softplus(raw_a)|)` where `l1_amp = 0.1 * lr` by default (10% of base LR = 5% of amplitude LR 2.0×)
   - **Diagonal regularization**: `+ l1_diag * mean(|softplus(raw_L_diag)|)` where `l1_diag = 0.01 * lr` by default (1% of base LR)
-  - **Sharpness regularization**: `+ l1_sharpness * mean(|sharpness_offsets_raw|)` where `l1_sharpness = 0.01 * lr` by default (1% of base LR = 2% of sharpness LR 0.5×)
   - **Rationale**: L1 regularization should scale with optimization strength for consistent sparsity pressure
   - **Dimensional scaling**: Works correctly with gradient dilution compensation (higher LR → higher L1)
   - **Auto-tuning**: Eliminates need for manual L1 adjustment when changing learning rates
-  - **Sharpness sparsity**: Optional L1 on sharpness offsets encourages standard Gaussians (`s' = 0`, `s = 2`) unless beneficial to deviate
 
 **Loss Function Selection Guide:**
 - **MSE**: Best for smooth data with Gaussian noise, fast convergence, well-behaved gradients
@@ -712,7 +581,7 @@ where:
 ```
 For each scale k:
     Fit Gaussians on Vₖ independently
-    → Get parameters: (centers_k, L_matrices_k, amplitudes_k, sharpness_k)
+    → Get parameters: (centers_k, L_matrices_k, amplitudes_k)
 ```
 
 **Parameter scaling** transforms parameters from scale space back to full resolution:
@@ -721,7 +590,6 @@ For each scale k:
 centers_full = centers_scale × scale_factor
 L_matrices_full = L_matrices_scale × scale_factor
 amplitudes_full = amplitudes_scale  (no scaling)
-sharpness_full = sharpness_scale    (no scaling)
 ```
 
 **Combination** produces the final multi-scale splat representation:
@@ -729,7 +597,6 @@ sharpness_full = sharpness_scale    (no scaling)
 ```
 params_combined = vstack([params_1, params_2, ..., params_K])
 amps_combined = concatenate([amps_1, amps_2, ..., amps_K])
-sharpness_combined = concatenate([sharpness_1, sharpness_2, ..., sharpness_K])
 ```
 
 ### Parameter Scaling Rules
@@ -781,7 +648,6 @@ scales_list, stats = decompose_image(
 ```python
 all_params = []
 all_amps = []
-all_sharpness = []
 
 for scale_idx, (scale_factor, V_scale) in enumerate(zip(scales, scales_list)):
     # Adjust init_sigma for scale
@@ -796,21 +662,17 @@ for scale_idx, (scale_factor, V_scale) in enumerate(zip(scales, scales_list)):
         **kwargs
     )
 
-    # Extract sharpness from params (always present in last column)
     d = V.ndim
-    sharpness_scale = params[:, -1]
-    params_geom = params[:, :-1]  # Everything except sharpness
 
     # Scale parameters back to full resolution
     if scale_factor > 1:
         # Scale centers (first d columns)
-        params_geom[:, :d] *= scale_factor
+        params[:, :d] *= scale_factor
         # Scale Cholesky factors (remaining columns)
-        params_geom[:, d:] *= scale_factor
+        params[:, d:] *= scale_factor
 
-    all_params.append(params_geom)
+    all_params.append(params)
     all_amps.append(amps)
-    all_sharpness.append(sharpness_scale)
 ```
 
 **Step 3: Combination**
@@ -818,12 +680,8 @@ for scale_idx, (scale_factor, V_scale) in enumerate(zip(scales, scales_list)):
 # Combine all scales
 params_combined = np.vstack(all_params)
 amps_combined = np.concatenate(all_amps)
-sharpness_combined = np.concatenate(all_sharpness)
 
-# Add sharpness column back to create final params
-params_final = np.column_stack([params_combined, sharpness_combined])
-
-return params_final, amps_combined, combined_stats
+return params_combined, amps_combined, combined_stats
 ```
 
 ### API Design
@@ -876,8 +734,8 @@ def fit_multiscale_gaussian_splats(
     Returns
     -------
     params : np.ndarray
-        Combined parameters from all scales, shape (N_total, d + d*(d+1)//2 + 1).
-        Includes: centers, Cholesky factors, and sharpness values.
+        Combined parameters from all scales, shape (N_total, d + d*(d+1)//2).
+        Includes: centers and Cholesky factors.
         All parameters scaled to full resolution.
     amplitudes : np.ndarray
         Combined amplitudes from all scales, shape (N_total,).
@@ -896,7 +754,7 @@ def fit_multiscale_gaussian_splats(
       * 3D with scale 8: 512× fewer voxels
     - Coarse scales capture large structures efficiently
     - Fine scales capture details at full resolution
-    - Amplitudes and sharpness values do not scale (see Parameter Scaling Rules)
+    - Amplitudes do not scale (see Parameter Scaling Rules)
     - Uses existing fit_gaussian_splats() as building block (thin wrapper)
 
     Examples
@@ -1144,12 +1002,6 @@ This section provides a quick reference for the most important terms. For compre
 - Parameter names: `raw_L_diag` (diagonal), `L_off` (off-diagonal)
 - NOT: covariance matrix directly (we use Cholesky for stability)
 
-**Sharpness (s)**
-- Controls edge falloff in generalized Gaussian: `exp(-0.5 * ||y||^s)`
-- Parameter name: `sharpness_offsets_raw` (where `s = 2 * exp(s')`)
-- `s = 2`: standard Gaussian, `s > 2`: sharper edges, `s < 2`: softer edges
-- NOT: shape parameter, falloff rate
-
 ### Operations
 
 **Seeding**
@@ -1250,13 +1102,11 @@ This section provides a quick reference for the most important terms. For compre
 - `raw_L_diag`: Diagonal Cholesky parameters (via softplus)
 - `L_off`: Off-diagonal Cholesky parameters (unconstrained)
 - `raw_a`: Amplitude parameters (via softplus)
-- `sharpness_offsets_raw`: Sharpness offset parameters (s')
 
 **Transformed Parameters** (after activation functions):
 - `centers` or `μ`: Actual center positions in voxel coordinates
 - `L` or `Ls`: Cholesky factors (lower-triangular matrices)
 - `amps` or `a`: Actual amplitudes (non-negative)
-- `sharpness` or `s`: Actual sharpness values (s = 2 * exp(s'))
 
 **Configuration Parameters**:
 - `sigma_min_diag`: Minimum diagonal values (per-dimension sequence or float, broadcast across dimensions)
@@ -1276,14 +1126,6 @@ This section provides a quick reference for the most important terms. For compre
 **L (L-matrix)**
 - Lower-triangular Cholesky factor
 - Ensures Σ is always positive definite
-
-**s (sharpness)**
-- Generalized Gaussian exponent
-- Computational form: `exp(-0.5 * ||y||^s)` where s=sharpness
-
-**s' (sharpness offset)**
-- Learnable parameter: `s = 2 * exp(s')`
-- Zero-centered: s'=0 gives s=2 (standard Gaussian)
 
 ### Cross-Package References
 

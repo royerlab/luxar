@@ -47,7 +47,6 @@ def mock_config_2d():
         asymmetric_penalty=10.0,
         l1_amp=0.001,
         l1_diag=0.0001,
-        l1_sharpness=0.0,
         scheduler_type="plateau",
         patience=10,
         lr_reduction_factor=0.5,
@@ -267,7 +266,7 @@ class TestPreprocessData:
         assert np.allclose(result.seed_centers, explicit_seeds)
 
     def test_init_arrays_subsampled_with_seeds(self, mock_config_2d) -> None:
-        """Test that init_L, init_amps, init_sharpness are sliced when seeds are subsampled.
+        """Test that init_L, init_amps are sliced when seeds are subsampled.
 
         This guards against a regression where subsampling seeds would leave the
         init arrays at their original size, causing shape mismatches during model init.
@@ -283,7 +282,6 @@ class TestPreprocessData:
         )
         mock_config_2d.init_L *= np.random.uniform(0.5, 2.0, size=(n_original, 1, 1))
         mock_config_2d.init_amps = np.random.rand(n_original).astype(np.float32)
-        mock_config_2d.init_sharpness = np.full(n_original, 2.0, dtype=np.float32)
 
         # Create many explicit seeds that will be subsampled
         V = np.zeros((50, 50), dtype=np.float32)
@@ -321,10 +319,6 @@ class TestPreprocessData:
                 assert result.init_amps.shape[0] == result.N, (
                     f"result.init_amps not sliced: got {result.init_amps.shape[0]}, expected {result.N}"
                 )
-            if result.init_sharpness is not None:
-                assert result.init_sharpness.shape[0] == result.N, (
-                    f"result.init_sharpness not sliced: got {result.init_sharpness.shape[0]}, expected {result.N}"
-                )
 
     def test_init_arrays_extended_when_more_seeds_needed(self, mock_config_2d) -> None:
         """Test that init arrays are extended when more seeds need to be generated.
@@ -358,7 +352,6 @@ class TestPreprocessData:
             2, axis=0
         )
         mock_config_2d.init_amps = np.array([1.0, 1.0], dtype=np.float32)
-        mock_config_2d.init_sharpness = np.array([2.0, 2.0], dtype=np.float32)
 
         # Store original config values to verify they aren't mutated
         original_init_L_shape = mock_config_2d.init_L.shape[0]
@@ -385,12 +378,6 @@ class TestPreprocessData:
             assert len(result.init_amps) == result.N, (
                 f"result.init_amps should have {result.N} entries, got {len(result.init_amps)}"
             )
-            assert result.init_sharpness is not None, (
-                "result.init_sharpness should be extended"
-            )
-            assert len(result.init_sharpness) == result.N, (
-                f"result.init_sharpness should have {result.N} entries"
-            )
 
 
 class TestCompressionRatio:
@@ -398,67 +385,67 @@ class TestCompressionRatio:
 
     def test_floats_per_splat_2d(self) -> None:
         """Test floats per splat calculation for 2D."""
-        # 2D: center (2) + cholesky (2*3/2=3) + amp (1) + sharpness (1) = 7
-        assert _compute_floats_per_splat(2) == 7
+        # 2D: center (2) + cholesky (2*3/2=3) + amp (1) = 6
+        assert _compute_floats_per_splat(2) == 6
 
     def test_floats_per_splat_3d(self) -> None:
         """Test floats per splat calculation for 3D."""
-        # 3D: center (3) + cholesky (3*4/2=6) + amp (1) + sharpness (1) = 11
-        assert _compute_floats_per_splat(3) == 11
+        # 3D: center (3) + cholesky (3*4/2=6) + amp (1) = 10
+        assert _compute_floats_per_splat(3) == 10
 
     def test_floats_per_splat_4d(self) -> None:
         """Test floats per splat calculation for 4D."""
-        # 4D: center (4) + cholesky (4*5/2=10) + amp (1) + sharpness (1) = 16
-        assert _compute_floats_per_splat(4) == 16
+        # 4D: center (4) + cholesky (4*5/2=10) + amp (1) = 15
+        assert _compute_floats_per_splat(4) == 15
 
     def test_floats_per_splat_5d(self) -> None:
         """Test floats per splat calculation for 5D."""
-        # 5D: center (5) + cholesky (5*6/2=15) + amp (1) + sharpness (1) = 22
-        assert _compute_floats_per_splat(5) == 22
+        # 5D: center (5) + cholesky (5*6/2=15) + amp (1) = 21
+        assert _compute_floats_per_splat(5) == 21
 
     def test_compression_ratio_to_target_count_2d(self) -> None:
         """Test compression ratio calculation for 2D."""
-        # 2D: 7 floats per splat
+        # 2D: 6 floats per splat
         # 100x100 image = 10,000 voxels
-        # ratio=0.1 → 0.1 * 10000 / 7 = 142.8 → 142
+        # ratio=0.1 → 0.1 * 10000 / 6 = 166.6 → 166
         target = _compression_ratio_to_target_count(0.1, (100, 100))
-        assert target == 142
+        assert target == 166
 
     def test_compression_ratio_to_target_count_3d(self) -> None:
         """Test compression ratio calculation for 3D."""
-        # 3D: 11 floats per splat
+        # 3D: 10 floats per splat
         # 64³ = 262,144 voxels
-        # ratio=0.05 → 0.05 * 262144 / 11 = 1191.56 → 1191
+        # ratio=0.05 → 0.05 * 262144 / 10 = 1310.72 → 1310
         target = _compression_ratio_to_target_count(0.05, (64, 64, 64))
-        assert target == 1191
+        assert target == 1310
 
     def test_compression_ratio_to_target_count_3d_high_ratio(self) -> None:
         """Test compression ratio calculation for 3D with high ratio."""
-        # 3D: 11 floats per splat
+        # 3D: 10 floats per splat
         # 64³ = 262,144 voxels
-        # ratio=0.1 → 0.1 * 262144 / 11 = 2383.1 → 2383
+        # ratio=0.1 → 0.1 * 262144 / 10 = 2621.44 → 2621
         target = _compression_ratio_to_target_count(0.1, (64, 64, 64))
-        assert target == 2383
+        assert target == 2621
 
     def test_compression_ratio_minimum_one_seed(self) -> None:
         """Test that compression ratio returns at least 1 seed."""
         # Very small ratio on small image should clamp to 1
-        # 4x4 = 16 voxels, ratio=0.001, 2D (7 floats)
-        # 0.001 * 16 / 7 = 0.002 → 0, but should clamp to 1
+        # 4x4 = 16 voxels, ratio=0.001, 2D (6 floats)
+        # 0.001 * 16 / 6 = 0.0027 → 0, but should clamp to 1
         target = _compression_ratio_to_target_count(0.001, (4, 4))
         assert target == 1
 
     def test_compression_ratio_large_volume(self) -> None:
         """Test compression ratio calculation for large 3D volume."""
         # 256³ = 16,777,216 voxels
-        # ratio=0.1 → 0.1 * 16777216 / 11 ≈ 152,520
+        # ratio=0.1 → 0.1 * 16777216 / 10 = 167,772
         target = _compression_ratio_to_target_count(0.1, (256, 256, 256))
-        assert target == 152520
+        assert target == 167772
 
     def test_compression_ratio_4d(self) -> None:
         """Test compression ratio calculation for 4D."""
-        # 4D: 16 floats per splat
+        # 4D: 15 floats per splat
         # 32^4 = 1,048,576 voxels
-        # ratio=0.05 → 0.05 * 1048576 / 16 = 3276.8 → 3276
+        # ratio=0.05 → 0.05 * 1048576 / 15 = 3495.25 → 3495
         target = _compression_ratio_to_target_count(0.05, (32, 32, 32, 32))
-        assert target == 3276
+        assert target == 3495

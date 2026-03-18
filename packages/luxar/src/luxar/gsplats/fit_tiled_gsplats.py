@@ -84,7 +84,6 @@ def fit_tile(
             centers=np.zeros((0, ndim), dtype=np.float32),
             amplitudes=np.zeros((0,), dtype=np.float32),
             cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
-            sharpnesses=np.zeros((0,), dtype=np.float32),
             stats={"time_seconds": 0.0, "skipped": True},
         )
     else:
@@ -200,7 +199,6 @@ def fit_tiled(
             centers=np.zeros((0, ndim), dtype=np.float32),
             amplitudes=np.zeros((0,), dtype=np.float32),
             cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
-            sharpnesses=np.zeros((0,), dtype=np.float32),
             stats={},
         )
 

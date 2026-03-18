@@ -61,7 +61,7 @@ def seed_from_edges(
         - centers: Edge point positions
         - amplitudes: Intensity values at each point
         - cholesky_factors: Isotropic Cholesky factors (σ=1.0)
-        - sharpnesses: All set to 2.0 (standard Gaussian)
+        - Standard Gaussian profile (no sharpness parameter)
 
     Notes
     -----
@@ -155,14 +155,10 @@ def seed_from_edges(
     # (over-prediction penalty causes divergence with overlapping splats)
     amplitudes = _sample_amplitudes(V, centers, device=device) * SEED_AMPLITUDE_SCALE
 
-    # Step 7: Standard Gaussian sharpness
-    sharpnesses = np.full(len(centers), 2.0, dtype=np.float32)
-
     return GSplatData(
         centers=centers.astype(np.float32),
         amplitudes=amplitudes.astype(np.float32),
         cholesky_factors=cholesky_factors.astype(np.float32),
-        sharpnesses=sharpnesses,
     )
 
 
@@ -173,7 +169,6 @@ def _empty_gsplatdata(ndim: int) -> GSplatData:
         centers=np.zeros((0, ndim), dtype=np.float32),
         amplitudes=np.zeros(0, dtype=np.float32),
         cholesky_factors=np.zeros((0, tril_size), dtype=np.float32),
-        sharpnesses=np.zeros(0, dtype=np.float32),
     )
 
 

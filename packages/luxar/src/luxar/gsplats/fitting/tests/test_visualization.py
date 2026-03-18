@@ -48,7 +48,6 @@ def test_display_compression_analysis_2d(capsys) -> None:
         centers=np.random.rand(N, d).astype(np.float32),
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
-        sharpnesses=np.full(N, 2.0, dtype=np.float32),
         stats={},
     )
 
@@ -76,7 +75,6 @@ def test_display_compression_analysis_3d(capsys) -> None:
         centers=np.random.rand(N, d).astype(np.float32),
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
-        sharpnesses=np.full(N, 2.0, dtype=np.float32),
         stats={},
     )
 
@@ -93,9 +91,9 @@ def test_compression_ratio_calculation(capsys) -> None:
     # Small example where we can verify the calculation
     V = np.random.rand(16, 16).astype(np.float32)  # 256 pixels * 4 bytes = 1024 bytes
 
-    # 2 splats: each has 2 (centers) + 3 (packed L) + 1 (sharpness) + 1 (amp) = 7 floats
-    # Total: 2 * 7 * 4 = 56 bytes
-    # Compression ratio: 1024 / 56 = 18.29:1
+    # 2 splats: each has 2 (centers) + 3 (packed L) + 1 (amp) = 6 floats
+    # Total: 2 * 6 * 4 = 48 bytes
+    # Compression ratio: 1024 / 48 = 21.33:1
     N = 2
     d = 2
     tril_size = 3
@@ -104,7 +102,6 @@ def test_compression_ratio_calculation(capsys) -> None:
         centers=np.random.rand(N, d).astype(np.float32),
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
-        sharpnesses=np.full(N, 2.0, dtype=np.float32),
         stats={},
     )
 
@@ -113,7 +110,7 @@ def test_compression_ratio_calculation(capsys) -> None:
     captured = capsys.readouterr()
     assert "Compression ratio:" in captured.out
     # Should see a high compression ratio (around 18:1)
-    assert "18." in captured.out or "18:" in captured.out
+    assert "21." in captured.out or "21:" in captured.out
 
 
 def test_bits_per_pixel_calculation(capsys) -> None:
@@ -129,7 +126,6 @@ def test_bits_per_pixel_calculation(capsys) -> None:
         centers=np.random.rand(N, d).astype(np.float32),
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
-        sharpnesses=np.full(N, 2.0, dtype=np.float32),
         stats={},
     )
 
@@ -220,7 +216,6 @@ def test_compression_analysis_zero_splats(capsys) -> None:
         centers=np.array([]).reshape(0, d).astype(np.float32),
         amplitudes=np.array([]).astype(np.float32),
         cholesky_factors=np.array([]).reshape(0, tril_size).astype(np.float32),
-        sharpnesses=np.array([]).astype(np.float32),
         stats={},
     )
 
@@ -247,7 +242,6 @@ def test_compression_analysis_many_splats(capsys) -> None:
         centers=np.random.rand(N, d).astype(np.float32),
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
-        sharpnesses=np.full(N, 2.0, dtype=np.float32),
         stats={},
     )
 
@@ -272,7 +266,6 @@ def test_display_compression_various_dimensions(capsys) -> None:
             centers=np.random.rand(N, d).astype(np.float32),
             amplitudes=np.random.rand(N).astype(np.float32),
             cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
-            sharpnesses=np.full(N, 2.0, dtype=np.float32),
             stats={},
         )
 

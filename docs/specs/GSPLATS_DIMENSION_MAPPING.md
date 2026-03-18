@@ -56,7 +56,6 @@ def add_gsplats(
     amplitudes: Union[float, np.ndarray],
     cholesky_factors: np.ndarray,  # Shape (N, k) where k = D_splat*(D_splat+1)/2
     colors: Optional[np.ndarray] = None,
-    sharpness: Union[float, np.ndarray] = 2.0,
     parent: Optional[Node] = None,
     dimensions: Optional[Union[List[str], List[int]]] = None,      # NEW
     extend_to_all: Optional[Union[List[str], List[int]]] = None,   # NEW (modified)
@@ -122,7 +121,6 @@ scene.add_gsplats(
     amplitudes=result.amplitudes,
     cholesky_factors=result.cholesky_factors,  # (N, 6) - 3D covariance
     colors=result.colors,
-    sharpness=result.sharpness,
     dimensions=["x", "y", "z"],          # Splats span spatial dims
     extend_to_all=["time"]               # Visible at all timepoints
 )
@@ -311,7 +309,6 @@ All dimension names must exist in the scene.
   "extend_to_all": ["time"],
   "scene_ndim": 4,
   "has_colors": true,
-  "has_sharpness": true,
   "cholesky_k": 6
 }
 ```
@@ -331,8 +328,7 @@ gsplat_node/
   ├── centers                   (N, ndim) float32
   ├── amplitudes                (N,) or (1,) float32
   ├── cholesky_factors          (N, k) or (1, k) float32, k=ndim*(ndim+1)/2
-  ├── colors                    (N, 3) or (1, 3) uint8/float32
-  └── sharpness                 (N,) or (1,) float32
+  └── colors                    (N, 3) or (1, 3) uint8/float32
 ```
 
 **No padding**: Arrays use intrinsic dimensionality, not scene dimensionality.
@@ -439,9 +435,8 @@ for (const splatIdx of hiddenSplatDims) {
   const variance = getCholeskyVariance(cholesky, i, metadata.ndim, splatIdx);
   const mahalDist = Math.abs(diff) / Math.sqrt(variance);
 
-  // Exponential falloff with sharpness
-  const sharp = sharpness[i];
-  attenuation *= Math.exp(-0.5 * Math.pow(mahalDist, sharp));
+  // Standard Gaussian falloff
+  attenuation *= Math.exp(-0.5 * mahalDist * mahalDist);
 }
 
 amplitudes3D[i] = amplitudes[i] * attenuation;

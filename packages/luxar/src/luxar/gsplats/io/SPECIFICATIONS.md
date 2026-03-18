@@ -33,7 +33,6 @@ Each Gaussian splat is parameterized by:
 | `amplitudes` | (N,) or (1,) | float32 | POSITIVE_SCALAR | Non-negative intensity |
 | `cholesky_factors` | (N, d*(d+1)/2) or (1, d*(d+1)/2) | float32 | CHOLESKY | Packed lower-triangular L where Σ = LLᵀ |
 | `colors` | (N, 3) or (1, 3) | float32/uint8 | COLOR | RGB colors (optional); uint8 [0-255] for SDR, float32 for HDR; absent if not present |
-| `sharpnesses` | (N,) or (1,) | float32 | BOUNDED_SCALAR | Generalized Gaussian exponent (s=2 is standard, bounds [0, 31]); optional |
 
 **Note**: Cholesky factors are packed in row-major order. For d=3: `[L00, L10, L11, L20, L21, L22]`
 
@@ -44,7 +43,7 @@ Each Gaussian splat is parameterized by:
 Broadcasting uses the standard `luxar.encoding` format. When all elements share the same value, the array is stored with shape `(1,)` or `(1, d)` with encoding metadata:
 
 ```json
-// sharpnesses/.zattrs - all splats have sharpness=2.0
+// amplitudes/.zattrs - all splats have amplitude=1.0
 {
   "encoding": {
     "name": "broadcasted",
@@ -52,8 +51,6 @@ Broadcasting uses the standard `luxar.encoding` format. When all elements share 
   }
 }
 ```
-
-**Note**: Semantic type is determined by the array name (e.g., `sharpnesses` → BOUNDED_SCALAR), not stored in metadata.
 
 The `n_splats` attribute in `splats/.zattrs` always reflects the true count (N), regardless of broadcasting.
 
@@ -71,7 +68,6 @@ fitted.gsplats.zarr/
 │   ├── amplitudes               # (N,) or (1,) float32, spatially ordered
 │   ├── cholesky_factors         # (N, k) or (1, k) float32, spatially ordered
 │   ├── colors                   # (N, 3) or (1, 3) float32/uint8, spatially ordered (optional)
-│   ├── sharpnesses              # (N,) or (1,) float32, spatially ordered (optional)
 │   ├── chunk_bounds             # (num_chunks, d, 2) float32, single chunk
 │   └── .zattrs                  # n_splats, ndim, ordering info, spatial index metadata
 │
@@ -105,14 +101,12 @@ fitted.gsplats.zarr/
   "n_splats": 10000,
   "ndim": 3,
   "has_colors": true,
-  "has_sharpness": true,
   "ordering": "morton",           // "morton", "hilbert", or "none"
   "morton_min": [0.0, 0.0, 0.0],  // Bounds for Morton normalization (all dimensions)
   "morton_max": [256.0, 256.0, 128.0],
   "morton_bits_per_dim": 21,      // Bits per dimension in Morton code
   "chunk_size": 2048,             // Elements per chunk
   "amplitude_range": {"min": 0.01, "max": 1.5},
-  "sharpness_bounds": {"min": 0.0, "max": 31.0},
   "center_bounds": {
     "min": [0.0, 0.0, 0.0],
     "max": [256.0, 256.0, 128.0]
@@ -311,7 +305,6 @@ Quantization is handled by `luxar.encoding` based on semantic types:
 | `centers` | COORDINATE | `float16` (half precision) |
 | `amplitudes` | POSITIVE_SCALAR | `positive_scalar_uint8` or `log_scalar_uint8` |
 | `cholesky_factors` | CHOLESKY | `float16` (~0.1% error, see encoding spec Section 4.5) |
-| `sharpnesses` | BOUNDED_SCALAR | `bounded_scalar_uint8` (8-bit, bounds [0, 31]) |
 
 **Log-scale amplitudes**: For high dynamic range (HDR) amplitudes, use log encoding:
 ```python
@@ -391,7 +384,6 @@ from luxar.typing_utils import TARGET_CHUNK_BYTES  # 65536 (64KB)
 # - amplitudes (N,) float32:    bytes_per_row = 4
 # - cholesky_factors (N, k):    bytes_per_row = k * 4  (where k = d*(d+1)/2)
 # - colors (N, 3) uint8/float32: bytes_per_row = 3 or 12
-# - sharpnesses (N,) float32:   bytes_per_row = 4
 
 chunk_elements = TARGET_CHUNK_BYTES // bytes_per_row
 ```
@@ -403,13 +395,12 @@ chunk_elements = TARGET_CHUNK_BYTES // bytes_per_row
 | amplitudes | () float32 | 4 | 16,384 |
 | cholesky_factors | (6,) float32 | 24 | 2,730 |
 | colors | (3,) float32 | 12 | 5,461 |
-| sharpnesses | () float32 | 4 | 16,384 |
 
 **Note**: Each array has its own optimal chunk size. The `chunk_size` in group metadata is a **reference value** for the primary arrays (centers), not a universal constant.
 
 **Chunk shape specification**:
 ```python
-# 1D arrays (amplitudes, sharpnesses)
+# 1D arrays (amplitudes)
 chunks = (chunk_elements,)
 
 # 2D arrays (centers, cholesky_factors, colors)
@@ -428,12 +419,12 @@ When arrays are written to `.gsplats.zarr`, encoding transformations are applied
 
 **Format**: Each array stores encoding metadata in its `.zattrs` file:
 ```json
-// Example: sharpnesses/.zattrs
+// Example: amplitudes/.zattrs
 {
   "encoding": {
-    "name": "bounded_scalar_uint8",
+    "name": "positive_scalar_uint8",
     "min": 0.0,
-    "max": 31.0,
+    "max": 10.0,
     "bits": 8,
     "original_dtype": "float32"
   }
@@ -585,7 +576,7 @@ There are two ways to store Gaussian splats, serving different purposes:
 
 **Structure**: See `../../core/SPECIFICATIONS.md` Section 7
 - GSplats as node in scene hierarchy
-- Same arrays: centers, amplitudes, cholesky_factors, colors, sharpness
+- Same arrays: centers, amplitudes, cholesky_factors, colors
 - Spatially ordered with `chunk_bounds`
 - Inherits scene dimensions, transforms, rendering attributes
 
@@ -674,6 +665,11 @@ This will be designed after the gsplats I/O module is complete.
 ---
 
 ## Changelog
+
+- **v1.2.0** (2026-03-18): Removed sharpness from GSplats
+  - Removed `sharpnesses` array from core data structure, zarr schema, and all examples
+  - GSplats now use fixed standard Gaussian falloff (equivalent to sharpness=2.0)
+  - Removed `has_sharpness` and `sharpness_bounds` from splats group attributes
 
 - **v1.1.1** (2025-11-28): Chunk sizing source of truth
   - Removed local TARGET_CHUNK_BYTES redefinition

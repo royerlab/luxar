@@ -32,7 +32,6 @@ def basic_config():
         asymmetric_penalty=None,
         l1_amp=None,
         l1_diag=None,
-        l1_sharpness=None,
         scheduler_type="plateau",
         patience=10,
         lr_reduction_factor=0.5,
@@ -153,7 +152,7 @@ def test_amplitude_extraction(basic_config, basic_preprocessed_data) -> None:
     components = initialize_optimization(basic_config, basic_preprocessed_data)
 
     model = components.model
-    centers, _, amps, _ = model.current_params()
+    centers, _, amps = model.current_params()
 
     # Amplitudes should be positive
     assert torch.all(amps > 0)
@@ -167,7 +166,7 @@ def test_sigma_initialization(basic_config, basic_preprocessed_data) -> None:
     components = initialize_optimization(basic_config, basic_preprocessed_data)
 
     model = components.model
-    _, Ls, _, _ = model.current_params()
+    _, Ls, _ = model.current_params()
 
     # Check diagonal elements are initialized correctly
     # L matrices should have appropriate scale
@@ -199,7 +198,6 @@ def test_initialization_3d(basic_config) -> None:
         asymmetric_penalty=None,
         l1_amp=None,
         l1_diag=None,
-        l1_sharpness=None,
         scheduler_type="plateau",
         patience=10,
         lr_reduction_factor=0.5,
@@ -281,7 +279,6 @@ def test_initialization_different_devices() -> None:
             asymmetric_penalty=None,
             l1_amp=None,
             l1_diag=None,
-            l1_sharpness=None,
             scheduler_type="plateau",
             patience=10,
             lr_reduction_factor=0.5,
@@ -317,7 +314,7 @@ def test_initialization_different_devices() -> None:
         assert components.model is not None
 
         # Check model is on correct device
-        centers, _, _, _ = components.model.current_params()
+        centers, _, _ = components.model.current_params()
         # Device check: for CPU it's "cpu", for CUDA it's "cuda:0", for MPS it's "mps:0"
         actual_device = str(centers.device)
         assert device_str in actual_device or actual_device.startswith(device_str)

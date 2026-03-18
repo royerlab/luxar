@@ -57,7 +57,6 @@ struct AABB {
  *
  * @param mu            Splat center in voxel coordinates, length DIM
  * @param L_row_norms   Row norms of Cholesky factor (approximates σ per axis), length DIM
- * @param sharpness     Sharpness parameter
  * @param amplitude     Amplitude
  * @param truncate      Base truncation radius
  * @param intensity_floor Minimum intensity threshold
@@ -70,7 +69,6 @@ template <int DIM>
 __device__ AABB<DIM> compute_splat_aabb(
     const float* __restrict__ mu,
     const float* __restrict__ L_row_norms,
-    float sharpness,
     float amplitude,
     float truncate,
     float intensity_floor,
@@ -81,7 +79,7 @@ __device__ AABB<DIM> compute_splat_aabb(
     AABB<DIM> aabb;
 
     // Compute effective truncation
-    float t_eff = effective_truncation(truncate, sharpness, amplitude, intensity_floor);
+    float t_eff = effective_truncation(truncate, amplitude, intensity_floor);
 
     #pragma unroll
     for (int d = 0; d < DIM; d++) {

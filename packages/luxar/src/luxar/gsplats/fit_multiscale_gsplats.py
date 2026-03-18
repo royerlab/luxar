@@ -34,8 +34,8 @@ _MIN_SEEDS_VOXEL_FRACTION = 0.01
 
 def _compute_floats_per_splat(ndim: int) -> int:
     """Compute number of floats needed to represent one Gaussian splat."""
-    # center (d) + cholesky (d*(d+1)/2) + amplitude (1) + sharpness (1)
-    return ndim + ndim * (ndim + 1) // 2 + 2
+    # center (d) + cholesky (d*(d+1)/2) + amplitude (1)
+    return ndim + ndim * (ndim + 1) // 2 + 1
 
 
 def _compression_ratio_to_total_seeds(
@@ -289,7 +289,6 @@ def fit_multiscale_gaussian_splats(
         - centers: np.ndarray, shape (N_total, d) - Center positions at full resolution
         - amplitudes: np.ndarray, shape (N_total,) - Combined amplitudes
         - cholesky_factors: np.ndarray, shape (N_total, d*(d+1)//2) - At full res
-        - sharpnesses: np.ndarray, shape (N_total,) - Per-splat sharpness
         - stats: Dict[str, Any] - Combined statistics including:
           * decomposition_stats: Stats from decompose_image()
           * per_scale_stats: List of stats from each scale's fitting
@@ -304,7 +303,6 @@ def fit_multiscale_gaussian_splats(
           * scale_images: Decomposed images (only if return_intermediate)
 
         Geometric params (centers, Cholesky) are scaled to full resolution.
-        Sharpness values are dimensionless and not scaled.
 
     Notes
     -----
@@ -313,7 +311,7 @@ def fit_multiscale_gaussian_splats(
       results in slower overall time than direct fitting. Benchmark before
       assuming speedup.
     - Coarse scales capture large structures, fine scales capture details
-    - Amplitudes and sharpness values do not scale (see Parameter Scaling Rules)
+    - Amplitudes do not scale (see Parameter Scaling Rules)
     - Uses existing fit_gaussian_splats() as building block
 
     Examples
@@ -430,7 +428,6 @@ def fit_multiscale_gaussian_splats(
     # Step 2: Independent Fitting Per Scale
     all_params = []
     all_amps = []
-    all_sharpness = []
     per_scale_stats: list[dict[str, Any]] = []
     per_scale_visualizations: Optional[list] = [] if visualize_per_scale else None
     intermediate_results: Optional[list] = [] if return_intermediate else None
@@ -487,7 +484,6 @@ def fit_multiscale_gaussian_splats(
         centers_scale = result.centers
         amps = result.amplitudes
         chol_scale = result.cholesky_factors
-        sharpness_scale = result.sharpnesses
         stats_scale = result.stats
 
         if verbose:
@@ -517,12 +513,8 @@ def fit_multiscale_gaussian_splats(
             # When we scale the Gaussian's sigma (coverage), the amplitude represents
             # the same peak intensity, which is correct for reconstruction.
 
-            # Sharpness does NOT get scaled - it's a dimensionless exponent that
-            # controls the Gaussian profile shape, not its spatial extent.
-
         all_params.append(params_geom)
         all_amps.append(amps)
-        all_sharpness.append(sharpness_scale)
 
         # Store per-scale statistics
         per_scale_stats.append(
@@ -545,7 +537,6 @@ def fit_multiscale_gaussian_splats(
                 centers=centers_scale.copy(),
                 amplitudes=amps.copy(),
                 cholesky_factors=chol_scale.copy(),
-                sharpnesses=sharpness_scale.copy(),
                 stats=stats_scale,
             )
 
@@ -556,7 +547,6 @@ def fit_multiscale_gaussian_splats(
                 centers=centers_full_res,
                 amplitudes=amps.copy(),
                 cholesky_factors=chol_full_res,
-                sharpnesses=sharpness_scale.copy(),
                 stats={},
             )
 
@@ -592,7 +582,6 @@ def fit_multiscale_gaussian_splats(
                 centers=centers_full_res,
                 amplitudes=amps,
                 cholesky_factors=chol_full_res,
-                sharpnesses=sharpness_scale,
                 stats={},  # Empty stats for visualization
             )
 
@@ -632,23 +621,19 @@ def fit_multiscale_gaussian_splats(
         # Filter out empty arrays
         valid_params = [p for p in all_params if len(p) > 0]
         valid_amps = [a for a in all_amps if len(a) > 0]
-        valid_sharpness = [s for s in all_sharpness if len(s) > 0]
 
         if len(valid_params) > 0:
             params_combined = np.vstack(valid_params)
             amps_combined = np.concatenate(valid_amps)
-            sharpness_combined = np.concatenate(valid_sharpness)
-            # Add sharpness column to create final params array
-            params_final = np.column_stack([params_combined, sharpness_combined])
         else:
             # No splats at all - return empty arrays with correct shape
-            expected_cols = d + d * (d + 1) // 2 + 1  # +1 for sharpness
-            params_final = np.zeros((0, expected_cols), dtype=np.float32)
+            expected_cols = d + d * (d + 1) // 2
+            params_combined = np.zeros((0, expected_cols), dtype=np.float32)
             amps_combined = np.zeros(0, dtype=np.float32)
     else:
         # No scales processed - return empty arrays with correct shape
-        expected_cols = d + d * (d + 1) // 2 + 1  # +1 for sharpness
-        params_final = np.zeros((0, expected_cols), dtype=np.float32)
+        expected_cols = d + d * (d + 1) // 2
+        params_combined = np.zeros((0, expected_cols), dtype=np.float32)
         amps_combined = np.zeros(0, dtype=np.float32)
 
     # Compute final statistics
@@ -673,7 +658,7 @@ def fit_multiscale_gaussian_splats(
         "decomposition_stats": decomp_stats,
         "per_scale_stats": per_scale_stats,
         "n_splats_per_scale": [stat["n_splats"] for stat in per_scale_stats],
-        "total_splats": int(len(params_final)),
+        "total_splats": int(len(params_combined)),
         "computational_speedup": float(computational_speedup),
         "total_time_seconds": float(total_time),
         "decomposition_time_seconds": float(decomp_time),
@@ -698,15 +683,13 @@ def fit_multiscale_gaussian_splats(
         aprint(f"Theoretical voxel speedup: {computational_speedup:.1f}×")
         aprint(f"Splats per scale: {stats['n_splats_per_scale']}")
 
-    # Unpack params_final into separate components
-    centers_final = params_final[:, :d]
-    cholesky_final = params_final[:, d:-1]  # Everything between centers and sharpness
-    sharpnesses_final = params_final[:, -1]
+    # Unpack params_combined into separate components
+    centers_final = params_combined[:, :d]
+    cholesky_final = params_combined[:, d:]
 
     return GSplatData(
         centers=centers_final,
         amplitudes=amps_combined,
         cholesky_factors=cholesky_final,
-        sharpnesses=sharpnesses_final,
         stats=stats,
     )

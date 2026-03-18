@@ -166,7 +166,6 @@ class TestPrepareConfig:
         # L1 defaults set in preprocessing.py after gradient dilution calc
         assert config.l1_amp is None
         assert config.l1_diag is None
-        assert config.l1_sharpness is None
 
     def test_l1_diag_regularization_custom(self) -> None:
         """Test custom L1 diagonal regularization parameter."""

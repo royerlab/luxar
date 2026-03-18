@@ -14,10 +14,8 @@ describe('GSplats Types', () => {
         n_splats: 1000,
         ndim: 3,
         has_colors: true,
-        has_sharpness: true,
         chunk_size: 2000,
         amplitude_range: { min: 0.0, max: 10.0 },
-        sharpness_bounds: { min: 1.5, max: 2.5 },
         center_bounds: { min: [0, 0, 0], max: [100, 100, 100] },
         ordering: 'hilbert',
       };
@@ -76,10 +74,8 @@ describe('GSplats Types', () => {
           n_splats: 1000,
           ndim: 3,
           has_colors: true,
-          has_sharpness: true,
           chunk_size: 2000,
           amplitude_range: { min: 0.0, max: 10.0 },
-          sharpness_bounds: { min: 2.0, max: 2.0 },
           center_bounds: { min: [0, 0, 0], max: [100, 100, 100] },
           ordering: 'morton',
         },
@@ -170,10 +166,8 @@ describe('GSplats Type Definitions', () => {
         n_splats: 10000,
         ndim: 3,
         has_colors: true,
-        has_sharpness: true,
         chunk_size: 2000,
         amplitude_range: { min: 0.1, max: 5.0 },
-        sharpness_bounds: { min: 1.8, max: 2.2 },
         center_bounds: { min: [0, 0, 0], max: [512, 512, 100] },
         ordering: 'hilbert' as const,
       };
@@ -182,7 +176,6 @@ describe('GSplats Type Definitions', () => {
       expect(metadata.n_splats).toBe(10000);
       expect(metadata.ndim).toBe(3);
       expect(metadata.has_colors).toBe(true);
-      expect(metadata.has_sharpness).toBe(true);
       expect(metadata.chunk_size).toBe(2000);
       expect(metadata.amplitude_range.min).toBe(0.1);
       expect(metadata.amplitude_range.max).toBe(5.0);
@@ -195,10 +188,8 @@ describe('GSplats Type Definitions', () => {
         n_splats: 5000,
         ndim: 4,
         has_colors: false,
-        has_sharpness: false,
         chunk_size: 1000,
         amplitude_range: { min: 0.0, max: 1.0 },
-        sharpness_bounds: { min: 2.0, max: 2.0 },
         center_bounds: { min: [0, 0, 0, 0], max: [100, 100, 100, 10] },
         ordering: 'morton' as const,
         ordering_min: [0, 0, 0, 0],
@@ -217,10 +208,8 @@ describe('GSplats Type Definitions', () => {
         n_splats: 1000,
         ndim: 3,
         has_colors: true,
-        has_sharpness: true,
         chunk_size: 500,
         amplitude_range: { min: 0.0, max: 1.0 },
-        sharpness_bounds: { min: 2.0, max: 2.0 },
         center_bounds: { min: [0, 0, 0], max: [10, 10, 10] },
         ordering: 'none' as const,
         transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 5, 5, 1],
@@ -264,7 +253,6 @@ describe('GSplats Type Definitions', () => {
           1, // Splat 2: anisotropic
         ]),
         colors: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), // RGB per splat
-        sharpness: new Float32Array([2.0, 1.5, 2.5]),
         splatCount: 3,
         ndim: 3,
       };
@@ -275,19 +263,17 @@ describe('GSplats Type Definitions', () => {
       expect(data.choleskyFactors.length).toBe(18); // 3 splats * 6 elements
     });
 
-    it('should allow null colors and sharpness', () => {
+    it('should allow null colors', () => {
       const data = {
         positions: new Float32Array([0, 0, 0]),
         amplitudes: new Float32Array([1.0]),
         choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
         colors: null,
-        sharpness: null,
         splatCount: 1,
         ndim: 3,
       };
 
       expect(data.colors).toBeNull();
-      expect(data.sharpness).toBeNull();
     });
   });
 
@@ -298,7 +284,6 @@ describe('GSplats Type Definitions', () => {
         amplitudes: new Float32Array([0.8, 0.4]), // Attenuated
         choleskyFactors3D: new Float32Array([1, 0, 1, 0, 0, 1, 2, 0, 2, 0, 0, 2]),
         colors: new Float32Array([1, 0, 0, 0, 1, 0]),
-        sharpness: new Float32Array([2.0, 1.5]),
         splatCount: 2,
       };
 
@@ -317,10 +302,8 @@ describe('GSplats Type Definitions', () => {
           n_splats: 10000,
           ndim: 3,
           has_colors: true,
-          has_sharpness: true,
           chunk_size: 2000,
           amplitude_range: { min: 0, max: 1 },
-          sharpness_bounds: { min: 2, max: 2 },
           center_bounds: { min: [0, 0, 0], max: [100, 100, 100] },
           ordering: 'hilbert' as const,
         },
