@@ -848,15 +848,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         colors: Optional[
             Union[NDArray[np.float32], List[float], Tuple[float, ...]]
         ] = None,
-        sharpness: Optional[Union[NDArray[np.float32], float]] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
         """Write Gaussian splats data to Zarr.
 
-        Scalar convenience: amplitudes, colors, and sharpness accept scalars:
+        Scalar convenience: amplitudes and colors accept scalars:
         - amplitudes=1.0 → all splats get amplitude 1.0
         - colors=[1.0, 0, 0] → all splats red
-        - sharpness=2.0 → standard Gaussian for all
 
         Args:
             path: Path for the gsplats within the store
@@ -864,7 +862,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             amplitudes: Amplitudes - array (N,) or scalar float
             cholesky_factors: Packed Cholesky factors of shape (N, k)
             colors: Colors - array (N, 3), RGB tuple/list, or None
-            sharpness: Sharpness - array (N,), scalar float, or None
             **attrs: Additional attributes
 
         Returns:
@@ -885,8 +882,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Log scalar inputs (no expansion - passed to encoder)
         if isinstance(amplitudes, (int, float)):
             aprint(f"  → Uniform amplitude {amplitudes:.3f} for all splats")
-        if sharpness is not None and isinstance(sharpness, (int, float)):
-            aprint(f"  → Uniform sharpness {sharpness:.1f} for all splats")
         if colors is not None and isinstance(colors, (list, tuple)):
             aprint(f"  → Uniform color RGB{list(colors)} for all splats")
 
@@ -932,9 +927,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if colors is not None and isinstance(colors, np.ndarray):
                 if colors.shape[0] > 1:
                     colors = colors[sort_indices]
-            if sharpness is not None and isinstance(sharpness, np.ndarray):
-                if sharpness.shape[0] > 1:
-                    sharpness = sharpness[sort_indices]
 
             # Compute chunk size
             from ..typing_utils import TARGET_CHUNK_BYTES
@@ -1052,7 +1044,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             "n_splats": n_splats,
             "ndim": n_dims,
             "has_colors": False,
-            "has_sharpness": False,
             "amplitude_range": {"min": amplitude_min, "max": amplitude_max},
             "center_bounds": {"min": center_min, "max": center_max},
         }
@@ -1123,44 +1114,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     float(max(colors)),
                 ]
 
-        if sharpness is not None:
-            from ..validation.base import validate_sharpness_for_writing
-
-            # Handle scalar vs array
-            if isinstance(sharpness, (int, float)):
-                n_elems_sharp = n_splats
-                chunks_sharp = None
-                sharpness_min = sharpness_max = float(sharpness)
-            else:
-                validate_sharpness_for_writing(sharpness, n_splats)
-                if sharpness.shape[0] == 1:
-                    n_elems_sharp = n_splats
-                    chunks_sharp = None
-                else:
-                    n_elems_sharp = None
-                    chunks_sharp = _calculate_intelligent_chunks(
-                        (n_splats,), spatial_index_data=ordering_data
-                    )
-                sharpness_min = float(np.min(sharpness))
-                sharpness_max = float(np.max(sharpness))
-
-            self._encoder.encode(
-                data=sharpness,
-                zarr_group=group,
-                name="sharpnesses",
-                semantic_type=SemanticType.BOUNDED_SCALAR,
-                mode=self._encoding_mode,
-                bounds=(0.0, SHARPNESS_MAX),
-                n_elements=n_elems_sharp,
-                chunks=chunks_sharp,
-                compressor=self.compressor,
-            )
-            metadata["has_sharpness"] = True
-            metadata["sharpness_bounds"] = {"min": sharpness_min, "max": sharpness_max}
-        else:
-            # Default sharpness bounds when not provided
-            metadata["sharpness_bounds"] = {"min": 2.0, "max": 2.0}
-
         # Write chunk_bounds if ordering was applied
         if ordering_data is not None:
             chunk_bounds = ordering_data["chunk_bounds"]
@@ -1206,9 +1159,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs["n_splats"] = n_splats
         group.attrs["ndim"] = n_dims
         group.attrs["has_colors"] = metadata["has_colors"]
-        group.attrs["has_sharpness"] = metadata["has_sharpness"]
         group.attrs["amplitude_range"] = metadata["amplitude_range"]
-        group.attrs["sharpness_bounds"] = metadata["sharpness_bounds"]
         group.attrs["center_bounds"] = metadata["center_bounds"]
         group.attrs["ordering"] = metadata["ordering"]
 

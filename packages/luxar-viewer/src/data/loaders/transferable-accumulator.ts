@@ -92,7 +92,6 @@ export interface GSplatsBuffers extends TransferableBuffers {
   amplitudes: Float32Array;
   choleskyFactors: Float32Array;
   colors?: Float32Array | Uint8Array;
-  sharpness?: Float32Array;
 }
 
 // ============================================================================
@@ -442,7 +441,6 @@ export function createGSplatsAccumulator(
     { name: 'amplitudes', elementsPerItem: 1, type: 'float32' },
     { name: 'choleskyFactors', elementsPerItem: choleskySize, type: 'float32' },
     { name: 'colors', elementsPerItem: 3, type: 'float32', optional: true },
-    { name: 'sharpness', elementsPerItem: 1, type: 'float32', optional: true },
   ];
 
   return new TransferableAccumulator<GSplatsBuffers>(shapes, initialCapacity);

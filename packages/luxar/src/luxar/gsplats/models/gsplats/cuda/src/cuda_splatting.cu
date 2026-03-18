@@ -75,9 +75,9 @@ inline const __half* get_data_ptr<__half>(const torch::Tensor& t) {
 
 // Preprocess kernel (no BATCH_SIZE dependency)
 #define INSTANTIATE_PREPROCESS(D) \
-    template void launch_preprocess<D, float>(const float*, const float*, const float*, const float*, \
+    template void launch_preprocess<D, float>(const float*, const float*, const float*, \
         int, const int*, const int*, int, float, float, int*, bool*, int*, int*, int64_t, int*, cudaStream_t); \
-    template void launch_preprocess<D, __half>(const __half*, const __half*, const __half*, const __half*, \
+    template void launch_preprocess<D, __half>(const __half*, const __half*, const __half*, \
         int, const int*, const int*, int, float, float, int*, bool*, int*, int*, int64_t, int*, cudaStream_t);
 
 INSTANTIATE_PREPROCESS(2)
@@ -112,14 +112,14 @@ INSTANTIATE_BIN(8)
 // Strategy: Use batch=256 for low dims, batch=128 for medium, batch=32 for high dims
 // See shared memory budget analysis in SPECIFICATIONS.md.
 #define INSTANTIATE_RASTERIZE(D, BATCH) \
-    template void launch_rasterize_forward<D, BATCH, float>(const float*, const float*, const float*, const float*, \
+    template void launch_rasterize_forward<D, BATCH, float>(const float*, const float*, const float*, \
         int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t); \
-    template void launch_rasterize_backward<D, BATCH, float>(const float*, const float*, const float*, const float*, const float*, \
-        int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t); \
-    template void launch_rasterize_forward<D, BATCH, __half>(const __half*, const __half*, const __half*, const __half*, \
+    template void launch_rasterize_backward<D, BATCH, float>(const float*, const float*, const float*, const float*, \
+        int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t); \
+    template void launch_rasterize_forward<D, BATCH, __half>(const __half*, const __half*, const __half*, \
         int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, int64_t, const std::vector<int>&, cudaStream_t); \
-    template void launch_rasterize_backward<D, BATCH, __half>(const float*, const __half*, const __half*, const __half*, const __half*, \
-        int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
+    template void launch_rasterize_backward<D, BATCH, __half>(const float*, const __half*, const __half*, const __half*, \
+        int, const int*, const int*, int, float, float, const int64_t*, const int*, const int*, float*, float*, float*, int64_t, const std::vector<int>&, cudaStream_t);
 
 // Batch size 32 (all dimensions - minimum safe batch size)
 INSTANTIATE_RASTERIZE(2, 32)
@@ -148,10 +148,10 @@ INSTANTIATE_RASTERIZE(4, 256)
 
 // Global splat kernel instantiations (no BATCH_SIZE dependency)
 #define INSTANTIATE_GLOBAL(D) \
-    template void launch_rasterize_global_forward<D, float>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t); \
-    template void launch_rasterize_global_backward<D, float>(const float*, const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t); \
-    template void launch_rasterize_global_forward<D, __half>(const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t); \
-    template void launch_rasterize_global_backward<D, __half>(const float*, const __half*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, float*, int64_t, cudaStream_t);
+    template void launch_rasterize_global_forward<D, float>(const float*, const float*, const float*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t); \
+    template void launch_rasterize_global_backward<D, float>(const float*, const float*, const float*, const float*, const int*, int, const int*, float, float, float*, float*, float*, int64_t, cudaStream_t); \
+    template void launch_rasterize_global_forward<D, __half>(const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, int64_t, cudaStream_t); \
+    template void launch_rasterize_global_backward<D, __half>(const float*, const __half*, const __half*, const __half*, const int*, int, const int*, float, float, float*, float*, float*, int64_t, cudaStream_t);
 
 INSTANTIATE_GLOBAL(2)
 INSTANTIATE_GLOBAL(3)
@@ -190,7 +190,6 @@ void validate_inputs(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const std::vector<int64_t>& shape,
     torch::ScalarType expected_dtype
 ) {
@@ -198,7 +197,6 @@ void validate_inputs(
     TORCH_CHECK(centers.is_cuda(), "centers must be on CUDA device");
     TORCH_CHECK(conic.is_cuda(), "conic must be on CUDA device");
     TORCH_CHECK(amps.is_cuda(), "amps must be on CUDA device");
-    TORCH_CHECK(sharpness.is_cuda(), "sharpness must be on CUDA device");
 
     // Check dimensions
     int dim = (int)shape.size();
@@ -213,20 +211,17 @@ void validate_inputs(
         "conic must have shape (N, ", expected_conic_size, ")");
 
     TORCH_CHECK(amps.size(0) == N, "amps must have shape (", N, ",)");
-    TORCH_CHECK(sharpness.size(0) == N, "sharpness must have shape (", N, ",)");
 
     // Check dtypes
     const char* dtype_name = (expected_dtype == torch::kFloat16) ? "float16" : "float32";
     TORCH_CHECK(centers.dtype() == expected_dtype, "centers must be ", dtype_name);
     TORCH_CHECK(conic.dtype() == expected_dtype, "conic must be ", dtype_name);
     TORCH_CHECK(amps.dtype() == expected_dtype, "amps must be ", dtype_name);
-    TORCH_CHECK(sharpness.dtype() == expected_dtype, "sharpness must be ", dtype_name);
 
     // Check contiguous
     TORCH_CHECK(centers.is_contiguous(), "centers must be contiguous");
     TORCH_CHECK(conic.is_contiguous(), "conic must be contiguous");
     TORCH_CHECK(amps.is_contiguous(), "amps must be contiguous");
-    TORCH_CHECK(sharpness.is_contiguous(), "sharpness must be contiguous");
 }
 
 // =============================================================================
@@ -249,7 +244,6 @@ void dispatch_forward_impl(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
@@ -297,14 +291,13 @@ void dispatch_forward_impl(
     // Extract typed data pointers
     const InputDType* centers_ptr = get_data_ptr<InputDType>(centers);
     const InputDType* amps_ptr = get_data_ptr<InputDType>(amps);
-    const InputDType* sharpness_ptr = get_data_ptr<InputDType>(sharpness);
     const InputDType* L_row_norms_ptr = get_data_ptr<InputDType>(L_row_norms);
     const InputDType* conic_ptr = get_data_ptr<InputDType>(conic);
 
     // Launch preprocess kernel
     DIM_DISPATCH(dim,
         launch_preprocess<D, InputDType>(
-            centers_ptr, amps_ptr, sharpness_ptr, L_row_norms_ptr,
+            centers_ptr, amps_ptr, L_row_norms_ptr,
             N,
             shape_tensor.data_ptr<int>(),
             tile_dims_tensor.data_ptr<int>(),
@@ -398,7 +391,7 @@ void dispatch_forward_impl(
     // Macro for rasterize forward launch (used by batch/dim dispatch below)
     #define LAUNCH_RASTER_FWD(D_val, BATCH_val) \
         launch_rasterize_forward<D_val, BATCH_val, InputDType>( \
-            centers_ptr, conic_ptr, amps_ptr, sharpness_ptr, \
+            centers_ptr, conic_ptr, amps_ptr, \
             N, \
             shape_tensor.data_ptr<int>(), \
             tile_dims_tensor.data_ptr<int>(), \
@@ -458,7 +451,7 @@ void dispatch_forward_impl(
 
         DIM_DISPATCH(dim,
             launch_rasterize_global_forward<D, InputDType>(
-                centers_ptr, conic_ptr, amps_ptr, sharpness_ptr,
+                centers_ptr, conic_ptr, amps_ptr,
                 state.global_splat_ids.data_ptr<int>(),
                 state.num_global_splats,
                 shape_tensor.data_ptr<int>(),
@@ -481,7 +474,7 @@ void dispatch_forward_impl(
  * Backward dispatcher - handles both FP32 and FP16 via InputDType template.
  *
  * grad_output is always FP32 regardless of InputDType.
- * Gradients (d_centers, d_conic, d_amps, d_sharpness) are always FP32.
+ * Gradients (d_centers, d_conic, d_amps) are always FP32.
  */
 template <typename InputDType>
 void dispatch_backward_impl(
@@ -490,7 +483,6 @@ void dispatch_backward_impl(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const torch::Tensor& tile_offsets,
     const torch::Tensor& tile_counts,
     const torch::Tensor& tile_content,
@@ -503,7 +495,6 @@ void dispatch_backward_impl(
     torch::Tensor& d_centers,
     torch::Tensor& d_conic,
     torch::Tensor& d_amps,
-    torch::Tensor& d_sharpness,
     const torch::Tensor& shape_tensor_cached,
     const torch::Tensor& tile_dims_tensor_cached
 ) {
@@ -526,13 +517,11 @@ void dispatch_backward_impl(
     d_centers.zero_();
     d_conic.zero_();
     d_amps.zero_();
-    d_sharpness.zero_();
 
     // Extract typed data pointers
     const InputDType* centers_ptr = get_data_ptr<InputDType>(centers);
     const InputDType* conic_ptr = get_data_ptr<InputDType>(conic);
     const InputDType* amps_ptr = get_data_ptr<InputDType>(amps);
-    const InputDType* sharpness_ptr = get_data_ptr<InputDType>(sharpness);
 
     // Clamp batch_size based on dimension due to shared memory constraints
     int effective_batch = batch_size;
@@ -543,7 +532,7 @@ void dispatch_backward_impl(
     #define LAUNCH_RASTER_BWD(D_val, BATCH_val) \
         launch_rasterize_backward<D_val, BATCH_val, InputDType>( \
             grad_output.data_ptr<float>(), \
-            centers_ptr, conic_ptr, amps_ptr, sharpness_ptr, \
+            centers_ptr, conic_ptr, amps_ptr, \
             N, \
             shape_tensor.data_ptr<int>(), \
             tile_dims_tensor.data_ptr<int>(), \
@@ -554,7 +543,6 @@ void dispatch_backward_impl(
             d_centers.data_ptr<float>(), \
             d_conic.data_ptr<float>(), \
             d_amps.data_ptr<float>(), \
-            d_sharpness.data_ptr<float>(), \
             num_tiles, tile_dims, stream)
 
     switch (effective_batch) {
@@ -598,7 +586,7 @@ void dispatch_backward_impl(
         DIM_DISPATCH(dim,
             launch_rasterize_global_backward<D, InputDType>(
                 grad_output.data_ptr<float>(),
-                centers_ptr, conic_ptr, amps_ptr, sharpness_ptr,
+                centers_ptr, conic_ptr, amps_ptr,
                 global_splat_ids.data_ptr<int>(),
                 n_global_splats,
                 shape_tensor.data_ptr<int>(),
@@ -606,7 +594,6 @@ void dispatch_backward_impl(
                 d_centers.data_ptr<float>(),
                 d_conic.data_ptr<float>(),
                 d_amps.data_ptr<float>(),
-                d_sharpness.data_ptr<float>(),
                 num_pixels, stream)
         );
 
@@ -630,7 +617,6 @@ forward_impl(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
@@ -641,7 +627,7 @@ forward_impl(
     constexpr torch::ScalarType expected_dtype =
         std::is_same_v<InputDType, __half> ? torch::kFloat16 : torch::kFloat32;
 
-    validate_inputs(centers, conic, amps, sharpness, shape, expected_dtype);
+    validate_inputs(centers, conic, amps, shape, expected_dtype);
 
     // Validate L_row_norms
     int dim = (int)shape.size();
@@ -669,7 +655,7 @@ forward_impl(
 
     // Run forward pass
     BinningState state;
-    dispatch_forward_impl<InputDType>(dim, centers, conic, amps, sharpness, L_row_norms, shape,
+    dispatch_forward_impl<InputDType>(dim, centers, conic, amps, L_row_norms, shape,
                                       truncate, intensity_floor, tile_size, batch_size, output, state);
 
     return std::make_tuple(
@@ -688,13 +674,12 @@ forward_impl(
  * Gradients are always FP32 regardless of InputDType.
  */
 template <typename InputDType>
-static std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+static std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
 backward_impl(
     const torch::Tensor& grad_output,
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const torch::Tensor& tile_offsets,
     const torch::Tensor& tile_counts,
     const torch::Tensor& tile_content,
@@ -710,7 +695,7 @@ backward_impl(
     constexpr torch::ScalarType expected_dtype =
         std::is_same_v<InputDType, __half> ? torch::kFloat16 : torch::kFloat32;
 
-    validate_inputs(centers, conic, amps, sharpness, shape, expected_dtype);
+    validate_inputs(centers, conic, amps, shape, expected_dtype);
 
     // Validate batch_size
     TORCH_CHECK(batch_size == 32 || batch_size == 128 || batch_size == 256,
@@ -725,16 +710,15 @@ backward_impl(
     auto d_centers = torch::zeros({N, dim}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
     auto d_conic = torch::zeros({N, conic_size}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
     auto d_amps = torch::zeros({N}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
-    auto d_sharpness = torch::zeros({N}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
 
     // Run backward pass
-    dispatch_backward_impl<InputDType>(dim, grad_output, centers, conic, amps, sharpness,
+    dispatch_backward_impl<InputDType>(dim, grad_output, centers, conic, amps,
                                        tile_offsets, tile_counts, tile_content, global_splat_ids,
                                        shape, truncate, intensity_floor, tile_size, batch_size,
-                                       d_centers, d_conic, d_amps, d_sharpness,
+                                       d_centers, d_conic, d_amps,
                                        shape_tensor_cached, tile_dims_tensor_cached);
 
-    return std::make_tuple(d_centers, d_conic, d_amps, d_sharpness);
+    return std::make_tuple(d_centers, d_conic, d_amps);
 }
 
 // Non-templated wrappers for binary compatibility (called by bindings.cpp)
@@ -744,7 +728,6 @@ forward(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
@@ -752,7 +735,7 @@ forward(
     int tile_size,
     int batch_size
 ) {
-    return forward_impl<float>(centers, conic, amps, sharpness, L_row_norms,
+    return forward_impl<float>(centers, conic, amps, L_row_norms,
                                shape, truncate, intensity_floor, tile_size, batch_size);
 }
 
@@ -761,7 +744,6 @@ forward_fp16(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
@@ -769,17 +751,16 @@ forward_fp16(
     int tile_size,
     int batch_size
 ) {
-    return forward_impl<__half>(centers, conic, amps, sharpness, L_row_norms,
+    return forward_impl<__half>(centers, conic, amps, L_row_norms,
                                 shape, truncate, intensity_floor, tile_size, batch_size);
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
 backward(
     const torch::Tensor& grad_output,
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const torch::Tensor& tile_offsets,
     const torch::Tensor& tile_counts,
     const torch::Tensor& tile_content,
@@ -792,19 +773,18 @@ backward(
     const torch::Tensor& shape_tensor_cached,
     const torch::Tensor& tile_dims_tensor_cached
 ) {
-    return backward_impl<float>(grad_output, centers, conic, amps, sharpness,
+    return backward_impl<float>(grad_output, centers, conic, amps,
                                 tile_offsets, tile_counts, tile_content, global_splat_ids,
                                 shape, truncate, intensity_floor, tile_size, batch_size,
                                 shape_tensor_cached, tile_dims_tensor_cached);
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
 backward_fp16(
     const torch::Tensor& grad_output,
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const torch::Tensor& tile_offsets,
     const torch::Tensor& tile_counts,
     const torch::Tensor& tile_content,
@@ -817,7 +797,7 @@ backward_fp16(
     const torch::Tensor& shape_tensor_cached,
     const torch::Tensor& tile_dims_tensor_cached
 ) {
-    return backward_impl<__half>(grad_output, centers, conic, amps, sharpness,
+    return backward_impl<__half>(grad_output, centers, conic, amps,
                                  tile_offsets, tile_counts, tile_content, global_splat_ids,
                                  shape, truncate, intensity_floor, tile_size, batch_size,
                                  shape_tensor_cached, tile_dims_tensor_cached);

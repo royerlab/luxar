@@ -184,7 +184,7 @@ Specialized shader material for volumetric Gaussian splatting with nD slicing su
 
 - **Oriented Anisotropic Gaussian**: Full 3D covariance via Cholesky factors
 - **Perspective Projection**: Projects 3D covariance to 2D screen space using Jacobian
-- **Generalized Gaussian Falloff**: `exp(-½ · r^sharpness)` for artistic control
+- **Standard Gaussian Falloff**: `exp(-½ · r²)` for physically correct rendering
 - **Sum/Max Projection Modes**: Ray integration for additive, peak value for max blending
 - **Two-Stage Near-Plane Culling**: Fixed threshold (1 cycle) + adaptive threshold (6 cycles) for large splats
 - **GPU Optimizations**: Flat interpolation, reciprocal precomputation, early discard at 3σ

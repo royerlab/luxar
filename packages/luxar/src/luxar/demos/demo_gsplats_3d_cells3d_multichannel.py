@@ -328,7 +328,6 @@ dim_order usage:
                         amplitudes=gsplats.amplitudes,
                         cholesky_factors=gsplats.cholesky_factors,
                         colors=colors,
-                        sharpness=gsplats.sharpnesses,
                         dim_order=["z", "y", "x"],
                         fill={"channel": float(i)},
                         fill_sigma={"channel": 0},

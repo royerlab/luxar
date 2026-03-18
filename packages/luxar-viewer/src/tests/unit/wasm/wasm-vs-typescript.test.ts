@@ -563,7 +563,6 @@ describe('WASM vs TypeScript Comparison', () => {
         1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1,
       ]);
       const amplitudes = new Float32Array([1.0, 1.0]);
-      const sharpness = new Float32Array([2.0, 2.0]);
       const slicePos = new Float32Array([0, 0, 0, 0]);
       const hiddenDims = new Uint32Array([3]);
 
@@ -576,7 +575,6 @@ describe('WASM vs TypeScript Comparison', () => {
         positions,
         cholesky,
         amplitudes,
-        sharpness,
         slicePos,
         hiddenDims,
         4,
@@ -589,7 +587,6 @@ describe('WASM vs TypeScript Comparison', () => {
         positions,
         cholesky,
         amplitudes,
-        sharpness,
         slicePos,
         hiddenDims,
         4,

@@ -78,7 +78,7 @@ def seed_from_decomposition(
         - centers: Peak positions in full resolution coordinates
         - amplitudes: Peak intensities
         - cholesky_factors: Isotropic Cholesky factors where sigma = scale_factor
-        - sharpnesses: All set to 2.0 (standard Gaussian)
+        - Standard Gaussian profile (no sharpness parameter)
 
     Notes
     -----
@@ -215,7 +215,6 @@ def seed_from_decomposition(
             centers=np.zeros((0, ndim), dtype=np.float32),
             amplitudes=np.zeros(0, dtype=np.float32),
             cholesky_factors=np.zeros((0, ndim * (ndim + 1) // 2), dtype=np.float32),
-            sharpnesses=np.zeros(0, dtype=np.float32),
         )
 
     seeds = np.vstack(all_seeds)
@@ -242,14 +241,10 @@ def seed_from_decomposition(
         seed_scales.astype(np.float32), ndim
     )
 
-    # Standard Gaussian sharpness
-    sharpnesses = np.full(len(seeds), 2.0, dtype=np.float32)
-
     return GSplatData(
         centers=seeds.astype(np.float32),
         amplitudes=amplitudes,
         cholesky_factors=cholesky_factors,
-        sharpnesses=sharpnesses,
     )
 
 

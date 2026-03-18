@@ -12,21 +12,17 @@ import zarr
 from luxar.encoding import EncodingMode
 from luxar.gsplats.io import save_gsplats
 
-
 def create_test_splats_3d(n_splats: int = 100) -> dict:
     """Create test 3D Gaussian splats."""
     centers = np.random.rand(n_splats, 3).astype(np.float32) * 10
     amplitudes = np.random.rand(n_splats).astype(np.float32) * 2
     cholesky_factors = np.random.rand(n_splats, 6).astype(np.float32)
-    sharpnesses = np.full(n_splats, 2.0, dtype=np.float32)
 
     return {
         "centers": centers,
         "amplitudes": amplitudes,
         "cholesky_factors": cholesky_factors,
-        "sharpnesses": sharpnesses,
     }
-
 
 class TestFormatCompliance:
     """Test format specification compliance."""
@@ -76,7 +72,6 @@ class TestFormatCompliance:
             assert "chunk_bounds" in splats_group
 
             # Check optional arrays
-            assert "sharpnesses" in splats_group
 
     def test_splats_group_attributes(self) -> None:
         """Test splats group attributes match spec."""
@@ -94,7 +89,6 @@ class TestFormatCompliance:
             assert attrs["n_splats"] == 100
             assert attrs["ndim"] == 3
             assert "has_colors" in attrs
-            assert "has_sharpness" in attrs
             assert attrs["ordering"] == "morton"
             assert "chunk_size" in attrs
 
@@ -105,17 +99,12 @@ class TestFormatCompliance:
 
             # Value ranges (spec Section "Splats Group Attributes")
             assert "amplitude_range" in attrs
-            assert "sharpness_bounds" in attrs
             assert "center_bounds" in attrs
 
             # Validate range structures
             amp_range = attrs["amplitude_range"]
             assert "min" in amp_range
             assert "max" in amp_range
-
-            sharpness_bounds = attrs["sharpness_bounds"]
-            assert "min" in sharpness_bounds
-            assert "max" in sharpness_bounds
 
             center_bounds = attrs["center_bounds"]
             assert "min" in center_bounds
@@ -150,8 +139,6 @@ class TestFormatCompliance:
             cholesky_factors = splats_group["cholesky_factors"]
             assert cholesky_factors.shape[1] == 6  # d*(d+1)//2 for d=3
 
-            sharpnesses = splats_group["sharpnesses"]
-            assert len(sharpnesses.shape) == 1
 
             chunk_bounds = splats_group["chunk_bounds"]
             assert chunk_bounds.shape[1] == 3  # ndim
@@ -177,7 +164,6 @@ class TestFormatCompliance:
                 "centers",
                 "amplitudes",
                 "cholesky_factors",
-                "sharpnesses",
             ]:
                 array = splats_group[array_name]
                 enc = array.attrs.get("encoding")
@@ -332,35 +318,6 @@ class TestFormatCompliance:
             assert len(center_bounds["min"]) == 3
             assert len(center_bounds["max"]) == 3
 
-    def test_broadcasting_metadata_format(self) -> None:
-        """Test broadcasting metadata format."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.gsplats.zarr"
-
-            # Create splats with uniform sharpness (will be broadcasted)
-            centers = np.random.rand(100, 3).astype(np.float32) * 10
-            amplitudes = np.random.rand(100).astype(np.float32) * 2
-            cholesky_factors = np.random.rand(100, 6).astype(np.float32)
-            sharpnesses = np.full(100, 2.0, dtype=np.float32)  # Uniform!
-
-            save_gsplats(
-                path=path,
-                centers=centers,
-                amplitudes=amplitudes,
-                cholesky_factors=cholesky_factors,
-                sharpnesses=sharpnesses,
-            )
-
-            root = zarr.open_group(str(path), mode="r")
-            sharpnesses_array = root["splats/sharpnesses"]
-
-            # Check if broadcasted (spec Section "Broadcasting Convention")
-            enc = sharpnesses_array.attrs.get("encoding", {})
-            if enc.get("name") == "broadcasted":
-                # Should have n_elements metadata
-                assert "n_elements" in enc
-                assert enc["n_elements"] == 100
-
     def test_semantic_type_assignment(self) -> None:
         """Test that arrays are encoded with correct semantic types."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -382,9 +339,7 @@ class TestFormatCompliance:
             assert centers_enc["name"] == "float32"
 
             # Sharpnesses: BOUNDED_SCALAR → bounded_scalar_uint8 in MEMORY mode
-            sharpness_enc = splats_group["sharpnesses"].attrs.get("encoding", {})
             # May be broadcasted or bounded_scalar_uint8
-            assert sharpness_enc["name"] in ("broadcasted", "bounded_scalar_uint8")
 
     def test_colors_with_color_mode(self) -> None:
         """Test colors are saved with color_mode metadata."""

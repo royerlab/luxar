@@ -116,15 +116,6 @@ def initialize_optimization(
         )
         amps0 = preprocessed_data.V_normalized[tuple(idx.T)]
 
-    # Sharpness initialization (used if model supports it)
-    sharpness0 = None
-    if preprocessed_data.init_sharpness is not None:
-        sharpness0 = preprocessed_data.init_sharpness.astype(np.float32)
-        if config.verbose:
-            aprint(
-                f"Using pre-initialized sharpness: range [{sharpness0.min():.2f}, {sharpness0.max():.2f}]"
-            )
-
     # Auto-determine amp_max if not specified
     # Default: 1.0 (matches max value in normalized [0, 1] image)
     # This prevents amplitude explosion during optimization
@@ -175,7 +166,6 @@ def initialize_optimization(
                     sigma_max_diag=_sigma_max,
                     amp_max=amp_max,
                     max_eccentricity=config.max_eccentricity,
-                    sharpness_range=config.sharpness_range,
                     truncate=config.truncate,
                     intensity_floor=config.metal_intensity_floor,
                     tile_size=config.metal_tile_size,
@@ -221,7 +211,6 @@ def initialize_optimization(
                     sigma_max_diag=_sigma_max,
                     amp_max=amp_max,
                     max_eccentricity=config.max_eccentricity,
-                    sharpness_range=config.sharpness_range,
                     truncate=config.truncate,
                     intensity_floor=config.cuda_intensity_floor,
                     tile_size=config.cuda_tile_size,  # None = auto-select
@@ -263,7 +252,6 @@ def initialize_optimization(
             sigma_max_diag=_sigma_max,
             amp_max=amp_max,
             max_eccentricity=config.max_eccentricity,
-            sharpness_range=config.sharpness_range,
             truncate=config.truncate,
             voxel_size=config.voxel_size,
             device=config.device,

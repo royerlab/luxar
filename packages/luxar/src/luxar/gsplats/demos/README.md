@@ -393,7 +393,6 @@ Most demos display real-time metrics:
 ### **Regularization**
 - `l1_amp`: Amplitude sparsity (default: 0.1 × lr)
 - `l1_diag`: Diagonal regularization (default: 0.01 × lr)
-- `l1_sharpness`: Sharpness regularization (default: 0.01 × lr)
 
 ### **Dynamic Operations**
 - `enable_dynamic_ops`: Enable/disable (default: True)
@@ -525,4 +524,4 @@ See `SPECIFICATIONS.md` for complete demo development guidelines.
 
 ---
 
-**Last updated**: 2025-01 (L1 sharpness default changed to 0.01 × lr, demos reorganized and renamed)
+**Last updated**: 2025-01 (demos reorganized and renamed)

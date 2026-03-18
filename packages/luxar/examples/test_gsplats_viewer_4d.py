@@ -123,7 +123,6 @@ with asection("GSplats 4D Viewer Test"):
         aprint(f"  Centers shape: {result.centers.shape} (should be N x 4)")
         aprint(f"  Cholesky shape: {result.cholesky_factors.shape} (should be N x 10)")
         aprint(f"  Amplitudes shape: {result.amplitudes.shape}")
-        aprint(f"  Sharpness shape: {result.sharpnesses.shape}")
 
     with asection("Creating Luxar scene with 4D dimensions"):
         # Create scene with 4 dimensions
@@ -147,7 +146,6 @@ with asection("GSplats 4D Viewer Test"):
                 centers=result.centers,
                 cholesky_factors=result.cholesky_factors,
                 amplitudes=result.amplitudes,
-                sharpness=result.sharpnesses,
                 colors=None,
                 opacity=1.0,
                 blending_mode="additive",

@@ -118,13 +118,11 @@ def splat_params_2d() -> dict[str, Any]:
     centers = np.random.rand(N, DIM).astype(np.float32) * (shape_size - 2) + 1
     L = np.eye(DIM, dtype=np.float32)[None, :, :].repeat(N, axis=0) * 2.0
     amps = np.abs(np.random.randn(N).astype(np.float32)) + 0.5
-    sharpness = np.ones(N, dtype=np.float32) * 2.0
 
     return {
         "centers": centers,
         "L": L,
         "amps": amps,
-        "sharpness": sharpness,
         "shape": (shape_size, shape_size),
         "sigma_min_diag": [0.5] * DIM,
         "dim": DIM,
@@ -141,13 +139,11 @@ def splat_params_3d() -> dict[str, Any]:
     centers = np.random.rand(N, DIM).astype(np.float32) * (shape_size - 2) + 1
     L = np.eye(DIM, dtype=np.float32)[None, :, :].repeat(N, axis=0) * 2.0
     amps = np.abs(np.random.randn(N).astype(np.float32)) + 0.5
-    sharpness = np.ones(N, dtype=np.float32) * 2.0
 
     return {
         "centers": centers,
         "L": L,
         "amps": amps,
-        "sharpness": sharpness,
         "shape": (shape_size, shape_size, shape_size),
         "sigma_min_diag": [0.5] * DIM,
         "dim": DIM,
@@ -164,13 +160,11 @@ def splat_params_nd(request) -> dict[str, Any]:
     centers = np.random.rand(N, DIM).astype(np.float32) * (shape_size - 2) + 1
     L = np.eye(DIM, dtype=np.float32)[None, :, :].repeat(N, axis=0) * 1.5
     amps = np.abs(np.random.randn(N).astype(np.float32)) + 0.5
-    sharpness = np.ones(N, dtype=np.float32) * 2.0
 
     return {
         "centers": centers,
         "L": L,
         "amps": amps,
-        "sharpness": sharpness,
         "shape": tuple([shape_size] * DIM),
         "sigma_min_diag": [0.5] * DIM,
         "dim": DIM,
@@ -197,13 +191,11 @@ def small_splat_params_3d() -> dict[str, Any]:
 
     L = np.eye(DIM, dtype=np.float32)[None, :, :].repeat(N, axis=0) * 1.5
     amps = np.ones(N, dtype=np.float32)
-    sharpness = np.ones(N, dtype=np.float32) * 2.0
 
     return {
         "centers": centers,
         "L": L,
         "amps": amps,
-        "sharpness": sharpness,
         "shape": (shape_size, shape_size, shape_size),
         "sigma_min_diag": [0.5] * DIM,
         "dim": DIM,
@@ -336,9 +328,6 @@ def params_to_tensors(params: dict[str, Any], device: torch.device) -> dict[str,
         "centers": torch.tensor(params["centers"], device=device, dtype=torch.float32),
         "L": torch.tensor(params["L"], device=device, dtype=torch.float32),
         "amps": torch.tensor(params["amps"], device=device, dtype=torch.float32),
-        "sharpness": torch.tensor(
-            params["sharpness"], device=device, dtype=torch.float32
-        ),
         "shape": params["shape"],
     }
 

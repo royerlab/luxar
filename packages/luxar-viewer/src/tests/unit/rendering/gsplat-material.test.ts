@@ -143,7 +143,6 @@ describe('GSplatMaterial', () => {
       expect(material.vertexShader).toContain('in vec2 aCholesky23');
       expect(material.vertexShader).toContain('in vec2 aCholesky45');
       expect(material.vertexShader).toContain('in float aAmplitude');
-      expect(material.vertexShader).toContain('in float aSharpness');
       expect(material.vertexShader).toContain('in vec3 aColor');
 
       // Check for uniforms
@@ -155,7 +154,6 @@ describe('GSplatMaterial', () => {
       // Check for flat varyings (GLSL ES 3.0 uses "flat out" for non-interpolated values)
       expect(material.vertexShader).toContain('flat out mediump vec3 vColor');
       expect(material.vertexShader).toContain('flat out mediump float vAmplitude2D');
-      expect(material.vertexShader).toContain('flat out mediump float vSharpness');
       expect(material.vertexShader).toContain('flat out highp vec3 vL2D');
       expect(material.vertexShader).toContain('flat out highp vec2 vCenterScreen');
     });
@@ -182,12 +180,11 @@ describe('GSplatMaterial', () => {
       expect(material.vertexShader).toContain('return vec3(invL00, L10, invL11)');
     });
 
-    it('should have sharpness integral factor function', () => {
+    it('should use hardcoded integral factor for standard Gaussian', () => {
       const material = new GSplatMaterial();
 
-      expect(material.vertexShader).toContain('float sharpnessIntegralFactor(float s)');
-      // Check for the simple approximation formula
-      expect(material.vertexShader).toContain('1.97 + 1.95 * exp(-0.64 * s)');
+      // c_s = sharpnessIntegralFactor(2.0) ≈ sqrt(2π) ≈ 2.507 (standard Gaussian ray integral)
+      expect(material.vertexShader).toContain('sigmaRay * 2.507');
     });
 
     it('should have near-plane guard', () => {
@@ -244,20 +241,10 @@ describe('GSplatMaterial', () => {
       // Check for early discard at 3σ
       expect(material.fragmentShader).toContain('if (mahalSq > 9.0) discard');
 
-      // Check for generalized Gaussian falloff with projection correction
-      // The correction factor handles non-separability of 3D→2D projection for s≠2
+      // Check for standard Gaussian falloff (no sharpness, no correction factor)
       expect(material.fragmentShader).toContain(
-        'float correctionFactor(float r, float s, float alpha)'
+        'float intensity = vAmplitude2D * exp(-0.5 * mahalSq)'
       );
-      expect(material.fragmentShader).toContain('float gauss_2d = exp(-0.5 * mahalSq)');
-      expect(material.fragmentShader).toContain(
-        'float correction = correctionFactor(r_2D, vSharpness, vAspectRatio)'
-      );
-      expect(material.fragmentShader).toContain('intensity = vAmplitude2D * gauss_2d * correction');
-
-      // Check for sharpness=2.0 optimization (standard Gaussian fast path)
-      expect(material.fragmentShader).toContain('if (abs(vSharpness - 2.0) < 0.001)');
-      expect(material.fragmentShader).toContain('intensity = vAmplitude2D * exp(-0.5 * mahalSq)');
     });
 
     it('should discard negligible contributions', () => {
@@ -486,7 +473,6 @@ describe('createInstancedGSplatsMesh', () => {
       cholesky23: new Float32Array([1, 0, 1, 0]),
       cholesky45: new Float32Array([0, 1, 0, 1]),
       amplitudes: new Float32Array([1.0, 0.5]),
-      sharpness: new Float32Array([2.0, 2.0]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0]), // Red and green
       splatCount: 2,
     };
@@ -506,7 +492,6 @@ describe('createInstancedGSplatsMesh', () => {
     expect(geometry.getAttribute('aCholesky23')).toBeDefined();
     expect(geometry.getAttribute('aCholesky45')).toBeDefined();
     expect(geometry.getAttribute('aAmplitude')).toBeDefined();
-    expect(geometry.getAttribute('aSharpness')).toBeDefined();
     expect(geometry.getAttribute('aColor')).toBeDefined();
   });
 
@@ -518,7 +503,6 @@ describe('createInstancedGSplatsMesh', () => {
       cholesky23: new Float32Array([1, 0, 1, 0]),
       cholesky45: new Float32Array([0, 1, 0, 1]),
       amplitudes: new Float32Array([1.0, 1.0]),
-      sharpness: new Float32Array([2.0, 2.0]),
       colors: new Float32Array([1, 1, 1, 1, 1, 1]),
       splatCount: 2,
     };
@@ -545,7 +529,6 @@ describe('updateInstancedGSplatsMesh', () => {
       cholesky23: new Float32Array([1, 0, 1, 0]),
       cholesky45: new Float32Array([0, 1, 0, 1]),
       amplitudes: new Float32Array([1.0, 0.5]),
-      sharpness: new Float32Array([2.0, 2.0]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0]),
       splatCount: 2,
     };
@@ -559,7 +542,6 @@ describe('updateInstancedGSplatsMesh', () => {
       cholesky23: new Float32Array([2, 0, 2, 0]),
       cholesky45: new Float32Array([0, 2, 0, 2]),
       amplitudes: new Float32Array([0.8, 0.3]),
-      sharpness: new Float32Array([1.5, 2.5]),
       colors: new Float32Array([0, 0, 1, 1, 1, 0]),
       splatCount: 2,
     };
@@ -583,7 +565,6 @@ describe('updateInstancedGSplatsMesh', () => {
       cholesky23: new Float32Array([1, 0, 1, 0]),
       cholesky45: new Float32Array([0, 1, 0, 1]),
       amplitudes: new Float32Array([1.0, 0.5]),
-      sharpness: new Float32Array([2.0, 2.0]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0]),
       splatCount: 2,
     };
@@ -597,7 +578,6 @@ describe('updateInstancedGSplatsMesh', () => {
       cholesky23: new Float32Array([1, 0, 1, 0, 1, 0]),
       cholesky45: new Float32Array([0, 1, 0, 1, 0, 1]),
       amplitudes: new Float32Array([1.0, 0.5, 0.3]),
-      sharpness: new Float32Array([2.0, 2.0, 2.0]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
       splatCount: 3,
     };
