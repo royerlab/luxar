@@ -59,7 +59,7 @@ This specification details performance optimizations for Luxar's data loading, c
 **Supported Primitive Types:**
 - **Points**: positions, colors, radii, sharpness
 - **Lines**: vertices, segments (indices), widths, colors, sharpness
-- **GSplats**: centers, amplitudes, choleskyFactors, colors, sharpness
+- **GSplats**: centers, amplitudes, choleskyFactors, colors
 
 **Browser Requirements** (Modern Only - No Backwards Compatibility):
 - WebAssembly support (Chrome 57+, Firefox 52+, Safari 11+)
@@ -111,7 +111,7 @@ LinesSpatialIndexLoader
   └─ Rendering: THREE.Line
 
 GSplatsSpatialIndexLoader
-  ├─ Data: centers, amplitudes, choleskyFactors, colors, sharpness
+  ├─ Data: centers, amplitudes, choleskyFactors, colors
   ├─ Loading: Single-phase (query chunks → load data)
   └─ Rendering: Custom instanced mesh
 ```
@@ -701,11 +701,9 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
   private amplitudeBuffer: Float32Array;
   private choleskyBuffer: Float32Array; // CORRECT: for choleskyFactors field
   private colorBuffer: Float32Array;    // RGB Float32 (always allocated)
-  private sharpnessBuffer: Float32Array; // always allocated
 
-  // Track whether data has colors/sharpness
+  // Track whether data has colors
   private hasColors = false;
-  private hasSharpness = false;
 
   private capacity: number;
   private ndim: number;
@@ -723,7 +721,6 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
     this.amplitudeBuffer = new Float32Array(initialCapacity);
     this.choleskyBuffer = new Float32Array(initialCapacity * this.choleskySize);
     this.colorBuffer = new Float32Array(initialCapacity * 3); // RGB
-    this.sharpnessBuffer = new Float32Array(initialCapacity);
 
     this.allocations++;
   }
@@ -745,19 +742,16 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
     const newAmplitudes = new Float32Array(newCapacity);
     const newCholesky = new Float32Array(newCapacity * this.choleskySize);
     const newColors = new Float32Array(newCapacity * 3); // RGB
-    const newSharpness = new Float32Array(newCapacity);
 
     newCenters.set(this.centerBuffer);
     newAmplitudes.set(this.amplitudeBuffer);
     newCholesky.set(this.choleskyBuffer);
     newColors.set(this.colorBuffer); // Always allocated, never null
-    newSharpness.set(this.sharpnessBuffer); // Always allocated, never null
 
     this.centerBuffer = newCenters;
     this.amplitudeBuffer = newAmplitudes;
     this.choleskyBuffer = newCholesky;
     this.colorBuffer = newColors;
-    this.sharpnessBuffer = newSharpness;
     this.capacity = newCapacity;
 
     this.allocations++;
@@ -776,9 +770,6 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
       choleskyFactors: this.choleskyBuffer.subarray(0, count * this.choleskySize), // CORRECT: camelCase!
       colors: this.hasColors
         ? this.colorBuffer.subarray(0, count * 3)
-        : null,  // Nullable based on data presence
-      sharpness: this.hasSharpness
-        ? this.sharpnessBuffer.subarray(0, count)
         : null,  // Nullable based on data presence
       splatCount: count,
       ndim: this.ndim,
@@ -799,10 +790,6 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
       this.hasColors = true;  // Mark as present
       this.colorBuffer.set(data.colors, offset * 3);
     }
-    if (data.sharpness) {
-      this.hasSharpness = true;  // Mark as present
-      this.sharpnessBuffer.set(data.sharpness, offset);
-    }
   }
 
   getStats(): AccumulatorStats {
@@ -810,8 +797,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
       this.ndim * 4 + // centers
       4 + // amplitude
       this.choleskySize * 4 + // cholesky
-      3 * 4 + // color (RGB)
-      4; // sharpness
+      3 * 4; // color (RGB)
 
     return {
       capacity: this.capacity,
@@ -826,10 +812,8 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
     this.amplitudeBuffer = new Float32Array(0);
     this.choleskyBuffer = new Float32Array(0);
     this.colorBuffer = new Float32Array(0);
-    this.sharpnessBuffer = new Float32Array(0);
     this.capacity = 0;
     this.hasColors = false;
-    this.hasSharpness = false;
   }
 }
 ```
@@ -1182,9 +1166,6 @@ export interface PackedGSplatsData {
   /** Splat colors RGB (M * 3) */
   colors: Float32Array;
 
-  /** Splat sharpness values (M,) */
-  sharpness: Float32Array;
-
   /** Number of splats */
   splatCount: number;
 }
@@ -1199,7 +1180,7 @@ for attenuation (matching actual implementation in `gsplats-processor.ts`).
 1. **Two-pass approach**: First counts visible splats, then extracts data (efficient memory allocation)
 2. **Mahalanobis distance**: Uses Cholesky factors in hidden dimensions for ellipsoid-aware attenuation
 3. **Visibility filtering**: Splats below `minAmplitude` threshold are excluded
-4. **Sharpness exponent**: Attenuation uses `exp(-0.5 * mahal^sharpness)`, not simple Gaussian
+4. **Standard Gaussian falloff**: Attenuation uses `exp(-0.5 * mahal^2)`
 
 ```typescript
 /**
@@ -1306,8 +1287,6 @@ export function processGSplats(
   const visibleIndices: number[] = [];
 
   for (let i = 0; i < splatCount; i++) {
-    const sharpness = loaded.sharpness?.[i] ?? 2.0;
-
     // Compute attenuation in hidden dimensions using Mahalanobis distance
     let attenuation = 1.0;
     if (sortedHiddenDims.length > 0) {
@@ -1330,8 +1309,8 @@ export function processGSplats(
       // Compute Mahalanobis distance in hidden dims
       const mahalDist = mahalanobisDistance(diff, hiddenCholesky, 0, sortedHiddenDims.length);
 
-      // Attenuation: exp(-½ · mahal^sharpness)
-      attenuation = Math.exp(-0.5 * Math.pow(mahalDist, sharpness));
+      // Standard Gaussian attenuation: exp(-½ · mahal²)
+      attenuation = Math.exp(-0.5 * mahalDist * mahalDist);
     }
 
     const attenuatedAmplitude = loaded.amplitudes[i] * attenuation;
@@ -1346,7 +1325,6 @@ export function processGSplats(
   const centers3D = new Float32Array(visibleCount * 3);
   const choleskyFactors3D = new Float32Array(visibleCount * display3DPackedSize);
   const amplitudes = new Float32Array(visibleCount);
-  const sharpness = new Float32Array(visibleCount);
   const colors = new Float32Array(visibleCount * 3);
 
   // SECOND PASS: Extract visible splat data
@@ -1372,9 +1350,6 @@ export function processGSplats(
     );
 
     // Compute attenuated amplitude (recalculate for visible splats)
-    const srcSharpness = loaded.sharpness?.[srcIdx] ?? 2.0;
-    sharpness[outIdx] = srcSharpness;
-
     let attenuation = 1.0;
     if (sortedHiddenDims.length > 0) {
       const diff = sortedHiddenDims.map(
@@ -1390,7 +1365,7 @@ export function processGSplats(
         0
       );
       const mahalDist = mahalanobisDistance(diff, hiddenCholesky, 0, sortedHiddenDims.length);
-      attenuation = Math.exp(-0.5 * Math.pow(mahalDist, srcSharpness));
+      attenuation = Math.exp(-0.5 * mahalDist * mahalDist);
     }
 
     amplitudes[outIdx] = loaded.amplitudes[srcIdx] * attenuation;
@@ -1414,7 +1389,6 @@ export function processGSplats(
     amplitudes,
     choleskyFactors3D,
     colors,
-    sharpness,
     splatCount: visibleCount,  // NOTE: May be less than input splatCount!
   };
 }
@@ -2079,7 +2053,6 @@ export interface PackedGSplatsData {
   cholesky23: Float32Array;     // M * 2 [L11, L20]
   cholesky45: Float32Array;     // M * 2 [L21, L22]
   colors: Float32Array;         // M * 3 (RGB)
-  sharpness: Float32Array;      // M
   splatCount: number;
 }
 
@@ -2902,7 +2875,6 @@ export class SceneManager {
       cholesky23: packed.cholesky23,
       cholesky45: packed.cholesky45,
       colors: processed.colors,
-      sharpness: processed.sharpness,
       splatCount: processed.splatCount,
     };
 
@@ -3033,7 +3005,6 @@ describe('GSplatsDataAccumulator', () => {
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]), // 3D: 6 elements
       colors: new Float32Array([1.0, 0.0, 0.0]), // RGB Float32
-      sharpness: new Float32Array([2.0]),
     });
 
     const data = acc.getData(1);

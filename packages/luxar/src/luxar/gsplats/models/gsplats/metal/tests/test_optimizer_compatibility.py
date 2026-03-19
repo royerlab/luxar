@@ -67,7 +67,6 @@ class TestOptimizerCompatibility:
         assert hasattr(simple_model, "raw_L_diag")
         assert hasattr(simple_model, "L_off")
         assert hasattr(simple_model, "raw_a")
-        assert hasattr(simple_model, "sharpness_offsets_raw")
 
         # Verify shapes
         assert simple_model.raw_mu.shape == (5, 3)

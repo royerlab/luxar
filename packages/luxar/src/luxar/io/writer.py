@@ -132,7 +132,6 @@ class ZarrWriterProtocol(Protocol):
         amplitudes: Union[ScalarArray, float],
         cholesky_factors: NDArray[np.float32],
         colors: Optional[Union[ColorArray, tuple, list]] = None,
-        sharpness: Optional[Union[ScalarArray, float]] = None,
         **attrs: Any,
     ) -> GSplatsMetadata:
         """Write Gaussian splats data immediately to Zarr.
@@ -140,7 +139,6 @@ class ZarrWriterProtocol(Protocol):
         Scalar Convenience (v1.4.0): Uniform attributes accept scalars:
         - amplitudes=1.0 instead of np.full(N, 1.0)
         - colors=(1.0, 0, 0) instead of np.full((N, 3), [1,0,0])
-        - sharpness=2.0 instead of np.full(N, 2.0)
 
         Args:
             path: Path within the Zarr store for this gsplats node
@@ -148,7 +146,6 @@ class ZarrWriterProtocol(Protocol):
             amplitudes: Amplitude values - array of shape (N,) or scalar float
             cholesky_factors: Packed Cholesky factors array of shape (N, k)
             colors: Optional - array of shape (N, 3), tuple/list (R,G,B), or None
-            sharpness: Optional - array of shape (N,), scalar float, or None
             **attrs: Additional attributes for the gsplats
 
         Returns:

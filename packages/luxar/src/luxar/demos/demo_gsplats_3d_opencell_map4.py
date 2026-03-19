@@ -364,7 +364,6 @@ Controls:
                         amplitudes=gsplats.amplitudes,
                         cholesky_factors=gsplats.cholesky_factors,
                         colors=colors,
-                        sharpness=gsplats.sharpnesses,
                         dim_order=["z", "y", "x"],
                         opacity=1.0,
                         blending_mode="additive",

@@ -42,7 +42,6 @@ def sample_gsplats(tmp_path: Path) -> Path:
         cholesky_factors=np.tile(
             np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (n, 1)
         ),
-        sharpnesses=np.full(n, 2.0, dtype=np.float32),
     )
     out = tmp_path / "test.gsplats.zarr"
     data.save(out)
@@ -115,12 +114,6 @@ class TestLoadFitConfig:
     def test_invalid_preset_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown preset"):
             load_fit_config(preset="ultra")
-
-    def test_sharpness_range_tuple_conversion(self) -> None:
-        config = load_fit_config(preset="standard")
-        sr = config["sharpness_range"]
-        assert isinstance(sr, tuple)
-        assert len(sr) == 2
 
     def test_passes_through_seed_kwargs(self, tmp_path: Path) -> None:
         """Seed generation kwargs (e.g., num_scales) must pass through,
@@ -389,7 +382,7 @@ class TestFitCommand:
         assert data.n_splats > 0
         assert data.ndim == 3
         assert data.amplitudes.shape == (data.n_splats,)
-        assert data.sharpnesses.shape == (data.n_splats,)
+
 
     def test_fit_with_yaml_config(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
@@ -570,7 +563,6 @@ class TestMergeCommand:
             cholesky_factors=np.tile(
                 np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (3, 1)
             ),
-            sharpnesses=np.full(3, 2.0, dtype=np.float32),
         )
         path2 = tmp_path / "test2.gsplats.zarr"
         data2.save(path2)
@@ -605,7 +597,6 @@ class TestMergeCommand:
             cholesky_factors=np.tile(
                 np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (4, 1)
             ),
-            sharpnesses=np.full(4, 2.0, dtype=np.float32),
         )
         path2 = tmp_path / "test2.gsplats.zarr"
         data2.save(path2)
@@ -642,7 +633,6 @@ class TestMergeCommand:
             cholesky_factors=np.tile(
                 np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (3, 1)
             ),
-            sharpnesses=np.full(3, 2.0, dtype=np.float32),
         )
         path2 = tmp_path / "test2.gsplats.zarr"
         data2.save(path2)
@@ -758,7 +748,6 @@ class TestMergeCommand:
                 cholesky_factors=np.tile(
                     np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (2, 1)
                 ),
-                sharpnesses=np.full(2, 2.0, dtype=np.float32),
             )
             d.save(tmp_path / name)
 
@@ -927,7 +916,6 @@ class TestZipCompression:
             cholesky_factors=np.tile(
                 np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (10, 1)
             ),
-            sharpnesses=np.full(10, 2.0, dtype=np.float32),
         )
         out = tmp_path / "test.gsplats.zarr.zip"
         data.save(out, compress="zip")
@@ -952,7 +940,6 @@ class TestZipCompression:
             cholesky_factors=np.tile(
                 np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (2, 1)
             ),
-            sharpnesses=np.full(2, 2.0, dtype=np.float32),
         )
         out = tmp_path / "roundtrip.gsplats.zarr.zip"
         original.save(out, compress="zip")
@@ -981,7 +968,6 @@ def sample_gsplats_for_filter(tmp_path: Path) -> Path:
         cholesky_factors=np.tile(
             np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (n, 1)
         ),
-        sharpnesses=np.full(n, 2.0, dtype=np.float32),
     )
     out = tmp_path / "filter_test.gsplats.zarr"
     data.save(out)

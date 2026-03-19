@@ -217,12 +217,11 @@ def run_optimization_loop(
                 iterations_since_improvement = 0  # Reset patience counter
 
                 # Save current best state (deep copy to avoid mutations)
-                centers, Ls, amps, sharpness = model.current_params()
+                centers, Ls, amps = model.current_params()
                 best_state = {
                     "centers": centers.detach().clone(),
                     "Ls": Ls.detach().clone(),
                     "amps": amps.detach().clone(),
-                    "sharpness": sharpness.detach().clone(),
                     "iteration": it,
                     "max_abs_error": current_max_abs_error,
                     "rel_l2": current_rel_l2,
@@ -360,14 +359,13 @@ def run_optimization_loop(
         centers = best_state["centers"]
         Ls = best_state["Ls"]
         amps = best_state["amps"]
-        sharpness = best_state["sharpness"]
         best_loss = best_state["loss"]
         best_max_abs_error = best_state["max_abs_error"]
         best_rel_l2 = best_state["rel_l2"]
     else:
         # Fallback to final state if no best state saved
         with torch.no_grad():
-            centers, Ls, amps, sharpness = model.current_params()
+            centers, Ls, amps = model.current_params()
             pred_final = model()
             best_max_abs_error = _compute_max_abs_error(pred_final, V_t)
             best_rel_l2 = _compute_rel_l2(pred_final, V_t)
@@ -376,7 +374,6 @@ def run_optimization_loop(
         centers=centers,
         Ls=Ls,
         amps=amps,
-        sharpness=sharpness,
         converged_early=converged_early,
         early_stopped=early_stopped,
         actual_iters=actual_iters,
@@ -418,7 +415,7 @@ def _record_movie_frame(
         residual_frame = torch.abs(V_t - pred.detach()).cpu().numpy()
 
         # Record current splat centers
-        centers, _, _, _ = model.current_params()
+        centers, _, _ = model.current_params()
         centers_frame = centers.detach().cpu().numpy()
 
         movie_frames["target"].append(target_frame)

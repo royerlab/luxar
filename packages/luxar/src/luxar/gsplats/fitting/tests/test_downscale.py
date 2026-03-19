@@ -195,7 +195,6 @@ class TestExplicitSeedsWithDownscale:
             asymmetric_penalty=10.0,
             l1_amp=None,
             l1_diag=None,
-            l1_sharpness=None,
             scheduler_type="plateau",
             patience=25,
             lr_reduction_factor=0.98,

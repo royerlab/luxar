@@ -35,9 +35,8 @@ def create_test_data(N: int, shape: tuple, seed: int = 42):
     for i in range(N):
         L[i] *= np.random.uniform(0.5, 2.0)
     amps = np.random.rand(N).astype(np.float32) + 0.1
-    sharpness = np.ones(N, dtype=np.float32) * 2.0
 
-    return centers, L, amps, sharpness
+    return centers, L, amps
 
 
 class TestPerformanceBaseline:
@@ -49,7 +48,7 @@ class TestPerformanceBaseline:
 
         N = 100
         shape = (64, 64, 64)
-        centers, L, amps, _ = create_test_data(N, shape)
+        centers, L, amps = create_test_data(N, shape)
 
         model = GaussianSplatModel(
             shape=shape,
@@ -80,7 +79,7 @@ class TestPerformanceBaseline:
 
         N = 1000
         shape = (128, 128, 128)
-        centers, L, amps, _ = create_test_data(N, shape)
+        centers, L, amps = create_test_data(N, shape)
 
         model = GaussianSplatModel(
             shape=shape,
@@ -119,7 +118,7 @@ class TestCUDAPerformance:
 
         N = 100
         shape = (64, 64, 64)
-        centers, L, amps, _ = create_test_data(N, shape)
+        centers, L, amps = create_test_data(N, shape)
 
         # CPU model
         cpu_model = GaussianSplatModel(
@@ -179,7 +178,7 @@ class TestCUDAPerformance:
 
         N = 500
         shape = (96, 96, 96)
-        centers, L, amps, _ = create_test_data(N, shape)
+        centers, L, amps = create_test_data(N, shape)
 
         # CPU model
         cpu_model = GaussianSplatModel(
@@ -239,7 +238,7 @@ class TestCUDAPerformance:
 
         N = 1000
         shape = (64, 64, 64)
-        centers, L, amps, _ = create_test_data(N, shape)
+        centers, L, amps = create_test_data(N, shape)
 
         # Record baseline memory
         torch.cuda.reset_peak_memory_stats()
@@ -294,7 +293,7 @@ class TestScaling:
         times = []
 
         for N in splat_counts:
-            centers, L, amps, _ = create_test_data(N, shape)
+            centers, L, amps = create_test_data(N, shape)
 
             model = GaussianSplatModel(
                 shape=shape,
@@ -338,7 +337,7 @@ class TestScaling:
         times = []
 
         for shape in shapes:
-            centers, L, amps, _ = create_test_data(N, shape)
+            centers, L, amps = create_test_data(N, shape)
 
             model = GaussianSplatModel(
                 shape=shape,

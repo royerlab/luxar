@@ -3,7 +3,7 @@
  *
  * This header provides parallel reduction operations and backward pass helpers:
  * - Warp-level sum reduction and aggregated atomic adds
- * - Gradient computation for Gaussian intensity (amplitude, sharpness, dist_sq)
+ * - Gradient computation for Gaussian intensity (amplitude, dist_sq)
  * - Explicit 2D/3D backward pass implementations
  */
 
@@ -59,56 +59,25 @@ __device__ __forceinline__ void warp_aggregated_atomic_add(
 /**
  * Compute gradient of intensity w.r.t. dist_sq.
  *
- * ∂I/∂D² = I × (-0.25 × s) × (D²)^(s/2 - 1)
- *
- * For standard Gaussian (s=2): ∂I/∂D² = I × (-0.5)
- *
- * OPTIMIZATION: Uses __powf() fast math intrinsic.
+ * For standard Gaussian: I = a * exp(-0.5 * D²)
+ * ∂I/∂D² = I × (-0.5)
  */
 __device__ __forceinline__ float grad_intensity_wrt_dist_sq(
-    float intensity,
-    float dist_sq,
-    float sharpness
+    float intensity
 ) {
-    // Fast path for standard Gaussian (s=2)
-    if (fabsf(sharpness - 2.0f) < 1e-4f) {
-        return intensity * (-0.5f);
-    }
-
-    // General case - use fast math intrinsic
-    float dist_sq_safe = fmaxf(dist_sq, 1e-12f);
-    float dist_pow_s_minus_1 = __powf(dist_sq_safe, sharpness * 0.5f - 1.0f);
-    return intensity * (-0.25f * sharpness) * dist_pow_s_minus_1;
+    return intensity * (-0.5f);
 }
 
 /**
  * Compute gradient of intensity w.r.t. amplitude.
  *
- * ∂I/∂a = exp(-0.5 × D^s) = I / a
+ * ∂I/∂a = exp(-0.5 × D²) = I / a
  */
 __device__ __forceinline__ float grad_intensity_wrt_amplitude(
     float intensity,
     float amplitude
 ) {
     return intensity / fmaxf(amplitude, 1e-10f);
-}
-
-/**
- * Compute gradient of intensity w.r.t. sharpness.
- *
- * ∂I/∂s = I × (-0.25) × (D²)^(s/2) × ln(D²)
- *
- * OPTIMIZATION: Uses __powf() and __logf() fast math intrinsics.
- */
-__device__ __forceinline__ float grad_intensity_wrt_sharpness(
-    float intensity,
-    float dist_sq,
-    float sharpness
-) {
-    float dist_sq_safe = fmaxf(dist_sq, 1e-12f);
-    float dist_pow_s = __powf(dist_sq_safe, sharpness * 0.5f);
-    float log_dist_sq = __logf(dist_sq_safe);
-    return intensity * (-0.25f) * dist_pow_s * log_dist_sq;
 }
 
 // =============================================================================
@@ -159,37 +128,28 @@ __device__ __forceinline__ void compute_dD2_dd_3d(
  *
  * @param dL_dI         Upstream gradient (∂L/∂I)
  * @param intensity     Computed intensity at this pixel
- * @param dist_sq       Mahalanobis distance squared
  * @param amp           Splat amplitude
- * @param s             Sharpness parameter
  * @param d_vec         Displacement (px - center), length 3
  * @param conic         Packed conic, length 6
  * @param local_d_centers Output: accumulated center gradients, length 3
  * @param local_d_conic   Output: accumulated conic gradients, length 6
  * @param local_d_amp     Output: accumulated amplitude gradient (single value)
- * @param local_d_sharpness Output: accumulated sharpness gradient (single value)
  */
 __device__ __forceinline__ void backward_pixel_splat_3d(
     float dL_dI,
     float intensity,
-    float dist_sq,
     float amp,
-    float s,
     const float* __restrict__ d_vec,
     const float* __restrict__ conic,
     float* __restrict__ local_d_centers,
     float* __restrict__ local_d_conic,
-    float& local_d_amp,
-    float& local_d_sharpness
+    float& local_d_amp
 ) {
     // Gradient w.r.t amplitude
     local_d_amp += dL_dI * grad_intensity_wrt_amplitude(intensity, amp);
 
-    // Gradient w.r.t sharpness
-    local_d_sharpness += dL_dI * grad_intensity_wrt_sharpness(intensity, dist_sq, s);
-
     // Gradient w.r.t dist_sq - pre-compute common factor (eliminates 8 redundant multiplies)
-    float grad_dist = grad_intensity_wrt_dist_sq(intensity, dist_sq, s);
+    float grad_dist = grad_intensity_wrt_dist_sq(intensity);
     float outer = dL_dI * grad_dist;
 
     // Compute ∂D²/∂d (3D explicit)
@@ -219,24 +179,18 @@ __device__ __forceinline__ void backward_pixel_splat_3d(
 __device__ __forceinline__ void backward_pixel_splat_2d(
     float dL_dI,
     float intensity,
-    float dist_sq,
     float amp,
-    float s,
     const float* __restrict__ d_vec,
     const float* __restrict__ conic,
     float* __restrict__ local_d_centers,
     float* __restrict__ local_d_conic,
-    float& local_d_amp,
-    float& local_d_sharpness
+    float& local_d_amp
 ) {
     // Gradient w.r.t amplitude
     local_d_amp += dL_dI * grad_intensity_wrt_amplitude(intensity, amp);
 
-    // Gradient w.r.t sharpness
-    local_d_sharpness += dL_dI * grad_intensity_wrt_sharpness(intensity, dist_sq, s);
-
     // Gradient w.r.t dist_sq - pre-compute common factor
-    float grad_dist = grad_intensity_wrt_dist_sq(intensity, dist_sq, s);
+    float grad_dist = grad_intensity_wrt_dist_sq(intensity);
     float outer = dL_dI * grad_dist;
 
     // For 2D, conic layout: [c00, c01, c11]

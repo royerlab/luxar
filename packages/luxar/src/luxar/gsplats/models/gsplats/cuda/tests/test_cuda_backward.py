@@ -260,7 +260,6 @@ class TestOptimizedVsGenericPath:
             L_2d[i] *= np.random.uniform(0.8, 2.0)
 
         amps = torch.rand(N, device="cuda", dtype=torch.float32) * 0.5 + 0.3
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
         truncate = 3.0
         intensity_floor = 1e-5
 
@@ -271,7 +270,6 @@ class TestOptimizedVsGenericPath:
             centers_2d.contiguous(),
             conic_2d.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms_2d.contiguous(),
             list(shape),
             truncate,
@@ -288,7 +286,6 @@ class TestOptimizedVsGenericPath:
             centers_4d.contiguous(),
             conic_4d.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms_4d.contiguous(),
             list(shape_4d),
             truncate,
@@ -335,7 +332,6 @@ class TestOptimizedVsGenericPath:
             L_3d[i] *= np.random.uniform(0.8, 2.0)
 
         amps = torch.rand(N, device="cuda", dtype=torch.float32) * 0.5 + 0.3
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
         truncate = 3.0
         intensity_floor = 1e-5
 
@@ -346,7 +342,6 @@ class TestOptimizedVsGenericPath:
             centers_3d.contiguous(),
             conic_3d.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms_3d.contiguous(),
             list(shape),
             truncate,
@@ -363,7 +358,6 @@ class TestOptimizedVsGenericPath:
             centers_4d.contiguous(),
             conic_4d.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms_4d.contiguous(),
             list(shape_4d),
             truncate,
@@ -407,7 +401,6 @@ class TestOptimizedVsGenericPath:
             L_2d[i, 1, 0] = np.random.uniform(-0.3, 0.3)
 
         amps = torch.ones(N, device="cuda", dtype=torch.float32) * 0.5
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         # Optimized 2D
         conic_2d = cholesky_to_conic(L_2d)
@@ -416,7 +409,6 @@ class TestOptimizedVsGenericPath:
             centers_2d.contiguous(),
             conic_2d.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms_2d.contiguous(),
             list(shape),
             3.0,
@@ -433,7 +425,6 @@ class TestOptimizedVsGenericPath:
             centers_4d.contiguous(),
             conic_4d.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms_4d.contiguous(),
             list(shape_4d),
             3.0,
@@ -477,7 +468,6 @@ class TestOptimizedVsGenericPath:
             L_3d[i, 2, 0] = np.random.uniform(-0.2, 0.2)
 
         amps = torch.ones(N, device="cuda", dtype=torch.float32) * 0.5
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         # Optimized 3D
         conic_3d = cholesky_to_conic(L_3d)
@@ -486,7 +476,6 @@ class TestOptimizedVsGenericPath:
             centers_3d.contiguous(),
             conic_3d.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms_3d.contiguous(),
             list(shape),
             3.0,
@@ -503,7 +492,6 @@ class TestOptimizedVsGenericPath:
             centers_4d.contiguous(),
             conic_4d.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms_4d.contiguous(),
             list(shape_4d),
             3.0,
@@ -514,77 +502,6 @@ class TestOptimizedVsGenericPath:
 
         self._assert_paths_match(
             output_3d, output_4d_slice, "3D anisotropic optimized vs generic"
-        )
-
-    @pytest.mark.parametrize("sharpness_val", [1.5, 2.0, 3.0])
-    def test_2d_various_sharpness_optimized_vs_generic(self, sharpness_val: float):
-        """Test 2D optimized path with various sharpness values matches generic path."""
-        import cuda_splatting_backend  # noqa: F401
-
-        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
-            cholesky_to_conic,
-        )
-
-        np.random.seed(111 + int(sharpness_val * 10))
-        N = 10
-        dim = 2
-        shape = (32, 32)
-
-        margin = 3
-        max_coord = min(shape) - margin
-        centers_2d = (
-            torch.rand(N, dim, device="cuda", dtype=torch.float32)
-            * (max_coord - margin)
-            + margin
-        )
-        L_2d = (
-            torch.eye(dim, device="cuda", dtype=torch.float32)
-            .unsqueeze(0)
-            .expand(N, -1, -1)
-            .clone()
-            * 1.5
-        )
-
-        amps = torch.ones(N, device="cuda", dtype=torch.float32) * 0.5
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * sharpness_val
-
-        # Optimized 2D
-        conic_2d = cholesky_to_conic(L_2d)
-        L_row_norms_2d = compute_L_row_norms(L_2d)
-        result_2d = cuda_splatting_backend.forward(
-            centers_2d.contiguous(),
-            conic_2d.contiguous(),
-            amps.contiguous(),
-            sharpness.contiguous(),
-            L_row_norms_2d.contiguous(),
-            list(shape),
-            3.0,
-            1e-5,
-            16,
-        )
-        output_2d = result_2d[0].reshape(shape)
-
-        # Generic 4D
-        centers_4d, L_4d, shape_4d = self._embed_2d_to_4d(centers_2d, L_2d, shape)
-        conic_4d = cholesky_to_conic(L_4d)
-        L_row_norms_4d = compute_L_row_norms(L_4d)
-        result_4d = cuda_splatting_backend.forward(
-            centers_4d.contiguous(),
-            conic_4d.contiguous(),
-            amps.contiguous(),
-            sharpness.contiguous(),
-            L_row_norms_4d.contiguous(),
-            list(shape_4d),
-            3.0,
-            1e-5,
-            4,
-        )
-        output_4d_slice = result_4d[0].reshape(shape_4d)[:, :, 0, 0]
-
-        self._assert_paths_match(
-            output_2d,
-            output_4d_slice,
-            f"2D sharpness={sharpness_val} optimized vs generic",
         )
 
     def _assert_paths_match(

@@ -24,11 +24,6 @@
  * Returns a 7-tuple: (output, tile_counts, tile_offsets, tile_content,
  *                      global_splat_ids, shape_tensor, tile_dims_tensor)
  * The last two are cached device tensors for backward pass reuse.
- *
- * @param use_fp16 If true, converts inputs to FP16 and uses FP16-optimized kernels.
- *                 Output is always FP32 for numerical stability.
- * @param batch_size Number of splats to process per batch in shared memory (32, 128, or 256).
- *                   Larger batches reduce global memory round-trips but use more shared memory.
  */
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
            torch::Tensor, torch::Tensor>
@@ -36,7 +31,6 @@ forward_wrapper(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     double truncate,
@@ -46,19 +40,15 @@ forward_wrapper(
     bool use_fp16
 ) {
     if (use_fp16) {
-        // Use FP16 inputs directly if already converted, else convert
-        // Pre-conversion in Python avoids per-call overhead
         auto centers_fp16 = centers.dtype() == torch::kFloat16 ? centers : centers.to(torch::kFloat16);
         auto conic_fp16 = conic.dtype() == torch::kFloat16 ? conic : conic.to(torch::kFloat16);
         auto amps_fp16 = amps.dtype() == torch::kFloat16 ? amps : amps.to(torch::kFloat16);
-        auto sharpness_fp16 = sharpness.dtype() == torch::kFloat16 ? sharpness : sharpness.to(torch::kFloat16);
         auto L_row_norms_fp16 = L_row_norms.dtype() == torch::kFloat16 ? L_row_norms : L_row_norms.to(torch::kFloat16);
 
         return forward_fp16(
             centers_fp16,
             conic_fp16,
             amps_fp16,
-            sharpness_fp16,
             L_row_norms_fp16,
             shape,
             (float)truncate,
@@ -72,7 +62,6 @@ forward_wrapper(
         centers,
         conic,
         amps,
-        sharpness,
         L_row_norms,
         shape,
         (float)truncate,
@@ -88,20 +77,14 @@ forward_wrapper(
  * Supports optional FP16 mode matching the forward pass.
  * Gradients are always returned as FP32 for numerical stability.
  *
- * @param use_fp16 If true, converts inputs to FP16 and uses FP16-optimized kernels.
- *                 Gradients are always FP32 regardless of this setting.
- * @param batch_size Number of splats to process per batch in shared memory (32, 128, or 256).
- *                   Must match the batch_size used in forward pass.
- * @param shape_tensor_cached Optional device tensor from forward pass (avoids H2D copy).
- * @param tile_dims_tensor_cached Optional device tensor from forward pass (avoids H2D copy).
+ * Returns a 3-tuple: (d_centers, d_conic, d_amps)
  */
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
 backward_wrapper(
     const torch::Tensor& grad_output,
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const torch::Tensor& tile_offsets,
     const torch::Tensor& tile_counts,
     const torch::Tensor& tile_content,
@@ -115,24 +98,19 @@ backward_wrapper(
     const c10::optional<torch::Tensor>& shape_tensor_cached,
     const c10::optional<torch::Tensor>& tile_dims_tensor_cached
 ) {
-    // Convert optional tensors to regular tensors (undefined if not provided)
     torch::Tensor shape_cached = shape_tensor_cached.value_or(torch::Tensor());
     torch::Tensor tile_dims_cached = tile_dims_tensor_cached.value_or(torch::Tensor());
 
     if (use_fp16) {
-        // Use FP16 inputs directly if already converted, else convert
-        // Pre-conversion in Python avoids per-call overhead
         auto centers_fp16 = centers.dtype() == torch::kFloat16 ? centers : centers.to(torch::kFloat16);
         auto conic_fp16 = conic.dtype() == torch::kFloat16 ? conic : conic.to(torch::kFloat16);
         auto amps_fp16 = amps.dtype() == torch::kFloat16 ? amps : amps.to(torch::kFloat16);
-        auto sharpness_fp16 = sharpness.dtype() == torch::kFloat16 ? sharpness : sharpness.to(torch::kFloat16);
 
         return backward_fp16(
-            grad_output,  // Always FP32
+            grad_output,
             centers_fp16,
             conic_fp16,
             amps_fp16,
-            sharpness_fp16,
             tile_offsets,
             tile_counts,
             tile_content,
@@ -152,7 +130,6 @@ backward_wrapper(
         centers,
         conic,
         amps,
-        sharpness,
         tile_offsets,
         tile_counts,
         tile_content,
@@ -183,7 +160,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         - Tile-based spatial binning (no depth sorting needed)
         - Warp-level gradient reduction
         - Shared memory batch loading
-        - Support for generalized Gaussians (variable sharpness)
+        - Standard Gaussian rendering (intensity = amplitude * exp(-0.5 * D^2))
 
         See SPECIFICATIONS.md for detailed algorithm descriptions.
     )doc";
@@ -202,8 +179,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                 (N, d*(d+1)/2) float32 - Packed upper-triangle of inverse covariance
             amps : torch.Tensor
                 (N,) float32 - Amplitudes
-            sharpness : torch.Tensor
-                (N,) float32 - Sharpness parameters (s=2 for standard Gaussian)
             L_row_norms : torch.Tensor
                 (N, d) float32 - Per-axis standard deviations from Cholesky row norms.
                 L_row_norms[i] = sqrt(sum_j L[i,j]^2) for exact AABB computation.
@@ -217,11 +192,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                 Tile size for spatial binning
             batch_size : int
                 Number of splats to process per batch in shared memory.
-                Must be 32, 128, or 256. Larger batches reduce global memory
-                round-trips but use more shared memory. Default: 128.
+                Must be 32, 128, or 256. Default: 128.
             use_fp16 : bool
                 If True, use FP16 precision for inputs to reduce memory bandwidth.
-                Computation and output are still FP32 for numerical stability.
                 Default: False.
 
             Returns
@@ -238,7 +211,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("centers"),
         py::arg("conic"),
         py::arg("amps"),
-        py::arg("sharpness"),
         py::arg("L_row_norms"),
         py::arg("shape"),
         py::arg("truncate"),
@@ -264,8 +236,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                 (N, d*(d+1)/2) float32 - Packed conic (from forward)
             amps : torch.Tensor
                 (N,) float32 - Amplitudes (from forward)
-            sharpness : torch.Tensor
-                (N,) float32 - Sharpness parameters (from forward)
             tile_offsets : torch.Tensor
                 (num_tiles,) int64 - From forward pass
             tile_counts : torch.Tensor
@@ -283,32 +253,25 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
             tile_size : int
                 Tile size
             batch_size : int
-                Number of splats to process per batch in shared memory.
-                Must be 32, 128, or 256. Must match the batch_size used in forward.
-                Default: 128.
+                Must match forward pass. Default: 128.
             use_fp16 : bool
-                If True, use FP16 precision for inputs to reduce memory bandwidth.
-                Must match the setting used in forward pass.
-                Gradients are always FP32 regardless of this setting.
-                Default: False.
+                Must match forward pass. Default: False.
             shape_tensor_cached : torch.Tensor, optional
-                Cached device tensor from forward pass. Avoids redundant H2D copy.
+                Cached device tensor from forward pass.
             tile_dims_tensor_cached : torch.Tensor, optional
-                Cached device tensor from forward pass. Avoids redundant H2D copy.
+                Cached device tensor from forward pass.
 
             Returns
             -------
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
                 - d_centers: (N, d) float32 - Center gradients
                 - d_conic: (N, d*(d+1)/2) float32 - Conic gradients
                 - d_amps: (N,) float32 - Amplitude gradients
-                - d_sharpness: (N,) float32 - Sharpness gradients
         )doc",
         py::arg("grad_output"),
         py::arg("centers"),
         py::arg("conic"),
         py::arg("amps"),
-        py::arg("sharpness"),
         py::arg("tile_offsets"),
         py::arg("tile_counts"),
         py::arg("tile_content"),

@@ -567,14 +567,12 @@ class TestFP16LowLevelBackend:
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
         amps = torch.rand(N, device="cuda", dtype=torch.float32)
-        sharpness = torch.full((N,), 2.0, device="cuda", dtype=torch.float32)
 
         # Call backend with use_fp16=False
         result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             shape,
             3.0,  # truncate
@@ -607,14 +605,12 @@ class TestFP16LowLevelBackend:
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
         amps = torch.rand(N, device="cuda", dtype=torch.float32)
-        sharpness = torch.full((N,), 2.0, device="cuda", dtype=torch.float32)
 
         # Call backend with use_fp16=True
         result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             shape,
             3.0,  # truncate
@@ -949,9 +945,8 @@ class TestModelMutationMethods:
         new_centers = torch.rand(10, 3, device="cuda") * 28 + 2
         new_Ls = torch.eye(3, device="cuda").unsqueeze(0).repeat(10, 1, 1)
         new_amps = torch.rand(10, device="cuda") + 0.5
-        new_sharpness = torch.full((10,), 2.0, device="cuda")
 
-        model.append_(new_centers, new_Ls, new_amps, new_sharpness)
+        model.append_(new_centers, new_Ls, new_amps)
 
         # Verify count increased
         assert model.n_splats() == 40
@@ -988,9 +983,8 @@ class TestModelMutationMethods:
         new_centers = torch.rand(10, 3, device="cuda")  # FP32
         new_Ls = torch.eye(3, device="cuda").unsqueeze(0).repeat(10, 1, 1)
         new_amps = torch.rand(10, device="cuda") + 0.5
-        new_sharpness = torch.full((10,), 2.0, device="cuda")
 
-        model.append_(new_centers, new_Ls, new_amps, new_sharpness)
+        model.append_(new_centers, new_Ls, new_amps)
 
         # Verify all params (including new ones) are FP16
         for param in model.parameters():
@@ -1030,9 +1024,8 @@ class TestModelMutationMethods:
         new_centers = torch.rand(20, 3, device="cuda") * 28 + 2
         new_Ls = torch.eye(3, device="cuda").unsqueeze(0).repeat(20, 1, 1) * 1.5
         new_amps = torch.ones(20, device="cuda")
-        new_sharpness = torch.full((20,), 2.0, device="cuda")
 
-        model.replace_with(new_centers, new_Ls, new_amps, new_sharpness)
+        model.replace_with(new_centers, new_Ls, new_amps)
 
         assert model.n_splats() == 20
 
@@ -1064,9 +1057,8 @@ class TestModelMutationMethods:
         new_centers = torch.rand(20, 3, device="cuda")  # FP32
         new_Ls = torch.eye(3, device="cuda").unsqueeze(0).repeat(20, 1, 1)
         new_amps = torch.ones(20, device="cuda")
-        new_sharpness = torch.full((20,), 2.0, device="cuda")
 
-        model.replace_with(new_centers, new_Ls, new_amps, new_sharpness)
+        model.replace_with(new_centers, new_Ls, new_amps)
 
         # Verify FP16 maintained
         for param in model.parameters():

@@ -1002,7 +1002,6 @@ describe('TypeScript Reference Implementation Tests', () => {
         1.0, // Splat 1
       ]);
       const amplitudes = new Float32Array([1.0, 0.5]);
-      const sharpness = new Float32Array([2.0, 2.0]);
       const slicePos = new Float32Array([0.0, 0.0, 0.0]);
       const hiddenDims = new Uint32Array([]); // No hidden dims
 
@@ -1013,7 +1012,6 @@ describe('TypeScript Reference Implementation Tests', () => {
         positions,
         cholesky,
         amplitudes,
-        sharpness,
         slicePos,
         hiddenDims,
         3,
@@ -1064,7 +1062,6 @@ describe('TypeScript Reference Implementation Tests', () => {
         1.0, // Splat 1
       ]);
       const amplitudes = new Float32Array([1.0, 1.0]);
-      const sharpness = new Float32Array([2.0, 2.0]);
       const slicePos = new Float32Array([0.0, 0.0, 0.0, 0.0]);
       const hiddenDims = new Uint32Array([3]); // Dim 3 is hidden
 
@@ -1075,7 +1072,6 @@ describe('TypeScript Reference Implementation Tests', () => {
         positions,
         cholesky,
         amplitudes,
-        sharpness,
         slicePos,
         hiddenDims,
         4,
@@ -1542,7 +1538,6 @@ describe('TypeScript Reference Implementation Tests', () => {
       const positions = new Float32Array([0, 0, 0, 0]);
       const cholesky = new Float32Array([2, 1, 3, 0, 0, 2, 0.5, 0.5, 0, 4]);
       const amplitudes = new Float32Array([1.0]);
-      const sharpness = new Float32Array([2.0]);
       const slicePos = new Float32Array([0, 0, 0, 1]); // slice at dim3 = 1
       const hiddenDims = new Uint32Array([3]);
 
@@ -1553,7 +1548,6 @@ describe('TypeScript Reference Implementation Tests', () => {
         positions,
         cholesky,
         amplitudes,
-        sharpness,
         slicePos,
         hiddenDims,
         4,

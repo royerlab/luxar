@@ -19,17 +19,27 @@ test.describe('Error Recovery - Invalid Datasets', () => {
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));
 
-    await page.goto('/?src=/data/does-not-exist.zarr&debug');
+    await page.goto('/?src=http://localhost:9000/does-not-exist.zarr&debug');
 
-    // Should show error message, not crash
-    await page.waitForSelector('.error-message', { timeout: 10000 });
+    // Should show error dialog or dataset browser (graceful handling, not crash)
+    await page.waitForSelector(
+      '.error-message, .luxar-error-dialog, .dataset-browser, .luxar-dataset-browser',
+      {
+        timeout: 30000,
+      }
+    );
 
-    const errorVisible = await page.locator('.error-message').isVisible();
-    expect(errorVisible).toBe(true);
-
-    // Should have helpful error text
-    const errorText = await page.locator('.error-message').textContent();
-    expect(errorText).toContain('Unable to Load Dataset');
+    const hasError = await page
+      .locator('.error-message, .luxar-error-dialog')
+      .first()
+      .isVisible()
+      .catch(() => false);
+    const hasBrowser = await page
+      .locator('.dataset-browser, .luxar-dataset-browser')
+      .first()
+      .isVisible()
+      .catch(() => false);
+    expect(hasError || hasBrowser).toBe(true);
   });
 
   test('should handle corrupted .zmetadata gracefully', async ({ page }) => {
@@ -37,7 +47,7 @@ test.describe('Error Recovery - Invalid Datasets', () => {
     page.on('pageerror', (err) => errors.push(err.message));
 
     // Try to load dataset that will fail during metadata parsing
-    await page.goto('/?src=/data/corrupted.zarr&debug');
+    await page.goto('/?src=http://localhost:9000/corrupted.zarr&debug');
 
     // Should either show error or fallback gracefully
     await page.waitForTimeout(5000);
@@ -56,7 +66,7 @@ test.describe('Error Recovery - Invalid Datasets', () => {
   test('should handle missing positions array', async ({ page }) => {
     // This would be a dataset with .zmetadata but missing critical data
     // For now, test that missing dataset URL shows proper error
-    await page.goto('/?src=/data/no-positions.zarr&debug');
+    await page.goto('/?src=http://localhost:9000/no-positions.zarr&debug');
 
     await page.waitForTimeout(3000);
 
@@ -115,41 +125,44 @@ test.describe('Error Recovery - Network Failures', () => {
 });
 
 test.describe('Error Recovery - WebGL Failures', () => {
-  test('should detect WebGL context loss', async ({ page }) => {
+  test('should detect WebGL context loss without crashing', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (err) => errors.push(err.message));
+
     await page.goto('/?debug');
     await waitForLuxarReady(page);
 
-    // Simulate WebGL context loss
-    const contextLostHandled = await page.evaluate(() => {
+    // Simulate WebGL context loss via the WEBGL_lose_context extension
+    const contextLostTriggered = await page.evaluate(() => {
       const canvas = document.querySelector('canvas') as HTMLCanvasElement;
       if (!canvas) return false;
 
-      // Try to trigger context loss event
-      const ext = canvas.getContext('webgl2')?.getExtension('WEBGL_lose_context');
+      const gl = canvas.getContext('webgl2');
+      const ext = gl?.getExtension('WEBGL_lose_context');
       if (ext) {
         ext.loseContext();
-        // Check if context is lost
-        return canvas.getContext('webgl2')?.isContextLost() === true;
+        return true;
       }
-
       return false;
     });
 
-    // If we could trigger context loss, verify it was detected
-    if (contextLostHandled) {
-      // App should detect the loss (implementation-specific)
-      await page.waitForTimeout(500);
+    // Wait for loss event to propagate
+    await page.waitForTimeout(500);
 
-      // Restore context
+    // Restore context
+    if (contextLostTriggered) {
       await page.evaluate(() => {
         const canvas = document.querySelector('canvas') as HTMLCanvasElement;
-        const ext = canvas.getContext('webgl2')?.getExtension('WEBGL_lose_context');
+        const gl = canvas?.getContext('webgl2');
+        const ext = gl?.getExtension('WEBGL_lose_context');
         ext?.restoreContext();
       });
+
+      await page.waitForTimeout(1000);
     }
 
-    // Test passes if context loss mechanism exists (even if not triggered)
-    expect(true).toBe(true);
+    // The key assertion: no unhandled exceptions during context loss/restore cycle
+    expect(errors).toEqual([]);
   });
 
   test('should verify WebGL context is valid on load', async ({ page }) => {

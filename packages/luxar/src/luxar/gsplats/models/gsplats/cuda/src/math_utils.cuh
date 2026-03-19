@@ -4,7 +4,7 @@
  * This header provides mathematical functions for Gaussian computation:
  * - Triangular matrix indexing for packed covariance matrices
  * - Mahalanobis distance calculation (generic + optimized 2D/3D)
- * - Gaussian intensity computation with sharpness parameter
+ * - Standard Gaussian intensity computation
  * - Effective truncation radius for early rejection
  */
 
@@ -149,45 +149,24 @@ __device__ __forceinline__ float mahalanobis_distance_sq<3>(
 // =============================================================================
 
 /**
- * Compute generalized Gaussian intensity.
+ * Compute standard Gaussian intensity.
  *
- * I(x) = a × exp(-0.5 × D^s)
+ * I(x) = a × exp(-0.5 × D²)
  *
- * where D² is Mahalanobis distance squared and s is sharpness parameter.
+ * where D² is Mahalanobis distance squared.
  *
- * OPTIMIZATION: Fast path for standard Gaussian (s=2) avoids expensive powf().
- * This is the most common case and provides ~20-30% speedup in inner loops.
- *
- * OPTIMIZATION: Uses __expf() and __powf() fast math intrinsics for ~15% speedup.
- * These have slightly lower precision (~2 ULP vs 1 ULP) but are acceptable
- * for rendering where visual quality, not numerical exactness, matters.
+ * OPTIMIZATION: Uses __expf() fast math intrinsic for ~15% speedup.
+ * Slightly lower precision (~2 ULP vs 1 ULP) but acceptable for rendering.
  *
  * @param dist_sq   Mahalanobis distance squared (D²)
  * @param amplitude Amplitude (a)
- * @param sharpness Sharpness parameter (s). Standard Gaussian: s=2
  * @return          Gaussian intensity
  */
 __device__ __forceinline__ float gaussian_intensity(
     float dist_sq,
-    float amplitude,
-    float sharpness
+    float amplitude
 ) {
-    // Fast path for standard Gaussian (s=2): I = a * exp(-0.5 * D²)
-    // This avoids the expensive powf() call entirely.
-    // Use a small tolerance to handle floating point representation of s=2.
-    if (fabsf(sharpness - 2.0f) < 1e-4f) {
-        return amplitude * __expf(-0.5f * dist_sq);
-    }
-
-    // General case for non-standard sharpness
-    // Clamp dist_sq to avoid numerical issues at exactly 0
-    float dist_sq_safe = fmaxf(dist_sq, 1e-12f);
-
-    // Compute D^s = (D²)^(s/2) using fast intrinsic
-    float dist_pow_s = __powf(dist_sq_safe, sharpness * 0.5f);
-
-    // I = a × exp(-0.5 × D^s) using fast intrinsic
-    return amplitude * __expf(-0.5f * dist_pow_s);
+    return amplitude * __expf(-0.5f * dist_sq);
 }
 
 // =============================================================================
@@ -195,35 +174,31 @@ __device__ __forceinline__ float gaussian_intensity(
 // =============================================================================
 
 /**
- * Compute effective truncation distance accounting for sharpness.
+ * Compute effective truncation distance for standard Gaussian.
  *
- * For standard Gaussian (s=2): radius = truncate * σ
- * For generalized (s≠2): radius = truncate^(2/s) * σ
+ * radius = truncate * σ
  *
  * Additionally, account for amplitude-based culling:
- * Find t_max where a * exp(-0.5 * t^s) = intensity_floor
- *   t_max = (2 * ln(a/intensity_floor))^(1/s)
+ * Find t_max where a * exp(-0.5 * t²) = intensity_floor
+ *   t_max = sqrt(2 * ln(a/intensity_floor))
  *
  * @param truncate        Base truncation radius (typically 3.0)
- * @param sharpness       Sharpness parameter
  * @param amplitude       Amplitude
  * @param intensity_floor Minimum intensity threshold
  * @return                Effective truncation in units of sqrt(eigenvalue)
  */
 __device__ __forceinline__ float effective_truncation(
     float truncate,
-    float sharpness,
     float amplitude,
     float intensity_floor
 ) {
-    // Sharpness-adjusted base truncation (fast intrinsic — only used for AABB, not inner loop)
-    float t_base = __powf(truncate * truncate, 1.0f / sharpness);
+    float t_base = truncate;
 
     // Amplitude-based truncation (where intensity drops below floor)
     float ratio = amplitude / fmaxf(intensity_floor, 1e-10f);
     float t_amp = 1e6f;  // Large default if amplitude check not needed
     if (ratio > 1.0f) {
-        t_amp = __powf(2.0f * __logf(ratio), 1.0f / sharpness);
+        t_amp = sqrtf(2.0f * __logf(ratio));
     }
 
     // Use minimum of both truncations
@@ -237,56 +212,32 @@ __device__ __forceinline__ float effective_truncation(
  * into shared memory. The inner loop then only needs a simple comparison:
  *     if (dist_sq <= effective_truncate_sq) { ... }
  *
- * This eliminates the expensive powf() call from the hot inner loop.
- *
  * Combines two truncation criteria (taking the tighter bound):
- * 1. Base truncation: D² <= truncate^(4/s)
+ * 1. Base truncation: D² <= truncate²
  * 2. Amplitude-based: D² where intensity drops below intensity_floor
- *    Solving a * exp(-0.5 * D^s) = floor => D² = (2*ln(a/floor))^(2/s)
- *
- * OPTIMIZATION: Uses __powf() fast math intrinsic.
+ *    Solving a * exp(-0.5 * D²) = floor => D² = 2*ln(a/floor)
  *
  * @param truncate        Base truncation radius (typically 3.0)
- * @param sharpness       Sharpness parameter (s)
  * @param amplitude       Splat amplitude (for amplitude-based tightening)
  * @param intensity_floor Minimum intensity threshold
  * @return                Squared effective truncation distance (in Mahalanobis space)
  */
 __device__ __forceinline__ float effective_truncate_sq(
     float truncate,
-    float sharpness,
     float amplitude,
     float intensity_floor
 ) {
-    float t_base_sq;
-
-    // Fast path for standard Gaussian (s=2)
-    if (fabsf(sharpness - 2.0f) < 1e-4f) {
-        t_base_sq = truncate * truncate;
-    } else {
-        // General case: truncate^(4/s) - use fast math intrinsic
-        // Since we compare D² against this threshold, we need:
-        // D^s <= truncate^2  =>  D² <= (truncate^2)^(2/s) = truncate^(4/s)
-        t_base_sq = __powf(truncate, 4.0f / sharpness);
-    }
+    float t_base_sq = truncate * truncate;
 
     // Amplitude-based tightening: find D² where intensity drops below floor
-    // a * exp(-0.5 * D^s) = floor => D^s = 2*ln(a/floor) => D² = (2*ln(a/floor))^(2/s)
+    // a * exp(-0.5 * D²) = floor => D² = 2*ln(a/floor)
     float ratio = amplitude / fmaxf(intensity_floor, 1e-10f);
     if (ratio <= 1.0f) {
         // amplitude <= intensity_floor: splat contributes nothing
-        // (the intensity >= intensity_floor check will reject everything anyway)
         return 0.0f;
     }
 
-    float t_amp_sq;
-    if (fabsf(sharpness - 2.0f) < 1e-4f) {
-        // s=2: D² = 2*ln(a/floor)
-        t_amp_sq = 2.0f * __logf(ratio);
-    } else {
-        // General: D² = (2*ln(a/floor))^(2/s)
-        t_amp_sq = __powf(2.0f * __logf(ratio), 2.0f / sharpness);
-    }
+    float t_amp_sq = 2.0f * __logf(ratio);
     return fminf(t_base_sq, t_amp_sq);
 }
 

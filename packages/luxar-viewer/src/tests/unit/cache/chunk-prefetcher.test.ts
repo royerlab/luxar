@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ChunkPrefetcher } from './chunk-prefetcher';
+import { ChunkPrefetcher } from '../../../cache/chunk-prefetcher';
 
 // Mock TwoLevelCachingStore for unit tests
 class MockStore {

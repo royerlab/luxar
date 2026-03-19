@@ -25,7 +25,6 @@ if HAS_TORCH:
     )
     from luxar.gsplats.utils.trils import pack_tril
 
-
 @pytest.fixture
 def simple_2d_params():
     """Create simple 2D Gaussian parameters for testing."""
@@ -40,14 +39,12 @@ def simple_2d_params():
     params_full = np.concatenate([centers, L_packed], axis=1)
 
     amps = np.array([1.0], dtype=np.float32)
-    sharpnesses = np.array([2.0], dtype=np.float32)  # Standard Gaussian
 
     # Create result object
     result = GSplatData(
         centers=centers,
         amplitudes=amps,
         cholesky_factors=L_packed,
-        sharpnesses=sharpnesses,
         stats={},
     )
 
@@ -59,7 +56,6 @@ def simple_2d_params():
         "L": L,
         "result": result,  # New API
     }
-
 
 @pytest.fixture
 def multi_2d_params():
@@ -87,14 +83,12 @@ def multi_2d_params():
     params_full = np.concatenate([centers, L_packed], axis=1)
 
     amps = np.array([0.8, 0.6, 1.0], dtype=np.float32)
-    sharpnesses = np.array([2.0, 2.0, 2.0], dtype=np.float32)  # Standard Gaussian
 
     # Create result object
     result = GSplatData(
         centers=centers,
         amplitudes=amps,
         cholesky_factors=L_packed,
-        sharpnesses=sharpnesses,
         stats={},
     )
 
@@ -106,7 +100,6 @@ def multi_2d_params():
         "L": L,
         "result": result,  # New API
     }
-
 
 @pytest.fixture
 def simple_3d_params():
@@ -122,14 +115,12 @@ def simple_3d_params():
     params_full = np.concatenate([centers, L_packed], axis=1)
 
     amps = np.array([1.0], dtype=np.float32)
-    sharpnesses = np.array([2.0], dtype=np.float32)  # Standard Gaussian
 
     # Create result object
     result = GSplatData(
         centers=centers,
         amplitudes=amps,
         cholesky_factors=L_packed,
-        sharpnesses=sharpnesses,
         stats={},
     )
 
@@ -141,7 +132,6 @@ def simple_3d_params():
         "L": L,
         "result": result,  # New API
     }
-
 
 class TestRenderGaussiansFullTorch:
     """Test PyTorch-based rendering function."""
@@ -231,7 +221,6 @@ class TestRenderGaussiansFullTorch:
             cholesky_factors=np.zeros(
                 (0, 3), dtype=np.float32
             ),  # 2D has 3 tril elements
-            sharpnesses=np.zeros((0,), dtype=np.float32),
             stats={},
         )
 
@@ -298,7 +287,6 @@ class TestRenderGaussiansFullTorch:
         peak_large: float = float(np.max(result_large_np))
         assert abs(peak_small - peak_large) / max(peak_small, peak_large) < 0.1
 
-
 class TestRenderGaussiansFullNumpy:
     """Test NumPy wrapper for rendering."""
 
@@ -345,7 +333,6 @@ class TestRenderGaussiansFullNumpy:
         # Results should be identical (or very close)
         np.testing.assert_allclose(result_numpy, result_torch, atol=1e-6, rtol=1e-6)
 
-
 class TestBatchedRendering:
     """Test batched rendering implementation."""
 
@@ -358,7 +345,6 @@ class TestBatchedRendering:
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
             amps=torch.from_numpy(params["amps"]),
-            sharpness=torch.full((len(params["amps"]),), 2.0),
             truncate=3.0,
         )
 
@@ -380,7 +366,6 @@ class TestBatchedRendering:
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
             amps=torch.from_numpy(params["amps"]),
-            sharpness=torch.full((len(params["amps"]),), 2.0),
             truncate=3.0,
         )
 
@@ -410,7 +395,6 @@ class TestBatchedRendering:
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
             amps=torch.from_numpy(small_amps),
-            sharpness=torch.full((len(small_amps),), 2.0),
             truncate=3.0,
             intensity_floor=1e-6,  # Should cull the tiny amplitude splat
         )
@@ -421,7 +405,6 @@ class TestBatchedRendering:
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
             amps=torch.from_numpy(small_amps),
-            sharpness=torch.full((len(small_amps),), 2.0),
             truncate=3.0,
             intensity_floor=None,
         )
@@ -437,14 +420,12 @@ class TestBatchedRendering:
         centers = torch.zeros((0, 2), dtype=torch.float32)
         Ls = torch.zeros((0, 2, 2), dtype=torch.float32)
         amps = torch.zeros((0,), dtype=torch.float32)
-        sharpness = torch.zeros((0,), dtype=torch.float32)
 
         result = render_gaussians_batched(
             shape=shape,
             centers=centers,
             Ls=Ls,
             amps=amps,
-            sharpness=sharpness,
             truncate=3.0,
         )
 
@@ -460,7 +441,6 @@ class TestBatchedRendering:
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
             amps=torch.from_numpy(params["amps"]),
-            sharpness=torch.full((len(params["amps"]),), 2.0),
             truncate=3.0,
         )
 
@@ -475,7 +455,6 @@ class TestBatchedRendering:
         assert abs(max_idx[0] - 5) <= 1
         assert abs(max_idx[1] - 5) <= 1
 
-
 class TestRenderingEdgeCases:
     """Test edge cases and error conditions."""
 
@@ -489,13 +468,11 @@ class TestRenderingEdgeCases:
         L_packed = pack_tril(L)
 
         amps = np.array([1.0], dtype=np.float32)
-        sharpnesses = np.array([2.0], dtype=np.float32)
 
         test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
-            sharpnesses=sharpnesses,
             stats={},
         )
 
@@ -515,13 +492,11 @@ class TestRenderingEdgeCases:
         L_packed = pack_tril(L)
 
         amps = np.array([0.01], dtype=np.float32)  # Small amplitude to compensate
-        sharpnesses = np.array([2.0], dtype=np.float32)
 
         test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
-            sharpnesses=sharpnesses,
             stats={},
         )
 
@@ -549,13 +524,11 @@ class TestRenderingEdgeCases:
         L_packed = pack_tril(L)
 
         amps = np.ones(3, dtype=np.float32)
-        sharpnesses = np.full(3, 2.0, dtype=np.float32)
 
         test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
-            sharpnesses=sharpnesses,
             stats={},
         )
 
@@ -576,13 +549,11 @@ class TestRenderingEdgeCases:
         L_packed = pack_tril(L)
 
         amps = np.array([1.0], dtype=np.float32)
-        sharpnesses = np.array([2.0], dtype=np.float32)
 
         test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
-            sharpnesses=sharpnesses,
             stats={},
         )
 
@@ -612,13 +583,11 @@ class TestRenderingEdgeCases:
         L_packed = pack_tril(L)
 
         amps = np.array([0.0], dtype=np.float32)  # Zero amplitude
-        sharpnesses = np.array([2.0], dtype=np.float32)
 
         test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
-            sharpnesses=sharpnesses,
             stats={},
         )
 
@@ -626,7 +595,6 @@ class TestRenderingEdgeCases:
 
         # Should be effectively zero (allowing for floating point precision)
         assert torch.all(result < 1e-6)
-
 
 class TestPerformanceAndNumericalStability:
     """Test performance characteristics and numerical stability."""
@@ -650,13 +618,11 @@ class TestPerformanceAndNumericalStability:
 
         # Random amplitudes
         amps = np.random.uniform(0.1, 1.0, n_splats).astype(np.float32)
-        sharpnesses = np.full(n_splats, 2.0, dtype=np.float32)
 
         test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
-            sharpnesses=sharpnesses,
             stats={},
         )
 
@@ -677,13 +643,11 @@ class TestPerformanceAndNumericalStability:
         L_small = np.array([[[1e-6, 0.0], [0.0, 1e-6]]], dtype=np.float32)
         L_packed_small = pack_tril(L_small)
         amps_small = np.array([1e-6], dtype=np.float32)
-        sharpnesses = np.array([2.0], dtype=np.float32)
 
         test_result_small = GSplatData(
             centers=centers,
             amplitudes=amps_small,
             cholesky_factors=L_packed_small,
-            sharpnesses=sharpnesses,
             stats={},
         )
 
@@ -699,13 +663,11 @@ class TestPerformanceAndNumericalStability:
             centers=centers,
             amplitudes=amps_large,
             cholesky_factors=L_packed_large,
-            sharpnesses=sharpnesses,
             stats={},
         )
 
         result_large = render_gaussians_pytorch(shape, test_result_large)
         assert torch.all(torch.isfinite(result_large))
-
 
 class TestRenderingWrappersEdgeCases:
     """Test edge cases in rendering wrapper functions."""
@@ -721,7 +683,6 @@ class TestRenderingWrappersEdgeCases:
             cholesky_factors=np.zeros(
                 (0, 3), dtype=np.float32
             ),  # 2D has 3 tril elements
-            sharpnesses=np.zeros((0,), dtype=np.float32),
             stats={},
         )
 
@@ -738,13 +699,11 @@ class TestRenderingWrappersEdgeCases:
         L_packed = pack_tril(L)
 
         amps = np.ones(1, dtype=np.float32)
-        sharpnesses = np.array([2.0], dtype=np.float32)
 
         test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
-            sharpnesses=sharpnesses,
             stats={},
         )
 
@@ -763,13 +722,11 @@ class TestRenderingWrappersEdgeCases:
         L_packed = pack_tril(L)
 
         amps = np.ones(1, dtype=np.float32)
-        sharpnesses = np.array([2.0], dtype=np.float32)
 
         test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
-            sharpnesses=sharpnesses,
             stats={},
         )
 
@@ -779,24 +736,6 @@ class TestRenderingWrappersEdgeCases:
         assert result.shape == shape
         assert torch.all(torch.isfinite(result))
         assert torch.sum(result) > 0
-
-    def test_batched_wrapper_with_sharpness(self) -> None:
-        """Test batched wrapper with explicit sharpness."""
-        shape = (10, 10)
-        centers = torch.tensor([[5.0, 5.0]], dtype=torch.float32)
-        Ls = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
-        amps = torch.tensor([1.0], dtype=torch.float32)
-        sharpness = torch.tensor([2.0], dtype=torch.float32)
-
-        # Call with explicit sharpness parameter
-        result = render_gaussians_batched(
-            shape, centers, Ls, amps, sharpness=sharpness, truncate=3.0
-        )
-
-        assert result.shape == shape
-        assert torch.all(torch.isfinite(result))
-        assert torch.sum(result) > 0
-
 
 class TestMPSFallbackHandling:
     """Test MPS fallback handling for torch.unique operations."""
@@ -894,7 +833,6 @@ class TestMPSFallbackHandling:
             "_group_by_box_gpu should have MPS fallback handling"
         )
 
-
 class TestMPSPeakFindingFallback:
     """Test MPS fallback handling for max_pool3d in peak finding."""
 
@@ -961,7 +899,6 @@ class TestMPSPeakFindingFallback:
         )
 
         assert len(peaks) == 2
-
 
 if __name__ == "__main__":
     pytest.main([__file__])

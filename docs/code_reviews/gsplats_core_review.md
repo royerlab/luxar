@@ -158,7 +158,7 @@ Overall: **60% addressed** (fixed or partially fixed), **40% still open**.
 - **Evidence:** Line 118 uses `n_splats, ndim = centers.shape` which will raise `ValueError: not enough values to unpack` if `centers` is 1D. There is no explicit check like `if centers.ndim != 2: raise ValueError(...)` with a clear error message. The error from unpacking is not user-friendly.
 - **File:** `/home/royer/PycharmProjects/luxar/packages/luxar/src/luxar/gsplats/io/save_gsplats.py`, line 118
 
-**Issue #20 - LOW: Hardcoded sharpness bounds `(0.0, 31.0)`**
+**Issue #20 - LOW: Hardcoded sharpness bounds `(0.0, 31.0)` -- RESOLVED (sharpness removed from gsplats)**
 - **Status: STILL OPEN**
 - **Evidence:** Line 296 still uses `bounds=(0.0, 31.0)` as a hardcoded constant for sharpness encoding. There is no named constant or configurable parameter for these bounds.
 - **File:** `/home/royer/PycharmProjects/luxar/packages/luxar/src/luxar/gsplats/io/save_gsplats.py`, line 296
@@ -320,7 +320,7 @@ Overall: **60% addressed** (fixed or partially fixed), **40% still open**.
 
 These were observations, not numbered issues:
 
-1. **Sharpness default injection**: Still present. Loading without sharpnesses creates defaults of 2.0 (line 157-158 in `load_gsplats.py`). This is by design.
+1. **Sharpness parameter**: Removed from gsplats. The standard Gaussian (s=2) is now hardcoded.
 
 2. **Ordering is not round-trippable**: Still the case. Hilbert reordering on save changes element order.
 

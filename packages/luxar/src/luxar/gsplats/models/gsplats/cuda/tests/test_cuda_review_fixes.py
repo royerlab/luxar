@@ -4,7 +4,6 @@ Tests for CUDA kernel review fixes.
 These tests verify the correctness of fixes identified during the CUDA kernel review:
 1. Buffer overflow guard in backward kernel's grad_output cache
 2. Tighter early rejection via amplitude-based truncation in effective_truncate_sq
-3. Unified sharpness gradient computation near dist_sq=0
 """
 
 import numpy as np
@@ -37,7 +36,6 @@ def _make_splat_data(
     centers: np.ndarray | None = None,
     L_scale: float = 1.5,
     amps: np.ndarray | None = None,
-    sharpness_val: float = 2.0,
 ):
     """Helper to create splat data tensors on CUDA."""
     from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import cholesky_to_conic
@@ -64,7 +62,6 @@ def _make_splat_data(
     else:
         amps_t = torch.tensor(amps, device=device, dtype=torch.float32)
 
-    sharpness_t = torch.full((N,), sharpness_val, device=device, dtype=torch.float32)
 
     conic = cholesky_to_conic(L)
     L_row_norms = compute_L_row_norms(L)
@@ -74,7 +71,6 @@ def _make_splat_data(
         "L": L,
         "conic": conic,
         "amps": amps_t,
-        "sharpness": sharpness_t,
         "L_row_norms": L_row_norms,
         "shape": shape,
     }
@@ -86,7 +82,6 @@ def _run_cuda_forward(data, tile_size, truncate=3.0, intensity_floor=1e-5):
         data["centers"].contiguous(),
         data["conic"].contiguous(),
         data["amps"].contiguous(),
-        data["sharpness"].contiguous(),
         data["L_row_norms"].contiguous(),
         list(data["shape"]),
         truncate,
@@ -106,7 +101,6 @@ def _run_pytorch_reference(data, truncate=3.0, intensity_floor=1e-5):
         data["centers"],
         data["L"],
         data["amps"],
-        data["sharpness"],
         truncate,
         intensity_floor,
     )
@@ -233,196 +227,6 @@ class TestAmplitudeBasedTruncation:
             assert rel_diff.max().item() < Tolerances.COMPARISON_MAX_REL_DIFF
 
 
-class TestSharpnessGradientConsistency:
-    """Tests for Fix 3: unified sharpness gradient near dist_sq=0."""
-
-    @pytest.mark.parametrize("sharpness_val", [1.5, 2.0, 3.0])
-    def test_backward_various_sharpness(self, sharpness_val):
-        """Forward+backward with various sharpness values produce consistent gradients."""
-        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
-            cholesky_to_conic,
-        )
-
-        np.random.seed(77)
-        N, d = 10, 3
-        shape = (16, 16, 16)
-        truncate = 3.0
-        intensity_floor = 1e-5
-
-        device = torch.device("cuda:0")
-
-        # Place one splat exactly at a voxel center to exercise dist_sq ≈ 0
-        centers = torch.rand(N, d, device=device, dtype=torch.float32) * 12 + 2
-        centers[0] = torch.tensor([8.0, 8.0, 8.0], device=device)
-
-        L = (
-            torch.eye(d, device=device, dtype=torch.float32)
-            .unsqueeze(0)
-            .expand(N, -1, -1)
-            .clone()
-            * 1.5
-        )
-        amps = torch.rand(N, device=device, dtype=torch.float32) * 0.5 + 0.5
-        sharpness = torch.full((N,), sharpness_val, device=device, dtype=torch.float32)
-
-        conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
-
-        # Run forward
-        result = cuda_splatting_backend.forward(
-            centers.contiguous(),
-            conic.contiguous(),
-            amps.contiguous(),
-            sharpness.contiguous(),
-            L_row_norms.contiguous(),
-            list(shape),
-            truncate,
-            intensity_floor,
-            8,  # tile_size for 3D
-        )
-        output = result[0]
-        tile_counts = result[1]
-        tile_offsets = result[2]
-        tile_content = result[3]
-        global_splat_ids = result[4]
-        shape_tensor = result[5]
-        tile_dims_tensor = result[6]
-
-        # Create a gradient (uniform upstream gradient)
-        grad_output = torch.ones_like(output)
-
-        # Run backward
-        d_centers, d_conic, d_amps, d_sharpness = cuda_splatting_backend.backward(
-            grad_output.contiguous(),
-            centers.contiguous(),
-            conic.contiguous(),
-            amps.contiguous(),
-            sharpness.contiguous(),
-            tile_offsets,
-            tile_counts,
-            tile_content,
-            global_splat_ids,
-            list(shape),
-            truncate,
-            intensity_floor,
-            8,
-            shape_tensor_cached=shape_tensor,
-            tile_dims_tensor_cached=tile_dims_tensor,
-        )
-
-        # Basic sanity: gradients should be finite
-        assert torch.isfinite(d_centers).all(), "d_centers has non-finite values"
-        assert torch.isfinite(d_conic).all(), "d_conic has non-finite values"
-        assert torch.isfinite(d_amps).all(), "d_amps has non-finite values"
-        assert torch.isfinite(d_sharpness).all(), "d_sharpness has non-finite values"
-
-        # Splat at center (dist_sq ≈ 0): sharpness gradient should be finite
-        # This specifically tests the clamped dist_sq path
-        assert torch.isfinite(d_sharpness[0]).all(), (
-            f"Sharpness gradient for center-placed splat (s={sharpness_val}) is not finite"
-        )
-
-        # Amplitude gradient should be positive (uniform upstream gradient, positive amps)
-        active_mask = d_amps.abs() > 1e-10
-        if active_mask.any():
-            assert (d_amps[active_mask] > 0).all(), (
-                "Amplitude gradients should be positive with positive upstream gradient"
-            )
-
-    def test_backward_2d_sharpness_at_center(self):
-        """2D backward: splat exactly at pixel center has finite sharpness gradient."""
-        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
-            cholesky_to_conic,
-        )
-
-        N, d = 1, 2
-        shape = (32, 32)
-        device = torch.device("cuda:0")
-
-        # Single splat at exact pixel center
-        centers = torch.tensor([[16.0, 16.0]], device=device, dtype=torch.float32)
-        L = torch.eye(d, device=device, dtype=torch.float32).unsqueeze(0) * 2.0
-        amps = torch.ones(N, device=device, dtype=torch.float32)
-        sharpness = torch.full((N,), 3.0, device=device, dtype=torch.float32)
-
-        conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
-
-        result = cuda_splatting_backend.forward(
-            centers.contiguous(),
-            conic.contiguous(),
-            amps.contiguous(),
-            sharpness.contiguous(),
-            L_row_norms.contiguous(),
-            list(shape),
-            3.0,
-            1e-5,
-            16,
-        )
-
-        grad_output = torch.ones_like(result[0])
-        d_centers, d_conic, d_amps, d_sharpness = cuda_splatting_backend.backward(
-            grad_output.contiguous(),
-            centers.contiguous(),
-            conic.contiguous(),
-            amps.contiguous(),
-            sharpness.contiguous(),
-            result[2],  # tile_offsets
-            result[1],  # tile_counts
-            result[3],  # tile_content
-            result[4],  # global_splat_ids
-            list(shape),
-            3.0,
-            1e-5,
-            16,
-            shape_tensor_cached=result[5],
-            tile_dims_tensor_cached=result[6],
-        )
-
-        assert torch.isfinite(d_sharpness).all(), (
-            "Sharpness gradient at exact pixel center should be finite"
-        )
-        assert torch.isfinite(d_centers).all()
-        assert torch.isfinite(d_conic).all()
-
-
-class TestForwardBackwardWithVariousSharpness:
-    """Tests ensuring forward/backward consistency with PyTorch reference across sharpness values."""
-
-    @pytest.mark.parametrize("sharpness_val", [1.5, 2.0, 3.0])
-    @pytest.mark.parametrize(
-        "dim,shape,tile_size",
-        [
-            (2, (32, 32), 16),
-            (3, (16, 16, 16), 8),
-        ],
-    )
-    def test_forward_matches_pytorch_with_sharpness(
-        self, sharpness_val, dim, shape, tile_size
-    ):
-        """Forward pass with non-standard sharpness matches PyTorch reference."""
-        np.random.seed(99)
-        N = 15
-        intensity_floor = 1e-5
-
-        data = _make_splat_data(N, dim, shape, sharpness_val=sharpness_val, L_scale=1.5)
-        cuda_out, _ = _run_cuda_forward(
-            data, tile_size=tile_size, intensity_floor=intensity_floor
-        )
-        pytorch_out = _run_pytorch_reference(data, intensity_floor=intensity_floor)
-
-        cuda_cpu = cuda_out.cpu()
-        pytorch_cpu = pytorch_out.cpu()
-
-        max_val = max(cuda_cpu.abs().max().item(), pytorch_cpu.abs().max().item())
-        if max_val > 1e-6:
-            rel_diff = (cuda_cpu - pytorch_cpu).abs() / (max_val + 1e-8)
-            assert rel_diff.max().item() < Tolerances.COMPARISON_MAX_REL_DIFF, (
-                f"Max relative diff {rel_diff.max().item():.4f} with s={sharpness_val} "
-                f"exceeds tolerance {Tolerances.COMPARISON_MAX_REL_DIFF}"
-            )
-
-
 class TestGradCacheBufferOverflowGuard:
     """Tests for Fix 1: buffer overflow guard in backward kernel's grad_output cache.
 
@@ -461,7 +265,6 @@ class TestGradCacheBufferOverflowGuard:
             * 2.0
         )
         amps = torch.rand(N, device=device, dtype=torch.float32) * 0.5 + 0.5
-        sharpness = torch.full((N,), 2.0, device=device, dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -471,7 +274,6 @@ class TestGradCacheBufferOverflowGuard:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             truncate,
@@ -482,12 +284,11 @@ class TestGradCacheBufferOverflowGuard:
 
         # Backward with oversized tile - this would crash without Fix 1
         grad_output = torch.ones_like(output)
-        d_centers, d_conic, d_amps, d_sharpness = cuda_splatting_backend.backward(
+        d_centers, d_conic, d_amps = cuda_splatting_backend.backward(
             grad_output.contiguous(),
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             result[2],  # tile_offsets
             result[1],  # tile_counts
             result[3],  # tile_content
@@ -504,7 +305,6 @@ class TestGradCacheBufferOverflowGuard:
         assert torch.isfinite(d_centers).all(), "d_centers has non-finite values"
         assert torch.isfinite(d_conic).all(), "d_conic has non-finite values"
         assert torch.isfinite(d_amps).all(), "d_amps has non-finite values"
-        assert torch.isfinite(d_sharpness).all(), "d_sharpness has non-finite values"
 
         # Amplitude gradients should be positive (uniform upstream gradient)
         active = d_amps.abs() > 1e-10

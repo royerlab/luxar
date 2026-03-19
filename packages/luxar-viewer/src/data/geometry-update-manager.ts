@@ -648,7 +648,6 @@ export class GeometryUpdateManager {
             cholesky23,
             cholesky45,
             colors: processed.colors,
-            sharpness: processed.sharpness,
             splatCount: processed.splatCount,
           },
           processed.splatCount
@@ -664,7 +663,6 @@ export class GeometryUpdateManager {
           cholesky23,
           cholesky45,
           amplitudes: processed.amplitudes,
-          sharpness: processed.sharpness,
           colors: processed.colors,
           splatCount: processed.splatCount,
         });
@@ -726,7 +724,7 @@ export class GeometryUpdateManager {
         choleskyFactors: data.choleskyFactors,
         amplitudes: data.amplitudes,
         colors: data.colors,
-        sharpness: data.sharpness,
+        sharpness: null,
         displayDims: viewState.displayDims,
         slicePosition: viewState.slicePosition,
         ndim: data.ndim,
@@ -746,7 +744,6 @@ export class GeometryUpdateManager {
         choleskyFactors3D: workerResult.choleskyFactors3D,
         amplitudes: workerResult.amplitudes,
         colors: workerResult.colors,
-        sharpness: workerResult.sharpness,
         splatCount: workerResult.visibleCount,
       };
     } catch (error) {

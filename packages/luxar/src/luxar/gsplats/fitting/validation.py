@@ -31,12 +31,10 @@ def prepare_fit_config(
     asymmetric_penalty: Optional[float] = 10.0,
     l1_amp: Optional[float] = None,
     l1_diag: Optional[float] = None,
-    l1_sharpness: Optional[float] = None,  # L1 regularization on sharpness offsets
     sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
     sigma_max_diag: Optional[Sequence[float] | float] = None,
     amp_max: Optional[float] = None,  # Maximum amplitude (prevents explosion)
     max_eccentricity: Optional[float] = None,
-    sharpness_range: Optional[tuple[float, float] | float] = None,
     truncate: float = 3.0,
     verbose: bool = True,
     max_abs_error: Optional[float] = None,
@@ -151,8 +149,6 @@ def prepare_fit_config(
         raise ValueError("l1_amp must be non-negative if specified")
     if l1_diag is not None and l1_diag < 0:
         raise ValueError("l1_diag must be non-negative if specified")
-    if l1_sharpness is not None and l1_sharpness < 0:
-        raise ValueError("l1_sharpness must be non-negative if specified")
     if asymmetric_penalty is not None and asymmetric_penalty < 1.0:
         raise ValueError(
             "asymmetric_penalty must be >= 1.0 (values < 1.0 would invert the penalty)"
@@ -227,23 +223,6 @@ def prepare_fit_config(
             "max_eccentricity must be >= 1.0 (ratio of longest to shortest axis)"
         )
 
-    # Validate sharpness_range
-    if sharpness_range is not None:
-        if isinstance(sharpness_range, (int, float)):
-            if sharpness_range <= 0:
-                raise ValueError("sharpness_range (fixed value) must be positive")
-        elif isinstance(sharpness_range, tuple):
-            if len(sharpness_range) != 2:
-                raise ValueError(
-                    "sharpness_range tuple must have exactly 2 elements (min, max)"
-                )
-            if sharpness_range[0] <= 0 or sharpness_range[1] <= 0:
-                raise ValueError("sharpness_range values must be positive")
-            if sharpness_range[0] >= sharpness_range[1]:
-                raise ValueError("sharpness_range[0] must be < sharpness_range[1]")
-        else:
-            raise ValueError("sharpness_range must be a float or tuple[float, float]")
-
     # Validate voxel_footprint_correction
     # Check for numeric types (int/float) but exclude bool (which is a subclass of int)
     if (
@@ -301,7 +280,6 @@ def prepare_fit_config(
         asymmetric_penalty=asymmetric_penalty,
         l1_amp=l1_amp,
         l1_diag=l1_diag,
-        l1_sharpness=l1_sharpness,
         scheduler_type=scheduler_type,
         patience=patience,
         lr_reduction_factor=lr_reduction_factor,
@@ -321,7 +299,6 @@ def prepare_fit_config(
         amp_max=amp_max,
         # Constraint parameters
         max_eccentricity=max_eccentricity,
-        sharpness_range=sharpness_range,
         # Post-processing
         cull_ratio=cull_ratio,
         voxel_footprint_correction=voxel_footprint_correction,
