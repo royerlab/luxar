@@ -57,7 +57,6 @@ template <int DIM, typename InputDType = float>
 void launch_preprocess(
     const InputDType* centers,
     const InputDType* amps,
-    const InputDType* sharpness,
     const InputDType* L_row_norms,
     int N,
     const int* shape,
@@ -77,7 +76,7 @@ void launch_preprocess(
     int num_blocks = (N + block_size - 1) / block_size;
 
     preprocess_kernel<DIM, InputDType><<<num_blocks, block_size, 0, stream>>>(
-        centers, amps, sharpness, L_row_norms, N,
+        centers, amps, L_row_norms, N,
         shape, tile_dims, tile_size, truncate, intensity_floor,
         tile_counts, global_flags, aabb_lo, aabb_hi, num_tiles, global_count
     );
@@ -118,7 +117,6 @@ void launch_rasterize_forward(
     const InputDType* centers,
     const InputDType* conic,
     const InputDType* amps,
-    const InputDType* sharpness,
     int N,
     const int* shape,
     const int* tile_dims,
@@ -155,7 +153,7 @@ void launch_rasterize_forward(
         // Grid: (z, y, x) so blockIdx.x=z, blockIdx.y=y, blockIdx.z=x
         dim3 grid(host_tile_dims[2], host_tile_dims[1], host_tile_dims[0]);
         rasterize_forward_kernel<DIM, BATCH_SIZE, InputDType><<<grid, block_size, smem_size, stream>>>(
-            centers, conic, amps, sharpness, N,
+            centers, conic, amps, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content, output
         );
@@ -163,7 +161,7 @@ void launch_rasterize_forward(
         // Grid: (y, x, 1) so blockIdx.x=y, blockIdx.y=x
         dim3 grid(host_tile_dims[1], host_tile_dims[0], 1);
         rasterize_forward_kernel<DIM, BATCH_SIZE, InputDType><<<grid, block_size, smem_size, stream>>>(
-            centers, conic, amps, sharpness, N,
+            centers, conic, amps, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content, output
         );
@@ -171,7 +169,7 @@ void launch_rasterize_forward(
         // For DIM > 3, use 1D grid
         int num_blocks = (int)num_tiles;
         rasterize_forward_kernel<DIM, BATCH_SIZE, InputDType><<<num_blocks, block_size, smem_size, stream>>>(
-            centers, conic, amps, sharpness, N,
+            centers, conic, amps, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content, output
         );
@@ -188,7 +186,6 @@ void launch_rasterize_backward(
     const InputDType* centers,
     const InputDType* conic,
     const InputDType* amps,
-    const InputDType* sharpness,
     int N,
     const int* shape,
     const int* tile_dims,
@@ -201,7 +198,6 @@ void launch_rasterize_backward(
     float* d_centers,
     float* d_conic,
     float* d_amps,
-    float* d_sharpness,
     int64_t num_tiles,
     const std::vector<int>& host_tile_dims,
     cudaStream_t stream
@@ -228,28 +224,28 @@ void launch_rasterize_backward(
         // Grid: (z, y, x) so blockIdx.x=z, blockIdx.y=y, blockIdx.z=x
         dim3 grid(host_tile_dims[2], host_tile_dims[1], host_tile_dims[0]);
         rasterize_backward_kernel<DIM, BATCH_SIZE, InputDType><<<grid, block_size, smem_size, stream>>>(
-            grad_output, centers, conic, amps, sharpness, N,
+            grad_output, centers, conic, amps, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content,
-            d_centers, d_conic, d_amps, d_sharpness
+            d_centers, d_conic, d_amps
         );
     } else if constexpr (DIM == 2) {
         // Grid: (y, x, 1) so blockIdx.x=y, blockIdx.y=x
         dim3 grid(host_tile_dims[1], host_tile_dims[0], 1);
         rasterize_backward_kernel<DIM, BATCH_SIZE, InputDType><<<grid, block_size, smem_size, stream>>>(
-            grad_output, centers, conic, amps, sharpness, N,
+            grad_output, centers, conic, amps, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content,
-            d_centers, d_conic, d_amps, d_sharpness
+            d_centers, d_conic, d_amps
         );
     } else {
         // For DIM > 3, use 1D grid
         int num_blocks = (int)num_tiles;
         rasterize_backward_kernel<DIM, BATCH_SIZE, InputDType><<<num_blocks, block_size, smem_size, stream>>>(
-            grad_output, centers, conic, amps, sharpness, N,
+            grad_output, centers, conic, amps, N,
             shape, tile_dims, tile_size, truncate, intensity_floor,
             tile_offsets, tile_counts, tile_content,
-            d_centers, d_conic, d_amps, d_sharpness
+            d_centers, d_conic, d_amps
         );
     }
 }
@@ -263,7 +259,6 @@ void launch_rasterize_global_forward(
     const InputDType* centers,
     const InputDType* conic,
     const InputDType* amps,
-    const InputDType* sharpness,
     const int* global_splat_ids,
     int n_global_splats,
     const int* shape,
@@ -279,7 +274,7 @@ void launch_rasterize_global_forward(
     int num_blocks = (int)((num_pixels + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
     rasterize_global_forward_kernel<DIM, InputDType><<<num_blocks, BLOCK_SIZE, 0, stream>>>(
-        centers, conic, amps, sharpness,
+        centers, conic, amps,
         global_splat_ids, n_global_splats,
         shape, truncate, intensity_floor, output, num_pixels
     );
@@ -295,7 +290,6 @@ void launch_rasterize_global_backward(
     const InputDType* centers,
     const InputDType* conic,
     const InputDType* amps,
-    const InputDType* sharpness,
     const int* global_splat_ids,
     int n_global_splats,
     const int* shape,
@@ -304,7 +298,6 @@ void launch_rasterize_global_backward(
     float* d_centers,
     float* d_conic,
     float* d_amps,
-    float* d_sharpness,
     int64_t num_pixels,
     cudaStream_t stream
 ) {
@@ -314,10 +307,10 @@ void launch_rasterize_global_backward(
     int num_blocks = (int)((num_pixels + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
     rasterize_global_backward_kernel<DIM, InputDType><<<num_blocks, BLOCK_SIZE, 0, stream>>>(
-        grad_output, centers, conic, amps, sharpness,
+        grad_output, centers, conic, amps,
         global_splat_ids, n_global_splats,
         shape, truncate, intensity_floor,
-        d_centers, d_conic, d_amps, d_sharpness, num_pixels
+        d_centers, d_conic, d_amps, num_pixels
     );
 }
 

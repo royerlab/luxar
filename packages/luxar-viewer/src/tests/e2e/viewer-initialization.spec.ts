@@ -1,40 +1,24 @@
 /**
- * End-to-End Data Loading Tests
+ * Viewer Initialization Tests
  *
- * **TEST SCOPE**: Full browser integration with real files
- * - Uses real browser (Playwright + Chromium)
- * - Loads actual zarr datasets from filesystem/network
- * - Real WebGL rendering
- * - Real OPFS cache
- * - Slow execution (browser startup, network, rendering)
+ * Tests the viewer startup without loading an external dataset (/?debug only).
+ * Verifies core Three.js initialization, debug interface, and renderer.
  *
- * **WHAT WE TEST**:
- * - Complete Python → TypeScript → WebGL pipeline
- * - Real zarr file loading from disk/HTTP
- * - Spatial index queries with real data
- * - Point rendering in WebGL
- * - Cache behavior with real OPFS
- * - nD navigation with real dimensional data
- *
- * **WHAT WE DON'T TEST** (see unit tests instead):
- * - Internal loader logic (tested with mocks in unit tests)
- * - Fast iteration on algorithm changes
- *
- * **Related Tests**:
- * - `unit/data/data-loading-integration.test.ts` - Loader pipeline logic (unit)
- * - `unit/data/data-monitor-integration.test.ts` - Monitor events (unit)
+ * For tests with real datasets, see:
+ * - `real-dataset-loading.spec.ts` - Real dataset loading
+ * - `all-examples-smoke-test.spec.ts` - All examples smoke test
  */
 
 import { test, expect } from '@playwright/test';
 import { waitForLuxarReady, getLuxarState } from './helpers';
 
-test.describe('Luxar Data Loading', () => {
-  test('should load points from demo dataset', async ({ page }) => {
+test.describe('Viewer Initialization', () => {
+  test('should initialize viewer without dataset', async ({ page }) => {
     // Track console for errors
     const consoleErrors: string[] = [];
     page.on('pageerror', (err) => consoleErrors.push(err.message));
 
-    // Navigate with demo dataset (assuming it exists)
+    // Navigate without any dataset (just debug mode)
     await page.goto('/?debug');
     await waitForLuxarReady(page);
 
@@ -103,36 +87,6 @@ test.describe('Luxar Data Loading', () => {
         expect(cloud.visible).toBe(true);
         expect(cloud.material).toBe('ShaderMaterial'); // Should use custom shader
       }
-    }
-  });
-
-  test('should access scene loader for cache inspection', async ({ page }) => {
-    await page.goto('/?debug');
-    await waitForLuxarReady(page);
-
-    // Use the getSceneLoader helper
-    const loaderInfo = await page.evaluate(async () => {
-      const debug = (window as any).__luxarDebug;
-      if (!debug.getSceneLoader) return null;
-
-      try {
-        const loaderManager = await debug.getSceneLoader();
-        const defaultLoader = loaderManager.getDefaultLoader();
-
-        if (!defaultLoader) return null;
-
-        return {
-          hasLoader: true,
-          hasClearCache: typeof defaultLoader.clearCaches === 'function',
-        };
-      } catch (error) {
-        return { error: String(error) };
-      }
-    });
-
-    // If we loaded a scene, loader should be available
-    if (loaderInfo) {
-      expect(loaderInfo.hasLoader).toBe(true);
     }
   });
 

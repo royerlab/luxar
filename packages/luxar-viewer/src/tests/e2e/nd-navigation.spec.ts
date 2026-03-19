@@ -211,18 +211,10 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
     await page.keyboard.press('[');
     await waitForSpatialQuery(page, 5000); // Cache hits are faster
 
-    // Relaxed: accept either cache hits present or successful navigation back
+    // Verify navigation back completed successfully
     const state = await getLuxarState(page);
     expect(state.initialized).toBe(true);
-
-    // If we have cache logs, check for hits
-    if (cacheLogs.length > 0) {
-      const cacheHits = cacheLogs.filter(
-        (log) => log.includes('Cache hit') || log.includes('cache hit')
-      );
-      // Allow for scenarios where cache may not be logged
-      expect(cacheHits.length).toBeGreaterThanOrEqual(0);
-    }
+    expect(state.totalPoints).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -241,7 +233,7 @@ test.describe('nD Navigation - Broadcasting', () => {
     // Navigate through a dimension (may be broadcast)
     await page.keyboard.press('4');
     await page.keyboard.press(']');
-    await page.waitForTimeout(2000);
+    await waitForSpatialQuery(page);
 
     const newPoints = (await getLuxarState(page)).totalPoints;
 

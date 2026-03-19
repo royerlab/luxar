@@ -200,14 +200,13 @@ pub fn extract_cholesky_submatrix(
 /// For each splat, computes:
 /// 1. Difference vector in hidden dimensions
 /// 2. Mahalanobis distance using hidden Cholesky submatrix
-/// 3. Attenuation = exp(-0.5 * mahal^sharpness)
+/// 3. Attenuation = exp(-0.5 * mahal²) (standard Gaussian)
 /// 4. Visibility = (amplitude * attenuation) >= threshold
 ///
 /// # Arguments
 /// * `positions` - Splat centers [splatCount * ndim]
 /// * `cholesky` - Packed Cholesky factors [splatCount * packedSize]
 /// * `amplitudes` - Splat amplitudes [splatCount]
-/// * `sharpness` - Per-splat sharpness values [splatCount]
 /// * `slice_position` - Current slice position [ndim]
 /// * `hidden_dims` - Indices of hidden dimensions (sorted) [numHidden]
 /// * `ndim` - Total dimensionality (max 16)
@@ -226,7 +225,6 @@ pub fn compute_gsplats_attenuation(
     positions: &[f32],
     cholesky: &[f32],
     amplitudes: &[f32],
-    sharpness: &[f32],
     slice_position: &[f32],
     hidden_dims: &[u32],
     ndim: usize,
@@ -249,7 +247,6 @@ pub fn compute_gsplats_attenuation(
     for i in 0..splat_count {
         let center_offset = i * ndim;
         let cholesky_offset = i * full_packed_size;
-        let splat_sharpness = sharpness[i];
 
         let attenuation = if num_hidden == 0 {
             // No hidden dimensions, full visibility
@@ -274,8 +271,8 @@ pub fn compute_gsplats_attenuation(
             let mahal_dist =
                 mahalanobis_distance_internal(&diff[..num_hidden], &hidden_cholesky, num_hidden);
 
-            // Attenuation = exp(-0.5 * mahal^sharpness)
-            (-0.5 * mahal_dist.powf(splat_sharpness)).exp()
+            // Standard Gaussian attenuation (sharpness=2 hardcoded)
+            (-0.5 * mahal_dist * mahal_dist).exp()
         };
 
         output_attenuation[i] = attenuation;
@@ -469,7 +466,6 @@ mod tests {
             1.0, 0.0, 1.0, 0.0, 0.0, 1.0, // Splat 1
         ];
         let amplitudes = vec![1.0, 0.5];
-        let sharpness = vec![2.0, 2.0];
         let slice_pos = vec![0.0, 0.0, 0.0];
         let hidden_dims: Vec<u32> = vec![]; // No hidden dims
 
@@ -480,7 +476,6 @@ mod tests {
             &positions,
             &cholesky,
             &amplitudes,
-            &sharpness,
             &slice_pos,
             &hidden_dims,
             3,
@@ -510,7 +505,6 @@ mod tests {
             1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, // Splat 1
         ];
         let amplitudes = vec![1.0, 1.0];
-        let sharpness = vec![2.0, 2.0];
         let slice_pos = vec![0.0, 0.0, 0.0, 0.0];
         let hidden_dims = vec![3u32]; // Dim 3 is hidden
 
@@ -521,7 +515,6 @@ mod tests {
             &positions,
             &cholesky,
             &amplitudes,
-            &sharpness,
             &slice_pos,
             &hidden_dims,
             4,
@@ -660,7 +653,6 @@ mod tests {
         let positions = vec![0.0, 0.0, 0.0, 0.0]; // at origin
         let cholesky = vec![2.0, 1.0, 3.0, 0.0, 0.0, 2.0, 0.5, 0.5, 0.0, 4.0];
         let amplitudes = vec![1.0];
-        let sharpness = vec![2.0];
         let slice_pos = vec![0.0, 0.0, 0.0, 1.0]; // slice at dim3 = 1
         let hidden_dims = vec![3u32];
 
@@ -671,7 +663,6 @@ mod tests {
             &positions,
             &cholesky,
             &amplitudes,
-            &sharpness,
             &slice_pos,
             &hidden_dims,
             4,

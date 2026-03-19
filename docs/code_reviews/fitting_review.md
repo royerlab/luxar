@@ -149,17 +149,9 @@ There is no None check before accessing `model.n_splats()` on line 111, `model()
 
 ### HIGH-06: `sharpness0` computed but never passed to any model constructor
 **File**: `initialization.py` lines 94-100
-**Status**: **STILL OPEN**
+**Status**: **RESOLVED** (sharpness parameter removed from gsplats)
 
-**Evidence**: The code still computes `sharpness0` (lines 96-102):
-```python
-sharpness0 = None
-if preprocessed_data.init_sharpness is not None:
-    sharpness0 = preprocessed_data.init_sharpness.astype(np.float32)
-    if config.verbose:
-        aprint(...)
-```
-But `sharpness0` is never passed to any model constructor (`GaussianSplatModel`, `GaussianSplatModelMetal`, `GaussianSplatModelCUDA`). The pre-initialized sharpness values from seeding are still silently discarded.
+**Note**: The sharpness parameter has been removed from Gaussian splats entirely. The standard Gaussian (s=2) is now hardcoded. This issue is no longer applicable.
 
 ---
 
@@ -288,7 +280,6 @@ All callers pass `None` (lines 161, 174, 193). The docstring now says "Deprecate
 aprint("L1 regularization (as % of base LR):")
 aprint(f"  Amplitude: {l1_amp:.4f} (10% of LR {config.lr:.3f})")
 aprint(f"  Diagonal: {l1_diag:.5f} (1% of LR {config.lr:.3f})")
-aprint(f"  Sharpness: {l1_sharpness:.5f} (1% of LR {config.lr:.3f})")
 ```
 When `config.l1_amp` was user-specified (not None), the log would misleadingly say "(10% of LR ...)" even though the value came from the user.
 
@@ -595,7 +586,7 @@ This `hasattr` check is more robust than a version string comparison, but the fa
 
 The following open issues should be prioritized:
 
-1. **HIGH-06** (initialization.py: `sharpness0` dead code) -- Pre-initialized sharpness is computed but never passed to any model constructor. Either wire through or remove the dead code.
+1. **HIGH-06** (initialization.py: `sharpness0` dead code) -- **RESOLVED**: Sharpness parameter removed from gsplats (standard Gaussian hardcoded).
 
 2. **HIGH-07** (optimization.py: double forward pass) -- Doubles computation cost per iteration. The evaluation forward pass result could be reused from the training forward pass with detached gradients.
 

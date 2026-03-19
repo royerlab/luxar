@@ -41,9 +41,8 @@ def _compute_chunk_size(n_splats: int, ndim: int) -> int:
     # amplitudes: 4 bytes
     # cholesky: (ndim * (ndim + 1) // 2) * 4 bytes
     # colors (optional): 12 bytes
-    # sharpness (optional): 4 bytes
     # Use conservative estimate
-    bytes_per_splat = ndim * 4 + 4 + (ndim * (ndim + 1) // 2) * 4 + 16
+    bytes_per_splat = ndim * 4 + 4 + (ndim * (ndim + 1) // 2) * 4 + 12
 
     chunk_elements = max(1024, TARGET_CHUNK_BYTES // bytes_per_splat)
 
@@ -59,7 +58,6 @@ def save_gsplats(
     amplitudes: np.ndarray,
     cholesky_factors: np.ndarray,
     colors: Optional[np.ndarray] = None,
-    sharpnesses: Optional[np.ndarray] = None,
     ordering: Literal["morton", "hilbert", "none"] = "hilbert",
     encoding_mode: EncodingMode = EncodingMode.AUTO,
     color_mode: Optional[Literal["sdr", "hdr"]] = None,
@@ -79,7 +77,6 @@ def save_gsplats(
         amplitudes: Splat amplitudes, shape (N,), float32
         cholesky_factors: Packed Cholesky factors, shape (N, d*(d+1)//2), float32
         colors: Optional RGB colors, shape (N, 3), float32 or uint8
-        sharpnesses: Optional sharpness values, shape (N,), float32
         ordering: Spatial ordering method ("morton", "hilbert", or "none")
         encoding_mode: Encoding mode (AUTO, PRECISION, or MEMORY)
         color_mode: Required if colors are float32 ("sdr" or "hdr")
@@ -139,11 +136,6 @@ def save_gsplats(
                 "color_mode must be specified ('sdr' or 'hdr') when colors are float32"
             )
 
-    if sharpnesses is not None and sharpnesses.shape != (n_splats,):
-        raise ValueError(
-            f"Sharpnesses shape {sharpnesses.shape} doesn't match ({n_splats},)"
-        )
-
     # Apply spatial ordering (skip for empty data)
     if ordering != "none" and n_splats > 0:
         sort_indices, ordering_metadata = sort_splats_spatial(centers, method=ordering)
@@ -154,8 +146,6 @@ def save_gsplats(
         cholesky_factors = cholesky_factors[sort_indices]
         if colors is not None:
             colors = colors[sort_indices]
-        if sharpnesses is not None:
-            sharpnesses = sharpnesses[sort_indices]
     else:
         ordering_metadata = {"ordering": "none"}
 
@@ -185,22 +175,14 @@ def save_gsplats(
     # Create splats group
     splats_group = root.create_group("splats")
 
-    # Compute amplitude and sharpness ranges for metadata
+    # Compute amplitude ranges for metadata
     if n_splats == 0:
         amplitude_min, amplitude_max = 0.0, 0.0
-        sharpness_min, sharpness_max = 2.0, 2.0
         center_min = [0.0] * ndim
         center_max = [0.0] * ndim
     else:
         amplitude_min = float(amplitudes.min())
         amplitude_max = float(amplitudes.max())
-
-        if sharpnesses is not None:
-            sharpness_min = float(sharpnesses.min())
-            sharpness_max = float(sharpnesses.max())
-        else:
-            sharpness_min = 2.0  # Default Gaussian
-            sharpness_max = 2.0
 
         # Center bounds
         center_min = centers.min(axis=0).tolist()
@@ -212,10 +194,8 @@ def save_gsplats(
         "n_splats": n_splats,
         "ndim": ndim,
         "has_colors": colors is not None,
-        "has_sharpness": sharpnesses is not None,
         "chunk_size": chunk_size,
         "amplitude_range": {"min": amplitude_min, "max": amplitude_max},
-        "sharpness_bounds": {"min": sharpness_min, "max": sharpness_max},
         "center_bounds": {"min": center_min, "max": center_max},
     }
     splats_attrs.update(ordering_metadata)
@@ -283,18 +263,6 @@ def save_gsplats(
             mode=encoding_mode,
             color_mode=color_mode,
             chunks=colors_chunks,
-        )
-
-    # Write sharpnesses (BOUNDED_SCALAR type) - optional
-    if sharpnesses is not None:
-        encoder.encode(
-            data=sharpnesses,
-            zarr_group=splats_group,
-            name="sharpnesses",
-            semantic_type=SemanticType.BOUNDED_SCALAR,
-            mode=encoding_mode,
-            bounds=(0.0, 31.0),
-            chunks=scalar_chunks,
         )
 
     # Write chunk_bounds (no encoding, single chunk)

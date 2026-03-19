@@ -28,24 +28,18 @@ template <int DIM>
 __device__ __forceinline__ void compute_pixel_gradients(
     float dL_dI,
     float intensity,
-    float dist_sq,
     float amp,
-    float s,
     const float* __restrict__ d_vec,
     const float* __restrict__ conic,
     float* __restrict__ local_d_centers,
     float* __restrict__ local_d_conic,
-    float& local_d_amp,
-    float& local_d_sharpness
+    float& local_d_amp
 ) {
     // Gradient w.r.t. amplitude
     local_d_amp += dL_dI * grad_intensity_wrt_amplitude(intensity, amp);
 
-    // Gradient w.r.t. sharpness
-    local_d_sharpness += dL_dI * grad_intensity_wrt_sharpness(intensity, dist_sq, s);
-
     // Gradient w.r.t. dist_sq
-    float grad_dist = grad_intensity_wrt_dist_sq(intensity, dist_sq, s);
+    float grad_dist = grad_intensity_wrt_dist_sq(intensity);
 
     // Pre-compute the common factor (CSE: used DIM + CONIC_SIZE times below)
     float outer = dL_dI * grad_dist;
@@ -99,18 +93,15 @@ template <>
 __device__ __forceinline__ void compute_pixel_gradients<3>(
     float dL_dI,
     float intensity,
-    float dist_sq,
     float amp,
-    float s,
     const float* __restrict__ d_vec,
     const float* __restrict__ conic,
     float* __restrict__ local_d_centers,
     float* __restrict__ local_d_conic,
-    float& local_d_amp,
-    float& local_d_sharpness
+    float& local_d_amp
 ) {
-    backward_pixel_splat_3d(dL_dI, intensity, dist_sq, amp, s, d_vec, conic,
-                           local_d_centers, local_d_conic, local_d_amp, local_d_sharpness);
+    backward_pixel_splat_3d(dL_dI, intensity, amp, d_vec, conic,
+                           local_d_centers, local_d_conic, local_d_amp);
 }
 
 /**
@@ -120,18 +111,15 @@ template <>
 __device__ __forceinline__ void compute_pixel_gradients<2>(
     float dL_dI,
     float intensity,
-    float dist_sq,
     float amp,
-    float s,
     const float* __restrict__ d_vec,
     const float* __restrict__ conic,
     float* __restrict__ local_d_centers,
     float* __restrict__ local_d_conic,
-    float& local_d_amp,
-    float& local_d_sharpness
+    float& local_d_amp
 ) {
-    backward_pixel_splat_2d(dL_dI, intensity, dist_sq, amp, s, d_vec, conic,
-                           local_d_centers, local_d_conic, local_d_amp, local_d_sharpness);
+    backward_pixel_splat_2d(dL_dI, intensity, amp, d_vec, conic,
+                           local_d_centers, local_d_conic, local_d_amp);
 }
 
 // =============================================================================
@@ -155,7 +143,6 @@ template <int DIM, typename InputDType = float>
 __global__ void preprocess_kernel(
     const InputDType* __restrict__ centers,
     const InputDType* __restrict__ amps,
-    const InputDType* __restrict__ sharpness,
     const InputDType* __restrict__ L_row_norms,
     int N,
     const int* __restrict__ shape,
@@ -181,7 +168,6 @@ __global__ void preprocess_kernel(
     }
 
     float amp = DTypeTraits<InputDType>::load(amps, splat_idx);
-    float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
 
     // Load exact L_row_norms (precomputed in Python from Cholesky factors)
     // L_row_norms[i] = sqrt(sum_j L[i,j]^2) = sqrt(Sigma[i,i])
@@ -204,7 +190,7 @@ __global__ void preprocess_kernel(
 
     // Compute AABB using exact L_row_norms
     AABB<DIM> aabb = compute_splat_aabb<DIM>(
-        mu, L_row_norms_local, s, amp, truncate, intensity_floor,
+        mu, L_row_norms_local, amp, truncate, intensity_floor,
         tile_size_arr, tile_dims_local, shape_local
     );
 
@@ -356,7 +342,6 @@ __global__ void rasterize_forward_kernel(
     const InputDType* __restrict__ centers,
     const InputDType* __restrict__ conic,
     const InputDType* __restrict__ amps,
-    const InputDType* __restrict__ sharpness,
     int N,
     const int* __restrict__ shape,
     const int* __restrict__ tile_dims,
@@ -411,7 +396,6 @@ __global__ void rasterize_forward_kernel(
     __shared__ float s_centers[BATCH_SIZE * CENTER_STRIDE];
     __shared__ float s_conic[BATCH_SIZE * CONIC_SIZE];
     __shared__ float s_amps[BATCH_SIZE];
-    __shared__ float s_sharpness[BATCH_SIZE];
     // OPTIMIZATION 1.2: Precompute effective truncation squared per splat
     __shared__ float s_truncate_sq[BATCH_SIZE];
 
@@ -516,14 +500,12 @@ __global__ void rasterize_forward_kernel(
                     }
 
                     // Load scalars with dtype conversion
-                    float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
                     s_amps[i] = DTypeTraits<InputDType>::load(amps, splat_idx);
-                    s_sharpness[i] = s;
 
                     // OPTIMIZATION 1.2: Precompute effective truncation squared
-                    // This moves the expensive powf() out of the hot inner loop
+                    // This moves the expensive computation out of the hot inner loop
                     // Includes amplitude-based tightening for better early rejection
-                    s_truncate_sq[i] = effective_truncate_sq(truncate, s, s_amps[i], intensity_floor);
+                    s_truncate_sq[i] = effective_truncate_sq(truncate, s_amps[i], intensity_floor);
                 }
                 __syncthreads();
 
@@ -544,7 +526,7 @@ __global__ void rasterize_forward_kernel(
                     if (dist_sq > s_truncate_sq[i]) continue;
 
                     // Compute intensity (only for pixels within truncation radius)
-                    float intensity = gaussian_intensity(dist_sq, s_amps[i], s_sharpness[i]);
+                    float intensity = gaussian_intensity(dist_sq, s_amps[i]);
 
                     // Skip if below threshold
                     if (intensity >= intensity_floor) {
@@ -586,10 +568,8 @@ __global__ void rasterize_forward_kernel(
                     s_conic[i * CONIC_SIZE + c] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + c);
                 }
 
-                float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
                 s_amps[i] = DTypeTraits<InputDType>::load(amps, splat_idx);
-                s_sharpness[i] = s;
-                s_truncate_sq[i] = effective_truncate_sq(truncate, s, s_amps[i], intensity_floor);
+                s_truncate_sq[i] = effective_truncate_sq(truncate, s_amps[i], intensity_floor);
             }
             __syncthreads();
 
@@ -613,7 +593,7 @@ __global__ void rasterize_forward_kernel(
                     }
                     float dist_sq = mahalanobis_distance_sq<DIM>(d, &s_conic[i * CONIC_SIZE]);
                     if (dist_sq > s_truncate_sq[i]) continue;
-                    float intensity = gaussian_intensity(dist_sq, s_amps[i], s_sharpness[i]);
+                    float intensity = gaussian_intensity(dist_sq, s_amps[i]);
                     if (intensity >= intensity_floor) {
                         pixel_intensity += intensity;
                     }
@@ -638,7 +618,6 @@ __global__ void rasterize_backward_kernel(
     const InputDType* __restrict__ centers,
     const InputDType* __restrict__ conic,
     const InputDType* __restrict__ amps,
-    const InputDType* __restrict__ sharpness,
     int N,
     const int* __restrict__ shape,
     const int* __restrict__ tile_dims,
@@ -650,8 +629,7 @@ __global__ void rasterize_backward_kernel(
     const int* __restrict__ tile_content,
     float* __restrict__ d_centers,
     float* __restrict__ d_conic,
-    float* __restrict__ d_amps,
-    float* __restrict__ d_sharpness
+    float* __restrict__ d_amps
 ) {
     // Each block handles one tile
     // OPTIMIZATION: For 2D/3D, use dim3 grid and extract tile coords directly from blockIdx
@@ -690,17 +668,15 @@ __global__ void rasterize_backward_kernel(
     __shared__ float s_centers[BATCH_SIZE * CENTER_STRIDE];
     __shared__ float s_conic[BATCH_SIZE * CONIC_SIZE];
     __shared__ float s_amps[BATCH_SIZE];
-    __shared__ float s_sharpness[BATCH_SIZE];
     __shared__ int s_splat_ids[BATCH_SIZE];
     // OPTIMIZATION 1.2: Precompute effective truncation squared per splat
     __shared__ float s_truncate_sq[BATCH_SIZE];
 
     // OPTIMIZATION 3.2: Per-tile gradient accumulators for shared memory reduction
-    // This reduces atomicAdd operations from 176 to 11 per splat per tile (3D case)
+    // This reduces atomicAdd operations per splat per tile
     __shared__ float s_d_centers_tile[BATCH_SIZE * CENTER_STRIDE];
     __shared__ float s_d_conic_tile[BATCH_SIZE * CONIC_SIZE];
     __shared__ float s_d_amps_tile[BATCH_SIZE];
-    __shared__ float s_d_sharpness_tile[BATCH_SIZE];
 
     // OPTIMIZATION 3.3: Cache grad_output in shared memory
     // This eliminates redundant global memory loads (each pixel loaded once per splat → once per tile)
@@ -794,17 +770,14 @@ __global__ void rasterize_backward_kernel(
                 }
             }
 
-            float s = DTypeTraits<InputDType>::load(sharpness, splat_idx);
             s_amps[i] = DTypeTraits<InputDType>::load(amps, splat_idx);
-            s_sharpness[i] = s;
 
             // OPTIMIZATION 1.2: Precompute effective truncation squared
             // Includes amplitude-based tightening for better early rejection
-            s_truncate_sq[i] = effective_truncate_sq(truncate, s, s_amps[i], intensity_floor);
+            s_truncate_sq[i] = effective_truncate_sq(truncate, s_amps[i], intensity_floor);
 
             // OPTIMIZATION 3.2: Initialize gradient accumulators for this batch
             s_d_amps_tile[i] = 0.0f;
-            s_d_sharpness_tile[i] = 0.0f;
             #pragma unroll
             for (int d = 0; d < CENTER_STRIDE; d++) {
                 s_d_centers_tile[i * CENTER_STRIDE + d] = 0.0f;
@@ -823,7 +796,6 @@ __global__ void rasterize_backward_kernel(
             float local_d_centers[DIM];
             float local_d_conic[CONIC_SIZE];
             float local_d_amp = 0.0f;
-            float local_d_sharpness = 0.0f;
 
             #pragma unroll
             for (int d = 0; d < DIM; d++) {
@@ -835,7 +807,6 @@ __global__ void rasterize_backward_kernel(
             }
 
             float amp = s_amps[si];
-            float s = s_sharpness[si];
             float truncate_sq = s_truncate_sq[si];
 
             // Each thread processes pixels
@@ -874,16 +845,16 @@ __global__ void rasterize_backward_kernel(
                 if (dist_sq > truncate_sq) continue;
 
                 // Compute intensity (only for pixels within truncation radius)
-                float intensity = gaussian_intensity(dist_sq, amp, s);
+                float intensity = gaussian_intensity(dist_sq, amp);
 
                 if (intensity < intensity_floor) continue;
 
                 // Use optimized gradient computation (template specialized for 2D/3D)
                 compute_pixel_gradients<DIM>(
-                    dL_dI, intensity, dist_sq, amp, s, d_vec,
+                    dL_dI, intensity, amp, d_vec,
                     &s_conic[si * CONIC_SIZE],
                     local_d_centers, local_d_conic,
-                    local_d_amp, local_d_sharpness
+                    local_d_amp
                 );
             }
 
@@ -895,12 +866,6 @@ __global__ void rasterize_backward_kernel(
             float warp_d_amp = warp_reduce_sum(local_d_amp);
             if (lane == 0) {
                 atomicAdd(&s_d_amps_tile[si], warp_d_amp);
-            }
-
-            // Reduce and write d_sharpness to shared memory
-            float warp_d_sharpness = warp_reduce_sum(local_d_sharpness);
-            if (lane == 0) {
-                atomicAdd(&s_d_sharpness_tile[si], warp_d_sharpness);
             }
 
             // Reduce and write d_centers to shared memory
@@ -923,14 +888,11 @@ __global__ void rasterize_backward_kernel(
         }
 
         // OPTIMIZATION 3.2: Cooperative write-back to global memory
-        // This reduces atomicAdds from 176 to 11 per splat per tile (3D case)
-        // 176 = 16 warps x (1 amp + 1 sharpness + 3 centers + 6 conic)
-        // 11 = 1 x (1 amp + 1 sharpness + 3 centers + 6 conic)
+        // This reduces atomicAdds per splat per tile (3D case)
         __syncthreads();
         for (int i = threadIdx.x; i < batch_size; i += blockDim.x) {
             int splat_idx = s_splat_ids[i];
             atomicAdd(&d_amps[splat_idx], s_d_amps_tile[i]);
-            atomicAdd(&d_sharpness[splat_idx], s_d_sharpness_tile[i]);
             #pragma unroll
             for (int d = 0; d < DIM; d++) {
                 atomicAdd(&d_centers[splat_idx * DIM + d], s_d_centers_tile[i * CENTER_STRIDE + d]);

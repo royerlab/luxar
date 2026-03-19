@@ -14,14 +14,12 @@ HAS_SCIPY = importlib.util.find_spec("scipy") is not None
 
 pytestmark = pytest.mark.skipif(not HAS_SCIPY, reason="SciPy not available")
 
-
 @pytest.fixture
 def image_with_edges():
     """Create a 2D image with clear edges (square)."""
     V = np.zeros((100, 100), dtype=float)
     V[30:70, 30:70] = 1.0  # Square in center
     return V
-
 
 @pytest.fixture
 def image_with_circle():
@@ -33,7 +31,6 @@ def image_with_circle():
     V = np.exp(-((dist - radius) ** 2) / (2 * 3**2))  # Ring
     return V
 
-
 @pytest.fixture
 def image_3d_with_edges():
     """Create a 3D volume with edges (cube)."""
@@ -41,12 +38,10 @@ def image_3d_with_edges():
     V[10:20, 10:20, 10:20] = 1.0  # Cube in center
     return V
 
-
 @pytest.fixture
 def uniform_image():
     """Create a uniform intensity image (no edges)."""
     return np.ones((50, 50), dtype=float) * 5.0
-
 
 def validate_gsplatdata(result: GSplatData, expected_ndim: int) -> None:
     """Validate GSplatData output format."""
@@ -58,13 +53,11 @@ def validate_gsplatdata(result: GSplatData, expected_ndim: int) -> None:
 
     N = len(result.centers)
     assert len(result.amplitudes) == N, "Amplitudes should match centers count"
-    assert len(result.sharpnesses) == N, "Sharpnesses should match centers count"
 
     tril_size = expected_ndim * (expected_ndim + 1) // 2
     assert result.cholesky_factors.shape == (N, tril_size), (
         f"Cholesky factors should be (N, {tril_size})"
     )
-
 
 class TestBasicFunctionality:
     """Test basic edge seeding functionality."""
@@ -111,7 +104,6 @@ class TestBasicFunctionality:
                 "Seeds should be near edges"
             )
 
-
 class TestParameters:
     """Test parameter handling."""
 
@@ -157,7 +149,6 @@ class TestParameters:
     # which were removed because isotropic σ=1.0 initialization proved more effective
     # in practice than anisotropic initialization from structure tensor eigenvalues.
 
-
 class TestIsotropicShapes:
     """Test isotropic Gaussian shape initialization (σ=1.0)."""
 
@@ -186,7 +177,6 @@ class TestIsotropicShapes:
     # NOTE: Removed test_structure_radius_effect
     # This tested structure_radius parameter which was removed along with
     # the structure tensor anisotropic initialization code (unused in practice).
-
 
 class TestEdgeCases:
     """Test edge cases."""
@@ -221,7 +211,6 @@ class TestEdgeCases:
         result = seed_from_edges(V, min_distance=1.0)
         validate_gsplatdata(result, 2)
 
-
 class TestOutputFormat:
     """Test output format consistency."""
 
@@ -231,13 +220,6 @@ class TestOutputFormat:
         assert result.centers.dtype == np.float32
         assert result.amplitudes.dtype == np.float32
         assert result.cholesky_factors.dtype == np.float32
-        assert result.sharpnesses.dtype == np.float32
-
-    def test_sharpness_value(self, image_with_edges) -> None:
-        """Test that sharpness is 2.0 (standard Gaussian)."""
-        result = seed_from_edges(image_with_edges)
-        if len(result.sharpnesses) > 0:
-            assert np.all(result.sharpnesses == 2.0)
 
     def test_coordinates_within_bounds(self, image_with_edges) -> None:
         """Test that coordinates are within image bounds."""
@@ -245,7 +227,6 @@ class TestOutputFormat:
         if len(result.centers) > 0:
             assert np.all(result.centers >= 0)
             assert np.all(result.centers < np.array(image_with_edges.shape))
-
 
 class TestReproducibility:
     """Test reproducibility."""
@@ -260,7 +241,6 @@ class TestReproducibility:
         np.testing.assert_array_equal(
             result1.cholesky_factors, result2.cholesky_factors
         )
-
 
 class TestCircularEdge:
     """Test with circular edge (varied orientations)."""
@@ -279,7 +259,6 @@ class TestCircularEdge:
         # assert specific values since they depend on edge orientation
         if len(result.centers) > 1:
             assert result.cholesky_factors.shape[1] == 3
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

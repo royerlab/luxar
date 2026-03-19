@@ -30,7 +30,7 @@ This document describes the implementation plan for adding Gaussian Splat (gspla
 > - Verified shader math (Jacobian, covariance projection, eigenvalues) - all correct
 >
 > **Fourth Review - Final Consistency Check:**
-> - Fixed pipeline diagram: `mahal²_hidden` → `mahal_hidden^s` (now consistent with sharpness formula)
+> - Fixed pipeline diagram: `mahal²_hidden` → standard Gaussian attenuation
 > - Fixed attribute count header: "7 locations" → "8 locations" (matches table)
 > - Verified all formulas, code examples, and cross-references are consistent
 >
@@ -44,7 +44,7 @@ This document describes the implementation plan for adding Gaussian Splat (gspla
 1. [Overview](#overview)
 2. [Mathematical Foundations](#mathematical-foundations)
 3. [Rendering Pipeline](#rendering-pipeline)
-4. [Sharpness Integral Factor](#sharpness-integral-factor)
+4. [Integral Factor](#integral-factor)
 5. [Implementation Architecture](#implementation-architecture)
 6. [Shader Design](#shader-design)
 7. [Data Loading](#data-loading)
@@ -127,7 +127,7 @@ L =  [L₁₀  L₁₁   0 ]
 GSplats have **zero thickness** in non-spatial dimensions. When viewing a 3D slice of an nD dataset:
 
 **Given:**
-- nD gsplat with center μ_nD, Cholesky L_nD, amplitude a, sharpness s
+- nD gsplat with center μ_nD, Cholesky L_nD, amplitude a
 - Display dimensions: [d₀, d₁, d₂] (the 3 spatial dims to show)
 - Slice position: h (position in non-displayed dimensions)
 
@@ -177,12 +177,12 @@ For a 3D Gaussian integrated along a viewing ray, the result is a **2D Gaussian*
 For maximum blending, we want the **peak value** along the ray (not the integral). The maximum Gaussian value occurs at the splat center, so no ray integration boost is needed.
 
 **Setup:**
-- 3D Gaussian: center μ, covariance Σ = LLᵀ, amplitude a, sharpness s
+- 3D Gaussian: center μ, covariance Σ = LLᵀ, amplitude a
 - Ray: r(t) = o + t·d (origin o, direction d)
 
 **Ray integral:**
 ```
-I = ∫_{-∞}^{∞} a · exp(-½ · ‖L⁻¹(r(t) - μ)‖^s) dt
+I = ∫_{-∞}^{∞} a · exp(-½ · ‖L⁻¹(r(t) - μ)‖²) dt
 ```
 
 **Result for s=2 (standard Gaussian):**
@@ -206,7 +206,9 @@ Where J is the Jacobian of perspective projection (see [Shader Design](#shader-d
 
 **Key insight:** The 2D covariance formula is identical to standard splatting, but the amplitude is **boosted by the Gaussian's thickness along the viewing ray**.
 
-### 5. Generalized Gaussians (s ≠ 2)
+### 5. Generalized Gaussians (Historical Reference)
+
+> **Note**: The sharpness parameter has been removed from gsplats. The standard Gaussian (s=2) is now hardcoded. This section is retained for historical reference only.
 
 For generalized Gaussian with sharpness s, the 1D integral:
 ```
@@ -222,7 +224,9 @@ a_2D = a_3D · σ_ray · c(s)
 
 ---
 
-## Sharpness Integral Factor
+## Integral Factor (Historical Reference)
+
+> **Note**: The sharpness parameter has been removed from gsplats. The standard Gaussian (s=2) is now hardcoded. For s=2, c(s) = sqrt(2*pi) ~ 2.507. This section is retained for historical reference.
 
 ### The Integral
 
@@ -268,20 +272,9 @@ c(s) = (2/s) · 2^(1/s) · Γ(1/s)
 
 **Key insight:** With 3σ truncation, c(s) stays in the narrow range [2.0, 3.6] for all practical s values, avoiding numerical blowout.
 
-### Practical Range in Luxar
+### Practical Value in Luxar
 
-From `gsplat_model.py:239`, sharpness is computed as:
-```python
-sharpness_clamped = torch.clamp(self.sharpness_offsets_raw, min=-2.5, max=2.5)
-sharpness = 2.0 * torch.exp(sharpness_clamped)
-```
-
-This gives:
-- **Minimum**: s = 2 × e^(-2.5) ≈ 0.164 (heavy tails, c ≈ 3.6 with 3σ truncation)
-- **Default**: s = 2 × e^0 = 2.0 (standard Gaussian, c ≈ 2.5)
-- **Maximum**: s = 2 × e^2.5 ≈ 24.4 (sharp edges, c ≈ 2.0)
-
-**Most common case**: s ≈ 2.0 (standard Gaussian), since the model initializes with sharpness_offset = 0.
+The standard Gaussian (s=2) is now hardcoded. For s=2, c(s) = sqrt(2*pi) ~ 2.507.
 
 ### Implementation Options
 
@@ -385,7 +378,7 @@ truncation keeps all values in a narrow range anyway.
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         nD GSplat Data                               │
-│  (μ_nD, L_nD packed, amplitude, sharpness, color)                   │
+│  (μ_nD, L_nD packed, amplitude, color)                              │
 └─────────────────────────────────────────────────────────────────────┘
                                   │
                                   ▼
@@ -466,10 +459,8 @@ export interface GSplatsMetadata {
   n_splats: number;
   ndim: number;
   has_colors: boolean;
-  has_sharpness: boolean;
   ordering: 'morton' | 'hilbert' | 'none';
   amplitude_range: { min: number; max: number };
-  sharpness_bounds: { min: number; max: number };
   center_bounds: { min: number[]; max: number[] };
   chunk_size: number;
   transform?: number[];  // 4x4 matrix
@@ -483,7 +474,6 @@ export interface LoadedGSplatsData {
   centers: Float32Array;          // (N × ndim)
   choleskyFactors: Float32Array;  // (N × k) where k = ndim*(ndim+1)/2
   amplitudes: Float32Array;       // (N,)
-  sharpnesses: Float32Array;      // (N,) or null for default s=2
   colors: Float32Array | null;    // (N × 3) RGB
   splatCount: number;
   ndim: number;
@@ -494,7 +484,6 @@ export interface ProcessedGSplatsData {
   centers3D: Float32Array;        // (M × 3)
   cholesky3D: Float32Array;       // (M × 6) packed [L00,L10,L11,L20,L21,L22]
   amplitudes3D: Float32Array;     // (M,) attenuated by hidden dim distance
-  sharpnesses: Float32Array;      // (M,)
   colors: Float32Array;           // (M × 3)
   splatCount: number;
 }
@@ -785,7 +774,6 @@ fitted.gsplats.zarr/
 │   ├── amplitudes            # (N,) float32
 │   ├── cholesky_factors      # (N, k) float32 where k = d*(d+1)/2
 │   ├── colors                # (N, 3) optional
-│   ├── sharpnesses           # (N,) optional
 │   ├── chunk_bounds          # (num_chunks, d, 2) float32
 │   └── .zattrs               # n_splats, ndim, ordering, etc. (NOTE: missing type='gsplats')
 └── fitting/                  # Optional metadata
@@ -856,8 +844,8 @@ function processGSplatsTo3D(
     const distHidden = mahalanobisDistance(centerHidden, slicePosition, choleskyHidden);
 
     // Amplitude attenuation
-    const sharpness = loaded.sharpnesses?.[i] ?? 2.0;
-    const attenuation = Math.exp(-0.5 * Math.pow(distHidden, sharpness));
+    // Standard Gaussian attenuation
+    const attenuation = Math.exp(-0.5 * distHidden * distHidden);
 
     // Skip if too attenuated
     if (attenuation < 1e-6) continue;
@@ -866,7 +854,7 @@ function processGSplatsTo3D(
     output.centers3D.set(extractDims(loaded.centers, i, displayDims), outIdx * 3);
     output.cholesky3D.set(extractCholeskySubmatrix(loaded.choleskyFactors, i, displayDims), outIdx * 6);
     output.amplitudes3D[outIdx] = loaded.amplitudes[i] * attenuation;
-    output.sharpnesses[outIdx] = sharpness;
+    // Standard Gaussian (s=2) is hardcoded, no sharpness output needed
     output.colors.set(loaded.colors?.slice(i*3, i*3+3) ?? [1,1,1], outIdx * 3);
 
     outIdx++;
@@ -911,7 +899,7 @@ This is deferred to Phase 4 (optimization) since 3D is the primary use case.
 
 **Implemented:**
 - Clamp discriminant before sqrt in eigenvalue computation
-- Clamp Mahalanobis distance before pow() for sharpness
+- Clamp Mahalanobis distance for numerical stability
 - Guard against zero Cholesky diagonal elements
 
 ---
@@ -979,7 +967,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     choleskyFactors?: zarr.Array<zarr.DataType, zarr.Readable>;
     amplitudes?: zarr.Array<zarr.DataType, zarr.Readable>;
     colors?: zarr.Array<zarr.DataType, zarr.Readable>;
-    sharpnesses?: zarr.Array<zarr.DataType, zarr.Readable>;
+    // sharpness parameter removed (standard Gaussian hardcoded)
   } = {};
 
   constructor(
@@ -1117,7 +1105,7 @@ From `array-decoder.ts`:
 - [x] Create `GSplatMaterial` with vertex/fragment shaders (`rendering/gsplat-material.ts`)
   - Volumetric ray integration with amplitude boost
   - Perspective-correct 2D covariance projection
-  - Generalized Gaussian falloff: exp(-½ · r^sharpness)
+  - Standard Gaussian falloff: exp(-½ · r²)
   - Sharpness integral factor with simple approximation: `1.97 + 1.95 * exp(-0.64 * s)`
   - Oriented quad expansion based on 2D covariance eigenvalues
 - [x] Create instanced geometry (oriented quads)
@@ -1167,8 +1155,7 @@ From `array-decoder.ts`:
 
 **Python Bugs (4 fixed):**
 8. Missing `ndim` in group.attrs (compiler.py:1025)
-9. Missing `sharpness_bounds` computation (compiler.py:998)
-10. Missing `has_colors`, `has_sharpness` in attrs (compiler.py:1026-1027)
+9. Missing `has_colors` in attrs (compiler.py:1026-1027)
 11. Missing `ordering`, `chunk_size` in attrs (compiler.py:1031, 1047)
 
 **Integration Bugs (4 fixed):**
@@ -1484,7 +1471,7 @@ Verified: ArrayDecoder already supports all encoding types used by gsplats:
 - `COORDINATE` → centers (no special handling needed, float32)
 - `CHOLESKY` → cholesky_factors (handled as generic float32)
 - `POSITIVE_SCALAR` → amplitudes (log_scalar or bounded_scalar encoding)
-- `BOUNDED_SCALAR` → sharpnesses (bounded_scalar_uint8)
+- `BOUNDED_SCALAR` → (no longer used for gsplat sharpness, removed)
 - `COLOR` → colors (rgb_uint8 or hdr encoding)
 
 No changes needed to ArrayDecoder.

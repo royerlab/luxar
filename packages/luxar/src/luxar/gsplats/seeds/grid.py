@@ -75,7 +75,7 @@ def seed_from_grid(
         - centers: Grid point positions (possibly jittered)
         - amplitudes: Intensity values at each grid point
         - cholesky_factors: Isotropic Cholesky factors (sigma * I)
-        - sharpnesses: All set to 2.0 (standard Gaussian)
+        - Standard Gaussian profile (no sharpness parameter)
 
     Notes
     -----
@@ -198,7 +198,6 @@ def seed_from_grid(
             centers=np.zeros((0, ndim), dtype=np.float32),
             amplitudes=np.zeros(0, dtype=np.float32),
             cholesky_factors=np.zeros((0, tril_size), dtype=np.float32),
-            sharpnesses=np.zeros(0, dtype=np.float32),
         )
 
     # Apply jitter
@@ -243,7 +242,6 @@ def seed_from_grid(
             centers=np.zeros((0, ndim), dtype=np.float32),
             amplitudes=np.zeros(0, dtype=np.float32),
             cholesky_factors=np.zeros((0, tril_size), dtype=np.float32),
-            sharpnesses=np.zeros(0, dtype=np.float32),
         )
 
     # Use spacing-based sigma so splats cover the image
@@ -251,12 +249,8 @@ def seed_from_grid(
     sigmas = np.full(n_final, sigma, dtype=np.float32)
     cholesky_factors = sigmas_to_cholesky_isotropic(sigmas, ndim)
 
-    # Standard Gaussian sharpness
-    sharpnesses = np.full(n_final, 2.0, dtype=np.float32)
-
     return GSplatData(
         centers=grid_coords.astype(np.float32),
         amplitudes=amplitudes.astype(np.float32),
         cholesky_factors=cholesky_factors,
-        sharpnesses=sharpnesses,
     )

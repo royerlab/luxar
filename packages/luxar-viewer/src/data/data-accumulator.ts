@@ -725,7 +725,6 @@ interface GSplatsAccumulatorTypes {
   amplitude: 'Float32Array';
   cholesky: 'Float32Array';
   color: 'Float32Array' | 'Uint8Array' | 'Uint16Array';
-  sharpness: 'Float32Array';
 }
 
 /**
@@ -743,14 +742,12 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
   private amplitudeBuffer: Float32Array;
   private choleskyBuffer: Float32Array; // CORRECT: for choleskyFactors field
   private colorBuffer: Float32Array | Uint8Array | Uint16Array; // RGB (multi-type!)
-  private sharpnessBuffer: Float32Array; // always allocated
 
   // Type tracking (like Points accumulator)
   private types: GSplatsAccumulatorTypes | null = null;
 
-  // Track whether data has colors/sharpness
+  // Track whether data has colors
   private hasColors = false;
-  private hasSharpness = false;
 
   private capacity: number;
   private ndim: number;
@@ -769,7 +766,6 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
     this.amplitudeBuffer = new Float32Array(initialCapacity);
     this.choleskyBuffer = new Float32Array(initialCapacity * this.choleskySize);
     this.colorBuffer = new Float32Array(initialCapacity * 3); // RGB
-    this.sharpnessBuffer = new Float32Array(initialCapacity);
 
     this.allocations++;
   }
@@ -790,7 +786,6 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
           : data.colors instanceof Uint16Array
             ? 'Uint16Array'
             : 'Float32Array',
-      sharpness: 'Float32Array',
     };
 
     this.types = types;
@@ -819,17 +814,14 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
     const newCenters = new Float32Array(newCapacity * this.ndim);
     const newAmplitudes = new Float32Array(newCapacity);
     const newCholesky = new Float32Array(newCapacity * this.choleskySize);
-    const newSharpness = new Float32Array(newCapacity);
 
     newCenters.set(this.centerBuffer);
     newAmplitudes.set(this.amplitudeBuffer);
     newCholesky.set(this.choleskyBuffer);
-    newSharpness.set(this.sharpnessBuffer);
 
     this.centerBuffer = newCenters;
     this.amplitudeBuffer = newAmplitudes;
     this.choleskyBuffer = newCholesky;
-    this.sharpnessBuffer = newSharpness;
 
     // Color: Type-preserving growth (like Points accumulator)
     if (this.colorBuffer instanceof Uint8Array) {
@@ -862,7 +854,6 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
       amplitudes: this.amplitudeBuffer.subarray(0, count),
       choleskyFactors: this.choleskyBuffer.subarray(0, count * this.choleskySize), // CORRECT: camelCase!
       colors: this.hasColors ? this.colorBuffer.subarray(0, count * 3) : null, // Nullable based on data presence
-      sharpness: this.hasSharpness ? this.sharpnessBuffer.subarray(0, count) : null, // Nullable based on data presence
       splatCount: count,
       ndim: this.ndim,
     };
@@ -901,10 +892,6 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
         (this.colorBuffer as Float32Array).set(data.colors, offset * 3);
       }
     }
-    if (data.sharpness) {
-      this.hasSharpness = true; // Mark as present
-      this.sharpnessBuffer.set(data.sharpness, offset);
-    }
   }
 
   getStats(): AccumulatorStats {
@@ -912,8 +899,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
       this.ndim * 4 + // centers
       4 + // amplitude
       this.choleskySize * 4 + // cholesky
-      3 * 4 + // color (RGB)
-      4; // sharpness
+      3 * 4; // color (RGB)
 
     return {
       capacity: this.capacity,
@@ -928,10 +914,8 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
     this.amplitudeBuffer = new Float32Array(0);
     this.choleskyBuffer = new Float32Array(0);
     this.colorBuffer = new Float32Array(0);
-    this.sharpnessBuffer = new Float32Array(0);
     this.capacity = 0;
     this.types = null;
     this.hasColors = false;
-    this.hasSharpness = false;
   }
 }

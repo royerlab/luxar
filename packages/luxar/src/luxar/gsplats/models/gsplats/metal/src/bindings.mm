@@ -212,7 +212,6 @@ std::vector<torch::Tensor> dispatch_forward_3d(
     torch::Tensor centers,   // (N, 3)
     torch::Tensor conic,     // (N, 6) - precomputed in PyTorch
     torch::Tensor amps,      // (N,)
-    torch::Tensor sharpness, // (N,)
     torch::Tensor Ls,        // (N, 3, 3) - needed for sigma_diag in binning
     std::vector<int64_t> shape,  // [D, H, W]
     float truncate,
@@ -247,19 +246,18 @@ std::vector<torch::Tensor> dispatch_forward_3d(
 
         setBufferWithOffset(enc, centers, 0);
         setBufferWithOffset(enc, Ls, 1);
-        setBufferWithOffset(enc, sharpness, 2);
-        setBufferWithOffset(enc, tile_counts, 3);
+        setBufferWithOffset(enc, tile_counts, 2);
 
-        [enc setBytes:&truncate length:sizeof(float) atIndex:4];
+        [enc setBytes:&truncate length:sizeof(float) atIndex:3];
 
         uint3 grid_dims_metal = {grid_x, grid_y, grid_z};
-        [enc setBytes:&grid_dims_metal length:sizeof(uint3) atIndex:5];
+        [enc setBytes:&grid_dims_metal length:sizeof(uint3) atIndex:4];
 
         uint32_t n_splats = (uint32_t)N;
-        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:6];
+        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:5];
 
         int32_t tile_size_param = (int32_t)tile_size;
-        [enc setBytes:&tile_size_param length:sizeof(int32_t) atIndex:7];
+        [enc setBytes:&tile_size_param length:sizeof(int32_t) atIndex:6];
 
         // CRITICAL FIX: Use proper threadgroup sizing
         // With gridSize=(1,1,1) and groupSize=(1,1,1), some Metal GPUs may not dispatch
@@ -302,20 +300,19 @@ std::vector<torch::Tensor> dispatch_forward_3d(
 
         setBufferWithOffset(enc, centers, 0);
         setBufferWithOffset(enc, Ls, 1);
-        setBufferWithOffset(enc, sharpness, 2);
-        setBufferWithOffset(enc, tile_offsets, 3);
-        setBufferWithOffset(enc, tile_write_heads, 4);
-        setBufferWithOffset(enc, tile_content, 5);
-        [enc setBytes:&truncate length:sizeof(float) atIndex:6];
+        setBufferWithOffset(enc, tile_offsets, 2);
+        setBufferWithOffset(enc, tile_write_heads, 3);
+        setBufferWithOffset(enc, tile_content, 4);
+        [enc setBytes:&truncate length:sizeof(float) atIndex:5];
 
         uint3 grid_dims_metal = {grid_x, grid_y, grid_z};
-        [enc setBytes:&grid_dims_metal length:sizeof(uint3) atIndex:7];
+        [enc setBytes:&grid_dims_metal length:sizeof(uint3) atIndex:6];
 
         uint32_t n_splats = (uint32_t)N;
-        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:8];
+        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:7];
 
         int32_t tile_size_param = (int32_t)tile_size;
-        [enc setBytes:&tile_size_param length:sizeof(int32_t) atIndex:9];
+        [enc setBytes:&tile_size_param length:sizeof(int32_t) atIndex:8];
 
         MTLSize gridSize = MTLSizeMake(N, 1, 1);
         MTLSize groupSize = MTLSizeMake(std::min(256, N), 1, 1);
@@ -334,20 +331,19 @@ std::vector<torch::Tensor> dispatch_forward_3d(
         setBufferWithOffset(enc, centers, 0);
         setBufferWithOffset(enc, conic, 1);
         setBufferWithOffset(enc, amps, 2);
-        setBufferWithOffset(enc, sharpness, 3);
-        setBufferWithOffset(enc, tile_offsets, 4);
-        setBufferWithOffset(enc, tile_counts, 5);
-        setBufferWithOffset(enc, tile_content, 6);
-        setBufferWithOffset(enc, output, 7);
+        setBufferWithOffset(enc, tile_offsets, 3);
+        setBufferWithOffset(enc, tile_counts, 4);
+        setBufferWithOffset(enc, tile_content, 5);
+        setBufferWithOffset(enc, output, 6);
 
         uint3 img_size = {(uint32_t)W, (uint32_t)H, (uint32_t)D};
-        [enc setBytes:&img_size length:sizeof(uint3) atIndex:8];
+        [enc setBytes:&img_size length:sizeof(uint3) atIndex:7];
 
         uint3 grid_dims_metal = {grid_x, grid_y, grid_z};
-        [enc setBytes:&grid_dims_metal length:sizeof(uint3) atIndex:9];
+        [enc setBytes:&grid_dims_metal length:sizeof(uint3) atIndex:8];
 
-        [enc setBytes:&truncate length:sizeof(float) atIndex:10];
-        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:11];
+        [enc setBytes:&truncate length:sizeof(float) atIndex:9];
+        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:10];
 
         // CRITICAL: Pad grid to multiple of tile size for full threadgroups
         int W_padded = ((W + tile_size - 1) / tile_size) * tile_size;
@@ -375,7 +371,6 @@ std::vector<torch::Tensor> dispatch_backward_3d(
     torch::Tensor centers,        // (N, 3)
     torch::Tensor conic,          // (N, 6)
     torch::Tensor amps,           // (N,)
-    torch::Tensor sharpness,      // (N,)
     torch::Tensor tile_offsets,   // From forward pass
     torch::Tensor tile_counts,    // From forward pass
     torch::Tensor tile_content,   // From forward pass
@@ -398,7 +393,6 @@ std::vector<torch::Tensor> dispatch_backward_3d(
     auto d_centers = torch::zeros({N, 3}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
     auto d_conic = torch::zeros({N, 6}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
     auto d_amps = torch::zeros({N}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
-    auto d_sharpness = torch::zeros({N}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
 
     // Ensure MPS operations complete
     torch::mps::synchronize();
@@ -414,26 +408,24 @@ std::vector<torch::Tensor> dispatch_backward_3d(
         setBufferWithOffset(enc, centers, 1);
         setBufferWithOffset(enc, conic, 2);
         setBufferWithOffset(enc, amps, 3);
-        setBufferWithOffset(enc, sharpness, 4);
-        setBufferWithOffset(enc, tile_offsets, 5);
-        setBufferWithOffset(enc, tile_counts, 6);
-        setBufferWithOffset(enc, tile_content, 7);
+        setBufferWithOffset(enc, tile_offsets, 4);
+        setBufferWithOffset(enc, tile_counts, 5);
+        setBufferWithOffset(enc, tile_content, 6);
 
         // Output gradient buffers
-        setBufferWithOffset(enc, d_centers, 8);
-        setBufferWithOffset(enc, d_conic, 9);
-        setBufferWithOffset(enc, d_amps, 10);
-        setBufferWithOffset(enc, d_sharpness, 11);
+        setBufferWithOffset(enc, d_centers, 7);
+        setBufferWithOffset(enc, d_conic, 8);
+        setBufferWithOffset(enc, d_amps, 9);
 
         // Constants
         uint3 img_size = {(uint32_t)W, (uint32_t)H, (uint32_t)D};
-        [enc setBytes:&img_size length:sizeof(uint3) atIndex:12];
+        [enc setBytes:&img_size length:sizeof(uint3) atIndex:10];
 
         uint3 grid_dims_metal = {grid_x, grid_y, grid_z};
-        [enc setBytes:&grid_dims_metal length:sizeof(uint3) atIndex:13];
+        [enc setBytes:&grid_dims_metal length:sizeof(uint3) atIndex:11];
 
-        [enc setBytes:&truncate length:sizeof(float) atIndex:14];
-        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:15];
+        [enc setBytes:&truncate length:sizeof(float) atIndex:12];
+        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:13];
 
         // CRITICAL: Pad grid to multiple of tile size for full threadgroups
         int W_padded = ((W + tile_size - 1) / tile_size) * tile_size;
@@ -448,7 +440,7 @@ std::vector<torch::Tensor> dispatch_backward_3d(
         [cmd waitUntilCompleted];
     }
 
-    return {d_centers, d_conic, d_amps, d_sharpness};
+    return {d_centers, d_conic, d_amps};
 }
 
 // ============================================================================
@@ -459,7 +451,6 @@ std::vector<torch::Tensor> dispatch_forward_nd(
     torch::Tensor centers,        // (N, dim)
     torch::Tensor Ls,             // (N, dim, dim)
     torch::Tensor amps,           // (N,)
-    torch::Tensor sharpness,      // (N,)
     std::vector<int64_t> shape,   // [s_0, s_1, ..., s_{dim-1}]
     float truncate,
     float intensity_floor
@@ -489,22 +480,21 @@ std::vector<torch::Tensor> dispatch_forward_nd(
         setBufferWithOffset(enc, centers, 0);
         setBufferWithOffset(enc, Ls, 1);
         setBufferWithOffset(enc, amps, 2);
-        setBufferWithOffset(enc, sharpness, 3);
-        setBufferWithOffset(enc, output, 4);
+        setBufferWithOffset(enc, output, 3);
 
         uint32_t n_splats = (uint32_t)N;
-        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:5];
+        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:4];
 
         uint32_t dim_u = (uint32_t)dim;
-        [enc setBytes:&dim_u length:sizeof(uint32_t) atIndex:6];
+        [enc setBytes:&dim_u length:sizeof(uint32_t) atIndex:5];
 
         // Pass shape as array
         uint32_t shape_arr[8] = {0};
         for (int i = 0; i < dim; i++) shape_arr[i] = (uint32_t)shape[i];
-        [enc setBytes:shape_arr length:sizeof(shape_arr) atIndex:7];
+        [enc setBytes:shape_arr length:sizeof(shape_arr) atIndex:6];
 
-        [enc setBytes:&truncate length:sizeof(float) atIndex:8];
-        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:9];
+        [enc setBytes:&truncate length:sizeof(float) atIndex:7];
+        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:8];
 
         MTLSize gridSize = MTLSizeMake(total_size, 1, 1);
         MTLSize groupSize = MTLSizeMake(std::min((int64_t)256, total_size), 1, 1);
@@ -526,7 +516,6 @@ std::vector<torch::Tensor> dispatch_backward_nd(
     torch::Tensor centers,        // (N, dim)
     torch::Tensor Ls,             // (N, dim, dim)
     torch::Tensor amps,           // (N,)
-    torch::Tensor sharpness,      // (N,)
     std::vector<int64_t> shape,
     float truncate,
     float intensity_floor
@@ -546,7 +535,6 @@ std::vector<torch::Tensor> dispatch_backward_nd(
     auto d_centers = torch::zeros({N, dim}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
     auto d_Ls = torch::zeros({N, dim, dim}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
     auto d_amps = torch::zeros({N}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
-    auto d_sharpness = torch::zeros({N}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
 
     torch::mps::synchronize();
 
@@ -560,27 +548,25 @@ std::vector<torch::Tensor> dispatch_backward_nd(
         setBufferWithOffset(enc, centers, 1);
         setBufferWithOffset(enc, Ls, 2);
         setBufferWithOffset(enc, amps, 3);
-        setBufferWithOffset(enc, sharpness, 4);
 
         // Output gradient buffers
-        setBufferWithOffset(enc, d_centers, 5);
-        setBufferWithOffset(enc, d_Ls, 6);
-        setBufferWithOffset(enc, d_amps, 7);
-        setBufferWithOffset(enc, d_sharpness, 8);
+        setBufferWithOffset(enc, d_centers, 4);
+        setBufferWithOffset(enc, d_Ls, 5);
+        setBufferWithOffset(enc, d_amps, 6);
 
         uint32_t n_splats = (uint32_t)N;
-        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:9];
+        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:7];
 
         uint32_t dim_u = (uint32_t)dim;
-        [enc setBytes:&dim_u length:sizeof(uint32_t) atIndex:10];
+        [enc setBytes:&dim_u length:sizeof(uint32_t) atIndex:8];
 
         // Shape and constants
         uint32_t shape_arr[8] = {0};
         for (int i = 0; i < dim; i++) shape_arr[i] = (uint32_t)shape[i];
-        [enc setBytes:shape_arr length:sizeof(shape_arr) atIndex:11];
+        [enc setBytes:shape_arr length:sizeof(shape_arr) atIndex:9];
 
-        [enc setBytes:&truncate length:sizeof(float) atIndex:12];
-        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:13];
+        [enc setBytes:&truncate length:sizeof(float) atIndex:10];
+        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:11];
 
         MTLSize gridSize = MTLSizeMake(total_size, 1, 1);
         MTLSize groupSize = MTLSizeMake(std::min((int64_t)256, total_size), 1, 1);
@@ -590,7 +576,7 @@ std::vector<torch::Tensor> dispatch_backward_nd(
         [cmd waitUntilCompleted];
     }
 
-    return {d_centers, d_Ls, d_amps, d_sharpness};
+    return {d_centers, d_Ls, d_amps};
 }
 
 // ============================================================================
@@ -607,11 +593,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           "Metal forward pass (3D tiled) - returns [output, tile_counts, tile_offsets, tile_content]");
 
     m.def("backward_3d", &dispatch_backward_3d,
-          "Metal backward pass (3D tiled with SIMD reduction) - returns [d_centers, d_conic, d_amps, d_sharpness]");
+          "Metal backward pass (3D tiled with SIMD reduction) - returns [d_centers, d_conic, d_amps]");
 
     m.def("forward_nd", &dispatch_forward_nd,
           "Metal forward pass (generic nD) - returns [output]");
 
     m.def("backward_nd", &dispatch_backward_nd,
-          "Metal backward pass (generic nD with SIMD reduction) - returns [d_centers, d_Ls, d_amps, d_sharpness]");
+          "Metal backward pass (generic nD with SIMD reduction) - returns [d_centers, d_Ls, d_amps]");
 }

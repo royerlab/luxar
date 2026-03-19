@@ -106,7 +106,7 @@ def generate_seeds(
         - centers: Peak/centroid positions
         - amplitudes: Peak intensities
         - cholesky_factors: Scale-informed Cholesky factors
-        - sharpnesses: All set to 2.0 (standard Gaussian)
+        - Standard Gaussian profile (no sharpness parameter)
 
     Examples
     --------
@@ -307,7 +307,6 @@ def _empty_gsplatdata(ndim: int) -> GSplatData:
         centers=np.zeros((0, ndim), dtype=np.float32),
         amplitudes=np.zeros(0, dtype=np.float32),
         cholesky_factors=np.zeros((0, tril_size), dtype=np.float32),
-        sharpnesses=np.zeros(0, dtype=np.float32),
     )
 
 
@@ -426,7 +425,6 @@ def _combine_gsplatdata(
     all_centers = np.vstack([r.centers for r in results])
     all_amplitudes = np.concatenate([r.amplitudes for r in results])
     all_cholesky = np.vstack([r.cholesky_factors for r in results])
-    all_sharpnesses = np.concatenate([r.sharpnesses for r in results])
 
     if len(all_centers) == 0:
         ndim = results[0].centers.shape[1]
@@ -449,5 +447,4 @@ def _combine_gsplatdata(
         centers=all_centers[kept_indices].astype(np.float32),
         amplitudes=all_amplitudes[kept_indices].astype(np.float32),
         cholesky_factors=all_cholesky[kept_indices].astype(np.float32),
-        sharpnesses=all_sharpnesses[kept_indices].astype(np.float32),
     )

@@ -1359,7 +1359,6 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const positions = generatePositions(size, ndim);
       const cholesky = generateCholeskyFactors(size, ndim);
       const amplitudes = generateRadii(size);
-      const sharpness = new Float32Array(size).fill(2.0);
       const slicePos = new Float32Array(ndim).fill(0);
       const hiddenDims = new Uint32Array([3]);
       const tsVisibility = new Uint8Array(size);
@@ -1373,7 +1372,6 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
             positions,
             cholesky,
             amplitudes,
-            sharpness,
             slicePos,
             hiddenDims,
             ndim,
@@ -1393,7 +1391,6 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
             positions,
             cholesky,
             amplitudes,
-            sharpness,
             slicePos,
             hiddenDims,
             ndim,

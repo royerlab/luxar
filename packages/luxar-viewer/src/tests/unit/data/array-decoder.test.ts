@@ -520,9 +520,9 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
         k: 1,
       };
 
-      expect(() =>
-        decoder.decodeLUTIndices(new Uint8Array([0, 2]), lutMetadata)
-      ).toThrow(/out of range/i);
+      expect(() => decoder.decodeLUTIndices(new Uint8Array([0, 2]), lutMetadata)).toThrow(
+        /out of range/i
+      );
     });
   });
 

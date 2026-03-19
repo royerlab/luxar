@@ -35,7 +35,6 @@ def create_test_config(V, **kwargs):
         asymmetric_penalty=None,
         l1_amp=None,
         l1_diag=None,
-        l1_sharpness=None,
         scheduler_type="plateau",
         patience=10,
         lr_reduction_factor=0.5,
@@ -52,18 +51,15 @@ def create_test_config(V, **kwargs):
     defaults.update(kwargs)
     return FitConfig(V=V, **defaults)
 
-
 @pytest.fixture
 def target_tensor():
     """Create a simple target tensor."""
     return torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32)
 
-
 @pytest.fixture
 def pred_tensor():
     """Create a prediction tensor."""
     return torch.tensor([[0.9, 2.2], [2.8, 4.1]], dtype=torch.float32)
-
 
 @pytest.fixture
 def basic_model():
@@ -86,7 +82,6 @@ def basic_model():
         device="cpu",
     )
 
-
 def test_mse_loss_basic(target_tensor, pred_tensor) -> None:
     """Test basic MSE loss without asymmetric penalty."""
     loss = _compute_mse_loss(pred_tensor, target_tensor, asymmetric_penalty=None)
@@ -94,7 +89,6 @@ def test_mse_loss_basic(target_tensor, pred_tensor) -> None:
     # Calculate expected MSE
     expected = torch.mean((pred_tensor - target_tensor) ** 2)
     assert torch.allclose(loss, expected, atol=1e-6)
-
 
 def test_mse_loss_asymmetric(target_tensor, pred_tensor) -> None:
     """Test MSE loss with asymmetric penalty."""
@@ -105,7 +99,6 @@ def test_mse_loss_asymmetric(target_tensor, pred_tensor) -> None:
     basic_loss = _compute_mse_loss(pred_tensor, target_tensor, None)
     assert loss >= basic_loss
 
-
 def test_l1_loss_basic(target_tensor, pred_tensor) -> None:
     """Test basic L1 loss."""
     loss = _compute_l1_loss(pred_tensor, target_tensor, asymmetric_penalty=None)
@@ -113,7 +106,6 @@ def test_l1_loss_basic(target_tensor, pred_tensor) -> None:
     # Calculate expected L1
     expected = torch.mean(torch.abs(pred_tensor - target_tensor))
     assert torch.allclose(loss, expected, atol=1e-6)
-
 
 def test_l1_loss_asymmetric(target_tensor, pred_tensor) -> None:
     """Test L1 loss with asymmetric penalty."""
@@ -124,7 +116,6 @@ def test_l1_loss_asymmetric(target_tensor, pred_tensor) -> None:
     basic_loss = _compute_l1_loss(pred_tensor, target_tensor, None)
     assert loss >= basic_loss
 
-
 def test_poisson_loss_basic(target_tensor, pred_tensor) -> None:
     """Test basic Poisson loss."""
     loss = _compute_poisson_loss(pred_tensor, target_tensor, asymmetric_penalty=None)
@@ -132,7 +123,6 @@ def test_poisson_loss_basic(target_tensor, pred_tensor) -> None:
     # Poisson loss should be positive
     assert loss > 0
     assert torch.isfinite(loss)
-
 
 def test_poisson_loss_asymmetric(target_tensor, pred_tensor) -> None:
     """Test Poisson loss with asymmetric penalty."""
@@ -142,7 +132,6 @@ def test_poisson_loss_asymmetric(target_tensor, pred_tensor) -> None:
     # Should be higher than basic Poisson
     basic_loss = _compute_poisson_loss(pred_tensor, target_tensor, None)
     assert loss >= basic_loss
-
 
 def test_l1_regularization_amplitude(basic_model) -> None:
     """Test L1 regularization on amplitudes."""
@@ -187,7 +176,6 @@ def test_l1_regularization_amplitude(basic_model) -> None:
     # Loss with regularization should be higher
     assert loss_with_reg > loss_without_reg
 
-
 def test_l1_regularization_diagonal(basic_model) -> None:
     """Test L1 regularization on diagonal elements."""
     V = np.random.rand(8, 8).astype(np.float32)
@@ -230,55 +218,6 @@ def test_l1_regularization_diagonal(basic_model) -> None:
 
     assert loss_with_reg > loss_without_reg
 
-
-def test_l1_regularization_sharpness(basic_model) -> None:
-    """Test L1 regularization on sharpness."""
-    V = np.random.rand(8, 8).astype(np.float32)
-    config = create_test_config(V, n_iters=10)
-
-    V_tensor = torch.from_numpy(V).to(config.device)
-    # L1 values are now stored in PreprocessedData (not config)
-    preprocessed_data_with_reg = PreprocessedData(
-        d=2,
-        N=3,
-        seed_centers=np.random.rand(3, 2).astype(np.float32) * 6,
-        V_normalized=V,
-        V_tensor=V_tensor,
-        image_min=0.0,
-        image_max=1.0,
-        intensity_range=1.0,
-        max_abs_error=0.01,
-        l1_sharpness=0.02,  # L1 regularization on sharpness
-    )
-
-    loss_fn = create_loss_function(config, preprocessed_data_with_reg, basic_model)
-    pred = basic_model()
-    loss_with_reg = loss_fn(pred)
-
-    # Test without regularization
-    preprocessed_data_no_reg = PreprocessedData(
-        d=2,
-        N=3,
-        seed_centers=np.random.rand(3, 2).astype(np.float32) * 6,
-        V_normalized=V,
-        V_tensor=V_tensor,
-        image_min=0.0,
-        image_max=1.0,
-        intensity_range=1.0,
-        max_abs_error=0.01,
-        l1_sharpness=None,  # No L1 regularization
-    )
-    loss_fn_no_reg = create_loss_function(config, preprocessed_data_no_reg, basic_model)
-    loss_without_reg = loss_fn_no_reg(pred)
-
-    # Loss with regularization should be >= loss without regularization
-    # (equal if sharpness parameters are zero/small)
-    assert loss_with_reg >= loss_without_reg
-    # Verify both losses are finite and positive
-    assert torch.isfinite(loss_with_reg)
-    assert torch.isfinite(loss_without_reg)
-
-
 def test_combined_regularization(basic_model) -> None:
     """Test all regularizations combined."""
     V = np.random.rand(8, 8).astype(np.float32)
@@ -298,7 +237,6 @@ def test_combined_regularization(basic_model) -> None:
         max_abs_error=0.01,
         l1_amp=0.1,
         l1_diag=0.05,
-        l1_sharpness=0.02,
     )
 
     loss_fn = create_loss_function(config, preprocessed_data_with_reg, basic_model)
@@ -322,7 +260,6 @@ def test_combined_regularization(basic_model) -> None:
 
     # Combined should be higher
     assert loss_combined > loss_no_reg
-
 
 def test_loss_function_factory_returns_callable(basic_model) -> None:
     """Test that create_loss_function returns a callable."""
@@ -350,7 +287,6 @@ def test_loss_function_factory_returns_callable(basic_model) -> None:
     pred = basic_model()
     loss = loss_fn(pred)
     assert torch.isfinite(loss)
-
 
 def test_different_loss_types(basic_model) -> None:
     """Test that different loss types produce different results."""
@@ -397,11 +333,9 @@ def test_different_loss_types(basic_model) -> None:
     losses = [loss_mse.item(), loss_l1.item(), loss_poisson.item()]
     assert len(set(losses)) >= 2  # At least 2 different values
 
-
 # =============================================================================
 # Boundary Penalty Tests
 # =============================================================================
-
 
 def _make_edge_model():
     """Create a model with splats near the edge of the volume."""
@@ -425,7 +359,6 @@ def _make_edge_model():
         device="cpu",
     )
 
-
 def _make_interior_model():
     """Create a model with splats well inside the volume."""
     shape = (32, 32)
@@ -447,7 +380,6 @@ def _make_interior_model():
         truncate=3.0,
         device="cpu",
     )
-
 
 def test_boundary_penalty_increases_loss() -> None:
     """Splats near edges with large sigma: boundary penalty increases loss."""
@@ -481,7 +413,6 @@ def test_boundary_penalty_increases_loss() -> None:
     assert loss_with > loss_without
     assert torch.isfinite(loss_with)
 
-
 def test_boundary_penalty_zero_when_inside() -> None:
     """Splats well inside the volume: boundary penalty adds ~0."""
     model = _make_interior_model()
@@ -512,7 +443,6 @@ def test_boundary_penalty_zero_when_inside() -> None:
     # Penalty should be negligible (splats well inside)
     assert abs(loss_with.item() - loss_without.item()) < 1e-4
 
-
 def test_boundary_penalty_differentiable() -> None:
     """Boundary penalty should produce non-zero gradients on center positions."""
     model = _make_edge_model()
@@ -540,7 +470,6 @@ def test_boundary_penalty_differentiable() -> None:
     # Gradients on raw_mu (center positions) should be non-zero
     assert model.raw_mu.grad is not None
     assert torch.any(model.raw_mu.grad != 0)
-
 
 def test_boundary_penalty_disabled_by_default() -> None:
     """boundary_penalty=None should not affect loss at all."""

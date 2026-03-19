@@ -6,8 +6,8 @@
  * PyTorch C++ bindings (bindings.cpp).
  *
  * Architecture:
- *   Forward:  preprocess → prefix_sum → bin → rasterize_fwd [→ global_fwd]
- *   Backward: rasterize_bwd [→ global_bwd]
+ *   Forward:  preprocess -> prefix_sum -> bin -> rasterize_fwd [-> global_fwd]
+ *   Backward: rasterize_bwd [-> global_bwd]
  *
  * FP16 support: All kernels and launch wrappers are templated on InputDType
  * (float or __half). The dispatch layer in cuda_splatting.cu uses unified
@@ -96,7 +96,6 @@ struct BinningState {
  * @param centers         (N, d) float32 - splat centers in voxel coordinates
  * @param conic           (N, d*(d+1)/2) float32 - packed upper-triangle of Sigma^-1
  * @param amps            (N,) float32 - amplitudes
- * @param sharpness       (N,) float32 - sharpness parameters
  * @param L_row_norms     (N, d) float32 - per-axis std dev from Cholesky row norms
  * @param shape           Target volume shape (d elements)
  * @param truncate        Base truncation radius
@@ -112,7 +111,6 @@ forward(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
@@ -128,15 +126,14 @@ forward(
 /**
  * Backward pass: Compute gradients (FP32 inputs).
  *
- * @return Tuple of 4 gradient tensors: d_centers, d_conic, d_amps, d_sharpness
+ * @return Tuple of 3 gradient tensors: d_centers, d_conic, d_amps
  */
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
 backward(
     const torch::Tensor& grad_output,
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const torch::Tensor& tile_offsets,
     const torch::Tensor& tile_counts,
     const torch::Tensor& tile_content,
@@ -176,7 +173,6 @@ forward_fp16(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
@@ -189,13 +185,12 @@ forward_fp16(
  * Backward pass with FP16 inputs.
  * Gradients are always FP32 for numerical stability.
  */
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
 backward_fp16(
     const torch::Tensor& grad_output,
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const torch::Tensor& tile_offsets,
     const torch::Tensor& tile_counts,
     const torch::Tensor& tile_content,
@@ -235,7 +230,6 @@ void validate_inputs(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& sharpness,
     const std::vector<int64_t>& shape,
     torch::ScalarType expected_dtype = torch::kFloat32
 );
