@@ -62,14 +62,27 @@ def create_optimizer_and_scheduler(
     d = len(model.shape)
     effective_lr = lr * calculate_gradient_dilution_factor(d)
 
-    optimizer = torch.optim.Adam(
-        model.parameters(),
+    # Use fused Adam on CUDA for single-kernel parameter updates (PyTorch >= 2.0)
+    import inspect
+
+    has_fused = "fused" in inspect.signature(torch.optim.Adam).parameters
+    use_fused = False
+    if has_fused and torch.cuda.is_available() and not amsgrad:
+        all_cuda = all(p.is_cuda for p in model.parameters())
+        if all_cuda:
+            use_fused = True
+
+    adam_kwargs: dict = dict(
         lr=effective_lr,
         betas=betas,
         eps=eps,
         weight_decay=weight_decay,
         amsgrad=amsgrad,
     )
+    if has_fused:
+        adam_kwargs["fused"] = use_fused
+
+    optimizer = torch.optim.Adam(model.parameters(), **adam_kwargs)
 
     # Create scheduler
     scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None
