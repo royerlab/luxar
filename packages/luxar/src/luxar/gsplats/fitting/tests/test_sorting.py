@@ -36,7 +36,6 @@ def _make_config_and_data(n_splats=20, shape=(32, 32)):
         asymmetric_penalty=None,
         l1_amp=None,
         l1_diag=None,
-        l1_sharpness=None,
         scheduler_type="plateau",
         patience=10,
         lr_reduction_factor=0.5,
@@ -85,7 +84,7 @@ class TestSortSplats:
         torch.testing.assert_close(output_before, output_after)
 
     def test_sort_permutes_all_parameters(self):
-        """All 5 model parameters should be reordered."""
+        """All 4 model parameters should be reordered."""
         config, preprocessed = _make_config_and_data()
         components = initialize_optimization(config, preprocessed)
         model = components.model
@@ -97,7 +96,6 @@ class TestSortSplats:
             "raw_a": model.raw_a.data.clone(),
             "raw_L_diag": model.raw_L_diag.data.clone(),
             "L_off": model.L_off.data.clone(),
-            "sharpness": model.sharpness_offsets_raw.data.clone(),
         }
 
         sort_splats_by_morton_order(model, optimizer)
@@ -119,10 +117,6 @@ class TestSortSplats:
         assert torch.allclose(
             model.L_off.data.sort(dim=0).values,
             orig_params["L_off"].sort(dim=0).values,
-        )
-        assert torch.allclose(
-            model.sharpness_offsets_raw.data.sort().values,
-            orig_params["sharpness"].sort().values,
         )
 
     def test_sort_permutes_optimizer_state(self):
@@ -222,3 +216,70 @@ class TestSortSplats:
         )
         assert result.centers.shape[0] > 0
         assert result.stats["iterations"] > 0
+
+    def test_sort_degenerate_identical_centers(self):
+        """Splats at identical positions should be a no-op (no crash)."""
+        config, preprocessed = _make_config_and_data(n_splats=10, shape=(32, 32))
+        components = initialize_optimization(config, preprocessed)
+        model = components.model
+        optimizer = components.optimizer
+
+        # Force all centers to the same position
+        with torch.no_grad():
+            model.raw_mu.data[:] = model.raw_mu.data[0]
+
+        orig_mu = model.raw_mu.data.clone()
+        sort_splats_by_morton_order(model, optimizer)
+        # All centers identical → argsort is identity → no-op
+        torch.testing.assert_close(model.raw_mu.data, orig_mu)
+
+    def test_sort_does_not_alias_permutation(self):
+        """In-place permutation must not corrupt data via aliasing."""
+        config, preprocessed = _make_config_and_data(n_splats=50, shape=(32, 32))
+        components = initialize_optimization(config, preprocessed)
+        model = components.model
+        optimizer = components.optimizer
+
+        # Capture all parameter values before sort
+        mu_before = model.raw_mu.data.clone()
+        a_before = model.raw_a.data.clone()
+        diag_before = model.raw_L_diag.data.clone()
+        off_before = model.L_off.data.clone()
+
+        sort_splats_by_morton_order(model, optimizer)
+
+        # After sorting, every original row must appear exactly once
+        # Check via sorted values (multiset equality)
+        torch.testing.assert_close(
+            model.raw_mu.data.sort(dim=0).values,
+            mu_before.sort(dim=0).values,
+        )
+        torch.testing.assert_close(
+            model.raw_a.data.sort().values,
+            a_before.sort().values,
+        )
+        torch.testing.assert_close(
+            model.raw_L_diag.data.sort(dim=0).values,
+            diag_before.sort(dim=0).values,
+        )
+        torch.testing.assert_close(
+            model.L_off.data.sort(dim=0).values,
+            off_before.sort(dim=0).values,
+        )
+
+    def test_sort_4d_high_dimension(self):
+        """Sorting should work for 4D data (bits_per_dim capped at 16)."""
+        config, preprocessed = _make_config_and_data(n_splats=20, shape=(8, 8, 8, 8))
+        components = initialize_optimization(config, preprocessed)
+        model = components.model
+        optimizer = components.optimizer
+
+        with torch.no_grad():
+            output_before = model().clone()
+
+        sort_splats_by_morton_order(model, optimizer)
+
+        with torch.no_grad():
+            output_after = model()
+
+        torch.testing.assert_close(output_before, output_after)
