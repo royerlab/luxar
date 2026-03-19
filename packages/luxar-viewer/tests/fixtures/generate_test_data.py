@@ -794,6 +794,120 @@ def generate_nd_transforms_test():
         aprint("  Expected: time=0 → 50 red, time=5 → 50 blue")
 
 
+def generate_lines_test():
+    """Test dataset with Lines geometry type.
+
+    Verifies that the TypeScript viewer can load and render Lines,
+    including vertices, widths, colors, and segment auto-generation.
+    """
+    with asection("Generating Lines Test"):
+        output = FIXTURES_DIR / "test_lines.zarr"
+
+        # Create a simple zigzag line with 10 vertices
+        num_vertices = 10
+        vertices = np.zeros((num_vertices, 3), dtype=np.float32)
+        vertices[:, 0] = np.arange(num_vertices, dtype=np.float32)  # X: 0,1,2,...
+        vertices[:, 1] = np.array(
+            [0, 1, 0, 1, 0, 1, 0, 1, 0, 1], dtype=np.float32
+        )  # Y: zigzag
+
+        # Widths per vertex
+        widths = np.linspace(0.1, 0.5, num_vertices).astype(np.float32)
+
+        # Colors per vertex (gradient red to blue)
+        colors = np.zeros((num_vertices, 3), dtype=np.float32)
+        colors[:, 0] = np.linspace(1, 0, num_vertices).astype(np.float32)
+        colors[:, 2] = np.linspace(0, 1, num_vertices).astype(np.float32)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_lines(
+                "zigzag_line",
+                vertices,
+                widths=widths,
+                colors=colors,
+            )
+
+        aprint(f"  Created {output}")
+        aprint(f"  Vertices: {vertices.shape}, Widths: {widths.shape}")
+
+
+def generate_gsplats_test():
+    """Test dataset with GSplats (Gaussian Splats) geometry type.
+
+    Verifies that the TypeScript viewer can load and render GSplats,
+    including centers, amplitudes, cholesky_factors, and colors.
+    """
+    with asection("Generating GSplats Test"):
+        output = FIXTURES_DIR / "test_gsplats.zarr"
+
+        # Create 20 Gaussian splats at grid positions
+        num_splats = 20
+        centers = np.zeros((num_splats, 3), dtype=np.float32)
+        centers[:, 0] = np.arange(num_splats, dtype=np.float32) % 5
+        centers[:, 1] = np.arange(num_splats, dtype=np.float32) // 5
+
+        # Amplitudes (brightness)
+        amplitudes = np.linspace(0.5, 2.0, num_splats).astype(np.float32)
+
+        # Cholesky factors (lower-triangular of precision matrix)
+        # For 3D: 6 elements per splat (L11, L21, L22, L31, L32, L33)
+        cholesky = np.zeros((num_splats, 6), dtype=np.float32)
+        for i in range(num_splats):
+            # Diagonal: 1/sigma (isotropic-ish with slight variation)
+            sigma = 0.3 + 0.1 * (i / num_splats)
+            cholesky[i, 0] = 1.0 / sigma  # L11
+            cholesky[i, 2] = 1.0 / sigma  # L22
+            cholesky[i, 5] = 1.0 / sigma  # L33
+
+        # Colors (rainbow gradient)
+        colors = np.zeros((num_splats, 3), dtype=np.float32)
+        colors[:, 0] = np.linspace(1, 0, num_splats).astype(np.float32)
+        colors[:, 1] = np.linspace(0, 1, num_splats).astype(np.float32)
+        colors[:, 2] = 0.5
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_gsplats(
+                "test_splats",
+                centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+            )
+
+        aprint(f"  Created {output}")
+        aprint(f"  Centers: {centers.shape}, Cholesky: {cholesky.shape}")
+
+
 def main():
     """Generate all test datasets."""
     aprint("=" * 70)
@@ -841,6 +955,12 @@ def main():
         generate_nd_transforms_test()
         aprint("")
 
+        generate_lines_test()
+        aprint("")
+
+        generate_gsplats_test()
+        aprint("")
+
         aprint("=" * 70)
         aprint("✓ ALL TEST DATASETS GENERATED")
         aprint("=" * 70)
@@ -859,6 +979,8 @@ def main():
         aprint(f"  {FIXTURES_DIR}/test_4d_scalar_lut.zarr")
         aprint(f"  {FIXTURES_DIR}/test_uint16_quantization.zarr")
         aprint(f"  {FIXTURES_DIR}/test_nd_transforms.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_lines.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_gsplats.zarr")
         aprint("")
         aprint("Run TypeScript tests with:")
         aprint("  cd packages/luxar-viewer && pnpm test array-decoder")

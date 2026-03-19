@@ -12,6 +12,7 @@ import zarr
 from luxar.encoding import EncodingMode
 from luxar.gsplats.io import save_gsplats
 
+
 def create_test_splats_3d(n_splats: int = 100) -> dict:
     """Create test 3D Gaussian splats."""
     centers = np.random.rand(n_splats, 3).astype(np.float32) * 10

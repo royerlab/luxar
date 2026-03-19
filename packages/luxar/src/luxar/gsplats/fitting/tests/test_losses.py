@@ -16,6 +16,7 @@ from luxar.gsplats.fitting.losses import (
 )
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
+
 def create_test_config(V, **kwargs):
     """Helper to create a FitConfig with all required fields."""
     defaults = dict(

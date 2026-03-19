@@ -222,3 +222,108 @@ test.describe('Performance Regression Tracking', () => {
     expect(true).toBe(true); // Info-only test
   });
 });
+
+test.describe('Performance - Memory & Rendering', () => {
+  test('should not leak memory while idle', async ({ page }) => {
+    await page.goto(`/?src=${DATASET}&debug`);
+    await waitForLuxarReady(page);
+
+    const initialMemory = await page.evaluate(() => {
+      return (performance as any).memory?.usedJSHeapSize || 0;
+    });
+
+    await page.waitForTimeout(3000);
+
+    const finalMemory = await page.evaluate(() => {
+      return (performance as any).memory?.usedJSHeapSize || 0;
+    });
+
+    // Memory shouldn't grow significantly while idle
+    const growthMB = (finalMemory - initialMemory) / 1024 / 1024;
+    expect(growthMB).toBeLessThan(50);
+  });
+
+  test('should track WebGL memory usage', async ({ page }) => {
+    await page.goto(`/?src=${DATASET}&debug`);
+    await waitForLuxarReady(page);
+
+    const webglMemory = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      return {
+        geometries: debug.renderer.info.memory.geometries,
+        textures: debug.renderer.info.memory.textures,
+      };
+    });
+
+    expect(webglMemory.geometries).toBeGreaterThan(0);
+  });
+
+  test('should render 60 frames efficiently', async ({ page }) => {
+    await page.goto(`/?src=${DATASET}&debug`);
+    await waitForLuxarReady(page);
+
+    const renderTime = await page.evaluate(async () => {
+      const debug = (window as any).__luxarDebug;
+      let frameCount = 0;
+      const targetFrames = 60;
+      const startTime = performance.now();
+
+      return new Promise<number>((resolve) => {
+        const countFrames = () => {
+          frameCount++;
+          if (frameCount < targetFrames) {
+            debug.renderOnce();
+            requestAnimationFrame(countFrames);
+          } else {
+            resolve(performance.now() - startTime);
+          }
+        };
+
+        debug.renderOnce();
+        requestAnimationFrame(countFrames);
+      });
+    });
+
+    // 60 frames should render in under 2 seconds (30+ FPS)
+    expect(renderTime).toBeLessThan(2000);
+  });
+
+  test('should not degrade FPS over time', async ({ page }) => {
+    await page.goto(`/?src=${DATASET}&debug`);
+    await waitForLuxarReady(page);
+
+    const measureFPS = async () => {
+      return page.evaluate(async () => {
+        let frames = 0;
+        const startTime = performance.now();
+
+        await new Promise<void>((resolve) => {
+          const counter = () => {
+            frames++;
+            if (performance.now() - startTime < 1000) {
+              requestAnimationFrame(counter);
+            } else {
+              resolve();
+            }
+          };
+          requestAnimationFrame(counter);
+        });
+
+        return frames;
+      });
+    };
+
+    const initialFPS = await measureFPS();
+
+    // Wait and navigate a bit
+    await page.waitForTimeout(5000);
+    await page.keyboard.press('v');
+    await page.waitForTimeout(1000);
+
+    const laterFPS = await measureFPS();
+
+    // FPS shouldn't degrade significantly (within 20%)
+    const degradation = (initialFPS - laterFPS) / initialFPS;
+    expect(degradation).toBeLessThan(0.2);
+  });
+});

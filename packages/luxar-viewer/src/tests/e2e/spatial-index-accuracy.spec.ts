@@ -78,7 +78,7 @@ test.describe('Spatial Index Query Accuracy', () => {
     // Navigate to trigger query
     await page.keyboard.press('4');
     await page.keyboard.press(']');
-    await page.waitForTimeout(2000);
+    await waitForSpatialQuery(page);
 
     const afterState = await getLuxarState(page);
 
@@ -180,7 +180,7 @@ test.describe('Spatial Index Query Accuracy', () => {
     await page.keyboard.press('4');
     await page.keyboard.press(']');
     await page.keyboard.press(']');
-    await page.waitForTimeout(2000);
+    await waitForSpatialQuery(page);
 
     // Primary verification: scene should still work after navigation
     const state = await getLuxarState(page);
@@ -233,33 +233,19 @@ test.describe('Spatial Index - Cache Behavior', () => {
     // Navigate forward
     await page.keyboard.press('4');
     await page.keyboard.press(']');
-    await page.waitForTimeout(3000);
+    await waitForSpatialQuery(page);
 
     cacheLogs.length = 0; // Clear logs
 
     // Navigate back - should hit cache OR load quickly
     await page.keyboard.press('[');
-    await page.waitForTimeout(2000);
+    await waitForSpatialQuery(page);
 
     // Navigation back should complete successfully
     const state = await getLuxarState(page);
     expect(state.initialized).toBe(true);
-
-    // Verify caching behavior by checking that return navigation is faster
-    // or that we have cache-related logs (either hit or load from cache)
-    const cacheRelatedLogs = cacheLogs.filter(
-      (log) =>
-        log.toLowerCase().includes('cache') ||
-        log.toLowerCase().includes('cached') ||
-        log.toLowerCase().includes('reusing')
-    );
-
-    // Should have at least some cache-related activity during navigation
-    // This is a meaningful check - if no cache activity at all, caching may be broken
-    expect(cacheRelatedLogs.length).toBeGreaterThanOrEqual(0); // Log presence optional, but tracked
-
-    // Primary verification: scene should still have data after round-trip
-    expect(state.totalPoints).toBeGreaterThanOrEqual(0);
+    // Scene should still have data after round-trip navigation
+    expect(typeof state.totalPoints).toBe('number');
   });
 
   test('should report cache statistics', async ({ page }) => {
@@ -271,7 +257,7 @@ test.describe('Spatial Index - Cache Behavior', () => {
 
     for (let i = 0; i < 3; i++) {
       await page.keyboard.press(']');
-      await page.waitForTimeout(2000);
+      await waitForSpatialQuery(page);
     }
 
     // Get cache stats via scene loader

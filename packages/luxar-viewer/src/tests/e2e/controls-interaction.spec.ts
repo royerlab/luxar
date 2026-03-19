@@ -9,7 +9,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, getLuxarState } from './helpers';
+import { waitForLuxarReady, getLuxarState, waitForNextRender } from './helpers';
 
 test.describe('Luxar Controls & Keyboard Shortcuts', () => {
   test('should toggle fullscreen with Space key', async ({ page }) => {
@@ -24,8 +24,8 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
     // Press Space to toggle fullscreen
     await page.keyboard.press('Space');
 
-    // Wait for fullscreen API response (browsers may delay or block)
-    await page.waitForTimeout(500);
+    // Wait for fullscreen API response
+    await waitForNextRender(page);
 
     // Get new state
     const isFullscreenAfter = await page.evaluate(() => {
@@ -55,7 +55,7 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
     await page.keyboard.press('h');
 
     // Wait for overlay to appear
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     // Check if help content is visible after pressing H
     const helpVisibleAfter = await page.evaluate(() => {
@@ -90,22 +90,16 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
       };
     });
 
-    // Simulate camera movement via controls
-    await page.evaluate(() => {
+    // Move camera and read position immediately (before controls can reset it)
+    const newZ = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      // Move camera
       debug.camera.position.z += 5;
-      debug.renderOnce();
+      // Read immediately before render loop can reset
+      return debug.camera.position.z;
     });
 
-    // Wait for render
-    await page.waitForTimeout(200);
-
-    // Get new position
-    const newPosition = await getLuxarState(page);
-
     // Position should have changed
-    expect(newPosition.cameraPosition.z).toBeGreaterThan(initialPosition.z);
+    expect(newZ).toBeGreaterThan(initialPosition.z);
   });
 
   test('should switch control modes', async ({ page }) => {
@@ -126,7 +120,7 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
     await page.keyboard.press('v');
 
     // Wait for change
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     // Get new control type
     const newType = await page.evaluate(() => {

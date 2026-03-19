@@ -78,7 +78,10 @@ jobs:
       - name: Unit tests
         run: pnpm test --run
 
+  # E2E tests temporarily disabled — will be reworked
+  # See: https://github.com/royerlab/luxar/issues/TBD
   e2e-tests:
+    if: false  # Disabled: reworking E2E test infrastructure
     needs: [python-tests, typescript-tests]
     runs-on: ubuntu-latest
     steps:

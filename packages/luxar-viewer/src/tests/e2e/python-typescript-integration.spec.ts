@@ -9,8 +9,10 @@
  *
  * This catches bugs like:
  * - Array_ref resolution failures
- * - Transform matrix transpose issues
  * - Encoding format mismatches
+ *
+ * Note: Transform/hierarchy integration is tested in transform-hierarchy.spec.ts.
+ * Note: All-dataset smoke tests are in all-examples-smoke-test.spec.ts.
  */
 
 import { test, expect } from '@playwright/test';
@@ -18,10 +20,7 @@ import { waitForLuxarReady, getLuxarState } from './helpers';
 
 const DATASETS = {
   basic: 'http://localhost:9000/datasets/examples/build_example_structured.zarr',
-  hierarchy: 'http://localhost:9000/datasets/examples/hierarchy_example.zarr',
-  transforms: 'http://localhost:9000/datasets/examples/transform_example.zarr',
   nD5D: 'http://localhost:9000/datasets/examples/dense_grid_5d_example.zarr',
-  nD4D: 'http://localhost:9000/datasets/examples/dimension_navigation_example.zarr',
 };
 
 test.describe('Python→TypeScript Integration', () => {
@@ -59,39 +58,6 @@ test.describe('Python→TypeScript Integration', () => {
     });
   });
 
-  test('should handle hierarchical transforms correctly', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.hierarchy}&debug`);
-    await waitForLuxarReady(page);
-
-    // Verify hierarchy exists and transforms are applied
-    const hierarchy = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      const objects: Array<{ name: string; depth: number; hasTransform: boolean }> = [];
-
-      function traverse(obj: any, depth: number) {
-        if (obj.type === 'Points' || obj.type === 'Group') {
-          const hasTransform =
-            obj.position.length() > 0.01 ||
-            obj.rotation.toArray().some((r: number) => Math.abs(r) > 0.01) ||
-            obj.scale.toArray().some((s: number) => Math.abs(s - 1.0) > 0.01);
-
-          objects.push({
-            name: obj.name,
-            depth,
-            hasTransform,
-          });
-        }
-        obj.children.forEach((child: any) => traverse(child, depth + 1));
-      }
-
-      traverse(debug.scene, 0);
-      return objects;
-    });
-
-    expect(hierarchy.length).toBeGreaterThan(0);
-    expect(hierarchy.some((h) => h.hasTransform)).toBe(true);
-  });
-
   test('should decode nD positions correctly', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.nD5D}&debug`);
     await waitForLuxarReady(page);
@@ -99,7 +65,7 @@ test.describe('Python→TypeScript Integration', () => {
     const state = await getLuxarState(page);
     expect(state.totalPoints).toBeGreaterThan(0);
 
-    // Verify dimensions were loaded (optional - may not be in all datasets)
+    // Verify dimensions were loaded
     const dimensionsInfo = await page.evaluate(() => {
       const scene = (window as any).__luxarDebug.scene;
       return {
@@ -108,49 +74,6 @@ test.describe('Python→TypeScript Integration', () => {
       };
     });
 
-    // 5D dataset should have dimensions, but this is implementation-dependent
-    // Just verify the scene loaded successfully
     expect(typeof dimensionsInfo.hasDimensions).toBe('boolean');
-  });
-
-  test('should handle multiple point clouds in hierarchy', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.hierarchy}&debug`);
-    await waitForLuxarReady(page);
-
-    const cloudCount = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      let count = 0;
-
-      debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points') count++;
-      });
-
-      return count;
-    });
-
-    expect(cloudCount).toBeGreaterThan(0);
-  });
-
-  test('should load all transform types correctly', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.transforms}&debug`);
-    await waitForLuxarReady(page);
-
-    const transformTypes = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      const types: string[] = [];
-
-      debug.scene.traverse((obj: any) => {
-        if (obj.name) {
-          if (obj.name.includes('Translate')) types.push('translate');
-          if (obj.name.includes('Rotate')) types.push('rotate');
-          if (obj.name.includes('Scale')) types.push('scale');
-        }
-      });
-
-      return [...new Set(types)];
-    });
-
-    // Should have at least some transform types
-    expect(transformTypes.length).toBeGreaterThan(0);
   });
 });

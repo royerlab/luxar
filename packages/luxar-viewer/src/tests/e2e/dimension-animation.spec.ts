@@ -621,20 +621,21 @@ test.describe('Dimension Animation - Animation Behavior', () => {
       const debugInfo = await page.evaluate(() => {
         const debug = (window as any).__luxarDebug;
         const mgr = debug?.inputHandler?.animationManager;
-        const state = mgr?.getState(3);
+        const rawState = mgr?.getState(3);
         const sceneDims = debug?.sceneDimsManager;
         const dims = sceneDims?.getDims();
+        const stateInfo = rawState
+          ? {
+              isPlaying: rawState.isPlaying,
+              loopMode: rawState.loopMode,
+              direction: rawState.direction,
+              targetFPS: rawState.targetFPS,
+            }
+          : null;
         return {
           hasManager: !!mgr,
           isAnimating: mgr?.isAnimating(3),
-          state: state
-            ? {
-              isPlaying: state.isPlaying,
-              loopMode: state.loopMode,
-              direction: state.direction,
-              targetFPS: state.targetFPS,
-            }
-            : null,
+          state: stateInfo,
           currentValue: dims?.currentStep?.[3],
           ranges: sceneDims?.getDimensionRanges(),
         };
