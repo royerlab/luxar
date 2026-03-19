@@ -69,7 +69,6 @@ def sort_splats_by_morton_order(
         model.raw_L_diag,
         model.L_off,
         model.raw_a,
-        model.sharpness_offsets_raw,
     ]
     for param in params:
         param.data[:] = param.data[perm]
