@@ -55,6 +55,8 @@ def prepare_fit_config(
     clip_to_bounds: bool = False,
     voxel_size: Optional[Sequence[float] | float] = None,
     output_space: str = "real",
+    sort_splats_enabled: bool = True,
+    sort_splats_interval: int = 1000,
     **seed_kwargs: Any,
 ) -> FitConfig:
     """
@@ -255,6 +257,10 @@ def prepare_fit_config(
     if output_space not in ("real", "voxel"):
         raise ValueError("output_space must be 'real' or 'voxel'")
 
+    # Validate sort_splats_interval
+    if sort_splats_interval < 1:
+        raise ValueError("sort_splats_interval must be >= 1")
+
     return FitConfig(
         V=V,
         seeds=seeds,
@@ -304,4 +310,7 @@ def prepare_fit_config(
         output_space=output_space,
         # Volume downscaling
         downscale=downscale_normalized,
+        # Z-order sorting
+        sort_splats_enabled=sort_splats_enabled,
+        sort_splats_interval=sort_splats_interval,
     )
