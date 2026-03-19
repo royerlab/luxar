@@ -50,7 +50,6 @@ class TestFitConfig:
             asymmetric_penalty=10.0,
             l1_amp=0.001,
             l1_diag=0.0001,
-            l1_sharpness=0.0,
             scheduler_type="plateau",
             patience=10,
             lr_reduction_factor=0.5,
@@ -106,13 +105,11 @@ class TestOptimizationResults:
         centers = torch.rand(5, 2)
         Ls = torch.rand(5, 2, 2)
         amps = torch.rand(5)
-        sharpness = torch.full((5,), 2.0)  # Standard Gaussian sharpness
 
         results = OptimizationResults(
             centers=centers,
             Ls=Ls,
             amps=amps,
-            sharpness=sharpness,
             converged_early=True,
             early_stopped=False,
             actual_iters=50,
@@ -127,7 +124,6 @@ class TestOptimizationResults:
 
         assert results.centers.shape == (5, 2)
         assert results.amps.shape == (5,)
-        assert results.sharpness.shape == (5,)
         assert results.converged_early
         assert results.actual_iters == 50
 

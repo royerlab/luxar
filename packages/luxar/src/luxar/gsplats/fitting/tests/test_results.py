@@ -27,7 +27,6 @@ def basic_optimization_results():
     Ls = torch.rand(N, d, d, dtype=torch.float32)
     # Amplitudes well above default max_abs_error (0.01) to avoid culling in basic tests
     amps = torch.rand(N, dtype=torch.float32) * 0.5 + 0.05
-    sharpness = torch.rand(N, dtype=torch.float32) * 2.0 + 1.0
 
     start_time = time.time()
     end_time = start_time + 10.0
@@ -36,7 +35,6 @@ def basic_optimization_results():
         centers=centers,
         Ls=Ls,
         amps=amps,
-        sharpness=sharpness,
         converged_early=True,
         early_stopped=False,
         actual_iters=50,
@@ -48,7 +46,6 @@ def basic_optimization_results():
         start_time=start_time,
         end_time=end_time,
     )
-
 
 @pytest.fixture
 def basic_config():
@@ -71,7 +68,6 @@ def basic_config():
         asymmetric_penalty=None,
         l1_amp=None,
         l1_diag=None,
-        l1_sharpness=None,
         scheduler_type="plateau",
         patience=10,
         lr_reduction_factor=0.5,
@@ -85,7 +81,6 @@ def basic_config():
         device=torch.device("cpu"),
         verbose=False,
     )
-
 
 @pytest.fixture
 def basic_preprocessed_data():
@@ -102,7 +97,6 @@ def basic_preprocessed_data():
         max_abs_error=0.01,
     )
 
-
 def test_finalize_results_basic(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ) -> None:
@@ -118,10 +112,8 @@ def test_finalize_results_basic(
 
     assert result.centers.shape == (N, d)
     assert result.cholesky_factors.shape == (N, tril_size)
-    assert result.sharpnesses.shape == (N,)
     assert result.amplitudes.shape == (N,)
     assert isinstance(result.stats, dict)
-
 
 def test_amplitude_rescaling(
     basic_optimization_results, basic_config, basic_preprocessed_data
@@ -136,7 +128,6 @@ def test_amplitude_rescaling(
     expected_amps = original_amps * basic_preprocessed_data.intensity_range
 
     assert np.allclose(result.amplitudes, expected_amps, rtol=1e-5)
-
 
 def test_parameter_packing(
     basic_optimization_results, basic_config, basic_preprocessed_data
@@ -158,31 +149,6 @@ def test_parameter_packing(
     assert result.cholesky_factors.shape == (N, tril_size)
 
     # Sharpness should match exactly
-    expected_sharpness = basic_optimization_results.sharpness.cpu().numpy()
-    assert np.allclose(result.sharpnesses, expected_sharpness, rtol=1e-5)
-
-
-def test_sharpness_statistics(
-    basic_optimization_results, basic_config, basic_preprocessed_data
-) -> None:
-    """Test that sharpness statistics are computed correctly."""
-    result = finalize_results(
-        basic_optimization_results, basic_config, basic_preprocessed_data
-    )
-
-    # Check that all sharpness stats are present
-    assert "sharpness_min" in result.stats
-    assert "sharpness_max" in result.stats
-    assert "sharpness_mean" in result.stats
-    assert "sharpness_std" in result.stats
-    assert "sharpness_median" in result.stats
-
-    # Verify they are reasonable values
-    sharpness_np = basic_optimization_results.sharpness.cpu().numpy()
-    assert abs(result.stats["sharpness_min"] - float(np.min(sharpness_np))) < 1e-5
-    assert abs(result.stats["sharpness_max"] - float(np.max(sharpness_np))) < 1e-5
-    assert abs(result.stats["sharpness_mean"] - float(np.mean(sharpness_np))) < 1e-5
-
 
 def test_stats_dictionary_structure(
     basic_optimization_results, basic_config, basic_preprocessed_data
@@ -205,11 +171,6 @@ def test_stats_dictionary_structure(
         "n_splats",
         "n_splats_before_culling",
         "n_culled",
-        "sharpness_min",
-        "sharpness_max",
-        "sharpness_mean",
-        "sharpness_std",
-        "sharpness_median",
     ]
 
     for field in required_fields:
@@ -221,7 +182,6 @@ def test_stats_dictionary_structure(
     assert result.stats["best_iteration"] == basic_optimization_results.best_iteration
     assert result.stats["final_loss"] == basic_optimization_results.best_loss
     assert result.stats["n_splats"] == len(result.amplitudes)
-
 
 def test_convergence_flag(
     basic_optimization_results, basic_config, basic_preprocessed_data
@@ -244,7 +204,6 @@ def test_convergence_flag(
     )
 
     assert result.stats["converged"] is False
-
 
 def test_movie_frames_included(
     basic_optimization_results, basic_config, basic_preprocessed_data
@@ -269,7 +228,6 @@ def test_movie_frames_included(
     assert result.stats["movie_frames"] == movie_frames
     assert result.stats["movie_shape"] == basic_config.V.shape
 
-
 def test_movie_frames_excluded(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ) -> None:
@@ -283,7 +241,6 @@ def test_movie_frames_excluded(
 
     assert result.stats["movie_frames"] is None
 
-
 def test_data_types(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ) -> None:
@@ -294,9 +251,7 @@ def test_data_types(
 
     assert result.centers.dtype == np.float32
     assert result.cholesky_factors.dtype == np.float32
-    assert result.sharpnesses.dtype == np.float32
     assert result.amplitudes.dtype == np.float32
-
 
 def test_3d_data(basic_config, basic_preprocessed_data) -> None:
     """Test finalization works for 3D data."""
@@ -307,13 +262,11 @@ def test_3d_data(basic_config, basic_preprocessed_data) -> None:
     Ls = torch.rand(N, d, d, dtype=torch.float32)
     # Amplitudes well above max_abs_error to avoid culling in this test
     amps = torch.rand(N, dtype=torch.float32) + 0.05
-    sharpness = torch.rand(N, dtype=torch.float32) * 2.0 + 1.0
 
     optimization_results = OptimizationResults(
         centers=centers,
         Ls=Ls,
         amps=amps,
-        sharpness=sharpness,
         converged_early=True,
         early_stopped=False,
         actual_iters=30,
@@ -339,9 +292,7 @@ def test_3d_data(basic_config, basic_preprocessed_data) -> None:
 
     assert result.centers.shape == (N, d)
     assert result.cholesky_factors.shape == (N, tril_size)
-    assert result.sharpnesses.shape == (N,)
     assert result.amplitudes.shape == (N,)
-
 
 def test_positive_amplitudes(
     basic_optimization_results, basic_config, basic_preprocessed_data
@@ -353,7 +304,6 @@ def test_positive_amplitudes(
 
     # All amplitudes should be positive
     assert np.all(result.amplitudes >= 0)
-
 
 def test_time_seconds_calculation(
     basic_optimization_results, basic_config, basic_preprocessed_data
@@ -369,11 +319,9 @@ def test_time_seconds_calculation(
 
     assert abs(result.stats["time_seconds"] - expected_time) < 1e-6
 
-
 # =============================================================================
 # Voxel Footprint Correction Tests
 # =============================================================================
-
 
 class TestVoxelFootprintCorrection:
     """Tests for voxel footprint correction feature."""
@@ -514,13 +462,11 @@ class TestVoxelFootprintCorrection:
         Ls = torch.tril(Ls)
         Ls[:, range(d), range(d)] = torch.abs(Ls[:, range(d), range(d)]) + 0.5
         amps = torch.rand(N, dtype=torch.float32) + 0.05
-        sharpness = torch.rand(N, dtype=torch.float32) * 2.0 + 1.0
 
         optimization_results = OptimizationResults(
             centers=centers,
             Ls=Ls,
             amps=amps,
-            sharpness=sharpness,
             converged_early=True,
             early_stopped=False,
             actual_iters=30,
@@ -571,13 +517,11 @@ class TestVoxelFootprintCorrection:
         Ls = torch.tril(Ls)
         Ls[:, range(d), range(d)] = torch.abs(Ls[:, range(d), range(d)]) + 0.5
         amps = torch.rand(N, dtype=torch.float32) + 0.05
-        sharpness = torch.rand(N, dtype=torch.float32) * 2.0 + 1.0
 
         optimization_results = OptimizationResults(
             centers=centers,
             Ls=Ls,
             amps=amps,
-            sharpness=sharpness,
             converged_early=True,
             early_stopped=False,
             actual_iters=30,
@@ -633,7 +577,6 @@ class TestVoxelFootprintCorrection:
         for i in range(len(L_new)):
             eigenvalues = np.linalg.eigvalsh(Sigma_new[i])
             assert np.all(eigenvalues > 0), f"Non-positive eigenvalue in covariance {i}"
-
 
 class TestVoxelFootprintCorrectionValidation:
     """Tests for voxel footprint correction validation."""
@@ -753,11 +696,9 @@ class TestVoxelFootprintCorrectionValidation:
                 voxel_footprint_correction=-1,  # negative integer
             )
 
-
 # =============================================================================
 # Post-Fit Culling Tests
 # =============================================================================
-
 
 class TestPostFitCulling:
     """Tests for noise-floor culling in finalize_results."""
@@ -768,12 +709,10 @@ class TestPostFitCulling:
         amps = torch.tensor(amps_list, dtype=torch.float32)
         centers = torch.rand(N, d, dtype=torch.float32)
         Ls = torch.eye(d, dtype=torch.float32).unsqueeze(0).expand(N, -1, -1).clone()
-        sharpness = torch.full((N,), 2.0, dtype=torch.float32)
         return OptimizationResults(
             centers=centers,
             Ls=Ls,
             amps=amps,
-            sharpness=sharpness,
             converged_early=True,
             early_stopped=False,
             actual_iters=100,
@@ -806,7 +745,6 @@ class TestPostFitCulling:
             asymmetric_penalty=None,
             l1_amp=None,
             l1_diag=None,
-            l1_sharpness=None,
             scheduler_type="plateau",
             patience=10,
             lr_reduction_factor=0.5,
@@ -941,11 +879,9 @@ class TestPostFitCulling:
         assert len(result.amplitudes) == 3
         assert result.stats["n_culled"] == 0
 
-
 # =============================================================================
 # Clip-to-Bounds Tests
 # =============================================================================
-
 
 class TestClipToBounds:
     """Tests for boundary clipping in post-processing."""
@@ -1082,13 +1018,11 @@ class TestClipToBounds:
         Ls[0, 0, 0] = 5.0
         Ls[0, 1, 1] = 1.0
         amps = torch.tensor([0.5], dtype=torch.float32)
-        sharpness = torch.tensor([2.0], dtype=torch.float32)
 
         opt = OptimizationResults(
             centers=centers,
             Ls=Ls,
             amps=amps,
-            sharpness=sharpness,
             converged_early=True,
             early_stopped=False,
             actual_iters=50,
@@ -1119,7 +1053,6 @@ class TestClipToBounds:
             asymmetric_penalty=None,
             l1_amp=None,
             l1_diag=None,
-            l1_sharpness=None,
             scheduler_type="plateau",
             patience=10,
             lr_reduction_factor=0.5,
@@ -1155,11 +1088,9 @@ class TestClipToBounds:
         # The result should be valid (finite values)
         assert np.all(np.isfinite(result.cholesky_factors))
 
-
 # =============================================================================
 # Voxel Size Output Conversion Tests
 # =============================================================================
-
 
 class TestVoxelSizeOutputConversion:
     """Tests for voxel_size + output_space coordinate conversion in finalize_results."""
@@ -1187,7 +1118,6 @@ class TestVoxelSizeOutputConversion:
             asymmetric_penalty=None,
             l1_amp=None,
             l1_diag=None,
-            l1_sharpness=None,
             scheduler_type="plateau",
             patience=10,
             lr_reduction_factor=0.5,
@@ -1210,14 +1140,12 @@ class TestVoxelSizeOutputConversion:
         for i in range(d):
             Ls[:, i, i] = 1.0 + 0.1 * i  # slightly different per axis
         amps = torch.tensor([0.5, 0.6, 0.7], dtype=torch.float32)
-        sharpness = torch.tensor([2.0, 2.0, 2.0], dtype=torch.float32)
 
         start_time = time.time()
         opt = OptimizationResults(
             centers=centers,
             Ls=Ls,
             amps=amps,
-            sharpness=sharpness,
             converged_early=True,
             early_stopped=False,
             actual_iters=50,
@@ -1341,11 +1269,9 @@ class TestVoxelSizeOutputConversion:
             result_real.centers, result_vox.centers * vs, rtol=1e-5
         )
 
-
 # ═══════════════════════════════════════════════════════════════════════
 # Post-fit quality metrics (PSNR, SSIM, MSE)
 # ═══════════════════════════════════════════════════════════════════════
-
 
 def test_postfit_metrics_present(
     basic_optimization_results, basic_config, basic_preprocessed_data
@@ -1360,7 +1286,6 @@ def test_postfit_metrics_present(
     # SSIM ranges from -1 to 1 (can be negative for anti-correlated signals)
     assert -1.0 <= result.stats["ssim"] <= 1.0
     assert result.stats["mse"] >= 0.0
-
 
 def test_postfit_metrics_skipped_for_physical_coords() -> None:
     """Post-fit metrics should be skipped when output is in physical coordinates."""
@@ -1382,7 +1307,6 @@ def test_postfit_metrics_skipped_for_physical_coords() -> None:
         asymmetric_penalty=None,
         l1_amp=None,
         l1_diag=None,
-        l1_sharpness=None,
         scheduler_type="plateau",
         patience=10,
         lr_reduction_factor=0.5,
@@ -1403,7 +1327,6 @@ def test_postfit_metrics_skipped_for_physical_coords() -> None:
         centers=torch.rand(5, 2),
         Ls=torch.eye(2).unsqueeze(0).expand(5, -1, -1),
         amps=torch.rand(5),
-        sharpness=torch.full((5,), 2.0),
         converged_early=False,
         early_stopped=False,
         actual_iters=10,

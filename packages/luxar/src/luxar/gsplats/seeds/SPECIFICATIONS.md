@@ -132,7 +132,6 @@ def generate_seeds(
 - `centers`: Peak/centroid positions (N, ndim)
 - `amplitudes`: Peak intensities (N,), scaled by `SEED_AMPLITUDE_SCALE` (0.9)
 - `cholesky_factors`: Scale-informed packed Cholesky factors (N, tril_size)
-- `sharpnesses`: All set to 2.0 (standard Gaussian)
 
 ### Algorithm: Auto Mode
 
@@ -204,7 +203,6 @@ def seed_from_edges(
 4. **Poisson disk sampling**: `_poisson_disk_sample_weighted()` selects `n_seeds` points weighted by edge response, enforcing `min_distance` via KD-tree
 5. **Isotropic initialization**: All seeds get sigma=1.0 via `sigmas_to_cholesky_isotropic()`
 6. **Amplitude sampling**: Interpolate from V at seed positions via `_sample_amplitudes()`, scaled by `SEED_AMPLITUDE_SCALE` (0.9)
-7. **Sharpness**: All set to 2.0 (standard Gaussian)
 
 ### Auto-estimation of n_seeds
 
@@ -297,7 +295,6 @@ def seed_from_grid(
 5. **Sample amplitudes**: Via `_sample_amplitudes()` from `edges.py`, scaled by `SEED_AMPLITUDE_SCALE` (0.9)
 6. **Intensity filtering**: Apply `exclude_below` or `exclude_below_percentile` mask
 7. **Cholesky factors**: `sigmas_to_cholesky_isotropic(sigma, ndim)` for all seeds
-8. **Sharpness**: All set to 2.0
 
 ---
 
@@ -347,7 +344,6 @@ def seed_from_decomposition(
 4. **Deduplicate**: `_dedupe_with_scales_and_energies()` - energy-based priority, greedy spatial deduplication
 5. **Amplitudes**: Sample from original image V at (rounded) seed positions, scaled by `SEED_AMPLITUDE_SCALE`
 6. **Cholesky factors**: `sigmas_to_cholesky_isotropic(scale_factors, ndim)` - sigma equals detection scale
-7. **Sharpness**: All set to 2.0
 
 ### Internal Functions
 
@@ -534,7 +530,6 @@ All seeding methods return `GSplatData` (from `luxar.gsplats.gsplat_data`):
 | `centers` | (N, ndim) | float32 | Seed positions |
 | `amplitudes` | (N,) | float32 | Intensity values (scaled by 0.9) |
 | `cholesky_factors` | (N, tril_size) | float32 | Packed lower-triangular Cholesky factors |
-| `sharpnesses` | (N,) | float32 | All 2.0 (standard Gaussian) |
 
 Where `tril_size = ndim * (ndim + 1) // 2`.
 

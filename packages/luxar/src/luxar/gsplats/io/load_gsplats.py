@@ -7,7 +7,6 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
-import numpy as np
 import zarr
 
 from luxar.encoding import ArrayDecoder
@@ -150,12 +149,7 @@ def load_gsplats(
         else:
             colors = None
 
-        if "sharpnesses" in splats_group:
-            sharpnesses = decoder.decode(splats_group["sharpnesses"], root)
-        else:
-            # Default to standard Gaussian (s=2.0)
-            n_splats = centers.shape[0]
-            sharpnesses = np.full(n_splats, 2.0, dtype=np.float32)
+        # Note: old files may contain a "sharpnesses" array — we simply ignore it.
 
         # Build stats dictionary
         stats: Dict[str, Any] = {}
@@ -190,7 +184,6 @@ def load_gsplats(
             centers=centers,
             amplitudes=amplitudes,
             cholesky_factors=cholesky_factors,
-            sharpnesses=sharpnesses,
             colors=colors,
             stats=stats,
         )

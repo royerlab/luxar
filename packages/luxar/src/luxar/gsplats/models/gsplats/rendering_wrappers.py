@@ -5,7 +5,7 @@ NumPy and PyTorch wrapper functions for Gaussian rendering.
 This module provides user-friendly wrappers around the core rendering engine:
 - render_gaussians_numpy: NumPy interface accepting GSplatData
 - render_gaussians_pytorch: PyTorch interface accepting GSplatData
-- render_gaussians_batched: Batched rendering with required sharpness
+- render_gaussians_batched: Batched rendering
 
 All wrappers work directly with GSplatData for clean, type-safe rendering.
 """
@@ -39,7 +39,7 @@ def render_gaussians_numpy(
         Output image/volume shape.
     result : GSplatData
         Fitted Gaussian splat result containing centers, amplitudes,
-        cholesky_factors, and sharpnesses.
+        and cholesky_factors.
     truncate : float, default=3.0
         Truncation radius in standard deviations.
     chunk_size : int, optional
@@ -57,7 +57,6 @@ def render_gaussians_numpy(
     # Extract components from result
     centers: np.ndarray = result.centers.astype(np.float32)
     packed_L: np.ndarray = result.cholesky_factors.astype(np.float32)
-    sharpness: np.ndarray = result.sharpnesses.astype(np.float32)
     amps: np.ndarray = result.amplitudes.astype(np.float32)
 
     # Unpack Cholesky factors
@@ -68,7 +67,6 @@ def render_gaussians_numpy(
     centers_torch = torch.tensor(centers, dtype=torch.float32, device="cpu")
     ls_torch = torch.tensor(ls, dtype=torch.float32, device="cpu")
     amps_torch = torch.tensor(amps, dtype=torch.float32, device="cpu")
-    sharpness_torch = torch.tensor(sharpness, dtype=torch.float32, device="cpu")
 
     # Render using the PyTorch function
     with torch.no_grad():
@@ -77,7 +75,6 @@ def render_gaussians_numpy(
             centers_torch,
             ls_torch,
             amps_torch,
-            sharpness_torch,
             truncate=truncate,
             chunk_size=chunk_size,
         )
@@ -103,7 +100,7 @@ def render_gaussians_pytorch(
         Output image/volume shape.
     result : GSplatData
         Fitted Gaussian splat result containing centers, amplitudes,
-        cholesky_factors, and sharpnesses.
+        and cholesky_factors.
     truncate : float, default=3.0
         Truncation radius in standard deviations.
     device : str, default="cpu"
@@ -123,7 +120,6 @@ def render_gaussians_pytorch(
     # Extract components from result
     centers: np.ndarray = result.centers.astype(np.float32)
     packed_L: np.ndarray = result.cholesky_factors.astype(np.float32)
-    sharpness: np.ndarray = result.sharpnesses.astype(np.float32)
     amps: np.ndarray = result.amplitudes.astype(np.float32)
 
     # Unpack Cholesky factors
@@ -134,7 +130,6 @@ def render_gaussians_pytorch(
     centers_torch = torch.tensor(centers, dtype=torch.float32, device=device)
     ls_torch = torch.tensor(ls, dtype=torch.float32, device=device)
     amps_torch = torch.tensor(amps, dtype=torch.float32, device=device)
-    sharpness_torch = torch.tensor(sharpness, dtype=torch.float32, device=device)
 
     # Render using the PyTorch function
     rendered = render_gaussians(
@@ -142,7 +137,6 @@ def render_gaussians_pytorch(
         centers_torch,
         ls_torch,
         amps_torch,
-        sharpness_torch,
         truncate=truncate,
         chunk_size=chunk_size,
     )
@@ -155,7 +149,6 @@ def render_gaussians_batched(
     centers: torch.Tensor,
     Ls: torch.Tensor,
     amps: torch.Tensor,
-    sharpness: torch.Tensor,
     truncate: float = 3.0,
     intensity_floor: float = 1e-5,
     chunk_size: Optional[int] = None,
@@ -173,8 +166,6 @@ def render_gaussians_batched(
         Cholesky factors.
     amps : torch.Tensor, shape (N,)
         Amplitudes.
-    sharpness : torch.Tensor, shape (N,)
-        Per-splat sharpness values (required).
     truncate : float, default=3.0
         Truncation radius.
     intensity_floor : float, default=1e-5
@@ -188,5 +179,5 @@ def render_gaussians_batched(
         Rendered output.
     """
     return render_gaussians(
-        shape, centers, Ls, amps, sharpness, truncate, intensity_floor, chunk_size
+        shape, centers, Ls, amps, truncate, intensity_floor, chunk_size
     )

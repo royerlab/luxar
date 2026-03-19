@@ -108,12 +108,10 @@ class GaussianSplatFitter:
         asymmetric_penalty: Optional[float] = 10.0,
         l1_amp: Optional[float] = None,
         l1_diag: Optional[float] = None,
-        l1_sharpness: Optional[float] = None,
         sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
         sigma_max_diag: Optional[Sequence[float] | float] = None,
         amp_max: Optional[float] = None,  # Max amplitude (default auto: 1.0)
         max_eccentricity: Optional[float] = 10.0,
-        sharpness_range: Optional[tuple[float, float] | float] = 2.0,
         truncate: float = 3.0,
         seed_method: str = "auto",
         verbose: bool = True,
@@ -169,7 +167,7 @@ class GaussianSplatFitter:
         Returns
         -------
         GSplatData
-            Dataclass containing centers, amplitudes, cholesky_factors, sharpnesses, and stats.
+            Dataclass containing centers, amplitudes, cholesky_factors, and stats.
         """
         # Step 1: Validate and prepare configuration
         config = prepare_fit_config(
@@ -185,12 +183,10 @@ class GaussianSplatFitter:
             asymmetric_penalty=asymmetric_penalty,
             l1_amp=l1_amp,
             l1_diag=l1_diag,
-            l1_sharpness=l1_sharpness,
             sigma_min_diag=sigma_min_diag,
             sigma_max_diag=sigma_max_diag,
             amp_max=amp_max,
             max_eccentricity=max_eccentricity,
-            sharpness_range=sharpness_range,
             truncate=truncate,
             verbose=verbose,
             max_abs_error=max_abs_error,
@@ -226,7 +222,6 @@ class GaussianSplatFitter:
                 centers=np.zeros((0, d), dtype=np.float32),
                 amplitudes=np.zeros((0,), dtype=np.float32),
                 cholesky_factors=np.zeros((0, tril_size(d)), dtype=np.float32),
-                sharpnesses=np.zeros((0,), dtype=np.float32),
                 stats={},
             )
 
@@ -257,12 +252,10 @@ def fit_gaussian_splats(
     asymmetric_penalty: Optional[float] = 10.0,
     l1_amp: Optional[float] = None,
     l1_diag: Optional[float] = None,
-    l1_sharpness: Optional[float] = None,
     sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
     sigma_max_diag: Optional[Sequence[float] | float] = None,
     amp_max: Optional[float] = None,
     max_eccentricity: Optional[float] = 10.0,
-    sharpness_range: Optional[tuple[float, float] | float] = 2.0,
     truncate: float = 3.0,
     device: Optional[str] = None,
     seed_method: str = "auto",
@@ -326,7 +319,7 @@ def fit_gaussian_splats(
           used to represent Gaussian splats over total image floats. For example,
           seeds=0.1 targets a representation using 10% of the original storage.
           The number of splats is computed as: n = ratio × total_voxels / floats_per_splat
-          where floats_per_splat = d + d×(d+1)/2 + 2 (center + Cholesky + amp + sharpness).
+          where floats_per_splat = d + d×(d+1)/2 + 1 (center + Cholesky + amp).
         - If None: Auto-generated using dimension-aware intelligent defaults:
           * Universal scales: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) for comprehensive detection
           * Volume-proportional density: ~1% of voxels as seeds
@@ -369,11 +362,6 @@ def fit_gaussian_splats(
         L1 regularization coefficient on diagonal elements of Cholesky factors.
         Encourages smaller, more isotropic splats. If None, automatically set
         to 1% of learning rate for mild shape regularization.
-    l1_sharpness : float, default=None (auto: 0.01 * lr)
-        L1 regularization coefficient on sharpness offset parameters (s').
-        Encourages splats to remain at standard Gaussian (s' = 0, s = 2) unless
-        beneficial to deviate. If None, automatically set to 1% of learning rate.
-        Higher values promote standard Gaussians, lower values allow more sharpness variation.
     sigma_min_diag : Sequence[float] | float, optional
         Minimum diagonal values for Cholesky factor L along each axis. A single
         float is broadcast across all dimensions.
@@ -397,12 +385,6 @@ def fit_gaussian_splats(
         anisotropy by constraining diagonal elements of Cholesky factor L so that
         max(diag)/min(diag) <= sqrt(max_eccentricity). For example, 2.0 means the
         longest axis can be at most sqrt(2) ≈ 1.41x the shortest axis.
-    sharpness_range : tuple[float, float] | float | None, default=2.0
-        Controls sharpness values during optimization:
-        - If tuple (min, max): Clamp sharpness to this range
-        - If float: Fix sharpness to this exact value (no optimization)
-        - If None: Use default behavior (sharpness in range [0.16, 24.5])
-        Note: s=2.0 is standard Gaussian, s>2 is sharper, s<2 is softer.
     truncate : float, default=3.0
         Truncation radius in standard deviations for rendering efficiency.
     device : str, optional
@@ -528,7 +510,6 @@ def fit_gaussian_splats(
         - centers: np.ndarray, shape (N, d) - Center positions (physical or voxel, see output_space)
         - amplitudes: np.ndarray, shape (N,) - Non-negative amplitudes rescaled to original intensity
         - cholesky_factors: np.ndarray, shape (N, d*(d+1)//2) - Packed lower-triangular Cholesky factors
-        - sharpnesses: np.ndarray, shape (N,) - Per-splat sharpness values (s=2.0 is standard Gaussian)
         - stats: Dict[str, Any] - Optimization statistics (time, iterations, convergence, etc.)
 
         All arrays represent the BEST state encountered during optimization (lowest loss).
@@ -570,13 +551,11 @@ def fit_gaussian_splats(
             asymmetric_penalty=asymmetric_penalty,
             l1_amp=l1_amp,
             l1_diag=l1_diag,
-            l1_sharpness=l1_sharpness,
             dynamic_ops_verbose=dynamic_ops_verbose,
             sigma_min_diag=sigma_min_diag,
             sigma_max_diag=sigma_max_diag,
             amp_max=amp_max,
             max_eccentricity=max_eccentricity,
-            sharpness_range=sharpness_range,
             truncate=truncate,
             seed_method=seed_method,
             verbose=verbose,
@@ -617,28 +596,6 @@ def fit_gaussian_splats(
         from luxar.gsplats.fitting.visualization import display_compression_analysis
 
         display_compression_analysis(V, result)
-
-        # Display sharpness statistics (skip if all splats were culled)
-        if len(result.amplitudes) > 0:
-            with asection("Sharpness Statistics"):
-                aprint(
-                    f"Range: [{result.stats['sharpness_min']:.2f}, {result.stats['sharpness_max']:.2f}]  "
-                    f"Mean: {result.stats['sharpness_mean']:.2f} ± {result.stats['sharpness_std']:.2f}  "
-                    f"Median: {result.stats['sharpness_median']:.2f}"
-                )
-                # Provide interpretation
-                if result.stats["sharpness_mean"] < 1.5:
-                    aprint("→ Soft falloff (s < 2): Heavy-tailed Gaussians")
-                elif result.stats["sharpness_mean"] < 2.5:
-                    aprint("→ Standard Gaussians (s ≈ 2): Classic Gaussian profiles")
-                elif result.stats["sharpness_mean"] < 4.0:
-                    aprint(
-                        "→ Sharp edges (2 < s < 4): Compact splats with faster decay"
-                    )
-                else:
-                    aprint(
-                        "→ Very sharp (s ≥ 4): Near box-like splats with abrupt cutoff"
-                    )
 
     # Show napari movie OUTSIDE the fitting section (so it doesn't affect timing)
     if result.stats.get("movie_frames") is not None:

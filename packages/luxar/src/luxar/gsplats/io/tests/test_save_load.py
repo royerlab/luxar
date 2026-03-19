@@ -23,13 +23,11 @@ def create_test_splats_3d(n_splats: int = 100) -> dict:
     amplitudes = np.random.rand(n_splats).astype(np.float32) * 2
     # 3D Cholesky: 6 elements [L00, L10, L11, L20, L21, L22]
     cholesky_factors = np.random.rand(n_splats, 6).astype(np.float32)
-    sharpnesses = np.full(n_splats, 2.0, dtype=np.float32)
 
     return {
         "centers": centers,
         "amplitudes": amplitudes,
         "cholesky_factors": cholesky_factors,
-        "sharpnesses": sharpnesses,
     }
 
 
@@ -208,7 +206,6 @@ class TestSaveGsplats:
                     centers=splats["centers"],
                     amplitudes=np.random.rand(50).astype(np.float32),  # Wrong size
                     cholesky_factors=splats["cholesky_factors"],
-                    sharpnesses=splats["sharpnesses"],
                 )
 
             # Mismatched cholesky shape
@@ -220,7 +217,6 @@ class TestSaveGsplats:
                     cholesky_factors=np.random.rand(100, 3).astype(
                         np.float32
                     ),  # Wrong k
-                    sharpnesses=splats["sharpnesses"],
                 )
 
             # Float colors without color_mode
@@ -253,7 +249,6 @@ class TestLoadGsplats:
             assert result.centers.shape == (100, 3)
             assert result.amplitudes.shape == (100,)
             assert result.cholesky_factors.shape == (100, 6)
-            assert result.sharpnesses.shape == (100,)
 
             # Check data types (decoded to float32)
             assert result.centers.dtype == np.float32
@@ -352,7 +347,6 @@ class TestRoundTrip:
             assert np.allclose(result.centers, splats["centers"])
             assert np.allclose(result.amplitudes, splats["amplitudes"])
             assert np.allclose(result.cholesky_factors, splats["cholesky_factors"])
-            assert np.allclose(result.sharpnesses, splats["sharpnesses"])
 
     def test_roundtrip_with_ordering(self) -> None:
         """Test round-trip with spatial ordering."""
@@ -410,7 +404,6 @@ class TestGSplatDataMethods:
                 centers=splats["centers"],
                 amplitudes=splats["amplitudes"],
                 cholesky_factors=splats["cholesky_factors"],
-                sharpnesses=splats["sharpnesses"],
                 stats={"time_seconds": 10.5, "iterations": 500},
             )
 
@@ -608,7 +601,6 @@ class TestInspectGsplats:
             assert info["ndim"] == 3
             assert info["ordering"] == "morton"
             assert info["has_colors"] is False
-            assert info["has_sharpness"] is True
 
     def test_inspect_with_fitting(self) -> None:
         """Test inspection with fitting info."""

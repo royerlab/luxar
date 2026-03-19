@@ -403,9 +403,7 @@ export class ArrayDecoder {
       for (let i = 0; i < n; i++) {
         const idx = Math.round(indices[i]);
         if (!Number.isFinite(idx) || idx < 0 || idx >= flatLUT.length) {
-          throw new Error(
-            `LUT (scalar) index out of range: idx=${idx}, lutSize=${flatLUT.length}`
-          );
+          throw new Error(`LUT (scalar) index out of range: idx=${idx}, lutSize=${flatLUT.length}`);
         }
         result[i] = flatLUT[idx];
       }

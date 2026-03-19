@@ -54,24 +54,31 @@ Key test suites include:
 | **basic-rendering.spec.ts** | Initialization, canvas, errors |
 | **cache-system.spec.ts** | OPFS caching functionality |
 | **controls-interaction.spec.ts** | Keyboard, mouse, camera |
-| **data-loading.spec.ts** | Points, attributes, cache |
+| **custom-gui-library.spec.ts** | Custom GUI panel testing |
 | **data-monitor-metrics.spec.ts** | Performance monitoring |
-| **demo-scripts-e2e.spec.ts** | Full Python → TypeScript pipeline |
+| **demo-validation.spec.ts** | Python script syntax + .zarr output checks |
+| **dimension-animation.spec.ts** | Dimension animation playback |
 | **dimension-initialization.spec.ts** | nD dimension setup |
 | **error-recovery.spec.ts** | ⭐ Error handling |
 | **first-time-ux.spec.ts** | Browser, help, error messages |
+| **geometry-types.spec.ts** | Lines & GSplats rendering |
+| **keyboard-input-system.spec.ts** | Fly controls, shortcuts, modifiers |
 | **nd-navigation.spec.ts** | ⭐ Core nD feature! |
-| **performance-benchmarks.spec.ts** | Load time, FPS, memory |
-| **performance-tracking.spec.ts** | ⭐ Regression detection |
+| **nd-transforms.spec.ts** | nD transform inverse-query |
+| **performance-tracking.spec.ts** | ⭐ Regression detection + memory/FPS |
 | **position-bounds-clipping.spec.ts** | Boundary testing |
 | **python-typescript-integration.spec.ts** | ⭐ Cross-language E2E |
-| **real-dataset-loading.spec.ts** | Real .zarr files |
-| **scene-integration.spec.ts** | Scene graph integration |
+| **real-dataset-loading.spec.ts** | Real .zarr files + dataset switching |
+| **recording-panel.spec.ts** | Screenshot/video capture panel |
+| **rendering-controls.spec.ts** | Rendering panel, FOV, controls |
 | **spatial-index-accuracy.spec.ts** | Query accuracy, caching |
 | **test-fixtures-rendering.spec.ts** | Encoding/decoding compatibility |
+| **theme-visual-regression.spec.ts** | Theme visual regression |
 | **transform-hierarchy.spec.ts** | ⭐ Transform correctness |
+| **viewer-initialization.spec.ts** | Viewer startup without data |
 | **visual-regression.spec.ts** | Screenshot comparison |
 | **webgl-errors.spec.ts** | WebGL error detection |
+| **worker-wasm-integration.spec.ts** | Worker + WASM integration |
 
 ---
 

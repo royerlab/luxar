@@ -6,7 +6,7 @@ This module contains the main rendering implementation including:
 - Memory-optimized chunk size calculation
 - Grid caching for performance
 - Specialized 2D/3D fast paths with explicit forward substitution
-- Generic nD renderer with AABB truncation and sharpness support
+- Generic nD renderer with AABB truncation
 """
 
 from __future__ import annotations
@@ -245,7 +245,6 @@ def _compute_aabb_with_intensity_floor(
     centers: torch.Tensor,
     Ls: torch.Tensor,
     amps: torch.Tensor,
-    sharpness: torch.Tensor,
     shape: Sequence[int],
     truncate: float,
     intensity_floor: float | None,
@@ -263,8 +262,6 @@ def _compute_aabb_with_intensity_floor(
         Lower-triangular Cholesky factors.
     amps : torch.Tensor, shape (N,)
         Splat amplitudes.
-    sharpness : torch.Tensor, shape (N,)
-        Per-splat sharpness values.
     shape : Sequence[int]
         Output volume shape.
     truncate : float
@@ -283,13 +280,12 @@ def _compute_aabb_with_intensity_floor(
     valid : torch.Tensor, shape (N,)
         Boolean mask indicating valid (non-empty) AABBs.
     """
-    # Compute sigma diagonal: Σ_ii = row-wise sum(L^2)
+    # Compute sigma diagonal: Sigma_ii = row-wise sum(L^2)
     sigma_diag = torch.sum(Ls * Ls, dim=2)  # (N, d)
 
-    # Sharpness-adjusted truncation for generalized Gaussian exp(-0.5 * r^s)
-    effective_truncate = truncate ** (2.0 / sharpness)  # (N,)
+    # Standard Gaussian truncation: truncate is in units of standard deviations
     radii = torch.clamp(
-        (effective_truncate[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
+        (truncate * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
         .ceil()
         .to(torch.long),
         min=1,
@@ -307,9 +303,8 @@ def _compute_aabb_with_intensity_floor(
         eps = torch.tensor(intensity_floor, device=device, dtype=torch.float32)
         a = torch.clamp(amps, min=1e-12)
         log_ratio = torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
-        tmax = torch.pow(
-            log_ratio, 1.0 / sharpness
-        )  # (N,) - sharpness-adjusted threshold
+        # For standard Gaussian exp(-0.5 * r^2), threshold is sqrt(log_ratio)
+        tmax = torch.sqrt(log_ratio)  # (N,)
 
         shrink = torch.clamp(
             (tmax[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
@@ -334,7 +329,6 @@ def _render_gaussians_2d(
     centers: torch.Tensor,  # (N,2)
     Ls: torch.Tensor,  # (N,2,2)
     amps: torch.Tensor,  # (N,)
-    sharpness: torch.Tensor,  # (N,)
     truncate: float,
     intensity_floor: float,
     chunk_size: Optional[int] = None,
@@ -347,16 +341,15 @@ def _render_gaussians_2d(
 
     # Compute AABB bounds using helper
     lo, hi, valid = _compute_aabb_with_intensity_floor(
-        centers, Ls, amps, sharpness, shape, truncate, intensity_floor, device
+        centers, Ls, amps, shape, truncate, intensity_floor, device
     )
 
     # Filter invalid boxes
     if not torch.all(valid):
-        centers, Ls, amps, sharpness = (
+        centers, Ls, amps = (
             centers[valid],
             Ls[valid],
             amps[valid],
-            sharpness[valid],
         )
         lo, hi = lo[valid], hi[valid]
         if centers.numel() == 0:
@@ -372,7 +365,6 @@ def _render_gaussians_2d(
         mu = centers[idx]  # (K,2)
         L = Ls[idx]  # (K,2,2)
         a = amps[idx]  # (K,)
-        s = sharpness[idx]  # (K,)
         lo_sel = lo[idx]  # (K,2)
 
         base, lin_offsets = _cached_base_and_offsets(
@@ -387,18 +379,14 @@ def _render_gaussians_2d(
         )
         for p0 in range(0, P, P_chunk):
             p1 = min(P, p0 + P_chunk)
-            # Δ = base + lo - μ
             d0 = base[0, p0:p1][None, :] + lo_sel[:, 0:1] - mu[:, 0:1]  # (K,Pc)
             d1 = base[1, p0:p1][None, :] + lo_sel[:, 1:2] - mu[:, 1:2]  # (K,Pc)
 
             # ||y||^2 via explicit forward-substitution
-            expo = _fwd_norm2_2d(L, d0, d1)  # (K,Pc)
+            dist_sq = _fwd_norm2_2d(L, d0, d1)  # (K,Pc)
 
-            # Apply sharpness: exp(-0.5 * ||y||^s) where s = sharpness
-            # ||y||^s = (||y||^2)^(s/2) = expo^(s/2)
-            # Clamp expo to avoid log(0) in gradients of pow(expo, s/2)
-            expo_safe = torch.clamp(expo, min=1e-10)
-            vals = torch.exp(-0.5 * torch.pow(expo_safe, s[:, None] / 2.0)) * a[:, None]
+            # Standard Gaussian: exp(-0.5 * ||y||^2)
+            vals = torch.exp(-0.5 * dist_sq) * a[:, None]
 
             idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
             out_flat.index_add_(0, idx_flat, vals.reshape(-1))
@@ -411,7 +399,6 @@ def _render_gaussians_3d(
     centers: torch.Tensor,  # (N,3)
     Ls: torch.Tensor,  # (N,3,3)
     amps: torch.Tensor,  # (N,)
-    sharpness: torch.Tensor,  # (N,)
     truncate: float,
     intensity_floor: float,
     chunk_size: Optional[int] = None,
@@ -424,16 +411,15 @@ def _render_gaussians_3d(
 
     # Compute AABB bounds using helper
     lo, hi, valid = _compute_aabb_with_intensity_floor(
-        centers, Ls, amps, sharpness, shape, truncate, intensity_floor, device
+        centers, Ls, amps, shape, truncate, intensity_floor, device
     )
 
     # Filter invalid boxes
     if not torch.all(valid):
-        centers, Ls, amps, sharpness = (
+        centers, Ls, amps = (
             centers[valid],
             Ls[valid],
             amps[valid],
-            sharpness[valid],
         )
         lo, hi = lo[valid], hi[valid]
         if centers.numel() == 0:
@@ -449,7 +435,6 @@ def _render_gaussians_3d(
         mu = centers[idx]  # (K,3)
         L = Ls[idx]  # (K,3,3)
         a = amps[idx]  # (K,)
-        s = sharpness[idx]  # (K,)
         lo_sel = lo[idx]  # (K,3)
 
         base, lin_offsets = _cached_base_and_offsets(
@@ -464,18 +449,14 @@ def _render_gaussians_3d(
         )
         for p0 in range(0, P, P_chunk):
             p1 = min(P, p0 + P_chunk)
-            # Δ = base + lo - μ
             d0 = base[0, p0:p1][None, :] + lo_sel[:, 0:1] - mu[:, 0:1]  # (K,Pc)
             d1 = base[1, p0:p1][None, :] + lo_sel[:, 1:2] - mu[:, 1:2]
             d2 = base[2, p0:p1][None, :] + lo_sel[:, 2:3] - mu[:, 2:3]
 
-            expo = _fwd_norm2_3d(L, d0, d1, d2)  # (K,Pc)
+            dist_sq = _fwd_norm2_3d(L, d0, d1, d2)  # (K,Pc)
 
-            # Apply sharpness: exp(-0.5 * ||y||^s) where s = sharpness
-            # ||y||^s = (||y||^2)^(s/2) = expo^(s/2)
-            # Clamp expo to avoid log(0) in gradients of pow(expo, s/2)
-            expo_safe = torch.clamp(expo, min=1e-10)
-            vals = torch.exp(-0.5 * torch.pow(expo_safe, s[:, None] / 2.0)) * a[:, None]
+            # Standard Gaussian: exp(-0.5 * ||y||^2)
+            vals = torch.exp(-0.5 * dist_sq) * a[:, None]
 
             idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
             out_flat.index_add_(0, idx_flat, vals.reshape(-1))
@@ -491,17 +472,15 @@ def render_gaussians(
     centers: torch.Tensor,  # (N, d) voxel coords
     Ls: torch.Tensor,  # (N, d, d) lower-tri
     amps: torch.Tensor,  # (N,)
-    sharpness: torch.Tensor,  # (N) sharpness values (s = 2 * exp(s'))
     truncate: float = 3.0,
     intensity_floor: float = 1e-5,  # for amplitude-aware culling
     chunk_size: Optional[int] = None,  # P-dimension chunk size for memory control
 ) -> torch.Tensor:
     """
-    Fast vectorized renderer with 2D/3D fast-paths and per-splat sharpness.
+    Fast vectorized renderer with 2D/3D fast-paths.
     Falls back to the generic nD implementation for d != 2 and d != 3.
 
-    Renders Gaussians with generalized falloff: exp(-0.5 * ||y||^s) where s is sharpness.
-    s = 2 is standard Gaussian, s > 2 is sharper, s < 2 is softer.
+    Renders standard Gaussians: exp(-0.5 * ||y||^2) where y = L^{-1}(x - mu).
 
     Parameters
     ----------
@@ -513,8 +492,6 @@ def render_gaussians(
         Lower-triangular Cholesky factors.
     amps : torch.Tensor, shape (N,)
         Splat amplitudes.
-    sharpness : torch.Tensor, shape (N,)
-        Per-splat sharpness values.
     truncate : float, default=3.0
         Truncation radius in standard deviations.
     intensity_floor : float, default=1e-5
@@ -530,11 +507,11 @@ def render_gaussians(
     d = len(shape)
     if d == 2:
         return _render_gaussians_2d(
-            shape, centers, Ls, amps, sharpness, truncate, intensity_floor, chunk_size
+            shape, centers, Ls, amps, truncate, intensity_floor, chunk_size
         )
     if d == 3:
         return _render_gaussians_3d(
-            shape, centers, Ls, amps, sharpness, truncate, intensity_floor, chunk_size
+            shape, centers, Ls, amps, truncate, intensity_floor, chunk_size
         )
 
     # --- Generic nD implementation ---
@@ -545,7 +522,7 @@ def render_gaussians(
 
     # Compute AABB bounds using helper
     lo, hi, valid = _compute_aabb_with_intensity_floor(
-        centers, Ls, amps, sharpness, shape, truncate, intensity_floor, device
+        centers, Ls, amps, shape, truncate, intensity_floor, device
     )
 
     # Filter invalid boxes
@@ -553,7 +530,6 @@ def render_gaussians(
         centers = centers[valid]
         Ls = Ls[valid]
         amps = amps[valid]
-        sharpness = sharpness[valid]
         lo = lo[valid]
         hi = hi[valid]
 
@@ -567,7 +543,6 @@ def render_gaussians(
         mu = centers[idx]  # (K, d)
         L = Ls[idx]  # (K, d, d)
         a = amps[idx]  # (K,)
-        s = sharpness[idx]  # (K,)
 
         # Build base grid (one per group, on device)
         # coords_i = [0, 1, ..., h_i-1]  -> broadcast to P points
@@ -597,16 +572,16 @@ def render_gaussians(
             base_chunk = base[:, p0:p1]  # (d, Pc)
             lin_offsets_chunk = lin_offsets[p0:p1]  # (Pc,)
 
-            # Per-splat Δ = base + lo - μ   (broadcast to (K, d, Pc))
+            # Per-splat delta = base + lo - mu   (broadcast to (K, d, Pc))
             delta = (
                 base_chunk[None, :, :] + lo_f[:, :, None] - mu[:, :, None]
             )  # (K, d, Pc)
 
-            # Solve L y = Δ  (batched lower-tri solve with Pc RHS per splat)
+            # Solve L y = delta  (batched lower-tri solve with Pc RHS per splat)
             # PyTorch Version Compatibility: See models/utils/lt_solver.py for full details
             # - Modern: torch.linalg.solve_triangular (PyTorch >= 1.9)
             # - Legacy: torch.triangular_solve (PyTorch 1.12-1.13, removed in 2.0+)
-            # - MPS Note: Both functions have identical 10× CPU overhead on Apple Silicon
+            # - MPS Note: Both functions have identical 10x CPU overhead on Apple Silicon
             try:
                 y = torch.linalg.solve_triangular(L, delta, upper=False)
             except AttributeError:
@@ -615,14 +590,9 @@ def render_gaussians(
                 # Note: triangular_solve returns (solution, cloned_matrix) tuple
                 y, _ = torch.triangular_solve(delta, L, upper=False)
 
-            # Exponent and values: exp(-0.5 * ||y||^s) * a where s is sharpness
-            # ||y||^s = (||y||^2)^(s/2) = expo^(s/2)
-            expo = torch.sum(y * y, dim=1)  # (K, Pc)
-            # Clamp expo to avoid log(0) in gradients of pow(expo, s/2)
-            expo_safe = torch.clamp(expo, min=1e-10)
-            vals = (
-                torch.exp(-0.5 * torch.pow(expo_safe, s[:, None] / 2.0)) * a[:, None]
-            )  # (K, Pc)
+            # Standard Gaussian: exp(-0.5 * ||y||^2) * a
+            dist_sq = torch.sum(y * y, dim=1)  # (K, Pc)
+            vals = torch.exp(-0.5 * dist_sq) * a[:, None]  # (K, Pc)
 
             # Absolute flat indices (K, Pc) -> (K*Pc,)
             idx_flat = (base_idx[:, None] + lin_offsets_chunk[None, :]).reshape(-1)

@@ -122,10 +122,10 @@ Filter splats by multiple criteria (AND logic).
 ```bash
 luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --amplitude-min 0.1 --eccentricity-max 5
 luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --bbox "0,50,0,50,0,50" --volume-max 100
-luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --mass-min 0.01 --sharpness-min 1.0
+luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --mass-min 0.01
 ```
 
-**Criteria**: `--bbox`, `--amplitude-min/max`, `--volume-min/max`, `--eccentricity-min/max`, `--sharpness-min/max`, `--mass-min/max`, `--sigma-axis`/`--sigma-min/max`. Supports `--*-normalized` flags.
+**Criteria**: `--bbox`, `--amplitude-min/max`, `--volume-min/max`, `--eccentricity-min/max`, `--mass-min/max`, `--sigma-axis`/`--sigma-min/max`. Supports `--*-normalized` flags.
 
 #### `luxar gsplat split`
 Split a dataset into multiple parts.

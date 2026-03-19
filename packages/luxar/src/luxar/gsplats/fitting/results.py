@@ -153,16 +153,14 @@ def _clip_to_bounds(
     Ls: np.ndarray,
     shape: Sequence[int],
     truncate: float,
-    sharpness: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Scale down L rows so no splat extends beyond volume bounds.
 
     For each splat k in dimension i, ensures:
-        effective_truncate * sqrt(Sigma_ii) <= min(center_ki, shape_i - 1 - center_ki)
+        truncate * sqrt(Sigma_ii) <= min(center_ki, shape_i - 1 - center_ki)
 
-    where Sigma_ii = sum_j(L[k,i,j]^2) is the marginal variance along axis i,
-    and effective_truncate = truncate^(2/s) accounts for per-splat sharpness s.
+    where Sigma_ii = sum_j(L[k,i,j]^2) is the marginal variance along axis i.
 
     This preserves the splat's orientation (ratios within each row of L) but
     scales it down to fit within the volume bounds.
@@ -177,9 +175,6 @@ def _clip_to_bounds(
         Volume shape (d elements).
     truncate : float
         Truncation radius (same as used during rendering).
-    sharpness : np.ndarray, shape (N,), optional
-        Per-splat sharpness values. If None, assumes s=2.0 (standard Gaussian)
-        where effective_truncate = truncate.
 
     Returns
     -------
@@ -191,15 +186,7 @@ def _clip_to_bounds(
         np.minimum(centers, shape_arr - 1.0 - centers), 0.0
     )  # (N, d)
 
-    # Sharpness-adjusted truncation (matches rendering_core.py AABB logic)
-    # For generalized Gaussian exp(-0.5 * ||y||^s), effective radius scales
-    # as truncate^(2/s) where s is sharpness (s=2 → truncate^1 = truncate)
-    if sharpness is not None:
-        sharpness = np.maximum(sharpness, 1e-6)  # Guard against near-zero exponent
-        eff_truncate = truncate ** (2.0 / sharpness)  # (N,)
-        max_sigma_sq = (dist_to_edge / eff_truncate[:, np.newaxis]) ** 2  # (N, d)
-    else:
-        max_sigma_sq = (dist_to_edge / truncate) ** 2  # (N, d)
+    max_sigma_sq = (dist_to_edge / truncate) ** 2  # (N, d)
 
     # Actual sigma_sq per dimension: Sigma_ii = sum_j(L[i,j]^2)
     actual_sigma_sq = np.sum(Ls * Ls, axis=2)  # (N, d)
@@ -234,7 +221,7 @@ def finalize_results(
     Returns
     -------
     GSplatData
-        Dataclass containing centers, amplitudes, cholesky_factors, sharpnesses, and stats
+        Dataclass containing centers, amplitudes, cholesky_factors, and stats
     """
     # --- Post-fit culling: remove splats below the noise floor ---
     # The culling threshold is a fraction (cull_ratio) of max_abs_error.
@@ -265,7 +252,6 @@ def finalize_results(
             centers_dev = optimization_results.centers[keep_indices]
             Ls_dev = optimization_results.Ls[keep_indices]
             amps_dev = amps_dev[keep_indices]
-            sharpness_dev = optimization_results.sharpness[keep_indices]
 
             culled_amps = optimization_results.amps[~keep_mask]
             with asection("Post-fit culling"):
@@ -285,7 +271,6 @@ def finalize_results(
         else:
             centers_dev = optimization_results.centers
             Ls_dev = optimization_results.Ls
-            sharpness_dev = optimization_results.sharpness
             n_culled = 0
             aprint(
                 f"Post-fit culling: 0/{n_before} splats below noise floor "
@@ -295,14 +280,12 @@ def finalize_results(
         # cull_ratio == 0: culling disabled
         centers_dev = optimization_results.centers
         Ls_dev = optimization_results.Ls
-        sharpness_dev = optimization_results.sharpness
         n_culled = 0
 
     # Transfer to CPU + numpy
     centers_np = centers_dev.cpu().numpy()
     Ls_np = Ls_dev.cpu().numpy()
     amps_np = amps_dev.cpu().numpy()
-    sharpness_np = sharpness_dev.cpu().numpy()
 
     # Rescale amplitudes to original intensity range
     amps_np = amps_np * preprocessed_data.intensity_range
@@ -322,7 +305,7 @@ def finalize_results(
                 for s, f in zip(config.V.shape, preprocessed_data.downscale_factors)
             )
         Ls_np = _clip_to_bounds(
-            centers_np, Ls_np, clip_shape, config.truncate, sharpness_np
+            centers_np, Ls_np, clip_shape, config.truncate
         )
         if config.verbose:
             aprint(f"Clipped splats to volume bounds (truncate={config.truncate:.1f})")
@@ -374,24 +357,6 @@ def finalize_results(
                 f"Converted output to physical coordinates (voxel_size={vs.tolist()})"
             )
 
-    # Compute sharpness statistics (handle empty array after culling)
-    if len(sharpness_np) > 0:
-        sharpness_stats = {
-            "sharpness_min": float(np.min(sharpness_np)),
-            "sharpness_max": float(np.max(sharpness_np)),
-            "sharpness_mean": float(np.mean(sharpness_np)),
-            "sharpness_std": float(np.std(sharpness_np)),
-            "sharpness_median": float(np.median(sharpness_np)),
-        }
-    else:
-        sharpness_stats = {
-            "sharpness_min": float("nan"),
-            "sharpness_max": float("nan"),
-            "sharpness_mean": float("nan"),
-            "sharpness_std": float("nan"),
-            "sharpness_median": float("nan"),
-        }
-
     # Compute statistics reflecting best state (not final state)
     stats: dict[str, Any] = {
         "time_seconds": optimization_results.end_time - optimization_results.start_time,
@@ -405,7 +370,6 @@ def finalize_results(
         "n_splats": len(amps_np),  # Final splat count (after culling)
         "n_splats_before_culling": n_before,
         "n_culled": n_culled,
-        **sharpness_stats,  # Include sharpness statistics
     }
 
     # Store movie frames in stats for later display (don't show here to avoid timing issues)
@@ -423,7 +387,6 @@ def finalize_results(
         centers=centers_np.astype(np.float32),
         amplitudes=amps_np.astype(np.float32),
         cholesky_factors=cholesky_packed.astype(np.float32),
-        sharpnesses=sharpness_np.astype(np.float32),
         stats=stats,
     )
 

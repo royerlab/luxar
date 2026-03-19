@@ -877,7 +877,7 @@ class TestGSplatsRoundTrip:
         """Test that ALL required metadata fields are written to group.attrs.
 
         This test prevents regression of the critical bug where ndim, has_colors,
-        has_sharpness, sharpness_bounds, ordering, and chunk_size were in the
+        ordering and chunk_size were in the
         internal metadata dict but NOT written to group.attrs, causing viewer errors.
         """
         output_path = tmp_path / "test.zarr"
@@ -887,7 +887,6 @@ class TestGSplatsRoundTrip:
         amplitudes = np.random.rand(n_splats).astype(np.float32) + 0.1
         cholesky = np.random.rand(n_splats, 6).astype(np.float32) * 0.5 + 0.1
         colors = np.random.rand(n_splats, 3).astype(np.float32)
-        sharpness = np.random.rand(n_splats).astype(np.float32) * 2.0 + 1.0
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -897,7 +896,6 @@ class TestGSplatsRoundTrip:
                 amplitudes=amplitudes,
                 cholesky_factors=cholesky,
                 colors=colors,
-                sharpness=sharpness,
             )
 
         # Open zarr directly to check group.attrs (not through LuxarScene API)
@@ -911,11 +909,9 @@ class TestGSplatsRoundTrip:
             "n_splats",
             "ndim",  # Bug #7: Was missing
             "has_colors",  # Bug #9: Was missing
-            "has_sharpness",  # Bug #9: Was missing
             "chunk_size",  # Bug: Required by TypeScript
             "ordering",  # Bug: Required by TypeScript
             "amplitude_range",
-            "sharpness_bounds",  # Bug #8: Was missing
             "center_bounds",
             "position_bounds",  # Required for dynamic clipping
         ]
@@ -928,7 +924,6 @@ class TestGSplatsRoundTrip:
         assert attrs["n_splats"] == n_splats
         assert attrs["ndim"] == 3
         assert attrs["has_colors"] is True
-        assert attrs["has_sharpness"] is True
         assert isinstance(attrs["chunk_size"], int)
         assert attrs["chunk_size"] > 0
         assert attrs["ordering"] in ["morton", "hilbert", "none"]
@@ -936,8 +931,6 @@ class TestGSplatsRoundTrip:
         # Verify ranges are dicts with min/max
         assert "min" in attrs["amplitude_range"]
         assert "max" in attrs["amplitude_range"]
-        assert "min" in attrs["sharpness_bounds"]
-        assert "max" in attrs["sharpness_bounds"]
         assert "min" in attrs["center_bounds"]
         assert "max" in attrs["center_bounds"]
         assert "min" in attrs["position_bounds"]
@@ -946,10 +939,6 @@ class TestGSplatsRoundTrip:
         # Verify position_bounds has correct dimensionality (3D)
         assert len(attrs["position_bounds"]["min"]) == 3
         assert len(attrs["position_bounds"]["max"]) == 3
-
-        # Verify sharpness bounds reflect actual data
-        assert attrs["sharpness_bounds"]["min"] >= 1.0
-        assert attrs["sharpness_bounds"]["max"] <= 3.0  # Our test data range
 
     def test_gsplats_metadata_without_optional_arrays(self, tmp_path) -> None:
         """Test metadata completeness when colors and sharpness are not provided."""
@@ -976,10 +965,6 @@ class TestGSplatsRoundTrip:
 
         # Verify required fields still present
         assert attrs["has_colors"] is False
-        assert attrs["has_sharpness"] is False
-        assert "sharpness_bounds" in attrs  # Should have defaults
-        assert attrs["sharpness_bounds"]["min"] == 2.0  # Default
-        assert attrs["sharpness_bounds"]["max"] == 2.0  # Default
         assert attrs["ndim"] == 3  # Must be present
         assert attrs["chunk_size"] > 0  # Must be present
 
@@ -1182,7 +1167,6 @@ class TestBroadcastedArraysRoundTrip:
             (n_splats, 1),
         )
         colors = np.array([[0.5, 0.5, 0.5]], dtype=np.float32)
-        sharpness = np.array([2.0], dtype=np.float32)
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -1192,14 +1176,12 @@ class TestBroadcastedArraysRoundTrip:
                 amplitudes=amplitudes,
                 cholesky_factors=cholesky,
                 colors=colors,
-                sharpness=sharpness,
             )
 
         scene = LuxarScene.load(output_path)
         data = scene.get_gsplats("splats")
 
         assert data["colors"].shape == (n_splats, 3)
-        assert data["sharpness"].shape == (n_splats,)
 
 
 class TestReaderGroupTransforms:

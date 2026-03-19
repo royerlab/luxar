@@ -237,10 +237,7 @@ describe('PointSpatialIndexLoader', () => {
         ...mockNode,
         attrs: { ...mockNode.attrs, max_radius: 0 },
       };
-      const zeroRadiusLoader = new PointSpatialIndexLoader(
-        mockZarrLocation,
-        nodeWithZeroRadius
-      );
+      const zeroRadiusLoader = new PointSpatialIndexLoader(mockZarrLocation, nodeWithZeroRadius);
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],

@@ -195,7 +195,6 @@ class TestGSplatsNode:
             assert gsplats.n_elements == 3  # n_elements == n_splats
             assert gsplats.ndim == 2
             assert gsplats.has_colors is False
-            assert gsplats.has_sharpness is True  # Default sharpness=2.0 always written
             assert gsplats.amplitude_range["min"] == 1.0
             assert gsplats.amplitude_range["max"] == 2.0
 
@@ -227,21 +226,6 @@ class TestGSplatsNode:
             )
 
             assert gsplats.has_colors is True
-
-    def test_add_gsplats_with_sharpness(self, tmp_path) -> None:
-        """Test gsplats with sharpness (generalized Gaussian exponent)."""
-        centers = np.array([[0, 0]], dtype=np.float32)  # 2D
-        amplitudes = np.array([1.0], dtype=np.float32)
-        cholesky = np.array([[1, 0, 1]], dtype=np.float32)  # 2D: k=3
-        sharpness = np.array([2.5], dtype=np.float32)
-
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_2d())
-            gsplats = scene.add_gsplats(
-                "sharp", centers, amplitudes, cholesky, sharpness=sharpness
-            )
-
-            assert gsplats.has_sharpness is True
 
     def test_add_gsplats_broadcast_amplitude(self, tmp_path) -> None:
         """Test gsplats with single amplitude value (broadcast)."""
@@ -304,14 +288,12 @@ class TestGSplatsNode:
         centers = np.array([[0, 0], [1, 1]], dtype=np.float32)
         amplitudes = np.array([1.0, 2.0], dtype=np.float32)
         cholesky = np.array([[1, 0, 1], [1, 0.5, 1]], dtype=np.float32)
-        sharpnesses = np.array([2.0, 2.0], dtype=np.float32)
         colors = np.array([[1.0, 0, 0], [0, 1.0, 0]], dtype=np.float32)
 
         result = GSplatData(
             centers=centers,
             amplitudes=amplitudes,
             cholesky_factors=cholesky,
-            sharpnesses=sharpnesses,
             colors=colors,
             stats={"test": "value"},
         )
@@ -323,7 +305,6 @@ class TestGSplatsNode:
             assert gsplats.n_splats == 2
             assert gsplats.ndim == 2
             assert gsplats.has_colors is True
-            assert gsplats.has_sharpness is True
 
     def test_add_gsplats_from_file(self, tmp_path) -> None:
         """Test adding gsplats from .gsplats.zarr file."""
@@ -333,13 +314,11 @@ class TestGSplatsNode:
         centers = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
         amplitudes = np.array([1.0, 1.5], dtype=np.float32)
         cholesky = np.array([[1, 0, 1, 0, 0, 1], [1, 0, 1, 0, 0, 1]], dtype=np.float32)
-        sharpnesses = np.array([2.0, 2.0], dtype=np.float32)
 
         result = GSplatData(
             centers=centers,
             amplitudes=amplitudes,
             cholesky_factors=cholesky,
-            sharpnesses=sharpnesses,
             stats={},
         )
 
@@ -355,7 +334,6 @@ class TestGSplatsNode:
             assert gsplats.n_splats == 2
             assert gsplats.ndim == 3
             assert gsplats.has_colors is False
-            assert gsplats.has_sharpness is True
 
     def test_add_gsplats_from_file_not_found(self, tmp_path) -> None:
         """Test error when file doesn't exist."""

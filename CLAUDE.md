@@ -336,10 +336,10 @@ pnpm agent:debug:visible          # AI debugging with visible browser
 Instead of running all E2E tests at once (which can timeout or be overwhelming), run them by topic:
 ```bash
 # Basic functionality
-npx playwright test basic-rendering.spec.ts data-loading.spec.ts
+npx playwright test basic-rendering.spec.ts viewer-initialization.spec.ts
 
 # Scene & transforms
-npx playwright test scene-integration.spec.ts transform-hierarchy.spec.ts
+npx playwright test transform-hierarchy.spec.ts
 
 # nD navigation & dimensions
 npx playwright test nd-navigation.spec.ts dimension-initialization.spec.ts dimension-animation.spec.ts
@@ -546,7 +546,7 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 ### Geometry Types & Attributes
 - **Points**: positions (Float32, nD, required), colors (Uint8/Float32 HDR), radii (Float32), sharpness (Float32)
 - **Lines**: vertices (Float32, nD, required), widths (Float32, required), segments (Uint32, auto-generated), colors (Uint8/Float32), sharpness (Float32)
-- **GSplats**: centers (Float32, nD, required), amplitudes (Float32, required), cholesky_factors (Float32, required), colors (Uint8/Float32), sharpness (Float32)
+- **GSplats**: centers (Float32, nD, required), amplitudes (Float32, required), cholesky_factors (Float32, required), colors (Uint8/Float32)
 
 ### Transforms
 - 4x4 matrices stored as 16-element lists
