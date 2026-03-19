@@ -134,6 +134,8 @@ class GaussianSplatFitter:
         clip_to_bounds: bool = False,
         voxel_size: Optional[Sequence[float] | float] = None,
         output_space: str = "real",
+        sort_splats_enabled: bool = True,
+        sort_splats_interval: int = 1000,
         **seed_kwargs: Any,
     ) -> GSplatData:
         """
@@ -209,6 +211,8 @@ class GaussianSplatFitter:
             clip_to_bounds=clip_to_bounds,
             voxel_size=voxel_size,
             output_space=output_space,
+            sort_splats_enabled=sort_splats_enabled,
+            sort_splats_interval=sort_splats_interval,
             **seed_kwargs,
         )
 
@@ -291,6 +295,9 @@ def fit_gaussian_splats(
     # Anisotropic voxel spacing
     voxel_size: Optional[Sequence[float] | float] = None,
     output_space: str = "real",
+    # Z-order sorting for memory locality
+    sort_splats_enabled: bool = True,
+    sort_splats_interval: int = 1000,
     **seed_kwargs: Any,
 ) -> GSplatData:
     """
@@ -589,6 +596,8 @@ def fit_gaussian_splats(
             clip_to_bounds=clip_to_bounds,
             voxel_size=voxel_size,
             output_space=output_space,
+            sort_splats_enabled=sort_splats_enabled,
+            sort_splats_interval=sort_splats_interval,
             **seed_kwargs,
         )
 

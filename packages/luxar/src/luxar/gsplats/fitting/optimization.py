@@ -23,6 +23,7 @@ from luxar.gsplats.fitting.dynamic_ops import (
     RecentlyRelocatedTracker,
     apply_dynamic_operations,
 )
+from luxar.gsplats.fitting.sorting import sort_splats_by_morton_order
 
 
 def _compute_max_abs_error(pred: torch.Tensor, target: torch.Tensor) -> float:
@@ -147,6 +148,12 @@ def run_optimization_loop(
                 f"Dynamic ops enabled: Splat relocation with cooldown "
                 f"({config.dynamic_config.relocation_cooldown_steps} steps)"
             )
+
+    # Initial Z-order sort for memory locality (iteration 0)
+    if config.sort_splats_enabled:
+        sort_splats_by_morton_order(model, optimizer, relocation_tracker)
+        if config.verbose:
+            aprint("Z-order sort applied (initial)")
 
     # Main optimization loop
     converged_early = False
@@ -284,6 +291,10 @@ def run_optimization_loop(
             # Advance tracker step counter (after relocation is complete)
             if relocation_tracker is not None:
                 relocation_tracker.advance_step()
+
+        # Periodic Z-order sort for memory locality
+        if config.sort_splats_enabled and it % config.sort_splats_interval == 0:
+            sort_splats_by_morton_order(model, optimizer, relocation_tracker)
 
         # Logging (update N after potential dynamic ops)
         N = model.n_splats() if hasattr(model, "n_splats") else preprocessed_data.N

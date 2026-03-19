@@ -34,6 +34,8 @@ class OptimConfig:
     patience: int = 25
     lr_reduction_factor: float = 0.98
     early_stop_patience: Optional[int] = 300
+    sort_splats_enabled: bool = True
+    sort_splats_interval: int = 1000
 
 
 @dataclass(frozen=True)
@@ -193,6 +195,10 @@ class FitConfig:
     # Boundary penalty weight (loss term during optimization)
     # Adds a differentiable penalty for splats whose effective support extends beyond bounds.
     boundary_penalty: Optional[float] = None
+
+    # Z-order (Morton) sorting for memory locality
+    sort_splats_enabled: bool = True  # Enable periodic Morton-code sorting of splats
+    sort_splats_interval: int = 1000  # Sort every N iterations (also sorts at iteration 0)
 
     # Volume downscaling (preprocessing)
     # Per-axis integer factors, e.g. (1, 4, 4). None = no downscaling.
