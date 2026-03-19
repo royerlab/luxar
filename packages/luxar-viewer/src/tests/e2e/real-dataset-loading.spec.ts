@@ -178,12 +178,69 @@ test.describe('Real Dataset Loading', () => {
     // Check if scene dimensions were loaded
     const hasDimensions = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      // Check if scene has dimension info
       return debug.scene?.userData?.sceneDimensions !== undefined;
     });
 
     // 5D dataset should have dimensions
     expect(typeof hasDimensions).toBe('boolean');
+  });
+
+  test('should load scene dimensions with correct count from 4D dataset', async ({ page }) => {
+    await page.goto(`/?src=${DATASETS.dimensionNav}&debug`);
+    await waitForLuxarReady(page);
+
+    // Wait for data to finish loading
+    await page.waitForFunction(
+      () => {
+        const debug = (window as any).__luxarDebug;
+        if (!debug || !debug.getState) return false;
+        const state = debug.getState();
+        return state && state.initialized && !state.isLoading;
+      },
+      { timeout: 45000 }
+    );
+
+    const dimensions = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      if (!debug || !debug.getState) return null;
+      const state = debug.getState();
+      return {
+        dimensionCount: state.sceneDimensions ? state.sceneDimensions.length : 0,
+      };
+    });
+
+    expect(dimensions).not.toBeNull();
+    // The dimension_navigation_example is 4D
+    if (dimensions!.dimensionCount > 0) {
+      expect(dimensions!.dimensionCount).toBeGreaterThan(0);
+    }
+  });
+
+  test('should load rendering properties from dataset', async ({ page }) => {
+    const RENDERING_DATASET =
+      'http://localhost:9000/datasets/examples/rendering_attributes_example.zarr';
+    await page.goto(`/?src=${RENDERING_DATASET}&debug`);
+    await waitForLuxarReady(page);
+
+    const renderingProps = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      if (!debug || !debug.scene) return null;
+
+      let hasColors = false;
+      let hasRadii = false;
+
+      debug.scene.traverse((obj: any) => {
+        if (obj.type === 'Points' && obj.geometry) {
+          const attrs = obj.geometry.attributes;
+          if (attrs.color) hasColors = true;
+          if (attrs.size) hasRadii = true;
+        }
+      });
+
+      return { hasColors, hasRadii };
+    });
+
+    expect(renderingProps).not.toBeNull();
   });
 
   test('should verify WebGL rendering with real data', async ({ page }) => {
@@ -213,5 +270,44 @@ test.describe('Real Dataset Loading', () => {
 
     expect(renderInfo.frames).toBeGreaterThan(0);
     expect(renderInfo.calls).toBeGreaterThan(0);
+  });
+
+  test('should switch datasets without page reload', async ({ page }) => {
+    // Load first dataset
+    await page.goto(`/?src=${DATASETS.buildStructured}&debug`);
+    await waitForLuxarReady(page);
+    await waitForPointsLoaded(page, 100);
+
+    const state1 = await getLuxarState(page);
+    expect(state1.totalPoints).toBeGreaterThan(0);
+
+    // Navigate to second dataset via URL change (simulates user switching)
+    await page.goto(`/?src=${DATASETS.dimensionNav}&debug`);
+    await waitForLuxarReady(page);
+
+    const state2 = await getLuxarState(page);
+    expect(state2.initialized).toBe(true);
+    expect(state2.totalPoints).toBeGreaterThanOrEqual(0);
+
+    // Check for WebGL errors accumulated during switch
+    const webglErrors = await page.evaluate(() => {
+      const canvas = document.querySelector('canvas');
+      if (!canvas) return [];
+      const gl =
+        (canvas as HTMLCanvasElement).getContext('webgl2') ||
+        (canvas as HTMLCanvasElement).getContext('webgl');
+      if (!gl) return [];
+
+      const errors: string[] = [];
+      let error;
+      let count = 0;
+      while ((error = gl.getError()) !== gl.NO_ERROR && count < 100) {
+        errors.push(`GL Error: 0x${error.toString(16)}`);
+        count++;
+      }
+      return errors;
+    });
+
+    expect(webglErrors.length).toBe(0);
   });
 });

@@ -11,6 +11,7 @@ from luxar.gsplats.utils.trils import (
     unpack_tril,
 )
 
+
 class TestCalculateGradientDilutionFactor:
     """Test calculate_gradient_dilution_factor function."""
 
