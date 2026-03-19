@@ -212,21 +212,22 @@ export async function waitForDebugInterfaceReady(page: Page, timeout = 10000): P
  */
 export async function waitForDimensionSelected(
   page: Page,
-  _dimensionIndex: number,
+  dimensionIndex: number,
   timeout = 5000
 ): Promise<void> {
   await page.waitForFunction(
-    () => {
+    (idx) => {
       const debug = (window as any).__luxarDebug;
-      // Check if dimension was selected (implementation may vary)
-      // For now, just wait for state to be stable
-      return debug && debug.getState && debug.getState().initialized;
+      if (!debug?.getState?.()?.initialized) return false;
+      // Try to verify the selected dimension via sceneDimsManager
+      const selected = debug?.app?.inputHandler?.sceneDimsManager?.getSelectedDimension?.();
+      if (typeof selected === 'number') return selected === idx;
+      // Fallback: if API not available, just wait for initialized state
+      return true;
     },
-    null,
+    dimensionIndex,
     { timeout }
   );
-  // Small delay to ensure input handler processed the key
-  await page.waitForTimeout(100);
 }
 
 /**
@@ -739,4 +740,43 @@ export async function assertNoConsoleErrors(
         'See console output above for full list.'
     );
   }
+}
+
+// ============================================================================
+// Standardized Debug Interface Accessors
+// ============================================================================
+
+/**
+ * Get the input handler from the debug interface.
+ * Standardizes access pattern: debug.app.inputHandler (canonical path).
+ */
+export async function getInputHandler(page: Page): Promise<any> {
+  return await page.evaluate(() => {
+    const debug = (window as any).__luxarDebug;
+    return debug?.app?.inputHandler ?? debug?.inputHandler ?? null;
+  });
+}
+
+/**
+ * Get the animation manager from the debug interface.
+ * Standardizes access: debug.app.inputHandler.animationManager.
+ */
+export async function getAnimationManager(page: Page): Promise<any> {
+  return await page.evaluate(() => {
+    const debug = (window as any).__luxarDebug;
+    const ih = debug?.app?.inputHandler ?? debug?.inputHandler;
+    return ih?.animationManager ?? null;
+  });
+}
+
+/**
+ * Get the scene dims manager from the debug interface.
+ * Standardizes access: debug.app.inputHandler.sceneDimsManager.
+ */
+export async function getSceneDimsManager(page: Page): Promise<any> {
+  return await page.evaluate(() => {
+    const debug = (window as any).__luxarDebug;
+    const ih = debug?.app?.inputHandler ?? debug?.inputHandler;
+    return ih?.sceneDimsManager ?? debug?.sceneDimsManager ?? null;
+  });
 }

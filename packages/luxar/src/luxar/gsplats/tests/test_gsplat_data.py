@@ -5,6 +5,7 @@ import pytest
 
 from luxar.gsplats.gsplat_data import GSplatData
 
+
 def _make_3d_gsplat(n=5, seed=42):
     """Helper: create a simple 3D GSplatData with n splats."""
     rng = np.random.RandomState(seed)

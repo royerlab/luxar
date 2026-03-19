@@ -7,6 +7,7 @@ import torch
 
 from luxar.gsplats.clahe import apply_clahe, compute_clahe_sampling_probabilities
 
+
 class TestCLAHEBasic:
     """Basic functionality tests for CLAHE."""
 

@@ -336,10 +336,10 @@ pnpm agent:debug:visible          # AI debugging with visible browser
 Instead of running all E2E tests at once (which can timeout or be overwhelming), run them by topic:
 ```bash
 # Basic functionality
-npx playwright test basic-rendering.spec.ts data-loading.spec.ts
+npx playwright test basic-rendering.spec.ts viewer-initialization.spec.ts
 
 # Scene & transforms
-npx playwright test scene-integration.spec.ts transform-hierarchy.spec.ts
+npx playwright test transform-hierarchy.spec.ts
 
 # nD navigation & dimensions
 npx playwright test nd-navigation.spec.ts dimension-initialization.spec.ts dimension-animation.spec.ts

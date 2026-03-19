@@ -43,7 +43,7 @@ This file tracks known issues, planned features, and improvements for the Luxar 
 
 9 - **UI ergonomics**: The current UI relies heavily on hidden keyboard shortcuts to reveal panels, which is poor discoverability. Improve with visible affordances (buttons, menus, or indicators).
 
-10 - **Retire sharpness from the viewer**: Remove or hide the sharpness parameter from the viewer UI. Keep it in the data model and rendering pipeline, but do not expose it as a user-facing control.
+0 - **Retire gsplat sharpness from the viewer**: Remove sharpness for rendering. Warn users that non-2 sharpnesses cannot be rendered.
 
 ## Rendering & Performance (MEDIUM Priority)
 
