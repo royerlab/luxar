@@ -9,11 +9,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import {
-  waitForLuxarReady,
-  assertNoConsoleErrors,
-  getWebGLErrors,
-} from './helpers';
+import { waitForLuxarReady, assertNoConsoleErrors, getWebGLErrors } from './helpers';
 
 const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
 

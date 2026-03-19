@@ -220,8 +220,7 @@ export async function waitForDimensionSelected(
       const debug = (window as any).__luxarDebug;
       if (!debug?.getState?.()?.initialized) return false;
       // Try to verify the selected dimension via sceneDimsManager
-      const selected =
-        debug?.app?.inputHandler?.sceneDimsManager?.getSelectedDimension?.();
+      const selected = debug?.app?.inputHandler?.sceneDimsManager?.getSelectedDimension?.();
       if (typeof selected === 'number') return selected === idx;
       // Fallback: if API not available, just wait for initialized state
       return true;

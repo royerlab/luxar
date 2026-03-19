@@ -71,19 +71,33 @@ test.describe('First-Time User Experience', () => {
     await page.goto('/?src=http://localhost:9000/nonexistent.zarr&debug');
 
     // Viewer should show either error dialog or dataset browser (graceful handling)
-    await page.waitForSelector('.error-message, .luxar-error-dialog, .dataset-browser, .luxar-dataset-browser', {
-      timeout: 30000,
-    });
+    await page.waitForSelector(
+      '.error-message, .luxar-error-dialog, .dataset-browser, .luxar-dataset-browser',
+      {
+        timeout: 30000,
+      }
+    );
 
-    const hasErrorDialog = await page.locator('.error-message, .luxar-error-dialog').first().isVisible().catch(() => false);
-    const hasDatasetBrowser = await page.locator('.dataset-browser, .luxar-dataset-browser').first().isVisible().catch(() => false);
+    const hasErrorDialog = await page
+      .locator('.error-message, .luxar-error-dialog')
+      .first()
+      .isVisible()
+      .catch(() => false);
+    const hasDatasetBrowser = await page
+      .locator('.dataset-browser, .luxar-dataset-browser')
+      .first()
+      .isVisible()
+      .catch(() => false);
 
     // At least one should be visible (graceful error handling)
     expect(hasErrorDialog || hasDatasetBrowser).toBe(true);
 
     // If error dialog is shown, verify it has helpful content
     if (hasErrorDialog) {
-      const errorText = await page.locator('.error-message, .luxar-error-dialog').first().textContent();
+      const errorText = await page
+        .locator('.error-message, .luxar-error-dialog')
+        .first()
+        .textContent();
       expect(errorText).toContain('Unable to Load Dataset');
     }
   });
@@ -92,12 +106,17 @@ test.describe('First-Time User Experience', () => {
     await page.goto('/?src=http://localhost:9000/missing.zarr&debug');
 
     // Wait for either error dialog or dataset browser
-    await page.waitForSelector('.error-message, .luxar-error-dialog, .dataset-browser, .luxar-dataset-browser', {
-      timeout: 30000,
-    });
+    await page.waitForSelector(
+      '.error-message, .luxar-error-dialog, .dataset-browser, .luxar-dataset-browser',
+      {
+        timeout: 30000,
+      }
+    );
 
     // Get text from whichever UI appeared
-    const uiElement = page.locator('.error-message, .luxar-error-dialog, .dataset-browser, .luxar-dataset-browser').first();
+    const uiElement = page
+      .locator('.error-message, .luxar-error-dialog, .dataset-browser, .luxar-dataset-browser')
+      .first();
     const uiText = await uiElement.textContent();
 
     // Should NOT have specific hardcoded dataset URLs
@@ -109,17 +128,26 @@ test.describe('First-Time User Experience', () => {
     await page.goto('/?src=http://localhost:9000/fail.zarr&debug');
 
     // Wait for UI to appear
-    await page.waitForSelector('.error-message, .luxar-error-dialog, .dataset-browser, .luxar-dataset-browser', {
-      timeout: 30000,
-    });
+    await page.waitForSelector(
+      '.error-message, .luxar-error-dialog, .dataset-browser, .luxar-dataset-browser',
+      {
+        timeout: 30000,
+      }
+    );
 
     // Dismiss with Escape or click
     await page.keyboard.press('Escape');
     await page.waitForTimeout(500);
 
     // At least one of the dismissal methods should work
-    const errorStillVisible = await page.locator('.error-message').isVisible().catch(() => false);
-    const browserStillVisible = await page.locator('.dataset-browser').isVisible().catch(() => false);
+    const errorStillVisible = await page
+      .locator('.error-message')
+      .isVisible()
+      .catch(() => false);
+    const browserStillVisible = await page
+      .locator('.dataset-browser')
+      .isVisible()
+      .catch(() => false);
 
     // Escape should dismiss at least one UI element
     expect(errorStillVisible && browserStillVisible).toBe(false);
@@ -133,13 +161,17 @@ test.describe('First-Time User Experience', () => {
     await expect(browser).toBeVisible({ timeout: 5000 });
 
     // Try close button (×)
-    const closeBtn = browser.locator('button[aria-label="Close"], .close-button, .close-btn, button:has-text("×")').first();
+    const closeBtn = browser
+      .locator('button[aria-label="Close"], .close-button, .close-btn, button:has-text("×")')
+      .first();
     if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
       await closeBtn.click();
       await expect(browser).toBeHidden({ timeout: 5000 });
     } else {
       // If no close button, navigate to a dataset to dismiss
-      await page.goto('/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.zarr&debug');
+      await page.goto(
+        '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.zarr&debug'
+      );
       await expect(browser).toBeHidden({ timeout: 10000 });
     }
   });

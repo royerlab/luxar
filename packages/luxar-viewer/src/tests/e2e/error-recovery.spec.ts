@@ -22,12 +22,23 @@ test.describe('Error Recovery - Invalid Datasets', () => {
     await page.goto('/?src=http://localhost:9000/does-not-exist.zarr&debug');
 
     // Should show error dialog or dataset browser (graceful handling, not crash)
-    await page.waitForSelector('.error-message, .luxar-error-dialog, .dataset-browser, .luxar-dataset-browser', {
-      timeout: 30000,
-    });
+    await page.waitForSelector(
+      '.error-message, .luxar-error-dialog, .dataset-browser, .luxar-dataset-browser',
+      {
+        timeout: 30000,
+      }
+    );
 
-    const hasError = await page.locator('.error-message, .luxar-error-dialog').first().isVisible().catch(() => false);
-    const hasBrowser = await page.locator('.dataset-browser, .luxar-dataset-browser').first().isVisible().catch(() => false);
+    const hasError = await page
+      .locator('.error-message, .luxar-error-dialog')
+      .first()
+      .isVisible()
+      .catch(() => false);
+    const hasBrowser = await page
+      .locator('.dataset-browser, .luxar-dataset-browser')
+      .first()
+      .isVisible()
+      .catch(() => false);
     expect(hasError || hasBrowser).toBe(true);
   });
 
