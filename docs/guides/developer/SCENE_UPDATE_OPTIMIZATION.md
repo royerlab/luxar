@@ -245,11 +245,11 @@ if (dataFingerprint === this.lastFingerprint) {
 
 ### 3.3 Material Consolidation
 
-**Idea**: Move radius/sharpness scaling entirely to shader, use single material per blend mode.
+**Idea**: Move radius scaling entirely to shader, use single material per blend mode.
 
 ```typescript
 // Before: Different scales = different materials
-const key = `point_${blend}_o${opacity}_r${radiusScale}_s${sharpnessScale}`;
+const key = `point_${blend}_o${opacity}_r${radiusScale}`;
 
 // After: Scales in uniform, single material per blend mode
 const key = `point_${blend}_o${opacity}`;

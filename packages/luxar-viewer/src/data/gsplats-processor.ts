@@ -228,7 +228,6 @@ export function processGSplatsTo3D(
     }
 
     // Step 2: Gaussian attenuation for continuous hidden dimensions only.
-    const splatSharpness = loaded.sharpness?.[i] ?? 2.0;
     let attenuation = 1.0;
 
     if (numContinuousHidden > 0) {
@@ -257,7 +256,8 @@ export function processGSplatsTo3D(
         yBuffer!
       );
 
-      attenuation = Math.exp(-0.5 * Math.pow(mahalDist, splatSharpness));
+      // Standard Gaussian attenuation (sharpness=2 hardcoded)
+      attenuation = Math.exp(-0.5 * mahalDist * mahalDist);
     }
 
     attenuations[i] = attenuation;
@@ -273,7 +273,6 @@ export function processGSplatsTo3D(
   const centers3D = new Float32Array(visibleCount * 3);
   const choleskyFactors3D = new Float32Array(visibleCount * display3DPackedSize);
   const amplitudes = new Float32Array(visibleCount);
-  const sharpness = new Float32Array(visibleCount);
   const colors = new Float32Array(visibleCount * 3);
 
   // Color normalization factor (computed once, not per-splat)
@@ -307,8 +306,6 @@ export function processGSplatsTo3D(
     );
 
     // Use cached attenuation from first pass (no recomputation!)
-    const srcSharpness = loaded.sharpness?.[srcIdx] ?? 2.0;
-    sharpness[outIdx] = srcSharpness;
     amplitudes[outIdx] = loaded.amplitudes[srcIdx] * attenuations[srcIdx];
 
     // Copy colors with normalization (default to white if not present)
@@ -330,7 +327,6 @@ export function processGSplatsTo3D(
     amplitudes,
     choleskyFactors3D,
     colors,
-    sharpness,
     splatCount: visibleCount,
   };
 }
@@ -355,7 +351,6 @@ export function processGSplats3DOnly(loaded: LoadedGSplatsData): ProcessedGSplat
   const centers3D = new Float32Array(splatCount * 3);
   const choleskyFactors3D = new Float32Array(splatCount * 6);
   const amplitudes = new Float32Array(splatCount);
-  const sharpness = new Float32Array(splatCount);
   const colors = new Float32Array(splatCount * 3);
 
   // Copy centers (already 3D)
@@ -366,13 +361,6 @@ export function processGSplats3DOnly(loaded: LoadedGSplatsData): ProcessedGSplat
 
   // Copy amplitudes
   amplitudes.set(loaded.amplitudes);
-
-  // Copy sharpness (default to 2.0 if not present)
-  if (loaded.sharpness) {
-    sharpness.set(loaded.sharpness);
-  } else {
-    sharpness.fill(2.0);
-  }
 
   // Copy colors with normalization (default to white if not present)
   if (loaded.colors) {
@@ -394,7 +382,6 @@ export function processGSplats3DOnly(loaded: LoadedGSplatsData): ProcessedGSplat
     amplitudes,
     choleskyFactors3D,
     colors,
-    sharpness,
     splatCount,
   };
 }

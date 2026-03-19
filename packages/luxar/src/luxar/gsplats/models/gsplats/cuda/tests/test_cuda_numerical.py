@@ -130,28 +130,6 @@ class TestGradientFormulas:
 
         np.testing.assert_allclose(dI_da, dI_da_numerical, rtol=1e-4)
 
-    def test_sharpness_gradient(self):
-        """Test ∂I/∂s = I × inner × 0.5 × ln(D²)."""
-        a = 2.0
-        dist_sq = 2.0
-        s = 2.0
-
-        inner = -0.5 * dist_sq ** (s / 2)
-        intensity = a * np.exp(inner)
-
-        # ∂I/∂s = I × inner × 0.5 × ln(D²)
-        dI_ds = intensity * inner * 0.5 * np.log(dist_sq)
-
-        # Numerical verification
-        eps = 1e-5
-        inner_plus = -0.5 * dist_sq ** ((s + eps) / 2)
-        inner_minus = -0.5 * dist_sq ** ((s - eps) / 2)
-        I_plus = a * np.exp(inner_plus)
-        I_minus = a * np.exp(inner_minus)
-        dI_ds_numerical = (I_plus - I_minus) / (2 * eps)
-
-        np.testing.assert_allclose(dI_ds, dI_ds_numerical, rtol=1e-3)
-
     def test_distance_gradient(self):
         """Test ∂I/∂D² = I × (-0.25s) × D^(s-2)."""
         a = 2.0

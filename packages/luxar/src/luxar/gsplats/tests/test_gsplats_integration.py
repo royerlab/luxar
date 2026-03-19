@@ -66,7 +66,6 @@ class TestGaussianSplatsIntegration:
         assert n_splats <= n_seeds  # Can't gain splats
         assert result.centers.shape == (n_splats, 2)  # 2D centers
         assert result.cholesky_factors.shape == (n_splats, tril_size(2))  # Packed L
-        assert result.sharpnesses.shape == (n_splats,)
         assert np.all(result.amplitudes >= 0)  # Amplitudes should be non-negative
 
         # Render reconstruction
@@ -107,7 +106,6 @@ class TestGaussianSplatsIntegration:
         assert n_splats <= n_seeds  # Can't gain splats
         assert result.centers.shape == (n_splats, 3)  # 3D centers
         assert result.cholesky_factors.shape == (n_splats, tril_size(3))  # Packed L
-        assert result.sharpnesses.shape == (n_splats,)
 
         # Render reconstruction
         reconstruction = render_gaussians_numpy(volume.shape, result, truncate=3.0)
@@ -166,7 +164,6 @@ class TestGaussianSplatsIntegration:
         if n_splats > 0:
             assert result.centers.shape == (n_splats, 4)  # 4D centers
             assert result.cholesky_factors.shape[1] == tril_size(4)  # 4x4 Cholesky
-            assert result.sharpnesses.shape == (n_splats,)
             assert all(result.amplitudes >= 0)  # Non-negative amplitudes
 
         # Render reconstruction (this tests our nD chunking path!)
@@ -271,11 +268,9 @@ class TestGaussianSplatsIntegration:
         L_full = unpack_tril(result.cholesky_factors, d)
         Ls = torch.tensor(L_full, device=device)
         amps_t = torch.tensor(result.amplitudes, device=device)
-        # Use fitted sharpness values
-        sharpness = torch.tensor(result.sharpnesses, device=device)
 
         recon_torch = render_gaussians(
-            image.shape, centers, Ls, amps_t, sharpness, truncate=3.0
+            image.shape, centers, Ls, amps_t, truncate=3.0
         )
         recon_torch_np = recon_torch.cpu().numpy()
 
@@ -379,7 +374,7 @@ class TestGaussianSplatsIntegration:
             napari_movie=False,
         )
         params = np.column_stack(
-            [result.centers, result.cholesky_factors, result.sharpnesses]
+            [result.centers, result.cholesky_factors]
         )
 
         # Extract and check Cholesky factors
@@ -409,7 +404,7 @@ class TestGaussianSplatsIntegration:
             napari_movie=False,
         )
         params_cpu = np.column_stack(
-            [result_cpu.centers, result_cpu.cholesky_factors, result_cpu.sharpnesses]
+            [result_cpu.centers, result_cpu.cholesky_factors]
         )
         assert np.all(np.isfinite(params_cpu))
 
@@ -426,7 +421,6 @@ class TestGaussianSplatsIntegration:
                 [
                     result_cuda.centers,
                     result_cuda.cholesky_factors,
-                    result_cuda.sharpnesses,
                 ]
             )
             assert np.all(np.isfinite(params_cuda))
@@ -444,7 +438,6 @@ class TestGaussianSplatsIntegration:
                 [
                     result_mps.centers,
                     result_mps.cholesky_factors,
-                    result_mps.sharpnesses,
                 ]
             )
             assert np.all(np.isfinite(params_mps))
@@ -464,14 +457,14 @@ class TestGaussianSplatsIntegration:
         )
         params = (
             np.column_stack(
-                [result.centers, result.cholesky_factors, result.sharpnesses]
+                [result.centers, result.cholesky_factors]
             )
             if len(result.centers) > 0
-            else np.zeros((0, 2 + tril_size(2) + 1))
+            else np.zeros((0, 2 + tril_size(2)))
         )
         amps = result.amplitudes
 
-        assert params.shape == (0, 2 + tril_size(2) + 1)  # Include sharpness
+        assert params.shape == (0, 2 + tril_size(2))
         assert amps.shape == (0,)
 
         # Uniform image
@@ -487,7 +480,7 @@ class TestGaussianSplatsIntegration:
             napari_movie=False,
         )
         params = np.column_stack(
-            [result.centers, result.cholesky_factors, result.sharpnesses]
+            [result.centers, result.cholesky_factors]
         )
         amps = result.amplitudes
 

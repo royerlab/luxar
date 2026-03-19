@@ -178,14 +178,14 @@ Wait -- re-reading the issue: it says "Rename to index-based (`c_00`) or coordin
 
 **Evidence**: The forward method at line 206 always saves 6 tensors:
 ```python
-ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps, sharpness)
+ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps)
 ```
 And also caches FP16 kernel tensors at lines 208-211:
 ```python
 ctx.centers_kernel = centers_kernel
 ctx.conic_kernel = conic_kernel
 ctx.amps_kernel = amps_kernel
-ctx.sharpness_kernel = sharpness_kernel
+// sharpness_kernel removed (standard Gaussian hardcoded)
 ```
 
 These are saved regardless of whether the CUDA backend was used (line 166) or the PyTorch fallback was used (line 191). The fallback backward path at lines 303-341 recomputes everything from scratch, so the cached kernel tensors are wasted memory in that path.

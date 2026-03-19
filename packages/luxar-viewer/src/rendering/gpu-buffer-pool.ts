@@ -41,7 +41,6 @@ export interface PackedGSplatsData {
   cholesky23: Float32Array; // M * 2 [L11, L20]
   cholesky45: Float32Array; // M * 2 [L21, L22]
   colors: Float32Array; // M * 3 (RGB)
-  sharpness: Float32Array; // M
   splatCount: number;
 }
 
@@ -816,7 +815,6 @@ export class GPUBufferPool {
       ['aCholesky45', 2],
       ['aAmplitude', 1],
       ['aColor', 3],
-      ['aSharpness', 1],
     ] as const;
 
     for (const [name, size] of attrs) {
@@ -841,7 +839,6 @@ export class GPUBufferPool {
       'aCholesky45',
       'aAmplitude',
       'aColor',
-      'aSharpness',
     ];
 
     for (const name of attrNames) {
@@ -872,7 +869,6 @@ export class GPUBufferPool {
       ['aCholesky45', data.cholesky45, 2],
       ['aAmplitude', data.amplitudes, 1],
       ['aColor', data.colors, 3],
-      ['aSharpness', data.sharpness, 1],
     ] as const;
 
     for (const [name, sourceData, size] of attrs) {

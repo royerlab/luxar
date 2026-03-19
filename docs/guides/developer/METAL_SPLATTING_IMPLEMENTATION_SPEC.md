@@ -89,13 +89,12 @@ This is the same approach used by:
 Each splat k contributes intensity at position x:
 
 ```
-I_k(x) = a_k × exp(-0.5 × D_k(x)^(s_k/2))
+I_k(x) = a_k × exp(-0.5 × D_k(x))
 ```
 
 Where:
 - `a_k` = amplitude (scalar)
-- `s_k` = sharpness (s=2 is standard Gaussian)
-- `D_k(x)` = squared Mahalanobis distance
+- `D_k(x)` = squared Mahalanobis distance (standard Gaussian, hardcoded s=2)
 
 ### 2.2 Mahalanobis Distance
 
@@ -168,14 +167,14 @@ extent_i = r × sqrt(Σ_ii)
 
 Where `Σ_ii = sum_j(L_ij²)` (row-wise sum of squares of L).
 
-For truncation radius `truncate` and sharpness `s`:
+For truncation radius `truncate`:
 ```
-r = truncate^(2/s)  # sharpness-adjusted radius
+r = truncate  # standard Gaussian truncation radius
 ```
 
 ### 2.6 Gradient Derivation
 
-**Forward**: `I = a × exp(inner)` where `inner = -0.5 × D^(s/2)`
+**Forward**: `I = a × exp(inner)` where `inner = -0.5 × D`
 
 **Gradients** (for backward pass):
 
@@ -317,12 +316,12 @@ Before writing any new kernel, verify:
 
 ```
 1. GaussianSplatModelMetal.forward()
-   └─> current_params() → centers, Ls, amps, sharpness
+   └─> current_params() → centers, Ls, amps
 
 2. MetalSplatFunction.forward()
    ├─> [PyTorch] cholesky_to_conic(Ls) → conic (N, 6)
    ├─> [PyTorch] compute_bbox(centers, Ls, truncate) → lo, hi
-   └─> [Metal] dispatch_forward_3d(centers, conic, amps, sharpness, shape, truncate)
+   └─> [Metal] dispatch_forward_3d(centers, conic, amps, shape, truncate)
        ├─> preprocess_3d: Count splats per tile
        ├─> prefix_sum: Compute tile offsets (GPU via torch.cumsum)
        ├─> bin_3d: Populate tile_content array
@@ -336,14 +335,14 @@ Before writing any new kernel, verify:
 ```
 1. MetalSplatFunction.backward(grad_output)
    ├─> [Metal] dispatch_backward_3d(grad_output, centers, conic, ...)
-   │   └─> rasterize_bwd_3d: Compute d_centers, d_conic, d_amps, d_sharpness
+   │   └─> rasterize_bwd_3d: Compute d_centers, d_conic, d_amps
    │       (Uses SIMD reduction to minimize atomic contention)
    │
    └─> [PyTorch] Chain rule: d_conic → d_Ls
        ├─> Recompute L → Conic in PyTorch (ensures graph consistency)
        └─> conic.backward(d_conic) → d_Ls
 
-2. Return d_centers, d_Ls, d_amps, d_sharpness
+2. Return d_centers, d_Ls, d_amps
 ```
 
 ### 3.4 Key Design Decision: L → Conic in PyTorch
@@ -515,7 +514,6 @@ def create_model(config: FitConfig, data: PreprocessedData) -> GaussianSplatMode
             centers0=data.seed_centers,
             L0=...,  # Same initialization as GaussianSplatModel
             amps0=...,
-            sharpness0=...,
             sigma_min_diag=config.sigma_min_diag,
             sigma_max_diag=config.sigma_max_diag,
             truncate=config.truncate,
@@ -828,7 +826,7 @@ The tile size of 4 is chosen because:
 |--------|-------|--------|------------|
 | `preprocess_3d` | centers, Ls, truncate | tile_counts | O(N × tiles/splat) |
 | `bin_3d` | centers, Ls, tile_offsets | tile_content | O(N × tiles/splat) |
-| `rasterize_fwd_3d` | conic, amps, sharpness, tiles | output | O(P × splats/tile) |
+| `rasterize_fwd_3d` | conic, amps, tiles | output | O(P × splats/tile) |
 | `rasterize_bwd_3d` | grad_output, conic, ... | d_* | O(P × splats/tile) |
 
 ### 6.4 Memory Layout
@@ -837,7 +835,6 @@ The tile size of 4 is chosen because:
 - `centers`: (N, 3) float32, row-major
 - `conic`: (N, 6) float32, upper triangle [xx, xy, xz, yy, yz, zz]
 - `amps`: (N,) float32
-- `sharpness`: (N,) float32
 
 **Intermediate Buffers**:
 - `tile_counts`: (num_tiles,) int32
@@ -860,14 +857,10 @@ inline TileRange get_tile_range_3d(
     float3 center,
     float3 sigma_diag,  // Σ_ii = sum_j(L_ij²)
     float truncate,
-    float sharpness,
     constant uint3& grid_dims
 ) {
-    // Sharpness-adjusted truncation radius
-    float effective_truncate = pow(truncate, 2.0f / sharpness);
-
-    // Exact bounding box: r_i = effective_truncate × sqrt(Σ_ii)
-    float3 r = effective_truncate * sqrt(sigma_diag);
+    // Exact bounding box: r_i = truncate × sqrt(Σ_ii)
+    float3 r = truncate * sqrt(sigma_diag);
 
     // Convert to tile indices (tile_size = 4)
     TileRange tr;
@@ -1002,7 +995,6 @@ std::vector<torch::Tensor> dispatch_forward_3d(
     torch::Tensor centers,   // (N, 3)
     torch::Tensor conic,     // (N, 6) - precomputed in PyTorch
     torch::Tensor amps,      // (N,)
-    torch::Tensor sharpness, // (N,)
     std::vector<int64_t> shape,  // [D, H, W]
     float truncate,
     float intensity_floor    // For early culling of invisible contributions
@@ -1030,8 +1022,7 @@ std::vector<torch::Tensor> dispatch_forward_3d(
         // Use helper to handle storage offsets correctly
         setBufferWithOffset(enc, centers, 0);
         setBufferWithOffset(enc, /* Ls for sigma_diag */, 1);
-        setBufferWithOffset(enc, sharpness, 2);
-        setBufferWithOffset(enc, tile_counts, 3);
+        setBufferWithOffset(enc, tile_counts, 2);
         // ... set constants (truncate, grid_dims, n_splats)
 
         MTLSize gridSize = MTLSizeMake(N, 1, 1);
@@ -1080,11 +1071,10 @@ std::vector<torch::Tensor> dispatch_forward_3d(
         setBufferWithOffset(enc, centers, 0);
         setBufferWithOffset(enc, conic, 1);
         setBufferWithOffset(enc, amps, 2);
-        setBufferWithOffset(enc, sharpness, 3);
-        setBufferWithOffset(enc, tile_offsets, 4);
-        setBufferWithOffset(enc, tile_counts, 5);
-        setBufferWithOffset(enc, tile_content, 6);
-        setBufferWithOffset(enc, output, 7);
+        setBufferWithOffset(enc, tile_offsets, 3);
+        setBufferWithOffset(enc, tile_counts, 4);
+        setBufferWithOffset(enc, tile_content, 5);
+        setBufferWithOffset(enc, output, 6);
         // ... set constants (img_size, grid_dims, truncate, intensity_floor)
 
         // CRITICAL: Pad grid to multiple of tile size to ensure full threadgroups!
@@ -1117,7 +1107,6 @@ std::vector<torch::Tensor> dispatch_backward_3d(
     torch::Tensor centers,        // (N, 3)
     torch::Tensor conic,          // (N, 6) - precomputed
     torch::Tensor amps,           // (N,)
-    torch::Tensor sharpness,      // (N,)
     torch::Tensor tile_offsets,   // From forward pass
     torch::Tensor tile_counts,    // From forward pass
     torch::Tensor tile_content,   // From forward pass
@@ -1142,7 +1131,6 @@ std::vector<torch::Tensor> dispatch_backward_3d(
     auto d_centers = torch::zeros({N, 3}, torch::kFloat32).to(torch::kMPS);
     auto d_conic = torch::zeros({N, 6}, torch::kFloat32).to(torch::kMPS);
     auto d_amps = torch::zeros({N}, torch::kFloat32).to(torch::kMPS);
-    auto d_sharpness = torch::zeros({N}, torch::kFloat32).to(torch::kMPS);
 
     // Ensure MPS operations complete before kernel dispatch
     torch::mps::synchronize();
@@ -1158,23 +1146,20 @@ std::vector<torch::Tensor> dispatch_backward_3d(
         setBufferWithOffset(enc, centers, 1);
         setBufferWithOffset(enc, conic, 2);
         setBufferWithOffset(enc, amps, 3);
-        setBufferWithOffset(enc, sharpness, 4);
-        setBufferWithOffset(enc, tile_offsets, 5);
-        setBufferWithOffset(enc, tile_counts, 6);
-        setBufferWithOffset(enc, tile_content, 7);
+        setBufferWithOffset(enc, tile_offsets, 4);
+        setBufferWithOffset(enc, tile_counts, 5);
+        setBufferWithOffset(enc, tile_content, 6);
 
         // Output gradient buffers (zero-initialized above)
-        setBufferWithOffset(enc, d_centers, 8);
-        setBufferWithOffset(enc, d_conic, 9);
-        setBufferWithOffset(enc, d_amps, 10);
-        setBufferWithOffset(enc, d_sharpness, 11);
+        setBufferWithOffset(enc, d_centers, 7);
+        setBufferWithOffset(enc, d_conic, 8);
+        setBufferWithOffset(enc, d_amps, 9);
 
         // Constants
         uint3 img_size = {(uint)W, (uint)H, (uint)D};
-        [enc setBytes:&img_size length:sizeof(uint3) atIndex:12];
-        [enc setBytes:&grid_dims length:sizeof(uint3) atIndex:13];
-        [enc setBytes:&truncate length:sizeof(float) atIndex:14];
-        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:15];
+        [enc setBytes:&img_size length:sizeof(uint3) atIndex:10];
+        [enc setBytes:&grid_dims length:sizeof(uint3) atIndex:11];
+        [enc setBytes:&truncate length:sizeof(float) atIndex:12];
 
         // CRITICAL: Pad grid to multiple of tile size to ensure full threadgroups!
         // Partial threadgroups can cause undefined behavior with simd_sum().
@@ -1192,7 +1177,7 @@ std::vector<torch::Tensor> dispatch_backward_3d(
         [cmd waitUntilCompleted];
     }
 
-    return {d_centers, d_conic, d_amps, d_sharpness};
+    return {d_centers, d_conic, d_amps};
 }
 ```
 
@@ -1203,7 +1188,6 @@ std::vector<torch::Tensor> dispatch_forward_nd(
     torch::Tensor centers,        // (N, dim)
     torch::Tensor Ls,             // (N, dim, dim)
     torch::Tensor amps,           // (N,)
-    torch::Tensor sharpness,      // (N,)
     std::vector<int64_t> shape,   // [s_0, s_1, ..., s_{dim-1}]
     float truncate,
     float intensity_floor
@@ -1234,20 +1218,19 @@ std::vector<torch::Tensor> dispatch_forward_nd(
         setBufferWithOffset(enc, centers, 0);
         setBufferWithOffset(enc, Ls, 1);
         setBufferWithOffset(enc, amps, 2);
-        setBufferWithOffset(enc, sharpness, 3);
-        setBufferWithOffset(enc, output, 4);
+        setBufferWithOffset(enc, output, 3);
 
         // Pass shape as array
         uint shape_arr[8] = {0};
         for (int i = 0; i < dim; i++) shape_arr[i] = (uint)shape[i];
-        [enc setBytes:shape_arr length:sizeof(shape_arr) atIndex:5];
+        [enc setBytes:shape_arr length:sizeof(shape_arr) atIndex:4];
 
         uint dim_u = (uint)dim;
         uint N_u = (uint)N;
-        [enc setBytes:&dim_u length:sizeof(uint) atIndex:6];
-        [enc setBytes:&N_u length:sizeof(uint) atIndex:7];
-        [enc setBytes:&truncate length:sizeof(float) atIndex:8];
-        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:9];
+        [enc setBytes:&dim_u length:sizeof(uint) atIndex:5];
+        [enc setBytes:&N_u length:sizeof(uint) atIndex:6];
+        [enc setBytes:&truncate length:sizeof(float) atIndex:7];
+        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:8];
 
         // Thread configuration: one thread per pixel
         MTLSize gridSize = MTLSizeMake(total_size, 1, 1);
@@ -1270,7 +1253,6 @@ std::vector<torch::Tensor> dispatch_backward_nd(
     torch::Tensor centers,        // (N, dim)
     torch::Tensor Ls,             // (N, dim, dim)
     torch::Tensor amps,           // (N,)
-    torch::Tensor sharpness,      // (N,)
     std::vector<int64_t> shape,
     float truncate,
     float intensity_floor
@@ -1292,7 +1274,6 @@ std::vector<torch::Tensor> dispatch_backward_nd(
     auto d_centers = torch::zeros({N, dim}, torch::kFloat32).to(torch::kMPS);
     auto d_Ls = torch::zeros({N, dim, dim}, torch::kFloat32).to(torch::kMPS);
     auto d_amps = torch::zeros({N}, torch::kFloat32).to(torch::kMPS);
-    auto d_sharpness = torch::zeros({N}, torch::kFloat32).to(torch::kMPS);
 
     torch::mps::synchronize();
 
@@ -1306,25 +1287,23 @@ std::vector<torch::Tensor> dispatch_backward_nd(
         setBufferWithOffset(enc, centers, 1);
         setBufferWithOffset(enc, Ls, 2);
         setBufferWithOffset(enc, amps, 3);
-        setBufferWithOffset(enc, sharpness, 4);
 
         // Output gradient buffers
-        setBufferWithOffset(enc, d_centers, 5);
-        setBufferWithOffset(enc, d_Ls, 6);
-        setBufferWithOffset(enc, d_amps, 7);
-        setBufferWithOffset(enc, d_sharpness, 8);
+        setBufferWithOffset(enc, d_centers, 4);
+        setBufferWithOffset(enc, d_Ls, 5);
+        setBufferWithOffset(enc, d_amps, 6);
 
         // Shape and constants
         uint shape_arr[8] = {0};
         for (int i = 0; i < dim; i++) shape_arr[i] = (uint)shape[i];
-        [enc setBytes:shape_arr length:sizeof(shape_arr) atIndex:9];
+        [enc setBytes:shape_arr length:sizeof(shape_arr) atIndex:7];
 
         uint dim_u = (uint)dim;
         uint N_u = (uint)N;
-        [enc setBytes:&dim_u length:sizeof(uint) atIndex:10];
-        [enc setBytes:&N_u length:sizeof(uint) atIndex:11];
-        [enc setBytes:&truncate length:sizeof(float) atIndex:12];
-        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:13];
+        [enc setBytes:&dim_u length:sizeof(uint) atIndex:8];
+        [enc setBytes:&N_u length:sizeof(uint) atIndex:9];
+        [enc setBytes:&truncate length:sizeof(float) atIndex:10];
+        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:11];
 
         MTLSize gridSize = MTLSizeMake(total_size, 1, 1);
         MTLSize groupSize = MTLSizeMake(std::min((int64_t)256, total_size), 1, 1);
@@ -1334,7 +1313,7 @@ std::vector<torch::Tensor> dispatch_backward_nd(
         [cmd waitUntilCompleted];
     }
 
-    return {d_centers, d_Ls, d_amps, d_sharpness};
+    return {d_centers, d_Ls, d_amps};
 }
 ```
 
@@ -1434,7 +1413,6 @@ class MetalSplatFunction(torch.autograd.Function):
         centers: torch.Tensor,      # (N, d)
         Ls: torch.Tensor,           # (N, d, d)
         amps: torch.Tensor,         # (N,)
-        sharpness: torch.Tensor,    # (N,)
         shape: Tuple[int, ...],
         truncate: float,
         intensity_floor: float = 1e-5,  # For early culling of invisible contributions
@@ -1463,12 +1441,11 @@ class MetalSplatFunction(torch.autograd.Function):
             centers_mps = centers.contiguous().to('mps')
             conic_mps = conic.detach().contiguous().to('mps')
             amps_mps = amps.contiguous().to('mps')
-            sharpness_mps = sharpness.contiguous().to('mps')
             Ls_mps = Ls.contiguous().to('mps')  # Needed for sigma_diag in binning
 
             # Forward returns: [output, tile_counts, tile_offsets, tile_content]
             result = metal_splatting_backend.forward_3d(
-                centers_mps, conic_mps, amps_mps, sharpness_mps, Ls_mps,
+                centers_mps, conic_mps, amps_mps, Ls_mps,
                 list(shape), truncate, intensity_floor
             )
             output = result[0].to(device)
@@ -1481,7 +1458,7 @@ class MetalSplatFunction(torch.autograd.Function):
             # Fallback to PyTorch (for nD or when Metal unavailable)
             from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
             output = render_gaussians(
-                shape, centers, Ls, amps, sharpness, truncate, intensity_floor
+                shape, centers, Ls, amps, truncate, intensity_floor
             )
             # No tile data for PyTorch path
             tile_counts = None
@@ -1489,7 +1466,7 @@ class MetalSplatFunction(torch.autograd.Function):
             tile_content = None
 
         # Save for backward - include tile data for Metal backward
-        ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps, sharpness)
+        ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps)
 
         # Save non-tensor data and tile buffers separately
         ctx.shape = shape
@@ -1507,13 +1484,13 @@ class MetalSplatFunction(torch.autograd.Function):
         """
         Backward pass: compute gradients.
 
-        Metal computes: d_centers, d_conic, d_amps, d_sharpness
+        Metal computes: d_centers, d_conic, d_amps
         PyTorch handles: d_conic → d_Ls (chain rule)
 
         CRITICAL: Uses saved tile_counts/offsets/content from forward pass
         to avoid recomputing binning (saves time and ensures determinism).
         """
-        (centers, Ls, Ls_for_conic, conic, amps, sharpness) = ctx.saved_tensors
+        (centers, Ls, Ls_for_conic, conic, amps) = ctx.saved_tensors
         shape = ctx.shape
         truncate = ctx.truncate
         intensity_floor = ctx.intensity_floor
@@ -1527,12 +1504,11 @@ class MetalSplatFunction(torch.autograd.Function):
             centers_mps = centers.contiguous().to('mps')
             conic_mps = conic.contiguous().to('mps')
             amps_mps = amps.contiguous().to('mps')
-            sharpness_mps = sharpness.contiguous().to('mps')
 
             # Reuse tile data from forward pass (CRITICAL for performance)
-            d_centers, d_conic, d_amps, d_sharpness = \
+            d_centers, d_conic, d_amps = \
                 metal_splatting_backend.backward_3d(
-                    grad_mps, centers_mps, conic_mps, amps_mps, sharpness_mps,
+                    grad_mps, centers_mps, conic_mps, amps_mps,
                     ctx.tile_offsets, ctx.tile_counts, ctx.tile_content,
                     list(shape), truncate, intensity_floor
                 )
@@ -1541,7 +1517,6 @@ class MetalSplatFunction(torch.autograd.Function):
             d_centers = d_centers.to(device)
             d_conic = d_conic.to(device)
             d_amps = d_amps.to(device)
-            d_sharpness = d_sharpness.to(device)
 
             # === PyTorch: Chain rule d_conic → d_Ls ===
             # CRITICAL: Custom autograd.Function.backward runs with grad mode disabled!
@@ -1569,8 +1544,8 @@ class MetalSplatFunction(torch.autograd.Function):
                 "PyTorch fallback backward not implemented - use forward path only"
             )
 
-        # Return gradients: (centers, Ls, amps, sharpness, shape, truncate, intensity_floor)
-        return d_centers, d_Ls, d_amps, d_sharpness, None, None, None
+        # Return gradients: (centers, Ls, amps, shape, truncate, intensity_floor)
+        return d_centers, d_Ls, d_amps, None, None, None
 
 
 ### 8.2 Handling 2D Inputs
@@ -1655,7 +1630,6 @@ def render_with_metal_fallback(
     centers: torch.Tensor,
     Ls: torch.Tensor,
     amps: torch.Tensor,
-    sharpness: torch.Tensor,
     shape: Tuple[int, ...],
     truncate: float,
     intensity_floor: float = 1e-5,
@@ -1671,14 +1645,14 @@ def render_with_metal_fallback(
     # Metal path: use custom autograd function
     if (d == 2 or d == 3) and METAL_AVAILABLE:
         return MetalSplatFunction.apply(
-            centers, Ls, amps, sharpness, shape, truncate, intensity_floor
+            centers, Ls, amps, shape, truncate, intensity_floor
         )
 
     # PyTorch fallback: call vanilla function directly
     # Autograd automatically records the computation graph
     from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
     return render_gaussians(
-        shape, centers, Ls, amps, sharpness, truncate, intensity_floor
+        shape, centers, Ls, amps, truncate, intensity_floor
     )
 ```
 
@@ -1738,10 +1712,10 @@ class GaussianSplatModelMetal(torch.nn.Module):
         """
         Render all splats using Metal acceleration (when available).
         """
-        centers, Ls, amps, sharpness = self.current_params()
+        centers, Ls, amps = self.current_params()
 
         return MetalSplatFunction.apply(
-            centers, Ls, amps, sharpness,
+            centers, Ls, amps,
             self.shape, self.truncate
         )
 
@@ -1753,11 +1727,11 @@ class GaussianSplatModelMetal(torch.nn.Module):
     def prune_(self, keep_mask: torch.Tensor) -> None:
         self._base.prune_(keep_mask)
 
-    def append_(self, centers_new, Ls_new, amps_new, sharpness_new) -> None:
-        self._base.append_(centers_new, Ls_new, amps_new, sharpness_new)
+    def append_(self, centers_new, Ls_new, amps_new) -> None:
+        self._base.append_(centers_new, Ls_new, amps_new)
 
-    def replace_with(self, centers, Ls, amps, sharpness) -> None:
-        self._base.replace_with(centers, Ls, amps, sharpness)
+    def replace_with(self, centers, Ls, amps) -> None:
+        self._base.replace_with(centers, Ls, amps)
 
     def parameters(self, recurse: bool = True):
         return self._base.parameters(recurse)
@@ -1792,7 +1766,7 @@ except ImportError as e:
 def _validate_inputs(centers: torch.Tensor, Ls: torch.Tensor, ...):
     """Validate inputs before Metal dispatch."""
     # All tensors must be on the same device
-    devices = {centers.device, Ls.device, amps.device, sharpness.device}
+    devices = {centers.device, Ls.device, amps.device}
     if len(devices) > 1:
         raise ValueError(f"All tensors must be on the same device, got: {devices}")
 
@@ -1803,7 +1777,7 @@ def _validate_inputs(centers: torch.Tensor, Ls: torch.Tensor, ...):
 
 **Invalid Tensor Shapes**
 ```python
-def _validate_shapes(centers: torch.Tensor, Ls: torch.Tensor, amps: torch.Tensor, sharpness: torch.Tensor):
+def _validate_shapes(centers: torch.Tensor, Ls: torch.Tensor, amps: torch.Tensor):
     """Validate tensor shapes."""
     N = centers.size(0)
     d = centers.size(1)
@@ -1812,8 +1786,6 @@ def _validate_shapes(centers: torch.Tensor, Ls: torch.Tensor, amps: torch.Tensor
         raise ValueError(f"Ls shape mismatch: expected ({N}, {d}, {d}), got {Ls.shape}")
     if amps.shape != (N,):
         raise ValueError(f"amps shape mismatch: expected ({N},), got {amps.shape}")
-    if sharpness.shape != (N,):
-        raise ValueError(f"sharpness shape mismatch: expected ({N},), got {sharpness.shape}")
 ```
 
 **Numerical Issues**
@@ -1882,7 +1854,7 @@ std::vector<torch::Tensor> dispatch_forward_3d(...) {
 def _check_gradients_valid(d_centers: torch.Tensor, d_Ls: torch.Tensor, ...):
     """Check gradient tensors for NaN/Inf."""
     for name, grad in [('d_centers', d_centers), ('d_Ls', d_Ls),
-                        ('d_amps', d_amps), ('d_sharpness', d_sharpness)]:
+                        ('d_amps', d_amps)]:
         if grad is None:
             continue
         if torch.isnan(grad).any():
@@ -1894,16 +1866,16 @@ def _check_gradients_valid(d_centers: torch.Tensor, d_Ls: torch.Tensor, ...):
 ### 8.5.5 Fallback Strategy
 
 ```python
-def forward_with_fallback(centers, Ls, amps, sharpness, shape, truncate, intensity_floor):
+def forward_with_fallback(centers, Ls, amps, shape, truncate, intensity_floor):
     """Forward pass with automatic fallback on errors."""
     try:
         if METAL_AVAILABLE:
-            return MetalSplatFunction.apply(centers, Ls, amps, sharpness, shape, truncate, intensity_floor)
+            return MetalSplatFunction.apply(centers, Ls, amps, shape, truncate, intensity_floor)
     except RuntimeError as e:
         warnings.warn(f"Metal forward failed: {e}. Falling back to PyTorch.")
 
     # PyTorch fallback (always works)
-    return render_gaussians(shape, centers, Ls, amps, sharpness, truncate, intensity_floor)
+    return render_gaussians(shape, centers, Ls, amps, truncate, intensity_floor)
 ```
 
 ---
@@ -1956,15 +1928,14 @@ def test_metal_forward_matches_pytorch():
     centers = torch.rand(N, 3) * torch.tensor(shape)
     Ls = torch.eye(3).expand(N, -1, -1) * 2.0
     amps = torch.rand(N)
-    sharpness = torch.ones(N) * 2.0
 
     # PyTorch reference
     from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
-    ref_output = render_gaussians(shape, centers, Ls, amps, sharpness, truncate=3.0)
+    ref_output = render_gaussians(shape, centers, Ls, amps, truncate=3.0)
 
     # Metal output
     metal_output = MetalSplatFunction.apply(
-        centers, Ls, amps, sharpness, shape, 3.0
+        centers, Ls, amps, shape, 3.0
     )
 
     # Compare
@@ -1983,11 +1954,10 @@ def test_metal_backward_matches_pytorch():
     Ls = torch.eye(3).expand(N, -1, -1).clone() * 2.0
     Ls.requires_grad_(True)
     amps = torch.rand(N, requires_grad=True)
-    sharpness = torch.ones(N, requires_grad=True) * 2.0
 
     # Forward + backward with Metal
     output_metal = MetalSplatFunction.apply(
-        centers, Ls, amps, sharpness, shape, 3.0
+        centers, Ls, amps, shape, 3.0
     )
     loss_metal = output_metal.sum()
     loss_metal.backward()
@@ -2002,7 +1972,7 @@ def test_metal_backward_matches_pytorch():
 
     # Forward + backward with PyTorch
     from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
-    output_ref = render_gaussians(shape, centers, Ls, amps, sharpness, truncate=3.0)
+    output_ref = render_gaussians(shape, centers, Ls, amps, truncate=3.0)
     loss_ref = output_ref.sum()
     loss_ref.backward()
 
@@ -2066,18 +2036,17 @@ def test_metal_speedup():
     centers = torch.rand(N, 3) * torch.tensor(shape)
     Ls = torch.eye(3).expand(N, -1, -1) * 2.0
     amps = torch.rand(N)
-    sharpness = torch.ones(N) * 2.0
 
     # Benchmark PyTorch
     start = time.perf_counter()
     for _ in range(n_iters):
-        render_gaussians(shape, centers, Ls, amps, sharpness, truncate=3.0)
+        render_gaussians(shape, centers, Ls, amps, truncate=3.0)
     pytorch_time = (time.perf_counter() - start) / n_iters
 
     # Benchmark Metal
     start = time.perf_counter()
     for _ in range(n_iters):
-        MetalSplatFunction.apply(centers, Ls, amps, sharpness, shape, 3.0)
+        MetalSplatFunction.apply(centers, Ls, amps, shape, 3.0)
     metal_time = (time.perf_counter() - start) / n_iters
 
     speedup = pytorch_time / metal_time
@@ -2284,14 +2253,10 @@ inline TileRange get_tile_range_3d(
     float3 center,
     float3 sigma_diag,  // Σ_ii = sum_j(L_ij²)
     float truncate,
-    float sharpness,
     uint3 grid_dims
 ) {
-    // Sharpness-adjusted truncation radius
-    float effective_truncate = pow(truncate, 2.0f / sharpness);
-
     // Exact bounding box radius per axis
-    float3 r = effective_truncate * sqrt(max(sigma_diag, float3(1e-8f)));
+    float3 r = truncate * sqrt(max(sigma_diag, float3(1e-8f)));
 
     // Convert to tile indices
     TileRange tr;
@@ -2319,11 +2284,10 @@ inline float3 compute_sigma_diag_3d(
 kernel void preprocess_3d(
     device const float* centers     [[buffer(0)]],  // (N, 3)
     device const float* Ls          [[buffer(1)]],  // (N, 3, 3) row-major
-    device const float* sharpness   [[buffer(2)]],  // (N,)
-    device atomic_int* tile_counts  [[buffer(3)]],  // (num_tiles,)
-    constant float& truncate        [[buffer(4)]],
-    constant uint3& grid_dims       [[buffer(5)]],
-    constant uint& n_splats         [[buffer(6)]],
+    device atomic_int* tile_counts  [[buffer(2)]],  // (num_tiles,)
+    constant float& truncate        [[buffer(3)]],
+    constant uint3& grid_dims       [[buffer(4)]],
+    constant uint& n_splats         [[buffer(5)]],
     uint id [[thread_position_in_grid]]
 ) {
     if (id >= n_splats) return;
@@ -2345,7 +2309,7 @@ kernel void preprocess_3d(
 
     // Get tile range
     TileRange tr = get_tile_range_3d(
-        center, sigma_diag, truncate, sharpness[id], grid_dims
+        center, sigma_diag, truncate, grid_dims
     );
 
     // Increment counts for each overlapping tile
@@ -2368,13 +2332,12 @@ kernel void preprocess_3d(
 kernel void bin_3d(
     device const float* centers         [[buffer(0)]],  // (N, 3)
     device const float* Ls              [[buffer(1)]],  // (N, 3, 3)
-    device const float* sharpness       [[buffer(2)]],  // (N,)
-    device const int* tile_offsets      [[buffer(3)]],  // (num_tiles,) prefix sum
-    device atomic_int* tile_write_heads [[buffer(4)]],  // (num_tiles,) must be zeroed
-    device int* tile_content            [[buffer(5)]],  // (total_pairs,)
-    constant float& truncate            [[buffer(6)]],
-    constant uint3& grid_dims           [[buffer(7)]],
-    constant uint& n_splats             [[buffer(8)]],
+    device const int* tile_offsets      [[buffer(2)]],  // (num_tiles,) prefix sum
+    device atomic_int* tile_write_heads [[buffer(3)]],  // (num_tiles,) must be zeroed
+    device int* tile_content            [[buffer(4)]],  // (total_pairs,)
+    constant float& truncate            [[buffer(5)]],
+    constant uint3& grid_dims           [[buffer(6)]],
+    constant uint& n_splats             [[buffer(7)]],
     uint id [[thread_position_in_grid]]
 ) {
     if (id >= n_splats) return;
@@ -2395,7 +2358,7 @@ kernel void bin_3d(
 
     // Get tile range (MUST match preprocess)
     TileRange tr = get_tile_range_3d(
-        center, sigma_diag, truncate, sharpness[id], grid_dims
+        center, sigma_diag, truncate, grid_dims
     );
 
     // Write splat ID to each tile's list
@@ -2424,15 +2387,14 @@ kernel void rasterize_fwd_3d(
     device const float* centers      [[buffer(0)]],   // (N, 3)
     device const float* conic        [[buffer(1)]],   // (N, 6) [xx,xy,xz,yy,yz,zz]
     device const float* amps         [[buffer(2)]],   // (N,)
-    device const float* sharpness    [[buffer(3)]],   // (N,)
-    device const int* tile_offsets   [[buffer(4)]],   // (num_tiles,)
-    device const int* tile_counts    [[buffer(5)]],   // (num_tiles,)
-    device const int* tile_content   [[buffer(6)]],   // (total_pairs,)
-    device float* output             [[buffer(7)]],   // (D, H, W) row-major output
-    constant uint3& img_size         [[buffer(8)]],   // (W, H, D) - see §2.7 Dimension Conventions
-    constant uint3& grid_dims        [[buffer(9)]],   // (tiles_x, tiles_y, tiles_z) - see §2.7
-    constant float& truncate         [[buffer(10)]],  // base truncate (NOT squared)
-    constant float& intensity_floor  [[buffer(11)]],  // early culling threshold
+    device const int* tile_offsets   [[buffer(3)]],   // (num_tiles,)
+    device const int* tile_counts    [[buffer(4)]],   // (num_tiles,)
+    device const int* tile_content   [[buffer(5)]],   // (total_pairs,)
+    device float* output             [[buffer(6)]],   // (D, H, W) row-major output
+    constant uint3& img_size         [[buffer(7)]],   // (W, H, D) - see §2.7 Dimension Conventions
+    constant uint3& grid_dims        [[buffer(8)]],   // (tiles_x, tiles_y, tiles_z) - see §2.7
+    constant float& truncate         [[buffer(9)]],   // base truncate (NOT squared)
+    constant float& intensity_floor  [[buffer(10)]],  // early culling threshold
     uint3 gid [[thread_position_in_grid]],
     uint3 group_id [[threadgroup_position_in_grid]]
 ) {
@@ -2478,17 +2440,13 @@ kernel void rasterize_fwd_3d(
         float dist_sq = d.x * d.x * c_xx + d.y * d.y * c_yy + d.z * d.z * c_zz
                       + 2.0f * (d.x * d.y * c_xy + d.x * d.z * c_xz + d.y * d.z * c_yz);
 
-        // Load sharpness and compute sharpness-adjusted truncation threshold
-        // Must match the threshold used in tiling: truncate^(2/s)
-        float s = sharpness[splat_id];
-        float effective_truncate_sq = pow(truncate, 4.0f / s);  // (truncate^(2/s))^2
-
-        // Truncation check (sharpness-adjusted to match tiling)
-        if (dist_sq <= effective_truncate_sq) {
+        // Truncation check
+        float trunc_sq = truncate * truncate;
+        if (dist_sq <= trunc_sq) {
             float a = amps[splat_id];
 
-            // Generalized Gaussian: exp(-0.5 × dist^s)
-            float val = a * exp(-0.5f * pow(max(dist_sq, 1e-10f), s * 0.5f));
+            // Standard Gaussian: exp(-0.5 × dist_sq)
+            float val = a * exp(-0.5f * dist_sq);
 
             // Early culling: skip invisible contributions (saves GPU cycles)
             if (val < intensity_floor) continue;
@@ -2511,14 +2469,12 @@ kernel void rasterize_bwd_3d(
     device const float* centers        [[buffer(1)]],   // (N, 3)
     device const float* conic          [[buffer(2)]],   // (N, 6)
     device const float* amps           [[buffer(3)]],   // (N,)
-    device const float* sharpness      [[buffer(4)]],   // (N,)
-    device const int* tile_offsets     [[buffer(5)]],
-    device const int* tile_counts      [[buffer(6)]],
-    device const int* tile_content     [[buffer(7)]],
-    device atomic_float* d_centers     [[buffer(8)]],   // (N, 3)
-    device atomic_float* d_conic       [[buffer(9)]],   // (N, 6)
-    device atomic_float* d_amps        [[buffer(10)]],  // (N,)
-    device atomic_float* d_sharpness   [[buffer(11)]],  // (N,)
+    device const int* tile_offsets     [[buffer(4)]],
+    device const int* tile_counts      [[buffer(5)]],
+    device const int* tile_content     [[buffer(6)]],
+    device atomic_float* d_centers     [[buffer(7)]],   // (N, 3)
+    device atomic_float* d_conic       [[buffer(8)]],   // (N, 6)
+    device atomic_float* d_amps        [[buffer(9)]],   // (N,)
     constant uint3& img_size           [[buffer(12)]],  // (W, H, D) - see §2.7
     constant uint3& grid_dims          [[buffer(13)]],  // (tiles_x, tiles_y, tiles_z) - see §2.7
     constant float& truncate           [[buffer(14)]],  // base truncate (NOT squared)
@@ -2546,7 +2502,6 @@ kernel void rasterize_bwd_3d(
 
         // === A. Compute local gradients (per thread) ===
         float val_amps = 0.0f;
-        float val_sharpness = 0.0f;
         float3 val_centers = 0.0f;
         float val_conic[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
@@ -2566,45 +2521,36 @@ kernel void rasterize_bwd_3d(
             float dist_sq = d.x * d.x * c_xx + d.y * d.y * c_yy + d.z * d.z * c_zz
                           + 2.0f * (d.x * d.y * c_xy + d.x * d.z * c_xz + d.y * d.z * c_yz);
 
-            // Sharpness-adjusted truncation (must match forward pass)
-            float s = sharpness[splat_id];
-            float effective_truncate_sq = pow(truncate, 4.0f / s);
+            // Truncation check (must match forward pass)
+            float trunc_sq = truncate * truncate;
 
-            if (dist_sq <= effective_truncate_sq) {
+            if (dist_sq <= trunc_sq) {
                 float a = amps[splat_id];
-                float half_s = s * 0.5f;
 
-                // Recompute forward values
-                float dist_sq_safe = max(dist_sq, 1e-10f);
-                float inner = -0.5f * pow(dist_sq_safe, half_s);
+                // Standard Gaussian: exp(-0.5 × dist_sq)
+                float inner = -0.5f * dist_sq;
                 float exp_val = exp(inner);
                 float intensity = a * exp_val;
 
                 // CRITICAL: Must match forward pass intensity_floor culling!
-                // If forward skipped this contribution, backward must too.
-                // Otherwise gradients are computed for a different function.
                 if (intensity < intensity_floor) continue;
 
                 float d_common = intensity * d_L_d_I;
 
-                // 1. Amplitude gradient: ∂I/∂a = exp(inner)
+                // 1. Amplitude gradient: dI/da = exp(inner)
                 val_amps = exp_val * d_L_d_I;
 
-                // 2. Sharpness gradient: ∂I/∂s = I × inner × 0.5 × ln(D)
-                val_sharpness = d_common * inner * 0.5f * log(dist_sq_safe);
+                // 2. Distance gradient: dI/dD = I * (-0.5)
+                float grad_dist = d_common * (-0.5f);
 
-                // 3. Distance gradient: ∂I/∂D = I × (-0.25s) × D^(s/2-1)
-                float d_inner_d_D2 = -0.25f * s * pow(dist_sq_safe, half_s - 1.0f);
-                float grad_dist = d_common * d_inner_d_D2;
-
-                // 4. Center gradient: ∂D/∂μ = -2 × Σ^-1 × d
+                // 3. Center gradient: dD/dmu = -2 * Sigma^-1 * d
                 float3 d_D2_d_d;
                 d_D2_d_d.x = 2.0f * (d.x * c_xx + d.y * c_xy + d.z * c_xz);
                 d_D2_d_d.y = 2.0f * (d.x * c_xy + d.y * c_yy + d.z * c_yz);
                 d_D2_d_d.z = 2.0f * (d.x * c_xz + d.y * c_yz + d.z * c_zz);
                 val_centers = grad_dist * d_D2_d_d * -1.0f;
 
-                // 5. Conic gradient: ∂D/∂c_ij
+                // 4. Conic gradient: dD/dc_ij
                 val_conic[0] = grad_dist * d.x * d.x;           // c_xx
                 val_conic[1] = grad_dist * 2.0f * d.x * d.y;    // c_xy
                 val_conic[2] = grad_dist * 2.0f * d.x * d.z;    // c_xz
@@ -2616,7 +2562,6 @@ kernel void rasterize_bwd_3d(
 
         // === B. SIMD Reduction (sum across 32 threads in simdgroup) ===
         float sum_amps = simd_sum(val_amps);
-        float sum_sharpness = simd_sum(val_sharpness);
         float3 sum_centers;
         sum_centers.x = simd_sum(val_centers.x);
         sum_centers.y = simd_sum(val_centers.y);
@@ -2632,9 +2577,6 @@ kernel void rasterize_bwd_3d(
             // Skip zero contributions to avoid unnecessary atomics
             if (abs(sum_amps) > 1e-12f) {
                 atomic_add_float(&d_amps[splat_id], sum_amps);
-            }
-            if (abs(sum_sharpness) > 1e-12f) {
-                atomic_add_float(&d_sharpness[splat_id], sum_sharpness);
             }
 
             atomic_add_float(&d_centers[splat_id * 3 + 0], sum_centers.x);
@@ -2659,13 +2601,12 @@ kernel void rasterize_fwd_nd(
     device const float* centers      [[buffer(0)]],   // (N, dim)
     device const float* Ls           [[buffer(1)]],   // (N, dim, dim)
     device const float* amps         [[buffer(2)]],   // (N,)
-    device const float* sharpness    [[buffer(3)]],   // (N,)
-    device float* output             [[buffer(4)]],   // flattened
-    constant uint& n_splats          [[buffer(5)]],
-    constant uint& dim               [[buffer(6)]],
-    constant uint* shape             [[buffer(7)]],   // (dim,)
-    constant float& truncate         [[buffer(8)]],
-    constant float& intensity_floor  [[buffer(9)]],   // ADDED: early culling threshold
+    device float* output             [[buffer(3)]],   // flattened
+    constant uint& n_splats          [[buffer(4)]],
+    constant uint& dim               [[buffer(5)]],
+    constant uint* shape             [[buffer(6)]],   // (dim,)
+    constant float& truncate         [[buffer(7)]],
+    constant float& intensity_floor  [[buffer(8)]],   // early culling threshold
     uint gid [[thread_position_in_grid]]
 ) {
     // Unpack voxel coordinates from linear index
@@ -2680,9 +2621,7 @@ kernel void rasterize_fwd_nd(
     float accum = 0.0f;
 
     for (uint i = 0; i < n_splats; i++) {
-        float s = sharpness[i];
-
-        // AABB check using diagonal of Sigma (with sharpness adjustment)
+        // AABB check using diagonal of Sigma
         bool possible = true;
         for (uint d = 0; d < dim; d++) {
             float c = centers[i * dim + d];
@@ -2695,9 +2634,7 @@ kernel void rasterize_fwd_nd(
                 sigma_dd += val * val;
             }
 
-            // Sharpness-adjusted radius
-            float eff_trunc = pow(truncate, 2.0f / s);
-            if (abs(diff) > eff_trunc * sqrt(sigma_dd)) {
+            if (abs(diff) > truncate * sqrt(sigma_dd)) {
                 possible = false;
                 break;
             }
@@ -2723,12 +2660,12 @@ kernel void rasterize_fwd_nd(
             dist_sq += y[d] * y[d];
         }
 
-        // FIXED: Use sharpness-adjusted truncation (consistent with AABB check)
-        float effective_truncate_sq = pow(truncate, 4.0f / s);  // (truncate^(2/s))²
-        if (dist_sq <= effective_truncate_sq) {
-            float val = amps[i] * exp(-0.5f * pow(max(dist_sq, 1e-10f), s * 0.5f));
+        float trunc_sq = truncate * truncate;
+        if (dist_sq <= trunc_sq) {
+            // Standard Gaussian: exp(-0.5 × dist_sq)
+            float val = amps[i] * exp(-0.5f * dist_sq);
 
-            // ADDED: Early culling for intensity_floor
+            // Early culling for intensity_floor
             if (val < intensity_floor) continue;
 
             accum += val;
@@ -2754,16 +2691,14 @@ kernel void rasterize_bwd_nd(
     device const float* centers        [[buffer(1)]],   // (N, dim)
     device const float* Ls             [[buffer(2)]],   // (N, dim, dim)
     device const float* amps           [[buffer(3)]],   // (N,)
-    device const float* sharpness      [[buffer(4)]],   // (N,)
-    device atomic_float* d_centers     [[buffer(5)]],   // (N, dim)
-    device atomic_float* d_Ls          [[buffer(6)]],   // (N, dim, dim)
-    device atomic_float* d_amps        [[buffer(7)]],   // (N,)
-    device atomic_float* d_sharpness   [[buffer(8)]],   // (N,)
-    constant uint& n_splats            [[buffer(9)]],
-    constant uint& dim                 [[buffer(10)]],
-    constant uint* shape               [[buffer(11)]],  // (dim,)
-    constant float& truncate           [[buffer(12)]],
-    constant float& intensity_floor    [[buffer(13)]],  // ADDED: for consistency
+    device atomic_float* d_centers     [[buffer(4)]],   // (N, dim)
+    device atomic_float* d_Ls          [[buffer(5)]],   // (N, dim, dim)
+    device atomic_float* d_amps        [[buffer(6)]],   // (N,)
+    constant uint& n_splats            [[buffer(7)]],
+    constant uint& dim                 [[buffer(8)]],
+    constant uint* shape               [[buffer(9)]],   // (dim,)
+    constant float& truncate           [[buffer(10)]],
+    constant float& intensity_floor    [[buffer(11)]],  // for consistency
     uint gid [[thread_position_in_grid]],
     uint simd_lane_id [[thread_index_in_simdgroup]]
 ) {
@@ -2780,16 +2715,13 @@ kernel void rasterize_bwd_nd(
 
     // Process each splat
     for (uint i = 0; i < n_splats; i++) {
-        float s = sharpness[i];
-
         // === A. Compute local gradients (per thread) ===
         float val_amps = 0.0f;
-        float val_sharpness = 0.0f;
         float val_centers[8] = {0};
         float val_Ls[64] = {0};  // Max 8x8
 
         if (active && abs(d_L_d_I) > 1e-9f) {
-            // AABB check (same as forward - with sharpness adjustment)
+            // AABB check (same as forward)
             bool possible = true;
             for (uint d = 0; d < dim; d++) {
                 float c = centers[i * dim + d];
@@ -2799,8 +2731,7 @@ kernel void rasterize_bwd_nd(
                     float val = Ls[i * dim * dim + d * dim + k];
                     sigma_dd += val * val;
                 }
-                float eff_trunc = pow(truncate, 2.0f / s);
-                if (abs(diff) > eff_trunc * sqrt(sigma_dd)) {
+                if (abs(diff) > truncate * sqrt(sigma_dd)) {
                     possible = false;
                     break;
                 }
@@ -2826,45 +2757,32 @@ kernel void rasterize_bwd_nd(
                     dist_sq += y[d] * y[d];
                 }
 
-                // FIXED: Sharpness-adjusted truncation (consistent with forward)
-                float effective_truncate_sq = pow(truncate, 4.0f / s);
-                if (dist_sq <= effective_truncate_sq) {
+                float trunc_sq = truncate * truncate;
+                if (dist_sq <= trunc_sq) {
                     float a = amps[i];
-                    float half_s = s * 0.5f;
-                    float dist_sq_safe = max(dist_sq, 1e-10f);
-                    float inner = -0.5f * pow(dist_sq_safe, half_s);
+
+                    // Standard Gaussian: exp(-0.5 × dist_sq)
+                    float inner = -0.5f * dist_sq;
                     float exp_val = exp(inner);
                     float intensity = a * exp_val;
                     float d_common = intensity * d_L_d_I;
 
-                    // 1. Amplitude gradient: ∂I/∂a = exp(inner)
+                    // 1. Amplitude gradient: dI/da = exp(inner)
                     val_amps = exp_val * d_L_d_I;
 
-                    // 2. Sharpness gradient: ∂I/∂s = I × inner × 0.5 × ln(D)
-                    val_sharpness = d_common * inner * 0.5f * log(dist_sq_safe);
+                    // 2. Distance gradient: dI/dD = I * (-0.5)
+                    float grad_dist = d_common * (-0.5f);
 
-                    // 3. Distance gradient: ∂I/∂D = I × (-0.25s) × D^(s/2-1)
-                    float d_inner_d_D2 = -0.25f * s * pow(dist_sq_safe, half_s - 1.0f);
-                    float grad_dist = d_common * d_inner_d_D2;
-
-                    // 4. Center gradient: ∂D/∂μ = -2 × y (via chain rule)
-                    // Since D = ||y||² and y = L^-1(x-μ), ∂D/∂μ = -2 × L^-T × y
-                    // For simplicity, we use: ∂D/∂μ ≈ -2y (valid when L≈I)
-                    // Full version would require solving L^T × z = y
+                    // 3. Center gradient
                     for (uint d = 0; d < dim; d++) {
                         val_centers[d] = grad_dist * (-2.0f * y[d]);
                     }
 
-                    // 5. L gradient: ∂D/∂L via chain rule
-                    // D = y^T y where L y = δ (δ = x - μ)
-                    // ∂D/∂L_rc = -2 × y_r × (L^-1 × δ)_c / L_cc (for r >= c)
-                    // Simplified: ∂D/∂L_rc ≈ -2 × y_r × y_c / L_rc
+                    // 4. L gradient: dD/dL via chain rule
                     for (uint r = 0; r < dim; r++) {
                         for (uint c = 0; c <= r; c++) {
                             float L_rc = Ls[i * dim * dim + r * dim + c];
                             float L_rc_safe = (c == r) ? max(abs(L_rc), 1e-9f) : (abs(L_rc) > 1e-9f ? L_rc : 1.0f);
-                            // Chain rule: ∂I/∂L_rc = grad_dist × ∂D/∂L_rc
-                            // ∂D/∂L_rc = -2 × y_r × y_c / L_rc (approximate)
                             val_Ls[r * 8 + c] = grad_dist * (-2.0f * y[r] * y[c]) / L_rc_safe;
                         }
                     }
@@ -2874,7 +2792,6 @@ kernel void rasterize_bwd_nd(
 
         // === B. SIMD Reduction (CRITICAL - reduces atomics by 32x) ===
         float sum_amps = simd_sum(val_amps);
-        float sum_sharpness = simd_sum(val_sharpness);
 
         // Sum centers across SIMD group
         float sum_centers[8];
@@ -2894,9 +2811,6 @@ kernel void rasterize_bwd_nd(
         if (simd_lane_id == 0) {
             if (abs(sum_amps) > 1e-12f) {
                 atomic_add_float(&d_amps[i], sum_amps);
-            }
-            if (abs(sum_sharpness) > 1e-12f) {
-                atomic_add_float(&d_sharpness[i], sum_sharpness);
             }
             for (uint d = 0; d < dim; d++) {
                 if (abs(sum_centers[d]) > 1e-12f) {
@@ -2940,11 +2854,11 @@ This section documents issues identified during specification review and their r
 
 2. ~~**MPS ↔ Metal Buffer Interop**~~: **FIXED** - Appendix E provides complete implementation with correct `storage().data_ptr()` approach and offset handling.
 
-3. ~~**Truncation Inconsistency**~~: **FIXED** - All rasterize kernels (3D and nD) now compute sharpness-adjusted truncation per-splat: `effective_truncate_sq = pow(truncate, 4.0f / s)`.
+3. ~~**Truncation Inconsistency**~~: **FIXED** - All rasterize kernels (3D and nD) now use consistent truncation: `trunc_sq = truncate * truncate`.
 
 4. ~~**Missing rasterize_bwd_nd Implementation**~~: **FIXED** - Section 6 (Appendix A) now contains complete `rasterize_bwd_nd` kernel with SIMD reduction for L gradients.
 
-5. ~~**nD Kernel Final Truncation Check**~~: **FIXED** - The nD kernels now use sharpness-adjusted truncation check.
+5. ~~**nD Kernel Final Truncation Check**~~: **FIXED** - The nD kernels now use consistent truncation check.
 
 6. ~~**Missing intensity_floor Parameter**~~: **FIXED** - All Metal kernels (forward and backward, 3D and nD) now include `intensity_floor` parameter for early culling.
 

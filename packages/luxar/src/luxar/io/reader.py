@@ -94,7 +94,6 @@ class GSplatsData(_DictCompatMixin):
     amplitudes: np.ndarray
     cholesky_factors: np.ndarray
     colors: Optional[np.ndarray]
-    sharpness: Optional[np.ndarray]
     chunk_bounds: Optional[np.ndarray]
     metadata: Dict[str, Any]
 
@@ -235,7 +234,6 @@ class LuxarScene:
                 info["n_splats"] = child.attrs.get("n_splats", 0)
                 info["ndim"] = child.attrs.get("ndim", 3)
                 info["has_colors"] = child.attrs.get("has_colors", False)
-                info["has_sharpness"] = child.attrs.get("has_sharpness", False)
             elif node_type == "lines":
                 info["n_vertices"] = child.attrs.get("n_vertices", 0)
                 info["n_segments"] = child.attrs.get("n_segments", 0)
@@ -409,10 +407,6 @@ class LuxarScene:
                 f"GSplats node '{name}' missing required 'cholesky_factors' array"
             )
         colors = self._decode_array(group, "colors")
-        # Try plural name first (current format), fall back to singular (legacy)
-        sharpness = self._decode_array(group, "sharpnesses")
-        if sharpness is None:
-            sharpness = self._decode_array(group, "sharpness")
 
         # Load chunk bounds if present
         chunk_bounds = None
@@ -431,7 +425,6 @@ class LuxarScene:
             amplitudes=amplitudes,
             cholesky_factors=cholesky_factors,
             colors=colors,
-            sharpness=sharpness,
             chunk_bounds=chunk_bounds,
             metadata=metadata,
         )

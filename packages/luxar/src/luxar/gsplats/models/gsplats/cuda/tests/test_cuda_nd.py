@@ -72,7 +72,6 @@ class Test4DDiagnostics:
         )
         L = torch.eye(dim, device="cuda", dtype=torch.float32).unsqueeze(0) * 2.0
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
-        sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         # CUDA forward
         conic = cholesky_to_conic(L)
@@ -81,7 +80,6 @@ class Test4DDiagnostics:
             center,
             conic,
             amps,
-            sharpness,
             L_row_norms.contiguous(),
             list(shape),
             3.0,
@@ -91,7 +89,7 @@ class Test4DDiagnostics:
         cuda_output = cuda_result[0].reshape(shape)
 
         # PyTorch reference
-        pytorch_output = render_gaussians(shape, center, L, amps, sharpness, 3.0, 1e-5)
+        pytorch_output = render_gaussians(shape, center, L, amps, 3.0, 1e-5)
 
         # Diagnostic output
         cuda_max = cuda_output.max().item()
@@ -228,7 +226,6 @@ class Test4DDiagnostics:
         )
         L = torch.eye(dim, device="cuda", dtype=torch.float32).unsqueeze(0) * 2.0
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
-        sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -236,7 +233,6 @@ class Test4DDiagnostics:
             center,
             conic,
             amps,
-            sharpness,
             L_row_norms.contiguous(),
             list(shape),
             3.0,
@@ -301,7 +297,6 @@ class Test4DDiagnostics:
         )
 
         amps = torch.ones(N, device="cuda", dtype=torch.float32)
-        sharpness = torch.ones(N, device="cuda", dtype=torch.float32) * 2.0
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -309,7 +304,6 @@ class Test4DDiagnostics:
             centers,
             conic,
             amps,
-            sharpness,
             L_row_norms.contiguous(),
             list(shape),
             3.0,
@@ -318,7 +312,7 @@ class Test4DDiagnostics:
         )
         cuda_output = cuda_result[0].reshape(shape)
 
-        pytorch_output = render_gaussians(shape, centers, L, amps, sharpness, 3.0, 1e-5)
+        pytorch_output = render_gaussians(shape, centers, L, amps, 3.0, 1e-5)
 
         # Check each splat's contribution at its center
         for i, c in enumerate(centers):
@@ -375,7 +369,6 @@ class Test4DDiagnostics:
             center = torch.tensor([pos], device="cuda", dtype=torch.float32)
             L = torch.eye(dim, device="cuda", dtype=torch.float32).unsqueeze(0) * 1.5
             amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
-            sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
             conic = cholesky_to_conic(L)
             L_row_norms = compute_L_row_norms(L)
@@ -383,8 +376,7 @@ class Test4DDiagnostics:
                 center,
                 conic,
                 amps,
-                sharpness,
-                L_row_norms.contiguous(),
+                    L_row_norms.contiguous(),
                 list(shape),
                 3.0,
                 1e-5,
@@ -427,7 +419,6 @@ class Test4DDiagnostics:
             center = torch.tensor([pos], device="cuda", dtype=torch.float32)
             L = torch.eye(dim, device="cuda", dtype=torch.float32).unsqueeze(0) * 2.0
             amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
-            sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
             conic = cholesky_to_conic(L)
             L_row_norms = compute_L_row_norms(L)
@@ -435,8 +426,7 @@ class Test4DDiagnostics:
                 center,
                 conic,
                 amps,
-                sharpness,
-                L_row_norms.contiguous(),
+                    L_row_norms.contiguous(),
                 list(shape),
                 3.0,
                 1e-5,
@@ -445,7 +435,7 @@ class Test4DDiagnostics:
             cuda_output = cuda_result[0].reshape(shape)
 
             pytorch_output = render_gaussians(
-                shape, center, L, amps, sharpness, 3.0, 1e-5
+                shape, center, L, amps, 3.0, 1e-5
             )
 
             pos_int = tuple(int(p) for p in pos)
@@ -497,7 +487,6 @@ class TestGlobalSplatHandling:
         centers = torch.tensor([[64.0, 64.0, 64.0]], device="cuda", dtype=torch.float32)
         L = torch.eye(d, device="cuda", dtype=torch.float32).unsqueeze(0) * 20.0
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
-        sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -507,7 +496,6 @@ class TestGlobalSplatHandling:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             truncate,
@@ -522,7 +510,7 @@ class TestGlobalSplatHandling:
 
         # Run PyTorch reference
         pytorch_output = render_gaussians(
-            shape, centers, L, amps, sharpness, truncate, intensity_floor
+            shape, centers, L, amps, truncate, intensity_floor
         )
 
         # Compare outputs
@@ -575,7 +563,6 @@ class TestGlobalSplatHandling:
         centers = torch.tensor([[64.0, 64.0, 64.0]], device="cuda", dtype=torch.float32)
         L = torch.eye(d, device="cuda", dtype=torch.float32).unsqueeze(0) * 20.0
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
-        sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -585,7 +572,6 @@ class TestGlobalSplatHandling:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             truncate,
@@ -600,7 +586,7 @@ class TestGlobalSplatHandling:
 
         # Run PyTorch reference with same intensity_floor
         pytorch_output = render_gaussians(
-            shape, centers, L, amps, sharpness, truncate, intensity_floor
+            shape, centers, L, amps, truncate, intensity_floor
         )
 
         # Compare outputs - should match closely since intensity_floor is applied
@@ -663,9 +649,6 @@ class TestGlobalSplatHandling:
         amps = torch.tensor(
             [1.0], device="cuda", dtype=torch.float32, requires_grad=True
         )
-        sharpness = torch.tensor(
-            [2.0], device="cuda", dtype=torch.float32, requires_grad=True
-        )
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -675,7 +658,6 @@ class TestGlobalSplatHandling:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             truncate,
@@ -697,12 +679,11 @@ class TestGlobalSplatHandling:
         tile_offsets = cuda_result[2]
         tile_content = cuda_result[3]
 
-        d_centers, d_conic, d_amps, d_sharpness = cuda_splatting_backend.backward(
+        d_centers, d_conic, d_amps = cuda_splatting_backend.backward(
             grad_output.contiguous(),
             centers.detach().contiguous(),  # Detach to avoid autograd issues
             conic.detach().contiguous(),
             amps.detach().contiguous(),
-            sharpness.detach().contiguous(),
             tile_offsets,  # Note: tile_offsets first
             tile_counts,  # tile_counts second
             tile_content,
@@ -719,9 +700,6 @@ class TestGlobalSplatHandling:
         )
         print(f"  d_conic shape: {d_conic.shape}, sum: {d_conic.sum().item():.4f}")
         print(f"  d_amps shape: {d_amps.shape}, sum: {d_amps.sum().item():.4f}")
-        print(
-            f"  d_sharpness shape: {d_sharpness.shape}, sum: {d_sharpness.sum().item():.4f}"
-        )
 
         # Gradients should be non-zero for a splat contributing to output
         assert d_amps.abs().sum().item() > 0, "Expected non-zero amplitude gradient"
@@ -772,13 +750,11 @@ class TestGlobalSplatHandling:
         centers = np.concatenate([centers_global, centers_tile], axis=0)
         L = np.concatenate([L_global, L_tile], axis=0)
         amps = np.ones(6, dtype=np.float32)
-        sharpnesses = np.ones(6, dtype=np.float32) * 2.0
 
         # Convert to torch
         centers_t = torch.tensor(centers, device="cuda")
         L_t = torch.tensor(L, device="cuda")
         amps_t = torch.tensor(amps, device="cuda")
-        sharpness_t = torch.tensor(sharpnesses, device="cuda")
 
         conic = cholesky_to_conic(L_t)
         L_row_norms = compute_L_row_norms(L_t)
@@ -788,7 +764,6 @@ class TestGlobalSplatHandling:
             centers_t.contiguous(),
             conic.contiguous(),
             amps_t.contiguous(),
-            sharpness_t.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             truncate,
@@ -807,7 +782,7 @@ class TestGlobalSplatHandling:
 
         # Run PyTorch reference
         pytorch_output = render_gaussians(
-            shape, centers_t, L_t, amps_t, sharpness_t, truncate, intensity_floor
+            shape, centers_t, L_t, amps_t, truncate, intensity_floor
         )
 
         # Compare outputs
@@ -863,7 +838,6 @@ class TestGlobalSplatHandling:
         centers = torch.tensor([center_coords], device="cuda", dtype=torch.float32)
         L = torch.eye(dim, device="cuda", dtype=torch.float32).unsqueeze(0) * L_scale
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
-        sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -873,7 +847,6 @@ class TestGlobalSplatHandling:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             truncate,
@@ -893,7 +866,7 @@ class TestGlobalSplatHandling:
 
         # Run PyTorch reference
         pytorch_output = render_gaussians(
-            shape, centers, L, amps, sharpness, truncate, intensity_floor
+            shape, centers, L, amps, truncate, intensity_floor
         )
 
         # Compare outputs
@@ -945,7 +918,6 @@ class TestGlobalSplatHandling:
         centers = torch.tensor([center_coords], device="cuda", dtype=torch.float32)
         L = torch.eye(dim, device="cuda", dtype=torch.float32).unsqueeze(0) * L_scale
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
-        sharpness = torch.tensor([2.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
         L_row_norms = compute_L_row_norms(L)
@@ -955,7 +927,6 @@ class TestGlobalSplatHandling:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             L_row_norms.contiguous(),
             list(shape),
             truncate,
@@ -976,12 +947,11 @@ class TestGlobalSplatHandling:
         tile_offsets = cuda_result[2]
         tile_content = cuda_result[3]
 
-        d_centers, d_conic, d_amps, d_sharpness = cuda_splatting_backend.backward(
+        d_centers, d_conic, d_amps = cuda_splatting_backend.backward(
             grad_output.contiguous(),
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            sharpness.contiguous(),
             tile_offsets,
             tile_counts,
             tile_content,

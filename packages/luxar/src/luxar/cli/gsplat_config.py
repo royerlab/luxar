@@ -41,21 +41,18 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "early_stop_patience": 100,
         "cull_ratio": 0.05,
         "max_eccentricity": 10.0,
-        "sharpness_range": 2.0,
     },
     "standard": {
         "n_iters": 3000,
         "early_stop_patience": 300,
         "cull_ratio": 0.01,
         "max_eccentricity": 10.0,
-        "sharpness_range": [1.0, 8.0],
     },
     "hifi": {
         "n_iters": 6000,
         "early_stop_patience": 500,
         "cull_ratio": 0.005,
         "max_eccentricity": 15.0,
-        "sharpness_range": [0.5, 16.0],
     },
 }
 
@@ -117,10 +114,6 @@ def load_fit_config(
         for key, value in cli_overrides.items():
             if value is not None:
                 config[key] = value
-
-    # Post-process: convert YAML lists to tuples where needed
-    if isinstance(config.get("sharpness_range"), list):
-        config["sharpness_range"] = tuple(config["sharpness_range"])
 
     # Remove 'seeds' — handled separately by the CLI.
     config.pop("seeds", None)
@@ -208,14 +201,12 @@ def dump_default_config(preset: str = "standard") -> str:
         f"asymmetric_penalty: {_fmt(vals.get('asymmetric_penalty'))}  # Over-prediction penalty (null=disabled)",
         f"l1_amp: {_fmt(vals.get('l1_amp'))}              # L1 on amplitudes (null=auto: 0.1*lr)",
         f"l1_diag: {_fmt(vals.get('l1_diag'))}            # L1 on Cholesky diagonals (null=auto: 0.01*lr)",
-        f"l1_sharpness: {_fmt(vals.get('l1_sharpness'))}  # L1 on sharpness (null=auto: 0.01*lr)",
         "",
         "# --- Shape Constraints ---",
         f"sigma_min_diag: {_fmt(vals.get('sigma_min_diag'))}  # Min Cholesky diagonal",
         f"sigma_max_diag: {_fmt(vals.get('sigma_max_diag'))}  # Max Cholesky diagonal (null=unbounded)",
         f"amp_max: {_fmt(vals.get('amp_max'))}            # Max amplitude (null=auto: 1.0)",
         f"max_eccentricity: {_fmt(vals.get('max_eccentricity'))}  # Max axis ratio (null=no constraint)",
-        f"sharpness_range: {_fmt(vals.get('sharpness_range'))}  # float=fixed, [min,max]=range, null=default",
         f"truncate: {_fmt(vals.get('truncate'))}          # Truncation radius in sigma",
         "",
         "# --- Convergence ---",

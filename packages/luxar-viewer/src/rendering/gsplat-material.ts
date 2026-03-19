@@ -9,20 +9,19 @@
  * - Full 3D covariance via Cholesky factors
  * - Perspective-correct projection of covariance to 2D
  * - Blending-mode-aware projection (sum for additive/normal, max for max blending)
- * - Generalized Gaussian falloff: exp(-½ · r^sharpness)
- * - Per-splat attributes (center, cholesky, amplitude, sharpness, color)
+ * - Standard Gaussian falloff: exp(-½ · r²)
+ * - Per-splat attributes (center, cholesky, amplitude, color)
  *
  * GPU Optimizations (GLSL ES 3.0 / WebGL2):
  * - flat interpolation: skips GPU interpolation for per-instance varyings
- * - Sharpness=2.0 specialization: avoids pow() for standard Gaussian
  * - Reciprocal precomputation: DIV→MUL in vertex and fragment shaders
- * - Early discard at 3σ before expensive pow()/exp()
+ * - Early discard at 3σ before expensive exp()
  * - Higher intensity threshold (1e-4) for fewer blended pixels
  * - mediump precision for color/amplitude to reduce register pressure
  *
  * Mathematical basis:
- * - GSplat density: G(x) = a · exp(-½ · ‖L⁻¹(x - μ)‖^s)
- * - Sum projection: amplitude boost by σ_ray · c(s) (ray integration)
+ * - GSplat density: G(x) = a · exp(-½ · ‖L⁻¹(x - μ)‖²)
+ * - Sum projection: amplitude boost by σ_ray · c_s (ray integration)
  * - Max projection: amplitude = a (peak value, no integration)
  * - 2D covariance: Σ_2D = J · Σ_cam · Jᵀ (perspective Jacobian projection)
  *
@@ -89,7 +88,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
    * - aCenter: 3D splat center (after nD slicing)
    * - aCholesky01, aCholesky23, aCholesky45: Packed 3D Cholesky factors
    * - aAmplitude: Already attenuated by hidden dimensions
-   * - aSharpness: Generalized Gaussian falloff exponent
    * - aColor: RGB color
    *
    * The shader:
@@ -113,7 +111,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     in vec2 aCholesky23;       // [L11, L20]
     in vec2 aCholesky45;       // [L21, L22]
     in float aAmplitude;       // Already attenuated by hidden dims
-    in float aSharpness;
     in vec3 aColor;
 
     // Uniforms (modelViewMatrix and projectionMatrix are built-in THREE.js uniforms)
@@ -127,7 +124,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     // OPTIMIZATION: flat qualifier skips GPU interpolation hardware for constant values
     flat out mediump vec3 vColor;
     flat out mediump float vAmplitude2D;
-    flat out mediump float vSharpness;
     // These need highp for screen-space calculations
     // OPTIMIZATION: vL2D stores [1/L00, L10, 1/L11] to replace fragment divisions with multiplications
     flat out highp vec3 vL2D;                // 2D Cholesky packed as [invL00, L10, invL11]
@@ -155,14 +151,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         float L11 = sqrt(max(S[1][1] - L10 * L10, 1e-8));
         float invL11 = 1.0 / L11;
         return vec3(invL00, L10, invL11);  // Pack reciprocals for fragment shader
-    }
-
-    // Sharpness integral factor c(s) - simple approximation
-    // With 3σ truncation, all values in [2.0, 3.6], so simple formula works well
-    // Optimized to be nearly exact at s=2 (the common case)
-    // Max error: 3.7%, error at s=2: 0.27%
-    float sharpnessIntegralFactor(float s) {
-        return 1.97 + 1.95 * exp(-0.64 * s);
     }
 
     void main() {
@@ -250,8 +238,8 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
             vec3 rayDir = (uIsOrtho == 1) ? vec3(0.0, 0.0, -1.0) : normalize(centerCam);
             float sigmaRaySq = dot(rayDir, Sigma_cam * rayDir);
             sigmaRay = sqrt(max(sigmaRaySq, 1e-8));
-            float c_s = sharpnessIntegralFactor(aSharpness);
-            float rayIntegrationBoost = sigmaRay * c_s;  // voxelSpacing = 1.0
+            // c_s = sharpnessIntegralFactor(2.0) ≈ sqrt(2π) ≈ 2.507 (standard Gaussian ray integral)
+            float rayIntegrationBoost = sigmaRay * 2.507;  // voxelSpacing = 1.0
             vAmplitude2D = aAmplitude * rayIntegrationBoost;
         } else {
             // Max projection: no boost needed
@@ -286,17 +274,10 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         }
         vec2 minorAxis = vec2(-majorAxis.y, majorAxis.x);
 
-        // Quad extents: truncation radius × sqrt(eigenvalue) × sharpness factor
-        // For generalized Gaussian, adjust truncation for sharpness
-        // OPTIMIZATION: For sharpness=2.0, pow(x, 1.0) = x, skip expensive pow()
-        float effectiveTruncate;
-        if (abs(aSharpness - 2.0) < 0.001) {
-            effectiveTruncate = uTruncate;  // pow(uTruncate, 1.0) = uTruncate
-        } else {
-            effectiveTruncate = pow(uTruncate, 2.0 / max(aSharpness, 0.1));
-        }
-        float extent1 = effectiveTruncate * sqrt(lambda1);
-        float extent2 = effectiveTruncate * sqrt(lambda2);
+        // Quad extents: truncation radius × sqrt(eigenvalue)
+        // Standard Gaussian (sharpness=2): effectiveTruncate = uTruncate
+        float extent1 = uTruncate * sqrt(lambda1);
+        float extent2 = uTruncate * sqrt(lambda2);
 
         // Project center to screen (pixels)
         if (uIsOrtho == 1) {
@@ -323,7 +304,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
 
         // Pass through other varyings
         vColor = aColor;
-        vSharpness = aSharpness;
 
         // Compute proper clip-space depth using projection matrix
         // This ensures correct depth buffer behavior for overlapping splats
@@ -344,9 +324,9 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
    * Optimizations:
    * - GLSL ES 3.0 with flat qualifier: skips GPU interpolation for per-instance values
    * - Reciprocal precomputation: 2 divisions replaced with 2 multiplications
-   * - Sharpness=2.0 specialization: skips expensive pow() for standard Gaussian
+   * - Standard Gaussian: no pow() needed
    * - mediump precision for color/amplitude (sufficient for visual quality)
-   * - Early discard at 3σ before expensive pow() for pixels beyond truncation
+   * - Early discard at 3σ before exp()
    * - Higher discard threshold (1e-4 is still invisible)
    */
   private static readonly FRAGMENT_SHADER = /* glsl */ `
@@ -356,7 +336,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     // OPTIMIZATION: flat qualifier skips GPU interpolation hardware
     flat in mediump vec3 vColor;
     flat in mediump float vAmplitude2D;
-    flat in mediump float vSharpness;
     // These need highp for screen-space calculations
     // OPTIMIZATION: vL2D stores [1/L00, L10, 1/L11] for MUL instead of DIV
     flat in highp vec3 vL2D;          // 2D Cholesky packed as [invL00, L10, invL11]
@@ -371,42 +350,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
 
     // GLSL ES 3.0 requires explicit fragment output declaration
     out vec4 fragColor;
-
-    // ============================================================================
-    // Correction factor for 3D generalized Gaussian projection
-    //
-    // For s≠2, the projection integral ∫exp(-½(r_2D² + z²)^(s/2))dz doesn't factor
-    // into separable 2D and depth components. This correction factor accounts for
-    // the non-separability, preventing elongated splats from appearing as artifacts.
-    //
-    // C(r, s, α) = (1 + (r/α)²)^((2-s)/4)
-    //
-    // Performance: ~10 cycles average (vs ~35 for naive pow)
-    // Accuracy: <1% error for 97% of cases, <5% for 95th percentile
-    // ============================================================================
-    float correctionFactor(float r, float s, float alpha) {
-        // Fast path 1: No correction when s ≈ 2 (standard Gaussian)
-        // Returns identity for ~60% of typical fragments
-        if (abs(s - 2.0) < 0.01) {
-            return 1.0;
-        }
-
-        // Compute base variables
-        float r_norm = r / alpha;
-        float x = r_norm * r_norm;  // x = (r/α)²
-        float k = (2.0 - s) * 0.25;  // k = (2-s)/4
-
-        // Fast path 2: Taylor approximation for small corrections
-        // (1+x)^k ≈ 1 + kx + ½k(k-1)x² ≈ 1 + kx + 0.5*kx*kx for small kx
-        // Handles ~25% of fragments (near splat center)
-        float kx = k * x;
-        if (abs(kx) < 0.15) {
-            return 1.0 + kx + 0.5 * kx * kx;
-        }
-
-        // General case: Hardware log/exp (~15% of fragments)
-        return exp(k * log(1.0 + x));
-    }
 
     void main() {
         // Pixel offset from splat center
@@ -425,32 +368,9 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         // This saves the expensive pow() and exp() for edge pixels
         if (mahalSq > 9.0) discard;
 
-        // Generalized Gaussian falloff - different formulas for sum vs max projection
-        //
-        // SUM PROJECTION (additive blending):
-        //   For s≠2, the 3D→2D projection integral doesn't factor separably.
-        //   Solution: Use s=2 (standard Gaussian) for 2D screen falloff, apply correction factor.
-        //   intensity = amplitude * exp(-½r²) * C(r, s, α)
-        //
-        // MAX PROJECTION:
-        //   We take the peak value along the ray, which is the 3D Gaussian at z=0.
-        //   intensity = amplitude * exp(-½r^s) - use actual sharpness in 2D falloff
-        //
-        float intensity;
-        if (abs(vSharpness - 2.0) < 0.001) {
-            // Standard Gaussian (sharpness=2.0): same formula for both modes
-            intensity = vAmplitude2D * exp(-0.5 * mahalSq);
-        } else if (vProjectionMode == 0) {
-            // Sum projection: use s=2 with correction factor for ray integration
-            float r_2D = sqrt(mahalSq);
-            float gauss_2d = exp(-0.5 * mahalSq);
-            float correction = correctionFactor(r_2D, vSharpness, vAspectRatio);
-            intensity = vAmplitude2D * gauss_2d * correction;
-        } else {
-            // Max projection: use actual sharpness (peak value at z=0)
-            float rToTheS = pow(max(mahalSq, 1e-8), vSharpness * 0.5);
-            intensity = vAmplitude2D * exp(-0.5 * rToTheS);
-        }
+        // Standard Gaussian falloff: exp(-½ · r²)
+        // Same formula for both sum and max projection modes
+        float intensity = vAmplitude2D * exp(-0.5 * mahalSq);
 
         // Early discard for negligible contribution (raised threshold for performance)
         if (intensity < 1e-4) discard;
@@ -731,8 +651,6 @@ export interface InstancedGSplatsMeshConfig {
   cholesky45: Float32Array;
   /** Amplitudes (splatCount) */
   amplitudes: Float32Array;
-  /** Sharpness values (splatCount) */
-  sharpness: Float32Array;
   /** Colors RGB (splatCount * 3) */
   colors: Float32Array;
   /** Number of splats */
@@ -821,7 +739,6 @@ export function createInstancedGSplatsMesh(
     new THREE.InstancedBufferAttribute(meshConfig.cholesky45, 2)
   );
   geometry.setAttribute('aAmplitude', new THREE.InstancedBufferAttribute(meshConfig.amplitudes, 1));
-  geometry.setAttribute('aSharpness', new THREE.InstancedBufferAttribute(meshConfig.sharpness, 1));
   geometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(meshConfig.colors, 3));
 
   // Set instance count
@@ -885,10 +802,6 @@ export function updateInstancedGSplatsMesh(
       'aAmplitude',
       new THREE.InstancedBufferAttribute(meshConfig.amplitudes, 1)
     );
-    geometry.setAttribute(
-      'aSharpness',
-      new THREE.InstancedBufferAttribute(meshConfig.sharpness, 1)
-    );
     geometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(meshConfig.colors, 3));
     geometry.instanceCount = meshConfig.splatCount;
 
@@ -907,7 +820,6 @@ export function updateInstancedGSplatsMesh(
     const chol23Attr = geometry.getAttribute('aCholesky23') as THREE.InstancedBufferAttribute;
     const chol45Attr = geometry.getAttribute('aCholesky45') as THREE.InstancedBufferAttribute;
     const ampAttr = geometry.getAttribute('aAmplitude') as THREE.InstancedBufferAttribute;
-    const sharpAttr = geometry.getAttribute('aSharpness') as THREE.InstancedBufferAttribute;
     const colorAttr = geometry.getAttribute('aColor') as THREE.InstancedBufferAttribute;
 
     centerAttr.set(meshConfig.centers);
@@ -915,7 +827,6 @@ export function updateInstancedGSplatsMesh(
     chol23Attr.set(meshConfig.cholesky23);
     chol45Attr.set(meshConfig.cholesky45);
     ampAttr.set(meshConfig.amplitudes);
-    sharpAttr.set(meshConfig.sharpness);
     colorAttr.set(meshConfig.colors);
 
     centerAttr.needsUpdate = true;
@@ -923,7 +834,6 @@ export function updateInstancedGSplatsMesh(
     chol23Attr.needsUpdate = true;
     chol45Attr.needsUpdate = true;
     ampAttr.needsUpdate = true;
-    sharpAttr.needsUpdate = true;
     colorAttr.needsUpdate = true;
   }
 

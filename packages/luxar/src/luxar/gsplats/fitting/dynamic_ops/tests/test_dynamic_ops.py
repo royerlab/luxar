@@ -153,7 +153,7 @@ class TestSplatImportanceCalculation:
         )
 
         # Get cached params and pass to importance function
-        _, Ls, amps, _ = model.current_params()
+        _, Ls, amps = model.current_params()
         importance = _calculate_splat_importance(Ls, amps)
 
         assert importance.shape == (3,)
@@ -237,7 +237,7 @@ class TestGaussianSplatModel:
             sigma_min_diag=[0.5, 0.5],
         )
 
-        centers_t, Ls_t, amps_t, sharpness_t = model.current_params()
+        centers_t, Ls_t, amps_t = model.current_params()
 
         assert centers_t.shape == (2, 2)
         assert Ls_t.shape == (2, 2, 2)
@@ -382,7 +382,7 @@ class TestDynamicOperationsIntegration:
         )
 
         # Test importance calculation - get cached params first
-        centers_t, Ls, amps_t, _ = model.current_params()
+        centers_t, Ls, amps_t = model.current_params()
         importance = _calculate_splat_importance(Ls, amps_t)
         assert importance.shape == (len(centers),)
         assert torch.all(importance >= 0)
@@ -430,7 +430,7 @@ class TestRelocationParameters:
         )
         _relocate_splats_batch(model, splat_indices, peak_coords, residual, cfg)
 
-        _, Ls, _, _ = model.current_params()
+        _, Ls, _ = model.current_params()
         diag = torch.diagonal(Ls[0], dim1=-2, dim2=-1)
         assert torch.allclose(
             diag, torch.tensor([0.6, 0.6], dtype=diag.dtype), atol=1e-6
@@ -542,7 +542,6 @@ class TestRelocationParameters:
             centers=np.random.random((N, d)).astype(np.float32),
             amplitudes=np.random.uniform(0.1, 1.0, N).astype(np.float32),
             cholesky_factors=np.random.random((N, 3)).astype(np.float32),  # 2D tril = 3
-            sharpnesses=np.random.uniform(1.5, 3.0, N).astype(np.float32),
             stats={},
         )
 

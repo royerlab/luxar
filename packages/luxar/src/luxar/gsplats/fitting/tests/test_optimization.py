@@ -44,7 +44,6 @@ def simple_2d_setup():
         asymmetric_penalty=None,
         l1_amp=None,
         l1_diag=None,
-        l1_sharpness=None,
         scheduler_type="plateau",
         patience=10,
         lr_reduction_factor=0.5,
@@ -106,7 +105,6 @@ def test_run_optimization_loop_basic(simple_2d_setup) -> None:
     assert results.centers is not None
     assert results.Ls is not None
     assert results.amps is not None
-    assert results.sharpness is not None
     assert results.actual_iters > 0
     assert results.best_iteration > 0
     assert results.best_loss >= 0

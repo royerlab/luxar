@@ -28,7 +28,6 @@ def _compute_floats_per_splat(ndim: int) -> int:
     - d floats for center position
     - d*(d+1)/2 floats for Cholesky factor (lower triangular)
     - 1 float for amplitude
-    - 1 float for sharpness
 
     Parameters
     ----------
@@ -40,8 +39,8 @@ def _compute_floats_per_splat(ndim: int) -> int:
     int
         Number of floats per splat
     """
-    # center (d) + cholesky (d*(d+1)/2) + amplitude (1) + sharpness (1)
-    return ndim + ndim * (ndim + 1) // 2 + 2
+    # center (d) + cholesky (d*(d+1)/2) + amplitude (1)
+    return ndim + ndim * (ndim + 1) // 2 + 1
 
 
 def _compression_ratio_to_target_count(
@@ -94,7 +93,6 @@ class _InitContext:
 
     init_L: Optional[np.ndarray] = None
     init_amps: Optional[np.ndarray] = None
-    init_sharpness: Optional[np.ndarray] = None
 
 
 def preprocess_data(config: FitConfig) -> PreprocessedData:
@@ -156,9 +154,6 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     init_ctx = _InitContext(
         init_L=config.init_L.copy() if config.init_L is not None else None,
         init_amps=config.init_amps.copy() if config.init_amps is not None else None,
-        init_sharpness=config.init_sharpness.copy()
-        if config.init_sharpness is not None
-        else None,
     )
 
     # Handle GSplatData seeds specially
@@ -284,10 +279,6 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     if l1_diag is None:
         l1_diag = 0.01 * config.lr  # 1% of LR for mild shape regularization
 
-    l1_sharpness = config.l1_sharpness
-    if l1_sharpness is None:
-        l1_sharpness = 0.01 * config.lr  # 1% of LR to encourage standard Gaussian
-
     # Move to device
     V_tensor = torch.tensor(V_normalized, dtype=torch.float32, device=config.device)
 
@@ -296,7 +287,6 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         aprint("L1 regularization (as % of base LR):")
         aprint(f"  Amplitude: {l1_amp:.4f} (10% of LR {config.lr:.3f})")
         aprint(f"  Diagonal: {l1_diag:.5f} (1% of LR {config.lr:.3f})")
-        aprint(f"  Sharpness: {l1_sharpness:.5f} (1% of LR {config.lr:.3f})")
 
     return PreprocessedData(
         V_normalized=V_normalized,
@@ -311,10 +301,8 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         rel_l2_target=config.rel_l2_target,
         l1_amp=l1_amp,
         l1_diag=l1_diag,
-        l1_sharpness=l1_sharpness,
         init_L=init_ctx.init_L,
         init_amps=init_ctx.init_amps,
-        init_sharpness=init_ctx.init_sharpness,
         downscale_factors=downscale_factors,
     )
 
@@ -431,8 +419,6 @@ def _generate_seeds(
                 init_ctx.init_L = init_ctx.init_L[selected_indices]
                 if init_ctx.init_amps is not None:
                     init_ctx.init_amps = init_ctx.init_amps[selected_indices]
-                if init_ctx.init_sharpness is not None:
-                    init_ctx.init_sharpness = init_ctx.init_sharpness[selected_indices]
             else:
                 result = _subsample_seeds_spatially_diverse(
                     seed_centers, intensities, target_count, verbose
@@ -457,7 +443,7 @@ def _generate_seeds(
             )
             n_added = len(seed_centers) - n_original
 
-            # Extend init_L/init_amps/init_sharpness for the new grid seeds
+            # Extend init_L/init_amps for the new grid seeds
             if init_ctx is not None and n_added > 0:
                 ndim = V.ndim
                 _extend_init_arrays_for_grid_seeds(
@@ -917,8 +903,7 @@ def _extract_gsplatdata_init(init_ctx: _InitContext, gsplat_data: GSplatData) ->
     """
     Extract pre-initialized parameters from GSplatData.
 
-    Populates init_ctx.init_L, init_ctx.init_amps, and init_ctx.init_sharpness
-    from a GSplatData object. This enables using moment pursuit results
+    Populates init_ctx.init_L and init_ctx.init_amps from a GSplatData object. This enables using moment pursuit results
     or loaded splats as initialization for gradient descent refinement.
 
     Parameters
@@ -938,9 +923,6 @@ def _extract_gsplatdata_init(init_ctx: _InitContext, gsplat_data: GSplatData) ->
     # Extract amplitudes
     init_ctx.init_amps = gsplat_data.amplitudes.copy()
 
-    # Extract sharpness
-    init_ctx.init_sharpness = gsplat_data.sharpnesses.copy()
-
 
 def _extend_init_arrays_for_grid_seeds(
     init_ctx: _InitContext,
@@ -953,7 +935,7 @@ def _extend_init_arrays_for_grid_seeds(
     verbose: bool,
 ) -> None:
     """
-    Extend init_L/init_amps/init_sharpness arrays for grid fallback seeds.
+    Extend init_L/init_amps arrays for grid fallback seeds.
 
     When we add grid-based fallback seeds, we need to generate appropriate
     initialization arrays for them while preserving the original seeds' values.
@@ -1021,16 +1003,3 @@ def _extend_init_arrays_for_grid_seeds(
             ndi.map_coordinates(V, original_coords, order=1, mode="nearest") * 0.9
         ).astype(np.float32)
         init_ctx.init_amps = np.concatenate([original_amps, grid_amps], axis=0)
-
-    # Extend init_sharpness - grid seeds use standard Gaussian sharpness (2.0)
-    grid_sharpness = np.full(n_added, 2.0, dtype=np.float32)
-    if init_ctx.init_sharpness is not None:
-        init_ctx.init_sharpness = np.concatenate(
-            [init_ctx.init_sharpness, grid_sharpness], axis=0
-        )
-    else:
-        # No original init_sharpness, use 2.0 for all
-        original_sharpness = np.full(n_original, 2.0, dtype=np.float32)
-        init_ctx.init_sharpness = np.concatenate(
-            [original_sharpness, grid_sharpness], axis=0
-        )
