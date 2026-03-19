@@ -10,6 +10,7 @@ import torch
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.optim.integration import create_optimizer_and_scheduler
 
+
 @pytest.fixture
 def simple_model():
     """Create a simple test model."""

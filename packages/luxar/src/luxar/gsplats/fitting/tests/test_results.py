@@ -16,6 +16,7 @@ from luxar.gsplats.fitting.config import (
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fitting.results import _clip_to_bounds, finalize_results
 
+
 @pytest.fixture
 def basic_optimization_results():
     """Create basic optimization results for testing."""

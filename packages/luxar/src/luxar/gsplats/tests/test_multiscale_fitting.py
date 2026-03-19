@@ -12,6 +12,7 @@ import pytest
 
 from luxar.gsplats import fit_multiscale_gaussian_splats
 
+
 class TestMultiScaleFitting:
     """Tests for fit_multiscale_gaussian_splats function."""
 
