@@ -30,38 +30,37 @@ export default async function globalSetup() {
 
   // Check 1: Verify examples directory exists
   if (!fs.existsSync(examplesDir)) {
-    console.error(`❌ Examples directory not found: ${examplesDir}`);
-    console.error('   Run "make run-examples" to generate test datasets');
-    throw new Error('Examples directory missing');
-  }
+    console.warn(`⚠️  Examples directory not found: ${examplesDir}`);
+    console.warn('   Run "make run-examples" to generate test datasets');
+    console.warn('   Tests requiring example datasets will fail.\n');
+    // Don't throw - allow tests that don't need examples to run
+    // (e.g., basic-rendering, viewer-initialization, test-fixtures, geometry-types)
+  } else {
+    console.log(`✅ Examples directory found: ${examplesDir}`);
 
-  console.log(`✅ Examples directory found: ${examplesDir}`);
+    // Check 2: Verify required datasets exist
+    const missingDatasets: string[] = [];
+    const foundDatasets: string[] = [];
 
-  // Check 2: Verify required datasets exist
-  const missingDatasets: string[] = [];
-  const foundDatasets: string[] = [];
-
-  for (const dataset of REQUIRED_DATASETS) {
-    const datasetPath = path.join(examplesDir, dataset);
-    if (fs.existsSync(datasetPath)) {
-      foundDatasets.push(dataset);
-    } else {
-      missingDatasets.push(dataset);
+    for (const dataset of REQUIRED_DATASETS) {
+      const datasetPath = path.join(examplesDir, dataset);
+      if (fs.existsSync(datasetPath)) {
+        foundDatasets.push(dataset);
+      } else {
+        missingDatasets.push(dataset);
+      }
     }
-  }
 
-  console.log(`✅ Found ${foundDatasets.length}/${REQUIRED_DATASETS.length} required datasets`);
+    console.log(`✅ Found ${foundDatasets.length}/${REQUIRED_DATASETS.length} required datasets`);
 
-  if (missingDatasets.length > 0) {
-    console.warn('\n⚠️  Warning: Some datasets are missing:');
-    for (const dataset of missingDatasets) {
-      console.warn(`   - ${dataset}`);
+    if (missingDatasets.length > 0) {
+      console.warn('\n⚠️  Warning: Some datasets are missing:');
+      for (const dataset of missingDatasets) {
+        console.warn(`   - ${dataset}`);
+      }
+      console.warn('\n   Tests requiring these datasets will fail.');
+      console.warn('   Run "make run-examples" to generate all datasets.\n');
     }
-    console.warn('\n   Tests requiring these datasets will fail.');
-    console.warn('   Run "make run-examples" to generate all datasets.\n');
-
-    // Don't throw error - allow tests to run with available datasets
-    // Some tests don't require all datasets
   }
 
   // Check 3: Verify we can write to test output directory

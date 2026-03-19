@@ -33,6 +33,7 @@ const ALL_EXAMPLES = [
   'dimension_navigation_example.zarr',
   'dimension_sliders_5d_example.zarr',
   'hierarchy_example.zarr',
+  'lines_basic_example.zarr',
   'multiple_objects_example.zarr',
   'nd_points_example.zarr',
   'performance_benchmark_example.zarr',
@@ -268,5 +269,21 @@ test.describe('Critical Examples - Deep Validation', () => {
 
     console.log(`[Hierarchy] Transforms applied: ${hasTransforms}`);
     console.log(`[Hierarchy] Point clouds: ${state.pointClouds.length}`);
+  });
+
+  test('radius_showcase - should demonstrate radius-based slicing', async ({ page }) => {
+    await page.goto(`/?src=${EXAMPLES_BASE}/radius_showcase_example.zarr&debug`);
+    await waitForLuxarReady(page, 60000);
+
+    await assertNoConsoleErrors(page);
+
+    const state = await getLuxarState(page);
+
+    // Should have multiple point clouds showing radius variations
+    expect(state.pointClouds.length).toBeGreaterThan(0);
+    expect(state.totalPoints).toBeGreaterThan(0);
+
+    console.log(`[Radius Showcase] Point clouds: ${state.pointClouds.length}`);
+    console.log(`[Radius Showcase] Total points: ${state.totalPoints}`);
   });
 });
