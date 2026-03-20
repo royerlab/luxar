@@ -25,6 +25,7 @@ if HAS_TORCH:
     )
     from luxar.gsplats.utils.trils import pack_tril
 
+
 @pytest.fixture
 def simple_2d_params():
     """Create simple 2D Gaussian parameters for testing."""
@@ -56,6 +57,7 @@ def simple_2d_params():
         "L": L,
         "result": result,  # New API
     }
+
 
 @pytest.fixture
 def multi_2d_params():
@@ -101,6 +103,7 @@ def multi_2d_params():
         "result": result,  # New API
     }
 
+
 @pytest.fixture
 def simple_3d_params():
     """Create simple 3D Gaussian parameters."""
@@ -132,6 +135,7 @@ def simple_3d_params():
         "L": L,
         "result": result,  # New API
     }
+
 
 class TestRenderGaussiansFullTorch:
     """Test PyTorch-based rendering function."""
@@ -287,6 +291,7 @@ class TestRenderGaussiansFullTorch:
         peak_large: float = float(np.max(result_large_np))
         assert abs(peak_small - peak_large) / max(peak_small, peak_large) < 0.1
 
+
 class TestRenderGaussiansFullNumpy:
     """Test NumPy wrapper for rendering."""
 
@@ -332,6 +337,7 @@ class TestRenderGaussiansFullNumpy:
 
         # Results should be identical (or very close)
         np.testing.assert_allclose(result_numpy, result_torch, atol=1e-6, rtol=1e-6)
+
 
 class TestBatchedRendering:
     """Test batched rendering implementation."""
@@ -454,6 +460,7 @@ class TestBatchedRendering:
         max_idx = np.unravel_index(np.argmax(result_np), result_np.shape)
         assert abs(max_idx[0] - 5) <= 1
         assert abs(max_idx[1] - 5) <= 1
+
 
 class TestRenderingEdgeCases:
     """Test edge cases and error conditions."""
@@ -596,6 +603,7 @@ class TestRenderingEdgeCases:
         # Should be effectively zero (allowing for floating point precision)
         assert torch.all(result < 1e-6)
 
+
 class TestPerformanceAndNumericalStability:
     """Test performance characteristics and numerical stability."""
 
@@ -669,6 +677,7 @@ class TestPerformanceAndNumericalStability:
         result_large = render_gaussians_pytorch(shape, test_result_large)
         assert torch.all(torch.isfinite(result_large))
 
+
 class TestRenderingWrappersEdgeCases:
     """Test edge cases in rendering wrapper functions."""
 
@@ -736,6 +745,7 @@ class TestRenderingWrappersEdgeCases:
         assert result.shape == shape
         assert torch.all(torch.isfinite(result))
         assert torch.sum(result) > 0
+
 
 class TestMPSFallbackHandling:
     """Test MPS fallback handling for torch.unique operations."""
@@ -833,6 +843,7 @@ class TestMPSFallbackHandling:
             "_group_by_box_gpu should have MPS fallback handling"
         )
 
+
 class TestMPSPeakFindingFallback:
     """Test MPS fallback handling for max_pool3d in peak finding."""
 
@@ -899,6 +910,7 @@ class TestMPSPeakFindingFallback:
         )
 
         assert len(peaks) == 2
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

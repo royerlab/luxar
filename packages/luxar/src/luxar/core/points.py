@@ -94,3 +94,8 @@ class Points(DataNode):
     def has_sharpness(self) -> bool:
         """Check if points have sharpness."""
         return bool(self._metadata.get("has_sharpness", False))
+
+    @property
+    def has_scalars(self) -> bool:
+        """Check if points have scalar values for colormap lookup."""
+        return bool(self._metadata.get("has_scalars", False))

@@ -47,6 +47,7 @@ def basic_optimization_results():
         end_time=end_time,
     )
 
+
 @pytest.fixture
 def basic_config():
     """Create basic FitConfig for testing."""
@@ -82,6 +83,7 @@ def basic_config():
         verbose=False,
     )
 
+
 @pytest.fixture
 def basic_preprocessed_data():
     """Create basic preprocessed data."""
@@ -96,6 +98,7 @@ def basic_preprocessed_data():
         intensity_range=2.5,  # Important for amplitude rescaling test
         max_abs_error=0.01,
     )
+
 
 def test_finalize_results_basic(
     basic_optimization_results, basic_config, basic_preprocessed_data
@@ -115,6 +118,7 @@ def test_finalize_results_basic(
     assert result.amplitudes.shape == (N,)
     assert isinstance(result.stats, dict)
 
+
 def test_amplitude_rescaling(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ) -> None:
@@ -128,6 +132,7 @@ def test_amplitude_rescaling(
     expected_amps = original_amps * basic_preprocessed_data.intensity_range
 
     assert np.allclose(result.amplitudes, expected_amps, rtol=1e-5)
+
 
 def test_parameter_packing(
     basic_optimization_results, basic_config, basic_preprocessed_data
@@ -149,6 +154,7 @@ def test_parameter_packing(
     assert result.cholesky_factors.shape == (N, tril_size)
 
     # Sharpness should match exactly
+
 
 def test_stats_dictionary_structure(
     basic_optimization_results, basic_config, basic_preprocessed_data
@@ -183,6 +189,7 @@ def test_stats_dictionary_structure(
     assert result.stats["final_loss"] == basic_optimization_results.best_loss
     assert result.stats["n_splats"] == len(result.amplitudes)
 
+
 def test_convergence_flag(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ) -> None:
@@ -204,6 +211,7 @@ def test_convergence_flag(
     )
 
     assert result.stats["converged"] is False
+
 
 def test_movie_frames_included(
     basic_optimization_results, basic_config, basic_preprocessed_data
@@ -228,6 +236,7 @@ def test_movie_frames_included(
     assert result.stats["movie_frames"] == movie_frames
     assert result.stats["movie_shape"] == basic_config.V.shape
 
+
 def test_movie_frames_excluded(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ) -> None:
@@ -241,6 +250,7 @@ def test_movie_frames_excluded(
 
     assert result.stats["movie_frames"] is None
 
+
 def test_data_types(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ) -> None:
@@ -252,6 +262,7 @@ def test_data_types(
     assert result.centers.dtype == np.float32
     assert result.cholesky_factors.dtype == np.float32
     assert result.amplitudes.dtype == np.float32
+
 
 def test_3d_data(basic_config, basic_preprocessed_data) -> None:
     """Test finalization works for 3D data."""
@@ -294,6 +305,7 @@ def test_3d_data(basic_config, basic_preprocessed_data) -> None:
     assert result.cholesky_factors.shape == (N, tril_size)
     assert result.amplitudes.shape == (N,)
 
+
 def test_positive_amplitudes(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ) -> None:
@@ -304,6 +316,7 @@ def test_positive_amplitudes(
 
     # All amplitudes should be positive
     assert np.all(result.amplitudes >= 0)
+
 
 def test_time_seconds_calculation(
     basic_optimization_results, basic_config, basic_preprocessed_data
@@ -319,9 +332,11 @@ def test_time_seconds_calculation(
 
     assert abs(result.stats["time_seconds"] - expected_time) < 1e-6
 
+
 # =============================================================================
 # Voxel Footprint Correction Tests
 # =============================================================================
+
 
 class TestVoxelFootprintCorrection:
     """Tests for voxel footprint correction feature."""
@@ -578,6 +593,7 @@ class TestVoxelFootprintCorrection:
             eigenvalues = np.linalg.eigvalsh(Sigma_new[i])
             assert np.all(eigenvalues > 0), f"Non-positive eigenvalue in covariance {i}"
 
+
 class TestVoxelFootprintCorrectionValidation:
     """Tests for voxel footprint correction validation."""
 
@@ -696,9 +712,11 @@ class TestVoxelFootprintCorrectionValidation:
                 voxel_footprint_correction=-1,  # negative integer
             )
 
+
 # =============================================================================
 # Post-Fit Culling Tests
 # =============================================================================
+
 
 class TestPostFitCulling:
     """Tests for noise-floor culling in finalize_results."""
@@ -879,9 +897,11 @@ class TestPostFitCulling:
         assert len(result.amplitudes) == 3
         assert result.stats["n_culled"] == 0
 
+
 # =============================================================================
 # Clip-to-Bounds Tests
 # =============================================================================
+
 
 class TestClipToBounds:
     """Tests for boundary clipping in post-processing."""
@@ -1088,9 +1108,11 @@ class TestClipToBounds:
         # The result should be valid (finite values)
         assert np.all(np.isfinite(result.cholesky_factors))
 
+
 # =============================================================================
 # Voxel Size Output Conversion Tests
 # =============================================================================
+
 
 class TestVoxelSizeOutputConversion:
     """Tests for voxel_size + output_space coordinate conversion in finalize_results."""
@@ -1269,9 +1291,11 @@ class TestVoxelSizeOutputConversion:
             result_real.centers, result_vox.centers * vs, rtol=1e-5
         )
 
+
 # ═══════════════════════════════════════════════════════════════════════
 # Post-fit quality metrics (PSNR, SSIM, MSE)
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def test_postfit_metrics_present(
     basic_optimization_results, basic_config, basic_preprocessed_data
@@ -1286,6 +1310,7 @@ def test_postfit_metrics_present(
     # SSIM ranges from -1 to 1 (can be negative for anti-correlated signals)
     assert -1.0 <= result.stats["ssim"] <= 1.0
     assert result.stats["mse"] >= 0.0
+
 
 def test_postfit_metrics_skipped_for_physical_coords() -> None:
     """Post-fit metrics should be skipped when output is in physical coordinates."""

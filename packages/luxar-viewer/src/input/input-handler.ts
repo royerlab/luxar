@@ -41,6 +41,7 @@ import { RenderingControls } from '../ui/rendering-controls';
 import type { RecordingPanel } from '../ui/recording-panel';
 import type { LayersPanel } from '../ui/layers';
 import type { ScaleBar } from '../ui/components/scale-bar';
+import type { ColormapLegend } from '../ui/components/colormap-legend';
 import { showHelpOverlay, hideHelpOverlay, clearError, showToast } from '../ui/helpers';
 import { config } from '../config';
 import { captureViewerState } from '../config/viewer-state-capture';
@@ -72,6 +73,9 @@ export class InputHandler {
 
   /** Optional reference to scale bar overlay */
   private scaleBar?: ScaleBar;
+
+  /** Optional reference to colormap legend overlay */
+  private colormapLegend?: ColormapLegend;
 
   /** Optional reference to recording panel */
   private recordingPanel?: RecordingPanel;
@@ -161,6 +165,10 @@ export class InputHandler {
 
   setScaleBar(scaleBar: ScaleBar): void {
     this.scaleBar = scaleBar;
+  }
+
+  setColormapLegend(legend: ColormapLegend): void {
+    this.colormapLegend = legend;
   }
 
   setRecordingPanel(panel: RecordingPanel): void {
@@ -825,6 +833,14 @@ export class InputHandler {
       handler: () => this.scaleBar?.toggle(),
       preventDefault: true,
       description: 'Toggle scale bar',
+    });
+
+    // Colormap legend overlay
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: config.input.keyboard.shortcuts.toggleColormapLegend,
+      handler: () => this.colormapLegend?.toggle(),
+      preventDefault: true,
+      description: 'Toggle colormap legend',
     });
 
     // Recording panel toggle
