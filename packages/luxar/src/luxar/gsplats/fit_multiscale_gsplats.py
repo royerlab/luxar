@@ -647,9 +647,7 @@ def fit_multiscale_gaussian_splats(
     # Baseline: fitting at full resolution for all scales: len(scales) * V.size
     # Actual: sum of downsampled volumes processed: sum(V_scale.size)
     baseline_voxel_cost = len(scales) * V.size
-    actual_voxel_cost = sum(
-        int(stat["n_voxels"]) for stat in per_scale_stats
-    )
+    actual_voxel_cost = sum(int(stat["n_voxels"]) for stat in per_scale_stats)
     computational_speedup = (
         baseline_voxel_cost / actual_voxel_cost if actual_voxel_cost > 0 else 1.0
     )

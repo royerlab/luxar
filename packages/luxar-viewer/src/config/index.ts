@@ -342,6 +342,7 @@ export const config: AppConfig = {
         togglePerformance: 'p',
         toggleRendering: 'r',
         toggleScaleBar: 'b',
+        toggleColormapLegend: 'j',
         toggleDebugConsole: 'ctrl+l',
         toggleLayers: 'l',
         recenterCamera: 'f',

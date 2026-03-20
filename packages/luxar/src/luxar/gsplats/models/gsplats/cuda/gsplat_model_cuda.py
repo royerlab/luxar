@@ -224,7 +224,9 @@ class CUDASplatFunction(torch.autograd.Function):
         return output_tensor
 
     @staticmethod
-    def backward(ctx: Any, grad_output: torch.Tensor) -> tuple[torch.Tensor | None, ...]:
+    def backward(
+        ctx: Any, grad_output: torch.Tensor
+    ) -> tuple[torch.Tensor | None, ...]:
         """
         Backward pass: compute gradients.
 
@@ -432,7 +434,9 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         # Device validation
         resolved_device: torch.device
         if device is None:
-            resolved_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            resolved_device = torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu"
+            )
         elif isinstance(device, str):
             resolved_device = torch.device(device)
         else:

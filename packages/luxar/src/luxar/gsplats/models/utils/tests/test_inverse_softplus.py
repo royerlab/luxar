@@ -17,6 +17,7 @@ try:
 except ImportError:
     HAS_TORCH = False
 
+
 class TestInverseSoftplus:
     """Test stable_inverse_softplus function."""
 
@@ -146,6 +147,7 @@ class TestInverseSoftplus:
 
         np.testing.assert_array_almost_equal(x_large, y_large, decimal=1)
 
+
 class TestErrorHandling:
     """Test error handling and edge cases."""
 
@@ -203,6 +205,7 @@ class TestErrorHandling:
         softplus_x = np.array(softplus_x)
         np.testing.assert_array_almost_equal(softplus_x, y, decimal=3)
 
+
 class TestNumericalStability:
     """Test numerical stability compared to naive implementation."""
 
@@ -223,6 +226,7 @@ class TestNumericalStability:
         y_tiny = np.array([1e-10])
         x_stable_tiny = stable_inverse_softplus(y_tiny)
         assert np.isfinite(x_stable_tiny).all()
+
 
 @pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
 class TestTorchNumpyEquivalence:
@@ -359,6 +363,7 @@ class TestTorchNumpyEquivalence:
 
         assert x_cpu.device.type == "cpu", "CPU input should produce CPU output"
         assert x_gpu.device.type == "cuda", "GPU input should produce GPU output"
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

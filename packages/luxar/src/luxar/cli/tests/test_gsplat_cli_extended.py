@@ -383,7 +383,6 @@ class TestFitCommand:
         assert data.ndim == 3
         assert data.amplitudes.shape == (data.n_splats,)
 
-
     def test_fit_with_yaml_config(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
     ) -> None:

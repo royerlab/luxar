@@ -182,6 +182,9 @@ class Group(Node):
         sharpness: Optional[
             Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float]
         ] = None,
+        scalars: Optional[
+            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float]
+        ] = None,
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
         grid_shape: Optional[Tuple[int, ...]] = None,
@@ -197,6 +200,8 @@ class Group(Node):
             colors: Optional (N, 3) array, RGB tuple, or None
             radii: Optional (N,) array, scalar, or None (default 0.5)
             sharpness: Optional (N,) array, scalar, or None
+            scalars: Optional (N,) array or scalar for colormap lookup.
+                Requires ``colormap`` in attrs. Mutually exclusive with ``colors``.
             parent: Parent node (default: this group)
             extend_to_all: Visibility extension across non-displayed dimensions
             grid_shape: Optional grid shape for structured data
@@ -205,7 +210,7 @@ class Group(Node):
                 Unmapped dims are filled with ``fill`` values and auto-extended.
             fill: Fixed coordinate values for unmapped scene dimensions
                 when using ``dim_order``. Defaults to 0.0 for unspecified dims.
-            **attrs: Additional node attributes (opacity, blending_mode, etc.)
+            **attrs: Additional node attributes (opacity, blending_mode, colormap, etc.)
 
         Returns:
             The created Points node
@@ -243,6 +248,17 @@ class Group(Node):
 
             parent_node = parent or self
 
+            # Colormap / colors mutual exclusivity
+            colormap = attrs.get("colormap")
+            if colors is not None and colormap is not None:
+                raise ValueError(
+                    "Cannot specify both 'colors' and 'colormap'. Use one or the other."
+                )
+            if scalars is not None and colormap is None:
+                raise ValueError(
+                    "'scalars' requires a 'colormap' attribute to map values to colors."
+                )
+
             if radii is None:
                 radii = DEFAULT_POINT_RADIUS
                 aprint(f"  📐 Using default radius: {DEFAULT_POINT_RADIUS}")
@@ -256,9 +272,23 @@ class Group(Node):
                 colors=cast(Any, colors),
                 radii=radii,
                 sharpness=sharpness,
+                scalars=scalars,
                 grid_shape=grid_shape,
                 **attrs,
             )
+
+            # Sync colormap attr with what the compiler wrote to zarr:
+            # - Array colormaps are resolved and stored as "custom"
+            # - Non-built-in string names (matplotlib/colorcet) are also
+            #   resolved to LUT and stored as "custom"
+            if "colormap" in attrs:
+                from ..colormaps.builtins import BUILTIN_COLORMAP_NAMES
+
+                cm = attrs["colormap"]
+                if not isinstance(cm, str) or (
+                    isinstance(cm, str) and cm not in BUILTIN_COLORMAP_NAMES
+                ):
+                    attrs["colormap"] = "custom"
 
             return Points(
                 name,
@@ -284,6 +314,9 @@ class Group(Node):
         sharpness: Optional[
             Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float]
         ] = None,
+        scalars: Optional[
+            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float]
+        ] = None,
         indices: Optional[np.ndarray[Any, Any]] = None,
         line_type: str = "polyline",
         parent: Optional[Node] = None,
@@ -300,6 +333,8 @@ class Group(Node):
             widths: (N,) array or scalar for line widths
             colors: Optional (N, 3) array, RGB tuple, or None
             sharpness: Optional (N,) array, scalar, or None
+            scalars: Optional (N,) array or scalar for colormap lookup.
+                Requires ``colormap`` in attrs. Mutually exclusive with ``colors``.
             indices: Optional vertex indices for indexed line type
             line_type: Connectivity ("segments", "polyline", "loop", "indexed")
             parent: Parent node (default: this group)
@@ -315,9 +350,7 @@ class Group(Node):
             scene = self._find_scene()
 
             vert_arr: np.ndarray = (
-                vertices
-                if isinstance(vertices, np.ndarray)
-                else np.asarray(vertices)
+                vertices if isinstance(vertices, np.ndarray) else np.asarray(vertices)
             )
             if vert_arr.ndim != 2:
                 raise ValueError(
@@ -344,6 +377,17 @@ class Group(Node):
                 attrs["extend_to_all"] = final_extend_dims
                 aprint(f"  📡 Extending visibility across: {final_extend_dims}")
 
+            # Colormap / colors mutual exclusivity
+            colormap = attrs.get("colormap")
+            if colors is not None and colormap is not None:
+                raise ValueError(
+                    "Cannot specify both 'colors' and 'colormap'. Use one or the other."
+                )
+            if scalars is not None and colormap is None:
+                raise ValueError(
+                    "'scalars' requires a 'colormap' attribute to map values to colors."
+                )
+
             parent_node = parent or self
 
             writer = scene._writer
@@ -355,10 +399,21 @@ class Group(Node):
                 widths=widths,
                 colors=cast(Any, colors),
                 sharpness=sharpness,
+                scalars=scalars,
                 indices=indices,
                 line_type=line_type,
                 **attrs,
             )
+
+            # Sync colormap attr with what the compiler wrote to zarr
+            if "colormap" in attrs:
+                from ..colormaps.builtins import BUILTIN_COLORMAP_NAMES
+
+                cm = attrs["colormap"]
+                if not isinstance(cm, str) or (
+                    isinstance(cm, str) and cm not in BUILTIN_COLORMAP_NAMES
+                ):
+                    attrs["colormap"] = "custom"
 
             return Lines(
                 name,
@@ -416,9 +471,7 @@ class Group(Node):
             scene = self._find_scene()
 
             ctr_arr: np.ndarray = (
-                centers
-                if isinstance(centers, np.ndarray)
-                else np.asarray(centers)
+                centers if isinstance(centers, np.ndarray) else np.asarray(centers)
             )
             if ctr_arr.ndim != 2:
                 raise ValueError(
@@ -455,6 +508,13 @@ class Group(Node):
                 attrs["extend_to_all"] = final_extend_dims
                 aprint(f"  📡 Extending visibility across: {final_extend_dims}")
 
+            # Colormap / colors mutual exclusivity
+            colormap = attrs.get("colormap")
+            if colors is not None and colormap is not None:
+                raise ValueError(
+                    "Cannot specify both 'colors' and 'colormap'. Use one or the other."
+                )
+
             parent_node = parent or self
 
             writer = scene._writer
@@ -468,6 +528,22 @@ class Group(Node):
                 colors=cast(Any, colors),
                 **attrs,
             )
+
+            # Sync colormap attr with what the compiler wrote to zarr
+            if "colormap" in attrs:
+                from ..colormaps.builtins import BUILTIN_COLORMAP_NAMES
+
+                cm = attrs["colormap"]
+                if not isinstance(cm, str) or (
+                    isinstance(cm, str) and cm not in BUILTIN_COLORMAP_NAMES
+                ):
+                    attrs["colormap"] = "custom"
+
+            # The compiler sets default "gray" colormap for gsplats without
+            # colors/colormap. Propagate that to the Node attrs so the
+            # in-memory node matches the zarr state.
+            if not metadata.get("has_colors") and "colormap" not in attrs:
+                attrs["colormap"] = "gray"
 
             return GSplats(
                 name,

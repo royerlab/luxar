@@ -122,6 +122,11 @@ class Node:
 
                 attrs["layer"] = validate_layer(attrs["layer"])
 
+            if "colormap" in attrs:
+                from ..validation.types import validate_colormap
+
+                attrs["colormap"] = validate_colormap(attrs["colormap"])
+
             # Store attributes
             if self._writer is not None:
                 # Write via writer interface and cache
@@ -558,6 +563,55 @@ class Node:
             Self for method chaining
         """
         self.blending_mode = value
+        return self
+
+    @property
+    def colormap(self) -> Optional[Any]:
+        """Get the colormap for this node.
+
+        Returns:
+            Colormap name (str) or LUT array, or None if not set.
+        """
+        return self.attrs.get("colormap")
+
+    @colormap.setter
+    def colormap(self, value: Any) -> None:
+        """Set the colormap for this node.
+
+        Changes are persisted to zarr immediately if a writer is available.
+        Only string colormap names are supported here. Custom array colormaps
+        must be set at node creation time via add_points/add_lines/add_gsplats.
+
+        Args:
+            value: Colormap name (str).
+
+        Raises:
+            TypeError: If value is not a string (numpy arrays cannot be
+                persisted via the property setter — use creation-time API).
+        """
+        if not isinstance(value, str):
+            raise TypeError(
+                "Colormap property setter only accepts string names. "
+                "Custom array colormaps must be set at node creation time "
+                "via add_points(..., colormap=array)."
+            )
+        from ..validation.types import validate_colormap
+
+        self._persist_attr("colormap", validate_colormap(value))
+
+    def set_colormap(self, value: str) -> "Node":
+        """Set colormap and return self for chaining.
+
+        Only string colormap names are supported after creation.
+        Custom array colormaps must be set at node creation time.
+
+        Args:
+            value: Colormap name (str).
+
+        Returns:
+            Self for method chaining
+        """
+        self.colormap = value
         return self
 
     # --------------------------------------------------------------- equality

@@ -206,6 +206,15 @@ export interface SceneNode {
     /** Min/max of amplitude data (GSplats), computed at encoding time */
     amplitude_data_range?: [number, number];
 
+    /** Min/max of scalar data (Points/Lines), computed at encoding time */
+    scalar_data_range?: [number, number];
+
+    /** Colormap name for scalar-to-color mapping (e.g., "viridis", "green", "custom") */
+    colormap?: string;
+
+    /** Whether this node has scalar values for colormap lookup */
+    has_scalars?: boolean;
+
     /** Dimensions to extend visibility across (points visible at all values) */
     extend_to_all?: string[];
 

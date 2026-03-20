@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Smoke test: verify sharpness removal from GSplats and preservation for Points/Lines."""
 
-import numpy as np
 import tempfile
 from pathlib import Path
 
-from luxar import LuxarZarrCompiler, LuxarScene, Dimensions
+import numpy as np
+
+from luxar import Dimensions, LuxarScene, LuxarZarrCompiler
 from luxar.gsplats import GSplatData
 
 
@@ -48,11 +49,14 @@ def test_gsplats_from_data():
 def test_gsplats_add_no_sharpness_param():
     """add_gsplats() signature should not include sharpness."""
     import inspect
+
     from luxar.core.group import Group
 
     sig = inspect.signature(Group.add_gsplats)
     params = list(sig.parameters.keys())
-    assert "sharpness" not in params, f"sharpness should not be in add_gsplats params: {params}"
+    assert "sharpness" not in params, (
+        f"sharpness should not be in add_gsplats params: {params}"
+    )
     print("PASS: add_gsplats signature does not include sharpness")
 
 
@@ -103,13 +107,13 @@ def test_gsplat_fitting_no_sharpness():
     img = np.random.rand(16, 16).astype(np.float32) * 0.5
     img[5:10, 5:10] = 1.0  # Bright region
 
-    result = fit_gaussian_splats(
-        img, seeds=5, max_iterations=10, verbose=False
-    )
+    result = fit_gaussian_splats(img, seeds=5, max_iterations=10, verbose=False)
     assert isinstance(result, GSplatData)
     assert not hasattr(result, "sharpnesses")
     assert result.centers.shape[1] == 2  # 2D
-    print(f"PASS: fit_gaussian_splats returns GSplatData without sharpness ({len(result.centers)} splats)")
+    print(
+        f"PASS: fit_gaussian_splats returns GSplatData without sharpness ({len(result.centers)} splats)"
+    )
 
 
 if __name__ == "__main__":

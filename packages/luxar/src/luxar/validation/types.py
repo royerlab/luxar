@@ -11,7 +11,7 @@ users writing data.
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, cast
+from typing import Any, List, Optional, Union, cast
 
 import numpy as np
 
@@ -409,6 +409,53 @@ def validate_blending_mode(mode: Any) -> BlendingMode:
         )
 
     return cast(BlendingMode, mode)
+
+
+def validate_colormap(value: Any) -> Union[str, "np.ndarray[Any, Any]"]:
+    """Validate a colormap specification.
+
+    Accepts:
+        - A string (colormap name, resolved at write time)
+        - A numpy array of shape (N, 3) with N >= 2
+
+    Args:
+        value: Colormap name or LUT array.
+
+    Returns:
+        Validated colormap (string or numpy array).
+
+    Raises:
+        TypeError: If value is not a string or numpy array.
+        ValueError: If array has wrong shape or values out of range.
+    """
+    if isinstance(value, str):
+        if not value:
+            raise ValueError("Colormap name must be non-empty")
+        return value
+
+    if isinstance(value, np.ndarray):
+        if value.ndim != 2 or value.shape[1] != 3:
+            raise ValueError(
+                f"Colormap array must have shape (N, 3), got {value.shape}"
+            )
+        if value.shape[0] < 2:
+            raise ValueError(
+                f"Colormap array must have at least 2 entries, got {value.shape[0]}"
+            )
+        # Validate dtype: must be float (range [0,1]) or uint8 (range [0,255])
+        if np.issubdtype(value.dtype, np.floating):
+            if np.any(value < 0) or np.any(value > 1):
+                raise ValueError("Float colormap values must be in [0, 1] range")
+        elif value.dtype != np.uint8:
+            raise TypeError(
+                f"Colormap array must be float32/float64 (range [0,1]) "
+                f"or uint8, got {value.dtype}"
+            )
+        return value
+
+    raise TypeError(
+        f"Colormap must be a string or numpy array, got {type(value).__name__}"
+    )
 
 
 # Type guards (return bool for conditional type narrowing)

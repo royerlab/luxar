@@ -285,9 +285,7 @@ def _compute_aabb_with_intensity_floor(
 
     # Standard Gaussian truncation: truncate is in units of standard deviations
     radii = torch.clamp(
-        (truncate * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
-        .ceil()
-        .to(torch.long),
+        (truncate * torch.sqrt(torch.clamp(sigma_diag, 1e-8))).ceil().to(torch.long),
         min=1,
     )
 

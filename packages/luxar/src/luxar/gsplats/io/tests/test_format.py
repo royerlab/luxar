@@ -25,6 +25,7 @@ def create_test_splats_3d(n_splats: int = 100) -> dict:
         "cholesky_factors": cholesky_factors,
     }
 
+
 class TestFormatCompliance:
     """Test format specification compliance."""
 
@@ -139,7 +140,6 @@ class TestFormatCompliance:
 
             cholesky_factors = splats_group["cholesky_factors"]
             assert cholesky_factors.shape[1] == 6  # d*(d+1)//2 for d=3
-
 
             chunk_bounds = splats_group["chunk_bounds"]
             assert chunk_bounds.shape[1] == 3  # ndim
