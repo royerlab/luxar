@@ -86,8 +86,9 @@ def _from_matplotlib(name: str) -> NDArray[np.uint8]:
         cmap = plt.get_cmap(name)
 
     t = np.linspace(0, 1, 256)
-    rgba = cmap(t)
-    return (rgba[:, :3] * 255).round().astype(np.uint8)
+    rgba: np.ndarray = cmap(t)
+    result: NDArray[np.uint8] = (rgba[:, :3] * 255).round().astype(np.uint8)
+    return result
 
 
 def _from_colorcet(name: str) -> NDArray[np.uint8]:

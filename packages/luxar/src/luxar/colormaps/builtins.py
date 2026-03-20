@@ -59,7 +59,8 @@ _COOLWARM_BYTES = b";L\xc0<N\xc2=P\xc3>Q\xc5?S\xc6@U\xc8BW\xc9CX\xcbDZ\xccE\\\xc
 
 def _bytes_to_lut(data: bytes) -> np.ndarray:
     """Convert raw bytes to (256, 3) uint8 numpy array."""
-    return np.frombuffer(data, dtype=np.uint8).reshape(256, 3).copy()
+    arr: np.ndarray = np.frombuffer(data, dtype=np.uint8).reshape(256, 3).copy()
+    return arr
 
 
 # Lazy cache for numpy arrays
@@ -100,7 +101,8 @@ def get_builtin_lut(name: str) -> np.ndarray:
         raise KeyError(f"Unknown built-in colormap: {name!r}")
     if name not in _cache:
         _cache[name] = _bytes_to_lut(_COLORMAP_BYTES[name])
-    return _cache[name].copy()
+    result: np.ndarray = _cache[name].copy()
+    return result
 
 
 BUILTIN_COLORMAP_NAMES: list[str] = list(_COLORMAP_BYTES.keys())

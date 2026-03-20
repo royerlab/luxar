@@ -274,6 +274,10 @@ module = [
     "metal_splatting_backend",
     "setuptools",
     "torch.utils.cpp_extension",
+    "matplotlib",
+    "matplotlib.*",
+    "colorcet",
+    "colorcet.*",
 ]
 ignore_missing_imports = true
 
