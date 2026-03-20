@@ -14,6 +14,7 @@ import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import { ResolutionIndicator } from '../ui/components/resolution-indicator';
 import { SceneLoaderManager, getSceneLoader } from '../data/scene-loader-manager';
 import { ScaleBar } from '../ui/components/scale-bar';
+import { ColormapLegend } from '../ui/components/colormap-legend';
 import { RecordingPanel } from '../ui/recording-panel';
 import { LayersPanel } from '../ui/layers';
 import { ThemeManager } from '../themes/theme-manager';
@@ -28,6 +29,7 @@ export class LuxarApp {
   private resolutionIndicator!: ResolutionIndicator;
   private datasetBrowser?: DatasetBrowser;
   private scaleBar?: ScaleBar;
+  private colormapLegend?: ColormapLegend;
   private recordingPanel?: RecordingPanel;
   private layersPanel?: LayersPanel;
   private isInitialized = false;
@@ -341,6 +343,11 @@ export class LuxarApp {
       }
     }
 
+    // Initialize colormap legend after layers panel (needs layer state)
+    if (this.layersPanel) {
+      this.initColormapLegend();
+    }
+
     // Apply zarr viewer_config: UI visibility, theme, dimension state, animation
     this.applyViewerConfigState(viewerConfig);
 
@@ -419,6 +426,29 @@ export class LuxarApp {
 
     // Wire to input handler for keyboard toggle
     this.inputHandler.setScaleBar(this.scaleBar);
+  }
+
+  /**
+   * Initialize the colormap legend overlay.
+   * Shows per-layer colormap gradients with names and data ranges.
+   */
+  private initColormapLegend(): void {
+    if (this.colormapLegend) {
+      this.colormapLegend.dispose();
+    }
+
+    if (!this.layersPanel) return;
+
+    try {
+      this.colormapLegend = new ColormapLegend({
+        layerState: this.layersPanel.layerState,
+      });
+
+      // Wire to input handler for keyboard toggle
+      this.inputHandler.setColormapLegend(this.colormapLegend);
+    } catch {
+      // ColormapLegend requires DOM; may fail in test environments
+    }
   }
 
   /**
@@ -739,6 +769,12 @@ export class LuxarApp {
       if (this.scaleBar) {
         this.scaleBar.dispose();
         this.scaleBar = undefined;
+      }
+
+      // Clean up colormap legend
+      if (this.colormapLegend) {
+        this.colormapLegend.dispose();
+        this.colormapLegend = undefined;
       }
 
       // Clean up recording panel

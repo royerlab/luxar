@@ -17,6 +17,7 @@ def _make_3d_gsplat(n=5, seed=42):
         ),
     )
 
+
 def _make_empty_gsplat(ndim=3):
     """Helper: create an empty GSplatData."""
     tril = ndim * (ndim + 1) // 2
@@ -26,7 +27,9 @@ def _make_empty_gsplat(ndim=3):
         cholesky_factors=np.zeros((0, tril), dtype=np.float32),
     )
 
+
 # ── Properties and basic interface ──────────────────────────
+
 
 class TestProperties:
     """Tests for n_splats, ndim, __len__, __repr__."""
@@ -82,7 +85,9 @@ class TestProperties:
         gs1.stats["foo"] = "bar"
         assert "foo" not in gs2.stats
 
+
 # ── Validation ──────────────────────────────────────────────
+
 
 class TestValidation:
     """Tests for __post_init__ shape validation."""
@@ -147,7 +152,9 @@ class TestValidation:
             cholesky_factors=np.zeros((4, 3), dtype=np.float32),
         )
 
+
 # ── Translate ───────────────────────────────────────────────
+
 
 class TestTranslate:
     def test_basic_translate(self):
@@ -178,7 +185,9 @@ class TestTranslate:
         translated = gs_with_colors.translate(np.array([1, 2, 3]))
         assert translated.colors is gs_with_colors.colors
 
+
 # ── Center at centroid ──────────────────────────────────────
+
 
 class TestCenterAtCentroid:
     def test_uniform_amplitudes(self):
@@ -214,7 +223,9 @@ class TestCenterAtCentroid:
         centered = gs.center_at_centroid()
         assert np.allclose(centered.centers.mean(axis=0), 0.0, atol=1e-5)
 
+
 # ── Scale intensity ─────────────────────────────────────────
+
 
 class TestScaleIntensity:
     def test_double(self):
@@ -233,7 +244,9 @@ class TestScaleIntensity:
         scaled = gs.scale_intensity(0.0)
         assert np.allclose(scaled.amplitudes, 0.0)
 
+
 # ── Prune ───────────────────────────────────────────────────
+
 
 class TestPrune:
     def test_cumulative_retains_signal(self):
@@ -309,7 +322,9 @@ class TestPrune:
         with pytest.raises(ValueError, match="Unknown pruning method"):
             gs.prune(method="invalid")
 
+
 # ── Save whitelist ──────────────────────────────────────────
+
 
 class TestSaveWhitelist:
     """Verify save() preserves quality metrics in fitting_info."""
@@ -387,6 +402,7 @@ class TestSaveWhitelist:
 
         # movie_frames should NOT be saved
         assert "movie_frames" not in fitting_info
+
 
 class TestMergeWithChannelColors:
     """Tests for GSplatData.merge_with_channel_colors() class method."""
@@ -639,7 +655,9 @@ class TestMergeWithChannelColors:
         # Output should be white, not black
         assert np.allclose(merged.colors[0], [1.0, 1.0, 1.0])
 
+
 # ── Computed properties ─────────────────────────────────
+
 
 def _make_2d_gsplat(n=5, seed=42):
     """Helper: create a 2D GSplatData."""
@@ -649,6 +667,7 @@ def _make_2d_gsplat(n=5, seed=42):
         amplitudes=rng.rand(n).astype(np.float32),
         cholesky_factors=np.tile(np.array([1, 0, 1], dtype=np.float32), (n, 1)),
     )
+
 
 class TestVolumes:
     def test_isotropic_identity_3d(self):
@@ -679,6 +698,7 @@ class TestVolumes:
         gs = _make_empty_gsplat()
         assert gs.volumes().shape == (0,)
 
+
 class TestMasses:
     def test_basic(self):
         gs = _make_3d_gsplat(n=5)
@@ -695,6 +715,7 @@ class TestMasses:
             ),
         )
         assert np.allclose(gs.masses(), 0.0)
+
 
 class TestMarginalSigmas:
     def test_identity(self):
@@ -737,6 +758,7 @@ class TestMarginalSigmas:
         gs = _make_2d_gsplat(n=2)
         assert gs.marginal_sigmas().shape == (2, 2)
 
+
 class TestEccentricities:
     def test_isotropic_is_one(self):
         gs = GSplatData(
@@ -759,7 +781,9 @@ class TestEccentricities:
         gs = _make_empty_gsplat()
         assert gs.eccentricities().shape == (0,)
 
+
 # ── Filter ──────────────────────────────────────────────
+
 
 class TestFilter:
     def test_basic(self):
@@ -812,7 +836,9 @@ class TestFilter:
         filtered = gs.filter(np.ones(0, dtype=bool))
         assert filtered.n_splats == 0
 
+
 # ── FilterBy (multi-criteria) ──────────────────────────
+
 
 class TestFilterBy:
     """Tests for filter_by() multi-criteria filtering."""
@@ -1007,7 +1033,9 @@ class TestFilterBy:
         with pytest.raises(ValueError, match="sigma_min/sigma_max require sigma_axis"):
             gs.filter_by(sigma_min=1.0)
 
+
 # ── SliceBy ────────────────────────────────────────────
+
 
 class TestSliceBy:
     """Tests for slice_by() coordinate-based slicing."""
@@ -1093,7 +1121,9 @@ class TestSliceBy:
         assert sliced.colors is not None
         assert np.array_equal(sliced.colors[1], [0, 255, 0])
 
+
 # ── Concatenate ─────────────────────────────────────────
+
 
 class TestConcatenate:
     def test_two_datasets(self):
@@ -1161,7 +1191,9 @@ class TestConcatenate:
         result = GSplatData.concatenate([gs])
         assert result.n_splats == 5
 
+
 # ── Split ───────────────────────────────────────────────
+
 
 class TestSplit:
     def test_equal_parts(self):
@@ -1208,7 +1240,9 @@ class TestSplit:
         assert parts[0].colors is not None
         assert np.allclose(parts[0].colors[0], [1, 0, 0])
 
+
 # ── Embed dimension ─────────────────────────────────────
+
 
 class TestEmbedDimension:
     def test_scalar_value(self):
@@ -1252,7 +1286,9 @@ class TestEmbedDimension:
         assert result.ndim == 4
         assert result.n_splats == 0
 
+
 # ── Combine as new dimension ─────────────────────────────
+
 
 class TestCombineAsNewDimension:
     """Tests for GSplatData.combine_as_new_dimension()."""
@@ -1366,7 +1402,9 @@ class TestCombineAsNewDimension:
         with pytest.raises(TypeError, match="must be a list"):
             GSplatData.combine_as_new_dimension(datasets, values=5.0)
 
+
 # ── Transform ───────────────────────────────────────────
+
 
 class TestTransform:
     def test_identity(self):
@@ -1440,7 +1478,9 @@ class TestTransform:
         result = gs.transform(np.eye(3))
         assert result.n_splats == 0
 
+
 # ── Intensity transforms ────────────────────────────────
+
 
 class TestAffineIntensity:
     def test_scale_only(self):
@@ -1463,6 +1503,7 @@ class TestAffineIntensity:
         result = gs.affine_intensity(scale=3.0)
         assert result.centers is gs.centers
 
+
 class TestNormalizeIntensity:
     def test_basic(self):
         gs = _make_3d_gsplat()
@@ -1484,6 +1525,7 @@ class TestNormalizeIntensity:
         )
         result = gs.normalize_intensity()
         assert np.allclose(result.amplitudes, 0.0)
+
 
 class TestClampIntensity:
     def test_min(self):

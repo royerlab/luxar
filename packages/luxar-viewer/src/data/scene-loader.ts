@@ -53,6 +53,7 @@ import {
   packCholeskyForShader,
 } from '../rendering/gsplat-material';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
+import { getColormapTexture } from '../rendering/colormap-textures';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './nd-transform';
 import type { AccumulatorStats } from './data-accumulator';
 import { UpdateProfiler } from '../profiling/update-profiler';
@@ -1600,8 +1601,8 @@ export class SceneLoader {
       let tolerance = linesViewState.dimensions
         ? computeLinesTolerance(linesViewState.dimensions, linesViewState.displayDims)
         : new Array(attrs.ndim || 3)
-          .fill(0)
-          .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
+            .fill(0)
+            .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
 
       // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
       // This ensures segments aren't clipped when navigating through extended dimensions
@@ -1642,6 +1643,19 @@ export class SceneLoader {
         offset: attrs.offset ?? 0.0,
         blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
       });
+
+      // Apply colormap if specified AND scalar data exists to drive it.
+      const lnColormapName = node.attrs.colormap as string | undefined;
+      const lnHasScalars = !!node.attrs.has_scalars;
+      if (lnColormapName && lnHasScalars) {
+        // TODO: load custom LUT from zarr when lnColormapName === "custom"
+        const lnColormapTex = getColormapTexture(lnColormapName);
+        if (lnColormapTex) {
+          material.updateColormapTexture(lnColormapTex);
+          const lnScalarRange = (node.attrs.scalar_data_range as [number, number]) ?? [0, 1];
+          material.updateScalarRange(lnScalarRange[0], lnScalarRange[1]);
+        }
+      }
 
       // Create instanced mesh
       const mesh = createInstancedLinesMesh(processed, material);
@@ -1794,6 +1808,24 @@ export class SceneLoader {
         offset: attrs.offset ?? 0.0,
         blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
       });
+
+      // Apply colormap if specified (post-creation, not cached)
+      const gsColormapName = node.attrs.colormap as string | undefined;
+      if (gsColormapName) {
+        // TODO: load custom LUT from zarr when gsColormapName === "custom"
+        const gsColormapTex = getColormapTexture(gsColormapName);
+        if (gsColormapTex) {
+          material.updateColormapTexture(gsColormapTex);
+          const ampRange = node.attrs.amplitude_data_range as [number, number] | undefined;
+          const gsScalarRange = ampRange ?? [0, 1];
+          material.updateScalarRange(gsScalarRange[0], gsScalarRange[1]);
+        } else if (gsColormapName === 'custom') {
+          log.warning(
+            Modules.SCENE_LOADER,
+            `Custom colormap LUT loading not yet implemented for ${node.path}`
+          );
+        }
+      }
 
       // Create instanced mesh
       const mesh = createInstancedGSplatsMesh(
@@ -2122,7 +2154,7 @@ export class SceneLoader {
     radiusScale: number = 1.0,
     sharpnessScale: number = 1.0
   ): THREE.ShaderMaterial {
-    return materialManager.getPointMaterial({
+    const material = materialManager.getPointMaterial({
       opacity: attrs.opacity ?? 1.0,
       gamma: attrs.gamma ?? 1.0,
       intensity: attrs.intensity ?? 1.0,
@@ -2131,6 +2163,23 @@ export class SceneLoader {
       radiusScale: radiusScale,
       sharpnessScale: sharpnessScale,
     });
+
+    // Apply colormap if specified AND scalar data exists to drive it.
+    // Without scalar data, the shader's `scalar` attribute defaults to 0,
+    // which would map everything to the first LUT color (usually black).
+    const ptColormapName = attrs.colormap as string | undefined;
+    const ptHasScalars = !!attrs.has_scalars;
+    if (ptColormapName && ptHasScalars) {
+      // TODO: load custom LUT from zarr when ptColormapName === "custom"
+      const ptColormapTex = getColormapTexture(ptColormapName);
+      if (ptColormapTex) {
+        material.updateColormapTexture(ptColormapTex);
+        const ptScalarRange = (attrs.scalar_data_range as [number, number]) ?? [0, 1];
+        material.updateScalarRange(ptScalarRange[0], ptScalarRange[1]);
+      }
+    }
+
+    return material;
   }
 
   /**

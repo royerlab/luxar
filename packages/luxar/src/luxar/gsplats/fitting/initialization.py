@@ -126,11 +126,15 @@ def initialize_optimization(
             aprint(f"Using auto amp_max={amp_max} (prevents amplitude explosion)")
 
     # Resolve sigma constraints: pass empty list when None (model uses defaults)
-    _sigma_min: Sequence[float] = config.sigma_min_diag if config.sigma_min_diag is not None else []
+    _sigma_min: Sequence[float] = (
+        config.sigma_min_diag if config.sigma_min_diag is not None else []
+    )
     _sigma_max: Optional[Sequence[float]] = (
-        list(config.sigma_max_diag) if isinstance(config.sigma_max_diag, (list, tuple)) else
-        [config.sigma_max_diag] * d if isinstance(config.sigma_max_diag, (int, float)) else
-        None
+        list(config.sigma_max_diag)
+        if isinstance(config.sigma_max_diag, (list, tuple))
+        else [config.sigma_max_diag] * d
+        if isinstance(config.sigma_max_diag, (int, float))
+        else None
     )
 
     # Build model - use hardware acceleration when available

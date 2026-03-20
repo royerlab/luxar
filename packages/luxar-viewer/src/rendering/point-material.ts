@@ -23,6 +23,8 @@ export interface PointMaterialConfig {
   transparent?: boolean; // Whether material is transparent (default true)
   radiusScale?: number; // Scale factor for radius normalization (e.g., 1/255 for uint8)
   sharpnessScale?: number; // Scale factor for sharpness normalization (e.g., 1/255 for uint8)
+  colormapTexture?: THREE.DataTexture; // Colormap LUT texture (256x1 RGB)
+  scalarRange?: [number, number]; // Scalar data range [min, max] for normalization
 }
 
 /**
@@ -40,6 +42,12 @@ export class PointMaterial extends THREE.ShaderMaterial {
 
     in float radius;
     in float sharpness;
+    #ifdef USE_COLORMAP
+    in float scalar;              // Per-point scalar for colormap lookup
+    uniform sampler2D uColormapTex;   // 256x1 LUT texture
+    uniform float uScalarMin;         // Scalar range minimum
+    uniform float uScalarScale;       // 1.0 / (max - min)
+    #endif
     uniform float pointSizeFactor; // Pre-computed: 2.0 * resolution.y / tanHalfFov (or resolution.y / frustumHeight for ortho)
     uniform float maxPointSize;    // Pre-computed: resolution.y * 0.5
     uniform float radiusScale;
@@ -51,8 +59,13 @@ export class PointMaterial extends THREE.ShaderMaterial {
     out highp float vRadius; // Pass radius to fragment for zero-check (needs precision)
 
     void main() {
-      // Pass vertex color to fragment shader
+      // Pass vertex color — either from attribute or colormap LUT
+      #ifdef USE_COLORMAP
+      float t = clamp((scalar - uScalarMin) * uScalarScale, 0.0, 1.0);
+      vColor = texture(uColormapTex, vec2(t, 0.5)).rgb;
+      #else
       vColor = color;
+      #endif
 
       // Apply sharpness scale for dtype normalization and use 2.0 as default
       float normalizedSharpness = sharpness * sharpnessScale;
@@ -177,11 +190,30 @@ export class PointMaterial extends THREE.ShaderMaterial {
 
         // Projection mode
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
+
+        // Colormap uniforms (only active when USE_COLORMAP define is set)
+        ...(materialConfig.colormapTexture
+          ? {
+              uColormapTex: { value: materialConfig.colormapTexture },
+              uScalarMin: { value: materialConfig.scalarRange?.[0] ?? 0.0 },
+              uScalarScale: {
+                value: materialConfig.scalarRange
+                  ? 1.0 /
+                    Math.max(1e-10, materialConfig.scalarRange[1] - materialConfig.scalarRange[0])
+                  : 1.0,
+              },
+            }
+          : {}),
       },
 
       // Shader source
       vertexShader: PointMaterial.VERTEX_SHADER,
       fragmentShader: PointMaterial.FRAGMENT_SHADER,
+
+      // Preprocessor defines — USE_COLORMAP enables scalar attribute + LUT lookup
+      defines: {
+        ...(materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {}),
+      },
 
       // GLSL ES 3.0 for consistency with other materials
       glslVersion: THREE.GLSL3,
@@ -195,9 +227,10 @@ export class PointMaterial extends THREE.ShaderMaterial {
       blending: materialConfig.blending ?? THREE.AdditiveBlending,
     });
 
-    // Store gamma in userData for clone() method
+    // Store in userData for clone() method
     this.userData.gamma = gammaValue;
     this.userData.depthTest = materialConfig.depthTest ?? true;
+    this.userData.scalarRange = materialConfig.scalarRange;
   }
 
   /**
@@ -266,6 +299,44 @@ export class PointMaterial extends THREE.ShaderMaterial {
   }
 
   /**
+   * Update the colormap texture and enable/disable colormap mode.
+   */
+  updateColormapTexture(texture: THREE.DataTexture | null): void {
+    const wasEnabled = 'USE_COLORMAP' in this.defines;
+    const nowEnabled = !!texture;
+
+    if (nowEnabled) {
+      this.defines.USE_COLORMAP = '';
+      if (!this.uniforms.uColormapTex) {
+        this.uniforms.uColormapTex = { value: texture };
+        this.uniforms.uScalarMin = { value: 0.0 };
+        this.uniforms.uScalarScale = { value: 1.0 };
+      } else {
+        this.uniforms.uColormapTex.value = texture;
+      }
+    } else {
+      delete this.defines.USE_COLORMAP;
+    }
+
+    if (wasEnabled !== nowEnabled) {
+      this.needsUpdate = true; // Triggers shader recompilation
+    }
+  }
+
+  /**
+   * Set the scalar data range for colormap normalization.
+   */
+  updateScalarRange(min: number, max: number): void {
+    if (this.uniforms.uScalarMin) {
+      this.uniforms.uScalarMin.value = min;
+    }
+    if (this.uniforms.uScalarScale) {
+      this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
+    }
+    this.userData.scalarRange = [min, max];
+  }
+
+  /**
    * Clone this material with optional config overrides
    * Override base class clone to return PointMaterial type
    */
@@ -279,6 +350,8 @@ export class PointMaterial extends THREE.ShaderMaterial {
       depthWrite: this.depthWrite,
       depthTest: this.userData.depthTest ?? true, // depthTest stored in userData
       transparent: this.transparent,
+      colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,
+      scalarRange: this.userData.scalarRange ?? undefined,
     });
 
     // Copy blend equation settings for custom blending (max mode)

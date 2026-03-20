@@ -611,9 +611,7 @@ def _subsample_seeds_spatially_diverse(
             selected_mask[farthest_global] = True
 
         # Extract final selection
-        selected_indices_final: np.ndarray = (
-            torch.where(selected_mask)[0].cpu().numpy()
-        )
+        selected_indices_final: np.ndarray = torch.where(selected_mask)[0].cpu().numpy()
         selected_arr = valid_seeds[selected_indices_final]
     else:
         # CPU fallback: original algorithm
@@ -624,9 +622,7 @@ def _subsample_seeds_spatially_diverse(
             selected_coords_arr = np.array(selected_list)
 
             # cdist computes all pairwise distances at once: (n_remaining, n_selected)
-            pairwise_dists_cpu = distance.cdist(
-                remaining_coords, selected_coords_arr
-            )
+            pairwise_dists_cpu = distance.cdist(remaining_coords, selected_coords_arr)
 
             # For each remaining point, find distance to nearest selected point
             min_dists_to_selected = pairwise_dists_cpu.min(axis=1)

@@ -269,9 +269,7 @@ class TestGaussianSplatsIntegration:
         Ls = torch.tensor(L_full, device=device)
         amps_t = torch.tensor(result.amplitudes, device=device)
 
-        recon_torch = render_gaussians(
-            image.shape, centers, Ls, amps_t, truncate=3.0
-        )
+        recon_torch = render_gaussians(image.shape, centers, Ls, amps_t, truncate=3.0)
         recon_torch_np = recon_torch.cpu().numpy()
 
         # Should be nearly identical
@@ -373,9 +371,7 @@ class TestGaussianSplatsIntegration:
             enable_dynamic_ops=False,
             napari_movie=False,
         )
-        params = np.column_stack(
-            [result.centers, result.cholesky_factors]
-        )
+        params = np.column_stack([result.centers, result.cholesky_factors])
 
         # Extract and check Cholesky factors
         d = 2
@@ -403,9 +399,7 @@ class TestGaussianSplatsIntegration:
             enable_dynamic_ops=False,
             napari_movie=False,
         )
-        params_cpu = np.column_stack(
-            [result_cpu.centers, result_cpu.cholesky_factors]
-        )
+        params_cpu = np.column_stack([result_cpu.centers, result_cpu.cholesky_factors])
         assert np.all(np.isfinite(params_cpu))
 
         # Test GPU if available
@@ -456,9 +450,7 @@ class TestGaussianSplatsIntegration:
             napari_movie=False,
         )
         params = (
-            np.column_stack(
-                [result.centers, result.cholesky_factors]
-            )
+            np.column_stack([result.centers, result.cholesky_factors])
             if len(result.centers) > 0
             else np.zeros((0, 2 + tril_size(2)))
         )
@@ -479,9 +471,7 @@ class TestGaussianSplatsIntegration:
             enable_dynamic_ops=False,
             napari_movie=False,
         )
-        params = np.column_stack(
-            [result.centers, result.cholesky_factors]
-        )
+        params = np.column_stack([result.centers, result.cholesky_factors])
         amps = result.amplitudes
 
         assert np.all(np.isfinite(params))

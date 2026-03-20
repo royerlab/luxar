@@ -300,6 +300,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         ] = None,
         radii: Optional[Union[NDArray[np.float32], float]] = None,
         sharpness: Optional[Union[NDArray[np.float32], float]] = None,
+        scalars: Optional[Union[NDArray[np.float32], float]] = None,
         **attrs: Any,
     ) -> PointsMetadata:
         """Write points data progressively to Zarr.
@@ -307,10 +308,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Data is written immediately to disk without being kept in memory.
         If spatial ordering is enabled, points are reordered using Morton/Hilbert curves.
 
-        Scalar convenience: radii, sharpness, and colors accept scalars:
+        Scalar convenience: radii, sharpness, scalars, and colors accept scalars:
         - radii=0.5 → all points get radius 0.5 (broadcasted)
         - colors=[1.0, 0, 0] → all points red (broadcasted)
         - sharpness=2.0 → all points standard Gaussian (broadcasted)
+        - scalars=0.5 → all points get scalar 0.5 (broadcasted)
 
         Args:
             path: Path for the points within the store
@@ -318,6 +320,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             colors: Colors - array (N, 3), RGB tuple/list, or None
             radii: Radii - array (N,), scalar float, or None
             sharpness: Sharpness - array (N,), scalar float, or None
+            scalars: Scalars for colormap lookup - array (N,), scalar float, or None
             **attrs: Additional attributes
 
         Returns:
@@ -372,7 +375,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 if sharpness.shape[0] > 1:  # Not broadcasted
                     sharpness = sharpness[ordering_data["sort_order"]]
                 # else: broadcasted, skip reordering
-            # Scalars stay as-is (they're uniform, order doesn't matter)
+            if scalars is not None and isinstance(scalars, np.ndarray):
+                if scalars.shape[0] > 1:  # Not broadcasted
+                    scalars = scalars[ordering_data["sort_order"]]
+                # else: broadcasted, skip reordering
 
         # 3. Write positions dataset
         self._write_positions_dataset(group, positions, ordering_data)
@@ -414,6 +420,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             metadata["max_sharpness"] = max_sharpness
             metadata["has_sharpness"] = True
             group.attrs["max_sharpness"] = max_sharpness
+
+        if scalars is not None:
+            self._write_scalars_dataset(group, scalars, ordering_data)
+            metadata["has_scalars"] = True
+            group.attrs["has_scalars"] = True
+
+        # 5b. Write colormap LUT if colormap is a custom array
+        self._write_colormap_lut_if_needed(group, attrs)
 
         # 6. Process transform if present using centralized conversion
         if "transform" in attrs:
@@ -476,6 +490,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             Union[NDArray[np.float32], List[float], Tuple[float, ...]]
         ] = None,
         sharpness: Optional[Union[NDArray[np.float32], float]] = None,
+        scalars: Optional[Union[NDArray[np.float32], float]] = None,
         indices: Optional[NDArray[np.uint32]] = None,
         line_type: str = "polyline",
         **attrs: Any,
@@ -608,6 +623,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 and sharpness.shape[0] > 1
             ):
                 sharpness = sharpness[vertex_sort_order]
+            if (
+                scalars is not None
+                and isinstance(scalars, np.ndarray)
+                and scalars.shape[0] > 1
+            ):
+                scalars = scalars[vertex_sort_order]
 
         # Write vertices using ArrayEncoder (COORDINATE)
         chunks_2d = _calculate_intelligent_chunks(
@@ -769,6 +790,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 compressor=self.compressor,
             )
             metadata["has_sharpness"] = True
+
+        if scalars is not None:
+            self._write_scalars_dataset(group, scalars, ordering_data)
+            metadata["has_scalars"] = True
+            group.attrs["has_scalars"] = True
+
+        # Write colormap LUT if colormap is a custom array
+        self._write_colormap_lut_if_needed(group, attrs)
 
         # Write spatial ordering data (chunk bounds and metadata)
         if ordering_data is not None:
@@ -1113,6 +1142,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     float(min(colors)),
                     float(max(colors)),
                 ]
+
+        # Default to "gray" colormap if no colors and no colormap
+        if not metadata.get("has_colors") and "colormap" not in attrs:
+            attrs["colormap"] = "gray"
+
+        # Write colormap LUT if colormap is a custom array
+        self._write_colormap_lut_if_needed(group, attrs)
 
         # Write chunk_bounds if ordering was applied
         if ordering_data is not None:
@@ -1782,6 +1818,118 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             aprint(f"  ✓ Wrote sharpness ({enc_name})")
 
         return max_sharpness
+
+    def _write_scalars_dataset(
+        self,
+        group: zarr.Group,
+        scalars: Union[NDArray[np.float32], float, int],
+        spatial_index_data: Optional[Dict[str, Any]],
+    ) -> None:
+        """Write scalars dataset to Zarr for colormap lookup.
+
+        Args:
+            group: Zarr group to write to
+            scalars: Scalar array or uniform value
+            spatial_index_data: Optional spatial index for chunk optimization
+        """
+        # Determine positions key for element count
+        # Points use "positions", Lines use "vertices", GSplats use "centers"
+        pos_key = next(
+            (k for k in ("positions", "vertices", "centers") if k in group),
+            None,
+        )
+        if pos_key is None:
+            raise RuntimeError(
+                f"No position data found in group '{group.path}' "
+                f"(expected 'positions', 'vertices', or 'centers')"
+            )
+
+        if isinstance(scalars, (int, float)):
+            n_elems = group[pos_key].shape[0]
+            chunks = None
+            scalar_min = float(scalars)
+            scalar_max = float(scalars)
+        else:
+            scalars = np.asarray(scalars, dtype=np.float32)
+            scalar_min = float(np.min(scalars))
+            scalar_max = float(np.max(scalars))
+            if scalars.shape[0] == 1:
+                n_elems = group[pos_key].shape[0]
+                chunks = None
+            else:
+                n_elems = None
+                chunks = _calculate_intelligent_chunks(
+                    scalars.shape, spatial_index_data=spatial_index_data
+                )
+
+        self._encoder.encode(
+            data=scalars,
+            zarr_group=group,
+            name="scalars",
+            semantic_type=SemanticType.POSITIVE_SCALAR,
+            mode=self._encoding_mode,
+            n_elements=n_elems,
+            chunks=chunks,
+            compressor=self.compressor,
+        )
+
+        # Store scalar data range for layer controls
+        group.attrs["scalar_data_range"] = [scalar_min, scalar_max]
+        aprint(f"  ✓ Wrote scalars (range [{scalar_min:.4f}, {scalar_max:.4f}])")
+
+    def _write_colormap_lut_if_needed(
+        self,
+        group: zarr.Group,
+        attrs: Dict[str, Any],
+    ) -> None:
+        """Write custom colormap LUT to zarr if colormap is an array.
+
+        If ``attrs["colormap"]`` is a numpy array, resolve it to a (256, 3) uint8
+        LUT, write it as a dataset, and replace the attr value with ``"custom"``.
+        String colormaps are left as-is.
+
+        Args:
+            group: Zarr group to write to
+            attrs: Node attributes dict (modified in-place)
+        """
+        colormap = attrs.get("colormap")
+        if colormap is None:
+            return
+
+        from ..colormaps import resolve_colormap
+        from ..colormaps.builtins import BUILTIN_COLORMAP_NAMES
+
+        if isinstance(colormap, str):
+            if colormap in BUILTIN_COLORMAP_NAMES:
+                # Built-in name — viewer resolves it directly, no LUT needed
+                return
+
+            # Non-built-in name (matplotlib/colorcet) — resolve to LUT and
+            # store as "custom" so the viewer can render it without needing
+            # matplotlib/colorcet at display time.
+            lut = resolve_colormap(colormap)  # Raises ValueError if unknown
+            group.create_dataset(
+                "colormap_lut",
+                data=lut,
+                chunks=(256, 3),
+                dtype=np.uint8,
+            )
+            attrs["colormap"] = "custom"
+            aprint(
+                f"  ✓ Resolved '{colormap}' to LUT and wrote as custom (256x3 uint8)"
+            )
+            return
+
+        # Array colormap — resolve and write as dataset
+        lut = resolve_colormap(colormap)  # (256, 3) uint8
+        group.create_dataset(
+            "colormap_lut",
+            data=lut,
+            chunks=(256, 3),
+            dtype=np.uint8,
+        )
+        attrs["colormap"] = "custom"
+        aprint("  ✓ Wrote custom colormap LUT (256x3 uint8)")
 
     def _write_spatial_ordering_to_zarr(
         self, group: zarr.Group, ordering_data: Dict[str, Any]

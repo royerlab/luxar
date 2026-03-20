@@ -88,7 +88,9 @@ class FitConfig:
 
     # Input data (required)
     V: np.ndarray
-    seeds: Optional[np.ndarray | int | float | "GSplatData"]  # Array, int, compression ratio, or GSplatData
+    seeds: Optional[
+        np.ndarray | int | float | "GSplatData"
+    ]  # Array, int, compression ratio, or GSplatData
 
     # Normalization
     norm_percentile: float
@@ -191,7 +193,9 @@ class FitConfig:
 
     # Z-order (Morton) sorting for memory locality
     sort_splats_enabled: bool = True  # Enable periodic Morton-code sorting of splats
-    sort_splats_interval: int = 1000  # Sort every N iterations (also sorts at iteration 0)
+    sort_splats_interval: int = (
+        1000  # Sort every N iterations (also sorts at iteration 0)
+    )
 
     # Volume downscaling (preprocessing)
     # Per-axis integer factors, e.g. (1, 4, 4). None = no downscaling.

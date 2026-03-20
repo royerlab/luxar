@@ -16,6 +16,7 @@ except ImportError:
 # Skip all tests if torch is not available
 pytestmark = pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
 
+
 class TestSolveLowerTriangular:
     """Test solve_lower_triangular function."""
 
@@ -179,6 +180,7 @@ class TestSolveLowerTriangular:
         assert not torch.allclose(L.grad, torch.zeros_like(L.grad))
         assert not torch.allclose(b.grad, torch.zeros_like(b.grad))
 
+
 class TestErrorHandling:
     """Test error handling and edge cases."""
 
@@ -223,6 +225,7 @@ class TestErrorHandling:
         x = solve_lower_triangular(L, b)
         assert x.shape == (0, 1)
 
+
 class TestCrossVersionCompatibility:
     """Test compatibility across different PyTorch versions."""
 
@@ -261,6 +264,7 @@ class TestCrossVersionCompatibility:
             result = L @ x
             torch.testing.assert_close(result, b, atol=1e-5, rtol=1e-5)
 
+
 class TestNumericalStability:
     """Test numerical stability of the solver."""
 
@@ -289,6 +293,7 @@ class TestNumericalStability:
         expected = torch.tensor([[3.0], [2.25]], dtype=torch.float32)
 
         torch.testing.assert_close(x, expected, atol=1e-6, rtol=1e-6)
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

@@ -32,6 +32,12 @@ export interface LayerInfo {
   blendingMode: BlendingMode;
   /** Whether this layer is selected in the list */
   selected: boolean;
+  /** Active colormap name (undefined = direct RGB colors) */
+  colormap?: string;
+  /** Whether this node supports colormap (has scalars or amplitudes) */
+  supportsColormap: boolean;
+  /** Scalar data range for colormap normalization */
+  scalarDataRange?: [number, number];
 }
 
 /** Computed shader uniforms from display range */
@@ -122,7 +128,14 @@ export class LayerStateManager {
         // Determine data range from zarr attrs
         const colorRange = node.attrs.color_data_range as [number, number] | undefined;
         const ampRange = node.attrs.amplitude_data_range as [number, number] | undefined;
-        const dataRange = colorRange || ampRange || [0, 1];
+        const scalarRange = node.attrs.scalar_data_range as [number, number] | undefined;
+        const dataRange = scalarRange || colorRange || ampRange || [0, 1];
+
+        // Colormap support
+        const colormap = node.attrs.colormap as string | undefined;
+        const supportsColormap = node.type === 'gsplats' || !!node.attrs.has_scalars || !!colormap;
+        // Scalar data range for colormap normalization
+        const colormapScalarRange = scalarRange || ampRange;
 
         // Initialize display range from existing intensity/offset if present,
         // otherwise default to full data range
@@ -155,6 +168,9 @@ export class LayerStateManager {
           gamma: (node.attrs.gamma as number) ?? 1.0,
           blendingMode: ((node.attrs.blending_mode as string) ?? 'additive') as BlendingMode,
           selected: false,
+          colormap,
+          supportsColormap,
+          scalarDataRange: colormapScalarRange,
         });
       }
     }
@@ -272,6 +288,14 @@ export class LayerStateManager {
     const layer = this.layers.get(path);
     if (!layer) return;
     layer.gamma = gamma;
+    this.notify();
+  }
+
+  /** Set colormap for a layer */
+  setColormap(path: string, colormap: string): void {
+    const layer = this.layers.get(path);
+    if (!layer) return;
+    layer.colormap = colormap;
     this.notify();
   }
 

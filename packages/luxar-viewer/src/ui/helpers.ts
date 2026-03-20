@@ -377,6 +377,7 @@ export function showHelpOverlay() {
         'T: Recording panel (screenshot/video)',
         'G: Quick screenshot',
         'B: Toggle scale bar',
+        'J: Toggle colormap legend',
         'P: Performance monitor',
         'M: Cycle data monitor (mini/expanded/off)',
         'C: Toggle cinematic mode (noise/vignette/CA/lens)',

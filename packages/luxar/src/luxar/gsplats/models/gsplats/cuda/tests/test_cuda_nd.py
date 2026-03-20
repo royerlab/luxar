@@ -376,7 +376,7 @@ class Test4DDiagnostics:
                 center,
                 conic,
                 amps,
-                    L_row_norms.contiguous(),
+                L_row_norms.contiguous(),
                 list(shape),
                 3.0,
                 1e-5,
@@ -426,7 +426,7 @@ class Test4DDiagnostics:
                 center,
                 conic,
                 amps,
-                    L_row_norms.contiguous(),
+                L_row_norms.contiguous(),
                 list(shape),
                 3.0,
                 1e-5,
@@ -434,9 +434,7 @@ class Test4DDiagnostics:
             )
             cuda_output = cuda_result[0].reshape(shape)
 
-            pytorch_output = render_gaussians(
-                shape, center, L, amps, 3.0, 1e-5
-            )
+            pytorch_output = render_gaussians(shape, center, L, amps, 3.0, 1e-5)
 
             pos_int = tuple(int(p) for p in pos)
             cuda_val = cuda_output[pos_int].item()

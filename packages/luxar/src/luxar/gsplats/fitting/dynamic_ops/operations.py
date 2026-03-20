@@ -175,7 +175,9 @@ def apply_dynamic_operations(
             cfg.k_max_residuals,
             cfg.nms_radius_vox,
             enable_tiled=cfg.enable_tiled_seeding,
-            num_tiles_per_dim=cfg.num_tiles_per_dim if cfg.num_tiles_per_dim is not None else 8,
+            num_tiles_per_dim=cfg.num_tiles_per_dim
+            if cfg.num_tiles_per_dim is not None
+            else 8,
         )
 
         if len(peak_locations) == 0:

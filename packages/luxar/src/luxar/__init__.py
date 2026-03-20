@@ -99,7 +99,7 @@ __version__ = "2025.08.03"
 # gsplats always provides names (real or stub that raises on use if torch is missing).
 import sys
 
-from . import core, io, typing_utils, utils
+from . import colormaps, core, io, typing_utils, utils
 from . import validation as validation_module
 from .core import dimensions, node, points, scene
 from .gsplats import GSplatData, fit_gaussian_splats
