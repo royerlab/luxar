@@ -110,6 +110,11 @@ class Lines(DataNode):
         return bool(self._metadata.get("has_sharpness", False))
 
     @property
+    def has_scalars(self) -> bool:
+        """Check if lines have scalar values for colormap lookup."""
+        return bool(self._metadata.get("has_scalars", False))
+
+    @property
     def max_width(self) -> float:
         """Get maximum line width."""
         return float(self._metadata.get("max_width", 0.0))

@@ -57,6 +57,7 @@ class TestCLAHEBasic:
         assert result_cpu.device.type == "cpu"
         assert result_gpu.device.type == "cuda"
 
+
 class TestCLAHEContrastEnhancement:
     """Tests for contrast enhancement properties."""
 
@@ -112,6 +113,7 @@ class TestCLAHEContrastEnhancement:
         # (Note: This is a heuristic test, may not always hold strictly)
         assert high_flatness >= low_flatness * 0.9  # Allow some tolerance
 
+
 class TestCLAHEDimensionality:
     """Tests for nD support."""
 
@@ -148,6 +150,7 @@ class TestCLAHEDimensionality:
             V = torch.randn(*shape)
             V_clahe = apply_clahe(V, tile_size=16)
             assert V_clahe.shape == V.shape
+
 
 class TestCLAHEEdgeCases:
     """Tests for edge cases and boundary conditions."""
@@ -187,6 +190,7 @@ class TestCLAHEEdgeCases:
         V = torch.zeros(256, 256)
         V_clahe = apply_clahe(V, tile_size=16)
         assert torch.allclose(V_clahe, V)
+
 
 class TestCLAHESamplingProbabilities:
     """Tests for compute_clahe_sampling_probabilities function."""
@@ -237,6 +241,7 @@ class TestCLAHESamplingProbabilities:
         expected_prob = 1.0 / (256 * 256)
         assert torch.allclose(probs, torch.tensor(expected_prob), atol=1e-6)
 
+
 class TestCLAHEParameterValidation:
     """Tests for parameter values and validation."""
 
@@ -266,6 +271,7 @@ class TestCLAHEParameterValidation:
         for nbins in nbins_values:
             V_clahe = apply_clahe(V, tile_size=16, nbins=nbins)
             assert V_clahe.shape == V.shape
+
 
 class TestCLAHENumericalStability:
     """Tests for numerical stability and robustness."""

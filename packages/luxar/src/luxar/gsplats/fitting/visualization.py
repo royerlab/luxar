@@ -38,9 +38,7 @@ def display_compression_analysis(V: np.ndarray, result: GSplatData) -> None:
 
         from luxar.gsplats.utils.trils import tril_size
 
-        floats_per_splat = (
-            d + tril_size(d) + 1
-        )  # centers + covariance + amplitude
+        floats_per_splat = d + tril_size(d) + 1  # centers + covariance + amplitude
         splat_bytes = n_splats * floats_per_splat * 4  # 4 bytes per float32
         splat_bits = splat_bytes * 8
 

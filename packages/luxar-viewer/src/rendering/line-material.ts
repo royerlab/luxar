@@ -35,6 +35,10 @@ export interface LineMaterialConfig {
   transparent?: boolean;
   /** Whether to test against depth buffer (default true; additive sets false) */
   depthTest?: boolean;
+  /** Colormap texture for scalar-to-color mapping (256x1 RGB) */
+  colormapTexture?: THREE.DataTexture;
+  /** Scalar data range [min, max] for normalization before LUT lookup */
+  scalarRange?: [number, number];
 }
 
 /**
@@ -85,6 +89,10 @@ export class LineMaterial extends THREE.ShaderMaterial {
     in vec3 aEndPos;
     in vec3 aStartColor;
     in vec3 aEndColor;
+    #ifdef USE_COLORMAP
+    in float aStartScalar;
+    in float aEndScalar;
+    #endif
     in float aStartWidth;
     in float aEndWidth;
     in float aStartSharpness;
@@ -97,6 +105,13 @@ export class LineMaterial extends THREE.ShaderMaterial {
     uniform float uFOV;
     uniform vec2 uResolution;
     uniform int uIsOrtho;  // 0 = perspective, 1 = orthographic
+
+    // Colormap uniforms (only active when USE_COLORMAP is defined)
+    #ifdef USE_COLORMAP
+    uniform sampler2D uColormapTex;
+    uniform float uScalarMin;
+    uniform float uScalarScale;
+    #endif
 
     // Varyings to fragment shader (smooth interpolation needed)
     out vec3 vColor;
@@ -111,7 +126,13 @@ export class LineMaterial extends THREE.ShaderMaterial {
 
       // Interpolate attributes along segment
       vec3 worldPos = mix(aStartPos, aEndPos, t);
+      #ifdef USE_COLORMAP
+      float s = mix(aStartScalar, aEndScalar, t);
+      float st = clamp((s - uScalarMin) * uScalarScale, 0.0, 1.0);
+      vColor = texture(uColormapTex, vec2(st, 0.5)).rgb;
+      #else
       vColor = mix(aStartColor, aEndColor, t);
+      #endif
       float width = mix(aStartWidth, aEndWidth, t);
       vSharpness = mix(aStartSharpness, aEndSharpness, t);
 
@@ -288,10 +309,28 @@ export class LineMaterial extends THREE.ShaderMaterial {
         uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
         uOffset: { value: materialConfig.offset ?? 0.0 },
+        // Colormap uniforms (only when USE_COLORMAP define is set)
+        ...(materialConfig.colormapTexture
+          ? {
+              uColormapTex: { value: materialConfig.colormapTexture },
+              uScalarMin: { value: materialConfig.scalarRange?.[0] ?? 0.0 },
+              uScalarScale: {
+                value: materialConfig.scalarRange
+                  ? 1.0 /
+                    Math.max(1e-10, materialConfig.scalarRange[1] - materialConfig.scalarRange[0])
+                  : 1.0,
+              },
+            }
+          : {}),
       },
 
       vertexShader: LineMaterial.VERTEX_SHADER,
       fragmentShader: LineMaterial.FRAGMENT_SHADER,
+
+      // Preprocessor defines
+      defines: {
+        ...(materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {}),
+      },
 
       // GLSL ES 3.0 for consistency with other materials
       glslVersion: THREE.GLSL3,
@@ -313,10 +352,11 @@ export class LineMaterial extends THREE.ShaderMaterial {
       this.blendDst = THREE.OneFactor;
     }
 
-    // Store blendingMode and gamma in userData for clone()
+    // Store in userData for clone()
     this.userData.blendingMode = blendingMode;
     this.userData.gamma = gammaValue;
     this.userData.depthTest = materialConfig.depthTest ?? !isAdditive;
+    this.userData.scalarRange = materialConfig.scalarRange;
   }
 
   /**
@@ -363,6 +403,44 @@ export class LineMaterial extends THREE.ShaderMaterial {
   }
 
   /**
+   * Update the colormap texture and enable/disable colormap mode.
+   */
+  updateColormapTexture(texture: THREE.DataTexture | null): void {
+    const wasEnabled = 'USE_COLORMAP' in this.defines;
+    const nowEnabled = !!texture;
+
+    if (nowEnabled) {
+      this.defines.USE_COLORMAP = '';
+      if (!this.uniforms.uColormapTex) {
+        this.uniforms.uColormapTex = { value: texture };
+        this.uniforms.uScalarMin = { value: 0.0 };
+        this.uniforms.uScalarScale = { value: 1.0 };
+      } else {
+        this.uniforms.uColormapTex.value = texture;
+      }
+    } else {
+      delete this.defines.USE_COLORMAP;
+    }
+
+    if (wasEnabled !== nowEnabled) {
+      this.needsUpdate = true;
+    }
+  }
+
+  /**
+   * Set the scalar data range for colormap normalization.
+   */
+  updateScalarRange(min: number, max: number): void {
+    if (this.uniforms.uScalarMin) {
+      this.uniforms.uScalarMin.value = min;
+    }
+    if (this.uniforms.uScalarScale) {
+      this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
+    }
+    this.userData.scalarRange = [min, max];
+  }
+
+  /**
    * Clone this material.
    */
   clone(): this {
@@ -374,6 +452,8 @@ export class LineMaterial extends THREE.ShaderMaterial {
       blendingMode: this.userData.blendingMode ?? 'additive',
       transparent: this.transparent,
       depthTest: this.userData.depthTest ?? true,
+      colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,
+      scalarRange: this.userData.scalarRange ?? undefined,
     });
 
     // Copy blend equation settings for custom blending (max mode)

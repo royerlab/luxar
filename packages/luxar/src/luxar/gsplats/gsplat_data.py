@@ -703,7 +703,6 @@ class GSplatData:
                 centers=self.centers.copy(),
                 amplitudes=self.amplitudes,
                 cholesky_factors=self.cholesky_factors.copy(),
-
                 colors=self.colors,
                 stats=dict(self.stats),
             )
@@ -722,7 +721,6 @@ class GSplatData:
             centers=new_centers,
             amplitudes=self.amplitudes,
             cholesky_factors=new_cholesky,
-
             colors=self.colors,
             stats=dict(self.stats),
         )
@@ -743,7 +741,6 @@ class GSplatData:
             centers=self.centers,
             amplitudes=self.amplitudes * scale + offset,
             cholesky_factors=self.cholesky_factors,
-
             colors=self.colors,
             stats=dict(self.stats),
         )
@@ -763,7 +760,6 @@ class GSplatData:
                 centers=self.centers,
                 amplitudes=self.amplitudes.copy(),
                 cholesky_factors=self.cholesky_factors,
-
                 colors=self.colors,
                 stats=dict(self.stats),
             )
@@ -792,7 +788,6 @@ class GSplatData:
             centers=self.centers,
             amplitudes=new_amps,
             cholesky_factors=self.cholesky_factors,
-
             colors=self.colors,
             stats=dict(self.stats),
         )

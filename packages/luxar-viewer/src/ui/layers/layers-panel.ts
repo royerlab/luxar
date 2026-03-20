@@ -23,6 +23,8 @@ import { materialManager } from '../../rendering/material-manager';
 import { log, Modules } from '../../utils/log';
 import { showToast } from '../helpers';
 import type { AnimationController } from '../../scene/animation-controller';
+import { getColormapTexture } from '../../rendering/colormap-textures';
+import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
 
 /** Clamp a gamma value to a safe range for the shader (prevents division by zero and extreme exponents) */
 function clampGamma(gamma: number): number {
@@ -35,6 +37,8 @@ interface LuxarMaterial extends THREE.Material {
   updateOffset(v: number): void;
   updateGamma(v: number): void;
   updateOpacity(v: number): void;
+  updateColormapTexture?(texture: THREE.DataTexture | null): void;
+  updateScalarRange?(min: number, max: number): void;
 }
 
 function isLuxarMaterial(m: THREE.Material): m is LuxarMaterial {
@@ -52,6 +56,11 @@ export class LayersPanel {
   private animationController: AnimationController;
 
   private state = new LayerStateManager();
+
+  /** Expose layer state for external consumers (e.g., colormap legend). */
+  get layerState(): LayerStateManager {
+    return this.state;
+  }
   private panelEl: HTMLElement | null = null;
   private listEl: HTMLElement | null = null;
   private controlsEl: HTMLElement | null = null;
@@ -59,6 +68,7 @@ export class LayersPanel {
   private gammaSlider: HTMLInputElement | null = null;
   private gammaValueEl: HTMLElement | null = null;
   private blendSelect: HTMLSelectElement | null = null;
+  private colormapSelect: HTMLSelectElement | null = null;
   private visible = false;
 
   // Row elements keyed by layer path for targeted DOM updates
@@ -402,6 +412,44 @@ export class LayersPanel {
     blendGroup.appendChild(blendLabel);
     blendGroup.appendChild(this.blendSelect);
     this.controlsEl.appendChild(blendGroup);
+
+    // Colormap selector (only shown for layers that support colormap)
+    const cmGroup = document.createElement('div');
+    cmGroup.className = 'luxar-layers-panel__control-group';
+    const cmLabel = document.createElement('div');
+    cmLabel.className = 'luxar-layers-panel__control-label';
+    cmLabel.textContent = 'Colormap';
+
+    this.colormapSelect = document.createElement('select');
+    this.colormapSelect.className = 'luxar-layers-panel__select';
+
+    // Add categorized options
+    for (const [category, names] of Object.entries(COLORMAP_CATEGORIES)) {
+      const optgroup = document.createElement('optgroup');
+      optgroup.label = category;
+      for (const name of names) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        optgroup.appendChild(opt);
+      }
+      this.colormapSelect.appendChild(optgroup);
+    }
+
+    this.colormapSelect.addEventListener('change', () => {
+      this.controlsInteracting = true;
+      const cmName = this.colormapSelect!.value;
+      this.state.applyToSelected((l) => {
+        l.colormap = cmName;
+      });
+      for (const sel of this.state.getSelected()) {
+        this.applyColormap(sel);
+      }
+      this.controlsInteracting = false;
+    });
+    cmGroup.appendChild(cmLabel);
+    cmGroup.appendChild(this.colormapSelect);
+    this.controlsEl.appendChild(cmGroup);
   }
 
   /** Update controls to reflect the primary selected layer's values */
@@ -423,6 +471,18 @@ export class LayersPanel {
 
     if (this.blendSelect) {
       this.blendSelect.value = primary.blendingMode;
+    }
+
+    if (this.colormapSelect) {
+      if (primary.supportsColormap) {
+        this.colormapSelect.parentElement!.style.display = '';
+        if (primary.colormap) {
+          this.colormapSelect.value = primary.colormap;
+        }
+      } else {
+        // Hide colormap control for layers that don't support it
+        this.colormapSelect.parentElement!.style.display = 'none';
+      }
     }
   }
 
@@ -526,6 +586,31 @@ export class LayersPanel {
         mat.depthWrite = false;
         mat.transparent = true;
         break;
+    }
+    mat.needsUpdate = true;
+    this.requestRender();
+  }
+
+  /**
+   * Apply a colormap change to the material.
+   * Gets the LUT texture and updates the material's colormap uniforms.
+   */
+  private applyColormap(layer: LayerInfo): void {
+    const obj = this.getMesh(layer.path);
+    if (!obj) return;
+    const mat = this.getMaterial(obj);
+    if (!mat || !mat.updateColormapTexture) return;
+
+    if (layer.colormap) {
+      const tex = getColormapTexture(layer.colormap);
+      if (tex) {
+        mat.updateColormapTexture(tex);
+        if (layer.scalarDataRange && mat.updateScalarRange) {
+          mat.updateScalarRange(layer.scalarDataRange[0], layer.scalarDataRange[1]);
+        }
+      }
+    } else {
+      mat.updateColormapTexture(null);
     }
     mat.needsUpdate = true;
     this.requestRender();

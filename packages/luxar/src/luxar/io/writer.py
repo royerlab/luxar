@@ -55,6 +55,7 @@ class ZarrWriterProtocol(Protocol):
         colors: Optional[Union[ColorArray, tuple, list]] = None,
         radii: Optional[Union[ScalarArray, float]] = None,
         sharpness: Optional[Union[ScalarArray, float]] = None,
+        scalars: Optional[Union[ScalarArray, float]] = None,
         **attrs: Any,
     ) -> PointsMetadata:
         """Write points data immediately to Zarr.
@@ -99,6 +100,7 @@ class ZarrWriterProtocol(Protocol):
         widths: Union[ScalarArray, float],
         colors: Optional[Union[ColorArray, tuple, list]] = None,
         sharpness: Optional[Union[ScalarArray, float]] = None,
+        scalars: Optional[Union[ScalarArray, float]] = None,
         indices: Optional[NDArray[np.uint32]] = None,
         line_type: str = "polyline",
         **attrs: Any,

@@ -53,8 +53,11 @@ class TestBasicRoundTrip:
         original_sorted = np.sort(positions, axis=0)
         loaded_sorted = np.sort(data["positions"], axis=0)
         np.testing.assert_allclose(
-            loaded_sorted, original_sorted, rtol=1e-6, atol=1e-6,
-            err_msg="Position values differ after round-trip"
+            loaded_sorted,
+            original_sorted,
+            rtol=1e-6,
+            atol=1e-6,
+            err_msg="Position values differ after round-trip",
         )
 
         # Verify metadata
