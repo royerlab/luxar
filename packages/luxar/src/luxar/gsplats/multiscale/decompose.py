@@ -164,7 +164,8 @@ def _cubic_upsample_recursive(
             mode=mode,
             align_corners=False if mode != "nearest" else None,
         )
-        return upsampled[0, 0]
+        result: torch.Tensor = upsampled[0, 0]
+        return result
     else:
         raise ValueError(f"Cannot upsample {current_shape} to {target_shape}")
 
