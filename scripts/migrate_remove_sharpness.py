@@ -22,13 +22,17 @@ def migrate_zip(zip_path: Path, *, dry_run: bool = False) -> bool:
 
     with zipfile.ZipFile(zip_path, "r") as zin:
         names = zin.namelist()
-        sharpness_entries = [n for n in names if "/sharpnesses/" in n or n.endswith("/sharpnesses")]
+        sharpness_entries = [
+            n for n in names if "/sharpnesses/" in n or n.endswith("/sharpnesses")
+        ]
         if not sharpness_entries:
             print(f"  SKIP (no sharpness entries): {zip_path.name}")
             return False
 
         had_sharpness = True
-        print(f"  Removing {len(sharpness_entries)} sharpness entries from {zip_path.name}")
+        print(
+            f"  Removing {len(sharpness_entries)} sharpness entries from {zip_path.name}"
+        )
 
         if dry_run:
             for entry in sharpness_entries:
@@ -80,9 +84,13 @@ def verify_zip(zip_path: Path) -> bool:
     """Verify a migrated zip has no sharpness entries."""
     with zipfile.ZipFile(zip_path, "r") as z:
         names = z.namelist()
-        sharpness_entries = [n for n in names if "/sharpnesses/" in n or n.endswith("/sharpnesses")]
+        sharpness_entries = [
+            n for n in names if "/sharpnesses/" in n or n.endswith("/sharpnesses")
+        ]
         if sharpness_entries:
-            print(f"  FAIL: {zip_path.name} still has sharpness entries: {sharpness_entries}")
+            print(
+                f"  FAIL: {zip_path.name} still has sharpness entries: {sharpness_entries}"
+            )
             return False
 
         # Check .zattrs
@@ -107,7 +115,15 @@ def main():
     dry_run = "--dry-run" in sys.argv
     verify_only = "--verify" in sys.argv
 
-    demo_data = Path(__file__).parent.parent / "packages" / "luxar" / "src" / "luxar" / "demos" / "data"
+    demo_data = (
+        Path(__file__).parent.parent
+        / "packages"
+        / "luxar"
+        / "src"
+        / "luxar"
+        / "demos"
+        / "data"
+    )
     zip_files = sorted(demo_data.glob("**/*.gsplats.zarr.zip"))
 
     if not zip_files:

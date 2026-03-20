@@ -137,10 +137,10 @@ export class DataLoadingMonitor {
     lines: { getStats: () => NonNullable<MemoryMetrics['accumulators']['lines']> } | null;
     gsplats: { getStats: () => NonNullable<MemoryMetrics['accumulators']['gsplats']> } | null;
   } = {
-      points: null,
-      lines: null,
-      gsplats: null,
-    };
+    points: null,
+    lines: null,
+    gsplats: null,
+  };
 
   // DOM element references for efficient updates (avoids full innerHTML replacement)
   private contentContainer: HTMLElement | null = null;

@@ -1,0 +1,473 @@
+"""Tests for colormap support in the compiler."""
+
+import tempfile
+from pathlib import Path
+
+import numpy as np
+import pytest
+import zarr
+
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
+
+
+class TestColormapPointsCompiler:
+    """Test colormap support when writing points."""
+
+    def test_points_with_colormap_string(self) -> None:
+        """Points with a named colormap and scalars."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                positions = np.random.rand(100, 3).astype(np.float32)
+                scalars = np.random.rand(100).astype(np.float32)
+                scene.add_points(
+                    "pts",
+                    positions,
+                    scalars=scalars,
+                    colormap="viridis",
+                    layer=True,
+                )
+
+            # Verify zarr contents
+            store = zarr.open(str(path), mode="r")
+            assert store["pts"].attrs["colormap"] == "viridis"
+            assert "scalar_data_range" in store["pts"].attrs
+            assert "scalars" in store["pts"]
+            # Critical: has_scalars must be in zarr attrs for viewer to enable colormap
+            assert store["pts"].attrs.get("has_scalars") is True
+
+    def test_points_colormap_without_scalars(self) -> None:
+        """Points with colormap but no scalars — valid (uses default uniform)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                positions = np.random.rand(50, 3).astype(np.float32)
+                scene.add_points("pts", positions, colormap="green")
+
+            store = zarr.open(str(path), mode="r")
+            assert store["pts"].attrs["colormap"] == "green"
+
+    def test_points_colors_and_colormap_raises(self) -> None:
+        """Cannot set both colors and colormap."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                positions = np.random.rand(50, 3).astype(np.float32)
+                colors = np.random.rand(50, 3).astype(np.float32)
+                with pytest.raises(ValueError, match="colors.*colormap"):
+                    scene.add_points("pts", positions, colors=colors, colormap="green")
+
+    def test_points_scalars_without_colormap_raises(self) -> None:
+        """Scalars require a colormap."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                positions = np.random.rand(50, 3).astype(np.float32)
+                scalars = np.random.rand(50).astype(np.float32)
+                with pytest.raises(ValueError, match="scalars.*colormap"):
+                    scene.add_points("pts", positions, scalars=scalars)
+
+    def test_points_custom_colormap_array(self) -> None:
+        """Custom colormap as numpy array is stored as LUT dataset."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            custom_lut = np.random.randint(0, 256, (256, 3), dtype=np.uint8)
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                positions = np.random.rand(50, 3).astype(np.float32)
+                scene.add_points("pts", positions, colormap=custom_lut)
+
+            store = zarr.open(str(path), mode="r")
+            assert store["pts"].attrs["colormap"] == "custom"
+            assert "colormap_lut" in store["pts"]
+            lut = np.array(store["pts"]["colormap_lut"])
+            assert lut.shape == (256, 3)
+            np.testing.assert_array_equal(lut, custom_lut)
+
+    def test_points_matplotlib_colormap_stored_as_custom(self) -> None:
+        """Non-built-in colormap names (e.g. matplotlib) are resolved to LUT."""
+        pytest.importorskip("matplotlib")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                positions = np.random.rand(50, 3).astype(np.float32)
+                pts = scene.add_points("pts", positions, colormap="cividis")
+                # Node should see "custom" (not "cividis")
+                assert pts.colormap == "custom"
+
+            # Zarr should have "custom" attr and colormap_lut dataset
+            store = zarr.open(str(path), mode="r")
+            assert store["pts"].attrs["colormap"] == "custom"
+            assert "colormap_lut" in store["pts"]
+            lut = np.array(store["pts"]["colormap_lut"])
+            assert lut.shape == (256, 3)
+
+    def test_points_builtin_colormap_stored_as_name(self) -> None:
+        """Built-in colormaps are stored by name (no LUT dataset)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                positions = np.random.rand(50, 3).astype(np.float32)
+                pts = scene.add_points("pts", positions, colormap="viridis")
+                # Node should see "viridis" (built-in, no resolution needed)
+                assert pts.colormap == "viridis"
+
+            store = zarr.open(str(path), mode="r")
+            assert store["pts"].attrs["colormap"] == "viridis"
+            assert "colormap_lut" not in store["pts"]
+
+
+class TestColormapGSplatsCompiler:
+    """Test colormap support when writing gsplats."""
+
+    def test_gsplats_default_gray_colormap(self) -> None:
+        """GSplats without colors or colormap get default gray."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                centers = np.random.rand(50, 3).astype(np.float32)
+                amplitudes = np.random.rand(50).astype(np.float32)
+                cholesky = np.eye(3)[np.newaxis, :, :].repeat(50, axis=0)
+                # Extract lower triangular: L00, L10, L11, L20, L21, L22
+                chol_packed = np.column_stack(
+                    [
+                        cholesky[:, 0, 0],
+                        cholesky[:, 1, 0],
+                        cholesky[:, 1, 1],
+                        cholesky[:, 2, 0],
+                        cholesky[:, 2, 1],
+                        cholesky[:, 2, 2],
+                    ]
+                ).astype(np.float32)
+                scene.add_gsplats("gs", centers, amplitudes, chol_packed)
+
+            store = zarr.open(str(path), mode="r")
+            assert store["gs"].attrs["colormap"] == "gray"
+
+    def test_gsplats_with_explicit_colormap(self) -> None:
+        """GSplats with explicit colormap."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                centers = np.random.rand(50, 3).astype(np.float32)
+                amplitudes = np.random.rand(50).astype(np.float32)
+                cholesky = np.eye(3)[np.newaxis, :, :].repeat(50, axis=0)
+                chol_packed = np.column_stack(
+                    [
+                        cholesky[:, 0, 0],
+                        cholesky[:, 1, 0],
+                        cholesky[:, 1, 1],
+                        cholesky[:, 2, 0],
+                        cholesky[:, 2, 1],
+                        cholesky[:, 2, 2],
+                    ]
+                ).astype(np.float32)
+                scene.add_gsplats(
+                    "gs", centers, amplitudes, chol_packed, colormap="magenta"
+                )
+
+            store = zarr.open(str(path), mode="r")
+            assert store["gs"].attrs["colormap"] == "magenta"
+
+    def test_gsplats_colors_and_colormap_raises(self) -> None:
+        """Cannot set both colors and colormap on gsplats."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                centers = np.random.rand(50, 3).astype(np.float32)
+                amplitudes = np.random.rand(50).astype(np.float32)
+                cholesky = np.eye(3)[np.newaxis, :, :].repeat(50, axis=0)
+                chol_packed = np.column_stack(
+                    [
+                        cholesky[:, 0, 0],
+                        cholesky[:, 1, 0],
+                        cholesky[:, 1, 1],
+                        cholesky[:, 2, 0],
+                        cholesky[:, 2, 1],
+                        cholesky[:, 2, 2],
+                    ]
+                ).astype(np.float32)
+                colors = np.random.rand(50, 3).astype(np.float32)
+                with pytest.raises(ValueError, match="colors.*colormap"):
+                    scene.add_gsplats(
+                        "gs",
+                        centers,
+                        amplitudes,
+                        chol_packed,
+                        colors=colors,
+                        colormap="green",
+                    )
+
+    def test_gsplats_with_colors_no_default_gray(self) -> None:
+        """GSplats with explicit colors should NOT get default gray colormap."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                centers = np.random.rand(50, 3).astype(np.float32)
+                amplitudes = np.random.rand(50).astype(np.float32)
+                cholesky = np.eye(3)[np.newaxis, :, :].repeat(50, axis=0)
+                chol_packed = np.column_stack(
+                    [
+                        cholesky[:, 0, 0],
+                        cholesky[:, 1, 0],
+                        cholesky[:, 1, 1],
+                        cholesky[:, 2, 0],
+                        cholesky[:, 2, 1],
+                        cholesky[:, 2, 2],
+                    ]
+                ).astype(np.float32)
+                colors = np.random.rand(50, 3).astype(np.float32)
+                scene.add_gsplats("gs", centers, amplitudes, chol_packed, colors=colors)
+
+            store = zarr.open(str(path), mode="r")
+            # Should NOT have colormap attr when colors are explicitly provided
+            assert "colormap" not in store["gs"].attrs
+
+    def test_gsplats_invalid_colormap_name_raises(self) -> None:
+        """Invalid colormap name should raise at write time."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                centers = np.random.rand(50, 3).astype(np.float32)
+                amplitudes = np.random.rand(50).astype(np.float32)
+                cholesky = np.eye(3)[np.newaxis, :, :].repeat(50, axis=0)
+                chol_packed = np.column_stack(
+                    [
+                        cholesky[:, 0, 0],
+                        cholesky[:, 1, 0],
+                        cholesky[:, 1, 1],
+                        cholesky[:, 2, 0],
+                        cholesky[:, 2, 1],
+                        cholesky[:, 2, 2],
+                    ]
+                ).astype(np.float32)
+                with pytest.raises(ValueError, match="Unknown colormap"):
+                    scene.add_gsplats(
+                        "gs",
+                        centers,
+                        amplitudes,
+                        chol_packed,
+                        colormap="totally_fake_colormap_xyz",
+                    )
+
+
+class TestColormapLinesCompiler:
+    """Test colormap support when writing lines."""
+
+    def test_lines_with_colormap_and_scalars(self) -> None:
+        """Lines with colormap and scalar values."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                vertices = np.random.rand(100, 3).astype(np.float32)
+                widths = np.full(100, 0.1, dtype=np.float32)
+                scalars = np.random.rand(100).astype(np.float32)
+                scene.add_lines(
+                    "ln",
+                    vertices,
+                    widths,
+                    scalars=scalars,
+                    colormap="inferno",
+                )
+
+            store = zarr.open(str(path), mode="r")
+            assert store["ln"].attrs["colormap"] == "inferno"
+            assert "scalar_data_range" in store["ln"].attrs
+            assert "scalars" in store["ln"]
+            # Critical: has_scalars must be in zarr attrs for viewer to enable colormap
+            assert store["ln"].attrs.get("has_scalars") is True
+
+    def test_lines_invalid_colormap_name_raises(self) -> None:
+        """Invalid colormap name should raise at write time, not silently pass."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                vertices = np.random.rand(50, 3).astype(np.float32)
+                widths = np.full(50, 0.1, dtype=np.float32)
+                with pytest.raises(ValueError, match="Unknown colormap"):
+                    scene.add_lines(
+                        "ln",
+                        vertices,
+                        widths,
+                        colormap="definitely_not_a_real_colormap",
+                    )
+
+
+class TestScalarsReorderWithSpatialOrdering:
+    """Regression tests for scalars reordering during spatial ordering.
+
+    When spatial ordering (Morton/Hilbert) is applied, per-element arrays
+    (positions, colors, radii, scalars) must all be reordered by the same
+    sort_order. A bug (fixed) left scalars unreordered, causing per-point
+    scalar values to be misaligned with their positions.
+    """
+
+    def test_points_scalars_aligned_after_spatial_ordering(self) -> None:
+        """Scalars must be reordered consistently with positions.
+
+        The encoder may quantize scalars (e.g., to uint8), so we use the
+        Luxar decoder to read them back as float32 for comparison.
+        """
+        from luxar.encoding.decoder import ArrayDecoder
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            # Create points with known pattern: scalar[i] = position[i].sum()
+            n = 500
+            positions = np.random.rand(n, 3).astype(np.float32)
+            scalars = positions.sum(axis=1).astype(np.float32)
+
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                scene.add_points("pts", positions, scalars=scalars, colormap="viridis")
+
+            # Read back using decoder to handle quantization
+            store = zarr.open(str(path), mode="r")
+            decoder = ArrayDecoder()
+            read_pos = decoder.decode(store["pts"]["positions"])
+            read_scalars = decoder.decode(store["pts"]["scalars"])
+
+            # Each scalar should still equal the sum of its position's coordinates
+            # (with tolerance for quantization)
+            expected_scalars = read_pos.sum(axis=1)
+            np.testing.assert_allclose(
+                read_scalars,
+                expected_scalars,
+                atol=0.05,
+                err_msg="Scalars are not aligned with positions after spatial reordering",
+            )
+
+    def test_lines_scalars_aligned_after_spatial_ordering(self) -> None:
+        """Lines scalars must be reordered consistently with vertices."""
+        from luxar.encoding.decoder import ArrayDecoder
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            n = 200
+            vertices = np.random.rand(n, 3).astype(np.float32)
+            widths = np.full(n, 0.1, dtype=np.float32)
+            scalars = vertices[:, 0].copy()  # scalar = x coordinate
+
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                scene.add_lines(
+                    "ln", vertices, widths, scalars=scalars, colormap="plasma"
+                )
+
+            store = zarr.open(str(path), mode="r")
+            decoder = ArrayDecoder()
+            read_verts = decoder.decode(store["ln"]["vertices"])
+            read_scalars = decoder.decode(store["ln"]["scalars"])
+
+            # Each scalar should still equal the x-coordinate of its vertex
+            np.testing.assert_allclose(
+                read_scalars,
+                read_verts[:, 0],
+                atol=0.05,
+                err_msg="Scalars are not aligned with vertices after spatial reordering",
+            )
+
+
+class TestColormapLinesScalarsBug:
+    """Regression tests for the Lines scalars bug (vertices vs positions key)."""
+
+    def test_lines_scalars_does_not_crash(self) -> None:
+        """Lines with scalars must not crash — _write_scalars_dataset must find 'vertices'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                vertices = np.random.rand(20, 3).astype(np.float32)
+                widths = np.full(20, 0.05, dtype=np.float32)
+                scalars = np.random.rand(20).astype(np.float32)
+                ln = scene.add_lines(
+                    "ln", vertices, widths, scalars=scalars, colormap="plasma"
+                )
+                assert ln.has_scalars
+
+            store = zarr.open(str(path), mode="r")
+            assert "scalars" in store["ln"]
+            assert store["ln"].attrs["colormap"] == "plasma"
+            sr = store["ln"].attrs["scalar_data_range"]
+            assert sr[0] <= sr[1]
+
+
+class TestColormapNodeProperty:
+    """Test Node.colormap property."""
+
+    def test_colormap_set_at_creation(self) -> None:
+        """Colormap set via attrs at node creation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                positions = np.random.rand(50, 3).astype(np.float32)
+                pts = scene.add_points("pts", positions, colormap="viridis")
+                assert pts.colormap == "viridis"
+
+    def test_colormap_setter_accepts_string(self) -> None:
+        """Colormap setter accepts string names."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                positions = np.random.rand(50, 3).astype(np.float32)
+                pts = scene.add_points("pts", positions, colormap="viridis")
+                pts.colormap = "magenta"
+                assert pts.colormap == "magenta"
+
+    def test_colormap_setter_rejects_array(self) -> None:
+        """Colormap property setter must reject numpy arrays (JSON serialization)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                positions = np.random.rand(50, 3).astype(np.float32)
+                pts = scene.add_points("pts", positions, colormap="viridis")
+                with pytest.raises(TypeError, match="string names"):
+                    pts.colormap = np.zeros((256, 3), dtype=np.uint8)
+
+    def test_colormap_default_none(self) -> None:
+        """Colormap defaults to None when not set."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                positions = np.random.rand(50, 3).astype(np.float32)
+                colors = np.random.rand(50, 3).astype(np.float32)
+                pts = scene.add_points("pts", positions, colors=colors)
+                assert pts.colormap is None

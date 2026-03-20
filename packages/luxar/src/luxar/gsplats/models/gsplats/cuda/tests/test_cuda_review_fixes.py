@@ -62,7 +62,6 @@ def _make_splat_data(
     else:
         amps_t = torch.tensor(amps, device=device, dtype=torch.float32)
 
-
     conic = cholesky_to_conic(L)
     L_row_norms = compute_L_row_norms(L)
 

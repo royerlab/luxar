@@ -304,9 +304,7 @@ def finalize_results(
                 -(-s // f)  # ceil division: equivalent to math.ceil(s / f)
                 for s, f in zip(config.V.shape, preprocessed_data.downscale_factors)
             )
-        Ls_np = _clip_to_bounds(
-            centers_np, Ls_np, clip_shape, config.truncate
-        )
+        Ls_np = _clip_to_bounds(centers_np, Ls_np, clip_shape, config.truncate)
         if config.verbose:
             aprint(f"Clipped splats to volume bounds (truncate={config.truncate:.1f})")
 

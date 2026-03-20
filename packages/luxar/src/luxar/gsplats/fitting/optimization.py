@@ -398,7 +398,10 @@ def _record_movie_frame(
     """Record a frame for the optimization movie."""
     with torch.no_grad():
         # Memory-bounded recording: remove oldest frames if limit exceeded
-        if config.movie_max_frames is not None and len(movie_frames["target"]) >= config.movie_max_frames:
+        if (
+            config.movie_max_frames is not None
+            and len(movie_frames["target"]) >= config.movie_max_frames
+        ):
             # Remove oldest frame (FIFO)
             for key in [
                 "target",
