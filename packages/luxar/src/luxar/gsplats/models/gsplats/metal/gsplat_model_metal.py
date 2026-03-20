@@ -260,20 +260,18 @@ class MetalSplatFunction(torch.autograd.Function):
             amps_mps = amps.contiguous().to("mps")
 
             # Reuse tile data from forward pass (CRITICAL for performance)
-            (d_centers, d_conic, d_amps) = (
-                metal_splatting_backend.backward_3d(
-                    grad_mps,
-                    centers_mps,
-                    conic_mps,
-                    amps_mps,
-                    ctx.tile_offsets,
-                    ctx.tile_counts,
-                    ctx.tile_content,
-                    list(shape),
-                    truncate,
-                    intensity_floor,
-                    tile_size,  # Must match forward!
-                )
+            (d_centers, d_conic, d_amps) = metal_splatting_backend.backward_3d(
+                grad_mps,
+                centers_mps,
+                conic_mps,
+                amps_mps,
+                ctx.tile_offsets,
+                ctx.tile_counts,
+                ctx.tile_content,
+                list(shape),
+                truncate,
+                intensity_floor,
+                tile_size,  # Must match forward!
             )
 
             # === DEBUG PROBE: Check raw Metal output ===

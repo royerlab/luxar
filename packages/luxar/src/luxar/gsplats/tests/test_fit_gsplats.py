@@ -635,12 +635,8 @@ class TestConvergence:
         # Should work with 3D data
         assert len(result.amplitudes) > 0
         # Reconstruct params_full to check shape
-        params_full = np.column_stack(
-            [result.centers, result.cholesky_factors]
-        )
-        assert (
-            params_full.shape[1] == 9
-        )  # 3D centers (3) + 3x3 packed L (6) = 9
+        params_full = np.column_stack([result.centers, result.cholesky_factors])
+        assert params_full.shape[1] == 9  # 3D centers (3) + 3x3 packed L (6) = 9
 
     def test_volume_proportional_scaling(self) -> None:
         """Test that candidate count scales with image volume."""

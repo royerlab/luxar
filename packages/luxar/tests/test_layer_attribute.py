@@ -126,9 +126,7 @@ class TestColorDataRange:
             zarr_path = f"{d}/scene.zarr"
             with LuxarZarrCompiler(zarr_path) as compiler:
                 scene = compiler.create_scene(dimensions=_DIMS)
-                colors = np.array(
-                    [[0.1, 0.2, 0.3], [0.8, 0.9, 1.0]], dtype=np.float32
-                )
+                colors = np.array([[0.1, 0.2, 0.3], [0.8, 0.9, 1.0]], dtype=np.float32)
                 scene.add_points(
                     "ch0",
                     positions=np.array([[1, 2], [3, 4]], dtype=np.float32),

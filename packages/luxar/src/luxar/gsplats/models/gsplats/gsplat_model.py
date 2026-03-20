@@ -376,9 +376,7 @@ class GaussianSplatModel(nn.Module):
         amps: torch.Tensor,
     ) -> None:
         """Hard replace the whole parameter set."""
-        raw_mu, L_diag_raw, L_off, amp_raw = self._to_internal_params(
-            centers, Ls, amps
-        )
+        raw_mu, L_diag_raw, L_off, amp_raw = self._to_internal_params(centers, Ls, amps)
         self.raw_mu = torch.nn.Parameter(raw_mu)
         self.raw_L_diag = torch.nn.Parameter(L_diag_raw)
         self.L_off = torch.nn.Parameter(L_off)

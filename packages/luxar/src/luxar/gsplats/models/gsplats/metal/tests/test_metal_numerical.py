@@ -360,9 +360,7 @@ class TestMetalGradients:
         target[16, 16, 16] = 1.0
 
         # Forward and backward
-        output = MetalSplatFunction.apply(
-            centers, L, amps, shape, 3.0, 1e-5, 4, False
-        )
+        output = MetalSplatFunction.apply(centers, L, amps, shape, 3.0, 1e-5, 4, False)
         loss = ((output - target) ** 2).sum()
         loss.backward()
 

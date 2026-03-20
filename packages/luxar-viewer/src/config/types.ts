@@ -176,6 +176,7 @@ export interface InputConfig {
       togglePerformance: string;
       toggleRendering: string;
       toggleScaleBar: string;
+      toggleColormapLegend: string;
       toggleDebugConsole: string;
       toggleLayers: string;
       recenterCamera: string;

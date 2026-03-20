@@ -151,25 +151,27 @@ N_ITERS = 8000  # Optimization iterations
 VOXEL_SIZE_ZYX = (1.25, 1.24, 1.24)
 
 # Channel configuration — ordered by emission wavelength
+# Uses named colormaps instead of baked RGB colors — the viewer applies the
+# colormap at display time, allowing interactive colormap switching.
 CHANNELS = [
     {
         "index": 0,
         "name": "Nuclei",
-        "color": (0.3, 0.4, 1.0),  # Blue (DAPI, 450nm)
+        "colormap": "blue",  # DAPI, 450nm
         "emission": "450nm",
         "stain": "DAPI",
     },
     {
         "index": 1,
         "name": "WGA",
-        "color": (0.0, 1.0, 0.3),  # Green (Alexa Fluor 488 WGA, 515nm)
+        "colormap": "green",  # Alexa Fluor 488 WGA, 515nm
         "emission": "515nm",
         "stain": "Alexa Fluor 488 WGA",
     },
     {
         "index": 2,
         "name": "Actin",
-        "color": (1.0, 0.3, 0.2),  # Red (Alexa Fluor 568 Phalloidin, 605nm)
+        "colormap": "red",  # Alexa Fluor 568 Phalloidin, 605nm
         "emission": "605nm",
         "stain": "Alexa Fluor 568 Phalloidin",
     },
@@ -418,7 +420,7 @@ Controls:
             # Add each channel as a layer-enabled gsplats node
             for i, (gsplats, ch_config) in enumerate(zip(gsplats_list, CHANNELS)):
                 ch_name = ch_config["name"]
-                color = ch_config["color"]
+                colormap = ch_config["colormap"]
 
                 with asection(f"Adding {ch_name} (layer)"):
                     # Transform: shared centroid so channels stay aligned
@@ -427,24 +429,22 @@ Controls:
 
                     n_splats = len(gsplats.amplitudes)
 
-                    # Assign channel color to all splats
-                    colors = np.tile(np.array(color, dtype=np.float32), (n_splats, 1))
-
-                    # KEY: layer=True exposes this node in the Layers panel.
-                    # No extra dimensions needed — the panel provides
-                    # visibility, display range, gamma, and blending controls.
+                    # KEY: colormap= replaces baked RGB colors.
+                    # The viewer applies the LUT at display time, enabling
+                    # interactive colormap switching in the Layers panel.
+                    # layer=True exposes this node in the Layers panel.
                     scene.add_gsplats(
                         name=f"gsplats_{ch_name.lower()}",
                         centers=gsplats.centers,
                         amplitudes=gsplats.amplitudes,
                         cholesky_factors=gsplats.cholesky_factors,
-                        colors=colors,
                         dim_order=["z", "y", "x"],
                         opacity=1.0,
                         blending_mode="additive",
                         layer=True,
+                        colormap=colormap,
                     )
-                    aprint(f"  Added {n_splats:,} splats with layer=True")
+                    aprint(f"  Added {n_splats:,} splats with colormap='{colormap}'")
 
         aprint(f"Scene saved: {output_path}")
         return output_path
