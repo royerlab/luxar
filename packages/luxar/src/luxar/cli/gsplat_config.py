@@ -299,7 +299,9 @@ def load_volume(
                 if len(keys) > 1:
                     aprint(f"  Using first array '{keys[0]}' (available: {keys})")
 
-    elif suffix == ".zarr":
+    elif suffix == ".zarr" or (suffix == ".zip" and path.stem.endswith(".zarr")):
+        # Handles both plain .zarr directories and .zarr.zip archives.
+        # zarr natively supports ZipStore so no extraction needed.
         volume = _load_zarr_volume(path, channel, timepoint, array_key)
 
     elif suffix in (".tiff", ".tif"):
@@ -434,15 +436,23 @@ class OMEZarrInfo:
     """Path to the zarr store."""
 
 
-def discover_ome_zarr_shape(path: Path) -> OMEZarrInfo:
+def discover_ome_zarr_shape(
+    path: Path,
+    axes_override: Optional[List[str]] = None,
+) -> OMEZarrInfo:
     """Discover the shape and axis structure of an OME-Zarr dataset.
 
     Parses ``.zattrs`` ``multiscales`` metadata (NGFF v0.4+). Falls back
-    to a shape-based heuristic (5D→TCZYX, 4D→CZYX, 3D→ZYX) for
-    non-NGFF zarr stores.
+    to a custom ``axes`` attribute, then to a shape-based heuristic
+    (5D→TCZYX, 4D→CZYX, 3D→ZYX) for non-NGFF zarr stores.
+
+    Accepts both plain ``.zarr`` directories and ``.zarr.zip`` archives —
+    zarr's ZipStore handles the latter transparently.
 
     Args:
-        path: Path to the ``.zarr`` store.
+        path: Path to the ``.zarr`` store or ``.zarr.zip`` archive.
+        axes_override: Explicit axis labels (e.g. ``["time","channel","z","y","x"]``).
+            Overrides all auto-detection when provided.
 
     Returns:
         :class:`OMEZarrInfo` with discovered metadata.
@@ -461,23 +471,42 @@ def discover_ome_zarr_shape(path: Path) -> OMEZarrInfo:
     elif isinstance(store, zarr.Group):
         attrs = dict(store.attrs)
         if "0" in store:
+            # OME-NGFF standard: resolution level "0" is highest resolution
             arr = store["0"]
         else:
-            arrays = [k for k in store.keys() if isinstance(store[k], zarr.Array)]
+            # Find the largest array in the group (covers custom layouts like
+            # {"data": <array>} used by Keller-lab .zarr.zip files)
+            arrays = [(k, store[k]) for k in store.keys() if isinstance(store[k], zarr.Array)]
             if not arrays:
                 raise ValueError(f"No arrays found in zarr group: {path}")
-            arr = store[arrays[0]]
+            # Pick the array with the most elements
+            arr = max(arrays, key=lambda kv: int(np.prod(kv[1].shape)))[1]
     else:
         raise ValueError(f"Unexpected zarr object type: {type(store)}")
 
     shape = tuple(arr.shape)
     ndim = len(shape)
 
+    # User-supplied axes override: skip all auto-detection
+    if axes_override is not None:
+        if len(axes_override) != ndim:
+            raise ValueError(
+                f"--axes has {len(axes_override)} labels but array is {ndim}D "
+                f"(shape {shape}). Provide exactly {ndim} comma-separated axis names."
+            )
+        return _parse_custom_axes_attr(axes_override, shape, path)
+
     # Try NGFF multiscales metadata
     multiscales = attrs.get("multiscales")
     if multiscales and isinstance(multiscales, list) and len(multiscales) > 0:
         ms = multiscales[0]
         return _parse_ngff_metadata(ms, shape, path, store)
+
+    # Try custom axes attribute (e.g. Keller-lab zarr.zip files store
+    # axes = ['time', 'camera', 'channel', 'z', 'y', 'x'])
+    custom_axes = attrs.get("axes")
+    if custom_axes and isinstance(custom_axes, list) and len(custom_axes) == ndim:
+        return _parse_custom_axes_attr(custom_axes, shape, path)
 
     # Fallback: heuristic based on ndim
     return _heuristic_ome_info(shape, ndim, path)
@@ -559,6 +588,60 @@ def _parse_ngff_metadata(
         voxel_size=voxel_size,
         unit=unit,
         resolution_levels=n_levels,
+        path=path,
+    )
+
+
+def _parse_custom_axes_attr(
+    axes: List[str], shape: Tuple[int, ...], path: Path
+) -> OMEZarrInfo:
+    """Build OMEZarrInfo from a custom ``axes`` list attribute.
+
+    Recognises common axis name conventions:
+      - T: ``time``, ``t``
+      - C: ``channel``, ``c``, ``ch``
+      - Camera / extra non-spatial dims (``camera``, ``cam``, ``view``,
+        ``angle``): folded into the channel count so each combination
+        becomes its own fitting task.
+      - Spatial: ``z``, ``y``, ``x``, ``depth``, ``height``, ``width``
+        (and any unrecognised leftover axes)
+    """
+    _SPATIAL = {"z", "y", "x", "depth", "height", "width"}
+    _TIME = {"time", "t"}
+    _CHANNEL = {"channel", "c", "ch"}
+    _CAMERA = {"camera", "cam", "view", "angle"}
+
+    t_idx: Optional[int] = None
+    channel_indices: List[int] = []   # channel + camera axes
+    spatial_indices: List[int] = []
+
+    for i, ax in enumerate(axes):
+        ax_l = ax.lower()
+        if ax_l in _TIME:
+            t_idx = i
+        elif ax_l in _CHANNEL or ax_l in _CAMERA:
+            channel_indices.append(i)
+        elif ax_l in _SPATIAL:
+            spatial_indices.append(i)
+        else:
+            # Unknown axis — treat as spatial
+            spatial_indices.append(i)
+
+    n_t = shape[t_idx] if t_idx is not None else 1
+    n_c = 1
+    for ci in channel_indices:
+        n_c *= shape[ci]
+
+    spatial_shape = tuple(shape[i] for i in spatial_indices)
+    spatial_axes = [axes[i] for i in spatial_indices]
+
+    return OMEZarrInfo(
+        axes=axes,
+        shape=shape,
+        n_timepoints=n_t,
+        n_channels=n_c,
+        spatial_shape=spatial_shape,
+        spatial_axes=spatial_axes,
         path=path,
     )
 
