@@ -718,6 +718,31 @@ __global__ void rasterize_backward_kernel(
     __syncthreads();
     } // end if (use_grad_cache)
 
+    // OPTIMIZATION: For DIM <= 4, precompute pixel coords and grad_output ONCE
+    // Each thread handles exactly one pixel (tile_pixels == blockDim.x by construction)
+    // This eliminates redundant recomputation in the inner splat loop
+    // (~batch_size redundant compute_pixel_coords_float calls per thread)
+    // NOTE: Only 4 registers (3 for px + 1 for dL_dI), unlike the failed
+    // precomp_px[4*DIM] attempt which used 12 registers and regressed.
+    float precomp_px[DIM];
+    float precomp_dL_dI = 0.0f;
+    bool precomp_has_grad = false;
+
+    if constexpr (DIM <= 4) {
+        compute_pixel_coords_float<DIM>(threadIdx.x, tile_origin, tile_extent,
+                                        use_fast_path_3d, use_fast_path_2d, precomp_px);
+        if (use_grad_cache) {
+            precomp_dL_dI = s_grad_output[threadIdx.x];
+        } else {
+            int voxel_int[DIM];
+            #pragma unroll
+            for (int d = 0; d < DIM; d++) voxel_int[d] = (int)precomp_px[d];
+            int64_t global_px_idx = voxel_to_linear<DIM>(voxel_int, shape);
+            precomp_dL_dI = grad_output[global_px_idx];
+        }
+        precomp_has_grad = (precomp_dL_dI != 0.0f);
+    }
+
     // Process splats in batches
     for (int batch_start = 0; batch_start < n_splats_in_tile; batch_start += BATCH_SIZE) {
         int batch_size = min(BATCH_SIZE, n_splats_in_tile - batch_start);
@@ -809,53 +834,71 @@ __global__ void rasterize_backward_kernel(
             float amp = s_amps[si];
             float truncate_sq = s_truncate_sq[si];
 
-            // Each thread processes pixels
-            for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels; local_px_idx += blockDim.x) {
-                // Compute pixel coordinates
-                float px[DIM];
-                compute_pixel_coords_float<DIM>(local_px_idx, tile_origin, tile_extent,
-                                                use_fast_path_3d, use_fast_path_2d, px);
-
-                // Get upstream gradient: from cache if available, else from global memory
-                float dL_dI;
-                if (use_grad_cache) {
-                    dL_dI = s_grad_output[local_px_idx];
-                } else {
-                    // Compute global pixel index from float coords
-                    int voxel_int[DIM];
+            if constexpr (DIM <= 4) {
+                // FAST PATH: Use precomputed pixel coords and grad (no pixel loop needed)
+                // For DIM <= 4, tile_pixels == blockDim.x, so each thread = one pixel
+                if (precomp_has_grad) {
+                    // Compute displacement (using padded stride)
+                    float d_vec[DIM];
                     #pragma unroll
-                    for (int d = 0; d < DIM; d++) voxel_int[d] = (int)px[d];
-                    int64_t global_px_idx = voxel_to_linear<DIM>(voxel_int, shape);
-                    dL_dI = grad_output[global_px_idx];
+                    for (int d = 0; d < DIM; d++) {
+                        d_vec[d] = precomp_px[d] - s_centers[si * CENTER_STRIDE + d];
+                    }
+
+                    float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, &s_conic[si * CONIC_SIZE]);
+
+                    if (dist_sq <= truncate_sq) {
+                        float intensity = gaussian_intensity(dist_sq, amp);
+                        if (intensity >= intensity_floor) {
+                            compute_pixel_gradients<DIM>(
+                                precomp_dL_dI, intensity, amp, d_vec,
+                                &s_conic[si * CONIC_SIZE],
+                                local_d_centers, local_d_conic,
+                                local_d_amp
+                            );
+                        }
+                    }
                 }
+            } else {
+                // GENERIC PATH: pixel loop (DIM >= 5, tile_pixels may differ from blockDim.x)
+                for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels; local_px_idx += blockDim.x) {
+                    float px[DIM];
+                    compute_pixel_coords_float<DIM>(local_px_idx, tile_origin, tile_extent,
+                                                    use_fast_path_3d, use_fast_path_2d, px);
 
-                if (dL_dI == 0.0f) continue;
+                    float dL_dI;
+                    if (use_grad_cache) {
+                        dL_dI = s_grad_output[local_px_idx];
+                    } else {
+                        int voxel_int[DIM];
+                        #pragma unroll
+                        for (int d = 0; d < DIM; d++) voxel_int[d] = (int)px[d];
+                        int64_t global_px_idx = voxel_to_linear<DIM>(voxel_int, shape);
+                        dL_dI = grad_output[global_px_idx];
+                    }
 
-                // Compute displacement (using padded stride)
-                float d_vec[DIM];
-                #pragma unroll
-                for (int d = 0; d < DIM; d++) {
-                    d_vec[d] = px[d] - s_centers[si * CENTER_STRIDE + d];
+                    if (dL_dI == 0.0f) continue;
+
+                    float d_vec[DIM];
+                    #pragma unroll
+                    for (int d = 0; d < DIM; d++) {
+                        d_vec[d] = px[d] - s_centers[si * CENTER_STRIDE + d];
+                    }
+
+                    float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, &s_conic[si * CONIC_SIZE]);
+
+                    if (dist_sq > truncate_sq) continue;
+
+                    float intensity = gaussian_intensity(dist_sq, amp);
+                    if (intensity < intensity_floor) continue;
+
+                    compute_pixel_gradients<DIM>(
+                        dL_dI, intensity, amp, d_vec,
+                        &s_conic[si * CONIC_SIZE],
+                        local_d_centers, local_d_conic,
+                        local_d_amp
+                    );
                 }
-
-                // Compute Mahalanobis distance
-                float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, &s_conic[si * CONIC_SIZE]);
-
-                // OPTIMIZATION 1.2: Early rejection based on precomputed truncation
-                if (dist_sq > truncate_sq) continue;
-
-                // Compute intensity (only for pixels within truncation radius)
-                float intensity = gaussian_intensity(dist_sq, amp);
-
-                if (intensity < intensity_floor) continue;
-
-                // Use optimized gradient computation (template specialized for 2D/3D)
-                compute_pixel_gradients<DIM>(
-                    dL_dI, intensity, amp, d_vec,
-                    &s_conic[si * CONIC_SIZE],
-                    local_d_centers, local_d_conic,
-                    local_d_amp
-                );
             }
 
             // OPTIMIZATION 3.2: Warp-level reduction to shared memory (fast atomics)
