@@ -2448,6 +2448,24 @@ def batch_plan(
             "z/y/x/depth/height/width (spatial)."
         ),
     ),
+    timepoints_slice: Optional[str] = typer.Option(
+        None,
+        "--timepoints",
+        help=(
+            "Python-style slice to select timepoints, e.g. "
+            "'0:10' (first 10), '::10' (every 10th), '100:200:5' (100-200 step 5). "
+            "Default: all timepoints."
+        ),
+    ),
+    channels_slice: Optional[str] = typer.Option(
+        None,
+        "--channels",
+        help=(
+            "Python-style slice to select channels, e.g. "
+            "'0:2' (first 2 channels), '::2' (every other). "
+            "Default: all channels."
+        ),
+    ),
     # Packing
     tasks_per_job: Optional[int] = typer.Option(
         None,
@@ -2565,14 +2583,33 @@ def batch_plan(
         resolved_gpu = resolved_gpu or "unknown"
 
         # 2. Discover dataset shape
+        # Helper: parse Python-style slice string "start:stop:step"
+        def _parse_slice(s: str, max_val: int) -> list[int]:
+            parts = s.split(":")
+            if len(parts) == 1:
+                # Single index
+                return [int(parts[0])]
+            start = int(parts[0]) if parts[0] else 0
+            stop = int(parts[1]) if len(parts) > 1 and parts[1] else max_val
+            step = int(parts[2]) if len(parts) > 2 and parts[2] else 1
+            return list(range(start, stop, step))
+
         with asection("Discovering dataset shape"):
             ome_info = discover_ome_zarr_shape(input_path, axes_override=axes_list)
-            n_t = ome_info.n_timepoints
-            n_c = ome_info.n_channels
+            n_t_full = ome_info.n_timepoints
+            n_c_full = ome_info.n_channels
             spatial = ome_info.spatial_shape
             aprint(f"Axes: {ome_info.axes}")
             aprint(f"Shape: {ome_info.shape}")
-            aprint(f"T={n_t}, C={n_c}, spatial={'x'.join(str(s) for s in spatial)}")
+            aprint(f"T={n_t_full}, C={n_c_full}, spatial={'x'.join(str(s) for s in spatial)}")
+
+            # Apply --timepoints / --channels slicing
+            t_indices = _parse_slice(timepoints_slice, n_t_full) if timepoints_slice else list(range(n_t_full))
+            c_indices = _parse_slice(channels_slice, n_c_full) if channels_slice else list(range(n_c_full))
+            n_t = len(t_indices)
+            n_c = len(c_indices)
+            if timepoints_slice or channels_slice:
+                aprint(f"Sliced: T={n_t} (of {n_t_full}), C={n_c} (of {n_c_full})")
 
         # 3. Pick tile size
         #
@@ -2728,6 +2765,8 @@ def batch_plan(
             slurm_mem_gb=mem,
             tasks_per_job=tasks_per_job,
             parallel_tasks_per_job=parallel,
+            timepoint_indices=t_indices if timepoints_slice else None,
+            channel_indices=c_indices if channels_slice else None,
             channel_colors=colors_list,
         )
 

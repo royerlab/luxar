@@ -87,6 +87,13 @@ class BatchManifest:
     # Merge config
     channel_colors: Optional[List[str]] = None
 
+    # Index arrays (when --timepoints/--channels slicing is used)
+    timepoint_indices: Optional[List[int]] = None
+    """Actual timepoint indices into the dataset, or None for contiguous 0..n_t-1."""
+
+    channel_indices: Optional[List[int]] = None
+    """Actual channel indices into the dataset, or None for contiguous 0..n_c-1."""
+
     # Post-submit state
     array_job_id: Optional[int] = None
     merge_job_id: Optional[int] = None

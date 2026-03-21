@@ -97,17 +97,31 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         ]
     )
 
+    # Index mapping arrays (for --timepoints/--channels slicing)
+    if manifest.timepoint_indices is not None:
+        t_arr = " ".join(str(i) for i in manifest.timepoint_indices)
+        lines.append(f"T_INDICES=({t_arr})")
+    if manifest.channel_indices is not None:
+        c_arr = " ".join(str(i) for i in manifest.channel_indices)
+        lines.append(f"C_INDICES=({c_arr})")
+    lines.append("")
+
     # Helper function: decode task ID and run fit
+    has_t_map = manifest.timepoint_indices is not None
+    has_c_map = manifest.channel_indices is not None
     lines.extend(
         [
             "run_task() {",
             "    local TASK_ID=$1",
             '    if [ "$TASK_ID" -ge "$TOTAL_TASKS" ]; then return; fi',
             "",
-            "    local T=$((TASK_ID / (N_CHANNELS * N_TILES)))",
+            "    local T_IDX=$((TASK_ID / (N_CHANNELS * N_TILES)))",
             "    local R=$((TASK_ID % (N_CHANNELS * N_TILES)))",
-            "    local C=$((R / N_TILES))",
+            "    local C_IDX=$((R / N_TILES))",
             "    local K=$((R % N_TILES))",
+            # Map sequential indices to actual dataset indices
+            f"    local T=${{T_INDICES[$T_IDX]}}" if has_t_map else "    local T=$T_IDX",
+            f"    local C=${{C_INDICES[$C_IDX]}}" if has_c_map else "    local C=$C_IDX",
             "",
             f'    local OUTPUT="{manifest.output_dir}/tiles/'
             f"t$(printf '%0{t_width}d' $T)_c$(printf '%0{c_width}d' $C)_tile$(printf '%0{k_width}d' $K)"
