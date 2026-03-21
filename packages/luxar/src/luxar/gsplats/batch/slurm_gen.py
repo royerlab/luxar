@@ -73,7 +73,7 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
             )
     fit_cmd = " \\\n    ".join(fit_cmd_parts)
 
-    # Loop body — processes tasks_per_job consecutive tasks
+    # Common variables
     lines.extend(
         [
             f"TASKS_PER_JOB={tpj}",
@@ -82,36 +82,76 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
             f"N_TILES={manifest.n_tiles}",
             "BASE_TASK=$((SLURM_ARRAY_TASK_ID * TASKS_PER_JOB))",
             "",
-            "for OFFSET in $(seq 0 $((TASKS_PER_JOB - 1))); do",
-            "    TASK_ID=$((BASE_TASK + OFFSET))",
+        ]
+    )
+
+    # Helper function: decode task ID and run fit
+    lines.extend(
+        [
+            "run_task() {",
+            "    local TASK_ID=$1",
+            '    if [ "$TASK_ID" -ge "$TOTAL_TASKS" ]; then return; fi',
             "",
-            "    # Stop if we've gone past the last task",
-            '    if [ "$TASK_ID" -ge "$TOTAL_TASKS" ]; then break; fi',
+            "    local T=$((TASK_ID / (N_CHANNELS * N_TILES)))",
+            "    local R=$((TASK_ID % (N_CHANNELS * N_TILES)))",
+            "    local C=$((R / N_TILES))",
+            "    local K=$((R % N_TILES))",
             "",
-            "    # --- Decode task ID -> (timepoint, channel, tile) ---",
-            "    T=$((TASK_ID / (N_CHANNELS * N_TILES)))",
-            "    R=$((TASK_ID % (N_CHANNELS * N_TILES)))",
-            "    C=$((R / N_TILES))",
-            "    K=$((R % N_TILES))",
-            "",
-            "    # Output path",
-            f'    OUTPUT="{manifest.output_dir}/tiles/'
+            f'    local OUTPUT="{manifest.output_dir}/tiles/'
             "t$(printf '%02d' $T)_c$(printf '%02d' $C)_tile$(printf '%03d' $K)"
             '.gsplats.zarr"',
             "",
-            "    # Skip if already completed (for restarts)",
             '    if [ -d "$OUTPUT" ]; then',
             '        echo "Already exists, skipping: $OUTPUT"',
-            "        continue",
+            "        return",
             "    fi",
             "",
             f'    echo "=== Task $TASK_ID / $TOTAL_TASKS (T=$T C=$C K=$K) ==="',
             f"    {fit_cmd}",
-            "",
-            "done",
+            "}",
             "",
         ]
     )
+
+    if manifest.parallel_tasks_per_job:
+        # Parallel mode: launch all tasks as background processes, then wait.
+        # Each process gets its own CUDA stream; GPU memory is shared.
+        lines.extend(
+            [
+                "# --- Parallel mode: launch tasks concurrently on the same GPU ---",
+                "PIDS=()",
+                "for OFFSET in $(seq 0 $((TASKS_PER_JOB - 1))); do",
+                "    TASK_ID=$((BASE_TASK + OFFSET))",
+                '    if [ "$TASK_ID" -ge "$TOTAL_TASKS" ]; then break; fi',
+                "    run_task $TASK_ID &",
+                "    PIDS+=($!)",
+                "done",
+                "",
+                "# Wait for all parallel tasks and collect exit codes",
+                "FAILED=0",
+                "for PID in ${PIDS[@]}; do",
+                "    if ! wait $PID; then FAILED=$((FAILED + 1)); fi",
+                "done",
+                'if [ "$FAILED" -gt 0 ]; then',
+                '    echo "WARNING: $FAILED of ${#PIDS[@]} parallel tasks failed"',
+                "    exit 1",
+                "fi",
+                "",
+            ]
+        )
+    else:
+        # Sequential mode: run tasks one by one
+        lines.extend(
+            [
+                "# --- Sequential mode: run tasks one by one ---",
+                "for OFFSET in $(seq 0 $((TASKS_PER_JOB - 1))); do",
+                "    TASK_ID=$((BASE_TASK + OFFSET))",
+                '    if [ "$TASK_ID" -ge "$TOTAL_TASKS" ]; then break; fi',
+                "    run_task $TASK_ID",
+                "done",
+                "",
+            ]
+        )
 
     return "\n".join(lines)
 
