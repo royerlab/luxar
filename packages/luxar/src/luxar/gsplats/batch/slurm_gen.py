@@ -56,10 +56,14 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.append("")
 
     # Compute printf format widths so filenames sort lexicographically.
-    # For 1434 timepoints: %04d; for 8 channels: %02d; for 252 tiles: %03d.
-    t_width = max(2, len(str(manifest.n_timepoints - 1))) if manifest.n_timepoints > 1 else 2
-    c_width = max(2, len(str(manifest.n_channels - 1))) if manifest.n_channels > 1 else 2
-    k_width = max(3, len(str(manifest.n_tiles - 1))) if manifest.n_tiles > 1 else 3
+    # When --timepoints slicing is used, the REAL indices (e.g. 1430) are
+    # larger than n_timepoints (20), so width must be based on the max value.
+    t_max = max(manifest.timepoint_indices) if manifest.timepoint_indices else max(0, manifest.n_timepoints - 1)
+    c_max = max(manifest.channel_indices) if manifest.channel_indices else max(0, manifest.n_channels - 1)
+    k_max = max(0, manifest.n_tiles - 1)
+    t_width = max(2, len(str(t_max)))
+    c_width = max(2, len(str(c_max)))
+    k_width = max(3, len(str(k_max)))
 
     # Build the fit command template (used in the loop body).
     # Only pass --channel / --timepoint when there are multiple values,
