@@ -238,17 +238,44 @@ install-pnpm:  ## Install pnpm package manager
 		echo "❌ npm not found. Install Node.js first with: make install-node"; \
 		exit 1; \
 	fi
-	npm install -g pnpm
-	@echo "✅ pnpm installed: $$(pnpm --version)"
+	@if command -v pnpm >/dev/null 2>&1; then \
+		echo "✅ pnpm already installed: $$(pnpm --version)"; \
+	elif [ -x "$$HOME/.local/bin/pnpm" ]; then \
+		echo "✅ pnpm already installed: $$($$HOME/.local/bin/pnpm --version) (in ~/.local/bin)"; \
+	elif npm install -g pnpm 2>/dev/null; then \
+		echo "✅ pnpm installed: $$(pnpm --version)"; \
+	else \
+		echo "   Global install failed (no sudo), installing to ~/.local ..."; \
+		npm install --prefix "$$HOME/.local" -g pnpm; \
+		mkdir -p "$$HOME/.local/bin"; \
+		if [ -x "$$HOME/.local/bin/pnpm" ]; then \
+			echo "✅ pnpm installed: $$($$HOME/.local/bin/pnpm --version) (in ~/.local/bin)"; \
+			echo "⚠️  Add ~/.local/bin to PATH: export PATH=\"$$HOME/.local/bin:$$PATH\""; \
+		else \
+			echo "❌ pnpm installation failed"; \
+			exit 1; \
+		fi; \
+	fi
 
 install-hatch:  ## Install Hatch for Python environment management
 	@echo "📦 Installing Hatch..."
-	@# Check if already installed
-	@if command -v hatch >/dev/null 2>&1; then \
+	@# Find a suitable Python 3.10+ interpreter
+	@PYTHON_CMD=""; \
+	for py in python3.13 python3.12 python3.11 python3.10 python3; do \
+		if command -v $$py >/dev/null 2>&1; then \
+			PY_MAJOR=$$($$py -c "import sys; print(sys.version_info.major)" 2>/dev/null); \
+			PY_MINOR=$$($$py -c "import sys; print(sys.version_info.minor)" 2>/dev/null); \
+			if [ "$$PY_MAJOR" = "3" ] && [ "$$PY_MINOR" -ge 10 ] 2>/dev/null; then \
+				PYTHON_CMD=$$py; \
+				break; \
+			fi; \
+		fi; \
+	done; \
+	if command -v hatch >/dev/null 2>&1; then \
 		echo "✅ Hatch already installed: $$(hatch --version)"; \
 	elif [ -x "$$HOME/.local/bin/hatch" ]; then \
-		echo "✅ Hatch already installed: $$($$HOME/.local/bin/hatch --version)"; \
-		echo "⚠️  Run 'pipx ensurepath' and restart terminal to add to PATH"; \
+		echo "✅ Hatch already installed: $$($$HOME/.local/bin/hatch --version) (in ~/.local/bin)"; \
+		echo "⚠️  Add ~/.local/bin to PATH: export PATH=\"$$HOME/.local/bin:$$PATH\""; \
 	elif command -v pipx >/dev/null 2>&1; then \
 		echo "Installing via pipx..."; \
 		pipx install hatch; \
@@ -259,11 +286,31 @@ install-hatch:  ## Install Hatch for Python environment management
 			echo "   Version: $$($$HOME/.local/bin/hatch --version)"; \
 			echo "⚠️  Run 'pipx ensurepath' and restart terminal to add to PATH"; \
 		fi; \
+	elif [ -n "$$PYTHON_CMD" ]; then \
+		echo "📥 Installing Hatch (no pipx, using $$PYTHON_CMD)..."; \
+		HATCH_INSTALLED=0; \
+		if $$PYTHON_CMD -m pip install --user hatch 2>/dev/null; then \
+			HATCH_INSTALLED=1; \
+		else \
+			echo "   pip --user failed, trying venv approach..."; \
+			HATCH_VENV="$$HOME/.local/hatch-env"; \
+			$$PYTHON_CMD -m venv "$$HATCH_VENV" 2>/dev/null && \
+			"$$HATCH_VENV/bin/pip" install hatch 2>/dev/null && \
+			mkdir -p "$$HOME/.local/bin" && \
+			ln -sf "$$HATCH_VENV/bin/hatch" "$$HOME/.local/bin/hatch" && \
+			HATCH_INSTALLED=1; \
+		fi; \
+		if [ "$$HATCH_INSTALLED" = "1" ] && [ -x "$$HOME/.local/bin/hatch" ]; then \
+			echo "✅ Hatch installed: $$($$HOME/.local/bin/hatch --version)"; \
+			echo "⚠️  Add ~/.local/bin to PATH: export PATH=\"$$HOME/.local/bin:$$PATH\""; \
+		else \
+			echo "❌ Hatch installation failed."; \
+			exit 1; \
+		fi; \
 	else \
-		echo "❌ pipx not found."; \
+		echo "❌ No suitable Python 3.10+ found and pipx not available."; \
 		echo ""; \
-		echo "Modern Ubuntu/Debian requires pipx for installing Python CLI tools."; \
-		echo "Please install pipx first:"; \
+		echo "Please install pipx or ensure Python 3.10+ is in PATH:"; \
 		echo ""; \
 		if [ "$(PKG_MANAGER)" = "apt" ]; then \
 			echo "  sudo apt-get install -y pipx"; \
@@ -805,12 +852,23 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 		exit 1; \
 	fi
 	@echo "✅ Python: $$(python3 --version)"
-	@# Install/fix hatch (use pipx)
-	@if command -v hatch >/dev/null 2>&1; then \
+	@# Install/fix hatch (use pipx or pip --user fallback for HPC/no-sudo systems)
+	@PYTHON_CMD=""; \
+	for py in python3.13 python3.12 python3.11 python3.10 python3; do \
+		if command -v $$py >/dev/null 2>&1; then \
+			PY_MAJOR=$$($$py -c "import sys; print(sys.version_info.major)" 2>/dev/null); \
+			PY_MINOR=$$($$py -c "import sys; print(sys.version_info.minor)" 2>/dev/null); \
+			if [ "$$PY_MAJOR" = "3" ] && [ "$$PY_MINOR" -ge 10 ] 2>/dev/null; then \
+				PYTHON_CMD=$$py; \
+				break; \
+			fi; \
+		fi; \
+	done; \
+	if command -v hatch >/dev/null 2>&1; then \
 		echo "✅ Hatch: $$(hatch --version)"; \
 	elif [ -x "$$HOME/.local/bin/hatch" ]; then \
 		echo "✅ Hatch: $$($$HOME/.local/bin/hatch --version) (in ~/.local/bin)"; \
-		echo "⚠️  Note: Run 'pipx ensurepath' and restart terminal to add to PATH"; \
+		echo "⚠️  Note: Add ~/.local/bin to PATH: export PATH=\"$$HOME/.local/bin:$$PATH\""; \
 	elif command -v pipx >/dev/null 2>&1; then \
 		echo "📥 Installing Hatch via pipx..."; \
 		if pipx list 2>/dev/null | grep -q "package hatch"; then \
@@ -828,12 +886,33 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 			echo "❌ Hatch installation failed. Try: pipx reinstall hatch"; \
 			exit 1; \
 		fi; \
+	elif [ -n "$$PYTHON_CMD" ]; then \
+		echo "📥 Installing Hatch (no pipx, using $$PYTHON_CMD)..."; \
+		HATCH_INSTALLED=0; \
+		if $$PYTHON_CMD -m pip install --user hatch 2>/dev/null; then \
+			HATCH_INSTALLED=1; \
+		else \
+			echo "   pip --user failed, trying venv approach..."; \
+			HATCH_VENV="$$HOME/.local/hatch-env"; \
+			$$PYTHON_CMD -m venv "$$HATCH_VENV" 2>/dev/null && \
+			"$$HATCH_VENV/bin/pip" install hatch 2>/dev/null && \
+			mkdir -p "$$HOME/.local/bin" && \
+			ln -sf "$$HATCH_VENV/bin/hatch" "$$HOME/.local/bin/hatch" && \
+			HATCH_INSTALLED=1; \
+		fi; \
+		if [ "$$HATCH_INSTALLED" = "1" ] && [ -x "$$HOME/.local/bin/hatch" ]; then \
+			echo "✅ Hatch: $$($$HOME/.local/bin/hatch --version) (in ~/.local/bin)"; \
+			echo "⚠️  Note: Add ~/.local/bin to PATH: export PATH=\"$$HOME/.local/bin:$$PATH\""; \
+		else \
+			echo "❌ Hatch installation failed."; \
+			exit 1; \
+		fi; \
 	else \
 		echo ""; \
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-		echo "⚠️  pipx not found (required for installing Hatch on modern Ubuntu/Debian)"; \
+		echo "⚠️  pipx not found and no Python 3.10+ available for pip install."; \
 		echo ""; \
-		echo "Please install pipx first, then re-run 'make setup-dev':"; \
+		echo "Please install pipx or load a Python 3.10+ module, then re-run 'make setup-dev':"; \
 		echo ""; \
 		if [ "$(PKG_MANAGER)" = "apt" ]; then \
 			echo "  sudo apt-get install -y pipx"; \
@@ -901,15 +980,26 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
 		. "$$NVM_DIR/nvm.sh"; \
 	fi; \
-	if ! command -v pnpm >/dev/null 2>&1; then \
-		echo "📥 Installing pnpm..."; \
-		npm install -g pnpm; \
-	fi; \
 	if command -v pnpm >/dev/null 2>&1; then \
 		echo "✅ pnpm: $$(pnpm --version)"; \
+	elif [ -x "$$HOME/.local/bin/pnpm" ]; then \
+		echo "✅ pnpm: $$($$HOME/.local/bin/pnpm --version) (in ~/.local/bin)"; \
 	else \
-		echo "❌ pnpm installation failed"; \
-		exit 1; \
+		echo "📥 Installing pnpm..."; \
+		if npm install -g pnpm 2>/dev/null; then \
+			echo "✅ pnpm: $$(pnpm --version)"; \
+		else \
+			echo "   Global install failed (no sudo), installing to ~/.local ..."; \
+			npm install --prefix "$$HOME/.local" -g pnpm; \
+			mkdir -p "$$HOME/.local/bin"; \
+			if [ -x "$$HOME/.local/bin/pnpm" ]; then \
+				echo "✅ pnpm: $$($$HOME/.local/bin/pnpm --version) (in ~/.local/bin)"; \
+				echo "⚠️  Add ~/.local/bin to PATH: export PATH=\"$$HOME/.local/bin:$$PATH\""; \
+			else \
+				echo "❌ pnpm installation failed"; \
+				exit 1; \
+			fi; \
+		fi; \
 	fi
 	@echo ""
 	@# Step 3: Set up Python environment with Hatch
