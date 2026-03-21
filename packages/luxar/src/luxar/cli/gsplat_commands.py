@@ -2553,22 +2553,38 @@ def batch_plan(
             aprint(f"T={n_t}, C={n_c}, spatial={'x'.join(str(s) for s in spatial)}")
 
         # 3. Pick tile size
+        #
+        # The goal is to choose the largest tile that fits in GPU memory.
+        # For anisotropic volumes (e.g. 108×1352×532) the old logic
+        # `min(peak_shape[0], *spatial)` would cap at the smallest dim (108),
+        # producing hundreds of tiny tiles even when the whole volume fits.
+        #
+        # New logic: compare total spatial voxels against max safe voxel
+        # count from the benchmark.  If the volume fits, skip tiling entirely.
         auto_tile = tile_size is None
         if auto_tile:
-            # summary is guaranteed non-None here (checked above)
             assert summary is not None
+            import math
+
+            total_voxels = math.prod(spatial)
+
+            # Get max safe voxel count from benchmark profile
             peak_shape = peak.get("shape", [])
-            if peak_shape:
-                tile_size = peak_shape[0]
-                tile_size = min(tile_size, *spatial)
+            oom = (summary or {}).get("oom_boundaries", {}).get("3d", {})
+            max_shape = oom.get("max_successful_shape", peak_shape)
+            max_safe_voxels = math.prod(max_shape) if max_shape else 256 ** 3
+
+            if total_voxels <= max_safe_voxels:
+                # Whole volume fits — set tile_size large enough that
+                # stride (= tile_size - overlap) exceeds every spatial dim,
+                # guaranteeing compute_tile_specs produces exactly 1 tile.
+                tile_size = max(spatial) + tile_overlap
             else:
-                oom = summary.get("oom_boundaries", {}).get("3d", {})
-                max_shape = oom.get("max_successful_shape")
-                if max_shape:
-                    tile_size = max_shape[0]
-                    tile_size = min(tile_size, *spatial)
-                else:
-                    tile_size = 256
+                # Volume is too large — tile it.  Use the cube root of max
+                # safe voxels as the isotropic tile edge length, clamped to
+                # the largest spatial dim.
+                tile_edge = int(max_safe_voxels ** (1.0 / len(spatial)))
+                tile_size = min(tile_edge, max(spatial))
 
         assert tile_size is not None  # narrowed by branches above
 
