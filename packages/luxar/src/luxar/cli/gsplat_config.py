@@ -39,19 +39,19 @@ PRESETS: Dict[str, Dict[str, Any]] = {
     "draft": {
         "n_iters": 500,
         "early_stop_patience": 100,
-        "cull_ratio": 0.05,
+        "cull_ratio": 0.0,
         "max_eccentricity": 10.0,
     },
     "standard": {
         "n_iters": 3000,
         "early_stop_patience": 300,
-        "cull_ratio": 0.01,
+        "cull_ratio": 0.0,
         "max_eccentricity": 10.0,
     },
     "hifi": {
         "n_iters": 6000,
         "early_stop_patience": 500,
-        "cull_ratio": 0.005,
+        "cull_ratio": 0.0,
         "max_eccentricity": 15.0,
     },
 }
