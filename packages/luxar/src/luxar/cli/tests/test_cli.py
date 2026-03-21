@@ -271,7 +271,7 @@ def test_cli_help_commands(runner) -> None:
     # Test main help
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "luxar – build and serve Zarr-backed 3-D scenes" in result.stdout
+    assert "luxar – build and serve Zarr-backed nD scenes" in result.stdout
 
     # Test individual command help
     for command in ["demo", "serve", "info", "viewer"]:
@@ -284,3 +284,138 @@ def test_invalid_command(runner) -> None:
     """Test invalid command handling."""
     result = runner.invoke(app, ["invalid_command"])
     assert result.exit_code != 0
+
+
+# ── Tests guarding CLI fixes ─────────────────────────────────────────────────
+
+
+def test_version_flag(runner) -> None:
+    """Test --version flag shows version string (#7)."""
+    from luxar import __version__
+
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert __version__ in result.stdout
+
+
+def test_no_command_shows_help(runner) -> None:
+    """Test that running luxar with no command shows help (regression guard)."""
+    result = runner.invoke(app, [])
+    assert result.exit_code == 0
+    assert "COMMAND" in result.stdout or "Commands" in result.stdout
+
+
+def test_info_format_validation(runner, sample_scene) -> None:
+    """Test that --format rejects invalid values (#1)."""
+    result = runner.invoke(app, ["info", str(sample_scene), "--format", "xml"])
+    assert result.exit_code == 1
+    assert "Unknown format" in result.stdout
+
+
+def test_info_json_with_stats_includes_details(runner, sample_scene) -> None:
+    """Test that --stats adds shape/dtype to JSON output (#16)."""
+    import json
+
+    result = runner.invoke(
+        app, ["info", str(sample_scene), "--format", "json", "--stats"]
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert len(data["points_objects"]) > 0
+    assert "shape" in data["points_objects"][0]
+    assert "dtype" in data["points_objects"][0]
+
+
+def test_info_json_without_stats_no_details(runner, sample_scene) -> None:
+    """Test that JSON without --stats omits shape/dtype (#16)."""
+    import json
+
+    result = runner.invoke(app, ["info", str(sample_scene), "--format", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert len(data["points_objects"]) > 0
+    assert "shape" not in data["points_objects"][0]
+
+
+def test_info_detects_lines_objects(runner, tmp_path) -> None:
+    """Test that info detects Lines geometry type (#9)."""
+    import json
+
+    store_path = tmp_path / "lines_scene.zarr"
+    root = zarr.open_group(store_path, mode="w")
+    root.attrs["type"] = "scene"
+    lines_group = root.create_group("my_lines")
+    lines_group.attrs["type"] = "lines"
+    lines_group.create_dataset(
+        "vertices", data=np.random.rand(100, 3).astype(np.float32)
+    )
+    lines_group.create_dataset("widths", data=np.ones(100, dtype=np.float32))
+
+    result = runner.invoke(app, ["info", str(store_path), "--format", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert len(data["lines_objects"]) == 1
+    assert data["lines_objects"][0]["n_vertices"] == 100
+    assert data["n_lines_vertices_total"] == 100
+
+
+def test_info_detects_gsplats_objects(runner, tmp_path) -> None:
+    """Test that info detects GSplats geometry type (#9)."""
+    import json
+
+    store_path = tmp_path / "gsplats_scene.zarr"
+    root = zarr.open_group(store_path, mode="w")
+    root.attrs["type"] = "scene"
+    gs_group = root.create_group("my_gsplats")
+    gs_group.attrs["type"] = "gsplats"
+    gs_group.create_dataset("centers", data=np.random.rand(50, 3).astype(np.float32))
+
+    result = runner.invoke(app, ["info", str(store_path), "--format", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert len(data["gsplats_objects"]) == 1
+    assert data["gsplats_objects"][0]["n_splats"] == 50
+    assert data["n_gsplats_total"] == 50
+
+
+def test_demo_no_serve_requires_output(runner) -> None:
+    """Test that demo --no-serve without --output errors (#11)."""
+    result = runner.invoke(app, ["demo", "--no-serve"])
+    assert result.exit_code == 1
+    assert "--output is required" in result.stdout
+
+
+def test_demo_rejects_zero_points(runner, tmp_path) -> None:
+    """Test that demo rejects --points 0 with clear message (#3)."""
+    result = runner.invoke(
+        app, ["demo", "--no-serve", "-o", str(tmp_path / "x.zarr"), "--points", "0"]
+    )
+    assert result.exit_code == 1
+    assert "must be positive" in result.stdout
+
+
+def test_demo_rejects_negative_points(runner, tmp_path) -> None:
+    """Test that demo rejects --points -1 with clear message (#4)."""
+    result = runner.invoke(
+        app, ["demo", "--no-serve", "-o", str(tmp_path / "x.zarr"), "--points", "-1"]
+    )
+    assert result.exit_code == 1
+    assert "must be positive" in result.stdout
+
+
+def test_info_tree_shows_lines_icon(runner, tmp_path) -> None:
+    """Test that tree view shows correct icon for Lines (#9)."""
+    store_path = tmp_path / "lines_scene.zarr"
+    root = zarr.open_group(store_path, mode="w")
+    root.attrs["type"] = "scene"
+    lines_group = root.create_group("my_lines")
+    lines_group.attrs["type"] = "lines"
+    lines_group.create_dataset(
+        "vertices", data=np.random.rand(10, 3).astype(np.float32)
+    )
+
+    result = runner.invoke(app, ["info", str(store_path)])
+    assert result.exit_code == 0
+    assert "my_lines" in result.stdout
+    # The tree should show the lines icon
+    assert "📏" in result.stdout
