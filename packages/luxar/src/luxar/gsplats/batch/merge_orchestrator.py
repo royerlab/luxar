@@ -61,7 +61,7 @@ def merge_batch_results(
 
                 tile_files = []
                 for k in range(n_k):
-                    fname = output_filename(t, c, k)
+                    fname = output_filename(t, c, k, n_t, n_c, n_k)
                     tile_path = tiles_dir / fname
                     if not tile_path.exists():
                         raise FileNotFoundError(

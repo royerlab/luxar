@@ -55,6 +55,12 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.append(env_preamble)
     lines.append("")
 
+    # Compute printf format widths so filenames sort lexicographically.
+    # For 1434 timepoints: %04d; for 8 channels: %02d; for 252 tiles: %03d.
+    t_width = max(2, len(str(manifest.n_timepoints - 1))) if manifest.n_timepoints > 1 else 2
+    c_width = max(2, len(str(manifest.n_channels - 1))) if manifest.n_channels > 1 else 2
+    k_width = max(3, len(str(manifest.n_tiles - 1))) if manifest.n_tiles > 1 else 3
+
     # Build the fit command template (used in the loop body).
     # Only pass --channel / --timepoint when there are multiple values,
     # otherwise _load_zarr_volume's ndim heuristic may interpret them
@@ -104,7 +110,7 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
             "    local K=$((R % N_TILES))",
             "",
             f'    local OUTPUT="{manifest.output_dir}/tiles/'
-            "t$(printf '%02d' $T)_c$(printf '%02d' $C)_tile$(printf '%03d' $K)"
+            f"t$(printf '%0{t_width}d' $T)_c$(printf '%0{c_width}d' $C)_tile$(printf '%0{k_width}d' $K)"
             '.gsplats.zarr"',
             "",
             '    if [ -d "$OUTPUT" ]; then',

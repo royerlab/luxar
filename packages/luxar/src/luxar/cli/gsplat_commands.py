@@ -2723,7 +2723,7 @@ def batch_plan(
                     timepoint=t,
                     channel=c,
                     tile_index=k,
-                    output_filename=output_filename(t, c, k),
+                    output_filename=output_filename(t, c, k, n_t, n_c, n_tiles),
                     estimated_wall_seconds=est_seconds,
                 )
             )
