@@ -371,6 +371,15 @@ def get_gpu_summary(
         single_summary: Dict[str, Any] = next(iter(gpus.values()))["summary"]
         return single_summary
 
+    # Multiple profiles but no GPU available for auto-detection (e.g. login
+    # node) — pick the one with the least memory (conservative).
+    if gpus:
+        conservative_name = min(
+            gpus,
+            key=lambda n: gpus[n].get("info", {}).get("total_memory_gb", float("inf")),
+        )
+        return gpus[conservative_name]["summary"]
+
     return None
 
 

@@ -157,7 +157,14 @@ def generate_env_preamble(env: CapturedEnv) -> str:
         # Skip CONDA_PREFIX/VIRTUAL_ENV — handled by activation
         if var in ("CONDA_PREFIX", "VIRTUAL_ENV"):
             continue
-        lines.append(f"export {var}={shlex.quote(val)}")
+        # LD_LIBRARY_PATH must prepend, not replace — module loads (gcc, cuda)
+        # set their own paths and a hard overwrite would break them.
+        if var == "LD_LIBRARY_PATH":
+            lines.append(
+                f"export {var}={shlex.quote(val)}:${{{var}:-}}"
+            )
+        else:
+            lines.append(f"export {var}={shlex.quote(val)}")
 
     lines.append("")
     return "\n".join(lines)
