@@ -2293,6 +2293,7 @@ def benchmark_gpu(
             "#!/bin/bash\n"
             f"#SBATCH --job-name=luxar-benchmark\n"
             f"#SBATCH --partition={partition}\n"
+            "#SBATCH --ntasks=1\n"
             "#SBATCH --gpus-per-task=1\n"
             "#SBATCH --cpus-per-task=4\n"
             "#SBATCH --mem=32G\n"
@@ -2436,6 +2437,17 @@ def batch_plan(
     channel_colors: Optional[str] = typer.Option(
         None, "--channel-colors", help="Hex colors for per-channel merge"
     ),
+    # Dataset structure override
+    axes: Optional[str] = typer.Option(
+        None,
+        "--axes",
+        help=(
+            "Comma-separated axis names overriding auto-detection, e.g. "
+            "'time,camera,channel,z,y,x'. Recognised special names: "
+            "time/t (timepoint), channel/c/ch/camera/cam (channel), "
+            "z/y/x/depth/height/width (spatial)."
+        ),
+    ),
     # Control
     submit: bool = typer.Option(
         False, "--submit", help="Actually submit to Slurm (default: dry-run)"
@@ -2449,14 +2461,18 @@ def batch_plan(
 
     By default shows the plan without submitting. Pass --submit to submit.
 
-    Requires a GPU profile from `luxar gsplat benchmark`.
+    A GPU profile from `luxar gsplat benchmark` is used to auto-select tile
+    size; pass --tile-size to skip the profile requirement.
 
     Examples:
-        luxar gsplat batch data.ome.zarr output/ --partition gpu
+        luxar gsplat batch data.ome.zarr output/ --partition gpu --tile-size 128
 
         luxar gsplat batch data.ome.zarr output/ --partition gpu --submit
 
         luxar gsplat batch data.ome.zarr output/ -p gpu --tile-size 256 --preset hifi
+
+        luxar gsplat batch keller.zarr.zip out/ -p gpu --tile-size 128 \\
+            --axes time,camera,channel,z,y,x
     """
     if partition is None:
         aprint("Error: --partition is required")
@@ -2495,25 +2511,29 @@ def batch_plan(
         )
         from luxar.gsplats.tiling import compute_tile_specs
 
-        # 1. Load GPU profile
+        # 1. Load GPU profile (required only for auto tile-size)
+        axes_list = [a.strip() for a in axes.split(",")] if axes else None
         summary = get_gpu_summary(
             gpu_name=gpu_name_opt,
             gpu_mem=float(gpu_mem) if gpu_mem else None,
         )
-        if summary is None:
+        if summary is None and tile_size is None:
             aprint("Error: No GPU benchmark profile found.")
             aprint("")
-            aprint("Run `luxar gsplat benchmark` on a GPU node first.")
-            aprint("Or: luxar gsplat benchmark --slurm --partition <partition>")
+            aprint("Option A — run the benchmark first (recommended):")
+            aprint("  luxar gsplat benchmark --slurm --partition " + (partition or "<partition>"))
+            aprint("")
+            aprint("Option B — skip the profile by providing a tile size explicitly:")
+            aprint("  luxar gsplat batch ... --tile-size 128")
             raise typer.Exit(1)
 
-        recs = summary.get("recommendations", {})
+        recs = (summary or {}).get("recommendations", {})
         peak = recs.get("peak_throughput_3d", {})
 
         # Resolve GPU name for display
         profiles = load_profiles()
         resolved_gpu = gpu_name_opt
-        if resolved_gpu is None:
+        if summary is not None and resolved_gpu is None:
             for name, entry in profiles.get("gpus", {}).items():
                 if entry.get("summary") == summary:
                     resolved_gpu = name
@@ -2524,7 +2544,7 @@ def batch_plan(
 
         # 2. Discover dataset shape
         with asection("Discovering dataset shape"):
-            ome_info = discover_ome_zarr_shape(input_path)
+            ome_info = discover_ome_zarr_shape(input_path, axes_override=axes_list)
             n_t = ome_info.n_timepoints
             n_c = ome_info.n_channels
             spatial = ome_info.spatial_shape
@@ -2535,6 +2555,8 @@ def batch_plan(
         # 3. Pick tile size
         auto_tile = tile_size is None
         if auto_tile:
+            # summary is guaranteed non-None here (checked above)
+            assert summary is not None
             peak_shape = peak.get("shape", [])
             if peak_shape:
                 tile_size = peak_shape[0]
