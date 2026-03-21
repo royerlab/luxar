@@ -486,6 +486,71 @@ All compiler output is in `build-cuda-logs/build_<JOB_ID>.out`. Common issues:
 | `.so not found after build` | Build succeeded but path wrong | Run `make test-cuda` which also searches for the .so |
 | `sbatch: Invalid job id` | Job already finished | Check the `.out` file — it may have succeeded |
 
+### Multi-architecture CUDA build
+
+The CUDA extension compiles for **all common GPU architectures** (sm_70 through sm_90)
+plus PTX for forward compatibility with future GPUs. This ensures the `.so` works on any
+GPU in a heterogeneous cluster (e.g. A6000 sm_86 + H100/H200 sm_90).
+
+Override with `CUDA_ARCHS` environment variable:
+```bash
+make build-cuda SLURM=1                     # Default: sm_70,75,80,86,89,90 + PTX
+CUDA_ARCHS="86;90" make build-cuda SLURM=1  # Only sm_86 and sm_90 (faster compile)
+```
+
+### Build metadata (`cuda_build_info.json`)
+
+After compilation, `build.py` writes `cuda_build_info.json` alongside the `.so` recording:
+- Which modules were loaded at build time (cuda/, gcc/)
+- PyTorch and CUDA versions
+- Python version
+
+At job submission time, `env_capture.py` reads this file and automatically
+adds missing modules to the sbatch preamble — so users don't need to remember
+to `module load gcc/14.2` before submitting fit jobs.
+
+### Batch fitting on Slurm
+
+After building the CUDA extension, use `luxar gsplat batch plan` to plan and
+submit large-scale fitting jobs:
+
+```bash
+# Plan (dry-run by default)
+hatch run luxar gsplat batch plan data.zarr.zip output/ -p gpu
+
+# Override axis labels for non-standard zarr layouts
+hatch run luxar gsplat batch plan data.zarr.zip output/ -p gpu \
+    --axes time,camera,channel,z,y,x
+
+# Submit with sequential task packing (default)
+hatch run luxar gsplat batch plan data.zarr.zip output/ -p gpu --submit
+
+# Parallel task packing (multiple fits sharing one GPU)
+hatch run luxar gsplat batch plan data.zarr.zip output/ -p gpu --parallel --submit
+
+# Manual control
+hatch run luxar gsplat batch plan data.zarr.zip output/ -p gpu \
+    --tile-size 256 --tasks-per-job 3 --preset draft --submit
+```
+
+**Key CLI options for batch plan:**
+
+| Option | Purpose |
+|--------|---------|
+| `--axes` | Comma-separated axis labels (e.g. `time,z,y,x`) — overrides auto-detection |
+| `--tile-size` | Manual tile size in voxels — skips GPU profile requirement |
+| `--tasks-per-job` | Number of tasks per Slurm job (auto-calculated from GPU capacity) |
+| `--parallel` / `--sequential` | Run packed tasks concurrently or one-by-one (default: sequential) |
+| `--preset` | Fitting preset: `draft` (500 iter), `standard` (3000), `hifi` (6000) |
+| `--gpu` | GPU profile name when auto-detect unavailable (login node) |
+
+**Auto-tiling**: compares total spatial voxels against the GPU's benchmarked
+capacity. Small volumes (e.g. 108×1352×532 = 78M voxels on H100 max 453M) get
+no tiling at all. Only volumes exceeding GPU capacity are tiled.
+
+**Task packing**: when volumes are small relative to GPU capacity, multiple
+fitting tasks are grouped into each Slurm job to reduce scheduling overhead.
+
 ### Running smoke tests
 
 `scripts/test_hpc_setup.py` verifies the HPC environment:
@@ -495,6 +560,14 @@ python scripts/test_hpc_setup.py
 ```
 
 Tests: Python 3.10+ available, hatch installed and functional, hatch env show works, hatch uses Python >= 3.10, pnpm installed and functional, `~/.local/bin` in PATH, npm `--prefix` fallback works, hatch venv uses Python >= 3.10.
+
+`scripts/test_batch_plan_fixes.py` verifies the batch planning fixes:
+
+```bash
+hatch run python scripts/test_batch_plan_fixes.py
+```
+
+Tests: zarr.zip support, custom axes parsing, axes override validation, array selection consistency, auto-tile logic, cull_ratio defaults, 6D slicing, manifest serialization, LD_LIBRARY_PATH handling.
 
 ---
 
@@ -513,6 +586,7 @@ The build system uses these environment variables:
 | `SLURM_QOS` | Slurm QOS for GPU builds | (none) |
 | `SLURM_TIME` | Wall-time limit for Slurm build jobs | `01:00:00` |
 | `CUDA_MODULE` | CUDA module to load on compute node (`auto` = detect) | `auto` |
+| `CUDA_ARCHS` | CUDA architectures to compile for (e.g. `86;90`) | all common (70-90) |
 
 ## CI/CD Integration
 

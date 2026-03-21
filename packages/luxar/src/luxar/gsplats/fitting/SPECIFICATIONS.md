@@ -805,14 +805,16 @@ Ls_np = optimization_results.Ls.cpu().numpy()                # Shape: (N, d, d)
 amps_np = optimization_results.amps.cpu().numpy()            # Shape: (N,)
 ```
 
-**Post-fit Culling**:
-After extracting parameters, splats with amplitude below a noise floor are removed:
+**Post-fit Culling** (disabled by default):
+Optionally, splats with amplitude below a noise floor can be removed:
 ```python
-threshold = cull_ratio * max_abs_error  # e.g., 0.01 * max_abs_error for "standard" preset
+threshold = cull_ratio * max_abs_error  # cull_ratio=0.0 by default (disabled)
 mask = amps > threshold
 # Apply mask to all arrays (centers, Ls, amps)
 ```
-This removes splats that contribute negligibly to the reconstruction, reducing file size and rendering cost.
+Culling is **disabled by default** (`cull_ratio=0.0` in all presets) to preserve the
+full fitted result and avoid silently removing valid splats with a poorly-tuned threshold.
+Use `luxar gsplat prune` as a separate, explicit step when pruning is desired.
 
 **Cholesky Factor Packing**:
 ```python
