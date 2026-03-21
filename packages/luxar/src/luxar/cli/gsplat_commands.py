@@ -2453,9 +2453,19 @@ def batch_plan(
         None,
         "--tasks-per-job",
         help=(
-            "Number of fitting tasks to run sequentially per Slurm job. "
+            "Number of fitting tasks to run per Slurm job. "
             "Auto-calculated from GPU capacity when omitted. "
             "Packing multiple small volumes per GPU reduces scheduling overhead."
+        ),
+    ),
+    parallel: bool = typer.Option(
+        False,
+        "--parallel/--sequential",
+        help=(
+            "Run packed tasks concurrently (--parallel) or one by one "
+            "(--sequential, default). Parallel mode launches multiple fit "
+            "processes sharing the same GPU — higher throughput but uses "
+            "more GPU memory."
         ),
     ),
     # Control
@@ -2637,14 +2647,25 @@ def batch_plan(
 
         if tasks_per_job is None:
             # Auto: how many volumes fit in the benchmark's max safe voxels?
+            # Each fit uses ~3-5× the volume memory (params + optimizer state
+            # + gradients), so be conservative for parallel mode.
             max_safe = _math.prod(max_shape) if max_shape else tile_voxels
-            packing = max(1, int(max_safe / max(tile_voxels, 1)))
-            # Cap at a reasonable number (don't make jobs too long)
+            if parallel:
+                # Each concurrent fit holds the volume tensor + model params
+                # + optimizer state.  ~2× the raw volume is a safe estimate.
+                packing = max(1, int(max_safe / max(tile_voxels * 2, 1)))
+            else:
+                packing = max(1, int(max_safe / max(tile_voxels, 1)))
+            # Cap at a reasonable number
             tasks_per_job = min(packing, 10)
         tasks_per_job = max(1, tasks_per_job)
 
         n_slurm_jobs = _math.ceil(total_tasks / tasks_per_job)
-        est_seconds_per_job = est_seconds * tasks_per_job
+        if parallel:
+            # Parallel: all tasks run at once, so wall time ≈ 1 task
+            est_seconds_per_job = est_seconds * 1.2  # 20% overhead for contention
+        else:
+            est_seconds_per_job = est_seconds * tasks_per_job
         slurm_time = time_limit or estimate_slurm_time_limit(est_seconds_per_job)
         total_gpu_hours = est_seconds * total_tasks / 3600.0
 
@@ -2683,6 +2704,7 @@ def batch_plan(
             slurm_cpus=cpus,
             slurm_mem_gb=mem,
             tasks_per_job=tasks_per_job,
+            parallel_tasks_per_job=parallel,
             channel_colors=colors_list,
         )
 
@@ -2732,7 +2754,8 @@ def batch_plan(
             aprint("  Tile: not needed (volume fits in GPU memory)")
         aprint(f"  Jobs: {n_t} x {n_c} x {n_tiles} = {total_tasks} fitting tasks")
         if tasks_per_job > 1:
-            aprint(f"  Packing: {tasks_per_job} tasks/job → {n_slurm_jobs} Slurm array elements")
+            mode = "parallel" if parallel else "sequential"
+            aprint(f"  Packing: {tasks_per_job} tasks/job ({mode}) → {n_slurm_jobs} Slurm array elements")
         else:
             aprint(f"  Slurm array: {total_tasks} elements (1 task each)")
         aprint(
@@ -2740,7 +2763,10 @@ def batch_plan(
             f" (preset: {preset}, {n_iters} iters)"
         )
         if tasks_per_job > 1:
-            aprint(f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min ({tasks_per_job} tasks × {est_seconds / 60:.0f} min)")
+            if parallel:
+                aprint(f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min ({tasks_per_job} tasks in parallel)")
+            else:
+                aprint(f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min ({tasks_per_job} tasks × {est_seconds / 60:.0f} min)")
         aprint(f"  Est. total GPU-hours: {total_gpu_hours:.0f} h")
         aprint(f"  Slurm --time: {slurm_time}")
         aprint(f"  Partition: {partition}, GPUs: {gpus}, CPUs: {cpus}, Mem: {mem}G")
