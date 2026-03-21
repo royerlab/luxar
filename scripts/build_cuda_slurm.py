@@ -84,6 +84,39 @@ def best_cuda_module(torch_cuda_version: str, available: list[str]) -> str | Non
     return candidates[-1]  # highest version (list is sorted)
 
 
+def list_available_gcc_modules() -> list[str]:
+    """Return sorted list of 'gcc/X.Y...' module names available via 'module spider gcc'."""
+    result = run(["bash", "-c", "module spider gcc 2>&1"])
+    modules = []
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("gcc/"):
+            modules.append(stripped)
+    return sorted(modules)
+
+
+def best_gcc_module(available: list[str]) -> str | None:
+    """
+    Pick the highest available GCC module that is >= 9 (required by PyTorch 2.x).
+
+    Module names look like 'gcc/11.3' or 'gcc/14.2'.
+    Returns None if no suitable module is found (system GCC may already be >=9).
+    """
+    candidates = []
+    for m in available:
+        ver_str = m.split("/")[1].split(".")[0]  # e.g. "11" from "gcc/11.3"
+        try:
+            major = int(ver_str)
+            if major >= 9:
+                candidates.append((major, m))
+        except ValueError:
+            continue
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0])
+    return candidates[-1][1]  # highest major version
+
+
 def get_virtual_env() -> str | None:
     """Return the path to the active virtualenv, or None."""
     return os.environ.get("VIRTUAL_ENV")
@@ -125,6 +158,7 @@ def generate_sbatch_script(
     *,
     partition: str,
     cuda_module: str,
+    gcc_module: str,
     virtual_env: str,
     project_root: Path,
     account: str,
@@ -135,7 +169,6 @@ def generate_sbatch_script(
 ) -> str:
     """Return a complete, heavily-commented sbatch script string."""
 
-    hatch_bin = shutil.which("hatch") or str(Path.home() / ".local" / "bin" / "hatch")
     log_dir = project_root / "build-cuda-logs"
     log_out = log_dir / "build_%j.out"
     log_err = log_dir / "build_%j.err"
@@ -146,6 +179,25 @@ def generate_sbatch_script(
 
     account_line = f"#SBATCH --account={account}" if account else "# (no --account set; add SLURM_ACCOUNT=... to make command if needed)"
     qos_line = f"#SBATCH --qos={qos}" if qos else "# (no --qos set; add SLURM_QOS=... to make command if needed)"
+
+    # gcc_load_block is injected at column 0 in the template (see placeholder
+    # below).  textwrap.dedent strips the MINIMUM leading whitespace across all
+    # lines.  To ensure it still strips the 8-space indent that every other
+    # template line has, every line of gcc_load_block must also start with 8
+    # spaces — that way the minimum stays 8 and dedent strips uniformly.
+    _i = "        "  # 8 spaces — matches the template's indent level
+    if gcc_module:
+        gcc_load_block = (
+            f"{_i}# PyTorch 2.x requires GCC >= 9.  Load a newer GCC module.\n"
+            f'{_i}echo "    Loading GCC module: {gcc_module}"\n'
+            f"{_i}module load {gcc_module}\n"
+            f'{_i}echo "    g++ version: $(g++ --version | head -1)"\n'
+        )
+    else:
+        gcc_load_block = (
+            f"{_i}# GCC module: none needed (system GCC is assumed to be >= 9)\n"
+            f'{_i}echo "    g++ version: $(g++ --version | head -1)"\n'
+        )
 
     script = textwrap.dedent(f"""\
         #!/bin/bash
@@ -185,12 +237,12 @@ def generate_sbatch_script(
         echo "============================================================"
         echo ""
 
-        # ── Step 1: Load CUDA toolkit ─────────────────────────────────
+        # ── Step 1: Load CUDA toolkit (and GCC >= 9 if needed) ───────────
         echo ">>> Step 1/5: Loading CUDA module ({cuda_module})"
         module load {cuda_module}
         echo "    nvcc version: $(nvcc --version | grep 'release' | awk '{{print $6}}')"
         echo "    nvcc path   : $(which nvcc)"
-        echo ""
+{gcc_load_block}        echo ""
 
         # ── Step 2: Verify GPU is accessible ─────────────────────────
         echo ">>> Step 2/5: Verifying GPU access"
@@ -445,6 +497,15 @@ def main() -> None:
         )
     print(f"{virtual_env}")
 
+    # ── Detect GCC module ─────────────────────────────────────────────────
+    print("  Finding GCC >= 9 module...", end=" ", flush=True)
+    available_gcc = list_available_gcc_modules()
+    gcc_module = best_gcc_module(available_gcc)
+    if gcc_module:
+        print(f"{gcc_module}  (auto-selected; system GCC 8.5.0 is too old for PyTorch 2.x)")
+    else:
+        print("none needed (system GCC >= 9 assumed)")
+
     # ── Validate partition ─────────────────────────────────────────────────
     if not args.dry_run:
         print("  Checking partition...", end=" ", flush=True)
@@ -470,6 +531,7 @@ def main() -> None:
     script = generate_sbatch_script(
         partition=args.partition,
         cuda_module=cuda_module,
+        gcc_module=gcc_module or "",
         virtual_env=virtual_env,
         project_root=project_root,
         account=args.account,
