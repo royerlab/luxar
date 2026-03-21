@@ -6,6 +6,8 @@ Uses torch.utils.cpp_extension directly without setuptools complexity.
 Run from project root: hatch run python packages/luxar/.../cuda/build.py
 """
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -99,10 +101,68 @@ def build() -> None:
         print()
         print(f"SUCCESS: Built {dest_so.name}")
         print(f"  Location: {dest_so}")
+
+        # Write build metadata so runtime environments know which modules
+        # are needed to load this extension (libstdc++, libcuda, etc.)
+        _write_build_info(dest_so)
     else:
         print()
         print("ERROR: Build completed but .so file not found")
         sys.exit(1)
+
+
+def _write_build_info(so_path: Path) -> None:
+    """Write a JSON metadata file alongside the .so recording build environment.
+
+    This file is read by luxar's env_capture at job-submission time to ensure
+    the correct HPC modules (gcc, cuda) are loaded in generated sbatch scripts.
+    """
+    import os
+
+    def _loaded_modules() -> list[str]:
+        try:
+            result = subprocess.run(
+                ["bash", "-c", "module list 2>&1"],
+                capture_output=True, text=True, timeout=5,
+            )
+            output = result.stdout.strip()
+            modules = []
+            for line in output.split("\n"):
+                line = line.strip()
+                if not line or line.startswith("Currently") or line.startswith("No "):
+                    continue
+                for prefix_end in (") ", ". "):
+                    idx = line.find(prefix_end)
+                    if idx != -1 and idx < 5:
+                        line = line[idx + len(prefix_end):].strip()
+                        break
+                for part in line.split():
+                    if part and "/" in part:
+                        modules.append(part)
+            return modules
+        except Exception:
+            return []
+
+    import torch
+
+    info: dict = {
+        "so_file": so_path.name,
+        "torch_version": torch.__version__,
+        "torch_cuda_version": torch.version.cuda,
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "loaded_modules": _loaded_modules(),
+        "cxx_compiler": os.environ.get("CXX", ""),
+        "cuda_home": os.environ.get("CUDA_HOME", ""),
+    }
+
+    info_path = so_path.parent / "cuda_build_info.json"
+    with open(info_path, "w") as f:
+        json.dump(info, f, indent=2)
+    print(f"  Build info: {info_path}")
+    if info["loaded_modules"]:
+        print(f"  Modules at build time: {', '.join(info['loaded_modules'])}")
+        print(f"  ⚠  Load these modules before submitting Slurm fit jobs:"
+              f"\n     module load {' '.join(info['loaded_modules'])}")
 
 
 if __name__ == "__main__":
