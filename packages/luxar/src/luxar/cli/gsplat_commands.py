@@ -2509,6 +2509,7 @@ def batch_plan(
         from luxar.gsplats.batch.env_capture import (
             capture_environment,
             generate_env_preamble,
+            get_slurm_scheduler_info,
             is_slurm_mps_available,
         )
         from luxar.gsplats.batch.manifest import (
@@ -2647,19 +2648,39 @@ def batch_plan(
         # When each volume is small relative to GPU capacity, we pack
         # multiple fitting tasks sequentially into one Slurm job to
         # reduce scheduling overhead (fewer array elements to launch).
+        # 5b-i. Query scheduler for smart packing defaults
+        sched_info = get_slurm_scheduler_info()
+        uses_backfill = sched_info["uses_backfill"]
+        no_job_limit = sched_info["max_jobs_per_user"] is None
+
         if tasks_per_job is None:
-            # Auto: how many volumes fit in the benchmark's max safe voxels?
-            # Each fit uses ~3-5× the volume memory (params + optimizer state
-            # + gradients), so be conservative for parallel mode.
             max_safe = math.prod(max_shape) if max_shape else tile_voxels
+
             if parallel:
                 # Each concurrent fit holds the volume tensor + model params
                 # + optimizer state.  ~2× the raw volume is a safe estimate.
                 packing = max(1, int(max_safe / max(tile_voxels * 2, 1)))
             else:
                 packing = max(1, int(max_safe / max(tile_voxels, 1)))
-            # Cap at a reasonable number
-            tasks_per_job = min(packing, 10)
+
+            # On backfill clusters with no job limit, prefer shorter jobs
+            # (more jobs = more backfill opportunities = faster throughput).
+            # Cap packing lower so individual jobs stay short.
+            if uses_backfill and no_job_limit:
+                if parallel:
+                    # Parallel: already short, keep the memory-based packing
+                    packing = min(packing, 4)
+                else:
+                    # Sequential: each extra task adds wall-time.
+                    # Keep jobs under ~5 min for best backfill scheduling.
+                    if est_seconds > 0:
+                        max_tasks_for_5min = max(1, int(300 / est_seconds))
+                        packing = min(packing, max_tasks_for_5min)
+                    packing = min(packing, 3)
+            else:
+                packing = min(packing, 10)
+
+            tasks_per_job = packing
         tasks_per_job = max(1, tasks_per_job)
 
         n_slurm_jobs = math.ceil(total_tasks / tasks_per_job)
@@ -2760,12 +2781,17 @@ def batch_plan(
             mps_note = ""
             if parallel:
                 if is_slurm_mps_available():
-                    mps_note = " [MPS available — scheduler-native GPU sharing]"
+                    mps_note = " [MPS available]"
                 else:
-                    mps_note = " [no MPS — using bash background processes]"
-            aprint(f"  Packing: {tasks_per_job} tasks/job ({mode}) → {n_slurm_jobs} Slurm array elements{mps_note}")
+                    mps_note = " [bash background processes]"
+            aprint(f"  Packing: {tasks_per_job} tasks/job ({mode}) → {n_slurm_jobs} Slurm jobs{mps_note}")
         else:
-            aprint(f"  Slurm array: {total_tasks} elements (1 task each)")
+            aprint(f"  Slurm array: {total_tasks} jobs (1 task each)")
+        if uses_backfill:
+            sched_note = "backfill scheduler — short jobs get scheduled fastest"
+            if no_job_limit:
+                sched_note += ", no job count limit"
+            aprint(f"  Scheduler: {sched_note}")
         aprint(
             f"  Est. time/task: ~{est_seconds / 60:.0f} min"
             f" (preset: {preset}, {n_iters} iters)"
