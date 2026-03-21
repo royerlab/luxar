@@ -75,7 +75,11 @@ class BatchManifest:
 
     # Packing
     tasks_per_job: int = 1
-    """Number of fitting tasks to run sequentially within each Slurm job."""
+    """Number of fitting tasks to run within each Slurm job."""
+
+    parallel_tasks_per_job: bool = False
+    """If True, tasks within a job run concurrently (background processes).
+    If False (default), they run sequentially."""
 
     # Jobs
     jobs: List[BatchJob] = field(default_factory=list)
