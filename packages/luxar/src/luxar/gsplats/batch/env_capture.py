@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 
 # Environment variables known to matter for CUDA/PyTorch workloads.
@@ -42,6 +44,23 @@ class CapturedEnv:
     """Installed luxar version string."""
 
 
+def read_cuda_build_info() -> Dict:
+    """Return the CUDA build metadata written by build.py, or an empty dict."""
+    try:
+        import luxar.gsplats.models.gsplats.cuda as cuda_pkg
+
+        info_path = Path(cuda_pkg.__file__).parent / "cuda_build_info.json"
+    except Exception:
+        return {}
+    if info_path.exists():
+        try:
+            with open(info_path) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
 def capture_environment() -> CapturedEnv:
     """Auto-detect the current execution environment.
 
@@ -49,8 +68,10 @@ def capture_environment() -> CapturedEnv:
     1. Active conda environment (``CONDA_PREFIX``)
     2. Active virtualenv (``VIRTUAL_ENV``)
     3. Loaded environment modules (``module list``)
-    4. Curated environment variables (only those that are set)
-    5. Luxar version
+    4. Modules required by the CUDA extension (from cuda_build_info.json),
+       merged into loaded_modules so sbatch scripts load them automatically
+    5. Curated environment variables (only those that are set)
+    6. Luxar version
     """
     env = CapturedEnv()
 
@@ -60,16 +81,41 @@ def capture_environment() -> CapturedEnv:
     # 2. Virtualenv
     env.virtual_env = os.environ.get("VIRTUAL_ENV")
 
-    # 3. Environment modules
-    env.loaded_modules = _detect_loaded_modules()
+    # 3. Environment modules currently loaded
+    currently_loaded = _detect_loaded_modules()
+    loaded_set = set(currently_loaded)
 
-    # 4. Curated env vars
+    # 4. Merge modules required at build time (e.g. gcc/14.2, cuda/12.8.x)
+    build_info = read_cuda_build_info()
+    build_modules: List[str] = build_info.get("loaded_modules", [])
+    missing: List[str] = []
+    for mod in build_modules:
+        # Only add non-trivial modules (skip slurm/default and similar)
+        base = mod.split("/")[0].lower()
+        if base in ("slurm",):
+            continue
+        if mod not in loaded_set:
+            currently_loaded.append(mod)
+            missing.append(mod)
+
+    if missing:
+        print(
+            f"\n⚠  The CUDA extension was built with these modules, which are not\n"
+            f"   currently loaded.  They will be added to the sbatch preamble:\n"
+            + "".join(f"     module load {m}\n" for m in missing)
+            + f"   To silence this warning, load them now:\n"
+            + f"     module load {' '.join(missing)}\n"
+        )
+
+    env.loaded_modules = currently_loaded
+
+    # 5. Curated env vars
     for var in CURATED_ENV_VARS:
         val = os.environ.get(var)
         if val is not None:
             env.env_vars[var] = val
 
-    # 5. Luxar version
+    # 6. Luxar version
     try:
         from importlib.metadata import version
 
