@@ -44,6 +44,59 @@ class CapturedEnv:
     """Installed luxar version string."""
 
 
+def get_slurm_scheduler_info() -> Dict:
+    """Query Slurm for scheduler type, job limits, and fairshare info.
+
+    Returns a dict with keys:
+        scheduler_type: e.g. "sched/backfill"
+        preempt_mode: e.g. "REQUEUE"
+        max_array_size: int
+        max_jobs_per_user: int or None (None = unlimited)
+        max_submit_per_user: int or None
+        uses_backfill: bool
+        uses_fairshare: bool
+    """
+    info: Dict = {
+        "scheduler_type": "unknown",
+        "preempt_mode": "OFF",
+        "max_array_size": 1000,
+        "max_jobs_per_user": None,
+        "max_submit_per_user": None,
+        "uses_backfill": False,
+        "uses_fairshare": False,
+    }
+    try:
+        result = subprocess.run(
+            ["scontrol", "show", "config"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("SchedulerType"):
+                info["scheduler_type"] = stripped.split("=", 1)[1].strip()
+                info["uses_backfill"] = "backfill" in info["scheduler_type"]
+            elif stripped.startswith("PriorityType"):
+                info["uses_fairshare"] = "multifactor" in stripped
+            elif stripped.startswith("PreemptMode"):
+                info["preempt_mode"] = stripped.split("=", 1)[1].strip()
+            elif stripped.startswith("MaxArraySize"):
+                try:
+                    info["max_array_size"] = int(stripped.split("=", 1)[1].strip())
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+
+    # Note: we intentionally do NOT try to parse per-QOS job limits here.
+    # Users may have multiple QOS (interactive, normal, etc.) with different
+    # limits, and the applicable QOS depends on the target partition.  Parsing
+    # this correctly requires knowing which QOS will be used for submission,
+    # which we don't know at this point.  max_jobs_per_user=None (unlimited)
+    # is the safe default — it just means we prefer shorter jobs for backfill.
+
+    return info
+
+
 def is_slurm_mps_available() -> bool:
     """Check if Slurm MPS (Multi-Process Service) GRES is available.
 
