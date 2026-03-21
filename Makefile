@@ -14,7 +14,7 @@
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-readme-videos \
         stats show-env prune-env shell build publish-test publish \
         check-deps install-node install-pnpm install-hatch \
-        setup-cuda check-cuda-deps build-cuda clean-cuda test-cuda benchmark-cuda \
+        setup-cuda check-cuda-deps build-cuda build-cuda-slurm clean-cuda test-cuda benchmark-cuda \
         benchmark-wasm
 
 # ============================================================================
@@ -1471,6 +1471,17 @@ clean-wasm:  ## Clean WASM build artifacts
 # Path to CUDA extension directory
 CUDA_EXT_DIR := packages/luxar/src/luxar/gsplats/models/gsplats/cuda
 
+# Slurm parameters for 'make build-cuda SLURM=1'
+# Override any of these on the command line, e.g.:
+#   make build-cuda SLURM=1 SLURM_PARTITION=gpu CUDA_MODULE=cuda/12.8.0_570.86.10
+SLURM           ?= 0
+SLURM_PARTITION ?= gpu
+SLURM_ACCOUNT   ?=
+SLURM_QOS       ?=
+SLURM_TIME      ?= 01:00:00
+# CUDA_MODULE: auto = detect from torch.version.cuda; or e.g. cuda/12.8.0_570.86.10
+CUDA_MODULE     ?= auto
+
 setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 	@echo "🔧 Setting up CUDA development environment..."
 	@echo ""
@@ -1758,53 +1769,91 @@ check-cuda-deps:  ## Check CUDA development dependencies
 	fi
 	@echo ""
 
-build-cuda:  ## Build the CUDA splatting extension
-	@echo "🔧 Building CUDA splatting extension..."
-	@echo ""
-	@# Check prerequisites
-	@if ! command -v nvcc >/dev/null 2>&1; then \
-		echo "❌ CUDA toolkit not found (nvcc not in PATH)"; \
+build-cuda:  ## Build the CUDA splatting extension  [SLURM=1 to build on a GPU node via Slurm]
+	@if [ "$(SLURM)" = "1" ]; then \
+		echo "🚀 Submitting CUDA build to Slurm (partition: $(SLURM_PARTITION))..."; \
 		echo ""; \
-		echo "   Run 'make check-cuda-deps' for installation instructions."; \
-		exit 1; \
-	fi
-	@if ! command -v nvidia-smi >/dev/null 2>&1; then \
-		echo "❌ NVIDIA driver not found"; \
-		echo ""; \
-		echo "   Run 'make check-cuda-deps' for installation instructions."; \
-		exit 1; \
-	fi
-	@if ! hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
-		echo "❌ PyTorch with CUDA support not available"; \
-		echo ""; \
-		echo "   Install PyTorch with CUDA in hatch environment:"; \
-		echo "     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu121"; \
-		echo ""; \
-		echo "   Or run 'make check-cuda-deps' for more details."; \
-		exit 1; \
-	fi
-	@echo "✅ Prerequisites OK"
-	@echo ""
-	@# Ensure ninja is installed (required by torch cpp_extension)
-	@hatch run pip install -q ninja 2>/dev/null || true
-	@echo "Building extension (this may take a few minutes)..."
-	@echo ""
-	hatch run python $(CUDA_EXT_DIR)/build.py
-	@echo ""
-	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
-		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-		echo "✅ CUDA extension built successfully!"; \
-		SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1); \
-		echo "   Output: $$(basename $$SO_FILE)"; \
-		echo ""; \
-		echo "Next steps:"; \
-		echo "  make test-cuda      - Run tests to verify"; \
-		echo "  make benchmark-cuda - Run performance benchmarks"; \
+		HATCH_CMD="$$(command -v hatch 2>/dev/null || echo $$HOME/.local/bin/hatch)"; \
+		$$HATCH_CMD run python scripts/build_cuda_slurm.py \
+			--partition "$(SLURM_PARTITION)" \
+			--cuda-module "$(CUDA_MODULE)" \
+			$(if $(SLURM_ACCOUNT),--account "$(SLURM_ACCOUNT)") \
+			$(if $(SLURM_QOS),--qos "$(SLURM_QOS)") \
+			--time "$(SLURM_TIME)"; \
 	else \
-		echo "❌ Build may have failed - .so file not found"; \
-		echo "   Check the build output above for errors."; \
-		exit 1; \
+		echo "🔧 Building CUDA splatting extension..."; \
+		echo ""; \
+		echo "   💡 On an HPC cluster without a GPU on the login node, use:"; \
+		echo "        make build-cuda SLURM=1"; \
+		echo "        make build-cuda SLURM=1 SLURM_PARTITION=gpu"; \
+		echo ""; \
+		if ! command -v nvcc >/dev/null 2>&1; then \
+			echo "❌ CUDA toolkit not found (nvcc not in PATH)"; \
+			echo ""; \
+			echo "   On this HPC system, load the CUDA module first:"; \
+			echo "     module load cuda/12.8.0_570.86.10   # match your PyTorch CUDA version"; \
+			echo "     make build-cuda"; \
+			echo ""; \
+			echo "   Or build on a GPU node automatically:"; \
+			echo "     make build-cuda SLURM=1"; \
+			echo ""; \
+			echo "   Run 'make check-cuda-deps' for a full diagnosis."; \
+			exit 1; \
+		fi; \
+		if ! nvidia-smi >/dev/null 2>&1; then \
+			echo "❌ GPU not accessible (nvidia-smi failed)"; \
+			echo ""; \
+			echo "   You are likely on a login node without direct GPU access."; \
+			echo "   Build on a GPU node via Slurm:"; \
+			echo "     make build-cuda SLURM=1"; \
+			echo "     make build-cuda SLURM=1 SLURM_PARTITION=gpu"; \
+			echo ""; \
+			exit 1; \
+		fi; \
+		if ! hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
+			echo "❌ PyTorch with CUDA support not available"; \
+			echo ""; \
+			TORCH_CUDA=$$(hatch run python -c "import torch; print(torch.version.cuda)" 2>/dev/null || echo "unknown"); \
+			echo "   PyTorch CUDA version: $$TORCH_CUDA"; \
+			echo "   Did you load the matching CUDA module?"; \
+			echo "     module load cuda/$$TORCH_CUDA.x  (find exact name with: module spider cuda)"; \
+			echo ""; \
+			echo "   Or reinstall PyTorch with CUDA:"; \
+			echo "     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu128"; \
+			echo ""; \
+			echo "   Run 'make check-cuda-deps' for more details."; \
+			exit 1; \
+		fi; \
+		echo "✅ Prerequisites OK"; \
+		echo ""; \
+		hatch run pip install -q ninja 2>/dev/null || true; \
+		echo "Building extension (this may take a few minutes)..."; \
+		echo ""; \
+		hatch run python $(CUDA_EXT_DIR)/build.py; \
+		echo ""; \
+		if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
+			echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+			echo "✅ CUDA extension built successfully!"; \
+			SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1); \
+			echo "   Output: $$(basename $$SO_FILE)"; \
+			echo ""; \
+			echo "Next steps:"; \
+			echo "  make test-cuda      - Run tests to verify"; \
+			echo "  make benchmark-cuda - Run performance benchmarks"; \
+		else \
+			echo "❌ Build may have failed - .so file not found"; \
+			echo "   Check the build output above for errors."; \
+			exit 1; \
+		fi; \
 	fi
+
+build-cuda-slurm:  ## Submit CUDA extension build as a Slurm job (alias for make build-cuda SLURM=1)
+	@$(MAKE) build-cuda SLURM=1 \
+		SLURM_PARTITION="$(SLURM_PARTITION)" \
+		SLURM_ACCOUNT="$(SLURM_ACCOUNT)" \
+		SLURM_QOS="$(SLURM_QOS)" \
+		SLURM_TIME="$(SLURM_TIME)" \
+		CUDA_MODULE="$(CUDA_MODULE)"
 
 clean-cuda:  ## Clean CUDA build artifacts
 	@echo "🧹 Cleaning CUDA build artifacts..."
