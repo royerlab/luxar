@@ -76,6 +76,8 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         f"    --tile-size {manifest.tile_size}",
         f"    --overlap {manifest.tile_overlap}",
     ]
+    if manifest.array_key:
+        fit_cmd_parts.append(f"    --array-key {shlex.quote(manifest.array_key)}")
     if manifest.n_channels > 1:
         fit_cmd_parts.append("    --channel $C")
     if manifest.n_timepoints > 1:
