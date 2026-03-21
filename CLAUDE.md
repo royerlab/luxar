@@ -57,7 +57,10 @@ make demo         # Generate demo dataset only (use 'luxar demo' to also serve)
 # CUDA (Gaussian Splatting)
 make setup-cuda       # Install CUDA deps + build extension (may need sudo)
 make check-cuda-deps  # Check CUDA dependencies (nvcc, PyTorch CUDA, etc.)
-make build-cuda       # Build CUDA splatting extension
+make build-cuda       # Build CUDA splatting extension (local GPU required)
+make build-cuda SLURM=1              # Build on a GPU node via Slurm (HPC)
+make build-cuda SLURM=1 SLURM_PARTITION=gpu  # Specify partition
+make build-cuda-slurm                # Alias for make build-cuda SLURM=1
 make test-cuda        # Run CUDA tests
 make benchmark-cuda   # Run performance benchmarks
 make clean-cuda       # Clean CUDA build artifacts
@@ -70,18 +73,19 @@ make help         # Show all available commands
 
 ### Development Environment Setup
 
-The build system is designed to work on **fresh Linux/macOS machines** with minimal pre-installed tools.
+The build system is designed to work on **fresh Linux/macOS machines** with minimal pre-installed tools, including **HPC/Slurm login nodes** (no sudo, no GPU on login node).
 
 **Prerequisites:**
-- Python 3.9+ (usually pre-installed)
+- Python 3.10+ (usually pre-installed; `python3.12` or `python3.11` work on HPC)
 - Git and curl
 - **Git LFS** (optional, required for demo data files): `brew install git-lfs` (macOS) or `sudo apt-get install git-lfs` (Ubuntu)
 - **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
+- **HPC/no-sudo**: no extra prerequisites — the Makefile auto-detects and uses venv fallback
 
 **What `make setup-dev` installs (no sudo needed):**
 - **Node.js 22+**: via nvm (Linux) or Homebrew (macOS)
-- **pnpm**: TypeScript package manager
-- **Hatch**: Python environment manager (via pipx)
+- **pnpm**: TypeScript package manager (via npm global or `--prefix ~/.local` fallback on HPC)
+- **Hatch**: Python environment manager (via pipx, or venv fallback on HPC)
 - **Pre-commit hooks**: Automatic code quality checks
 
 **Key tools and their locations:**
@@ -89,10 +93,10 @@ The build system is designed to work on **fresh Linux/macOS machines** with mini
 |------|--------------|----------|
 | nvm | Auto-installed | `~/.nvm/` |
 | Node.js | Via nvm | `~/.nvm/versions/node/` |
-| Hatch | Via pipx | `~/.local/bin/hatch` |
-| pnpm | Via npm | Global npm package |
+| Hatch | Via pipx (or venv on HPC) | `~/.local/bin/hatch` |
+| pnpm | Via npm (or `--prefix ~/.local` on HPC) | `~/.local/bin/pnpm` |
 | Rust/wasm-pack | `make install-rust` | `~/.cargo/` |
-| CUDA toolkit | Manual install | `/usr/local/cuda/` (typical) |
+| CUDA toolkit | Manual install or module load | `/usr/local/cuda/` (typical) |
 | CUDA extension | `make build-cuda` | `packages/luxar/.../cuda/*.so` |
 
 **Troubleshooting:**
@@ -113,6 +117,38 @@ source ~/.nvm/nvm.sh
 make clean-setup
 make setup-dev
 ```
+
+**HPC / Slurm cluster setup (no sudo, no GPU on login node):**
+```bash
+# 1. Bootstrap the environment (detects HPC, uses venv fallback automatically)
+make setup-dev
+
+# 2. Ensure ~/.local/bin is in PATH (needed for hatch/pnpm on HPC)
+export PATH="$HOME/.local/bin:$PATH"   # Add to ~/.bashrc to persist
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+
+# 3. Verify the environment works
+python scripts/test_hpc_setup.py
+
+# 4. Build the CUDA extension on a GPU node via Slurm
+make build-cuda SLURM=1                           # Auto-detect CUDA + GCC modules
+make build-cuda SLURM=1 SLURM_PARTITION=gpu      # Specify partition
+make build-cuda SLURM=1 CUDA_MODULE=cuda/12.8.0_570.86.10  # Pin CUDA module
+
+# 5. Monitor the build job
+tail -f build-cuda-logs/build_<JOB_ID>.out
+
+# 6. Verify the extension after the job completes
+make test-cuda
+```
+
+**What `make build-cuda SLURM=1` does:**
+1. Detects the PyTorch CUDA version (e.g., 12.8) and finds a matching `cuda/` module
+2. Detects and loads the highest available GCC >= 9 module (required by PyTorch 2.x)
+3. Captures the current hatch virtual environment path
+4. Generates a self-contained sbatch script (`build-cuda-logs/build_cuda_job.sh`)
+5. Submits it to Slurm and prints monitoring commands
+6. The build job loads CUDA + GCC modules, activates the venv, preserves `LD_LIBRARY_PATH`, and compiles with full output merged into the main log file for easy debugging
 
 **Git LFS (Large File Storage):**
 
