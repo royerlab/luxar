@@ -280,7 +280,7 @@ def fit_gaussian_splats(
     use_metal: bool = True,
     use_cuda: bool = True,
     # Post-processing
-    cull_ratio: float = 0.01,
+    cull_ratio: float = 0.0,
     voxel_footprint_correction: bool | float = False,
     # Boundary containment
     boundary_penalty: Optional[float] = None,

@@ -2582,17 +2582,20 @@ def batch_plan(
         #
         # New logic: compare total spatial voxels against max safe voxel
         # count from the benchmark.  If the volume fits, skip tiling entirely.
+        import math
+
         auto_tile = tile_size is None
+
+        # Compute max safe shape from GPU profile (used by both auto-tile
+        # and tasks-per-job packing).  Falls back to a conservative default.
+        peak_shape = peak.get("shape", [])
+        oom = (summary or {}).get("oom_boundaries", {}).get("3d", {})
+        max_shape = oom.get("max_successful_shape", peak_shape)
+        total_voxels = math.prod(spatial)
+
         if auto_tile:
             assert summary is not None
-            import math
 
-            total_voxels = math.prod(spatial)
-
-            # Get max safe voxel count from benchmark profile
-            peak_shape = peak.get("shape", [])
-            oom = (summary or {}).get("oom_boundaries", {}).get("3d", {})
-            max_shape = oom.get("max_successful_shape", peak_shape)
             max_safe_voxels = math.prod(max_shape) if max_shape else 256 ** 3
 
             if total_voxels <= max_safe_voxels:
@@ -2644,13 +2647,11 @@ def batch_plan(
         # When each volume is small relative to GPU capacity, we pack
         # multiple fitting tasks sequentially into one Slurm job to
         # reduce scheduling overhead (fewer array elements to launch).
-        import math as _math
-
         if tasks_per_job is None:
             # Auto: how many volumes fit in the benchmark's max safe voxels?
             # Each fit uses ~3-5× the volume memory (params + optimizer state
             # + gradients), so be conservative for parallel mode.
-            max_safe = _math.prod(max_shape) if max_shape else tile_voxels
+            max_safe = math.prod(max_shape) if max_shape else tile_voxels
             if parallel:
                 # Each concurrent fit holds the volume tensor + model params
                 # + optimizer state.  ~2× the raw volume is a safe estimate.
@@ -2661,7 +2662,7 @@ def batch_plan(
             tasks_per_job = min(packing, 10)
         tasks_per_job = max(1, tasks_per_job)
 
-        n_slurm_jobs = _math.ceil(total_tasks / tasks_per_job)
+        n_slurm_jobs = math.ceil(total_tasks / tasks_per_job)
         if parallel:
             # Parallel: all tasks run at once, so wall time ≈ 1 task
             est_seconds_per_job = est_seconds * 1.2  # 20% overhead for contention
