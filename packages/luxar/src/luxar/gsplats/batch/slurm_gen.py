@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import shlex
 
 from luxar.gsplats.batch.manifest import BatchManifest
@@ -10,9 +11,14 @@ from luxar.gsplats.batch.manifest import BatchManifest
 def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     """Generate the sbatch array job script for fitting.
 
-    Each array task decodes its ``SLURM_ARRAY_TASK_ID`` into
-    ``(timepoint, channel, tile_index)`` and runs
-    ``luxar gsplat fit`` with the appropriate flags.
+    When ``manifest.tasks_per_job == 1`` (default), each Slurm array
+    element processes exactly one ``(timepoint, channel, tile)`` combination.
+
+    When ``tasks_per_job > 1``, each Slurm array element loops over
+    *tasks_per_job* consecutive fitting tasks sequentially.  This packs
+    multiple small volumes onto a single GPU allocation, reducing Slurm
+    scheduling overhead for datasets where a single volume doesn't
+    saturate the GPU.
 
     Args:
         manifest: Fully populated batch manifest.
@@ -21,10 +27,13 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     Returns:
         Complete sbatch script as a string.
     """
+    tpj = manifest.tasks_per_job
+    n_slurm_jobs = math.ceil(manifest.total_tasks / tpj)
+
     lines = [
         "#!/bin/bash",
         "#SBATCH --job-name=luxar-fit",
-        f"#SBATCH --array=0-{manifest.total_tasks - 1}",
+        f"#SBATCH --array=0-{n_slurm_jobs - 1}",
         f"#SBATCH --partition={manifest.slurm_partition}",
         "#SBATCH --ntasks=1",
         f"#SBATCH --gpus-per-task={manifest.slurm_gpus}",
@@ -46,33 +55,7 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.append(env_preamble)
     lines.append("")
 
-    # Task ID decoding
-    lines.extend(
-        [
-            "# --- Decode task ID -> (timepoint, channel, tile) ---",
-            "TASK_ID=$SLURM_ARRAY_TASK_ID",
-            f"N_CHANNELS={manifest.n_channels}",
-            f"N_TILES={manifest.n_tiles}",
-            "T=$((TASK_ID / (N_CHANNELS * N_TILES)))",
-            "R=$((TASK_ID % (N_CHANNELS * N_TILES)))",
-            "C=$((R / N_TILES))",
-            "K=$((R % N_TILES))",
-            "",
-            "# Output path",
-            f'OUTPUT="{manifest.output_dir}/tiles/'
-            "t$(printf '%02d' $T)_c$(printf '%02d' $C)_tile$(printf '%03d' $K)"
-            '.gsplats.zarr"',
-            "",
-            "# Skip if already completed (for restarts)",
-            'if [ -d "$OUTPUT" ]; then',
-            '    echo "Output already exists, skipping: $OUTPUT"',
-            "    exit 0",
-            "fi",
-            "",
-        ]
-    )
-
-    # Build the fit command
+    # Build the fit command template (used in the loop body)
     fit_cmd_parts = [
         f'luxar gsplat fit {shlex.quote(manifest.input_path)} "$OUTPUT"',
         f"    --tile $K/{manifest.n_tiles}",
@@ -81,19 +64,54 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         "    --channel $C",
         "    --timepoint $T",
     ]
-
     if manifest.preset:
         fit_cmd_parts.append(f"    --preset {manifest.preset}")
-
-    # Add extra fit args from config (shell-escaped)
     for key, value in manifest.fit_args.items():
         if value is not None:
             fit_cmd_parts.append(
                 f"    --{key.replace('_', '-')} {shlex.quote(str(value))}"
             )
+    fit_cmd = " \\\n    ".join(fit_cmd_parts)
 
-    lines.append(" \\\n".join(fit_cmd_parts))
-    lines.append("")
+    # Loop body — processes tasks_per_job consecutive tasks
+    lines.extend(
+        [
+            f"TASKS_PER_JOB={tpj}",
+            f"TOTAL_TASKS={manifest.total_tasks}",
+            f"N_CHANNELS={manifest.n_channels}",
+            f"N_TILES={manifest.n_tiles}",
+            "BASE_TASK=$((SLURM_ARRAY_TASK_ID * TASKS_PER_JOB))",
+            "",
+            "for OFFSET in $(seq 0 $((TASKS_PER_JOB - 1))); do",
+            "    TASK_ID=$((BASE_TASK + OFFSET))",
+            "",
+            "    # Stop if we've gone past the last task",
+            '    if [ "$TASK_ID" -ge "$TOTAL_TASKS" ]; then break; fi',
+            "",
+            "    # --- Decode task ID -> (timepoint, channel, tile) ---",
+            "    T=$((TASK_ID / (N_CHANNELS * N_TILES)))",
+            "    R=$((TASK_ID % (N_CHANNELS * N_TILES)))",
+            "    C=$((R / N_TILES))",
+            "    K=$((R % N_TILES))",
+            "",
+            "    # Output path",
+            f'    OUTPUT="{manifest.output_dir}/tiles/'
+            "t$(printf '%02d' $T)_c$(printf '%02d' $C)_tile$(printf '%03d' $K)"
+            '.gsplats.zarr"',
+            "",
+            "    # Skip if already completed (for restarts)",
+            '    if [ -d "$OUTPUT" ]; then',
+            '        echo "Already exists, skipping: $OUTPUT"',
+            "        continue",
+            "    fi",
+            "",
+            f'    echo "=== Task $TASK_ID / $TOTAL_TASKS (T=$T C=$C K=$K) ==="',
+            f"    {fit_cmd}",
+            "",
+            "done",
+            "",
+        ]
+    )
 
     return "\n".join(lines)
 
