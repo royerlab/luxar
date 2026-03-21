@@ -212,6 +212,47 @@ def test_env_capture_ld_library_path_prepend():
     print("PASS: LD_LIBRARY_PATH prepend in preamble")
 
 
+def test_sbatch_omits_channel_when_single():
+    """When n_channels=1, sbatch script must NOT pass --channel (avoids slicing bug)."""
+    from luxar.gsplats.batch.manifest import BatchManifest
+    from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch
+
+    # TimeFused-like: T=10, C=1
+    m = BatchManifest(
+        input_path="/data/test.zarr.zip",
+        output_dir="/output/test",
+        n_timepoints=10,
+        n_channels=1,
+        tile_size=1384, tile_overlap=32, n_tiles=1,
+        total_tasks=10, preset="draft",
+        slurm_partition="gpu", slurm_time_limit="00:15:00",
+    )
+    script = generate_fit_sbatch(m, "# preamble\n")
+    assert "--channel" not in script, (
+        "sbatch passes --channel when n_channels=1 — would override --timepoint!"
+    )
+    assert "--timepoint" in script, "sbatch should pass --timepoint when T>1"
+
+    # Multi-channel, single timepoint
+    m.n_channels = 4
+    m.n_timepoints = 1
+    m.total_tasks = 4
+    script2 = generate_fit_sbatch(m, "# preamble\n")
+    assert "--channel" in script2, "sbatch should pass --channel when C>1"
+    assert "--timepoint" not in script2, (
+        "sbatch passes --timepoint when n_timepoints=1 — would override --channel!"
+    )
+
+    # Both multi
+    m.n_timepoints = 5
+    m.total_tasks = 20
+    script3 = generate_fit_sbatch(m, "# preamble\n")
+    assert "--channel" in script3
+    assert "--timepoint" in script3
+
+    print("PASS: sbatch conditionally includes --channel/--timepoint")
+
+
 if __name__ == "__main__":
     tests = [
         test_zarr_zip_suffix_detection,
@@ -223,6 +264,7 @@ if __name__ == "__main__":
         test_6d_channel_decoding,
         test_tasks_per_job_manifest,
         test_env_capture_ld_library_path_prepend,
+        test_sbatch_omits_channel_when_single,
     ]
 
     passed = failed = 0
