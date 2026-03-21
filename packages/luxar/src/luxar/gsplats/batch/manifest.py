@@ -73,6 +73,10 @@ class BatchManifest:
     slurm_mem_gb: int = 32
     slurm_extra_args: List[str] = field(default_factory=list)
 
+    # Packing
+    tasks_per_job: int = 1
+    """Number of fitting tasks to run sequentially within each Slurm job."""
+
     # Jobs
     jobs: List[BatchJob] = field(default_factory=list)
 

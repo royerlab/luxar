@@ -2448,6 +2448,16 @@ def batch_plan(
             "z/y/x/depth/height/width (spatial)."
         ),
     ),
+    # Packing
+    tasks_per_job: Optional[int] = typer.Option(
+        None,
+        "--tasks-per-job",
+        help=(
+            "Number of fitting tasks to run sequentially per Slurm job. "
+            "Auto-calculated from GPU capacity when omitted. "
+            "Packing multiple small volumes per GPU reduces scheduling overhead."
+        ),
+    ),
     # Control
     submit: bool = typer.Option(
         False, "--submit", help="Actually submit to Slurm (default: dry-run)"
@@ -2618,7 +2628,24 @@ def batch_plan(
         else:
             est_seconds = 600.0
 
-        slurm_time = time_limit or estimate_slurm_time_limit(est_seconds)
+        # 5b. Compute tasks-per-job packing
+        #
+        # When each volume is small relative to GPU capacity, we pack
+        # multiple fitting tasks sequentially into one Slurm job to
+        # reduce scheduling overhead (fewer array elements to launch).
+        import math as _math
+
+        if tasks_per_job is None:
+            # Auto: how many volumes fit in the benchmark's max safe voxels?
+            max_safe = _math.prod(max_shape) if max_shape else tile_voxels
+            packing = max(1, int(max_safe / max(tile_voxels, 1)))
+            # Cap at a reasonable number (don't make jobs too long)
+            tasks_per_job = min(packing, 10)
+        tasks_per_job = max(1, tasks_per_job)
+
+        n_slurm_jobs = _math.ceil(total_tasks / tasks_per_job)
+        est_seconds_per_job = est_seconds * tasks_per_job
+        slurm_time = time_limit or estimate_slurm_time_limit(est_seconds_per_job)
         total_gpu_hours = est_seconds * total_tasks / 3600.0
 
         # 6. Build manifest
@@ -2655,6 +2682,7 @@ def batch_plan(
             slurm_gpus=gpus,
             slurm_cpus=cpus,
             slurm_mem_gb=mem,
+            tasks_per_job=tasks_per_job,
             channel_colors=colors_list,
         )
 
@@ -2702,11 +2730,17 @@ def batch_plan(
             )
         else:
             aprint("  Tile: not needed (volume fits in GPU memory)")
-        aprint(f"  Jobs: {n_t} x {n_c} x {n_tiles} = {total_tasks} array tasks")
+        aprint(f"  Jobs: {n_t} x {n_c} x {n_tiles} = {total_tasks} fitting tasks")
+        if tasks_per_job > 1:
+            aprint(f"  Packing: {tasks_per_job} tasks/job → {n_slurm_jobs} Slurm array elements")
+        else:
+            aprint(f"  Slurm array: {total_tasks} elements (1 task each)")
         aprint(
             f"  Est. time/task: ~{est_seconds / 60:.0f} min"
             f" (preset: {preset}, {n_iters} iters)"
         )
+        if tasks_per_job > 1:
+            aprint(f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min ({tasks_per_job} tasks × {est_seconds / 60:.0f} min)")
         aprint(f"  Est. total GPU-hours: {total_gpu_hours:.0f} h")
         aprint(f"  Slurm --time: {slurm_time}")
         aprint(f"  Partition: {partition}, GPUs: {gpus}, CPUs: {cpus}, Mem: {mem}G")
