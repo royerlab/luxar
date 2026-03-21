@@ -44,6 +44,10 @@ class BatchManifest:
     input_path: str = ""
     output_dir: str = ""
 
+    # Array selection
+    array_key: Optional[str] = None
+    """Key path to a specific array within the zarr store (e.g. 'h2afva/fused')."""
+
     # Dataset shape
     n_timepoints: int = 1
     n_channels: int = 1
