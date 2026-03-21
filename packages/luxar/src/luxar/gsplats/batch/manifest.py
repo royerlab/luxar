@@ -152,6 +152,19 @@ def decode_task_id(task_id: int, manifest: BatchManifest) -> Tuple[int, int, int
     return (t, c, k)
 
 
-def output_filename(t: int, c: int, k: int) -> str:
-    """Generate canonical output filename for a task."""
-    return f"t{t:02d}_c{c:02d}_tile{k:03d}.gsplats.zarr"
+def output_filename(
+    t: int,
+    c: int,
+    k: int,
+    n_timepoints: int = 100,
+    n_channels: int = 100,
+    n_tiles: int = 1000,
+) -> str:
+    """Generate canonical output filename for a task.
+
+    Widths are computed from the max index so filenames sort lexicographically.
+    """
+    tw = max(2, len(str(max(0, n_timepoints - 1))))
+    cw = max(2, len(str(max(0, n_channels - 1))))
+    kw = max(3, len(str(max(0, n_tiles - 1))))
+    return f"t{t:0{tw}d}_c{c:0{cw}d}_tile{k:0{kw}d}.gsplats.zarr"
