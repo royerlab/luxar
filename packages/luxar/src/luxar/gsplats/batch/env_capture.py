@@ -44,6 +44,27 @@ class CapturedEnv:
     """Installed luxar version string."""
 
 
+def is_slurm_mps_available() -> bool:
+    """Check if Slurm MPS (Multi-Process Service) GRES is available.
+
+    MPS allows the scheduler to pack multiple jobs onto a single GPU
+    with isolated memory and compute sharing.  Requires ``GresTypes``
+    to include ``mps`` in ``slurm.conf`` (admin-configured).
+    """
+    try:
+        result = subprocess.run(
+            ["scontrol", "show", "config"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            if line.strip().startswith("GresTypes"):
+                gres_types = line.split("=", 1)[1].strip().lower()
+                return "mps" in [g.strip() for g in gres_types.split(",")]
+    except Exception:
+        pass
+    return False
+
+
 def read_cuda_build_info() -> Dict:
     """Return the CUDA build metadata written by build.py, or an empty dict."""
     try:

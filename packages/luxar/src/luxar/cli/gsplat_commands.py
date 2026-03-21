@@ -2509,6 +2509,7 @@ def batch_plan(
         from luxar.gsplats.batch.env_capture import (
             capture_environment,
             generate_env_preamble,
+            is_slurm_mps_available,
         )
         from luxar.gsplats.batch.manifest import (
             BatchJob,
@@ -2755,7 +2756,13 @@ def batch_plan(
         aprint(f"  Jobs: {n_t} x {n_c} x {n_tiles} = {total_tasks} fitting tasks")
         if tasks_per_job > 1:
             mode = "parallel" if parallel else "sequential"
-            aprint(f"  Packing: {tasks_per_job} tasks/job ({mode}) → {n_slurm_jobs} Slurm array elements")
+            mps_note = ""
+            if parallel:
+                if is_slurm_mps_available():
+                    mps_note = " [MPS available — scheduler-native GPU sharing]"
+                else:
+                    mps_note = " [no MPS — using bash background processes]"
+            aprint(f"  Packing: {tasks_per_job} tasks/job ({mode}) → {n_slurm_jobs} Slurm array elements{mps_note}")
         else:
             aprint(f"  Slurm array: {total_tasks} elements (1 task each)")
         aprint(
