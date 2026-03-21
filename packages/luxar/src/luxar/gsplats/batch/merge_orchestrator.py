@@ -43,25 +43,31 @@ def merge_batch_results(
     n_c = manifest.n_channels
     n_k = manifest.n_tiles
 
+    # When --timepoints/--channels slicing was used, the tile filenames
+    # contain the REAL dataset indices (e.g. t0072 not t01).
+    t_indices = manifest.timepoint_indices if manifest.timepoint_indices is not None else list(range(n_t))
+    c_indices = manifest.channel_indices if manifest.channel_indices is not None else list(range(n_c))
+
     # ================================================================
     # Level 1: Merge tiles per (T, C)
     # ================================================================
     tc_paths: dict[tuple[int, int], Path] = {}
 
     with asection("Level 1: Merging tiles per (timepoint, channel)"):
-        for t in range(n_t):
-            for c in range(n_c):
-                out_path = merged_dir / f"t{t:02d}_c{c:02d}.gsplats.zarr"
-                tc_paths[(t, c)] = out_path
+        for t_seq, t_real in enumerate(t_indices):
+            for c_seq, c_real in enumerate(c_indices):
+                out_path = merged_dir / f"t{t_seq:02d}_c{c_seq:02d}.gsplats.zarr"
+                tc_paths[(t_seq, c_seq)] = out_path
 
                 if out_path.exists() and not force:
                     if verbose:
-                        aprint(f"  t={t} c={c}: exists, skipping")
+                        aprint(f"  t={t_real} c={c_real}: exists, skipping")
                     continue
 
                 tile_files = []
                 for k in range(n_k):
-                    fname = output_filename(t, c, k, n_t, n_c, n_k)
+                    # Use REAL indices for tile filenames (matches sbatch output)
+                    fname = output_filename(t_real, c_real, k, max(t_indices) + 1, max(c_indices) + 1, n_k)
                     tile_path = tiles_dir / fname
                     if not tile_path.exists():
                         raise FileNotFoundError(
@@ -84,7 +90,7 @@ def merge_batch_results(
                     merged.save(out_path)
 
                 if verbose:
-                    aprint(f"  t={t} c={c}: merged {n_k} tiles")
+                    aprint(f"  t={t_real} c={c_real}: merged {n_k} tiles")
 
     # ================================================================
     # Level 2: Stack timepoints per channel (if T > 1)
@@ -93,33 +99,33 @@ def merge_batch_results(
 
     if n_t > 1:
         with asection("Level 2: Stacking timepoints per channel"):
-            for c in range(n_c):
-                out_path = merged_dir / f"c{c:02d}_4d.gsplats.zarr"
-                channel_paths[c] = out_path
+            for c_seq in range(n_c):
+                out_path = merged_dir / f"c{c_seq:02d}_4d.gsplats.zarr"
+                channel_paths[c_seq] = out_path
 
                 if out_path.exists() and not force:
                     if verbose:
-                        aprint(f"  c={c}: exists, skipping")
+                        aprint(f"  c={c_seq}: exists, skipping")
                     continue
 
-                tc_files = [tc_paths[(t, c)] for t in range(n_t)]
+                tc_files = [tc_paths[(t_seq, c_seq)] for t_seq in range(n_t)]
                 datasets = [GSplatData.load(p) for p in tc_files]
                 stacked = GSplatData.combine_as_new_dimension(
                     datasets,
-                    values=[float(t) for t in range(n_t)],
+                    values=[float(t) for t in t_indices],
                     sigma=0.0,
                 )
                 stacked.save(out_path)
 
                 if verbose:
                     aprint(
-                        f"  c={c}: stacked {n_t} timepoints "
+                        f"  c={c_seq}: stacked {n_t} timepoints "
                         f"-> {stacked.ndim}D ({stacked.n_splats:,} splats)"
                     )
     else:
         # Single timepoint — use Level 1 outputs directly
-        for c in range(n_c):
-            channel_paths[c] = tc_paths[(0, c)]
+        for c_seq in range(n_c):
+            channel_paths[c_seq] = tc_paths[(0, c_seq)]
 
     # ================================================================
     # Level 3: Merge channels (if C > 1 and colors provided)
