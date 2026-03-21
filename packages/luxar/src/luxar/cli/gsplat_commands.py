@@ -2415,6 +2415,9 @@ def batch_plan(
     preset: str = typer.Option("standard", "--preset", help="Fitting preset"),
     config: Optional[Path] = typer.Option(None, "--config", help="YAML fit config"),
     seeds: Optional[str] = typer.Option(None, "--seeds", help="Seed count or ratio"),
+    iters: Optional[int] = typer.Option(
+        None, "--iters", "-n", help="Max optimization iterations (overrides preset)"
+    ),
     # Slurm params
     partition: Optional[str] = typer.Option(
         None, "--partition", "-p", help="Slurm partition"
@@ -2484,6 +2487,16 @@ def batch_plan(
             "(--sequential, default). Parallel mode launches multiple fit "
             "processes sharing the same GPU — higher throughput but uses "
             "more GPU memory."
+        ),
+    ),
+    # Array selection
+    array_key: Optional[str] = typer.Option(
+        None,
+        "--array-key",
+        help=(
+            "Key path to a specific array within the zarr store, e.g. "
+            "'h2afva/fused'. Useful when a store contains multiple groups "
+            "with different arrays. Auto-selects largest array if omitted."
         ),
     ),
     # Control
@@ -2595,7 +2608,7 @@ def batch_plan(
             return list(range(start, stop, step))
 
         with asection("Discovering dataset shape"):
-            ome_info = discover_ome_zarr_shape(input_path, axes_override=axes_list)
+            ome_info = discover_ome_zarr_shape(input_path, axes_override=axes_list, array_key=array_key)
             n_t_full = ome_info.n_timepoints
             n_c_full = ome_info.n_channels
             spatial = ome_info.spatial_shape
@@ -2671,7 +2684,7 @@ def batch_plan(
         throughput_table = get_gpu_throughput_table(gpu_name=resolved_gpu)
 
         preset_config = PRESETS.get(preset, PRESETS["standard"])
-        n_iters = preset_config.get("n_iters", 3000)
+        n_iters = iters if iters is not None else preset_config.get("n_iters", 3000)
 
         if throughput_table:
             est_seconds = estimate_tile_wall_seconds(
@@ -2733,6 +2746,8 @@ def batch_plan(
         fit_args = {}
         if seeds:
             fit_args["seeds"] = seeds
+        if iters is not None:
+            fit_args["iters"] = str(iters)
         if config:
             fit_args["config"] = str(config)
 
@@ -2745,6 +2760,7 @@ def batch_plan(
             created=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             input_path=str(input_path.resolve()),
             output_dir=str(output_dir.resolve()),
+            array_key=array_key,
             n_timepoints=n_t,
             n_channels=n_c,
             spatial_shape=spatial,

@@ -54,6 +54,12 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "cull_ratio": 0.0,
         "max_eccentricity": 15.0,
     },
+    "ultra": {
+        "n_iters": 10000,
+        "early_stop_patience": 1000,
+        "cull_ratio": 0.0,
+        "max_eccentricity": 20.0,
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -338,6 +344,21 @@ def load_volume(
     return volume
 
 
+def _find_all_arrays(group, prefix: str = "") -> list:
+    """Recursively find all arrays in a zarr group, returning (key_path, array) pairs."""
+    import zarr
+
+    results = []
+    for k in group.keys():
+        item = group[k]
+        key_path = f"{prefix}/{k}" if prefix else k
+        if isinstance(item, zarr.Array):
+            results.append((key_path, item))
+        elif isinstance(item, zarr.Group):
+            results.extend(_find_all_arrays(item, key_path))
+    return results
+
+
 def _load_zarr_volume(
     path: Path,
     channel: Optional[int],
@@ -362,9 +383,9 @@ def _load_zarr_volume(
             aprint("  Detected OME-ZARR layout (using resolution level '0')")
             arr = store["0"]
         else:
-            # Find the largest array in the group (consistent with
-            # discover_ome_zarr_shape which also picks the largest).
-            arrays = [(k, store[k]) for k in store.keys() if isinstance(store[k], zarr.Array)]
+            # Find the largest array in the group, searching recursively
+            # into sub-groups (e.g. h2afva/fused, mezzo/fused).
+            arrays = _find_all_arrays(store)
             if not arrays:
                 raise ValueError(f"No arrays found in zarr group: {path}")
             best_key = max(arrays, key=lambda kv: int(np.prod(kv[1].shape)))[0]
@@ -463,6 +484,7 @@ class OMEZarrInfo:
 def discover_ome_zarr_shape(
     path: Path,
     axes_override: Optional[List[str]] = None,
+    array_key: Optional[str] = None,
 ) -> OMEZarrInfo:
     """Discover the shape and axis structure of an OME-Zarr dataset.
 
@@ -494,13 +516,15 @@ def discover_ome_zarr_shape(
         attrs: Dict[str, Any] = dict(getattr(store, "attrs", {}))
     elif isinstance(store, zarr.Group):
         attrs = dict(store.attrs)
-        if "0" in store:
+        if array_key:
+            # User-specified array key (may be nested, e.g. "h2afva/fused")
+            arr = store[array_key]
+        elif "0" in store:
             # OME-NGFF standard: resolution level "0" is highest resolution
             arr = store["0"]
         else:
-            # Find the largest array in the group (covers custom layouts like
-            # {"data": <array>} used by Keller-lab .zarr.zip files)
-            arrays = [(k, store[k]) for k in store.keys() if isinstance(store[k], zarr.Array)]
+            # Find the largest array, searching recursively into sub-groups
+            arrays = _find_all_arrays(store)
             if not arrays:
                 raise ValueError(f"No arrays found in zarr group: {path}")
             # Pick the array with the most elements
