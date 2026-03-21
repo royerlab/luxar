@@ -1666,13 +1666,14 @@ check-cuda-deps:  ## Check CUDA development dependencies
 	@echo ""
 	@echo "=== 2. NVIDIA GPU Driver ==="
 	@if command -v nvidia-smi >/dev/null 2>&1; then \
-		DRIVER_VERSION=$$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1); \
-		GPU_NAME=$$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1); \
-		if [ -n "$$DRIVER_VERSION" ]; then \
+		if nvidia-smi >/dev/null 2>&1; then \
+			DRIVER_VERSION=$$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1); \
+			GPU_NAME=$$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1); \
 			echo "✅ NVIDIA driver: $$DRIVER_VERSION"; \
 			echo "   GPU: $$GPU_NAME"; \
 		else \
-			echo "⚠️  nvidia-smi found but GPU not detected"; \
+			echo "⚠️  nvidia-smi found but GPU not accessible (login node? driver not loaded?)"; \
+			echo "   On HPC: load the driver module or run on a GPU node"; \
 		fi; \
 	else \
 		echo "❌ NVIDIA driver not found (nvidia-smi not available)"; \
