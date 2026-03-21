@@ -508,7 +508,7 @@ test-cov-all:  ## Run all tests with coverage (Python + TypeScript)
 
 # Pre-commit
 enable-pre-commit:  ## Enable and activate pre-commit hooks
-	hatch run pre-commit install
+	hatch run pre-commit install --allow-missing-config
 
 run-pre-commit:  ## Run pre-commit on all files
 	hatch run pre-commit run --all-files
@@ -1009,7 +1009,7 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	echo "Creating Hatch environment..."; \
 	$$HATCH_CMD env create || true; \
 	echo "Installing pre-commit hooks..."; \
-	$$HATCH_CMD run pre-commit install || echo "⚠️  pre-commit install skipped"
+	$$HATCH_CMD run pre-commit install --allow-missing-config || echo "⚠️  pre-commit install skipped"
 	@echo ""
 	@# Step 4: Install TypeScript dependencies (source nvm first if needed)
 	@echo "=== Step 4: Installing TypeScript Dependencies ==="
