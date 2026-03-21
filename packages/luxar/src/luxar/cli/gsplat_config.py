@@ -356,17 +356,20 @@ def _load_zarr_volume(
     elif isinstance(store, zarr.Group):
         if array_key:
             arr = store[array_key]
+            aprint(f"  Using array '{array_key}'")
         elif "0" in store:
             # OME-ZARR convention: "0" is highest resolution
             aprint("  Detected OME-ZARR layout (using resolution level '0')")
             arr = store["0"]
         else:
-            # Find first array in group
-            arrays = [k for k in store.keys() if isinstance(store[k], zarr.Array)]
+            # Find the largest array in the group (consistent with
+            # discover_ome_zarr_shape which also picks the largest).
+            arrays = [(k, store[k]) for k in store.keys() if isinstance(store[k], zarr.Array)]
             if not arrays:
                 raise ValueError(f"No arrays found in zarr group: {path}")
-            arr = store[arrays[0]]
-            aprint(f"  Using array '{arrays[0]}'")
+            best_key = max(arrays, key=lambda kv: int(np.prod(kv[1].shape)))[0]
+            arr = store[best_key]
+            aprint(f"  Using array '{best_key}'")
     else:
         raise ValueError(f"Unexpected zarr object type: {type(store)}")
 
@@ -374,8 +377,29 @@ def _load_zarr_volume(
     ndim = len(shape)
     aprint(f"  Raw array shape: {shape} ({ndim}D)")
 
-    # Handle multi-dimensional data (OME-ZARR is TCZYX)
-    if ndim == 5:
+    # Slice the array down to a 2D/3D spatial volume.
+    # For nD data where ndim > 5, consume leading dimensions using
+    # timepoint and channel indices (defaulting to 0 for each).
+    if ndim >= 6:
+        # Generic >5D: treat first dim as T, slice the rest by channel
+        # until we're down to 3D spatial.
+        t = timepoint if timepoint is not None else 0
+        idx = [t]
+        # Consume non-spatial leading dims (all except last 3) as channel indices
+        remaining_non_spatial = ndim - 4  # -1 for time, -3 for spatial
+        if channel is not None and remaining_non_spatial > 0:
+            # Decode flat channel index into multi-dim indices
+            c_flat = channel
+            non_spatial_shape = shape[1 : 1 + remaining_non_spatial]
+            for dim_size in reversed(non_spatial_shape):
+                idx.insert(1, c_flat % dim_size)
+                c_flat //= dim_size
+        else:
+            for i in range(remaining_non_spatial):
+                idx.append(0)
+        aprint(f"  Slicing {ndim}D: indices {idx} → 3D spatial")
+        volume = np.array(arr[tuple(idx)])
+    elif ndim == 5:
         t = timepoint if timepoint is not None else 0
         c = channel if channel is not None else 0
         aprint(f"  Slicing 5D (TCZYX): T={t}, C={c}")
