@@ -254,6 +254,96 @@ def parse_packet_loss(loss_str: str) -> float:
     return value
 
 
+def parse_network_options(
+    profile: Optional[str] = None,
+    bandwidth: Optional[str] = None,
+    latency: Optional[str] = None,
+    jitter: Optional[str] = None,
+    packet_loss: Optional[str] = None,
+) -> tuple[Optional[float], Optional[float], float, float]:
+    """Parse and merge network simulation CLI parameters.
+
+    Loads a profile first (if given), then overrides with individual params.
+
+    Args:
+        profile: Profile name (e.g., "3g", "satellite").
+        bandwidth: Bandwidth string (e.g., "1mbps", "500kbps").
+        latency: Latency string (e.g., "100ms", "1s").
+        jitter: Jitter string (e.g., "10%", "0.1").
+        packet_loss: Packet loss string (e.g., "1%", "0.01").
+
+    Returns:
+        Tuple of (bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate).
+
+    Raises:
+        ValueError: If any parameter has invalid format.
+    """
+    bandwidth_mbps: Optional[float] = None
+    latency_ms: Optional[float] = None
+    jitter_percent: float = 0.0
+    packet_loss_rate: float = 0.0
+
+    # 1. Load profile defaults (if specified)
+    if profile:
+        profile_data = load_network_profile(profile)
+        bandwidth_mbps = parse_bandwidth(profile_data["bandwidth"])
+        latency_ms = parse_latency(profile_data["latency"])
+        jitter_percent = profile_data["jitter"]
+        packet_loss_rate = profile_data["packet_loss"]
+
+    # 2. Override with individual parameters
+    if bandwidth:
+        bandwidth_mbps = parse_bandwidth(bandwidth)
+    if latency:
+        latency_ms = parse_latency(latency)
+    if jitter:
+        jitter_percent = parse_jitter(jitter)
+    if packet_loss:
+        packet_loss_rate = parse_packet_loss(packet_loss)
+
+    return bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
+
+
+def has_network_simulation(
+    bandwidth_mbps: Optional[float],
+    latency_ms: Optional[float],
+    jitter_percent: float,
+    packet_loss_rate: float,
+) -> bool:
+    """Check if any network simulation parameters are active."""
+    return any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0])
+
+
+def print_network_params(
+    bandwidth_mbps: Optional[float],
+    latency_ms: Optional[float],
+    jitter_percent: float,
+    packet_loss_rate: float,
+    qualifier: str = "",
+) -> None:
+    """Print active network simulation parameters.
+
+    Args:
+        bandwidth_mbps: Bandwidth in Mbps.
+        latency_ms: Latency in milliseconds.
+        jitter_percent: Jitter as decimal (0.0-1.0).
+        packet_loss_rate: Packet loss as decimal (0.0-1.0).
+        qualifier: Optional qualifier for the message (e.g., "data server only").
+    """
+    from arbol import aprint
+
+    suffix = f" ({qualifier})" if qualifier else ""
+    aprint(f"🌐 [Luxar] Network simulation enabled{suffix}:")
+    if bandwidth_mbps:
+        aprint(f"   • Bandwidth: {bandwidth_mbps:.2f} Mbps")
+    if latency_ms:
+        aprint(f"   • Latency: {latency_ms:.0f} ms")
+    if jitter_percent > 0:
+        aprint(f"   • Jitter: {jitter_percent * 100:.0f}%")
+    if packet_loss_rate > 0:
+        aprint(f"   • Packet loss: {packet_loss_rate * 100:.1f}%")
+
+
 def load_network_profile(profile_name: str) -> NetworkProfile:
     """Load network profile by name.
 
