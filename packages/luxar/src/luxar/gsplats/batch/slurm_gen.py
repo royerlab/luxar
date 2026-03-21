@@ -55,15 +55,21 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.append(env_preamble)
     lines.append("")
 
-    # Build the fit command template (used in the loop body)
+    # Build the fit command template (used in the loop body).
+    # Only pass --channel / --timepoint when there are multiple values,
+    # otherwise _load_zarr_volume's ndim heuristic may interpret them
+    # incorrectly (e.g. for 4D TZYX, passing --channel 0 would override
+    # --timepoint and always slice dim 0 = channel instead of timepoint).
     fit_cmd_parts = [
         f'luxar gsplat fit {shlex.quote(manifest.input_path)} "$OUTPUT"',
         f"    --tile $K/{manifest.n_tiles}",
         f"    --tile-size {manifest.tile_size}",
         f"    --overlap {manifest.tile_overlap}",
-        "    --channel $C",
-        "    --timepoint $T",
     ]
+    if manifest.n_channels > 1:
+        fit_cmd_parts.append("    --channel $C")
+    if manifest.n_timepoints > 1:
+        fit_cmd_parts.append("    --timepoint $T")
     if manifest.preset:
         fit_cmd_parts.append(f"    --preset {manifest.preset}")
     for key, value in manifest.fit_args.items():
