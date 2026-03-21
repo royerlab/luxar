@@ -179,12 +179,20 @@ def format_tree_node(
         line += " 📁"
     elif node_type == "points":
         line += " ⚫"
+    elif node_type == "lines":
+        line += " 📏"
+    elif node_type == "gsplats":
+        line += " 💠"
 
     # Add selected attributes
     if attrs:
         important_attrs = []
         if "n_points" in attrs:
             important_attrs.append(f"n={attrs['n_points']:,}")
+        if "n_vertices" in attrs:
+            important_attrs.append(f"n={attrs['n_vertices']:,}")
+        if "n_splats" in attrs:
+            important_attrs.append(f"n={attrs['n_splats']:,}")
         if "shape" in attrs:
             important_attrs.append(f"shape={attrs['shape']}")
         if "dtype" in attrs:
@@ -211,16 +219,17 @@ def format_memory_size(bytes_size: float) -> str:
     return f"{bytes_size:.1f} PB"
 
 
-def get_zarr_info(store_path: Path) -> dict[str, Any]:
+def get_zarr_info(store_path: Path, detailed: bool = False) -> dict[str, Any]:
     """Get detailed information about a Zarr store.
 
     Args:
         store_path: Path to the Zarr store.
+        detailed: If True, include extra per-object details (shapes, dtypes).
 
     Returns:
         Dictionary with store information.
     """
-    info = {
+    info: dict[str, Any] = {
         "path": str(store_path),
         "exists": store_path.exists(),
         "size": 0,
@@ -228,6 +237,10 @@ def get_zarr_info(store_path: Path) -> dict[str, Any]:
         "n_arrays": 0,
         "n_points_total": 0,
         "points_objects": [],
+        "n_lines_vertices_total": 0,
+        "lines_objects": [],
+        "n_gsplats_total": 0,
+        "gsplats_objects": [],
     }
 
     if not info["exists"]:
@@ -245,12 +258,14 @@ def get_zarr_info(store_path: Path) -> dict[str, Any]:
 
         def analyze_group(group: zarr.Group, path: str = "") -> None:
             """Recursively analyze a Zarr group."""
-            info["n_groups"] += 1  # type: ignore
+            info["n_groups"] += 1
 
-            # Check if this is a points group
-            if "positions" in group:
+            # Detect geometry type from attrs (set by compiler)
+            node_type = group.attrs.get("type", "")
+
+            if node_type == "points" and "positions" in group:
                 positions = group["positions"]
-                point_info = {
+                point_info: dict[str, Any] = {
                     "path": path or "/",
                     "n_points": positions.shape[0],
                     "n_dims": positions.shape[1] if len(positions.shape) > 1 else 1,
@@ -258,12 +273,44 @@ def get_zarr_info(store_path: Path) -> dict[str, Any]:
                     "has_radii": "radii" in group,
                     "has_sharpness": "sharpness" in group,
                 }
-                info["points_objects"].append(point_info)  # type: ignore
+                if detailed:
+                    point_info["shape"] = list(positions.shape)
+                    point_info["dtype"] = str(positions.dtype)
+                info["points_objects"].append(point_info)
                 info["n_points_total"] += point_info["n_points"]
 
+            elif node_type == "lines" and "vertices" in group:
+                vertices = group["vertices"]
+                line_info: dict[str, Any] = {
+                    "path": path or "/",
+                    "n_vertices": vertices.shape[0],
+                    "n_dims": vertices.shape[1] if len(vertices.shape) > 1 else 1,
+                    "has_colors": "colors" in group,
+                    "has_widths": "widths" in group,
+                }
+                if detailed:
+                    line_info["shape"] = list(vertices.shape)
+                    line_info["dtype"] = str(vertices.dtype)
+                info["lines_objects"].append(line_info)
+                info["n_lines_vertices_total"] += line_info["n_vertices"]
+
+            elif node_type == "gsplats" and "centers" in group:
+                centers = group["centers"]
+                gsplat_info: dict[str, Any] = {
+                    "path": path or "/",
+                    "n_splats": centers.shape[0],
+                    "n_dims": centers.shape[1] if len(centers.shape) > 1 else 1,
+                    "has_colors": "colors" in group,
+                }
+                if detailed:
+                    gsplat_info["shape"] = list(centers.shape)
+                    gsplat_info["dtype"] = str(centers.dtype)
+                info["gsplats_objects"].append(gsplat_info)
+                info["n_gsplats_total"] += gsplat_info["n_splats"]
+
             # Count arrays
-            for array_name in group.array_keys():
-                info["n_arrays"] += 1  # type: ignore
+            for _array_name in group.array_keys():
+                info["n_arrays"] += 1
 
             # Recurse into subgroups
             for subgroup_name in group.group_keys():

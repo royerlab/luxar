@@ -474,3 +474,73 @@ class TestNetworkSimulationMiddleware:
 
         # Should have dropped approximately 50% (allow 30-70%)
         assert 30 <= call_count <= 70, f"Expected ~50 calls, got {call_count}"
+
+
+class TestParseNetworkOptions:
+    """Tests for the parse_network_options shared helper (#10)."""
+
+    def test_no_params_returns_defaults(self):
+        """All None inputs return zeros/None."""
+        from luxar.cli.network_simulation import parse_network_options
+
+        bw, lat, jit, pl = parse_network_options()
+        assert bw is None
+        assert lat is None
+        assert jit == 0.0
+        assert pl == 0.0
+
+    def test_profile_loads_all_params(self):
+        """Loading a profile populates all four values."""
+        from luxar.cli.network_simulation import parse_network_options
+
+        bw, lat, jit, pl = parse_network_options(profile="3g")
+        assert bw is not None and bw > 0
+        assert lat is not None and lat > 0
+        assert jit > 0
+        assert pl > 0
+
+    def test_individual_overrides_profile(self):
+        """Individual params override profile values."""
+        from luxar.cli.network_simulation import parse_network_options
+
+        bw, lat, jit, pl = parse_network_options(
+            profile="3g", bandwidth="100mbps", latency="5ms"
+        )
+        assert bw == 100.0
+        assert lat == 5.0
+        # jitter and packet_loss come from 3g profile
+        assert jit > 0
+        assert pl > 0
+
+    def test_invalid_bandwidth_raises(self):
+        """Invalid bandwidth string raises ValueError."""
+        from luxar.cli.network_simulation import parse_network_options
+
+        with pytest.raises(ValueError):
+            parse_network_options(bandwidth="invalid")
+
+    def test_invalid_profile_raises(self):
+        """Invalid profile name raises ValueError."""
+        from luxar.cli.network_simulation import parse_network_options
+
+        with pytest.raises(ValueError):
+            parse_network_options(profile="nonexistent")
+
+
+class TestHasNetworkSimulation:
+    """Tests for has_network_simulation helper."""
+
+    def test_all_defaults_is_false(self):
+        from luxar.cli.network_simulation import has_network_simulation
+
+        assert has_network_simulation(None, None, 0.0, 0.0) is False
+
+    def test_bandwidth_alone_is_true(self):
+        from luxar.cli.network_simulation import has_network_simulation
+
+        assert has_network_simulation(10.0, None, 0.0, 0.0) is True
+
+    def test_latency_alone_is_true(self):
+        from luxar.cli.network_simulation import has_network_simulation
+
+        assert has_network_simulation(None, 100.0, 0.0, 0.0) is True

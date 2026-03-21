@@ -1635,8 +1635,11 @@ export class SceneLoader {
         );
       }
 
-      // Create material
-      const material = materialManager.getLineMaterial({
+      // Create material — clone if colormap needs to be applied, to avoid
+      // polluting the material manager's cache.
+      const lnColormapName = node.attrs.colormap as string | undefined;
+      const lnHasScalars = !!node.attrs.has_scalars;
+      let material = materialManager.getLineMaterial({
         opacity: attrs.opacity ?? 1.0,
         gamma: attrs.gamma ?? 1.0,
         intensity: attrs.intensity ?? 1.0,
@@ -1645,12 +1648,15 @@ export class SceneLoader {
       });
 
       // Apply colormap if specified AND scalar data exists to drive it.
-      const lnColormapName = node.attrs.colormap as string | undefined;
-      const lnHasScalars = !!node.attrs.has_scalars;
+      // NOTE: Lines colormap with scalars requires the loader to load the
+      // `scalars` zarr dataset and bind it as `aStartScalar`/`aEndScalar`
+      // InstancedBufferAttributes. This is NOT YET IMPLEMENTED.
       if (lnColormapName && lnHasScalars) {
-        // TODO: load custom LUT from zarr when lnColormapName === "custom"
         const lnColormapTex = getColormapTexture(lnColormapName);
         if (lnColormapTex) {
+          // Clone to avoid mutating the cached material
+          material = material.clone() as typeof material;
+          materialManager.register(material);
           material.updateColormapTexture(lnColormapTex);
           const lnScalarRange = (node.attrs.scalar_data_range as [number, number]) ?? [0, 1];
           material.updateScalarRange(lnScalarRange[0], lnScalarRange[1]);
@@ -1800,8 +1806,10 @@ export class SceneLoader {
         processed.splatCount
       );
 
-      // Create material
-      const material = materialManager.getGSplatMaterial({
+      // Create material — clone if colormap needs to be applied, to avoid
+      // polluting the material manager's cache with colormap defines/uniforms.
+      const gsColormapName = node.attrs.colormap as string | undefined;
+      let material = materialManager.getGSplatMaterial({
         opacity: attrs.opacity ?? 1.0,
         gamma: attrs.gamma ?? 1.0,
         intensity: attrs.intensity ?? 1.0,
@@ -1809,12 +1817,13 @@ export class SceneLoader {
         blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
       });
 
-      // Apply colormap if specified (post-creation, not cached)
-      const gsColormapName = node.attrs.colormap as string | undefined;
+      // Apply colormap if specified
       if (gsColormapName) {
-        // TODO: load custom LUT from zarr when gsColormapName === "custom"
         const gsColormapTex = getColormapTexture(gsColormapName);
         if (gsColormapTex) {
+          // Clone to avoid mutating the cached material
+          material = material.clone() as typeof material;
+          materialManager.register(material);
           material.updateColormapTexture(gsColormapTex);
           const ampRange = node.attrs.amplitude_data_range as [number, number] | undefined;
           const gsScalarRange = ampRange ?? [0, 1];
@@ -2154,7 +2163,7 @@ export class SceneLoader {
     radiusScale: number = 1.0,
     sharpnessScale: number = 1.0
   ): THREE.ShaderMaterial {
-    const material = materialManager.getPointMaterial({
+    let material: THREE.ShaderMaterial = materialManager.getPointMaterial({
       opacity: attrs.opacity ?? 1.0,
       gamma: attrs.gamma ?? 1.0,
       intensity: attrs.intensity ?? 1.0,
@@ -2165,17 +2174,22 @@ export class SceneLoader {
     });
 
     // Apply colormap if specified AND scalar data exists to drive it.
-    // Without scalar data, the shader's `scalar` attribute defaults to 0,
-    // which would map everything to the first LUT color (usually black).
+    // NOTE: Points colormap with scalars requires the loader to load the
+    // `scalars` zarr dataset and bind it as a `scalar` BufferAttribute.
+    // This is NOT YET IMPLEMENTED — the point-spatial-index-loader does not
+    // load scalars. Until then, this block is effectively unreachable because
+    // ptHasScalars will be false (the loader doesn't populate has_scalars).
+    // Clone to avoid mutating the cached material.
     const ptColormapName = attrs.colormap as string | undefined;
     const ptHasScalars = !!attrs.has_scalars;
     if (ptColormapName && ptHasScalars) {
-      // TODO: load custom LUT from zarr when ptColormapName === "custom"
       const ptColormapTex = getColormapTexture(ptColormapName);
       if (ptColormapTex) {
-        material.updateColormapTexture(ptColormapTex);
+        material = material.clone();
+        materialManager.register(material);
+        (material as any).updateColormapTexture(ptColormapTex);
         const ptScalarRange = (attrs.scalar_data_range as [number, number]) ?? [0, 1];
-        material.updateScalarRange(ptScalarRange[0], ptScalarRange[1]);
+        (material as any).updateScalarRange(ptScalarRange[0], ptScalarRange[1]);
       }
     }
 
