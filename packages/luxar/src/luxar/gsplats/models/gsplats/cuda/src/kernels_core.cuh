@@ -914,45 +914,36 @@ __global__ void rasterize_backward_kernel(
             if (warp_has_grads != 0) {
                 int lane = threadIdx.x % 32;
 
-                // OPTIMIZATION: Manually interleaved warp reduction across ALL
-                // gradient components simultaneously. Instead of 10 sequential
-                // warp_reduce_sum calls (each with 5 serial shuffle steps),
-                // interleave shuffles from all components at each offset step.
-                // This allows the GPU to exploit ILP: independent shuffles on
-                // different registers can issue in the same cycle.
-                constexpr int CONIC_SIZE_L = conic_size<DIM>();
-                float r_amp = local_d_amp;
-                float r_centers[DIM];
-                float r_conic[CONIC_SIZE_L];
-                #pragma unroll
-                for (int d = 0; d < DIM; d++) r_centers[d] = local_d_centers[d];
-                #pragma unroll
-                for (int c = 0; c < CONIC_SIZE_L; c++) r_conic[c] = local_d_conic[c];
+                // OPTIMIZATION: Batch all warp reductions BEFORE any atomics.
+                // Each warp_reduce_sum requires all threads via __shfl_down_sync.
+                // Interleaving reduce→atomic→reduce→atomic serializes because
+                // lane 0's atomic blocks the next __shfl_down_sync for all lanes.
+                // By batching reductions first, the GPU can interleave independent
+                // shuffle operations across components (ILP).
+                float warp_d_amp = warp_reduce_sum(local_d_amp);
 
-                // 5 shuffle steps (offsets: 16, 8, 4, 2, 1), all components interleaved
+                float warp_d_centers[DIM];
                 #pragma unroll
-                for (int offset = 16; offset > 0; offset >>= 1) {
-                    r_amp += __shfl_down_sync(0xFFFFFFFF, r_amp, offset);
-                    #pragma unroll
-                    for (int d = 0; d < DIM; d++) {
-                        r_centers[d] += __shfl_down_sync(0xFFFFFFFF, r_centers[d], offset);
-                    }
-                    #pragma unroll
-                    for (int c = 0; c < CONIC_SIZE_L; c++) {
-                        r_conic[c] += __shfl_down_sync(0xFFFFFFFF, r_conic[c], offset);
-                    }
+                for (int d = 0; d < DIM; d++) {
+                    warp_d_centers[d] = warp_reduce_sum(local_d_centers[d]);
                 }
 
-                // Batch all atomic writes (only lane 0)
+                float warp_d_conic[CONIC_SIZE];
+                #pragma unroll
+                for (int c = 0; c < CONIC_SIZE; c++) {
+                    warp_d_conic[c] = warp_reduce_sum(local_d_conic[c]);
+                }
+
+                // Now batch all atomic writes (only lane 0)
                 if (lane == 0) {
-                    atomicAdd(&s_d_amps_tile[si], r_amp);
+                    atomicAdd(&s_d_amps_tile[si], warp_d_amp);
                     #pragma unroll
                     for (int d = 0; d < DIM; d++) {
-                        atomicAdd(&s_d_centers_tile[si * CENTER_STRIDE + d], r_centers[d]);
+                        atomicAdd(&s_d_centers_tile[si * CENTER_STRIDE + d], warp_d_centers[d]);
                     }
                     #pragma unroll
-                    for (int c = 0; c < CONIC_SIZE_L; c++) {
-                        atomicAdd(&s_d_conic_tile[si * CONIC_SIZE + c], r_conic[c]);
+                    for (int c = 0; c < CONIC_SIZE; c++) {
+                        atomicAdd(&s_d_conic_tile[si * CONIC_SIZE + c], warp_d_conic[c]);
                     }
                 }
             }
