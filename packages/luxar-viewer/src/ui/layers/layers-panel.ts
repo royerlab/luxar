@@ -81,6 +81,9 @@ export class LayersPanel {
   // to prevent programmatic .value= from fighting with the user's drag
   private controlsInteracting = false;
 
+  // Tracks layers panel height to reposition the rendering controls (GUI) below
+  private resizeObserver: ResizeObserver | null = null;
+
   constructor(container: HTMLElement, animationController: AnimationController) {
     this.container = container;
     this.animationController = animationController;
@@ -121,8 +124,16 @@ export class LayersPanel {
     // Build DOM
     this.buildPanel();
 
-    // Auto-select first layer
+    // Sync initial display range to materials — the layer state may compute a
+    // displayMin/displayMax from the data range that differs from the material's
+    // default intensity=1/offset=0 (which corresponds to display range [0,1]).
+    // Without this, the first slider interaction causes a sudden brightness jump.
     const layers = this.state.getLayers();
+    for (const layer of layers) {
+      this.applyDisplayRange(layer);
+    }
+
+    // Auto-select first layer
     if (layers.length > 0) {
       this.state.select(layers[0].path, 'single');
     }
@@ -132,12 +143,14 @@ export class LayersPanel {
     if (!this.panelEl || this.state.count === 0) return;
     this.panelEl.style.display = 'flex';
     this.visible = true;
+    this.repositionGUI();
   }
 
   hide(): void {
     if (!this.panelEl) return;
     this.panelEl.style.display = 'none';
     this.visible = false;
+    this.repositionGUI();
   }
 
   toggle(): void {
@@ -171,6 +184,12 @@ export class LayersPanel {
       this.unsubscribeState();
       this.unsubscribeState = null;
     }
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    // Reset visibility and GUI position before removing the panel DOM
+    const wasVisible = this.visible;
+    this.visible = false;
+    if (wasVisible) this.repositionGUI();
     this.rangeSlider?.dispose();
     this.rangeSlider = null;
     this.gammaSlider = null;
@@ -220,6 +239,12 @@ export class LayersPanel {
     panel.appendChild(controls);
 
     this.container.appendChild(panel);
+
+    // Track panel size changes to keep the GUI positioned below
+    this.resizeObserver = new ResizeObserver(() => {
+      if (this.visible) this.repositionGUI();
+    });
+    this.resizeObserver.observe(panel);
 
     // Build the list rows and controls once
     this.renderList();
@@ -344,6 +369,14 @@ export class LayersPanel {
         for (const sel of this.state.getSelected()) {
           this.applyDisplayRange(sel);
         }
+        this.controlsInteracting = false;
+      },
+      onBoundsChange: (min, max) => {
+        this.controlsInteracting = true;
+        this.state.applyToSelected((l) => {
+          l.dataMin = min;
+          l.dataMax = max;
+        });
         this.controlsInteracting = false;
       },
     });
@@ -614,6 +647,25 @@ export class LayersPanel {
     }
     mat.needsUpdate = true;
     this.requestRender();
+  }
+
+  /**
+   * Reposition the rendering controls (`.luxar-gui`) so it sits below the
+   * layers panel when visible, or resets to its default position when hidden.
+   */
+  private repositionGUI(): void {
+    // Target the rendering controls GUI specifically (not the recording panel GUI)
+    const gui = document.querySelector(
+      '.luxar-gui:not(.luxar-recording-panel)'
+    ) as HTMLElement | null;
+    if (!gui) return;
+
+    if (this.visible && this.panelEl) {
+      const rect = this.panelEl.getBoundingClientRect();
+      gui.style.top = `${rect.bottom + 8}px`;
+    } else {
+      gui.style.top = '20px';
+    }
   }
 
   private requestRender(): void {

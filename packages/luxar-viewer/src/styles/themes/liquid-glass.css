@@ -69,6 +69,7 @@
 [data-theme='liquid-glass'] .luxar-debug-console::before,
 [data-theme='liquid-glass'] .luxar-data-monitor::before,
 [data-theme='liquid-glass'] .luxar-dimension-sliders::before,
+[data-theme='liquid-glass'] .luxar-layers-panel::before,
 [data-theme='liquid-glass'] .luxar-gui::before {
   content: '';
   position: absolute;
@@ -96,6 +97,7 @@
 [data-theme='liquid-glass'] .luxar-debug-console::after,
 [data-theme='liquid-glass'] .luxar-data-monitor::after,
 [data-theme='liquid-glass'] .luxar-dimension-sliders::after,
+[data-theme='liquid-glass'] .luxar-layers-panel::after,
 [data-theme='liquid-glass'] .luxar-gui::after {
   content: '';
   position: absolute;
@@ -404,3 +406,58 @@
 }
 
 /* Note: .luxar-error-dialog__content and __footer selectors removed - these classes don't exist in the error dialog DOM */
+
+/* ==========================================================================
+   LAYERS PANEL INNER ELEMENT STYLING
+   Make layers panel elements transparent for glass effect
+   ========================================================================== */
+
+/* Header border */
+[data-theme='liquid-glass'] .luxar-layers-panel__header {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Controls separator border */
+[data-theme='liquid-glass'] .luxar-layers-panel__controls {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Layer row hover - more transparent */
+[data-theme='liquid-glass'] .luxar-layer-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Layer row selected - more transparent */
+[data-theme='liquid-glass'] .luxar-layer-row--selected {
+  background: rgba(33, 150, 243, 0.1) !important;
+}
+
+/* Select controls - glass style (matches GUI selects) */
+[data-theme='liquid-glass'] .luxar-layers-panel__select {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-layers-panel__select:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-layers-panel__select:focus {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-color: var(--luxar-success) !important;
+}
+
+/* Slider track - subtle (matches GUI slider) */
+[data-theme='liquid-glass'] .luxar-layers-panel__slider {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Range slider track - subtle */
+[data-theme='liquid-glass'] .luxar-range-slider__track {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Type badge - more transparent */
+[data-theme='liquid-glass'] .luxar-layer-row__badge {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
