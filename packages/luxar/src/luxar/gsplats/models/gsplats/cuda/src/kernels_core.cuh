@@ -676,7 +676,8 @@ __global__ void rasterize_forward_kernel(
 // =============================================================================
 
 template <int DIM, int BATCH_SIZE = DEFAULT_BATCH_SIZE, typename InputDType = float>
-__global__ void rasterize_backward_kernel(
+__global__ __launch_bounds__(512, 3)
+void rasterize_backward_kernel(
     const float* __restrict__ grad_output,
     const InputDType* __restrict__ centers,
     const InputDType* __restrict__ conic,
