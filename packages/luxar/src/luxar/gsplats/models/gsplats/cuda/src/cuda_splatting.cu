@@ -76,9 +76,9 @@ inline const __half* get_data_ptr<__half>(const torch::Tensor& t) {
 // Preprocess kernel (no BATCH_SIZE dependency)
 #define INSTANTIATE_PREPROCESS(D) \
     template void launch_preprocess<D, float>(const float*, const float*, const float*, \
-        int, const int*, const int*, int, float, float, int*, bool*, int*, int*, int64_t, int*, int64_t*, cudaStream_t); \
+        int, const int*, const int*, int, float, float, int*, bool*, int*, int*, int64_t, int*, cudaStream_t); \
     template void launch_preprocess<D, __half>(const __half*, const __half*, const __half*, \
-        int, const int*, const int*, int, float, float, int*, bool*, int*, int*, int64_t, int*, int64_t*, cudaStream_t);
+        int, const int*, const int*, int, float, float, int*, bool*, int*, int*, int64_t, int*, cudaStream_t);
 
 INSTANTIATE_PREPROCESS(2)
 INSTANTIATE_PREPROCESS(3)
@@ -274,11 +274,8 @@ void dispatch_forward_impl(
     state.aabb_lo = torch::empty({N, dim}, torch::TensorOptions().dtype(torch::kInt32).device(device));
     state.aabb_hi = torch::empty({N, dim}, torch::TensorOptions().dtype(torch::kInt32).device(device));
 
-    // Atomic counters for global splats and total tile-splat pairs
+    // Atomic counter for global splats (avoids expensive torch::nonzero when 0)
     auto global_count_tensor = torch::zeros({1}, torch::TensorOptions().dtype(torch::kInt32).device(device));
-    // OPTIMIZATION: Compute total_pairs via atomic counter in preprocess_kernel.
-    // This allows syncing BEFORE the prefix sum (saves ~0.15ms CPU stall).
-    auto total_pairs_tensor = torch::zeros({1}, torch::TensorOptions().dtype(torch::kInt64).device(device));
 
     // Copy shape and tile_dims to device
     // OPTIMIZATION: Store in BinningState for reuse in backward pass
@@ -297,7 +294,7 @@ void dispatch_forward_impl(
     const InputDType* L_row_norms_ptr = get_data_ptr<InputDType>(L_row_norms);
     const InputDType* conic_ptr = get_data_ptr<InputDType>(conic);
 
-    // Launch preprocess kernel (now also computes total_pairs via atomic counter)
+    // Launch preprocess kernel
     DIM_DISPATCH(dim,
         launch_preprocess<D, InputDType>(
             centers_ptr, amps_ptr, L_row_norms_ptr,
@@ -311,32 +308,18 @@ void dispatch_forward_impl(
             state.aabb_hi.data_ptr<int>(),
             num_tiles,
             global_count_tensor.data_ptr<int>(),
-            total_pairs_tensor.data_ptr<int64_t>(),
             stream)
     );
 
     CUDA_CHECK_LAST();
 
-    // OPTIMIZATION: Issue memcpys for global_count and total_pairs, then sync BEFORE prefix sum.
-    // Previously, sync happened AFTER prefix sum (waited for preprocess + prefix_sum + memcpy).
-    // Now sync only waits for preprocess + memcpy, saving ~0.1-0.2ms of CPU stall.
+    // OPTIMIZATION: Issue global_count memcpy early (right after preprocess kernel writes it).
+    // This will be read after the single sync below, eliminating a second sync later.
     int h_global_count = 0;
-    int64_t h_total_pairs = 0;
     cudaMemcpyAsync(&h_global_count, global_count_tensor.data_ptr<int>(),
         sizeof(int), cudaMemcpyDeviceToHost, stream);
-    cudaMemcpyAsync(&h_total_pairs, total_pairs_tensor.data_ptr<int64_t>(),
-        sizeof(int64_t), cudaMemcpyDeviceToHost, stream);
-    cudaStreamSynchronize(stream);
 
-    state.total_pairs = h_total_pairs;
-
-    // Allocate tile content BEFORE prefix sum (total_pairs known from atomic counter)
-    state.tile_content = torch::empty({state.total_pairs > 0 ? state.total_pairs : 1},
-        torch::TensorOptions().dtype(torch::kInt32).device(device));
-    state.tile_write_heads = torch::zeros({num_tiles},
-        torch::TensorOptions().dtype(torch::kInt32).device(device));
-
-    // Compute prefix sum for tile offsets (runs AFTER sync, overlaps with CPU allocation)
+    // Compute prefix sum for tile offsets
     state.tile_offsets = torch::empty({num_tiles}, torch::TensorOptions().dtype(torch::kInt64).device(device));
 
     size_t temp_bytes = 0;
@@ -359,6 +342,18 @@ void dispatch_forward_impl(
     );
 
     CUDA_CHECK_LAST();
+
+    // Compute total pairs from last offset + last count
+    // Note: h_global_count memcpy was issued above — all three memcpys complete at this sync
+    int64_t last_offset = 0;
+    int last_count = 0;
+    cudaMemcpyAsync(&last_offset, state.tile_offsets.data_ptr<int64_t>() + num_tiles - 1,
+        sizeof(int64_t), cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(&last_count, state.tile_counts.data_ptr<int>() + num_tiles - 1,
+        sizeof(int), cudaMemcpyDeviceToHost, stream);
+    cudaStreamSynchronize(stream);
+
+    state.total_pairs = last_offset + last_count;
 
     // Allocate tile content
     state.tile_content = torch::empty({state.total_pairs},
