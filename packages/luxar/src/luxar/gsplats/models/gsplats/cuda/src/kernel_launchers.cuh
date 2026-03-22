@@ -251,6 +251,37 @@ void launch_rasterize_backward(
 }
 
 // =============================================================================
+// SPLAT-CENTRIC BACKWARD KERNEL LAUNCHER
+// =============================================================================
+
+template <int DIM, typename InputDType = float>
+void launch_rasterize_backward_splat_centric(
+    const float* grad_output,
+    const InputDType* centers,
+    const InputDType* conic,
+    const InputDType* amps,
+    int N,
+    const int* shape,
+    float truncate,
+    float intensity_floor,
+    float* d_centers,
+    float* d_conic,
+    float* d_amps,
+    cudaStream_t stream
+) {
+    if (N == 0) return;
+
+    constexpr int BLOCK_SIZE = 256;
+    int num_blocks = N;  // One block per splat
+
+    rasterize_backward_splat_centric_kernel<DIM, InputDType><<<num_blocks, BLOCK_SIZE, 0, stream>>>(
+        grad_output, centers, conic, amps, N,
+        shape, truncate, intensity_floor,
+        d_centers, d_conic, d_amps
+    );
+}
+
+// =============================================================================
 // GLOBAL SPLAT FORWARD KERNEL LAUNCHER
 // =============================================================================
 

@@ -163,6 +163,21 @@ INSTANTIATE_GLOBAL(8)
 
 #undef INSTANTIATE_GLOBAL
 
+// Splat-centric backward kernel instantiations (no BATCH_SIZE dependency)
+#define INSTANTIATE_SPLAT_BWD(D) \
+    template void launch_rasterize_backward_splat_centric<D, float>(const float*, const float*, const float*, const float*, int, const int*, float, float, float*, float*, float*, cudaStream_t); \
+    template void launch_rasterize_backward_splat_centric<D, __half>(const float*, const __half*, const __half*, const __half*, int, const int*, float, float, float*, float*, float*, cudaStream_t);
+
+INSTANTIATE_SPLAT_BWD(2)
+INSTANTIATE_SPLAT_BWD(3)
+INSTANTIATE_SPLAT_BWD(4)
+INSTANTIATE_SPLAT_BWD(5)
+INSTANTIATE_SPLAT_BWD(6)
+INSTANTIATE_SPLAT_BWD(7)
+INSTANTIATE_SPLAT_BWD(8)
+
+#undef INSTANTIATE_SPLAT_BWD
+
 // =============================================================================
 // UTILITY FUNCTIONS
 // =============================================================================
@@ -513,92 +528,32 @@ void dispatch_backward_impl(
     auto tile_dims_tensor = tile_dims_tensor_cached.defined() ? tile_dims_tensor_cached :
         torch::tensor(tile_dims, torch::TensorOptions().dtype(torch::kInt32).device(device));
 
-    // Zero gradient buffers
-    d_centers.zero_();
-    d_conic.zero_();
-    d_amps.zero_();
-
     // Extract typed data pointers
     const InputDType* centers_ptr = get_data_ptr<InputDType>(centers);
     const InputDType* conic_ptr = get_data_ptr<InputDType>(conic);
     const InputDType* amps_ptr = get_data_ptr<InputDType>(amps);
 
-    // Clamp batch_size based on dimension due to shared memory constraints
-    int effective_batch = batch_size;
-    if (dim >= 7 && effective_batch > 32) effective_batch = 32;
-    else if (dim >= 5 && effective_batch > 128) effective_batch = 128;
-
-    // Macro for rasterize backward launch
-    #define LAUNCH_RASTER_BWD(D_val, BATCH_val) \
-        launch_rasterize_backward<D_val, BATCH_val, InputDType>( \
-            grad_output.data_ptr<float>(), \
-            centers_ptr, conic_ptr, amps_ptr, \
-            N, \
-            shape_tensor.data_ptr<int>(), \
-            tile_dims_tensor.data_ptr<int>(), \
-            tile_size, truncate, intensity_floor, \
-            tile_offsets.data_ptr<int64_t>(), \
-            tile_counts.data_ptr<int>(), \
-            tile_content.data_ptr<int>(), \
-            d_centers.data_ptr<float>(), \
-            d_conic.data_ptr<float>(), \
-            d_amps.data_ptr<float>(), \
-            num_tiles, tile_dims, stream)
-
-    switch (effective_batch) {
-        case 32:
-            DIM_DISPATCH(dim, LAUNCH_RASTER_BWD(D, 32));
-            break;
-        case 128:
-            switch (dim) {
-                case 2: LAUNCH_RASTER_BWD(2, 128); break;
-                case 3: LAUNCH_RASTER_BWD(3, 128); break;
-                case 4: LAUNCH_RASTER_BWD(4, 128); break;
-                case 5: LAUNCH_RASTER_BWD(5, 128); break;
-                case 6: LAUNCH_RASTER_BWD(6, 128); break;
-                default: TORCH_CHECK(false, "Unsupported dimension for batch_size 128: ", dim);
-            }
-            break;
-        case 256:
-            switch (dim) {
-                case 2: LAUNCH_RASTER_BWD(2, 256); break;
-                case 3: LAUNCH_RASTER_BWD(3, 256); break;
-                case 4: LAUNCH_RASTER_BWD(4, 256); break;
-                default: TORCH_CHECK(false, "Unsupported dimension for batch_size 256: ", dim);
-            }
-            break;
-        default: TORCH_CHECK(false, "Unsupported batch_size: ", effective_batch, ". Must be 32, 128, or 256.");
-    }
-    #undef LAUNCH_RASTER_BWD
+    // OPTIMIZATION: Splat-centric backward — each block processes ONE splat,
+    // iterating over all voxels in its AABB. This replaces BOTH the tile-centric
+    // backward AND global splat backward kernels.
+    // Benefits: no tile binning dependency, no global atomics, no shared memory
+    // gradient accumulators, handles all splats (including global) uniformly.
+    // Note: gradient buffers are NOT pre-zeroed — the kernel writes directly
+    // (each block owns its splat exclusively, no concurrent writes).
+    DIM_DISPATCH(dim,
+        launch_rasterize_backward_splat_centric<D, InputDType>(
+            grad_output.data_ptr<float>(),
+            centers_ptr, conic_ptr, amps_ptr,
+            N,
+            shape_tensor.data_ptr<int>(),
+            truncate, intensity_floor,
+            d_centers.data_ptr<float>(),
+            d_conic.data_ptr<float>(),
+            d_amps.data_ptr<float>(),
+            stream)
+    );
 
     CUDA_CHECK_LAST();
-
-    // ==========================================================================
-    // GLOBAL SPLAT BACKWARD PASS
-    // ==========================================================================
-    int n_global_splats = (int)global_splat_ids.size(0);
-    if (n_global_splats > 0) {
-        int64_t num_pixels = 1;
-        for (int d = 0; d < dim; d++) {
-            num_pixels *= shape[d];
-        }
-
-        DIM_DISPATCH(dim,
-            launch_rasterize_global_backward<D, InputDType>(
-                grad_output.data_ptr<float>(),
-                centers_ptr, conic_ptr, amps_ptr,
-                global_splat_ids.data_ptr<int>(),
-                n_global_splats,
-                shape_tensor.data_ptr<int>(),
-                truncate, intensity_floor,
-                d_centers.data_ptr<float>(),
-                d_conic.data_ptr<float>(),
-                d_amps.data_ptr<float>(),
-                num_pixels, stream)
-        );
-
-        CUDA_CHECK_LAST();
-    }
 }
 
 // =============================================================================
