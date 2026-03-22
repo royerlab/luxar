@@ -116,7 +116,8 @@ forward(
     float truncate,
     float intensity_floor,
     int tile_size,
-    int batch_size
+    int batch_size,
+    const torch::Tensor& output_buffer = torch::Tensor()
 );
 
 // =============================================================================
@@ -144,7 +145,8 @@ backward(
     int tile_size,
     int batch_size,
     const torch::Tensor& shape_tensor_cached = torch::Tensor(),
-    const torch::Tensor& tile_dims_tensor_cached = torch::Tensor()
+    const torch::Tensor& tile_dims_tensor_cached = torch::Tensor(),
+    const torch::Tensor& output_to_zero = torch::Tensor()
 );
 
 // =============================================================================
@@ -178,7 +180,8 @@ forward_fp16(
     float truncate,
     float intensity_floor,
     int tile_size,
-    int batch_size
+    int batch_size,
+    const torch::Tensor& output_buffer = torch::Tensor()
 );
 
 /**
@@ -201,7 +204,8 @@ backward_fp16(
     int tile_size,
     int batch_size,
     const torch::Tensor& shape_tensor_cached = torch::Tensor(),
-    const torch::Tensor& tile_dims_tensor_cached = torch::Tensor()
+    const torch::Tensor& tile_dims_tensor_cached = torch::Tensor(),
+    const torch::Tensor& output_to_zero = torch::Tensor()
 );
 
 // =============================================================================
