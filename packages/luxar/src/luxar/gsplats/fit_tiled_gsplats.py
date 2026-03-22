@@ -104,7 +104,7 @@ def fit_tile(
             offset = origin * vs
         else:
             offset = origin
-        result.centers = result.centers + offset[np.newaxis, :]
+        result = result.translate(offset)
 
     # Tag tile info in stats
     result.stats["tile_index"] = spec.index

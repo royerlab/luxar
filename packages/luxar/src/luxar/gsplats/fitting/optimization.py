@@ -106,7 +106,7 @@ def run_optimization_loop(
     movie_frames: Optional[Dict[str, Any]] = None
     if config.napari_movie:
         movie_frames = {
-            "target": [],
+            "target": V_t.cpu().numpy(),  # Store once (target never changes)
             "reconstruction": [],
             "residual": [],
             "iterations": [],
@@ -174,19 +174,22 @@ def run_optimization_loop(
 
         optimizer.step()
 
-        # Learning rate scheduling
+        # Single post-step evaluation (avoids redundant forward pass)
+        with torch.no_grad():
+            pred_eval = model()
+            loss_eval = loss_fn(pred_eval)
+
+        # Learning rate scheduling (uses post-step loss for accurate signal)
         if scheduler is not None:
             # ReduceLROnPlateau schedulers require metrics, others don't
             # Check by class name to handle both PyTorch and per-splat versions
             scheduler_name = type(scheduler).__name__
             if "Plateau" in scheduler_name:
-                scheduler.step(loss.detach())  # Plateau schedulers need loss
+                scheduler.step(
+                    loss_eval.detach()
+                )  # Plateau schedulers need post-step loss
             else:
                 scheduler.step()  # Exponential and other schedulers don't need loss
-
-        with torch.no_grad():
-            pred_eval = model()
-            loss_eval = loss_fn(pred_eval)
 
         # Tracking (use post-step metrics to match current model state)
         current_loss = float(loss_eval.item())
@@ -400,11 +403,10 @@ def _record_movie_frame(
         # Memory-bounded recording: remove oldest frames if limit exceeded
         if (
             config.movie_max_frames is not None
-            and len(movie_frames["target"]) >= config.movie_max_frames
+            and len(movie_frames["reconstruction"]) >= config.movie_max_frames
         ):
-            # Remove oldest frame (FIFO)
+            # Remove oldest frame (FIFO) — target is stored once, not per-frame
             for key in [
-                "target",
                 "reconstruction",
                 "residual",
                 "splat_centers",
@@ -413,7 +415,6 @@ def _record_movie_frame(
                 movie_frames[key].pop(0)
 
         # Store frames as numpy arrays (detached from computation graph)
-        target_frame = V_t.cpu().numpy()
         pred_frame = pred.detach().cpu().numpy()
         residual_frame = torch.abs(V_t - pred.detach()).cpu().numpy()
 
@@ -421,7 +422,6 @@ def _record_movie_frame(
         centers, _, _ = model.current_params()
         centers_frame = centers.detach().cpu().numpy()
 
-        movie_frames["target"].append(target_frame)
         movie_frames["reconstruction"].append(pred_frame)
         movie_frames["residual"].append(residual_frame)
         movie_frames["splat_centers"].append(centers_frame)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 import numpy as np
 
@@ -12,60 +12,18 @@ if TYPE_CHECKING:
     from luxar.encoding import EncodingMode
 
 
-@dataclass(eq=False)
-class GSplatData:
-    """Container for Gaussian splat data.
+class _SplatArrayMixin:
+    """Shared computed properties for splat array containers.
 
-    Attributes
-    ----------
-    centers : np.ndarray, shape (N, d)
-        Splat center positions in voxel coordinates.
-    amplitudes : np.ndarray, shape (N,)
-        Non-negative splat amplitudes, rescaled to original image intensity range.
-    cholesky_factors : np.ndarray, shape (N, d*(d+1)//2)
-        Packed lower-triangular Cholesky factors (L) where Σ = L @ L.T.
-        The packing order follows: [L00, L10, L11, L20, L21, L22, ...]
-    colors : Optional[np.ndarray], shape (N, 3)
-        Optional RGB colors per splat. Can be uint8 [0, 255] for SDR or
-        float32 for HDR. None if colors are not present.
-    stats : Dict[str, Any]
-        Optimization statistics including:
-        - time_seconds: Total optimization time
-        - iterations: Number of iterations completed
-        - converged: Whether convergence criteria were met
-        - best_iteration: Iteration where best state was found
-        - final_max_abs_error: Maximum absolute error in best state
-        - final_rel_l2: Relative L2 error in best state
-        - movie_frames: Optional optimization movie frames (if napari_movie=True)
+    Requires the implementing class to have:
+    - ``centers``: np.ndarray of shape (N, d)
+    - ``amplitudes``: np.ndarray of shape (N,)
+    - ``cholesky_factors``: np.ndarray of shape (N, d*(d+1)//2)
     """
 
     centers: np.ndarray
     amplitudes: np.ndarray
     cholesky_factors: np.ndarray
-    colors: Optional[np.ndarray] = None
-    stats: Dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        """Validate array shape consistency."""
-        n = self.centers.shape[0]
-        if self.amplitudes.shape != (n,):
-            raise ValueError(
-                f"Amplitudes shape {self.amplitudes.shape} doesn't match "
-                f"centers count ({n},)"
-            )
-        if self.colors is not None and self.colors.shape[0] != n:
-            raise ValueError(
-                f"Colors count {self.colors.shape[0]} doesn't match centers count {n}"
-            )
-        if self.centers.ndim >= 2:
-            from luxar.gsplats.utils.trils import validate_cholesky_shape
-
-            validate_cholesky_shape(
-                self.cholesky_factors,
-                ndim=self.centers.shape[1],
-                n_splats=n,
-                allow_uniform=False,
-            )
 
     @property
     def n_splats(self) -> int:
@@ -80,22 +38,6 @@ class GSplatData:
     def __len__(self) -> int:
         """Return number of splats."""
         return self.n_splats
-
-    def __repr__(self) -> str:
-        """Summary representation (avoids dumping full arrays)."""
-        n = self.n_splats
-        ndim = self.ndim
-        if n > 0:
-            amp_range = f"[{float(self.amplitudes.min()):.4g}, {float(self.amplitudes.max()):.4g}]"
-        else:
-            amp_range = "[]"
-        colors = "yes" if self.colors is not None else "no"
-        return (
-            f"GSplatData({n:,} splats, {ndim}D, "
-            f"amplitudes={amp_range}, colors={colors})"
-        )
-
-    # ── Computed properties ─────────────────────────────────
 
     def _cholesky_diag_elements(self) -> np.ndarray:
         """Extract diagonal elements from packed Cholesky factors.
@@ -165,6 +107,261 @@ class GSplatData:
         nonzero = min_s > 0
         result[nonzero] = max_s[nonzero] / min_s[nonzero]
         return result
+
+
+@dataclass(frozen=True, eq=False)
+class GSplatLOD(_SplatArrayMixin):
+    """A single Level-of-Detail layer — immutable container for splat arrays.
+
+    Attributes
+    ----------
+    centers : np.ndarray, shape (N, d)
+        Splat center positions.
+    amplitudes : np.ndarray, shape (N,)
+        Non-negative splat amplitudes.
+    cholesky_factors : np.ndarray, shape (N, d*(d+1)//2)
+        Packed lower-triangular Cholesky factors.
+    colors : Optional[np.ndarray], shape (N, 3)
+        Optional RGB colors per splat.
+    stats : Dict[str, Any]
+        Per-LOD statistics (e.g., psnr_db, time_seconds, pass_index).
+    """
+
+    centers: np.ndarray
+    amplitudes: np.ndarray
+    cholesky_factors: np.ndarray
+    colors: Optional[np.ndarray] = None
+    stats: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Validate array shape consistency."""
+        n = self.centers.shape[0]
+        if self.amplitudes.shape != (n,):
+            raise ValueError(
+                f"Amplitudes shape {self.amplitudes.shape} doesn't match "
+                f"centers count ({n},)"
+            )
+        if self.colors is not None and self.colors.shape[0] != n:
+            raise ValueError(
+                f"Colors count {self.colors.shape[0]} doesn't match centers count {n}"
+            )
+        if self.centers.ndim >= 2:
+            from luxar.gsplats.utils.trils import validate_cholesky_shape
+
+            validate_cholesky_shape(
+                self.cholesky_factors,
+                ndim=self.centers.shape[1],
+                n_splats=n,
+                allow_uniform=False,
+            )
+
+    def __repr__(self) -> str:
+        n = self.n_splats
+        ndim = self.ndim
+        if n > 0:
+            amp_range = f"[{float(self.amplitudes.min()):.4g}, {float(self.amplitudes.max()):.4g}]"
+        else:
+            amp_range = "[]"
+        return f"GSplatLOD({n:,} splats, {ndim}D, amplitudes={amp_range})"
+
+
+class GSplatData(_SplatArrayMixin):
+    """Container for Gaussian splat data with always-LOD structure.
+
+    Every ``GSplatData`` holds one or more LOD levels (``GSplatLOD`` instances).
+    A single-LOD dataset is simply ``lods=[one_lod]``.
+
+    **Construction styles** (convenience constructor preserves old API)::
+
+        # Old-style (wraps into single LOD internally):
+        GSplatData(centers=c, amplitudes=a, cholesky_factors=cf)
+
+        # New-style (explicit LODs):
+        GSplatData.from_lods([lod0, lod1, lod2])
+
+    Top-level ``centers``, ``amplitudes``, ``cholesky_factors``, and ``colors``
+    are the concatenation of all LODs, computed once at construction time.
+    The object is conceptually immutable — all operations return new instances.
+
+    Attributes
+    ----------
+    lods : List[GSplatLOD]
+        LOD levels, always >= 1.  ``lods[0]`` is the coarsest level.
+    centers : np.ndarray, shape (N_total, d)
+        Cached concatenation of all LOD centers.
+    amplitudes : np.ndarray, shape (N_total,)
+        Cached concatenation of all LOD amplitudes.
+    cholesky_factors : np.ndarray, shape (N_total, tril)
+        Cached concatenation of all LOD Cholesky factors.
+    colors : Optional[np.ndarray], shape (N_total, 3)
+        Cached concatenation of all LOD colors (None if no LOD has colors).
+    stats : Dict[str, Any]
+        Top-level statistics (overall quality, timing, etc.).
+    """
+
+    def __init__(
+        self,
+        centers: Optional[np.ndarray] = None,
+        amplitudes: Optional[np.ndarray] = None,
+        cholesky_factors: Optional[np.ndarray] = None,
+        colors: Optional[np.ndarray] = None,
+        stats: Optional[Dict[str, Any]] = None,
+        *,
+        lods: Optional[List[GSplatLOD]] = None,
+    ) -> None:
+        if lods is not None:
+            # Explicit LOD construction
+            if len(lods) == 0:
+                raise ValueError("lods must contain at least one GSplatLOD")
+            for lod in lods:
+                if not isinstance(lod, GSplatLOD):
+                    raise TypeError(
+                        f"Each LOD must be a GSplatLOD, got {type(lod).__name__}"
+                    )
+            self.lods: List[GSplatLOD] = list(lods)
+        elif (
+            centers is not None
+            and amplitudes is not None
+            and cholesky_factors is not None
+        ):
+            # Convenience constructor — wrap into single LOD
+            single_lod = GSplatLOD(
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky_factors,
+                colors=colors,
+                stats=stats if stats is not None else {},
+            )
+            self.lods = [single_lod]
+        else:
+            raise ValueError(
+                "Provide either lods=[...] or (centers, amplitudes, cholesky_factors)"
+            )
+
+        # Compute cached concatenations from LODs
+        if len(self.lods) == 1:
+            # Fast path: single LOD, no copy
+            lod0 = self.lods[0]
+            self.centers = lod0.centers
+            self.amplitudes = lod0.amplitudes
+            self.cholesky_factors = lod0.cholesky_factors
+            self.colors = lod0.colors
+        else:
+            self.centers = np.concatenate([lod.centers for lod in self.lods], axis=0)
+            self.amplitudes = np.concatenate([lod.amplitudes for lod in self.lods])
+            self.cholesky_factors = np.concatenate(
+                [lod.cholesky_factors for lod in self.lods], axis=0
+            )
+            # Colors: concat if all have them, None if all None, fill missing with white
+            has_colors = [lod.colors is not None for lod in self.lods]
+            if all(has_colors):
+                self.colors = np.concatenate([lod.colors for lod in self.lods], axis=0)
+            elif not any(has_colors):
+                self.colors = None
+            else:
+                parts = []
+                for lod in self.lods:
+                    if lod.colors is not None:
+                        parts.append(lod.colors)
+                    else:
+                        parts.append(np.ones((lod.n_splats, 3), dtype=np.float32))
+                self.colors = np.concatenate(parts, axis=0)
+
+        # Top-level stats (separate from per-LOD stats)
+        if stats is not None:
+            self.stats: Dict[str, Any] = stats
+        elif lods is not None:
+            # When constructed via lods=, start with empty top-level stats
+            self.stats = {}
+        else:
+            # Convenience constructor already set stats on the LOD; mirror it
+            self.stats = dict(self.lods[0].stats)
+
+    def __repr__(self) -> str:
+        """Summary representation (avoids dumping full arrays)."""
+        n = self.n_splats
+        ndim = self.ndim
+        if n > 0:
+            amp_range = f"[{float(self.amplitudes.min()):.4g}, {float(self.amplitudes.max()):.4g}]"
+        else:
+            amp_range = "[]"
+        colors = "yes" if self.colors is not None else "no"
+        lod_str = f", {self.n_lods} LODs" if self.n_lods > 1 else ""
+        return (
+            f"GSplatData({n:,} splats, {ndim}D, "
+            f"amplitudes={amp_range}, colors={colors}{lod_str})"
+        )
+
+    # ── LOD-specific methods ───────────────────────────────
+
+    @property
+    def n_lods(self) -> int:
+        """Number of LOD levels."""
+        return len(self.lods)
+
+    def at_lod(self, level: int) -> GSplatLOD:
+        """Return the GSplatLOD at the given level.
+
+        Args:
+            level: LOD level index (0 = coarsest).
+        """
+        return self.lods[level]
+
+    def up_to_lod(self, level: int) -> "GSplatData":
+        """Return a new GSplatData with LODs 0 through ``level`` (inclusive).
+
+        Args:
+            level: Maximum LOD level to include.
+
+        Returns:
+            New GSplatData with ``level + 1`` LODs.
+        """
+        return GSplatData(lods=self.lods[: level + 1], stats=dict(self.stats))
+
+    def trim_lods(self, max_level: int) -> "GSplatData":
+        """Alias for :meth:`up_to_lod`."""
+        return self.up_to_lod(max_level)
+
+    def flattened(self) -> "GSplatData":
+        """Collapse all LODs into a single LOD.
+
+        Returns:
+            New GSplatData with ``n_lods == 1`` containing all splats.
+        """
+        single = GSplatLOD(
+            centers=self.centers,
+            amplitudes=self.amplitudes,
+            cholesky_factors=self.cholesky_factors,
+            colors=self.colors,
+            stats=dict(self.stats),
+        )
+        return GSplatData(lods=[single], stats=dict(self.stats))
+
+    def lod_psnrs(self) -> list[float]:
+        """Extract cumulative PSNR from each LOD's stats.
+
+        Returns:
+            List of PSNR values (one per LOD). NaN if not available.
+        """
+        return [
+            float(lod.stats.get("cumulative_psnr_db", float("nan")))
+            for lod in self.lods
+        ]
+
+    @classmethod
+    def from_lods(
+        cls, lods: List[GSplatLOD], stats: Optional[Dict[str, Any]] = None
+    ) -> "GSplatData":
+        """Construct a multi-LOD GSplatData from a list of GSplatLOD objects.
+
+        Args:
+            lods: List of GSplatLOD (at least one, no nesting).
+            stats: Optional top-level statistics.
+
+        Returns:
+            New GSplatData with the given LODs.
+        """
+        return cls(lods=lods, stats=stats)
 
     # ── Filtering ───────────────────────────────────────────
 
@@ -882,23 +1079,166 @@ class GSplatData:
             if "provenance" in self.stats:
                 provenance_info = self.stats["provenance"]
 
-        # Call save function
-        save_gsplats(
-            path=path,
-            centers=self.centers,
-            amplitudes=self.amplitudes,
-            cholesky_factors=self.cholesky_factors,
-            colors=self.colors,
-            ordering=ordering,
-            encoding_mode=encoding_mode,
-            color_mode=color_mode,
-            positive_scalar_encoding=positive_scalar_encoding,
-            fitting_info=fitting_info,
-            fitting_config=fitting_config,
-            provenance_info=provenance_info,
-            description=description,
-            compress=compress,
+        if self.n_lods == 1:
+            # Single LOD: use v1.0 format for full backward compatibility
+            save_gsplats(
+                path=path,
+                centers=self.centers,
+                amplitudes=self.amplitudes,
+                cholesky_factors=self.cholesky_factors,
+                colors=self.colors,
+                ordering=ordering,
+                encoding_mode=encoding_mode,
+                color_mode=color_mode,
+                positive_scalar_encoding=positive_scalar_encoding,
+                fitting_info=fitting_info,
+                fitting_config=fitting_config,
+                provenance_info=provenance_info,
+                description=description,
+                compress=compress,
+            )
+        else:
+            # Multi-LOD: use v1.1 format with per-LOD groups
+            self._save_multi_lod(
+                path=path,
+                ordering=ordering,
+                encoding_mode=encoding_mode,
+                color_mode=color_mode,
+                positive_scalar_encoding=positive_scalar_encoding,
+                fitting_info=fitting_info,
+                fitting_config=fitting_config,
+                provenance_info=provenance_info,
+                description=description,
+                compress=compress,
+            )
+
+    def _save_multi_lod(
+        self,
+        path: str | Path,
+        ordering: Literal["morton", "hilbert", "none"],
+        encoding_mode: "EncodingMode",
+        color_mode: Optional[Literal["sdr", "hdr"]],
+        positive_scalar_encoding: Literal["linear", "log"],
+        fitting_info: Optional[Dict[str, Any]],
+        fitting_config: Optional[Dict[str, Any]],
+        provenance_info: Optional[Dict[str, Any]],
+        description: Optional[str],
+        compress: Optional[Literal["zip", "tar.gz"]],
+    ) -> None:
+        """Write multi-LOD data as v1.1 zarr format with per-LOD groups."""
+        import datetime
+        import shutil
+        import tempfile
+
+        import zarr
+        from zarr.storage import DirectoryStore
+
+        from luxar.gsplats.io.save_gsplats import (  # type: ignore[attr-defined]
+            GSPLATS_VERSION,
+            _save_splat_arrays_to_group,
         )
+
+        path = Path(path)
+
+        # Handle compression (same pattern as save_gsplats)
+        temp_dir = None
+        if compress:
+            temp_dir = Path(tempfile.mkdtemp(prefix="luxar_gsplat_save_"))
+            zarr_name = path.name
+            for suffix in [".zip", ".tar.gz", ".gz"]:
+                if zarr_name.endswith(suffix):
+                    zarr_name = zarr_name[: -len(suffix)]
+            if not zarr_name.endswith(".gsplats.zarr"):
+                zarr_name = zarr_name + ".gsplats.zarr"
+            zarr_path = temp_dir / zarr_name
+        else:
+            zarr_path = path
+
+        store = DirectoryStore(str(zarr_path))
+        root = zarr.group(store=store, overwrite=True)
+
+        # Root attributes (v1.1)
+        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        root.attrs.update(
+            {
+                "format_version": "1.1",
+                "format_type": "gsplats_zarr",
+                "timestamp": timestamp,
+                "luxar_gsplats_version": GSPLATS_VERSION,
+                "n_lods": self.n_lods,
+            }
+        )
+        if description:
+            root.attrs["description"] = description
+
+        # Create splats group with LOD subgroups
+        splats_group = root.create_group("splats")
+        splats_group.attrs.update(
+            {
+                "type": "gsplats",
+                "n_lods": self.n_lods,
+                "n_splats_total": self.n_splats,
+            }
+        )
+
+        # Write each LOD as a subgroup
+        for i, lod in enumerate(self.lods):
+            lod_group = splats_group.create_group(f"lod_{i}")
+
+            # Serialize LOD stats that are JSON-safe
+            lod_stats = {
+                k: v
+                for k, v in lod.stats.items()
+                if isinstance(v, (int, float, str, bool, list))
+            }
+
+            _save_splat_arrays_to_group(
+                splats_group=lod_group,
+                centers=lod.centers,
+                amplitudes=lod.amplitudes,
+                cholesky_factors=lod.cholesky_factors,
+                colors=lod.colors,
+                ordering=ordering,
+                encoding_mode=encoding_mode,
+                color_mode=color_mode,
+                positive_scalar_encoding=positive_scalar_encoding,
+                float16_allowed=False,
+                lod_stats=lod_stats,
+            )
+
+        # Write fitting info (optional, root level)
+        if fitting_info is not None:
+            fitting_group = root.create_group("fitting")
+            fitting_group.attrs.update(fitting_info)
+            if fitting_config is not None:
+                config_group = fitting_group.create_group("config")
+                config_group.attrs.update(fitting_config)
+
+        # Write provenance info (optional)
+        if provenance_info is not None:
+            prov_group = root.create_group("provenance")
+            prov_group.attrs.update(provenance_info)
+
+        zarr.consolidate_metadata(store)
+
+        # Compress if requested
+        if compress:
+            try:
+                import tarfile
+                import zipfile
+
+                if compress == "zip":
+                    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as zipf:
+                        for file_path in zarr_path.rglob("*"):
+                            if file_path.is_file():
+                                arcname = file_path.relative_to(zarr_path.parent)
+                                zipf.write(file_path, arcname)
+                elif compress == "tar.gz":
+                    with tarfile.open(path, "w:gz") as tarf:
+                        tarf.add(zarr_path, arcname=zarr_path.name)
+            finally:
+                if temp_dir is not None and temp_dir.exists():
+                    shutil.rmtree(temp_dir, ignore_errors=True)
 
     def translate(self, offset: np.ndarray) -> "GSplatData":
         """Translate all splat centers by an offset vector.

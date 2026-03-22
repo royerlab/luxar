@@ -374,7 +374,7 @@ def finalize_results(
     if (
         config.napari_movie
         and optimization_results.movie_frames is not None
-        and len(optimization_results.movie_frames["target"]) > 0
+        and len(optimization_results.movie_frames["reconstruction"]) > 0
     ):
         stats["movie_frames"] = optimization_results.movie_frames
         stats["movie_shape"] = config.V.shape
