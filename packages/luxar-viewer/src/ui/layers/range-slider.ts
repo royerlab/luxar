@@ -3,6 +3,10 @@
  *
  * Renders two overlapping <input type="range"> elements over a shared track.
  * CSS styling uses the theme's CSS variables for consistent appearance.
+ *
+ * The bound labels (left/right of the track) are click-to-edit: clicking on
+ * them opens a tiny text input so the user can type a custom slider limit,
+ * napari-style.
  */
 
 export interface RangeSliderOptions {
@@ -14,6 +18,23 @@ export interface RangeSliderOptions {
   step?: number;
   label?: string;
   onChange: (low: number, high: number) => void;
+  /** Called when the user edits the slider bounds (click-to-edit on limits). */
+  onBoundsChange?: (min: number, max: number) => void;
+}
+
+/**
+ * Compute an adaptive scroll step based on the current slider range.
+ *
+ * Strategy: step = 10^(floor(log10(range)) - 1), giving ~10–100 clean
+ * power-of-10 increments across the full range.
+ * Shift key divides by 10 for fine control.
+ */
+function computeWheelStep(min: number, max: number, fine: boolean): number {
+  const range = Math.abs(max - min);
+  if (range < 1e-10) return fine ? 0.01 : 0.1;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(range)));
+  const step = magnitude / 10; // ~10 steps per order of magnitude
+  return fine ? step / 10 : step;
 }
 
 export class RangeSlider {
@@ -22,8 +43,14 @@ export class RangeSlider {
   private highInput: HTMLInputElement;
   private lowLabel: HTMLElement;
   private highLabel: HTMLElement;
+  private boundsLowLabel: HTMLElement;
+  private boundsHighLabel: HTMLElement;
   private trackFill: HTMLElement;
   private options: RangeSliderOptions;
+
+  // Bound wheel handlers (stored for removeEventListener in dispose)
+  private onWheelLow: (e: WheelEvent) => void;
+  private onWheelHigh: (e: WheelEvent) => void;
 
   constructor(options: RangeSliderOptions) {
     this.options = options;
@@ -32,7 +59,7 @@ export class RangeSlider {
     this.wrapper = document.createElement('div');
     this.wrapper.className = 'luxar-range-slider';
 
-    // Label row
+    // Label row (title + current values)
     if (options.label) {
       const labelRow = document.createElement('div');
       labelRow.className = 'luxar-range-slider__label-row';
@@ -49,7 +76,7 @@ export class RangeSlider {
       const valuesEl = document.createElement('span');
       valuesEl.className = 'luxar-range-slider__values';
       valuesEl.appendChild(this.lowLabel);
-      valuesEl.appendChild(document.createTextNode(' – '));
+      valuesEl.appendChild(document.createTextNode(' \u2013 '));
       valuesEl.appendChild(this.highLabel);
 
       labelRow.appendChild(labelEl);
@@ -59,6 +86,30 @@ export class RangeSlider {
       this.lowLabel = document.createElement('span');
       this.highLabel = document.createElement('span');
     }
+
+    // Track container (bounds labels + track + sliders)
+    const trackRow = document.createElement('div');
+    trackRow.className = 'luxar-range-slider__track-row';
+
+    // Editable bounds label — low (left of track)
+    this.boundsLowLabel = document.createElement('span');
+    this.boundsLowLabel.className = 'luxar-range-slider__bound';
+    this.boundsLowLabel.title = 'Click to edit · Scroll to adjust (Shift = fine)';
+    this.boundsLowLabel.textContent = this.formatValue(options.min);
+    this.boundsLowLabel.addEventListener('click', () => this.editBound('low'));
+
+    // Editable bounds label — high (right of track)
+    this.boundsHighLabel = document.createElement('span');
+    this.boundsHighLabel.className = 'luxar-range-slider__bound';
+    this.boundsHighLabel.title = 'Click to edit · Scroll to adjust (Shift = fine)';
+    this.boundsHighLabel.textContent = this.formatValue(options.max);
+    this.boundsHighLabel.addEventListener('click', () => this.editBound('high'));
+
+    // Mousewheel adjustment on bound labels
+    this.onWheelLow = (e: WheelEvent) => this.handleBoundWheel(e, 'low');
+    this.onWheelHigh = (e: WheelEvent) => this.handleBoundWheel(e, 'high');
+    this.boundsLowLabel.addEventListener('wheel', this.onWheelLow, { passive: false });
+    this.boundsHighLabel.addEventListener('wheel', this.onWheelHigh, { passive: false });
 
     // Track container
     const trackContainer = document.createElement('div');
@@ -94,7 +145,11 @@ export class RangeSlider {
     trackContainer.appendChild(track);
     trackContainer.appendChild(this.lowInput);
     trackContainer.appendChild(this.highInput);
-    this.wrapper.appendChild(trackContainer);
+
+    trackRow.appendChild(this.boundsLowLabel);
+    trackRow.appendChild(trackContainer);
+    trackRow.appendChild(this.boundsHighLabel);
+    this.wrapper.appendChild(trackRow);
 
     // Event listeners
     this.lowInput.addEventListener('input', this.onLowChange);
@@ -157,6 +212,122 @@ export class RangeSlider {
     return v.toFixed(3).replace(/\.?0+$/, '');
   }
 
+  /**
+   * Replace a bound label with a text input for inline editing.
+   * On Enter or blur, parse the value and update the slider bounds.
+   */
+  private editBound(which: 'low' | 'high'): void {
+    const label = which === 'low' ? this.boundsLowLabel : this.boundsHighLabel;
+    const currentValue =
+      which === 'low' ? parseFloat(this.lowInput.min) : parseFloat(this.lowInput.max);
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'luxar-range-slider__bound-input';
+    input.value = this.formatValue(currentValue);
+    input.style.width = `${Math.max(label.offsetWidth, 28)}px`;
+
+    // Replace label with input
+    label.style.display = 'none';
+    label.parentElement!.insertBefore(input, label.nextSibling);
+    input.focus();
+    input.select();
+
+    const commit = (): void => {
+      const parsed = parseFloat(input.value);
+      if (!isNaN(parsed)) {
+        let newMin = parseFloat(this.lowInput.min);
+        let newMax = parseFloat(this.lowInput.max);
+
+        if (which === 'low') {
+          newMin = Math.min(parsed, newMax); // Don't let min exceed max
+        } else {
+          newMax = Math.max(parsed, newMin); // Don't let max go below min
+        }
+
+        this.setBounds(newMin, newMax);
+
+        // Clamp current values into new bounds
+        let low = parseFloat(this.lowInput.value);
+        let high = parseFloat(this.highInput.value);
+        low = Math.max(newMin, Math.min(newMax, low));
+        high = Math.max(newMin, Math.min(newMax, high));
+        this.lowInput.value = String(low);
+        this.highInput.value = String(high);
+        this.updateLabels();
+        this.updateTrackFill();
+
+        this.options.onBoundsChange?.(newMin, newMax);
+        this.options.onChange(low, high);
+      }
+
+      // Restore label
+      input.remove();
+      label.style.display = '';
+    };
+
+    let committed = false;
+    input.addEventListener('keydown', (e) => {
+      // Stop propagation so viewer keyboard shortcuts (dimension navigation etc.)
+      // don't fire while the user is typing a number.
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        committed = true;
+        commit();
+      } else if (e.key === 'Escape') {
+        committed = true;
+        input.remove();
+        label.style.display = '';
+      }
+    });
+    input.addEventListener('blur', () => {
+      if (!committed) commit();
+    });
+  }
+
+  /**
+   * Adjust a bound via mousewheel.
+   * Scroll up → increase value, scroll down → decrease.
+   * Shift key gives 10× finer increments.
+   */
+  private handleBoundWheel(e: WheelEvent, which: 'low' | 'high'): void {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const curMin = parseFloat(this.lowInput.min);
+    const curMax = parseFloat(this.lowInput.max);
+    const step = computeWheelStep(curMin, curMax, e.shiftKey);
+    // Scroll up (deltaY < 0) → increase, scroll down → decrease
+    const direction = e.deltaY < 0 ? 1 : -1;
+    const delta = step * direction;
+
+    let newMin = curMin;
+    let newMax = curMax;
+
+    if (which === 'low') {
+      newMin = curMin + delta;
+      if (newMin > curMax) newMin = curMax;
+    } else {
+      newMax = curMax + delta;
+      if (newMax < curMin) newMax = curMin;
+    }
+
+    this.setBounds(newMin, newMax);
+
+    // Clamp current thumb values into new bounds
+    let low = parseFloat(this.lowInput.value);
+    let high = parseFloat(this.highInput.value);
+    low = Math.max(newMin, Math.min(newMax, low));
+    high = Math.max(newMin, Math.min(newMax, high));
+    this.lowInput.value = String(low);
+    this.highInput.value = String(high);
+    this.updateLabels();
+    this.updateTrackFill();
+
+    this.options.onBoundsChange?.(newMin, newMax);
+    this.options.onChange(low, high);
+  }
+
   /** Programmatically set both values */
   setValues(low: number, high: number): void {
     this.lowInput.value = String(low);
@@ -171,6 +342,8 @@ export class RangeSlider {
     this.lowInput.max = String(max);
     this.highInput.min = String(min);
     this.highInput.max = String(max);
+    this.boundsLowLabel.textContent = this.formatValue(min);
+    this.boundsHighLabel.textContent = this.formatValue(max);
     this.updateTrackFill();
   }
 
@@ -178,6 +351,8 @@ export class RangeSlider {
   dispose(): void {
     this.lowInput.removeEventListener('input', this.onLowChange);
     this.highInput.removeEventListener('input', this.onHighChange);
+    this.boundsLowLabel.removeEventListener('wheel', this.onWheelLow);
+    this.boundsHighLabel.removeEventListener('wheel', this.onWheelHigh);
     this.wrapper.remove();
   }
 }
