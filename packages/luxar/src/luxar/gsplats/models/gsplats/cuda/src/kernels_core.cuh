@@ -1095,7 +1095,7 @@ void rasterize_forward_splat_centric_kernel(
             int total = 1;
             #pragma unroll
             for (int d = 0; d < 3; d++) {
-                float radius = t_eff * sigma[d] + 0.5f;
+                float radius = t_eff * sigma[d] + 0.01f;
                 s_lo[d] = max(0, (int)floorf(s_center[d] - radius));
                 s_hi[d] = min(shape[d] - 1, (int)floorf(s_center[d] + radius));
                 s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
@@ -1113,7 +1113,7 @@ void rasterize_forward_splat_centric_kernel(
             int total = 1;
             #pragma unroll
             for (int d = 0; d < 2; d++) {
-                float radius = t_eff * sigma[d] + 0.5f;
+                float radius = t_eff * sigma[d] + 0.01f;
                 s_lo[d] = max(0, (int)floorf(s_center[d] - radius));
                 s_hi[d] = min(shape[d] - 1, (int)floorf(s_center[d] + radius));
                 s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
@@ -1294,7 +1294,7 @@ void rasterize_backward_splat_centric_kernel(
             int total = 1;
             #pragma unroll
             for (int d = 0; d < 3; d++) {
-                float radius = t_eff * sigma[d] + 0.5f;  // +0.5 safety margin
+                float radius = t_eff * sigma[d] + 0.01f;  // +0.5 safety margin
                 s_lo[d] = max(0, (int)floorf(s_center[d] - radius));
                 s_hi[d] = min(shape[d] - 1, (int)floorf(s_center[d] + radius));
                 s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
@@ -1312,7 +1312,7 @@ void rasterize_backward_splat_centric_kernel(
             int total = 1;
             #pragma unroll
             for (int d = 0; d < 2; d++) {
-                float radius = t_eff * sigma[d] + 0.5f;
+                float radius = t_eff * sigma[d] + 0.01f;
                 s_lo[d] = max(0, (int)floorf(s_center[d] - radius));
                 s_hi[d] = min(shape[d] - 1, (int)floorf(s_center[d] + radius));
                 s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
