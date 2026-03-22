@@ -53,11 +53,12 @@ def merge_batch_results(
     # ================================================================
     tc_paths: dict[tuple[int, int], Path] = {}
 
+    t_w = max(2, len(str(max(t_indices))))
+    c_w = max(2, len(str(max(c_indices))))
+
     with asection("Level 1: Merging tiles per (timepoint, channel)"):
         for t_seq, t_real in enumerate(t_indices):
             for c_seq, c_real in enumerate(c_indices):
-                t_w = max(2, len(str(max(t_indices))))
-                c_w = max(2, len(str(max(c_indices))))
                 out_path = merged_dir / f"t{t_real:0{t_w}d}_c{c_real:0{c_w}d}.gsplats.zarr"
                 tc_paths[(t_seq, c_seq)] = out_path
 
