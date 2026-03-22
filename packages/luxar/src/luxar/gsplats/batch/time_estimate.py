@@ -116,7 +116,7 @@ def _interpolate_train_ms(
         v_hi, ms_hi = entries[i + 1]
         if v_lo <= tile_voxels <= v_hi:
             # Log-log interpolation
-            if v_lo > 0 and v_hi > 0 and ms_lo > 0 and ms_hi > 0:
+            if v_lo > 0 and v_hi > 0 and ms_lo > 0 and ms_hi > 0 and v_lo != v_hi:
                 log_v = math.log(tile_voxels)
                 log_v_lo = math.log(v_lo)
                 log_v_hi = math.log(v_hi)
