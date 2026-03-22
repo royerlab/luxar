@@ -419,11 +419,16 @@ def embed_cholesky_packed(
         # eigenvalues (vectorised, much faster than per-splat cholesky).
         eig_min = np.linalg.eigvalsh(Sigma_dst)[:, 0]  # smallest eigenvalue
         bad_mask = eig_min <= 0
-        n_bad = bad_mask.sum()
+        n_bad = int(bad_mask.sum())
 
-        # Regularise only the bad matrices: add enough to make min
-        # eigenvalue positive (with margin).
-        if n_bad > 0:
+        # If eigenvalues all look positive but Cholesky still failed,
+        # the matrices are near-singular.  Regularise everything lightly.
+        if n_bad == 0:
+            for k in range(d_dst):
+                Sigma_dst[:, k, k] += 1e-6
+        else:
+            # Regularise only the bad matrices: add enough to make min
+            # eigenvalue positive (with margin).
             deficit = np.abs(eig_min[bad_mask]) + 1e-6
             for k in range(d_dst):
                 Sigma_dst[bad_mask, k, k] += deficit
@@ -431,16 +436,11 @@ def embed_cholesky_packed(
         try:
             L_dst = np.linalg.cholesky(Sigma_dst)
         except np.linalg.LinAlgError:
-            # Last resort: per-splat fallback (only for remaining bad ones)
-            L_dst = np.linalg.cholesky(Sigma_dst[~bad_mask].copy()) if (~bad_mask).any() else np.empty((0, d_dst, d_dst))
-            L_bad = np.zeros((n_bad, d_dst, d_dst), dtype=Sigma_dst.dtype)
-            for i, sigma in enumerate(Sigma_dst[bad_mask]):
+            # Last resort: per-splat decomposition for all matrices.
+            L_dst = np.empty_like(Sigma_dst)
+            for i in range(N):
                 try:
-                    L_bad[i] = np.linalg.cholesky(sigma)
+                    L_dst[i] = np.linalg.cholesky(Sigma_dst[i])
                 except np.linalg.LinAlgError:
-                    L_bad[i] = np.eye(d_dst) * 1e-3
-            L_all = np.empty_like(Sigma_dst)
-            L_all[~bad_mask] = L_dst
-            L_all[bad_mask] = L_bad
-            L_dst = L_all
+                    L_dst[i] = np.eye(d_dst) * 1e-3
     return pack_tril(L_dst.astype(input_dtype))

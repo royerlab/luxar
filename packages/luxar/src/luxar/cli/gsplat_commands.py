@@ -1393,7 +1393,7 @@ def fit_volume(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
     ),
     preset: Optional[str] = typer.Option(
-        None, "--preset", help="Parameter preset: draft/standard/hifi"
+        None, "--preset", help="Parameter preset: draft/standard/hifi/ultra"
     ),
     loss: Optional[str] = typer.Option(
         None, "--loss", help="Loss function: l1/mse/poisson"
@@ -1454,9 +1454,10 @@ def fit_volume(
     full control over all ~35 parameters.
 
     Presets:
-        draft    - Fast preview (500 iters, aggressive culling)
+        draft    - Fast preview (500 iters)
         standard - Balanced quality/speed (3000 iters)
-        hifi     - Maximum quality (6000 iters)
+        hifi     - High quality (6000 iters)
+        ultra    - Maximum quality (10000 iters)
 
     Examples:
         luxar gsplat fit volume.npy splats.gsplats.zarr --preset draft --seeds 1000
