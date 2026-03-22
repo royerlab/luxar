@@ -345,7 +345,7 @@ def load_volume(
     return volume
 
 
-def _find_all_arrays(group, prefix: str = "") -> list:
+def _find_all_arrays(group: Any, prefix: str = "") -> list:
     """Recursively find all arrays in a zarr group, returning (key_path, array) pairs."""
     import zarr
 

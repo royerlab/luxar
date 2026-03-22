@@ -133,7 +133,7 @@ def read_cuda_build_info() -> Dict:
     if info_path.exists():
         try:
             with open(info_path) as f:
-                return json.load(f)
+                return dict(json.load(f))
         except Exception:
             pass
     return {}
