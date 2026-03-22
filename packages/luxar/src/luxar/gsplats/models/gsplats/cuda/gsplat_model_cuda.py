@@ -117,8 +117,9 @@ def _cholesky_to_conic_backward_3d(
     """Analytical backward: d_conic → d_Ls for 3D (replaces autograd).
 
     Derivation: C = K^T K where K = L^{-1} (lower triangular).
-    VJP: d_K = 2 * d_C_full @ K, then d_L = -K^T @ d_K @ K^T,
-    projected to lower triangle.
+    VJP for C = K^T K: g_K = K @ (G + G^T) where G is the symmetric
+    gradient matrix (unpacked from d_conic). Since G is symmetric, G+G^T = 2G.
+    Then d_L = -K^T @ g_K @ K^T, projected to lower triangle.
     """
     N = Ls.shape[0]
     L00 = Ls[:, 0, 0]; L10 = Ls[:, 1, 0]; L11 = Ls[:, 1, 1]
@@ -133,22 +134,23 @@ def _cholesky_to_conic_backward_3d(
     K21 = -L21 * K11 * K22
     K20 = -(L20 * K00 + L21 * K10) * K22
 
-    # Unpack d_conic → symmetric d_C matrix elements
+    # Unpack d_conic → symmetric G matrix elements
     dc00 = d_conic[:, 0]; dc01 = d_conic[:, 1]; dc02 = d_conic[:, 2]
     dc11 = d_conic[:, 3]; dc12 = d_conic[:, 4]; dc22 = d_conic[:, 5]
 
-    # d_K = 2 * d_C_full @ K (3x3 matmul, K is lower triangular)
-    # d_C_full = [[dc00, dc01, dc02], [dc01, dc11, dc12], [dc02, dc12, dc22]]
-    # K = [[K00, 0, 0], [K10, K11, 0], [K20, K21, K22]]
-    dK00 = 2.0 * (dc00 * K00 + dc01 * K10 + dc02 * K20)
-    dK01 = 2.0 * (dc00 * 0   + dc01 * K11 + dc02 * K21)  # K upper = 0
-    dK02 = 2.0 * (dc00 * 0   + dc01 * 0   + dc02 * K22)
-    dK10 = 2.0 * (dc01 * K00 + dc11 * K10 + dc12 * K20)
-    dK11 = 2.0 * (dc01 * 0   + dc11 * K11 + dc12 * K21)
-    dK12 = 2.0 * (dc01 * 0   + dc11 * 0   + dc12 * K22)
-    dK20 = 2.0 * (dc02 * K00 + dc12 * K10 + dc22 * K20)
-    dK21 = 2.0 * (dc02 * 0   + dc12 * K11 + dc22 * K21)
-    dK22 = 2.0 * (dc02 * 0   + dc12 * 0   + dc22 * K22)
+    # g_K = K @ (G + G^T) = 2 * K @ G  (since G is symmetric)
+    # K is lower triangular: K = [[K00,0,0],[K10,K11,0],[K20,K21,K22]]
+    # G = [[dc00,dc01,dc02],[dc01,dc11,dc12],[dc02,dc12,dc22]]
+    # g_K[i,j] = 2 * sum_k K[i,k] * G[k,j]
+    dK00 = 2.0 * (K00 * dc00)
+    dK01 = 2.0 * (K00 * dc01)
+    dK02 = 2.0 * (K00 * dc02)
+    dK10 = 2.0 * (K10 * dc00 + K11 * dc01)
+    dK11 = 2.0 * (K10 * dc01 + K11 * dc11)
+    dK12 = 2.0 * (K10 * dc02 + K11 * dc12)
+    dK20 = 2.0 * (K20 * dc00 + K21 * dc01 + K22 * dc02)
+    dK21 = 2.0 * (K20 * dc01 + K21 * dc11 + K22 * dc12)
+    dK22 = 2.0 * (K20 * dc02 + K21 * dc12 + K22 * dc22)
 
     # d_L = -K^T @ d_K @ K^T (then project to lower triangle)
     # K^T = [[K00, K10, K20], [0, K11, K21], [0, 0, K22]]
@@ -191,10 +193,12 @@ def _cholesky_to_conic_backward_2d(
 
     dc00 = d_conic[:, 0]; dc01 = d_conic[:, 1]; dc11 = d_conic[:, 2]
 
-    dK00 = 2.0 * (dc00 * K00 + dc01 * K10)
-    dK01 = 2.0 * (dc01 * K11)
-    dK10 = 2.0 * (dc01 * K00 + dc11 * K10)
-    dK11 = 2.0 * (dc11 * K11)
+    # g_K = 2 * K @ G (K is lower tri, G is symmetric)
+    # K = [[K00, 0], [K10, K11]], G = [[dc00, dc01], [dc01, dc11]]
+    dK00 = 2.0 * (K00 * dc00)
+    dK01 = 2.0 * (K00 * dc01)
+    dK10 = 2.0 * (K10 * dc00 + K11 * dc01)
+    dK11 = 2.0 * (K10 * dc01 + K11 * dc11)
 
     M00 = dK00*K00 + dK01*K10
     M01 = dK01*K11
@@ -255,14 +259,10 @@ class CUDASplatFunction(torch.autograd.Function):
         use_fp16_kernel = use_fp16 or torch.is_autocast_enabled()
 
         # Compute conic (Σ⁻¹) from Cholesky factors (preserves dtype)
-        # OPTIMIZATION: For 2D/3D, analytical backward doesn't need autograd graph,
-        # so skip the clone + requires_grad. For 4D+, keep for autograd fallback.
-        if d <= 3:
-            Ls_for_conic = Ls  # No clone needed — analytical backward uses Ls directly
-            conic = _cholesky_to_conic_compiled(Ls.detach())
-        else:
-            Ls_for_conic = Ls.detach().clone().requires_grad_(True)
-            conic = _cholesky_to_conic_compiled(Ls_for_conic)
+        # The clone creates an independent autograd leaf for the L→conic chain.
+        # torch.compile fuses the forward+backward into optimized kernels (~0.3ms).
+        Ls_for_conic = Ls.detach().clone().requires_grad_(True)
+        conic = _cholesky_to_conic_compiled(Ls_for_conic)
 
         # Compute exact L_row_norms from Cholesky factors for AABB computation
         # L_row_norms[i] = sqrt(sum_j L[i,j]^2) = sqrt(Sigma[i,i])
@@ -415,20 +415,17 @@ class CUDASplatFunction(torch.autograd.Function):
 
             # Chain rule: d_conic → d_Ls via analytical formula (replaces autograd)
             # This saves ~0.3ms by avoiding autograd graph construction + traversal.
-            d = ctx.d
-            if d == 3:
-                d_Ls = _conic_bwd_3d_compiled(Ls, d_conic)
-            elif d == 2:
-                d_Ls = _conic_bwd_2d_compiled(Ls, d_conic)
-            else:
-                # Fallback: use autograd for higher dimensions
-                with torch.enable_grad():
-                    conic_recomputed = cholesky_to_conic(Ls_for_conic)
-                (d_Ls,) = torch.autograd.grad(
-                    outputs=conic_recomputed,
-                    inputs=Ls_for_conic,
-                    grad_outputs=d_conic,
-                )
+            # Chain rule: d_conic → d_Ls via PyTorch autograd.
+            # torch.compile fuses both forward and backward into optimized kernels,
+            # giving ~0.3ms (vs ~1.6ms without compile). Autograd is correct by
+            # construction — compile just fuses the kernel launches.
+            with torch.enable_grad():
+                conic_recomputed = _cholesky_to_conic_compiled(Ls_for_conic)
+            (d_Ls,) = torch.autograd.grad(
+                outputs=conic_recomputed,
+                inputs=Ls_for_conic,
+                grad_outputs=d_conic,
+            )
         else:
             # Fallback: recompute forward with gradient tracking and use autograd
             # This is slower than CUDA backward but ensures correctness when CUDA
