@@ -1310,9 +1310,10 @@ void rasterize_backward_splat_centric_kernel(
             int total = 1;
             #pragma unroll
             for (int d = 0; d < 3; d++) {
-                float radius = t_eff * sigma[d] + 0.5f;  // +0.5 safety margin
-                s_lo[d] = max(0, (int)floorf(s_center[d] - radius));
-                s_hi[d] = min(shape[d] - 1, (int)floorf(s_center[d] + radius));
+                // AABB matches forward kernel and PyTorch reference exactly
+                int int_radius = (int)ceilf(t_eff * sigma[d]);
+                s_lo[d] = max(0, (int)floorf(s_center[d]) - int_radius);
+                s_hi[d] = min(shape[d] - 1, (int)ceilf(s_center[d]) + int_radius);
                 s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
                 total *= s_extent[d];
             }
@@ -1339,15 +1340,15 @@ void rasterize_backward_splat_centric_kernel(
             }
             s_total_voxels = total;
         } else {
-            // Generic: use diagonal of conic as conservative approximation
-            // 1/sqrt(conic[ii]) gives a LOWER bound on sigma_i, so we add extra margin
+            // Generic DIM: conic diagonal gives lower bound on sigma,
+            // use 1.5x safety factor + ceil to match reference conservatively
             int total = 1;
             int ci = 0;
             for (int d = 0; d < DIM; d++) {
                 float sigma_d = 1.0f / sqrtf(fmaxf(s_conic[ci], 1e-10f));
-                float radius = t_eff * sigma_d * 1.5f + 1.0f;  // generous margin
-                s_lo[d] = max(0, (int)floorf(s_center[d] - radius));
-                s_hi[d] = min(shape[d] - 1, (int)floorf(s_center[d] + radius));
+                int int_radius = (int)ceilf(t_eff * sigma_d * 1.5f);
+                s_lo[d] = max(0, (int)floorf(s_center[d]) - int_radius);
+                s_hi[d] = min(shape[d] - 1, (int)ceilf(s_center[d]) + int_radius);
                 s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
                 total *= s_extent[d];
                 ci += (DIM - d);  // skip to next diagonal in packed triangle
