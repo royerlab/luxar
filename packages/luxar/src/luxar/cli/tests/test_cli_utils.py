@@ -317,8 +317,9 @@ class TestGetZarrInfo:
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "test.zarr"
 
-            # Create zarr store with points structure
+            # Create zarr store with points structure (type attr required)
             root = zarr.open_group(store_path, mode="w")
+            root.attrs["type"] = "points"
             root.create_dataset(
                 "positions",
                 data=np.random.rand(50, 3).astype(np.float32),
@@ -341,6 +342,7 @@ class TestGetZarrInfo:
 
             root = zarr.open_group(store_path, mode="w")
             child = root.create_group("child")
+            child.attrs["type"] = "points"
             child.create_dataset(
                 "positions",
                 data=np.random.rand(25, 3).astype(np.float32),

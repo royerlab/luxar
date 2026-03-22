@@ -25,14 +25,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp
 
+from luxar import __version__
+
 from .network_simulation import (
     NETWORK_PROFILES,
     NetworkSimulationMiddleware,
-    load_network_profile,
-    parse_bandwidth,
-    parse_jitter,
-    parse_latency,
-    parse_packet_loss,
+    has_network_simulation,
+    parse_network_options,
+    print_network_params,
 )
 from .utils import (
     build_viewer,
@@ -69,24 +69,21 @@ class DirectoryListingStaticFiles(StaticFiles):
             raise ValueError("Directory not set")
         full_path = Path(self.directory) / path if path else Path(self.directory)
 
-        # Handle .zgroup files for zarr directories
-        if path.endswith(".zgroup") and full_path.exists() and full_path.is_file():
-            from starlette.responses import FileResponse
-
-            return FileResponse(full_path)
-
         # If it's a directory, provide listing
         if full_path.exists() and full_path.is_dir():
             # Check Accept header
             headers = dict(scope.get("headers", []))
             accept = headers.get(b"accept", b"").decode("utf-8")
 
+            # Zarr dot-files that should appear in directory listings
+            _ZARR_DOT_FILES = {".zgroup", ".zattrs", ".zarray", ".zmetadata"}
+
             # Generate directory listing
             entries = []
             try:
                 for item in sorted(full_path.iterdir()):
-                    # Skip hidden files except .zgroup
-                    if item.name.startswith(".") and item.name != ".zgroup":
+                    # Skip hidden files except zarr metadata files
+                    if item.name.startswith(".") and item.name not in _ZARR_DOT_FILES:
                         continue
 
                     item_type = "directory" if item.is_dir() else "file"
@@ -168,7 +165,31 @@ def create_server_app(path: str, serve_viewer: bool = False) -> FastAPI:
     return api
 
 
-app = typer.Typer(help="luxar – build and serve Zarr-backed 3-D scenes")
+def _version_callback(value: bool) -> None:
+    if value:
+        print(f"luxar {__version__}")
+        raise typer.Exit()
+
+
+app = typer.Typer(help="luxar – build and serve Zarr-backed nD scenes")
+
+
+@app.callback(invoke_without_command=True)
+def main_callback(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
+) -> None:
+    """luxar – build and serve Zarr-backed nD scenes."""
+    if not ctx.invoked_subcommand:
+        print(ctx.get_help())
+        raise typer.Exit(0)
+
 
 # Add gsplat subcommands
 from .gsplat_commands import app_gsplat  # noqa: E402
@@ -188,7 +209,7 @@ def serve(
     port: int = typer.Option(8000, "--port", "-p"),
     viewer: bool = typer.Option(False, "--viewer", help="Also serve the viewer"),
     viewer_port: int = typer.Option(5173, "--viewer-port", help="Port for viewer"),
-    open_browser: bool = typer.Option(False, "--open", "-o", help="Open browser"),
+    open_browser: bool = typer.Option(False, "--open", help="Open browser"),
     viewer_only: bool = typer.Option(
         False, "--viewer-only", help="Serve only the viewer"
     ),
@@ -196,7 +217,7 @@ def serve(
     profile: Optional[str] = typer.Option(
         None,
         "--profile",
-        help="Network profile (3g, 4g, 5g, broadband, satellite, etc.)",
+        help="Network profile (3g, 4g, 5g, slow-broadband, broadband, fast-broadband, satellite, rural, congested)",
     ),
     bandwidth: Optional[str] = typer.Option(
         None,
@@ -229,7 +250,7 @@ def serve(
         realistic network conditions. You can use a preset profile or
         specify individual parameters.
 
-        Profiles: 3g, 4g, 5g, broadband, satellite, rural, congested
+        Profiles: 3g, 4g, 5g, slow-broadband, broadband, fast-broadband, satellite, rural, congested
 
         Individual parameters override profile defaults.
 
@@ -261,6 +282,14 @@ def serve(
         packet_loss (str, optional): Packet loss rate.
     """
     try:
+        # Warn about conflicting flags
+        if viewer_only and path is not None:
+            aprint("⚠️  --viewer-only ignores the path argument")
+        if viewer_only and viewer:
+            aprint(
+                "⚠️  --viewer-only already includes the viewer; --viewer is redundant"
+            )
+
         # Handle viewer-only mode
         if viewer_only:
             if not check_viewer_built():
@@ -321,64 +350,20 @@ def serve(
             actual_viewer_port = viewer_port
 
         # Parse network simulation parameters
-        bandwidth_mbps = None
-        latency_ms = None
-        jitter_percent = 0.0
-        packet_loss_rate = 0.0
+        try:
+            bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate = (
+                parse_network_options(profile, bandwidth, latency, jitter, packet_loss)
+            )
+        except ValueError as e:
+            aprint(f"❌ [Luxar] {e}")
+            raise typer.Exit(code=1)
 
-        # 1. Load profile (if specified)
-        if profile:
-            try:
-                profile_data = load_network_profile(profile)
-                bandwidth_mbps = parse_bandwidth(profile_data["bandwidth"])
-                latency_ms = parse_latency(profile_data["latency"])
-                jitter_percent = profile_data["jitter"]
-                packet_loss_rate = profile_data["packet_loss"]
-                aprint(f"📊 [Luxar] Using network profile: {profile_data['name']}")
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        # 2. Override with individual parameters
-        if bandwidth:
-            try:
-                bandwidth_mbps = parse_bandwidth(bandwidth)
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        if latency:
-            try:
-                latency_ms = parse_latency(latency)
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        if jitter:
-            try:
-                jitter_percent = parse_jitter(jitter)
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        if packet_loss:
-            try:
-                packet_loss_rate = parse_packet_loss(packet_loss)
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        # 3. Display simulation parameters (if any enabled)
-        if any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0]):
-            aprint("🌐 [Luxar] Network simulation enabled:")
-            if bandwidth_mbps:
-                aprint(f"   • Bandwidth: {bandwidth_mbps:.2f} Mbps")
-            if latency_ms:
-                aprint(f"   • Latency: {latency_ms:.0f} ms")
-            if jitter_percent > 0:
-                aprint(f"   • Jitter: {jitter_percent * 100:.0f}%")
-            if packet_loss_rate > 0:
-                aprint(f"   • Packet loss: {packet_loss_rate * 100:.1f}%")
+        if has_network_simulation(
+            bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
+        ):
+            print_network_params(
+                bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
+            )
             aprint(
                 "⚠️  [Luxar] Responses will be throttled - this is intentional for testing"
             )
@@ -422,19 +407,21 @@ def serve(
 
         # Open browser if requested
         if open_browser:
-            if viewer and not viewer_served:
+            if not viewer:
+                aprint("⚠️  --open requires --viewer to also be set. Ignoring --open.")
+            elif not viewer_served:
                 aprint("⚠️  Viewer not served; skipping --open.")
             else:
-                # Construct URL without trailing slash on data URL (prevents double-slash in path joining)
                 data_url = f"http://{host}:{actual_port}"
-                viewer_port_to_use = actual_viewer_port if viewer_served else 5173
-                viewer_url = f"http://{host}:{viewer_port_to_use}/?src={data_url}"
+                viewer_url = f"http://{host}:{actual_viewer_port}/?src={data_url}"
                 time.sleep(1)  # Give servers time to start
                 open_browser_func(viewer_url)
 
         # Wrap the complete ASGI app with network simulation (if enabled)
         asgi_app: ASGIApp = api
-        if any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0]):
+        if has_network_simulation(
+            bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
+        ):
             asgi_app = cast(
                 ASGIApp,
                 NetworkSimulationMiddleware(
@@ -501,7 +488,7 @@ def viewer(
     profile: Optional[str] = typer.Option(
         None,
         "--profile",
-        help="Network profile (3g, 4g, 5g, broadband, satellite, etc.)",
+        help="Network profile (3g, 4g, 5g, slow-broadband, broadband, fast-broadband, satellite, rural, congested)",
     ),
     bandwidth: Optional[str] = typer.Option(
         None,
@@ -562,67 +549,30 @@ def viewer(
                 raise typer.Exit(1)
 
         # Parse network simulation parameters (applies only if data is provided)
-        bandwidth_mbps = None
-        latency_ms = None
-        jitter_percent = 0.0
-        packet_loss_rate = 0.0
+        try:
+            bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate = (
+                parse_network_options(profile, bandwidth, latency, jitter, packet_loss)
+            )
+        except ValueError as e:
+            aprint(f"❌ [Luxar] {e}")
+            raise typer.Exit(code=1)
 
-        if profile:
-            try:
-                profile_data = load_network_profile(profile)
-                bandwidth_mbps = parse_bandwidth(profile_data["bandwidth"])
-                latency_ms = parse_latency(profile_data["latency"])
-                jitter_percent = profile_data["jitter"]
-                packet_loss_rate = profile_data["packet_loss"]
-                aprint(f"📊 [Luxar] Using network profile: {profile_data['name']}")
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        if bandwidth:
-            try:
-                bandwidth_mbps = parse_bandwidth(bandwidth)
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        if latency:
-            try:
-                latency_ms = parse_latency(latency)
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        if jitter:
-            try:
-                jitter_percent = parse_jitter(jitter)
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        if packet_loss:
-            try:
-                packet_loss_rate = parse_packet_loss(packet_loss)
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        if any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0]):
+        if has_network_simulation(
+            bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
+        ):
             if data is None:
                 aprint(
                     "⚠️  [Luxar] Network simulation requires --data to be specified. "
                     "Simulation will be ignored."
                 )
             else:
-                aprint("🌐 [Luxar] Network simulation enabled (data server only):")
-                if bandwidth_mbps:
-                    aprint(f"   • Bandwidth: {bandwidth_mbps:.2f} Mbps")
-                if latency_ms:
-                    aprint(f"   • Latency: {latency_ms:.0f} ms")
-                if jitter_percent > 0:
-                    aprint(f"   • Jitter: {jitter_percent * 100:.0f}%")
-                if packet_loss_rate > 0:
-                    aprint(f"   • Packet loss: {packet_loss_rate * 100:.1f}%")
+                print_network_params(
+                    bandwidth_mbps,
+                    latency_ms,
+                    jitter_percent,
+                    packet_loss_rate,
+                    qualifier="data server only",
+                )
 
         # If data provided, serve it in background
         data_url = None
@@ -717,7 +667,9 @@ def _serve_data(
 
     # Wrap with network simulation if enabled
     asgi_app: ASGIApp = api
-    if any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0]):
+    if has_network_simulation(
+        bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
+    ):
         asgi_app = cast(
             ASGIApp,
             NetworkSimulationMiddleware(
@@ -747,7 +699,7 @@ def demo(
     profile: Optional[str] = typer.Option(
         None,
         "--profile",
-        help="Network profile (3g, 4g, 5g, broadband, satellite, etc.)",
+        help="Network profile (3g, 4g, 5g, slow-broadband, broadband, fast-broadband, satellite, rural, congested)",
     ),
     bandwidth: Optional[str] = typer.Option(
         None,
@@ -786,7 +738,7 @@ def demo(
         # Test with 3G network conditions
         luxar demo --profile 3g
 
-        # Just generate without serving (replaces old 'random' command)
+        # Just generate without serving
         luxar demo --no-serve --output my_demo.zarr
 
         # Generate with specific parameters and simulate slow network
@@ -807,21 +759,25 @@ def demo(
         jitter (str, optional): Latency jitter percentage.
         packet_loss (str, optional): Packet loss rate.
     """
+    # Validate inputs early
+    if n_points <= 0:
+        aprint(f"❌ --points must be positive, got {n_points}")
+        raise typer.Exit(1)
+
+    if not serve and output is None:
+        aprint("❌ --output is required when using --no-serve")
+        raise typer.Exit(1)
+
+    _temp_dir_ctx = None
     try:
         with asection("Demo Configuration and Generation"):
             # Determine output path
             if output is None:
-                if serve:
-                    # Create temp directory for serving mode (auto-cleanup on exit)
-                    temp_dir = Path(tempfile.mkdtemp(prefix="luxar_demo_"))
-                    output = temp_dir / f"{demo_type}_demo.zarr"
-                    aprint(f"📂 Using temporary directory: {temp_dir}")
-                else:
-                    # Use persistent datasets/demos/ directory
-                    from luxar.utils.paths import get_demos_output_dir
-
-                    output = get_demos_output_dir() / f"{demo_type}_demo.zarr"
-                    aprint(f"📂 Using datasets directory: {output.parent}")
+                # serve=True and output=None: use a temp directory
+                _temp_dir_ctx = tempfile.TemporaryDirectory(prefix="luxar_demo_")
+                temp_dir = Path(_temp_dir_ctx.__enter__())
+                output = temp_dir / f"{demo_type}_demo.zarr"
+                aprint(f"📂 Using temporary directory: {temp_dir}")
 
             # Generate demo
             aprint(f"🎲 Generating {demo_type} demo with {n_points:,} points...")
@@ -837,66 +793,24 @@ def demo(
 
             aprint(f"✅ Generated {n_points:,} points → {output}")
 
-        # If not serving, we're done (replaces old 'random' command)
         if not serve:
             return
 
         # Parse network simulation parameters (if serving)
-        bandwidth_mbps = None
-        latency_ms = None
-        jitter_percent = 0.0
-        packet_loss_rate = 0.0
+        try:
+            bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate = (
+                parse_network_options(profile, bandwidth, latency, jitter, packet_loss)
+            )
+        except ValueError as e:
+            aprint(f"❌ [Luxar] {e}")
+            raise typer.Exit(code=1)
 
-        if profile:
-            try:
-                profile_data = load_network_profile(profile)
-                bandwidth_mbps = parse_bandwidth(profile_data["bandwidth"])
-                latency_ms = parse_latency(profile_data["latency"])
-                jitter_percent = profile_data["jitter"]
-                packet_loss_rate = profile_data["packet_loss"]
-                aprint(f"📊 [Luxar] Using network profile: {profile_data['name']}")
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        if bandwidth:
-            try:
-                bandwidth_mbps = parse_bandwidth(bandwidth)
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        if latency:
-            try:
-                latency_ms = parse_latency(latency)
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        if jitter:
-            try:
-                jitter_percent = parse_jitter(jitter)
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        if packet_loss:
-            try:
-                packet_loss_rate = parse_packet_loss(packet_loss)
-            except ValueError as e:
-                aprint(f"❌ [Luxar] {e}")
-                raise typer.Exit(code=1)
-
-        if any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0]):
-            aprint("🌐 [Luxar] Network simulation enabled:")
-            if bandwidth_mbps:
-                aprint(f"   • Bandwidth: {bandwidth_mbps:.2f} Mbps")
-            if latency_ms:
-                aprint(f"   • Latency: {latency_ms:.0f} ms")
-            if jitter_percent > 0:
-                aprint(f"   • Jitter: {jitter_percent * 100:.0f}%")
-            if packet_loss_rate > 0:
-                aprint(f"   • Packet loss: {packet_loss_rate * 100:.1f}%")
+        if has_network_simulation(
+            bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
+        ):
+            print_network_params(
+                bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
+            )
 
         with asection("Viewer Setup and Port Management"):
             # Check viewer is built
@@ -944,6 +858,9 @@ def demo(
     except Exception as e:
         aprint(f"❌ Error: {e}")
         raise typer.Exit(1)
+    finally:
+        if _temp_dir_ctx is not None:
+            _temp_dir_ctx.__exit__(None, None, None)
 
 
 # ────────────────────────────── info ─────────────────────────────────────────
@@ -964,13 +881,17 @@ def info(
         depth (int, optional): Max tree depth. Defaults to None (unlimited).
         format (str, optional): Output format. Defaults to "text".
     """
+    if format not in ("text", "json"):
+        aprint(f"❌ Unknown format: {format}. Use 'text' or 'json'.")
+        raise typer.Exit(1)
+
     try:
         if not path.exists():
             aprint("❌ Path does not exist.")
             raise typer.Exit(1)
 
         # Get zarr info
-        info_dict = get_zarr_info(path)
+        info_dict = get_zarr_info(path, detailed=stats)
 
         if format == "json":
             import json
@@ -1015,18 +936,41 @@ def info(
         aprint("📊 Summary Statistics:")
         aprint(f"  🗂️  Groups: {info_dict['n_groups']}")
         aprint(f"  📦 Arrays: {info_dict['n_arrays']}")
-        aprint(f"  ⭕ Points objects: {len(info_dict['points_objects'])}")
-        aprint(f"  ✨ Total points: {info_dict['n_points_total']:,}")
+        if info_dict["points_objects"]:
+            aprint(f"  ⭕ Points objects: {len(info_dict['points_objects'])}")
+            aprint(f"  ✨ Total points: {info_dict['n_points_total']:,}")
+        if info_dict["lines_objects"]:
+            aprint(f"  📏 Lines objects: {len(info_dict['lines_objects'])}")
+            aprint(f"  ✨ Total vertices: {info_dict['n_lines_vertices_total']:,}")
+        if info_dict["gsplats_objects"]:
+            aprint(f"  💠 GSplats objects: {len(info_dict['gsplats_objects'])}")
+            aprint(f"  ✨ Total splats: {info_dict['n_gsplats_total']:,}")
 
-        if stats and info_dict["points_objects"]:
-            aprint("\n📦 Points Objects Details:")
-            for pc in info_dict["points_objects"]:
-                aprint(f"  {pc['path']}:")
-                aprint(f"    Points: {pc['n_points']:,}")
-                aprint(f"    Dimensions: {pc['n_dims']}")
-                aprint(f"    Has colors: {pc['has_colors']}")
-                aprint(f"    Has radii: {pc['has_radii']}")
-                aprint(f"    Has sharpness: {pc['has_sharpness']}")
+        if stats:
+            if info_dict["points_objects"]:
+                aprint("\n📦 Points Objects Details:")
+                for pc in info_dict["points_objects"]:
+                    aprint(f"  {pc['path']}:")
+                    aprint(f"    Points: {pc['n_points']:,}")
+                    aprint(f"    Dimensions: {pc['n_dims']}")
+                    aprint(f"    Has colors: {pc['has_colors']}")
+                    aprint(f"    Has radii: {pc['has_radii']}")
+                    aprint(f"    Has sharpness: {pc['has_sharpness']}")
+            if info_dict["lines_objects"]:
+                aprint("\n📏 Lines Objects Details:")
+                for lo in info_dict["lines_objects"]:
+                    aprint(f"  {lo['path']}:")
+                    aprint(f"    Vertices: {lo['n_vertices']:,}")
+                    aprint(f"    Dimensions: {lo['n_dims']}")
+                    aprint(f"    Has colors: {lo['has_colors']}")
+                    aprint(f"    Has widths: {lo['has_widths']}")
+            if info_dict["gsplats_objects"]:
+                aprint("\n💠 GSplats Objects Details:")
+                for gs in info_dict["gsplats_objects"]:
+                    aprint(f"  {gs['path']}:")
+                    aprint(f"    Splats: {gs['n_splats']:,}")
+                    aprint(f"    Dimensions: {gs['n_dims']}")
+                    aprint(f"    Has colors: {gs['has_colors']}")
     except Exception as e:
         aprint(f"❌ Error reading info for {path}: {e}")
         raise typer.Exit(1)
@@ -1044,17 +988,34 @@ def _print_tree(
     if max_depth is not None and depth > max_depth:
         return
 
-    # Determine node type and gather info
-    node_type = "scene" if depth == 0 else "group"
+    # Determine node type from zarr attrs (set by compiler)
+    stored_type = group.attrs.get("type", "")
+    if depth == 0:
+        node_type = "scene"
+    elif stored_type in ("points", "lines", "gsplats"):
+        node_type = stored_type
+    else:
+        node_type = "group"
     attrs = {}
 
-    if "positions" in group:
-        node_type = "points"
+    if node_type == "points" and "positions" in group:
         positions = group["positions"]
         attrs["n_points"] = positions.shape[0]
         if show_stats:
             attrs["shape"] = positions.shape
             attrs["dtype"] = str(positions.dtype)
+    elif node_type == "lines" and "vertices" in group:
+        vertices = group["vertices"]
+        attrs["n_vertices"] = vertices.shape[0]
+        if show_stats:
+            attrs["shape"] = vertices.shape
+            attrs["dtype"] = str(vertices.dtype)
+    elif node_type == "gsplats" and "centers" in group:
+        centers = group["centers"]
+        attrs["n_splats"] = centers.shape[0]
+        if show_stats:
+            attrs["shape"] = centers.shape
+            attrs["dtype"] = str(centers.dtype)
 
     # Print node
     if depth == 0:
@@ -1150,19 +1111,23 @@ def export(
 
             serve_script = result / "serve.py"
             aprint(f"Starting local server on port {port}...")
-            subprocess.run(
-                [sys.executable, str(serve_script), "--port", str(port)],
-                cwd=str(result),
-            )
+            aprint("Press Ctrl+C to stop the server.")
+            try:
+                subprocess.run(
+                    [sys.executable, str(serve_script), "--port", str(port)],
+                    cwd=str(result),
+                )
+            except KeyboardInterrupt:
+                aprint("\n🛑 Server stopped.")
     except FileExistsError as e:
-        aprint(f"Error: {e}")
+        aprint(f"❌ {e}")
         aprint("Use --overwrite to replace existing output")
         raise typer.Exit(1)
     except (FileNotFoundError, ValueError) as e:
-        aprint(f"Error: {e}")
+        aprint(f"❌ {e}")
         raise typer.Exit(1)
     except Exception as e:
-        aprint(f"Error exporting scene: {e}")
+        aprint(f"❌ Error exporting scene: {e}")
         raise typer.Exit(1)
 
 

@@ -48,6 +48,7 @@ import type {
 import { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
 import { processGSplats } from './gsplats-processor';
 import {
+  GSplatMaterial,
   createInstancedGSplatsMesh,
   updateInstancedGSplatsMesh,
   packCholeskyForShader,
@@ -1635,8 +1636,8 @@ export class SceneLoader {
         );
       }
 
-      // Create material
-      const material = materialManager.getLineMaterial({
+      // Create material — start from cached base, clone if per-node colormap needed
+      let material = materialManager.getLineMaterial({
         opacity: attrs.opacity ?? 1.0,
         gamma: attrs.gamma ?? 1.0,
         intensity: attrs.intensity ?? 1.0,
@@ -1645,12 +1646,15 @@ export class SceneLoader {
       });
 
       // Apply colormap if specified AND scalar data exists to drive it.
+      // Clone the material — the manager returns cached instances shared across nodes.
       const lnColormapName = node.attrs.colormap as string | undefined;
       const lnHasScalars = !!node.attrs.has_scalars;
       if (lnColormapName && lnHasScalars) {
         // TODO: load custom LUT from zarr when lnColormapName === "custom"
         const lnColormapTex = getColormapTexture(lnColormapName);
         if (lnColormapTex) {
+          material = material.clone() as typeof material;
+          materialManager.register(material);
           material.updateColormapTexture(lnColormapTex);
           const lnScalarRange = (node.attrs.scalar_data_range as [number, number]) ?? [0, 1];
           material.updateScalarRange(lnScalarRange[0], lnScalarRange[1]);
@@ -1800,8 +1804,8 @@ export class SceneLoader {
         processed.splatCount
       );
 
-      // Create material
-      const material = materialManager.getGSplatMaterial({
+      // Create material — start from cached base, clone if per-node colormap needed
+      let material: GSplatMaterial = materialManager.getGSplatMaterial({
         opacity: attrs.opacity ?? 1.0,
         gamma: attrs.gamma ?? 1.0,
         intensity: attrs.intensity ?? 1.0,
@@ -1809,12 +1813,18 @@ export class SceneLoader {
         blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
       });
 
-      // Apply colormap if specified (post-creation, not cached)
+      // Apply colormap if specified.
+      // Clone the material first — the material manager returns cached instances,
+      // so mutating the colormap would affect all nodes sharing the same cache key.
       const gsColormapName = node.attrs.colormap as string | undefined;
+      let gsplatMaterialCloned = false;
       if (gsColormapName) {
         // TODO: load custom LUT from zarr when gsColormapName === "custom"
         const gsColormapTex = getColormapTexture(gsColormapName);
         if (gsColormapTex) {
+          material = material.clone() as GSplatMaterial;
+          materialManager.register(material);
+          gsplatMaterialCloned = true;
           material.updateColormapTexture(gsColormapTex);
           const ampRange = node.attrs.amplitude_data_range as [number, number] | undefined;
           const gsScalarRange = ampRange ?? [0, 1];
@@ -1848,6 +1858,9 @@ export class SceneLoader {
         loader,
         attrs,
         visibleSplatCount: processed.splatCount,
+        // Mark material as already cloned if we made a per-node copy for colormap,
+        // so the layers panel doesn't redundantly clone it again.
+        _layerMaterialCloned: gsplatMaterialCloned,
       } as GSplatsUserData;
 
       // Apply transform
@@ -2154,7 +2167,7 @@ export class SceneLoader {
     radiusScale: number = 1.0,
     sharpnessScale: number = 1.0
   ): THREE.ShaderMaterial {
-    const material = materialManager.getPointMaterial({
+    let material = materialManager.getPointMaterial({
       opacity: attrs.opacity ?? 1.0,
       gamma: attrs.gamma ?? 1.0,
       intensity: attrs.intensity ?? 1.0,
@@ -2167,12 +2180,15 @@ export class SceneLoader {
     // Apply colormap if specified AND scalar data exists to drive it.
     // Without scalar data, the shader's `scalar` attribute defaults to 0,
     // which would map everything to the first LUT color (usually black).
+    // Clone the material — the manager returns cached instances shared across nodes.
     const ptColormapName = attrs.colormap as string | undefined;
     const ptHasScalars = !!attrs.has_scalars;
     if (ptColormapName && ptHasScalars) {
       // TODO: load custom LUT from zarr when ptColormapName === "custom"
       const ptColormapTex = getColormapTexture(ptColormapName);
       if (ptColormapTex) {
+        material = material.clone() as typeof material;
+        materialManager.register(material);
         material.updateColormapTexture(ptColormapTex);
         const ptScalarRange = (attrs.scalar_data_range as [number, number]) ?? [0, 1];
         material.updateScalarRange(ptScalarRange[0], ptScalarRange[1]);
