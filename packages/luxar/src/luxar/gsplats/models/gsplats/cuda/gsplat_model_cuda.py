@@ -259,10 +259,14 @@ class CUDASplatFunction(torch.autograd.Function):
         use_fp16_kernel = use_fp16 or torch.is_autocast_enabled()
 
         # Compute conic (Σ⁻¹) from Cholesky factors (preserves dtype)
-        # OPTIMIZATION: torch.compile fuses the ~12 elementwise kernel launches
-        # into a single fused kernel, reducing overhead from ~0.3ms to ~0.03ms
-        Ls_for_conic = Ls.detach().clone().requires_grad_(True)
-        conic = _cholesky_to_conic_compiled(Ls_for_conic)
+        # OPTIMIZATION: For 2D/3D, analytical backward doesn't need autograd graph,
+        # so skip the clone + requires_grad. For 4D+, keep for autograd fallback.
+        if d <= 3:
+            Ls_for_conic = Ls  # No clone needed — analytical backward uses Ls directly
+            conic = _cholesky_to_conic_compiled(Ls.detach())
+        else:
+            Ls_for_conic = Ls.detach().clone().requires_grad_(True)
+            conic = _cholesky_to_conic_compiled(Ls_for_conic)
 
         # Compute exact L_row_norms from Cholesky factors for AABB computation
         # L_row_norms[i] = sqrt(sum_j L[i,j]^2) = sqrt(Sigma[i,i])
