@@ -679,7 +679,7 @@ def _parse_custom_axes_attr(
     _CAMERA = {"camera", "cam", "view", "angle"}
 
     t_idx: Optional[int] = None
-    channel_indices: List[int] = []   # channel + camera axes
+    channel_indices: List[int] = []  # channel + camera axes
     spatial_indices: List[int] = []
 
     for i, ax in enumerate(axes):

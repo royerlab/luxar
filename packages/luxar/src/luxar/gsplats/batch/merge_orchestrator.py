@@ -45,8 +45,16 @@ def merge_batch_results(
 
     # When --timepoints/--channels slicing was used, the tile filenames
     # contain the REAL dataset indices (e.g. t0072 not t01).
-    t_indices = manifest.timepoint_indices if manifest.timepoint_indices is not None else list(range(n_t))
-    c_indices = manifest.channel_indices if manifest.channel_indices is not None else list(range(n_c))
+    t_indices = (
+        manifest.timepoint_indices
+        if manifest.timepoint_indices is not None
+        else list(range(n_t))
+    )
+    c_indices = (
+        manifest.channel_indices
+        if manifest.channel_indices is not None
+        else list(range(n_c))
+    )
 
     # ================================================================
     # Level 1: Merge tiles per (T, C)
@@ -59,7 +67,9 @@ def merge_batch_results(
     with asection("Level 1: Merging tiles per (timepoint, channel)"):
         for t_seq, t_real in enumerate(t_indices):
             for c_seq, c_real in enumerate(c_indices):
-                out_path = merged_dir / f"t{t_real:0{t_w}d}_c{c_real:0{c_w}d}.gsplats.zarr"
+                out_path = (
+                    merged_dir / f"t{t_real:0{t_w}d}_c{c_real:0{c_w}d}.gsplats.zarr"
+                )
                 tc_paths[(t_seq, c_seq)] = out_path
 
                 if out_path.exists() and not force:
@@ -70,7 +80,9 @@ def merge_batch_results(
                 tile_files = []
                 for k in range(n_k):
                     # Use REAL indices for tile filenames (matches sbatch output)
-                    fname = output_filename(t_real, c_real, k, max(t_indices) + 1, max(c_indices) + 1, n_k)
+                    fname = output_filename(
+                        t_real, c_real, k, max(t_indices) + 1, max(c_indices) + 1, n_k
+                    )
                     tile_path = tiles_dir / fname
                     if not tile_path.exists():
                         raise FileNotFoundError(
