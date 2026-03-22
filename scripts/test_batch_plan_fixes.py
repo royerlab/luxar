@@ -209,6 +209,15 @@ def test_env_capture_ld_library_path_prepend():
     # Should NOT be a plain assignment
     assert "export LD_LIBRARY_PATH='/some/path'\n" not in preamble
 
+    # Env vars must appear BEFORE module loads so that modules can
+    # prepend their paths and take priority over captured (stale) paths.
+    ld_line_idx = preamble.find("export LD_LIBRARY_PATH=")
+    module_line_idx = preamble.find("module load")
+    assert ld_line_idx < module_line_idx, (
+        f"LD_LIBRARY_PATH export (pos {ld_line_idx}) must appear before "
+        f"module load (pos {module_line_idx}) in preamble:\n{preamble}"
+    )
+
     print("PASS: LD_LIBRARY_PATH prepend in preamble")
 
 
