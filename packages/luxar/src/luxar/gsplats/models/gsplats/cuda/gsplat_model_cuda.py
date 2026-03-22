@@ -108,6 +108,15 @@ def cholesky_to_conic(L: torch.Tensor) -> torch.Tensor:
 try:
     _cholesky_to_conic_compiled = torch.compile(cholesky_to_conic)
 except Exception:
+    import warnings
+
+    warnings.warn(
+        "torch.compile unavailable (missing Triton?). "
+        "cholesky_to_conic will run ~5x slower in eager mode. "
+        "Install Triton: pip install triton",
+        RuntimeWarning,
+        stacklevel=1,
+    )
     _cholesky_to_conic_compiled = cholesky_to_conic
 
 
