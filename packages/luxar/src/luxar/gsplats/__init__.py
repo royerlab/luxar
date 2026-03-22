@@ -8,9 +8,10 @@ if TYPE_CHECKING:
     from luxar.gsplats import clahe, seeds
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
     from luxar.gsplats.fit_multiscale_gsplats import fit_multiscale_gaussian_splats
+    from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
     from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
-    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
     from luxar.gsplats.seeds import (
         generate_seeds,
         seed_from_decomposition,
@@ -25,9 +26,12 @@ else:
         from luxar.gsplats import clahe, seeds
         from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
         from luxar.gsplats.fit_multiscale_gsplats import fit_multiscale_gaussian_splats
+        from luxar.gsplats.fit_progressive_gsplats import (
+            fit_progressive_gaussian_splats,
+        )
         from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
         from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
-        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
         from luxar.gsplats.seeds import (
             generate_seeds,
             seed_from_decomposition,
@@ -52,11 +56,18 @@ else:
         def fit_multiscale_gaussian_splats(*_args: Any, **_kwargs: Any) -> Any:
             _raise_gsplats_import_error()
 
+        def fit_progressive_gaussian_splats(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
         class GaussianSplatFitter:
             def __init__(self, *_args: Any, **_kwargs: Any) -> None:
                 _raise_gsplats_import_error()
 
         class GSplatData:
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                _raise_gsplats_import_error()
+
+        class GSplatLOD:
             def __init__(self, *_args: Any, **_kwargs: Any) -> None:
                 _raise_gsplats_import_error()
 
@@ -99,11 +110,13 @@ __all__ = [
     # Fitting functions
     "fit_gaussian_splats",
     "fit_multiscale_gaussian_splats",
+    "fit_progressive_gaussian_splats",
     "fit_tiled_gaussian_splats",
     "fit_tile",
     "fit_tiled",
     "GaussianSplatFitter",
     "GSplatData",
+    "GSplatLOD",
     "DynamicOpsConfig",
     # Tiling
     "TileSpec",

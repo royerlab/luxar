@@ -1548,3 +1548,209 @@ class TestClampIntensity:
         gs = _make_3d_gsplat()
         result = gs.clamp_intensity(min=0.0, max=1.0)
         assert result.centers is gs.centers
+
+
+# ── LOD Tests ──────────────────────────────────────────────
+
+
+class TestGSplatLOD:
+    """Tests for the GSplatLOD frozen dataclass."""
+
+    def test_creation(self):
+        from luxar.gsplats.gsplat_data import GSplatLOD
+
+        lod = GSplatLOD(
+            centers=np.array([[1, 2, 3]], dtype=np.float32),
+            amplitudes=np.array([0.5], dtype=np.float32),
+            cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
+        )
+        assert lod.n_splats == 1
+        assert lod.ndim == 3
+
+    def test_frozen(self):
+        from luxar.gsplats.gsplat_data import GSplatLOD
+
+        lod = GSplatLOD(
+            centers=np.zeros((2, 3), dtype=np.float32),
+            amplitudes=np.ones(2, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (2, 1)
+            ),
+        )
+        with pytest.raises(AttributeError):
+            lod.centers = np.zeros((2, 3))  # type: ignore[misc]
+
+    def test_mixin_properties(self):
+        from luxar.gsplats.gsplat_data import GSplatLOD
+
+        lod = GSplatLOD(
+            centers=np.array([[10, 20, 30]], dtype=np.float32),
+            amplitudes=np.array([2.0], dtype=np.float32),
+            cholesky_factors=np.array([[2, 0, 3, 0, 0, 4]], dtype=np.float32),
+        )
+        assert lod.n_splats == 1
+        assert lod.ndim == 3
+        assert len(lod.volumes()) == 1
+        assert len(lod.masses()) == 1
+        assert lod.marginal_sigmas().shape == (1, 3)
+        assert len(lod.eccentricities()) == 1
+
+    def test_validation(self):
+        from luxar.gsplats.gsplat_data import GSplatLOD
+
+        with pytest.raises(ValueError, match="Amplitudes shape"):
+            GSplatLOD(
+                centers=np.zeros((3, 2), dtype=np.float32),
+                amplitudes=np.ones(2, dtype=np.float32),  # wrong count
+                cholesky_factors=np.zeros((3, 3), dtype=np.float32),
+            )
+
+
+class TestGSplatDataLOD:
+    """Tests for LOD functionality in GSplatData."""
+
+    def _make_lods(self, n_lods=3, splats_per_lod=10):
+        from luxar.gsplats.gsplat_data import GSplatLOD
+
+        rng = np.random.RandomState(42)
+        lods = []
+        for i in range(n_lods):
+            lods.append(
+                GSplatLOD(
+                    centers=rng.rand(splats_per_lod, 3).astype(np.float32) * 100,
+                    amplitudes=rng.rand(splats_per_lod).astype(np.float32),
+                    cholesky_factors=np.tile(
+                        np.array([1, 0, 1, 0, 0, 1], dtype=np.float32),
+                        (splats_per_lod, 1),
+                    ),
+                    stats={"pass_index": i, "cumulative_psnr_db": 20.0 + i * 5.0},
+                )
+            )
+        return lods
+
+    def test_from_lods(self):
+        lods = self._make_lods()
+        data = GSplatData.from_lods(lods)
+        assert data.n_lods == 3
+        assert data.n_splats == 30
+        assert data.centers.shape == (30, 3)
+
+    def test_convenience_constructor_is_single_lod(self):
+        gs = _make_3d_gsplat(n=5)
+        assert gs.n_lods == 1
+        assert gs.lods[0].n_splats == 5
+
+    def test_n_lods(self):
+        lods = self._make_lods(n_lods=4)
+        data = GSplatData.from_lods(lods)
+        assert data.n_lods == 4
+
+    def test_at_lod(self):
+        lods = self._make_lods()
+        data = GSplatData.from_lods(lods)
+        lod0 = data.at_lod(0)
+        assert lod0.n_splats == 10
+        assert lod0.stats["pass_index"] == 0
+
+    def test_up_to_lod(self):
+        lods = self._make_lods(n_lods=4)
+        data = GSplatData.from_lods(lods)
+        trimmed = data.up_to_lod(1)
+        assert trimmed.n_lods == 2
+        assert trimmed.n_splats == 20
+
+    def test_trim_lods(self):
+        lods = self._make_lods()
+        data = GSplatData.from_lods(lods)
+        trimmed = data.trim_lods(0)
+        assert trimmed.n_lods == 1
+        assert trimmed.n_splats == 10
+
+    def test_flattened(self):
+        lods = self._make_lods()
+        data = GSplatData.from_lods(lods)
+        flat = data.flattened()
+        assert flat.n_lods == 1
+        assert flat.n_splats == data.n_splats
+        np.testing.assert_array_equal(flat.centers, data.centers)
+
+    def test_lod_psnrs(self):
+        lods = self._make_lods()
+        data = GSplatData.from_lods(lods)
+        psnrs = data.lod_psnrs()
+        assert psnrs == [20.0, 25.0, 30.0]
+
+    def test_lod_psnrs_missing(self):
+        from luxar.gsplats.gsplat_data import GSplatLOD
+
+        lods = [
+            GSplatLOD(
+                centers=np.zeros((1, 2), dtype=np.float32),
+                amplitudes=np.ones(1, dtype=np.float32),
+                cholesky_factors=np.array([[1, 0, 1]], dtype=np.float32),
+                stats={},  # no psnr
+            )
+        ]
+        data = GSplatData.from_lods(lods)
+        psnrs = data.lod_psnrs()
+        assert np.isnan(psnrs[0])
+
+    def test_cached_concat_matches_lods(self):
+        lods = self._make_lods()
+        data = GSplatData.from_lods(lods)
+        expected_centers = np.concatenate([lod.centers for lod in lods], axis=0)
+        np.testing.assert_array_equal(data.centers, expected_centers)
+
+    def test_single_lod_no_copy(self):
+        """Single-LOD fast path should share array references."""
+        from luxar.gsplats.gsplat_data import GSplatLOD
+
+        c = np.zeros((5, 3), dtype=np.float32)
+        a = np.ones(5, dtype=np.float32)
+        cf = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (5, 1))
+        lod = GSplatLOD(centers=c, amplitudes=a, cholesky_factors=cf)
+        data = GSplatData.from_lods([lod])
+        # Should share memory, not copy
+        assert data.centers is c
+        assert data.amplitudes is a
+
+    def test_repr_multi_lod(self):
+        lods = self._make_lods()
+        data = GSplatData.from_lods(lods)
+        r = repr(data)
+        assert "3 LODs" in r
+        assert "30 splats" in r
+
+    def test_repr_single_lod(self):
+        gs = _make_3d_gsplat()
+        r = repr(gs)
+        assert "LOD" not in r  # single LOD should not mention LODs
+
+    def test_mixin_on_multi_lod(self):
+        """Computed properties work on the concatenated view."""
+        lods = self._make_lods(n_lods=2, splats_per_lod=5)
+        data = GSplatData.from_lods(lods)
+        assert data.volumes().shape == (10,)
+        assert data.masses().shape == (10,)
+        assert data.eccentricities().shape == (10,)
+
+    def test_filter_returns_single_lod(self):
+        """filter() operates on concat and returns single-LOD result."""
+        lods = self._make_lods()
+        data = GSplatData.from_lods(lods)
+        mask = data.amplitudes > 0.5
+        filtered = data.filter(mask)
+        assert filtered.n_lods == 1
+        assert filtered.n_splats == int(mask.sum())
+
+    def test_empty_lods_raises(self):
+        with pytest.raises(ValueError, match="at least one"):
+            GSplatData(lods=[])
+
+    def test_invalid_lod_type_raises(self):
+        with pytest.raises(TypeError, match="GSplatLOD"):
+            GSplatData(lods=["not a lod"])  # type: ignore[list-item]
+
+    def test_no_args_raises(self):
+        with pytest.raises(ValueError, match="Provide either"):
+            GSplatData()
