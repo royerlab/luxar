@@ -724,10 +724,94 @@ __global__ void rasterize_backward_kernel(
         tile_pixels *= tile_extent[d];
     }
 
-    // Shared memory for splat data and gradient accumulation
-    // OPTIMIZATION 2.3: Pad DIM to avoid bank conflicts
     constexpr int CONIC_SIZE = conic_size<DIM>();
     constexpr int CENTER_STRIDE = (DIM == 3) ? 4 : DIM;
+
+    // OPTIMIZATION: Single-splat fast path for backward kernel.
+    // Bypasses ALL shared memory (splat data, gradient accumulators, grad_output cache),
+    // batch loading, __syncthreads, and cooperative write-back. Uses warp-aggregated
+    // atomic adds directly to global memory.
+    if constexpr (DIM <= 4) {
+        if (n_splats_in_tile == 1 && tile_pixels <= (int)blockDim.x) {
+            int splat_idx = __ldg(&tile_content[tile_offset]);
+
+            // Load splat data via __ldg (broadcast)
+            float mu[DIM];
+            #pragma unroll
+            for (int d = 0; d < DIM; d++) {
+                mu[d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
+            }
+            float con[CONIC_SIZE];
+            #pragma unroll
+            for (int c = 0; c < CONIC_SIZE; c++) {
+                con[c] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + c);
+            }
+            float amp_val = DTypeTraits<InputDType>::load(amps, splat_idx);
+            float trunc_sq = effective_truncate_sq(truncate, amp_val, intensity_floor);
+
+            const bool fast_3d = (DIM == 3) && (tile_size == 8) &&
+                (tile_extent[0] == 8) && (tile_extent[1] == 8) && (tile_extent[2] == 8);
+            const bool fast_2d = (DIM == 2) && (tile_size == 16) &&
+                (tile_extent[0] == 16) && (tile_extent[1] == 16);
+
+            // Each thread processes its pixel
+            float local_d_centers[DIM];
+            float local_d_conic[CONIC_SIZE];
+            float local_d_amp = 0.0f;
+            #pragma unroll
+            for (int d = 0; d < DIM; d++) local_d_centers[d] = 0.0f;
+            #pragma unroll
+            for (int c = 0; c < CONIC_SIZE; c++) local_d_conic[c] = 0.0f;
+
+            int local_px_idx = threadIdx.x;
+            if (local_px_idx < tile_pixels) {
+                // Compute pixel coords
+                float px[DIM];
+                int voxel_coords[DIM];
+                compute_voxel_coords<DIM>(local_px_idx, tile_origin, tile_extent,
+                                          fast_3d, fast_2d, voxel_coords);
+                #pragma unroll
+                for (int d = 0; d < DIM; d++) px[d] = (float)voxel_coords[d];
+
+                // Load grad_output
+                int64_t global_px_idx = voxel_to_linear<DIM>(voxel_coords, shape);
+                float dL_dI = grad_output[global_px_idx];
+
+                if (dL_dI != 0.0f) {
+                    float d_vec[DIM];
+                    #pragma unroll
+                    for (int d = 0; d < DIM; d++) d_vec[d] = px[d] - mu[d];
+
+                    float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, con);
+
+                    if (dist_sq <= trunc_sq) {
+                        float intensity = gaussian_intensity(dist_sq, amp_val);
+                        if (intensity >= intensity_floor) {
+                            compute_pixel_gradients<DIM>(
+                                dL_dI, intensity, amp_val, d_vec, con,
+                                local_d_centers, local_d_conic, local_d_amp
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Warp-aggregated atomic directly to global (no shared memory)
+            warp_aggregated_atomic_add(&d_amps[splat_idx], local_d_amp);
+            #pragma unroll
+            for (int d = 0; d < DIM; d++) {
+                warp_aggregated_atomic_add(&d_centers[splat_idx * DIM + d], local_d_centers[d]);
+            }
+            #pragma unroll
+            for (int c = 0; c < CONIC_SIZE; c++) {
+                warp_aggregated_atomic_add(&d_conic[splat_idx * CONIC_SIZE + c], local_d_conic[c]);
+            }
+            return;
+        }
+    }
+
+    // Shared memory for splat data and gradient accumulation
+    // OPTIMIZATION 2.3: Pad DIM to avoid bank conflicts
     __shared__ float s_centers[BATCH_SIZE * CENTER_STRIDE];
     __shared__ float s_conic[BATCH_SIZE * CONIC_SIZE];
     __shared__ float s_amps[BATCH_SIZE];
