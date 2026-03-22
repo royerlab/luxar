@@ -14,10 +14,10 @@
 /* ========== Main Container ========== */
 
 .luxar-layers-panel {
-  /* Positioning */
+  /* Positioning — matches .luxar-gui (20px from viewport edge) */
   position: fixed;
-  top: var(--luxar-spacing-6);
-  left: var(--luxar-spacing-6);
+  top: 20px;
+  left: 20px;
   width: 260px;
   max-height: 70vh;
 
@@ -48,36 +48,36 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: var(--luxar-spacing-4) var(--luxar-spacing-5);
-  border-bottom: 1px solid var(--luxar-border-subtle);
+  padding: var(--luxar-spacing-8) var(--luxar-spacing-8) var(--luxar-spacing-3);
+  margin-bottom: var(--luxar-spacing-5);
+  border-bottom: 1px solid var(--luxar-border-strong);
   flex-shrink: 0;
 }
 
 .luxar-layers-panel__title {
-  font-size: var(--luxar-text-sm);
-  font-weight: var(--luxar-font-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--luxar-text-secondary);
+  font-size: var(--luxar-text-lg);
+  font-weight: var(--luxar-font-bold);
+  color: var(--luxar-text-primary);
+  margin: 0;
 }
 
 .luxar-layers-panel__close {
   background: none;
   border: none;
-  color: var(--luxar-text-secondary);
-  font-size: var(--luxar-text-lg);
+  color: var(--luxar-text-muted);
+  font-size: var(--luxar-text-3xl);
   cursor: pointer;
-  padding: 0 var(--luxar-spacing-2);
-  line-height: 1;
-  border-radius: var(--luxar-radius-sm);
-  transition:
-    color var(--luxar-transition-fast),
-    background var(--luxar-transition-fast);
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--luxar-transition-fast);
 }
 
 .luxar-layers-panel__close:hover {
   color: var(--luxar-text-primary);
-  background: var(--luxar-interactive-hover);
 }
 
 /* ========== Layer List ========== */
@@ -92,13 +92,31 @@
   scrollbar-color: var(--luxar-success) transparent;
 }
 
+.luxar-layers-panel__list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.luxar-layers-panel__list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.luxar-layers-panel__list::-webkit-scrollbar-thumb {
+  background: var(--luxar-success);
+  border-radius: var(--luxar-radius-full);
+}
+
+.luxar-layers-panel__list::-webkit-scrollbar-thumb:hover {
+  background: var(--luxar-success);
+  opacity: 0.8;
+}
+
 /* ========== Individual Layer Row ========== */
 
 .luxar-layer-row {
   display: flex;
   align-items: center;
   gap: var(--luxar-spacing-3);
-  padding: var(--luxar-spacing-3) var(--luxar-spacing-5);
+  padding: var(--luxar-spacing-3) var(--luxar-spacing-8);
   cursor: pointer;
   border-left: 3px solid transparent;
   transition:
@@ -163,7 +181,7 @@
 /* ========== Controls Section ========== */
 
 .luxar-layers-panel__controls {
-  padding: var(--luxar-spacing-4) var(--luxar-spacing-5);
+  padding: var(--luxar-spacing-4) var(--luxar-spacing-8) var(--luxar-spacing-8);
   border-top: 1px solid var(--luxar-border-subtle);
   display: flex;
   flex-direction: column;
@@ -269,6 +287,14 @@
   color: #ffffff;
 }
 
+.luxar-layers-panel__select optgroup {
+  background-color: #161616;
+  color: #999999;
+  font-style: normal;
+  font-weight: 600;
+  padding: 4px 0;
+}
+
 /* ========== Range Slider Component ========== */
 
 .luxar-range-slider {
@@ -299,9 +325,46 @@
   min-width: 2ch;
 }
 
+.luxar-range-slider__track-row {
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-1);
+}
+
+.luxar-range-slider__bound {
+  font-family: var(--luxar-font-mono);
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
+  cursor: pointer;
+  min-width: 2ch;
+  text-align: center;
+  padding: 0 1px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.luxar-range-slider__bound:hover {
+  color: var(--luxar-success);
+  background: var(--luxar-interactive-hover);
+}
+
+.luxar-range-slider__bound-input {
+  font-family: var(--luxar-font-mono);
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-primary);
+  background: var(--luxar-bg-secondary);
+  border: 1px solid var(--luxar-success);
+  border-radius: 2px;
+  padding: 0 2px;
+  outline: none;
+  flex-shrink: 0;
+}
+
 .luxar-range-slider__track-container {
   position: relative;
   height: 16px;
+  flex: 1;
+  min-width: 0;
 }
 
 .luxar-range-slider__track {
@@ -386,4 +449,9 @@
 [data-theme='light'] .luxar-layers-panel__select option:checked {
   background-color: #f0f0f0;
   color: #000000;
+}
+
+[data-theme='light'] .luxar-layers-panel__select optgroup {
+  background-color: #f5f5f5;
+  color: #666666;
 }
