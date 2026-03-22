@@ -80,7 +80,7 @@ The setup process has 5 steps:
 
 #### Step 1: Python Environment
 
-1. Verifies Python 3.9+ is available
+1. Verifies Python 3.10+ is available
 2. Checks for Hatch (Python environment manager)
 3. If Hatch is missing:
    - Checks for pipx (required on modern Ubuntu/Debian)
@@ -637,7 +637,7 @@ For automated environments (GitHub Actions, etc.):
 
 | Tool | Minimum Version | Reason |
 |------|----------------|--------|
-| Python | 3.9 | Type hints, dataclasses |
+| Python | 3.10 | Type hints, dataclasses, match statements |
 | Node.js | 20.19 | Vite 7.x requirements |
 | Rust | stable | WASM compilation |
 | wasm-pack | latest | WASM packaging |
