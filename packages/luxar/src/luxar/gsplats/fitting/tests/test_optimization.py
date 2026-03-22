@@ -238,7 +238,9 @@ def test_movie_recording_enabled(simple_2d_setup) -> None:
     assert "iterations" in results.movie_frames
 
     # Should have recorded frames at iterations 5, 10, 15
-    assert len(results.movie_frames["target"]) >= 2
+    assert len(results.movie_frames["reconstruction"]) >= 2
+    # Target is stored once (single array, not per-frame list)
+    assert isinstance(results.movie_frames["target"], np.ndarray)
 
 
 def test_movie_recording_disabled(simple_2d_setup) -> None:

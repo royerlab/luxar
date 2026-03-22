@@ -887,7 +887,7 @@ class TestMPSPeakFindingFallback:
         )
 
         assert len(peaks) == 2
-        assert (5, 5, 5) in peaks
+        assert (5, 5, 5) in {tuple(p.tolist()) for p in peaks}
 
     @pytest.mark.skipif(
         not torch.backends.mps.is_available(),
