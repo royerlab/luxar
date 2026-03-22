@@ -155,7 +155,8 @@ __global__ void preprocess_kernel(
     int* __restrict__ aabb_lo_cache,
     int* __restrict__ aabb_hi_cache,
     int64_t num_tiles,
-    int* __restrict__ global_count  // Atomic counter for global splats
+    int* __restrict__ global_count,  // Atomic counter for global splats
+    int64_t* __restrict__ total_pairs_counter  // Atomic counter for total tile-splat pairs
 ) {
     int splat_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (splat_idx >= N) return;
@@ -220,10 +221,13 @@ __global__ void preprocess_kernel(
     bool is_global = (n_tiles > (int)global_threshold) && (n_tiles > MIN_GLOBAL_TILES);
     global_flags[splat_idx] = is_global;
 
-    // Increment atomic counter so host can skip torch::nonzero when 0 global splats
+    // Increment atomic counters
     if (is_global) {
         atomicAdd(global_count, 1);
     }
+    // Accumulate total tile-splat pairs (enables earlier host sync)
+    // Use unsigned long long cast for CUDA atomicAdd compatibility
+    atomicAdd((unsigned long long*)total_pairs_counter, (unsigned long long)n_tiles);
 
     // Cache AABB for bin_kernel (avoids recomputation)
     #pragma unroll

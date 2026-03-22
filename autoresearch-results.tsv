@@ -1,0 +1,16 @@
+# metric_direction: lower_is_better
+iteration	commit	metric	delta	guard	status	description
+0	f544db3	13.882	0.0	pass	baseline	initial state — 3D_512_50K FP32 total train 13.882ms1	868723a	12.747	-1.135	pass	keep	hoist pixel coords + grad_output out of backward splat loop (DIM<=4)
+2	8f23be5	9.447	-3.300	pass	keep	warp-level early termination for backward gradient reduction (__ballot_sync)
+3	12b1958	8.869	-0.578	pass	keep	warp-level early termination in forward kernel inner loop (__ballot_sync)
+4	44d0871	8.615	-0.254	pass	keep	batch warp reductions before atomics in backward kernel (ILP)
+5	-	-	-	fail	discard	remove intensity_floor checks (broke zero-amplitude edge case)
+6	-	8.578	+0.037	pass	discard	skip write-back for non-contributing splats (within noise)
+7	-	8.835	+0.220	pass	discard	CSE optimization in 3D backward (worse register allocation)
+8	-	8.696	+0.081	pass	discard	manual interleaved warp shuffles (worse register pressure)
+9	4d2278b	8.518	-0.097	pass	keep	single-splat fast path in forward kernel (bypass shared memory)
+10	-	9.043	+0.525	pass	discard	single-splat backward fast path (global atomics too expensive)
+11	-	10.039	+1.521	pass	discard	persistent forward kernel (lost spatial locality + atomic contention)
+12	ccaedd8	8.402	-0.116	pass	keep	skip grad_output shared memory cache for DIM<=4 backward
+13	-	8.603	+0.201	pass	discard	pragma unroll 2 forward inner loop (register pressure from unrolling)
+14	236aaaf	8.483	+0.081	pass	keep	__launch_bounds__(512,3) backward — fixes secondary regressions (3D_256_10K -3%, 2D_1024_5K -18%)
