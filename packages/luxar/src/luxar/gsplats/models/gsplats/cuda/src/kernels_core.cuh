@@ -388,11 +388,70 @@ __global__ void rasterize_forward_kernel(
         tile_pixels *= tile_extent[d];
     }
 
+    constexpr int CONIC_SIZE = conic_size<DIM>();
+    constexpr int CENTER_STRIDE = (DIM == 3) ? 4 : DIM;  // Pad 3D to 4
+
+    // OPTIMIZATION: Single-splat fast path — bypass shared memory entirely.
+    // For tiles with exactly 1 splat (common: most tiles have 0-1 splats),
+    // load data via __ldg (texture cache broadcast) and process directly.
+    // Saves: 2 __syncthreads + cooperative load + shared memory overhead.
+    if constexpr (DIM <= 4) {
+        // Only use fast path when tile_pixels == blockDim.x (standard tile sizes)
+        // Oversized tiles need the multi-pixel loop and can't use this shortcut
+        if (n_splats_in_tile == 1 && tile_pixels <= (int)blockDim.x) {
+            int splat_idx = __ldg(&tile_content[tile_offset]);
+
+            // Load splat data directly from global memory (broadcast to all threads)
+            float mu[DIM];
+            #pragma unroll
+            for (int d = 0; d < DIM; d++) {
+                mu[d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
+            }
+            float con[CONIC_SIZE];
+            #pragma unroll
+            for (int c = 0; c < CONIC_SIZE; c++) {
+                con[c] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + c);
+            }
+            float amp_val = DTypeTraits<InputDType>::load(amps, splat_idx);
+            float trunc_sq = effective_truncate_sq(truncate, amp_val, intensity_floor);
+
+            // Compute fast path flags
+            const bool fast_3d = (DIM == 3) && (tile_size == 8) &&
+                (tile_extent[0] == 8) && (tile_extent[1] == 8) && (tile_extent[2] == 8);
+            const bool fast_2d = (DIM == 2) && (tile_size == 16) &&
+                (tile_extent[0] == 16) && (tile_extent[1] == 16);
+
+            // Each thread processes its pixel (tile_pixels == blockDim.x for DIM <= 4)
+            int local_px_idx = threadIdx.x;
+            if (local_px_idx < tile_pixels) {
+                int voxel_coords[DIM];
+                compute_voxel_coords<DIM>(local_px_idx, tile_origin, tile_extent,
+                                          fast_3d, fast_2d, voxel_coords);
+                float px[DIM];
+                #pragma unroll
+                for (int d = 0; d < DIM; d++) px[d] = (float)voxel_coords[d];
+
+                float d_vec[DIM];
+                #pragma unroll
+                for (int d = 0; d < DIM; d++) d_vec[d] = px[d] - mu[d];
+
+                float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, con);
+
+                if (dist_sq <= trunc_sq) {
+                    float intensity = gaussian_intensity(dist_sq, amp_val);
+                    if (intensity >= intensity_floor) {
+                        int64_t global_px_idx = voxel_to_linear<DIM>(voxel_coords, shape);
+                        output[global_px_idx] = intensity;
+                    }
+                }
+            }
+            return;
+        }
+    }
+
     // Shared memory for splat batch loading
     // OPTIMIZATION 2.3: Pad DIM to avoid bank conflicts (stride-3 causes conflicts)
     // For 3D: use stride-4 instead of stride-3, wastes 25% but eliminates conflicts
-    constexpr int CONIC_SIZE = conic_size<DIM>();
-    constexpr int CENTER_STRIDE = (DIM == 3) ? 4 : DIM;  // Pad 3D to 4
     __shared__ float s_centers[BATCH_SIZE * CENTER_STRIDE];
     __shared__ float s_conic[BATCH_SIZE * CONIC_SIZE];
     __shared__ float s_amps[BATCH_SIZE];
