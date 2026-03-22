@@ -249,6 +249,7 @@ const GLASS_PANEL_SELECTORS = [
   '.luxar-debug-console',
   '.luxar-data-monitor',
   '.luxar-dimension-sliders',
+  '.luxar-layers-panel',
   '.luxar-gui',
 ];
 
