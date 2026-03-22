@@ -77,9 +77,13 @@ def show_optimization_movie(movie_frames: Dict[str, Any], shape: tuple) -> None:
 
         aprint("🎬 Creating optimization movie visualization...")
 
-        # Convert lists to 4D arrays (time, y, x) for 2D or (time, z, y, x) for 3D
-        target_stack = np.array(movie_frames["target"])
+        # Convert to 4D arrays (time, y, x) for 2D or (time, z, y, x) for 3D
+        # Target is stored once (not per-frame) — broadcast to match frame count
         reconstruction_stack = np.array(movie_frames["reconstruction"])
+        target_single = movie_frames["target"]  # single array, not a list
+        target_stack = np.broadcast_to(
+            target_single[np.newaxis], reconstruction_stack.shape
+        )
         residual_stack = np.array(movie_frames["residual"])
         splat_centers_list = movie_frames["splat_centers"]
         iterations = movie_frames["iterations"]

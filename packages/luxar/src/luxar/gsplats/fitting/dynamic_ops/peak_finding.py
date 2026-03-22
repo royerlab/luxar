@@ -78,7 +78,7 @@ def _find_residual_peaks(
     nms_radius_vox: float,
     enable_tiled: bool = False,
     num_tiles_per_dim: int = 8,
-) -> List[Tuple[int, ...]]:
+) -> torch.Tensor:
     """
     Find k strongest residual peaks with spatial exclusion (non-maximum suppression).
 
@@ -100,7 +100,7 @@ def _find_residual_peaks(
         num_tiles_per_dim: Number of tiles per dimension (e.g., 8 → 8×8=64 tiles for 2D, 8³=512 for 3D)
 
     Returns:
-        List of peak coordinates as tuples (only where residual > 0)
+        Tensor of peak coordinates, shape (K, d), on same device as residual
 
     Notes:
         In tiled mode, k_per_tile = k_max_residuals / num_tiles is auto-calculated:
@@ -118,7 +118,7 @@ def _find_residual_peaks(
 
 def _find_residual_peaks_global(
     residual: torch.Tensor, k_max_residuals: int, nms_radius_vox: float
-) -> List[Tuple[int, ...]]:
+) -> torch.Tensor:
     """
     Find k strongest residual peaks globally with spatial exclusion (original method).
 
@@ -136,7 +136,7 @@ def _find_residual_peaks_global(
         nms_radius_vox: Minimum distance between peaks
 
     Returns:
-        List of peak coordinates as tuples (sorted by residual magnitude, descending)
+        Tensor of peak coordinates, shape (K, d), on same device as residual
     """
     # Only consider positive residuals (undershoot: target > prediction)
     # Negative residuals mean overshoot - adding more splats would make it worse
@@ -180,7 +180,7 @@ def _find_residual_peaks_global(
     peak_indices = torch.nonzero(is_peak, as_tuple=False)
 
     if len(peak_indices) == 0:
-        return []
+        return torch.zeros((0, d), dtype=torch.long, device=residual.device)
 
     # Get values and sort by magnitude
     peak_values = residual_positive[tuple(peak_indices.T)]
@@ -190,7 +190,7 @@ def _find_residual_peaks_global(
     top_k = min(k_max_residuals, len(sorted_indices))
     selected_peaks = peak_indices[sorted_indices[:top_k]]
 
-    return [tuple(peak.tolist()) for peak in selected_peaks]
+    return selected_peaks
 
 
 def _find_residual_peaks_tiled(
@@ -198,7 +198,7 @@ def _find_residual_peaks_tiled(
     num_tiles_per_dim: int | None,
     k_max_residuals: int,
     nms_radius_vox: float,
-) -> List[Tuple[int, ...]]:
+) -> torch.Tensor:
     """
     Find residual peaks using tile-based approach for spatial fairness.
 
@@ -221,7 +221,7 @@ def _find_residual_peaks_tiled(
         nms_radius_vox: Minimum distance between peaks (applied within each tile)
 
     Returns:
-        List of peak coordinates as tuples (in global image coordinates)
+        Tensor of peak coordinates, shape (K, d), on same device as residual
 
     Notes:
         - k_per_tile = k_max_residuals / total_tiles is auto-calculated
@@ -340,19 +340,22 @@ def _find_residual_peaks_tiled(
 
         # Convert local tile coordinates to global image coordinates
         for local_coords in tile_peaks:
-            global_coords = tuple(local_coords[i] + tile_origin[i] for i in range(d))
+            global_coords = torch.tensor(
+                [local_coords[i] + tile_origin[i] for i in range(d)],
+                dtype=torch.long,
+                device=residual.device,
+            )
             all_peaks.append(global_coords)
 
     # Sort peaks by residual magnitude (descending) to match global mode
     # This ensures convergence guard checks the actual strongest peak
     if len(all_peaks) > 0:
-        peak_residuals = [residual_positive[peak].item() for peak in all_peaks]
-        sorted_indices = sorted(
-            range(len(all_peaks)), key=lambda i: peak_residuals[i], reverse=True
-        )
-        all_peaks = [all_peaks[i] for i in sorted_indices]
+        peaks_tensor = torch.stack(all_peaks)  # (K, d)
+        peak_residuals = residual_positive[tuple(peaks_tensor.T)]
+        sorted_indices = torch.argsort(peak_residuals, descending=True)
+        return peaks_tensor[sorted_indices]
 
-    return all_peaks
+    return torch.zeros((0, d), dtype=torch.long, device=residual.device)
 
 
 def _find_peaks_in_tile(
