@@ -914,27 +914,36 @@ __global__ void rasterize_backward_kernel(
             if (warp_has_grads != 0) {
                 int lane = threadIdx.x % 32;
 
-                // Reduce and write d_amp to shared memory
+                // OPTIMIZATION: Batch all warp reductions BEFORE any atomics.
+                // Each warp_reduce_sum requires all threads via __shfl_down_sync.
+                // Interleaving reduce→atomic→reduce→atomic serializes because
+                // lane 0's atomic blocks the next __shfl_down_sync for all lanes.
+                // By batching reductions first, the GPU can interleave independent
+                // shuffle operations across components (ILP).
                 float warp_d_amp = warp_reduce_sum(local_d_amp);
-                if (lane == 0) {
-                    atomicAdd(&s_d_amps_tile[si], warp_d_amp);
-                }
 
-                // Reduce and write d_centers to shared memory
+                float warp_d_centers[DIM];
                 #pragma unroll
                 for (int d = 0; d < DIM; d++) {
-                    float warp_d_center = warp_reduce_sum(local_d_centers[d]);
-                    if (lane == 0) {
-                        atomicAdd(&s_d_centers_tile[si * CENTER_STRIDE + d], warp_d_center);
-                    }
+                    warp_d_centers[d] = warp_reduce_sum(local_d_centers[d]);
                 }
 
-                // Reduce and write d_conic to shared memory
+                float warp_d_conic[CONIC_SIZE];
                 #pragma unroll
                 for (int c = 0; c < CONIC_SIZE; c++) {
-                    float warp_d_conic = warp_reduce_sum(local_d_conic[c]);
-                    if (lane == 0) {
-                        atomicAdd(&s_d_conic_tile[si * CONIC_SIZE + c], warp_d_conic);
+                    warp_d_conic[c] = warp_reduce_sum(local_d_conic[c]);
+                }
+
+                // Now batch all atomic writes (only lane 0)
+                if (lane == 0) {
+                    atomicAdd(&s_d_amps_tile[si], warp_d_amp);
+                    #pragma unroll
+                    for (int d = 0; d < DIM; d++) {
+                        atomicAdd(&s_d_centers_tile[si * CENTER_STRIDE + d], warp_d_centers[d]);
+                    }
+                    #pragma unroll
+                    for (int c = 0; c < CONIC_SIZE; c++) {
+                        atomicAdd(&s_d_conic_tile[si * CONIC_SIZE + c], warp_d_conic[c]);
                     }
                 }
             }
