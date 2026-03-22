@@ -529,10 +529,12 @@ __global__ void rasterize_forward_kernel(
 
                     if (within_range) {
                         // Compute intensity (only for pixels within truncation radius)
-                        // Note: intensity_floor check is unnecessary here because
-                        // effective_truncate_sq = min(truncate², 2*ln(amp/floor))
-                        // guarantees intensity >= floor for any dist_sq within range.
-                        intensity_sum += gaussian_intensity(dist_sq, s_amps[i]);
+                        float intensity = gaussian_intensity(dist_sq, s_amps[i]);
+
+                        // Skip if below threshold
+                        if (intensity >= intensity_floor) {
+                            intensity_sum += intensity;
+                        }
                     }
                 }
             }
@@ -595,7 +597,10 @@ __global__ void rasterize_forward_kernel(
                     }
                     float dist_sq = mahalanobis_distance_sq<DIM>(d, &s_conic[i * CONIC_SIZE]);
                     if (dist_sq > s_truncate_sq[i]) continue;
-                    pixel_intensity += gaussian_intensity(dist_sq, s_amps[i]);
+                    float intensity = gaussian_intensity(dist_sq, s_amps[i]);
+                    if (intensity >= intensity_floor) {
+                        pixel_intensity += intensity;
+                    }
                 }
 
                 if (pixel_intensity != 0.0f) {
@@ -847,15 +852,15 @@ __global__ void rasterize_backward_kernel(
                     float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, &s_conic[si * CONIC_SIZE]);
 
                     if (dist_sq <= truncate_sq) {
-                        // intensity_floor check removed: effective_truncate_sq
-                        // guarantees intensity >= floor for any dist_sq in range
                         float intensity = gaussian_intensity(dist_sq, amp);
-                        compute_pixel_gradients<DIM>(
-                            precomp_dL_dI, intensity, amp, d_vec,
-                            &s_conic[si * CONIC_SIZE],
-                            local_d_centers, local_d_conic,
-                            local_d_amp
-                        );
+                        if (intensity >= intensity_floor) {
+                            compute_pixel_gradients<DIM>(
+                                precomp_dL_dI, intensity, amp, d_vec,
+                                &s_conic[si * CONIC_SIZE],
+                                local_d_centers, local_d_conic,
+                                local_d_amp
+                            );
+                        }
                     }
                 }
             } else {
@@ -889,6 +894,7 @@ __global__ void rasterize_backward_kernel(
                     if (dist_sq > truncate_sq) continue;
 
                     float intensity = gaussian_intensity(dist_sq, amp);
+                    if (intensity < intensity_floor) continue;
 
                     compute_pixel_gradients<DIM>(
                         dL_dI, intensity, amp, d_vec,
