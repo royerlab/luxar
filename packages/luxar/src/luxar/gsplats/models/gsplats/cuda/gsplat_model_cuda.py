@@ -144,21 +144,22 @@ class CUDASplatFunction(torch.autograd.Function):
         Ls_for_conic = Ls.detach().clone().requires_grad_(True)
         conic = cholesky_to_conic(Ls_for_conic)
 
-        # L_row_norms no longer needed — splat-centric kernels compute AABB from conic
-        # (cofactor/determinant extraction of Sigma diagonals). This eliminates 4+ GPU
-        # kernel launches per forward call (Ls*Ls, sum, sqrt, contiguous).
-        L_row_norms_kernel = torch.empty(0, device=centers.device, dtype=centers.dtype)
+        # Compute exact L_row_norms from Cholesky factors for AABB computation
+        # L_row_norms[i] = sqrt(sum_j L[i,j]^2) = sqrt(Sigma[i,i])
+        # This is exact (unlike the old conic-diagonal approximation)
+        L_row_norms = torch.sqrt(torch.sum(Ls * Ls, dim=2))  # (N, d)
 
         # Convert to FP16 for kernel if needed (AMP mode converts FP32 params to FP16)
         if use_fp16_kernel and centers.dtype != torch.float16:
             centers_kernel = centers.half().contiguous()
             conic_kernel = conic.half().contiguous()
             amps_kernel = amps.half().contiguous()
-            L_row_norms_kernel = L_row_norms_kernel.half()
+            L_row_norms_kernel = L_row_norms.half().contiguous()
         else:
             centers_kernel = centers.contiguous()
             conic_kernel = conic.contiguous()
             amps_kernel = amps.contiguous()
+            L_row_norms_kernel = L_row_norms.float().contiguous()
 
         if CUDA_BACKEND_AVAILABLE:
             # Dispatch to CUDA kernels (use FP16 kernel if autocast or explicit)
