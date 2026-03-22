@@ -569,6 +569,9 @@ __global__ void rasterize_forward_kernel(
                 __syncthreads();
 
                 // Process loaded splats
+                // OPTIMIZATION: Unroll by 2 for ILP — GPU interleaves independent
+                // splat computations, hiding ALU latency between them
+                #pragma unroll 2
                 for (int i = 0; i < batch_size; i++) {
                     // Compute displacement d = px - mu (using padded stride)
                     float d[DIM];
