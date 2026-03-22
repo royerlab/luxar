@@ -14,7 +14,7 @@
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-readme-videos \
         stats show-env prune-env shell build publish-test publish \
         check-deps install-node install-pnpm install-hatch \
-        setup-cuda check-cuda-deps build-cuda clean-cuda test-cuda benchmark-cuda \
+        setup-cuda check-cuda-deps build-cuda build-cuda-slurm clean-cuda test-cuda benchmark-cuda \
         benchmark-wasm
 
 # ============================================================================
@@ -238,17 +238,44 @@ install-pnpm:  ## Install pnpm package manager
 		echo "❌ npm not found. Install Node.js first with: make install-node"; \
 		exit 1; \
 	fi
-	npm install -g pnpm
-	@echo "✅ pnpm installed: $$(pnpm --version)"
+	@if command -v pnpm >/dev/null 2>&1; then \
+		echo "✅ pnpm already installed: $$(pnpm --version)"; \
+	elif [ -x "$$HOME/.local/bin/pnpm" ]; then \
+		echo "✅ pnpm already installed: $$($$HOME/.local/bin/pnpm --version) (in ~/.local/bin)"; \
+	elif npm install -g pnpm 2>/dev/null; then \
+		echo "✅ pnpm installed: $$(pnpm --version)"; \
+	else \
+		echo "   Global install failed (no sudo), installing to ~/.local ..."; \
+		npm install --prefix "$$HOME/.local" -g pnpm; \
+		mkdir -p "$$HOME/.local/bin"; \
+		if [ -x "$$HOME/.local/bin/pnpm" ]; then \
+			echo "✅ pnpm installed: $$($$HOME/.local/bin/pnpm --version) (in ~/.local/bin)"; \
+			echo "⚠️  Add ~/.local/bin to PATH: export PATH=\"$$HOME/.local/bin:$$PATH\""; \
+		else \
+			echo "❌ pnpm installation failed"; \
+			exit 1; \
+		fi; \
+	fi
 
 install-hatch:  ## Install Hatch for Python environment management
 	@echo "📦 Installing Hatch..."
-	@# Check if already installed
-	@if command -v hatch >/dev/null 2>&1; then \
+	@# Find a suitable Python 3.10+ interpreter
+	@PYTHON_CMD=""; \
+	for py in python3.13 python3.12 python3.11 python3.10 python3; do \
+		if command -v $$py >/dev/null 2>&1; then \
+			PY_MAJOR=$$($$py -c "import sys; print(sys.version_info.major)" 2>/dev/null); \
+			PY_MINOR=$$($$py -c "import sys; print(sys.version_info.minor)" 2>/dev/null); \
+			if [ "$$PY_MAJOR" = "3" ] && [ "$$PY_MINOR" -ge 10 ] 2>/dev/null; then \
+				PYTHON_CMD=$$py; \
+				break; \
+			fi; \
+		fi; \
+	done; \
+	if command -v hatch >/dev/null 2>&1; then \
 		echo "✅ Hatch already installed: $$(hatch --version)"; \
 	elif [ -x "$$HOME/.local/bin/hatch" ]; then \
-		echo "✅ Hatch already installed: $$($$HOME/.local/bin/hatch --version)"; \
-		echo "⚠️  Run 'pipx ensurepath' and restart terminal to add to PATH"; \
+		echo "✅ Hatch already installed: $$($$HOME/.local/bin/hatch --version) (in ~/.local/bin)"; \
+		echo "⚠️  Add ~/.local/bin to PATH: export PATH=\"$$HOME/.local/bin:$$PATH\""; \
 	elif command -v pipx >/dev/null 2>&1; then \
 		echo "Installing via pipx..."; \
 		pipx install hatch; \
@@ -259,11 +286,31 @@ install-hatch:  ## Install Hatch for Python environment management
 			echo "   Version: $$($$HOME/.local/bin/hatch --version)"; \
 			echo "⚠️  Run 'pipx ensurepath' and restart terminal to add to PATH"; \
 		fi; \
+	elif [ -n "$$PYTHON_CMD" ]; then \
+		echo "📥 Installing Hatch (no pipx, using $$PYTHON_CMD)..."; \
+		HATCH_INSTALLED=0; \
+		if $$PYTHON_CMD -m pip install --user hatch 2>/dev/null; then \
+			HATCH_INSTALLED=1; \
+		else \
+			echo "   pip --user failed, trying venv approach..."; \
+			HATCH_VENV="$$HOME/.local/hatch-env"; \
+			$$PYTHON_CMD -m venv "$$HATCH_VENV" 2>/dev/null && \
+			"$$HATCH_VENV/bin/pip" install hatch 2>/dev/null && \
+			mkdir -p "$$HOME/.local/bin" && \
+			ln -sf "$$HATCH_VENV/bin/hatch" "$$HOME/.local/bin/hatch" && \
+			HATCH_INSTALLED=1; \
+		fi; \
+		if [ "$$HATCH_INSTALLED" = "1" ] && [ -x "$$HOME/.local/bin/hatch" ]; then \
+			echo "✅ Hatch installed: $$($$HOME/.local/bin/hatch --version)"; \
+			echo "⚠️  Add ~/.local/bin to PATH: export PATH=\"$$HOME/.local/bin:$$PATH\""; \
+		else \
+			echo "❌ Hatch installation failed."; \
+			exit 1; \
+		fi; \
 	else \
-		echo "❌ pipx not found."; \
+		echo "❌ No suitable Python 3.10+ found and pipx not available."; \
 		echo ""; \
-		echo "Modern Ubuntu/Debian requires pipx for installing Python CLI tools."; \
-		echo "Please install pipx first:"; \
+		echo "Please install pipx or ensure Python 3.10+ is in PATH:"; \
 		echo ""; \
 		if [ "$(PKG_MANAGER)" = "apt" ]; then \
 			echo "  sudo apt-get install -y pipx"; \
@@ -461,7 +508,7 @@ test-cov-all:  ## Run all tests with coverage (Python + TypeScript)
 
 # Pre-commit
 enable-pre-commit:  ## Enable and activate pre-commit hooks
-	hatch run pre-commit install
+	hatch run pre-commit install --allow-missing-config
 
 run-pre-commit:  ## Run pre-commit on all files
 	hatch run pre-commit run --all-files
@@ -805,12 +852,23 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 		exit 1; \
 	fi
 	@echo "✅ Python: $$(python3 --version)"
-	@# Install/fix hatch (use pipx)
-	@if command -v hatch >/dev/null 2>&1; then \
+	@# Install/fix hatch (use pipx or pip --user fallback for HPC/no-sudo systems)
+	@PYTHON_CMD=""; \
+	for py in python3.13 python3.12 python3.11 python3.10 python3; do \
+		if command -v $$py >/dev/null 2>&1; then \
+			PY_MAJOR=$$($$py -c "import sys; print(sys.version_info.major)" 2>/dev/null); \
+			PY_MINOR=$$($$py -c "import sys; print(sys.version_info.minor)" 2>/dev/null); \
+			if [ "$$PY_MAJOR" = "3" ] && [ "$$PY_MINOR" -ge 10 ] 2>/dev/null; then \
+				PYTHON_CMD=$$py; \
+				break; \
+			fi; \
+		fi; \
+	done; \
+	if command -v hatch >/dev/null 2>&1; then \
 		echo "✅ Hatch: $$(hatch --version)"; \
 	elif [ -x "$$HOME/.local/bin/hatch" ]; then \
 		echo "✅ Hatch: $$($$HOME/.local/bin/hatch --version) (in ~/.local/bin)"; \
-		echo "⚠️  Note: Run 'pipx ensurepath' and restart terminal to add to PATH"; \
+		echo "⚠️  Note: Add ~/.local/bin to PATH: export PATH=\"$$HOME/.local/bin:$$PATH\""; \
 	elif command -v pipx >/dev/null 2>&1; then \
 		echo "📥 Installing Hatch via pipx..."; \
 		if pipx list 2>/dev/null | grep -q "package hatch"; then \
@@ -828,12 +886,33 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 			echo "❌ Hatch installation failed. Try: pipx reinstall hatch"; \
 			exit 1; \
 		fi; \
+	elif [ -n "$$PYTHON_CMD" ]; then \
+		echo "📥 Installing Hatch (no pipx, using $$PYTHON_CMD)..."; \
+		HATCH_INSTALLED=0; \
+		if $$PYTHON_CMD -m pip install --user hatch 2>/dev/null; then \
+			HATCH_INSTALLED=1; \
+		else \
+			echo "   pip --user failed, trying venv approach..."; \
+			HATCH_VENV="$$HOME/.local/hatch-env"; \
+			$$PYTHON_CMD -m venv "$$HATCH_VENV" 2>/dev/null && \
+			"$$HATCH_VENV/bin/pip" install hatch 2>/dev/null && \
+			mkdir -p "$$HOME/.local/bin" && \
+			ln -sf "$$HATCH_VENV/bin/hatch" "$$HOME/.local/bin/hatch" && \
+			HATCH_INSTALLED=1; \
+		fi; \
+		if [ "$$HATCH_INSTALLED" = "1" ] && [ -x "$$HOME/.local/bin/hatch" ]; then \
+			echo "✅ Hatch: $$($$HOME/.local/bin/hatch --version) (in ~/.local/bin)"; \
+			echo "⚠️  Note: Add ~/.local/bin to PATH: export PATH=\"$$HOME/.local/bin:$$PATH\""; \
+		else \
+			echo "❌ Hatch installation failed."; \
+			exit 1; \
+		fi; \
 	else \
 		echo ""; \
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-		echo "⚠️  pipx not found (required for installing Hatch on modern Ubuntu/Debian)"; \
+		echo "⚠️  pipx not found and no Python 3.10+ available for pip install."; \
 		echo ""; \
-		echo "Please install pipx first, then re-run 'make setup-dev':"; \
+		echo "Please install pipx or load a Python 3.10+ module, then re-run 'make setup-dev':"; \
 		echo ""; \
 		if [ "$(PKG_MANAGER)" = "apt" ]; then \
 			echo "  sudo apt-get install -y pipx"; \
@@ -901,15 +980,26 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
 		. "$$NVM_DIR/nvm.sh"; \
 	fi; \
-	if ! command -v pnpm >/dev/null 2>&1; then \
-		echo "📥 Installing pnpm..."; \
-		npm install -g pnpm; \
-	fi; \
 	if command -v pnpm >/dev/null 2>&1; then \
 		echo "✅ pnpm: $$(pnpm --version)"; \
+	elif [ -x "$$HOME/.local/bin/pnpm" ]; then \
+		echo "✅ pnpm: $$($$HOME/.local/bin/pnpm --version) (in ~/.local/bin)"; \
 	else \
-		echo "❌ pnpm installation failed"; \
-		exit 1; \
+		echo "📥 Installing pnpm..."; \
+		if npm install -g pnpm 2>/dev/null; then \
+			echo "✅ pnpm: $$(pnpm --version)"; \
+		else \
+			echo "   Global install failed (no sudo), installing to ~/.local ..."; \
+			npm install --prefix "$$HOME/.local" -g pnpm; \
+			mkdir -p "$$HOME/.local/bin"; \
+			if [ -x "$$HOME/.local/bin/pnpm" ]; then \
+				echo "✅ pnpm: $$($$HOME/.local/bin/pnpm --version) (in ~/.local/bin)"; \
+				echo "⚠️  Add ~/.local/bin to PATH: export PATH=\"$$HOME/.local/bin:$$PATH\""; \
+			else \
+				echo "❌ pnpm installation failed"; \
+				exit 1; \
+			fi; \
+		fi; \
 	fi
 	@echo ""
 	@# Step 3: Set up Python environment with Hatch
@@ -919,7 +1009,7 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	echo "Creating Hatch environment..."; \
 	$$HATCH_CMD env create || true; \
 	echo "Installing pre-commit hooks..."; \
-	$$HATCH_CMD run pre-commit install || echo "⚠️  pre-commit install skipped"
+	$$HATCH_CMD run pre-commit install --allow-missing-config || echo "⚠️  pre-commit install skipped"
 	@echo ""
 	@# Step 4: Install TypeScript dependencies (source nvm first if needed)
 	@echo "=== Step 4: Installing TypeScript Dependencies ==="
@@ -1381,6 +1471,17 @@ clean-wasm:  ## Clean WASM build artifacts
 # Path to CUDA extension directory
 CUDA_EXT_DIR := packages/luxar/src/luxar/gsplats/models/gsplats/cuda
 
+# Slurm parameters for 'make build-cuda SLURM=1'
+# Override any of these on the command line, e.g.:
+#   make build-cuda SLURM=1 SLURM_PARTITION=gpu CUDA_MODULE=cuda/12.8.0_570.86.10
+SLURM           ?= 0
+SLURM_PARTITION ?= gpu
+SLURM_ACCOUNT   ?=
+SLURM_QOS       ?=
+SLURM_TIME      ?= 01:00:00
+# CUDA_MODULE: auto = detect from torch.version.cuda; or e.g. cuda/12.8.0_570.86.10
+CUDA_MODULE     ?= auto
+
 setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 	@echo "🔧 Setting up CUDA development environment..."
 	@echo ""
@@ -1576,13 +1677,14 @@ check-cuda-deps:  ## Check CUDA development dependencies
 	@echo ""
 	@echo "=== 2. NVIDIA GPU Driver ==="
 	@if command -v nvidia-smi >/dev/null 2>&1; then \
-		DRIVER_VERSION=$$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1); \
-		GPU_NAME=$$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1); \
-		if [ -n "$$DRIVER_VERSION" ]; then \
+		if nvidia-smi >/dev/null 2>&1; then \
+			DRIVER_VERSION=$$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1); \
+			GPU_NAME=$$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1); \
 			echo "✅ NVIDIA driver: $$DRIVER_VERSION"; \
 			echo "   GPU: $$GPU_NAME"; \
 		else \
-			echo "⚠️  nvidia-smi found but GPU not detected"; \
+			echo "⚠️  nvidia-smi found but GPU not accessible (login node? driver not loaded?)"; \
+			echo "   On HPC: load the driver module or run on a GPU node"; \
 		fi; \
 	else \
 		echo "❌ NVIDIA driver not found (nvidia-smi not available)"; \
@@ -1667,53 +1769,91 @@ check-cuda-deps:  ## Check CUDA development dependencies
 	fi
 	@echo ""
 
-build-cuda:  ## Build the CUDA splatting extension
-	@echo "🔧 Building CUDA splatting extension..."
-	@echo ""
-	@# Check prerequisites
-	@if ! command -v nvcc >/dev/null 2>&1; then \
-		echo "❌ CUDA toolkit not found (nvcc not in PATH)"; \
+build-cuda:  ## Build the CUDA splatting extension  [SLURM=1 to build on a GPU node via Slurm]
+	@if [ "$(SLURM)" = "1" ]; then \
+		echo "🚀 Submitting CUDA build to Slurm (partition: $(SLURM_PARTITION))..."; \
 		echo ""; \
-		echo "   Run 'make check-cuda-deps' for installation instructions."; \
-		exit 1; \
-	fi
-	@if ! command -v nvidia-smi >/dev/null 2>&1; then \
-		echo "❌ NVIDIA driver not found"; \
-		echo ""; \
-		echo "   Run 'make check-cuda-deps' for installation instructions."; \
-		exit 1; \
-	fi
-	@if ! hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
-		echo "❌ PyTorch with CUDA support not available"; \
-		echo ""; \
-		echo "   Install PyTorch with CUDA in hatch environment:"; \
-		echo "     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu121"; \
-		echo ""; \
-		echo "   Or run 'make check-cuda-deps' for more details."; \
-		exit 1; \
-	fi
-	@echo "✅ Prerequisites OK"
-	@echo ""
-	@# Ensure ninja is installed (required by torch cpp_extension)
-	@hatch run pip install -q ninja 2>/dev/null || true
-	@echo "Building extension (this may take a few minutes)..."
-	@echo ""
-	hatch run python $(CUDA_EXT_DIR)/build.py
-	@echo ""
-	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
-		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-		echo "✅ CUDA extension built successfully!"; \
-		SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1); \
-		echo "   Output: $$(basename $$SO_FILE)"; \
-		echo ""; \
-		echo "Next steps:"; \
-		echo "  make test-cuda      - Run tests to verify"; \
-		echo "  make benchmark-cuda - Run performance benchmarks"; \
+		HATCH_CMD="$$(command -v hatch 2>/dev/null || echo $$HOME/.local/bin/hatch)"; \
+		$$HATCH_CMD run python scripts/build_cuda_slurm.py \
+			--partition "$(SLURM_PARTITION)" \
+			--cuda-module "$(CUDA_MODULE)" \
+			$(if $(SLURM_ACCOUNT),--account "$(SLURM_ACCOUNT)") \
+			$(if $(SLURM_QOS),--qos "$(SLURM_QOS)") \
+			--time "$(SLURM_TIME)"; \
 	else \
-		echo "❌ Build may have failed - .so file not found"; \
-		echo "   Check the build output above for errors."; \
-		exit 1; \
+		echo "🔧 Building CUDA splatting extension..."; \
+		echo ""; \
+		echo "   💡 On an HPC cluster without a GPU on the login node, use:"; \
+		echo "        make build-cuda SLURM=1"; \
+		echo "        make build-cuda SLURM=1 SLURM_PARTITION=gpu"; \
+		echo ""; \
+		if ! command -v nvcc >/dev/null 2>&1; then \
+			echo "❌ CUDA toolkit not found (nvcc not in PATH)"; \
+			echo ""; \
+			echo "   On this HPC system, load the CUDA module first:"; \
+			echo "     module load cuda/12.8.0_570.86.10   # match your PyTorch CUDA version"; \
+			echo "     make build-cuda"; \
+			echo ""; \
+			echo "   Or build on a GPU node automatically:"; \
+			echo "     make build-cuda SLURM=1"; \
+			echo ""; \
+			echo "   Run 'make check-cuda-deps' for a full diagnosis."; \
+			exit 1; \
+		fi; \
+		if ! nvidia-smi >/dev/null 2>&1; then \
+			echo "❌ GPU not accessible (nvidia-smi failed)"; \
+			echo ""; \
+			echo "   You are likely on a login node without direct GPU access."; \
+			echo "   Build on a GPU node via Slurm:"; \
+			echo "     make build-cuda SLURM=1"; \
+			echo "     make build-cuda SLURM=1 SLURM_PARTITION=gpu"; \
+			echo ""; \
+			exit 1; \
+		fi; \
+		if ! hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
+			echo "❌ PyTorch with CUDA support not available"; \
+			echo ""; \
+			TORCH_CUDA=$$(hatch run python -c "import torch; print(torch.version.cuda)" 2>/dev/null || echo "unknown"); \
+			echo "   PyTorch CUDA version: $$TORCH_CUDA"; \
+			echo "   Did you load the matching CUDA module?"; \
+			echo "     module load cuda/$$TORCH_CUDA.x  (find exact name with: module spider cuda)"; \
+			echo ""; \
+			echo "   Or reinstall PyTorch with CUDA:"; \
+			echo "     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu128"; \
+			echo ""; \
+			echo "   Run 'make check-cuda-deps' for more details."; \
+			exit 1; \
+		fi; \
+		echo "✅ Prerequisites OK"; \
+		echo ""; \
+		hatch run pip install -q ninja 2>/dev/null || true; \
+		echo "Building extension (this may take a few minutes)..."; \
+		echo ""; \
+		hatch run python $(CUDA_EXT_DIR)/build.py; \
+		echo ""; \
+		if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
+			echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+			echo "✅ CUDA extension built successfully!"; \
+			SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1); \
+			echo "   Output: $$(basename $$SO_FILE)"; \
+			echo ""; \
+			echo "Next steps:"; \
+			echo "  make test-cuda      - Run tests to verify"; \
+			echo "  make benchmark-cuda - Run performance benchmarks"; \
+		else \
+			echo "❌ Build may have failed - .so file not found"; \
+			echo "   Check the build output above for errors."; \
+			exit 1; \
+		fi; \
 	fi
+
+build-cuda-slurm:  ## Submit CUDA extension build as a Slurm job (alias for make build-cuda SLURM=1)
+	@$(MAKE) build-cuda SLURM=1 \
+		SLURM_PARTITION="$(SLURM_PARTITION)" \
+		SLURM_ACCOUNT="$(SLURM_ACCOUNT)" \
+		SLURM_QOS="$(SLURM_QOS)" \
+		SLURM_TIME="$(SLURM_TIME)" \
+		CUDA_MODULE="$(CUDA_MODULE)"
 
 clean-cuda:  ## Clean CUDA build artifacts
 	@echo "🧹 Cleaning CUDA build artifacts..."

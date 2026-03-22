@@ -1393,7 +1393,7 @@ def fit_volume(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
     ),
     preset: Optional[str] = typer.Option(
-        None, "--preset", help="Parameter preset: draft/standard/hifi"
+        None, "--preset", help="Parameter preset: draft/standard/hifi/ultra"
     ),
     loss: Optional[str] = typer.Option(
         None, "--loss", help="Loss function: l1/mse/poisson"
@@ -1454,9 +1454,10 @@ def fit_volume(
     full control over all ~35 parameters.
 
     Presets:
-        draft    - Fast preview (500 iters, aggressive culling)
+        draft    - Fast preview (500 iters)
         standard - Balanced quality/speed (3000 iters)
-        hifi     - Maximum quality (6000 iters)
+        hifi     - High quality (6000 iters)
+        ultra    - Maximum quality (10000 iters)
 
     Examples:
         luxar gsplat fit volume.npy splats.gsplats.zarr --preset draft --seeds 1000
@@ -2293,6 +2294,7 @@ def benchmark_gpu(
             "#!/bin/bash\n"
             f"#SBATCH --job-name=luxar-benchmark\n"
             f"#SBATCH --partition={partition}\n"
+            "#SBATCH --ntasks=1\n"
             "#SBATCH --gpus-per-task=1\n"
             "#SBATCH --cpus-per-task=4\n"
             "#SBATCH --mem=32G\n"
@@ -2414,6 +2416,9 @@ def batch_plan(
     preset: str = typer.Option("standard", "--preset", help="Fitting preset"),
     config: Optional[Path] = typer.Option(None, "--config", help="YAML fit config"),
     seeds: Optional[str] = typer.Option(None, "--seeds", help="Seed count or ratio"),
+    iters: Optional[int] = typer.Option(
+        None, "--iters", "-n", help="Max optimization iterations (overrides preset)"
+    ),
     # Slurm params
     partition: Optional[str] = typer.Option(
         None, "--partition", "-p", help="Slurm partition"
@@ -2436,6 +2441,65 @@ def batch_plan(
     channel_colors: Optional[str] = typer.Option(
         None, "--channel-colors", help="Hex colors for per-channel merge"
     ),
+    # Dataset structure override
+    axes: Optional[str] = typer.Option(
+        None,
+        "--axes",
+        help=(
+            "Comma-separated axis names overriding auto-detection, e.g. "
+            "'time,camera,channel,z,y,x'. Recognised special names: "
+            "time/t (timepoint), channel/c/ch/camera/cam (channel), "
+            "z/y/x/depth/height/width (spatial)."
+        ),
+    ),
+    timepoints_slice: Optional[str] = typer.Option(
+        None,
+        "--timepoints",
+        help=(
+            "Python-style slice to select timepoints, e.g. "
+            "'0:10' (first 10), '::10' (every 10th), '100:200:5' (100-200 step 5). "
+            "Default: all timepoints."
+        ),
+    ),
+    channels_slice: Optional[str] = typer.Option(
+        None,
+        "--channels",
+        help=(
+            "Python-style slice to select channels, e.g. "
+            "'0:2' (first 2 channels), '::2' (every other). "
+            "Default: all channels."
+        ),
+    ),
+    # Packing
+    tasks_per_job: Optional[int] = typer.Option(
+        None,
+        "--tasks-per-job",
+        help=(
+            "Number of fitting tasks to run per Slurm job. "
+            "Auto-calculated from GPU capacity when omitted. "
+            "Packing multiple small volumes per GPU reduces scheduling overhead."
+        ),
+    ),
+    parallel: bool = typer.Option(
+        False,
+        "--parallel/--sequential",
+        help=(
+            "Run packed tasks concurrently (--parallel) or one by one "
+            "(--sequential, default). Parallel mode launches multiple fit "
+            "processes sharing the same GPU — higher throughput but uses "
+            "more GPU memory."
+        ),
+    ),
+    # Array selection
+    array_key: Optional[str] = typer.Option(
+        None,
+        "--array-key",
+        help=(
+            "Key path to a specific array within the zarr store, e.g. "
+            "'h2afva/fused'. Useful when a store contains multiple groups "
+            "with different arrays. Auto-selects largest array if omitted."
+        ),
+    ),
     # Control
     submit: bool = typer.Option(
         False, "--submit", help="Actually submit to Slurm (default: dry-run)"
@@ -2449,14 +2513,18 @@ def batch_plan(
 
     By default shows the plan without submitting. Pass --submit to submit.
 
-    Requires a GPU profile from `luxar gsplat benchmark`.
+    A GPU profile from `luxar gsplat benchmark` is used to auto-select tile
+    size; pass --tile-size to skip the profile requirement.
 
     Examples:
-        luxar gsplat batch data.ome.zarr output/ --partition gpu
+        luxar gsplat batch data.ome.zarr output/ --partition gpu --tile-size 128
 
         luxar gsplat batch data.ome.zarr output/ --partition gpu --submit
 
         luxar gsplat batch data.ome.zarr output/ -p gpu --tile-size 256 --preset hifi
+
+        luxar gsplat batch keller.zarr.zip out/ -p gpu --tile-size 128 \\
+            --axes time,camera,channel,z,y,x
     """
     if partition is None:
         aprint("Error: --partition is required")
@@ -2473,6 +2541,8 @@ def batch_plan(
         from luxar.gsplats.batch.env_capture import (
             capture_environment,
             generate_env_preamble,
+            get_slurm_scheduler_info,
+            is_slurm_mps_available,
         )
         from luxar.gsplats.batch.manifest import (
             BatchJob,
@@ -2495,25 +2565,32 @@ def batch_plan(
         )
         from luxar.gsplats.tiling import compute_tile_specs
 
-        # 1. Load GPU profile
+        # 1. Load GPU profile (required only for auto tile-size)
+        axes_list = [a.strip() for a in axes.split(",")] if axes else None
         summary = get_gpu_summary(
             gpu_name=gpu_name_opt,
             gpu_mem=float(gpu_mem) if gpu_mem else None,
         )
-        if summary is None:
+        if summary is None and tile_size is None:
             aprint("Error: No GPU benchmark profile found.")
             aprint("")
-            aprint("Run `luxar gsplat benchmark` on a GPU node first.")
-            aprint("Or: luxar gsplat benchmark --slurm --partition <partition>")
+            aprint("Option A — run the benchmark first (recommended):")
+            aprint(
+                "  luxar gsplat benchmark --slurm --partition "
+                + (partition or "<partition>")
+            )
+            aprint("")
+            aprint("Option B — skip the profile by providing a tile size explicitly:")
+            aprint("  luxar gsplat batch ... --tile-size 128")
             raise typer.Exit(1)
 
-        recs = summary.get("recommendations", {})
+        recs = (summary or {}).get("recommendations", {})
         peak = recs.get("peak_throughput_3d", {})
 
         # Resolve GPU name for display
         profiles = load_profiles()
         resolved_gpu = gpu_name_opt
-        if resolved_gpu is None:
+        if summary is not None and resolved_gpu is None:
             for name, entry in profiles.get("gpus", {}).items():
                 if entry.get("summary") == summary:
                     resolved_gpu = name
@@ -2523,30 +2600,82 @@ def batch_plan(
         resolved_gpu = resolved_gpu or "unknown"
 
         # 2. Discover dataset shape
+        # Helper: parse Python-style slice string "start:stop:step"
+        def _parse_slice(s: str, max_val: int) -> list[int]:
+            parts = s.split(":")
+            if len(parts) == 1:
+                # Single index
+                return [int(parts[0])]
+            start = int(parts[0]) if parts[0] else 0
+            stop = int(parts[1]) if len(parts) > 1 and parts[1] else max_val
+            step = int(parts[2]) if len(parts) > 2 and parts[2] else 1
+            return list(range(start, stop, step))
+
         with asection("Discovering dataset shape"):
-            ome_info = discover_ome_zarr_shape(input_path)
-            n_t = ome_info.n_timepoints
-            n_c = ome_info.n_channels
+            ome_info = discover_ome_zarr_shape(
+                input_path, axes_override=axes_list, array_key=array_key
+            )
+            n_t_full = ome_info.n_timepoints
+            n_c_full = ome_info.n_channels
             spatial = ome_info.spatial_shape
             aprint(f"Axes: {ome_info.axes}")
             aprint(f"Shape: {ome_info.shape}")
-            aprint(f"T={n_t}, C={n_c}, spatial={'x'.join(str(s) for s in spatial)}")
+            aprint(
+                f"T={n_t_full}, C={n_c_full}, spatial={'x'.join(str(s) for s in spatial)}"
+            )
+
+            # Apply --timepoints / --channels slicing
+            t_indices = (
+                _parse_slice(timepoints_slice, n_t_full)
+                if timepoints_slice
+                else list(range(n_t_full))
+            )
+            c_indices = (
+                _parse_slice(channels_slice, n_c_full)
+                if channels_slice
+                else list(range(n_c_full))
+            )
+            n_t = len(t_indices)
+            n_c = len(c_indices)
+            if timepoints_slice or channels_slice:
+                aprint(f"Sliced: T={n_t} (of {n_t_full}), C={n_c} (of {n_c_full})")
 
         # 3. Pick tile size
+        #
+        # The goal is to choose the largest tile that fits in GPU memory.
+        # For anisotropic volumes (e.g. 108×1352×532) the old logic
+        # `min(peak_shape[0], *spatial)` would cap at the smallest dim (108),
+        # producing hundreds of tiny tiles even when the whole volume fits.
+        #
+        # New logic: compare total spatial voxels against max safe voxel
+        # count from the benchmark.  If the volume fits, skip tiling entirely.
+        import math
+
         auto_tile = tile_size is None
+
+        # Compute max safe shape from GPU profile (used by both auto-tile
+        # and tasks-per-job packing).  Falls back to a conservative default.
+        peak_shape = peak.get("shape", [])
+        oom = (summary or {}).get("oom_boundaries", {}).get("3d", {})
+        max_shape = oom.get("max_successful_shape", peak_shape)
+        total_voxels = math.prod(spatial)
+
         if auto_tile:
-            peak_shape = peak.get("shape", [])
-            if peak_shape:
-                tile_size = peak_shape[0]
-                tile_size = min(tile_size, *spatial)
+            assert summary is not None
+
+            max_safe_voxels = math.prod(max_shape) if max_shape else 256**3
+
+            if total_voxels <= max_safe_voxels:
+                # Whole volume fits — set tile_size large enough that
+                # stride (= tile_size - overlap) exceeds every spatial dim,
+                # guaranteeing compute_tile_specs produces exactly 1 tile.
+                tile_size = max(spatial) + tile_overlap
             else:
-                oom = summary.get("oom_boundaries", {}).get("3d", {})
-                max_shape = oom.get("max_successful_shape")
-                if max_shape:
-                    tile_size = max_shape[0]
-                    tile_size = min(tile_size, *spatial)
-                else:
-                    tile_size = 256
+                # Volume is too large — tile it.  Use the cube root of max
+                # safe voxels as the isotropic tile edge length, clamped to
+                # the largest spatial dim.
+                tile_edge = int(max_safe_voxels ** (1.0 / len(spatial)))
+                tile_size = min(tile_edge, max(spatial))
 
         assert tile_size is not None  # narrowed by branches above
 
@@ -2571,7 +2700,7 @@ def batch_plan(
         throughput_table = get_gpu_throughput_table(gpu_name=resolved_gpu)
 
         preset_config = PRESETS.get(preset, PRESETS["standard"])
-        n_iters = preset_config.get("n_iters", 3000)
+        n_iters = iters if iters is not None else preset_config.get("n_iters", 3000)
 
         if throughput_table:
             est_seconds = estimate_tile_wall_seconds(
@@ -2580,13 +2709,61 @@ def batch_plan(
         else:
             est_seconds = 600.0
 
-        slurm_time = time_limit or estimate_slurm_time_limit(est_seconds)
+        # 5b. Compute tasks-per-job packing
+        #
+        # When each volume is small relative to GPU capacity, we pack
+        # multiple fitting tasks sequentially into one Slurm job to
+        # reduce scheduling overhead (fewer array elements to launch).
+        # 5b-i. Query scheduler for smart packing defaults
+        sched_info = get_slurm_scheduler_info()
+        uses_backfill = sched_info["uses_backfill"]
+        no_job_limit = sched_info["max_jobs_per_user"] is None
+
+        if tasks_per_job is None:
+            max_safe = math.prod(max_shape) if max_shape else tile_voxels
+
+            if parallel:
+                # Each concurrent fit holds the volume tensor + model params
+                # + optimizer state.  ~2× the raw volume is a safe estimate.
+                packing = max(1, int(max_safe / max(tile_voxels * 2, 1)))
+            else:
+                packing = max(1, int(max_safe / max(tile_voxels, 1)))
+
+            # On backfill clusters with no job limit, prefer shorter jobs
+            # (more jobs = more backfill opportunities = faster throughput).
+            # Cap packing lower so individual jobs stay short.
+            if uses_backfill and no_job_limit:
+                if parallel:
+                    # Parallel: already short, keep the memory-based packing
+                    packing = min(packing, 4)
+                else:
+                    # Sequential: each extra task adds wall-time.
+                    # Keep jobs under ~5 min for best backfill scheduling.
+                    if est_seconds > 0:
+                        max_tasks_for_5min = max(1, int(300 / est_seconds))
+                        packing = min(packing, max_tasks_for_5min)
+                    packing = min(packing, 3)
+            else:
+                packing = min(packing, 10)
+
+            tasks_per_job = packing
+        tasks_per_job = max(1, tasks_per_job)
+
+        n_slurm_jobs = math.ceil(total_tasks / tasks_per_job)
+        if parallel:
+            # Parallel: all tasks run at once, so wall time ≈ 1 task
+            est_seconds_per_job = est_seconds * 1.2  # 20% overhead for contention
+        else:
+            est_seconds_per_job = est_seconds * tasks_per_job
+        slurm_time = time_limit or estimate_slurm_time_limit(est_seconds_per_job)
         total_gpu_hours = est_seconds * total_tasks / 3600.0
 
         # 6. Build manifest
         fit_args = {}
         if seeds:
             fit_args["seeds"] = seeds
+        if iters is not None:
+            fit_args["iters"] = str(iters)
         if config:
             fit_args["config"] = str(config)
 
@@ -2599,6 +2776,7 @@ def batch_plan(
             created=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             input_path=str(input_path.resolve()),
             output_dir=str(output_dir.resolve()),
+            array_key=array_key,
             n_timepoints=n_t,
             n_channels=n_c,
             spatial_shape=spatial,
@@ -2617,6 +2795,10 @@ def batch_plan(
             slurm_gpus=gpus,
             slurm_cpus=cpus,
             slurm_mem_gb=mem,
+            tasks_per_job=tasks_per_job,
+            parallel_tasks_per_job=parallel,
+            timepoint_indices=t_indices if timepoints_slice else None,
+            channel_indices=c_indices if channels_slice else None,
             channel_colors=colors_list,
         )
 
@@ -2633,7 +2815,7 @@ def batch_plan(
                     timepoint=t,
                     channel=c,
                     tile_index=k,
-                    output_filename=output_filename(t, c, k),
+                    output_filename=output_filename(t, c, k, n_t, n_c, n_tiles),
                     estimated_wall_seconds=est_seconds,
                 )
             )
@@ -2664,11 +2846,38 @@ def batch_plan(
             )
         else:
             aprint("  Tile: not needed (volume fits in GPU memory)")
-        aprint(f"  Jobs: {n_t} x {n_c} x {n_tiles} = {total_tasks} array tasks")
+        aprint(f"  Jobs: {n_t} x {n_c} x {n_tiles} = {total_tasks} fitting tasks")
+        if tasks_per_job > 1:
+            mode = "parallel" if parallel else "sequential"
+            mps_note = ""
+            if parallel:
+                if is_slurm_mps_available():
+                    mps_note = " [MPS available]"
+                else:
+                    mps_note = " [bash background processes]"
+            aprint(
+                f"  Packing: {tasks_per_job} tasks/job ({mode}) → {n_slurm_jobs} Slurm jobs{mps_note}"
+            )
+        else:
+            aprint(f"  Slurm array: {total_tasks} jobs (1 task each)")
+        if uses_backfill:
+            sched_note = "backfill scheduler — short jobs get scheduled fastest"
+            if no_job_limit:
+                sched_note += ", no job count limit"
+            aprint(f"  Scheduler: {sched_note}")
         aprint(
             f"  Est. time/task: ~{est_seconds / 60:.0f} min"
             f" (preset: {preset}, {n_iters} iters)"
         )
+        if tasks_per_job > 1:
+            if parallel:
+                aprint(
+                    f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min ({tasks_per_job} tasks in parallel)"
+                )
+            else:
+                aprint(
+                    f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min ({tasks_per_job} tasks × {est_seconds / 60:.0f} min)"
+                )
         aprint(f"  Est. total GPU-hours: {total_gpu_hours:.0f} h")
         aprint(f"  Slurm --time: {slurm_time}")
         aprint(f"  Partition: {partition}, GPUs: {gpus}, CPUs: {cpus}, Mem: {mem}G")
