@@ -222,10 +222,6 @@ except Exception:
 class CUDASplatFunction(torch.autograd.Function):
     """Custom autograd function for CUDA-accelerated splatting."""
 
-    # Class-level state for output buffer reuse (avoids autograd graph issues)
-    _pending_output_buffer: Optional[torch.Tensor] = None
-    _pending_model_ref: Any = None
-
     @staticmethod
     def forward(
         ctx: Any,
@@ -287,14 +283,6 @@ class CUDASplatFunction(torch.autograd.Function):
 
         if CUDA_BACKEND_AVAILABLE:
             # Dispatch to CUDA kernels (use FP16 kernel if autocast or explicit)
-            # Read output buffer from class-level state (set by model.forward)
-            # This avoids passing it as a tensor argument to .apply(),
-            # which would cause autograd graph lifetime issues across iterations.
-            output_buffer = CUDASplatFunction._pending_output_buffer
-            model_ref = CUDASplatFunction._pending_model_ref
-            CUDASplatFunction._pending_output_buffer = None
-            CUDASplatFunction._pending_model_ref = None
-
             result = cuda_splatting_backend.forward(
                 centers_kernel,
                 conic_kernel,
@@ -306,7 +294,6 @@ class CUDASplatFunction(torch.autograd.Function):
                 tile_size,
                 batch_size,
                 use_fp16_kernel,
-                output_buffer,  # Pre-zeroed buffer from backward (or None)
             )
             output = result[0]
 
@@ -334,9 +321,10 @@ class CUDASplatFunction(torch.autograd.Function):
 
         # Save for backward (keep FP16 tensors for backward pass if enabled)
         ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps)
-        # Save output reference for backward to zero (eliminates output.zero_() on next fwd)
-        ctx.forward_output = output
-        ctx.model_ref = model_ref
+        # NOTE: output buffer reuse (ctx.forward_output) was removed because it
+        # keeps the output tensor alive during backward, doubling memory for large
+        # volumes (768³ = 1.72GB). The 0.56ms output.zero_() savings wasn't worth
+        # the OOM risk. See git history for the implementation if needed.
         # Cache FP16 tensors for backward to avoid re-conversion
         ctx.centers_kernel = centers_kernel
         ctx.conic_kernel = conic_kernel
@@ -404,10 +392,7 @@ class CUDASplatFunction(torch.autograd.Function):
             if ctx.tile_dims_tensor_cached is not None:
                 cached_kwargs["tile_dims_tensor_cached"] = ctx.tile_dims_tensor_cached
 
-            # OPTIMIZATION: Zero the forward output pixels that were written to.
-            # With buffer reuse, the next forward skips output.zero_() (0.56ms savings).
-            # Only zeros contributing pixels (~5M of 134M), costing ~0.02ms.
-            output_to_zero = getattr(ctx, 'forward_output', None)
+            output_to_zero = None  # Buffer reuse disabled (see note above)
 
             d_centers, d_conic, d_amps = cuda_splatting_backend.backward(
                 grad_output.contiguous(),
@@ -427,10 +412,6 @@ class CUDASplatFunction(torch.autograd.Function):
                 **cached_kwargs,
                 output_to_zero=output_to_zero,
             )
-
-            # Signal model that the output buffer is now zeroed (ready for reuse)
-            if output_to_zero is not None and getattr(ctx, 'model_ref', None) is not None:
-                ctx.model_ref._output_zeroed = True
 
             # Chain rule: d_conic → d_Ls via analytical formula (replaces autograd)
             # This saves ~0.3ms by avoiding autograd graph construction + traversal.
@@ -814,18 +795,6 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         # Get optimal batch size based on GPU capabilities
         batch_size = self._get_splat_batch_size(len(self._shape))
 
-        # OPTIMIZATION: Reuse pre-zeroed output buffer from previous backward.
-        # The backward kernel zeros exactly the pixels that forward wrote to,
-        # so the buffer is ready for the next forward's atomicAdd.
-        output_buf = getattr(self, '_output_buf', None)
-        if not getattr(self, '_output_zeroed', False):
-            output_buf = None  # Not ready — C++ will allocate + zero fresh
-
-        # Set class-level state for the autograd Function (avoids passing
-        # tensors through .apply() which would track them in the autograd graph)
-        CUDASplatFunction._pending_output_buffer = output_buf
-        CUDASplatFunction._pending_model_ref = self
-
         output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call]
             centers,
             Ls,
@@ -837,10 +806,6 @@ class GaussianSplatModelCUDA(torch.nn.Module):
             batch_size,
             self._use_fp16,
         )
-
-        # Save output buffer for potential reuse
-        self._output_buf = output.view(-1) if output.shape != self._shape else output
-        self._output_zeroed = False  # Will be set True by backward
 
         # Ensure output has correct shape (CUDA kernel may return flattened tensor)
         if output.shape != self._shape:
