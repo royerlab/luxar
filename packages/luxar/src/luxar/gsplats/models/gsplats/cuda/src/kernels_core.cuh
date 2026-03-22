@@ -901,31 +901,37 @@ __global__ void rasterize_backward_kernel(
                 }
             }
 
-            // OPTIMIZATION 3.2: Warp-level reduction to shared memory (fast atomics)
-            // This accumulates per-batch instead of writing directly to global memory
-            int lane = threadIdx.x % 32;
+            // OPTIMIZATION 3.2 + 3.3: Warp-level reduction with early termination
+            // Skip the entire reduction when no thread in the warp contributed gradients.
+            // For sparse splats (most common case), many warps have zero contributions.
+            // __ballot_sync costs ~5 cycles but saves 50 shuffles + 10 shared atomics.
+            unsigned int warp_has_grads = __ballot_sync(0xFFFFFFFF, local_d_amp != 0.0f);
 
-            // Reduce and write d_amp to shared memory
-            float warp_d_amp = warp_reduce_sum(local_d_amp);
-            if (lane == 0) {
-                atomicAdd(&s_d_amps_tile[si], warp_d_amp);
-            }
+            if (warp_has_grads != 0) {
+                int lane = threadIdx.x % 32;
 
-            // Reduce and write d_centers to shared memory
-            #pragma unroll
-            for (int d = 0; d < DIM; d++) {
-                float warp_d_center = warp_reduce_sum(local_d_centers[d]);
+                // Reduce and write d_amp to shared memory
+                float warp_d_amp = warp_reduce_sum(local_d_amp);
                 if (lane == 0) {
-                    atomicAdd(&s_d_centers_tile[si * CENTER_STRIDE + d], warp_d_center);
+                    atomicAdd(&s_d_amps_tile[si], warp_d_amp);
                 }
-            }
 
-            // Reduce and write d_conic to shared memory
-            #pragma unroll
-            for (int c = 0; c < CONIC_SIZE; c++) {
-                float warp_d_conic = warp_reduce_sum(local_d_conic[c]);
-                if (lane == 0) {
-                    atomicAdd(&s_d_conic_tile[si * CONIC_SIZE + c], warp_d_conic);
+                // Reduce and write d_centers to shared memory
+                #pragma unroll
+                for (int d = 0; d < DIM; d++) {
+                    float warp_d_center = warp_reduce_sum(local_d_centers[d]);
+                    if (lane == 0) {
+                        atomicAdd(&s_d_centers_tile[si * CENTER_STRIDE + d], warp_d_center);
+                    }
+                }
+
+                // Reduce and write d_conic to shared memory
+                #pragma unroll
+                for (int c = 0; c < CONIC_SIZE; c++) {
+                    float warp_d_conic = warp_reduce_sum(local_d_conic[c]);
+                    if (lane == 0) {
+                        atomicAdd(&s_d_conic_tile[si * CONIC_SIZE + c], warp_d_conic);
+                    }
                 }
             }
         }
