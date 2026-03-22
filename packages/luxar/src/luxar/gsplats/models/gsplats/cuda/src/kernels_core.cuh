@@ -762,11 +762,11 @@ __global__ void rasterize_backward_kernel(
         (tile_extent[0] == 16) && (tile_extent[1] == 16);
 
     // OPTIMIZATION 3.3: Load grad_output into shared memory ONCE per tile
-    // This eliminates redundant global memory loads when tiles have many splats.
-    // For sparse tiles (few splats), skip the cache to avoid loading overhead.
-    // SAFETY: Disable cache if tile_pixels exceeds the fixed shared memory buffer.
-    // This can happen when a non-default tile_size is used (e.g., tile_size=4 for DIM=5).
-    const bool use_grad_cache = (n_splats_in_tile > GRAD_CACHE_THRESHOLD) &&
+    // For DIM <= 4: SKIP the cache entirely — precomp_dL_dI loads directly from global
+    // into a register, so the shared memory cache (512 writes + sync + 512 reads) is pure waste.
+    // For DIM >= 5: Cache is valuable because multiple pixel iterations re-read the same values.
+    const bool use_grad_cache = (DIM > 4) &&
+                                (n_splats_in_tile > GRAD_CACHE_THRESHOLD) &&
                                 (tile_pixels <= MAX_TILE_PIXELS);
 
     if (use_grad_cache) {
@@ -783,10 +783,7 @@ __global__ void rasterize_backward_kernel(
 
     // OPTIMIZATION: For DIM <= 4, precompute pixel coords and grad_output ONCE
     // Each thread handles exactly one pixel (tile_pixels == blockDim.x by construction)
-    // This eliminates redundant recomputation in the inner splat loop
-    // (~batch_size redundant compute_pixel_coords_float calls per thread)
-    // NOTE: Only 4 registers (3 for px + 1 for dL_dI), unlike the failed
-    // precomp_px[4*DIM] attempt which used 12 registers and regressed.
+    // Load grad_output directly from global memory (no shared memory intermediary)
     float precomp_px[DIM];
     float precomp_dL_dI = 0.0f;
     bool precomp_has_grad = false;
@@ -794,9 +791,8 @@ __global__ void rasterize_backward_kernel(
     if constexpr (DIM <= 4) {
         compute_pixel_coords_float<DIM>(threadIdx.x, tile_origin, tile_extent,
                                         use_fast_path_3d, use_fast_path_2d, precomp_px);
-        if (use_grad_cache) {
-            precomp_dL_dI = s_grad_output[threadIdx.x];
-        } else {
+        // Always load directly from global memory (shared cache skipped for DIM<=4)
+        {
             int voxel_int[DIM];
             #pragma unroll
             for (int d = 0; d < DIM; d++) voxel_int[d] = (int)precomp_px[d];
