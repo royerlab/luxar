@@ -251,6 +251,74 @@ void launch_rasterize_backward(
 }
 
 // =============================================================================
+// SPLAT-CENTRIC FORWARD KERNEL LAUNCHER
+// =============================================================================
+
+template <int DIM, typename InputDType = float>
+void launch_rasterize_forward_splat_centric(
+    const InputDType* centers,
+    const InputDType* conic,
+    const InputDType* amps,
+    int N,
+    const int* shape,
+    float truncate,
+    float intensity_floor,
+    float* output,
+    bool* global_splat_flags,
+    int* global_splat_count,
+    int64_t num_tiles,
+    int tile_size,
+    int* tile_counts_out,
+    const int* tile_dims,
+    cudaStream_t stream
+) {
+    if (N == 0) return;
+
+    constexpr int BLOCK_SIZE = 256;
+    int num_blocks = N;  // One block per splat
+
+    rasterize_forward_splat_centric_kernel<DIM, InputDType><<<num_blocks, BLOCK_SIZE, 0, stream>>>(
+        centers, conic, amps, N,
+        shape, truncate, intensity_floor, output,
+        global_splat_flags, global_splat_count, num_tiles, tile_size,
+        tile_counts_out, tile_dims
+    );
+}
+
+// =============================================================================
+// SPLAT-CENTRIC BACKWARD KERNEL LAUNCHER
+// =============================================================================
+
+template <int DIM, typename InputDType = float>
+void launch_rasterize_backward_splat_centric(
+    const float* grad_output,
+    const InputDType* centers,
+    const InputDType* conic,
+    const InputDType* amps,
+    int N,
+    const int* shape,
+    float truncate,
+    float intensity_floor,
+    float* d_centers,
+    float* d_conic,
+    float* d_amps,
+    float* output_to_zero,  // Optional: zero forward output as side effect
+    cudaStream_t stream
+) {
+    if (N == 0) return;
+
+    constexpr int BLOCK_SIZE = 256;
+    int num_blocks = N;  // One block per splat
+
+    rasterize_backward_splat_centric_kernel<DIM, InputDType><<<num_blocks, BLOCK_SIZE, 0, stream>>>(
+        grad_output, centers, conic, amps, N,
+        shape, truncate, intensity_floor,
+        d_centers, d_conic, d_amps,
+        output_to_zero
+    );
+}
+
+// =============================================================================
 // GLOBAL SPLAT FORWARD KERNEL LAUNCHER
 // =============================================================================
 

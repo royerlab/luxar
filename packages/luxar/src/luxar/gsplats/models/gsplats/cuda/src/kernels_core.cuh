@@ -388,11 +388,70 @@ __global__ void rasterize_forward_kernel(
         tile_pixels *= tile_extent[d];
     }
 
+    constexpr int CONIC_SIZE = conic_size<DIM>();
+    constexpr int CENTER_STRIDE = (DIM == 3) ? 4 : DIM;  // Pad 3D to 4
+
+    // OPTIMIZATION: Single-splat fast path — bypass shared memory entirely.
+    // For tiles with exactly 1 splat (common: most tiles have 0-1 splats),
+    // load data via __ldg (texture cache broadcast) and process directly.
+    // Saves: 2 __syncthreads + cooperative load + shared memory overhead.
+    if constexpr (DIM <= 4) {
+        // Only use fast path when tile_pixels == blockDim.x (standard tile sizes)
+        // Oversized tiles need the multi-pixel loop and can't use this shortcut
+        if (n_splats_in_tile == 1 && tile_pixels <= (int)blockDim.x) {
+            int splat_idx = __ldg(&tile_content[tile_offset]);
+
+            // Load splat data directly from global memory (broadcast to all threads)
+            float mu[DIM];
+            #pragma unroll
+            for (int d = 0; d < DIM; d++) {
+                mu[d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
+            }
+            float con[CONIC_SIZE];
+            #pragma unroll
+            for (int c = 0; c < CONIC_SIZE; c++) {
+                con[c] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + c);
+            }
+            float amp_val = DTypeTraits<InputDType>::load(amps, splat_idx);
+            float trunc_sq = effective_truncate_sq(truncate, amp_val, intensity_floor);
+
+            // Compute fast path flags
+            const bool fast_3d = (DIM == 3) && (tile_size == 8) &&
+                (tile_extent[0] == 8) && (tile_extent[1] == 8) && (tile_extent[2] == 8);
+            const bool fast_2d = (DIM == 2) && (tile_size == 16) &&
+                (tile_extent[0] == 16) && (tile_extent[1] == 16);
+
+            // Each thread processes its pixel (tile_pixels == blockDim.x for DIM <= 4)
+            int local_px_idx = threadIdx.x;
+            if (local_px_idx < tile_pixels) {
+                int voxel_coords[DIM];
+                compute_voxel_coords<DIM>(local_px_idx, tile_origin, tile_extent,
+                                          fast_3d, fast_2d, voxel_coords);
+                float px[DIM];
+                #pragma unroll
+                for (int d = 0; d < DIM; d++) px[d] = (float)voxel_coords[d];
+
+                float d_vec[DIM];
+                #pragma unroll
+                for (int d = 0; d < DIM; d++) d_vec[d] = px[d] - mu[d];
+
+                float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, con);
+
+                if (dist_sq <= trunc_sq) {
+                    float intensity = gaussian_intensity(dist_sq, amp_val);
+                    if (intensity >= intensity_floor) {
+                        int64_t global_px_idx = voxel_to_linear<DIM>(voxel_coords, shape);
+                        output[global_px_idx] = intensity;
+                    }
+                }
+            }
+            return;
+        }
+    }
+
     // Shared memory for splat batch loading
     // OPTIMIZATION 2.3: Pad DIM to avoid bank conflicts (stride-3 causes conflicts)
     // For 3D: use stride-4 instead of stride-3, wastes 25% but eliminates conflicts
-    constexpr int CONIC_SIZE = conic_size<DIM>();
-    constexpr int CENTER_STRIDE = (DIM == 3) ? 4 : DIM;  // Pad 3D to 4
     __shared__ float s_centers[BATCH_SIZE * CENTER_STRIDE];
     __shared__ float s_conic[BATCH_SIZE * CONIC_SIZE];
     __shared__ float s_amps[BATCH_SIZE];
@@ -521,16 +580,20 @@ __global__ void rasterize_forward_kernel(
                     // Compute Mahalanobis distance squared
                     float dist_sq = mahalanobis_distance_sq<DIM>(d, &s_conic[i * CONIC_SIZE]);
 
-                    // OPTIMIZATION 1.2: Early rejection based on precomputed truncation
-                    // Skip expensive gaussian_intensity computation for distant pixels
-                    if (dist_sq > s_truncate_sq[i]) continue;
+                    // OPTIMIZATION: Warp-level early termination
+                    // If no thread in this warp is within truncation radius, skip __expf
+                    bool within_range = (dist_sq <= s_truncate_sq[i]);
+                    unsigned int warp_in_range = __ballot_sync(0xFFFFFFFF, within_range);
+                    if (warp_in_range == 0) continue;
 
-                    // Compute intensity (only for pixels within truncation radius)
-                    float intensity = gaussian_intensity(dist_sq, s_amps[i]);
+                    if (within_range) {
+                        // Compute intensity (only for pixels within truncation radius)
+                        float intensity = gaussian_intensity(dist_sq, s_amps[i]);
 
-                    // Skip if below threshold
-                    if (intensity >= intensity_floor) {
-                        intensity_sum += intensity;
+                        // Skip if below threshold
+                        if (intensity >= intensity_floor) {
+                            intensity_sum += intensity;
+                        }
                     }
                 }
             }
@@ -613,7 +676,8 @@ __global__ void rasterize_forward_kernel(
 // =============================================================================
 
 template <int DIM, int BATCH_SIZE = DEFAULT_BATCH_SIZE, typename InputDType = float>
-__global__ void rasterize_backward_kernel(
+__global__ __launch_bounds__(512, 3)
+void rasterize_backward_kernel(
     const float* __restrict__ grad_output,
     const InputDType* __restrict__ centers,
     const InputDType* __restrict__ conic,
@@ -699,11 +763,11 @@ __global__ void rasterize_backward_kernel(
         (tile_extent[0] == 16) && (tile_extent[1] == 16);
 
     // OPTIMIZATION 3.3: Load grad_output into shared memory ONCE per tile
-    // This eliminates redundant global memory loads when tiles have many splats.
-    // For sparse tiles (few splats), skip the cache to avoid loading overhead.
-    // SAFETY: Disable cache if tile_pixels exceeds the fixed shared memory buffer.
-    // This can happen when a non-default tile_size is used (e.g., tile_size=4 for DIM=5).
-    const bool use_grad_cache = (n_splats_in_tile > GRAD_CACHE_THRESHOLD) &&
+    // For DIM <= 4: SKIP the cache entirely — precomp_dL_dI loads directly from global
+    // into a register, so the shared memory cache (512 writes + sync + 512 reads) is pure waste.
+    // For DIM >= 5: Cache is valuable because multiple pixel iterations re-read the same values.
+    const bool use_grad_cache = (DIM > 4) &&
+                                (n_splats_in_tile > GRAD_CACHE_THRESHOLD) &&
                                 (tile_pixels <= MAX_TILE_PIXELS);
 
     if (use_grad_cache) {
@@ -717,6 +781,27 @@ __global__ void rasterize_backward_kernel(
     }
     __syncthreads();
     } // end if (use_grad_cache)
+
+    // OPTIMIZATION: For DIM <= 4, precompute pixel coords and grad_output ONCE
+    // Each thread handles exactly one pixel (tile_pixels == blockDim.x by construction)
+    // Load grad_output directly from global memory (no shared memory intermediary)
+    float precomp_px[DIM];
+    float precomp_dL_dI = 0.0f;
+    bool precomp_has_grad = false;
+
+    if constexpr (DIM <= 4) {
+        compute_pixel_coords_float<DIM>(threadIdx.x, tile_origin, tile_extent,
+                                        use_fast_path_3d, use_fast_path_2d, precomp_px);
+        // Always load directly from global memory (shared cache skipped for DIM<=4)
+        {
+            int voxel_int[DIM];
+            #pragma unroll
+            for (int d = 0; d < DIM; d++) voxel_int[d] = (int)precomp_px[d];
+            int64_t global_px_idx = voxel_to_linear<DIM>(voxel_int, shape);
+            precomp_dL_dI = grad_output[global_px_idx];
+        }
+        precomp_has_grad = (precomp_dL_dI != 0.0f);
+    }
 
     // Process splats in batches
     for (int batch_start = 0; batch_start < n_splats_in_tile; batch_start += BATCH_SIZE) {
@@ -809,80 +894,113 @@ __global__ void rasterize_backward_kernel(
             float amp = s_amps[si];
             float truncate_sq = s_truncate_sq[si];
 
-            // Each thread processes pixels
-            for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels; local_px_idx += blockDim.x) {
-                // Compute pixel coordinates
-                float px[DIM];
-                compute_pixel_coords_float<DIM>(local_px_idx, tile_origin, tile_extent,
-                                                use_fast_path_3d, use_fast_path_2d, px);
-
-                // Get upstream gradient: from cache if available, else from global memory
-                float dL_dI;
-                if (use_grad_cache) {
-                    dL_dI = s_grad_output[local_px_idx];
-                } else {
-                    // Compute global pixel index from float coords
-                    int voxel_int[DIM];
+            if constexpr (DIM <= 4) {
+                // FAST PATH: Use precomputed pixel coords and grad (no pixel loop needed)
+                // For DIM <= 4, tile_pixels == blockDim.x, so each thread = one pixel
+                if (precomp_has_grad) {
+                    // Compute displacement (using padded stride)
+                    float d_vec[DIM];
                     #pragma unroll
-                    for (int d = 0; d < DIM; d++) voxel_int[d] = (int)px[d];
-                    int64_t global_px_idx = voxel_to_linear<DIM>(voxel_int, shape);
-                    dL_dI = grad_output[global_px_idx];
+                    for (int d = 0; d < DIM; d++) {
+                        d_vec[d] = precomp_px[d] - s_centers[si * CENTER_STRIDE + d];
+                    }
+
+                    float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, &s_conic[si * CONIC_SIZE]);
+
+                    if (dist_sq <= truncate_sq) {
+                        float intensity = gaussian_intensity(dist_sq, amp);
+                        if (intensity >= intensity_floor) {
+                            compute_pixel_gradients<DIM>(
+                                precomp_dL_dI, intensity, amp, d_vec,
+                                &s_conic[si * CONIC_SIZE],
+                                local_d_centers, local_d_conic,
+                                local_d_amp
+                            );
+                        }
+                    }
                 }
+            } else {
+                // GENERIC PATH: pixel loop (DIM >= 5, tile_pixels may differ from blockDim.x)
+                for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels; local_px_idx += blockDim.x) {
+                    float px[DIM];
+                    compute_pixel_coords_float<DIM>(local_px_idx, tile_origin, tile_extent,
+                                                    use_fast_path_3d, use_fast_path_2d, px);
 
-                if (dL_dI == 0.0f) continue;
+                    float dL_dI;
+                    if (use_grad_cache) {
+                        dL_dI = s_grad_output[local_px_idx];
+                    } else {
+                        int voxel_int[DIM];
+                        #pragma unroll
+                        for (int d = 0; d < DIM; d++) voxel_int[d] = (int)px[d];
+                        int64_t global_px_idx = voxel_to_linear<DIM>(voxel_int, shape);
+                        dL_dI = grad_output[global_px_idx];
+                    }
 
-                // Compute displacement (using padded stride)
-                float d_vec[DIM];
+                    if (dL_dI == 0.0f) continue;
+
+                    float d_vec[DIM];
+                    #pragma unroll
+                    for (int d = 0; d < DIM; d++) {
+                        d_vec[d] = px[d] - s_centers[si * CENTER_STRIDE + d];
+                    }
+
+                    float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, &s_conic[si * CONIC_SIZE]);
+
+                    if (dist_sq > truncate_sq) continue;
+
+                    float intensity = gaussian_intensity(dist_sq, amp);
+                    if (intensity < intensity_floor) continue;
+
+                    compute_pixel_gradients<DIM>(
+                        dL_dI, intensity, amp, d_vec,
+                        &s_conic[si * CONIC_SIZE],
+                        local_d_centers, local_d_conic,
+                        local_d_amp
+                    );
+                }
+            }
+
+            // OPTIMIZATION 3.2 + 3.3: Warp-level reduction with early termination
+            // Skip the entire reduction when no thread in the warp contributed gradients.
+            // For sparse splats (most common case), many warps have zero contributions.
+            // __ballot_sync costs ~5 cycles but saves 50 shuffles + 10 shared atomics.
+            unsigned int warp_has_grads = __ballot_sync(0xFFFFFFFF, local_d_amp != 0.0f);
+
+            if (warp_has_grads != 0) {
+                int lane = threadIdx.x % 32;
+
+                // OPTIMIZATION: Batch all warp reductions BEFORE any atomics.
+                // Each warp_reduce_sum requires all threads via __shfl_down_sync.
+                // Interleaving reduce→atomic→reduce→atomic serializes because
+                // lane 0's atomic blocks the next __shfl_down_sync for all lanes.
+                // By batching reductions first, the GPU can interleave independent
+                // shuffle operations across components (ILP).
+                float warp_d_amp = warp_reduce_sum(local_d_amp);
+
+                float warp_d_centers[DIM];
                 #pragma unroll
                 for (int d = 0; d < DIM; d++) {
-                    d_vec[d] = px[d] - s_centers[si * CENTER_STRIDE + d];
+                    warp_d_centers[d] = warp_reduce_sum(local_d_centers[d]);
                 }
 
-                // Compute Mahalanobis distance
-                float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, &s_conic[si * CONIC_SIZE]);
-
-                // OPTIMIZATION 1.2: Early rejection based on precomputed truncation
-                if (dist_sq > truncate_sq) continue;
-
-                // Compute intensity (only for pixels within truncation radius)
-                float intensity = gaussian_intensity(dist_sq, amp);
-
-                if (intensity < intensity_floor) continue;
-
-                // Use optimized gradient computation (template specialized for 2D/3D)
-                compute_pixel_gradients<DIM>(
-                    dL_dI, intensity, amp, d_vec,
-                    &s_conic[si * CONIC_SIZE],
-                    local_d_centers, local_d_conic,
-                    local_d_amp
-                );
-            }
-
-            // OPTIMIZATION 3.2: Warp-level reduction to shared memory (fast atomics)
-            // This accumulates per-batch instead of writing directly to global memory
-            int lane = threadIdx.x % 32;
-
-            // Reduce and write d_amp to shared memory
-            float warp_d_amp = warp_reduce_sum(local_d_amp);
-            if (lane == 0) {
-                atomicAdd(&s_d_amps_tile[si], warp_d_amp);
-            }
-
-            // Reduce and write d_centers to shared memory
-            #pragma unroll
-            for (int d = 0; d < DIM; d++) {
-                float warp_d_center = warp_reduce_sum(local_d_centers[d]);
-                if (lane == 0) {
-                    atomicAdd(&s_d_centers_tile[si * CENTER_STRIDE + d], warp_d_center);
+                float warp_d_conic[CONIC_SIZE];
+                #pragma unroll
+                for (int c = 0; c < CONIC_SIZE; c++) {
+                    warp_d_conic[c] = warp_reduce_sum(local_d_conic[c]);
                 }
-            }
 
-            // Reduce and write d_conic to shared memory
-            #pragma unroll
-            for (int c = 0; c < CONIC_SIZE; c++) {
-                float warp_d_conic = warp_reduce_sum(local_d_conic[c]);
+                // Now batch all atomic writes (only lane 0)
                 if (lane == 0) {
-                    atomicAdd(&s_d_conic_tile[si * CONIC_SIZE + c], warp_d_conic);
+                    atomicAdd(&s_d_amps_tile[si], warp_d_amp);
+                    #pragma unroll
+                    for (int d = 0; d < DIM; d++) {
+                        atomicAdd(&s_d_centers_tile[si * CENTER_STRIDE + d], warp_d_centers[d]);
+                    }
+                    #pragma unroll
+                    for (int c = 0; c < CONIC_SIZE; c++) {
+                        atomicAdd(&s_d_conic_tile[si * CONIC_SIZE + c], warp_d_conic[c]);
+                    }
                 }
             }
         }
@@ -901,6 +1019,471 @@ __global__ void rasterize_backward_kernel(
             for (int c = 0; c < CONIC_SIZE; c++) {
                 atomicAdd(&d_conic[splat_idx * CONIC_SIZE + c], s_d_conic_tile[i * CONIC_SIZE + c]);
             }
+        }
+    }
+}
+
+// =============================================================================
+// SPLAT-CENTRIC FORWARD RASTERIZATION KERNEL
+// =============================================================================
+// Each block processes ONE splat: computes its voxel AABB from conic,
+// iterates over all voxels, computes intensity, and atomicAdds to output.
+// For sparse data (most pixels receive 0-1 contributions), atomicAdd
+// contention is negligible. Eliminates the entire tile binning pipeline.
+
+template <int DIM, typename InputDType = float>
+__global__ __launch_bounds__(256, 6)
+void rasterize_forward_splat_centric_kernel(
+    const InputDType* __restrict__ centers,
+    const InputDType* __restrict__ conic,
+    const InputDType* __restrict__ amps,
+    int N,
+    const int* __restrict__ shape,
+    float truncate,
+    float intensity_floor,
+    float* __restrict__ output,
+    // Optional: global splat detection (pass nullptr to skip)
+    bool* __restrict__ global_splat_flags,
+    int* __restrict__ global_splat_count,
+    int64_t num_tiles,
+    int tile_size_param,
+    // Optional: tile_counts for diagnostic compatibility (pass nullptr to skip)
+    int* __restrict__ tile_counts_out,
+    const int* __restrict__ tile_dims
+) {
+    int splat_idx = blockIdx.x;
+    if (splat_idx >= N) return;
+
+    constexpr int CONIC_SIZE_L = conic_size<DIM>();
+
+    // Load splat data into shared memory (broadcast to all threads)
+    __shared__ float s_center[DIM];
+    __shared__ float s_conic[CONIC_SIZE_L];
+    __shared__ float s_amp;
+    __shared__ float s_truncate_sq;
+    __shared__ int s_lo[DIM], s_hi[DIM];
+    __shared__ int s_extent[DIM];
+    __shared__ int s_total_voxels;
+
+    if (threadIdx.x == 0) {
+        s_amp = DTypeTraits<InputDType>::load(amps, splat_idx);
+        s_truncate_sq = effective_truncate_sq(truncate, s_amp, intensity_floor);
+
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            s_center[d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
+        }
+        #pragma unroll
+        for (int c = 0; c < CONIC_SIZE_L; c++) {
+            s_conic[c] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE_L + c);
+        }
+
+        // Compute voxel AABB from conic (Sigma^-1) via cofactor/determinant
+        float t_eff = effective_truncation(truncate, s_amp, intensity_floor);
+
+        if constexpr (DIM == 3) {
+            float c00 = s_conic[0], c01 = s_conic[1], c02 = s_conic[2];
+            float c11 = s_conic[3], c12 = s_conic[4], c22 = s_conic[5];
+            float det = c00*(c11*c22 - c12*c12) - c01*(c01*c22 - c02*c12)
+                      + c02*(c01*c12 - c02*c11);
+            float inv_det = 1.0f / fmaxf(fabsf(det), 1e-10f);
+            float sigma[3] = {
+                sqrtf(fmaxf((c11*c22 - c12*c12) * inv_det, 0.0f)),
+                sqrtf(fmaxf((c00*c22 - c02*c02) * inv_det, 0.0f)),
+                sqrtf(fmaxf((c00*c11 - c01*c01) * inv_det, 0.0f))
+            };
+            int total = 1;
+            #pragma unroll
+            for (int d = 0; d < 3; d++) {
+                // AABB matches PyTorch reference: ceil(t_eff * sigma) as integer radius,
+                // then floor(center) - radius for lo, ceil(center) + radius for hi.
+                // This ensures the CUDA AABB covers ALL pixels the reference covers.
+                int int_radius = (int)ceilf(t_eff * sigma[d]);
+                s_lo[d] = max(0, (int)floorf(s_center[d]) - int_radius);
+                s_hi[d] = min(shape[d] - 1, (int)ceilf(s_center[d]) + int_radius);
+                s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
+                total *= s_extent[d];
+            }
+            s_total_voxels = total;
+        } else if constexpr (DIM == 2) {
+            float c00 = s_conic[0], c01 = s_conic[1], c11 = s_conic[2];
+            float det = c00*c11 - c01*c01;
+            float inv_det = 1.0f / fmaxf(fabsf(det), 1e-10f);
+            float sigma[2] = {
+                sqrtf(fmaxf(c11 * inv_det, 0.0f)),
+                sqrtf(fmaxf(c00 * inv_det, 0.0f))
+            };
+            int total = 1;
+            #pragma unroll
+            for (int d = 0; d < 2; d++) {
+                // AABB matches PyTorch reference: ceil(t_eff * sigma) as integer radius,
+                // then floor(center) - radius for lo, ceil(center) + radius for hi.
+                // This ensures the CUDA AABB covers ALL pixels the reference covers.
+                int int_radius = (int)ceilf(t_eff * sigma[d]);
+                s_lo[d] = max(0, (int)floorf(s_center[d]) - int_radius);
+                s_hi[d] = min(shape[d] - 1, (int)ceilf(s_center[d]) + int_radius);
+                s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
+                total *= s_extent[d];
+            }
+            s_total_voxels = total;
+        } else {
+            int total = 1;
+            int ci = 0;
+            for (int d = 0; d < DIM; d++) {
+                float sigma_d = 1.0f / sqrtf(fmaxf(s_conic[ci], 1e-10f));
+                // Generic DIM: conic diagonal gives lower bound on sigma,
+                // use 1.5x safety factor + ceil to match reference conservatively
+                int int_radius = (int)ceilf(t_eff * sigma_d * 1.5f);
+                s_lo[d] = max(0, (int)floorf(s_center[d]) - int_radius);
+                s_hi[d] = min(shape[d] - 1, (int)ceilf(s_center[d]) + int_radius);
+                s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
+                total *= s_extent[d];
+                ci += (DIM - d);
+            }
+            s_total_voxels = total;
+        }
+
+        // Optional: flag global splats and compute tile_counts (API/diagnostic compat)
+        if (global_splat_flags != nullptr) {
+            // Compute tile AABB from voxel AABB
+            int n_tiles_approx = 1;
+            for (int d = 0; d < DIM; d++) {
+                int tile_lo = s_lo[d] / tile_size_param;
+                int tile_hi = s_hi[d] / tile_size_param;
+                n_tiles_approx *= max(1, tile_hi - tile_lo + 1);
+            }
+            bool is_global = (n_tiles_approx > (int)(0.1f * (float)num_tiles))
+                          && (n_tiles_approx > 1024);
+            global_splat_flags[splat_idx] = is_global;
+            if (is_global && global_splat_count != nullptr) {
+                atomicAdd(global_splat_count, 1);
+            }
+
+            // Compute tile_counts for diagnostic compatibility
+            if (tile_counts_out != nullptr && tile_dims != nullptr && !is_global) {
+                int tile_lo[DIM], tile_hi[DIM];
+                for (int d = 0; d < DIM; d++) {
+                    tile_lo[d] = max(0, s_lo[d] / tile_size_param);
+                    tile_hi[d] = min(tile_dims[d] - 1, s_hi[d] / tile_size_param);
+                }
+                // Iterate tile AABB and increment counts (same as preprocess_kernel)
+                int tile_coords_iter[DIM];
+                for (int d = 0; d < DIM; d++) tile_coords_iter[d] = tile_lo[d];
+                for (int i = 0; i < n_tiles_approx; i++) {
+                    int tile_idx_linear = tile_coords_to_linear<DIM>(tile_coords_iter, tile_dims);
+                    atomicAdd(&tile_counts_out[tile_idx_linear], 1);
+                    // Advance odometer
+                    for (int d = DIM - 1; d >= 0; d--) {
+                        tile_coords_iter[d]++;
+                        if (tile_coords_iter[d] <= tile_hi[d]) break;
+                        tile_coords_iter[d] = tile_lo[d];
+                    }
+                }
+            }
+        }
+    }
+    __syncthreads();
+
+    if (s_total_voxels == 0) return;
+
+    // Load splat data into registers
+    float amp = s_amp;
+    float truncate_sq = s_truncate_sq;
+    float center_reg[DIM];
+    float conic_reg[CONIC_SIZE_L];
+    #pragma unroll
+    for (int d = 0; d < DIM; d++) center_reg[d] = s_center[d];
+    #pragma unroll
+    for (int c = 0; c < CONIC_SIZE_L; c++) conic_reg[c] = s_conic[c];
+
+    int total_voxels = s_total_voxels;
+    for (int vox_idx = threadIdx.x; vox_idx < total_voxels; vox_idx += blockDim.x) {
+        int voxel[DIM];
+        {
+            int remaining = vox_idx;
+            #pragma unroll
+            for (int d = DIM - 1; d >= 0; d--) {
+                voxel[d] = s_lo[d] + (remaining % s_extent[d]);
+                remaining /= s_extent[d];
+            }
+        }
+
+        float d_vec[DIM];
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            d_vec[d] = (float)voxel[d] - center_reg[d];
+        }
+
+        // Early rejection via Mahalanobis distance: skip pixels outside the
+        // effective truncation sphere. Uses min(truncate², 2*ln(amp/floor)).
+        //
+        // KNOWN LIMITATION: For high-amplitude splats, the base truncation
+        // (truncate²) can be tighter than the amplitude-based cutoff. This
+        // may reject ~4 borderline pixels per volume (intensity within 42% of
+        // floor threshold). Sum accuracy remains within 0.001% of reference.
+        // See SPECIFICATIONS.md for details.
+        float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, conic_reg);
+        if (dist_sq > truncate_sq) continue;
+
+        float intensity = gaussian_intensity(dist_sq, amp);
+        if (intensity >= intensity_floor) {
+            int64_t global_px_idx = voxel_to_linear<DIM>(voxel, shape);
+            atomicAdd(&output[global_px_idx], intensity);
+        }
+    }
+}
+
+// =============================================================================
+// SPLAT-CENTRIC BACKWARD RASTERIZATION KERNEL
+// =============================================================================
+// Each block processes ONE splat: iterates over all voxels in its AABB,
+// accumulates gradients in thread-local registers, reduces once, and writes
+// directly to global memory with ZERO atomics. Replaces both the tile-centric
+// backward and global splat backward kernels.
+//
+// Key advantages over tile-centric:
+// 1. No tile binning dependency (no tile_offsets/counts/content needed)
+// 2. No shared memory gradient accumulators (saves ~6KB per block)
+// 3. No global atomicAdds for gradient write-back (each block owns its splat)
+// 4. Handles global splats uniformly (no separate kernel needed)
+// 5. Simpler block reduction (1 per splat vs 128 warp reductions per tile)
+
+template <int DIM, typename InputDType = float>
+__global__ __launch_bounds__(256, 6)
+void rasterize_backward_splat_centric_kernel(
+    const float* __restrict__ grad_output,
+    const InputDType* __restrict__ centers,
+    const InputDType* __restrict__ conic,
+    const InputDType* __restrict__ amps,
+    int N,
+    const int* __restrict__ shape,
+    float truncate,
+    float intensity_floor,
+    float* __restrict__ d_centers,
+    float* __restrict__ d_conic,
+    float* __restrict__ d_amps,
+    // Optional: zero the forward output tensor as a side effect (eliminates output.zero_() on next call)
+    float* __restrict__ output_to_zero
+) {
+    int splat_idx = blockIdx.x;
+    if (splat_idx >= N) return;
+
+    constexpr int CONIC_SIZE_L = conic_size<DIM>();
+
+    // Load splat data into shared memory (broadcast to all threads)
+    __shared__ float s_center[DIM];
+    __shared__ float s_conic[CONIC_SIZE_L];
+    __shared__ float s_amp;
+    __shared__ float s_truncate_sq;
+    __shared__ int s_lo[DIM], s_hi[DIM];
+    __shared__ int s_extent[DIM];
+    __shared__ int s_total_voxels;
+
+    if (threadIdx.x == 0) {
+        s_amp = DTypeTraits<InputDType>::load(amps, splat_idx);
+        s_truncate_sq = effective_truncate_sq(truncate, s_amp, intensity_floor);
+
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            s_center[d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
+        }
+        #pragma unroll
+        for (int c = 0; c < CONIC_SIZE_L; c++) {
+            s_conic[c] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE_L + c);
+        }
+
+        // Compute voxel AABB from conic (Sigma^-1) by extracting Sigma diagonals
+        // via cofactor / determinant. This gives the exact per-axis standard deviation.
+        float t_eff = effective_truncation(truncate, s_amp, intensity_floor);
+
+        if constexpr (DIM == 3) {
+            float c00 = s_conic[0], c01 = s_conic[1], c02 = s_conic[2];
+            float c11 = s_conic[3], c12 = s_conic[4], c22 = s_conic[5];
+            float det = c00*(c11*c22 - c12*c12) - c01*(c01*c22 - c02*c12)
+                      + c02*(c01*c12 - c02*c11);
+            float inv_det = 1.0f / fmaxf(fabsf(det), 1e-10f);
+            float sigma[3] = {
+                sqrtf(fmaxf((c11*c22 - c12*c12) * inv_det, 0.0f)),
+                sqrtf(fmaxf((c00*c22 - c02*c02) * inv_det, 0.0f)),
+                sqrtf(fmaxf((c00*c11 - c01*c01) * inv_det, 0.0f))
+            };
+            int total = 1;
+            #pragma unroll
+            for (int d = 0; d < 3; d++) {
+                // AABB matches forward kernel and PyTorch reference exactly
+                int int_radius = (int)ceilf(t_eff * sigma[d]);
+                s_lo[d] = max(0, (int)floorf(s_center[d]) - int_radius);
+                s_hi[d] = min(shape[d] - 1, (int)ceilf(s_center[d]) + int_radius);
+                s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
+                total *= s_extent[d];
+            }
+            s_total_voxels = total;
+        } else if constexpr (DIM == 2) {
+            float c00 = s_conic[0], c01 = s_conic[1], c11 = s_conic[2];
+            float det = c00*c11 - c01*c01;
+            float inv_det = 1.0f / fmaxf(fabsf(det), 1e-10f);
+            float sigma[2] = {
+                sqrtf(fmaxf(c11 * inv_det, 0.0f)),
+                sqrtf(fmaxf(c00 * inv_det, 0.0f))
+            };
+            int total = 1;
+            #pragma unroll
+            for (int d = 0; d < 2; d++) {
+                // AABB matches PyTorch reference: ceil(t_eff * sigma) as integer radius,
+                // then floor(center) - radius for lo, ceil(center) + radius for hi.
+                // This ensures the CUDA AABB covers ALL pixels the reference covers.
+                int int_radius = (int)ceilf(t_eff * sigma[d]);
+                s_lo[d] = max(0, (int)floorf(s_center[d]) - int_radius);
+                s_hi[d] = min(shape[d] - 1, (int)ceilf(s_center[d]) + int_radius);
+                s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
+                total *= s_extent[d];
+            }
+            s_total_voxels = total;
+        } else {
+            // Generic DIM: conic diagonal gives lower bound on sigma,
+            // use 1.5x safety factor + ceil to match reference conservatively
+            int total = 1;
+            int ci = 0;
+            for (int d = 0; d < DIM; d++) {
+                float sigma_d = 1.0f / sqrtf(fmaxf(s_conic[ci], 1e-10f));
+                int int_radius = (int)ceilf(t_eff * sigma_d * 1.5f);
+                s_lo[d] = max(0, (int)floorf(s_center[d]) - int_radius);
+                s_hi[d] = min(shape[d] - 1, (int)ceilf(s_center[d]) + int_radius);
+                s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
+                total *= s_extent[d];
+                ci += (DIM - d);  // skip to next diagonal in packed triangle
+            }
+            s_total_voxels = total;
+        }
+    }
+    __syncthreads();
+
+    if (s_total_voxels == 0) return;
+
+    // Thread-local gradient accumulators
+    float local_d_centers[DIM];
+    float local_d_conic[CONIC_SIZE_L];
+    float local_d_amp = 0.0f;
+    #pragma unroll
+    for (int d = 0; d < DIM; d++) local_d_centers[d] = 0.0f;
+    #pragma unroll
+    for (int c = 0; c < CONIC_SIZE_L; c++) local_d_conic[c] = 0.0f;
+
+    // Load splat data from shared memory into registers
+    float amp = s_amp;
+    float truncate_sq = s_truncate_sq;
+    float center_reg[DIM];
+    float conic_reg[CONIC_SIZE_L];
+    #pragma unroll
+    for (int d = 0; d < DIM; d++) center_reg[d] = s_center[d];
+    #pragma unroll
+    for (int c = 0; c < CONIC_SIZE_L; c++) conic_reg[c] = s_conic[c];
+
+    // Iterate over all voxels in AABB
+    int total_voxels = s_total_voxels;
+    for (int vox_idx = threadIdx.x; vox_idx < total_voxels; vox_idx += blockDim.x) {
+        // Convert linear index to voxel coordinates within AABB
+        int voxel[DIM];
+        {
+            int remaining = vox_idx;
+            #pragma unroll
+            for (int d = DIM - 1; d >= 0; d--) {
+                voxel[d] = s_lo[d] + (remaining % s_extent[d]);
+                remaining /= s_extent[d];
+            }
+        }
+
+        // Load grad_output
+        int64_t global_px_idx = voxel_to_linear<DIM>(voxel, shape);
+        float dL_dI = grad_output[global_px_idx];
+        if (dL_dI == 0.0f) continue;
+
+        // Compute displacement
+        float d_vec[DIM];
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            d_vec[d] = (float)voxel[d] - center_reg[d];
+        }
+
+        // Same truncation as forward (see KNOWN LIMITATION comment above)
+        float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, conic_reg);
+        if (dist_sq > truncate_sq) continue;
+
+        float intensity = gaussian_intensity(dist_sq, amp);
+        if (intensity < intensity_floor) continue;
+
+        // OPTIMIZATION: Zero ONLY the pixels that the forward actually wrote to.
+        // This is inside the same intensity >= floor check as the forward kernel's
+        // atomicAdd, so we zero exactly the same set of pixels. Cost: ~0.02ms
+        // (vs 0.56ms for output.zero_()) because only ~5M of 134M pixels are hit.
+        // Safe: backward runs AFTER forward, output is consumed by loss computation,
+        // and the zeroed buffer is ready for the next forward's atomicAdd.
+        if (output_to_zero != nullptr) {
+            output_to_zero[global_px_idx] = 0.0f;
+        }
+
+        // Accumulate gradients (template-specialized for 2D/3D)
+        compute_pixel_gradients<DIM>(
+            dL_dI, intensity, amp, d_vec, conic_reg,
+            local_d_centers, local_d_conic, local_d_amp
+        );
+    }
+
+    // Two-level reduction: warp → block → single write
+    // Step 1: Warp reduction
+    int lane = threadIdx.x % 32;
+    int warp_id = threadIdx.x / 32;
+    constexpr int NUM_WARPS = 256 / 32;  // 8 warps
+
+    float warp_d_amp = warp_reduce_sum(local_d_amp);
+    float warp_d_centers[DIM];
+    float warp_d_conic[CONIC_SIZE_L];
+    #pragma unroll
+    for (int d = 0; d < DIM; d++) warp_d_centers[d] = warp_reduce_sum(local_d_centers[d]);
+    #pragma unroll
+    for (int c = 0; c < CONIC_SIZE_L; c++) warp_d_conic[c] = warp_reduce_sum(local_d_conic[c]);
+
+    // Step 2: Block reduction via shared memory
+    __shared__ float s_block_d_amp[NUM_WARPS];
+    __shared__ float s_block_d_centers[NUM_WARPS * DIM];
+    __shared__ float s_block_d_conic[NUM_WARPS * CONIC_SIZE_L];
+
+    if (lane == 0) {
+        s_block_d_amp[warp_id] = warp_d_amp;
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) s_block_d_centers[warp_id * DIM + d] = warp_d_centers[d];
+        #pragma unroll
+        for (int c = 0; c < CONIC_SIZE_L; c++) s_block_d_conic[warp_id * CONIC_SIZE_L + c] = warp_d_conic[c];
+    }
+    __syncthreads();
+
+    // Final reduction: first warp reduces the NUM_WARPS partial sums
+    if (threadIdx.x < NUM_WARPS) {
+        float final_amp = s_block_d_amp[threadIdx.x];
+        // Reduce across the first warp (only NUM_WARPS values, pad rest with 0)
+        #pragma unroll
+        for (int offset = NUM_WARPS / 2; offset > 0; offset >>= 1) {
+            final_amp += __shfl_down_sync(0xFF, final_amp, offset);
+        }
+        if (threadIdx.x == 0) d_amps[splat_idx] = final_amp;
+
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            float val = s_block_d_centers[threadIdx.x * DIM + d];
+            #pragma unroll
+            for (int offset = NUM_WARPS / 2; offset > 0; offset >>= 1) {
+                val += __shfl_down_sync(0xFF, val, offset);
+            }
+            if (threadIdx.x == 0) d_centers[splat_idx * DIM + d] = val;
+        }
+        #pragma unroll
+        for (int c = 0; c < CONIC_SIZE_L; c++) {
+            float val = s_block_d_conic[threadIdx.x * CONIC_SIZE_L + c];
+            #pragma unroll
+            for (int offset = NUM_WARPS / 2; offset > 0; offset >>= 1) {
+                val += __shfl_down_sync(0xFF, val, offset);
+            }
+            if (threadIdx.x == 0) d_conic[splat_idx * CONIC_SIZE_L + c] = val;
         }
     }
 }
