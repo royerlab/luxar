@@ -672,6 +672,137 @@ __global__ void rasterize_forward_kernel(
 }
 
 // =============================================================================
+// PERSISTENT FORWARD RASTERIZATION KERNEL
+// =============================================================================
+// Each block processes MULTIPLE tiles via atomic work queue instead of one tile.
+// Benefits: better load balancing (fast blocks take more tiles), warmer caches,
+// reduced kernel launch overhead (168 blocks vs 262K blocks).
+// Uses 1D grid with linear_to_tile_coords (generic path).
+
+template <int DIM, int BATCH_SIZE = DEFAULT_BATCH_SIZE, typename InputDType = float>
+__global__ void rasterize_forward_persistent_kernel(
+    const InputDType* __restrict__ centers,
+    const InputDType* __restrict__ conic,
+    const InputDType* __restrict__ amps,
+    int N,
+    const int* __restrict__ shape,
+    const int* __restrict__ tile_dims,
+    int tile_size,
+    float truncate,
+    float intensity_floor,
+    const int64_t* __restrict__ tile_offsets,
+    const int* __restrict__ tile_counts,
+    const int* __restrict__ tile_content,
+    float* __restrict__ output,
+    int* __restrict__ global_tile_counter,
+    int64_t num_tiles
+) {
+    constexpr int CONIC_SIZE = conic_size<DIM>();
+    constexpr int CENTER_STRIDE = (DIM == 3) ? 4 : DIM;
+    __shared__ float s_centers[BATCH_SIZE * CENTER_STRIDE];
+    __shared__ float s_conic[BATCH_SIZE * CONIC_SIZE];
+    __shared__ float s_amps[BATCH_SIZE];
+    __shared__ float s_truncate_sq[BATCH_SIZE];
+    __shared__ int s_next_tile;
+
+    while (true) {
+        // Thread 0 grabs the next tile via atomic counter
+        if (threadIdx.x == 0) {
+            s_next_tile = atomicAdd(global_tile_counter, 1);
+        }
+        __syncthreads();
+
+        int tile_idx = s_next_tile;
+        if (tile_idx >= (int)num_tiles) return;
+
+        // Convert linear index to tile coordinates
+        int tile_coords[DIM];
+        linear_to_tile_coords<DIM>(tile_idx, tile_dims, tile_coords);
+
+        int n_splats_in_tile = tile_counts[tile_idx];
+        if (n_splats_in_tile == 0) continue;  // Skip empty tiles quickly
+
+        int64_t tile_offset = tile_offsets[tile_idx];
+
+        int tile_origin[DIM];
+        int tile_extent[DIM];
+        int tile_pixels = 1;
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            tile_origin[d] = tile_coords[d] * tile_size;
+            int tile_end = min(tile_origin[d] + tile_size, shape[d]);
+            tile_extent[d] = tile_end - tile_origin[d];
+            tile_pixels *= tile_extent[d];
+        }
+
+        const bool use_fast_path_3d = (DIM == 3) && (tile_size == 8) &&
+            (tile_extent[0] == 8) && (tile_extent[1] == 8) && (tile_extent[2] == 8);
+        const bool use_fast_path_2d = (DIM == 2) && (tile_size == 16) &&
+            (tile_extent[0] == 16) && (tile_extent[1] == 16);
+
+        // Process tile: same logic as rasterize_forward_kernel DIM<=4 path
+        if constexpr (DIM <= 4) {
+            for (int local_px_idx = threadIdx.x; local_px_idx < tile_pixels; local_px_idx += blockDim.x) {
+                int voxel_coords[DIM];
+                compute_voxel_coords<DIM>(local_px_idx, tile_origin, tile_extent,
+                                          use_fast_path_3d, use_fast_path_2d, voxel_coords);
+                float px[DIM];
+                #pragma unroll
+                for (int d = 0; d < DIM; d++) px[d] = (float)voxel_coords[d];
+
+                float intensity_sum = 0.0f;
+
+                for (int batch_start = 0; batch_start < n_splats_in_tile; batch_start += BATCH_SIZE) {
+                    int batch_size = min(BATCH_SIZE, n_splats_in_tile - batch_start);
+
+                    __syncthreads();
+                    for (int i = threadIdx.x; i < batch_size; i += blockDim.x) {
+                        int splat_idx = __ldg(&tile_content[tile_offset + batch_start + i]);
+                        #pragma unroll
+                        for (int d = 0; d < DIM; d++) {
+                            s_centers[i * CENTER_STRIDE + d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
+                        }
+                        #pragma unroll
+                        for (int c = 0; c < CONIC_SIZE; c++) {
+                            s_conic[i * CONIC_SIZE + c] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + c);
+                        }
+                        s_amps[i] = DTypeTraits<InputDType>::load(amps, splat_idx);
+                        s_truncate_sq[i] = effective_truncate_sq(truncate, s_amps[i], intensity_floor);
+                    }
+                    __syncthreads();
+
+                    for (int i = 0; i < batch_size; i++) {
+                        float d[DIM];
+                        #pragma unroll
+                        for (int dim = 0; dim < DIM; dim++) {
+                            d[dim] = px[dim] - s_centers[i * CENTER_STRIDE + dim];
+                        }
+                        float dist_sq = mahalanobis_distance_sq<DIM>(d, &s_conic[i * CONIC_SIZE]);
+
+                        bool within_range = (dist_sq <= s_truncate_sq[i]);
+                        unsigned int warp_in_range = __ballot_sync(0xFFFFFFFF, within_range);
+                        if (warp_in_range == 0) continue;
+
+                        if (within_range) {
+                            float intensity = gaussian_intensity(dist_sq, s_amps[i]);
+                            if (intensity >= intensity_floor) {
+                                intensity_sum += intensity;
+                            }
+                        }
+                    }
+                }
+
+                if (local_px_idx < tile_pixels && intensity_sum != 0.0f) {
+                    int64_t global_px_idx = voxel_to_linear<DIM>(voxel_coords, shape);
+                    output[global_px_idx] = intensity_sum;
+                }
+            }
+        }
+        // Note: DIM >= 5 uses the non-persistent kernel path (launched separately)
+    }
+}
+
+// =============================================================================
 // BACKWARD RASTERIZATION KERNEL
 // =============================================================================
 
