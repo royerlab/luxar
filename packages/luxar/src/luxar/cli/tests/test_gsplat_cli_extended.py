@@ -113,7 +113,7 @@ class TestLoadFitConfig:
 
     def test_invalid_preset_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown preset"):
-            load_fit_config(preset="ultra")
+            load_fit_config(preset="nonexistent")
 
     def test_passes_through_seed_kwargs(self, tmp_path: Path) -> None:
         """Seed generation kwargs (e.g., num_scales) must pass through,
