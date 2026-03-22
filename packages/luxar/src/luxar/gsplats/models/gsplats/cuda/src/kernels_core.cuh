@@ -1024,6 +1024,200 @@ void rasterize_backward_kernel(
 }
 
 // =============================================================================
+// SPLAT-CENTRIC FORWARD RASTERIZATION KERNEL
+// =============================================================================
+// Each block processes ONE splat: computes its voxel AABB from conic,
+// iterates over all voxels, computes intensity, and atomicAdds to output.
+// For sparse data (most pixels receive 0-1 contributions), atomicAdd
+// contention is negligible. Eliminates the entire tile binning pipeline.
+
+template <int DIM, typename InputDType = float>
+__global__ __launch_bounds__(256, 6)
+void rasterize_forward_splat_centric_kernel(
+    const InputDType* __restrict__ centers,
+    const InputDType* __restrict__ conic,
+    const InputDType* __restrict__ amps,
+    int N,
+    const int* __restrict__ shape,
+    float truncate,
+    float intensity_floor,
+    float* __restrict__ output,
+    // Optional: global splat detection (pass nullptr to skip)
+    bool* __restrict__ global_splat_flags,
+    int* __restrict__ global_splat_count,
+    int64_t num_tiles,
+    int tile_size_param,
+    // Optional: tile_counts for diagnostic compatibility (pass nullptr to skip)
+    int* __restrict__ tile_counts_out,
+    const int* __restrict__ tile_dims
+) {
+    int splat_idx = blockIdx.x;
+    if (splat_idx >= N) return;
+
+    constexpr int CONIC_SIZE_L = conic_size<DIM>();
+
+    // Load splat data into shared memory (broadcast to all threads)
+    __shared__ float s_center[DIM];
+    __shared__ float s_conic[CONIC_SIZE_L];
+    __shared__ float s_amp;
+    __shared__ float s_truncate_sq;
+    __shared__ int s_lo[DIM], s_hi[DIM];
+    __shared__ int s_extent[DIM];
+    __shared__ int s_total_voxels;
+
+    if (threadIdx.x == 0) {
+        s_amp = DTypeTraits<InputDType>::load(amps, splat_idx);
+        s_truncate_sq = effective_truncate_sq(truncate, s_amp, intensity_floor);
+
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            s_center[d] = DTypeTraits<InputDType>::load(centers, splat_idx * DIM + d);
+        }
+        #pragma unroll
+        for (int c = 0; c < CONIC_SIZE_L; c++) {
+            s_conic[c] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE_L + c);
+        }
+
+        // Compute voxel AABB from conic (same as backward kernel)
+        float t_eff = effective_truncation(truncate, s_amp, intensity_floor);
+
+        if constexpr (DIM == 3) {
+            float c00 = s_conic[0], c01 = s_conic[1], c02 = s_conic[2];
+            float c11 = s_conic[3], c12 = s_conic[4], c22 = s_conic[5];
+            float det = c00*(c11*c22 - c12*c12) - c01*(c01*c22 - c02*c12)
+                      + c02*(c01*c12 - c02*c11);
+            float inv_det = 1.0f / fmaxf(fabsf(det), 1e-10f);
+            float sigma[3] = {
+                sqrtf(fmaxf((c11*c22 - c12*c12) * inv_det, 0.0f)),
+                sqrtf(fmaxf((c00*c22 - c02*c02) * inv_det, 0.0f)),
+                sqrtf(fmaxf((c00*c11 - c01*c01) * inv_det, 0.0f))
+            };
+            int total = 1;
+            #pragma unroll
+            for (int d = 0; d < 3; d++) {
+                float radius = t_eff * sigma[d] + 0.5f;
+                s_lo[d] = max(0, (int)floorf(s_center[d] - radius));
+                s_hi[d] = min(shape[d] - 1, (int)floorf(s_center[d] + radius));
+                s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
+                total *= s_extent[d];
+            }
+            s_total_voxels = total;
+        } else if constexpr (DIM == 2) {
+            float c00 = s_conic[0], c01 = s_conic[1], c11 = s_conic[2];
+            float det = c00*c11 - c01*c01;
+            float inv_det = 1.0f / fmaxf(fabsf(det), 1e-10f);
+            float sigma[2] = {
+                sqrtf(fmaxf(c11 * inv_det, 0.0f)),
+                sqrtf(fmaxf(c00 * inv_det, 0.0f))
+            };
+            int total = 1;
+            #pragma unroll
+            for (int d = 0; d < 2; d++) {
+                float radius = t_eff * sigma[d] + 0.5f;
+                s_lo[d] = max(0, (int)floorf(s_center[d] - radius));
+                s_hi[d] = min(shape[d] - 1, (int)floorf(s_center[d] + radius));
+                s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
+                total *= s_extent[d];
+            }
+            s_total_voxels = total;
+        } else {
+            int total = 1;
+            int ci = 0;
+            for (int d = 0; d < DIM; d++) {
+                float sigma_d = 1.0f / sqrtf(fmaxf(s_conic[ci], 1e-10f));
+                float radius = t_eff * sigma_d * 1.5f + 1.0f;
+                s_lo[d] = max(0, (int)floorf(s_center[d] - radius));
+                s_hi[d] = min(shape[d] - 1, (int)floorf(s_center[d] + radius));
+                s_extent[d] = max(0, s_hi[d] - s_lo[d] + 1);
+                total *= s_extent[d];
+                ci += (DIM - d);
+            }
+            s_total_voxels = total;
+        }
+
+        // Optional: flag global splats and compute tile_counts (API/diagnostic compat)
+        if (global_splat_flags != nullptr) {
+            // Compute tile AABB from voxel AABB
+            int n_tiles_approx = 1;
+            for (int d = 0; d < DIM; d++) {
+                int tile_lo = s_lo[d] / tile_size_param;
+                int tile_hi = s_hi[d] / tile_size_param;
+                n_tiles_approx *= max(1, tile_hi - tile_lo + 1);
+            }
+            bool is_global = (n_tiles_approx > (int)(0.1f * (float)num_tiles))
+                          && (n_tiles_approx > 1024);
+            global_splat_flags[splat_idx] = is_global;
+            if (is_global && global_splat_count != nullptr) {
+                atomicAdd(global_splat_count, 1);
+            }
+
+            // Compute tile_counts for diagnostic compatibility
+            if (tile_counts_out != nullptr && tile_dims != nullptr && !is_global) {
+                int tile_lo[DIM], tile_hi[DIM];
+                for (int d = 0; d < DIM; d++) {
+                    tile_lo[d] = max(0, s_lo[d] / tile_size_param);
+                    tile_hi[d] = min(tile_dims[d] - 1, s_hi[d] / tile_size_param);
+                }
+                // Iterate tile AABB and increment counts (same as preprocess_kernel)
+                int tile_coords_iter[DIM];
+                for (int d = 0; d < DIM; d++) tile_coords_iter[d] = tile_lo[d];
+                for (int i = 0; i < n_tiles_approx; i++) {
+                    int tile_idx_linear = tile_coords_to_linear<DIM>(tile_coords_iter, tile_dims);
+                    atomicAdd(&tile_counts_out[tile_idx_linear], 1);
+                    // Advance odometer
+                    for (int d = DIM - 1; d >= 0; d--) {
+                        tile_coords_iter[d]++;
+                        if (tile_coords_iter[d] <= tile_hi[d]) break;
+                        tile_coords_iter[d] = tile_lo[d];
+                    }
+                }
+            }
+        }
+    }
+    __syncthreads();
+
+    if (s_total_voxels == 0) return;
+
+    // Load splat data into registers
+    float amp = s_amp;
+    float truncate_sq = s_truncate_sq;
+    float center_reg[DIM];
+    float conic_reg[CONIC_SIZE_L];
+    #pragma unroll
+    for (int d = 0; d < DIM; d++) center_reg[d] = s_center[d];
+    #pragma unroll
+    for (int c = 0; c < CONIC_SIZE_L; c++) conic_reg[c] = s_conic[c];
+
+    int total_voxels = s_total_voxels;
+    for (int vox_idx = threadIdx.x; vox_idx < total_voxels; vox_idx += blockDim.x) {
+        int voxel[DIM];
+        {
+            int remaining = vox_idx;
+            #pragma unroll
+            for (int d = DIM - 1; d >= 0; d--) {
+                voxel[d] = s_lo[d] + (remaining % s_extent[d]);
+                remaining /= s_extent[d];
+            }
+        }
+
+        float d_vec[DIM];
+        #pragma unroll
+        for (int d = 0; d < DIM; d++) {
+            d_vec[d] = (float)voxel[d] - center_reg[d];
+        }
+
+        float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, conic_reg);
+        if (dist_sq > truncate_sq) continue;
+
+        float intensity = gaussian_intensity(dist_sq, amp);
+        if (intensity >= intensity_floor) {
+            int64_t global_px_idx = voxel_to_linear<DIM>(voxel, shape);
+            atomicAdd(&output[global_px_idx], intensity);
+        }
+    }
+}
+
+// =============================================================================
 // SPLAT-CENTRIC BACKWARD RASTERIZATION KERNEL
 // =============================================================================
 // Each block processes ONE splat: iterates over all voxels in its AABB,
