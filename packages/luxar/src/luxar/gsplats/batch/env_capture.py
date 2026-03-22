@@ -68,7 +68,9 @@ def get_slurm_scheduler_info() -> Dict:
     try:
         result = subprocess.run(
             ["scontrol", "show", "config"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         for line in result.stdout.splitlines():
             stripped = line.strip()
@@ -107,7 +109,9 @@ def is_slurm_mps_available() -> bool:
     try:
         result = subprocess.run(
             ["scontrol", "show", "config"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         for line in result.stdout.splitlines():
             if line.strip().startswith("GresTypes"):
@@ -174,10 +178,10 @@ def capture_environment() -> CapturedEnv:
 
     if missing:
         print(
-            f"\n⚠  The CUDA extension was built with these modules, which are not\n"
-            f"   currently loaded.  They will be added to the sbatch preamble:\n"
+            "\n⚠  The CUDA extension was built with these modules, which are not\n"
+            "   currently loaded.  They will be added to the sbatch preamble:\n"
             + "".join(f"     module load {m}\n" for m in missing)
-            + f"   To silence this warning, load them now:\n"
+            + "   To silence this warning, load them now:\n"
             + f"     module load {' '.join(missing)}\n"
         )
 
@@ -231,9 +235,7 @@ def generate_env_preamble(env: CapturedEnv) -> str:
             continue
         # LD_LIBRARY_PATH: set as baseline; module loads will prepend theirs.
         if var == "LD_LIBRARY_PATH":
-            lines.append(
-                f"export {var}={shlex.quote(val)}:${{{var}:-}}"
-            )
+            lines.append(f"export {var}={shlex.quote(val)}:${{{var}:-}}")
         else:
             lines.append(f"export {var}={shlex.quote(val)}")
 

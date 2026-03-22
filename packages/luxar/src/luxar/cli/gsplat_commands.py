@@ -2575,7 +2575,10 @@ def batch_plan(
             aprint("Error: No GPU benchmark profile found.")
             aprint("")
             aprint("Option A — run the benchmark first (recommended):")
-            aprint("  luxar gsplat benchmark --slurm --partition " + (partition or "<partition>"))
+            aprint(
+                "  luxar gsplat benchmark --slurm --partition "
+                + (partition or "<partition>")
+            )
             aprint("")
             aprint("Option B — skip the profile by providing a tile size explicitly:")
             aprint("  luxar gsplat batch ... --tile-size 128")
@@ -2609,17 +2612,29 @@ def batch_plan(
             return list(range(start, stop, step))
 
         with asection("Discovering dataset shape"):
-            ome_info = discover_ome_zarr_shape(input_path, axes_override=axes_list, array_key=array_key)
+            ome_info = discover_ome_zarr_shape(
+                input_path, axes_override=axes_list, array_key=array_key
+            )
             n_t_full = ome_info.n_timepoints
             n_c_full = ome_info.n_channels
             spatial = ome_info.spatial_shape
             aprint(f"Axes: {ome_info.axes}")
             aprint(f"Shape: {ome_info.shape}")
-            aprint(f"T={n_t_full}, C={n_c_full}, spatial={'x'.join(str(s) for s in spatial)}")
+            aprint(
+                f"T={n_t_full}, C={n_c_full}, spatial={'x'.join(str(s) for s in spatial)}"
+            )
 
             # Apply --timepoints / --channels slicing
-            t_indices = _parse_slice(timepoints_slice, n_t_full) if timepoints_slice else list(range(n_t_full))
-            c_indices = _parse_slice(channels_slice, n_c_full) if channels_slice else list(range(n_c_full))
+            t_indices = (
+                _parse_slice(timepoints_slice, n_t_full)
+                if timepoints_slice
+                else list(range(n_t_full))
+            )
+            c_indices = (
+                _parse_slice(channels_slice, n_c_full)
+                if channels_slice
+                else list(range(n_c_full))
+            )
             n_t = len(t_indices)
             n_c = len(c_indices)
             if timepoints_slice or channels_slice:
@@ -2648,7 +2663,7 @@ def batch_plan(
         if auto_tile:
             assert summary is not None
 
-            max_safe_voxels = math.prod(max_shape) if max_shape else 256 ** 3
+            max_safe_voxels = math.prod(max_shape) if max_shape else 256**3
 
             if total_voxels <= max_safe_voxels:
                 # Whole volume fits — set tile_size large enough that
@@ -2840,7 +2855,9 @@ def batch_plan(
                     mps_note = " [MPS available]"
                 else:
                     mps_note = " [bash background processes]"
-            aprint(f"  Packing: {tasks_per_job} tasks/job ({mode}) → {n_slurm_jobs} Slurm jobs{mps_note}")
+            aprint(
+                f"  Packing: {tasks_per_job} tasks/job ({mode}) → {n_slurm_jobs} Slurm jobs{mps_note}"
+            )
         else:
             aprint(f"  Slurm array: {total_tasks} jobs (1 task each)")
         if uses_backfill:
@@ -2854,9 +2871,13 @@ def batch_plan(
         )
         if tasks_per_job > 1:
             if parallel:
-                aprint(f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min ({tasks_per_job} tasks in parallel)")
+                aprint(
+                    f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min ({tasks_per_job} tasks in parallel)"
+                )
             else:
-                aprint(f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min ({tasks_per_job} tasks × {est_seconds / 60:.0f} min)")
+                aprint(
+                    f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min ({tasks_per_job} tasks × {est_seconds / 60:.0f} min)"
+                )
         aprint(f"  Est. total GPU-hours: {total_gpu_hours:.0f} h")
         aprint(f"  Slurm --time: {slurm_time}")
         aprint(f"  Partition: {partition}, GPUs: {gpus}, CPUs: {cpus}, Mem: {mem}G")

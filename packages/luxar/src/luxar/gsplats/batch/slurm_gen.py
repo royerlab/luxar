@@ -58,8 +58,16 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     # Compute printf format widths so filenames sort lexicographically.
     # When --timepoints slicing is used, the REAL indices (e.g. 1430) are
     # larger than n_timepoints (20), so width must be based on the max value.
-    t_max = max(manifest.timepoint_indices) if manifest.timepoint_indices else max(0, manifest.n_timepoints - 1)
-    c_max = max(manifest.channel_indices) if manifest.channel_indices else max(0, manifest.n_channels - 1)
+    t_max = (
+        max(manifest.timepoint_indices)
+        if manifest.timepoint_indices
+        else max(0, manifest.n_timepoints - 1)
+    )
+    c_max = (
+        max(manifest.channel_indices)
+        if manifest.channel_indices
+        else max(0, manifest.n_channels - 1)
+    )
     k_max = max(0, manifest.n_tiles - 1)
     t_width = max(2, len(str(t_max)))
     c_width = max(2, len(str(c_max)))
@@ -132,8 +140,8 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
             "    local C_IDX=$((R / N_TILES))",
             "    local K=$((R % N_TILES))",
             # Map sequential indices to actual dataset indices
-            f"    local T=${{T_INDICES[$T_IDX]}}" if has_t_map else "    local T=$T_IDX",
-            f"    local C=${{C_INDICES[$C_IDX]}}" if has_c_map else "    local C=$C_IDX",
+            "    local T=${T_INDICES[$T_IDX]}" if has_t_map else "    local T=$T_IDX",
+            "    local C=${C_INDICES[$C_IDX]}" if has_c_map else "    local C=$C_IDX",
             "",
             f'    local OUTPUT="{manifest.output_dir}/tiles/'
             f"t$(printf '%0{t_width}d' $T)_c$(printf '%0{c_width}d' $C)_tile$(printf '%0{k_width}d' $K)"
@@ -144,7 +152,7 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
             "        return",
             "    fi",
             "",
-            f'    echo "=== Task $TASK_ID / $TOTAL_TASKS (T=$T C=$C K=$K) ==="',
+            '    echo "=== Task $TASK_ID / $TOTAL_TASKS (T=$T C=$C K=$K) ==="',
             f"    {fit_cmd}",
             "}",
             "",
