@@ -96,10 +96,12 @@ backward_wrapper(
     int64_t batch_size,
     bool use_fp16,
     const c10::optional<torch::Tensor>& shape_tensor_cached,
-    const c10::optional<torch::Tensor>& tile_dims_tensor_cached
+    const c10::optional<torch::Tensor>& tile_dims_tensor_cached,
+    const c10::optional<torch::Tensor>& output_to_zero
 ) {
     torch::Tensor shape_cached = shape_tensor_cached.value_or(torch::Tensor());
     torch::Tensor tile_dims_cached = tile_dims_tensor_cached.value_or(torch::Tensor());
+    torch::Tensor output_zero = output_to_zero.value_or(torch::Tensor());
 
     if (use_fp16) {
         auto centers_fp16 = centers.dtype() == torch::kFloat16 ? centers : centers.to(torch::kFloat16);
@@ -121,7 +123,8 @@ backward_wrapper(
             (int)tile_size,
             (int)batch_size,
             shape_cached,
-            tile_dims_cached
+            tile_dims_cached,
+            output_zero
         );
     }
 
@@ -140,7 +143,8 @@ backward_wrapper(
         (int)tile_size,
         (int)batch_size,
         shape_cached,
-        tile_dims_cached
+        tile_dims_cached,
+        output_zero
     );
 }
 
@@ -283,7 +287,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("batch_size") = 128,
         py::arg("use_fp16") = false,
         py::arg("shape_tensor_cached") = py::none(),
-        py::arg("tile_dims_tensor_cached") = py::none()
+        py::arg("tile_dims_tensor_cached") = py::none(),
+        py::arg("output_to_zero") = py::none()
     );
 
     // Version info

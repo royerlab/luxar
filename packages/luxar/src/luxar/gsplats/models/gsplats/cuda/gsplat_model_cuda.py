@@ -209,6 +209,8 @@ class CUDASplatFunction(torch.autograd.Function):
 
         # Save for backward (keep FP16 tensors for backward pass if enabled)
         ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps)
+        # Save output reference for backward to zero (eliminates output.zero_() on next fwd)
+        ctx.forward_output = output
         # Cache FP16 tensors for backward to avoid re-conversion
         ctx.centers_kernel = centers_kernel
         ctx.conic_kernel = conic_kernel
@@ -276,6 +278,11 @@ class CUDASplatFunction(torch.autograd.Function):
             if ctx.tile_dims_tensor_cached is not None:
                 cached_kwargs["tile_dims_tensor_cached"] = ctx.tile_dims_tensor_cached
 
+            # NOTE: output_to_zero API is wired but disabled until model-level
+            # output buffer reuse is implemented (backward zeroing without reuse
+            # adds ~1ms of memory traffic for no benefit)
+            output_to_zero = None
+
             d_centers, d_conic, d_amps = cuda_splatting_backend.backward(
                 grad_output.contiguous(),
                 ctx.centers_kernel,  # Use cached FP16 or FP32 tensor
@@ -292,6 +299,7 @@ class CUDASplatFunction(torch.autograd.Function):
                 batch_size,
                 use_fp16,
                 **cached_kwargs,
+                output_to_zero=output_to_zero,
             )
 
             # Chain rule: d_conic → d_Ls via PyTorch autograd

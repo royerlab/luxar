@@ -395,7 +395,8 @@ void dispatch_backward_impl(
     torch::Tensor& d_conic,
     torch::Tensor& d_amps,
     const torch::Tensor& shape_tensor_cached,
-    const torch::Tensor& tile_dims_tensor_cached
+    const torch::Tensor& tile_dims_tensor_cached,
+    const torch::Tensor& output_to_zero
 ) {
     cudaStream_t stream = c10::cuda::getCurrentCUDAStream().stream();
 
@@ -434,7 +435,7 @@ void dispatch_backward_impl(
             d_centers.data_ptr<float>(),
             d_conic.data_ptr<float>(),
             d_amps.data_ptr<float>(),
-            nullptr,  // TODO: pass output tensor for backward-zeroing optimization
+            output_to_zero.defined() ? output_to_zero.data_ptr<float>() : nullptr,
             stream)
     );
 
@@ -530,7 +531,8 @@ backward_impl(
     int tile_size,
     int batch_size,
     const torch::Tensor& shape_tensor_cached,
-    const torch::Tensor& tile_dims_tensor_cached
+    const torch::Tensor& tile_dims_tensor_cached,
+    const torch::Tensor& output_to_zero
 ) {
     constexpr torch::ScalarType expected_dtype =
         std::is_same_v<InputDType, __half> ? torch::kFloat16 : torch::kFloat32;
@@ -556,7 +558,8 @@ backward_impl(
                                        tile_offsets, tile_counts, tile_content, global_splat_ids,
                                        shape, truncate, intensity_floor, tile_size, batch_size,
                                        d_centers, d_conic, d_amps,
-                                       shape_tensor_cached, tile_dims_tensor_cached);
+                                       shape_tensor_cached, tile_dims_tensor_cached,
+                                       output_to_zero);
 
     return std::make_tuple(d_centers, d_conic, d_amps);
 }
@@ -611,12 +614,13 @@ backward(
     int tile_size,
     int batch_size,
     const torch::Tensor& shape_tensor_cached,
-    const torch::Tensor& tile_dims_tensor_cached
+    const torch::Tensor& tile_dims_tensor_cached,
+    const torch::Tensor& output_to_zero
 ) {
     return backward_impl<float>(grad_output, centers, conic, amps,
                                 tile_offsets, tile_counts, tile_content, global_splat_ids,
                                 shape, truncate, intensity_floor, tile_size, batch_size,
-                                shape_tensor_cached, tile_dims_tensor_cached);
+                                shape_tensor_cached, tile_dims_tensor_cached, output_to_zero);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
@@ -635,10 +639,11 @@ backward_fp16(
     int tile_size,
     int batch_size,
     const torch::Tensor& shape_tensor_cached,
-    const torch::Tensor& tile_dims_tensor_cached
+    const torch::Tensor& tile_dims_tensor_cached,
+    const torch::Tensor& output_to_zero
 ) {
     return backward_impl<__half>(grad_output, centers, conic, amps,
                                  tile_offsets, tile_counts, tile_content, global_splat_ids,
                                  shape, truncate, intensity_floor, tile_size, batch_size,
-                                 shape_tensor_cached, tile_dims_tensor_cached);
+                                 shape_tensor_cached, tile_dims_tensor_cached, output_to_zero);
 }
