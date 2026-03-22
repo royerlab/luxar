@@ -37,10 +37,6 @@ constexpr int RASTER_BLOCK_SIZE_3D = 512;  // 8x8x8 tile
 constexpr int RASTER_BLOCK_SIZE_DEFAULT = 256;
 constexpr int GLOBAL_BLOCK_SIZE = 256;
 
-// Persistent kernel threshold: use persistent work-queue kernel when tile count
-// exceeds this. Below threshold, standard dim3 grid is used (better for small volumes).
-constexpr int64_t PERSISTENT_TILE_THRESHOLD = 10000;
-
 /**
  * Compile-time block size for rasterization kernels based on dimension.
  * Used by __launch_bounds__ to inform the compiler of the actual max threads,
@@ -150,33 +146,7 @@ void launch_rasterize_forward(
     // Static allocation allows compile-time optimization and bank conflict avoidance.
     constexpr size_t smem_size = 0;
 
-    // OPTIMIZATION: Use persistent kernel for large tile counts (better load balancing)
-    // For DIM <= 4 with many tiles, the persistent kernel avoids launching 262K+ blocks
-    // and provides automatic load balancing via atomic work queue.
-    if constexpr (DIM <= 4) {
-        if (num_tiles > PERSISTENT_TILE_THRESHOLD) {
-            // Allocate/reuse global tile counter (static per-stream one-time allocation)
-            static int* s_tile_counter = nullptr;
-            if (!s_tile_counter) {
-                cudaMalloc(&s_tile_counter, sizeof(int));
-            }
-            cudaMemsetAsync(s_tile_counter, 0, sizeof(int), stream);
-
-            int num_sms = 0;
-            cudaDeviceGetAttribute(&num_sms, cudaDevAttrMultiProcessorCount, 0);
-            int persistent_blocks = num_sms * 2;
-
-            rasterize_forward_persistent_kernel<DIM, BATCH_SIZE, InputDType><<<persistent_blocks, block_size, smem_size, stream>>>(
-                centers, conic, amps, N,
-                shape, tile_dims, tile_size, truncate, intensity_floor,
-                tile_offsets, tile_counts, tile_content, output,
-                s_tile_counter, num_tiles
-            );
-            return;
-        }
-    }
-
-    // Standard path: Use 3D grid for 2D/3D volumes
+    // OPTIMIZATION: Use 3D grid for 2D/3D volumes
     // This improves L2 cache locality and eliminates division/modulo in tile coordinate extraction
     // Grid order: last dimension varies fastest to match linear index formula
     if constexpr (DIM == 3) {
