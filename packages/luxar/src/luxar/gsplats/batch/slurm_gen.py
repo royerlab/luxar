@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import shlex
 
 from luxar.gsplats.batch.manifest import BatchManifest
@@ -10,9 +11,14 @@ from luxar.gsplats.batch.manifest import BatchManifest
 def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     """Generate the sbatch array job script for fitting.
 
-    Each array task decodes its ``SLURM_ARRAY_TASK_ID`` into
-    ``(timepoint, channel, tile_index)`` and runs
-    ``luxar gsplat fit`` with the appropriate flags.
+    When ``manifest.tasks_per_job == 1`` (default), each Slurm array
+    element processes exactly one ``(timepoint, channel, tile)`` combination.
+
+    When ``tasks_per_job > 1``, each Slurm array element loops over
+    *tasks_per_job* consecutive fitting tasks sequentially.  This packs
+    multiple small volumes onto a single GPU allocation, reducing Slurm
+    scheduling overhead for datasets where a single volume doesn't
+    saturate the GPU.
 
     Args:
         manifest: Fully populated batch manifest.
@@ -21,11 +27,15 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     Returns:
         Complete sbatch script as a string.
     """
+    tpj = manifest.tasks_per_job
+    n_slurm_jobs = math.ceil(manifest.total_tasks / tpj)
+
     lines = [
         "#!/bin/bash",
         "#SBATCH --job-name=luxar-fit",
-        f"#SBATCH --array=0-{manifest.total_tasks - 1}",
+        f"#SBATCH --array=0-{n_slurm_jobs - 1}",
         f"#SBATCH --partition={manifest.slurm_partition}",
+        "#SBATCH --ntasks=1",
         f"#SBATCH --gpus-per-task={manifest.slurm_gpus}",
         f"#SBATCH --cpus-per-task={manifest.slurm_cpus}",
         f"#SBATCH --mem={manifest.slurm_mem_gb}G",
@@ -45,54 +55,149 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.append(env_preamble)
     lines.append("")
 
-    # Task ID decoding
-    lines.extend(
-        [
-            "# --- Decode task ID -> (timepoint, channel, tile) ---",
-            "TASK_ID=$SLURM_ARRAY_TASK_ID",
-            f"N_CHANNELS={manifest.n_channels}",
-            f"N_TILES={manifest.n_tiles}",
-            "T=$((TASK_ID / (N_CHANNELS * N_TILES)))",
-            "R=$((TASK_ID % (N_CHANNELS * N_TILES)))",
-            "C=$((R / N_TILES))",
-            "K=$((R % N_TILES))",
-            "",
-            "# Output path",
-            f'OUTPUT="{manifest.output_dir}/tiles/'
-            "t$(printf '%02d' $T)_c$(printf '%02d' $C)_tile$(printf '%03d' $K)"
-            '.gsplats.zarr"',
-            "",
-            "# Skip if already completed (for restarts)",
-            'if [ -d "$OUTPUT" ]; then',
-            '    echo "Output already exists, skipping: $OUTPUT"',
-            "    exit 0",
-            "fi",
-            "",
-        ]
+    # Compute printf format widths so filenames sort lexicographically.
+    # When --timepoints slicing is used, the REAL indices (e.g. 1430) are
+    # larger than n_timepoints (20), so width must be based on the max value.
+    t_max = (
+        max(manifest.timepoint_indices)
+        if manifest.timepoint_indices
+        else max(0, manifest.n_timepoints - 1)
     )
+    c_max = (
+        max(manifest.channel_indices)
+        if manifest.channel_indices
+        else max(0, manifest.n_channels - 1)
+    )
+    k_max = max(0, manifest.n_tiles - 1)
+    t_width = max(2, len(str(t_max)))
+    c_width = max(2, len(str(c_max)))
+    k_width = max(3, len(str(k_max)))
 
-    # Build the fit command
+    # Build the fit command template (used in the loop body).
+    # Pass --channel / --timepoint when:
+    #   - there are multiple values, OR
+    #   - slicing selected specific indices (even a single non-default one)
+    # Without slicing, omitting them lets _load_zarr_volume use its ndim
+    # heuristic, which avoids the 4D TZYX ambiguity (--channel 0 would
+    # override --timepoint).  With slicing, we must pass them to select
+    # the correct index even when only one is selected.
+    has_explicit_timepoints = manifest.timepoint_indices is not None
+    has_explicit_channels = manifest.channel_indices is not None
+
     fit_cmd_parts = [
         f'luxar gsplat fit {shlex.quote(manifest.input_path)} "$OUTPUT"',
         f"    --tile $K/{manifest.n_tiles}",
         f"    --tile-size {manifest.tile_size}",
         f"    --overlap {manifest.tile_overlap}",
-        "    --channel $C",
-        "    --timepoint $T",
     ]
-
+    if manifest.array_key is not None:
+        fit_cmd_parts.append(f"    --array-key {shlex.quote(manifest.array_key)}")
+    if manifest.n_channels > 1 or has_explicit_channels:
+        fit_cmd_parts.append("    --channel $C")
+    if manifest.n_timepoints > 1 or has_explicit_timepoints:
+        fit_cmd_parts.append("    --timepoint $T")
     if manifest.preset:
         fit_cmd_parts.append(f"    --preset {manifest.preset}")
-
-    # Add extra fit args from config (shell-escaped)
     for key, value in manifest.fit_args.items():
         if value is not None:
             fit_cmd_parts.append(
                 f"    --{key.replace('_', '-')} {shlex.quote(str(value))}"
             )
+    fit_cmd = " \\\n    ".join(fit_cmd_parts)
 
-    lines.append(" \\\n".join(fit_cmd_parts))
+    # Common variables
+    lines.extend(
+        [
+            f"TASKS_PER_JOB={tpj}",
+            f"TOTAL_TASKS={manifest.total_tasks}",
+            f"N_CHANNELS={manifest.n_channels}",
+            f"N_TILES={manifest.n_tiles}",
+            "BASE_TASK=$((SLURM_ARRAY_TASK_ID * TASKS_PER_JOB))",
+            "",
+        ]
+    )
+
+    # Index mapping arrays (for --timepoints/--channels slicing)
+    if manifest.timepoint_indices is not None:
+        t_arr = " ".join(str(i) for i in manifest.timepoint_indices)
+        lines.append(f"T_INDICES=({t_arr})")
+    if manifest.channel_indices is not None:
+        c_arr = " ".join(str(i) for i in manifest.channel_indices)
+        lines.append(f"C_INDICES=({c_arr})")
     lines.append("")
+
+    # Helper function: decode task ID and run fit
+    has_t_map = manifest.timepoint_indices is not None
+    has_c_map = manifest.channel_indices is not None
+    lines.extend(
+        [
+            "run_task() {",
+            "    local TASK_ID=$1",
+            '    if [ "$TASK_ID" -ge "$TOTAL_TASKS" ]; then return; fi',
+            "",
+            "    local T_IDX=$((TASK_ID / (N_CHANNELS * N_TILES)))",
+            "    local R=$((TASK_ID % (N_CHANNELS * N_TILES)))",
+            "    local C_IDX=$((R / N_TILES))",
+            "    local K=$((R % N_TILES))",
+            # Map sequential indices to actual dataset indices
+            "    local T=${T_INDICES[$T_IDX]}" if has_t_map else "    local T=$T_IDX",
+            "    local C=${C_INDICES[$C_IDX]}" if has_c_map else "    local C=$C_IDX",
+            "",
+            f'    local OUTPUT="{manifest.output_dir}/tiles/'
+            f"t$(printf '%0{t_width}d' $T)_c$(printf '%0{c_width}d' $C)_tile$(printf '%0{k_width}d' $K)"
+            '.gsplats.zarr"',
+            "",
+            '    if [ -d "$OUTPUT" ]; then',
+            '        echo "Already exists, skipping: $OUTPUT"',
+            "        return",
+            "    fi",
+            "",
+            '    echo "=== Task $TASK_ID / $TOTAL_TASKS (T=$T C=$C K=$K) ==="',
+            f"    {fit_cmd}",
+            "}",
+            "",
+        ]
+    )
+
+    if manifest.parallel_tasks_per_job:
+        # Parallel mode: launch all tasks as background processes, then wait.
+        # Each process gets its own CUDA stream; GPU memory is shared.
+        lines.extend(
+            [
+                "# --- Parallel mode: launch tasks concurrently on the same GPU ---",
+                "PIDS=()",
+                "for OFFSET in $(seq 0 $((TASKS_PER_JOB - 1))); do",
+                "    TASK_ID=$((BASE_TASK + OFFSET))",
+                '    if [ "$TASK_ID" -ge "$TOTAL_TASKS" ]; then break; fi',
+                "    run_task $TASK_ID &",
+                "    PIDS+=($!)",
+                "done",
+                "",
+                "# Wait for all parallel tasks and collect exit codes",
+                "FAILED=0",
+                "for PID in ${PIDS[@]}; do",
+                "    if ! wait $PID; then FAILED=$((FAILED + 1)); fi",
+                "done",
+                'if [ "$FAILED" -gt 0 ]; then',
+                '    echo "WARNING: $FAILED of ${#PIDS[@]} parallel tasks failed"',
+                "    exit 1",
+                "fi",
+                "",
+            ]
+        )
+    else:
+        # Sequential mode: run tasks one by one
+        lines.extend(
+            [
+                "# --- Sequential mode: run tasks one by one ---",
+                "for OFFSET in $(seq 0 $((TASKS_PER_JOB - 1))); do",
+                "    TASK_ID=$((BASE_TASK + OFFSET))",
+                '    if [ "$TASK_ID" -ge "$TOTAL_TASKS" ]; then break; fi',
+                "    run_task $TASK_ID",
+                "done",
+                "",
+            ]
+        )
 
     return "\n".join(lines)
 
@@ -113,6 +218,7 @@ def generate_merge_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         "#!/bin/bash",
         "#SBATCH --job-name=luxar-merge",
         f"#SBATCH --partition={manifest.slurm_partition}",
+        "#SBATCH --ntasks=1",
         "#SBATCH --gpus-per-task=0",
         "#SBATCH --cpus-per-task=8",
         f"#SBATCH --mem={max(manifest.slurm_mem_gb, 64)}G",

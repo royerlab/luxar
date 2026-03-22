@@ -1,7 +1,7 @@
 """Configuration system for gsplat CLI commands.
 
 Provides:
-- Fitting presets (draft/standard/hifi)
+- Fitting presets (draft/standard/hifi/ultra)
 - YAML config loading with priority chain
 - Commented YAML config dump
 - Volume file loaders (.npy, .npz, .tiff, .zarr, imageio fallback)
@@ -33,26 +33,33 @@ class FitPreset(str, Enum):
     DRAFT = "draft"
     STANDARD = "standard"
     HIFI = "hifi"
+    ULTRA = "ultra"
 
 
 PRESETS: Dict[str, Dict[str, Any]] = {
     "draft": {
         "n_iters": 500,
         "early_stop_patience": 100,
-        "cull_ratio": 0.05,
+        "cull_ratio": 0.0,
         "max_eccentricity": 10.0,
     },
     "standard": {
         "n_iters": 3000,
         "early_stop_patience": 300,
-        "cull_ratio": 0.01,
+        "cull_ratio": 0.0,
         "max_eccentricity": 10.0,
     },
     "hifi": {
         "n_iters": 6000,
         "early_stop_patience": 500,
-        "cull_ratio": 0.005,
+        "cull_ratio": 0.0,
         "max_eccentricity": 15.0,
+    },
+    "ultra": {
+        "n_iters": 10000,
+        "early_stop_patience": 1000,
+        "cull_ratio": 0.0,
+        "max_eccentricity": 20.0,
     },
 }
 
@@ -86,7 +93,7 @@ def load_fit_config(
         CLI flags > YAML config > preset > function defaults
 
     Args:
-        preset: Preset name ("draft", "standard", "hifi") or None
+        preset: Preset name ("draft", "standard", "hifi", "ultra") or None
         config_path: Path to YAML config file or None
         cli_overrides: Dict of CLI-provided values (None values are ignored)
 
@@ -299,7 +306,9 @@ def load_volume(
                 if len(keys) > 1:
                     aprint(f"  Using first array '{keys[0]}' (available: {keys})")
 
-    elif suffix == ".zarr":
+    elif suffix == ".zarr" or (suffix == ".zip" and path.stem.endswith(".zarr")):
+        # Handles both plain .zarr directories and .zarr.zip archives.
+        # zarr natively supports ZipStore so no extraction needed.
         volume = _load_zarr_volume(path, channel, timepoint, array_key)
 
     elif suffix in (".tiff", ".tif"):
@@ -336,6 +345,21 @@ def load_volume(
     return volume
 
 
+def _find_all_arrays(group: Any, prefix: str = "") -> list:
+    """Recursively find all arrays in a zarr group, returning (key_path, array) pairs."""
+    import zarr
+
+    results = []
+    for k in group.keys():
+        item = group[k]
+        key_path = f"{prefix}/{k}" if prefix else k
+        if isinstance(item, zarr.Array):
+            results.append((key_path, item))
+        elif isinstance(item, zarr.Group):
+            results.extend(_find_all_arrays(item, key_path))
+    return results
+
+
 def _load_zarr_volume(
     path: Path,
     channel: Optional[int],
@@ -352,19 +376,29 @@ def _load_zarr_volume(
     if isinstance(store, zarr.Array):
         arr = store
     elif isinstance(store, zarr.Group):
-        if array_key:
-            arr = store[array_key]
+        if array_key is not None:
+            try:
+                arr = store[array_key]
+            except KeyError:
+                available = list(store.keys())
+                raise ValueError(
+                    f"Array key '{array_key}' not found in {path}. "
+                    f"Available keys: {available}"
+                )
+            aprint(f"  Using array '{array_key}'")
         elif "0" in store:
             # OME-ZARR convention: "0" is highest resolution
             aprint("  Detected OME-ZARR layout (using resolution level '0')")
             arr = store["0"]
         else:
-            # Find first array in group
-            arrays = [k for k in store.keys() if isinstance(store[k], zarr.Array)]
+            # Find the largest array in the group, searching recursively
+            # into sub-groups (e.g. h2afva/fused, mezzo/fused).
+            arrays = _find_all_arrays(store)
             if not arrays:
                 raise ValueError(f"No arrays found in zarr group: {path}")
-            arr = store[arrays[0]]
-            aprint(f"  Using array '{arrays[0]}'")
+            best_key = max(arrays, key=lambda kv: int(np.prod(kv[1].shape)))[0]
+            arr = store[best_key]
+            aprint(f"  Using array '{best_key}'")
     else:
         raise ValueError(f"Unexpected zarr object type: {type(store)}")
 
@@ -372,8 +406,29 @@ def _load_zarr_volume(
     ndim = len(shape)
     aprint(f"  Raw array shape: {shape} ({ndim}D)")
 
-    # Handle multi-dimensional data (OME-ZARR is TCZYX)
-    if ndim == 5:
+    # Slice the array down to a 2D/3D spatial volume.
+    # For nD data where ndim > 5, consume leading dimensions using
+    # timepoint and channel indices (defaulting to 0 for each).
+    if ndim >= 6:
+        # Generic >5D: treat first dim as T, slice the rest by channel
+        # until we're down to 3D spatial.
+        t = timepoint if timepoint is not None else 0
+        idx = [t]
+        # Consume non-spatial leading dims (all except last 3) as channel indices
+        remaining_non_spatial = ndim - 4  # -1 for time, -3 for spatial
+        if channel is not None and remaining_non_spatial > 0:
+            # Decode flat channel index into multi-dim indices
+            c_flat = channel
+            non_spatial_shape = shape[1 : 1 + remaining_non_spatial]
+            for dim_size in reversed(non_spatial_shape):
+                idx.insert(1, c_flat % dim_size)
+                c_flat //= dim_size
+        else:
+            for i in range(remaining_non_spatial):
+                idx.append(0)
+        aprint(f"  Slicing {ndim}D: indices {idx} → 3D spatial")
+        volume = np.array(arr[tuple(idx)])
+    elif ndim == 5:
         t = timepoint if timepoint is not None else 0
         c = channel if channel is not None else 0
         aprint(f"  Slicing 5D (TCZYX): T={t}, C={c}")
@@ -434,21 +489,34 @@ class OMEZarrInfo:
     """Path to the zarr store."""
 
 
-def discover_ome_zarr_shape(path: Path) -> OMEZarrInfo:
+def discover_ome_zarr_shape(
+    path: Path,
+    axes_override: Optional[List[str]] = None,
+    array_key: Optional[str] = None,
+) -> OMEZarrInfo:
     """Discover the shape and axis structure of an OME-Zarr dataset.
 
     Parses ``.zattrs`` ``multiscales`` metadata (NGFF v0.4+). Falls back
-    to a shape-based heuristic (5D→TCZYX, 4D→CZYX, 3D→ZYX) for
-    non-NGFF zarr stores.
+    to a custom ``axes`` attribute, then to a shape-based heuristic
+    (5D→TCZYX, 4D→CZYX, 3D→ZYX) for non-NGFF zarr stores.
+
+    Accepts both plain ``.zarr`` directories and ``.zarr.zip`` archives —
+    zarr's ZipStore handles the latter transparently.
 
     Args:
-        path: Path to the ``.zarr`` store.
+        path: Path to the ``.zarr`` store or ``.zarr.zip`` archive.
+        axes_override: Explicit axis labels (e.g. ``["time","channel","z","y","x"]``).
+            Overrides all auto-detection when provided.
+        array_key: Key path to a specific array within the zarr store
+            (e.g. ``"h2afva/fused"``).  When provided, skips auto-selection
+            and navigates directly to this array.
 
     Returns:
         :class:`OMEZarrInfo` with discovered metadata.
 
     Raises:
-        ValueError: If the zarr store has no arrays or is unreadable.
+        ValueError: If the zarr store has no arrays, ``array_key`` is not
+            found, or the store is unreadable.
     """
     import zarr
 
@@ -460,24 +528,52 @@ def discover_ome_zarr_shape(path: Path) -> OMEZarrInfo:
         attrs: Dict[str, Any] = dict(getattr(store, "attrs", {}))
     elif isinstance(store, zarr.Group):
         attrs = dict(store.attrs)
-        if "0" in store:
+        if array_key is not None:
+            # User-specified array key (may be nested, e.g. "h2afva/fused")
+            try:
+                arr = store[array_key]
+            except KeyError:
+                available = list(store.keys())
+                raise ValueError(
+                    f"Array key '{array_key}' not found in {path}. "
+                    f"Available keys: {available}"
+                )
+        elif "0" in store:
+            # OME-NGFF standard: resolution level "0" is highest resolution
             arr = store["0"]
         else:
-            arrays = [k for k in store.keys() if isinstance(store[k], zarr.Array)]
+            # Find the largest array, searching recursively into sub-groups
+            arrays = _find_all_arrays(store)
             if not arrays:
                 raise ValueError(f"No arrays found in zarr group: {path}")
-            arr = store[arrays[0]]
+            # Pick the array with the most elements
+            arr = max(arrays, key=lambda kv: int(np.prod(kv[1].shape)))[1]
     else:
         raise ValueError(f"Unexpected zarr object type: {type(store)}")
 
     shape = tuple(arr.shape)
     ndim = len(shape)
 
+    # User-supplied axes override: skip all auto-detection
+    if axes_override is not None:
+        if len(axes_override) != ndim:
+            raise ValueError(
+                f"--axes has {len(axes_override)} labels but array is {ndim}D "
+                f"(shape {shape}). Provide exactly {ndim} comma-separated axis names."
+            )
+        return _parse_custom_axes_attr(axes_override, shape, path)
+
     # Try NGFF multiscales metadata
     multiscales = attrs.get("multiscales")
     if multiscales and isinstance(multiscales, list) and len(multiscales) > 0:
         ms = multiscales[0]
         return _parse_ngff_metadata(ms, shape, path, store)
+
+    # Try custom axes attribute (e.g. Keller-lab zarr.zip files store
+    # axes = ['time', 'camera', 'channel', 'z', 'y', 'x'])
+    custom_axes = attrs.get("axes")
+    if custom_axes and isinstance(custom_axes, list) and len(custom_axes) == ndim:
+        return _parse_custom_axes_attr(custom_axes, shape, path)
 
     # Fallback: heuristic based on ndim
     return _heuristic_ome_info(shape, ndim, path)
@@ -559,6 +655,60 @@ def _parse_ngff_metadata(
         voxel_size=voxel_size,
         unit=unit,
         resolution_levels=n_levels,
+        path=path,
+    )
+
+
+def _parse_custom_axes_attr(
+    axes: List[str], shape: Tuple[int, ...], path: Path
+) -> OMEZarrInfo:
+    """Build OMEZarrInfo from a custom ``axes`` list attribute.
+
+    Recognises common axis name conventions:
+      - T: ``time``, ``t``
+      - C: ``channel``, ``c``, ``ch``
+      - Camera / extra non-spatial dims (``camera``, ``cam``, ``view``,
+        ``angle``): folded into the channel count so each combination
+        becomes its own fitting task.
+      - Spatial: ``z``, ``y``, ``x``, ``depth``, ``height``, ``width``
+        (and any unrecognised leftover axes)
+    """
+    _SPATIAL = {"z", "y", "x", "depth", "height", "width"}
+    _TIME = {"time", "t"}
+    _CHANNEL = {"channel", "c", "ch"}
+    _CAMERA = {"camera", "cam", "view", "angle"}
+
+    t_idx: Optional[int] = None
+    channel_indices: List[int] = []  # channel + camera axes
+    spatial_indices: List[int] = []
+
+    for i, ax in enumerate(axes):
+        ax_l = ax.lower()
+        if ax_l in _TIME:
+            t_idx = i
+        elif ax_l in _CHANNEL or ax_l in _CAMERA:
+            channel_indices.append(i)
+        elif ax_l in _SPATIAL:
+            spatial_indices.append(i)
+        else:
+            # Unknown axis — treat as spatial
+            spatial_indices.append(i)
+
+    n_t = shape[t_idx] if t_idx is not None else 1
+    n_c = 1
+    for ci in channel_indices:
+        n_c *= shape[ci]
+
+    spatial_shape = tuple(shape[i] for i in spatial_indices)
+    spatial_axes = [axes[i] for i in spatial_indices]
+
+    return OMEZarrInfo(
+        axes=axes,
+        shape=shape,
+        n_timepoints=n_t,
+        n_channels=n_c,
+        spatial_shape=spatial_shape,
+        spatial_axes=spatial_axes,
         path=path,
     )
 
