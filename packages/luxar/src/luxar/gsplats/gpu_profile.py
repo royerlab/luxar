@@ -376,7 +376,7 @@ def get_gpu_summary(
     if gpus:
         conservative_name = min(
             gpus,
-            key=lambda n: gpus[n].get("info", {}).get("total_memory_gb", float("inf")),
+            key=lambda n: gpus[n].get("info", {}).get("total_memory_gb", 0),
         )
         return gpus[conservative_name]["summary"]
 

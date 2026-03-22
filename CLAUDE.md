@@ -185,11 +185,13 @@ luxar profiles                   # Network simulation profiles
 
 ### GSplat CLI (fitting, converting, rendering, merging)
 ```bash
-# Fit Gaussian splats to a volume (presets: draft/standard/hifi)
+# Fit Gaussian splats to a volume (presets: draft/standard/hifi/ultra)
 # Supported input formats: .zarr, .zarr.zip, .tiff, .npy, .npz
 luxar gsplat fit volume.tiff splats.gsplats.zarr --preset standard --seeds 8000
 luxar gsplat fit volume.npy splats.gsplats.zarr --config params.yaml
 luxar gsplat fit data.zarr.zip splats.gsplats.zarr --timepoint 0 --channel 0
+luxar gsplat fit data.zarr.zip splats.gsplats.zarr --array-key h2afva/fused  # Nested zarr group
+luxar gsplat fit volume.tiff splats.gsplats.zarr --preset hifi --iters 8000  # Override iterations
 luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config template
 
 # Tiled fitting for large volumes (Hann cosine apodization, seamless stitching)
@@ -205,6 +207,12 @@ luxar gsplat batch plan data.zarr.zip output/ -p gpu --parallel         # Concur
 luxar gsplat batch plan data.zarr.zip output/ -p gpu --tasks-per-job 5  # Manual packing
 luxar gsplat batch plan data.zarr.zip output/ -p gpu \
     --axes time,camera,channel,z,y,x                                    # Override axis labels
+luxar gsplat batch plan data.zarr.zip output/ -p gpu \
+    --array-key h2afva/fused --axes time,z,y,x                          # Nested zarr group
+luxar gsplat batch plan data.zarr.zip output/ -p gpu \
+    --timepoints '::10' --channels '0:2'                                # Subset selection
+luxar gsplat batch plan data.zarr.zip output/ -p gpu \
+    --iters 8000 --seeds 100000                                         # Override fit params
 luxar gsplat batch status output/                                       # Check job status
 luxar gsplat batch merge output/                                        # Merge completed tiles
 
