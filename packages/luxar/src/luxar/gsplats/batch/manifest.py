@@ -44,6 +44,10 @@ class BatchManifest:
     input_path: str = ""
     output_dir: str = ""
 
+    # Array selection
+    array_key: Optional[str] = None
+    """Key path to a specific array within the zarr store (e.g. 'h2afva/fused')."""
+
     # Dataset shape
     n_timepoints: int = 1
     n_channels: int = 1
@@ -73,11 +77,26 @@ class BatchManifest:
     slurm_mem_gb: int = 32
     slurm_extra_args: List[str] = field(default_factory=list)
 
+    # Packing
+    tasks_per_job: int = 1
+    """Number of fitting tasks to run within each Slurm job."""
+
+    parallel_tasks_per_job: bool = False
+    """If True, tasks within a job run concurrently (background processes).
+    If False (default), they run sequentially."""
+
     # Jobs
     jobs: List[BatchJob] = field(default_factory=list)
 
     # Merge config
     channel_colors: Optional[List[str]] = None
+
+    # Index arrays (when --timepoints/--channels slicing is used)
+    timepoint_indices: Optional[List[int]] = None
+    """Actual timepoint indices into the dataset, or None for contiguous 0..n_t-1."""
+
+    channel_indices: Optional[List[int]] = None
+    """Actual channel indices into the dataset, or None for contiguous 0..n_c-1."""
 
     # Post-submit state
     array_job_id: Optional[int] = None
@@ -144,6 +163,19 @@ def decode_task_id(task_id: int, manifest: BatchManifest) -> Tuple[int, int, int
     return (t, c, k)
 
 
-def output_filename(t: int, c: int, k: int) -> str:
-    """Generate canonical output filename for a task."""
-    return f"t{t:02d}_c{c:02d}_tile{k:03d}.gsplats.zarr"
+def output_filename(
+    t: int,
+    c: int,
+    k: int,
+    n_timepoints: int = 100,
+    n_channels: int = 100,
+    n_tiles: int = 1000,
+) -> str:
+    """Generate canonical output filename for a task.
+
+    Widths are computed from the max index so filenames sort lexicographically.
+    """
+    tw = max(2, len(str(max(0, n_timepoints - 1))))
+    cw = max(2, len(str(max(0, n_channels - 1))))
+    kw = max(3, len(str(max(0, n_tiles - 1))))
+    return f"t{t:0{tw}d}_c{c:0{cw}d}_tile{k:0{kw}d}.gsplats.zarr"

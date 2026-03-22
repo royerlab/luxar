@@ -408,6 +408,39 @@ def embed_cholesky_packed(
                 sigma = 1e-7
             Sigma_dst[:, i_dst, i_dst] = sigma * sigma  # variance = sigma^2
 
-    # Cholesky decompose in float64, then cast back to input dtype
-    L_dst = np.linalg.cholesky(Sigma_dst)
+    # Cholesky decompose in float64, then cast back to input dtype.
+    # Some splats may have degenerate covariance matrices (e.g. from
+    # numerical issues during fitting), so we selectively regularise
+    # only the failing matrices when the batch cholesky fails.
+    try:
+        L_dst = np.linalg.cholesky(Sigma_dst)
+    except np.linalg.LinAlgError:
+        # Identify which matrices are not positive-definite by checking
+        # eigenvalues (vectorised, much faster than per-splat cholesky).
+        eig_min = np.linalg.eigvalsh(Sigma_dst)[:, 0]  # smallest eigenvalue
+        bad_mask = eig_min <= 0
+        n_bad = int(bad_mask.sum())
+
+        # If eigenvalues all look positive but Cholesky still failed,
+        # the matrices are near-singular.  Regularise everything lightly.
+        if n_bad == 0:
+            for k in range(d_dst):
+                Sigma_dst[:, k, k] += 1e-6
+        else:
+            # Regularise only the bad matrices: add enough to make min
+            # eigenvalue positive (with margin).
+            deficit = np.abs(eig_min[bad_mask]) + 1e-6
+            for k in range(d_dst):
+                Sigma_dst[bad_mask, k, k] += deficit
+
+        try:
+            L_dst = np.linalg.cholesky(Sigma_dst)
+        except np.linalg.LinAlgError:
+            # Last resort: per-splat decomposition for all matrices.
+            L_dst = np.empty_like(Sigma_dst)
+            for i in range(N):
+                try:
+                    L_dst[i] = np.linalg.cholesky(Sigma_dst[i])
+                except np.linalg.LinAlgError:
+                    L_dst[i] = np.eye(d_dst) * 1e-3
     return pack_tril(L_dst.astype(input_dtype))

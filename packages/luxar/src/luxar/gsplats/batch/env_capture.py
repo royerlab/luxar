@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 
 # Environment variables known to matter for CUDA/PyTorch workloads.
@@ -42,6 +44,101 @@ class CapturedEnv:
     """Installed luxar version string."""
 
 
+def get_slurm_scheduler_info() -> Dict:
+    """Query Slurm for scheduler type, job limits, and fairshare info.
+
+    Returns a dict with keys:
+        scheduler_type: e.g. "sched/backfill"
+        preempt_mode: e.g. "REQUEUE"
+        max_array_size: int
+        max_jobs_per_user: int or None (None = unlimited)
+        max_submit_per_user: int or None
+        uses_backfill: bool
+        uses_fairshare: bool
+    """
+    info: Dict = {
+        "scheduler_type": "unknown",
+        "preempt_mode": "OFF",
+        "max_array_size": 1000,
+        "max_jobs_per_user": None,
+        "max_submit_per_user": None,
+        "uses_backfill": False,
+        "uses_fairshare": False,
+    }
+    try:
+        result = subprocess.run(
+            ["scontrol", "show", "config"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("SchedulerType"):
+                info["scheduler_type"] = stripped.split("=", 1)[1].strip()
+                info["uses_backfill"] = "backfill" in info["scheduler_type"]
+            elif stripped.startswith("PriorityType"):
+                info["uses_fairshare"] = "multifactor" in stripped
+            elif stripped.startswith("PreemptMode"):
+                info["preempt_mode"] = stripped.split("=", 1)[1].strip()
+            elif stripped.startswith("MaxArraySize"):
+                try:
+                    info["max_array_size"] = int(stripped.split("=", 1)[1].strip())
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+
+    # Note: we intentionally do NOT try to parse per-QOS job limits here.
+    # Users may have multiple QOS (interactive, normal, etc.) with different
+    # limits, and the applicable QOS depends on the target partition.  Parsing
+    # this correctly requires knowing which QOS will be used for submission,
+    # which we don't know at this point.  max_jobs_per_user=None (unlimited)
+    # is the safe default — it just means we prefer shorter jobs for backfill.
+
+    return info
+
+
+def is_slurm_mps_available() -> bool:
+    """Check if Slurm MPS (Multi-Process Service) GRES is available.
+
+    MPS allows the scheduler to pack multiple jobs onto a single GPU
+    with isolated memory and compute sharing.  Requires ``GresTypes``
+    to include ``mps`` in ``slurm.conf`` (admin-configured).
+    """
+    try:
+        result = subprocess.run(
+            ["scontrol", "show", "config"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            if line.strip().startswith("GresTypes"):
+                gres_types = line.split("=", 1)[1].strip().lower()
+                return "mps" in [g.strip() for g in gres_types.split(",")]
+    except Exception:
+        pass
+    return False
+
+
+def read_cuda_build_info() -> Dict:
+    """Return the CUDA build metadata written by build.py, or an empty dict."""
+    try:
+        import luxar.gsplats.models.gsplats.cuda as cuda_pkg
+
+        info_path = Path(cuda_pkg.__file__).parent / "cuda_build_info.json"
+    except Exception:
+        return {}
+    if info_path.exists():
+        try:
+            with open(info_path) as f:
+                return dict(json.load(f))
+        except Exception:
+            pass
+    return {}
+
+
 def capture_environment() -> CapturedEnv:
     """Auto-detect the current execution environment.
 
@@ -49,8 +146,10 @@ def capture_environment() -> CapturedEnv:
     1. Active conda environment (``CONDA_PREFIX``)
     2. Active virtualenv (``VIRTUAL_ENV``)
     3. Loaded environment modules (``module list``)
-    4. Curated environment variables (only those that are set)
-    5. Luxar version
+    4. Modules required by the CUDA extension (from cuda_build_info.json),
+       merged into loaded_modules so sbatch scripts load them automatically
+    5. Curated environment variables (only those that are set)
+    6. Luxar version
     """
     env = CapturedEnv()
 
@@ -60,16 +159,41 @@ def capture_environment() -> CapturedEnv:
     # 2. Virtualenv
     env.virtual_env = os.environ.get("VIRTUAL_ENV")
 
-    # 3. Environment modules
-    env.loaded_modules = _detect_loaded_modules()
+    # 3. Environment modules currently loaded
+    currently_loaded = _detect_loaded_modules()
+    loaded_set = set(currently_loaded)
 
-    # 4. Curated env vars
+    # 4. Merge modules required at build time (e.g. gcc/14.2, cuda/12.8.x)
+    build_info = read_cuda_build_info()
+    build_modules: List[str] = build_info.get("loaded_modules", [])
+    missing: List[str] = []
+    for mod in build_modules:
+        # Only add non-trivial modules (skip slurm/default and similar)
+        base = mod.split("/")[0].lower()
+        if base in ("slurm",):
+            continue
+        if mod not in loaded_set:
+            currently_loaded.append(mod)
+            missing.append(mod)
+
+    if missing:
+        print(
+            "\n⚠  The CUDA extension was built with these modules, which are not\n"
+            "   currently loaded.  They will be added to the sbatch preamble:\n"
+            + "".join(f"     module load {m}\n" for m in missing)
+            + "   To silence this warning, load them now:\n"
+            + f"     module load {' '.join(missing)}\n"
+        )
+
+    env.loaded_modules = currently_loaded
+
+    # 5. Curated env vars
     for var in CURATED_ENV_VARS:
         val = os.environ.get(var)
         if val is not None:
             env.env_vars[var] = val
 
-    # 5. Luxar version
+    # 6. Luxar version
     try:
         from importlib.metadata import version
 
@@ -102,16 +226,23 @@ def generate_env_preamble(env: CapturedEnv) -> str:
         activate = os.path.join(env.virtual_env, "bin", "activate")
         lines.append(f"source {shlex.quote(activate)}")
 
-    # Module loads
-    for mod in env.loaded_modules:
-        lines.append(f"module load {shlex.quote(mod)}")
-
-    # Env vars (shell-escaped to prevent injection)
+    # Env vars BEFORE module loads — modules (gcc, cuda) append/prepend
+    # their own paths to LD_LIBRARY_PATH, and those must take priority
+    # over the captured (potentially stale) paths from plan time.
     for var, val in env.env_vars.items():
         # Skip CONDA_PREFIX/VIRTUAL_ENV — handled by activation
         if var in ("CONDA_PREFIX", "VIRTUAL_ENV"):
             continue
-        lines.append(f"export {var}={shlex.quote(val)}")
+        # LD_LIBRARY_PATH: set as baseline; module loads will prepend theirs.
+        if var == "LD_LIBRARY_PATH":
+            lines.append(f"export {var}={shlex.quote(val)}:${{{var}:-}}")
+        else:
+            lines.append(f"export {var}={shlex.quote(val)}")
+
+    # Module loads AFTER env vars — modules prepend to LD_LIBRARY_PATH,
+    # so freshly-loaded CUDA/GCC libraries take priority over captured paths.
+    for mod in env.loaded_modules:
+        lines.append(f"module load {shlex.quote(mod)}")
 
     lines.append("")
     return "\n".join(lines)
