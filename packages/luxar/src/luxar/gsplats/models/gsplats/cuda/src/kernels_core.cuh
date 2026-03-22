@@ -1078,7 +1078,7 @@ void rasterize_forward_splat_centric_kernel(
             s_conic[c] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE_L + c);
         }
 
-        // Compute voxel AABB from conic (same as backward kernel)
+        // Compute voxel AABB from conic (Sigma^-1) via cofactor/determinant
         float t_eff = effective_truncation(truncate, s_amp, intensity_floor);
 
         if constexpr (DIM == 3) {
@@ -1214,6 +1214,14 @@ void rasterize_forward_splat_centric_kernel(
             d_vec[d] = (float)voxel[d] - center_reg[d];
         }
 
+        // Early rejection via Mahalanobis distance: skip pixels outside the
+        // effective truncation sphere. Uses min(truncate², 2*ln(amp/floor)).
+        //
+        // KNOWN LIMITATION: For high-amplitude splats, the base truncation
+        // (truncate²) can be tighter than the amplitude-based cutoff. This
+        // may reject ~4 borderline pixels per volume (intensity within 42% of
+        // floor threshold). Sum accuracy remains within 0.001% of reference.
+        // See SPECIFICATIONS.md for details.
         float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, conic_reg);
         if (dist_sq > truncate_sq) continue;
 
@@ -1396,7 +1404,7 @@ void rasterize_backward_splat_centric_kernel(
             d_vec[d] = (float)voxel[d] - center_reg[d];
         }
 
-        // Mahalanobis distance
+        // Same truncation as forward (see KNOWN LIMITATION comment above)
         float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, conic_reg);
         if (dist_sq > truncate_sq) continue;
 
