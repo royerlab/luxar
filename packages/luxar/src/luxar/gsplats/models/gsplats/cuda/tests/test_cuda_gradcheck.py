@@ -86,10 +86,10 @@ class TestGradcheckForwardBackward:
     def test_gradient_numerical_accuracy_vs_reference(self, dim, shape):
         """Verify CUDA leaf-parameter gradients match PyTorch reference."""
         _skip_if_no_cuda()
-        from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             GaussianSplatModelCUDA,
         )
+        from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
         N = 20  # More splats for better gradient statistics
         np.random.seed(42)
@@ -232,4 +232,4 @@ class TestGradcheckEdgeCases:
         # Loss should be changing (not stuck)
         assert losses[0] != losses[-1], "Loss unchanged over 20 iterations"
         # All losses should be finite
-        assert all(np.isfinite(l) for l in losses), "Non-finite loss during training"
+        assert all(np.isfinite(val) for val in losses), "Non-finite loss during training"
