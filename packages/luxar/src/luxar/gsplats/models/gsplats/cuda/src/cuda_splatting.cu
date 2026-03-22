@@ -180,8 +180,8 @@ INSTANTIATE_SPLAT_FWD(8)
 
 // Splat-centric backward kernel instantiations (no BATCH_SIZE dependency)
 #define INSTANTIATE_SPLAT_BWD(D) \
-    template void launch_rasterize_backward_splat_centric<D, float>(const float*, const float*, const float*, const float*, int, const int*, float, float, float*, float*, float*, cudaStream_t); \
-    template void launch_rasterize_backward_splat_centric<D, __half>(const float*, const __half*, const __half*, const __half*, int, const int*, float, float, float*, float*, float*, cudaStream_t);
+    template void launch_rasterize_backward_splat_centric<D, float>(const float*, const float*, const float*, const float*, int, const int*, float, float, float*, float*, float*, float*, cudaStream_t); \
+    template void launch_rasterize_backward_splat_centric<D, __half>(const float*, const __half*, const __half*, const __half*, int, const int*, float, float, float*, float*, float*, float*, cudaStream_t);
 
 INSTANTIATE_SPLAT_BWD(2)
 INSTANTIATE_SPLAT_BWD(3)
@@ -434,6 +434,7 @@ void dispatch_backward_impl(
             d_centers.data_ptr<float>(),
             d_conic.data_ptr<float>(),
             d_amps.data_ptr<float>(),
+            nullptr,  // TODO: pass output tensor for backward-zeroing optimization
             stream)
     );
 

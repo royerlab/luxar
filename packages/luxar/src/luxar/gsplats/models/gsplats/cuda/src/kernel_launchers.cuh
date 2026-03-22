@@ -302,6 +302,7 @@ void launch_rasterize_backward_splat_centric(
     float* d_centers,
     float* d_conic,
     float* d_amps,
+    float* output_to_zero,  // Optional: zero forward output as side effect
     cudaStream_t stream
 ) {
     if (N == 0) return;
@@ -312,7 +313,8 @@ void launch_rasterize_backward_splat_centric(
     rasterize_backward_splat_centric_kernel<DIM, InputDType><<<num_blocks, BLOCK_SIZE, 0, stream>>>(
         grad_output, centers, conic, amps, N,
         shape, truncate, intensity_floor,
-        d_centers, d_conic, d_amps
+        d_centers, d_conic, d_amps,
+        output_to_zero
     );
 }
 
