@@ -37,8 +37,11 @@ forward_wrapper(
     double intensity_floor,
     int64_t tile_size,
     int64_t batch_size,
-    bool use_fp16
+    bool use_fp16,
+    const c10::optional<torch::Tensor>& output_buffer
 ) {
+    torch::Tensor out_buf = output_buffer.value_or(torch::Tensor());
+
     if (use_fp16) {
         auto centers_fp16 = centers.dtype() == torch::kFloat16 ? centers : centers.to(torch::kFloat16);
         auto conic_fp16 = conic.dtype() == torch::kFloat16 ? conic : conic.to(torch::kFloat16);
@@ -54,7 +57,8 @@ forward_wrapper(
             (float)truncate,
             (float)intensity_floor,
             (int)tile_size,
-            (int)batch_size
+            (int)batch_size,
+            out_buf
         );
     }
 
@@ -67,7 +71,8 @@ forward_wrapper(
         (float)truncate,
         (float)intensity_floor,
         (int)tile_size,
-        (int)batch_size
+        (int)batch_size,
+        out_buf
     );
 }
 
@@ -221,7 +226,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("intensity_floor"),
         py::arg("tile_size"),
         py::arg("batch_size") = 128,
-        py::arg("use_fp16") = false
+        py::arg("use_fp16") = false,
+        py::arg("output_buffer") = py::none()
     );
 
     m.def(

@@ -325,8 +325,8 @@ void dispatch_forward_impl(
     const InputDType* centers_ptr = get_data_ptr<InputDType>(centers);
     const InputDType* conic_ptr = get_data_ptr<InputDType>(conic);
 
-    // Zero-initialize output (splat-centric kernel uses atomicAdd)
-    output.zero_();
+    // NOTE: output is ALREADY zero-initialized by forward_impl
+    // (either torch::zeros for first call, or pre-zeroed buffer from backward)
 
     // Single kernel launch: each block processes one splat
     // Also computes global splat flags as a side effect (thread 0 per block)
@@ -463,7 +463,8 @@ forward_impl(
     float truncate,
     float intensity_floor,
     int tile_size,
-    int batch_size
+    int batch_size,
+    const torch::Tensor& output_buffer
 ) {
     constexpr torch::ScalarType expected_dtype =
         std::is_same_v<InputDType, __half> ? torch::kFloat16 : torch::kFloat32;
@@ -491,8 +492,15 @@ forward_impl(
         num_pixels *= s;
     }
 
-    // Allocate output (always FP32)
-    auto output = torch::zeros({num_pixels}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
+    // OPTIMIZATION: Reuse pre-zeroed output buffer if provided (from backward zeroing).
+    // This eliminates the 0.56ms output.zero_() for training iterations after the first.
+    torch::Tensor output;
+    if (output_buffer.defined() && output_buffer.numel() == num_pixels &&
+        output_buffer.dtype() == torch::kFloat32 && output_buffer.is_cuda()) {
+        output = output_buffer;  // Reuse pre-zeroed buffer (skip alloc + zero)
+    } else {
+        output = torch::zeros({num_pixels}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
+    }
 
     // Run forward pass
     BinningState state;
@@ -576,10 +584,11 @@ forward(
     float truncate,
     float intensity_floor,
     int tile_size,
-    int batch_size
+    int batch_size,
+    const torch::Tensor& output_buffer
 ) {
     return forward_impl<float>(centers, conic, amps, L_row_norms,
-                               shape, truncate, intensity_floor, tile_size, batch_size);
+                               shape, truncate, intensity_floor, tile_size, batch_size, output_buffer);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
@@ -592,10 +601,11 @@ forward_fp16(
     float truncate,
     float intensity_floor,
     int tile_size,
-    int batch_size
+    int batch_size,
+    const torch::Tensor& output_buffer
 ) {
     return forward_impl<__half>(centers, conic, amps, L_row_norms,
-                                shape, truncate, intensity_floor, tile_size, batch_size);
+                                shape, truncate, intensity_floor, tile_size, batch_size, output_buffer);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>

@@ -116,7 +116,8 @@ forward(
     float truncate,
     float intensity_floor,
     int tile_size,
-    int batch_size
+    int batch_size,
+    const torch::Tensor& output_buffer = torch::Tensor()
 );
 
 // =============================================================================
@@ -179,7 +180,8 @@ forward_fp16(
     float truncate,
     float intensity_floor,
     int tile_size,
-    int batch_size
+    int batch_size,
+    const torch::Tensor& output_buffer = torch::Tensor()
 );
 
 /**
