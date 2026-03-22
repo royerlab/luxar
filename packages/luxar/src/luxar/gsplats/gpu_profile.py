@@ -378,7 +378,7 @@ def get_gpu_summary(
             gpus,
             key=lambda n: gpus[n].get("info", {}).get("total_memory_gb", 0),
         )
-        return gpus[conservative_name]["summary"]
+        return dict(gpus[conservative_name]["summary"])
 
     return None
 
