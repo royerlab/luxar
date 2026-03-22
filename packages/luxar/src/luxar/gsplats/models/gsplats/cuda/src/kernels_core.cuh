@@ -521,16 +521,20 @@ __global__ void rasterize_forward_kernel(
                     // Compute Mahalanobis distance squared
                     float dist_sq = mahalanobis_distance_sq<DIM>(d, &s_conic[i * CONIC_SIZE]);
 
-                    // OPTIMIZATION 1.2: Early rejection based on precomputed truncation
-                    // Skip expensive gaussian_intensity computation for distant pixels
-                    if (dist_sq > s_truncate_sq[i]) continue;
+                    // OPTIMIZATION: Warp-level early termination
+                    // If no thread in this warp is within truncation radius, skip __expf
+                    bool within_range = (dist_sq <= s_truncate_sq[i]);
+                    unsigned int warp_in_range = __ballot_sync(0xFFFFFFFF, within_range);
+                    if (warp_in_range == 0) continue;
 
-                    // Compute intensity (only for pixels within truncation radius)
-                    float intensity = gaussian_intensity(dist_sq, s_amps[i]);
+                    if (within_range) {
+                        // Compute intensity (only for pixels within truncation radius)
+                        float intensity = gaussian_intensity(dist_sq, s_amps[i]);
 
-                    // Skip if below threshold
-                    if (intensity >= intensity_floor) {
-                        intensity_sum += intensity;
+                        // Skip if below threshold
+                        if (intensity >= intensity_floor) {
+                            intensity_sum += intensity;
+                        }
                     }
                 }
             }
