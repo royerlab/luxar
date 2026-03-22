@@ -338,11 +338,11 @@ class GaussianSplatModel(nn.Module):
 
         # L -> diag/off raw (diag via inverse-softplus)
         diag = torch.diagonal(Ls, dim1=1, dim2=2)  # (N,d)
-        # Avoid zero/neg
+        # Subtract sigma_min_diag before inverse softplus (matches _build_L: sigma_min + softplus(raw))
         eps = 1e-6
-        diag = torch.clamp(diag, min=eps)
+        diag_shifted = torch.clamp(diag - self.sigma_min_diag, min=eps)
         L_diag_raw = torch.tensor(
-            stable_inverse_softplus(diag.detach().cpu().numpy()),
+            stable_inverse_softplus(diag_shifted.detach().cpu().numpy()),
             device=device,
             dtype=torch.float32,
         )

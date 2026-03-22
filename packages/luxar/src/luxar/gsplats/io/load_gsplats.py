@@ -11,6 +11,7 @@ import zarr
 
 from luxar.encoding import ArrayDecoder
 from luxar.gsplats import GSplatData
+from luxar.gsplats.gsplat_data import GSplatLOD
 
 
 def _extract_compressed_zarr(compressed_path: Path) -> Path:
@@ -127,9 +128,9 @@ def load_gsplats(
             )
 
         format_version = root.attrs.get("format_version")
-        if format_version != "1.0":
+        if format_version not in ("1.0", "1.1"):
             raise ValueError(
-                f"Unsupported format_version: {format_version}, expected '1.0'"
+                f"Unsupported format_version: {format_version}, expected '1.0' or '1.1'"
             )
 
         # Get splats group
@@ -138,28 +139,9 @@ def load_gsplats(
         # Create decoder
         decoder = ArrayDecoder()
 
-        # Decode arrays (automatically handles encoding metadata)
-        centers = decoder.decode(splats_group["centers"], root)
-        amplitudes = decoder.decode(splats_group["amplitudes"], root)
-        cholesky_factors = decoder.decode(splats_group["cholesky_factors"], root)
-
-        # Decode optional arrays
-        if "colors" in splats_group:
-            colors = decoder.decode(splats_group["colors"], root)
-        else:
-            colors = None
-
-        # Note: old files may contain a "sharpnesses" array — we simply ignore it.
-
-        # Build stats dictionary
+        # Build root-level stats dictionary
         stats: Dict[str, Any] = {}
-
         if include_stats:
-            # Add basic metadata
-            stats["n_splats"] = splats_group.attrs.get("n_splats")
-            stats["ndim"] = splats_group.attrs.get("ndim")
-            stats["ordering"] = splats_group.attrs.get("ordering", "none")
-
             # Add fitting info if present
             if "fitting" in root:
                 fitting_group = root["fitting"]
@@ -179,14 +161,60 @@ def load_gsplats(
             if "description" in root.attrs:
                 stats["description"] = root.attrs["description"]
 
-        # Create data object with colors
-        data = GSplatData(
-            centers=centers,
-            amplitudes=amplitudes,
-            cholesky_factors=cholesky_factors,
-            colors=colors,
-            stats=stats,
-        )
+        if format_version == "1.1":
+            # v1.1: Multi-LOD format with per-LOD groups
+            n_lods = splats_group.attrs.get("n_lods", 1)
+            lods = []
+            for i in range(n_lods):
+                lod_group = splats_group[f"lod_{i}"]
+                lod_centers = decoder.decode(lod_group["centers"], root)
+                lod_amplitudes = decoder.decode(lod_group["amplitudes"], root)
+                lod_cholesky = decoder.decode(lod_group["cholesky_factors"], root)
+                lod_colors = (
+                    decoder.decode(lod_group["colors"], root)
+                    if "colors" in lod_group
+                    else None
+                )
+                lod_stats: Dict[str, Any] = {}
+                if include_stats:
+                    lod_stats_raw = lod_group.attrs.get("lod_stats", {})
+                    if isinstance(lod_stats_raw, dict):
+                        lod_stats = dict(lod_stats_raw)
+                    lod_stats["n_splats"] = lod_group.attrs.get("n_splats")
+                    lod_stats["ndim"] = lod_group.attrs.get("ndim")
+                    lod_stats["ordering"] = lod_group.attrs.get("ordering", "none")
+                lods.append(
+                    GSplatLOD(
+                        centers=lod_centers,
+                        amplitudes=lod_amplitudes,
+                        cholesky_factors=lod_cholesky,
+                        colors=lod_colors,
+                        stats=lod_stats,
+                    )
+                )
+            data = GSplatData(lods=lods, stats=stats)
+        else:
+            # v1.0: Flat format (single LOD)
+            centers = decoder.decode(splats_group["centers"], root)
+            amplitudes = decoder.decode(splats_group["amplitudes"], root)
+            cholesky_factors = decoder.decode(splats_group["cholesky_factors"], root)
+            colors = (
+                decoder.decode(splats_group["colors"], root)
+                if "colors" in splats_group
+                else None
+            )
+            # Note: old files may contain a "sharpnesses" array — we simply ignore it.
+            if include_stats:
+                stats["n_splats"] = splats_group.attrs.get("n_splats")
+                stats["ndim"] = splats_group.attrs.get("ndim")
+                stats["ordering"] = splats_group.attrs.get("ordering", "none")
+            data = GSplatData(
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky_factors,
+                colors=colors,
+                stats=stats,
+            )
 
         return data
 

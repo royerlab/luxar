@@ -163,6 +163,36 @@ INSTANTIATE_GLOBAL(8)
 
 #undef INSTANTIATE_GLOBAL
 
+// Splat-centric forward kernel instantiations (no BATCH_SIZE dependency)
+#define INSTANTIATE_SPLAT_FWD(D) \
+    template void launch_rasterize_forward_splat_centric<D, float>(const float*, const float*, const float*, int, const int*, float, float, float*, bool*, int*, int64_t, int, int*, const int*, cudaStream_t); \
+    template void launch_rasterize_forward_splat_centric<D, __half>(const __half*, const __half*, const __half*, int, const int*, float, float, float*, bool*, int*, int64_t, int, int*, const int*, cudaStream_t);
+
+INSTANTIATE_SPLAT_FWD(2)
+INSTANTIATE_SPLAT_FWD(3)
+INSTANTIATE_SPLAT_FWD(4)
+INSTANTIATE_SPLAT_FWD(5)
+INSTANTIATE_SPLAT_FWD(6)
+INSTANTIATE_SPLAT_FWD(7)
+INSTANTIATE_SPLAT_FWD(8)
+
+#undef INSTANTIATE_SPLAT_FWD
+
+// Splat-centric backward kernel instantiations (no BATCH_SIZE dependency)
+#define INSTANTIATE_SPLAT_BWD(D) \
+    template void launch_rasterize_backward_splat_centric<D, float>(const float*, const float*, const float*, const float*, int, const int*, float, float, float*, float*, float*, float*, cudaStream_t); \
+    template void launch_rasterize_backward_splat_centric<D, __half>(const float*, const __half*, const __half*, const __half*, int, const int*, float, float, float*, float*, float*, float*, cudaStream_t);
+
+INSTANTIATE_SPLAT_BWD(2)
+INSTANTIATE_SPLAT_BWD(3)
+INSTANTIATE_SPLAT_BWD(4)
+INSTANTIATE_SPLAT_BWD(5)
+INSTANTIATE_SPLAT_BWD(6)
+INSTANTIATE_SPLAT_BWD(7)
+INSTANTIATE_SPLAT_BWD(8)
+
+#undef INSTANTIATE_SPLAT_BWD
+
 // =============================================================================
 // UTILITY FUNCTIONS
 // =============================================================================
@@ -265,202 +295,71 @@ void dispatch_forward_impl(
 
     auto device = centers.device();
 
-    // Allocate binning state
-    state.tile_counts = torch::zeros({num_tiles}, torch::TensorOptions().dtype(torch::kInt32).device(device));
-    state.global_splat_flags = torch::zeros({N}, torch::TensorOptions().dtype(torch::kBool).device(device));
-    state.num_tiles = num_tiles;
+    // OPTIMIZATION: Splat-centric forward — eliminates the ENTIRE tile binning pipeline.
+    // Instead of: preprocess → prefix_sum → bin → rasterize_fwd → global_fwd (5 kernels + sync)
+    // Now: output.zero_() → 1 splat-centric kernel (each block = 1 splat, atomicAdd to output)
+    //
+    // This eliminates: ~13 tensor allocations, 4 kernel launches, CUB prefix sum,
+    // cudaStreamSynchronize, shared memory loading/barriers, tile binning entirely.
 
-    // Allocate AABB cache (written by preprocess, read by bin)
-    state.aabb_lo = torch::empty({N, dim}, torch::TensorOptions().dtype(torch::kInt32).device(device));
-    state.aabb_hi = torch::empty({N, dim}, torch::TensorOptions().dtype(torch::kInt32).device(device));
-
-    // Atomic counter for global splats (avoids expensive torch::nonzero when 0)
-    auto global_count_tensor = torch::zeros({1}, torch::TensorOptions().dtype(torch::kInt32).device(device));
-
-    // Copy shape and tile_dims to device
-    // OPTIMIZATION: Store in BinningState for reuse in backward pass
+    // Only keep shape_tensor for backward pass compatibility
     state.shape_tensor = torch::tensor(std::vector<int>(shape.begin(), shape.end()),
         torch::TensorOptions().dtype(torch::kInt32).device(device));
-    state.tile_dims_tensor = torch::tensor(tile_dims,
+    auto tile_dims_vec = compute_tile_dims(shape, tile_size);
+    state.tile_dims_tensor = torch::tensor(tile_dims_vec,
         torch::TensorOptions().dtype(torch::kInt32).device(device));
     state.tile_size = tile_size;
+    state.num_tiles = num_tiles;
 
-    auto& shape_tensor = state.shape_tensor;
-    auto& tile_dims_tensor = state.tile_dims_tensor;
+    // BinningState populated for API/diagnostic compatibility (not used by splat-centric kernels)
+    state.tile_counts = torch::zeros({num_tiles}, torch::TensorOptions().dtype(torch::kInt32).device(device));
+    state.tile_offsets = torch::zeros({num_tiles}, torch::TensorOptions().dtype(torch::kInt64).device(device));
+    state.tile_content = torch::empty({0}, torch::TensorOptions().dtype(torch::kInt32).device(device));
+    state.total_pairs = 0;
+
+    // Global splat detection (lightweight: just flags + counter in the splat-centric kernel)
+    state.global_splat_flags = torch::zeros({N}, torch::TensorOptions().dtype(torch::kBool).device(device));
+    auto global_count_tensor = torch::zeros({1}, torch::TensorOptions().dtype(torch::kInt32).device(device));
 
     // Extract typed data pointers
     const InputDType* centers_ptr = get_data_ptr<InputDType>(centers);
-    const InputDType* amps_ptr = get_data_ptr<InputDType>(amps);
-    const InputDType* L_row_norms_ptr = get_data_ptr<InputDType>(L_row_norms);
     const InputDType* conic_ptr = get_data_ptr<InputDType>(conic);
 
-    // Launch preprocess kernel
+    // NOTE: output is ALREADY zero-initialized by forward_impl
+    // (either torch::zeros for first call, or pre-zeroed buffer from backward)
+
+    // Single kernel launch: each block processes one splat
+    // Also computes global splat flags as a side effect (thread 0 per block)
     DIM_DISPATCH(dim,
-        launch_preprocess<D, InputDType>(
-            centers_ptr, amps_ptr, L_row_norms_ptr,
+        launch_rasterize_forward_splat_centric<D, InputDType>(
+            centers_ptr, conic_ptr,
+            get_data_ptr<InputDType>(amps),
             N,
-            shape_tensor.data_ptr<int>(),
-            tile_dims_tensor.data_ptr<int>(),
-            tile_size, truncate, intensity_floor,
-            state.tile_counts.data_ptr<int>(),
+            state.shape_tensor.data_ptr<int>(),
+            truncate, intensity_floor,
+            output.data_ptr<float>(),
             state.global_splat_flags.data_ptr<bool>(),
-            state.aabb_lo.data_ptr<int>(),
-            state.aabb_hi.data_ptr<int>(),
-            num_tiles,
             global_count_tensor.data_ptr<int>(),
+            num_tiles,
+            tile_size,
+            state.tile_counts.data_ptr<int>(),
+            state.tile_dims_tensor.data_ptr<int>(),
             stream)
     );
 
     CUDA_CHECK_LAST();
 
-    // OPTIMIZATION: Issue global_count memcpy early (right after preprocess kernel writes it).
-    // This will be read after the single sync below, eliminating a second sync later.
+    // Read global splat count (async memcpy + sync only if count > 0)
     int h_global_count = 0;
     cudaMemcpyAsync(&h_global_count, global_count_tensor.data_ptr<int>(),
         sizeof(int), cudaMemcpyDeviceToHost, stream);
-
-    // Compute prefix sum for tile offsets
-    state.tile_offsets = torch::empty({num_tiles}, torch::TensorOptions().dtype(torch::kInt64).device(device));
-
-    size_t temp_bytes = 0;
-    cub::DeviceScan::ExclusiveSum(
-        nullptr, temp_bytes,
-        state.tile_counts.data_ptr<int>(),
-        state.tile_offsets.data_ptr<int64_t>(),
-        (int)num_tiles, stream
-    );
-
-    state.scan_temp_storage = torch::empty({(int64_t)temp_bytes},
-        torch::TensorOptions().dtype(torch::kUInt8).device(device));
-    state.scan_temp_bytes = temp_bytes;
-
-    cub::DeviceScan::ExclusiveSum(
-        state.scan_temp_storage.data_ptr<uint8_t>(), temp_bytes,
-        state.tile_counts.data_ptr<int>(),
-        state.tile_offsets.data_ptr<int64_t>(),
-        (int)num_tiles, stream
-    );
-
-    CUDA_CHECK_LAST();
-
-    // Compute total pairs from last offset + last count
-    // Note: h_global_count memcpy was issued above — all three memcpys complete at this sync
-    int64_t last_offset = 0;
-    int last_count = 0;
-    cudaMemcpyAsync(&last_offset, state.tile_offsets.data_ptr<int64_t>() + num_tiles - 1,
-        sizeof(int64_t), cudaMemcpyDeviceToHost, stream);
-    cudaMemcpyAsync(&last_count, state.tile_counts.data_ptr<int>() + num_tiles - 1,
-        sizeof(int), cudaMemcpyDeviceToHost, stream);
     cudaStreamSynchronize(stream);
 
-    state.total_pairs = last_offset + last_count;
-
-    // Allocate tile content
-    state.tile_content = torch::empty({state.total_pairs},
-        torch::TensorOptions().dtype(torch::kInt32).device(device));
-    state.tile_write_heads = torch::zeros({num_tiles},
-        torch::TensorOptions().dtype(torch::kInt32).device(device));
-
-    // Launch binning kernel (not templated on InputDType - uses cached int AABBs)
-    DIM_DISPATCH(dim,
-        launch_bin<D>(
-            state.aabb_lo.data_ptr<int>(),
-            state.aabb_hi.data_ptr<int>(),
-            state.global_splat_flags.data_ptr<bool>(),
-            N,
-            tile_dims_tensor.data_ptr<int>(),
-            state.tile_offsets.data_ptr<int64_t>(),
-            state.tile_write_heads.data_ptr<int>(),
-            state.tile_content.data_ptr<int>(),
-            num_tiles, stream)
-    );
-
-    CUDA_CHECK_LAST();
-
-    // Initialize output to zero
-    output.zero_();
-
-    // Launch rasterization kernel
-    // OPTIMIZATION: Pass host tile_dims for 3D grid launch (2D/3D volumes)
-    // Not all batch_size/dim combinations are instantiated due to shared memory limits:
-    //   Batch 256: dims 2-4 only | Batch 128: dims 2-6 only | Batch 32: all dims
-    int effective_batch = batch_size;
-    if (dim >= 7 && effective_batch > 32) effective_batch = 32;
-    else if (dim >= 5 && effective_batch > 128) effective_batch = 128;
-
-    // Macro for rasterize forward launch (used by batch/dim dispatch below)
-    #define LAUNCH_RASTER_FWD(D_val, BATCH_val) \
-        launch_rasterize_forward<D_val, BATCH_val, InputDType>( \
-            centers_ptr, conic_ptr, amps_ptr, \
-            N, \
-            shape_tensor.data_ptr<int>(), \
-            tile_dims_tensor.data_ptr<int>(), \
-            tile_size, truncate, intensity_floor, \
-            state.tile_offsets.data_ptr<int64_t>(), \
-            state.tile_counts.data_ptr<int>(), \
-            state.tile_content.data_ptr<int>(), \
-            output.data_ptr<float>(), \
-            num_tiles, tile_dims, stream)
-
-    switch (effective_batch) {
-        case 32:
-            DIM_DISPATCH(dim, LAUNCH_RASTER_FWD(D, 32));
-            break;
-        case 128:
-            switch (dim) {
-                case 2: LAUNCH_RASTER_FWD(2, 128); break;
-                case 3: LAUNCH_RASTER_FWD(3, 128); break;
-                case 4: LAUNCH_RASTER_FWD(4, 128); break;
-                case 5: LAUNCH_RASTER_FWD(5, 128); break;
-                case 6: LAUNCH_RASTER_FWD(6, 128); break;
-                default: TORCH_CHECK(false, "Unsupported dimension for batch_size 128: ", dim);
-            }
-            break;
-        case 256:
-            switch (dim) {
-                case 2: LAUNCH_RASTER_FWD(2, 256); break;
-                case 3: LAUNCH_RASTER_FWD(3, 256); break;
-                case 4: LAUNCH_RASTER_FWD(4, 256); break;
-                default: TORCH_CHECK(false, "Unsupported dimension for batch_size 256: ", dim);
-            }
-            break;
-        default: TORCH_CHECK(false, "Unsupported batch_size: ", effective_batch, ". Must be 32, 128, or 256.");
-    }
-    #undef LAUNCH_RASTER_FWD
-
-    CUDA_CHECK_LAST();
-
-    // ==========================================================================
-    // GLOBAL SPLAT HANDLING
-    // ==========================================================================
-    // Global splats touch too many tiles (>10% AND >1024 tiles).
-    // h_global_count was already read via early memcpy + sync above (no second sync needed).
-
     state.num_global_splats = h_global_count;
-
     if (h_global_count > 0) {
         auto global_indices = torch::nonzero(state.global_splat_flags);
         state.global_splat_ids = global_indices.squeeze(1).to(torch::kInt32).contiguous();
-        // Use actual count from nonzero (authoritative) rather than atomic counter
         state.num_global_splats = (int)global_indices.size(0);
-
-        int64_t num_pixels = 1;
-        for (int d = 0; d < dim; d++) {
-            num_pixels *= shape[d];
-        }
-
-        DIM_DISPATCH(dim,
-            launch_rasterize_global_forward<D, InputDType>(
-                centers_ptr, conic_ptr, amps_ptr,
-                state.global_splat_ids.data_ptr<int>(),
-                state.num_global_splats,
-                shape_tensor.data_ptr<int>(),
-                truncate, intensity_floor,
-                output.data_ptr<float>(),
-                num_pixels, stream)
-        );
-
-        CUDA_CHECK_LAST();
     } else {
         state.global_splat_ids = torch::empty({0}, torch::TensorOptions().dtype(torch::kInt32).device(device));
     }
@@ -496,7 +395,8 @@ void dispatch_backward_impl(
     torch::Tensor& d_conic,
     torch::Tensor& d_amps,
     const torch::Tensor& shape_tensor_cached,
-    const torch::Tensor& tile_dims_tensor_cached
+    const torch::Tensor& tile_dims_tensor_cached,
+    const torch::Tensor& output_to_zero
 ) {
     cudaStream_t stream = c10::cuda::getCurrentCUDAStream().stream();
 
@@ -513,92 +413,33 @@ void dispatch_backward_impl(
     auto tile_dims_tensor = tile_dims_tensor_cached.defined() ? tile_dims_tensor_cached :
         torch::tensor(tile_dims, torch::TensorOptions().dtype(torch::kInt32).device(device));
 
-    // Zero gradient buffers
-    d_centers.zero_();
-    d_conic.zero_();
-    d_amps.zero_();
-
     // Extract typed data pointers
     const InputDType* centers_ptr = get_data_ptr<InputDType>(centers);
     const InputDType* conic_ptr = get_data_ptr<InputDType>(conic);
     const InputDType* amps_ptr = get_data_ptr<InputDType>(amps);
 
-    // Clamp batch_size based on dimension due to shared memory constraints
-    int effective_batch = batch_size;
-    if (dim >= 7 && effective_batch > 32) effective_batch = 32;
-    else if (dim >= 5 && effective_batch > 128) effective_batch = 128;
-
-    // Macro for rasterize backward launch
-    #define LAUNCH_RASTER_BWD(D_val, BATCH_val) \
-        launch_rasterize_backward<D_val, BATCH_val, InputDType>( \
-            grad_output.data_ptr<float>(), \
-            centers_ptr, conic_ptr, amps_ptr, \
-            N, \
-            shape_tensor.data_ptr<int>(), \
-            tile_dims_tensor.data_ptr<int>(), \
-            tile_size, truncate, intensity_floor, \
-            tile_offsets.data_ptr<int64_t>(), \
-            tile_counts.data_ptr<int>(), \
-            tile_content.data_ptr<int>(), \
-            d_centers.data_ptr<float>(), \
-            d_conic.data_ptr<float>(), \
-            d_amps.data_ptr<float>(), \
-            num_tiles, tile_dims, stream)
-
-    switch (effective_batch) {
-        case 32:
-            DIM_DISPATCH(dim, LAUNCH_RASTER_BWD(D, 32));
-            break;
-        case 128:
-            switch (dim) {
-                case 2: LAUNCH_RASTER_BWD(2, 128); break;
-                case 3: LAUNCH_RASTER_BWD(3, 128); break;
-                case 4: LAUNCH_RASTER_BWD(4, 128); break;
-                case 5: LAUNCH_RASTER_BWD(5, 128); break;
-                case 6: LAUNCH_RASTER_BWD(6, 128); break;
-                default: TORCH_CHECK(false, "Unsupported dimension for batch_size 128: ", dim);
-            }
-            break;
-        case 256:
-            switch (dim) {
-                case 2: LAUNCH_RASTER_BWD(2, 256); break;
-                case 3: LAUNCH_RASTER_BWD(3, 256); break;
-                case 4: LAUNCH_RASTER_BWD(4, 256); break;
-                default: TORCH_CHECK(false, "Unsupported dimension for batch_size 256: ", dim);
-            }
-            break;
-        default: TORCH_CHECK(false, "Unsupported batch_size: ", effective_batch, ". Must be 32, 128, or 256.");
-    }
-    #undef LAUNCH_RASTER_BWD
+    // OPTIMIZATION: Splat-centric backward — each block processes ONE splat,
+    // iterating over all voxels in its AABB. This replaces BOTH the tile-centric
+    // backward AND global splat backward kernels.
+    // Benefits: no tile binning dependency, no global atomics, no shared memory
+    // gradient accumulators, handles all splats (including global) uniformly.
+    // Note: gradient buffers are NOT pre-zeroed — the kernel writes directly
+    // (each block owns its splat exclusively, no concurrent writes).
+    DIM_DISPATCH(dim,
+        launch_rasterize_backward_splat_centric<D, InputDType>(
+            grad_output.data_ptr<float>(),
+            centers_ptr, conic_ptr, amps_ptr,
+            N,
+            shape_tensor.data_ptr<int>(),
+            truncate, intensity_floor,
+            d_centers.data_ptr<float>(),
+            d_conic.data_ptr<float>(),
+            d_amps.data_ptr<float>(),
+            output_to_zero.defined() ? output_to_zero.data_ptr<float>() : nullptr,
+            stream)
+    );
 
     CUDA_CHECK_LAST();
-
-    // ==========================================================================
-    // GLOBAL SPLAT BACKWARD PASS
-    // ==========================================================================
-    int n_global_splats = (int)global_splat_ids.size(0);
-    if (n_global_splats > 0) {
-        int64_t num_pixels = 1;
-        for (int d = 0; d < dim; d++) {
-            num_pixels *= shape[d];
-        }
-
-        DIM_DISPATCH(dim,
-            launch_rasterize_global_backward<D, InputDType>(
-                grad_output.data_ptr<float>(),
-                centers_ptr, conic_ptr, amps_ptr,
-                global_splat_ids.data_ptr<int>(),
-                n_global_splats,
-                shape_tensor.data_ptr<int>(),
-                truncate, intensity_floor,
-                d_centers.data_ptr<float>(),
-                d_conic.data_ptr<float>(),
-                d_amps.data_ptr<float>(),
-                num_pixels, stream)
-        );
-
-        CUDA_CHECK_LAST();
-    }
 }
 
 // =============================================================================
@@ -622,7 +463,8 @@ forward_impl(
     float truncate,
     float intensity_floor,
     int tile_size,
-    int batch_size
+    int batch_size,
+    const torch::Tensor& output_buffer
 ) {
     constexpr torch::ScalarType expected_dtype =
         std::is_same_v<InputDType, __half> ? torch::kFloat16 : torch::kFloat32;
@@ -650,8 +492,15 @@ forward_impl(
         num_pixels *= s;
     }
 
-    // Allocate output (always FP32)
-    auto output = torch::zeros({num_pixels}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
+    // OPTIMIZATION: Reuse pre-zeroed output buffer if provided (from backward zeroing).
+    // This eliminates the 0.56ms output.zero_() for training iterations after the first.
+    torch::Tensor output;
+    if (output_buffer.defined() && output_buffer.numel() == num_pixels &&
+        output_buffer.dtype() == torch::kFloat32 && output_buffer.is_cuda()) {
+        output = output_buffer;  // Reuse pre-zeroed buffer (skip alloc + zero)
+    } else {
+        output = torch::zeros({num_pixels}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
+    }
 
     // Run forward pass
     BinningState state;
@@ -690,7 +539,8 @@ backward_impl(
     int tile_size,
     int batch_size,
     const torch::Tensor& shape_tensor_cached,
-    const torch::Tensor& tile_dims_tensor_cached
+    const torch::Tensor& tile_dims_tensor_cached,
+    const torch::Tensor& output_to_zero
 ) {
     constexpr torch::ScalarType expected_dtype =
         std::is_same_v<InputDType, __half> ? torch::kFloat16 : torch::kFloat32;
@@ -716,7 +566,8 @@ backward_impl(
                                        tile_offsets, tile_counts, tile_content, global_splat_ids,
                                        shape, truncate, intensity_floor, tile_size, batch_size,
                                        d_centers, d_conic, d_amps,
-                                       shape_tensor_cached, tile_dims_tensor_cached);
+                                       shape_tensor_cached, tile_dims_tensor_cached,
+                                       output_to_zero);
 
     return std::make_tuple(d_centers, d_conic, d_amps);
 }
@@ -733,10 +584,11 @@ forward(
     float truncate,
     float intensity_floor,
     int tile_size,
-    int batch_size
+    int batch_size,
+    const torch::Tensor& output_buffer
 ) {
     return forward_impl<float>(centers, conic, amps, L_row_norms,
-                               shape, truncate, intensity_floor, tile_size, batch_size);
+                               shape, truncate, intensity_floor, tile_size, batch_size, output_buffer);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
@@ -749,10 +601,11 @@ forward_fp16(
     float truncate,
     float intensity_floor,
     int tile_size,
-    int batch_size
+    int batch_size,
+    const torch::Tensor& output_buffer
 ) {
     return forward_impl<__half>(centers, conic, amps, L_row_norms,
-                                shape, truncate, intensity_floor, tile_size, batch_size);
+                                shape, truncate, intensity_floor, tile_size, batch_size, output_buffer);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
@@ -771,12 +624,13 @@ backward(
     int tile_size,
     int batch_size,
     const torch::Tensor& shape_tensor_cached,
-    const torch::Tensor& tile_dims_tensor_cached
+    const torch::Tensor& tile_dims_tensor_cached,
+    const torch::Tensor& output_to_zero
 ) {
     return backward_impl<float>(grad_output, centers, conic, amps,
                                 tile_offsets, tile_counts, tile_content, global_splat_ids,
                                 shape, truncate, intensity_floor, tile_size, batch_size,
-                                shape_tensor_cached, tile_dims_tensor_cached);
+                                shape_tensor_cached, tile_dims_tensor_cached, output_to_zero);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
@@ -795,10 +649,11 @@ backward_fp16(
     int tile_size,
     int batch_size,
     const torch::Tensor& shape_tensor_cached,
-    const torch::Tensor& tile_dims_tensor_cached
+    const torch::Tensor& tile_dims_tensor_cached,
+    const torch::Tensor& output_to_zero
 ) {
     return backward_impl<__half>(grad_output, centers, conic, amps,
                                  tile_offsets, tile_counts, tile_content, global_splat_ids,
                                  shape, truncate, intensity_floor, tile_size, batch_size,
-                                 shape_tensor_cached, tile_dims_tensor_cached);
+                                 shape_tensor_cached, tile_dims_tensor_cached, output_to_zero);
 }
