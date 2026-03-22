@@ -6,7 +6,7 @@ Performance-optimized implementation using batched tensor operations.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 from arbol import aprint, asection
@@ -193,7 +193,7 @@ def apply_dynamic_operations(
         # Note: peak_locations only contains positive residual locations (undershoot),
         # so residual value is already positive
         strongest_peak_coords = peak_locations[0]  # Sorted by strength
-        strongest_peak_residual = residual[strongest_peak_coords].item()
+        strongest_peak_residual = residual[tuple(strongest_peak_coords.long())].item()
 
         if strongest_peak_residual < max_abs_error_threshold:
             if verbose:
@@ -250,9 +250,9 @@ def apply_dynamic_operations(
             return False
 
         # === STEP 4: Relocate Splats (BATCHED) ===
-        # Convert peak indices to coordinates (still vectorized)
-        peak_coords_tensor = torch.tensor(
-            peak_locations, dtype=torch.float32, device=centers.device
+        # Index peak coordinates by matched indices (already a tensor)
+        peak_coords_tensor = peak_locations.to(
+            device=centers.device, dtype=torch.float32
         )[matched_peak_indices]
 
         # Perform all relocations in one batched operation (with optimizer state reset)
@@ -272,7 +272,7 @@ def apply_dynamic_operations(
                 for i in range(sample_size):
                     splat_idx = int(matched_splat_indices[i].item())
                     peak_idx = int(matched_peak_indices[i].item())
-                    peak_coords = peak_locations[peak_idx]
+                    peak_coords = tuple(peak_locations[peak_idx].long().tolist())
                     aprint(
                         f"Splat {splat_idx} → {peak_coords} "
                         f"(importance was {importance[splat_idx]:.6f})"
@@ -313,7 +313,7 @@ def _select_weak_splats(
     residual: torch.Tensor,
     relocation_percentile: float,
     relocation_tracker: Optional[RecentlyRelocatedTracker] = None,
-) -> List[int]:
+) -> torch.Tensor:
     """
     Select weak splats that are safe to relocate.
 
@@ -335,7 +335,7 @@ def _select_weak_splats(
         relocation_tracker: Optional tracker for cooldown filtering
 
     Returns:
-        List of splat indices sorted by importance (weakest first)
+        Tensor of splat indices sorted by importance (weakest first)
     """
     n_splats = len(importance)
     n_candidates = max(1, int(n_splats * relocation_percentile / 100.0))
@@ -423,8 +423,7 @@ def _select_weak_splats(
             if len(expanded_eligible) > len(candidates_tensor):
                 candidates_tensor = expanded_eligible[:n_candidates]
 
-    # Convert to list only at the end (single GPU→CPU transfer)
-    return candidates_tensor.tolist()
+    return candidates_tensor
 
 
 def _compute_peak_coverage_batch(
@@ -554,8 +553,8 @@ def _match_weak_splats_to_peaks_batch(
     centers: torch.Tensor,
     Ls: torch.Tensor,
     amps: torch.Tensor,
-    weak_splat_indices: List[int],
-    peak_locations: List[Tuple[int, ...]],
+    weak_splat_indices: torch.Tensor,
+    peak_locations: torch.Tensor,
     min_contribution_threshold: float,
     max_relocations: int | None,
     enable_coverage_check: bool,
@@ -593,11 +592,9 @@ def _match_weak_splats_to_peaks_batch(
         empty = torch.tensor([], dtype=torch.long, device=device)
         return empty, empty
 
-    # Convert peaks to tensor
-    peak_tensor = torch.tensor(peak_locations, dtype=torch.float32, device=device)
-
-    # Convert weak indices to tensor
-    weak_tensor = torch.tensor(weak_splat_indices, dtype=torch.long, device=device)
+    # Ensure tensors are on correct device
+    peak_tensor = peak_locations.to(device=device, dtype=torch.float32)
+    weak_tensor = weak_splat_indices.to(device=device, dtype=torch.long)
 
     if enable_coverage_check:
         # Original behavior: Skip peaks already covered by non-weak splats

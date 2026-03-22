@@ -66,10 +66,10 @@ class TestResidualPeakFinding:
         assert len(peaks) <= 3
         assert len(peaks) > 0
 
-        # Check that peaks contain the expected locations
-        peak_locations = set(peaks)
-        assert (5, 5) in peak_locations
-        assert (15, 15) in peak_locations
+        # Check that peaks contain the expected locations (peaks is now a tensor)
+        peak_tuples = {tuple(p.tolist()) for p in peaks}
+        assert (5, 5) in peak_tuples
+        assert (15, 15) in peak_tuples
 
     def test_find_residual_peaks_3d(self) -> None:
         """Test finding residual peaks in 3D volumes."""
@@ -83,9 +83,8 @@ class TestResidualPeakFinding:
         assert len(peaks) <= 2
         assert len(peaks) > 0
 
-        # Check that we get 3D coordinates
-        for peak in peaks:
-            assert len(peak) == 3
+        # Check that we get 3D coordinates (peaks is now a tensor of shape (K, 3))
+        assert peaks.shape[1] == 3
 
     def test_find_residual_peaks_empty(self) -> None:
         """Test behavior with no significant peaks."""
@@ -187,7 +186,7 @@ class TestWeakSplatSelection:
         )
 
         assert len(weak_indices) == 2  # 40% of 5 = 2
-        assert weak_indices == [1, 3]
+        assert weak_indices.tolist() == [1, 3]
 
     def test_select_weak_splats_minimum_one(self) -> None:
         """Test that at least one splat is always selected."""
@@ -202,7 +201,7 @@ class TestWeakSplatSelection:
             importance, centers, residual, relocation_percentile=1.0
         )
 
-        assert weak_indices == [0]
+        assert weak_indices.tolist() == [0]
 
 
 class TestGaussianSplatModel:
@@ -396,7 +395,7 @@ class TestDynamicOperationsIntegration:
         assert len(weak_indices) == expected_candidates
 
         sorted_indices = torch.argsort(importance).tolist()
-        assert weak_indices == sorted_indices[:expected_candidates]
+        assert weak_indices.tolist() == sorted_indices[:expected_candidates]
 
 
 class TestRelocationParameters:
