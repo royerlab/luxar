@@ -1,7 +1,7 @@
 """Configuration system for gsplat CLI commands.
 
 Provides:
-- Fitting presets (draft/standard/hifi)
+- Fitting presets (draft/standard/hifi/ultra)
 - YAML config loading with priority chain
 - Commented YAML config dump
 - Volume file loaders (.npy, .npz, .tiff, .zarr, imageio fallback)
@@ -33,6 +33,7 @@ class FitPreset(str, Enum):
     DRAFT = "draft"
     STANDARD = "standard"
     HIFI = "hifi"
+    ULTRA = "ultra"
 
 
 PRESETS: Dict[str, Dict[str, Any]] = {
@@ -92,7 +93,7 @@ def load_fit_config(
         CLI flags > YAML config > preset > function defaults
 
     Args:
-        preset: Preset name ("draft", "standard", "hifi") or None
+        preset: Preset name ("draft", "standard", "hifi", "ultra") or None
         config_path: Path to YAML config file or None
         cli_overrides: Dict of CLI-provided values (None values are ignored)
 
@@ -375,8 +376,15 @@ def _load_zarr_volume(
     if isinstance(store, zarr.Array):
         arr = store
     elif isinstance(store, zarr.Group):
-        if array_key:
-            arr = store[array_key]
+        if array_key is not None:
+            try:
+                arr = store[array_key]
+            except KeyError:
+                available = list(store.keys())
+                raise ValueError(
+                    f"Array key '{array_key}' not found in {path}. "
+                    f"Available keys: {available}"
+                )
             aprint(f"  Using array '{array_key}'")
         elif "0" in store:
             # OME-ZARR convention: "0" is highest resolution
@@ -499,12 +507,16 @@ def discover_ome_zarr_shape(
         path: Path to the ``.zarr`` store or ``.zarr.zip`` archive.
         axes_override: Explicit axis labels (e.g. ``["time","channel","z","y","x"]``).
             Overrides all auto-detection when provided.
+        array_key: Key path to a specific array within the zarr store
+            (e.g. ``"h2afva/fused"``).  When provided, skips auto-selection
+            and navigates directly to this array.
 
     Returns:
         :class:`OMEZarrInfo` with discovered metadata.
 
     Raises:
-        ValueError: If the zarr store has no arrays or is unreadable.
+        ValueError: If the zarr store has no arrays, ``array_key`` is not
+            found, or the store is unreadable.
     """
     import zarr
 
@@ -516,9 +528,16 @@ def discover_ome_zarr_shape(
         attrs: Dict[str, Any] = dict(getattr(store, "attrs", {}))
     elif isinstance(store, zarr.Group):
         attrs = dict(store.attrs)
-        if array_key:
+        if array_key is not None:
             # User-specified array key (may be nested, e.g. "h2afva/fused")
-            arr = store[array_key]
+            try:
+                arr = store[array_key]
+            except KeyError:
+                available = list(store.keys())
+                raise ValueError(
+                    f"Array key '{array_key}' not found in {path}. "
+                    f"Available keys: {available}"
+                )
         elif "0" in store:
             # OME-NGFF standard: resolution level "0" is highest resolution
             arr = store["0"]
