@@ -222,23 +222,25 @@ def generate_env_preamble(env: CapturedEnv) -> str:
         activate = os.path.join(env.virtual_env, "bin", "activate")
         lines.append(f"source {shlex.quote(activate)}")
 
-    # Module loads
-    for mod in env.loaded_modules:
-        lines.append(f"module load {shlex.quote(mod)}")
-
-    # Env vars (shell-escaped to prevent injection)
+    # Env vars BEFORE module loads — modules (gcc, cuda) append/prepend
+    # their own paths to LD_LIBRARY_PATH, and those must take priority
+    # over the captured (potentially stale) paths from plan time.
     for var, val in env.env_vars.items():
         # Skip CONDA_PREFIX/VIRTUAL_ENV — handled by activation
         if var in ("CONDA_PREFIX", "VIRTUAL_ENV"):
             continue
-        # LD_LIBRARY_PATH must prepend, not replace — module loads (gcc, cuda)
-        # set their own paths and a hard overwrite would break them.
+        # LD_LIBRARY_PATH: set as baseline; module loads will prepend theirs.
         if var == "LD_LIBRARY_PATH":
             lines.append(
                 f"export {var}={shlex.quote(val)}:${{{var}:-}}"
             )
         else:
             lines.append(f"export {var}={shlex.quote(val)}")
+
+    # Module loads AFTER env vars — modules prepend to LD_LIBRARY_PATH,
+    # so freshly-loaded CUDA/GCC libraries take priority over captured paths.
+    for mod in env.loaded_modules:
+        lines.append(f"module load {shlex.quote(mod)}")
 
     lines.append("")
     return "\n".join(lines)
