@@ -951,12 +951,8 @@ __global__ void rasterize_backward_kernel(
 
         // OPTIMIZATION 3.2: Cooperative write-back to global memory
         // This reduces atomicAdds per splat per tile (3D case)
-        // Skip splats with zero accumulated gradients (binned by AABB but
-        // no pixels actually within truncation range for this tile)
         __syncthreads();
         for (int i = threadIdx.x; i < batch_size; i += blockDim.x) {
-            // Quick check: if amp gradient is zero, no pixel contributed
-            if (s_d_amps_tile[i] == 0.0f) continue;
             int splat_idx = s_splat_ids[i];
             atomicAdd(&d_amps[splat_idx], s_d_amps_tile[i]);
             #pragma unroll
