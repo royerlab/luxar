@@ -125,7 +125,8 @@ def test_hatch_uses_python_310_plus():
     )
     version_str = result.stdout.strip()
     # Output like "(3, 12)"
-    major, minor = eval(version_str)
+    import ast
+    major, minor = ast.literal_eval(version_str)
     assert major == 3 and minor >= 10, (
         f"hatch env Python is {major}.{minor}, need >=3.10. "
         "hatch may be using the system Python 3.6."

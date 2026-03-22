@@ -66,21 +66,27 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     k_width = max(3, len(str(k_max)))
 
     # Build the fit command template (used in the loop body).
-    # Only pass --channel / --timepoint when there are multiple values,
-    # otherwise _load_zarr_volume's ndim heuristic may interpret them
-    # incorrectly (e.g. for 4D TZYX, passing --channel 0 would override
-    # --timepoint and always slice dim 0 = channel instead of timepoint).
+    # Pass --channel / --timepoint when:
+    #   - there are multiple values, OR
+    #   - slicing selected specific indices (even a single non-default one)
+    # Without slicing, omitting them lets _load_zarr_volume use its ndim
+    # heuristic, which avoids the 4D TZYX ambiguity (--channel 0 would
+    # override --timepoint).  With slicing, we must pass them to select
+    # the correct index even when only one is selected.
+    has_explicit_timepoints = manifest.timepoint_indices is not None
+    has_explicit_channels = manifest.channel_indices is not None
+
     fit_cmd_parts = [
         f'luxar gsplat fit {shlex.quote(manifest.input_path)} "$OUTPUT"',
         f"    --tile $K/{manifest.n_tiles}",
         f"    --tile-size {manifest.tile_size}",
         f"    --overlap {manifest.tile_overlap}",
     ]
-    if manifest.array_key:
+    if manifest.array_key is not None:
         fit_cmd_parts.append(f"    --array-key {shlex.quote(manifest.array_key)}")
-    if manifest.n_channels > 1:
+    if manifest.n_channels > 1 or has_explicit_channels:
         fit_cmd_parts.append("    --channel $C")
-    if manifest.n_timepoints > 1:
+    if manifest.n_timepoints > 1 or has_explicit_timepoints:
         fit_cmd_parts.append("    --timepoint $T")
     if manifest.preset:
         fit_cmd_parts.append(f"    --preset {manifest.preset}")
