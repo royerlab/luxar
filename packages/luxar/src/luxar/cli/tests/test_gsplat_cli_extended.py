@@ -1531,7 +1531,8 @@ class TestTransformCommand:
         assert result.exit_code == 0, f"transform failed: {result.stdout}"
 
         dimmed = GSplatData.load(out)
-        np.testing.assert_allclose(dimmed.amplitudes, original.amplitudes * 0.5, atol=1e-5)
+        # Save/load reorders splats (spatial ordering), so compare sorted values
+        np.testing.assert_allclose(np.sort(dimmed.amplitudes), np.sort(original.amplitudes * 0.5), atol=1e-5)
 
     def test_transform_rotate_z(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
