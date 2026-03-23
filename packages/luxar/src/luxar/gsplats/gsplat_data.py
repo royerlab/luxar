@@ -908,11 +908,30 @@ class GSplatData(_SplatArrayMixin):
             self.centers.dtype
         )
 
-        L = unpack_tril(self.cholesky_factors.astype(np.float64), d)
-        Sigma = L @ np.swapaxes(L, -2, -1)
-        Sigma_new = A @ Sigma @ A.T
-        L_new = np.linalg.cholesky(Sigma_new)
-        new_cholesky = pack_tril(L_new).astype(self.cholesky_factors.dtype)
+        # Fast path: diagonal matrix (e.g., per-axis scaling for anisotropy correction)
+        # Scale row i of Cholesky L by A[i,i] — no unpack/repack/cholesky needed.
+        is_diagonal = np.count_nonzero(A - np.diag(np.diagonal(A))) == 0
+        if is_diagonal:
+            diag = np.diagonal(A)
+            if np.any(diag <= 0):
+                raise ValueError(
+                    f"Diagonal scale factors must be positive, got {diag}"
+                )
+            # Build packed scale vector: row i has (i+1) elements, all scaled by diag[i]
+            tril_scales = np.concatenate(
+                [[diag[i]] * (i + 1) for i in range(d)]
+            ).astype(self.cholesky_factors.dtype)
+            new_cholesky = self.cholesky_factors * tril_scales
+        else:
+            # General case: unpack → covariance → transform → re-Cholesky → pack
+            # Note: an "orthogonal fast path" (L_new = A @ L) is tempting but
+            # WRONG because A @ L is not lower-triangular for general rotations,
+            # so pack_tril would discard upper-triangular information.
+            L = unpack_tril(self.cholesky_factors.astype(np.float64), d)
+            Sigma = L @ np.swapaxes(L, -2, -1)
+            Sigma_new = A @ Sigma @ A.T
+            L_new = np.linalg.cholesky(Sigma_new)
+            new_cholesky = pack_tril(L_new).astype(self.cholesky_factors.dtype)
 
         return GSplatData(
             centers=new_centers,

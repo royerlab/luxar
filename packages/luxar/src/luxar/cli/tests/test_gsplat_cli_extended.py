@@ -1462,3 +1462,159 @@ class TestCompareCommand:
         assert result.exit_code == 0, f"compare failed: {result.stdout}"
         assert "QUALITY COMPARISON" not in result.stdout
         assert json_path.exists()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Transform command tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestTransformCommand:
+    """Tests for luxar gsplat transform CLI command."""
+
+    def test_transform_scale(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Scale factors are applied correctly to centers."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        original = GSplatData.load(sample_gsplats)
+        out = tmp_path / "scaled.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "transform", str(sample_gsplats), str(out), "--scale", "2,3,4"],
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+        assert out.exists()
+
+        scaled = GSplatData.load(out)
+        assert scaled.n_splats == original.n_splats
+        # Save/load reorders splats (spatial ordering), so compare sorted values
+        np.testing.assert_allclose(np.sort(scaled.centers[:, 0]), np.sort(original.centers[:, 0] * 2), atol=1e-3)
+        np.testing.assert_allclose(np.sort(scaled.centers[:, 1]), np.sort(original.centers[:, 1] * 3), atol=1e-3)
+        np.testing.assert_allclose(np.sort(scaled.centers[:, 2]), np.sort(original.centers[:, 2] * 4), atol=1e-3)
+
+    def test_transform_center(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Centering moves the centroid to near origin."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out = tmp_path / "centered.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "transform", str(sample_gsplats), str(out), "--center"],
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+
+        centered = GSplatData.load(out)
+        # Amplitude-weighted centroid should be near zero
+        total_amp = centered.amplitudes.sum()
+        centroid = (centered.centers.T @ centered.amplitudes) / total_amp
+        np.testing.assert_allclose(centroid, 0.0, atol=1e-3)
+
+    def test_transform_scale_intensity(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Amplitude scaling works correctly."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        original = GSplatData.load(sample_gsplats)
+        out = tmp_path / "dimmed.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat", "transform", str(sample_gsplats), str(out),
+                "--scale-intensity", "0.5",
+            ],
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+
+        dimmed = GSplatData.load(out)
+        np.testing.assert_allclose(dimmed.amplitudes, original.amplitudes * 0.5, atol=1e-5)
+
+    def test_transform_rotate_z(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """90-degree Z rotation swaps X and Y (with sign flip)."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        original = GSplatData.load(sample_gsplats)
+        out = tmp_path / "rotated.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "transform", str(sample_gsplats), str(out), "--rotate-z", "90"],
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+
+        rotated = GSplatData.load(out)
+        # Save/load reorders splats (spatial ordering), so compare sorted values
+        # After 90° Z rotation: new_x = -old_y, new_y = old_x, z unchanged
+        expected_x = np.sort(-original.centers[:, 1])
+        expected_y = np.sort(original.centers[:, 0])
+        expected_z = np.sort(original.centers[:, 2])
+        np.testing.assert_allclose(np.sort(rotated.centers[:, 0]), expected_x, atol=1e-3)
+        np.testing.assert_allclose(np.sort(rotated.centers[:, 1]), expected_y, atol=1e-3)
+        np.testing.assert_allclose(np.sort(rotated.centers[:, 2]), expected_z, atol=1e-3)
+
+    def test_transform_combined(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Multiple transforms can be combined."""
+        out = tmp_path / "combined.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat", "transform", str(sample_gsplats), str(out),
+                "--scale", "1,1,2",
+                "--scale-intensity", "0.1",
+                "--center",
+            ],
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+        assert out.exists()
+
+    def test_transform_no_flags_errors(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Error when no transforms are specified."""
+        out = tmp_path / "noop.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "transform", str(sample_gsplats), str(out)],
+        )
+        assert result.exit_code != 0
+
+    def test_transform_wrong_scale_dims(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Error when scale factor count doesn't match ndim."""
+        out = tmp_path / "bad.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "transform", str(sample_gsplats), str(out), "--scale", "1,2"],
+        )
+        assert result.exit_code != 0
+
+    def test_transform_translate(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Translation shifts centers correctly."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        original = GSplatData.load(sample_gsplats)
+        out = tmp_path / "translated.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat", "transform", str(sample_gsplats), str(out),
+                "--translate", "10,20,30",
+            ],
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+
+        translated = GSplatData.load(out)
+        # Save/load reorders splats (spatial ordering), so compare sorted values
+        np.testing.assert_allclose(np.sort(translated.centers[:, 0]), np.sort(original.centers[:, 0] + 10), atol=1e-3)
+        np.testing.assert_allclose(np.sort(translated.centers[:, 1]), np.sort(original.centers[:, 1] + 20), atol=1e-3)
+        np.testing.assert_allclose(np.sort(translated.centers[:, 2]), np.sort(original.centers[:, 2] + 30), atol=1e-3)

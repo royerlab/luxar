@@ -33,7 +33,7 @@ export async function loadLinesChunkSpatialIndex(
   // Check if spatial ordering is enabled
   if (attrs.ordering === 'none' || !attrs.vertex_ordering || !attrs.segment_ordering) {
     log.info(
-      Modules.SPATIAL_INDEX_LOADER,
+      Modules.LINES_LOADER,
       `Lines node has no spatial ordering (ordering=${attrs.ordering})`
     );
     return null;
@@ -68,20 +68,20 @@ export async function loadLinesChunkSpatialIndex(
 
     if (vertexChunkBounds.length !== expectedVertexSize) {
       log.warning(
-        Modules.SPATIAL_INDEX_LOADER,
+        Modules.LINES_LOADER,
         `Vertex bounds size mismatch: got ${vertexChunkBounds.length}, expected ${expectedVertexSize}`
       );
     }
 
     if (segmentChunkBounds.length !== expectedSegmentSize) {
       log.warning(
-        Modules.SPATIAL_INDEX_LOADER,
+        Modules.LINES_LOADER,
         `Segment bounds size mismatch: got ${segmentChunkBounds.length}, expected ${expectedSegmentSize}`
       );
     }
 
     log.info(
-      Modules.SPATIAL_INDEX_LOADER,
+      Modules.LINES_LOADER,
       `Loaded Lines spatial index: ${vertexChunkCount} vertex chunks, ${segmentChunkCount} segment chunks`
     );
 
@@ -100,11 +100,11 @@ export async function loadLinesChunkSpatialIndex(
       error.message?.includes('Node not found')
     ) {
       log.info(
-        Modules.SPATIAL_INDEX_LOADER,
+        Modules.LINES_LOADER,
         'No chunk bounds found - Lines dataset has no spatial indexing'
       );
     } else {
-      log.error(Modules.SPATIAL_INDEX_LOADER, 'Failed to load Lines spatial index:', error);
+      log.error(Modules.LINES_LOADER, 'Failed to load Lines spatial index:', error);
     }
     return null;
   }
@@ -155,7 +155,7 @@ export function querySegmentChunksForView(
   }
 
   log.query(
-    Modules.SPATIAL_INDEX_LOADER,
+    Modules.LINES_LOADER,
     `Lines: Found ${matchingChunks.length}/${segmentChunkCount} segment chunks matching query`
   );
 
@@ -204,7 +204,7 @@ export function queryVertexChunksForView(
   }
 
   log.query(
-    Modules.SPATIAL_INDEX_LOADER,
+    Modules.LINES_LOADER,
     `Lines: Found ${matchingChunks.length}/${vertexChunkCount} vertex chunks matching query`
   );
 
@@ -323,7 +323,7 @@ export function mergeRanges(ranges: SegmentRange[]): SegmentRange[] {
 
   if (merged.length !== ranges.length) {
     log.info(
-      Modules.SPATIAL_INDEX_LOADER,
+      Modules.LINES_LOADER,
       `Merged ${ranges.length} ranges → ${merged.length} continuous ranges`
     );
   }
