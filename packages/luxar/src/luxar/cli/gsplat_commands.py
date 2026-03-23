@@ -1367,6 +1367,260 @@ def slice_dataset(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# transform — Apply spatial and intensity transforms to gsplat datasets
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _parse_csv_floats(value: str, expected: int, name: str) -> list[float]:
+    """Parse comma-separated float values and validate count matches expected dimensions."""
+    parts = [p.strip() for p in value.split(",")]
+    if len(parts) != expected:
+        raise typer.BadParameter(
+            f"--{name} expects {expected} comma-separated values (one per dimension), "
+            f"got {len(parts)}: '{value}'"
+        )
+    try:
+        return [float(p) for p in parts]
+    except ValueError as e:
+        raise typer.BadParameter(f"--{name} values must be numbers: {e}") from e
+
+
+@app_gsplat.command("transform")
+def transform_dataset(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr dataset"),
+    # Spatial transforms
+    scale_factors: Optional[str] = typer.Option(
+        None,
+        "--scale",
+        "-s",
+        help="Per-axis scale factors, comma-separated (e.g. '1,1,1,4')",
+    ),
+    translate_offset: Optional[str] = typer.Option(
+        None,
+        "--translate",
+        "-t",
+        help="Per-axis translation, comma-separated (e.g. '0,0,0,100')",
+    ),
+    rotate_x_deg: Optional[float] = typer.Option(
+        None, "--rotate-x", help="Rotate around X axis (degrees, 3D spatial dims only)"
+    ),
+    rotate_y_deg: Optional[float] = typer.Option(
+        None, "--rotate-y", help="Rotate around Y axis (degrees, 3D spatial dims only)"
+    ),
+    rotate_z_deg: Optional[float] = typer.Option(
+        None, "--rotate-z", help="Rotate around Z axis (degrees, 3D spatial dims only)"
+    ),
+    center: bool = typer.Option(
+        False, "--center", help="Center at amplitude-weighted centroid"
+    ),
+    # Intensity transforms
+    scale_intensity_factor: Optional[float] = typer.Option(
+        None, "--scale-intensity", help="Scale amplitudes by factor (e.g. 0.01)"
+    ),
+    normalize_intensity: Optional[float] = typer.Option(
+        None,
+        "--normalize-intensity",
+        help="Normalize amplitudes so max equals this value (e.g. 1.0)",
+    ),
+    # Output options
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode for output"
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
+    ),
+) -> None:
+    """Apply spatial and intensity transforms to a Gaussian splat dataset.
+
+    Multiple transforms can be combined in one command. They are applied
+    in a fixed order: scale → rotate → translate → center → scale-intensity →
+    normalize-intensity.
+
+    Examples:
+        # Fix microscopy anisotropy (Z=4x) and normalize brightness
+        luxar gsplat transform in.gsplats.zarr out.gsplats.zarr \\
+            --scale 4,1,1,1 --normalize-intensity 1.0 --center
+
+        # Translate and recenter
+        luxar gsplat transform in.gsplats.zarr out.gsplats.zarr \\
+            --translate 0,100,0 --center
+
+        # Rotate 90 degrees around Z axis
+        luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --rotate-z 90
+
+        # Just recenter at centroid
+        luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --center
+
+        # Normalize amplitudes to [0, 1]
+        luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --normalize-intensity 1.0
+
+        # Scale brightness only
+        luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --scale-intensity 0.5
+    """
+    try:
+        import numpy as np
+
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        encoding_map = {
+            "auto": EncodingMode.AUTO,
+            "precision": EncodingMode.PRECISION,
+            "memory": EncodingMode.MEMORY,
+        }
+        encoding_mode_obj = encoding_map[encoding_mode]
+
+        # Check that at least one transform is requested
+        has_transform = any([
+            scale_factors,
+            translate_offset,
+            rotate_x_deg is not None,
+            rotate_y_deg is not None,
+            rotate_z_deg is not None,
+            center,
+            scale_intensity_factor is not None,
+            normalize_intensity is not None,
+        ])
+        if not has_transform:
+            aprint("❌ No transforms specified. Use --help to see available options.")
+            raise typer.Exit(1)
+
+        with asection(f"Transforming: {input_path.name}"):
+            # Load
+            with asection("Loading dataset"):
+                data = GSplatData.load(input_path, include_stats=True)
+                aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+
+            d = data.ndim
+            transforms_applied: list[str] = []
+
+            # 1. Scale (per-axis)
+            if scale_factors is not None:
+                factors = _parse_csv_floats(scale_factors, d, "scale")
+                with asection("Applying scale"):
+                    aprint(f"Scale factors: {factors}")
+                    scale_matrix = np.diag(factors)
+                    data = data.transform(scale_matrix)
+                    transforms_applied.append(f"scale({scale_factors})")
+
+            # 2. Rotations (3D spatial dims only)
+            has_rotation = any(r is not None for r in [rotate_x_deg, rotate_y_deg, rotate_z_deg])
+            if has_rotation:
+                # Determine spatial dimensions
+                # For nD data, we assume the last 3 dims are spatial (XYZ)
+                # and any preceding dims are non-spatial (e.g., time)
+                if d < 3:
+                    aprint(f"❌ Rotation requires at least 3 spatial dimensions, got {d}D data")
+                    raise typer.Exit(1)
+
+                with asection("Applying rotation"):
+                    # Build 3x3 rotation matrix
+                    rot3 = np.eye(3, dtype=np.float64)
+                    if rotate_x_deg is not None:
+                        rad = np.radians(rotate_x_deg)
+                        c, s = np.cos(rad), np.sin(rad)
+                        rx = np.array([[1, 0, 0], [0, c, -s], [0, s, c]], dtype=np.float64)
+                        rot3 = rx @ rot3
+                        aprint(f"Rotate X: {rotate_x_deg}°")
+                        transforms_applied.append(f"rotate_x({rotate_x_deg}°)")
+
+                    if rotate_y_deg is not None:
+                        rad = np.radians(rotate_y_deg)
+                        c, s = np.cos(rad), np.sin(rad)
+                        ry = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]], dtype=np.float64)
+                        rot3 = ry @ rot3
+                        aprint(f"Rotate Y: {rotate_y_deg}°")
+                        transforms_applied.append(f"rotate_y({rotate_y_deg}°)")
+
+                    if rotate_z_deg is not None:
+                        rad = np.radians(rotate_z_deg)
+                        c, s = np.cos(rad), np.sin(rad)
+                        rz = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]], dtype=np.float64)
+                        rot3 = rz @ rot3
+                        aprint(f"Rotate Z: {rotate_z_deg}°")
+                        transforms_applied.append(f"rotate_z({rotate_z_deg}°)")
+
+                    # Embed 3x3 rotation into (d, d) identity matrix
+                    # Rotation applies to the last 3 dimensions
+                    full_matrix = np.eye(d, dtype=np.float64)
+                    full_matrix[d - 3 :, d - 3 :] = rot3
+                    data = data.transform(full_matrix)
+
+            # 3. Translate
+            if translate_offset is not None:
+                offsets = _parse_csv_floats(translate_offset, d, "translate")
+                with asection("Applying translation"):
+                    aprint(f"Translation: {offsets}")
+                    data = data.translate(np.array(offsets, dtype=np.float64))
+                    transforms_applied.append(f"translate({translate_offset})")
+
+            # 4. Center at centroid
+            if center:
+                with asection("Centering at centroid"):
+                    data = data.center_at_centroid()
+                    aprint("Centered at amplitude-weighted centroid")
+                    transforms_applied.append("center")
+
+            # 5. Scale intensity
+            if scale_intensity_factor is not None:
+                with asection("Scaling intensity"):
+                    aprint(f"Intensity scale factor: {scale_intensity_factor}")
+                    data = data.scale_intensity(scale_intensity_factor)
+                    transforms_applied.append(f"scale_intensity({scale_intensity_factor})")
+
+            # 6. Normalize intensity
+            if normalize_intensity is not None:
+                with asection("Normalizing intensity"):
+                    current_max = float(data.amplitudes.max())
+                    aprint(f"Current max: {current_max:.4f} → target max: {normalize_intensity}")
+                    data = data.normalize_intensity(normalize_intensity)
+                    transforms_applied.append(f"normalize({normalize_intensity})")
+
+            # Summary
+            aprint(f"\nTransforms applied: {' → '.join(transforms_applied)}")
+
+            # Print new bounding box
+            with asection("Result bounding box"):
+                for i in range(d):
+                    lo = data.centers[:, i].min()
+                    hi = data.centers[:, i].max()
+                    aprint(f"  Dim {i}: [{lo:.4f}, {hi:.4f}]  range: {hi - lo:.4f}")
+
+            # Save
+            with asection(f"Saving to {output_path.name}"):
+                # Auto-detect color_mode for float32 colors
+                color_mode: Optional[Literal["sdr", "hdr"]] = None
+                if data.colors is not None and data.colors.dtype.kind == "f":
+                    color_mode = "hdr"
+
+                data.save(
+                    output_path,
+                    encoding_mode=encoding_mode_obj,
+                    include_fitting_info=True,
+                    compress=compress,
+                    color_mode=color_mode,
+                )
+                aprint(f"Saved: {output_path}")
+
+                if output_path.exists():
+                    output_size = output_path.stat().st_size
+                    if output_size < 1024 * 1024:
+                        aprint(f"  Size: {output_size / 1024:.1f} KB")
+                    else:
+                        aprint(f"  Size: {output_size / (1024 * 1024):.1f} MB")
+
+    except Exception as e:
+        aprint(f"❌ Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # fit — Fit Gaussian splats to a volume
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -1446,6 +1700,29 @@ def fit_volume(
         "--tile",
         help="Fit single tile N/M (e.g., '3/16' = tile index 3 of 16 total)",
     ),
+    # Progressive fitting
+    progressive: bool = typer.Option(
+        False,
+        "--progressive",
+        help="Enable progressive fitting: fit in multiple passes on residuals, "
+        "producing a multi-LOD result. Each pass adds detail to the previous. "
+        "Tip: for tiled batch jobs, combine with --parallel to improve GPU utilization.",
+    ),
+    max_splats_per_pass: int = typer.Option(
+        5000,
+        "--splats-per-pass",
+        help="Maximum splats per progressive pass (actual may be fewer after culling)",
+    ),
+    psnr_patience: float = typer.Option(
+        0.5,
+        "--psnr-patience",
+        help="Stop progressive fitting if ΔPSNR between passes < this value (dB)",
+    ),
+    max_passes: Optional[int] = typer.Option(
+        None,
+        "--max-passes",
+        help="Maximum number of progressive passes (default: unlimited, stops by budget or PSNR patience)",
+    ),
 ) -> None:
     """Fit Gaussian splats to a volume.
 
@@ -1472,6 +1749,10 @@ def fit_volume(
         luxar gsplat fit large.zarr splats.gsplats.zarr --tiled --tile-size 256 --overlap 32
 
         luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32
+
+        luxar gsplat fit volume.tiff splats.gsplats.zarr --progressive --seeds 10000
+
+        luxar gsplat fit volume.tiff splats.gsplats.zarr --progressive --seeds 50000 --splats-per-pass 5000 --psnr-patience 0.3
     """
     from luxar.cli.gsplat_config import (
         dump_default_config,
@@ -1608,6 +1889,10 @@ def fit_volume(
                         specs[tile_idx],
                         voxel_size=fc_voxel_size,
                         output_space=fc_output_space,
+                        progressive=progressive,
+                        max_splats_per_pass=max_splats_per_pass,
+                        psnr_patience=psnr_patience,
+                        max_passes=max_passes,
                         seeds=parsed_seeds,
                         **fit_config,
                     )
@@ -1629,9 +1914,45 @@ def fit_volume(
                     voxel_size=fc_voxel_size,
                     output_space=fc_output_space,
                     verbose=fc_verbose,
+                    progressive=progressive,
+                    max_splats_per_pass=max_splats_per_pass,
+                    psnr_patience=psnr_patience,
+                    max_passes=max_passes,
                     seeds=parsed_seeds,
                     **fit_config,
                 )
+
+            elif progressive:
+                # Progressive fitting: multiple passes on residuals
+                from luxar.gsplats.fit_progressive_gsplats import (
+                    fit_progressive_gaussian_splats,
+                )
+
+                # max_splats = seeds (total budget), or use seeds as max
+                prog_max_splats = (
+                    parsed_seeds
+                    if isinstance(parsed_seeds, int)
+                    else fit_config.pop("seeds", 50000)
+                )
+                # Map --iters to iters_per_pass for progressive mode
+                prog_iters = fit_config.pop("n_iters", 1000)
+                # Remove params that progressive handles differently
+                fit_config.pop("downscale", None)
+                fit_config.pop("seeds", None)
+                # Progressive always works in voxel space internally
+                fit_config.pop("output_space", None)
+                fit_config.pop("voxel_size", None)
+
+                with asection("Progressive Optimization"):
+                    result = fit_progressive_gaussian_splats(
+                        volume,
+                        max_splats=prog_max_splats,
+                        max_splats_per_pass=max_splats_per_pass,
+                        iters_per_pass=prog_iters,
+                        psnr_patience=psnr_patience,
+                        max_passes=max_passes,
+                        **fit_config,
+                    )
 
             else:
                 # Standard fitting (downscale handled inside fit_gaussian_splats)
@@ -2419,6 +2740,22 @@ def batch_plan(
     iters: Optional[int] = typer.Option(
         None, "--iters", "-n", help="Max optimization iterations (overrides preset)"
     ),
+    # Progressive fitting
+    batch_progressive: bool = typer.Option(
+        False,
+        "--progressive",
+        help="Use progressive fitting per tile (multi-LOD). "
+        "Combine with --parallel for better GPU utilization.",
+    ),
+    batch_splats_per_pass: Optional[int] = typer.Option(
+        None, "--splats-per-pass", help="Max splats per progressive pass"
+    ),
+    batch_psnr_patience: Optional[float] = typer.Option(
+        None, "--psnr-patience", help="PSNR patience for progressive fitting (dB)"
+    ),
+    batch_max_passes: Optional[int] = typer.Option(
+        None, "--max-passes", help="Max progressive passes per tile"
+    ),
     # Slurm params
     partition: Optional[str] = typer.Option(
         None, "--partition", "-p", help="Slurm partition"
@@ -2766,6 +3103,14 @@ def batch_plan(
             fit_args["iters"] = str(iters)
         if config:
             fit_args["config"] = str(config)
+        if batch_progressive:
+            fit_args["progressive"] = ""  # boolean flag, no value
+        if batch_splats_per_pass is not None:
+            fit_args["splats-per-pass"] = str(batch_splats_per_pass)
+        if batch_psnr_patience is not None:
+            fit_args["psnr-patience"] = str(batch_psnr_patience)
+        if batch_max_passes is not None:
+            fit_args["max-passes"] = str(batch_max_passes)
 
         colors_list = None
         if channel_colors:

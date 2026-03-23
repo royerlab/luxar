@@ -111,18 +111,18 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
       if (!this.chunkIndex) {
         log.info(
-          Modules.SPATIAL_INDEX_LOADER,
+          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
           `No spatial index for GSplats ${this.node.path} - will load all data`
         );
       } else {
         log.query(
-          Modules.SPATIAL_INDEX_LOADER,
+          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
           `GSplats index loaded: ${this.chunkIndex.chunkCount} chunks`
         );
       }
     } catch (error) {
       log.error(
-        Modules.SPATIAL_INDEX_LOADER,
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
         `Failed to load GSplats spatial index for ${this.node.path}:`,
         error
       );
@@ -163,7 +163,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       this.registerBounds('amplitudes', amplitudesArray);
       this.registerBounds('cholesky_factors', choleskyArray);
     } catch (e) {
-      log.error(Modules.SPATIAL_INDEX_LOADER, 'Failed to open required GSplats arrays:', e);
+      log.error(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'Failed to open required GSplats arrays:', e);
       throw e;
     }
 
@@ -176,7 +176,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       }
       this.arrays.colors = colorsArray;
     } catch {
-      log.info(Modules.SPATIAL_INDEX_LOADER, 'No colors array found (using default white)');
+      log.info(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'No colors array found (using default white)');
     }
 
     // Initialize data accumulator for object pooling (Phase 1 optimization)
@@ -248,7 +248,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     }
 
     if (splatRanges.length === 0) {
-      log.info(Modules.SPATIAL_INDEX_LOADER, 'No visible gsplats - returning empty data');
+      log.info(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'No visible gsplats - returning empty data');
       return this.createEmptyGSplatsData(attrs);
     }
 
@@ -257,7 +257,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     if (!this._initialLoadDone) {
       log.load(
-        Modules.SPATIAL_INDEX_LOADER,
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
         `Loading ${totalSplats} gsplats from ${splatRanges.length} ranges`
       );
     }
@@ -409,7 +409,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       // DEFENSIVE CHECK: Warn if dimensions not available for extend_to_all
       if (!viewState.dimensions || viewState.dimensions.length === 0) {
         log.warning(
-          Modules.SPATIAL_INDEX_LOADER,
+          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
           `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
             'viewState.dimensions is undefined. extend_to_all will not work. ' +
             'Ensure scene dimensions are initialized before loading nodes.'
@@ -429,7 +429,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
         if (!this._initialLoadDone) {
           log.custom(
             LogEmoji.BROADCAST,
-            Modules.SPATIAL_INDEX_LOADER,
+            Modules.GSPLATS_SPATIAL_INDEX_LOADER,
             `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
           );
         }
@@ -505,7 +505,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       // Array reference: Resolve target and use RangeLoader for target
       const targetPath = attrs.encoding!.target!;
       log.info(
-        Modules.SPATIAL_INDEX_LOADER,
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
         `GSplats: Array ref: ${arrayName} → ${targetPath} (using RangeLoader)`
       );
 
@@ -521,7 +521,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
       // Use RangeLoader for target
       const encoding = RangeLoader.detectEncoding(targetAttrs);
-      log.info(Modules.SPATIAL_INDEX_LOADER, `GSplats: Array ref target encoding: ${encoding}`);
+      log.info(Modules.GSPLATS_SPATIAL_INDEX_LOADER, `GSplats: Array ref target encoding: ${encoding}`);
 
       await this.rangeLoader.loadRanges(
         targetArray,

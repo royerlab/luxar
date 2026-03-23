@@ -100,9 +100,12 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         fit_cmd_parts.append(f"    --preset {manifest.preset}")
     for key, value in manifest.fit_args.items():
         if value is not None:
-            fit_cmd_parts.append(
-                f"    --{key.replace('_', '-')} {shlex.quote(str(value))}"
-            )
+            flag = f"--{key.replace('_', '-')}"
+            if value == "":
+                # Boolean flag (no value)
+                fit_cmd_parts.append(f"    {flag}")
+            else:
+                fit_cmd_parts.append(f"    {flag} {shlex.quote(str(value))}")
     fit_cmd = " \\\n    ".join(fit_cmd_parts)
 
     # Common variables
