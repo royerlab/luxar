@@ -35,7 +35,7 @@ export async function loadGSplatsChunkSpatialIndex(
   // Check if spatial ordering is enabled
   if (attrs.ordering === 'none') {
     log.info(
-      Modules.SPATIAL_INDEX_LOADER,
+      Modules.GSPLATS_SPATIAL_INDEX_LOADER,
       `GSplats node has no spatial ordering (ordering=${attrs.ordering})`
     );
     return null;
@@ -56,13 +56,13 @@ export async function loadGSplatsChunkSpatialIndex(
     const expectedSize = chunkCount * attrs.ndim * 2;
     if (chunkBounds.length !== expectedSize) {
       log.warning(
-        Modules.SPATIAL_INDEX_LOADER,
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
         `GSplats bounds size mismatch: got ${chunkBounds.length}, expected ${expectedSize}`
       );
     }
 
     log.info(
-      Modules.SPATIAL_INDEX_LOADER,
+      Modules.GSPLATS_SPATIAL_INDEX_LOADER,
       `Loaded GSplats spatial index: ${chunkCount} chunks, ${attrs.ndim}D`
     );
 
@@ -80,11 +80,11 @@ export async function loadGSplatsChunkSpatialIndex(
       errorMessage?.includes('Node not found')
     ) {
       log.info(
-        Modules.SPATIAL_INDEX_LOADER,
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
         'No chunk bounds found - GSplats dataset has no spatial indexing'
       );
     } else {
-      log.error(Modules.SPATIAL_INDEX_LOADER, 'Failed to load GSplats spatial index:', error);
+      log.error(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'Failed to load GSplats spatial index:', error);
     }
     return null;
   }
