@@ -372,3 +372,137 @@ class TestFitTiled:
 
         assert result.n_splats > 0
         assert result.stats.get("num_tiles") == 1
+
+
+# ── Tiled + Progressive tests ──────────────────────────────
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
+class TestTiledProgressive:
+    """Tests for tiled fitting with progressive=True."""
+
+    def test_tiled_progressive_basic(self) -> None:
+        """Basic tiled+progressive produces multi-LOD result."""
+        from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+
+        V = np.random.RandomState(42).rand(32, 32).astype(np.float32)
+        result = fit_tiled(
+            V,
+            tile_size=16,
+            overlap=4,
+            progressive=True,
+            max_splats_per_pass=50,
+            psnr_patience=0.01,
+            max_passes=3,  # Force multiple passes
+            seeds=150,
+            iters_per_pass=30,
+            verbose=False,
+        )
+        assert result.n_splats > 0
+        assert result.n_lods >= 1  # At least one LOD
+        assert result.stats.get("progressive") is True
+
+    def test_merge_lods_across_tiles(self) -> None:
+        """LOD merge correctly combines LODs from multiple tiles."""
+        from luxar.gsplats.fit_tiled_gsplats import _merge_lods_across_tiles
+        from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+
+        rng = np.random.RandomState(42)
+
+        # Create 3 fake tile results with 2 LODs each
+        tiles = []
+        for _ in range(3):
+            lods = []
+            for level in range(2):
+                n = rng.randint(5, 15)
+                lods.append(
+                    GSplatLOD(
+                        centers=rng.rand(n, 2).astype(np.float32),
+                        amplitudes=rng.rand(n).astype(np.float32),
+                        cholesky_factors=np.tile(
+                            np.array([1, 0, 1], dtype=np.float32), (n, 1)
+                        ),
+                    )
+                )
+            tiles.append(GSplatData.from_lods(lods))
+
+        merged = _merge_lods_across_tiles(tiles)
+
+        # Should have 2 LODs
+        assert merged.n_lods == 2
+        # LOD 0 = sum of all tiles' LOD 0 splats
+        expected_lod0 = sum(t.at_lod(0).n_splats for t in tiles)
+        assert merged.at_lod(0).n_splats == expected_lod0
+        # LOD 1 = sum of all tiles' LOD 1 splats
+        expected_lod1 = sum(t.at_lod(1).n_splats for t in tiles)
+        assert merged.at_lod(1).n_splats == expected_lod1
+        # Total
+        assert merged.n_splats == expected_lod0 + expected_lod1
+
+    def test_merge_lods_mismatched_counts(self) -> None:
+        """LOD merge handles tiles with different LOD counts (pad to max)."""
+        from luxar.gsplats.fit_tiled_gsplats import _merge_lods_across_tiles
+        from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+
+        rng = np.random.RandomState(42)
+
+        # Tile A: 3 LODs, Tile B: 1 LOD
+        tile_a = GSplatData.from_lods([
+            GSplatLOD(
+                centers=rng.rand(5, 2).astype(np.float32),
+                amplitudes=rng.rand(5).astype(np.float32),
+                cholesky_factors=np.tile(np.array([1, 0, 1], dtype=np.float32), (5, 1)),
+            )
+            for _ in range(3)
+        ])
+        tile_b = GSplatData(
+            centers=rng.rand(8, 2).astype(np.float32),
+            amplitudes=rng.rand(8).astype(np.float32),
+            cholesky_factors=np.tile(np.array([1, 0, 1], dtype=np.float32), (8, 1)),
+        )  # single LOD
+
+        merged = _merge_lods_across_tiles([tile_a, tile_b])
+
+        # Should pad to max LODs = 3
+        assert merged.n_lods == 3
+        # LOD 0 should have splats from both tiles
+        assert merged.at_lod(0).n_splats == 5 + 8
+        # LOD 1 and 2 should only have tile_a's splats
+        assert merged.at_lod(1).n_splats == 5
+        assert merged.at_lod(2).n_splats == 5
+
+    def test_tiled_progressive_stats(self) -> None:
+        """Stats reflect progressive tiled fitting."""
+        from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+
+        V = np.random.RandomState(42).rand(32, 32).astype(np.float32)
+        result = fit_tiled(
+            V,
+            tile_size=16,
+            overlap=4,
+            progressive=True,
+            max_splats_per_pass=50,
+            psnr_patience=0.01,
+            seeds=100,
+            iters_per_pass=30,
+            verbose=False,
+        )
+        assert result.stats.get("tiled_fitting") is True
+        assert result.stats.get("progressive") is True
+        assert result.stats.get("num_tiles", 0) > 1
+
+    def test_tiled_non_progressive_still_works(self) -> None:
+        """progressive=False (default) still produces single-LOD result."""
+        from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+
+        V = np.random.RandomState(42).rand(32, 32).astype(np.float32)
+        result = fit_tiled(
+            V,
+            tile_size=16,
+            overlap=4,
+            progressive=False,
+            seeds=50,
+            n_iters=30,
+            verbose=False,
+        )
+        assert result.n_lods == 1

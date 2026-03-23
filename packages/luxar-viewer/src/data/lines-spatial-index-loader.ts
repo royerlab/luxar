@@ -157,18 +157,18 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
       if (!this.chunkIndex) {
         log.info(
-          Modules.SPATIAL_INDEX_LOADER,
+          Modules.LINES_LOADER,
           `No spatial index for Lines ${this.node.path} - will load all data`
         );
       } else {
         log.query(
-          Modules.SPATIAL_INDEX_LOADER,
+          Modules.LINES_LOADER,
           `Lines index loaded: ${this.chunkIndex.vertexChunkCount} vertex chunks, ${this.chunkIndex.segmentChunkCount} segment chunks`
         );
       }
     } catch (error) {
       log.error(
-        Modules.SPATIAL_INDEX_LOADER,
+        Modules.LINES_LOADER,
         `Failed to load Lines spatial index for ${this.node.path}:`,
         error
       );
@@ -194,7 +194,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       this.arrays.vertices = verticesArray;
       this.arrays.segments = segmentsArray;
     } catch (e) {
-      log.error(Modules.SPATIAL_INDEX_LOADER, 'Failed to open required Lines arrays:', e);
+      log.error(Modules.LINES_LOADER, 'Failed to open required Lines arrays:', e);
       throw e;
     }
 
@@ -207,7 +207,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       }
       this.arrays.widths = widthsArray;
     } catch {
-      log.info(Modules.SPATIAL_INDEX_LOADER, 'No widths array found (using default width)');
+      log.info(Modules.LINES_LOADER, 'No widths array found (using default width)');
     }
 
     try {
@@ -218,7 +218,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       }
       this.arrays.colors = colorsArray;
     } catch {
-      log.info(Modules.SPATIAL_INDEX_LOADER, 'No colors array found (using default color)');
+      log.info(Modules.LINES_LOADER, 'No colors array found (using default color)');
     }
 
     try {
@@ -247,7 +247,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       this.arrays.sharpness = sharpnessArray;
     } catch {
       log.info(
-        Modules.SPATIAL_INDEX_LOADER,
+        Modules.LINES_LOADER,
         'No sharpnesses array found (using default sharpness)'
       );
     }
@@ -323,13 +323,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     }
 
     if (segmentRanges.length === 0) {
-      log.info(Modules.SPATIAL_INDEX_LOADER, 'No visible segments - returning empty lines data');
+      log.info(Modules.LINES_LOADER, 'No visible segments - returning empty lines data');
       return this.createEmptyLinesData(attrs);
     }
 
     // Load segment indices
     if (!this._initialLoadDone) {
-      log.load(Modules.SPATIAL_INDEX_LOADER, `Loading segments for ${segmentRanges.length} ranges`);
+      log.load(Modules.LINES_LOADER, `Loading segments for ${segmentRanges.length} ranges`);
     }
     let segmentData: Uint32Array;
     if (session) {
@@ -362,16 +362,16 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     if (!this._initialLoadDone) {
       log.load(
-        Modules.SPATIAL_INDEX_LOADER,
+        Modules.LINES_LOADER,
         `Loading vertices for ${mergedVertexRanges.length} ranges (${sortedIndices.length} unique vertices)`
       );
       log.info(
-        Modules.SPATIAL_INDEX_LOADER,
+        Modules.LINES_LOADER,
         `  Vertex index range: [${minIdx} - ${maxIdx}], span=${indexSpan}, efficiency=${(efficiency * 100).toFixed(1)}%`
       );
       if (mergedVertexRanges.length <= 10) {
         log.info(
-          Modules.SPATIAL_INDEX_LOADER,
+          Modules.LINES_LOADER,
           `  Ranges: ${mergedVertexRanges.map((r) => `[${r.start}-${r.end})`).join(', ')}`
         );
       } else {
@@ -383,8 +383,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
           .slice(-5)
           .map((r) => `[${r.start}-${r.end})`)
           .join(', ');
-        log.info(Modules.SPATIAL_INDEX_LOADER, `  First 5 ranges: ${first5}`);
-        log.info(Modules.SPATIAL_INDEX_LOADER, `  Last 5 ranges: ${last5}`);
+        log.info(Modules.LINES_LOADER, `  First 5 ranges: ${first5}`);
+        log.info(Modules.LINES_LOADER, `  Last 5 ranges: ${last5}`);
       }
     }
 
@@ -587,7 +587,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       // DEFENSIVE CHECK: Warn if dimensions not available for extend_to_all
       if (!viewState.dimensions || viewState.dimensions.length === 0) {
         log.warning(
-          Modules.SPATIAL_INDEX_LOADER,
+          Modules.LINES_LOADER,
           `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
             'viewState.dimensions is undefined. extend_to_all will not work. ' +
             'Ensure scene dimensions are initialized before loading nodes.'
@@ -608,7 +608,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         if (!this._initialLoadDone) {
           log.custom(
             LogEmoji.BROADCAST,
-            Modules.SPATIAL_INDEX_LOADER,
+            Modules.LINES_LOADER,
             `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
           );
         }
@@ -713,7 +713,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       // Array reference: Resolve target and use RangeLoader for target
       const targetPath = attrs.encoding!.target!;
       log.info(
-        Modules.SPATIAL_INDEX_LOADER,
+        Modules.LINES_LOADER,
         `Lines: Array ref: ${arrayName} → ${targetPath} (using RangeLoader)`
       );
 
@@ -729,7 +729,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
       // Use RangeLoader for target
       const encoding = RangeLoader.detectEncoding(targetAttrs);
-      log.info(Modules.SPATIAL_INDEX_LOADER, `Lines: Array ref target encoding: ${encoding}`);
+      log.info(Modules.LINES_LOADER, `Lines: Array ref target encoding: ${encoding}`);
 
       await this.rangeLoader.loadRanges(
         targetArray,
@@ -1534,5 +1534,5 @@ export function buildInstanceBuffersWASM(
  */
 export async function initLinesWASM(): Promise<void> {
   await getWasmModule();
-  log.info(Modules.SPATIAL_INDEX_LOADER, 'WASM module initialized for lines clipping');
+  log.info(Modules.LINES_LOADER, 'WASM module initialized for lines clipping');
 }

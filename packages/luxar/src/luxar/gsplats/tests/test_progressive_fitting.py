@@ -39,7 +39,7 @@ class TestProgressiveFitting:
         result = fit_progressive_gaussian_splats(
             V,
             max_splats=200,
-            splats_per_pass=100,
+            max_splats_per_pass=100,
             iters_per_pass=50,
             psnr_patience=0.1,
             verbose=False,
@@ -55,14 +55,14 @@ class TestProgressiveFitting:
         result = fit_progressive_gaussian_splats(
             V,
             max_splats=300,
-            splats_per_pass=100,
+            max_splats_per_pass=100,
             iters_per_pass=30,
             psnr_patience=0.01,  # Very low patience to force multiple passes
             verbose=False,
         )
         # Should have at least 2 passes (may stop by PSNR patience)
         assert result.n_lods >= 2
-        # Total splats should be approximately splats_per_pass * n_lods
+        # Total splats should be approximately max_splats_per_pass * n_lods
         assert result.n_splats > 0
 
     def test_max_splats_respected(self):
@@ -71,7 +71,7 @@ class TestProgressiveFitting:
         result = fit_progressive_gaussian_splats(
             V,
             max_splats=150,
-            splats_per_pass=100,
+            max_splats_per_pass=100,
             iters_per_pass=30,
             psnr_patience=0.01,
             verbose=False,
@@ -84,7 +84,7 @@ class TestProgressiveFitting:
         result = fit_progressive_gaussian_splats(
             V,
             max_splats=10000,  # Very high limit
-            splats_per_pass=200,
+            max_splats_per_pass=200,
             iters_per_pass=100,
             psnr_patience=5.0,  # Very high patience = stop early
             verbose=False,
@@ -102,7 +102,7 @@ class TestProgressiveFitting:
         result = fit_progressive_gaussian_splats(
             V,
             max_splats=200,
-            splats_per_pass=100,
+            max_splats_per_pass=100,
             iters_per_pass=30,
             psnr_patience=0.01,
             verbose=False,
@@ -121,7 +121,7 @@ class TestProgressiveFitting:
         result = fit_progressive_gaussian_splats(
             V,
             max_splats=300,
-            splats_per_pass=100,
+            max_splats_per_pass=100,
             iters_per_pass=50,
             psnr_patience=0.01,
             verbose=False,
@@ -142,7 +142,7 @@ class TestProgressiveFitting:
         result = fit_progressive_gaussian_splats(
             V,
             max_splats=200,
-            splats_per_pass=100,
+            max_splats_per_pass=100,
             iters_per_pass=30,
             psnr_patience=0.01,
             on_pass_complete=my_callback,
@@ -157,7 +157,7 @@ class TestProgressiveFitting:
         result = fit_progressive_gaussian_splats(
             V,
             max_splats=200,
-            splats_per_pass=100,
+            max_splats_per_pass=100,
             iters_per_pass=30,
             psnr_patience=0.01,
             verbose=False,
@@ -175,7 +175,7 @@ class TestProgressiveFitting:
         result = fit_progressive_gaussian_splats(
             V,
             max_splats=200,
-            splats_per_pass=100,
+            max_splats_per_pass=100,
             iters_per_pass=30,
             psnr_patience=0.01,
             verbose=False,
@@ -194,3 +194,74 @@ class TestProgressiveFitting:
                     result.at_lod(i).centers,
                     atol=1e-3,
                 )
+
+    def test_max_passes_limits_passes(self):
+        """Verify max_passes caps the number of passes."""
+        V = _make_synthetic_volume(shape=(32, 32))
+        result = fit_progressive_gaussian_splats(
+            V,
+            max_splats=10000,
+            max_splats_per_pass=100,
+            iters_per_pass=30,
+            max_passes=2,
+            psnr_patience=0.01,
+            verbose=False,
+        )
+        assert result.n_lods <= 2
+        assert result.stats.get("stop_reason") == "max_passes"
+
+    def test_max_passes_zero_raises(self):
+        """Verify max_passes=0 raises ValueError."""
+        import pytest
+
+        V = _make_synthetic_volume(shape=(32, 32))
+        with pytest.raises(ValueError, match="max_passes must be >= 1"):
+            fit_progressive_gaussian_splats(
+                V,
+                max_splats=100,
+                max_splats_per_pass=50,
+                max_passes=0,
+                verbose=False,
+            )
+
+    def test_cull_ratio_removes_weak_splats(self):
+        """Verify aggressive cull_ratio reduces splat count below seeds requested."""
+        V = _make_synthetic_volume(shape=(32, 32))
+        # Aggressive culling
+        result_aggressive = fit_progressive_gaussian_splats(
+            V,
+            max_splats=200,
+            max_splats_per_pass=200,
+            iters_per_pass=50,
+            max_passes=1,
+            cull_ratio=1.0,
+            verbose=False,
+        )
+        # No culling
+        result_no_cull = fit_progressive_gaussian_splats(
+            V,
+            max_splats=200,
+            max_splats_per_pass=200,
+            iters_per_pass=50,
+            max_passes=1,
+            cull_ratio=0.0,
+            verbose=False,
+        )
+        # Aggressive culling should produce fewer splats
+        assert result_aggressive.n_splats <= result_no_cull.n_splats
+
+    def test_adaptive_seed_reduction_tracked(self):
+        """Verify per-LOD stats track seeds_requested and splats_after_culling."""
+        V = _make_synthetic_volume(shape=(32, 32))
+        result = fit_progressive_gaussian_splats(
+            V,
+            max_splats=300,
+            max_splats_per_pass=100,
+            iters_per_pass=30,
+            psnr_patience=0.01,
+            verbose=False,
+        )
+        for lod in result.lods:
+            assert "seeds_requested" in lod.stats
+            assert "splats_after_culling" in lod.stats
+            assert lod.stats["splats_after_culling"] == lod.n_splats

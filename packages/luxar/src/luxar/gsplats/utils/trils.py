@@ -126,13 +126,8 @@ def pack_tril(L: np.ndarray) -> np.ndarray:
     array([[1, 2, 3]])  # Shape (1, 3): [L00, L10, L11]
     """
     N, d, _ = L.shape
-    out = np.zeros((N, tril_size(d)), dtype=L.dtype)
-    k = 0
-    for i in range(d):
-        for j in range(i + 1):
-            out[:, k] = L[:, i, j]
-            k += 1
-    return out
+    rows, cols = np.tril_indices(d)
+    return L[:, rows, cols]
 
 
 def unpack_tril(v: np.ndarray, d: int) -> np.ndarray:
@@ -164,15 +159,9 @@ def unpack_tril(v: np.ndarray, d: int) -> np.ndarray:
             [2, 3]]])  # Shape (1, 2, 2)
     """
     N = v.shape[0]
-    # Initialize output matrices (zeros above diagonal by default)
     L = np.zeros((N, d, d), dtype=v.dtype)
-
-    # Unpack elements in row-major order
-    k = 0
-    for i in range(d):  # Row index
-        for j in range(i + 1):  # Column index (j <= i, lower triangle)
-            L[:, i, j] = v[:, k]
-            k += 1
+    rows, cols = np.tril_indices(d)
+    L[:, rows, cols] = v
     return L
 
 
