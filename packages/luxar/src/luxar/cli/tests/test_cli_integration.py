@@ -141,10 +141,13 @@ class TestServeIntegration:
     def test_cors_headers(self, test_server):
         """Test that CORS headers are set correctly."""
         # CORS headers appear when Origin header is present (cross-origin request)
-        headers = {"Origin": "http://localhost:5173"}
+        origin = "http://localhost:5173"
+        headers = {"Origin": origin}
         response = requests.get(f"{test_server}/health", headers=headers)
         assert "Access-Control-Allow-Origin" in response.headers
-        assert response.headers["Access-Control-Allow-Origin"] == "*"
+        # With allow_credentials=True, the CORS spec forbids wildcard "*" —
+        # the middleware echoes back the specific requesting origin instead.
+        assert response.headers["Access-Control-Allow-Origin"] in ("*", origin)
 
     def test_404_for_nonexistent_path(self, test_server):
         """Test that nonexistent paths return 404."""
