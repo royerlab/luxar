@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Optional
 _GSPLATS_IMPORT_ERROR: Optional[ImportError] = None
 
 if TYPE_CHECKING:
-    from luxar.gsplats import clahe, seeds
+    from luxar.gsplats import clahe, preprocessing, seeds
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
     from luxar.gsplats.fit_multiscale_gsplats import fit_multiscale_gaussian_splats
     from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     fit_tiled_gaussian_splats = fit_tiled
 else:
     try:
-        from luxar.gsplats import clahe, seeds
+        from luxar.gsplats import clahe, preprocessing, seeds
         from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
         from luxar.gsplats.fit_multiscale_gsplats import fit_multiscale_gaussian_splats
         from luxar.gsplats.fit_progressive_gsplats import (
@@ -130,4 +130,5 @@ __all__ = [
     # Submodules
     "seeds",
     "clahe",
+    "preprocessing",
 ]

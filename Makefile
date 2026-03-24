@@ -15,6 +15,7 @@
         stats show-env prune-env shell build publish-test publish \
         check-deps install-node install-pnpm install-hatch \
         setup-cuda check-cuda-deps build-cuda build-cuda-slurm clean-cuda test-cuda benchmark-cuda \
+        build-nlm-cuda clean-nlm-cuda test-nlm-cuda \
         benchmark-wasm
 
 # ============================================================================
@@ -1468,8 +1469,9 @@ clean-wasm:  ## Clean WASM build artifacts
 # CUDA Backend (Gaussian Splatting)
 # ============================================================================
 
-# Path to CUDA extension directory
+# Path to CUDA extension directories
 CUDA_EXT_DIR := packages/luxar/src/luxar/gsplats/models/gsplats/cuda
+NLM_CUDA_DIR := packages/luxar/src/luxar/gsplats/preprocessing/cuda
 
 # Slurm parameters for 'make build-cuda SLURM=1'
 # Override any of these on the command line, e.g.:
@@ -1898,6 +1900,45 @@ benchmark-cuda:  ## Run CUDA performance benchmarks
 	hatch run python $(CUDA_EXT_DIR)/benchmark.py
 	@echo ""
 	@echo "✅ Benchmark completed!"
+
+# ============================================================================
+# NLM CUDA Extension (Non-Local Means denoising)
+# ============================================================================
+
+build-nlm-cuda:  ## Build the NLM CUDA denoising extension
+	@echo "🔧 Building NLM CUDA extension..."
+	@echo ""
+	@if ! command -v nvcc >/dev/null 2>&1; then \
+		echo "❌ CUDA toolkit not found (nvcc not in PATH)"; \
+		exit 1; \
+	fi
+	@if ! nvidia-smi >/dev/null 2>&1; then \
+		echo "❌ GPU not accessible (nvidia-smi failed)"; \
+		exit 1; \
+	fi
+	hatch run pip install -q ninja 2>/dev/null || true
+	hatch run python $(NLM_CUDA_DIR)/build.py
+	@echo ""
+	@echo "✅ NLM CUDA extension built!"
+
+clean-nlm-cuda:  ## Clean NLM CUDA build artifacts
+	@echo "🧹 Cleaning NLM CUDA build artifacts..."
+	rm -rf $(NLM_CUDA_DIR)/build/
+	rm -f $(NLM_CUDA_DIR)/nlm_cuda_backend*.so
+	rm -f $(NLM_CUDA_DIR)/nlm_build_info.json
+	rm -rf $(NLM_CUDA_DIR)/__pycache__/
+	@echo "✅ NLM CUDA artifacts cleaned!"
+
+test-nlm-cuda:  ## Run NLM CUDA extension tests
+	@echo "🧪 Running NLM CUDA tests..."
+	@if ! ls $(NLM_CUDA_DIR)/nlm_cuda_backend*.so 1>/dev/null 2>&1; then \
+		echo "⚠️  NLM CUDA extension not built. Building first..."; \
+		$(MAKE) build-nlm-cuda; \
+		echo ""; \
+	fi
+	hatch run pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py -v
+	@echo ""
+	@echo "✅ NLM CUDA tests completed!"
 
 test-fixtures:  ## Generate test fixtures for TypeScript tests
 	@echo "🔬 Generating test fixtures..."
