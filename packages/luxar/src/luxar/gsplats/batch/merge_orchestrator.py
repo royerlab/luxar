@@ -101,16 +101,7 @@ def merge_batch_results(
                     shutil.copytree(tile_files[0], out_path)
                 else:
                     datasets = [GSplatData.load(p) for p in tile_files]
-                    # LOD-aware merge if any tile has multiple LODs
-                    has_lods = any(d.n_lods > 1 for d in datasets)
-                    if has_lods:
-                        from luxar.gsplats.fit_tiled_gsplats import (
-                            _merge_lods_across_tiles,
-                        )
-
-                        merged = _merge_lods_across_tiles(datasets)
-                    else:
-                        merged = GSplatData.concatenate(datasets)
+                    merged = GSplatData.concatenate(datasets)
                     merged.save(out_path)
 
                 if verbose:
