@@ -2,9 +2,9 @@
 """
 3D DAPI — Progressive fitting convergence movie for pass 1.
 
-Runs 2 progressive passes on the DAPI dataset, then shows the optimization
-convergence movie for pass 1 (fitting the residual) in napari. This lets
-you see how splats converge on the sparse residual frame by frame.
+Manually replicates the first 2 passes of fit_progressive_gaussian_splats
+with a convergence movie enabled for pass 1, so you can watch how splats
+converge on the residual frame by frame.
 
 Usage:
     python demo_3d_dapi_progressive_movie.py
@@ -18,9 +18,6 @@ import zarr
 from arbol import Arbol, aprint, asection
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
-from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
-from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
 NO_NAPARI = "--no-napari" in sys.argv
@@ -35,6 +32,9 @@ TRUNCATE_SIG = 3.0
 ZARR_URL = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.2/6001240.zarr"
 DAPI_CHANNEL = 1
 TARGET_SIZE = 128
+# Match fit_progressive_gaussian_splats defaults:
+CULL_RATIO = 0.0  # progressive default: no culling
+ASYMMETRIC_PENALTY = 10.0
 # ==========================
 
 Arbol.max_depth = 5
@@ -80,7 +80,8 @@ def _load_dapi_volume() -> np.ndarray:
     except Exception as exc:
         aprint(f"Remote load failed: {exc}, using synthetic fallback")
         rng = np.random.RandomState(42)
-        shape = (TARGET_SIZE, TARGET_SIZE, TARGET_SIZE)
+        fallback_size = TARGET_SIZE if TARGET_SIZE else 128
+        shape = (fallback_size, fallback_size, fallback_size)
         vol = np.zeros(shape, dtype=np.float32)
         for _ in range(10):
             center = [rng.uniform(10, s - 10) for s in shape]
@@ -98,21 +99,28 @@ with asection("Progressive fitting convergence movie (pass 1)"):
         V = _load_dapi_volume()
         aprint(f"Volume: {V.shape}, range: [{V.min():.2f}, {V.max():.2f}]")
 
-    # --- Pass 0: fit original volume (no movie, just get the splats) ---
-    with asection(f"Pass 0: fitting {MAX_SPLATS_PER_PASS} splats to original volume"):
+    # --- Pass 0: fit original volume (no movie) ---
+    # Matches fit_progressive_gaussian_splats pass 0:
+    #   seed_method="auto", cull_ratio from param, no thresholding
+    with asection(f"Pass 0: fitting {MAX_SPLATS_PER_PASS} splats (seed_method=auto)"):
         pass0_result = fit_gaussian_splats(
             V,
             seeds=MAX_SPLATS_PER_PASS,
             n_iters=ITERS_PASS_0,
-            cull_ratio=1.0,
+            cull_ratio=CULL_RATIO,
+            asymmetric_penalty=ASYMMETRIC_PENALTY,
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
+            seed_method="auto",
             max_eccentricity=6.0,
         )
         aprint(f"Pass 0: {pass0_result.n_splats} splats")
 
-    # --- Compute residual for pass 1 (matching fit_progressive_gaussian_splats) ---
+    # --- Compute residual for pass 1 ---
+    # Matches fit_progressive_gaussian_splats:
+    #   residual = clamp(V - render(accumulated), min=0)
+    #   No thresholding (removed from progressive)
     with asection("Computing residual"):
         import torch
 
@@ -124,37 +132,27 @@ with asection("Progressive fitting convergence movie (pass 1)"):
             residual = torch.clamp(V_tensor - rendered, min=0).cpu().numpy()
 
         residual_max = float(residual.max())
-        residual_nonzero_frac = float((residual > 0.1).sum()) / residual.size
-        aprint(f"Residual (raw): max={residual_max:.2f}, non-zero={residual_nonzero_frac:.1%}")
-
-        # Threshold the residual: zero out diffuse background
-        # (same logic as fit_progressive_gaussian_splats)
-        nonzero_vals = residual[residual > 0]
-        if len(nonzero_vals) > 0:
-            residual_threshold = float(np.median(nonzero_vals))
-        else:
-            residual_threshold = 0.0
-        n_before = int((residual > 0).sum())
-        residual[residual < residual_threshold] = 0.0
-        n_after = int((residual > 0).sum())
+        n_nonzero = int((residual > 0).sum())
         aprint(
-            f"Thresholding: zeroed {n_before - n_after:,} of {n_before:,} voxels "
-            f"(threshold={residual_threshold:.3f} = median of non-zero residual)"
+            f"Residual: max={residual_max:.2f}, "
+            f"non-zero={n_nonzero:,} ({100 * n_nonzero / residual.size:.1f}%)"
         )
-        aprint(f"Residual (thresholded): non-zero={n_after:,} ({100*n_after/residual.size:.1f}%)")
 
     # --- Pass 1: fit residual WITH convergence movie ---
-    with asection(f"Pass 1: fitting {MAX_SPLATS_PER_PASS} splats to residual (with movie)"):
+    # Matches fit_progressive_gaussian_splats pass 1+:
+    #   seed_method="peaks", same cull_ratio, same asymmetric_penalty
+    with asection(f"Pass 1: fitting {MAX_SPLATS_PER_PASS} splats (seed_method=peaks, with movie)"):
         pass1_result = fit_gaussian_splats(
             residual,
             seeds=MAX_SPLATS_PER_PASS,
             n_iters=ITERS_PASS_1,
-            cull_ratio=1.0,
+            cull_ratio=CULL_RATIO,
+            asymmetric_penalty=ASYMMETRIC_PENALTY,
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
-            max_eccentricity=6.0,
             seed_method="peaks",
+            max_eccentricity=6.0,
             napari_movie=True,
             movie_every=MOVIE_EVERY,
             movie_max_frames=200,
@@ -185,10 +183,10 @@ with asection("Progressive fitting convergence movie (pass 1)"):
                 ndisplay=3,
             )
 
-            # Target (the thresholded residual that pass 1 was actually fitting)
+            # Target (the residual that pass 1 was fitting)
             viewer.add_image(
                 target_vol,
-                name="Target (thresholded residual)",
+                name="Target (clamped residual)",
                 colormap="magma",
                 contrast_limits=[0, residual_max],
                 rendering="mip",
