@@ -169,6 +169,10 @@ def fit_progressive_gaussian_splats(
                 stop_reason = "residual_negligible"
                 break
 
+            # NOTE: Residual thresholding disabled — with denoised data,
+            # the entire residual is legitimate signal. Peaks seeding
+            # already concentrates seeds on high-intensity regions.
+
         # --- Determine seed count (adapt based on previous culling rate) ---
         effective_max_splats_per_pass = max_splats_per_pass
         if len(accumulated_lods) > 0:
@@ -192,10 +196,16 @@ def fit_progressive_gaussian_splats(
         seeds_this_pass = min(effective_max_splats_per_pass, max_splats - total_so_far)
 
         # --- Fit splats to target ---
+        # Pass 0: use default seeding (auto). Passes 1+: use peaks seeding
+        # to place seeds directly at local maxima of the sparse residual.
+        pass_seed_method = "auto" if pass_i == 0 else "peaks"
+
         if verbose:
             aprint(f"\n{'=' * 60}")
             aprint(
-                f"Pass {pass_i}: fitting {seeds_this_pass} splats to {'volume' if pass_i == 0 else 'residual'}"
+                f"Pass {pass_i}: fitting {seeds_this_pass} splats to "
+                f"{'volume' if pass_i == 0 else 'residual'} "
+                f"(seed_method={pass_seed_method})"
             )
 
         result = fit_gaussian_splats(
@@ -205,6 +215,7 @@ def fit_progressive_gaussian_splats(
             asymmetric_penalty=asymmetric_penalty,
             enable_dynamic_ops=enable_dynamic_ops,
             cull_ratio=cull_ratio,
+            seed_method=pass_seed_method,
             device=device,
             verbose=verbose,
             truncate=truncate,
