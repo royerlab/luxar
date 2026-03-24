@@ -24,7 +24,6 @@ from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds.gpu_ops import _get_device, should_use_gpu
 from luxar.gsplats.seeds.utils import SEED_AMPLITUDE_SCALE, sigmas_to_cholesky_isotropic
 
-
 # Default init sigma: sqrt(1/12) ≈ 0.289 voxels (single-voxel Gaussian)
 _SINGLE_VOXEL_SIGMA = float(np.sqrt(1.0 / 12.0))
 
@@ -54,9 +53,10 @@ def seed_from_peaks(
         Number of seeds to generate. If None or larger than the number
         of non-zero voxels, returns one seed per non-zero voxel.
     init_sigma : float, optional
-        Initial Gaussian sigma for seed splats. If None, auto-scaled to
-        5% of the smallest volume dimension (min 1.5 voxels). This ensures
-        splats are large enough to produce meaningful gradients.
+        Initial Gaussian sigma for seed splats. If None, auto-scaled based
+        on expected inter-seed spacing: ``(non_zero_voxels / n_seeds)^(1/d) / 2``.
+        This ensures splats are large enough for gradients but don't
+        massively overlap and overshoot.
     device : str, optional
         PyTorch device ('cuda', 'mps', 'cpu', or None for auto).
 
@@ -69,16 +69,24 @@ def seed_from_peaks(
     ndim = V.ndim
 
     if init_sigma is None:
-        # Auto-scale: ~5% of smallest dimension, minimum 1.5 voxels.
-        # Single-voxel splats have negligible gradients on large volumes —
-        # start large enough that the optimizer can "see" the splat's
-        # contribution across multiple voxels.
-        min_dim = float(min(V.shape))
-        init_sigma = max(1.5, min_dim * 0.05)
+        # Auto-scale based on expected inter-seed spacing in the signal
+        # region.  Use the "significant" voxels (above median of non-zero
+        # values) as the effective volume — the diffuse background inflates
+        # the non-zero count but isn't where splats should focus.
+        nonzero_vals_np = V[V > 0]
+        if len(nonzero_vals_np) > 0:
+            median_val = float(np.median(nonzero_vals_np))
+            n_significant = max(1, int((V > median_val).sum()))
+        else:
+            n_significant = max(1, int(np.prod(V.shape)))
+        n_target = n_seeds if n_seeds is not None else n_significant
+        spacing = (n_significant / max(1, n_target)) ** (1.0 / ndim)
+        init_sigma = max(1.5, spacing / 2.0)
 
-    # Resolve device
-    use_gpu = should_use_gpu(V, device or "cpu")
-    dev = _get_device(device or "cpu") if use_gpu else torch.device("cpu")
+    # Resolve device (None → "auto" for GPU auto-detection)
+    effective_device = device if device is not None else "auto"
+    use_gpu = should_use_gpu(V, effective_device)
+    dev = _get_device(effective_device) if use_gpu else torch.device("cpu")
 
     with asection(f"Peak seeding ({ndim}D)"):
         V_tensor = torch.from_numpy(V.astype(np.float32)).to(dev)
