@@ -1,0 +1,5 @@
+# CUDA build artifacts
+build/
+*.so
+nlm_build_info.json
+__pycache__/
