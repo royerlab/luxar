@@ -75,7 +75,7 @@ Use --recompute to re-fit from scratch (requires network + CUDA GPU).
 
 Requirements:
     - CUDA GPU strongly recommended (fitting is ~100x slower on CPU)
-    - scikit-image for N2S-NLM denoising:  pip install scikit-image
+    - PyTorch for NLM denoising (included in luxar[gsplats])
 
 Output:
     - Scene saved to:  datasets/demos/gsplats_4d_celegans_tracking.zarr
@@ -612,10 +612,11 @@ def _is_cached(cache_file: Path) -> bool:
 def calibrate_nlm_once(first_volume: np.ndarray | None) -> float:
     """Calibrate Non-Local Means denoising using the Noise2Self (J-invariant) method.
 
-    Uses skimage's ``calibrate_denoiser`` on a single representative 2D slice
-    to find the optimal ``h`` parameter for ``denoise_nl_means``.  The result
-    is cached in ``CACHE_DIR / "nlm_calibration_s{SAMPLE_INDEX}.json"`` so
-    subsequent runs skip the calibration step entirely.
+    Uses ``luxar.gsplats.preprocessing.calibrate_nlm_h`` (GPU-accelerated) on a
+    single representative 2D slice to find the optimal ``h`` parameter for NLM
+    denoising.  The result is cached in
+    ``CACHE_DIR / "nlm_calibration_s{SAMPLE_INDEX}.json"`` so subsequent runs
+    skip the calibration step entirely.
 
     Args:
         first_volume: 3D float32 volume (Z, Y, X) from the first timepoint,
@@ -623,8 +624,12 @@ def calibrate_nlm_once(first_volume: np.ndarray | None) -> float:
             to be loaded from cache.
 
     Returns:
-        Optimal ``h`` parameter for ``denoise_nl_means``.
+        Optimal ``h`` parameter for NLM denoising.
     """
+    import torch
+
+    from luxar.gsplats.preprocessing import calibrate_nlm_h
+
     cal_file = CACHE_DIR / f"nlm_calibration_s{SAMPLE_INDEX}.json"
 
     if _is_cached(cal_file):
@@ -644,37 +649,17 @@ def calibrate_nlm_once(first_volume: np.ndarray | None) -> float:
             "provided for re-calibration.  Re-run with --no-cache."
         )
 
-    try:
-        from skimage.restoration import calibrate_denoiser, denoise_nl_means
-    except ImportError as e:
-        raise ImportError(
-            "scikit-image is required for preprocessing.\n"
-            "Install with: pip install scikit-image"
-        ) from e
-
     with asection("Calibrating NLM denoiser (Noise2Self / J-invariant)"):
-        # Use middle z-slice — representative since imaging is consistent
-        mid_z = first_volume.shape[0] // 2
-        cal_slice = first_volume[mid_z]
-        aprint(f"  Calibrating on z={mid_z} slice ({cal_slice.shape})")
+        vol_tensor = torch.from_numpy(first_volume)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        calibrated = calibrate_denoiser(
-            cal_slice,
-            denoise_nl_means,
-            denoise_parameters=dict(
-                h=np.arange(0.005, 0.08, 0.005),
-                fast_mode=[True],
-                patch_size=[PREPROCESS_NLM_PATCH_SIZE],
-                patch_distance=[PREPROCESS_NLM_PATCH_DISTANCE],
-            ),
-            stride=2,
+        h = calibrate_nlm_h(
+            vol_tensor,
+            patch_size=PREPROCESS_NLM_PATCH_SIZE,
+            search_distance=PREPROCESS_NLM_PATCH_DISTANCE,
+            use_2d_slice=True,
+            device=device,
         )
-
-        # Extract the calibrated h from the partial-function keywords.
-        # calibrate_denoiser returns functools.partial(denoise_invariant, ...)
-        # with the best params nested in 'denoiser_kwargs'.
-        best_kwargs = calibrated.keywords.get("denoiser_kwargs", {})
-        h = best_kwargs.get("h", 0.02)
         aprint(f"  Optimal h={h:.6f}")
 
         # Cache the result with marker-file safety
@@ -689,37 +674,37 @@ def calibrate_nlm_once(first_volume: np.ndarray | None) -> float:
 
 
 def preprocess_volume(volume: np.ndarray, nlm_h: float) -> np.ndarray:
-    """Preprocess a 3D volume with N2S-NLM denoising followed by CLAHE.
+    """Preprocess a 3D volume with NLM denoising followed by CLAHE.
 
     Pipeline:
-      1. Full 3D Non-Local Means denoising (using calibrated ``h``)
+      1. Full 3D Non-Local Means denoising (GPU-accelerated via luxar)
       2. CLAHE contrast enhancement (GPU-accelerated via luxar)
 
     Args:
         volume: 3D float32 volume (Z, Y, X), normalised to [0, 1].
-        nlm_h: Calibrated ``h`` parameter for ``denoise_nl_means``.
+        nlm_h: Calibrated ``h`` parameter for NLM denoising.
 
     Returns:
         Preprocessed float32 volume, normalised to [0, 1].
     """
     import torch
-    from skimage.restoration import denoise_nl_means
 
-    # Step 1: Full 3D Non-Local Means denoising
-    denoised = denoise_nl_means(
-        volume,
+    from luxar.gsplats.preprocessing import denoise_nlm
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Step 1: Full 3D Non-Local Means denoising (GPU-accelerated)
+    vol_tensor = torch.from_numpy(volume).to(device)
+    denoised = denoise_nlm(
+        vol_tensor,
         h=nlm_h,
         patch_size=PREPROCESS_NLM_PATCH_SIZE,
-        patch_distance=PREPROCESS_NLM_PATCH_DISTANCE,
-        fast_mode=True,
-    ).astype(np.float32)
+        search_distance=PREPROCESS_NLM_PATCH_DISTANCE,
+    )
 
     # Step 2: CLAHE (GPU-accelerated)
-    vol_torch = torch.from_numpy(denoised)
-    if torch.cuda.is_available():
-        vol_torch = vol_torch.cuda()
     result = apply_clahe(
-        vol_torch,
+        denoised,
         tile_size=PREPROCESS_CLAHE_TILE,
         clip_limit=PREPROCESS_CLAHE_CLIP,
     )
