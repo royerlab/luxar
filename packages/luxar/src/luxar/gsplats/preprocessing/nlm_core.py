@@ -149,7 +149,24 @@ def denoise_nlm(
     if resolved == "cuda":
         from .cuda.nlm_cuda_wrapper import nlm_cuda_denoise
 
-        return nlm_cuda_denoise(volume, h, patch_size, search_distance)
+        try:
+            return nlm_cuda_denoise(volume, h, patch_size, search_distance)
+        except ValueError as exc:
+            # Unsupported params (e.g., search_distance too large for GPU
+            # shared memory) — fall back to PyTorch backend
+            import warnings
+
+            warnings.warn(
+                f"CUDA NLM: {exc} — falling back to PyTorch backend "
+                f"(slower but supports any parameter combination).",
+                UserWarning,
+                stacklevel=2,
+            )
+            from .nlm_pytorch import nlm_pytorch_denoise
+
+            return nlm_pytorch_denoise(
+                volume, h, patch_size, search_distance, chunk_size=chunk_size
+            )
     elif resolved == "pytorch":
         from .nlm_pytorch import nlm_pytorch_denoise
 

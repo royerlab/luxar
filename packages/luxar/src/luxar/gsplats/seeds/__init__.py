@@ -42,6 +42,7 @@ from luxar.gsplats.seeds.edges import seed_from_edges
 from luxar.gsplats.seeds.generate import generate_seeds
 from luxar.gsplats.seeds.grid import seed_from_grid
 from luxar.gsplats.seeds.multiscale_decomposition import seed_from_decomposition
+from luxar.gsplats.seeds.peaks import seed_from_peaks
 from luxar.gsplats.seeds.utils import (
     combine_seeds,
     dedupe_farthest_first,
@@ -56,6 +57,7 @@ __all__ = [
     "seed_from_decomposition",
     "seed_from_grid",
     "seed_from_edges",
+    "seed_from_peaks",
     # Utility functions (for advanced usage)
     "sigmas_to_cholesky_isotropic",
     "local_maxima",
