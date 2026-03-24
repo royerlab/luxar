@@ -12,6 +12,32 @@ if TYPE_CHECKING:
     from luxar.encoding import EncodingMode
 
 
+def _merge_lod_colors(
+    lods: "list[GSplatLOD]",
+) -> "Optional[np.ndarray]":
+    """Merge colors from multiple LODs/datasets using None/all/mixed logic.
+
+    - All have colors → concatenate.
+    - All None → return None.
+    - Mixed → fill missing with white (1,1,1).
+    """
+    if not lods:
+        return None
+    has_colors = [lod.colors is not None for lod in lods]
+    if all(has_colors):
+        return np.concatenate([lod.colors for lod in lods], axis=0)
+    elif not any(has_colors):
+        return None
+    else:
+        parts = []
+        for lod in lods:
+            if lod.colors is not None:
+                parts.append(lod.colors)
+            else:
+                parts.append(np.ones((lod.n_splats, 3), dtype=np.float32))
+        return np.concatenate(parts, axis=0)
+
+
 class _SplatArrayMixin:
     """Shared computed properties for splat array containers.
 
@@ -252,20 +278,7 @@ class GSplatData(_SplatArrayMixin):
             self.cholesky_factors = np.concatenate(
                 [lod.cholesky_factors for lod in self.lods], axis=0
             )
-            # Colors: concat if all have them, None if all None, fill missing with white
-            has_colors = [lod.colors is not None for lod in self.lods]
-            if all(has_colors):
-                self.colors = np.concatenate([lod.colors for lod in self.lods], axis=0)
-            elif not any(has_colors):
-                self.colors = None
-            else:
-                parts = []
-                for lod in self.lods:
-                    if lod.colors is not None:
-                        parts.append(lod.colors)
-                    else:
-                        parts.append(np.ones((lod.n_splats, 3), dtype=np.float32))
-                self.colors = np.concatenate(parts, axis=0)
+            self.colors = _merge_lod_colors(self.lods)
 
         # Top-level stats (separate from per-LOD stats)
         if stats is not None:
@@ -383,6 +396,26 @@ class GSplatData(_SplatArrayMixin):
             raise ValueError(
                 f"Mask shape {mask.shape} doesn't match splat count ({self.n_splats},)"
             )
+
+        # Multi-LOD path: split mask across LODs
+        if self.n_lods > 1:
+            new_lods = []
+            offset = 0
+            for lod in self.lods:
+                n = lod.n_splats
+                lod_mask = mask[offset : offset + n]
+                new_lods.append(
+                    GSplatLOD(
+                        centers=lod.centers[lod_mask],
+                        amplitudes=lod.amplitudes[lod_mask],
+                        cholesky_factors=lod.cholesky_factors[lod_mask],
+                        colors=lod.colors[lod_mask] if lod.colors is not None else None,
+                        stats=dict(lod.stats),
+                    )
+                )
+                offset += n
+            return GSplatData.from_lods(new_lods, stats=dict(self.stats))
+
         return GSplatData(
             centers=self.centers[mask],
             amplitudes=self.amplitudes[mask],
@@ -646,23 +679,6 @@ class GSplatData(_SplatArrayMixin):
                     f"dataset {i} has {ds.ndim}D"
                 )
 
-        all_centers = np.concatenate([d.centers for d in non_empty], axis=0)
-        all_amplitudes = np.concatenate([d.amplitudes for d in non_empty])
-        all_cholesky = np.concatenate([d.cholesky_factors for d in non_empty], axis=0)
-        has_colors = [d.colors is not None for d in non_empty]
-        if all(has_colors):
-            all_colors = np.concatenate([d.colors for d in non_empty], axis=0)
-        elif not any(has_colors):
-            all_colors = None
-        else:
-            parts = []
-            for d in non_empty:
-                if d.colors is not None:
-                    parts.append(d.colors)
-                else:
-                    parts.append(np.ones((d.n_splats, 3), dtype=np.float32))
-            all_colors = np.concatenate(parts, axis=0)
-
         merged_stats: Dict[str, Any] = {
             "concatenated_from": len(datasets),
             "splats_per_source": [d.n_splats for d in datasets],
@@ -670,6 +686,37 @@ class GSplatData(_SplatArrayMixin):
         total_time = sum(d.stats.get("time_seconds", 0) for d in non_empty)
         if total_time > 0:
             merged_stats["time_seconds"] = total_time
+
+        # Multi-LOD path: per-LOD concatenation
+        max_lods = max(d.n_lods for d in non_empty)
+        if max_lods > 1:
+            merged_lods = []
+            for level in range(max_lods):
+                level_lods = [d.at_lod(level) for d in non_empty if level < d.n_lods]
+                centers = np.concatenate([lod.centers for lod in level_lods], axis=0)
+                amplitudes = np.concatenate([lod.amplitudes for lod in level_lods])
+                cholesky = np.concatenate(
+                    [lod.cholesky_factors for lod in level_lods], axis=0
+                )
+                colors = _merge_lod_colors(level_lods)
+                merged_lods.append(
+                    GSplatLOD(
+                        centers=centers,
+                        amplitudes=amplitudes,
+                        cholesky_factors=cholesky,
+                        colors=colors,
+                        stats={"lod_level": level, "n_sources": len(level_lods)},
+                    )
+                )
+            return cls(lods=merged_lods, stats=merged_stats)
+
+        # Single-LOD fast path (unchanged)
+        all_centers = np.concatenate([d.centers for d in non_empty], axis=0)
+        all_amplitudes = np.concatenate([d.amplitudes for d in non_empty])
+        all_cholesky = np.concatenate([d.cholesky_factors for d in non_empty], axis=0)
+        # Use flattened LODs for color merging in single-LOD path
+        all_single_lods = [d.at_lod(0) for d in non_empty]
+        all_colors = _merge_lod_colors(all_single_lods)
 
         return cls(
             centers=all_centers,
@@ -821,6 +868,42 @@ class GSplatData(_SplatArrayMixin):
         n = self.n_splats
         d = self.ndim
 
+        # Multi-LOD path: embed each LOD independently
+        if self.n_lods > 1:
+            is_scalar = np.isscalar(values)
+            if not is_scalar:
+                values = np.asarray(values, dtype=self.centers.dtype)
+                if values.shape != (n,):
+                    raise ValueError(
+                        f"values shape {values.shape} doesn't match splat count ({n},)"
+                    )
+            new_lods = []
+            offset = 0
+            dim_mapping = list(range(d))
+            fill_sigma = {d: sigma}
+            for lod in self.lods:
+                nl = lod.n_splats
+                if is_scalar:
+                    lod_col = np.full((nl, 1), values, dtype=lod.centers.dtype)
+                else:
+                    lod_col = values[offset : offset + nl].reshape(nl, 1)
+                lod_centers = np.concatenate([lod.centers, lod_col], axis=1)
+                lod_cholesky = embed_cholesky_packed(
+                    lod.cholesky_factors, d, d + 1, dim_mapping, fill_sigma
+                )
+                new_lods.append(
+                    GSplatLOD(
+                        centers=lod_centers,
+                        amplitudes=lod.amplitudes,
+                        cholesky_factors=lod_cholesky,
+                        colors=lod.colors,
+                        stats=dict(lod.stats),
+                    )
+                )
+                offset += nl
+            return GSplatData.from_lods(new_lods, stats=dict(self.stats))
+
+        # Single-LOD fast path (unchanged)
         if np.isscalar(values):
             new_col = np.full((n, 1), values, dtype=self.centers.dtype)
         else:
@@ -896,6 +979,20 @@ class GSplatData(_SplatArrayMixin):
             )
 
         if self.n_splats == 0:
+            if self.n_lods > 1:
+                return GSplatData.from_lods(
+                    [
+                        GSplatLOD(
+                            centers=lod.centers.copy(),
+                            amplitudes=lod.amplitudes,
+                            cholesky_factors=lod.cholesky_factors.copy(),
+                            colors=lod.colors,
+                            stats=dict(lod.stats),
+                        )
+                        for lod in self.lods
+                    ],
+                    stats=dict(self.stats),
+                )
             return GSplatData(
                 centers=self.centers.copy(),
                 amplitudes=self.amplitudes,
@@ -904,34 +1001,47 @@ class GSplatData(_SplatArrayMixin):
                 stats=dict(self.stats),
             )
 
-        new_centers = (self.centers.astype(np.float64) @ A.T + t).astype(
-            self.centers.dtype
-        )
-
-        # Fast path: diagonal matrix (e.g., per-axis scaling for anisotropy correction)
-        # Scale row i of Cholesky L by A[i,i] — no unpack/repack/cholesky needed.
+        # Precompute cholesky transform (shared between single/multi-LOD paths)
         is_diagonal = np.count_nonzero(A - np.diag(np.diagonal(A))) == 0
         if is_diagonal:
             diag = np.diagonal(A)
             if np.any(diag <= 0):
-                raise ValueError(
-                    f"Diagonal scale factors must be positive, got {diag}"
-                )
-            # Build packed scale vector: row i has (i+1) elements, all scaled by diag[i]
-            tril_scales = np.concatenate(
-                [[diag[i]] * (i + 1) for i in range(d)]
-            ).astype(self.cholesky_factors.dtype)
-            new_cholesky = self.cholesky_factors * tril_scales
-        else:
-            # General case: unpack → covariance → transform → re-Cholesky → pack
-            # Note: an "orthogonal fast path" (L_new = A @ L) is tempting but
-            # WRONG because A @ L is not lower-triangular for general rotations,
-            # so pack_tril would discard upper-triangular information.
-            L = unpack_tril(self.cholesky_factors.astype(np.float64), d)
+                raise ValueError(f"Diagonal scale factors must be positive, got {diag}")
+            tril_scales = np.concatenate([[diag[i]] * (i + 1) for i in range(d)])
+
+        def _transform_cholesky(chol: np.ndarray) -> np.ndarray:
+            if is_diagonal:
+                return chol * tril_scales.astype(chol.dtype)
+            L = unpack_tril(chol.astype(np.float64), d)
             Sigma = L @ np.swapaxes(L, -2, -1)
             Sigma_new = A @ Sigma @ A.T
             L_new = np.linalg.cholesky(Sigma_new)
-            new_cholesky = pack_tril(L_new).astype(self.cholesky_factors.dtype)
+            return pack_tril(L_new).astype(chol.dtype)
+
+        # Multi-LOD path: transform each LOD independently
+        if self.n_lods > 1:
+            new_lods = []
+            for lod in self.lods:
+                lod_centers = (lod.centers.astype(np.float64) @ A.T + t).astype(
+                    lod.centers.dtype
+                )
+                lod_cholesky = _transform_cholesky(lod.cholesky_factors)
+                new_lods.append(
+                    GSplatLOD(
+                        centers=lod_centers,
+                        amplitudes=lod.amplitudes,
+                        cholesky_factors=lod_cholesky,
+                        colors=lod.colors,
+                        stats=dict(lod.stats),
+                    )
+                )
+            return GSplatData.from_lods(new_lods, stats=dict(self.stats))
+
+        # Single-LOD fast path
+        new_centers = (self.centers.astype(np.float64) @ A.T + t).astype(
+            self.centers.dtype
+        )
+        new_cholesky = _transform_cholesky(self.cholesky_factors)
 
         return GSplatData(
             centers=new_centers,
@@ -943,6 +1053,32 @@ class GSplatData(_SplatArrayMixin):
 
     # ── Intensity transforms ────────────────────────────────
 
+    def _with_new_amplitudes(self, new_amplitudes: np.ndarray) -> "GSplatData":
+        """Return a new GSplatData with replaced amplitudes, preserving LODs."""
+        if self.n_lods > 1:
+            new_lods = []
+            offset = 0
+            for lod in self.lods:
+                n = lod.n_splats
+                new_lods.append(
+                    GSplatLOD(
+                        centers=lod.centers,
+                        amplitudes=new_amplitudes[offset : offset + n],
+                        cholesky_factors=lod.cholesky_factors,
+                        colors=lod.colors,
+                        stats=dict(lod.stats),
+                    )
+                )
+                offset += n
+            return GSplatData.from_lods(new_lods, stats=dict(self.stats))
+        return GSplatData(
+            centers=self.centers,
+            amplitudes=new_amplitudes,
+            cholesky_factors=self.cholesky_factors,
+            colors=self.colors,
+            stats=dict(self.stats),
+        )
+
     def affine_intensity(self, scale: float = 1.0, offset: float = 0.0) -> "GSplatData":
         """Apply affine transform to amplitudes: new_amp = scale * amp + offset.
 
@@ -953,13 +1089,7 @@ class GSplatData(_SplatArrayMixin):
         Returns:
             New GSplatData with transformed amplitudes.
         """
-        return GSplatData(
-            centers=self.centers,
-            amplitudes=self.amplitudes * scale + offset,
-            cholesky_factors=self.cholesky_factors,
-            colors=self.colors,
-            stats=dict(self.stats),
-        )
+        return self._with_new_amplitudes(self.amplitudes * scale + offset)
 
     def normalize_intensity(self, target_max: float = 1.0) -> "GSplatData":
         """Normalize amplitudes so the maximum equals target_max.
@@ -972,13 +1102,7 @@ class GSplatData(_SplatArrayMixin):
         """
         current_max = float(self.amplitudes.max()) if self.n_splats > 0 else 0.0
         if current_max == 0:
-            return GSplatData(
-                centers=self.centers,
-                amplitudes=self.amplitudes.copy(),
-                cholesky_factors=self.cholesky_factors,
-                colors=self.colors,
-                stats=dict(self.stats),
-            )
+            return self._with_new_amplitudes(self.amplitudes.copy())
         return self.scale_intensity(target_max / current_max)
 
     def clamp_intensity(
@@ -1000,13 +1124,7 @@ class GSplatData(_SplatArrayMixin):
             new_amps = np.maximum(new_amps, min)
         if max is not None:
             new_amps = np.minimum(new_amps, max)
-        return GSplatData(
-            centers=self.centers,
-            amplitudes=new_amps,
-            cholesky_factors=self.cholesky_factors,
-            colors=self.colors,
-            stats=dict(self.stats),
-        )
+        return self._with_new_amplitudes(new_amps)
 
     # ── I/O ─────────────────────────────────────────────────
 
@@ -1272,11 +1390,25 @@ class GSplatData(_SplatArrayMixin):
             >>> # Shift all splats by [10, 20, 30]
             >>> translated = data.translate(np.array([10, 20, 30]))
         """
+        # Multi-LOD path: translate each LOD independently
+        if self.n_lods > 1:
+            new_lods = [
+                GSplatLOD(
+                    centers=lod.centers + offset,
+                    amplitudes=lod.amplitudes,
+                    cholesky_factors=lod.cholesky_factors,
+                    colors=lod.colors,
+                    stats=dict(lod.stats),
+                )
+                for lod in self.lods
+            ]
+            return GSplatData.from_lods(new_lods, stats=dict(self.stats))
+
         return GSplatData(
-            centers=self.centers + offset,  # NEW array
-            amplitudes=self.amplitudes,  # REFERENCE (no copy needed)
-            cholesky_factors=self.cholesky_factors,  # REFERENCE
-            colors=self.colors,  # REFERENCE (None-safe)
+            centers=self.centers + offset,
+            amplitudes=self.amplitudes,
+            cholesky_factors=self.cholesky_factors,
+            colors=self.colors,
             stats=dict(self.stats),
         )
 
@@ -1323,13 +1455,7 @@ class GSplatData(_SplatArrayMixin):
             >>> # Brighten by 2x
             >>> brightened = data.scale_intensity(2.0)
         """
-        return GSplatData(
-            centers=self.centers,  # REFERENCE (no copy needed)
-            amplitudes=self.amplitudes * factor,  # NEW array
-            cholesky_factors=self.cholesky_factors,  # REFERENCE
-            colors=self.colors,  # REFERENCE (None-safe)
-            stats=dict(self.stats),
-        )
+        return self._with_new_amplitudes(self.amplitudes * factor)
 
     def prune(
         self,
@@ -1588,7 +1714,51 @@ class GSplatData(_SplatArrayMixin):
                     f"channel {i} has {gsplat.ndim}D"
                 )
 
-        # Concatenate all arrays
+        # Merge stats (basic aggregation)
+        merged_stats: Dict[str, Any] = {
+            "merged_from_channels": len(gsplats_per_channel),
+            "splats_per_channel": [len(g.amplitudes) for g in gsplats_per_channel],
+        }
+        total_time = sum(g.stats.get("time_seconds", 0) for g in gsplats_per_channel)
+        if total_time > 0:
+            merged_stats["time_seconds"] = total_time
+
+        # Multi-LOD path: per-LOD channel color assignment
+        max_lods = max(g.n_lods for g in gsplats_per_channel)
+        if max_lods > 1:
+            merged_lods = []
+            for level in range(max_lods):
+                level_parts = [
+                    (g.at_lod(level), color)
+                    for g, color in zip(gsplats_per_channel, channel_colors)
+                    if level < g.n_lods
+                ]
+                centers = np.concatenate(
+                    [lod.centers for lod, _ in level_parts], axis=0
+                )
+                amplitudes = np.concatenate([lod.amplitudes for lod, _ in level_parts])
+                cholesky = np.concatenate(
+                    [lod.cholesky_factors for lod, _ in level_parts], axis=0
+                )
+                colors = np.concatenate(
+                    [
+                        np.tile(np.array(c, dtype=np.float32), (lod.n_splats, 1))
+                        for lod, c in level_parts
+                    ],
+                    axis=0,
+                )
+                merged_lods.append(
+                    GSplatLOD(
+                        centers=centers,
+                        amplitudes=amplitudes,
+                        cholesky_factors=cholesky,
+                        colors=colors,
+                        stats={"lod_level": level, "n_channels": len(level_parts)},
+                    )
+                )
+            return cls(lods=merged_lods, stats=merged_stats)
+
+        # Single-LOD fast path (unchanged)
         all_centers = np.concatenate([g.centers for g in gsplats_per_channel], axis=0)
         all_amplitudes = np.concatenate(
             [g.amplitudes for g in gsplats_per_channel], axis=0
@@ -1596,28 +1766,13 @@ class GSplatData(_SplatArrayMixin):
         all_cholesky = np.concatenate(
             [g.cholesky_factors for g in gsplats_per_channel], axis=0
         )
-        # Build colors array: each splat gets the color of its source channel
         color_arrays = []
         for gsplat, color in zip(gsplats_per_channel, channel_colors):
-            n_splats = len(gsplat.amplitudes)
-            # Create (N, 3) array filled with channel color
             channel_color_array = np.tile(
-                np.array(color, dtype=np.float32), (n_splats, 1)
+                np.array(color, dtype=np.float32), (gsplat.n_splats, 1)
             )
             color_arrays.append(channel_color_array)
-
         all_colors = np.concatenate(color_arrays, axis=0)
-
-        # Merge stats (basic aggregation)
-        merged_stats: Dict[str, Any] = {
-            "merged_from_channels": len(gsplats_per_channel),
-            "splats_per_channel": [len(g.amplitudes) for g in gsplats_per_channel],
-        }
-
-        # Sum time if available
-        total_time = sum(g.stats.get("time_seconds", 0) for g in gsplats_per_channel)
-        if total_time > 0:
-            merged_stats["time_seconds"] = total_time
 
         return cls(
             centers=all_centers,

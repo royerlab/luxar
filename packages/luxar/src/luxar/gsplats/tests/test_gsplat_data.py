@@ -1734,13 +1734,13 @@ class TestGSplatDataLOD:
         assert data.masses().shape == (10,)
         assert data.eccentricities().shape == (10,)
 
-    def test_filter_returns_single_lod(self):
-        """filter() operates on concat and returns single-LOD result."""
+    def test_filter_preserves_lods(self):
+        """filter() preserves LOD structure on multi-LOD data."""
         lods = self._make_lods()
         data = GSplatData.from_lods(lods)
         mask = data.amplitudes > 0.5
         filtered = data.filter(mask)
-        assert filtered.n_lods == 1
+        assert filtered.n_lods == 3  # LODs preserved
         assert filtered.n_splats == int(mask.sum())
 
     def test_empty_lods_raises(self):
@@ -1754,3 +1754,179 @@ class TestGSplatDataLOD:
     def test_no_args_raises(self):
         with pytest.raises(ValueError, match="Provide either"):
             GSplatData()
+
+
+class TestLODPreservation:
+    """Tests that merge/transform operations preserve multi-LOD structure."""
+
+    def _make_multi_lod(self, n_lods=3, splats_per_lod=10, ndim=3, seed=42):
+        """Create a multi-LOD GSplatData for testing."""
+        from luxar.gsplats.gsplat_data import GSplatLOD
+
+        rng = np.random.RandomState(seed)
+        tril_size = ndim * (ndim + 1) // 2
+        lods = []
+        for i in range(n_lods):
+            # Identity-like cholesky: diagonal = 1, off-diagonal = 0
+            chol = np.zeros((splats_per_lod, tril_size), dtype=np.float32)
+            k = 0
+            for row in range(ndim):
+                for col in range(row + 1):
+                    if row == col:
+                        chol[:, k] = 1.0
+                    k += 1
+            lods.append(
+                GSplatLOD(
+                    centers=rng.rand(splats_per_lod, ndim).astype(np.float32) * 100,
+                    amplitudes=rng.rand(splats_per_lod).astype(np.float32) + 0.1,
+                    cholesky_factors=chol,
+                    stats={"pass_index": i, "cumulative_psnr_db": 20.0 + i * 5.0},
+                )
+            )
+        return GSplatData.from_lods(lods)
+
+    def test_concatenate_preserves_lods(self):
+        d1 = self._make_multi_lod(n_lods=3, splats_per_lod=10, seed=1)
+        d2 = self._make_multi_lod(n_lods=3, splats_per_lod=15, seed=2)
+        result = GSplatData.concatenate([d1, d2])
+        assert result.n_lods == 3
+        for level in range(3):
+            lod = result.at_lod(level)
+            assert lod.n_splats == 25  # 10 + 15
+
+    def test_concatenate_mixed_lod_counts(self):
+        d1 = self._make_multi_lod(n_lods=2, splats_per_lod=10, seed=1)
+        d2 = self._make_multi_lod(n_lods=4, splats_per_lod=8, seed=2)
+        result = GSplatData.concatenate([d1, d2])
+        assert result.n_lods == 4
+        # Level 0 and 1: both contribute
+        assert result.at_lod(0).n_splats == 18  # 10 + 8
+        assert result.at_lod(1).n_splats == 18
+        # Level 2 and 3: only d2 contributes
+        assert result.at_lod(2).n_splats == 8
+        assert result.at_lod(3).n_splats == 8
+
+    def test_concatenate_single_lod_unchanged(self):
+        d1 = GSplatData(
+            centers=np.random.rand(5, 3).astype(np.float32),
+            amplitudes=np.ones(5, dtype=np.float32),
+            cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (5, 1)).astype(np.float32),
+        )
+        d2 = GSplatData(
+            centers=np.random.rand(7, 3).astype(np.float32),
+            amplitudes=np.ones(7, dtype=np.float32),
+            cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (7, 1)).astype(np.float32),
+        )
+        result = GSplatData.concatenate([d1, d2])
+        assert result.n_lods == 1
+        assert result.n_splats == 12
+
+    def test_embed_dimension_preserves_lods(self):
+        data = self._make_multi_lod(n_lods=3, splats_per_lod=10, ndim=3)
+        assert data.ndim == 3
+        embedded = data.embed_dimension(5.0, sigma=0.0)
+        assert embedded.ndim == 4
+        assert embedded.n_lods == 3
+        for level in range(3):
+            lod = embedded.at_lod(level)
+            assert lod.n_splats == 10
+            assert lod.centers.shape == (10, 4)
+            # Check the new dimension has value 5.0
+            np.testing.assert_allclose(lod.centers[:, 3], 5.0)
+
+    def test_embed_dimension_per_splat_values_multi_lod(self):
+        data = self._make_multi_lod(n_lods=2, splats_per_lod=10, ndim=3)
+        # Per-splat values: 20 total splats
+        values = np.arange(20, dtype=np.float32)
+        embedded = data.embed_dimension(values, sigma=0.0)
+        assert embedded.n_lods == 2
+        # LOD 0 should get values 0-9, LOD 1 should get values 10-19
+        np.testing.assert_allclose(embedded.at_lod(0).centers[:, 3], np.arange(10))
+        np.testing.assert_allclose(embedded.at_lod(1).centers[:, 3], np.arange(10, 20))
+
+    def test_combine_as_new_dimension_preserves_lods(self):
+        d1 = self._make_multi_lod(n_lods=2, splats_per_lod=10, ndim=3, seed=1)
+        d2 = self._make_multi_lod(n_lods=2, splats_per_lod=10, ndim=3, seed=2)
+        combined = GSplatData.combine_as_new_dimension([d1, d2], sigma=0.0)
+        assert combined.ndim == 4
+        assert combined.n_lods == 2
+        # Each LOD should have 20 splats (10 from each dataset)
+        assert combined.at_lod(0).n_splats == 20
+        assert combined.at_lod(1).n_splats == 20
+
+    def test_merge_with_channel_colors_preserves_lods(self):
+        d1 = self._make_multi_lod(n_lods=2, splats_per_lod=10, seed=1)
+        d2 = self._make_multi_lod(n_lods=2, splats_per_lod=8, seed=2)
+        merged = GSplatData.merge_with_channel_colors(
+            [d1, d2],
+            channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        )
+        assert merged.n_lods == 2
+        # Each LOD: 10 + 8 = 18 splats
+        for level in range(2):
+            lod = merged.at_lod(level)
+            assert lod.n_splats == 18
+            assert lod.colors is not None
+            # First 10 splats should be red, next 8 green
+            np.testing.assert_allclose(lod.colors[:10], [[1, 0, 0]] * 10)
+            np.testing.assert_allclose(lod.colors[10:], [[0, 1, 0]] * 8)
+
+    def test_translate_preserves_lods(self):
+        data = self._make_multi_lod(n_lods=3, splats_per_lod=10)
+        original_centers = [data.at_lod(i).centers.copy() for i in range(3)]
+        offset = np.array([10, 20, 30], dtype=np.float32)
+        translated = data.translate(offset)
+        assert translated.n_lods == 3
+        for level in range(3):
+            lod = translated.at_lod(level)
+            assert lod.n_splats == 10
+            np.testing.assert_allclose(
+                lod.centers, original_centers[level] + offset, atol=1e-5
+            )
+
+    def test_transform_preserves_lods(self):
+        data = self._make_multi_lod(n_lods=2, splats_per_lod=10)
+        # Uniform 2x scaling
+        scale = np.eye(3) * 2.0
+        transformed = data.transform(scale)
+        assert transformed.n_lods == 2
+        for level in range(2):
+            orig = data.at_lod(level)
+            new = transformed.at_lod(level)
+            assert new.n_splats == orig.n_splats
+            np.testing.assert_allclose(new.centers, orig.centers * 2.0, atol=1e-4)
+
+    def test_full_merge_pipeline_preserves_lods(self):
+        """End-to-end: tile concat → timepoint stacking → channel merge."""
+
+        # Simulate 2 tiles per timepoint, 2 timepoints, 2 channels
+        # Each tile has 2 LODs
+        def make_tiles(seed):
+            return [
+                self._make_multi_lod(n_lods=2, splats_per_lod=5, seed=seed + i)
+                for i in range(2)
+            ]
+
+        # Level 1: tile merge (concatenate)
+        tp0_ch0 = GSplatData.concatenate(make_tiles(0))
+        tp1_ch0 = GSplatData.concatenate(make_tiles(10))
+        tp0_ch1 = GSplatData.concatenate(make_tiles(20))
+        tp1_ch1 = GSplatData.concatenate(make_tiles(30))
+        assert tp0_ch0.n_lods == 2  # LODs preserved through tile concat
+
+        # Level 2: timepoint stacking (combine_as_new_dimension)
+        ch0_4d = GSplatData.combine_as_new_dimension([tp0_ch0, tp1_ch0], sigma=0.0)
+        ch1_4d = GSplatData.combine_as_new_dimension([tp0_ch1, tp1_ch1], sigma=0.0)
+        assert ch0_4d.n_lods == 2  # LODs preserved through stacking
+        assert ch0_4d.ndim == 4
+
+        # Level 3: channel merge
+        final = GSplatData.merge_with_channel_colors(
+            [ch0_4d, ch1_4d],
+            channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        )
+        assert final.n_lods == 2  # LODs preserved through channel merge
+        assert final.ndim == 4
+        # 2 tiles × 5 splats × 2 timepoints × 2 channels = 40 splats per LOD
+        assert final.at_lod(0).n_splats == 40
+        assert final.at_lod(1).n_splats == 40
