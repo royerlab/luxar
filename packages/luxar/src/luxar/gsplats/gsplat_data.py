@@ -871,11 +871,12 @@ class GSplatData(_SplatArrayMixin):
         # Multi-LOD path: embed each LOD independently
         if self.n_lods > 1:
             is_scalar = np.isscalar(values)
+            values_arr: Optional[np.ndarray] = None
             if not is_scalar:
-                values = np.asarray(values, dtype=self.centers.dtype)
-                if values.shape != (n,):
+                values_arr = np.asarray(values, dtype=self.centers.dtype)
+                if values_arr.shape != (n,):
                     raise ValueError(
-                        f"values shape {values.shape} doesn't match splat count ({n},)"
+                        f"values shape {values_arr.shape} doesn't match splat count ({n},)"
                     )
             new_lods = []
             offset = 0
@@ -886,7 +887,8 @@ class GSplatData(_SplatArrayMixin):
                 if is_scalar:
                     lod_col = np.full((nl, 1), values, dtype=lod.centers.dtype)
                 else:
-                    lod_col = values[offset : offset + nl].reshape(nl, 1)
+                    assert values_arr is not None
+                    lod_col = values_arr[offset : offset + nl].reshape(nl, 1)
                 lod_centers = np.concatenate([lod.centers, lod_col], axis=1)
                 lod_cholesky = embed_cholesky_packed(
                     lod.cholesky_factors, d, d + 1, dim_mapping, fill_sigma
@@ -1011,7 +1013,7 @@ class GSplatData(_SplatArrayMixin):
 
         def _transform_cholesky(chol: np.ndarray) -> np.ndarray:
             if is_diagonal:
-                return chol * tril_scales.astype(chol.dtype)
+                return np.asarray(chol * tril_scales.astype(chol.dtype))
             L = unpack_tril(chol.astype(np.float64), d)
             Sigma = L @ np.swapaxes(L, -2, -1)
             Sigma_new = A @ Sigma @ A.T
