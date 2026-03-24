@@ -51,7 +51,7 @@ if NO_NAPARI:
 MAX_SPLATS = 6000  # Total splat budget
 MAX_SPLATS_PER_PASS = 1000  # Max splats per pass (actual may be lower after culling)
 ITERS_PER_PASS = 3000  # Optimization iterations per pass
-PSNR_PATIENCE = 0.1  # Stop if ΔPSNR < 0.1 dB between passes
+PSNR_PATIENCE = 0.01  # Stop if ΔPSNR < 0.01 dB between passes
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps"
 TRUNCATE_SIG = 3.0  # Rendering support truncation
 ZARR_URL = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.2/6001240.zarr"
