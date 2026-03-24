@@ -16,7 +16,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.tiling import TileSpec, compute_tile_specs, cosine_window
 
 
@@ -153,22 +153,7 @@ def fit_tile(
         else:
             offset = origin
 
-        if result.n_lods > 1:
-            # LOD-aware translate: translate each LOD individually to
-            # preserve the multi-LOD structure (translate() flattens LODs).
-            translated_lods = [
-                GSplatLOD(
-                    centers=lod.centers + offset,
-                    amplitudes=lod.amplitudes,
-                    cholesky_factors=lod.cholesky_factors,
-                    colors=lod.colors,
-                    stats=dict(lod.stats),
-                )
-                for lod in result.lods
-            ]
-            result = GSplatData.from_lods(translated_lods, stats=dict(result.stats))
-        else:
-            result = result.translate(offset)
+        result = result.translate(offset)
 
     # Tag tile info in stats
     result.stats["tile_index"] = spec.index
@@ -331,48 +316,9 @@ def _merge_lods_across_tiles(results: list[GSplatData]) -> GSplatData:
     Pads to the maximum LOD count — tiles that stopped early simply
     contribute nothing to higher LODs.
     """
-    max_lods = max(r.n_lods for r in results)
-    merged_lods: list[GSplatLOD] = []
-
-    for level in range(max_lods):
-        # Collect this level's LOD from each tile that has it
-        level_lods = [r.at_lod(level) for r in results if level < r.n_lods]
-
-        centers = np.concatenate([lod.centers for lod in level_lods], axis=0)
-        amplitudes = np.concatenate([lod.amplitudes for lod in level_lods])
-        cholesky = np.concatenate(
-            [lod.cholesky_factors for lod in level_lods], axis=0
-        )
-
-        # Handle colors (None/mixed)
-        has_colors = [lod.colors is not None for lod in level_lods]
-        if all(has_colors):
-            colors = np.concatenate([lod.colors for lod in level_lods], axis=0)
-        elif not any(has_colors):
-            colors = None
-        else:
-            parts = []
-            for lod in level_lods:
-                if lod.colors is not None:
-                    parts.append(lod.colors)
-                else:
-                    parts.append(np.ones((lod.n_splats, 3), dtype=np.float32))
-            colors = np.concatenate(parts, axis=0)
-
-        merged_lods.append(
-            GSplatLOD(
-                centers=centers,
-                amplitudes=amplitudes,
-                cholesky_factors=cholesky,
-                colors=colors,
-                stats={
-                    "lod_level": level,
-                    "n_tiles": len(level_lods),
-                },
-            )
-        )
-
-    return GSplatData.from_lods(merged_lods)
+    # Delegates to LOD-aware concatenate() which handles per-LOD merging
+    # and mixed LOD counts automatically.
+    return GSplatData.concatenate(results)
 
 
 def _grid_shape(specs: list[TileSpec], ndim: int) -> tuple[int, ...]:
