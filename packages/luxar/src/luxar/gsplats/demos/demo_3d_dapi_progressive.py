@@ -51,7 +51,7 @@ if NO_NAPARI:
 # ======= Demo knobs =======
 DEBUG = False  # Set to True to collect per-pass diagnostics (overshoot analysis)
 MAX_SPLATS = 10000  # Total splat budget
-MAX_SPLATS_PER_PASS = 2000  # Max splats per pass (actual may be lower after culling)
+MAX_SPLATS_PER_PASS = 1000  # Max splats per pass (actual may be lower after culling)
 ITERS_PER_PASS = 3000  # Optimization iterations per pass
 PSNR_PATIENCE = 0.01  # Stop if ΔPSNR < 0.01 dB between passes
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps"
