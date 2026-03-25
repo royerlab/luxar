@@ -105,25 +105,24 @@ def create_loss_function(
 def _compute_poisson_loss(
     pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: float | None
 ) -> torch.Tensor:
-    """Compute Poisson deviance loss."""
+    """Compute Poisson deviance loss.
+
+    Optimized: per-element deviance is computed once, then reused for both
+    the total deviance and the asymmetric over-prediction penalty.
+    """
     eps = 1e-8
     Vc = torch.clamp(target, min=0.0)
     Pc = torch.clamp(pred, min=eps)
-    # Use xlogy to safely handle Vc=0 (0 * log(0) = 0, with correct gradients)
-    dev = 2.0 * torch.sum(Pc - Vc + torch.xlogy(Vc, torch.clamp(Vc / Pc, min=eps)))
-    data = dev / target.numel()
+    # Per-element deviance (computed once, reused below)
+    per_elem = Pc - Vc + torch.xlogy(Vc, torch.clamp(Vc / Pc, min=eps))
+    N = target.numel()
+    data = 2.0 * torch.sum(per_elem) / N
 
-    # Apply asymmetric penalty if specified
     if asymmetric_penalty is not None:
-        over_prediction_mask = pred > target
-        # Compute additional penalty for over-prediction regions only
-        # This penalizes regions where we predict more intensity than target
-        over_prediction_dev = 2.0 * torch.sum(
-            over_prediction_mask
-            * (Pc - Vc + torch.xlogy(Vc, torch.clamp(Vc / Pc, min=eps)))
-        )
-        # Add (F-1) times the over-prediction loss to get total F times penalty
-        data = data + (asymmetric_penalty - 1.0) * over_prediction_dev / target.numel()
+        # Additional penalty for over-prediction regions (reuses per_elem)
+        over_mask = (pred > target).float()
+        over_dev = 2.0 * torch.sum(over_mask * per_elem) / N
+        data = data + (asymmetric_penalty - 1.0) * over_dev
 
     return data
 
