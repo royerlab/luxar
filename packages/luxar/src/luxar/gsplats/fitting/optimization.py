@@ -155,12 +155,6 @@ def run_optimization_loop(
         if config.verbose:
             aprint("Z-order sort applied (initial)")
 
-    # Compile model forward for kernel fusion (fuses cholesky_to_conic,
-    # L_row_norms, .contiguous() calls before the CUDA kernel dispatch).
-    # fullgraph=False allows custom autograd functions (CUDASplatFunction).
-    if V_t.is_cuda:
-        model = torch.compile(model, fullgraph=False)
-
     # Eval frequency: full forward pass for convergence/metrics only every N iters.
     # The training forward+backward is always needed, but the second (eval) forward
     # pass is pure overhead for monitoring.  Skipping it on most iterations saves
