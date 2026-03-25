@@ -275,8 +275,11 @@ def fit_progressive_gaussian_splats(
             # Poisson loss: natural for sparse, count-like residuals.
             pass_kwargs["loss_type"] = "poisson"
 
-            # Higher LR: fine-detail splats need faster convergence.
-            pass_kwargs["lr"] = 0.03
+            # Higher LR: fine-detail splats converge faster with bigger steps.
+            # 0.05 is aggressive but the ReduceLROnPlateau scheduler catches
+            # divergence and reduces LR automatically.  Faster convergence →
+            # early stopping triggers sooner → fewer effective iterations.
+            pass_kwargs["lr"] = 0.05
 
             # Progressive compactness: gentle shrinkage increasing each pass.
             pass_kwargs["l1_diag"] = 0.0001 * pass_i
