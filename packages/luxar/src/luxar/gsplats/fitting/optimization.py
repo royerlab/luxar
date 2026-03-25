@@ -155,12 +155,6 @@ def run_optimization_loop(
         if config.verbose:
             aprint("Z-order sort applied (initial)")
 
-    # Enable TF32 on Ampere+ GPUs: ~3x throughput for float32 matmul/convolutions
-    # with negligible precision loss (19 mantissa bits vs 23 for FP32).
-    if V_t.is_cuda:
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-
     # Eval frequency: full forward pass for convergence/metrics only every N iters.
     # The training forward+backward is always needed, but the second (eval) forward
     # pass is pure overhead for monitoring.  Skipping it on most iterations saves
