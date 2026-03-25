@@ -159,7 +159,7 @@ def run_optimization_loop(
     # The training forward+backward is always needed, but the second (eval) forward
     # pass is pure overhead for monitoring.  Skipping it on most iterations saves
     # ~30% of per-iteration wall-clock time.
-    _EVAL_INTERVAL = 40
+    _EVAL_INTERVAL = 25
 
     # Main optimization loop
     converged_early = False
@@ -180,7 +180,6 @@ def run_optimization_loop(
         actual_iters = it
 
         # Forward pass (training — always needed)
-        # Compile the train step on first call for kernel fusion.
         optimizer.zero_grad()
         pred = model()
         loss = loss_fn(pred)
