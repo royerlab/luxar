@@ -44,15 +44,6 @@ def create_loss_function(
     l1_diag = preprocessed_data.l1_diag
     boundary_penalty = config.boundary_penalty
 
-    # Pre-dispatch loss type once at creation (avoid string comparison per-iteration)
-    _lt = loss_type.lower()
-    if _lt == "poisson":
-        _base_loss_fn = _compute_poisson_loss
-    elif _lt == "l1":
-        _base_loss_fn = _compute_l1_loss
-    else:
-        _base_loss_fn = _compute_mse_loss
-
     def loss_fn(pred: torch.Tensor) -> torch.Tensor:
         """
         Compute loss between prediction and target.
@@ -67,7 +58,13 @@ def create_loss_function(
         torch.Tensor
             Computed loss value
         """
-        data = _base_loss_fn(pred, V_t, asymmetric_penalty)
+        if loss_type.lower() == "poisson":
+            data = _compute_poisson_loss(pred, V_t, asymmetric_penalty)
+        elif loss_type.lower() == "l1":
+            data = _compute_l1_loss(pred, V_t, asymmetric_penalty)
+        else:
+            # MSE loss (default)
+            data = _compute_mse_loss(pred, V_t, asymmetric_penalty)
 
         # Add L1 regularization on amplitudes if specified
         if l1_amp is not None and l1_amp > 0:
