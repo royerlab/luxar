@@ -102,7 +102,7 @@ def create_loss_function(
     return loss_fn
 
 
-@torch.compile(fullgraph=False)
+@torch.compile(mode="reduce-overhead")
 def _compute_poisson_loss(
     pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: float | None
 ) -> torch.Tensor:
