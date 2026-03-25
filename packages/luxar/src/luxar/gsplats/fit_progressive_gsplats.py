@@ -286,18 +286,10 @@ def fit_progressive_gaussian_splats(
         # from relocation (quality iteration 30).  Saves per-iteration overhead.
         pass_enable_dynamic = False
 
-        # --- Hybrid Adam→LBFGS for residual passes ---
-        # Phase 1: Adam with asymmetric penalty establishes good positions.
-        # Phase 2: LBFGS with symmetric loss rapidly fine-tunes (smooth landscape).
-        _lbfgs_fraction = 0.3 if pass_i > 0 else 0.0  # 30% of iters for LBFGS
-        _adam_iters = int(iters_per_pass * (1 - _lbfgs_fraction))
-        _lbfgs_iters = iters_per_pass - _adam_iters
-
-        # Phase 1: Adam (full iterations for pass 0, 70% for residual passes)
         result = fit_gaussian_splats(
             target,
             seeds=seeds_this_pass,
-            n_iters=_adam_iters,
+            n_iters=iters_per_pass,
             asymmetric_penalty=pass_asymmetric_penalty,
             enable_dynamic_ops=pass_enable_dynamic,
             cull_ratio=cull_ratio,
@@ -307,35 +299,6 @@ def fit_progressive_gaussian_splats(
             truncate=truncate,
             **pass_kwargs,
         )
-
-        # Phase 2: LBFGS fine-tuning (residual passes only)
-        if _lbfgs_iters > 0:
-            from luxar.gsplats.gsplat_data import GSplatData as _GSplatData
-
-            warm_seeds = _GSplatData(
-                centers=result.centers,
-                amplitudes=result.amplitudes,
-                cholesky_factors=result.cholesky_factors,
-            )
-            lbfgs_kwargs = dict(pass_kwargs)
-            lbfgs_kwargs["optimizer_type"] = "lbfgs"
-            lbfgs_kwargs["lr"] = 0.1
-            lbfgs_kwargs["gradient_clip"] = None
-            # Keep a valid scheduler_type (LBFGS ignores it — no scheduler created)
-            lbfgs_kwargs.pop("scheduler_type", None)
-            result = fit_gaussian_splats(
-                target,
-                seeds=warm_seeds,
-                n_iters=_lbfgs_iters,
-                asymmetric_penalty=2.0,  # mild asymmetry (vs 10.0 in Adam phase)
-                enable_dynamic_ops=False,
-                cull_ratio=cull_ratio,
-                seed_method="auto",
-                device=device,
-                verbose=verbose,
-                truncate=truncate,
-                **lbfgs_kwargs,
-            )
 
         # --- Create LOD from result ---
         lod = GSplatLOD(
