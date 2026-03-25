@@ -58,17 +58,13 @@ def create_loss_function(
         torch.Tensor
             Computed loss value
         """
-        # Spatial sub-sampling: compute loss on every other slice along dim 0.
-        # Halves the number of voxels for loss computation and backward, while
-        # Adam's momentum averages gradients across iterations for full coverage.
-        _p = pred[::2]
-        _t = V_t[::2]
         if loss_type.lower() == "poisson":
-            data = _compute_poisson_loss(_p, _t, asymmetric_penalty)
+            data = _compute_poisson_loss(pred, V_t, asymmetric_penalty)
         elif loss_type.lower() == "l1":
-            data = _compute_l1_loss(_p, _t, asymmetric_penalty)
+            data = _compute_l1_loss(pred, V_t, asymmetric_penalty)
         else:
-            data = _compute_mse_loss(_p, _t, asymmetric_penalty)
+            # MSE loss (default)
+            data = _compute_mse_loss(pred, V_t, asymmetric_penalty)
 
         # Add L1 regularization on amplitudes if specified
         if l1_amp is not None and l1_amp > 0:
