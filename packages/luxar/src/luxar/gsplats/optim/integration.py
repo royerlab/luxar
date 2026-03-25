@@ -82,6 +82,25 @@ def create_optimizer_and_scheduler(
     if has_fused:
         adam_kwargs["fused"] = use_fused
 
+    # Check if LBFGS was requested via extra_kwargs
+    optimizer_type = extra_kwargs.pop("optimizer_type", "adam")
+
+    if optimizer_type == "lbfgs":
+        # L-BFGS: quasi-Newton optimizer ideal for full-batch deterministic
+        # optimization.  Uses approximate curvature for much better steps.
+        # Typically converges in 10-100x fewer iterations than Adam.
+        lbfgs_max_iter = extra_kwargs.pop("lbfgs_max_iter", 5)
+        lbfgs_history = extra_kwargs.pop("lbfgs_history_size", 10)
+        optimizer = torch.optim.LBFGS(
+            model.parameters(),
+            lr=effective_lr,
+            max_iter=lbfgs_max_iter,
+            history_size=lbfgs_history,
+            line_search_fn="strong_wolfe",
+        )
+        # LBFGS manages its own step size — no scheduler needed
+        return optimizer, None
+
     optimizer = torch.optim.Adam(model.parameters(), **adam_kwargs)
 
     # Create scheduler
