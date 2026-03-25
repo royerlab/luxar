@@ -295,7 +295,7 @@ def fit_progressive_gaussian_splats(
             cull_ratio=cull_ratio,
             seed_method=pass_seed_method,
             device=device,
-            verbose=False,  # progressive loop handles its own logging
+            verbose=verbose,
             truncate=truncate,
             **pass_kwargs,
         )
