@@ -82,7 +82,17 @@ def create_optimizer_and_scheduler(
     if has_fused:
         adam_kwargs["fused"] = use_fused
 
-    optimizer = torch.optim.Adam(model.parameters(), **adam_kwargs)
+    # Per-parameter-group LRs: amplitudes converge faster than positions/shapes.
+    # Giving amplitudes 3x LR accelerates convergence without destabilizing
+    # the more sensitive center/Cholesky optimization.
+    param_groups = []
+    for name, param in model.named_parameters():
+        pg = dict(adam_kwargs)
+        if "raw_a" in name:
+            pg["lr"] = effective_lr * 3.0  # amplitudes converge fast
+        param_groups.append({"params": [param], **pg})
+
+    optimizer = torch.optim.Adam(param_groups)
 
     # Create scheduler
     scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None
