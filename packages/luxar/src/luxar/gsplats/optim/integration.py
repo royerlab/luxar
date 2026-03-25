@@ -90,6 +90,8 @@ def create_optimizer_and_scheduler(
         pg = dict(adam_kwargs)
         if "raw_a" in name:
             pg["lr"] = effective_lr * 3.0  # amplitudes converge fast
+        elif "raw_mu" in name:
+            pg["lr"] = effective_lr * 2.0  # centers need to move quickly
         param_groups.append({"params": [param], **pg})
 
     optimizer = torch.optim.Adam(param_groups)
