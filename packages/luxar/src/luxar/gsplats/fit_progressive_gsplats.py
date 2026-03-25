@@ -150,12 +150,6 @@ def fit_progressive_gaussian_splats(
     start_time = time.time()
     V_original = V.astype(np.float32)
 
-    # Pre-compute GPU tensor once (avoids repeated numpy→GPU copies per pass).
-    # Each copy transfers ~N_voxels × 4 bytes to GPU; for a 236×512×512 volume
-    # that's ~124MB per copy.  Previously copied 2× per pass × 6 passes = ~1.5GB.
-    _resolve_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    V_tensor_gpu = torch.from_numpy(V_original).to(_resolve_device)
-
     accumulated_lods: list[GSplatLOD] = []
     prev_psnr = 0.0
     stop_reason = "max_splats"
@@ -197,11 +191,12 @@ def fit_progressive_gaussian_splats(
             with torch.no_grad():
                 rendered = cached_rendered
                 assert rendered is not None  # guaranteed after pass 0
-                residual_tensor = torch.clamp(V_tensor_gpu - rendered, min=0)
+                V_tensor = torch.from_numpy(V_original).to(rendered.device)
+                residual_tensor = torch.clamp(V_tensor - rendered, min=0)
                 target = residual_tensor.cpu().numpy()
 
             # Check if residual is negligible
-            residual_max = float(residual_tensor.max().item())
+            residual_max = float(target.max())
             if residual_max < 1e-6:
                 if verbose:
                     aprint(
@@ -324,7 +319,8 @@ def fit_progressive_gaussian_splats(
                 device=device,
                 truncate=truncate,
             )
-            quality = compute_quality_metrics(cached_rendered, V_tensor_gpu)
+            V_tensor = torch.from_numpy(V_original).to(cached_rendered.device)
+            quality = compute_quality_metrics(cached_rendered, V_tensor)
 
         current_psnr = quality["psnr_db"]
         delta_psnr = current_psnr - prev_psnr
