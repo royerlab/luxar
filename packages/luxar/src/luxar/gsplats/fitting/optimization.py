@@ -180,7 +180,7 @@ def run_optimization_loop(
         actual_iters = it
 
         # Forward pass (training — always needed)
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         pred = model()
         loss = loss_fn(pred)
         loss.backward()  # type: ignore[no-untyped-call]
