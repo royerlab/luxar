@@ -13,8 +13,6 @@ Main API
 
 .. autofunction:: luxar.gsplats.fit_gaussian_splats
 
-.. autofunction:: luxar.gsplats.fit_multiscale_gsplats
-
 .. autoclass:: luxar.gsplats.GSplatData
    :members:
    :undoc-members:

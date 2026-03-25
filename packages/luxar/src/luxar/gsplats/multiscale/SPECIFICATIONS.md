@@ -702,22 +702,7 @@ V_quarter = scales_list[2]   # Quarter resolution: (64, 64, 32)
 V_eighth = scales_list[3]    # Eighth resolution: (32, 32, 16)
 ```
 
-### Pattern 2: Multi-Scale Gaussian Splat Fitting
-
-**Note**: Multi-scale Gaussian splat fitting is now specified in the main gsplats package. Please refer to:
-
-**[Main SPECIFICATIONS.md](../SPECIFICATIONS.md)** → Section 6: Multi-Scale Gaussian Splat Fitting
-
-This section provides comprehensive specification for:
-- Mathematical formulation and parameter scaling rules
-- Complete API design for `fit_multiscale_gaussian_splats()`
-- Thin wrapper architecture using `fit_gaussian_splats()` as building block
-- Computational complexity analysis and expected speedups
-- Implementation details and usage examples
-
-The multi-scale decomposition provided by this package (`decompose_image()`) is used as a building block for the multi-scale fitting feature in the main gsplats package.
-
-### Pattern 3: Custom Loss Weights
+### Pattern 2: Custom Loss Weights
 
 ```python
 # Aggressive coarse preference
@@ -735,7 +720,7 @@ scales_list, _ = decompose_image(
 )
 ```
 
-### Pattern 4: Initialization Method Selection (5 Methods Available)
+### Pattern 3: Initialization Method Selection (5 Methods Available)
 
 ```python
 # Coarse initialization (default and STRONGLY RECOMMENDED)
@@ -936,13 +921,6 @@ else:
    - Convergence properties comparison
    - Numerical stability of initialization
 
-### Integration Tests
-
-1. **test_multiscale_fitting.py**:
-   - Full pipeline: decompose → fit splats → combine
-   - Verify splat count scaling
-   - Computational efficiency gains
-
 ### Demos
 
 1. **demo_decompose_2d.py**:
@@ -959,11 +937,6 @@ else:
    - 3D volume decomposition
    - Napari visualization
    - Per-scale energy analysis
-
-4. **demo_multiscale_fitting.py** (future):
-   - Complete multi-scale fitting pipeline
-   - Comparison with single-scale baseline
-   - Performance benchmarks
 
 ## Performance Considerations
 
