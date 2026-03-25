@@ -281,12 +281,17 @@ def fit_progressive_gaussian_splats(
             # Progressive compactness: gentle shrinkage increasing each pass.
             pass_kwargs["l1_diag"] = 0.0001 * pass_i
 
+        # Disable dynamic ops for progressive passes: seeds are already placed
+        # at residual peaks, and diverse benchmark showed no quality benefit
+        # from relocation (quality iteration 30).  Saves per-iteration overhead.
+        pass_enable_dynamic = False
+
         result = fit_gaussian_splats(
             target,
             seeds=seeds_this_pass,
             n_iters=iters_per_pass,
             asymmetric_penalty=pass_asymmetric_penalty,
-            enable_dynamic_ops=enable_dynamic_ops,
+            enable_dynamic_ops=pass_enable_dynamic,
             cull_ratio=cull_ratio,
             seed_method=pass_seed_method,
             device=device,
