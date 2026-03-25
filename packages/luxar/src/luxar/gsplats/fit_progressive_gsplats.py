@@ -281,6 +281,11 @@ def fit_progressive_gaussian_splats(
             # Progressive compactness: gentle shrinkage increasing each pass.
             pass_kwargs["l1_diag"] = 0.0001 * pass_i
 
+        # Tighter early stopping for all progressive passes: each pass fits a
+        # small number of splats to a specific residual, so convergence is
+        # fast and 150 iterations of no improvement is a reliable plateau signal.
+        pass_kwargs.setdefault("early_stop_patience", 150)
+
         result = fit_gaussian_splats(
             target,
             seeds=seeds_this_pass,
