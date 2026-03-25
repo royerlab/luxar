@@ -286,11 +286,6 @@ def fit_progressive_gaussian_splats(
         # from relocation (quality iteration 30).  Saves per-iteration overhead.
         pass_enable_dynamic = False
 
-        # Moderate early stopping patience: 200 iterations of no improvement
-        # (vs default 300). Progressive passes fit small splat counts to
-        # residuals and converge relatively quickly.
-        pass_kwargs.setdefault("early_stop_patience", 200)
-
         result = fit_gaussian_splats(
             target,
             seeds=seeds_this_pass,
