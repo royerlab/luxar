@@ -44,6 +44,16 @@ def create_loss_function(
     l1_diag = preprocessed_data.l1_diag
     boundary_penalty = config.boundary_penalty
 
+    # Signal mask for sparse targets (residual passes in progressive fitting).
+    # When >50% of voxels are zero/near-zero, masking the loss to signal-only
+    # voxels makes the backward pass cheaper (CUDA kernel skips zero-gradient
+    # voxels via existing early-exit check).
+    _signal_mask: torch.Tensor | None = None
+    if loss_type.lower() == "poisson":
+        _zero_fraction = float((V_t < 1e-6).sum()) / V_t.numel()
+        if _zero_fraction > 0.5:
+            _signal_mask = (V_t > 1e-6).float()
+
     def loss_fn(pred: torch.Tensor) -> torch.Tensor:
         """
         Compute loss between prediction and target.
@@ -59,7 +69,7 @@ def create_loss_function(
             Computed loss value
         """
         if loss_type.lower() == "poisson":
-            data = _compute_poisson_loss(pred, V_t, asymmetric_penalty)
+            data = _compute_poisson_loss(pred, V_t, asymmetric_penalty, _signal_mask)
         elif loss_type.lower() == "l1":
             data = _compute_l1_loss(pred, V_t, asymmetric_penalty)
         else:
@@ -104,23 +114,41 @@ def create_loss_function(
 
 @torch.compile(fullgraph=False)
 def _compute_poisson_loss(
-    pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: float | None
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    asymmetric_penalty: float | None,
+    signal_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Compute Poisson deviance loss.
 
     Optimized: per-element deviance is computed once, then reused for both
     the total deviance and the asymmetric over-prediction penalty.
+
+    When ``signal_mask`` is provided, loss is computed only at signal voxels.
+    This zeros grad_output at background voxels, causing the CUDA backward
+    kernel to skip them (existing ``if (dL_dI == 0) continue`` in
+    ``rasterize_backward_splat_centric_kernel``).  For sparse residuals,
+    this can make the backward 3-10x cheaper.
     """
     eps = 1e-8
     Vc = torch.clamp(target, min=0.0)
     Pc = torch.clamp(pred, min=eps)
     # Per-element deviance (computed once, reused below)
     per_elem = Pc - Vc + torch.xlogy(Vc, torch.clamp(Vc / Pc, min=eps))
+
     N = target.numel()
-    data = 2.0 * torch.sum(per_elem) / N
+
+    if signal_mask is not None:
+        # Masked base deviance: only at signal voxels (cheaper loss + backward)
+        masked_per_elem = per_elem * signal_mask
+        N_signal = signal_mask.sum().clamp(min=1)
+        data = 2.0 * torch.sum(masked_per_elem) / N_signal
+    else:
+        data = 2.0 * torch.sum(per_elem) / N
 
     if asymmetric_penalty is not None:
-        # Additional penalty for over-prediction regions (reuses per_elem)
+        # Asymmetric penalty on ALL voxels (including background) — prevents
+        # splat tails from extending into empty regions unchecked.
         over_mask = (pred > target).float()
         over_dev = 2.0 * torch.sum(over_mask * per_elem) / N
         data = data + (asymmetric_penalty - 1.0) * over_dev
