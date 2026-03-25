@@ -161,9 +161,6 @@ def run_optimization_loop(
     # ~30% of per-iteration wall-clock time.
     _EVAL_INTERVAL = 25
 
-    # Detect LBFGS (requires closure-based stepping)
-    _is_lbfgs = isinstance(optimizer, torch.optim.LBFGS)
-
     # Main optimization loop
     converged_early = False
     early_stopped = False
@@ -182,46 +179,27 @@ def run_optimization_loop(
     for it in range(1, config.n_iters + 1):
         actual_iters = it
 
-        if _is_lbfgs:
-            # LBFGS: closure-based step. The optimizer calls the closure
-            # multiple times for line search (strong Wolfe conditions).
-            _lbfgs_loss = torch.tensor(0.0, device=V_t.device)
+        # Forward pass (training — always needed)
+        optimizer.zero_grad()
+        pred = model()
+        loss = loss_fn(pred)
+        loss.backward()  # type: ignore[no-untyped-call]
 
-            def _lbfgs_closure() -> torch.Tensor:
-                nonlocal _lbfgs_loss
-                optimizer.zero_grad()
-                p = model()
-                lo = loss_fn(p)
-                lo.backward()
-                _lbfgs_loss = lo.detach()
-                return lo
+        # Gradient clipping: use clip_grad_value_ instead of clip_grad_norm_
+        # to avoid the GPU→CPU sync that norm computation requires.
+        if config.gradient_clip is not None:
+            torch.nn.utils.clip_grad_value_(model.parameters(), config.gradient_clip)
 
-            optimizer.step(_lbfgs_closure)
-            loss = _lbfgs_loss
-        else:
-            # Adam-style: single forward + backward + step
-            optimizer.zero_grad()
-            pred = model()
-            loss = loss_fn(pred)
-            loss.backward()  # type: ignore[no-untyped-call]
+        optimizer.step()
 
-            # Gradient clipping: use clip_grad_value_ instead of clip_grad_norm_
-            # to avoid the GPU→CPU sync that norm computation requires.
-            if config.gradient_clip is not None:
-                torch.nn.utils.clip_grad_value_(model.parameters(), config.gradient_clip)
-
-            optimizer.step()
-
-            # Learning rate scheduling (pass loss tensor, no .item() needed)
-            if _is_plateau_scheduler:
-                scheduler.step(loss.detach())  # type: ignore[union-attr]
-            elif scheduler is not None:
-                scheduler.step()
-
-            loss = loss.detach()
+        # Learning rate scheduling (pass loss tensor, no .item() needed)
+        if _is_plateau_scheduler:
+            scheduler.step(loss.detach())  # type: ignore[union-attr]
+        elif scheduler is not None:
+            scheduler.step()
 
         # --- Best state tracking using tensor comparison (no CPU sync) ---
-        loss_detached = loss.detach() if loss.requires_grad else loss
+        loss_detached = loss.detach()
         if loss_detached < _best_loss_t:
             _best_loss_t = loss_detached.clone()
             best_iteration = it
