@@ -281,6 +281,11 @@ def fit_progressive_gaussian_splats(
             # Progressive compactness: gentle shrinkage increasing each pass.
             pass_kwargs["l1_diag"] = 0.0001 * pass_i
 
+        # Disable Z-order sorting for progressive passes: with only
+        # max_splats_per_pass (typically 1000) splats, the memory locality
+        # benefit is negligible but the sort overhead is not.
+        pass_kwargs.setdefault("sort_splats_enabled", False)
+
         result = fit_gaussian_splats(
             target,
             seeds=seeds_this_pass,
