@@ -161,6 +161,12 @@ def run_optimization_loop(
     # ~30% of per-iteration wall-clock time.
     _EVAL_INTERVAL = 25
 
+    # LR warmup: ramp from lr/10 to lr over the first 100 iterations.
+    # Prevents initial oscillation — the optimizer settles into a good basin
+    # before using the full learning rate, leading to faster convergence.
+    _WARMUP_ITERS = min(100, config.n_iters // 10)
+    _initial_lrs = [pg["lr"] for pg in optimizer.param_groups]
+
     # Main optimization loop
     converged_early = False
     early_stopped = False
@@ -170,6 +176,12 @@ def run_optimization_loop(
     pred_eval = None  # lazily computed
     for it in range(1, config.n_iters + 1):
         actual_iters = it
+
+        # LR warmup: linearly ramp from lr/10 to lr during warmup phase
+        if it <= _WARMUP_ITERS:
+            factor = 0.1 + 0.9 * (it / _WARMUP_ITERS)
+            for pg, ilr in zip(optimizer.param_groups, _initial_lrs):
+                pg["lr"] = ilr * factor
 
         # Forward pass (training — always needed)
         optimizer.zero_grad()
@@ -188,8 +200,8 @@ def run_optimization_loop(
         # smooths the signal via patience anyway).
         training_loss = float(loss.item())
 
-        # Learning rate scheduling
-        if scheduler is not None:
+        # Learning rate scheduling (skip during warmup — warmup controls LR)
+        if it > _WARMUP_ITERS and scheduler is not None:
             scheduler_name = type(scheduler).__name__
             if "Plateau" in scheduler_name:
                 scheduler.step(loss.detach())
