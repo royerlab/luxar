@@ -278,12 +278,6 @@ def fit_progressive_gaussian_splats(
             # Higher LR: fine-detail splats need faster convergence.
             pass_kwargs["lr"] = 0.03
 
-            # Aggressive LR decay for residual passes: reduce patience and
-            # increase decay factor so the scheduler drops LR faster when
-            # progress stalls.  This helps residual passes converge sooner.
-            pass_kwargs["patience"] = 15
-            pass_kwargs["lr_reduction_factor"] = 0.9
-
             # Progressive compactness: gentle shrinkage increasing each pass.
             pass_kwargs["l1_diag"] = 0.0001 * pass_i
 
