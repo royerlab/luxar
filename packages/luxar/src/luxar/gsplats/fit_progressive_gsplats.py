@@ -286,6 +286,11 @@ def fit_progressive_gaussian_splats(
         # from relocation (quality iteration 30).  Saves per-iteration overhead.
         pass_enable_dynamic = False
 
+        # Slightly tighter truncation during fitting: 2.8σ captures 99.5% of
+        # Gaussian mass (vs 99.7% at 3.0σ) but renders ~19% fewer voxels per
+        # splat in 3D ((5.6/6.0)^3 ≈ 0.81).
+        fit_truncate = min(truncate, 2.8)
+
         result = fit_gaussian_splats(
             target,
             seeds=seeds_this_pass,
@@ -296,7 +301,7 @@ def fit_progressive_gaussian_splats(
             seed_method=pass_seed_method,
             device=device,
             verbose=verbose,
-            truncate=truncate,
+            truncate=fit_truncate,
             **pass_kwargs,
         )
 
