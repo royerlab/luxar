@@ -7,7 +7,6 @@ _GSPLATS_IMPORT_ERROR: Optional[ImportError] = None
 if TYPE_CHECKING:
     from luxar.gsplats import clahe, preprocessing, seeds
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
-    from luxar.gsplats.fit_multiscale_gsplats import fit_multiscale_gaussian_splats
     from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
     from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
@@ -25,7 +24,6 @@ else:
     try:
         from luxar.gsplats import clahe, preprocessing, seeds
         from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
-        from luxar.gsplats.fit_multiscale_gsplats import fit_multiscale_gaussian_splats
         from luxar.gsplats.fit_progressive_gsplats import (
             fit_progressive_gaussian_splats,
         )
@@ -51,9 +49,6 @@ else:
             ) from _exc
 
         def fit_gaussian_splats(*_args: Any, **_kwargs: Any) -> Any:
-            _raise_gsplats_import_error()
-
-        def fit_multiscale_gaussian_splats(*_args: Any, **_kwargs: Any) -> Any:
             _raise_gsplats_import_error()
 
         def fit_progressive_gaussian_splats(*_args: Any, **_kwargs: Any) -> Any:
@@ -109,7 +104,6 @@ else:
 __all__ = [
     # Fitting functions
     "fit_gaussian_splats",
-    "fit_multiscale_gaussian_splats",
     "fit_progressive_gaussian_splats",
     "fit_tiled_gaussian_splats",
     "fit_tile",

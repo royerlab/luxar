@@ -52,7 +52,6 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_2d_synthetic_blobs.
 
 | Demo | Focus | Demonstrates |
 |------|-------|--------------|
-| **demo_multiscale_fitting.py** | Performance | Single-scale vs multi-scale comparison |
 | **demo_splats_mitosis_intgrad.py** | Algorithm | CLAHE seeding with intensity gradients |
 
 ---
@@ -209,21 +208,6 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_2d_synthetic_blobs.
 
 ---
 
-### **demo_multiscale_fitting.py**
-**What it does**: Compares single-scale vs multi-scale fitting performance
-- Side-by-side comparison with timing
-- Speedup analysis (wall-clock and computational)
-- Per-scale visualization
-- Quality comparison (MSE)
-
-**Key concepts**: Multi-scale optimization, hierarchical fitting, computational efficiency
-
-**Usage**: `python demo_multiscale_fitting.py [--no-napari]`
-
-**Speedup**: Typically 2-5× faster than single-scale on large images
-
----
-
 ## 🎮 Running Demos
 
 ### **Standard Execution (with napari visualization)**
@@ -272,7 +256,6 @@ python demo_performance_metrics.py --no-napari --n-iters 500
 | demo_splats_coins | 2D | Real (photo) | 2000 | Metallic | ~10s |
 | demo_splats_mitosis | 2D | Real (bio) | 2000 | Histology | ~10s |
 | demo_splats_mitosis_intgrad | 2D | Real (bio) | 2000 | CLAHE Test | ~15s |
-| demo_multiscale_fitting | 2D | Real (bio) | 6000 | Multi-scale | ~30s |
 
 *Run times are approximate on modern CPU (M1/M2 or recent Intel/AMD)*
 
@@ -291,9 +274,8 @@ python demo_performance_metrics.py --no-napari --n-iters 500
 6. **demo_3d_dapi_microscopy.py** - Real 3D microscopy
 
 ### **Advanced** (Specialized Features)
-7. **demo_multiscale_fitting.py** - Multi-scale optimization
-8. **demo_4d_hypercube.py** - nD algorithm validation
-9. **demo_splats_mitosis_intgrad.py** - CLAHE seeding validation
+7. **demo_4d_hypercube.py** - nD algorithm validation
+8. **demo_splats_mitosis_intgrad.py** - CLAHE seeding validation
 
 ---
 
@@ -330,9 +312,6 @@ python demo_performance_metrics.py --no-napari --n-iters 500
 
 **Remote Data Loading**:
 - demo_3d_dapi_microscopy.py (IDR via fsspec)
-
-**Multi-Scale Optimization**:
-- demo_multiscale_fitting.py (hierarchical scales)
 
 **Algorithm Validation**:
 - demo_4d_hypercube.py (nD algorithms)

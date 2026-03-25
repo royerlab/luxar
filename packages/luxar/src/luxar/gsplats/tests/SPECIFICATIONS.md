@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Top-level tests for the Gaussian splatting module: high-level fitting API (`fit_gaussian_splats`), GSplatData class, end-to-end integration tests, multi-scale fitting, and Cholesky dimension operations.
+Top-level tests for the Gaussian splatting module: high-level fitting API (`fit_gaussian_splats`), GSplatData class, end-to-end integration tests, and Cholesky dimension operations.
 
 ---
 
@@ -16,10 +16,9 @@ Top-level tests for the Gaussian splatting module: high-level fitting API (`fit_
 | `test_fit_gsplats.py` | `fit_gaussian_splats` function and optimization pipeline |
 | `test_gsplat_data.py` | GSplatData class methods |
 | `test_gsplats_integration.py` | End-to-end pipeline tests (candidate generation to fitting to rendering) |
-| `test_multiscale_fitting.py` | Multi-scale Gaussian splat fitting |
 | `test_cholesky_dim_ops.py` | Cholesky dimension permutation and embedding utilities (`permute_cholesky_packed`, `embed_cholesky_packed`, `pack_tril`, `unpack_tril`) |
 
-**Total**: 5 test files
+**Total**: 4 test files
 
 ---
 
@@ -27,7 +26,6 @@ Top-level tests for the Gaussian splatting module: high-level fitting API (`fit_
 
 - Integration tests verify the complete pipeline from volume data through seed generation, fitting, and rendering output.
 - Cholesky tests verify that dimension permutations preserve covariance matrices.
-- Multi-scale tests verify that hierarchical decomposition produces valid Gaussian representations.
 
 ---
 
