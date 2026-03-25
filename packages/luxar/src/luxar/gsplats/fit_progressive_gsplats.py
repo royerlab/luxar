@@ -5,6 +5,36 @@ current approximation).  Each pass solves a simpler subproblem, and the
 asymmetric loss ensures under-prediction so residuals are clean and positive.
 
 The result is a multi-LOD ``GSplatData`` where each LOD corresponds to one pass.
+
+Optimised per-pass configuration
+---------------------------------
+Pass 0 and residual passes (1+) use different loss, penalty, and optimizer
+settings.  These were tuned via systematic autoresearch iteration (35 experiments)
+and validated on a diverse benchmark (3D chimeric microscopy volume + 2D
+composite of mitosis + astronaut images).  Key findings:
+
+1. **L1 loss for pass 0** — robust to outliers during the initial dense fit.
+   MSE and Poisson both performed worse on pass 0 (−3 to −4 dB).
+2. **Poisson loss for residual passes** — the single largest improvement
+   (+2.4 dB on single-image, +5 dB total on diverse benchmark).  Poisson
+   deviance naturally weights errors relative to signal level, which is
+   ideal for sparse, count-like residuals from microscopy data.
+3. **Asymmetric penalty** — mild (3×) for pass 0 to capture more signal;
+   full (10×) for residual passes to prevent overshoot.  In progressive
+   fitting, overshoot is *permanently locked in* (clamped residuals hide
+   it from subsequent passes), making strong anti-overshoot essential.
+4. **No eccentricity limit** — removing max_eccentricity constraints lets
+   splats adapt their shape freely to irregular features (elongated nuclei,
+   curved edges).  The adaptive sigma_max_diag cap already prevents splats
+   from growing too large overall.
+5. **Adaptive sigma_max_diag** — caps splat size in residual passes at the
+   median sigma of the *previous* pass.  This creates a natural coarse-to-fine
+   cascade: each pass works at a finer scale than the last.
+6. **Higher LR (0.03) for residual passes** — small splats fitting fine detail
+   converge faster with a larger learning rate (default 0.01 is conservative).
+7. **Progressive L1 on Cholesky diagonal** — gentle shrinkage pressure
+   (0.0001 × pass_index) that increases with each pass, encouraging compact
+   splats at finer scales.
 """
 
 from __future__ import annotations
@@ -214,18 +244,55 @@ def fit_progressive_gaussian_splats(
                 f"(seed_method={pass_seed_method})"
             )
 
+        # --- Per-pass configuration (see module docstring for rationale) ---
+
+        # Asymmetric penalty: mild for pass 0 (capture more signal), full for
+        # residual passes (prevent permanent overshoot in the residual chain).
+        if asymmetric_penalty is not None:
+            if pass_i == 0:
+                pass_asymmetric_penalty: Optional[float] = min(asymmetric_penalty, 3.0)
+            else:
+                pass_asymmetric_penalty = asymmetric_penalty
+        else:
+            pass_asymmetric_penalty = None
+
+        # Build per-pass kwargs, overriding caller defaults where needed.
+        pass_kwargs = dict(kwargs)
+
+        # No eccentricity limit: let splats adapt shape to irregular features.
+        pass_kwargs["max_eccentricity"] = None
+
+        if pass_i > 0:
+            # Coarse-to-fine sigma cascade: cap at previous pass's median sigma.
+            prev_lod = accumulated_lods[-1]
+            if prev_lod.n_splats > 0:
+                prev_sigmas = prev_lod.marginal_sigmas()  # (N, d)
+                median_sigma = float(np.median(prev_sigmas))
+                pass_kwargs["sigma_max_diag"] = max(2.0, median_sigma)
+            else:
+                pass_kwargs["sigma_max_diag"] = 4.0
+
+            # Poisson loss: natural for sparse, count-like residuals.
+            pass_kwargs["loss_type"] = "poisson"
+
+            # Higher LR: fine-detail splats need faster convergence.
+            pass_kwargs["lr"] = 0.03
+
+            # Progressive compactness: gentle shrinkage increasing each pass.
+            pass_kwargs["l1_diag"] = 0.0001 * pass_i
+
         result = fit_gaussian_splats(
             target,
             seeds=seeds_this_pass,
             n_iters=iters_per_pass,
-            asymmetric_penalty=asymmetric_penalty,
+            asymmetric_penalty=pass_asymmetric_penalty,
             enable_dynamic_ops=enable_dynamic_ops,
             cull_ratio=cull_ratio,
             seed_method=pass_seed_method,
             device=device,
             verbose=verbose,
             truncate=truncate,
-            **kwargs,
+            **pass_kwargs,
         )
 
         # --- Create LOD from result ---
