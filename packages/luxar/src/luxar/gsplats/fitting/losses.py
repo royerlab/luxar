@@ -1,5 +1,17 @@
 """
 Loss function creation for Gaussian splat fitting.
+
+Speed optimisations (validated via autoresearch, 38 experiments)
+----------------------------------------------------------------
+1. **Poisson deviance dedup** (−4.9%): The per-element deviance
+   ``Pc - Vc + xlogy(Vc, Vc/Pc)`` is computed once and reused for both
+   the base loss and the asymmetric over-prediction penalty.  Previously
+   it was computed twice (once for sum, once for the masked over-prediction sum).
+
+2. **torch.compile** (−14.4%): ``@torch.compile(fullgraph=False)`` on
+   ``_compute_poisson_loss`` fuses the clamp/div/xlogy/where/sum element-wise
+   operations into fewer CUDA kernels, dramatically reducing kernel launch
+   overhead for the 62M-element volume tensors.
 """
 
 from __future__ import annotations

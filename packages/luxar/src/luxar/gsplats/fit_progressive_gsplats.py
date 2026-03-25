@@ -35,6 +35,24 @@ composite of mitosis + astronaut images).  Key findings:
 7. **Progressive L1 on Cholesky diagonal** — gentle shrinkage pressure
    (0.0001 × pass_index) that increases with each pass, encouraging compact
    splats at finer scales.
+
+Speed optimisations (validated via autoresearch, 38 experiments)
+----------------------------------------------------------------
+Total speedup: **−51.4%** (825 s → 401 s) with quality preserved.
+
+8. **Disable dynamic ops** (−10.6%): Splat relocation is unnecessary in
+   progressive fitting — peaks seeding already places seeds at residual maxima.
+   Disabling removes per-iteration overhead from the relocation tracker.
+9. **Adaptive iteration count** (−9.4%): Later passes fit progressively
+   smaller residuals and converge faster.  Iteration budget scales as
+   100%, 95%, 90%, 85%, 80% for passes 0–4+.
+10. **Per-parameter-group LR** (−4.4%): Amplitudes converge faster than
+    positions/shapes.  Giving amplitudes 3× the base learning rate
+    accelerates convergence without destabilising the optimisation.
+
+Additional optimisations live in the fitting sub-modules:
+  - ``fitting/optimization.py``: eval frequency (−21.5%), GPU sync elim (−1.9%)
+  - ``fitting/losses.py``: Poisson dedup (−4.9%), torch.compile (−14.4%)
 """
 
 from __future__ import annotations

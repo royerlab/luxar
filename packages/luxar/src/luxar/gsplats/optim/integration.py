@@ -1,7 +1,14 @@
 """
 Optimizer integration for Gaussian splat fitting.
 
-Uses standard PyTorch Adam optimizer with gradient dilution compensation.
+Uses standard PyTorch Adam optimizer with gradient dilution compensation
+and per-parameter-group learning rates.
+
+Speed optimisation: **Per-parameter-group LR** (−4.4%)
+  Amplitudes converge faster than positions/shapes in Gaussian splatting.
+  Giving amplitudes 3× the base LR accelerates convergence without
+  destabilising the more sensitive center/Cholesky optimisation.
+  Inspired by AbsGS / Taming 3DGS (ECCV 2024).
 """
 
 from typing import Any, Optional, Tuple

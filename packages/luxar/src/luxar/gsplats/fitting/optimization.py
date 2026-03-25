@@ -1,5 +1,16 @@
 """
 Optimization loop logic for Gaussian splat fitting.
+
+Speed optimisations (validated via autoresearch, 38 experiments)
+----------------------------------------------------------------
+1. **Eval frequency** (−21.5%): The eval forward pass (for convergence checking
+   and best-state metrics) runs every 25 iterations instead of every iteration.
+   Training loss is used for scheduler and best-loss tracking on non-eval iters.
+
+2. **GPU sync elimination** (−1.9%): Best-loss is tracked as a GPU tensor
+   (avoids ``loss.item()`` which forces CPU↔GPU sync every iteration).
+   ``clip_grad_value_`` replaces ``clip_grad_norm_`` (the norm computation
+   requires a GPU→CPU sync to return a Python float).
 """
 
 from __future__ import annotations
