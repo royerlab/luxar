@@ -159,7 +159,7 @@ def run_optimization_loop(
     # The training forward+backward is always needed, but the second (eval) forward
     # pass is pure overhead for monitoring.  Skipping it on most iterations saves
     # ~30% of per-iteration wall-clock time.
-    _EVAL_INTERVAL = 50
+    _EVAL_INTERVAL = 25
 
     # Main optimization loop
     converged_early = False
