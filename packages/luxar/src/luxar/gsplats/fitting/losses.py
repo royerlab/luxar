@@ -44,6 +44,41 @@ def create_loss_function(
     l1_diag = preprocessed_data.l1_diag
     boundary_penalty = config.boundary_penalty
 
+    # Dilated signal mask for sparse targets.  The mask covers signal voxels
+    # + a margin of truncate * sigma_max voxels (the maximum extent any
+    # splat can reach).  Voxels beyond this margin cannot be influenced by
+    # any splat, so their gradient is naturally zero — the mask just makes
+    # this explicit for the CUDA backward kernel's early-exit check.
+    # The FULL loss (incl asymmetric penalty) is computed within the mask.
+    _dilated_mask: torch.Tensor | None = None
+    if loss_type.lower() == "poisson":
+        _zero_frac = float((V_t < 1e-6).sum()) / V_t.numel()
+        if _zero_frac > 0.3:
+            # Dilation radius: truncate * sigma_max (conservative estimate)
+            # sigma_max_diag caps the maximum splat size; default ~4-8 voxels.
+            # With truncate=3.0, margin = 3 * 8 = 24 voxels.
+            # Use max_pool for fast GPU binary dilation.
+            _margin = int(config.truncate * 8)  # conservative margin
+            _kernel = 2 * _margin + 1
+            _signal = (V_t > 1e-6).float()
+            d = V_t.ndim
+            if d == 3:
+                _dilated_mask = torch.nn.functional.max_pool3d(
+                    _signal.unsqueeze(0).unsqueeze(0),
+                    kernel_size=_kernel, stride=1, padding=_margin,
+                ).squeeze(0).squeeze(0)
+            elif d == 2:
+                _dilated_mask = torch.nn.functional.max_pool2d(
+                    _signal.unsqueeze(0).unsqueeze(0),
+                    kernel_size=_kernel, stride=1, padding=_margin,
+                ).squeeze(0).squeeze(0)
+            else:
+                _dilated_mask = None  # skip for other dims
+            if _dilated_mask is not None:
+                _masked_frac = 1.0 - float(_dilated_mask.sum()) / V_t.numel()
+                if _masked_frac < 0.1:
+                    _dilated_mask = None  # not enough savings, skip
+
     def loss_fn(pred: torch.Tensor) -> torch.Tensor:
         """
         Compute loss between prediction and target.
@@ -59,7 +94,7 @@ def create_loss_function(
             Computed loss value
         """
         if loss_type.lower() == "poisson":
-            data = _compute_poisson_loss(pred, V_t, asymmetric_penalty)
+            data = _compute_poisson_loss(pred, V_t, asymmetric_penalty, _dilated_mask)
         elif loss_type.lower() == "l1":
             data = _compute_l1_loss(pred, V_t, asymmetric_penalty)
         else:
@@ -104,24 +139,37 @@ def create_loss_function(
 
 @torch.compile(fullgraph=False)
 def _compute_poisson_loss(
-    pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: float | None
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    asymmetric_penalty: float | None,
+    region_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Compute Poisson deviance loss.
+    """Compute Poisson deviance loss with optional spatial masking.
 
-    Optimized: per-element deviance is computed once, then reused for both
-    the total deviance and the asymmetric over-prediction penalty.
+    When ``region_mask`` is provided (dilated signal mask), the FULL loss
+    (including asymmetric penalty) is computed only within the mask.
+    Voxels outside the mask get zero gradient, causing the CUDA backward
+    kernel to skip them via its existing ``if (dL_dI == 0) continue`` check.
     """
     eps = 1e-8
     Vc = torch.clamp(target, min=0.0)
     Pc = torch.clamp(pred, min=eps)
     # Per-element deviance (computed once, reused below)
     per_elem = Pc - Vc + torch.xlogy(Vc, torch.clamp(Vc / Pc, min=eps))
-    N = target.numel()
+
+    # Apply spatial mask: zero gradient outside dilated signal region
+    if region_mask is not None:
+        per_elem = per_elem * region_mask
+        N = region_mask.sum().clamp(min=1)
+    else:
+        N = target.numel()
+
     data = 2.0 * torch.sum(per_elem) / N
 
     if asymmetric_penalty is not None:
-        # Additional penalty for over-prediction regions (reuses per_elem)
         over_mask = (pred > target).float()
+        if region_mask is not None:
+            over_mask = over_mask * region_mask
         over_dev = 2.0 * torch.sum(over_mask * per_elem) / N
         data = data + (asymmetric_penalty - 1.0) * over_dev
 
