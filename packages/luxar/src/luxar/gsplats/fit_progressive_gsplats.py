@@ -275,8 +275,12 @@ def fit_progressive_gaussian_splats(
             # Poisson loss: natural for sparse, count-like residuals.
             pass_kwargs["loss_type"] = "poisson"
 
-            # Higher LR: fine-detail splats need faster convergence.
-            pass_kwargs["lr"] = 0.03
+            # LBFGS optimizer for residual passes: quasi-Newton method that
+            # converges in far fewer iterations than Adam by using approximate
+            # curvature.  Ideal for our full-batch, deterministic optimization.
+            pass_kwargs["optimizer_type"] = "lbfgs"
+            pass_kwargs["lr"] = 0.1  # Conservative LR for LBFGS with asymmetric loss
+            pass_kwargs["gradient_clip"] = None  # LBFGS handles step size via line search
 
             # Progressive compactness: gentle shrinkage increasing each pass.
             pass_kwargs["l1_diag"] = 0.0001 * pass_i

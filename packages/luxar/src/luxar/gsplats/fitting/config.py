@@ -30,6 +30,7 @@ class OptimConfig:
     n_iters: int = 1000
     lr: float = 0.01
     gradient_clip: Optional[float] = 1.0
+    optimizer_type: str = "adam"  # "adam" or "lbfgs"
     scheduler_type: str = "plateau"
     patience: int = 25
     lr_reduction_factor: float = 0.98
@@ -107,6 +108,7 @@ class FitConfig:
     max_abs_error: Optional[float]
     rel_l2_target: Optional[float]
     gradient_clip: Optional[float]
+    optimizer_type: str  # "adam" or "lbfgs"
 
     # Loss function
     loss_type: str
