@@ -286,10 +286,20 @@ def fit_progressive_gaussian_splats(
         # from relocation (quality iteration 30).  Saves per-iteration overhead.
         pass_enable_dynamic = False
 
+        # Adaptive iteration count: later passes fit progressively smaller
+        # residuals and converge faster. Scale iterations with pass index.
+        # Pass 0: full iters.  Pass 1+: decreasing from 100% to 60%.
+        if pass_i == 0:
+            pass_iters = iters_per_pass
+        else:
+            # Gentle decay: pass 1=95%, pass 2=90%, ..., min 80%
+            decay = max(0.8, 1.0 - 0.05 * pass_i)
+            pass_iters = max(500, int(iters_per_pass * decay))
+
         result = fit_gaussian_splats(
             target,
             seeds=seeds_this_pass,
-            n_iters=iters_per_pass,
+            n_iters=pass_iters,
             asymmetric_penalty=pass_asymmetric_penalty,
             enable_dynamic_ops=pass_enable_dynamic,
             cull_ratio=cull_ratio,
