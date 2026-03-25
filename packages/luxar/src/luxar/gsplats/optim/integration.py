@@ -82,10 +82,7 @@ def create_optimizer_and_scheduler(
     if has_fused:
         adam_kwargs["fused"] = use_fused
 
-    # NAdam (Nesterov Adam) — uses lookahead gradients for faster convergence.
-    # Drop-in replacement for Adam with same hyperparameters.
-    nadam_kwargs = {k: v for k, v in adam_kwargs.items() if k not in ("amsgrad", "fused")}
-    optimizer = torch.optim.NAdam(model.parameters(), **nadam_kwargs)
+    optimizer = torch.optim.Adam(model.parameters(), **adam_kwargs)
 
     # Create scheduler
     scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None
