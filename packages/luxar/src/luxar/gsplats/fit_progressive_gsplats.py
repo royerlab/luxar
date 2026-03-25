@@ -311,14 +311,21 @@ def fit_progressive_gaussian_splats(
         accumulated_lods.append(lod)
 
         # --- Compute global PSNR (and cache render for next pass's residual) ---
-        accumulated_data = GSplatData.from_lods(accumulated_lods)
+        # Incremental rendering: render only the new LOD and add to the cached
+        # render from the previous pass.  This is O(new_splats) instead of
+        # O(total_splats), a significant saving for later passes.
+        new_lod_data = GSplatData.from_lods([lod])
         with torch.no_grad():
-            cached_rendered = render_to_volume_tensor(
-                accumulated_data,
+            new_contribution = render_to_volume_tensor(
+                new_lod_data,
                 shape=V.shape,
                 device=device,
                 truncate=truncate,
             )
+            if cached_rendered is not None:
+                cached_rendered = cached_rendered + new_contribution
+            else:
+                cached_rendered = new_contribution
             V_tensor = torch.from_numpy(V_original).to(cached_rendered.device)
             quality = compute_quality_metrics(cached_rendered, V_tensor)
 
