@@ -161,12 +161,6 @@ def run_optimization_loop(
     # ~30% of per-iteration wall-clock time.
     _EVAL_INTERVAL = 25
 
-    # AMP (Automatic Mixed Precision): use FP16 for forward/backward on CUDA.
-    # The CUDA splatting model auto-detects autocast and uses FP16 kernels,
-    # halving memory bandwidth and potentially doubling throughput.
-    _use_amp = V_t.is_cuda
-    _amp_scaler = torch.amp.GradScaler("cuda", enabled=_use_amp)
-
     # Main optimization loop
     converged_early = False
     early_stopped = False
@@ -178,22 +172,16 @@ def run_optimization_loop(
         actual_iters = it
 
         # Forward pass (training — always needed)
-        # AMP only for model forward (splatting kernel), NOT for loss computation.
-        # Poisson deviance and other loss functions require FP32 precision.
         optimizer.zero_grad()
-        with torch.amp.autocast("cuda", enabled=_use_amp):
-            pred = model()
-        # Cast prediction back to FP32 for loss computation
-        loss = loss_fn(pred.float())
-        _amp_scaler.scale(loss).backward()  # type: ignore[no-untyped-call]
+        pred = model()
+        loss = loss_fn(pred)
+        loss.backward()  # type: ignore[no-untyped-call]
 
-        # Gradient clipping for stability (unscale first for correct norm)
+        # Gradient clipping for stability
         if config.gradient_clip is not None:
-            _amp_scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip)
 
-        _amp_scaler.step(optimizer)
-        _amp_scaler.update()
+        optimizer.step()
 
         # Use training loss for scheduler and best-loss tracking (standard practice —
         # pre-step loss is highly correlated with post-step, and the scheduler
