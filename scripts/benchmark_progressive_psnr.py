@@ -197,8 +197,11 @@ def run_fit_and_evaluate(
     V: np.ndarray, max_splats: int, label: str
 ) -> dict:
     """Run progressive fitting and compute PSNR + SSIM."""
+    import time as _time
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    fit_start = _time.perf_counter()
     with asection(f"Fitting: {label}"):
         result = fit_progressive_gaussian_splats(
             V,
@@ -212,6 +215,8 @@ def run_fit_and_evaluate(
             max_eccentricity=6.0,
         )
 
+    fit_time = _time.perf_counter() - fit_start
+
     with torch.no_grad():
         recon_tensor = render_to_volume_tensor(
             result, shape=V.shape, device=device, truncate=TRUNCATE_SIG
@@ -224,6 +229,7 @@ def run_fit_and_evaluate(
     return {
         "psnr": psnr,
         "ssim": ssim,
+        "fit_time": fit_time,
         "splats": result.n_splats,
         "passes": result.n_lods,
         "stop_reason": result.stats.get("stop_reason", "?"),
@@ -331,7 +337,12 @@ def main():
             aprint(f"Combined PSNR (geomean): {combined_psnr:.4f} dB")
             aprint(f"Combined SSIM (geomean): {combined_ssim:.6f}")
 
-        # 5. Output metric for autoresearch
+        # 5. Compute timing
+        time_3d = results["3D chimera"]["fit_time"]
+        time_2d = results["2D composite"]["fit_time"]
+        time_total = time_3d + time_2d
+
+        # 6. Output metrics for autoresearch
         print(f"METRIC={combined_psnr:.4f}")
         print(f"PSNR_3D={results['3D chimera']['psnr']:.4f}")
         print(f"SSIM_3D={results['3D chimera']['ssim']:.6f}")
@@ -340,8 +351,11 @@ def main():
         print(f"COMBINED_SSIM={combined_ssim:.6f}")
         print(f"splats_3d={results['3D chimera']['splats']}")
         print(f"splats_2d={results['2D composite']['splats']}")
+        print(f"TIME_TOTAL={time_total:.1f}")
+        print(f"TIME_3D={time_3d:.1f}")
+        print(f"TIME_2D={time_2d:.1f}")
 
-        # 6. Save PDF
+        # 7. Save PDF
         save_comparison_pdf(targets, results, combined_psnr, combined_ssim)
 
 
