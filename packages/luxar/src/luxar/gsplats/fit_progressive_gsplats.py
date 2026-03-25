@@ -281,11 +281,6 @@ def fit_progressive_gaussian_splats(
             # Progressive compactness: gentle shrinkage increasing each pass.
             pass_kwargs["l1_diag"] = 0.0001 * pass_i
 
-            # Cosine annealing: smooth predetermined LR decay without waiting
-            # for plateau detection.  Avoids patience-related delays.
-            pass_kwargs["scheduler_type"] = "exponential"
-            pass_kwargs["lr_reduction_factor"] = 0.9993  # ~0.12 of initial at iter 3000
-
         # Disable dynamic ops for progressive passes: seeds are already placed
         # at residual peaks, and diverse benchmark showed no quality benefit
         # from relocation (quality iteration 30).  Saves per-iteration overhead.
