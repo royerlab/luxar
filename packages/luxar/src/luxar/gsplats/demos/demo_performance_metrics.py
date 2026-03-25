@@ -38,7 +38,6 @@ Performance Metrics - Convergence Speed and Quality Analysis
 
 **Related demos:**
 - demo_basic_fitting.py - Simpler introduction without detailed metrics
-- demo_multiscale_fitting.py - Compares single-scale vs multi-scale performance
 """
 
 import argparse
