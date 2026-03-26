@@ -277,7 +277,7 @@ def generate_calibrate_sbatch(manifest: BatchManifest, env_preamble: str) -> str
         "#SBATCH --gpus-per-task=1",
         "#SBATCH --cpus-per-task=4",
         f"#SBATCH --mem={manifest.slurm_mem_gb}G",
-        "#SBATCH --time=00:15:00",
+        "#SBATCH --time=01:00:00",  # Large zarr.zip archives need I/O time
         f"#SBATCH --output={manifest.output_dir}/logs/calibrate.out",
         f"#SBATCH --error={manifest.output_dir}/logs/calibrate.err",
     ]
@@ -324,8 +324,8 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         "#SBATCH --ntasks=1",
         "#SBATCH --gpus-per-task=1",
         "#SBATCH --cpus-per-task=4",
-        f"#SBATCH --mem={manifest.slurm_mem_gb}G",
-        "#SBATCH --time=00:30:00",
+        f"#SBATCH --mem={max(manifest.slurm_mem_gb, 128)}G",  # 3D NLM needs ~20x volume size
+        "#SBATCH --time=01:00:00",
         f"#SBATCH --output={manifest.output_dir}/logs/denoise_%a.out",
         f"#SBATCH --error={manifest.output_dir}/logs/denoise_%a.err",
     ]
