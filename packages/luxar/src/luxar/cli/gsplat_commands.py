@@ -3651,6 +3651,54 @@ def batch_status_cmd(
         raise typer.Exit(1)
 
 
+@app_batch.command("cancel")
+def batch_cancel_cmd(
+    output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
+) -> None:
+    """Cancel all Slurm jobs for a batch fitting run.
+
+    Reads the manifest to find job IDs (calibrate, denoise, fit array,
+    merge) and cancels them via scancel.
+
+    Examples:
+        luxar gsplat batch cancel output_dir/
+    """
+    import subprocess
+
+    try:
+        from luxar.gsplats.batch.manifest import load_manifest
+
+        manifest = load_manifest(output_dir)
+
+        job_ids = []
+        for attr in (
+            "calibrate_job_id",
+            "denoise_job_id",
+            "array_job_id",
+            "merge_job_id",
+        ):
+            jid = getattr(manifest, attr, None)
+            if jid is not None:
+                job_ids.append(str(jid))
+
+        if not job_ids:
+            aprint("No job IDs found in manifest — nothing to cancel.")
+            raise typer.Exit(0)
+
+        aprint(f"Cancelling {len(job_ids)} job(s): {', '.join(job_ids)}")
+        result = subprocess.run(["scancel"] + job_ids, capture_output=True, text=True)
+        if result.returncode == 0:
+            aprint("All jobs cancelled.")
+        else:
+            # scancel may warn about already-completed jobs — that's fine
+            aprint(f"scancel output: {result.stderr.strip()}")
+            aprint("Cancel command sent (some jobs may have already completed).")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        raise typer.Exit(1)
+
+
 @app_batch.command("merge")
 def batch_merge_cmd(
     output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
