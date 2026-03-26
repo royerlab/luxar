@@ -205,7 +205,7 @@ def run_optimization_loop(
 
         # Learning rate scheduling (pass loss tensor, no .item() needed)
         if _is_plateau_scheduler:
-            scheduler.step(loss.detach())  # type: ignore[union-attr]
+            scheduler.step(loss.detach())
         elif scheduler is not None:
             scheduler.step()
 
