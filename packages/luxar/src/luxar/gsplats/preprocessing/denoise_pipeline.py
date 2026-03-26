@@ -46,6 +46,28 @@ def denormalize_volume(volume: np.ndarray, vmin: float, vmax: float) -> np.ndarr
 # ── Single-volume denoising ─────────────────────────────────────
 
 
+def _auto_chunk_size(
+    shape: tuple[int, ...], search_distance: int, patch_size: int
+) -> Optional[int]:
+    """Compute chunk_size for 3D NLM to keep CPU memory under ~16 GB.
+
+    Returns None if the volume is small enough to process in one shot.
+    """
+    if len(shape) != 3:
+        return None
+    d, h, w = shape
+    slice_bytes = h * w * 4  # float32
+    # Each chunk needs ~5x its size in memory (input, output, weights, etc.)
+    mem_per_slice = slice_bytes * 5
+    target_mem = 16 * 1024**3  # 16 GB target
+    max_slices = max(1, int(target_mem / mem_per_slice))
+    # Add halo to effective chunk size
+    halo = search_distance + patch_size // 2
+    if max_slices + 2 * halo >= d:
+        return None  # Volume fits in memory, no chunking needed
+    return max_slices
+
+
 def denoise_volume_array(
     volume: np.ndarray,
     h: float,
@@ -54,6 +76,7 @@ def denoise_volume_array(
     backend: str = "auto",
     device: Optional[str] = None,
     use_2d: bool = False,
+    chunk_size: Optional[int] = None,
 ) -> np.ndarray:
     """Denoise a single 3D volume (or 2D image) with NLM.
 
@@ -67,6 +90,10 @@ def denoise_volume_array(
         NLM filtering strength (calibrated in [0,1] normalized space).
     use_2d : bool
         If True, denoise slice-by-slice (2D) instead of full 3D.
+    chunk_size : int, optional
+        Process 3D volumes in overlapping chunks of this many Z-slices.
+        Auto-computed to keep memory under ~16 GB if not specified.
+        Only used with the ``pytorch`` backend for 3D volumes.
     """
     import torch
 
@@ -76,6 +103,12 @@ def denoise_volume_array(
     norm_vol, vmin, vmax = normalize_volume(volume)
 
     dev = torch.device(device) if device else None
+
+    # Auto-compute chunk_size for large 3D volumes
+    if chunk_size is None and not use_2d and norm_vol.ndim == 3:
+        chunk_size = _auto_chunk_size(norm_vol.shape, search_distance, patch_size)
+        if chunk_size is not None:
+            aprint(f"Auto-chunking: {chunk_size} Z-slices per chunk")
 
     if use_2d and norm_vol.ndim == 3:
         # Slice-by-slice 2D NLM
@@ -101,6 +134,7 @@ def denoise_volume_array(
             search_distance=search_distance,
             backend=backend,
             device=dev,
+            chunk_size=chunk_size,
         )
         denoised_np = denoised.cpu().numpy()
 
