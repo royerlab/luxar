@@ -322,7 +322,7 @@ def run_optimization_loop(
             and it % config.movie_every == 0
         ):
             with torch.no_grad():
-                _movie_pred = pred_eval if need_eval else model()
+                _movie_pred = pred_eval if (need_eval and pred_eval is not None) else model()
             _record_movie_frame(model, _movie_pred, V_t, movie_frames, config, it)
 
         # Periodic Z-order sort for memory locality
