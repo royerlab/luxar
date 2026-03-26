@@ -324,7 +324,7 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         "#SBATCH --ntasks=1",
         "#SBATCH --gpus-per-task=1",
         "#SBATCH --cpus-per-task=4",
-        f"#SBATCH --mem={max(manifest.slurm_mem_gb, 128)}G",  # 3D NLM needs ~20x volume size
+        f"#SBATCH --mem={max(manifest.slurm_mem_gb, 64)}G",  # NLM + volume loading headroom
         "#SBATCH --time=01:00:00",
         f"#SBATCH --output={manifest.output_dir}/logs/denoise_%a.out",
         f"#SBATCH --error={manifest.output_dir}/logs/denoise_%a.err",
