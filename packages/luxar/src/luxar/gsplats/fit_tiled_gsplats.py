@@ -85,6 +85,15 @@ def fit_tile(
     # 1. Extract tile subvolume (materializes from zarr if needed)
     tile_data = np.asarray(volume[spec.slices], dtype=np.float32)
 
+    # 1b. Denoise tile (if requested via fit_kwargs)
+    # Use pop to remove denoise keys before forwarding to fitting functions
+    _denoise_h = fit_kwargs.pop("_denoise_h", None)
+    _denoise_params = fit_kwargs.pop("_denoise_params", None)
+    if _denoise_h is not None and _denoise_params is not None:
+        from luxar.gsplats.preprocessing.denoise_pipeline import denoise_volume_array
+
+        tile_data = denoise_volume_array(tile_data, h=_denoise_h, **_denoise_params)
+
     # 2. Apply cosine apodization window
     window = cosine_window(spec)
     tile_data = tile_data * window
