@@ -1955,11 +1955,13 @@ def fit_volume(
 
                         norm_vol, _, _ = normalize_volume(volume)
                         t_vol = torch.from_numpy(norm_vol)
+                        dev = torch.device(device) if device else None
                         effective_h = calibrate_nlm_h(
                             t_vol,
                             patch_size=denoise_patch_size,
                             search_distance=denoise_search_distance,
                             backend=denoise_backend,
+                            device=dev,
                             use_2d_slice=True,
                         )
                         aprint(f"Calibrated h={effective_h:.4f}")

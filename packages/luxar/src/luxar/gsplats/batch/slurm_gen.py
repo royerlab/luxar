@@ -116,7 +116,11 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         # Read per-channel h at runtime and inject --denoise-h.
         fit_cmd_parts.append("    --denoise-h $DENOISE_H")
 
-    # For preprocess mode, override input path to denoised zarr
+    # For preprocess mode, override input path to denoised zarr.
+    # The denoised.zarr stores volumes under "data" with shape
+    # (n_selected_t, n_selected_c, *spatial) using sequential indices,
+    # so we must use $T_IDX/$C_IDX (not $T/$C which are real dataset indices)
+    # and explicitly point at the "data" array key.
     if (
         manifest.denoise
         and manifest.denoise_mode == "preprocess"
@@ -126,6 +130,18 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         fit_cmd_parts[0] = (
             f'luxar gsplat fit {shlex.quote(manifest.denoised_zarr_path)} "$OUTPUT"'
         )
+        # Replace or add --array-key data to point at the denoised dataset
+        array_key_replaced = False
+        for i, part in enumerate(fit_cmd_parts):
+            if part.strip().startswith("--array-key "):
+                fit_cmd_parts[i] = "    --array-key data"
+                array_key_replaced = True
+            elif part.strip() == "--channel $C":
+                fit_cmd_parts[i] = "    --channel $C_IDX"
+            elif part.strip() == "--timepoint $T":
+                fit_cmd_parts[i] = "    --timepoint $T_IDX"
+        if not array_key_replaced:
+            fit_cmd_parts.append("    --array-key data")
 
     fit_cmd = " \\\n    ".join(fit_cmd_parts)
 
