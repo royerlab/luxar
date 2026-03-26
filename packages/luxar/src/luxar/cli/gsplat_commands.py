@@ -2976,7 +2976,7 @@ def batch_plan(
     batch_preprocess: Optional[bool] = typer.Option(
         None,
         "--preprocess/--no-preprocess",
-        help="Force preprocess mode (denoise to zarr) or on-the-fly. Auto-detects if omitted.",
+        help="Write denoised volumes to zarr before fitting (default: off, denoise per-tile on-the-fly).",
     ),
     # Slurm params
     partition: Optional[str] = typer.Option(
@@ -3343,8 +3343,9 @@ def batch_plan(
             elif batch_preprocess is False:
                 denoise_mode = "on-the-fly"
             else:
-                # Auto-detect: preprocess when tiled
-                denoise_mode = "preprocess" if n_tiles > 1 else "on-the-fly"
+                # Default: on-the-fly (denoise per-tile inside each fit task).
+                # Use --preprocess to write denoised zarr separately.
+                denoise_mode = "on-the-fly"
             aprint(f"Denoise mode: {denoise_mode}")
 
             if denoise_mode == "preprocess":
