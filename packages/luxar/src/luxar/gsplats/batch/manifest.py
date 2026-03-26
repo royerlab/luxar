@@ -98,7 +98,35 @@ class BatchManifest:
     channel_indices: Optional[List[int]] = None
     """Actual channel indices into the dataset, or None for contiguous 0..n_c-1."""
 
+    # Denoise config
+    denoise: bool = False
+    """Whether NLM denoising is enabled."""
+
+    denoise_2d: bool = False
+    """Use 2D NLM (slice-by-slice) instead of 3D."""
+
+    denoise_h: Optional[float] = None
+    """Manual h override (None = auto-calibrate)."""
+
+    denoise_patch_size: int = 3
+    denoise_search_distance: int = 5
+    denoise_backend: str = "auto"
+
+    denoise_mode: Optional[str] = None
+    """'preprocess' or 'on-the-fly'. Set by batch plan based on n_tiles."""
+
+    denoise_h_values: Optional[Dict[str, float]] = None
+    """Per-channel calibrated h values. Key is str(channel_index), value is h."""
+
+    denoised_zarr_path: Optional[str] = None
+    """Path to denoised.zarr when denoise_mode='preprocess'."""
+
+    calibration_samples: int = 5
+    """Number of timepoints to sample for h calibration."""
+
     # Post-submit state
+    calibrate_job_id: Optional[int] = None
+    denoise_job_id: Optional[int] = None
     array_job_id: Optional[int] = None
     merge_job_id: Optional[int] = None
 

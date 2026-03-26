@@ -1,44 +1,110 @@
 ---
 name: double-check
-description: Iteratively review and fix all uncommitted changes until clean. Use when you want a thorough multi-pass review of recent work.
+description: "Iteratively review and fix changes until clean. Scope: latest (last N commits), uncommitted (default), branch (full PR). Add '?' for interactive mode."
 disable-model-invocation: true
 user-invocable: true
 context: fork
 agent: general-purpose
 model: opus
 effort: high
-allowed-tools: Read, Edit, Write, Glob, Grep, Bash(git diff *), Bash(git log *), Bash(git status *), Bash(hatch run *), Bash(cd packages/luxar-viewer && pnpm *)
-argument-hint: "[max-iterations]"
+allowed-tools: Read, Edit, Write, Glob, Grep, AskUserQuestion, Bash(git diff *), Bash(git log *), Bash(git status *), Bash(git merge-base *), Bash(hatch run *), Bash(cd packages/luxar-viewer && pnpm *)
+argument-hint: "[scope] [max-iterations] [?]"
 ---
 
 # Double-Check: Iterative Review Loop
 
-You are a meticulous code reviewer. Your job is to iteratively review and fix all uncommitted changes in this repository until no more issues remain.
+You are a meticulous code reviewer. Your job is to iteratively review and fix changes in this repository until no more issues remain.
 
-**Max iterations**: $ARGUMENTS (default: 12 if not specified)
+## Argument Parsing
 
-## Concurrency Warning
+Raw arguments: `$ARGUMENTS`
 
-Other agents are working on this codebase concurrently. You MUST:
-- **Re-read every file immediately before editing it** (never edit from stale content)
-- **Never run `git stash`, `git reset`, `git checkout .`**, or any command that affects the entire working tree
-- **Only edit files that are in the uncommitted diff** — if you spot issues in other files, report them but do NOT fix them
+Parse the arguments as follows (order-independent, all optional):
 
-## Changed Files
+| Token | Meaning | Default |
+|-------|---------|---------|
+| `latest` or `latest:N` | Review last N commits + uncommitted (default N=1) | — |
+| `uncommitted` | Review all uncommitted changes (staged + unstaged) | **this is the default scope** |
+| `branch` | Review all changes on current branch vs main + uncommitted | — |
+| A bare integer (e.g. `8`) | Max iterations | 12 |
+| `?` | Interactive mode — ask user about ambiguous issues | off |
+
+Examples:
+- `/double-check` → uncommitted scope, 12 iterations, non-interactive
+- `/double-check latest` → last 1 commit + uncommitted, 12 iterations
+- `/double-check latest:3 8` → last 3 commits + uncommitted, 8 iterations
+- `/double-check branch ?` → full branch scope, 12 iterations, interactive
+- `/double-check 5 ?` → uncommitted scope, 5 iterations, interactive
+
+## Scope Definitions
+
+### Scope: `uncommitted` (default)
+
+Review all uncommitted changes (staged + unstaged) against HEAD.
+
+**Changed files**: `git diff HEAD --name-only`
+**Diff to review**: `git diff HEAD`
+**Staged diff**: `git diff --cached`
+
+### Scope: `latest` or `latest:N`
+
+Review the last N commits (default 1) plus any uncommitted changes. This is useful for reviewing work done by the current agent session.
+
+**Changed files**: `git diff HEAD~N --name-only`
+**Diff to review**: `git diff HEAD~N`
+**Commit context**: `git log --oneline -N` (to understand intent of recent commits)
+
+### Scope: `branch`
+
+Review ALL changes on the current branch compared to main (or master), plus uncommitted changes. This is the most comprehensive mode — useful before opening or merging a PR.
+
+**Base commit**: `git merge-base main HEAD` (fall back to `master` if `main` doesn't exist)
+**Changed files**: `git diff <base>...HEAD --name-only` combined with `git diff HEAD --name-only`
+**Diff to review**: `git diff <base>...HEAD` (committed branch changes) plus `git diff HEAD` (uncommitted)
+**Commit context**: `git log --oneline <base>..HEAD` (all branch commits)
+
+**Note for `branch` scope**: The diff may be large. Prioritize reviewing files with the most changes first. If >30 files changed, focus on non-test source files first, then tests.
+
+## Loaded Diff Context
+
+The following is auto-loaded for the default (uncommitted) scope. For `latest` and `branch` scopes, you MUST run the appropriate git commands above to get the correct diff.
+
+### Changed Files (uncommitted)
 
 !`git diff HEAD --name-only`
 
-## Full Diff
+### Full Diff (uncommitted)
 
 !`git diff HEAD`
 
-## Staged Diff
+### Staged Diff
 
 !`git diff --cached`
+
+## Interactive Mode (`?`)
+
+When `?` is present in the arguments, you are in **interactive mode**.
+
+**IMPORTANT**: Interactive questions are asked **after the loop completes**, NOT during the loop. During the loop, accumulate ambiguous issues as `[FLAG]` entries (same as non-interactive mode). After the loop ends, present all accumulated `[FLAG]` items to the user via `AskUserQuestion`, then run one final iteration to apply their answers.
+
+**When NOT in interactive mode**: `[FLAG]` items appear in the final report only. No questions are asked.
+
+## Concurrency Warning
+
+Other agents may be working on this codebase concurrently. You MUST:
+- **Re-read every file immediately before editing it** (never edit from stale content)
+- **Never run `git stash`, `git reset`, `git checkout .`**, or any command that affects the entire working tree
+- **Only edit files that are in the reviewed diff** — if you spot issues in other files, report them but do NOT fix them
 
 ## Procedure
 
 Execute the following loop. Track your iteration count starting at 1.
+
+### Step 0: Determine Scope
+
+1. Parse `$ARGUMENTS` per the table above
+2. If scope is `latest` or `branch`, run the appropriate git commands to get the correct file list and diff (the auto-loaded diff above is only for `uncommitted`)
+3. Log: `[SCOPE] <scope>, max iterations: <N>, interactive: <yes/no>`
 
 ### Each Iteration
 
@@ -60,6 +126,7 @@ Execute the following loop. Track your iteration count starting at 1.
    - Log it: `[FIXED] <file>:<line> — <description>`
 4. For ambiguous issues you're unsure about:
    - Log it: `[FLAG] <file>:<line> — <description> (reason for uncertainty)`
+   - (In interactive mode, these will be presented to the user after the loop ends)
 
 #### Phase 2: Automated Checks
 
@@ -87,27 +154,54 @@ If automated checks find many issues (>5) or critical failures:
 
 #### Phase 3: Convergence Check
 
-- If **no issues were found or fixed** in both Phase 1 and Phase 2 → **STOP the loop**
-- If issues were found and fixed → continue to next iteration
-- If you've reached the max iteration count → **STOP the loop** (even if issues remain)
+Track a `consecutive_clean` counter (starts at 0):
+- If **no issues were found or fixed** in both Phase 1 and Phase 2 → increment `consecutive_clean`
+- If any issues were found or fixed → reset `consecutive_clean` to 0
+
+**Stop conditions** (checked after updating the counter):
+- `consecutive_clean >= 2` → **STOP** — two consecutive clean passes confirm stability
+- You've reached the max iteration count → **STOP** (even if issues remain)
+- Otherwise → continue to next iteration
 
 ### After the Loop Ends
+
+#### Interactive Resolution Phase (only if `?` mode is active AND there are `[FLAG]` items)
+
+If interactive mode is enabled and you accumulated any `[FLAG]` items during the loop:
+
+1. **Present all flagged items** to the user via `AskUserQuestion`. Group related flags into a single question where possible (max 4 questions per call). For each flag, provide options like:
+   ```
+   Question: "<file>:<line> — <description>"
+   Options:
+     - "Fix: <your suggested approach>"
+     - "Alternative: <other valid approach>" (if applicable)
+     - "Intentional — leave as-is"
+     - "Skip — don't fix this"
+   ```
+
+2. **Apply the user's answers**: For each item the user wants fixed, re-read the file and apply the fix. Log as `[FIXED-INTERACTIVE]`.
+
+3. **Run one final iteration** (Phase 1 + Phase 2) to verify the interactive fixes didn't introduce new issues. Log this as the "verification pass."
+
+#### Final Report
 
 Produce a structured final report:
 
 ```
 ## Double-Check Report
 
-**Iterations completed**: N / max
+**Scope**: <scope> | **Iterations completed**: N / max | **Interactive**: yes/no
 **Outcome**: CLEAN | ISSUES_REMAINING | MAX_ITERATIONS_REACHED
 
 ### Fixes Applied
 - [FIXED] file:line — description
 - [TOOL-FIX] tool: file:line — description
+- [FIXED-INTERACTIVE] file:line — description (user chose: ...)
 ...
 
 ### Flagged (Not Fixed)
 - [FLAG] file:line — description (reason)
+- [SKIPPED] file:line — description (user chose to skip)
 ...
 
 ### Final Automated Check Results
@@ -127,3 +221,4 @@ Produce a structured final report:
 - Don't change formatting unless ruff explicitly flags it
 - If a test fails, investigate whether it's a pre-existing failure before trying to fix it
 - Respect the project's CLAUDE.md conventions (check it if unsure about style)
+- For `branch` scope with large diffs, pace yourself — review in logical file groups rather than all at once
