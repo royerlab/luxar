@@ -75,7 +75,6 @@ Four parallel deep reviews were conducted covering:
 - Epsilon inconsistencies across CPU/CUDA/Metal backends (1e-6 to 1e-12)
 - CLAHE block artifacts from no inter-tile interpolation
 - Incorrect nD (>3D) downsampling in decompose.py (nearest instead of area)
-- Variable `truncate` shadowed in fit_multiscale_gsplats.py loop
 - Cross-module import of private `_sample_amplitudes` (grid.py -> edges.py)
 - Duplicated NMS logic in peak_finding.py
 - No cross-tile NMS deduplication

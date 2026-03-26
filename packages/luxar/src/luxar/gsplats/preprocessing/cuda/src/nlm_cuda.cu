@@ -294,21 +294,41 @@ static torch::Tensor launch_nlm_3d(
 // Runtime dispatch macros
 // ============================================================================
 
+// Dispatch macros — instantiate for all supported (patch_half, search_dist) combos.
+// Search distances 5,7 (original) + 9,11,13,15 (extended for microscopy).
+// Larger search distances need more shared memory (Ampere+ for 3D with sd>=11).
+
 #define NLM_DISPATCH_2D(ph, sd, input_padded, H, W, H_pad, W_pad, pad, exp_scale)  \
-    if ((ph) == 1 && (sd) == 5)       return launch_nlm_2d<1, 5>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
-    else if ((ph) == 1 && (sd) == 7)  return launch_nlm_2d<1, 7>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
-    else if ((ph) == 2 && (sd) == 5)  return launch_nlm_2d<2, 5>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
-    else if ((ph) == 2 && (sd) == 7)  return launch_nlm_2d<2, 7>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
+    if ((ph) == 1 && (sd) == 5)        return launch_nlm_2d<1,  5>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
+    else if ((ph) == 1 && (sd) == 7)   return launch_nlm_2d<1,  7>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
+    else if ((ph) == 1 && (sd) == 9)   return launch_nlm_2d<1,  9>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
+    else if ((ph) == 1 && (sd) == 11)  return launch_nlm_2d<1, 11>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
+    else if ((ph) == 1 && (sd) == 13)  return launch_nlm_2d<1, 13>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
+    else if ((ph) == 1 && (sd) == 15)  return launch_nlm_2d<1, 15>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
+    else if ((ph) == 2 && (sd) == 5)   return launch_nlm_2d<2,  5>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
+    else if ((ph) == 2 && (sd) == 7)   return launch_nlm_2d<2,  7>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
+    else if ((ph) == 2 && (sd) == 9)   return launch_nlm_2d<2,  9>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
+    else if ((ph) == 2 && (sd) == 11)  return launch_nlm_2d<2, 11>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
+    else if ((ph) == 2 && (sd) == 13)  return launch_nlm_2d<2, 13>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
+    else if ((ph) == 2 && (sd) == 15)  return launch_nlm_2d<2, 15>(input_padded, H, W, H_pad, W_pad, pad, exp_scale); \
     else TORCH_CHECK(false, "Unsupported NLM params: patch_half=", ph, " search_dist=", sd, \
-                     ". Supported: (1,5), (1,7), (2,5), (2,7)")
+                     ". Supported: patch_size={3,5}, search_distance={5,7,9,11,13,15}")
 
 #define NLM_DISPATCH_3D(ph, sd, input, D, H, W, exp_scale)  \
-    if ((ph) == 1 && (sd) == 5)       return launch_nlm_3d<1, 5>(input, D, H, W, exp_scale); \
-    else if ((ph) == 1 && (sd) == 7)  return launch_nlm_3d<1, 7>(input, D, H, W, exp_scale); \
-    else if ((ph) == 2 && (sd) == 5)  return launch_nlm_3d<2, 5>(input, D, H, W, exp_scale); \
-    else if ((ph) == 2 && (sd) == 7)  return launch_nlm_3d<2, 7>(input, D, H, W, exp_scale); \
+    if ((ph) == 1 && (sd) == 5)        return launch_nlm_3d<1,  5>(input, D, H, W, exp_scale); \
+    else if ((ph) == 1 && (sd) == 7)   return launch_nlm_3d<1,  7>(input, D, H, W, exp_scale); \
+    else if ((ph) == 1 && (sd) == 9)   return launch_nlm_3d<1,  9>(input, D, H, W, exp_scale); \
+    else if ((ph) == 1 && (sd) == 11)  return launch_nlm_3d<1, 11>(input, D, H, W, exp_scale); \
+    else if ((ph) == 1 && (sd) == 13)  return launch_nlm_3d<1, 13>(input, D, H, W, exp_scale); \
+    else if ((ph) == 1 && (sd) == 15)  return launch_nlm_3d<1, 15>(input, D, H, W, exp_scale); \
+    else if ((ph) == 2 && (sd) == 5)   return launch_nlm_3d<2,  5>(input, D, H, W, exp_scale); \
+    else if ((ph) == 2 && (sd) == 7)   return launch_nlm_3d<2,  7>(input, D, H, W, exp_scale); \
+    else if ((ph) == 2 && (sd) == 9)   return launch_nlm_3d<2,  9>(input, D, H, W, exp_scale); \
+    else if ((ph) == 2 && (sd) == 11)  return launch_nlm_3d<2, 11>(input, D, H, W, exp_scale); \
+    else if ((ph) == 2 && (sd) == 13)  return launch_nlm_3d<2, 13>(input, D, H, W, exp_scale); \
+    else if ((ph) == 2 && (sd) == 15)  return launch_nlm_3d<2, 15>(input, D, H, W, exp_scale); \
     else TORCH_CHECK(false, "Unsupported NLM params: patch_half=", ph, " search_dist=", sd, \
-                     ". Supported: (1,5), (1,7), (2,5), (2,7)")
+                     ". Supported: patch_size={3,5}, search_distance={5,7,9,11,13,15}")
 
 
 // ============================================================================

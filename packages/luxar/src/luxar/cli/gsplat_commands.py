@@ -1939,9 +1939,8 @@ def fit_volume(
                 # Remove params that progressive handles differently
                 fit_config.pop("downscale", None)
                 fit_config.pop("seeds", None)
-                # Progressive always works in voxel space internally
-                fit_config.pop("output_space", None)
-                fit_config.pop("voxel_size", None)
+                # voxel_size/output_space are passed through — progressive
+                # handles them internally (voxel space for passes, converts final result)
 
                 with asection("Progressive Optimization"):
                     result = fit_progressive_gaussian_splats(
