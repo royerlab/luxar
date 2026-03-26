@@ -28,6 +28,21 @@ Example:
 from __future__ import annotations
 
 from .calibration import calibrate_nlm_h
+from .denoise_pipeline import (
+    calibrate_all_channels,
+    calibrate_h_for_channel,
+    denoise_volume_array,
+    denormalize_volume,
+    normalize_volume,
+)
 from .nlm_core import denoise_nlm
 
-__all__ = ["denoise_nlm", "calibrate_nlm_h"]
+__all__ = [
+    "calibrate_all_channels",
+    "calibrate_h_for_channel",
+    "calibrate_nlm_h",
+    "denoise_nlm",
+    "denoise_volume_array",
+    "denormalize_volume",
+    "normalize_volume",
+]
