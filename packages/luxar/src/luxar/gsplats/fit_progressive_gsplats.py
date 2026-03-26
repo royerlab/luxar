@@ -152,6 +152,7 @@ def fit_progressive_gaussian_splats(
     # Pop params that progressive handles itself to avoid "multiple values" conflicts
     kwargs.pop("n_iters", None)  # progressive uses iters_per_pass instead
     kwargs.pop("seeds", None)  # progressive computes seeds_this_pass per pass
+    kwargs.pop("seed_method", None)  # progressive sets auto/peaks per pass
     # Force voxel-space output for internal passes: render_to_volume_tensor
     # expects voxel-space centers for correct residual computation.
     # We capture voxel_size/output_space to apply to the final result.
