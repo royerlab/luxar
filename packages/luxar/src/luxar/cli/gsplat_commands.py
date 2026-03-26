@@ -1474,16 +1474,18 @@ def transform_dataset(
         encoding_mode_obj = encoding_map[encoding_mode]
 
         # Check that at least one transform is requested
-        has_transform = any([
-            scale_factors,
-            translate_offset,
-            rotate_x_deg is not None,
-            rotate_y_deg is not None,
-            rotate_z_deg is not None,
-            center,
-            scale_intensity_factor is not None,
-            normalize_intensity is not None,
-        ])
+        has_transform = any(
+            [
+                scale_factors,
+                translate_offset,
+                rotate_x_deg is not None,
+                rotate_y_deg is not None,
+                rotate_z_deg is not None,
+                center,
+                scale_intensity_factor is not None,
+                normalize_intensity is not None,
+            ]
+        )
         if not has_transform:
             aprint("❌ No transforms specified. Use --help to see available options.")
             raise typer.Exit(1)
@@ -1507,13 +1509,17 @@ def transform_dataset(
                     transforms_applied.append(f"scale({scale_factors})")
 
             # 2. Rotations (3D spatial dims only)
-            has_rotation = any(r is not None for r in [rotate_x_deg, rotate_y_deg, rotate_z_deg])
+            has_rotation = any(
+                r is not None for r in [rotate_x_deg, rotate_y_deg, rotate_z_deg]
+            )
             if has_rotation:
                 # Determine spatial dimensions
                 # For nD data, we assume the last 3 dims are spatial (XYZ)
                 # and any preceding dims are non-spatial (e.g., time)
                 if d < 3:
-                    aprint(f"❌ Rotation requires at least 3 spatial dimensions, got {d}D data")
+                    aprint(
+                        f"❌ Rotation requires at least 3 spatial dimensions, got {d}D data"
+                    )
                     raise typer.Exit(1)
 
                 with asection("Applying rotation"):
@@ -1522,7 +1528,9 @@ def transform_dataset(
                     if rotate_x_deg is not None:
                         rad = np.radians(rotate_x_deg)
                         c, s = np.cos(rad), np.sin(rad)
-                        rx = np.array([[1, 0, 0], [0, c, -s], [0, s, c]], dtype=np.float64)
+                        rx = np.array(
+                            [[1, 0, 0], [0, c, -s], [0, s, c]], dtype=np.float64
+                        )
                         rot3 = rx @ rot3
                         aprint(f"Rotate X: {rotate_x_deg}°")
                         transforms_applied.append(f"rotate_x({rotate_x_deg}°)")
@@ -1530,7 +1538,9 @@ def transform_dataset(
                     if rotate_y_deg is not None:
                         rad = np.radians(rotate_y_deg)
                         c, s = np.cos(rad), np.sin(rad)
-                        ry = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]], dtype=np.float64)
+                        ry = np.array(
+                            [[c, 0, s], [0, 1, 0], [-s, 0, c]], dtype=np.float64
+                        )
                         rot3 = ry @ rot3
                         aprint(f"Rotate Y: {rotate_y_deg}°")
                         transforms_applied.append(f"rotate_y({rotate_y_deg}°)")
@@ -1538,7 +1548,9 @@ def transform_dataset(
                     if rotate_z_deg is not None:
                         rad = np.radians(rotate_z_deg)
                         c, s = np.cos(rad), np.sin(rad)
-                        rz = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]], dtype=np.float64)
+                        rz = np.array(
+                            [[c, -s, 0], [s, c, 0], [0, 0, 1]], dtype=np.float64
+                        )
                         rot3 = rz @ rot3
                         aprint(f"Rotate Z: {rotate_z_deg}°")
                         transforms_applied.append(f"rotate_z({rotate_z_deg}°)")
@@ -1569,13 +1581,17 @@ def transform_dataset(
                 with asection("Scaling intensity"):
                     aprint(f"Intensity scale factor: {scale_intensity_factor}")
                     data = data.scale_intensity(scale_intensity_factor)
-                    transforms_applied.append(f"scale_intensity({scale_intensity_factor})")
+                    transforms_applied.append(
+                        f"scale_intensity({scale_intensity_factor})"
+                    )
 
             # 6. Normalize intensity
             if normalize_intensity is not None:
                 with asection("Normalizing intensity"):
                     current_max = float(data.amplitudes.max())
-                    aprint(f"Current max: {current_max:.4f} → target max: {normalize_intensity}")
+                    aprint(
+                        f"Current max: {current_max:.4f} → target max: {normalize_intensity}"
+                    )
                     data = data.normalize_intensity(normalize_intensity)
                     transforms_applied.append(f"normalize({normalize_intensity})")
 
@@ -1618,6 +1634,125 @@ def transform_dataset(
 
         traceback.print_exc()
         raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# denoise — Denoise a volume using Non-Local Means
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("denoise")
+def denoise_volume_cmd(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input volume (.npy/.npz/.tiff/.zarr/.zarr.zip)"
+    ),
+    output_path: Path = typer.Argument(..., help="Output path (.npy/.zarr)"),
+    # Denoise params
+    h: Optional[float] = typer.Option(
+        None, "--h", help="Manual NLM h value (skip auto-calibration)"
+    ),
+    patch_size: int = typer.Option(
+        3, "--patch-size", help="NLM patch size (odd integer)"
+    ),
+    search_distance: int = typer.Option(
+        5, "--search-distance", help="NLM search window half-size"
+    ),
+    backend: str = typer.Option(
+        "auto", "--backend", help="NLM backend: auto/cuda/pytorch/skimage"
+    ),
+    device: Optional[str] = typer.Option(
+        None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
+    ),
+    denoise_2d: bool = typer.Option(
+        False, "--denoise-2d", help="Denoise slice-by-slice (2D) instead of 3D"
+    ),
+    # Input selection
+    channel: Optional[int] = typer.Option(None, "--channel", help="Channel index"),
+    timepoint: Optional[int] = typer.Option(
+        None, "--timepoint", help="Timepoint index"
+    ),
+    array_key: Optional[str] = typer.Option(
+        None, "--array-key", help="Array key within zarr store"
+    ),
+) -> None:
+    """Denoise a volume using Non-Local Means.
+
+    Auto-calibrates the denoising strength h using Noise2Self unless --h is
+    provided.  Runs locally (no Slurm).  For batch denoising on HPC, use
+    ``luxar gsplat batch plan --denoise``.
+
+    Examples:
+        luxar gsplat denoise volume.zarr denoised.zarr
+
+        luxar gsplat denoise volume.zarr denoised.npy --h 0.03
+
+        luxar gsplat denoise data.zarr.zip out.zarr --channel 0 --timepoint 5 --denoise-2d
+    """
+    try:
+        from luxar.cli.gsplat_config import load_volume
+        from luxar.gsplats.preprocessing.denoise_pipeline import (
+            denoise_volume_array,
+            normalize_volume,
+        )
+
+        with asection("Loading volume"):
+            volume = load_volume(
+                input_path, channel=channel, timepoint=timepoint, array_key=array_key
+            )
+            aprint(f"Shape: {volume.shape}, dtype: {volume.dtype}")
+
+        # Calibrate h if not provided
+        effective_h: float
+        if h is not None:
+            effective_h = h
+            aprint(f"Using manual h={effective_h:.4f}")
+        else:
+            import torch
+
+            from luxar.gsplats.preprocessing import calibrate_nlm_h
+
+            with asection("Auto-calibrating h (Noise2Self)"):
+                norm_vol, _, _ = normalize_volume(volume)
+                t_vol = torch.from_numpy(norm_vol)
+                dev = torch.device(device) if device else None
+                effective_h = calibrate_nlm_h(
+                    t_vol,
+                    patch_size=patch_size,
+                    search_distance=search_distance,
+                    backend=backend,
+                    device=dev,
+                    use_2d_slice=True,
+                )
+                aprint(f"Calibrated h={effective_h:.4f}")
+
+        with asection("Denoising (NLM)"):
+            denoised = denoise_volume_array(
+                volume,
+                h=effective_h,
+                patch_size=patch_size,
+                search_distance=search_distance,
+                backend=backend,
+                device=device,
+                use_2d=denoise_2d,
+            )
+            aprint(f"Denoised shape: {denoised.shape}")
+
+        # Save
+        with asection(f"Saving to {output_path.name}"):
+            suffix = output_path.suffix.lower()
+            if suffix == ".npy":
+                np.save(output_path, denoised)
+            elif suffix in (".zarr",):
+                import zarr
+
+                zarr.save(str(output_path), denoised)
+            else:
+                np.save(output_path, denoised)
+            aprint("Done")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        raise typer.Exit(1) from e
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1723,6 +1858,25 @@ def fit_volume(
         "--max-passes",
         help="Maximum number of progressive passes (default: unlimited, stops by budget or PSNR patience)",
     ),
+    # Denoising
+    denoise: bool = typer.Option(
+        False, "--denoise", help="Denoise volume before fitting (NLM)"
+    ),
+    denoise_h: Optional[float] = typer.Option(
+        None, "--denoise-h", help="Manual NLM h value (skip auto-calibration)"
+    ),
+    denoise_2d: bool = typer.Option(
+        False, "--denoise-2d", help="Use 2D NLM (slice-by-slice) instead of 3D"
+    ),
+    denoise_patch_size: int = typer.Option(
+        3, "--denoise-patch-size", help="NLM patch size (odd integer)"
+    ),
+    denoise_search_distance: int = typer.Option(
+        5, "--denoise-search-distance", help="NLM search window half-size"
+    ),
+    denoise_backend: str = typer.Option(
+        "auto", "--denoise-backend", help="NLM backend: auto/cuda/pytorch/skimage"
+    ),
 ) -> None:
     """Fit Gaussian splats to a volume.
 
@@ -1785,6 +1939,46 @@ def fit_volume(
             with asection("Loading volume"):
                 volume = load_volume(input_path, channel, timepoint, array_key)
                 aprint(f"Volume shape: {volume.shape}")
+
+            # 1b. Denoise (if requested)
+            if denoise:
+                from luxar.gsplats.preprocessing.denoise_pipeline import (
+                    denoise_volume_array,
+                    normalize_volume,
+                )
+
+                with asection("Denoising (NLM)"):
+                    if denoise_h is None:
+                        import torch
+
+                        from luxar.gsplats.preprocessing import calibrate_nlm_h
+
+                        norm_vol, _, _ = normalize_volume(volume)
+                        t_vol = torch.from_numpy(norm_vol)
+                        dev = torch.device(device) if device else None
+                        effective_h = calibrate_nlm_h(
+                            t_vol,
+                            patch_size=denoise_patch_size,
+                            search_distance=denoise_search_distance,
+                            backend=denoise_backend,
+                            device=dev,
+                            use_2d_slice=True,
+                        )
+                        aprint(f"Calibrated h={effective_h:.4f}")
+                    else:
+                        effective_h = denoise_h
+                        aprint(f"Using manual h={effective_h:.4f}")
+
+                    volume = denoise_volume_array(
+                        volume,
+                        h=effective_h,
+                        patch_size=denoise_patch_size,
+                        search_distance=denoise_search_distance,
+                        backend=denoise_backend,
+                        device=device,
+                        use_2d=denoise_2d,
+                    )
+                    aprint(f"Denoised volume shape: {volume.shape}")
 
             # 2. Parse downscale option
             parsed_downscale = None
@@ -2755,6 +2949,35 @@ def batch_plan(
     batch_max_passes: Optional[int] = typer.Option(
         None, "--max-passes", help="Max progressive passes per tile"
     ),
+    # Denoising
+    batch_denoise: bool = typer.Option(
+        False,
+        "--denoise",
+        help="Denoise volumes before fitting (NLM). Auto-calibrates h per channel.",
+    ),
+    batch_denoise_h: Optional[float] = typer.Option(
+        None, "--denoise-h", help="Manual NLM h (skip calibration)"
+    ),
+    batch_denoise_2d: bool = typer.Option(
+        False, "--denoise-2d", help="Use 2D NLM (slice-by-slice) instead of 3D"
+    ),
+    batch_denoise_patch_size: int = typer.Option(
+        3, "--denoise-patch-size", help="NLM patch size"
+    ),
+    batch_denoise_search_distance: int = typer.Option(
+        5, "--denoise-search-distance", help="NLM search distance"
+    ),
+    batch_denoise_backend: str = typer.Option(
+        "auto", "--denoise-backend", help="NLM backend"
+    ),
+    batch_calibration_samples: int = typer.Option(
+        5, "--calibration-samples", help="Timepoints to sample for h calibration"
+    ),
+    batch_preprocess: Optional[bool] = typer.Option(
+        None,
+        "--preprocess/--no-preprocess",
+        help="Force preprocess mode (denoise to zarr) or on-the-fly. Auto-detects if omitted.",
+    ),
     # Slurm params
     partition: Optional[str] = typer.Option(
         None, "--partition", "-p", help="Slurm partition"
@@ -3111,6 +3334,37 @@ def batch_plan(
         if batch_max_passes is not None:
             fit_args["max-passes"] = str(batch_max_passes)
 
+        # Denoise mode detection
+        denoise_mode = None
+        denoised_zarr_path = None
+        if batch_denoise:
+            if batch_preprocess is True:
+                denoise_mode = "preprocess"
+            elif batch_preprocess is False:
+                denoise_mode = "on-the-fly"
+            else:
+                # Auto-detect: preprocess when tiled
+                denoise_mode = "preprocess" if n_tiles > 1 else "on-the-fly"
+            aprint(f"Denoise mode: {denoise_mode}")
+
+            if denoise_mode == "preprocess":
+                denoised_zarr_path = str(output_dir.resolve() / "denoised.zarr")
+
+            # For on-the-fly mode, pass denoise flags to fit tasks
+            if denoise_mode == "on-the-fly":
+                fit_args["denoise"] = ""
+                if batch_denoise_2d:
+                    fit_args["denoise-2d"] = ""
+                if batch_denoise_patch_size != 3:
+                    fit_args["denoise-patch-size"] = str(batch_denoise_patch_size)
+                if batch_denoise_search_distance != 5:
+                    fit_args["denoise-search-distance"] = str(
+                        batch_denoise_search_distance
+                    )
+                if batch_denoise_backend != "auto":
+                    fit_args["denoise-backend"] = batch_denoise_backend
+                # Note: --denoise-h is passed at runtime from h_values JSON
+
         colors_list = None
         if channel_colors:
             colors_list = [c.strip() for c in channel_colors.split(",")]
@@ -3144,6 +3398,15 @@ def batch_plan(
             timepoint_indices=t_indices if timepoints_slice else None,
             channel_indices=c_indices if channels_slice else None,
             channel_colors=colors_list,
+            denoise=batch_denoise,
+            denoise_2d=batch_denoise_2d,
+            denoise_h=batch_denoise_h,
+            denoise_patch_size=batch_denoise_patch_size,
+            denoise_search_distance=batch_denoise_search_distance,
+            denoise_backend=batch_denoise_backend,
+            denoise_mode=denoise_mode,
+            denoised_zarr_path=denoised_zarr_path,
+            calibration_samples=batch_calibration_samples,
         )
 
         # Build job list
@@ -3170,6 +3433,20 @@ def batch_plan(
         preamble = generate_env_preamble(env)
         fit_script = generate_fit_sbatch(manifest, preamble)
         merge_script = generate_merge_sbatch(manifest, preamble)
+
+        # Generate denoise scripts if needed
+        calibrate_script = None
+        denoise_script = None
+        if batch_denoise:
+            from luxar.gsplats.batch.slurm_gen import (
+                generate_calibrate_sbatch,
+                generate_denoise_sbatch,
+            )
+
+            if batch_denoise_h is None:
+                calibrate_script = generate_calibrate_sbatch(manifest, preamble)
+            if denoise_mode == "preprocess":
+                denoise_script = generate_denoise_sbatch(manifest, preamble)
 
         # 8. Print plan (always)
         spatial_str = "x".join(str(s) for s in spatial)
@@ -3245,20 +3522,74 @@ def batch_plan(
         fit_path.write_text(fit_script)
         merge_path.write_text(merge_script)
         env_path.write_text(preamble)
+        if calibrate_script:
+            (out / "calibrate.sbatch").write_text(calibrate_script)
+        if denoise_script:
+            (out / "denoise_array.sbatch").write_text(denoise_script)
         save_manifest(manifest, out)
 
+        def _parse_job_id(stdout: str) -> Optional[int]:
+            for word in stdout.strip().split():
+                if word.isdigit():
+                    return int(word)
+            return None
+
+        # Submit calibration job (if needed)
+        calibrate_job_id = None
+        if calibrate_script:
+            aprint("Submitting calibration job...")
+            result = subprocess.run(
+                ["sbatch", str(out / "calibrate.sbatch")],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                aprint(f"Error submitting calibration job: {result.stderr}")
+                raise typer.Exit(1)
+            calibrate_job_id = _parse_job_id(result.stdout)
+            manifest.calibrate_job_id = calibrate_job_id
+            aprint(f"  Calibration job: {calibrate_job_id}")
+
+        # Submit denoise preprocessing array (if preprocess mode)
+        denoise_job_id = None
+        if denoise_script:
+            aprint("Submitting denoise preprocessing array...")
+            dep_cmd = ["sbatch"]
+            if calibrate_job_id:
+                dep_cmd.append(f"--dependency=afterok:{calibrate_job_id}")
+            dep_cmd.append(str(out / "denoise_array.sbatch"))
+            result = subprocess.run(dep_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                aprint(f"Error submitting denoise job: {result.stderr}")
+                raise typer.Exit(1)
+            denoise_job_id = _parse_job_id(result.stdout)
+            manifest.denoise_job_id = denoise_job_id
+            denoise_n_t = (
+                len(manifest.timepoint_indices)
+                if manifest.timepoint_indices
+                else manifest.n_timepoints
+            )
+            denoise_n_c = (
+                len(manifest.channel_indices)
+                if manifest.channel_indices
+                else manifest.n_channels
+            )
+            denoise_total = denoise_n_t * denoise_n_c
+            aprint(f"  Denoise array job: {denoise_job_id} ({denoise_total} tasks)")
+
+        # Submit fitting array (depends on denoise or calibrate)
+        fit_dep_id = denoise_job_id or calibrate_job_id
         aprint("Submitting fitting array job...")
-        result = subprocess.run(
-            ["sbatch", str(fit_path)], capture_output=True, text=True
-        )
+        fit_cmd = ["sbatch"]
+        if fit_dep_id:
+            fit_cmd.append(f"--dependency=afterok:{fit_dep_id}")
+        fit_cmd.append(str(fit_path))
+        result = subprocess.run(fit_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             aprint(f"Error submitting fit job: {result.stderr}")
             raise typer.Exit(1)
 
-        fit_job_id = None
-        for word in result.stdout.strip().split():
-            if word.isdigit():
-                fit_job_id = int(word)
+        fit_job_id = _parse_job_id(result.stdout)
         aprint(f"  Fitting array job: {fit_job_id} ({total_tasks} tasks)")
 
         merge_cmd = ["sbatch"]
@@ -3269,9 +3600,7 @@ def batch_plan(
         result = subprocess.run(merge_cmd, capture_output=True, text=True)
         merge_job_id = None
         if result.returncode == 0:
-            for word in result.stdout.strip().split():
-                if word.isdigit():
-                    merge_job_id = int(word)
+            merge_job_id = _parse_job_id(result.stdout)
             aprint(f"  Merge job: {merge_job_id} (depends on {fit_job_id})")
         else:
             aprint(f"  Warning: merge job submission failed: {result.stderr}")
@@ -3369,3 +3698,145 @@ def batch_merge_cmd(
 
         traceback.print_exc()
         raise typer.Exit(1)
+
+
+# ── Hidden batch worker commands for denoise pipeline ────────────
+
+
+@app_batch.command("denoise-calibrate", hidden=True)
+def batch_denoise_calibrate_cmd(
+    output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
+) -> None:
+    """[Internal] Run NLM calibration for batch denoise pipeline.
+
+    Reads manifest, calibrates h per channel, writes results back.
+    Called by the calibration Slurm job.
+    """
+    try:
+        import json
+
+        from luxar.gsplats.batch.manifest import load_manifest, save_manifest
+        from luxar.gsplats.preprocessing.denoise_pipeline import calibrate_all_channels
+
+        manifest = load_manifest(output_dir)
+
+        if not manifest.denoise:
+            aprint("Error: denoise not enabled in manifest")
+            raise typer.Exit(1)
+
+        with asection("NLM Calibration"):
+            h_values = calibrate_all_channels(
+                input_path=Path(manifest.input_path),
+                n_timepoints=manifest.n_timepoints,
+                n_channels=manifest.n_channels,
+                channel_indices=(
+                    manifest.channel_indices
+                    if manifest.channel_indices
+                    else list(range(manifest.n_channels))
+                ),
+                timepoint_indices=manifest.timepoint_indices,
+                array_key=manifest.array_key,
+                calibration_samples=manifest.calibration_samples,
+                patch_size=manifest.denoise_patch_size,
+                search_distance=manifest.denoise_search_distance,
+                backend=manifest.denoise_backend,
+                h_override=manifest.denoise_h,
+            )
+
+            # Write h_values to manifest (string keys for JSON)
+            manifest.denoise_h_values = {str(k): v for k, v in h_values.items()}
+            save_manifest(manifest, output_dir)
+
+            # Also write standalone JSON for easy reading by other jobs
+            h_path = output_dir / "denoise_h_values.json"
+            h_path.write_text(json.dumps(h_values, indent=2))
+
+            aprint(f"Calibrated h values: {h_values}")
+            aprint(f"Saved to {h_path}")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        raise typer.Exit(1) from e
+
+
+@app_batch.command("denoise-preprocess", hidden=True)
+def batch_denoise_preprocess_cmd(
+    output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
+    task_id: int = typer.Argument(..., help="Array task ID (encodes T*n_c + C)"),
+) -> None:
+    """[Internal] Denoise one (T,C) volume for batch preprocess pipeline.
+
+    Called by the denoise Slurm array job, one task per (timepoint, channel).
+    """
+    try:
+        import json
+
+        import zarr
+
+        from luxar.cli.gsplat_config import load_volume
+        from luxar.gsplats.batch.manifest import load_manifest
+        from luxar.gsplats.preprocessing.denoise_pipeline import denoise_volume_array
+
+        manifest = load_manifest(output_dir)
+
+        # Read calibrated h values
+        h_path = output_dir / "denoise_h_values.json"
+        if not h_path.exists():
+            aprint("Error: denoise_h_values.json not found. Run calibration first.")
+            raise typer.Exit(1)
+        h_values = json.loads(h_path.read_text())
+
+        # Decode task_id -> (t_idx, c_idx) within selected indices
+        n_c = manifest.n_channels
+        t_idx = task_id // n_c
+        c_idx = task_id % n_c
+
+        # Map to real dataset indices
+        t_indices = manifest.timepoint_indices or list(range(manifest.n_timepoints))
+        c_indices = manifest.channel_indices or list(range(manifest.n_channels))
+        t_real = t_indices[t_idx]
+        c_real = c_indices[c_idx]
+
+        h = h_values.get(str(c_real), 0.04)
+
+        with asection(f"Denoising T={t_real} C={c_real} (h={h:.4f})"):
+            # Load volume
+            volume = load_volume(
+                Path(manifest.input_path),
+                channel=c_real if manifest.n_channels > 1 else None,
+                timepoint=t_real if manifest.n_timepoints > 1 else None,
+                array_key=manifest.array_key,
+            )
+            aprint(f"Loaded: shape={volume.shape}")
+
+            # Denoise
+            denoised = denoise_volume_array(
+                volume,
+                h=h,
+                patch_size=manifest.denoise_patch_size,
+                search_distance=manifest.denoise_search_distance,
+                backend=manifest.denoise_backend,
+                use_2d=manifest.denoise_2d,
+            )
+
+            # Write to denoised.zarr
+            zarr_path = output_dir / "denoised.zarr"
+            store = zarr.open(str(zarr_path), mode="a")
+
+            spatial = denoised.shape
+            full_shape = (len(t_indices), len(c_indices), *spatial)
+            chunks = (1, 1, *[min(s, 128) for s in spatial])
+
+            if "data" not in store:
+                store.create_dataset(
+                    "data",
+                    shape=full_shape,
+                    chunks=chunks,
+                    dtype=np.float32,
+                )
+            store["data"][t_idx, c_idx] = denoised
+            aprint(f"Written to denoised.zarr[{t_idx}, {c_idx}]")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        raise typer.Exit(1) from e
