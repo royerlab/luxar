@@ -1973,6 +1973,7 @@ def fit_volume(
                         patch_size=denoise_patch_size,
                         search_distance=denoise_search_distance,
                         backend=denoise_backend,
+                        device=device,
                         use_2d=denoise_2d,
                     )
                     aprint(f"Denoised volume shape: {volume.shape}")
@@ -3784,7 +3785,7 @@ def batch_denoise_preprocess_cmd(
         t_real = t_indices[t_idx]
         c_real = c_indices[c_idx]
 
-        h = h_values.get(str(c_real), h_values.get(str(c_idx), 0.04))
+        h = h_values.get(str(c_real), 0.04)
 
         with asection(f"Denoising T={t_real} C={c_real} (h={h:.4f})"):
             # Load volume

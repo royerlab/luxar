@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import torch
 from arbol import aprint, asection
 
 # ── Normalization ────────────────────────────────────────────────
@@ -69,6 +68,8 @@ def denoise_volume_array(
     use_2d : bool
         If True, denoise slice-by-slice (2D) instead of full 3D.
     """
+    import torch
+
     from .nlm_core import denoise_nlm
 
     volume = volume.astype(np.float32)
@@ -146,6 +147,8 @@ def calibrate_h_for_channel(
     Loads the central 2D slice at each sample timepoint, normalizes to [0,1],
     runs Noise2Self calibration, and returns the median h across timepoints.
     """
+    import torch
+
     from .calibration import calibrate_nlm_h
 
     h_values = []

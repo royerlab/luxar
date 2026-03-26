@@ -186,11 +186,13 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         and manifest.denoise_mode == "on-the-fly"
         and manifest.denoise_h is None
     ):
-        h_json_path = f"{manifest.output_dir}/denoise_h_values.json"
+        h_json_path = shlex.quote(f"{manifest.output_dir}/denoise_h_values.json")
         lines.extend(
             [
-                f'    local DENOISE_H=$(python3 -c "import json; '
-                f"print(json.load(open('{h_json_path}')).get(str($C), 0.04))\")",
+                f"    local H_JSON={h_json_path}",
+                '    local DENOISE_H=$(python3 -c "import json,sys; '
+                "d=json.load(open(sys.argv[1])); "
+                'print(d.get(str(int(sys.argv[2])), 0.04))" "$H_JSON" "$C")',
             ]
         )
 
@@ -286,7 +288,18 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     Array job: one task per (timepoint, channel). Each task denoises one
     volume and writes to ``denoised.zarr``.
     """
-    total_tasks = manifest.n_timepoints * manifest.n_channels
+    # Use actual selected counts (not original dataset counts) for task array
+    n_t = (
+        len(manifest.timepoint_indices)
+        if manifest.timepoint_indices
+        else manifest.n_timepoints
+    )
+    n_c = (
+        len(manifest.channel_indices)
+        if manifest.channel_indices
+        else manifest.n_channels
+    )
+    total_tasks = n_t * n_c
     lines = [
         "#!/bin/bash",
         "#SBATCH --job-name=luxar-denoise",
