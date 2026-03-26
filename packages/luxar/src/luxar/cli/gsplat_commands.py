@@ -3562,7 +3562,17 @@ def batch_plan(
                 raise typer.Exit(1)
             denoise_job_id = _parse_job_id(result.stdout)
             manifest.denoise_job_id = denoise_job_id
-            denoise_total = manifest.n_timepoints * manifest.n_channels
+            denoise_n_t = (
+                len(manifest.timepoint_indices)
+                if manifest.timepoint_indices
+                else manifest.n_timepoints
+            )
+            denoise_n_c = (
+                len(manifest.channel_indices)
+                if manifest.channel_indices
+                else manifest.n_channels
+            )
+            denoise_total = denoise_n_t * denoise_n_c
             aprint(f"  Denoise array job: {denoise_job_id} ({denoise_total} tasks)")
 
         # Submit fitting array (depends on denoise or calibrate)
