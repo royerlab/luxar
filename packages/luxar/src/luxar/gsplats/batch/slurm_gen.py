@@ -106,6 +106,43 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
                 fit_cmd_parts.append(f"    {flag}")
             else:
                 fit_cmd_parts.append(f"    {flag} {shlex.quote(str(value))}")
+    # For on-the-fly denoise with auto-calibration, read h from JSON at runtime
+    if (
+        manifest.denoise
+        and manifest.denoise_mode == "on-the-fly"
+        and manifest.denoise_h is None
+    ):
+        # The calibration job writes denoise_h_values.json.
+        # Read per-channel h at runtime and inject --denoise-h.
+        fit_cmd_parts.append("    --denoise-h $DENOISE_H")
+
+    # For preprocess mode, override input path to denoised zarr.
+    # The denoised.zarr stores volumes under "data" with shape
+    # (n_selected_t, n_selected_c, *spatial) using sequential indices,
+    # so we must use $T_IDX/$C_IDX (not $T/$C which are real dataset indices)
+    # and explicitly point at the "data" array key.
+    if (
+        manifest.denoise
+        and manifest.denoise_mode == "preprocess"
+        and manifest.denoised_zarr_path
+    ):
+        # Replace the input path in the command
+        fit_cmd_parts[0] = (
+            f'luxar gsplat fit {shlex.quote(manifest.denoised_zarr_path)} "$OUTPUT"'
+        )
+        # Replace or add --array-key data to point at the denoised dataset
+        array_key_replaced = False
+        for i, part in enumerate(fit_cmd_parts):
+            if part.strip().startswith("--array-key "):
+                fit_cmd_parts[i] = "    --array-key data"
+                array_key_replaced = True
+            elif part.strip() == "--channel $C":
+                fit_cmd_parts[i] = "    --channel $C_IDX"
+            elif part.strip() == "--timepoint $T":
+                fit_cmd_parts[i] = "    --timepoint $T_IDX"
+        if not array_key_replaced:
+            fit_cmd_parts.append("    --array-key data")
+
     fit_cmd = " \\\n    ".join(fit_cmd_parts)
 
     # Common variables
@@ -156,6 +193,27 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
             "    fi",
             "",
             '    echo "=== Task $TASK_ID / $TOTAL_TASKS (T=$T C=$C K=$K) ==="',
+        ]
+    )
+
+    # For on-the-fly denoise, read per-channel h at runtime
+    if (
+        manifest.denoise
+        and manifest.denoise_mode == "on-the-fly"
+        and manifest.denoise_h is None
+    ):
+        h_json_path = shlex.quote(f"{manifest.output_dir}/denoise_h_values.json")
+        lines.extend(
+            [
+                f"    local H_JSON={h_json_path}",
+                '    local DENOISE_H=$(python3 -c "import json,sys; '
+                "d=json.load(open(sys.argv[1])); "
+                'print(d.get(str(int(sys.argv[2])), 0.04))" "$H_JSON" "$C")',
+            ]
+        )
+
+    lines.extend(
+        [
             f"    {fit_cmd}",
             "}",
             "",
@@ -201,6 +259,90 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
                 "",
             ]
         )
+
+    return "\n".join(lines)
+
+
+def generate_calibrate_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
+    """Generate sbatch script for NLM calibration job.
+
+    Single GPU, ~10 min. Runs ``luxar gsplat batch denoise-calibrate``
+    which calibrates h per channel and writes results to manifest + JSON.
+    """
+    lines = [
+        "#!/bin/bash",
+        "#SBATCH --job-name=luxar-calibrate",
+        f"#SBATCH --partition={manifest.slurm_partition}",
+        "#SBATCH --ntasks=1",
+        "#SBATCH --gpus-per-task=1",
+        "#SBATCH --cpus-per-task=4",
+        f"#SBATCH --mem={manifest.slurm_mem_gb}G",
+        "#SBATCH --time=00:15:00",
+        f"#SBATCH --output={manifest.output_dir}/logs/calibrate.out",
+        f"#SBATCH --error={manifest.output_dir}/logs/calibrate.err",
+    ]
+
+    if manifest.slurm_account:
+        lines.append(f"#SBATCH --account={manifest.slurm_account}")
+    if manifest.slurm_qos:
+        lines.append(f"#SBATCH --qos={manifest.slurm_qos}")
+
+    lines.append("")
+    lines.append(env_preamble)
+    lines.append("")
+    lines.append(
+        f"luxar gsplat batch denoise-calibrate {shlex.quote(manifest.output_dir)}"
+    )
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
+    """Generate sbatch script for denoise preprocessing array job.
+
+    Array job: one task per (timepoint, channel). Each task denoises one
+    volume and writes to ``denoised.zarr``.
+    """
+    # Use actual selected counts (not original dataset counts) for task array
+    n_t = (
+        len(manifest.timepoint_indices)
+        if manifest.timepoint_indices
+        else manifest.n_timepoints
+    )
+    n_c = (
+        len(manifest.channel_indices)
+        if manifest.channel_indices
+        else manifest.n_channels
+    )
+    total_tasks = n_t * n_c
+    lines = [
+        "#!/bin/bash",
+        "#SBATCH --job-name=luxar-denoise",
+        f"#SBATCH --array=0-{total_tasks - 1}",
+        f"#SBATCH --partition={manifest.slurm_partition}",
+        "#SBATCH --ntasks=1",
+        "#SBATCH --gpus-per-task=1",
+        "#SBATCH --cpus-per-task=4",
+        f"#SBATCH --mem={manifest.slurm_mem_gb}G",
+        "#SBATCH --time=00:30:00",
+        f"#SBATCH --output={manifest.output_dir}/logs/denoise_%a.out",
+        f"#SBATCH --error={manifest.output_dir}/logs/denoise_%a.err",
+    ]
+
+    if manifest.slurm_account:
+        lines.append(f"#SBATCH --account={manifest.slurm_account}")
+    if manifest.slurm_qos:
+        lines.append(f"#SBATCH --qos={manifest.slurm_qos}")
+
+    lines.append("")
+    lines.append(env_preamble)
+    lines.append("")
+    lines.append(
+        f"luxar gsplat batch denoise-preprocess "
+        f"{shlex.quote(manifest.output_dir)} $SLURM_ARRAY_TASK_ID"
+    )
+    lines.append("")
 
     return "\n".join(lines)
 
