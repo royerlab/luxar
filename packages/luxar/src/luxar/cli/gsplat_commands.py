@@ -1941,22 +1941,27 @@ def fit_volume(
                 aprint(f"Volume shape: {volume.shape}")
 
             # 1b. Denoise (if requested)
+            # Resolve effective_h (calibrate if needed), then either:
+            # - Denoise full volume now (non-tiled fitting)
+            # - Pass h + params through to fit_tile (tiled fitting, per-tile denoise)
+            _denoise_effective_h: Optional[float] = None
             if denoise:
-                from luxar.gsplats.preprocessing.denoise_pipeline import (
-                    denoise_volume_array,
-                    normalize_volume,
-                )
+                if denoise_h is not None:
+                    _denoise_effective_h = denoise_h
+                    aprint(f"Denoise: using manual h={_denoise_effective_h:.4f}")
+                else:
+                    import torch
 
-                with asection("Denoising (NLM)"):
-                    if denoise_h is None:
-                        import torch
+                    from luxar.gsplats.preprocessing import calibrate_nlm_h
+                    from luxar.gsplats.preprocessing.denoise_pipeline import (
+                        normalize_volume,
+                    )
 
-                        from luxar.gsplats.preprocessing import calibrate_nlm_h
-
+                    with asection("Calibrating NLM h"):
                         norm_vol, _, _ = normalize_volume(volume)
                         t_vol = torch.from_numpy(norm_vol)
                         dev = torch.device(device) if device else None
-                        effective_h = calibrate_nlm_h(
+                        _denoise_effective_h = calibrate_nlm_h(
                             t_vol,
                             patch_size=denoise_patch_size,
                             search_distance=denoise_search_distance,
@@ -1964,14 +1969,20 @@ def fit_volume(
                             device=dev,
                             use_2d_slice=True,
                         )
-                        aprint(f"Calibrated h={effective_h:.4f}")
-                    else:
-                        effective_h = denoise_h
-                        aprint(f"Using manual h={effective_h:.4f}")
+                        aprint(f"Calibrated h={_denoise_effective_h:.4f}")
 
+            # For non-tiled paths, denoise the full volume now.
+            # For tiled paths, denoise is deferred to per-tile (see fit_tile).
+            is_tiled = (tile is not None) or tiled
+            if denoise and _denoise_effective_h is not None and not is_tiled:
+                from luxar.gsplats.preprocessing.denoise_pipeline import (
+                    denoise_volume_array,
+                )
+
+                with asection("Denoising (NLM)"):
                     volume = denoise_volume_array(
                         volume,
-                        h=effective_h,
+                        h=_denoise_effective_h,
                         patch_size=denoise_patch_size,
                         search_distance=denoise_search_distance,
                         backend=denoise_backend,
@@ -2011,6 +2022,18 @@ def fit_volume(
                 aprint(f"Seeds: {parsed_seeds}")
             else:
                 aprint("Seeds: auto")
+
+            # 4b. Inject per-tile denoise params for tiled fitting
+            if denoise and _denoise_effective_h is not None and is_tiled:
+                fit_config["_denoise_h"] = _denoise_effective_h
+                fit_config["_denoise_params"] = {
+                    "patch_size": denoise_patch_size,
+                    "search_distance": denoise_search_distance,
+                    "backend": denoise_backend,
+                    "device": device,
+                    "use_2d": denoise_2d,
+                }
+                aprint(f"Denoise: per-tile on-the-fly (h={_denoise_effective_h:.4f})")
 
             # 5. Apply downscaling
             # Pop downscale from fit_config to avoid "multiple values" conflict
