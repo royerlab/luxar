@@ -15,6 +15,7 @@ from arbol import aprint, asection
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds.grid import seed_from_grid
 from luxar.gsplats.seeds.multiscale_decomposition import seed_from_decomposition
+from luxar.gsplats.seeds.peaks import seed_from_peaks
 
 
 def generate_seeds(
@@ -38,6 +39,7 @@ def generate_seeds(
         - "decomposition": Multi-scale decomposition for blob-like features (slow)
         - "grid": Uniform grid for spatial coverage
         - "edges": Edge-based boundary detection with Sobel gradients
+        - "peaks": Local maxima after Gaussian blur (ideal for sparse residuals)
         - "decomposition,edges,grid": Include all methods (comma-separated)
     **kwargs
         Method-specific parameters. Common parameters are routed to all applicable
@@ -152,7 +154,7 @@ def generate_seeds(
 
     # Parse method string
     method = method.lower().strip()
-    single_methods = {"decomposition", "grid", "edges"}
+    single_methods = {"decomposition", "grid", "edges", "peaks"}
 
     # Handle comma-separated methods (e.g., "decomposition,grid")
     if "," in method:
@@ -171,7 +173,7 @@ def generate_seeds(
     else:
         raise ValueError(
             f"Invalid method: '{method}'. "
-            "Valid options: 'decomposition', 'grid', 'edges', 'auto', "
+            "Valid options: 'decomposition', 'grid', 'edges', 'peaks', 'auto', "
             "or comma-separated combination (e.g., 'decomposition,grid')"
         )
 
@@ -212,6 +214,12 @@ def generate_seeds(
         "device",
     }
 
+    peaks_params = {
+        "n_seeds",
+        "init_sigma",
+        "device",
+    }
+
     # Passthrough params from higher-level APIs (used by fitter, not seeding)
     passthrough_params = {
         "use_metal",
@@ -222,11 +230,14 @@ def generate_seeds(
         "device",
     }
 
+    peaks_kwargs: Dict[str, Any] = {}
+
     # Route parameters
     for key, value in kwargs.items():
         used_by_decomposition = key in decomposition_params
         used_by_grid = key in grid_params
         used_by_edges = key in edges_params
+        used_by_peaks = key in peaks_params
 
         if "decomposition" in methods and used_by_decomposition:
             decomposition_kwargs[key] = value
@@ -234,11 +245,14 @@ def generate_seeds(
             grid_kwargs[key] = value
         if "edges" in methods and used_by_edges:
             edges_kwargs[key] = value
+        if "peaks" in methods and used_by_peaks:
+            peaks_kwargs[key] = value
 
         if not (
             used_by_decomposition
             or used_by_grid
             or used_by_edges
+            or used_by_peaks
             or key in passthrough_params
         ):
             import warnings
@@ -289,6 +303,12 @@ def generate_seeds(
                     "Edge seeding not available yet (edges.py not implemented)",
                     UserWarning,
                 )
+        elif m == "peaks":
+            # Pass target_seeds as n_seeds if not already set
+            if "n_seeds" not in peaks_kwargs and target_seeds is not None:
+                peaks_kwargs["n_seeds"] = target_seeds
+            result = seed_from_peaks(V, **peaks_kwargs)
+            results.append(result)
 
     # Combine results if multiple methods were used
     if len(results) == 0:

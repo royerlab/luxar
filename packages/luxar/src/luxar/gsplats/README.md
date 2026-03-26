@@ -146,69 +146,6 @@ reconstruction = render_gaussians_numpy(image.shape, result, truncate=3.0)
 
 The result can be directly passed to `render_gaussians_numpy()` or `render_gaussians_pytorch()` for rendering, or added to a Scene (see below).
 
-### Multi-Scale Fitting for Large Datasets
-
-For large images and volumes, multi-scale fitting provides 10-100x speedup by leveraging multi-scale decomposition:
-
-```python
-from luxar.gsplats import fit_multiscale_gaussian_splats
-
-# Multi-scale fitting with intelligent defaults
-result = fit_multiscale_gaussian_splats(
-    large_volume,                      # 3D volume or 2D image
-    scales=[1, 2, 4, 8],              # Scale factors (default)
-    base_init_sigma=1.5,              # Base sigma (scaled per level)
-    n_iters_decomp=1000,              # Decomposition iterations
-    n_iters_per_scale=500,            # Iterations per scale
-    loss_type="l1",                    # Loss function
-    max_abs_error=0.1,                # Convergence threshold
-    verbose=True,                      # Show progress
-)
-
-# Access speedup statistics from result.stats
-print(f"Computational speedup: {result.stats['computational_speedup']:.1f}x")
-print(f"Splats per scale: {result.stats['n_splats_per_scale']}")
-print(f"Total time: {result.stats['total_time_seconds']:.2f}s")
-```
-
-**How it works:**
-1. **Decompose** image into multiple scales (coarse to fine)
-2. **Fit independently** on each scale (fewer voxels = faster)
-3. **Scale parameters** back to full resolution
-4. **Combine** all splats from all scales
-
-**Key benefits:**
-- **Massive speedup**: 8x scale in 3D = 512x fewer voxels per scale
-- **Hierarchical**: Coarse scales capture large structures, fine scales capture details
-- **Quality**: Similar or better reconstruction than single-scale
-- **Scalable**: Enables fitting on very large volumes (1024^3+)
-
-**When to use:**
-- Large 3D/4D datasets where single-scale is slow
-- Data with hierarchical structure (coarse + fine features)
-- Need explicit scale separation
-- Want 10-100x speedup without quality loss
-
-**Visualization options:**
-```python
-# Enable per-scale visualization and decomposition movie
-result = fit_multiscale_gaussian_splats(
-    image,
-    scales=[1, 2, 4, 8],
-    visualize_per_scale=True,  # Show splat locations and reconstructions per scale
-    napari_movie=True,          # Record decomposition convergence animation
-    movie_every=50,             # Record every 50 iterations
-)
-
-# Access per-scale visualization data from result.stats
-for vis in result.stats['per_scale_visualizations']:
-    scale = vis['scale_factor']
-    centers = vis['centers']           # Splat locations at full resolution
-    recon = vis['reconstruction']      # Full resolution reconstruction
-    residual = vis['residual']         # Full resolution error map
-    print(f"Scale {scale}x: {vis['n_splats']} splats, MSE={vis['error_mse']:.6e}")
-```
-
 ### Tiled Fitting for Large Volumes
 
 For volumes that exceed GPU memory, tiled fitting splits the data into overlapping tiles with cosine (Hann) apodization and fits each tile independently:
@@ -969,7 +906,6 @@ See [metal/README.md](models/gsplats/metal/README.md) for detailed installation 
 gsplats/
 ├── fit_gsplats.py              # Main fitting interface (refactored to use modular pipeline)
 ├── fit_tiled_gsplats.py        # Tiled fitting for large volumes (fit_tile, fit_tiled)
-├── fit_multiscale_gsplats.py   # Multi-scale fitting for large datasets
 ├── tiling.py                   # Tile geometry and cosine apodization (TileSpec, cosine_window)
 ├── metrics.py                  # Quality metrics (PSNR, SSIM, MSE, relative L2)
 ├── seeds.py               # Multiscale candidate detection
@@ -1002,7 +938,6 @@ gsplats/
 ├── demos/                         # Interactive demonstrations
 │   ├── demo_basic_fitting.py      # Simple API introduction with standard optimizer
 │   ├── demo_performance_metrics.py # Detailed convergence and quality metrics
-│   ├── demo_multiscale_fitting.py # Multi-scale vs single-scale performance comparison
 │   ├── demo_tiled_fitting.py      # Tiled fitting for large volumes
 │   ├── demo_2d_synthetic_blobs.py # 2D compression analysis with oriented ellipses
 │   ├── demo_3d_synthetic_phantom.py # 3D volumetric compression with ellipsoid wireframes
@@ -1013,7 +948,6 @@ gsplats/
 │   ├── demo_splats_mitosis.py     # Mitosis histology compression analysis
 │   └── demo_splats_mitosis_intgrad.py # CLAHE seeding test with intensity gradient
 └── tests/
-    ├── test_multiscale_fitting.py   # Multi-scale fitting tests (NEW)
     ├── test_tiled_fitting.py        # Tiled fitting tests
     ├── test_metrics.py              # Quality metrics tests
     └── test_gsplats_integration.py  # Comprehensive tests
@@ -1034,9 +968,6 @@ The fitting pipeline has been refactored from a monolithic 480+ line method into
 
 **Standard execution (with napari visualization):**
 ```bash
-# Multi-scale fitting comparison (NEW)
-hatch run python packages/luxar/src/luxar/gsplats/demos/demo_multiscale_fitting.py
-
 # Tiled fitting for large volumes
 hatch run python packages/luxar/src/luxar/gsplats/demos/demo_tiled_fitting.py
 
