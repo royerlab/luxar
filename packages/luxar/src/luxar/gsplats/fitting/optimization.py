@@ -9,8 +9,6 @@ Speed optimisations (validated via autoresearch, 38 experiments)
 
 2. **GPU sync elimination** (−1.9%): Best-loss is tracked as a GPU tensor
    (avoids ``loss.item()`` which forces CPU↔GPU sync every iteration).
-   ``clip_grad_value_`` replaces ``clip_grad_norm_`` (the norm computation
-   requires a GPU→CPU sync to return a Python float).
 """
 
 from __future__ import annotations
@@ -170,7 +168,10 @@ def run_optimization_loop(
     # The training forward+backward is always needed, but the second (eval) forward
     # pass is pure overhead for monitoring.  Skipping it on most iterations saves
     # ~30% of per-iteration wall-clock time.
-    _EVAL_INTERVAL = 25
+    # Eval interval: skip the expensive eval forward pass on most iterations.
+    # For short runs (<100 iters), check every iteration to not miss convergence.
+    # For long runs (progressive fitting: 3000 iters), check every 25.
+    _EVAL_INTERVAL = 25 if config.n_iters >= 100 else 1
 
     # Main optimization loop
     converged_early = False
@@ -196,10 +197,9 @@ def run_optimization_loop(
         loss = loss_fn(pred)
         loss.backward()  # type: ignore[no-untyped-call]
 
-        # Gradient clipping: use clip_grad_value_ instead of clip_grad_norm_
-        # to avoid the GPU→CPU sync that norm computation requires.
+        # Gradient clipping
         if config.gradient_clip is not None:
-            torch.nn.utils.clip_grad_value_(model.parameters(), config.gradient_clip)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip)
 
         optimizer.step()
 
@@ -263,14 +263,6 @@ def run_optimization_loop(
                     best_max_abs_error = current_max_abs_error
                     best_rel_l2 = current_rel_l2
 
-            # Movie frame recording
-            if (
-                config.napari_movie
-                and movie_frames is not None
-                and it % config.movie_every == 0
-            ):
-                _record_movie_frame(model, pred_eval, V_t, movie_frames, config, it)
-
             # Convergence check (either criterion suffices)
             if current_max_abs_error < preprocessed_data.max_abs_error:
                 converged_early = True
@@ -322,6 +314,16 @@ def run_optimization_loop(
                 )
                 if relocation_tracker is not None:
                     relocation_tracker.advance_step()
+
+        # Movie frame recording (runs on its own schedule, outside eval gate)
+        if (
+            config.napari_movie
+            and movie_frames is not None
+            and it % config.movie_every == 0
+        ):
+            with torch.no_grad():
+                _movie_pred = pred_eval if need_eval else model()
+            _record_movie_frame(model, _movie_pred, V_t, movie_frames, config, it)
 
         # Periodic Z-order sort for memory locality
         if config.sort_splats_enabled and it % config.sort_splats_interval == 0:
