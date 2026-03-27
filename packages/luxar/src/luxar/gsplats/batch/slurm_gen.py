@@ -89,7 +89,7 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     has_explicit_channels = manifest.channel_indices is not None
 
     fit_cmd_parts = [
-        f'luxar gsplat fit {shlex.quote(manifest.input_path)} "$OUTPUT"',
+        f'luxar gsplat fit {shlex.quote(manifest.input_path)} "${{OUTPUT}}.tmp"',
         f"    --tile $K/{manifest.n_tiles}",
         f"    --tile-size {manifest.tile_size}",
         f"    --overlap {manifest.tile_overlap}",
@@ -132,7 +132,7 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     ):
         # Replace the input path in the command
         fit_cmd_parts[0] = (
-            f'luxar gsplat fit {shlex.quote(manifest.denoised_zarr_path)} "$OUTPUT"'
+            f'luxar gsplat fit {shlex.quote(manifest.denoised_zarr_path)} "${{OUTPUT}}.tmp"'
         )
         # Replace or add --array-key data to point at the denoised dataset
         array_key_replaced = False
@@ -191,6 +191,12 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
             f"t$(printf '%0{t_width}d' $T)_c$(printf '%0{c_width}d' $C)_tile$(printf '%0{k_width}d' $K)"
             '.gsplats.zarr"',
             "",
+            "    # Clean up leftover .tmp from a previous crashed run",
+            '    if [ -d "${OUTPUT}.tmp" ]; then',
+            '        echo "Cleaning up incomplete tile: ${OUTPUT}.tmp"',
+            '        rm -rf "${OUTPUT}.tmp"',
+            "    fi",
+            "",
             '    if [ -d "$OUTPUT" ]; then',
             '        echo "Already exists, skipping: $OUTPUT"',
             "        return",
@@ -219,6 +225,14 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.extend(
         [
             f"    {fit_cmd}",
+            '    if [ $? -eq 0 ] && [ -d "${OUTPUT}.tmp" ]; then',
+            '        mv "${OUTPUT}.tmp" "$OUTPUT"',
+            '        echo "Tile saved: $OUTPUT"',
+            "    else",
+            '        echo "ERROR: fit failed or output missing, cleaning up"',
+            '        rm -rf "${OUTPUT}.tmp"',
+            "        return 1",
+            "    fi",
             "}",
             "",
         ]
