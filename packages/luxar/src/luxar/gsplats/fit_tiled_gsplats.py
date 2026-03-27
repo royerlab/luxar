@@ -90,9 +90,12 @@ def fit_tile(
     _denoise_h = fit_kwargs.pop("_denoise_h", None)
     _denoise_params = fit_kwargs.pop("_denoise_params", None)
     if _denoise_h is not None and _denoise_params is not None:
+        from arbol import asection as _asection
+
         from luxar.gsplats.preprocessing.denoise_pipeline import denoise_volume_array
 
-        tile_data = denoise_volume_array(tile_data, h=_denoise_h, **_denoise_params)
+        with _asection(f"Denoising tile {spec.index} (h={_denoise_h:.4f})"):
+            tile_data = denoise_volume_array(tile_data, h=_denoise_h, **_denoise_params)
 
     # 2. Apply cosine apodization window
     window = cosine_window(spec)
