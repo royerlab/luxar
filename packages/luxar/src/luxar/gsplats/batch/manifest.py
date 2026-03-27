@@ -85,6 +85,10 @@ class BatchManifest:
     """If True, tasks within a job run concurrently (background processes).
     If False (default), they run sequentially."""
 
+    max_concurrent: Optional[int] = None
+    """Maximum number of Slurm array tasks running simultaneously.
+    Maps to ``--array=0-N%MAX``. None means no limit."""
+
     # Jobs
     jobs: List[BatchJob] = field(default_factory=list)
 

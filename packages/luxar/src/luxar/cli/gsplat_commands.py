@@ -3005,6 +3005,12 @@ def batch_plan(
     partition: Optional[str] = typer.Option(
         None, "--partition", "-p", help="Slurm partition"
     ),
+    max_concurrent: Optional[int] = typer.Option(
+        None,
+        "--max-concurrent",
+        help="Maximum simultaneous Slurm array tasks (limits cluster usage). "
+        "Maps to --array=0-N%%MAX. No limit if omitted.",
+    ),
     account: Optional[str] = typer.Option(None, "--account", "-A"),
     qos: Optional[str] = typer.Option(None, "--qos"),
     gpus: int = typer.Option(1, "--gpus", help="GPUs per task"),
@@ -3419,6 +3425,7 @@ def batch_plan(
             slurm_mem_gb=mem,
             tasks_per_job=tasks_per_job,
             parallel_tasks_per_job=parallel,
+            max_concurrent=max_concurrent,
             timepoint_indices=t_indices if timepoints_slice else None,
             channel_indices=c_indices if channels_slice else None,
             channel_colors=colors_list,
