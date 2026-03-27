@@ -3682,6 +3682,149 @@ def batch_status_cmd(
         raise typer.Exit(1)
 
 
+@app_batch.command("validate")
+def batch_validate_cmd(
+    output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
+    fix: bool = typer.Option(
+        False, "--fix", help="Delete corrupt/incomplete tiles so they get re-fitted"
+    ),
+) -> None:
+    """Validate integrity of all tiles in a batch output directory.
+
+    Checks each tile for completeness (metadata, arrays, shapes).
+    Reports OK, MISSING, CORRUPT, and STALE_TMP counts.
+
+    Use --fix to delete corrupt tiles and leftover .tmp directories,
+    so they get re-fitted on the next submit.
+
+    Examples:
+        luxar gsplat batch validate output_dir/
+
+        luxar gsplat batch validate output_dir/ --fix
+    """
+    import shutil
+
+    try:
+        from luxar.gsplats.batch.manifest import load_manifest
+
+        manifest = load_manifest(output_dir)
+        tiles_dir = output_dir / "tiles"
+
+        if not tiles_dir.exists():
+            aprint("No tiles directory found.")
+            raise typer.Exit(1)
+
+        # Build expected tile list from manifest
+        expected_tiles = [job.output_filename for job in manifest.jobs]
+        aprint(f"Checking {len(expected_tiles)} expected tiles...")
+
+        ok = 0
+        missing = 0
+        corrupt = 0
+        stale_tmp = 0
+        corrupt_reasons: list[str] = []
+
+        for tile_name in expected_tiles:
+            tile_path = tiles_dir / tile_name
+            tmp_path = tiles_dir / f"{tile_name}.tmp"
+
+            # Check for stale .tmp
+            if tmp_path.is_dir():
+                stale_tmp += 1
+                if fix:
+                    shutil.rmtree(tmp_path)
+                    aprint(f"  Deleted: {tile_name}.tmp")
+
+            if not tile_path.is_dir():
+                missing += 1
+                continue
+
+            # Validate tile integrity
+            reason = _validate_tile(tile_path)
+            if reason == "ok":
+                ok += 1
+            else:
+                corrupt += 1
+                corrupt_reasons.append(f"  {tile_name}: {reason}")
+                if fix:
+                    shutil.rmtree(tile_path)
+                    aprint(f"  Deleted corrupt: {tile_name} ({reason})")
+
+        # Summary
+        aprint("")
+        aprint(f"  OK:        {ok}")
+        aprint(f"  MISSING:   {missing}")
+        aprint(f"  CORRUPT:   {corrupt}")
+        aprint(f"  STALE_TMP: {stale_tmp}")
+
+        if corrupt_reasons and not fix:
+            aprint("")
+            aprint("Corrupt tiles:")
+            for r in corrupt_reasons:
+                aprint(r)
+            aprint("")
+            aprint("Run with --fix to delete corrupt tiles.")
+
+        if fix and (corrupt > 0 or stale_tmp > 0):
+            aprint(f"\nFixed: deleted {corrupt} corrupt + {stale_tmp} stale .tmp")
+            aprint("Resubmit to re-fit deleted tiles.")
+
+    except Exception as e:
+        aprint(f"Error: {e}")
+        raise typer.Exit(1) from e
+
+
+def _validate_tile(tile_path: Path) -> str:
+    """Validate a single tile's integrity. Returns 'ok' or a reason string."""
+    import json
+
+    # Check .zmetadata (written last by consolidate_metadata — best completeness signal)
+    if not (tile_path / ".zmetadata").exists():
+        return "no_zmetadata (save incomplete)"
+
+    # Check root attrs
+    zattrs_path = tile_path / ".zattrs"
+    if not zattrs_path.exists():
+        return "no_zattrs"
+    try:
+        attrs = json.loads(zattrs_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return "corrupt_zattrs"
+
+    if attrs.get("format_type") != "gsplats_zarr":
+        return f"bad_format_type: {attrs.get('format_type')}"
+
+    # Check splats group
+    if not (tile_path / "splats").is_dir():
+        return "no_splats_group"
+
+    # Check LOD arrays
+    n_lods = attrs.get("n_lods", 1)
+    version = attrs.get("format_version", "1.0")
+
+    if version == "1.1" and n_lods > 1:
+        for i in range(n_lods):
+            lod_dir = tile_path / "splats" / f"lod_{i}"
+            if not lod_dir.is_dir():
+                return f"missing_lod_{i}"
+            for arr_name in ("centers", "amplitudes", "cholesky_factors"):
+                arr_dir = lod_dir / arr_name
+                if not arr_dir.is_dir():
+                    return f"missing_{arr_name}_lod_{i}"
+                if not (arr_dir / ".zarray").exists():
+                    return f"no_zarray_{arr_name}_lod_{i}"
+    else:
+        splats_dir = tile_path / "splats"
+        for arr_name in ("centers", "amplitudes", "cholesky_factors"):
+            arr_dir = splats_dir / arr_name
+            if not arr_dir.is_dir():
+                return f"missing_{arr_name}"
+            if not (arr_dir / ".zarray").exists():
+                return f"no_zarray_{arr_name}"
+
+    return "ok"
+
+
 @app_batch.command("cancel")
 def batch_cancel_cmd(
     output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
