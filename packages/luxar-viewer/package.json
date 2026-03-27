@@ -32,6 +32,8 @@
   },
   "dependencies": {
     "comlink": "^4.4.2",
+    "fflate": "^0.8.2",
+    "mediabunny": "^1.40.1",
     "postprocessing": "^6.38.0",
     "three": "^0.163.0",
     "zarrita": "^0.5.4"

@@ -225,7 +225,10 @@ export class AnimationController {
     // Check if any post-processing effects need continuous updates
     const hasEffects = this.postProcessing.needsContinuousAnimation();
 
-    return autoRotate || hasEffects;
+    // Check if any per-frame callbacks are active (e.g., turntable recording, dimension animation)
+    const hasCallbacks = this.perFrameCallbacks.size > 0;
+
+    return autoRotate || hasEffects || hasCallbacks;
   }
 
   /**

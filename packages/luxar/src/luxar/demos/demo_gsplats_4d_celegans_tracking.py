@@ -94,6 +94,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.clahe import apply_clahe
+from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
     launch_viewer,
@@ -114,9 +115,11 @@ ZENODO_URL = "https://zenodo.org/api/records/6460303/files/mskcc_confocal.zip/co
 VOXEL_SIZE_ZYX = (0.75, 0.15, 0.15)  # Micrometres
 IMAGE_SHAPE = (41, 512, 512)  # Z, Y, X per timepoint
 
-# Fitting parameters
-N_SEEDS = 5000  # Per timepoint (small volumes)
-N_ITERS = 6000
+# Progressive fitting parameters
+MAX_SPLATS = 8000  # Total splats per timepoint
+MAX_SPLATS_PER_PASS = 1000  # Splats added per progressive pass
+ITERS_PER_PASS = 3000  # Iterations per pass
+PSNR_PATIENCE = 0.2  # Stop if ΔPSNR < this (dB)
 
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_celegans"
@@ -810,21 +813,27 @@ def fit_timepoint(
 
         DEVICE = detect_device()
 
-    from luxar.gsplats import fit_gaussian_splats
+    aprint(
+        f"  Progressive fitting {label} "
+        f"(max {MAX_SPLATS} splats, {MAX_SPLATS_PER_PASS}/pass, "
+        f"patience {PSNR_PATIENCE} dB)..."
+    )
 
-    aprint(f"  Fitting {label} ({N_ITERS} iters, {N_SEEDS} seeds)...")
-
+    # Progressive fitting: iteratively fits residuals in multiple passes,
+    # building a multi-LOD representation from coarse to fine detail.
     # Pass voxel_size so GSplats account for the strong Z-anisotropy
     # (0.75 µm Z vs 0.15 µm XY = 5x).  output_space defaults to "real",
     # so centers come back in physical µm coordinates.
-    result = fit_gaussian_splats(
+    result = fit_progressive_gaussian_splats(
         volume,
-        lr=0.01,
-        seeds=N_SEEDS,
-        n_iters=N_ITERS,
+        max_splats=MAX_SPLATS,
+        max_splats_per_pass=MAX_SPLATS_PER_PASS,
+        iters_per_pass=ITERS_PER_PASS,
+        psnr_patience=PSNR_PATIENCE,
+        enable_dynamic_ops=True,
         device=DEVICE,
         verbose=True,
-        enable_dynamic_ops=True,
+        lr=0.01,
         voxel_size=VOXEL_SIZE_ZYX,
     )
 
