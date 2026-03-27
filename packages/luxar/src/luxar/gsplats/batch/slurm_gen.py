@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import math
 import shlex
+from typing import Optional
 
 from luxar.gsplats.batch.manifest import BatchManifest
 
 
-def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
+def generate_fit_sbatch(
+    manifest: BatchManifest,
+    env_preamble: str,
+    *,
+    partition_override: Optional[str] = None,
+    max_concurrent_override: Optional[int] = None,
+    requeue: bool = False,
+    job_name: str = "luxar-fit",
+) -> str:
     """Generate the sbatch array job script for fitting.
 
     When ``manifest.tasks_per_job == 1`` (default), each Slurm array
@@ -30,25 +39,30 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     tpj = manifest.tasks_per_job
     n_slurm_jobs = math.ceil(manifest.total_tasks / tpj)
 
+    effective_partition = partition_override or manifest.slurm_partition
+    effective_concurrent = max_concurrent_override or manifest.max_concurrent
+
     lines = [
         "#!/bin/bash",
-        "#SBATCH --job-name=luxar-fit",
+        f"#SBATCH --job-name={job_name}",
         f"#SBATCH --array=0-{n_slurm_jobs - 1}"
-        + (f"%{manifest.max_concurrent}" if manifest.max_concurrent else ""),
-        f"#SBATCH --partition={manifest.slurm_partition}",
+        + (f"%{effective_concurrent}" if effective_concurrent else ""),
+        f"#SBATCH --partition={effective_partition}",
         "#SBATCH --ntasks=1",
         f"#SBATCH --gpus-per-task={manifest.slurm_gpus}",
         f"#SBATCH --cpus-per-task={manifest.slurm_cpus}",
         f"#SBATCH --mem={manifest.slurm_mem_gb}G",
         f"#SBATCH --time={manifest.slurm_time_limit}",
-        f"#SBATCH --output={manifest.output_dir}/logs/fit_%a.out",
-        f"#SBATCH --error={manifest.output_dir}/logs/fit_%a.err",
+        f"#SBATCH --output={manifest.output_dir}/logs/{job_name.removeprefix('luxar-')}_%a.out",
+        f"#SBATCH --error={manifest.output_dir}/logs/{job_name.removeprefix('luxar-')}_%a.err",
     ]
 
     if manifest.slurm_account:
         lines.append(f"#SBATCH --account={manifest.slurm_account}")
     if manifest.slurm_qos:
         lines.append(f"#SBATCH --qos={manifest.slurm_qos}")
+    if requeue:
+        lines.append("#SBATCH --requeue")
     for arg in manifest.slurm_extra_args:
         lines.append(f"#SBATCH {arg}")
 
@@ -57,6 +71,22 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.append("")
     lines.append("# Unbuffered Python output for real-time Slurm logging")
     lines.append("export PYTHONUNBUFFERED=1")
+
+    # Requeue logging (for preemptible jobs)
+    if requeue:
+        lines.extend(
+            [
+                "",
+                "# Log requeue attempts (SLURM_RESTART_COUNT is undefined on first run)",
+                'if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then',
+                '    echo "Requeued (attempt $((SLURM_RESTART_COUNT + 1)))"',
+                "fi",
+                'if [ "${SLURM_RESTART_COUNT:-0}" -ge 5 ]; then',
+                '    echo "ERROR: preempted 5+ times, giving up on this task"',
+                "    exit 1",
+                "fi",
+            ]
+        )
     lines.append("")
 
     # Compute printf format widths so filenames sort lexicographically.
@@ -225,13 +255,23 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.extend(
         [
             f"    {fit_cmd}",
-            '    if [ $? -eq 0 ] && [ -d "${OUTPUT}.tmp" ]; then',
-            '        mv "${OUTPUT}.tmp" "$OUTPUT"',
-            '        echo "Tile saved: $OUTPUT"',
-            "    else",
-            '        echo "ERROR: fit failed or output missing, cleaning up"',
+            "    local FIT_RC=$?",
+            '    if [ "$FIT_RC" -ne 0 ] || [ ! -d "${OUTPUT}.tmp" ]; then',
+            '        echo "ERROR: fit failed (rc=$FIT_RC), cleaning up"',
             '        rm -rf "${OUTPUT}.tmp"',
             "        return 1",
+            "    fi",
+            "    # Atomic rename — handles race with parallel preemptible job",
+            '    if ! mv -T "${OUTPUT}.tmp" "$OUTPUT" 2>/dev/null; then',
+            '        if [ -d "$OUTPUT" ]; then',
+            '            echo "Tile completed by another task, cleaning up duplicate"',
+            '            rm -rf "${OUTPUT}.tmp"',
+            "        else",
+            '            echo "ERROR: mv failed and output missing"',
+            "            return 1",
+            "        fi",
+            "    else",
+            '        echo "Tile saved: $OUTPUT"',
             "    fi",
             "}",
             "",
