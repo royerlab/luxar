@@ -339,6 +339,8 @@ def info_dataset(
                 f"   Command: luxar gsplat prune {path.name} pruned.gsplats.zarr.zip --method cumulative --retention 0.95"
             )
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
@@ -430,6 +432,8 @@ def napari_viewer(
 
                 napari.run()
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error opening dataset: {e}")
         import traceback
@@ -580,6 +584,8 @@ def quick_view(
         # Cleanup temp directory
         if "temp_dir" in locals():
             shutil.rmtree(temp_dir, ignore_errors=True)
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
@@ -867,6 +873,8 @@ def prune_dataset(
 
                 napari_module.run()
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
@@ -1097,6 +1105,8 @@ def filter_dataset(
                         else:
                             aprint(f"  Size: {output_size / (1024 * 1024):.1f} MB")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
@@ -1216,6 +1226,8 @@ def split_dataset(
                     )
                     aprint(f"  Saved {out_path.name} ({part.n_splats:,} splats)")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
@@ -1358,6 +1370,8 @@ def slice_dataset(
                         else:
                             aprint(f"  Size: {output_size / (1024 * 1024):.1f} MB")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
@@ -1628,6 +1642,8 @@ def transform_dataset(
                     else:
                         aprint(f"  Size: {output_size / (1024 * 1024):.1f} MB")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
@@ -1750,6 +1766,8 @@ def denoise_volume_cmd(
                 np.save(output_path, denoised)
             aprint("Done")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         raise typer.Exit(1) from e
@@ -2214,6 +2232,8 @@ def fit_volume(
         time_s = result.stats.get("time_seconds", 0)
         aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         import traceback
@@ -2298,6 +2318,8 @@ def convert_to_scene(
             aprint(f"\nScene saved: {output_path}")
             aprint(f"Serve with: luxar serve {output_path} --viewer")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         import traceback
@@ -2397,6 +2419,8 @@ def render_to_file(
 
         aprint(f"\nSaved: {output_path}")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         import traceback
@@ -2579,6 +2603,8 @@ def compare_quality(
             if not quiet:
                 aprint(f"\nMetrics written to: {output_json}")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         import traceback
@@ -2725,6 +2751,8 @@ def merge_datasets(
 
         aprint(f"\nDone: {merged.n_splats:,} splats merged")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         import traceback
@@ -3645,6 +3673,8 @@ def batch_plan(
 
     except typer.Exit:
         raise
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         import traceback
@@ -3677,9 +3707,156 @@ def batch_status_cmd(
         status = check_batch_status(output_dir)
         aprint(format_status_report(status, manifest, verbose=verbose))
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         raise typer.Exit(1)
+
+
+@app_batch.command("validate")
+def batch_validate_cmd(
+    output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
+    fix: bool = typer.Option(
+        False, "--fix", help="Delete corrupt/incomplete tiles so they get re-fitted"
+    ),
+) -> None:
+    """Validate integrity of all tiles in a batch output directory.
+
+    Checks each tile for completeness (metadata, arrays, shapes).
+    Reports OK, MISSING, CORRUPT, and STALE_TMP counts.
+
+    Use --fix to delete corrupt tiles and leftover .tmp directories,
+    so they get re-fitted on the next submit.
+
+    Examples:
+        luxar gsplat batch validate output_dir/
+
+        luxar gsplat batch validate output_dir/ --fix
+    """
+    try:
+        from luxar.gsplats.batch.manifest import load_manifest
+
+        manifest = load_manifest(output_dir)
+        tiles_dir = output_dir / "tiles"
+
+        if not tiles_dir.exists():
+            aprint("No tiles directory found.")
+            raise typer.Exit(1)
+
+        # Build expected tile list from manifest
+        expected_tiles = [job.output_filename for job in manifest.jobs]
+        aprint(f"Checking {len(expected_tiles)} expected tiles...")
+
+        ok = 0
+        missing = 0
+        corrupt = 0
+        stale_tmp = 0
+        corrupt_reasons: list[str] = []
+
+        for tile_name in expected_tiles:
+            tile_path = tiles_dir / tile_name
+            tmp_path = tiles_dir / f"{tile_name}.tmp"
+
+            # Check for stale .tmp
+            if tmp_path.is_dir():
+                stale_tmp += 1
+                if fix:
+                    shutil.rmtree(tmp_path)
+                    aprint(f"  Deleted: {tile_name}.tmp")
+
+            if not tile_path.is_dir():
+                missing += 1
+                continue
+
+            # Validate tile integrity
+            reason = _validate_tile(tile_path)
+            if reason == "ok":
+                ok += 1
+            else:
+                corrupt += 1
+                corrupt_reasons.append(f"  {tile_name}: {reason}")
+                if fix:
+                    shutil.rmtree(tile_path)
+                    aprint(f"  Deleted corrupt: {tile_name} ({reason})")
+
+        # Summary
+        aprint("")
+        aprint(f"  OK:        {ok}")
+        aprint(f"  MISSING:   {missing}")
+        aprint(f"  CORRUPT:   {corrupt}")
+        aprint(f"  STALE_TMP: {stale_tmp}")
+
+        if corrupt_reasons and not fix:
+            aprint("")
+            aprint("Corrupt tiles:")
+            for r in corrupt_reasons:
+                aprint(r)
+            aprint("")
+            aprint("Run with --fix to delete corrupt tiles.")
+
+        if fix and (corrupt > 0 or stale_tmp > 0):
+            aprint(f"\nFixed: deleted {corrupt} corrupt + {stale_tmp} stale .tmp")
+            aprint("Resubmit to re-fit deleted tiles.")
+
+    except typer.Exit:
+        raise
+    except typer.Exit:
+        raise
+    except Exception as e:
+        aprint(f"Error: {e}")
+        raise typer.Exit(1) from e
+
+
+def _validate_tile(tile_path: Path) -> str:
+    """Validate a single tile's integrity. Returns 'ok' or a reason string."""
+    import json
+
+    # Check .zmetadata (written last by consolidate_metadata — best completeness signal)
+    if not (tile_path / ".zmetadata").exists():
+        return "no_zmetadata (save incomplete)"
+
+    # Check root attrs
+    zattrs_path = tile_path / ".zattrs"
+    if not zattrs_path.exists():
+        return "no_zattrs"
+    try:
+        attrs = json.loads(zattrs_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return "corrupt_zattrs"
+
+    if attrs.get("format_type") != "gsplats_zarr":
+        return f"bad_format_type: {attrs.get('format_type')}"
+
+    # Check splats group
+    if not (tile_path / "splats").is_dir():
+        return "no_splats_group"
+
+    # Check LOD arrays
+    n_lods = attrs.get("n_lods", 1)
+    version = attrs.get("format_version", "1.0")
+
+    if version == "1.1" and n_lods > 1:
+        for i in range(n_lods):
+            lod_dir = tile_path / "splats" / f"lod_{i}"
+            if not lod_dir.is_dir():
+                return f"missing_lod_{i}"
+            for arr_name in ("centers", "amplitudes", "cholesky_factors"):
+                arr_dir = lod_dir / arr_name
+                if not arr_dir.is_dir():
+                    return f"missing_{arr_name}_lod_{i}"
+                if not (arr_dir / ".zarray").exists():
+                    return f"no_zarray_{arr_name}_lod_{i}"
+    else:
+        splats_dir = tile_path / "splats"
+        for arr_name in ("centers", "amplitudes", "cholesky_factors"):
+            arr_dir = splats_dir / arr_name
+            if not arr_dir.is_dir():
+                return f"missing_{arr_name}"
+            if not (arr_dir / ".zarray").exists():
+                return f"no_zarray_{arr_name}"
+
+    return "ok"
 
 
 @app_batch.command("cancel")
@@ -3725,6 +3902,8 @@ def batch_cancel_cmd(
             aprint(f"scancel output: {result.stderr.strip()}")
             aprint("Cancel command sent (some jobs may have already completed).")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         raise typer.Exit(1)
@@ -3771,6 +3950,8 @@ def batch_merge_cmd(
             )
             aprint(f"\nFinal output: {final_path}")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         import traceback
@@ -3833,6 +4014,8 @@ def batch_denoise_calibrate_cmd(
             aprint(f"Calibrated h values: {h_values}")
             aprint(f"Saved to {h_path}")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         raise typer.Exit(1) from e
@@ -3916,6 +4099,8 @@ def batch_denoise_preprocess_cmd(
             store["data"][t_idx, c_idx] = denoised
             aprint(f"Written to denoised.zarr[{t_idx}, {c_idx}]")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         raise typer.Exit(1) from e
