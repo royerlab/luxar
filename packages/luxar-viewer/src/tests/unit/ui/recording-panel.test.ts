@@ -7,6 +7,52 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
+// Polyfill ImageData for jsdom (not available in jsdom by default)
+if (typeof globalThis.ImageData === 'undefined') {
+  (globalThis as any).ImageData = class ImageData {
+    data: Uint8ClampedArray;
+    width: number;
+    height: number;
+    constructor(widthOrData: number | Uint8ClampedArray, heightOrWidth: number, height?: number) {
+      if (widthOrData instanceof Uint8ClampedArray) {
+        this.data = widthOrData;
+        this.width = heightOrWidth;
+        this.height = height ?? (widthOrData.length / (4 * heightOrWidth));
+      } else {
+        this.width = widthOrData;
+        this.height = heightOrWidth;
+        this.data = new Uint8ClampedArray(this.width * this.height * 4);
+      }
+    }
+  };
+}
+
+// Mock canvas 2D context for offscreen canvases (jsdom doesn't support getContext('2d')).
+// The `canvasToBlobOverride` variable allows individual tests to make toBlob return null.
+let canvasToBlobOverride: ((cb: any) => void) | null = null;
+const origCreateElement = document.createElement.bind(document);
+vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: any) => {
+  const el = origCreateElement(tag, options);
+  if (tag === 'canvas') {
+    const canvasEl = el as HTMLCanvasElement;
+    const origGetContext = canvasEl.getContext.bind(canvasEl);
+    (canvasEl as any).getContext = (type: string, ...args: any[]) => {
+      if (type === '2d') {
+        return { putImageData: vi.fn(), drawImage: vi.fn() };
+      }
+      return origGetContext(type, ...args);
+    };
+    (el as HTMLCanvasElement).toBlob = vi.fn((cb: any) => {
+      if (canvasToBlobOverride) {
+        canvasToBlobOverride(cb);
+      } else {
+        cb(new Blob(['test'], { type: 'image/png' }));
+      }
+    });
+  }
+  return el;
+});
+
 // Mock the GUI module before importing RecordingPanel
 vi.mock('../../../ui/gui/index', () => {
   function createMockElement(): any {
@@ -18,6 +64,7 @@ vi.mock('../../../ui/gui/index', () => {
       appendChild: vi.fn(),
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
+      querySelector: vi.fn().mockReturnValue({ readOnly: false, style: {}, cursor: '' }),
     };
   }
 
@@ -27,6 +74,7 @@ vi.mock('../../../ui/gui/index', () => {
       onChange: vi.fn().mockReturnThis(),
       show: vi.fn().mockReturnThis(),
       hide: vi.fn().mockReturnThis(),
+      updateDisplay: vi.fn().mockReturnThis(),
       domElement: createMockElement(),
     };
   }
@@ -121,9 +169,16 @@ function createMockSceneManager() {
   return {
     renderer: {
       domElement: mockCanvas,
+      getSize: vi.fn().mockReturnValue({ x: 800, y: 600 }),
+      setPixelRatio: vi.fn(),
+      setSize: vi.fn(),
     },
+    resizeLocked: false,
     postProcessing: {
       render: vi.fn(),
+      renderToImageData: vi.fn().mockReturnValue(new ImageData(4, 4)),
+      captureHDRAsEXR: vi.fn().mockResolvedValue(new Uint8Array([0x76, 0x2f, 0x31, 0x01])),
+      resize: vi.fn(),
     },
     camera: {
       position: { x: 10, y: 5, z: 10, distanceTo: vi.fn().mockReturnValue(15), clone: vi.fn() },
@@ -145,6 +200,7 @@ function createMockSceneManager() {
 function createMockAnimationController() {
   return {
     startAnimation: vi.fn(),
+    stopAnimation: vi.fn(),
     addPerFrameCallback: vi.fn(),
     removePerFrameCallback: vi.fn(),
   } as any;
@@ -188,7 +244,7 @@ describe('RecordingPanel', () => {
   });
 
   describe('screenshot capture', () => {
-    it('should call postProcessing.render() and canvas.toBlob()', async () => {
+    it('should call renderToImageData() for SDR screenshot', async () => {
       // Use real requestAnimationFrame
       const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
         cb(0);
@@ -197,8 +253,7 @@ describe('RecordingPanel', () => {
 
       await panel.captureScreenshot();
 
-      expect(mockSceneManager.postProcessing.render).toHaveBeenCalled();
-      expect(mockSceneManager.renderer.domElement.toBlob).toHaveBeenCalled();
+      expect(mockSceneManager.postProcessing.renderToImageData).toHaveBeenCalled();
       expect(showToast).toHaveBeenCalledWith('Screenshot saved');
 
       rafSpy.mockRestore();
@@ -215,32 +270,26 @@ describe('RecordingPanel', () => {
       const p2 = panel.captureScreenshot();
       await Promise.all([p1, p2]);
 
-      // Should only render once
-      expect(mockSceneManager.postProcessing.render).toHaveBeenCalledTimes(1);
+      // Should only capture once (second is blocked by isCaptureInProgress)
+      expect(mockSceneManager.postProcessing.renderToImageData).toHaveBeenCalledTimes(1);
 
       rafSpy.mockRestore();
     });
 
-    it('should handle toBlob returning null with PNG fallback', async () => {
+    it('should handle toBlob returning null', async () => {
       const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
         cb(0);
         return 0;
       });
 
-      let callCount = 0;
-      mockSceneManager.renderer.domElement.toBlob = vi.fn((callback: any) => {
-        callCount++;
-        if (callCount === 1) {
-          callback(null); // First call fails
-        } else {
-          callback(new Blob(['test'], { type: 'image/png' })); // Fallback succeeds
-        }
-      });
+      // Make the offscreen canvas toBlob return null (simulates encoding failure)
+      canvasToBlobOverride = (cb: any) => { cb(null); };
 
       await panel.captureScreenshot();
 
-      expect(showToast).toHaveBeenCalledWith('Screenshot saved (PNG fallback)');
+      expect(showToast).toHaveBeenCalledWith('Screenshot failed');
 
+      canvasToBlobOverride = null;
       rafSpy.mockRestore();
     });
 
@@ -450,7 +499,7 @@ describe('RecordingPanel', () => {
       });
 
       (panel as any).options.transparentBackground = true;
-      (panel as any).options.imageFormat = 'jpeg';
+      (panel as any).options.outputFormat = 'jpeg';
 
       await panel.captureScreenshot();
 
@@ -581,6 +630,90 @@ describe('RecordingPanel', () => {
     });
   });
 
+  describe('EXR HDR screenshot', () => {
+    it('should call captureHDRAsEXR instead of toBlob for EXR format', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+
+      // Set format to EXR
+      (panel as any).options.outputFormat = 'exr';
+
+      await panel.captureScreenshot();
+
+      expect(mockSceneManager.postProcessing.captureHDRAsEXR).toHaveBeenCalled();
+      // Should NOT call renderToImageData for EXR (uses captureHDRAsEXR instead)
+      expect(mockSceneManager.postProcessing.renderToImageData).not.toHaveBeenCalled();
+      expect(showToast).toHaveBeenCalledWith('HDR screenshot saved (EXR)');
+
+      rafSpy.mockRestore();
+    });
+
+    it('should generate filename with .exr extension', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+
+      (panel as any).options.outputFormat = 'exr';
+
+      // Spy on downloadBlob to check the filename
+      const downloadSpy = vi.spyOn(panel as any, 'downloadBlob');
+
+      await panel.captureScreenshot();
+
+      expect(downloadSpy).toHaveBeenCalledWith(
+        expect.any(Blob),
+        expect.stringMatching(/\.exr$/)
+      );
+
+      rafSpy.mockRestore();
+    });
+  });
+
+  describe('EXR sequence recording', () => {
+    it('should initialize EXR sequence state fields', () => {
+      expect((panel as any).exrFrames).toEqual([]);
+      expect((panel as any).isEXRSequenceRecording).toBe(false);
+    });
+
+    it('should branch to EXR sequence when format is exr in video mode', async () => {
+      (panel as any).options.outputFormat = 'exr';
+      (panel as any).mode = 'video';
+
+      const startEXRSpy = vi
+        .spyOn(panel as any, 'startEXRSequenceRecording')
+        .mockResolvedValue(undefined);
+
+      await panel.startVideoRecording();
+
+      expect(startEXRSpy).toHaveBeenCalled();
+    });
+
+    it('should stop EXR sequence recording via stopVideoRecording', () => {
+      (panel as any).isRecording = true;
+      (panel as any).isEXRSequenceRecording = true;
+
+      panel.stopVideoRecording();
+
+      // The offline loop checks isRecording — stopVideoRecording sets flags to signal the loop
+      expect((panel as any).isRecording).toBe(false);
+      expect((panel as any).isEXRSequenceRecording).toBe(false);
+    });
+
+    it('should set isRecording flag to signal the offline loop to stop', () => {
+      (panel as any).isRecording = true;
+      (panel as any).isEXRSequenceRecording = true;
+
+      (panel as any).stopEXRSequenceRecording();
+
+      // Offline loop architecture: stop methods just set flags
+      expect((panel as any).isRecording).toBe(false);
+      expect((panel as any).isEXRSequenceRecording).toBe(false);
+    });
+  });
+
   describe('slider sync', () => {
     it('should set animation manager via setter', () => {
       const mockAnimManager = {
@@ -596,6 +729,161 @@ describe('RecordingPanel', () => {
       const mockDPR = { isActive: vi.fn() };
       panel.setAdaptiveDPRManager(mockDPR as any);
       expect((panel as any).adaptiveDPRManager).toBe(mockDPR);
+    });
+  });
+
+  describe('computeVideoBitrate', () => {
+    it('low quality at 1080p30', () => {
+      (panel as any).options.videoQuality = 'low';
+      (panel as any).options.videoFPS = 30;
+      const bitrate = (panel as any).computeVideoBitrate(1920, 1080);
+      expect(bitrate).toBe(Math.round(1920 * 1080 * 30 * 0.04));
+    });
+
+    it('high quality at 1080p60', () => {
+      (panel as any).options.videoQuality = 'high';
+      (panel as any).options.videoFPS = 60;
+      const bitrate = (panel as any).computeVideoBitrate(1920, 1080);
+      expect(bitrate).toBe(Math.round(1920 * 1080 * 60 * 0.15));
+    });
+
+    it('max quality at 4K', () => {
+      (panel as any).options.videoQuality = 'max';
+      (panel as any).options.videoFPS = 60;
+      const bitrate = (panel as any).computeVideoBitrate(3840, 2160);
+      expect(bitrate).toBe(Math.round(3840 * 2160 * 60 * 0.3));
+    });
+  });
+
+  describe('generateFfmpegScript', () => {
+    it('generates valid bash script', () => {
+      const script = (panel as any).generateFfmpegScript(30, 300, 'png');
+      expect(script.startsWith('#!/bin/bash')).toBe(true);
+      expect(script).toContain('set -e');
+    });
+
+    it('uses correct frame pattern for PNG', () => {
+      const script = (panel as any).generateFfmpegScript(60, 600, 'png');
+      expect(script).toContain('frame_%06d.png');
+      expect(script).toContain('framerate 60');
+    });
+
+    it('includes HDR section for EXR', () => {
+      const script = (panel as any).generateFfmpegScript(30, 300, 'exr');
+      expect(script).toContain('yuv420p10le');
+      expect(script).toContain('bt2020');
+    });
+
+    it('excludes HDR section for non-EXR', () => {
+      const script = (panel as any).generateFfmpegScript(30, 300, 'jpg');
+      expect(script).not.toContain('yuv420p10le');
+    });
+  });
+
+  describe('updateControlVisibility', () => {
+    it('Image mode hides video and turntable controls', () => {
+      (panel as any).mode = 'image';
+      (panel as any).options.outputFormat = 'webp';
+      (panel as any).updateControlVisibility();
+
+      for (const ctrl of (panel as any).videoControllers) {
+        expect(ctrl.hide).toHaveBeenCalled();
+      }
+      for (const ctrl of (panel as any).turntableControllers) {
+        expect(ctrl.hide).toHaveBeenCalled();
+      }
+    });
+
+    it('Video mode hides image controls', () => {
+      (panel as any).mode = 'video';
+      (panel as any).options.outputFormat = 'webm';
+      (panel as any).updateControlVisibility();
+
+      for (const ctrl of (panel as any).imageControllers) {
+        expect(ctrl.hide).toHaveBeenCalled();
+      }
+    });
+
+    it('Turntable shows video and turntable controls', () => {
+      (panel as any).mode = 'turntable';
+      (panel as any).options.outputFormat = 'mp4';
+      (panel as any).updateControlVisibility();
+
+      for (const ctrl of (panel as any).videoControllers) {
+        expect(ctrl.show).toHaveBeenCalled();
+      }
+      for (const ctrl of (panel as any).turntableControllers) {
+        expect(ctrl.show).toHaveBeenCalled();
+      }
+    });
+
+    it('Image+EXR hides quality and transparent', () => {
+      (panel as any).mode = 'image';
+      (panel as any).options.outputFormat = 'exr';
+      (panel as any).updateControlVisibility();
+
+      const qualityCtrl = (panel as any).qualityController;
+      if (qualityCtrl) {
+        expect(qualityCtrl.hide).toHaveBeenCalled();
+      }
+      const transparentCtrl = (panel as any).transparentController;
+      if (transparentCtrl) {
+        expect(transparentCtrl.hide).toHaveBeenCalled();
+      }
+    });
+
+    it('auto-corrects format when switching to Video mode', () => {
+      (panel as any).mode = 'video';
+      (panel as any).options.outputFormat = 'png';
+      (panel as any).updateControlVisibility();
+
+      expect((panel as any).options.outputFormat).toBe('webm');
+    });
+  });
+
+  describe('getSupportedMimeType', () => {
+    let originalMediaRecorder: typeof MediaRecorder | undefined;
+
+    beforeEach(() => {
+      originalMediaRecorder = globalThis.MediaRecorder;
+    });
+
+    afterEach(() => {
+      if (originalMediaRecorder !== undefined) {
+        globalThis.MediaRecorder = originalMediaRecorder;
+      } else {
+        delete (globalThis as any).MediaRecorder;
+      }
+    });
+
+    it('returns VP9 mime type when supported', () => {
+      (globalThis as any).MediaRecorder = {
+        isTypeSupported: vi.fn((type: string) => type.includes('vp9')),
+      };
+      const result = (panel as any).getSupportedMimeType();
+      expect(result).toBe('video/webm;codecs=vp9');
+    });
+
+    it('falls back to VP8', () => {
+      (globalThis as any).MediaRecorder = {
+        isTypeSupported: vi.fn((type: string) => type.includes('vp8')),
+      };
+      const result = (panel as any).getSupportedMimeType();
+      expect(result).toBe('video/webm;codecs=vp8');
+    });
+
+    it('returns null when nothing supported', () => {
+      (globalThis as any).MediaRecorder = {
+        isTypeSupported: vi.fn().mockReturnValue(false),
+      };
+      const result = (panel as any).getSupportedMimeType();
+      expect(result).toBeNull();
+    });
+
+    it('returns null when MediaRecorder undefined', () => {
+      delete (globalThis as any).MediaRecorder;
+      const result = (panel as any).getSupportedMimeType();
+      expect(result).toBeNull();
     });
   });
 });

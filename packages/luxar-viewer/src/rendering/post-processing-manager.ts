@@ -27,6 +27,7 @@ import {
   isChromaticLensDistortionEffect,
 } from './chromatic-lens-distortion-effect';
 import * as THREE from 'three';
+import { EXRExporter, ZIP_COMPRESSION } from 'three/examples/jsm/exporters/EXRExporter.js';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import {
@@ -67,6 +68,7 @@ import {
  * requestAnimationFrame(() => postProcessing.render());
  * ```
  */
+
 export class PostProcessingManager {
   private composer: EffectComposer;
   private renderPass: RenderPass;
@@ -1687,6 +1689,196 @@ export class PostProcessingManager {
       fps,
       memoryUsageMB,
     };
+  }
+
+  /**
+   * Determine which ping-pong buffer holds the final render result.
+   *
+   * The EffectComposer alternates between inputBuffer and outputBuffer after
+   * each enabled pass (via swapBuffers). After an even number of swaps the
+   * result is in inputBuffer; after an odd number it's in outputBuffer.
+   *
+   * This is deterministic and avoids the fragile center-pixel probe that
+   * fails when the probed pixel is legitimately black or when the probe
+   * reads stale intermediate data from the wrong buffer.
+   */
+  private getResultBuffer(): THREE.WebGLRenderTarget {
+    // Count enabled passes that actually swap buffers.
+    // Only passes with needsSwap === true trigger a buffer swap in the composer;
+    // counting all enabled passes would give the wrong buffer when some passes
+    // (e.g. ClearPass, MaskPass) don't swap.
+    let swapCount = 0;
+    for (const pass of this.composer.passes) {
+      if (pass.enabled && pass.needsSwap) swapCount++;
+    }
+    return swapCount % 2 === 0
+      ? this.composer.inputBuffer
+      : this.composer.outputBuffer;
+  }
+
+  /**
+   * Capture the current scene as raw HDR float pixel data (pre-tone-mapping).
+   *
+   * Returns the linear float RGBA pixels from the HDR pipeline. This is the
+   * building block for both EXR export and HDR video encoding.
+   *
+   * @returns Object with Float32Array pixels and dimensions
+   */
+  captureHDRPixels(): { pixels: Float32Array; width: number; height: number } {
+    // Save and disable LDR effects (everything after the scene render that
+    // modifies the image in ways not meaningful for raw HDR export)
+    const effectStates = new Map<object, boolean>();
+    const ldrEffects = [
+      this.toneMappingEffect,
+      this.vignetteEffect,
+      this.smaaEffect,
+      this.fxaaEffect,
+      this.detectorNoiseEffect,
+      this.chromaticLensDistortionEffect,
+    ].filter(Boolean) as object[];
+
+    for (const effect of ldrEffects) {
+      const e = effect as any;
+      effectStates.set(effect, e.enabled !== false);
+      e.enabled = false;
+    }
+
+    const savedAutoRender = this.composer.autoRenderToScreen;
+    this.composer.autoRenderToScreen = false;
+    const savedPassStates = this.composer.passes.map((p) => p.renderToScreen);
+    for (const pass of this.composer.passes) {
+      pass.renderToScreen = false;
+    }
+
+    let pixels: Float32Array;
+    let width: number;
+    let height: number;
+
+    try {
+      this.composer.render();
+
+      const sourceBuffer = this.getResultBuffer();
+      width = sourceBuffer.width;
+      height = sourceBuffer.height;
+      const pixelCount = width * height * 4;
+
+      // Determine buffer type based on the render target's texture type.
+      // WebGL requires matching typed arrays: HalfFloat → Uint16Array, Float → Float32Array
+      const isHalfFloat =
+        sourceBuffer.texture.type === THREE.HalfFloatType;
+
+      if (isHalfFloat) {
+        // Read as Uint16Array (half-float encoded), then convert to Float32Array
+        const halfData = new Uint16Array(pixelCount);
+        this.renderer.readRenderTargetPixels(sourceBuffer, 0, 0, width, height, halfData);
+        pixels = new Float32Array(pixelCount);
+        for (let i = 0; i < pixelCount; i++) {
+          pixels[i] = THREE.DataUtils.fromHalfFloat(halfData[i]);
+        }
+      } else {
+        // FloatType — read directly as Float32Array
+        pixels = new Float32Array(pixelCount);
+        this.renderer.readRenderTargetPixels(sourceBuffer, 0, 0, width, height, pixels);
+      }
+    } finally {
+      this.composer.autoRenderToScreen = savedAutoRender;
+      this.composer.passes.forEach((p, i) => {
+        p.renderToScreen = savedPassStates[i];
+      });
+      for (const effect of ldrEffects) {
+        const e = effect as any;
+        e.enabled = effectStates.get(effect) ?? true;
+      }
+    }
+
+    return { pixels, width, height };
+  }
+
+  /**
+   * Capture the current scene as HDR EXR binary data (pre-tone-mapping).
+   *
+   * Uses captureHDRPixels() for the render/readback, then encodes as EXR.
+   *
+   * @param options - Export options
+   * @param options.type - Texture type: THREE.HalfFloatType (default, smaller) or THREE.FloatType (full precision)
+   * @returns EXR file as Uint8Array binary data
+   */
+  async captureHDRAsEXR(options?: {
+    type?: THREE.TextureDataType;
+  }): Promise<Uint8Array> {
+    const exrType: THREE.TextureDataType = options?.type ?? THREE.HalfFloatType;
+    const { pixels, width, height } = this.captureHDRPixels();
+
+    // Create DataTexture and export as EXR
+    // Convert to the requested type if needed
+    const totalComponents = pixels.length;
+    let data: Float32Array | Uint16Array = pixels;
+    if (exrType === THREE.HalfFloatType) {
+      // Convert Float32 → Half-float (Uint16) for smaller file size
+      const halfData = new Uint16Array(totalComponents);
+      for (let i = 0; i < totalComponents; i++) {
+        halfData[i] = THREE.DataUtils.toHalfFloat(pixels[i]);
+      }
+      data = halfData;
+    }
+
+    const texture = new THREE.DataTexture(
+      data,
+      width,
+      height,
+      THREE.RGBAFormat,
+      exrType
+    );
+    texture.needsUpdate = true;
+
+    const exporter = new EXRExporter();
+    // Note: EXRExporter.parse() is synchronous in practice but typed as Promise
+    const exrData = await exporter.parse(texture, { type: exrType, compression: ZIP_COMPRESSION });
+
+    texture.dispose();
+
+    log.info(
+      Modules.POST_PROCESSING,
+      `HDR EXR captured: ${width}x${height}, ` +
+        `${exrType === THREE.HalfFloatType ? 'half-float' : 'float'}, ` +
+        `${(exrData.byteLength / (1024 * 1024)).toFixed(1)} MB`
+    );
+
+    return exrData;
+  }
+
+  /**
+   * Render the full post-processing pipeline and return the result as ImageData.
+   *
+   * Strategy: render normally to screen (full pipeline with correct sRGB output),
+   * then immediately read the WebGL framebuffer via gl.readPixels(). This works
+   * because readPixels forces a GPU sync, and we read synchronously before the
+   * browser compositor clears the buffer (preserveDrawingBuffer:false only clears
+   * AFTER compositing, which happens at the end of the current JS task).
+   */
+  renderToImageData(): ImageData {
+    // Render to screen with the full pipeline (tone mapping, sRGB, AA — everything)
+    this.composer.render();
+
+    // Read pixels directly from the WebGL default framebuffer.
+    // gl.readPixels() forces a GPU flush so the draw is guaranteed complete.
+    const gl = this.renderer.getContext();
+    const width = gl.drawingBufferWidth;
+    const height = gl.drawingBufferHeight;
+    const pixelCount = width * height * 4;
+    const pixels = new Uint8Array(pixelCount);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+    // Flip vertically — WebGL framebuffer is bottom-up, ImageData is top-down
+    const rowSize = width * 4;
+    const flipped = new Uint8ClampedArray(pixelCount);
+    for (let y = 0; y < height; y++) {
+      const srcOffset = y * rowSize;
+      const dstOffset = (height - 1 - y) * rowSize;
+      flipped.set(pixels.subarray(srcOffset, srcOffset + rowSize), dstOffset);
+    }
+
+    return new ImageData(flipped, width, height);
   }
 
   /**

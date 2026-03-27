@@ -106,6 +106,9 @@ export class SceneManager extends THREE.EventDispatcher<{
   private contextLostHandler: ((event: Event) => void) | null = null;
   private contextRestoredHandler: ((event: Event) => void) | null = null;
 
+  /** When true, resize events are suppressed (used during recording to prevent resolution changes) */
+  public resizeLocked: boolean = false;
+
   /** Cached ortho zoom level to avoid redundant material updates during panning */
   private lastOrthoZoom: number = 1;
 
@@ -991,6 +994,9 @@ export class SceneManager extends THREE.EventDispatcher<{
    * ```
    */
   updateSize(): void {
+    // Suppress resize during recording to prevent resolution changes mid-capture
+    if (this.resizeLocked) return;
+
     // Store the latest dimensions
     this.pendingResize = {
       width: window.innerWidth,
@@ -1733,7 +1739,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Update all materials with current camera projection parameters.
    * Handles both perspective (FOV-based) and orthographic (frustum-based) modes.
    */
-  private updateMaterialsForCurrentCamera(): void {
+  updateMaterialsForCurrentCamera(): void {
     const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     if (isOrthographicCamera(this.camera)) {
       const frustumHeight = getOrthoFrustumHeight(this.camera);

@@ -1,13 +1,27 @@
 // Recording panel for screenshot and video capture of the WebGL canvas
 // Uses browser-native APIs: canvas.toBlob() for screenshots,
 // canvas.captureStream() + MediaRecorder for video recording (WebM)
+// HDR export: EXR screenshots, EXR frame sequences (ZIP), 10-bit HDR video (WebCodecs)
 
 import * as THREE from 'three';
+import { zipSync } from 'fflate';
 import GUI, { type Controller } from './gui';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
 import { showToast } from './helpers';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
+// HDR video encoder kept for future use when browser 10-bit support matures
+// import { isHDRVideoSupported, HDRVideoEncoder } from '../utils/hdr-video-encoder';
+import {
+  Output,
+  WebMOutputFormat,
+  Mp4OutputFormat,
+  MkvOutputFormat,
+  BufferTarget,
+  VideoSampleSource,
+  VideoSample,
+  canEncodeVideo,
+} from 'mediabunny';
 import type { SceneManager } from '../scene/scene-manager';
 import type { AnimationController } from '../scene/animation-controller';
 import type { DimensionAnimationManager } from '../scene/dimension-animation-manager';
@@ -21,23 +35,30 @@ type VideoQuality = 'low' | 'medium' | 'high' | 'max';
 /** Video resolution presets — 0 means native canvas size */
 type VideoResolution = 0 | 1080 | 1440 | 2160;
 
+/** Output format — what file type you get */
+type OutputFormat = 'png' | 'webp' | 'jpeg' | 'exr' | 'mp4' | 'webm' | 'mkv';
+
+/** Video codec for MP4/WebM encoding (ordered by modernity) */
+type VideoCodecOption = 'h265' | 'vp9' | 'h264' | 'vp8';
+
 /** Recording options for image and video capture */
 interface RecordingOptions {
   // Image options
-  imageFormat: 'png' | 'webp' | 'jpeg';
+  outputFormat: OutputFormat;
   imageQuality: number;
   maxDPR: boolean;
   transparentBackground: boolean;
   // Video options
   videoDurationLimit: number; // 0 = unlimited, else seconds
   videoFPS: number;
-  videoCodec: 'vp9' | 'vp8';
+  videoCodec: VideoCodecOption;
   videoQuality: VideoQuality;
   videoResolution: VideoResolution; // target height in pixels, 0 = native
   syncToSlider: boolean;
   syncDimensionIndex: number; // -1 = none
   // Turntable options
   turntableSpeed: number; // degrees per second
+  frameByFrame: boolean; // offline frame-by-frame capture (smooth but slow)
   // General
   showPanels: boolean;
 }
@@ -52,26 +73,27 @@ type PanelStates = Map<string, boolean>;
  * - Screenshot with transparent background and max DPR
  * - Video recording with slider sync
  * - Turntable 360° rotation recording
- *
- * Uses zero external dependencies — all browser-native APIs.
+ * - HDR EXR screenshots and frame sequences (fflate for ZIP)
+ * - 10-bit HDR video encoding (mediabunny for WebCodecs muxing)
  */
 export class RecordingPanel {
   private gui: GUI;
   private visible: boolean = false;
   private mode: RecordingMode = 'image';
   private options: RecordingOptions = {
-    imageFormat: 'webp',
+    outputFormat: 'webp',
     imageQuality: 0.92,
     maxDPR: true,
     transparentBackground: false,
     videoDurationLimit: 0,
-    videoFPS: 30,
-    videoCodec: 'vp9',
+    videoFPS: 60,
+    videoCodec: 'h265',
     videoQuality: 'high',
     videoResolution: 0,
     syncToSlider: false,
     syncDimensionIndex: -1,
     turntableSpeed: 36,
+    frameByFrame: true,
     showPanels: false,
   };
 
@@ -94,6 +116,10 @@ export class RecordingPanel {
   private turntableCallbackId = 'recording-turntable';
   private syncCompleteHandler: (() => void) | null = null;
 
+  // EXR sequence recording state
+  private exrFrames: Uint8Array[] = [];
+  private isEXRSequenceRecording: boolean = false;
+
   // Screenshot debounce
   private isCaptureInProgress: boolean = false;
 
@@ -110,11 +136,21 @@ export class RecordingPanel {
   private videoControllers: Controller[] = [];
   private turntableControllers: Controller[] = [];
   private qualityController: Controller | null = null;
+  private transparentController: Controller | null = null;
   private syncToggleController: Controller | null = null;
   private syncDimensionController: Controller | null = null;
+  private videoCodecController: Controller | null = null;
+  private videoQualityController: Controller | null = null;
+  private videoDurationController: Controller | null = null;
+  private formatController: Controller | null = null;
 
-  // Saved renderer state for resolution scaling restore
-  private savedRendererSize: { width: number; height: number } | null = null;
+  // Saved recording state for restore after capture/recording
+  private savedRecordingState: {
+    dprEnabled: boolean;
+    dpr: number;
+    rendererSize: { width: number; height: number } | null;
+    resizeLocked: boolean;
+  } | null = null;
 
   constructor(sceneManager: SceneManager, animationController: AnimationController) {
     this.sceneManager = sceneManager;
@@ -198,10 +234,7 @@ export class RecordingPanel {
     if (this.isCaptureInProgress) return;
     this.isCaptureInProgress = true;
 
-    // Save state for restore
     let savedBackground: THREE.Color | THREE.Texture | null = null;
-    let savedDPREnabled: boolean | null = null;
-    let savedDPR: number | null = null;
 
     try {
       log.info(Modules.RECORDING, 'Capturing screenshot...');
@@ -209,14 +242,10 @@ export class RecordingPanel {
       this.hideAllPanels();
       await new Promise((r) => requestAnimationFrame(r));
 
-      // Maximize DPR for highest resolution
-      if (this.options.maxDPR && this.adaptiveDPRManager) {
-        savedDPREnabled = this.adaptiveDPRManager.isActive();
-        savedDPR = this.adaptiveDPRManager.getCurrentDPR();
-        const nativeDPR = this.adaptiveDPRManager.getNativeDPR();
-        this.adaptiveDPRManager.setEnabled(false);
-        this.sceneManager.setAdaptivePixelRatio(nativeDPR);
-        // Wait one more frame for resize to take effect
+      // Save state (always — ensures restoreRecordingState restores panels)
+      const wantMaxDPR = this.options.maxDPR && !!this.adaptiveDPRManager;
+      this.saveRecordingState({ disableDPR: wantMaxDPR });
+      if (wantMaxDPR) {
         await new Promise((r) => requestAnimationFrame(r));
       }
 
@@ -226,58 +255,48 @@ export class RecordingPanel {
         this.sceneManager.scene.background = null;
       }
 
-      // Force render through the full post-processing pipeline
-      this.sceneManager.postProcessing.render();
+      let format = this.options.outputFormat;
 
-      // Capture canvas. toBlob() captures pixel data synchronously at call time
-      // (only encoding is async), so this works despite preserveDrawingBuffer: false.
-      const canvas = this.sceneManager.renderer.domElement;
-
-      // Auto-switch from JPEG to PNG if transparent background (JPEG has no alpha)
-      let format = this.options.imageFormat;
-      if (this.options.transparentBackground && format === 'jpeg') {
+      // Guard: video formats are not valid for screenshots — fall back to PNG.
+      // Normally unreachable (updateControlVisibility auto-corrects), but defends
+      // against programmatic callers or future format-filtering changes.
+      if (format === 'mp4' || format === 'webm' || format === 'mkv') {
+        log.warning(Modules.RECORDING, `Screenshot format '${format}' is a video format, falling back to PNG`);
         format = 'png';
-        showToast('Switched to PNG (JPEG has no alpha)');
       }
-      const mimeType = `image/${format === 'jpeg' ? 'jpeg' : format}`;
-      const quality = format === 'png' ? undefined : this.options.imageQuality;
 
-      const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, mimeType, quality)
-      );
+      if (format === 'exr') {
+        const exrData = await this.sceneManager.postProcessing.captureHDRAsEXR();
+        const blob = new Blob([exrData as BlobPart], { type: 'application/octet-stream' });
+        this.downloadBlob(blob, this.generateFilename('exr'));
+        showToast('HDR screenshot saved (EXR)');
+      } else {
+        const captureCanvas = this.renderFrameToCanvas();
 
-      if (!blob) {
-        log.warning(Modules.RECORDING, 'toBlob returned null, falling back to PNG');
-        this.sceneManager.postProcessing.render();
-        const fallbackBlob = await new Promise<Blob | null>((resolve) =>
-          canvas.toBlob(resolve, 'image/png')
+        let effectiveFormat = format;
+        if (this.options.transparentBackground && effectiveFormat === 'jpeg') {
+          effectiveFormat = 'png';
+          showToast('Switched to PNG (JPEG has no alpha)');
+        }
+        const mimeType = `image/${effectiveFormat === 'jpeg' ? 'jpeg' : effectiveFormat}`;
+        const quality = effectiveFormat === 'png' ? undefined : this.options.imageQuality;
+
+        const blob = await new Promise<Blob | null>((resolve) =>
+          captureCanvas.toBlob(resolve, mimeType, quality)
         );
-        if (fallbackBlob) {
-          this.downloadBlob(fallbackBlob, this.generateFilename('png'));
-          showToast('Screenshot saved (PNG fallback)');
+
+        if (blob) {
+          this.downloadBlob(blob, this.generateFilename(effectiveFormat));
+          showToast('Screenshot saved');
         } else {
           showToast('Screenshot failed');
         }
-      } else {
-        this.downloadBlob(blob, this.generateFilename(format));
-        showToast('Screenshot saved');
       }
     } finally {
-      // Restore transparent background (savedBackground is non-null only if we changed it)
       if (savedBackground !== null) {
         this.sceneManager.scene.background = savedBackground;
       }
-
-      // Restore DPR
-      if (savedDPREnabled !== null && this.adaptiveDPRManager) {
-        if (savedDPREnabled) {
-          this.adaptiveDPRManager.setEnabled(true);
-        } else {
-          this.sceneManager.setAdaptivePixelRatio(savedDPR!);
-        }
-      }
-
-      this.restoreAllPanels();
+      this.restoreRecordingState();
       this.isCaptureInProgress = false;
     }
   }
@@ -286,6 +305,24 @@ export class RecordingPanel {
 
   async startVideoRecording(): Promise<void> {
     if (this.isRecording) return;
+
+    // Branch: frame-by-frame capture modes
+    const fmt = this.options.outputFormat;
+    const isImageFormat = fmt === 'png' || fmt === 'webp' || fmt === 'jpeg';
+    const isTurntableSmooth = this.mode === 'turntable' && this.options.frameByFrame;
+
+    // EXR → ZIP of EXR frames (always offline)
+    if (fmt === 'exr') {
+      return this.startEXRSequenceRecording();
+    }
+    // Turntable smooth mode — all formats use offline capture
+    if (isTurntableSmooth) {
+      if (isImageFormat) {
+        return this.runOfflineCaptureLoop(fmt); // → ZIP of images
+      }
+      return this.runOfflineCaptureLoop(fmt as 'mp4' | 'webm' | 'mkv'); // → video file
+    }
+    // Video mode with image formats falls through to real-time MediaRecorder below
 
     const mimeType = this.getSupportedMimeType();
     if (!mimeType) {
@@ -298,17 +335,16 @@ export class RecordingPanel {
 
     this.hideAllPanels();
 
-    // Apply resolution scaling if requested
+    // Disable adaptive DPR during recording — resolution changes mid-capture cause
+    // frozen frames, aspect ratio glitches, and partial rotations
+    this.saveRecordingState({
+      disableDPR: true,
+      lockResize: true,
+      scaleResolution: this.options.videoResolution > 0
+        ? { targetH: this.options.videoResolution }
+        : undefined,
+    });
     if (this.options.videoResolution > 0) {
-      const renderer = this.sceneManager.renderer;
-      const currentSize = renderer.getSize(new THREE.Vector2());
-      this.savedRendererSize = { width: currentSize.x, height: currentSize.y };
-      const targetH = this.options.videoResolution;
-      const aspect = currentSize.x / currentSize.y;
-      const targetW = Math.round(targetH * aspect);
-      renderer.setPixelRatio(1); // Use exact pixel dimensions
-      renderer.setSize(targetW, targetH, false); // false = don't change CSS
-      this.sceneManager.postProcessing.resize(targetW, targetH);
       await new Promise((r) => requestAnimationFrame(r));
     }
 
@@ -317,7 +353,9 @@ export class RecordingPanel {
 
     log.info(
       Modules.RECORDING,
-      `Starting video recording (${mimeType}, ${this.options.videoFPS} FPS, ${Math.round(videoBitsPerSecond / 1_000_000)}Mbps, ${canvas.width}x${canvas.height})`
+      `Starting video recording (${mimeType}, ${this.options.videoFPS} FPS, ` +
+        `${Math.round(videoBitsPerSecond / 1_000_000)}Mbps, ${canvas.width}x${canvas.height}, ` +
+        `mode: ${this.mode})`
     );
 
     this.animationController.startAnimation();
@@ -334,33 +372,23 @@ export class RecordingPanel {
     };
 
     this.mediaRecorder.onstop = () => {
+      const blob = new Blob(this.recordedChunks, { type: mimeType });
+      const totalElapsed = ((Date.now() - this.recordingStartTime) / 1000).toFixed(1);
       log.info(
         Modules.RECORDING,
-        `Recording stopped, ${this.recordedChunks.length} chunks collected`
+        `Recording finalized: ${this.recordedChunks.length} chunks, ` +
+          `${(blob.size / (1024 * 1024)).toFixed(1)} MB, ${totalElapsed}s elapsed`
       );
-      const blob = new Blob(this.recordedChunks, { type: mimeType });
       this.downloadBlob(blob, this.generateFilename('webm'));
       this.recordedChunks = [];
       this.isRecording = false;
       this.hideRecordingIndicator();
 
       if (!this.disposed) {
-        // Restore resolution if scaled
-        if (this.savedRendererSize) {
-          const renderer = this.sceneManager.renderer;
-          renderer.setPixelRatio(window.devicePixelRatio);
-          renderer.setSize(this.savedRendererSize.width, this.savedRendererSize.height);
-          this.sceneManager.postProcessing.resize(
-            this.savedRendererSize.width,
-            this.savedRendererSize.height
-          );
-          this.savedRendererSize = null;
-        }
-
         this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
         this.animationController.removePerFrameCallback(this.turntableCallbackId);
         this.cleanupSyncListener();
-        this.restoreAllPanels();
+        this.restoreRecordingState();
         showToast('Video saved');
       }
     };
@@ -389,8 +417,21 @@ export class RecordingPanel {
   }
 
   stopVideoRecording(): void {
-    if (!this.isRecording || !this.mediaRecorder) return;
-    log.info(Modules.RECORDING, 'Stopping video recording...');
+    if (!this.isRecording) return;
+
+    // Branch: HDR sequence stop
+    if (this.isEXRSequenceRecording) {
+      this.stopEXRSequenceRecording();
+      return;
+    }
+
+    // Branch: offline capture loop (non-EXR) — no mediaRecorder, signal via flag
+    if (!this.mediaRecorder) {
+      this.isRecording = false;
+      return;
+    }
+    const elapsed = ((Date.now() - this.recordingStartTime) / 1000).toFixed(1);
+    log.info(Modules.RECORDING, `Stopping video recording after ${elapsed}s...`);
 
     if (this.durationTimer) {
       clearTimeout(this.durationTimer);
@@ -398,6 +439,353 @@ export class RecordingPanel {
     }
 
     this.mediaRecorder.stop();
+  }
+
+  // ========== EXR Sequence Recording ==========
+
+  /**
+   * Run a deterministic offline capture loop for HDR recording (EXR or HDR video).
+   *
+   * Unlike real-time MediaRecorder capture, this loop is fully decoupled from the
+   * browser's animation frame rate. Each frame is:
+   * 1. Camera positioned at the exact angle for this frame
+   * 2. Scene rendered (full pipeline)
+   * 3. Pixels read back (synchronous GPU stall — intentional)
+   * 4. Frame stored / encoded
+   * 5. Brief yield to keep the browser responsive (UI updates, recording indicator)
+   *
+   * This guarantees every frame is perfectly rendered regardless of GPU speed.
+   * The output will be smooth 60fps even if capture takes seconds per frame.
+   */
+  private async runOfflineCaptureLoop(
+    mode: 'exr' | 'webm' | 'mp4' | 'mkv' | 'png' | 'webp' | 'jpeg'
+  ): Promise<void> {
+    const confirmed = await this.showConfirmationDialog();
+    if (!confirmed) return;
+
+    this.hideAllPanels();
+
+    // Save state, disable DPR, lock resize, and scale resolution.
+    // Dimensions are rounded to a multiple of 16 (macroblock alignment for H.264/H.265).
+    const targetH = this.options.videoResolution > 0 ? this.options.videoResolution : 1080;
+    this.saveRecordingState({
+      disableDPR: true,
+      lockResize: true,
+      scaleResolution: { targetH, align16: true },
+    });
+    await new Promise((r) => requestAnimationFrame(r));
+
+    // Compute turntable parameters
+    const fps = this.options.videoFPS;
+    const durationSeconds = 360 / this.options.turntableSpeed;
+    const totalFrames = Math.ceil(durationSeconds * fps);
+
+    const camera = this.sceneManager.camera;
+    const controls = this.sceneManager.controls.getControls();
+    const target = (controls as any)?.target?.clone() ?? new THREE.Vector3();
+    const offset = new THREE.Vector3().subVectors(camera.position, target);
+    const radius = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
+    const startAngle = Math.atan2(offset.z, offset.x);
+    const startY = camera.position.y;
+
+    log.info(
+      Modules.RECORDING,
+      `Starting offline ${mode} capture: ${totalFrames} frames, ${fps} FPS, ${durationSeconds.toFixed(1)}s`
+    );
+
+    // Set recording state
+    if (mode === 'exr') {
+      this.exrFrames = [];
+      this.isEXRSequenceRecording = true;
+    }
+    this.isRecording = true;
+    this.recordingStartTime = Date.now();
+    this.showRecordingIndicator();
+
+    // Block user interaction during offline capture with a modal overlay.
+    // Camera manipulation or resize during frame-by-frame capture would corrupt the sequence.
+    // Includes a live preview canvas so the user can see each frame as it's captured.
+    const overlay = document.createElement('div');
+    overlay.className = 'luxar-recording-overlay';
+    overlay.innerHTML = `
+      <div class="luxar-recording-overlay__content">
+        <canvas class="luxar-recording-overlay__preview"></canvas>
+        <div class="luxar-recording-overlay__progress">
+          <span class="luxar-recording-overlay__label">Capturing frames...</span>
+          <span class="luxar-recording-overlay__counter">0/${totalFrames}</span>
+        </div>
+        <button class="luxar-recording-overlay__cancel">Cancel</button>
+      </div>
+    `;
+    const previewCanvas = overlay.querySelector(
+      '.luxar-recording-overlay__preview'
+    ) as HTMLCanvasElement;
+    const previewCtx = previewCanvas.getContext('2d');
+    overlay.querySelector('.luxar-recording-overlay__cancel')?.addEventListener('click', () => {
+      this.isRecording = false;
+    });
+    // Block all pointer/keyboard events from reaching the canvas
+    overlay.addEventListener('keydown', (e) => e.stopPropagation(), true);
+    document.body.appendChild(overlay);
+
+    const counterEl = overlay.querySelector('.luxar-recording-overlay__counter');
+    const labelEl = overlay.querySelector('.luxar-recording-overlay__label');
+
+    // For WebM/MP4: set up mediabunny encoder (NOT captureStream — WebGL canvases
+    // with preserveDrawingBuffer:false don't work reliably with captureStream)
+    let videoOutput: Output | null = null;
+    let videoTarget: BufferTarget | null = null;
+    let videoSource: VideoSampleSource | null = null;
+    const isVideoMode = mode === 'webm' || mode === 'mp4' || mode === 'mkv';
+    let videoExt = 'webm';
+    let videoMime = 'video/webm';
+    if (isVideoMode) {
+      const canvas = this.sceneManager.renderer.domElement;
+      const videoBitsPerSecond = this.computeVideoBitrate(canvas.width, canvas.height);
+
+      // Map user codec selection to mediabunny codec names
+      type MBCodec = 'av1' | 'vp9' | 'avc' | 'hevc' | 'vp8';
+      const codecMap: Record<VideoCodecOption, MBCodec> = {
+        h265: 'hevc',
+        vp9: 'vp9',
+        h264: 'avc',
+        vp8: 'vp8',
+      };
+      const encOpts = { width: canvas.width, height: canvas.height, bitrate: videoBitsPerSecond };
+      let codec: MBCodec = codecMap[this.options.videoCodec];
+
+      // Check support and fall back
+      // WebM only supports vp9, av1, vp8 — avc/hevc require MP4 container
+      const webmOnly: MBCodec[] = ['vp9', 'av1', 'vp8'];
+      if (mode === 'webm' && !webmOnly.includes(codec)) {
+        // Force codec to a WebM-compatible one before even checking support
+        codec = 'vp9';
+      }
+      if (!(await canEncodeVideo(codec, encOpts))) {
+        const allFallbacks: MBCodec[] = codec === 'hevc' ? ['avc', 'vp9', 'av1', 'vp8'] : ['vp9', 'av1', 'vp8', 'avc'];
+        const fallbacks = mode === 'webm' ? allFallbacks.filter(c => webmOnly.includes(c)) : allFallbacks;
+        let found = false;
+        for (const fb of fallbacks) {
+          if (await canEncodeVideo(fb, encOpts)) {
+            log.warning(Modules.RECORDING, `${codec} not supported, falling back to ${fb}`);
+            codec = fb;
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          showToast('No supported video codec at this resolution');
+          overlay.remove();
+          this.restoreRecordingState();
+          return;
+        }
+      }
+
+      const format = mode === 'mp4' ? new Mp4OutputFormat() : mode === 'mkv' ? new MkvOutputFormat() : new WebMOutputFormat();
+      videoExt = mode;
+      videoMime = mode === 'mp4' ? 'video/mp4' : mode === 'mkv' ? 'video/x-matroska' : 'video/webm';
+      videoTarget = new BufferTarget();
+      videoSource = new VideoSampleSource({
+        codec,
+        bitrate: videoBitsPerSecond,
+        latencyMode: 'quality',
+      });
+      videoOutput = new Output({ format, target: videoTarget });
+      videoOutput.addVideoTrack(videoSource, { frameRate: fps });
+      await videoOutput.start();
+      log.info(
+        Modules.RECORDING,
+        `Offline ${videoExt.toUpperCase()} encoder started (${codec.toUpperCase()}, ` +
+          `${canvas.width}x${canvas.height}, ${Math.round(videoBitsPerSecond / 1_000_000)}Mbps)`
+      );
+    }
+
+    // Frame-by-frame capture using the live animation loop.
+    //
+    // The animation loop runs: controls.update() → per-frame callbacks → render().
+    // We register a per-frame callback that:
+    //   1. Overrides the camera position for the current frame (after controls.update)
+    //   2. After the render, reads the freshly-drawn pixels via renderToImageData
+    //   3. Resolves a promise so the outer loop can process the captured data
+    //
+    // This guarantees we read pixels from a properly rendered frame — the same
+    // pipeline that produces visible on-screen output.
+    let captureCanvas: HTMLCanvasElement | null = null;
+    const imageFrames: Uint8Array[] = [];
+    let capturedFrames = 0;
+    let consecutiveErrors = 0;
+    const MAX_CONSECUTIVE_ERRORS = 3;
+    const captureCallbackId = 'recording-offline-capture';
+
+    for (let i = 0; i < totalFrames; i++) {
+      if (!this.isRecording) break;
+
+      // Position camera and capture in a single animation frame via callback.
+      // The callback positions the camera (overriding controls.update), then
+      // after the animation loop renders, we read the pixels.
+      const progress = i / totalFrames;
+      const angle = startAngle + progress * Math.PI * 2;
+
+      // Register callback to position camera AFTER controls.update, BEFORE render
+      this.animationController.addPerFrameCallback(captureCallbackId, () => {
+        camera.position.x = target.x + radius * Math.cos(angle);
+        camera.position.z = target.z + radius * Math.sin(angle);
+        camera.position.y = startY;
+        camera.lookAt(target);
+      });
+
+      // Wait for one full animation frame (callback + render)
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+      // The animation loop has rendered with our camera position.
+      // Now capture the pixels from the default framebuffer.
+      // We call renderToImageData which re-renders (composer.render + readPixels)
+      // with the camera still in our turntable position.
+      try {
+        if (mode === 'png' || mode === 'webp' || mode === 'jpeg') {
+          captureCanvas = this.renderFrameToCanvas();
+          const mimeType = mode === 'jpeg' ? 'image/jpeg' : `image/${mode}`;
+          const quality = mode === 'png' ? undefined : this.options.imageQuality;
+          const blob = await new Promise<Blob | null>((resolve) =>
+            captureCanvas!.toBlob(resolve, mimeType, quality)
+          );
+          if (blob) {
+            const buf = new Uint8Array(await blob.arrayBuffer());
+            imageFrames.push(buf);
+          }
+        } else if ((isVideoMode) && videoSource) {
+          captureCanvas = this.renderFrameToCanvas();
+          const frameDuration = 1 / fps;
+          const sample = new VideoSample(captureCanvas, {
+            timestamp: i * frameDuration,
+            duration: frameDuration,
+          });
+          await videoSource.add(sample);
+          sample.close();
+        } else if (mode === 'exr') {
+          const exrData = await this.sceneManager.postProcessing.captureHDRAsEXR();
+          this.exrFrames.push(exrData);
+        }
+        capturedFrames++;
+        consecutiveErrors = 0;
+      } catch (err) {
+        consecutiveErrors++;
+        log.error(Modules.RECORDING, `Frame ${i + 1} capture failed: ${err}`);
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          log.error(
+            Modules.RECORDING,
+            `${MAX_CONSECUTIVE_ERRORS} consecutive failures — aborting capture. ` +
+              'The browser may not support 10-bit encoding at this resolution.'
+          );
+          showToast('HDR video encoding failed — try EXR sequence instead');
+          break;
+        }
+      }
+
+      // Update progress overlay + live preview
+      if (counterEl) counterEl.textContent = `${i + 1}/${totalFrames}`;
+      if (captureCanvas && previewCtx) {
+        if (i === 0) {
+          previewCanvas.width = captureCanvas.width;
+          previewCanvas.height = captureCanvas.height;
+        }
+        previewCtx.drawImage(captureCanvas, 0, 0);
+      }
+    }
+
+    // Remove the capture callback
+    this.animationController.removePerFrameCallback(captureCallbackId);
+
+    // Finalize
+    this.hideRecordingIndicator();
+    this.isRecording = false;
+
+    if (mode === 'png' || mode === 'webp' || mode === 'jpeg') {
+      // Package image frames as ZIP with ffmpeg script
+      if (imageFrames.length > 0) {
+        if (labelEl) labelEl.textContent = 'Packaging ZIP...';
+        await new Promise((r) => requestAnimationFrame(r));
+        const ext = mode === 'jpeg' ? 'jpg' : mode;
+        const files: Record<string, Uint8Array> = {};
+        for (let j = 0; j < imageFrames.length; j++) {
+          const padded = String(j).padStart(6, '0');
+          files[`frame_${padded}.${ext}`] = imageFrames[j];
+        }
+        // Include ffmpeg encode script
+        const encoder = new TextEncoder();
+        files['encode_video.sh'] = encoder.encode(
+          this.generateFfmpegScript(fps, imageFrames.length, ext)
+        );
+        const zipData = zipSync(files, { level: 0 });
+        const blob = new Blob([zipData as BlobPart], { type: 'application/zip' });
+        this.downloadBlob(blob, this.generateFilename('zip'));
+        showToast(`${mode.toUpperCase()} sequence saved (${imageFrames.length} frames)`);
+      } else {
+        showToast('No frames captured');
+      }
+    } else if (isVideoMode) {
+      if (videoOutput && capturedFrames > 0) {
+        if (labelEl) labelEl.textContent = 'Finalizing video...';
+        if (counterEl) counterEl.textContent = '';
+        try {
+          await videoOutput.finalize();
+          const buffer = videoTarget?.buffer;
+          if (buffer) {
+            const blob = new Blob([buffer], { type: videoMime });
+            log.info(
+              Modules.RECORDING,
+              `Offline ${videoExt.toUpperCase()} capture: ${capturedFrames} frames, ${(blob.size / (1024 * 1024)).toFixed(1)} MB`
+            );
+            this.downloadBlob(blob, this.generateFilename(videoExt));
+            showToast(`Video saved (${capturedFrames} frames)`);
+          } else {
+            showToast('Video encoding produced no output');
+          }
+        } catch (err) {
+          log.error(Modules.RECORDING, `Video finalization failed: ${err}`);
+          showToast('Video encoding failed');
+        }
+      } else {
+        showToast('No frames captured');
+      }
+    } else if (mode === 'exr') {
+      this.isEXRSequenceRecording = false;
+      if (this.exrFrames.length > 0) {
+        if (labelEl) labelEl.textContent = 'Packaging ZIP...';
+        await new Promise((r) => requestAnimationFrame(r));
+        const files: Record<string, Uint8Array> = {};
+        for (let j = 0; j < this.exrFrames.length; j++) {
+          const padded = String(j).padStart(6, '0');
+          files[`frame_${padded}.exr`] = this.exrFrames[j];
+        }
+        // Include ffmpeg encode script
+        const encoder = new TextEncoder();
+        files['encode_video.sh'] = encoder.encode(
+          this.generateFfmpegScript(fps, this.exrFrames.length, 'exr')
+        );
+        const zipData = zipSync(files, { level: 0 });
+        const blob = new Blob([zipData as BlobPart], { type: 'application/zip' });
+        this.downloadBlob(blob, this.generateFilename('zip'));
+        showToast(`EXR sequence saved (${this.exrFrames.length} frames)`);
+      } else {
+        showToast('No frames captured');
+      }
+      this.exrFrames = [];
+    }
+
+    // Remove overlay, restore all saved state
+    overlay.remove();
+    this.restoreRecordingState();
+  }
+
+  private async startEXRSequenceRecording(): Promise<void> {
+    return this.runOfflineCaptureLoop('exr');
+  }
+
+  private stopEXRSequenceRecording(): void {
+    // Offline loop checks this.isRecording — setting it to false stops the loop
+    this.isRecording = false;
+    this.isEXRSequenceRecording = false;
   }
 
   // ========== Slider Sync ==========
@@ -433,6 +821,16 @@ export class RecordingPanel {
 
   // ========== Turntable Rotation ==========
 
+  /**
+   * Start time-based turntable rotation for the standard MediaRecorder path.
+   *
+   * Uses wall clock time because MediaRecorder operates in real time —
+   * it captures whatever is on the canvas at its framerate. The rotation
+   * completes after the correct wall clock duration regardless of GPU FPS.
+   *
+   * Note: The offline capture loop (for EXR/HDR video) uses its own
+   * frame-index-based camera positioning and does NOT use this method.
+   */
   private startTurntableRotation(): void {
     const camera = this.sceneManager.camera;
     const controls = this.sceneManager.controls.getControls();
@@ -444,9 +842,19 @@ export class RecordingPanel {
     const totalDuration = (360 / this.options.turntableSpeed) * 1000;
     const startTime = Date.now();
 
+    log.info(
+      Modules.RECORDING,
+      `Turntable started: speed=${this.options.turntableSpeed}°/s, ` +
+        `duration=${(totalDuration / 1000).toFixed(1)}s, radius=${radius.toFixed(1)}`
+    );
+
     let turntableDone = false;
+    let frameCount = 0;
     this.animationController.addPerFrameCallback(this.turntableCallbackId, () => {
       if (turntableDone) return;
+      frameCount++;
+
+      // Time-based progress — rotation completes after the correct wall clock duration
       const elapsed = Date.now() - startTime;
       const progress = Math.min(elapsed / totalDuration, 1);
       const angle = startAngle + progress * Math.PI * 2;
@@ -458,6 +866,11 @@ export class RecordingPanel {
 
       if (progress >= 1) {
         turntableDone = true;
+        log.info(
+          Modules.RECORDING,
+          `Turntable completed: ${frameCount} rendered frames in ` +
+            `${(elapsed / 1000).toFixed(1)}s (${(frameCount / (elapsed / 1000)).toFixed(1)} FPS)`
+        );
         this.stopVideoRecording();
       }
     });
@@ -494,24 +907,29 @@ export class RecordingPanel {
 
     // ── Image options ──
     const imgSettings = {
-      format: this.options.imageFormat,
+      format: this.options.outputFormat,
       quality: this.options.imageQuality,
       maxDPR: this.options.maxDPR,
       transparentBg: this.options.transparentBackground,
     };
 
     const formatCtrl = advanced
-      .add(imgSettings, 'format', { PNG: 'png', WebP: 'webp', JPEG: 'jpeg' })
-      .name('Image Format')
+      .add(imgSettings, 'format', {
+        PNG: 'png',
+        WebP: 'webp',
+        JPEG: 'jpeg',
+        EXR: 'exr',
+        MP4: 'mp4',
+        WebM: 'webm',
+        MKV: 'mkv',
+      })
+      .name('Format')
       .onChange((val: string) => {
-        this.options.imageFormat = val as 'png' | 'webp' | 'jpeg';
-        if (val === 'png') {
-          qualityCtrl.hide();
-        } else {
-          qualityCtrl.show();
-        }
+        this.options.outputFormat = val as OutputFormat;
+        this.updateControlVisibility();
       });
-    this.imageControllers.push(formatCtrl);
+    this.formatController = formatCtrl;
+    // Format is always visible (applies to both image and video/turntable modes)
 
     const qualityCtrl = advanced
       .add(imgSettings, 'quality', 0.1, 1.0, 0.05)
@@ -543,6 +961,7 @@ export class RecordingPanel {
       .closest('.luxar-gui__controller')
       ?.setAttribute('title', 'Transparent background (PNG/WebP only, auto-switches from JPEG)');
     this.imageControllers.push(transparentCtrl);
+    this.transparentController = transparentCtrl;
 
     // ── Video options ──
     const vidSettings = {
@@ -568,6 +987,7 @@ export class RecordingPanel {
         'Video bitrate quality (Low ~2.5Mbps, Medium ~5Mbps, High ~9Mbps, Max ~19Mbps at 1080p)'
       );
     this.videoControllers.push(videoQualityCtrl);
+    this.videoQualityController = videoQualityCtrl;
 
     const resolutionCtrl = advanced
       .add(vidSettings, 'resolution', { Native: 0, '1080p': 1080, '1440p': 1440, '4K': 2160 })
@@ -582,7 +1002,7 @@ export class RecordingPanel {
 
     const durationCtrl = advanced
       .add(vidSettings, 'duration', 0, 300, 1)
-      .name('Duration (s)')
+      .name('Max Duration (s)')
       .onChange((val: number) => {
         this.options.videoDurationLimit = val;
       });
@@ -590,6 +1010,7 @@ export class RecordingPanel {
       .closest('.luxar-gui__controller')
       ?.setAttribute('title', 'Recording duration limit in seconds (0 = unlimited)');
     this.videoControllers.push(durationCtrl);
+    this.videoDurationController = durationCtrl;
 
     const fpsCtrl = advanced
       .add(vidSettings, 'fps', { '30 FPS': 30, '60 FPS': 60 })
@@ -599,21 +1020,20 @@ export class RecordingPanel {
       });
     this.videoControllers.push(fpsCtrl);
 
-    // Codecs (only supported ones)
-    const codecOptions: Record<string, string> = {};
-    if (typeof MediaRecorder !== 'undefined') {
-      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) codecOptions['VP9'] = 'vp9';
-      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) codecOptions['VP8'] = 'vp8';
-    }
-    if (Object.keys(codecOptions).length > 0) {
-      const codecCtrl = advanced
-        .add(vidSettings, 'codec', codecOptions)
-        .name('Codec')
-        .onChange((val: string) => {
-          this.options.videoCodec = val as 'vp9' | 'vp8';
-        });
-      this.videoControllers.push(codecCtrl);
-    }
+    // Video codec selector (shown only for MP4/WebM formats)
+    const codecCtrl = advanced
+      .add(vidSettings, 'codec', {
+        'H.265': 'h265',
+        VP9: 'vp9',
+        'H.264': 'h264',
+        VP8: 'vp8',
+      })
+      .name('Codec')
+      .onChange((val: string) => {
+        this.options.videoCodec = val as VideoCodecOption;
+      });
+    this.videoControllers.push(codecCtrl);
+    this.videoCodecController = codecCtrl;
 
     // Sync to slider
     const syncCtrl = advanced
@@ -643,16 +1063,60 @@ export class RecordingPanel {
     // ── Turntable options ──
     const ttSettings = { speed: this.options.turntableSpeed };
 
+    // Turntable info display (computed from speed + FPS, read-only)
+    const turntableInfo = { info: this.getTurntableInfo() };
+    const turntableInfoCtrl = advanced
+      .add(turntableInfo, 'info')
+      .name('Output');
+    // Make the input read-only (this is a computed display, not user-editable)
+    const infoInput = turntableInfoCtrl.domElement.querySelector('input');
+    if (infoInput) {
+      infoInput.readOnly = true;
+      infoInput.style.opacity = '0.7';
+      infoInput.style.cursor = 'default';
+    }
+    this.turntableControllers.push(turntableInfoCtrl);
+
+    const updateTurntableInfo = () => {
+      turntableInfo.info = this.getTurntableInfo();
+      turntableInfoCtrl.updateDisplay();
+    };
+
     const speedCtrl = advanced
       .add(ttSettings, 'speed', 6, 180, 1)
       .name('Speed (°/s)')
       .onChange((val: number) => {
         this.options.turntableSpeed = val;
+        updateTurntableInfo();
       });
     speedCtrl.domElement
       .closest('.luxar-gui__controller')
       ?.setAttribute('title', 'Rotation speed in degrees per second (36 = 10s for 360°)');
     this.turntableControllers.push(speedCtrl);
+
+    // Also update turntable info when FPS changes
+    fpsCtrl.onChange((val: number) => {
+      this.options.videoFPS = val;
+      updateTurntableInfo();
+    });
+
+    // Frame-by-frame (smooth) checkbox
+    const fbfSettings = { frameByFrame: this.options.frameByFrame };
+    const fbfCtrl = advanced
+      .add(fbfSettings, 'frameByFrame')
+      .name('Smooth (offline)')
+      .onChange((val: boolean) => {
+        this.options.frameByFrame = val;
+      });
+    fbfCtrl.domElement
+      .closest('.luxar-gui__controller')
+      ?.setAttribute(
+        'title',
+        'Render each frame individually for perfectly smooth video. ' +
+          'Slower to capture, but guarantees every frame is fully rendered. ' +
+          'Recommended for heavy scenes.'
+      );
+    this.turntableControllers.push(fbfCtrl);
 
     // Capture/Record button — at the bottom, prominent
     const actions = {
@@ -668,6 +1132,13 @@ export class RecordingPanel {
     captureBtn.domElement.closest('.luxar-gui__controller')?.classList.add('luxar-recording-btn');
 
     this.updateControlVisibility();
+  }
+
+  /** Compute turntable info string from current speed and FPS */
+  private getTurntableInfo(): string {
+    const duration = 360 / this.options.turntableSpeed;
+    const frames = Math.ceil(duration * this.options.videoFPS);
+    return `${duration.toFixed(1)}s, ${frames} frames`;
   }
 
   /** Get navigable dimension names as dropdown options */
@@ -694,18 +1165,105 @@ export class RecordingPanel {
     const isVideo = this.mode === 'video';
     const isTurntable = this.mode === 'turntable';
 
+    // Filter format dropdown options based on mode:
+    // - Image: PNG, WebP, JPEG, EXR (screenshots)
+    // - Video: WebM only (real-time MediaRecorder outputs WebM)
+    // - Turntable: image formats (→ ZIP) + video formats (→ offline encode)
+    const imageFormats = ['png', 'webp', 'jpeg', 'exr'];
+    const videoFormats = ['webm'];
+    const turntableFormats = ['png', 'webp', 'jpeg', 'exr', 'mp4', 'webm', 'mkv'];
+    const validFormats = isImage
+      ? imageFormats
+      : isTurntable
+        ? turntableFormats
+        : videoFormats;
+
+    // Show/hide <option> elements in the format dropdown.
+    // Note: our GUI uses the display label as option.value (e.g., "PNG" not "png"),
+    // and maps labels→values internally. We match by label→value mapping.
+    const labelToValue: Record<string, string> = {
+      PNG: 'png', WebP: 'webp', JPEG: 'jpeg', EXR: 'exr', MP4: 'mp4', WebM: 'webm', MKV: 'mkv',
+    };
+    const selectEl = this.formatController?.domElement.querySelector(
+      'select'
+    ) as HTMLSelectElement | null;
+    if (selectEl?.options) {
+      for (const opt of Array.from(selectEl.options)) {
+        const val = labelToValue[opt.value] || opt.value;
+        opt.hidden = !validFormats.includes(val);
+      }
+    }
+
+    // Auto-correct if current format is invalid for this mode
+    if (!validFormats.includes(this.options.outputFormat)) {
+      this.options.outputFormat = isVideo ? 'webm' : isImage ? 'webp' : 'mp4';
+      this.formatController?.updateDisplay();
+    }
+    const fmt = this.options.outputFormat;
+
+    // Format selector is always visible
+    this.formatController?.show();
+
+    // Image-only controls (quality, max DPR, transparent BG)
     for (const ctrl of this.imageControllers) {
       isImage ? ctrl.show() : ctrl.hide();
     }
-    if (isImage && this.options.imageFormat === 'png') {
-      this.qualityController?.hide();
+    if (isImage) {
+      // Hide quality slider for lossless/HDR formats
+      // (mp4/webm cannot occur in Image mode — auto-correction above prevents it)
+      if (fmt === 'png' || fmt === 'exr') {
+        this.qualityController?.hide();
+      }
+      // Hide transparent BG for HDR format (EXR always has alpha)
+      if (fmt === 'exr') {
+        this.transparentController?.hide();
+      }
     }
 
     for (const ctrl of this.videoControllers) {
       isVideo || isTurntable ? ctrl.show() : ctrl.hide();
     }
-    // Sync to slider only in video mode (not turntable)
+    // Codec dropdown: only show for video formats (MP4/WebM/MKV)
+    const isVideoFormat = fmt === 'mp4' || fmt === 'webm' || fmt === 'mkv';
+    if (!isVideoFormat) {
+      this.videoCodecController?.hide();
+    }
+    // Filter codec options by mode: MediaRecorder (Video) only supports VP9/VP8.
+    // Turntable (mediabunny) supports all codecs.
+    if (isVideo && isVideoFormat) {
+      const codecLabelToValue: Record<string, string> = {
+        'H.265': 'h265', VP9: 'vp9', 'H.264': 'h264', VP8: 'vp8',
+      };
+      const mediaRecorderCodecs = ['vp9', 'vp8'];
+      const codecSelect = this.videoCodecController?.domElement.querySelector(
+        'select'
+      ) as HTMLSelectElement | null;
+      if (codecSelect?.options) {
+        for (const opt of Array.from(codecSelect.options)) {
+          const val = codecLabelToValue[opt.value] || opt.value;
+          opt.hidden = !mediaRecorderCodecs.includes(val);
+        }
+      }
+    } else if (isTurntable && isVideoFormat) {
+      // Turntable: show all codec options (mediabunny supports all)
+      const codecSelect = this.videoCodecController?.domElement.querySelector(
+        'select'
+      ) as HTMLSelectElement | null;
+      if (codecSelect?.options) {
+        for (const opt of Array.from(codecSelect.options)) {
+          opt.hidden = false;
+        }
+      }
+    }
+    // Video quality: hide only for image sequence formats where bitrate is irrelevant.
+    // Both MediaRecorder (Video mode) and mediabunny (Turntable video) use computeVideoBitrate().
+    const isImageSequenceFormat = fmt === 'exr' || fmt === 'png' || fmt === 'webp' || fmt === 'jpeg';
+    if ((isVideo || isTurntable) && isImageSequenceFormat) {
+      this.videoQualityController?.hide();
+    }
+    // Turntable: hide duration limit and sync (turntable has its own computed duration from speed)
     if (isTurntable) {
+      this.videoDurationController?.hide();
       this.syncToggleController?.hide();
       this.syncDimensionController?.hide();
     }
@@ -755,14 +1313,26 @@ export class RecordingPanel {
       const overlay = document.createElement('div');
       overlay.className = 'luxar-recording-confirm';
 
-      let details = `Recording will capture the canvas at ${this.options.videoFPS} FPS.`;
+      const fmt = this.options.outputFormat;
+      let details = `Recording will capture at ${this.options.videoFPS} FPS.`;
       if (this.mode === 'turntable') {
         const duration = Math.round(360 / this.options.turntableSpeed);
-        details = `Camera will rotate 360° in ~${duration}s at ${this.options.videoFPS} FPS.`;
+        const expectedFrames = Math.ceil(duration * this.options.videoFPS);
+        details = `Camera will rotate 360° — ${expectedFrames} frames at ${this.options.videoFPS} FPS (${duration}s video).`;
+        if (this.options.frameByFrame) {
+          details += '<br><strong>Offline capture</strong> — each frame is rendered individually.';
+        }
       } else if (this.options.syncToSlider) {
         details += '<br>Recording will stop when the slider animation completes.';
       } else if (this.options.videoDurationLimit > 0) {
         details += `<br>Duration limit: ${this.options.videoDurationLimit} seconds.`;
+      }
+      if (fmt === 'exr') {
+        details += '<br>Output: <strong>ZIP of EXR frames</strong> (full float precision).';
+      } else if (fmt === 'png' || fmt === 'webp' || fmt === 'jpeg') {
+        details += `<br>Output: <strong>ZIP of ${fmt.toUpperCase()} frames</strong> + ffmpeg script.`;
+      } else if (fmt === 'mp4' || fmt === 'webm' || fmt === 'mkv') {
+        details += `<br>Output: <strong>${fmt.toUpperCase()} video</strong> (${this.options.videoCodec.toUpperCase()}).`;
       }
 
       overlay.innerHTML = `
@@ -833,12 +1403,17 @@ export class RecordingPanel {
     const timeEl = indicator.querySelector('.luxar-recording-indicator__time');
     this.recordingTimeInterval = setInterval(() => {
       if (timeEl) {
-        const elapsed = Math.floor((Date.now() - this.recordingStartTime) / 1000);
-        const mins = Math.floor(elapsed / 60)
-          .toString()
-          .padStart(2, '0');
-        const secs = (elapsed % 60).toString().padStart(2, '0');
-        timeEl.textContent = `${mins}:${secs}`;
+        if (this.isEXRSequenceRecording) {
+          // Offline capture uses the overlay for progress, not this indicator
+          timeEl.textContent = 'capturing...';
+        } else {
+          const elapsed = Math.floor((Date.now() - this.recordingStartTime) / 1000);
+          const mins = Math.floor(elapsed / 60)
+            .toString()
+            .padStart(2, '0');
+          const secs = (elapsed % 60).toString().padStart(2, '0');
+          timeEl.textContent = `${mins}:${secs}`;
+        }
       }
     }, 1000);
   }
@@ -854,7 +1429,137 @@ export class RecordingPanel {
     }
   }
 
+  // ========== Recording State Guard ==========
+
+  /**
+   * Save current DPR, renderer size, and resize-lock state, then apply
+   * recording-safe defaults (disable adaptive DPR, lock resize, optionally
+   * scale resolution). Call `restoreRecordingState()` to undo all changes.
+   *
+   * Used by captureScreenshot, startVideoRecording, and runOfflineCaptureLoop
+   * to avoid duplicating the save/restore logic.
+   */
+  private saveRecordingState(options: {
+    lockResize?: boolean;
+    disableDPR?: boolean;
+    scaleResolution?: { targetH: number; align16?: boolean };
+  }): void {
+    // Save current state
+    const dprEnabled = this.adaptiveDPRManager?.isActive() ?? false;
+    const dpr = this.adaptiveDPRManager?.getCurrentDPR() ?? window.devicePixelRatio;
+    const renderer = this.sceneManager.renderer;
+    const currentSize = renderer.getSize(new THREE.Vector2());
+    this.savedRecordingState = {
+      dprEnabled,
+      dpr,
+      rendererSize: null, // set below only if we actually scale
+      resizeLocked: this.sceneManager.resizeLocked,
+    };
+
+    // Disable adaptive DPR — resolution changes during capture cause corruption
+    if (options.disableDPR && this.adaptiveDPRManager) {
+      this.adaptiveDPRManager.setEnabled(false);
+      this.sceneManager.setAdaptivePixelRatio(this.adaptiveDPRManager.getNativeDPR());
+    }
+
+    // Lock resize to prevent mid-capture resolution changes
+    if (options.lockResize) {
+      this.sceneManager.resizeLocked = true;
+    }
+
+    // Scale renderer to target resolution.
+    // Only call postProcessing.resize() — it internally calls renderer.setSize()
+    // and composer.setSize() with correct SSAA handling. Calling renderer.setSize()
+    // separately would be overridden by postProcessing.resize() anyway.
+    if (options.scaleResolution) {
+      this.savedRecordingState.rendererSize = { width: currentSize.x, height: currentSize.y };
+      const { targetH, align16 } = options.scaleResolution;
+      const aspect = currentSize.x / currentSize.y;
+      let w = Math.round(targetH * aspect);
+      let h = targetH;
+      if (align16) {
+        w = w & ~15;
+        h = h & ~15;
+      }
+      renderer.setPixelRatio(1);
+      this.sceneManager.postProcessing.resize(w, h);
+      // postProcessing.resize() sets canvas CSS to the capture dimensions,
+      // which shrinks the visible canvas and exposes the page background.
+      // Override CSS back to full viewport — the WebGL framebuffer is already
+      // at the correct capture resolution regardless of CSS size.
+      const canvas = renderer.domElement;
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+      // Update camera projection to match new aspect ratio
+      const camera = this.sceneManager.camera;
+      if (camera instanceof THREE.PerspectiveCamera) {
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      }
+      // Update material uniforms (viewport size, FOV) for the new resolution.
+      // Without this, point/splat shaders use stale viewport dimensions and
+      // render geometry at the wrong screen-space size (nearly invisible).
+      this.sceneManager.updateMaterialsForCurrentCamera();
+    }
+  }
+
+  /**
+   * Restore DPR, renderer size, resize lock, and panels to pre-recording state.
+   * Safe to call multiple times (no-ops if no saved state).
+   */
+  private restoreRecordingState(): void {
+    const saved = this.savedRecordingState;
+    if (!saved) return;
+
+    // Restore renderer size and camera projection
+    if (saved.rendererSize) {
+      const renderer = this.sceneManager.renderer;
+      renderer.setPixelRatio(window.devicePixelRatio);
+      this.sceneManager.postProcessing.resize(
+        saved.rendererSize.width,
+        saved.rendererSize.height
+      );
+      const camera = this.sceneManager.camera;
+      if (camera instanceof THREE.PerspectiveCamera) {
+        camera.aspect = saved.rendererSize.width / saved.rendererSize.height;
+        camera.updateProjectionMatrix();
+      }
+      this.sceneManager.updateMaterialsForCurrentCamera();
+    }
+
+    // Restore resize lock
+    this.sceneManager.resizeLocked = saved.resizeLocked;
+
+    // Restore adaptive DPR
+    if (this.adaptiveDPRManager) {
+      if (saved.dprEnabled) {
+        this.adaptiveDPRManager.setEnabled(true);
+      } else {
+        this.sceneManager.setAdaptivePixelRatio(saved.dpr);
+      }
+    }
+
+    this.savedRecordingState = null;
+    this.restoreAllPanels();
+  }
+
   // ========== Utilities ==========
+
+  /**
+   * Render a frame and return it on an offscreen canvas.
+   * Centralizes the renderToImageData → putImageData pattern used by
+   * captureScreenshot (SDR path) and runOfflineCaptureLoop (image + video modes).
+   * The returned canvas can be passed to toBlob() or to VideoSample.
+   */
+  private renderFrameToCanvas(): HTMLCanvasElement {
+    const imgData = this.sceneManager.postProcessing.renderToImageData();
+    const canvas = document.createElement('canvas');
+    canvas.width = imgData.width;
+    canvas.height = imgData.height;
+    const ctx = canvas.getContext('2d')!;
+    ctx.putImageData(imgData, 0, 0);
+    return canvas;
+  }
 
   /** Compute video bitrate based on canvas size, FPS, and quality preset */
   private computeVideoBitrate(width: number, height: number): number {
@@ -870,19 +1575,73 @@ export class RecordingPanel {
     return Math.round(width * height * this.options.videoFPS * bpp);
   }
 
+  /**
+   * Get a supported MIME type for real-time MediaRecorder capture.
+   * MediaRecorder only supports WebM with VP9 or VP8 — H.264/H.265 are
+   * NOT valid WebM codecs. The videoCodec option only applies to the
+   * offline mediabunny path (turntable mode).
+   */
   private getSupportedMimeType(): string | null {
-    const codec = this.options.videoCodec;
-    const preferred = `video/webm;codecs=${codec}`;
-    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(preferred)) {
-      return preferred;
-    }
-    const fallbacks = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-    for (const type of fallbacks) {
-      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) {
+    if (typeof MediaRecorder === 'undefined') return null;
+    // Only try valid WebM codec strings (VP9 preferred, VP8 fallback)
+    const candidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+    for (const type of candidates) {
+      if (MediaRecorder.isTypeSupported(type)) {
         return type;
       }
     }
     return null;
+  }
+
+  /** Generate a shell script with ffmpeg commands to encode the EXR sequence */
+  private generateFfmpegScript(fps: number, frameCount: number, ext = 'exr'): string {
+    const duration = (frameCount / fps).toFixed(1);
+    const isHDRFormat = ext === 'exr';
+    const inputPattern = `frame_%06d.${ext}`;
+    return `#!/bin/bash
+# Luxar Image Sequence Encoder
+# ${frameCount} ${ext.toUpperCase()} frames at ${fps} FPS (${duration}s)
+# Generated by Luxar Viewer — https://github.com/royerlab/luxar
+#
+# Requirements: ffmpeg
+# Usage: chmod +x encode_video.sh && ./encode_video.sh
+
+set -e
+SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# --- MP4 (H.265, high quality) ---
+echo "Encoding MP4 (H.265)..."
+ffmpeg -y -framerate ${fps} -i '${inputPattern}' \\
+  -c:v libx265 -preset slow -crf 18 \\
+  -pix_fmt yuv420p \\
+  -movflags +faststart \\
+  "turntable.mp4"
+echo "  -> turntable.mp4"
+
+# --- MP4 (H.264, widely compatible) ---
+# Uncomment if H.265 is not supported by your player:
+# echo "Encoding MP4 (H.264)..."
+# ffmpeg -y -framerate ${fps} -i '${inputPattern}' \\
+#   -c:v libx264 -preset slow -crf 18 \\
+#   -pix_fmt yuv420p \\
+#   -movflags +faststart \\
+#   "turntable_h264.mp4"
+# echo "  -> turntable_h264.mp4"
+${isHDRFormat ? `
+# --- HDR MP4 (H.265, 10-bit PQ/BT.2020) ---
+echo "Encoding HDR MP4 (H.265 10-bit)..."
+ffmpeg -y -framerate ${fps} -i '${inputPattern}' \\
+  -c:v libx265 -preset slow -crf 18 \\
+  -pix_fmt yuv420p10le \\
+  -color_primaries bt2020 -color_trc smpte2084 -colorspace bt2020nc \\
+  -movflags +faststart \\
+  "turntable_hdr.mp4"
+echo "  -> turntable_hdr.mp4"
+` : ''}
+
+echo "Done!"
+`;
   }
 
   private generateFilename(ext: string): string {

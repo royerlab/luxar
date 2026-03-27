@@ -3,6 +3,14 @@
  *
  * Styles for the screenshot/video recording panel, recording indicator,
  * and confirmation dialog. Used by RecordingPanel in ui/recording-panel.ts.
+ *
+ * Z-index values here are intentionally higher than config.ui.zIndex
+ * (which ranges 100-2000) because recording overlays MUST appear above
+ * all application UI, including third-party panels or tooltips.
+ *
+ *   Recording indicator:  9999   (above all app UI, below dialogs)
+ *   Confirmation dialog: 10000   (above indicator, modal)
+ *   Capture overlay:     100000  (above everything, blocks all interaction)
  */
 
 /* ========== Panel Size Override ========== */
@@ -201,6 +209,93 @@
 
 [data-theme='light'] .luxar-recording-confirm__btn {
   color: var(--luxar-text-primary);
+}
+
+/* ========== Offline Capture Overlay ========== */
+
+.luxar-recording-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.3);
+  cursor: wait;
+}
+
+.luxar-recording-overlay__content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 32px 48px;
+  background: rgba(30, 30, 30, 0.95);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.luxar-recording-overlay__preview {
+  max-width: 480px;
+  max-height: 270px;
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: #000;
+}
+
+.luxar-recording-overlay__progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.luxar-recording-overlay__label {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.8);
+  font-family: inherit;
+}
+
+.luxar-recording-overlay__counter {
+  font-size: 28px;
+  font-weight: 600;
+  color: #fff;
+  font-family: monospace;
+  letter-spacing: 2px;
+}
+
+.luxar-recording-overlay__cancel {
+  padding: 8px 24px;
+  background: rgba(231, 76, 60, 0.8);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.luxar-recording-overlay__cancel:hover {
+  background: rgba(231, 76, 60, 1);
+}
+
+[data-theme='light'] .luxar-recording-overlay {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+[data-theme='light'] .luxar-recording-overlay__content {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='light'] .luxar-recording-overlay__label {
+  color: rgba(0, 0, 0, 0.7);
+}
+
+[data-theme='light'] .luxar-recording-overlay__counter {
+  color: #000;
 }
 
 /* ========== Reduced Motion ========== */
