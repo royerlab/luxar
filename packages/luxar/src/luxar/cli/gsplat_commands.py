@@ -339,6 +339,8 @@ def info_dataset(
                 f"   Command: luxar gsplat prune {path.name} pruned.gsplats.zarr.zip --method cumulative --retention 0.95"
             )
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
@@ -430,6 +432,8 @@ def napari_viewer(
 
                 napari.run()
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error opening dataset: {e}")
         import traceback
@@ -580,6 +584,8 @@ def quick_view(
         # Cleanup temp directory
         if "temp_dir" in locals():
             shutil.rmtree(temp_dir, ignore_errors=True)
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
@@ -867,6 +873,8 @@ def prune_dataset(
 
                 napari_module.run()
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
@@ -1097,6 +1105,8 @@ def filter_dataset(
                         else:
                             aprint(f"  Size: {output_size / (1024 * 1024):.1f} MB")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
@@ -1216,6 +1226,8 @@ def split_dataset(
                     )
                     aprint(f"  Saved {out_path.name} ({part.n_splats:,} splats)")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
@@ -1358,6 +1370,8 @@ def slice_dataset(
                         else:
                             aprint(f"  Size: {output_size / (1024 * 1024):.1f} MB")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
@@ -1628,6 +1642,8 @@ def transform_dataset(
                     else:
                         aprint(f"  Size: {output_size / (1024 * 1024):.1f} MB")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
@@ -1750,6 +1766,8 @@ def denoise_volume_cmd(
                 np.save(output_path, denoised)
             aprint("Done")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         raise typer.Exit(1) from e
@@ -2214,6 +2232,8 @@ def fit_volume(
         time_s = result.stats.get("time_seconds", 0)
         aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         import traceback
@@ -2298,6 +2318,8 @@ def convert_to_scene(
             aprint(f"\nScene saved: {output_path}")
             aprint(f"Serve with: luxar serve {output_path} --viewer")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         import traceback
@@ -2397,6 +2419,8 @@ def render_to_file(
 
         aprint(f"\nSaved: {output_path}")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         import traceback
@@ -2579,6 +2603,8 @@ def compare_quality(
             if not quiet:
                 aprint(f"\nMetrics written to: {output_json}")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         import traceback
@@ -2725,6 +2751,8 @@ def merge_datasets(
 
         aprint(f"\nDone: {merged.n_splats:,} splats merged")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         import traceback
@@ -3645,6 +3673,8 @@ def batch_plan(
 
     except typer.Exit:
         raise
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         import traceback
@@ -3677,6 +3707,8 @@ def batch_status_cmd(
         status = check_batch_status(output_dir)
         aprint(format_status_report(status, manifest, verbose=verbose))
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         raise typer.Exit(1)
@@ -3702,8 +3734,6 @@ def batch_validate_cmd(
 
         luxar gsplat batch validate output_dir/ --fix
     """
-    import shutil
-
     try:
         from luxar.gsplats.batch.manifest import load_manifest
 
@@ -3769,6 +3799,10 @@ def batch_validate_cmd(
             aprint(f"\nFixed: deleted {corrupt} corrupt + {stale_tmp} stale .tmp")
             aprint("Resubmit to re-fit deleted tiles.")
 
+    except typer.Exit:
+        raise
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         raise typer.Exit(1) from e
@@ -3868,6 +3902,8 @@ def batch_cancel_cmd(
             aprint(f"scancel output: {result.stderr.strip()}")
             aprint("Cancel command sent (some jobs may have already completed).")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         raise typer.Exit(1)
@@ -3914,6 +3950,8 @@ def batch_merge_cmd(
             )
             aprint(f"\nFinal output: {final_path}")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         import traceback
@@ -3976,6 +4014,8 @@ def batch_denoise_calibrate_cmd(
             aprint(f"Calibrated h values: {h_values}")
             aprint(f"Saved to {h_path}")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         raise typer.Exit(1) from e
@@ -4059,6 +4099,8 @@ def batch_denoise_preprocess_cmd(
             store["data"][t_idx, c_idx] = denoised
             aprint(f"Written to denoised.zarr[{t_idx}, {c_idx}]")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         aprint(f"Error: {e}")
         raise typer.Exit(1) from e
