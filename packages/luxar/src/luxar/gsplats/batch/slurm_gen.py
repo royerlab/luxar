@@ -33,7 +33,8 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines = [
         "#!/bin/bash",
         "#SBATCH --job-name=luxar-fit",
-        f"#SBATCH --array=0-{n_slurm_jobs - 1}",
+        f"#SBATCH --array=0-{n_slurm_jobs - 1}"
+        + (f"%{manifest.max_concurrent}" if manifest.max_concurrent else ""),
         f"#SBATCH --partition={manifest.slurm_partition}",
         "#SBATCH --ntasks=1",
         f"#SBATCH --gpus-per-task={manifest.slurm_gpus}",
@@ -319,7 +320,8 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines = [
         "#!/bin/bash",
         "#SBATCH --job-name=luxar-denoise",
-        f"#SBATCH --array=0-{total_tasks - 1}",
+        f"#SBATCH --array=0-{total_tasks - 1}"
+        + (f"%{manifest.max_concurrent}" if manifest.max_concurrent else ""),
         f"#SBATCH --partition={manifest.slurm_partition}",
         "#SBATCH --ntasks=1",
         "#SBATCH --gpus-per-task=1",
