@@ -122,6 +122,105 @@ def is_slurm_mps_available() -> bool:
     return False
 
 
+def detect_preemptible_gpu_partition() -> Optional[str]:
+    """Find a preemptible partition with GPU resources.
+
+    Looks for partitions whose name suggests preemptibility (e.g.,
+    ``preempted``, ``preempt``, ``scavenger``, ``low-priority``),
+    then verifies they have GPU GRES and are accessible.
+
+    On many clusters, ``PreemptMode=REQUEUE`` is set globally for all
+    partitions, so we can't rely on that alone — we use naming conventions
+    to identify the actual preemptible/scavenger partition.
+
+    Returns
+    -------
+    str or None
+        Partition name, or None if no preemptible GPU partition found.
+    """
+    # Common names for preemptible/scavenger partitions
+    PREEMPT_KEYWORDS = ("preempt", "scaveng", "low", "opportun", "backfill")
+
+    try:
+        result = subprocess.run(
+            ["scontrol", "show", "partitions"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+
+        # Parse partition blocks — collect name + state
+        partitions: list[tuple[str, str]] = []  # (name, state)
+        current_name: Optional[str] = None
+        current_state: str = ""
+
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("PartitionName="):
+                if current_name:
+                    partitions.append((current_name, current_state))
+                current_name = line.split()[0].split("=", 1)[1]
+                current_state = ""
+            if "State=" in line:
+                for part in line.split():
+                    if part.startswith("State="):
+                        current_state = part.split("=", 1)[1]
+        if current_name:
+            partitions.append((current_name, current_state))
+
+        # Filter to partitions with preemptible-sounding names + State=UP
+        candidates = [
+            name
+            for name, state in partitions
+            if state.upper() == "UP"
+            and any(kw in name.lower() for kw in PREEMPT_KEYWORDS)
+        ]
+
+        # Filter to partitions with GPU GRES
+        for partition in candidates:
+            try:
+                sinfo = subprocess.run(
+                    ["sinfo", "-p", partition, "--format=%G", "--noheader"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                for gres_line in sinfo.stdout.splitlines():
+                    if "gpu:" in gres_line.lower():
+                        return partition
+            except Exception:
+                continue
+
+    except Exception:
+        pass
+    return None
+
+
+def validate_partition_access(partition: str) -> bool:
+    """Check if a partition exists and is UP.
+
+    Uses ``sinfo -p <partition>`` to verify availability.
+    """
+    try:
+        result = subprocess.run(
+            ["sinfo", "-p", partition, "--format=%a", "--noheader"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return False
+        # Check if partition is available (not down/drain)
+        for line in result.stdout.splitlines():
+            if line.strip().lower() == "up":
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def read_cuda_build_info() -> Dict:
     """Return the CUDA build metadata written by build.py, or an empty dict."""
     try:
