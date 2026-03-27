@@ -104,12 +104,18 @@ def denoise_volume_array(
     volume = volume.astype(np.float32)
     norm_vol, vmin, vmax = normalize_volume(volume)
 
-    dev = torch.device(device) if device else None
+    # Auto-detect device: prefer CUDA when available
+    if device is not None:
+        dev = torch.device(device)
+    elif torch.cuda.is_available():
+        dev = torch.device("cuda")
+    else:
+        dev = torch.device("cpu")
 
     # Resolve and log backend
     from .nlm_core import _resolve_backend
 
-    effective_device = dev if dev is not None else torch.device("cpu")
+    effective_device = dev
     resolved_backend = _resolve_backend(backend, effective_device)
     mode_str = (
         "2D slice-by-slice" if (use_2d and norm_vol.ndim == 3) else f"{norm_vol.ndim}D"
