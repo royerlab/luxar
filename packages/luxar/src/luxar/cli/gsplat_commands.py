@@ -3039,6 +3039,24 @@ def batch_plan(
         help="Maximum simultaneous Slurm array tasks (limits cluster usage). "
         "Maps to --array=0-N%%MAX. No limit if omitted.",
     ),
+    preemptible: bool = typer.Option(
+        False,
+        "--preemptible",
+        help="Also submit tasks on a preemptible partition for extra throughput. "
+        "Auto-detects the preemptible partition. Preempted tasks are automatically "
+        "requeued. Uses atomic tile writes to handle interruptions safely.",
+    ),
+    preemptible_partition_opt: Optional[str] = typer.Option(
+        None,
+        "--preemptible-partition",
+        help="Explicit preemptible partition name (skip auto-detection).",
+    ),
+    preemptible_concurrent: Optional[int] = typer.Option(
+        None,
+        "--preemptible-concurrent",
+        help="Max concurrent tasks on preemptible partition. "
+        "Defaults to same as --max-concurrent.",
+    ),
     account: Optional[str] = typer.Option(None, "--account", "-A"),
     qos: Optional[str] = typer.Option(None, "--qos"),
     gpus: int = typer.Option(1, "--gpus", help="GPUs per task"),
@@ -3427,6 +3445,39 @@ def batch_plan(
         if channel_colors:
             colors_list = [c.strip() for c in channel_colors.split(",")]
 
+        # Preemptible partition detection
+        preempt_partition: Optional[str] = None
+        if preemptible:
+            if preemptible_partition_opt:
+                preempt_partition = preemptible_partition_opt
+            else:
+                from luxar.gsplats.batch.env_capture import (
+                    detect_preemptible_gpu_partition,
+                )
+
+                preempt_partition = detect_preemptible_gpu_partition()
+
+            if preempt_partition is None:
+                aprint(
+                    "No preemptible GPU partition found on this cluster.\n"
+                    "  Checked all partitions for: PreemptMode=REQUEUE + GPU resources.\n"
+                    "  This cluster may not offer preemptible scheduling.\n"
+                    "  Continuing with guaranteed partition only."
+                )
+            else:
+                from luxar.gsplats.batch.env_capture import validate_partition_access
+
+                if not validate_partition_access(preempt_partition, account):
+                    aprint(
+                        f"Cannot submit to preemptible partition '{preempt_partition}'.\n"
+                        f"  Your account may not have access.\n"
+                        f"  To check: sacctmgr show assoc user=$USER partition={preempt_partition}\n"
+                        "  Continuing with guaranteed partition only."
+                    )
+                    preempt_partition = None
+                else:
+                    aprint(f"Preemptible partition: {preempt_partition}")
+
         manifest = BatchManifest(
             version=1,
             created=datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -3454,6 +3505,11 @@ def batch_plan(
             tasks_per_job=tasks_per_job,
             parallel_tasks_per_job=parallel,
             max_concurrent=max_concurrent,
+            preemptible=preempt_partition is not None,
+            preemptible_partition=preempt_partition,
+            preemptible_max_concurrent=(
+                preemptible_concurrent or max_concurrent if preempt_partition else None
+            ),
             timepoint_indices=t_indices if timepoints_slice else None,
             channel_indices=c_indices if channels_slice else None,
             channel_colors=colors_list,
@@ -3492,6 +3548,18 @@ def batch_plan(
         preamble = generate_env_preamble(env)
         fit_script = generate_fit_sbatch(manifest, preamble)
         merge_script = generate_merge_sbatch(manifest, preamble)
+
+        # Generate preemptible fit script if enabled
+        preempt_fit_script = None
+        if preempt_partition:
+            preempt_fit_script = generate_fit_sbatch(
+                manifest,
+                preamble,
+                partition_override=preempt_partition,
+                max_concurrent_override=manifest.preemptible_max_concurrent,
+                requeue=True,
+                job_name="luxar-fit-preempt",
+            )
 
         # Generate denoise scripts if needed
         calibrate_script = None
@@ -3585,6 +3653,8 @@ def batch_plan(
             (out / "calibrate.sbatch").write_text(calibrate_script)
         if denoise_script:
             (out / "denoise_array.sbatch").write_text(denoise_script)
+        if preempt_fit_script:
+            (out / "fit_array_preempt.sbatch").write_text(preempt_fit_script)
         save_manifest(manifest, out)
 
         def _parse_job_id(stdout: str) -> Optional[int]:
@@ -3651,16 +3721,42 @@ def batch_plan(
         fit_job_id = _parse_job_id(result.stdout)
         aprint(f"  Fitting array job: {fit_job_id} ({total_tasks} tasks)")
 
+        # Submit preemptible fit array (if enabled)
+        preemptible_job_id = None
+        if preempt_fit_script:
+            aprint("Submitting preemptible fitting array...")
+            preempt_cmd = ["sbatch"]
+            if fit_dep_id:
+                preempt_cmd.append(f"--dependency=afterok:{fit_dep_id}")
+            preempt_cmd.append(str(out / "fit_array_preempt.sbatch"))
+            result = subprocess.run(preempt_cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                preemptible_job_id = _parse_job_id(result.stdout)
+                manifest.preemptible_job_id = preemptible_job_id
+                aprint(
+                    f"  Preemptible array job: {preemptible_job_id} "
+                    f"({total_tasks} tasks on {preempt_partition}, requeue)"
+                )
+            else:
+                aprint(
+                    f"  Warning: preemptible submission failed: {result.stderr}\n"
+                    "  Continuing with guaranteed partition only."
+                )
+
+        # Merge depends on ALL fit arrays
+        merge_deps = [jid for jid in [fit_job_id, preemptible_job_id] if jid]
         merge_cmd = ["sbatch"]
-        if fit_job_id:
-            merge_cmd.append(f"--dependency=afterok:{fit_job_id}")
+        if merge_deps:
+            dep_str = ":".join(str(jid) for jid in merge_deps)
+            merge_cmd.append(f"--dependency=afterok:{dep_str}")
         merge_cmd.append(str(merge_path))
 
         result = subprocess.run(merge_cmd, capture_output=True, text=True)
         merge_job_id = None
         if result.returncode == 0:
             merge_job_id = _parse_job_id(result.stdout)
-            aprint(f"  Merge job: {merge_job_id} (depends on {fit_job_id})")
+            dep_info = " + ".join(str(j) for j in merge_deps)
+            aprint(f"  Merge job: {merge_job_id} (depends on {dep_info})")
         else:
             aprint(f"  Warning: merge job submission failed: {result.stderr}")
 

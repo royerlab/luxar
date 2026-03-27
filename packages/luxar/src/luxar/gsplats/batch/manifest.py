@@ -89,6 +89,17 @@ class BatchManifest:
     """Maximum number of Slurm array tasks running simultaneously.
     Maps to ``--array=0-N%MAX``. None means no limit."""
 
+    preemptible: bool = False
+    """Whether a preemptible array job is submitted alongside the main one."""
+
+    preemptible_partition: Optional[str] = None
+    """Name of the preemptible partition (auto-detected or explicit)."""
+
+    preemptible_max_concurrent: Optional[int] = None
+    """Max concurrent tasks on preemptible partition."""
+
+    preemptible_job_id: Optional[int] = None
+
     # Jobs
     jobs: List[BatchJob] = field(default_factory=list)
 
