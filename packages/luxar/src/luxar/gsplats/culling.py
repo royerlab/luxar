@@ -610,6 +610,7 @@ def cull_by_contribution(
 
         if use_error_budget:
             # --- Error-budget mode ---
+            assert target is not None  # guarded by use_error_budget
             R = target - V_pred
             abs_R = torch.abs(R)
             tau = (
