@@ -290,6 +290,10 @@
   border-color: rgba(0, 0, 0, 0.1);
 }
 
+[data-theme='light'] .luxar-recording-overlay__preview {
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
 [data-theme='light'] .luxar-recording-overlay__label {
   color: rgba(0, 0, 0, 0.7);
 }

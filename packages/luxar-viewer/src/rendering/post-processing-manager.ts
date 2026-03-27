@@ -68,7 +68,6 @@ import {
  * requestAnimationFrame(() => postProcessing.render());
  * ```
  */
-
 export class PostProcessingManager {
   private composer: EffectComposer;
   private renderPass: RenderPass;

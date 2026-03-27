@@ -1738,6 +1738,9 @@ export class SceneManager extends THREE.EventDispatcher<{
   /**
    * Update all materials with current camera projection parameters.
    * Handles both perspective (FOV-based) and orthographic (frustum-based) modes.
+   *
+   * Called internally on resize and camera changes. Also used by
+   * RecordingPanel when the renderer is resized for offline capture.
    */
   updateMaterialsForCurrentCamera(): void {
     const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
