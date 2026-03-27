@@ -98,8 +98,6 @@ class BatchManifest:
     preemptible_max_concurrent: Optional[int] = None
     """Max concurrent tasks on preemptible partition."""
 
-    preemptible_job_id: Optional[int] = None
-
     # Jobs
     jobs: List[BatchJob] = field(default_factory=list)
 
@@ -143,6 +141,7 @@ class BatchManifest:
     calibrate_job_id: Optional[int] = None
     denoise_job_id: Optional[int] = None
     array_job_id: Optional[int] = None
+    preemptible_job_id: Optional[int] = None
     merge_job_id: Optional[int] = None
 
 

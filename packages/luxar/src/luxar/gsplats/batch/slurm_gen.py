@@ -53,8 +53,8 @@ def generate_fit_sbatch(
         f"#SBATCH --cpus-per-task={manifest.slurm_cpus}",
         f"#SBATCH --mem={manifest.slurm_mem_gb}G",
         f"#SBATCH --time={manifest.slurm_time_limit}",
-        f"#SBATCH --output={manifest.output_dir}/logs/fit_%a.out",
-        f"#SBATCH --error={manifest.output_dir}/logs/fit_%a.err",
+        f"#SBATCH --output={manifest.output_dir}/logs/{job_name.removeprefix('luxar-')}_%a.out",
+        f"#SBATCH --error={manifest.output_dir}/logs/{job_name.removeprefix('luxar-')}_%a.err",
     ]
 
     if manifest.slurm_account:
@@ -77,11 +77,11 @@ def generate_fit_sbatch(
         lines.extend(
             [
                 "",
-                "# Log requeue attempts",
-                'if [ "${SLURM_RESTART_CNT:-0}" -gt 0 ]; then',
-                '    echo "Requeued (attempt $((SLURM_RESTART_CNT + 1)))"',
+                "# Log requeue attempts (SLURM_RESTART_COUNT is undefined on first run)",
+                'if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then',
+                '    echo "Requeued (attempt $((SLURM_RESTART_COUNT + 1)))"',
                 "fi",
-                'if [ "${SLURM_RESTART_CNT:-0}" -ge 5 ]; then',
+                'if [ "${SLURM_RESTART_COUNT:-0}" -ge 5 ]; then',
                 '    echo "ERROR: preempted 5+ times, giving up on this task"',
                 "    exit 1",
                 "fi",
@@ -262,7 +262,7 @@ def generate_fit_sbatch(
             "        return 1",
             "    fi",
             "    # Atomic rename — handles race with parallel preemptible job",
-            '    if ! mv "${OUTPUT}.tmp" "$OUTPUT" 2>/dev/null; then',
+            '    if ! mv -T "${OUTPUT}.tmp" "$OUTPUT" 2>/dev/null; then',
             '        if [ -d "$OUTPUT" ]; then',
             '            echo "Tile completed by another task, cleaning up duplicate"',
             '            rm -rf "${OUTPUT}.tmp"',

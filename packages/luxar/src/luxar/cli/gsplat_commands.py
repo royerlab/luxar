@@ -3460,14 +3460,14 @@ def batch_plan(
             if preempt_partition is None:
                 aprint(
                     "No preemptible GPU partition found on this cluster.\n"
-                    "  Checked all partitions for: PreemptMode=REQUEUE + GPU resources.\n"
-                    "  This cluster may not offer preemptible scheduling.\n"
+                    "  Checked all partitions for: preemptible naming + GPU resources.\n"
+                    "  Use --preemptible-partition to specify one explicitly.\n"
                     "  Continuing with guaranteed partition only."
                 )
             else:
                 from luxar.gsplats.batch.env_capture import validate_partition_access
 
-                if not validate_partition_access(preempt_partition, account):
+                if not validate_partition_access(preempt_partition):
                     aprint(
                         f"Cannot submit to preemptible partition '{preempt_partition}'.\n"
                         f"  Your account may not have access.\n"
@@ -3508,7 +3508,9 @@ def batch_plan(
             preemptible=preempt_partition is not None,
             preemptible_partition=preempt_partition,
             preemptible_max_concurrent=(
-                preemptible_concurrent or max_concurrent if preempt_partition else None
+                (preemptible_concurrent or max_concurrent)
+                if preempt_partition
+                else None
             ),
             timepoint_indices=t_indices if timepoints_slice else None,
             channel_indices=c_indices if channels_slice else None,

@@ -161,9 +161,9 @@ def detect_preemptible_gpu_partition() -> Optional[str]:
             if line.startswith("PartitionName="):
                 if current_name:
                     partitions.append((current_name, current_state))
-                current_name = line.split("=", 1)[1].strip()
+                current_name = line.split()[0].split("=", 1)[1]
                 current_state = ""
-            elif "State=" in line:
+            if "State=" in line:
                 for part in line.split():
                     if part.startswith("State="):
                         current_state = part.split("=", 1)[1]
@@ -198,12 +198,10 @@ def detect_preemptible_gpu_partition() -> Optional[str]:
     return None
 
 
-def validate_partition_access(partition: str, account: Optional[str] = None) -> bool:
-    """Check if the user can submit to a partition.
+def validate_partition_access(partition: str) -> bool:
+    """Check if a partition exists and is UP.
 
-    Uses ``sinfo -p <partition>`` to verify the partition exists and is UP.
-    A more thorough check would use ``sbatch --test-only`` but that requires
-    a valid script.
+    Uses ``sinfo -p <partition>`` to verify availability.
     """
     try:
         result = subprocess.run(
