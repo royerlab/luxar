@@ -2,7 +2,15 @@
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.models.gsplats.rendering_core import (
+    cached_base_and_offsets,
+    calculate_optimal_chunk_size,
     clear_grid_cache,
+    compute_aabb_with_intensity_floor,
+    fwd_norm2_2d,
+    fwd_norm2_3d,
+    group_by_box,
+    group_by_box_gpu,
+    linear_strides,
     render_gaussians,
 )
 from luxar.gsplats.models.gsplats.rendering_wrappers import (
@@ -13,7 +21,15 @@ from luxar.gsplats.models.gsplats.rendering_wrappers import (
 
 __all__ = [
     "GaussianSplatModel",
+    "cached_base_and_offsets",
+    "calculate_optimal_chunk_size",
     "clear_grid_cache",
+    "compute_aabb_with_intensity_floor",
+    "fwd_norm2_2d",
+    "fwd_norm2_3d",
+    "group_by_box",
+    "group_by_box_gpu",
+    "linear_strides",
     "render_gaussians",
     "render_gaussians_numpy",
     "render_gaussians_pytorch",

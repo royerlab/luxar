@@ -6,6 +6,7 @@ _GSPLATS_IMPORT_ERROR: Optional[ImportError] = None
 
 if TYPE_CHECKING:
     from luxar.gsplats import clahe, preprocessing, seeds
+    from luxar.gsplats.culling import CullResult, cull_by_contribution
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
     from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
     from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 else:
     try:
         from luxar.gsplats import clahe, preprocessing, seeds
+        from luxar.gsplats.culling import CullResult, cull_by_contribution
         from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
         from luxar.gsplats.fit_progressive_gsplats import (
             fit_progressive_gaussian_splats,
@@ -47,6 +49,13 @@ else:
                 "luxar.gsplats requires optional dependencies. "
                 "Install with: pip install 'luxar[gsplats]'"
             ) from _exc
+
+        def cull_by_contribution(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
+        class CullResult:
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                _raise_gsplats_import_error()
 
         def fit_gaussian_splats(*_args: Any, **_kwargs: Any) -> Any:
             _raise_gsplats_import_error()
@@ -102,6 +111,9 @@ else:
 
 
 __all__ = [
+    # Culling
+    "cull_by_contribution",
+    "CullResult",
     # Fitting functions
     "fit_gaussian_splats",
     "fit_progressive_gaussian_splats",

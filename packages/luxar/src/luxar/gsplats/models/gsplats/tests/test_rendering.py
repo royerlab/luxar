@@ -751,8 +751,8 @@ class TestMPSFallbackHandling:
     """Test MPS fallback handling for torch.unique operations."""
 
     def test_group_by_box_cpu(self) -> None:
-        """Test _group_by_box works on CPU."""
-        from luxar.gsplats.models.gsplats.rendering_core import _group_by_box
+        """Test group_by_box works on CPU."""
+        from luxar.gsplats.models.gsplats.rendering_core import group_by_box
 
         # Create test data on CPU with different box shapes
         # Box 0: (0,0) to (5,5) -> shape (5,5)
@@ -761,7 +761,7 @@ class TestMPSFallbackHandling:
         lo = torch.tensor([[0, 0], [10, 10], [0, 0]], dtype=torch.long)
         hi = torch.tensor([[5, 5], [17, 13], [5, 5]], dtype=torch.long)
 
-        groups = _group_by_box(lo, hi)
+        groups = group_by_box(lo, hi)
 
         # Should group identical box shapes together
         assert len(groups) == 2  # Two unique shapes: (5,5) and (7,3)
@@ -771,13 +771,13 @@ class TestMPSFallbackHandling:
         assert len(groups[(5, 5)]) == 2
 
     def test_group_by_box_gpu_cpu(self) -> None:
-        """Test _group_by_box_gpu works on CPU."""
-        from luxar.gsplats.models.gsplats.rendering_core import _group_by_box_gpu
+        """Test group_by_box_gpu works on CPU."""
+        from luxar.gsplats.models.gsplats.rendering_core import group_by_box_gpu
 
         lo = torch.tensor([[0, 0], [10, 10], [0, 0]], dtype=torch.long)
         hi = torch.tensor([[5, 5], [17, 13], [5, 5]], dtype=torch.long)
 
-        uniq, inv = _group_by_box_gpu(lo, hi)
+        uniq, inv = group_by_box_gpu(lo, hi)
 
         # Should find 2 unique sizes: (5,5) and (7,3)
         assert uniq.shape[0] == 2
@@ -789,14 +789,14 @@ class TestMPSFallbackHandling:
         reason="MPS not available",
     )
     def test_group_by_box_mps(self) -> None:
-        """Test _group_by_box MPS fallback path."""
-        from luxar.gsplats.models.gsplats.rendering_core import _group_by_box
+        """Test group_by_box MPS fallback path."""
+        from luxar.gsplats.models.gsplats.rendering_core import group_by_box
 
         # Create test data on MPS with different box shapes
         lo = torch.tensor([[0, 0], [10, 10], [0, 0]], dtype=torch.long, device="mps")
         hi = torch.tensor([[5, 5], [17, 13], [5, 5]], dtype=torch.long, device="mps")
 
-        groups = _group_by_box(lo, hi)
+        groups = group_by_box(lo, hi)
 
         # Should still work correctly on MPS with CPU fallback
         assert len(groups) == 2
@@ -808,13 +808,13 @@ class TestMPSFallbackHandling:
         reason="MPS not available",
     )
     def test_group_by_box_gpu_mps(self) -> None:
-        """Test _group_by_box_gpu MPS fallback path."""
-        from luxar.gsplats.models.gsplats.rendering_core import _group_by_box_gpu
+        """Test group_by_box_gpu MPS fallback path."""
+        from luxar.gsplats.models.gsplats.rendering_core import group_by_box_gpu
 
         lo = torch.tensor([[0, 0], [10, 10], [0, 0]], dtype=torch.long, device="mps")
         hi = torch.tensor([[5, 5], [17, 13], [5, 5]], dtype=torch.long, device="mps")
 
-        uniq, inv = _group_by_box_gpu(lo, hi)
+        uniq, inv = group_by_box_gpu(lo, hi)
 
         # Results should be on MPS device
         assert uniq.device.type == "mps"
@@ -822,25 +822,25 @@ class TestMPSFallbackHandling:
         assert uniq.shape[0] == 2
 
     def test_mps_fallback_code_path_exists(self) -> None:
-        """Verify MPS fallback code path exists in _group_by_box."""
+        """Verify MPS fallback code path exists in group_by_box."""
         import inspect
 
-        from luxar.gsplats.models.gsplats.rendering_core import _group_by_box
+        from luxar.gsplats.models.gsplats.rendering_core import group_by_box
 
-        source = inspect.getsource(_group_by_box)
+        source = inspect.getsource(group_by_box)
         assert 'device.type == "mps"' in source, (
-            "_group_by_box should have MPS fallback handling"
+            "group_by_box should have MPS fallback handling"
         )
 
     def test_mps_fallback_code_path_exists_gpu(self) -> None:
-        """Verify MPS fallback code path exists in _group_by_box_gpu."""
+        """Verify MPS fallback code path exists in group_by_box_gpu."""
         import inspect
 
-        from luxar.gsplats.models.gsplats.rendering_core import _group_by_box_gpu
+        from luxar.gsplats.models.gsplats.rendering_core import group_by_box_gpu
 
-        source = inspect.getsource(_group_by_box_gpu)
+        source = inspect.getsource(group_by_box_gpu)
         assert 'device.type == "mps"' in source, (
-            "_group_by_box_gpu should have MPS fallback handling"
+            "group_by_box_gpu should have MPS fallback handling"
         )
 
 

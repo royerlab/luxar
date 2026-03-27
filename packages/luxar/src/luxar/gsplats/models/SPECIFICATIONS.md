@@ -166,7 +166,7 @@ def render_gaussians(
 
 **Memory Management**:
 ```python
-def _calculate_optimal_chunk_size(K, d, device, dtype) -> int:
+def calculate_optimal_chunk_size(K, d, device, dtype) -> int:
     """
     Calculate optimal chunk size based on available memory.
 
@@ -197,7 +197,7 @@ def _calculate_optimal_chunk_size(K, d, device, dtype) -> int:
 **Helper Functions**:
 
 ```python
-def _linear_strides(shape: Sequence[int], device) -> torch.Tensor:
+def linear_strides(shape: Sequence[int], device) -> torch.Tensor:
     """
     Compute row-major linear strides for nD tensor.
 
@@ -205,7 +205,7 @@ def _linear_strides(shape: Sequence[int], device) -> torch.Tensor:
     Example: shape (10, 20, 30) → strides [600, 30, 1]
     """
 
-def _group_by_box(lo: torch.Tensor, hi: torch.Tensor) -> Dict[Tuple[int, ...], torch.Tensor]:
+def group_by_box(lo: torch.Tensor, hi: torch.Tensor) -> Dict[Tuple[int, ...], torch.Tensor]:
     """
     Group splats by AABB shape using torch.unique on GPU.
 
@@ -214,7 +214,7 @@ def _group_by_box(lo: torch.Tensor, hi: torch.Tensor) -> Dict[Tuple[int, ...], t
     Only transfers small unique array to CPU for dict keys
     """
 
-def _group_by_box_gpu(lo: torch.Tensor, hi: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def group_by_box_gpu(lo: torch.Tensor, hi: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     GPU-friendly grouping by AABB size (returns uniq_sizes, inv).
 
@@ -530,11 +530,11 @@ centers = u * torch.clamp(shape - 1.0, min=1.0)
 **Algorithm**:
 ```python
 # Step 1: Group by AABB dimensions
-groups = _group_by_box(lo, hi)  # Dict[box_shape -> splat_indices]
+groups = group_by_box(lo, hi)  # Dict[box_shape -> splat_indices]
 
 for box_shape, indices in groups.items():
     # Step 2: Generate or retrieve cached grid for this shape
-    base, lin_offsets = _cached_base_and_offsets(box_shape, strides, device)
+    base, lin_offsets = cached_base_and_offsets(box_shape, strides, device)
     # base: (d, P) coordinates in [0, h_i-1]
     # lin_offsets: (P,) flat indices for output accumulation
 
@@ -551,9 +551,9 @@ for box_shape, indices in groups.items():
 
         # Step 6: Solve L*y = delta (batched)
         if d == 2:
-            expo = _fwd_norm2_2d(L, delta[0], delta[1])
+            expo = fwd_norm2_2d(L, delta[0], delta[1])
         elif d == 3:
-            expo = _fwd_norm2_3d(L, delta[0], delta[1], delta[2])
+            expo = fwd_norm2_3d(L, delta[0], delta[1], delta[2])
         else:
             y = torch.linalg.solve_triangular(L, delta, upper=False)
             expo = torch.sum(y * y, dim=1)  # (K, Pc)
