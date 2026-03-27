@@ -95,6 +95,8 @@ def denoise_volume_array(
         Auto-computed to keep memory under ~16 GB if not specified.
         Only used with the ``pytorch`` backend for 3D volumes.
     """
+    import time as _time
+
     import torch
 
     from .nlm_core import denoise_nlm
@@ -104,11 +106,26 @@ def denoise_volume_array(
 
     dev = torch.device(device) if device else None
 
+    # Resolve and log backend
+    from .nlm_core import _resolve_backend
+
+    effective_device = dev if dev is not None else torch.device("cpu")
+    resolved_backend = _resolve_backend(backend, effective_device)
+    mode_str = (
+        "2D slice-by-slice" if (use_2d and norm_vol.ndim == 3) else f"{norm_vol.ndim}D"
+    )
+    aprint(
+        f"NLM denoise: {mode_str}, shape={norm_vol.shape}, "
+        f"h={h:.4f}, backend={resolved_backend}, device={effective_device}"
+    )
+
     # Auto-compute chunk_size for large 3D volumes
     if chunk_size is None and not use_2d and norm_vol.ndim == 3:
         chunk_size = _auto_chunk_size(norm_vol.shape, search_distance, patch_size)
         if chunk_size is not None:
             aprint(f"Auto-chunking: {chunk_size} Z-slices per chunk")
+
+    t0 = _time.monotonic()
 
     if use_2d and norm_vol.ndim == 3:
         # Slice-by-slice 2D NLM
@@ -137,6 +154,9 @@ def denoise_volume_array(
             chunk_size=chunk_size,
         )
         denoised_np = denoised.cpu().numpy()
+
+    elapsed = _time.monotonic() - t0
+    aprint(f"NLM denoise completed in {elapsed:.1f}s")
 
     return denormalize_volume(denoised_np, vmin, vmax)
 
