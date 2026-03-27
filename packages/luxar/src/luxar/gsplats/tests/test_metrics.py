@@ -6,6 +6,9 @@ import pytest
 import torch
 
 from luxar.gsplats.metrics import (
+    _should_tile_ssim,
+    _ssim_nd,
+    _ssim_nd_tiled,
     compute_psnr,
     compute_quality_metrics,
     compute_ssim,
@@ -88,6 +91,17 @@ class TestSSIM:
         b = torch.rand(32, 64, device=device)
         with pytest.raises(ValueError, match="Shape mismatch"):
             compute_ssim(a, b)
+
+    def test_inputs_not_modified(self, device: torch.device) -> None:
+        """In-place optimisations in _ssim_nd must not mutate pred/target."""
+        torch.manual_seed(99)
+        a = torch.rand(32, 32, 32, device=device)
+        b = torch.rand(32, 32, 32, device=device)
+        a_copy = a.clone()
+        b_copy = b.clone()
+        compute_ssim(a, b)
+        assert torch.equal(a, a_copy)
+        assert torch.equal(b, b_copy)
 
 
 # ---------------------------------------------------------------------------
@@ -175,3 +189,120 @@ class TestQualityMetrics:
             sigma=1.5,
         )
         assert ours == pytest.approx(ref, abs=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# _ssim_nd return type
+# ---------------------------------------------------------------------------
+
+
+class TestSSIMReturnType:
+    def test_returns_tuple(self, device: torch.device) -> None:
+        a = torch.rand(32, 32, device=device)
+        result = _ssim_nd(a, a.clone(), window_size=11, data_range=1.0)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        ssim_sum, num_voxels = result
+        assert isinstance(ssim_sum, float)
+        assert isinstance(num_voxels, int)
+        assert num_voxels > 0
+
+    def test_mean_matches_compute_ssim(self, device: torch.device) -> None:
+        """ssim_sum / num_voxels should equal compute_ssim output."""
+        torch.manual_seed(42)
+        a = torch.rand(32, 32, 32, device=device)
+        b = a + 0.1 * torch.randn_like(a)
+        dr = float((b.max() - b.min()).item())
+
+        ssim_sum, num_voxels = _ssim_nd(a, b, window_size=11, data_range=dr)
+        expected = compute_ssim(a, b, data_range=dr)
+        assert ssim_sum / num_voxels == pytest.approx(expected, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Tiled SSIM
+# ---------------------------------------------------------------------------
+
+
+class TestTiledSSIM:
+    def test_tiled_matches_non_tiled_3d(self, device: torch.device) -> None:
+        """Tiled SSIM must match non-tiled to < 1e-4."""
+        torch.manual_seed(42)
+        a = torch.rand(64, 64, 64, device=device)
+        b = a + 0.1 * torch.randn_like(a)
+        dr = 1.0
+
+        s_ref, n_ref = _ssim_nd(a, b, window_size=11, data_range=dr)
+        s_tiled, n_tiled = _ssim_nd_tiled(a, b, window_size=11, data_range=dr, tile_size=32)
+
+        assert n_tiled == n_ref
+        assert s_tiled / n_tiled == pytest.approx(s_ref / n_ref, abs=1e-4)
+
+    def test_tiled_matches_non_tiled_2d(self, device: torch.device) -> None:
+        torch.manual_seed(42)
+        a = torch.rand(128, 128, device=device)
+        b = a + 0.1 * torch.randn_like(a)
+        dr = 1.0
+
+        s_ref, n_ref = _ssim_nd(a, b, window_size=11, data_range=dr)
+        s_tiled, n_tiled = _ssim_nd_tiled(a, b, window_size=11, data_range=dr, tile_size=48)
+
+        assert n_tiled == n_ref
+        assert s_tiled / n_tiled == pytest.approx(s_ref / n_ref, abs=1e-4)
+
+    def test_volume_smaller_than_tile(self, device: torch.device) -> None:
+        """When volume fits in one tile, result is identical to non-tiled."""
+        torch.manual_seed(42)
+        a = torch.rand(16, 16, 16, device=device)
+        b = a + 0.05 * torch.randn_like(a)
+        dr = 1.0
+
+        s_ref, n_ref = _ssim_nd(a, b, window_size=11, data_range=dr)
+        s_tiled, n_tiled = _ssim_nd_tiled(a, b, window_size=11, data_range=dr, tile_size=128)
+
+        assert s_tiled == pytest.approx(s_ref, abs=1e-7)
+        assert n_tiled == n_ref
+
+    def test_tiled_identical_volumes(self, device: torch.device) -> None:
+        """Identical volumes give SSIM ~1.0 even through tiled path."""
+        a = torch.rand(64, 64, 64, device=device)
+        s, n = _ssim_nd_tiled(a, a.clone(), window_size=11, data_range=1.0, tile_size=32)
+        assert s / n == pytest.approx(1.0, abs=1e-5)
+
+    def test_num_voxels_consistency(self, device: torch.device) -> None:
+        """Total voxels from tiled must equal non-tiled valid region."""
+        torch.manual_seed(42)
+        a = torch.rand(48, 48, 48, device=device)
+        b = a + 0.05 * torch.randn_like(a)
+        dr = 1.0
+
+        _, n_ref = _ssim_nd(a, b, window_size=11, data_range=dr)
+        _, n_tiled = _ssim_nd_tiled(a, b, window_size=11, data_range=dr, tile_size=24)
+        assert n_tiled == n_ref
+
+    def test_non_cubic_volume(self, device: torch.device) -> None:
+        """Tiling works correctly for non-cubic volumes."""
+        torch.manual_seed(42)
+        a = torch.rand(100, 40, 60, device=device)
+        b = a + 0.1 * torch.randn_like(a)
+        dr = 1.0
+
+        s_ref, n_ref = _ssim_nd(a, b, window_size=11, data_range=dr)
+        s_tiled, n_tiled = _ssim_nd_tiled(a, b, window_size=11, data_range=dr, tile_size=32)
+
+        assert n_tiled == n_ref
+        assert s_tiled / n_tiled == pytest.approx(s_ref / n_ref, abs=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# Auto-tiling heuristic
+# ---------------------------------------------------------------------------
+
+
+class TestShouldTile:
+    def test_cpu_never_tiles(self) -> None:
+        assert _should_tile_ssim((1000, 1000, 1000), torch.device("cpu")) is False
+
+    def test_small_volume_no_tile(self, device: torch.device) -> None:
+        # 32^3 * 4 bytes * 8 ≈ 1 MB — should never exceed 50% GPU memory
+        assert _should_tile_ssim((32, 32, 32), device) is False

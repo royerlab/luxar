@@ -7,7 +7,9 @@ to CPU (via ``.item()``).
 
 from __future__ import annotations
 
-from typing import Dict
+import itertools
+import math
+from typing import Dict, List, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -15,6 +17,13 @@ import torch.nn.functional as F
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# Estimated peak live full-volume tensors in the optimised _ssim_nd (used by
+# the auto-tiling heuristic).  The actual peak is 6, we use 8 for safety.
+_SSIM_PEAK_TENSOR_COUNT = 8
+
+# Default tile size (per spatial axis) for tiled SSIM.
+_SSIM_DEFAULT_TILE_SIZE = 128
 
 
 def _gaussian_kernel_1d(
@@ -44,8 +53,38 @@ def _gaussian_kernel_nd(
     return kernel.unsqueeze(0).unsqueeze(0)
 
 
+def _gpu_free_memory(device: torch.device) -> int | None:
+    """Return free GPU memory in bytes, or *None* for non-CUDA devices."""
+    if device.type != "cuda":
+        return None
+    try:
+        free, _total = torch.cuda.mem_get_info(device)
+        return free
+    except Exception:
+        return None
+
+
+def _should_tile_ssim(
+    shape: Tuple[int, ...],
+    device: torch.device,
+    memory_fraction: float = 0.5,
+) -> bool:
+    """Decide whether SSIM should use the tiled path.
+
+    Returns *True* if the estimated peak memory of the non-tiled path
+    exceeds *memory_fraction* of free GPU memory.  Always *False* for
+    CPU tensors.
+    """
+    free = _gpu_free_memory(device)
+    if free is None:
+        return False
+    numel = math.prod(shape)
+    peak_bytes = _SSIM_PEAK_TENSOR_COUNT * numel * 4  # float32
+    return peak_bytes > memory_fraction * free
+
+
 # ---------------------------------------------------------------------------
-# SSIM
+# SSIM (core — memory-optimised)
 # ---------------------------------------------------------------------------
 
 
@@ -54,12 +93,18 @@ def _ssim_nd(
     target: torch.Tensor,
     window_size: int,
     data_range: float,
-) -> float:
+) -> Tuple[float, int]:
     """Compute SSIM for a 2-D or 3-D tensor pair using convolution.
 
     Uses valid (no-padding) convolution so the border region — where the
     kernel would overlap with implicit zeros — is excluded from the mean.
     This matches the standard scikit-image implementation.
+
+    Returns ``(ssim_sum, num_voxels)`` so callers can do voxel-weighted
+    averaging across tiles.  Mean SSIM = ``ssim_sum / num_voxels``.
+
+    Memory-optimised: peak ~6 live full-volume tensors (down from ~15 in
+    the naive implementation) via in-place ops and explicit ``del``.
     """
     ndim = pred.ndim
     if ndim not in (2, 3):
@@ -77,24 +122,144 @@ def _ssim_nd(
     t = target.unsqueeze(0).unsqueeze(0)
 
     conv_fn = F.conv2d if ndim == 2 else F.conv3d
-    # padding=0 → valid convolution: output excludes border pixels
-    # where the kernel would extend beyond the input.
+
+    # --- Step 1: means (live: mu_p, mu_t = 2 tensors) ---
     mu_p = conv_fn(p, kernel, padding=0)
     mu_t = conv_fn(t, kernel, padding=0)
 
-    mu_p_sq = mu_p * mu_p
-    mu_t_sq = mu_t * mu_t
+    # --- Step 2: squared / cross means (live: +3 = 5 tensors) ---
+    mu_p_sq = mu_p.square()
+    mu_t_sq = mu_t.square()
     mu_pt = mu_p * mu_t
+    del mu_p, mu_t  # live: mu_p_sq, mu_t_sq, mu_pt = 3
 
-    sigma_p_sq = conv_fn(p * p, kernel, padding=0) - mu_p_sq
-    sigma_t_sq = conv_fn(t * t, kernel, padding=0) - mu_t_sq
-    sigma_pt = conv_fn(p * t, kernel, padding=0) - mu_pt
+    # --- Step 3: sigmas (live: peak 6 tensors) ---
+    sigma_p_sq = conv_fn(p * p, kernel, padding=0)
+    sigma_p_sq.sub_(mu_p_sq)
 
-    ssim_map = ((2.0 * mu_pt + C1) * (2.0 * sigma_pt + C2)) / (
-        (mu_p_sq + mu_t_sq + C1) * (sigma_p_sq + sigma_t_sq + C2)
-    )
+    sigma_t_sq = conv_fn(t * t, kernel, padding=0)
+    sigma_t_sq.sub_(mu_t_sq)
 
-    return ssim_map.mean().item()
+    sigma_pt = conv_fn(p * t, kernel, padding=0)
+    sigma_pt.sub_(mu_pt)
+
+    del p, t  # free unsqueezed views
+
+    # --- Step 4: numerator in-place (reuse mu_pt, sigma_pt) ---
+    # numerator = (2*mu_pt + C1) * (2*sigma_pt + C2)
+    mu_pt.mul_(2.0).add_(C1)       # mu_pt -> numerator_a
+    sigma_pt.mul_(2.0).add_(C2)    # sigma_pt -> numerator_b
+    mu_pt.mul_(sigma_pt)           # mu_pt -> full numerator
+    del sigma_pt                   # live: mu_p_sq, mu_t_sq, sigma_p_sq, sigma_t_sq, mu_pt = 5
+
+    # --- Step 5: denominator in-place (reuse mu_p_sq, sigma_p_sq) ---
+    # denominator = (mu_p_sq + mu_t_sq + C1) * (sigma_p_sq + sigma_t_sq + C2)
+    mu_p_sq.add_(mu_t_sq).add_(C1)         # mu_p_sq -> denom_a
+    del mu_t_sq                             # live: 4
+    sigma_p_sq.add_(sigma_t_sq).add_(C2)   # sigma_p_sq -> denom_b
+    del sigma_t_sq                          # live: 3
+    mu_p_sq.mul_(sigma_p_sq)               # mu_p_sq -> full denominator
+    del sigma_p_sq                          # live: mu_pt(=num), mu_p_sq(=den) = 2
+
+    # --- Step 6: SSIM map ---
+    mu_pt.div_(mu_p_sq)  # mu_pt -> ssim_map
+    del mu_p_sq           # live: 1
+
+    ssim_sum = float(mu_pt.sum().item())
+    num_voxels = mu_pt.numel()
+    del mu_pt
+
+    return ssim_sum, num_voxels
+
+
+# ---------------------------------------------------------------------------
+# SSIM (tiled)
+# ---------------------------------------------------------------------------
+
+
+def _compute_tile_slices(
+    volume_shape: Tuple[int, ...],
+    tile_size: int,
+    overlap: int,
+) -> List[Tuple[slice, ...]]:
+    """Generate overlapping tile slices covering a volume.
+
+    Each tile is *tile_size* voxels per axis.  Adjacent tiles overlap by
+    *overlap* voxels so that valid-convolution outputs abut seamlessly.
+    The last tile on each axis is extended to reach the volume boundary.
+    """
+    ndim = len(volume_shape)
+    stride = tile_size - overlap
+
+    axis_slices: List[List[slice]] = []
+    for d in range(ndim):
+        size = volume_shape[d]
+        slices_d: List[slice] = []
+        pos = 0
+        while pos < size:
+            end = min(pos + tile_size, size)
+            # If the remaining strip is too small for a valid conv, merge
+            # it into the previous tile.
+            if end - pos <= overlap and slices_d:
+                prev = slices_d[-1]
+                slices_d[-1] = slice(prev.start, end)
+            else:
+                slices_d.append(slice(pos, end))
+            pos += stride
+        axis_slices.append(slices_d)
+
+    return list(itertools.product(*axis_slices))
+
+
+def _ssim_nd_tiled(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    window_size: int,
+    data_range: float,
+    tile_size: int = _SSIM_DEFAULT_TILE_SIZE,
+) -> Tuple[float, int]:
+    """Compute SSIM by splitting the volume into overlapping tiles.
+
+    Each tile overlaps its neighbours by ``window_size - 1`` voxels.
+    Because ``_ssim_nd`` uses valid convolution (``padding=0``), the
+    overlap region is exactly the border that gets trimmed — so each
+    tile's output covers a non-overlapping region of the full SSIM map.
+    The tiled result is therefore numerically identical to the non-tiled
+    result (modulo float summation order).
+
+    Returns ``(ssim_sum, num_voxels)`` — same contract as ``_ssim_nd``.
+    """
+    ndim = pred.ndim
+    overlap = window_size - 1
+
+    # If volume fits in a single tile, skip tiling overhead.
+    if all(s <= tile_size for s in pred.shape):
+        return _ssim_nd(pred, target, window_size, data_range)
+
+    tile_slices = _compute_tile_slices(pred.shape, tile_size, overlap)
+
+    total_sum = 0.0
+    total_voxels = 0
+
+    for slices in tile_slices:
+        tile_p = pred[slices]
+        tile_t = target[slices]
+
+        # Skip tiles too small for the convolution kernel.
+        if any(tile_p.shape[d] < window_size for d in range(ndim)):
+            continue
+
+        s, n = _ssim_nd(tile_p, tile_t, window_size, data_range)
+        del tile_p, tile_t
+        total_sum += s
+        total_voxels += n
+
+    return total_sum, total_voxels
+
+
+# ---------------------------------------------------------------------------
+# SSIM (public API)
+# ---------------------------------------------------------------------------
 
 
 def compute_ssim(
@@ -108,6 +273,10 @@ def compute_ssim(
     For 2-D and 3-D tensors a true n-D SSIM is computed via ``F.conv{2,3}d``.
     For higher-dimensional tensors the SSIM is averaged over all 3-D
     sub-volumes along the leading dimensions.
+
+    Large volumes are automatically split into overlapping tiles to avoid
+    GPU out-of-memory errors.  The tiling threshold is based on estimated
+    peak memory vs. available GPU memory.
 
     Parameters
     ----------
@@ -139,17 +308,29 @@ def compute_ssim(
 
     ndim = pred.ndim
     if ndim in (2, 3):
-        return _ssim_nd(pred, target, window_size, data_range)
+        use_tiled = _should_tile_ssim(pred.shape, pred.device)
+        if use_tiled:
+            s_sum, n_vox = _ssim_nd_tiled(pred, target, window_size, data_range)
+        else:
+            s_sum, n_vox = _ssim_nd(pred, target, window_size, data_range)
+        return s_sum / n_vox if n_vox > 0 else 0.0
 
-    # >3D: average SSIM over all 3D sub-volumes along leading dims
+    # >3D: voxel-weighted average over all 3D sub-volumes along leading dims
     leading = pred.shape[:-3]
-    total = 0.0
-    count = 0
+    total_sum = 0.0
+    total_voxels = 0
     for idx in torch.cartesian_prod(*[torch.arange(s) for s in leading]):
         idx_tuple = tuple(idx.tolist()) if idx.ndim > 0 else (idx.item(),)
-        total += _ssim_nd(pred[idx_tuple], target[idx_tuple], window_size, data_range)
-        count += 1
-    return total / count if count > 0 else 0.0
+        sub_p = pred[idx_tuple]
+        sub_t = target[idx_tuple]
+        use_tiled = _should_tile_ssim(sub_p.shape, sub_p.device)
+        if use_tiled:
+            s, n = _ssim_nd_tiled(sub_p, sub_t, window_size, data_range)
+        else:
+            s, n = _ssim_nd(sub_p, sub_t, window_size, data_range)
+        total_sum += s
+        total_voxels += n
+    return total_sum / total_voxels if total_voxels > 0 else 0.0
 
 
 # ---------------------------------------------------------------------------
