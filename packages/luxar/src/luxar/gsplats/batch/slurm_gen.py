@@ -55,6 +55,9 @@ def generate_fit_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.append("")
     lines.append(env_preamble)
     lines.append("")
+    lines.append("# Unbuffered Python output for real-time Slurm logging")
+    lines.append("export PYTHONUNBUFFERED=1")
+    lines.append("")
 
     # Compute printf format widths so filenames sort lexicographically.
     # When --timepoints slicing is used, the REAL indices (e.g. 1430) are
