@@ -477,10 +477,15 @@ export class LuxarApp {
    */
   private setupFocusHandling(): void {
     this.boundFocusHandler = () => {
+      // Suppress focus-triggered renders during recording — they can interfere
+      // with the deterministic capture loop or cause resize side effects
+      if (this.recordingPanel?.isCurrentlyRecording()) return;
       this.animationController.startAnimation();
       log.info(Modules.LUXAR, 'Window focused - triggering render refresh');
     };
     this.boundVisibilityHandler = () => {
+      // Don't stop animation during recording (offline capture needs the loop alive)
+      if (this.recordingPanel?.isCurrentlyRecording()) return;
       if (document.hidden) {
         this.animationController.stopAnimation();
         log.info(Modules.LUXAR, 'Document hidden - stopping animation to save resources');
