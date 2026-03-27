@@ -460,15 +460,10 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Initialize HDR post-processing pipeline for advanced visual effects
+   * Initialize the HDR post-processing pipeline (pmndrs/postprocessing).
    *
-   * This creates a sophisticated rendering chain:
-   * 1. Scene renders to HDR buffer (16-bit float precision)
-   * 2. UnrealBloomPass creates glow effects on bright areas
-   * 3. OutputPass applies ACES tone mapping and sRGB conversion
-   *
-   * The result is professional-quality rendering with realistic bloom
-   * effects and proper color management for accurate display.
+   * Creates an EffectComposer with 16-bit float buffers, bloom, tone mapping,
+   * and optional AA effects. See PostProcessingManager for the full pipeline.
    */
   private setupPostProcessing(): void {
     // Get canvas dimensions for proper HDR render target sizing
@@ -481,9 +476,6 @@ export class SceneManager extends THREE.EventDispatcher<{
       width,
       height,
     });
-
-    // Log shader configuration for debugging
-    // Shader configuration logging removed - now handled by PointMaterial
 
     log.success(Modules.POST_PROCESSING, 'HDR pipeline initialized');
   }
@@ -967,13 +959,6 @@ export class SceneManager extends THREE.EventDispatcher<{
     );
   }
 
-  /**
-   * Update renderer and camera for window resize (debounced)
-   *
-   * This method debounces resize events using requestAnimationFrame to prevent
-   * excessive WebGL buffer reallocations during window dragging. Multiple rapid
-   * resize events are coalesced into a single update on the next frame.
-   */
   /**
    * Update canvas size and camera aspect ratio for window resize.
    *
@@ -1526,7 +1511,7 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Clean up all Three.js resources to prevent memory leaks
+   * Clean up all Three.js resources to prevent memory leaks.
    *
    * WebGL resources (textures, buffers, shaders) are not automatically
    * garbage collected and must be explicitly disposed. This method ensures
@@ -1538,27 +1523,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * 4. Scene objects: Dispose geometry buffers and material shaders
    * 5. Materials: Free texture memory and shader programs
    *
-   * Critical for preventing memory leaks in long-running applications.
-   */
-  /**
-   * Clean up all Three.js resources and prevent memory leaks.
-   *
-   * Disposes:
-   * - All geometries and materials in scene
-   * - Renderer and render targets
-   * - Post-processing effects
-   * - Camera controls
-   * - Event listeners (context loss, resize, etc.)
-   *
-   * Should be called when scene manager is no longer needed. After calling
-   * dispose(), the scene manager cannot be reused - create a new instance.
-   *
-   * @example
-   * ```typescript
-   * // During application teardown
-   * sceneManager.dispose();
-   * // All WebGL resources released
-   * ```
+   * After calling dispose(), the scene manager cannot be reused.
    */
   dispose(): void {
     // Cancel any pending resize operations to prevent memory leaks

@@ -476,12 +476,6 @@ export class PostProcessingManager {
   }
 
   /**
-   * Updates bloom effect parameters
-   * @param strength - Bloom intensity multiplier (0-2+ range typically)
-   * @param radius - Mipmap blur radius (0-1+ range typically)
-   * @param threshold - Luminance threshold (0-1 range, higher = less bloom)
-   */
-  /**
    * Update bloom effect parameters.
    *
    * Controls HDR bloom glow intensity, spread, and brightness threshold.
@@ -582,9 +576,6 @@ export class PostProcessingManager {
   }
 
   /**
-   * Sets the tone mapping mode
-   */
-  /**
    * Set HDR tone mapping algorithm.
    *
    * Converts HDR scene values to displayable LDR range. Different algorithms
@@ -614,9 +605,6 @@ export class PostProcessingManager {
     log.update(Modules.POST_PROCESSING, `Tone mapping set to: ${modeName}`);
   }
 
-  /**
-   * Gets the current tone mapping mode as THREE constant
-   */
   /**
    * Get current tone mapping mode.
    *
@@ -668,9 +656,6 @@ export class PostProcessingManager {
     }
   }
 
-  /**
-   * Enables or disables FXAA anti-aliasing
-   */
   /**
    * Enable or disable FXAA (Fast Approximate Anti-Aliasing).
    *
@@ -1140,10 +1125,6 @@ export class PostProcessingManager {
     }
   }
 
-  /**
-   * Check if any effects require continuous animation
-   * @returns True if animation should continue running
-   */
   /**
    * Check if any active effects require continuous rendering.
    *
