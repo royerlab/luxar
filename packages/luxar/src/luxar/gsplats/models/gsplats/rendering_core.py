@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 
-def _calculate_optimal_chunk_size(
+def calculate_optimal_chunk_size(
     K: int, d: int, device: torch.device, dtype: torch.dtype
 ) -> int:
     """
@@ -98,7 +98,7 @@ def clear_grid_cache() -> None:
     _GRID_CACHE.clear()
 
 
-def _cached_base_and_offsets(
+def cached_base_and_offsets(
     box_shape: Sequence[int],
     strides: torch.Tensor,  # (d,), long
     device: torch.device,
@@ -135,7 +135,7 @@ def _cached_base_and_offsets(
 
 
 @torch.jit.ignore  # type: ignore[untyped-decorator]  # jit-able but optional; ignore keeps it simple if torch.compile() is used outside
-def _group_by_box_gpu(
+def group_by_box_gpu(
     lo: torch.Tensor, hi: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
@@ -158,7 +158,7 @@ def _group_by_box_gpu(
 # ---- Explicit forward-substitution for 2D/3D (no linalg kernels) -----------
 
 
-def _fwd_norm2_2d(L: torch.Tensor, d0: torch.Tensor, d1: torch.Tensor) -> torch.Tensor:
+def fwd_norm2_2d(L: torch.Tensor, d0: torch.Tensor, d1: torch.Tensor) -> torch.Tensor:
     """
     Solve L y = [d0, d1]^T for each splat (batched) and return ||y||^2.
     L: (K, 2, 2), d0/d1: (K, P)
@@ -173,7 +173,7 @@ def _fwd_norm2_2d(L: torch.Tensor, d0: torch.Tensor, d1: torch.Tensor) -> torch.
     return y0.mul(y0).add_(y1.mul(y1))
 
 
-def _fwd_norm2_3d(
+def fwd_norm2_3d(
     L: torch.Tensor, d0: torch.Tensor, d1: torch.Tensor, d2: torch.Tensor
 ) -> torch.Tensor:
     """
@@ -197,7 +197,7 @@ def _fwd_norm2_3d(
 # ---- Helper functions for nD rendering --------------------------------------
 
 
-def _linear_strides(shape: Sequence[int], device: torch.device | str) -> torch.Tensor:
+def linear_strides(shape: Sequence[int], device: torch.device | str) -> torch.Tensor:
     """Row-major linear strides for an nD tensor with given shape."""
     d = len(shape)
     s = [1]
@@ -206,7 +206,7 @@ def _linear_strides(shape: Sequence[int], device: torch.device | str) -> torch.T
     return torch.tensor(s, device=device, dtype=torch.long)  # (d,)
 
 
-def _group_by_box(
+def group_by_box(
     lo: torch.Tensor, hi: torch.Tensor
 ) -> Dict[Tuple[int, ...], torch.Tensor]:
     """
@@ -241,7 +241,7 @@ def _group_by_box(
 # ---- Specialized renderers --------------------------------------------------
 
 
-def _compute_aabb_with_intensity_floor(
+def compute_aabb_with_intensity_floor(
     centers: torch.Tensor,
     Ls: torch.Tensor,
     amps: torch.Tensor,
@@ -335,10 +335,10 @@ def _render_gaussians_2d(
     device = centers.device
     out = torch.zeros(tuple(shape), dtype=torch.float32, device=device)
     out_flat = out.view(-1)
-    strides = _linear_strides(shape, device)  # (2,)
+    strides = linear_strides(shape, device)  # (2,)
 
     # Compute AABB bounds using helper
-    lo, hi, valid = _compute_aabb_with_intensity_floor(
+    lo, hi, valid = compute_aabb_with_intensity_floor(
         centers, Ls, amps, shape, truncate, intensity_floor, device
     )
 
@@ -354,7 +354,7 @@ def _render_gaussians_2d(
             return out
 
     # Group on GPU
-    uniq, inv = _group_by_box_gpu(lo, hi)
+    uniq, inv = group_by_box_gpu(lo, hi)
 
     for g in range(uniq.shape[0]):
         box_shape = uniq[g].tolist()  # [h0, h1]
@@ -365,14 +365,14 @@ def _render_gaussians_2d(
         a = amps[idx]  # (K,)
         lo_sel = lo[idx]  # (K,2)
 
-        base, lin_offsets = _cached_base_and_offsets(
+        base, lin_offsets = cached_base_and_offsets(
             box_shape, strides, device, dtype=torch.float32
         )  # (2,P), (P,)
         base_idx = (lo_sel.to(torch.long) * strides).sum(dim=1)  # (K,)
 
         P = base.shape[1]
         # Calculate optimal chunk size for memory management (2D)
-        P_chunk = chunk_size or _calculate_optimal_chunk_size(
+        P_chunk = chunk_size or calculate_optimal_chunk_size(
             K=len(idx), d=2, device=device, dtype=torch.float32
         )
         for p0 in range(0, P, P_chunk):
@@ -381,7 +381,7 @@ def _render_gaussians_2d(
             d1 = base[1, p0:p1][None, :] + lo_sel[:, 1:2] - mu[:, 1:2]  # (K,Pc)
 
             # ||y||^2 via explicit forward-substitution
-            dist_sq = _fwd_norm2_2d(L, d0, d1)  # (K,Pc)
+            dist_sq = fwd_norm2_2d(L, d0, d1)  # (K,Pc)
 
             # Standard Gaussian: exp(-0.5 * ||y||^2)
             vals = torch.exp(-0.5 * dist_sq) * a[:, None]
@@ -405,10 +405,10 @@ def _render_gaussians_3d(
     device = centers.device
     out = torch.zeros(tuple(shape), dtype=torch.float32, device=device)
     out_flat = out.view(-1)
-    strides = _linear_strides(shape, device)  # (3,)
+    strides = linear_strides(shape, device)  # (3,)
 
     # Compute AABB bounds using helper
-    lo, hi, valid = _compute_aabb_with_intensity_floor(
+    lo, hi, valid = compute_aabb_with_intensity_floor(
         centers, Ls, amps, shape, truncate, intensity_floor, device
     )
 
@@ -424,7 +424,7 @@ def _render_gaussians_3d(
             return out
 
     # Group on GPU
-    uniq, inv = _group_by_box_gpu(lo, hi)
+    uniq, inv = group_by_box_gpu(lo, hi)
 
     for g in range(uniq.shape[0]):
         box_shape = uniq[g].tolist()  # [h0, h1, h2]
@@ -435,14 +435,14 @@ def _render_gaussians_3d(
         a = amps[idx]  # (K,)
         lo_sel = lo[idx]  # (K,3)
 
-        base, lin_offsets = _cached_base_and_offsets(
+        base, lin_offsets = cached_base_and_offsets(
             box_shape, strides, device, dtype=torch.float32
         )  # (3,P),(P,)
         base_idx = (lo_sel.to(torch.long) * strides).sum(dim=1)  # (K,)
 
         P = base.shape[1]
         # Calculate optimal chunk size for memory management (3D)
-        P_chunk = chunk_size or _calculate_optimal_chunk_size(
+        P_chunk = chunk_size or calculate_optimal_chunk_size(
             K=len(idx), d=3, device=device, dtype=torch.float32
         )
         for p0 in range(0, P, P_chunk):
@@ -451,7 +451,7 @@ def _render_gaussians_3d(
             d1 = base[1, p0:p1][None, :] + lo_sel[:, 1:2] - mu[:, 1:2]
             d2 = base[2, p0:p1][None, :] + lo_sel[:, 2:3] - mu[:, 2:3]
 
-            dist_sq = _fwd_norm2_3d(L, d0, d1, d2)  # (K,Pc)
+            dist_sq = fwd_norm2_3d(L, d0, d1, d2)  # (K,Pc)
 
             # Standard Gaussian: exp(-0.5 * ||y||^2)
             vals = torch.exp(-0.5 * dist_sq) * a[:, None]
@@ -516,10 +516,10 @@ def render_gaussians(
     device = centers.device
     out = torch.zeros(tuple(shape), dtype=torch.float32, device=device)
     out_flat = out.view(-1)
-    strides = _linear_strides(shape, device)  # (d,)
+    strides = linear_strides(shape, device)  # (d,)
 
     # Compute AABB bounds using helper
-    lo, hi, valid = _compute_aabb_with_intensity_floor(
+    lo, hi, valid = compute_aabb_with_intensity_floor(
         centers, Ls, amps, shape, truncate, intensity_floor, device
     )
 
@@ -535,7 +535,7 @@ def render_gaussians(
         return out
 
     # --- Group by box size for reuse of base grid ---
-    groups = _group_by_box(lo, hi)  # { (h1,..,hd) : idx }
+    groups = group_by_box(lo, hi)  # { (h1,..,hd) : idx }
     for box_shape, idx in groups.items():
         # Splat subset
         mu = centers[idx]  # (K, d)
@@ -560,7 +560,7 @@ def render_gaussians(
 
         # *** MEMORY OPTIMIZATION: Process P dimension in chunks to prevent OOM ***
         # Calculate optimal chunk size based on available memory and tensor dimensions
-        P_chunk = chunk_size or _calculate_optimal_chunk_size(
+        P_chunk = chunk_size or calculate_optimal_chunk_size(
             K=len(idx), d=d, device=device, dtype=torch.float32
         )
         for p0 in range(0, P, P_chunk):

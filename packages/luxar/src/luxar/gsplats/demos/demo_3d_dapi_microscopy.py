@@ -3,6 +3,7 @@
 3D DAPI Microscopy - Real Biological Data from Image Data Resource
 
 **What this demo demonstrates:**
+- **GPU-accelerated Non-Local Means (NLM) denoising** with auto-calibrated h
 - 3D Gaussian splatting on real DAPI-stained nuclear microscopy data
 - **Metal acceleration on Apple Silicon (3-7x speedup automatically!)**
 - Remote zarr data loading from Image Data Resource (IDR)
@@ -12,6 +13,7 @@
 - 3D ellipsoid fitting to real biological structures
 
 **Key concepts:**
+- **GPU-accelerated NLM denoising** with Noise2Self auto-calibration (before fitting)
 - Real data challenges: Noise, irregular shapes, varying intensities
 - OME-ZARR: Standard format for multi-dimensional microscopy data
 - Remote loading: Uses fsspec to stream zarr data from IDR
@@ -26,7 +28,9 @@
 - Fallback: Creates synthetic nucleus-like blobs if remote load fails
 
 **Visualization:** 3D napari viewer with MIP rendering (all layers gray/white LUT)
-- DAPI input volume
+- DAPI raw (noisy) volume
+- DAPI NLM-denoised volume (before/after comparison)
+- NLM removed noise (absolute difference)
 - Final reconstruction from fitted model (with PSNR/compression stats)
 - Final residual: original minus reconstruction
 - Compression sweep: reconstruction at varying splat counts (slider)
@@ -68,11 +72,14 @@ DEVICE = None  # None -> auto: CUDA on Linux with NVIDIA, MPS on macOS, CPU fall
 N_FRAMES = 30  # number of compression steps (<= #splats)
 ZARR_URL = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.2/6001240.zarr"
 DAPI_CHANNEL = 1  # DAPI is typically channel 1 (0-indexed)
-TARGET_SIZE = 128  # Downscale to this size for manageable computation
+TARGET_SIZE = None  # Downscale to this size for manageable computation
 TIME_POINT = 0  # Use first time point
 # Hardware acceleration (enabled by default, auto-detected)
 USE_METAL = True  # Enable Metal acceleration on Apple Silicon (3-7x faster!)
 USE_CUDA = True  # Enable CUDA acceleration on NVIDIA GPUs (10-50x faster!)
+# NLM denoising parameters
+NLM_PATCH_SIZE = 3
+NLM_PATCH_DISTANCE = 5
 # ==========================
 
 # Setup Arbol
@@ -220,20 +227,21 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                 V = data[DAPI_CHANNEL, :, :, :]
                 V = np.array(V, dtype=np.float32)
 
-                # Downscale to target size using zoom
-                from scipy.ndimage import zoom
+                if TARGET_SIZE:
+                    # Downscale to target size using zoom
+                    from scipy.ndimage import zoom
 
-                zoom_factors = [
-                    TARGET_SIZE / z_size,
-                    TARGET_SIZE / y_size,
-                    TARGET_SIZE / x_size,
-                ]
-                aprint(
-                    f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
-                    f" X={zoom_factors[2]:.3f}"
-                )
-                V = zoom(V, zoom_factors, order=1)
-                aprint(f"Downscaled to: {V.shape}")
+                    zoom_factors = [
+                        TARGET_SIZE / z_size,
+                        TARGET_SIZE / y_size,
+                        TARGET_SIZE / x_size,
+                    ]
+                    aprint(
+                        f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
+                        f" X={zoom_factors[2]:.3f}"
+                    )
+                    V = zoom(V, zoom_factors, order=1)
+                    aprint(f"Downscaled to: {V.shape}")
 
             elif len(full_shape) == 3:
                 # Single channel, just ZYX
@@ -245,20 +253,21 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                 V = data[:, :, :]
                 V = np.array(V, dtype=np.float32)
 
-                # Downscale to target size using zoom
-                from scipy.ndimage import zoom
+                if TARGET_SIZE:
+                    # Downscale to target size using zoom
+                    from scipy.ndimage import zoom
 
-                zoom_factors = [
-                    TARGET_SIZE / z_size,
-                    TARGET_SIZE / y_size,
-                    TARGET_SIZE / x_size,
-                ]
-                aprint(
-                    f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
-                    f" X={zoom_factors[2]:.3f}"
-                )
-                V = zoom(V, zoom_factors, order=1)
-                aprint(f"Downscaled to: {V.shape}")
+                    zoom_factors = [
+                        TARGET_SIZE / z_size,
+                        TARGET_SIZE / y_size,
+                        TARGET_SIZE / x_size,
+                    ]
+                    aprint(
+                        f"Zoom: Z={zoom_factors[0]:.3f} Y={zoom_factors[1]:.3f}"
+                        f" X={zoom_factors[2]:.3f}"
+                    )
+                    V = zoom(V, zoom_factors, order=1)
+                    aprint(f"Downscaled to: {V.shape}")
             else:
                 raise ValueError(f"Unexpected shape: {full_shape}. Expected 3D/4D/5D.")
 
@@ -278,7 +287,8 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             aprint("Falling back to synthetic phantom data for demo purposes")
 
             # Create synthetic data as fallback
-            shape_3d = (TARGET_SIZE, TARGET_SIZE, TARGET_SIZE)
+            fallback_size = TARGET_SIZE if TARGET_SIZE is not None else 128
+            shape_3d = (fallback_size, fallback_size, fallback_size)
             V = np.zeros(shape_3d, dtype=np.float32)
 
             # Add nucleus-like blobs
@@ -295,6 +305,84 @@ with asection("3D DAPI Gaussian Splatting Demo"):
 
             V = np.clip(V, 0, 100).astype(np.float32)
             aprint(f"Created synthetic DAPI-like volume: {V.shape}")
+
+    # ----- NLM Denoising -----
+    with asection("NLM Denoising (GPU-accelerated)"):
+        import torch
+
+        from luxar.gsplats.preprocessing import calibrate_nlm_h, denoise_nlm
+
+        denoise_device = "cpu"
+        if USE_CUDA and torch.cuda.is_available():
+            denoise_device = "cuda"
+        elif USE_METAL and torch.backends.mps.is_available():
+            denoise_device = "mps"
+        aprint(f"Denoising device: {denoise_device}")
+
+        vol_tensor = torch.from_numpy(V)
+
+        with asection("Calibrating NLM h (Noise2Self / J-invariant)"):
+            h = calibrate_nlm_h(
+                vol_tensor,
+                patch_size=NLM_PATCH_SIZE,
+                search_distance=NLM_PATCH_DISTANCE,
+                use_2d_slice=True,
+                device=denoise_device,
+            )
+            aprint(f"Calibrated h = {h:.6f}")
+
+        with asection("Applying Non-Local Means denoising"):
+            V_raw = V.copy()  # keep original for napari comparison
+            V_denoised = denoise_nlm(
+                vol_tensor.to(denoise_device),
+                h=h,
+                patch_size=NLM_PATCH_SIZE,
+                search_distance=NLM_PATCH_DISTANCE,
+            )
+            if isinstance(V_denoised, torch.Tensor):
+                V_denoised = V_denoised.cpu().numpy()
+            V = V_denoised.astype(np.float32)
+            aprint(f"Denoised volume range: [{V.min():.2f}, {V.max():.2f}]")
+
+    # ----- Show denoising comparison in napari (blocking) -----
+    if not NO_NAPARI:
+        import napari
+
+        aprint("🔬 Launching napari to compare raw vs denoised...")
+        aprint("   Close the napari window to continue with splat fitting.")
+        denoise_viewer = napari.Viewer(
+            title="NLM Denoising — close to continue fitting", ndisplay=3
+        )
+
+        denoise_viewer.add_image(
+            V_raw,
+            name="DAPI (raw / noisy)",
+            colormap="gray",
+            contrast_limits=[0, float(V_raw.max())],
+            rendering="mip",
+        )
+        denoise_viewer.add_image(
+            V,
+            name="DAPI (NLM denoised)",
+            colormap="gray",
+            contrast_limits=[0, float(V.max())],
+            rendering="mip",
+        )
+        denoise_diff = np.abs(V_raw - V)
+        denoise_viewer.add_image(
+            denoise_diff,
+            name="NLM removed noise",
+            colormap="gray",
+            contrast_limits=[0, max(1e-12, float(denoise_diff.max()))],
+            rendering="mip",
+            visible=False,
+        )
+
+        denoise_viewer.camera.angles = (45, 45, 45)
+        denoise_viewer.camera.zoom = 2.0
+
+        napari.run()  # blocks until user closes the window
+        aprint("Napari closed — continuing with splat fitting...")
 
     # Device auto-detection: fitter will automatically select best backend:
     # - Linux + NVIDIA GPU: CUDA with custom kernels (10-50x speedup)
@@ -463,14 +551,20 @@ for i, K in enumerate(keep_counts[::5]):  # Show every 5th frame
 if not NO_NAPARI:
     import napari
 
-    # ----- Napari viewer with "compression" slider -----
-    aprint("🔬 Launching interactive 3D napari viewer...")
+    aprint("🔬 Launching napari viewer with full results...")
     viewer = napari.Viewer(title="3D DAPI Gaussian Splatting Demo", ndisplay=3)
 
-    # Add original DAPI volume
+    # Denoising layers
+    viewer.add_image(
+        V_raw,
+        name="DAPI (raw / noisy)",
+        colormap="gray",
+        contrast_limits=[0, float(V_raw.max())],
+        rendering="mip",
+    )
     viewer.add_image(
         V,
-        name="DAPI (input)",
+        name="DAPI (NLM denoised)",
         colormap="gray",
         contrast_limits=[0, float(V.max())],
         rendering="mip",
@@ -548,17 +642,19 @@ if not NO_NAPARI:
     aprint("   • Toggle layers on/off to compare input vs reconstruction")
     aprint("")
     aprint("📊 Layer guide:")
-    aprint("   • 'DAPI (input)' = original volume")
+    aprint("   • 'DAPI (raw / noisy)' = original volume before denoising")
+    aprint("   • 'DAPI (NLM denoised)' = after GPU-accelerated NLM denoising")
     aprint(
         "   • 'final reconstruction' = fitted model output "
         f"({n_splats_final} splats, PSNR {psnr_final:.1f} dB)"
     )
-    aprint("   • 'final residual' = original minus reconstruction")
+    aprint("   • 'final residual' = denoised minus reconstruction")
     aprint("   • 'reconstruction (compression...)' = compression sweep (slider)")
     aprint("   • 'absolute residual' = compression sweep residual (slider)")
     aprint("")
     aprint("🔍 What to notice:")
-    aprint("   • Toggle 'final reconstruction' to compare with input")
+    aprint("   • Toggle between 'raw' and 'NLM denoised' to see denoising effect")
+    aprint("   • Toggle 'final reconstruction' to compare with denoised input")
     aprint("   • Toggle 'final residual' to see where the model struggles")
     aprint("   • Use the compression slider to see quality vs splat count")
     aprint("   • Alignment of ellipsoids with nuclear morphology")
