@@ -246,6 +246,9 @@ luxar gsplat slice input.gsplats.zarr output.gsplats.zarr ":50, 20:80, :"
 # Inspect, prune, and filter
 luxar gsplat info splats.gsplats.zarr          # Dataset statistics
 luxar gsplat prune splats.gsplats.zarr pruned.gsplats.zarr --retention 0.95
+luxar gsplat cull fitted.gsplats.zarr original.tiff culled.gsplats.zarr             # Contribution-based culling
+luxar gsplat cull fitted.gsplats.zarr original.npy culled.gsplats.zarr -t 1.5       # More aggressive
+luxar gsplat cull fitted.gsplats.zarr original.npy culled.gsplats.zarr -p 95        # Lower percentile = more culling
 luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --amplitude-min 0.1 --eccentricity-max 5
 luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --bbox "0,50,0,50,0,50" --volume-max 100
 luxar gsplat view splats.gsplats.zarr          # Quick web viewer
