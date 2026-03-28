@@ -73,7 +73,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 │ │ • Runs main training loop (forward/backward/step)               │ │
 │ │ • Tracks best state based on loss                               │ │
 │ │ • Checks convergence criteria                                   │ │
-│ │ • Applies dynamic operations (seeding/pruning)                  │ │
+│ │ • Applies dynamic operations (splat relocation)                 │ │
 │ │ • Records movie frames (optional)                               │ │
 │ │ • Returns OptimizationResults dataclass                         │ │
 │ └─────────────────────────────────────────────────────────────────┘ │

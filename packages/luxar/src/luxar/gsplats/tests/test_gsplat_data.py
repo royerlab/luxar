@@ -391,6 +391,7 @@ class TestSaveWhitelist:
                 "culled",
                 "culling_method",
                 "n_original",
+                "n_removed",
                 "amplitude_retention",
             ]
         }

@@ -53,7 +53,7 @@ Overall: **60% addressed** (fixed or partially fixed), **40% still open**.
   - `fit_gaussian_splats()` docstring says `lr_reduction_factor` default is `0.95` (line 409) but code has `0.98` (line 259)
   - `fit_gaussian_splats()` docstring says `early_stop_patience` default is `200` (line 412) but code has `300` (line 260)
 
-  Additionally, `prepare_fit_config()` in `validation.py` has different defaults in its own signature (`lr_reduction_factor=0.5`, `early_stop_patience=200`, `patience=10`, `cull_ratio=0.1`), but since callers always pass explicit values, these are effectively dead defaults. They are still misleading to anyone reading the code.
+  Additionally, `prepare_fit_config()` in `validation.py` has different defaults in its own signature (`lr_reduction_factor=0.5`, `early_stop_patience=200`, `patience=10`), but since callers always pass explicit values, these are effectively dead defaults. They are still misleading to anyone reading the code. (Note: `cull_ratio` was removed — post-fit culling is now handled by `cull_retention` via `GSplatData.cull()`.)
 - **Files:** `/home/royer/PycharmProjects/luxar/packages/luxar/src/luxar/gsplats/fit_gsplats.py` (lines 409, 412) and `/home/royer/PycharmProjects/luxar/packages/luxar/src/luxar/gsplats/fitting/validation.py` (lines 47-52)
 
 **Issue #4 - MEDIUM: `ConstraintConfig` override silently ignores `amp_max` when it is `None`**

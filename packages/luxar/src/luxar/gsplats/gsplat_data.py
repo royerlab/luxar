@@ -1176,7 +1176,7 @@ class GSplatData(_SplatArrayMixin):
         provenance_info = None
 
         if include_fitting_info and self.stats:
-            # Extract common fitting fields (including quality metrics and pruning stats)
+            # Extract common fitting fields (quality metrics, culling/filtering stats)
             fitting_info = {
                 k: v
                 for k, v in self.stats.items()
@@ -1198,6 +1198,7 @@ class GSplatData(_SplatArrayMixin):
                     "culled",
                     "culling_method",
                     "n_original",
+                    "n_removed",
                     "amplitude_retention",
                     "filtered",
                     "filter_criteria",

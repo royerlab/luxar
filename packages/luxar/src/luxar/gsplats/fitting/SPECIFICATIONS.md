@@ -13,7 +13,7 @@ The fitting package implements a modular, type-safe pipeline for fitting n-dimen
 - **Model & Rendering**: [models/SPECIFICATIONS.md](../models/SPECIFICATIONS.md)
 - **Optimizers**: [optim/SPECIFICATIONS.md](../optim/SPECIFICATIONS.md)
 - **Utilities**: [utils/SPECIFICATIONS.md](../utils/SPECIFICATIONS.md)
-- **Dynamic Operations**: [dynamic_ops/README.md](dynamic_ops/README.md) - Adaptive seeding and pruning
+- **Dynamic Operations**: [dynamic_ops/README.md](dynamic_ops/README.md) - Fixed-pool splat relocation
 
 ## Design Principles
 
@@ -77,7 +77,7 @@ class FitConfig:
     early_stop_patience: Optional[int]       # Stop if no better state for N iters (None=off, default=200)
 
     # Dynamic operations
-    enable_dynamic_ops: bool                 # Enable adaptive seeding/pruning
+    enable_dynamic_ops: bool                 # Enable fixed-pool splat relocation
     dynamic_config: DynamicOpsConfig         # Configuration for dynamic operations
     dynamic_ops_verbose: bool                # Verbose logging for dynamic operations
 
