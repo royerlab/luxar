@@ -569,9 +569,14 @@ class Group(Node):
     ) -> GSplats:
         """Add Gaussian splats from a GSplatData object.
 
+        Multi-LOD data (from progressive fitting) is written with per-LOD
+        subgroups (lod_0/, lod_1/, ...) mirroring the .gsplats.zarr v1.1
+        format.  Single-LOD data uses the flat layout.
+
         Args:
             name: Name of the gsplats node
-            result: GSplatData from fit_gaussian_splats()
+            result: GSplatData from fit_gaussian_splats() or
+                fit_progressive_gaussian_splats()
             parent: Parent node (default: this group)
             extend_to_all: Visibility extension across non-displayed dimensions
             dim_order: Map data columns to scene dimensions by name
@@ -590,12 +595,26 @@ class Group(Node):
         if not isinstance(result, GSplatData):
             raise TypeError(f"Expected GSplatData, got {type(result).__name__}")
 
-        return self.add_gsplats(
+        # Single-LOD: delegate to flat writer
+        if result.n_lods <= 1:
+            return self.add_gsplats(
+                name=name,
+                centers=result.centers,
+                amplitudes=result.amplitudes,
+                cholesky_factors=result.cholesky_factors,
+                colors=result.colors,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                fill_sigma=fill_sigma,
+                **attrs,
+            )
+
+        # Multi-LOD: write per-LOD subgroups
+        return self._add_gsplats_multi_lod(
             name=name,
-            centers=result.centers,
-            amplitudes=result.amplitudes,
-            cholesky_factors=result.cholesky_factors,
-            colors=result.colors,
+            result=result,
             parent=parent,
             extend_to_all=extend_to_all,
             dim_order=dim_order,
@@ -603,6 +622,105 @@ class Group(Node):
             fill_sigma=fill_sigma,
             **attrs,
         )
+
+    def _add_gsplats_multi_lod(
+        self,
+        name: str,
+        result: GSplatData,
+        parent: Optional[Node] = None,
+        extend_to_all: Optional[Union[List[str], str]] = None,
+        dim_order: Optional[List[str]] = None,
+        fill: Optional[Dict[str, float]] = None,
+        fill_sigma: Optional[Dict[str, float]] = None,
+        **attrs: Any,
+    ) -> GSplats:
+        """Write multi-LOD GSplatData with per-LOD subgroups."""
+        try:
+            scene = self._find_scene()
+            d_data = result.ndim
+
+            # Build per-LOD tuples, applying dim_order to each LOD
+            lod_tuples: list[
+                tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]
+            ] = []
+            lod_stats_list: list[dict[str, Any]] = []
+
+            for lod in result.lods:
+                ctr_arr = lod.centers.copy()
+                chol_arr = lod.cholesky_factors.copy()
+
+                if dim_order is not None:
+                    ctr_arr, extend_to_all = self._apply_dim_order_positions(
+                        ctr_arr, scene, dim_order, fill, extend_to_all
+                    )
+                    chol_arr = self._apply_dim_order_cholesky(
+                        chol_arr, d_data, scene, dim_order, fill_sigma
+                    )
+
+                scene._validate_data_dimensions(ctr_arr, name, data_type="centers")
+
+                lod_tuples.append((
+                    ctr_arr.astype(np.float32),
+                    lod.amplitudes,
+                    chol_arr,
+                    lod.colors,
+                ))
+                lod_stats_list.append(dict(lod.stats))
+
+            n_splats = result.n_splats
+            ndim = lod_tuples[0][0].shape[1]
+            aprint(
+                f"Adding multi-LOD gsplats node '{name}' with "
+                f"{n_splats:,} splats in {ndim}D ({result.n_lods} LODs)."
+            )
+
+            final_extend_dims = scene._resolve_extend_to_all(
+                extend_to_all, lod_tuples[0][0], "splats"
+            )
+            if final_extend_dims:
+                attrs["extend_to_all"] = final_extend_dims
+                aprint(f"  📡 Extending visibility across: {final_extend_dims}")
+
+            colormap = attrs.get("colormap")
+            if any(t[3] is not None for t in lod_tuples) and colormap is not None:
+                raise ValueError(
+                    "Cannot specify both 'colors' and 'colormap'. Use one or the other."
+                )
+
+            parent_node = parent or self
+            writer = scene._writer
+            assert writer is not None, "Scene writer is not initialized"
+            path = f"{parent_node.path}/{name}" if parent_node.path else name
+
+            metadata = writer.write_gsplats_multi_lod(  # type: ignore[attr-defined]
+                path,
+                lods=lod_tuples,
+                lod_stats=lod_stats_list,
+                **attrs,
+            )
+
+            if "colormap" in attrs:
+                from ..colormaps.builtins import BUILTIN_COLORMAP_NAMES
+
+                cm = attrs["colormap"]
+                if not isinstance(cm, str) or (
+                    isinstance(cm, str) and cm not in BUILTIN_COLORMAP_NAMES
+                ):
+                    attrs["colormap"] = "custom"
+
+            if not metadata.get("has_colors") and "colormap" not in attrs:
+                attrs["colormap"] = "gray"
+
+            return GSplats(
+                name,
+                metadata=metadata,
+                parent=cast(Any, parent_node),
+                writer=writer,
+                **attrs,
+            )
+        except (ValueError, TypeError) as e:
+            aprint(f"Failed to add multi-LOD gsplats node '{name}': {e}")
+            raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 
     def add_gsplats_from_file(
         self,
@@ -655,6 +773,10 @@ class Group(Node):
         seeds: Optional[Union[int, float]] = None,
         n_iters: int = 1000,
         device: Optional[str] = None,
+        progressive: bool = False,
+        max_splats_per_pass: int = 5000,
+        psnr_patience: float = 0.5,
+        max_passes: Optional[int] = None,
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
         dim_order: Optional[List[str]] = None,
@@ -669,9 +791,15 @@ class Group(Node):
         Args:
             name: Name of the gsplats node
             volume: Input n-dimensional volume to fit
-            seeds: Number of splats (int), compression ratio (float), or None
-            n_iters: Optimization iterations (default: 1000)
+            seeds: Number of splats (int), compression ratio (float), or None.
+                In progressive mode, this is the total max splats budget.
+            n_iters: Optimization iterations (default: 1000).
+                In progressive mode, this is iterations per pass.
             device: Compute device ("cuda", "mps", "cpu", or None for auto)
+            progressive: Use progressive multi-pass fitting (produces multi-LOD)
+            max_splats_per_pass: Max splats per progressive pass (default: 5000)
+            psnr_patience: Stop progressive fitting if PSNR gain < this (dB)
+            max_passes: Max number of progressive passes (None = unlimited)
             parent: Parent node (default: this group)
             extend_to_all: Visibility extension across non-displayed dimensions
             dim_order: Map fitted data columns to scene dimensions by name
@@ -679,17 +807,32 @@ class Group(Node):
             fill_sigma: Standard deviations for unmapped dims in Cholesky embedding
             opacity: Node opacity (0.0-1.0)
             blending_mode: Blending mode ("normal", "additive", "max")
-            **fit_kwargs: Extra kwargs for fit_gaussian_splats()
+            **fit_kwargs: Extra kwargs for fitting function
         """
-        from luxar.gsplats import fit_gaussian_splats
+        if progressive:
+            from luxar.gsplats import fit_progressive_gaussian_splats
 
-        result = fit_gaussian_splats(
-            volume,
-            seeds=seeds,
-            n_iters=n_iters,
-            device=device,
-            **fit_kwargs,
-        )
+            max_splats = seeds if isinstance(seeds, int) else 50000
+            result = fit_progressive_gaussian_splats(
+                volume,
+                max_splats=max_splats,
+                max_splats_per_pass=max_splats_per_pass,
+                iters_per_pass=n_iters,
+                psnr_patience=psnr_patience,
+                max_passes=max_passes,
+                device=device,
+                **fit_kwargs,
+            )
+        else:
+            from luxar.gsplats import fit_gaussian_splats
+
+            result = fit_gaussian_splats(
+                volume,
+                seeds=seeds,
+                n_iters=n_iters,
+                device=device,
+                **fit_kwargs,
+            )
 
         scene_attrs: dict[str, Any] = {}
         if opacity is not None:

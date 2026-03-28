@@ -388,7 +388,7 @@ class TestFitCommand:
     ) -> None:
         """End-to-end: fit using a YAML config file."""
         config_path = tmp_path / "config.yaml"
-        config_path.write_text("n_iters: 3\ncull_ratio: 0.0\n")
+        config_path.write_text("n_iters: 3\ncull_retention: 0.95\n")
 
         out = tmp_path / "fitted.gsplats.zarr"
         result = runner.invoke(

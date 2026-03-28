@@ -163,11 +163,6 @@ class FitConfig:
     # Constraint parameters
     max_eccentricity: Optional[float] = None  # Limit ratio of longest to shortest axis
 
-    # Post-fit culling ratio: threshold = cull_ratio * max_abs_error
-    # Splats with amplitude below this threshold are removed after fitting.
-    # 0.0 disables culling, 1.0 culls at the full convergence threshold.
-    cull_ratio: float = 0.01
-
     # Voxel footprint correction (post-processing)
     # - False: Disabled (default)
     # - True: Enable with 1-voxel box footprint (sigma ≈ 0.289 voxels)

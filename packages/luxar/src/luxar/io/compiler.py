@@ -868,118 +868,52 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         return metadata
 
-    def write_gsplats(  # type: ignore[override]
+    # ── GSplats helpers (composable building blocks) ─────────────
+
+    def _validate_gsplat_inputs(
         self,
-        path: NodePath,
         centers: NDArray[np.float32],
         amplitudes: Union[NDArray[np.float32], float],
         cholesky_factors: NDArray[np.float32],
         colors: Optional[
             Union[NDArray[np.float32], List[float], Tuple[float, ...]]
         ] = None,
-        **attrs: Any,
-    ) -> dict[str, Any]:
-        """Write Gaussian splats data to Zarr.
-
-        Scalar convenience: amplitudes and colors accept scalars:
-        - amplitudes=1.0 → all splats get amplitude 1.0
-        - colors=[1.0, 0, 0] → all splats red
-
-        Args:
-            path: Path for the gsplats within the store
-            centers: Splat centers of shape (N, D)
-            amplitudes: Amplitudes - array (N,) or scalar float
-            cholesky_factors: Packed Cholesky factors of shape (N, k)
-            colors: Colors - array (N, 3), RGB tuple/list, or None
-            **attrs: Additional attributes
+    ) -> Tuple[
+        NDArray[np.float32],
+        Union[NDArray[np.float32], float],
+        NDArray[np.float32],
+        Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
+        int,
+        int,
+        bool,
+    ]:
+        """Validate and normalize gsplat inputs.
 
         Returns:
-            Metadata dictionary about the written gsplats
+            (centers, amplitudes, cholesky_factors, colors,
+             n_splats, n_dims, cholesky_is_uniform)
         """
-        from ..validation.base import (
-            validate_colors_for_writing,
-            validate_positions_for_writing,
-        )
+        from ..validation.base import validate_positions_for_writing
 
-        # Setup and validation
-        path = path.lstrip("/")
-        group = self.store.require_group(path)
         n_splats, n_dims = validate_positions_for_writing(centers)
-
-        aprint(f"📝 Writing {n_splats:,} gsplats ({n_dims}D) to {path}")
-
-        # Log scalar inputs (no expansion - passed to encoder)
-        if isinstance(amplitudes, (int, float)):
-            aprint(f"  → Uniform amplitude {amplitudes:.3f} for all splats")
-        if colors is not None and isinstance(colors, (list, tuple)):
-            aprint(f"  → Uniform color RGB{list(colors)} for all splats")
-
-        # Validate cholesky_factors shape FIRST (before spatial ordering)
         expected_k = n_dims * (n_dims + 1) // 2
-        cholesky_is_uniform = False  # Track if cholesky is uniform (for encoder)
+        cholesky_is_uniform = False
 
         if cholesky_factors.ndim == 1:
-            # Shape (k,) - uniform cholesky for all splats
             if cholesky_factors.shape[0] != expected_k:
                 raise ValueError(
                     f"Cholesky factors shape mismatch: expected ({expected_k},), "
                     f"got {cholesky_factors.shape}"
                 )
-            # Reshape to (1, k) for encoder passthrough (no intermediate array)
             cholesky_factors = cholesky_factors.reshape(1, expected_k)
             cholesky_is_uniform = True
-            aprint(f"  → Uniform Cholesky factors (shape {expected_k}) for all splats")
-
         elif cholesky_factors.shape != (n_splats, expected_k):
             raise ValueError(
                 f"Cholesky factors shape mismatch: expected ({n_splats}, {expected_k}), "
                 f"got {cholesky_factors.shape}"
             )
 
-        # Apply spatial ordering if enabled
-        ordering_data = None
-        if self.enable_spatial_index and n_splats > 0:
-            from .ordering import compute_chunk_bounds_gsplats, sort_splats_spatial
-
-            aprint(f"  🔍 Applying {self.ordering_method} ordering to gsplats...")
-            sort_indices, ordering_metadata = sort_splats_spatial(
-                centers, method=self.ordering_method
-            )
-
-            # Reorder arrays only (skip scalars and uniform cholesky)
-            centers = centers[sort_indices]
-            if not cholesky_is_uniform:
-                cholesky_factors = cholesky_factors[sort_indices]
-            # Scalars stay as-is (uniform, order doesn't matter)
-            if isinstance(amplitudes, np.ndarray):
-                amplitudes = amplitudes[sort_indices]
-            if colors is not None and isinstance(colors, np.ndarray):
-                if colors.shape[0] > 1:
-                    colors = colors[sort_indices]
-
-            # Compute chunk size
-            from ..typing_utils import TARGET_CHUNK_BYTES
-
-            bytes_per_splat = n_dims * 4 + 4 + expected_k * 4 + 16
-            chunk_size = max(1024, TARGET_CHUNK_BYTES // bytes_per_splat)
-            chunk_size = min(chunk_size, n_splats)
-
-            # Compute chunk bounds
-            chunk_bounds = compute_chunk_bounds_gsplats(
-                centers, cholesky_factors, chunk_size
-            )
-
-            ordering_data = {
-                "chunk_bounds": chunk_bounds,
-                "chunk_size": chunk_size,
-                **ordering_metadata,
-            }
-
-            aprint(
-                f"  ✓ Spatial ordering complete: {ordering_metadata['ordering']} with {len(chunk_bounds)} chunks"
-            )
-
-        # Validate amplitudes (must be non-negative: >= 0, zero is valid but invisible)
+        # Validate amplitudes
         if isinstance(amplitudes, np.ndarray):
             if amplitudes.shape[0] != n_splats:
                 raise ValueError(
@@ -993,7 +927,108 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         elif isinstance(amplitudes, (int, float)) and amplitudes < 0:
             raise ValueError(f"Amplitude must be non-negative (>= 0). Got {amplitudes}")
 
-        # Write centers using ArrayEncoder (COORDINATE)
+        return (
+            centers,
+            amplitudes,
+            cholesky_factors,
+            colors,
+            n_splats,
+            n_dims,
+            cholesky_is_uniform,
+        )
+
+    def _apply_gsplat_spatial_ordering(
+        self,
+        centers: NDArray[np.float32],
+        amplitudes: Union[NDArray[np.float32], float],
+        cholesky_factors: NDArray[np.float32],
+        colors: Optional[
+            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
+        ],
+        n_splats: int,
+        n_dims: int,
+        cholesky_is_uniform: bool,
+    ) -> Tuple[
+        NDArray[np.float32],
+        Union[NDArray[np.float32], float],
+        NDArray[np.float32],
+        Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
+        Optional[Dict[str, Any]],
+    ]:
+        """Apply spatial ordering to gsplat arrays.
+
+        Returns:
+            (centers, amplitudes, cholesky_factors, colors, ordering_data)
+            where ordering_data is None if ordering was not applied.
+        """
+        ordering_data = None
+        if self.enable_spatial_index and n_splats > 0:
+            from .ordering import compute_chunk_bounds_gsplats, sort_splats_spatial
+
+            aprint(f"  🔍 Applying {self.ordering_method} ordering to gsplats...")
+            sort_indices, ordering_metadata = sort_splats_spatial(
+                centers, method=self.ordering_method
+            )
+
+            centers = centers[sort_indices]
+            if not cholesky_is_uniform:
+                cholesky_factors = cholesky_factors[sort_indices]
+            if isinstance(amplitudes, np.ndarray):
+                amplitudes = amplitudes[sort_indices]
+            if colors is not None and isinstance(colors, np.ndarray):
+                if colors.shape[0] > 1:
+                    colors = colors[sort_indices]
+
+            from ..typing_utils import TARGET_CHUNK_BYTES
+
+            expected_k = n_dims * (n_dims + 1) // 2
+            bytes_per_splat = n_dims * 4 + 4 + expected_k * 4 + 16
+            chunk_size = max(1024, TARGET_CHUNK_BYTES // bytes_per_splat)
+            chunk_size = min(chunk_size, n_splats)
+
+            chunk_bounds = compute_chunk_bounds_gsplats(
+                centers, cholesky_factors, chunk_size
+            )
+
+            ordering_data = {
+                "chunk_bounds": chunk_bounds,
+                "chunk_size": chunk_size,
+                **ordering_metadata,
+            }
+
+            aprint(
+                f"  ✓ Spatial ordering complete: {ordering_metadata['ordering']} "
+                f"with {len(chunk_bounds)} chunks"
+            )
+
+        return centers, amplitudes, cholesky_factors, colors, ordering_data
+
+    def _write_gsplat_arrays(
+        self,
+        group: zarr.Group,
+        centers: NDArray[np.float32],
+        amplitudes: Union[NDArray[np.float32], float],
+        cholesky_factors: NDArray[np.float32],
+        colors: Optional[
+            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
+        ],
+        n_splats: int,
+        n_dims: int,
+        cholesky_is_uniform: bool,
+        ordering_data: Optional[Dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Write gsplat arrays to a zarr group and return metadata.
+
+        This is the core array-writing routine used by both single-LOD
+        and multi-LOD writers.
+
+        Returns:
+            Metadata dict with n_splats, ndim, has_colors, amplitude_range,
+            center_bounds, and ordering info.
+        """
+        from ..validation.base import validate_colors_for_writing
+
+        # Write centers
         chunks_centers = _calculate_intelligent_chunks(
             centers.shape, spatial_index_data=ordering_data
         )
@@ -1007,7 +1042,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor=self.compressor,
         )
 
-        # Write amplitudes using ArrayEncoder (POSITIVE_SCALAR, can be zero)
+        # Write amplitudes
         if isinstance(amplitudes, (int, float)):
             amplitude_min = amplitude_max = float(amplitudes)
             n_elems_amp = n_splats
@@ -1033,16 +1068,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor=self.compressor,
         )
 
-        # Store amplitude data range for layer controls
         if isinstance(amplitudes, np.ndarray) and amplitudes.size > 0:
             group.attrs["amplitude_data_range"] = [
                 float(amplitudes.min()),
                 float(amplitudes.max()),
             ]
 
-        # Write cholesky_factors using ArrayEncoder (CHOLESKY)
+        # Write cholesky_factors
         if cholesky_is_uniform:
-            # Pass (1, k) array with n_elements for broadcasting
             n_elems_chol = n_splats
             chunks_cholesky = None
         else:
@@ -1062,13 +1095,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor=self.compressor,
         )
 
-        # Initialize metadata
+        # Compute metadata
         if n_splats > 0:
             center_min = centers.min(axis=0).tolist()
             center_max = centers.max(axis=0).tolist()
         else:
             center_min = [0.0] * n_dims
             center_max = [0.0] * n_dims
+
         metadata: dict[str, Any] = {
             "n_splats": n_splats,
             "ndim": n_dims,
@@ -1077,7 +1111,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             "center_bounds": {"min": center_min, "max": center_max},
         }
 
-        # Add ordering metadata if spatial ordering was applied
         if ordering_data is not None:
             metadata.update(
                 {
@@ -1091,12 +1124,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         else:
             metadata["ordering"] = "none"
 
-        # Write optional datasets
+        # Write colors
         if colors is not None:
-            # Handle scalar/tuple vs array
             color_mode: Optional[Literal["sdr", "hdr"]] = None
             if isinstance(colors, (tuple, list)):
-                # Detect HDR vs SDR from values
                 max_val = max(colors)
                 color_mode = "hdr" if max_val > 1.0 else "sdr"
                 n_elems_color = n_splats
@@ -1112,7 +1143,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     )
                     n_elems_color = None
 
-                # Detect color_mode
                 if np.issubdtype(colors.dtype, np.floating):
                     color_mode = "hdr" if np.any(colors > 1.0) else "sdr"
             else:
@@ -1131,7 +1161,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             )
             metadata["has_colors"] = True
 
-            # Store color data range for layer controls
             if isinstance(colors, np.ndarray) and colors.size > 0:
                 group.attrs["color_data_range"] = [
                     float(colors.min()),
@@ -1143,14 +1172,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     float(max(colors)),
                 ]
 
-        # Default to "gray" colormap if no colors and no colormap
-        if not metadata.get("has_colors") and "colormap" not in attrs:
-            attrs["colormap"] = "gray"
-
-        # Write colormap LUT if colormap is a custom array
-        self._write_colormap_lut_if_needed(group, attrs)
-
-        # Write chunk_bounds if ordering was applied
+        # Write chunk_bounds
         if ordering_data is not None:
             chunk_bounds = ordering_data["chunk_bounds"]
             if len(chunk_bounds) > 0:
@@ -1161,6 +1183,25 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     dtype=np.float32,
                 )
                 aprint(f"  ✓ Chunk bounds written: {len(chunk_bounds)} chunks")
+
+        return metadata
+
+    def _apply_gsplat_group_attrs(
+        self,
+        group: zarr.Group,
+        metadata: dict[str, Any],
+        attrs: dict[str, Any],
+    ) -> None:
+        """Set standard gsplats group attributes and rendering defaults.
+
+        Mutates both group.attrs and attrs dict in-place.
+        """
+        # Default colormap if no colors and no colormap
+        if not metadata.get("has_colors") and "colormap" not in attrs:
+            attrs["colormap"] = "gray"
+
+        # Write colormap LUT if colormap is a custom array
+        self._write_colormap_lut_if_needed(group, attrs)
 
         # Process transform if present
         if "transform" in attrs:
@@ -1177,30 +1218,28 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 dims = Dimensions.from_dict(self.store.attrs["scene_dimensions"])
             attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"], dims)
 
-        # Set rendering defaults (must match write_points defaults)
-        if "opacity" not in attrs:
-            attrs["opacity"] = 1.0
-        if "gamma" not in attrs:
-            attrs["gamma"] = 1.0
-        if "intensity" not in attrs:
-            attrs["intensity"] = 1.0
-        if "offset" not in attrs:
-            attrs["offset"] = 0.0
-        if "blending_mode" not in attrs:
-            attrs["blending_mode"] = "additive"
+        # Set rendering defaults
+        for key, default in [
+            ("opacity", 1.0),
+            ("gamma", 1.0),
+            ("intensity", 1.0),
+            ("offset", 0.0),
+            ("blending_mode", "additive"),
+        ]:
+            if key not in attrs:
+                attrs[key] = default
 
-        # Set attributes
+        # Write all attrs, then override with authoritative metadata
         group.attrs.update(attrs)
         group.attrs["type"] = "gsplats"
-        group.attrs["n_splats"] = n_splats
-        group.attrs["ndim"] = n_dims
+        group.attrs["n_splats"] = metadata["n_splats"]
+        group.attrs["ndim"] = metadata["ndim"]
         group.attrs["has_colors"] = metadata["has_colors"]
         group.attrs["amplitude_range"] = metadata["amplitude_range"]
         group.attrs["center_bounds"] = metadata["center_bounds"]
         group.attrs["ordering"] = metadata["ordering"]
 
-        # Add ordering metadata to attrs if present
-        if ordering_data is not None:
+        if metadata["ordering"] != "none":
             for key in [
                 "ordering_min",
                 "ordering_max",
@@ -1210,21 +1249,234 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 if key in metadata:
                     group.attrs[key] = metadata[key]
         else:
-            # Set default chunk_size when no ordering (required by TypeScript)
-            # Use a reasonable default based on splat count
-            default_chunk_size = min(1024, max(64, n_splats))
+            default_chunk_size = min(1024, max(64, metadata["n_splats"]))
             group.attrs["chunk_size"] = default_chunk_size
 
-        # Compute and store position bounds (nD bounding box) for dynamic clipping
-        position_bounds = {"min": center_min, "max": center_max}
+        # Position bounds
+        center_bounds = metadata["center_bounds"]
+        position_bounds = {"min": center_bounds["min"], "max": center_bounds["max"]}
         group.attrs["position_bounds"] = position_bounds
         metadata["position_bounds"] = position_bounds
 
-        # Update scene-level bounds (union of all node bounds)
-        self._update_scene_bounds(position_bounds)
+    # ── GSplats public write methods ───────────────────────────
+
+    def write_gsplats(  # type: ignore[override]
+        self,
+        path: NodePath,
+        centers: NDArray[np.float32],
+        amplitudes: Union[NDArray[np.float32], float],
+        cholesky_factors: NDArray[np.float32],
+        colors: Optional[
+            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
+        ] = None,
+        **attrs: Any,
+    ) -> dict[str, Any]:
+        """Write Gaussian splats data to Zarr (single-LOD, flat layout).
+
+        Scalar convenience: amplitudes and colors accept scalars:
+        - amplitudes=1.0 → all splats get amplitude 1.0
+        - colors=[1.0, 0, 0] → all splats red
+
+        Args:
+            path: Path for the gsplats within the store
+            centers: Splat centers of shape (N, D)
+            amplitudes: Amplitudes - array (N,) or scalar float
+            cholesky_factors: Packed Cholesky factors of shape (N, k)
+            colors: Colors - array (N, 3), RGB tuple/list, or None
+            **attrs: Additional attributes
+
+        Returns:
+            Metadata dictionary about the written gsplats
+        """
+        path = path.lstrip("/")
+        group = self.store.require_group(path)
+
+        # Validate
+        (
+            centers,
+            amplitudes,
+            cholesky_factors,
+            colors,
+            n_splats,
+            n_dims,
+            cholesky_is_uniform,
+        ) = self._validate_gsplat_inputs(centers, amplitudes, cholesky_factors, colors)
+
+        aprint(f"📝 Writing {n_splats:,} gsplats ({n_dims}D) to {path}")
+        if isinstance(amplitudes, (int, float)):
+            aprint(f"  → Uniform amplitude {amplitudes:.3f} for all splats")
+        if colors is not None and isinstance(colors, (list, tuple)):
+            aprint(f"  → Uniform color RGB{list(colors)} for all splats")
+        if cholesky_is_uniform:
+            aprint(
+                f"  → Uniform Cholesky factors (shape {n_dims * (n_dims + 1) // 2}) "
+                f"for all splats"
+            )
+
+        # Spatial ordering
+        (
+            centers,
+            amplitudes,
+            cholesky_factors,
+            colors,
+            ordering_data,
+        ) = self._apply_gsplat_spatial_ordering(
+            centers, amplitudes, cholesky_factors, colors,
+            n_splats, n_dims, cholesky_is_uniform,
+        )
+
+        # Write arrays
+        metadata = self._write_gsplat_arrays(
+            group, centers, amplitudes, cholesky_factors, colors,
+            n_splats, n_dims, cholesky_is_uniform, ordering_data,
+        )
+
+        # Set group attrs
+        self._apply_gsplat_group_attrs(group, metadata, attrs)
+
+        # Update scene-level bounds
+        self._update_scene_bounds(metadata["position_bounds"])
 
         self._metadata_cache[path] = metadata
         aprint(f"✅ GSplats written to {path}")
+
+        return metadata
+
+    def write_gsplats_multi_lod(
+        self,
+        path: NodePath,
+        lods: list[Tuple[
+            NDArray[np.float32],
+            Union[NDArray[np.float32], float],
+            NDArray[np.float32],
+            Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
+        ]],
+        lod_stats: Optional[list[dict[str, Any]]] = None,
+        **attrs: Any,
+    ) -> dict[str, Any]:
+        """Write multi-LOD Gaussian splats to Zarr.
+
+        Creates per-LOD subgroups (lod_0/, lod_1/, ...) mirroring the
+        standalone .gsplats.zarr v1.1 format.  Each LOD gets its own
+        spatially-ordered arrays.
+
+        Args:
+            path: Path for the gsplats node within the store
+            lods: List of (centers, amplitudes, cholesky_factors, colors)
+                tuples, one per LOD level (index 0 = coarsest).
+            lod_stats: Optional per-LOD statistics dicts.
+            **attrs: Additional node attributes (opacity, blending_mode, etc.)
+
+        Returns:
+            Metadata dictionary about the written gsplats (aggregate).
+        """
+        if not lods:
+            raise ValueError("lods must contain at least one LOD")
+
+        path = path.lstrip("/")
+        group = self.store.require_group(path)
+        n_lods = len(lods)
+
+        # Validate all LODs and collect metadata
+        total_splats = 0
+        all_center_mins: list[list[float]] = []
+        all_center_maxs: list[list[float]] = []
+        all_amp_mins: list[float] = []
+        all_amp_maxs: list[float] = []
+        has_any_colors = False
+        n_dims: Optional[int] = None
+
+        for i, (ctr, amp, chol, col) in enumerate(lods):
+            (
+                ctr, amp, chol, col,
+                ns, nd, chol_uniform,
+            ) = self._validate_gsplat_inputs(ctr, amp, chol, col)
+
+            if n_dims is None:
+                n_dims = nd
+            elif nd != n_dims:
+                raise ValueError(
+                    f"LOD {i} has {nd}D data but LOD 0 has {n_dims}D"
+                )
+
+            # Write per-LOD subgroup
+            lod_group = group.require_group(f"lod_{i}")
+            aprint(f"📝 Writing LOD {i}: {ns:,} gsplats ({nd}D)")
+
+            (
+                ctr, amp, chol, col, ordering_data,
+            ) = self._apply_gsplat_spatial_ordering(
+                ctr, amp, chol, col, ns, nd, chol_uniform,
+            )
+
+            lod_meta = self._write_gsplat_arrays(
+                lod_group, ctr, amp, chol, col,
+                ns, nd, chol_uniform, ordering_data,
+            )
+
+            # Write per-LOD group attrs (lightweight — no rendering defaults)
+            lod_group.attrs["type"] = "gsplats"
+            lod_group.attrs["n_splats"] = ns
+            lod_group.attrs["ndim"] = nd
+            lod_group.attrs["has_colors"] = lod_meta["has_colors"]
+            lod_group.attrs["amplitude_range"] = lod_meta["amplitude_range"]
+            lod_group.attrs["center_bounds"] = lod_meta["center_bounds"]
+            lod_group.attrs["ordering"] = lod_meta["ordering"]
+            if lod_meta["ordering"] != "none":
+                for key in [
+                    "ordering_min", "ordering_max",
+                    "ordering_bits_per_dim", "chunk_size",
+                ]:
+                    if key in lod_meta:
+                        lod_group.attrs[key] = lod_meta[key]
+            else:
+                lod_group.attrs["chunk_size"] = min(1024, max(64, ns))
+
+            if lod_stats and i < len(lod_stats):
+                lod_group.attrs["lod_stats"] = lod_stats[i]
+
+            # Accumulate aggregate info
+            total_splats += ns
+            if lod_meta["has_colors"]:
+                has_any_colors = True
+            bounds = lod_meta["center_bounds"]
+            all_center_mins.append(bounds["min"])
+            all_center_maxs.append(bounds["max"])
+            amp_range = lod_meta["amplitude_range"]
+            all_amp_mins.append(amp_range["min"])
+            all_amp_maxs.append(amp_range["max"])
+
+        assert n_dims is not None  # guaranteed by non-empty lods
+
+        # Compute aggregate bounds
+        if all_center_mins:
+            agg_min = [min(m[d] for m in all_center_mins) for d in range(n_dims)]
+            agg_max = [max(m[d] for m in all_center_maxs) for d in range(n_dims)]
+        else:
+            agg_min = [0.0] * n_dims
+            agg_max = [0.0] * n_dims
+
+        metadata: dict[str, Any] = {
+            "n_splats": total_splats,
+            "ndim": n_dims,
+            "has_colors": has_any_colors,
+            "amplitude_range": {"min": min(all_amp_mins), "max": max(all_amp_maxs)},
+            "center_bounds": {"min": agg_min, "max": agg_max},
+            "ordering": "none",  # aggregate has no single ordering
+            "n_lods": n_lods,
+        }
+
+        # Apply group attrs (rendering defaults, transforms, etc.)
+        self._apply_gsplat_group_attrs(group, metadata, attrs)
+
+        # Also write n_lods to group attrs
+        group.attrs["n_lods"] = n_lods
+
+        # Update scene-level bounds
+        self._update_scene_bounds(metadata["position_bounds"])
+
+        self._metadata_cache[path] = metadata
+        aprint(f"✅ Multi-LOD GSplats written to {path} ({n_lods} LODs, {total_splats:,} total)")
 
         return metadata
 

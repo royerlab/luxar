@@ -154,3 +154,113 @@ class TestGroupIsGroup:
             assert hasattr(group, "add_lines")
             assert hasattr(group, "add_gsplats")
             assert hasattr(group, "add_gsplats_from_data")
+
+
+class TestMultiLODGSplats:
+    """Test multi-LOD GSplatData writing through add_gsplats_from_data."""
+
+    @staticmethod
+    def _make_multi_lod_gsplat_data():
+        """Create a multi-LOD GSplatData with 2 LODs."""
+        from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+
+        rng = np.random.RandomState(42)
+        lod0 = GSplatLOD(
+            centers=rng.rand(5, 3).astype(np.float32) * 100,
+            amplitudes=rng.rand(5).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (5, 1)
+            ),
+            stats={"pass_index": 0, "cumulative_psnr_db": 25.0},
+        )
+        lod1 = GSplatLOD(
+            centers=rng.rand(3, 3).astype(np.float32) * 100,
+            amplitudes=rng.rand(3).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([0.5, 0, 0.5, 0, 0, 0.5], dtype=np.float32), (3, 1)
+            ),
+            stats={"pass_index": 1, "cumulative_psnr_db": 30.0},
+        )
+        return GSplatData.from_lods([lod0, lod1])
+
+    def test_multi_lod_writes_subgroups(self, tmp_path) -> None:
+        """Multi-LOD GSplatData writes per-LOD subgroups (lod_0, lod_1)."""
+        output_path = tmp_path / "test.zarr"
+        data = self._make_multi_lod_gsplat_data()
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_gsplats_from_data("splats", data)
+
+            assert node.n_splats == 8  # 5 + 3
+
+        store = zarr.open(str(output_path), mode="r")
+        grp = store["splats"]
+        assert grp.attrs["type"] == "gsplats"
+        assert grp.attrs["n_lods"] == 2
+        assert grp.attrs["n_splats"] == 8
+
+        # Per-LOD subgroups exist
+        assert "lod_0" in grp
+        assert "lod_1" in grp
+        assert grp["lod_0"].attrs["n_splats"] == 5
+        assert grp["lod_1"].attrs["n_splats"] == 3
+
+        # Per-LOD arrays exist
+        assert "centers" in grp["lod_0"]
+        assert "amplitudes" in grp["lod_0"]
+        assert "cholesky_factors" in grp["lod_0"]
+
+    def test_multi_lod_preserves_per_lod_stats(self, tmp_path) -> None:
+        """Per-LOD stats are written to lod_stats attribute."""
+        output_path = tmp_path / "test.zarr"
+        data = self._make_multi_lod_gsplat_data()
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data("splats", data)
+
+        store = zarr.open(str(output_path), mode="r")
+        lod0_stats = store["splats"]["lod_0"].attrs.get("lod_stats", {})
+        assert lod0_stats.get("pass_index") == 0
+        lod1_stats = store["splats"]["lod_1"].attrs.get("lod_stats", {})
+        assert lod1_stats.get("pass_index") == 1
+
+    def test_single_lod_uses_flat_layout(self, tmp_path) -> None:
+        """Single-LOD GSplatData still uses flat layout (no subgroups)."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        output_path = tmp_path / "test.zarr"
+        data = GSplatData(
+            centers=np.array([[1, 2, 3]], dtype=np.float32),
+            amplitudes=np.array([1.0], dtype=np.float32),
+            cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
+        )
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data("splats", data)
+
+        store = zarr.open(str(output_path), mode="r")
+        grp = store["splats"]
+        assert grp.attrs["type"] == "gsplats"
+        # No LOD subgroups — flat layout
+        assert "lod_0" not in grp
+        assert "n_lods" not in grp.attrs
+        # Arrays at top level
+        assert "centers" in grp
+        assert "amplitudes" in grp
+
+    def test_multi_lod_in_group(self, tmp_path) -> None:
+        """Multi-LOD gsplats can be added under a group node."""
+        output_path = tmp_path / "test.zarr"
+        data = self._make_multi_lod_gsplat_data()
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("grp")
+            group.add_gsplats_from_data("splats", data)
+
+        store = zarr.open(str(output_path), mode="r")
+        assert "lod_0" in store["grp"]["splats"]
+        assert "lod_1" in store["grp"]["splats"]

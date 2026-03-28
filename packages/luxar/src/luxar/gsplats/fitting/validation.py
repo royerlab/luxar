@@ -49,7 +49,6 @@ def prepare_fit_config(
     early_stop_patience: Optional[int] = 300,
     dynamic_ops_verbose: bool = False,
     seed_method: str = "auto",
-    cull_ratio: float = 0.01,
     voxel_footprint_correction: bool | float = False,
     boundary_penalty: Optional[float] = None,
     clip_to_bounds: bool = False,
@@ -300,7 +299,6 @@ def prepare_fit_config(
         # Constraint parameters
         max_eccentricity=max_eccentricity,
         # Post-processing
-        cull_ratio=cull_ratio,
         voxel_footprint_correction=voxel_footprint_correction,
         # Boundary containment
         boundary_penalty=boundary_penalty,

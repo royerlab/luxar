@@ -76,7 +76,7 @@ def fit_progressive_gaussian_splats(
     max_passes: Optional[int] = None,
     asymmetric_penalty: Optional[float] = 10.0,
     enable_dynamic_ops: bool = True,
-    cull_ratio: float = 0.0,
+    cull_retention: float | None = 0.95,
     on_pass_complete: Optional[Callable[[int, GSplatLOD, float], None]] = None,
     device: Optional[str] = None,
     verbose: bool = True,
@@ -111,11 +111,10 @@ def fit_progressive_gaussian_splats(
         Asymmetric loss penalty factor (default 10.0).
     enable_dynamic_ops : bool
         Whether to enable dynamic splat relocation within each pass.
-    cull_ratio : float
-        Post-fit culling ratio per pass (default 0.0, disabled).  Splats with
-        amplitude below ``cull_ratio * max_abs_error`` are removed.  The
-        residual-based approach of progressive fitting already prevents waste,
-        so culling is disabled by default.  Set to 1.0 for aggressive culling.
+    cull_retention : float or None, default=0.95
+        Post-fit cumulative culling on the final accumulated result.  Keeps the
+        top splats that account for this fraction of total amplitude (0--1).
+        Set to ``None`` to disable.
     on_pass_complete : callable, optional
         Callback invoked after each pass:
         ``on_pass_complete(pass_index, lod_data, cumulative_psnr)``.
@@ -153,6 +152,7 @@ def fit_progressive_gaussian_splats(
     kwargs.pop("n_iters", None)  # progressive uses iters_per_pass instead
     kwargs.pop("seeds", None)  # progressive computes seeds_this_pass per pass
     kwargs.pop("seed_method", None)  # progressive sets auto/peaks per pass
+    kwargs.pop("cull_retention", None)  # per-pass culling disabled; final cull at end
     # Force voxel-space output for internal passes: render_to_volume_tensor
     # expects voxel-space centers for correct residual computation.
     # We capture voxel_size/output_space to apply to the final result.
@@ -180,7 +180,7 @@ def fit_progressive_gaussian_splats(
         with asection("Progressive Gaussian splat fitting"):
             aprint(f"Volume shape: {V.shape}")
             aprint(f"Max splats: {max_splats:,}, splats/pass: {max_splats_per_pass:,}")
-            aprint(f"Iters/pass: {iters_per_pass}, cull_ratio: {cull_ratio}")
+            aprint(f"Iters/pass: {iters_per_pass}")
             aprint(f"PSNR patience: {psnr_patience} dB")
             aprint(
                 f"Note: each pass fits {max_splats_per_pass:,} splats — "
@@ -321,7 +321,7 @@ def fit_progressive_gaussian_splats(
             n_iters=pass_iters,
             asymmetric_penalty=pass_asymmetric_penalty,
             enable_dynamic_ops=pass_enable_dynamic,
-            cull_ratio=cull_ratio,
+            cull_retention=None,  # Disable per-pass; final cull at end of progressive
             seed_method=pass_seed_method,
             device=device,
             verbose=verbose,
@@ -450,5 +450,15 @@ def fit_progressive_gaussian_splats(
         final_result = GSplatData.from_lods(converted_lods, stats=overall_stats)
         if verbose:
             aprint(f"Converted output to physical coordinates (voxel_size={vs.tolist()})")
+
+    # Post-fit cumulative culling on the full accumulated result
+    if cull_retention is not None and 0 < cull_retention < 1.0 and final_result.n_splats > 0:
+        n_before = final_result.n_splats
+        final_result = final_result.cull(method="cumulative", retention=cull_retention)
+        if verbose and final_result.n_splats < n_before:
+            aprint(
+                f"Post-fit culling: {n_before} -> {final_result.n_splats} splats "
+                f"(retained {cull_retention * 100:.0f}% of amplitude)"
+            )
 
     return final_result

@@ -1,7 +1,7 @@
 # luxar.gsplats.io - Technical Specification
 
-**Version**: 1.1.1
-**Last Updated**: 2025-11-28
+**Version**: 2.0.0
+**Last Updated**: 2026-03-27
 
 ## Purpose
 
@@ -20,8 +20,8 @@ The `gsplats.io` package provides I/O operations for persisting and loading Gaus
 1. **Save/Load fitted results** - Persist expensive fitting results for later use
 2. **Lightweight rendering** - Load only splat data for visualization
 3. **Provenance tracking** - Record what image/parameters produced the splats
-4. **Future: Checkpoint/Resume** - Pause and resume fitting (deferred)
-5. **Future: Multiscale storage** - Store hierarchical decompositions (deferred)
+4. **Multi-LOD storage** - Store progressive fitting results as hierarchical LOD levels (format v1.1)
+5. **Future: Checkpoint/Resume** - Pause and resume fitting (deferred)
 
 ## Core Data Structure
 
@@ -56,43 +56,100 @@ The `n_splats` attribute in `splats/.zattrs` always reflects the true count (N),
 
 ---
 
-## Zarr Structure
+## Format Versions
+
+Two format versions exist:
+
+- **v1.0**: Single-LOD flat layout. Used when `GSplatData.n_lods == 1`.
+- **v1.1**: Multi-LOD with per-LOD subgroups. Used when `GSplatData.n_lods > 1` (from progressive fitting).
+
+The loader detects the version from `format_version` in root `.zattrs` and handles both transparently.
+
+---
+
+## Zarr Structure (v1.0 — Single LOD)
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs                      # Format metadata (see below)
+├── .zattrs                      # Format metadata (format_version: "1.0")
 ├── .zmetadata                   # Consolidated metadata for fast loading
 │
-├── splats/                      # Core splat data
+├── splats/                      # Core splat data (flat)
 │   ├── centers                  # (N, d) float32, spatially ordered
 │   ├── amplitudes               # (N,) or (1,) float32, spatially ordered
 │   ├── cholesky_factors         # (N, k) or (1, k) float32, spatially ordered
-│   ├── colors                   # (N, 3) or (1, 3) float32/uint8, spatially ordered (optional)
+│   ├── colors                   # (N, 3) or (1, 3) float32/uint8, optional
 │   ├── chunk_bounds             # (num_chunks, d, 2) float32, single chunk
-│   └── .zattrs                  # n_splats, ndim, ordering info, spatial index metadata
+│   └── .zattrs                  # n_splats, ndim, ordering info
 │
-├── fitting/                     # Optimization info (optional, fitter-specific)
+├── fitting/                     # Optimization info (optional)
 │   ├── .zattrs                  # Common: time_seconds, fitter_name, fitter_version
-│   └── config/                  # Fitter-specific parameters (free-form JSON)
-│       └── .zattrs              # Each fitter defines its own schema
+│   └── config/
+│       └── .zattrs              # Fitter-specific parameters
 │
 └── provenance/                  # Image lineage (optional)
     └── .zattrs                  # source_file, shape, dtype, normalization
 ```
 
+## Zarr Structure (v1.1 — Multi-LOD)
+
+```
+fitted.gsplats.zarr/
+├── .zattrs                      # Format metadata (format_version: "1.1", n_lods)
+├── .zmetadata                   # Consolidated metadata
+│
+├── splats/                      # LOD container
+│   ├── .zattrs                  # type: "gsplats", n_lods, n_splats_total
+│   │
+│   ├── lod_0/                   # LOD 0 (coarsest — pass 0 splats)
+│   │   ├── centers              # (N_0, d) float32
+│   │   ├── amplitudes           # (N_0,) float32
+│   │   ├── cholesky_factors     # (N_0, k) float32
+│   │   ├── colors               # (N_0, 3) optional
+│   │   ├── chunk_bounds         # (num_chunks_0, d, 2) float32
+│   │   └── .zattrs              # Per-LOD: n_splats, ndim, ordering, lod_stats
+│   │
+│   ├── lod_1/                   # LOD 1 (finer — pass 1 residual splats)
+│   │   └── ...                  # Same structure as lod_0
+│   │
+│   └── lod_N/                   # LOD N (finest)
+│       └── ...
+│
+├── fitting/                     # Optional
+│   └── ...
+│
+└── provenance/                  # Optional
+    └── ...
+```
+
+Each LOD subgroup has the same internal structure as the v1.0 `splats/` group (arrays, ordering, chunk_bounds). LODs are additive: to render at LOD level L, load and combine LODs 0 through L.
+
 ### Root Attributes (.zattrs)
 
+**v1.0**:
 ```json
 {
   "format_version": "1.0",
   "format_type": "gsplats_zarr",
-  "timestamp": "2025-01-15T14:30:00Z",  // ISO 8601 format (creation time)
+  "timestamp": "2025-01-15T14:30:00Z",
   "luxar_gsplats_version": "X.Y.Z",
   "description": "Optional user description"
 }
 ```
 
-**Note**: Core splat metadata (`n_splats`, `ndim`) is stored in `splats/.zattrs` (single source of truth).
+**v1.1** (additional fields):
+```json
+{
+  "format_version": "1.1",
+  "format_type": "gsplats_zarr",
+  "n_lods": 5,
+  "timestamp": "2026-03-27T10:00:00Z",
+  "luxar_gsplats_version": "X.Y.Z",
+  "description": "Progressive fit, 5 passes"
+}
+```
+
+**Note**: Core splat metadata (`n_splats`, `ndim`) is stored in `splats/.zattrs` (single source of truth). For v1.1, each `splats/lod_i/.zattrs` has per-LOD counts.
 
 ### Splats Group Attributes (Single Source of Truth)
 
@@ -341,11 +398,11 @@ For our case, could factorize:
 
 **Status**: Deferred to future version - initial implementation uses ordering + standard compression.
 
-### 4. Pruning Before Storage
+### 4. Culling Before Storage
 
 Not a storage format concern, but worth noting:
 - Remove low-amplitude splats before saving
-- User can set threshold: `result.prune(min_amplitude=0.01).save(...)`
+- User can cull before saving: `result.cull(method="cumulative", retention=0.95).save(...)`
 
 ---
 
@@ -603,32 +660,47 @@ There are two ways to store Gaussian splats, serving different purposes:
 - Encoding application
 - Both formats call the same underlying functions
 
-**Future Integration**: `scene.add_gsplats()` will support loading from `.gsplats.zarr` files directly (planned).
+**Scene Integration**: `scene.add_gsplats_from_file()` loads `.gsplats.zarr` files directly, preserving LOD structure for multi-LOD data.
 
 ---
 
-## Luxar Integration (Future)
+## Luxar Scene Integration
 
-Once `.gsplats.zarr` format is stable, integrate with Luxar visualization:
+The `.gsplats.zarr` format integrates with the Luxar scene system.
+Single-LOD and multi-LOD data are both supported:
 
 ```python
 from luxar import LuxarZarrCompiler, Dimensions
-from luxar.gsplats import GSplatData
+from luxar.gsplats import fit_gaussian_splats, fit_progressive_gaussian_splats
 
-# Option 1: From in-memory result
-result = fit_gaussian_splats(image)
 dims = Dimensions.default_3d()
-with LuxarZarrCompiler("scene.zarr") as compiler:
-    scene = compiler.create_scene(dimensions=dims)
-    scene.add_gsplats("nuclei", result)
 
-# Option 2: From saved .gsplats.zarr file
+# Single-pass fitting → flat gsplats node
+result = fit_gaussian_splats(image, n_iters=1000)
 with LuxarZarrCompiler("scene.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
-    scene.add_gsplats("nuclei", "fitted.gsplats.zarr")  # Path
+    scene.add_gsplats_from_data("nuclei", result)
+
+# Progressive fitting → multi-LOD gsplats node (per-LOD subgroups)
+result = fit_progressive_gaussian_splats(image, max_splats=50000)
+with LuxarZarrCompiler("scene.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
+    scene.add_gsplats_from_data("nuclei", result)  # auto-detects multi-LOD
+
+# From saved .gsplats.zarr file (preserves LOD structure)
+with LuxarZarrCompiler("scene.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
+    scene.add_gsplats_from_file("nuclei", "fitted.gsplats.zarr")
+
+# Fit-and-add in one step (supports progressive=True)
+with LuxarZarrCompiler("scene.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
+    scene.add_gsplats_from_volume("nuclei", image, progressive=True)
 ```
 
-This will be designed after the gsplats I/O module is complete.
+Multi-LOD scene nodes use per-LOD subgroups (lod_0/, lod_1/, ...)
+matching the standalone v1.1 format.  The viewer can load LODs
+incrementally for progressive rendering.
 
 ---
 
@@ -645,7 +717,7 @@ This will be designed after the gsplats I/O module is complete.
 | Covariance storage | Cholesky (packed) | Already have it, compresses well |
 | Fitting info | Fitter-agnostic design | Allows other programs to use format |
 | Checkpoint/Resume | Deferred | Focus on basic I/O first |
-| Multiscale | Deferred | Not finalized yet |
+| Multi-LOD | v1.1 per-LOD subgroups | Progressive fitting produces additive LODs; viewer loads incrementally |
 | Image embedding | No | Keep format focused on splats |
 | Compression | Blosc + BITSHUFFLE + zstd | Standard, well-supported |
 | Delta encoding | No | Blosc shuffle sufficient |
@@ -665,6 +737,16 @@ This will be designed after the gsplats I/O module is complete.
 ---
 
 ## Changelog
+
+- **v2.0.0** (2026-03-27): Multi-LOD format (v1.1) and scene integration
+  - Added format v1.1 with per-LOD subgroups (`splats/lod_0/`, `splats/lod_1/`, ...)
+  - Produced by `fit_progressive_gaussian_splats()` (iterative residual decomposition)
+  - LODs are additive: render LODs 0..L to get cumulative approximation at level L
+  - Each LOD has independent spatial ordering, chunk bounds, and per-LOD stats
+  - Loader auto-detects v1.0 vs v1.1 from `format_version` in root attrs
+  - Scene API now writes multi-LOD nodes with per-LOD subgroups (matching standalone format)
+  - Updated Luxar Integration section — `add_gsplats_from_data()`, `add_gsplats_from_volume(progressive=True)`, `add_gsplats_from_file()` all preserve LOD structure
+  - Replaced "Future: Multiscale storage (deferred)" with implemented multi-LOD support
 
 - **v1.2.0** (2026-03-18): Removed sharpness from GSplats
   - Removed `sharpnesses` array from core data structure, zarr schema, and all examples

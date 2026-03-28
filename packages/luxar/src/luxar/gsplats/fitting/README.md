@@ -198,8 +198,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 
 **Operations:**
 1. Extracts parameters from best state (not final state)
-2. Post-fit culling: removes splats with amplitude below `cull_ratio × max_abs_error` noise floor
-3. Converts tensors to numpy arrays with separate fields:
+2. Converts tensors to numpy arrays with separate fields:
    - `centers`: Shape `(N, d)` - splat center positions
    - `cholesky_factors`: Shape `(N, d*(d+1)//2)` - packed lower-triangular Cholesky factors
    - `sharpnesses`: Shape `(N,)` - per-splat sharpness values
