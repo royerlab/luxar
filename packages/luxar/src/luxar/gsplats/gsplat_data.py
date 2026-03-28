@@ -1575,6 +1575,153 @@ class GSplatData(_SplatArrayMixin):
 
         return result
 
+    def cull(
+        self,
+        target: np.ndarray | None = None,
+        shape: tuple[int, ...] | None = None,
+        truncate: float = 3.0,
+        error_percentile: float = 99.0,
+        error_tolerance: float = 1.0,
+        redundancy_threshold: float = 0.01,
+        max_binary_search_iters: int = 8,
+        device: str | None = None,
+        intensity_floor: float = 1e-5,
+        verbose: bool = False,
+    ) -> "GSplatData":
+        """Cull splats that contribute negligibly to the reconstruction.
+
+        Two modes are available, selected by whether *target* is provided:
+
+        **Error-budget mode** (``target`` provided):
+            Compares the reconstruction against the original volume that was
+            fitted.  Uses the residual ``R = target - V_pred`` to set an error
+            budget: a splat is safe to remove when its deletion does not
+            increase the worst-case local error beyond the budget.  This is the
+            most principled mode but requires the original volume.
+
+        **Redundancy mode** (``target=None``, the default):
+            Works from the splats alone — no target volume needed.  For each
+            splat, measures the maximum fraction of the local signal it
+            contributes: ``g_j(x) / V_pred(x)``.  A splat is redundant when
+            this fraction is below ``redundancy_threshold`` everywhere in its
+            support — other splats already cover its region.  This mode is
+            useful when the original volume is unavailable.
+
+        Both modes include a Phase 2 compounding check to ensure the joint
+        removal of all candidates does not exceed the budget.
+
+        Args:
+            target: Original target volume that was fitted.  If provided,
+                error-budget mode is used.  If ``None`` (default), redundancy
+                mode is used instead.
+            shape: Volume shape for rendering.  Required when ``target`` is
+                None; otherwise defaults to ``target.shape``.
+            truncate: Truncation radius in standard deviations.
+            error_percentile: *Error-budget mode only.*  Percentile of
+                |residual| for the budget (0--100).  Higher = more conservative.
+            error_tolerance: *Error-budget mode only.*  Multiplier on the budget.
+            redundancy_threshold: *Redundancy mode only.*  Maximum fractional
+                contribution below which a splat is considered redundant (0--1).
+                E.g. 0.01 means "remove splats contributing < 1% of the local
+                signal everywhere."
+            max_binary_search_iters: Max binary-search iterations for Phase 2.
+            device: Device for GPU computation.  Auto-detected if None.
+            intensity_floor: Minimum intensity threshold for AABB computation.
+            verbose: Print progress information.
+
+        Returns:
+            New GSplatData with culled splats removed.  Stats include culling
+            metadata (``culled``, ``culling_method``, ``n_culled``, etc.).
+
+        Examples:
+            >>> # Redundancy mode (no target needed)
+            >>> culled = data.cull(shape=(128, 128, 128))
+            >>> culled = data.cull(shape=(128, 128, 128), redundancy_threshold=0.02)
+            >>>
+            >>> # Error-budget mode (target available)
+            >>> culled = data.cull(original_volume)
+            >>> culled = data.cull(original_volume, error_tolerance=1.5)
+        """
+        import torch
+
+        from luxar.gsplats.culling import cull_by_contribution
+        from luxar.gsplats.rendering.volume_rendering import auto_detect_device
+
+        if target is not None and shape is None:
+            shape = target.shape
+        if shape is None:
+            raise ValueError(
+                "shape is required when target is None (redundancy mode). "
+                "Pass the volume shape, e.g. shape=(128, 128, 128)."
+            )
+
+        if device is None:
+            device = auto_detect_device()
+
+        # Convert to GPU tensors
+        centers_t = torch.from_numpy(self.centers.astype(np.float32)).to(device)
+        amps_t = torch.from_numpy(self.amplitudes.astype(np.float32)).to(device)
+        target_t = (
+            torch.from_numpy(target.astype(np.float32)).to(device)
+            if target is not None
+            else None
+        )
+
+        # Unpack Cholesky factors: (N, d*(d+1)/2) -> (N, d, d) lower-triangular
+        chol = self.cholesky_factors
+        ndim = self.ndim
+        Ls_t = torch.zeros(
+            (len(chol), ndim, ndim), device=device, dtype=torch.float32
+        )
+        if ndim == 2:
+            Ls_t[:, 0, 0] = torch.from_numpy(chol[:, 0]).to(device)
+            Ls_t[:, 1, 0] = torch.from_numpy(chol[:, 1]).to(device)
+            Ls_t[:, 1, 1] = torch.from_numpy(chol[:, 2]).to(device)
+        elif ndim == 3:
+            Ls_t[:, 0, 0] = torch.from_numpy(chol[:, 0]).to(device)
+            Ls_t[:, 1, 0] = torch.from_numpy(chol[:, 1]).to(device)
+            Ls_t[:, 1, 1] = torch.from_numpy(chol[:, 2]).to(device)
+            Ls_t[:, 2, 0] = torch.from_numpy(chol[:, 3]).to(device)
+            Ls_t[:, 2, 1] = torch.from_numpy(chol[:, 4]).to(device)
+            Ls_t[:, 2, 2] = torch.from_numpy(chol[:, 5]).to(device)
+        else:
+            idx = 0
+            for i in range(ndim):
+                for j in range(i + 1):
+                    Ls_t[:, i, j] = torch.from_numpy(chol[:, idx]).to(device)
+                    idx += 1
+
+        result = cull_by_contribution(
+            centers_t,
+            Ls_t,
+            amps_t,
+            target_t,
+            shape,
+            truncate=truncate,
+            error_percentile=error_percentile,
+            error_tolerance=error_tolerance,
+            redundancy_threshold=redundancy_threshold,
+            max_binary_search_iters=max_binary_search_iters,
+            intensity_floor=intensity_floor,
+            verbose=verbose,
+        )
+
+        culled = self.filter(result.keep_mask)
+        culled.stats.update(
+            {
+                "culled": True,
+                "culling_method": result.mode,
+                "n_original": self.n_splats,
+                "n_culled": result.n_culled,
+                "error_budget": result.error_budget,
+                "redundancy_threshold": redundancy_threshold,
+                "phase1_candidates": result.phase1_candidates,
+                "phase2_iterations": result.phase2_iterations,
+                "max_joint_error": result.max_joint_error,
+            }
+        )
+        return culled
+
     def render_to_volume(
         self,
         shape: tuple[int, ...],

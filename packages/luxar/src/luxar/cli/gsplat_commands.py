@@ -884,6 +884,157 @@ def prune_dataset(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# cull — Contribution-based culling (requires target volume)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("cull")
+def cull_dataset(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    target_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        help="Target volume that was fitted (.npy/.npz/.tiff/.zarr/.zarr.zip)",
+    ),
+    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr dataset"),
+    error_percentile: float = typer.Option(
+        99.0,
+        "--error-percentile",
+        "-p",
+        help="Percentile of |residual| for error budget (0-100). Higher = more conservative.",
+        min=0.0,
+        max=100.0,
+    ),
+    error_tolerance: float = typer.Option(
+        1.0,
+        "--error-tolerance",
+        "-t",
+        help="Multiplier on the error budget. >1 = more culling, <1 = less culling.",
+        min=0.0,
+    ),
+    truncate: float = typer.Option(
+        3.0, "--truncate", help="Truncation radius in standard deviations"
+    ),
+    max_iters: int = typer.Option(
+        8,
+        "--max-iters",
+        help="Maximum binary-search iterations for Phase 2 compounding check",
+    ),
+    device: Optional[str] = typer.Option(
+        None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
+    ),
+    channel: Optional[int] = typer.Option(
+        None, "--channel", "-c", help="Channel index for OME-Zarr target"
+    ),
+    timepoint: Optional[int] = typer.Option(
+        None, "--timepoint", help="Timepoint index for OME-Zarr target"
+    ),
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode for output"
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", help="Compress output as .zip or .tar.gz archive"
+    ),
+) -> None:
+    """Cull splats using contribution-based error budget analysis.
+
+    Unlike 'prune' (which uses amplitude/volume heuristics), 'cull' tests
+    each splat's actual contribution to the reconstruction. A splat is
+    removed only if its deletion does not increase the local reconstruction
+    error beyond a budget derived from the existing residual.
+
+    Requires the original target volume for comparison.
+
+    Examples:
+        luxar gsplat cull fitted.gsplats.zarr volume.npy culled.gsplats.zarr
+        luxar gsplat cull fitted.gsplats.zarr volume.tiff culled.gsplats.zarr -t 1.5
+        luxar gsplat cull fitted.gsplats.zarr volume.zarr culled.gsplats.zarr -p 95
+    """
+    try:
+        from luxar.cli.gsplat_config import load_volume
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        encoding_map = {
+            "auto": EncodingMode.AUTO,
+            "precision": EncodingMode.PRECISION,
+            "memory": EncodingMode.MEMORY,
+        }
+        encoding_mode_obj = encoding_map[encoding_mode]
+
+        with asection(f"Contribution-based culling: {input_path.name}"):
+            # Load gsplat dataset
+            with asection("Loading dataset"):
+                data = GSplatData.load(input_path, include_stats=True)
+                n_original = data.n_splats
+                aprint(f"Loaded {n_original:,} splats ({data.ndim}D)")
+
+            # Load target volume
+            with asection("Loading target volume"):
+                target_np = load_volume(
+                    target_path, channel=channel, timepoint=timepoint
+                )
+                aprint(f"Target shape: {target_np.shape}")
+
+                if len(target_np.shape) != data.ndim:
+                    aprint(
+                        f"Dimension mismatch: gsplats are {data.ndim}D but "
+                        f"target is {len(target_np.shape)}D"
+                    )
+                    raise typer.Exit(1)
+
+            # Cull
+            with asection("Culling"):
+                aprint(f"Error percentile: {error_percentile}")
+                aprint(f"Error tolerance: {error_tolerance}")
+                culled_data = data.cull(
+                    target_np,
+                    truncate=truncate,
+                    error_percentile=error_percentile,
+                    error_tolerance=error_tolerance,
+                    max_binary_search_iters=max_iters,
+                    device=device,
+                    verbose=True,
+                )
+
+                n_culled = n_original - culled_data.n_splats
+                ndim = data.ndim
+                tril = ndim * (ndim + 1) // 2
+                floats_per_splat = ndim + tril + 1
+                bits_original = n_original * floats_per_splat * 32
+                bits_culled = culled_data.n_splats * floats_per_splat * 32
+                vol_bits = int(target_np.size) * 32
+
+                aprint("\nResults:")
+                aprint(f"  Original: {n_original:,} splats")
+                aprint(f"  Culled:   {n_culled:,} splats ({100 * n_culled / max(n_original, 1):.1f}%)")
+                aprint(f"  Kept:     {culled_data.n_splats:,} splats")
+                aprint(f"  Compression: {vol_bits / max(bits_original, 1):.1f}x -> {vol_bits / max(bits_culled, 1):.1f}x")
+                aprint(f"  Error budget: {culled_data.stats.get('error_budget', 'N/A')}")
+                aprint(f"  Phase 2 iters: {culled_data.stats.get('phase2_iterations', 'N/A')}")
+
+            # Save
+            with asection("Saving"):
+                culled_data.save(
+                    output_path,
+                    encoding_mode=encoding_mode_obj,
+                    compress=compress,
+                )
+                aprint(f"Saved to {output_path}")
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # filter — Filter splats by multiple criteria
 # ═══════════════════════════════════════════════════════════════════════
 
