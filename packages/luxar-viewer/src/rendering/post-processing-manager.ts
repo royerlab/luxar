@@ -1691,9 +1691,7 @@ export class PostProcessingManager {
     for (const pass of this.composer.passes) {
       if (pass.enabled && pass.needsSwap) swapCount++;
     }
-    return swapCount % 2 === 0
-      ? this.composer.inputBuffer
-      : this.composer.outputBuffer;
+    return swapCount % 2 === 0 ? this.composer.inputBuffer : this.composer.outputBuffer;
   }
 
   /**
@@ -1744,8 +1742,7 @@ export class PostProcessingManager {
 
       // Determine buffer type based on the render target's texture type.
       // WebGL requires matching typed arrays: HalfFloat → Uint16Array, Float → Float32Array
-      const isHalfFloat =
-        sourceBuffer.texture.type === THREE.HalfFloatType;
+      const isHalfFloat = sourceBuffer.texture.type === THREE.HalfFloatType;
 
       if (isHalfFloat) {
         // Read as Uint16Array (half-float encoded), then convert to Float32Array
@@ -1783,9 +1780,7 @@ export class PostProcessingManager {
    * @param options.type - Texture type: THREE.HalfFloatType (default, smaller) or THREE.FloatType (full precision)
    * @returns EXR file as Uint8Array binary data
    */
-  async captureHDRAsEXR(options?: {
-    type?: THREE.TextureDataType;
-  }): Promise<Uint8Array> {
+  async captureHDRAsEXR(options?: { type?: THREE.TextureDataType }): Promise<Uint8Array> {
     const exrType: THREE.TextureDataType = options?.type ?? THREE.HalfFloatType;
     const { pixels, width, height } = this.captureHDRPixels();
 
@@ -1802,13 +1797,7 @@ export class PostProcessingManager {
       data = halfData;
     }
 
-    const texture = new THREE.DataTexture(
-      data,
-      width,
-      height,
-      THREE.RGBAFormat,
-      exrType
-    );
+    const texture = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, exrType);
     texture.needsUpdate = true;
 
     const exporter = new EXRExporter();
