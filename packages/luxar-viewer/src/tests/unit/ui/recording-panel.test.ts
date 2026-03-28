@@ -17,7 +17,7 @@ if (typeof globalThis.ImageData === 'undefined') {
       if (widthOrData instanceof Uint8ClampedArray) {
         this.data = widthOrData;
         this.width = heightOrWidth;
-        this.height = height ?? (widthOrData.length / (4 * heightOrWidth));
+        this.height = height ?? widthOrData.length / (4 * heightOrWidth);
       } else {
         this.width = widthOrData;
         this.height = heightOrWidth;
@@ -283,7 +283,9 @@ describe('RecordingPanel', () => {
       });
 
       // Make the offscreen canvas toBlob return null (simulates encoding failure)
-      canvasToBlobOverride = (cb: any) => { cb(null); };
+      canvasToBlobOverride = (cb: any) => {
+        cb(null);
+      };
 
       await panel.captureScreenshot();
 
@@ -663,10 +665,7 @@ describe('RecordingPanel', () => {
 
       await panel.captureScreenshot();
 
-      expect(downloadSpy).toHaveBeenCalledWith(
-        expect.any(Blob),
-        expect.stringMatching(/\.exr$/)
-      );
+      expect(downloadSpy).toHaveBeenCalledWith(expect.any(Blob), expect.stringMatching(/\.exr$/));
 
       rafSpy.mockRestore();
     });

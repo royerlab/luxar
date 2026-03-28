@@ -261,7 +261,10 @@ export class RecordingPanel {
       // Normally unreachable (updateControlVisibility auto-corrects), but defends
       // against programmatic callers or future format-filtering changes.
       if (format === 'mp4' || format === 'webm' || format === 'mkv') {
-        log.warning(Modules.RECORDING, `Screenshot format '${format}' is a video format, falling back to PNG`);
+        log.warning(
+          Modules.RECORDING,
+          `Screenshot format '${format}' is a video format, falling back to PNG`
+        );
         format = 'png';
       }
 
@@ -340,9 +343,8 @@ export class RecordingPanel {
     this.saveRecordingState({
       disableDPR: true,
       lockResize: true,
-      scaleResolution: this.options.videoResolution > 0
-        ? { targetH: this.options.videoResolution }
-        : undefined,
+      scaleResolution:
+        this.options.videoResolution > 0 ? { targetH: this.options.videoResolution } : undefined,
     });
     if (this.options.videoResolution > 0) {
       await new Promise((r) => requestAnimationFrame(r));
@@ -562,8 +564,10 @@ export class RecordingPanel {
         codec = 'vp9';
       }
       if (!(await canEncodeVideo(codec, encOpts))) {
-        const allFallbacks: MBCodec[] = codec === 'hevc' ? ['avc', 'vp9', 'av1', 'vp8'] : ['vp9', 'av1', 'vp8', 'avc'];
-        const fallbacks = mode === 'webm' ? allFallbacks.filter(c => webmOnly.includes(c)) : allFallbacks;
+        const allFallbacks: MBCodec[] =
+          codec === 'hevc' ? ['avc', 'vp9', 'av1', 'vp8'] : ['vp9', 'av1', 'vp8', 'avc'];
+        const fallbacks =
+          mode === 'webm' ? allFallbacks.filter((c) => webmOnly.includes(c)) : allFallbacks;
         let found = false;
         for (const fb of fallbacks) {
           if (await canEncodeVideo(fb, encOpts)) {
@@ -581,7 +585,12 @@ export class RecordingPanel {
         }
       }
 
-      const format = mode === 'mp4' ? new Mp4OutputFormat() : mode === 'mkv' ? new MkvOutputFormat() : new WebMOutputFormat();
+      const format =
+        mode === 'mp4'
+          ? new Mp4OutputFormat()
+          : mode === 'mkv'
+            ? new MkvOutputFormat()
+            : new WebMOutputFormat();
       videoExt = mode;
       videoMime = mode === 'mp4' ? 'video/mp4' : mode === 'mkv' ? 'video/x-matroska' : 'video/webm';
       videoTarget = new BufferTarget();
@@ -653,7 +662,7 @@ export class RecordingPanel {
             const buf = new Uint8Array(await blob.arrayBuffer());
             imageFrames.push(buf);
           }
-        } else if ((isVideoMode) && videoSource) {
+        } else if (isVideoMode && videoSource) {
           captureCanvas = this.renderFrameToCanvas();
           const frameDuration = 1 / fps;
           const sample = new VideoSample(captureCanvas, {
@@ -1065,9 +1074,7 @@ export class RecordingPanel {
 
     // Turntable info display (computed from speed + FPS, read-only)
     const turntableInfo = { info: this.getTurntableInfo() };
-    const turntableInfoCtrl = advanced
-      .add(turntableInfo, 'info')
-      .name('Output');
+    const turntableInfoCtrl = advanced.add(turntableInfo, 'info').name('Output');
     // Make the input read-only (this is a computed display, not user-editable)
     const infoInput = turntableInfoCtrl.domElement.querySelector('input');
     if (infoInput) {
@@ -1172,17 +1179,19 @@ export class RecordingPanel {
     const imageFormats = ['png', 'webp', 'jpeg', 'exr'];
     const videoFormats = ['webm'];
     const turntableFormats = ['png', 'webp', 'jpeg', 'exr', 'mp4', 'webm', 'mkv'];
-    const validFormats = isImage
-      ? imageFormats
-      : isTurntable
-        ? turntableFormats
-        : videoFormats;
+    const validFormats = isImage ? imageFormats : isTurntable ? turntableFormats : videoFormats;
 
     // Show/hide <option> elements in the format dropdown.
     // Note: our GUI uses the display label as option.value (e.g., "PNG" not "png"),
     // and maps labels→values internally. We match by label→value mapping.
     const labelToValue: Record<string, string> = {
-      PNG: 'png', WebP: 'webp', JPEG: 'jpeg', EXR: 'exr', MP4: 'mp4', WebM: 'webm', MKV: 'mkv',
+      PNG: 'png',
+      WebP: 'webp',
+      JPEG: 'jpeg',
+      EXR: 'exr',
+      MP4: 'mp4',
+      WebM: 'webm',
+      MKV: 'mkv',
     };
     const selectEl = this.formatController?.domElement.querySelector(
       'select'
@@ -1232,7 +1241,10 @@ export class RecordingPanel {
     // Turntable (mediabunny) supports all codecs.
     if (isVideo && isVideoFormat) {
       const codecLabelToValue: Record<string, string> = {
-        'H.265': 'h265', VP9: 'vp9', 'H.264': 'h264', VP8: 'vp8',
+        'H.265': 'h265',
+        VP9: 'vp9',
+        'H.264': 'h264',
+        VP8: 'vp8',
       };
       const mediaRecorderCodecs = ['vp9', 'vp8'];
       const codecSelect = this.videoCodecController?.domElement.querySelector(
@@ -1257,7 +1269,8 @@ export class RecordingPanel {
     }
     // Video quality: hide only for image sequence formats where bitrate is irrelevant.
     // Both MediaRecorder (Video mode) and mediabunny (Turntable video) use computeVideoBitrate().
-    const isImageSequenceFormat = fmt === 'exr' || fmt === 'png' || fmt === 'webp' || fmt === 'jpeg';
+    const isImageSequenceFormat =
+      fmt === 'exr' || fmt === 'png' || fmt === 'webp' || fmt === 'jpeg';
     if ((isVideo || isTurntable) && isImageSequenceFormat) {
       this.videoQualityController?.hide();
     }
@@ -1515,10 +1528,7 @@ export class RecordingPanel {
     if (saved.rendererSize) {
       const renderer = this.sceneManager.renderer;
       renderer.setPixelRatio(window.devicePixelRatio);
-      this.sceneManager.postProcessing.resize(
-        saved.rendererSize.width,
-        saved.rendererSize.height
-      );
+      this.sceneManager.postProcessing.resize(saved.rendererSize.width, saved.rendererSize.height);
       const camera = this.sceneManager.camera;
       if (camera instanceof THREE.PerspectiveCamera) {
         camera.aspect = saved.rendererSize.width / saved.rendererSize.height;
@@ -1628,7 +1638,9 @@ echo "  -> turntable.mp4"
 #   -movflags +faststart \\
 #   "turntable_h264.mp4"
 # echo "  -> turntable_h264.mp4"
-${isHDRFormat ? `
+${
+  isHDRFormat
+    ? `
 # --- HDR MP4 (H.265, 10-bit PQ/BT.2020) ---
 echo "Encoding HDR MP4 (H.265 10-bit)..."
 ffmpeg -y -framerate ${fps} -i '${inputPattern}' \\
@@ -1638,7 +1650,9 @@ ffmpeg -y -framerate ${fps} -i '${inputPattern}' \\
   -movflags +faststart \\
   "turntable_hdr.mp4"
 echo "  -> turntable_hdr.mp4"
-` : ''}
+`
+    : ''
+}
 
 echo "Done!"
 `;
