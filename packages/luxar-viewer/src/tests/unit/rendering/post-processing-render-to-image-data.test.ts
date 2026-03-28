@@ -120,9 +120,7 @@ describe('PostProcessingManager.renderToImageData', () => {
    * (bypasses constructor) and injects mock internals.
    */
   async function callRenderToImageData() {
-    const { PostProcessingManager } = await import(
-      '../../../rendering/post-processing-manager'
-    );
+    const { PostProcessingManager } = await import('../../../rendering/post-processing-manager');
     const instance = Object.create(PostProcessingManager.prototype);
     (instance as any).renderer = mockRenderer;
     (instance as any).composer = mockComposer;
@@ -167,13 +165,33 @@ describe('PostProcessingManager.renderToImageData', () => {
     mockRenderer = createMockRenderer(mockGL);
 
     mockGL.readPixels.mockImplementation(
-      (_x: number, _y: number, _w: number, _h: number, _fmt: number, _type: number, buf: Uint8Array) => {
+      (
+        _x: number,
+        _y: number,
+        _w: number,
+        _h: number,
+        _fmt: number,
+        _type: number,
+        buf: Uint8Array
+      ) => {
         // Row 0 (bottom in WebGL): red
-        buf[0] = 255; buf[1] = 0;   buf[2] = 0;   buf[3] = 255;
-        buf[4] = 255; buf[5] = 0;   buf[6] = 0;   buf[7] = 255;
+        buf[0] = 255;
+        buf[1] = 0;
+        buf[2] = 0;
+        buf[3] = 255;
+        buf[4] = 255;
+        buf[5] = 0;
+        buf[6] = 0;
+        buf[7] = 255;
         // Row 1 (top in WebGL): green
-        buf[8] = 0;   buf[9] = 255; buf[10] = 0;  buf[11] = 255;
-        buf[12] = 0;  buf[13] = 255; buf[14] = 0; buf[15] = 255;
+        buf[8] = 0;
+        buf[9] = 255;
+        buf[10] = 0;
+        buf[11] = 255;
+        buf[12] = 0;
+        buf[13] = 255;
+        buf[14] = 0;
+        buf[15] = 255;
       }
     );
 
@@ -216,9 +234,7 @@ describe('PostProcessingManager.getResultBuffer', () => {
    * the result of the private getResultBuffer() method.
    */
   async function callGetResultBuffer(passes: Array<{ enabled: boolean; needsSwap?: boolean }>) {
-    const { PostProcessingManager } = await import(
-      '../../../rendering/post-processing-manager'
-    );
+    const { PostProcessingManager } = await import('../../../rendering/post-processing-manager');
     const instance = Object.create(PostProcessingManager.prototype);
     const composer = createMockComposer(passes);
     (instance as any).composer = composer;

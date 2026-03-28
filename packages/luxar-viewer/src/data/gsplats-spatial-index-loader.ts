@@ -521,7 +521,10 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
       // Use RangeLoader for target
       const encoding = RangeLoader.detectEncoding(targetAttrs);
-      log.info(Modules.GSPLATS_SPATIAL_INDEX_LOADER, `GSplats: Array ref target encoding: ${encoding}`);
+      log.info(
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+        `GSplats: Array ref target encoding: ${encoding}`
+      );
 
       await this.rangeLoader.loadRanges(
         targetArray,

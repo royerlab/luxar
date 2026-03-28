@@ -84,7 +84,11 @@ export async function loadGSplatsChunkSpatialIndex(
         'No chunk bounds found - GSplats dataset has no spatial indexing'
       );
     } else {
-      log.error(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'Failed to load GSplats spatial index:', error);
+      log.error(
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+        'Failed to load GSplats spatial index:',
+        error
+      );
     }
     return null;
   }

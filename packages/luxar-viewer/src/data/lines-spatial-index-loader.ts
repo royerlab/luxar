@@ -246,10 +246,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       }
       this.arrays.sharpness = sharpnessArray;
     } catch {
-      log.info(
-        Modules.LINES_LOADER,
-        'No sharpnesses array found (using default sharpness)'
-      );
+      log.info(Modules.LINES_LOADER, 'No sharpnesses array found (using default sharpness)');
     }
 
     // Initialize data accumulator for object pooling (Phase 1 optimization)
