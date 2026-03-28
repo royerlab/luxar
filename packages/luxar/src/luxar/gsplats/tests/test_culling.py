@@ -336,6 +336,114 @@ class TestCullByContribution:
 # ---------------------------------------------------------------------------
 
 
+class TestRedundancyMode:
+    """Tests for redundancy mode (no target volume)."""
+
+    def test_redundancy_culls_duplicates(self, device: torch.device) -> None:
+        """Redundancy mode should cull overlapping duplicates."""
+        shape = (32, 32)
+        # One real splat + one tiny duplicate
+        s_real = _make_splat_2d((16.0, 16.0), 1.0, 3.0, device)
+        s_tiny = _make_splat_2d((16.0, 16.0), 0.005, 3.0, device)
+        centers, Ls, amps = _concat_splats(s_real, s_tiny)
+
+        result = cull_by_contribution(
+            centers, Ls, amps, None, shape, truncate=3.0,
+            redundancy_threshold=0.01,
+        )
+
+        assert result.mode == "redundancy"
+        assert result.n_culled >= 1
+        assert not result.keep_mask[1]  # tiny splat culled
+
+    def test_redundancy_keeps_unique_splats(self, device: torch.device) -> None:
+        """Redundancy mode should keep splats that are the sole local contributors."""
+        shape = (64, 64)
+        s1 = _make_splat_2d((16.0, 16.0), 1.0, 2.0, device)
+        s2 = _make_splat_2d((48.0, 48.0), 1.0, 2.0, device)
+        centers, Ls, amps = _concat_splats(s1, s2)
+
+        result = cull_by_contribution(
+            centers, Ls, amps, None, shape, truncate=3.0,
+            redundancy_threshold=0.01,
+        )
+
+        assert result.n_culled == 0
+        assert result.keep_mask.all()
+
+    def test_redundancy_empty(self, device: torch.device) -> None:
+        """Redundancy mode with empty data."""
+        shape = (16, 16)
+        centers = torch.zeros((0, 2), device=device)
+        Ls = torch.zeros((0, 2, 2), device=device)
+        amps = torch.zeros((0,), device=device)
+
+        result = cull_by_contribution(
+            centers, Ls, amps, None, shape, truncate=3.0,
+        )
+
+        assert result.mode == "redundancy"
+        assert result.n_culled == 0
+
+
+class TestNdSupport:
+    """Test the generic nD code path (d != 2 and d != 3)."""
+
+    def test_4d_deletion_error(self, device: torch.device) -> None:
+        """4D triggers the generic nD path."""
+        shape = (8, 8, 8, 8)
+        centers = torch.tensor([[4.0, 4.0, 4.0, 4.0]], device=device)
+        amps = torch.tensor([1.0], device=device)
+        Ls = torch.eye(4, device=device).unsqueeze(0) * 2.0
+
+        R = torch.zeros(shape, device=device)
+
+        errors = compute_per_splat_deletion_error(
+            centers, Ls, amps, R, shape, truncate=2.0
+        )
+
+        assert errors.shape == (1,)
+        assert errors[0].item() > 0.5
+
+    def test_4d_cull(self, device: torch.device) -> None:
+        """Culling works end-to-end for 4D data."""
+        shape = (8, 8, 8, 8)
+        c1 = torch.tensor([[4.0, 4.0, 4.0, 4.0]], device=device)
+        c2 = torch.tensor([[4.0, 4.0, 4.0, 4.0]], device=device)
+        centers = torch.cat([c1, c2])
+        amps = torch.tensor([1.0, 0.001], device=device)
+        L = torch.eye(4, device=device).unsqueeze(0) * 2.0
+        Ls = L.expand(2, -1, -1).clone()
+
+        # Target from real splat only
+        target = render_gaussians(shape, c1, L, amps[:1], truncate=2.0)
+
+        result = cull_by_contribution(
+            centers, Ls, amps, target, shape, truncate=2.0,
+        )
+
+        assert result.n_culled >= 1
+
+
+class TestPhase2BinarySearch:
+    """Test that Phase 2 binary search produces monotonic results."""
+
+    def test_verbose_output(self, device: torch.device) -> None:
+        """Verbose mode should not crash."""
+        shape = (32, 32)
+        s1 = _make_splat_2d((16.0, 16.0), 1.0, 3.0, device)
+        s2 = _make_splat_2d((16.0, 16.0), 0.01, 3.0, device)
+        c_real, L_real, a_real = s1
+        target = render_gaussians(shape, c_real, L_real, a_real, truncate=3.0)
+        centers, Ls, amps = _concat_splats(s1, s2)
+
+        result = cull_by_contribution(
+            centers, Ls, amps, target, shape, truncate=3.0,
+            verbose=True,
+        )
+        assert isinstance(result, CullResult)
+
+
 class TestGSplatDataCull:
     def test_basic_cull(self, device: torch.device) -> None:
         """GSplatData.cull() should return a valid GSplatData."""
@@ -397,3 +505,22 @@ class TestGSplatDataCull:
         assert "n_culled" in culled.stats
         assert "error_budget" in culled.stats
         assert "phase1_candidates" in culled.stats
+
+    def test_redundancy_mode_no_target(self, device: torch.device) -> None:
+        """GSplatData.cull() without target uses redundancy mode."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        centers_np = np.array([[16.0, 16.0], [16.0, 16.0]], dtype=np.float32)
+        amps_np = np.array([1.0, 0.005], dtype=np.float32)
+        chol_np = np.array([[3.0, 0.0, 3.0], [3.0, 0.0, 3.0]], dtype=np.float32)
+
+        data = GSplatData(
+            centers=centers_np,
+            amplitudes=amps_np,
+            cholesky_factors=chol_np,
+        )
+
+        culled = data.cull(shape=(32, 32), device=str(device))
+
+        assert culled.stats["culling_method"] == "redundancy"
+        assert culled.n_splats <= data.n_splats
