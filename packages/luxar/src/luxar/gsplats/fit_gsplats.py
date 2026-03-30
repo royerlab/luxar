@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import warnings
 from typing import Any, Optional, Sequence
 
@@ -578,6 +579,18 @@ def fit_gaussian_splats(
             sort_splats_interval=sort_splats_interval,
             **seed_kwargs,
         )
+
+    # Explicitly release the fitter and its GPU resources (optimizer state,
+    # model weights, preprocessed V_tensor) before post-fit operations.
+    # Also clear the rendering grid cache which accumulates GPU tensors
+    # for each unique AABB box shape seen during optimization.
+    from luxar.gsplats.models.gsplats.rendering_core import clear_grid_cache
+
+    del fitter
+    clear_grid_cache()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # After fitting section closes, show summary and movie
     if verbose:

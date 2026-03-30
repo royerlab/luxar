@@ -119,6 +119,15 @@ export async function loadChunkSpatialIndex(
   zarrLocation: zarr.Location<zarr.Readable>,
   nodeAttrs: any
 ): Promise<ChunkSpatialIndex | null> {
+  // Skip network probe if spatial ordering is disabled or absent.
+  // This matches the guard in gsplats-chunk-spatial-index.ts and
+  // lines-chunk-spatial-index.ts, avoiding 3-4 HTTP 404s per node
+  // for datasets without spatial indexing.
+  if (!nodeAttrs.ordering || nodeAttrs.ordering === 'none') {
+    log.info(Modules.SPATIAL_INDEX, 'No spatial ordering — skipping chunk_bounds probe');
+    return null;
+  }
+
   try {
     // Try to load chunk_bounds array
     const boundsLoc = zarrLocation.resolve('chunk_bounds');

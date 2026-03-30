@@ -12,6 +12,16 @@ import { consoleInterceptor } from '../utils/console-interceptor';
 import { log, Modules, LogEmoji } from '../utils/log';
 log.custom(LogEmoji.START, Modules.LUXAR, 'Application starting...');
 
+// Eagerly warm the blosc codec module cache — zarrita lazy-loads it on first
+// compressed chunk access, but every Luxar dataset uses blosc compression.
+// Triggering the registry thunk now lets the browser fetch + parse the 601KB
+// WASM module in parallel with app initialization, eliminating the ~771ms
+// delay on first chunk decompress.
+import { registry as _codecRegistry } from 'zarrita';
+_codecRegistry
+  .get('blosc')?.()
+  ?.catch(() => {});
+
 import { LuxarApp } from './app';
 import { config } from '../config';
 import { validateAndLog } from '../config/validation';

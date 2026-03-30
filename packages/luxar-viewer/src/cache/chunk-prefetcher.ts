@@ -181,7 +181,13 @@ export class ChunkPrefetcher {
    */
   registerArrayBounds(arrayPath: string, shape: number[], chunks: number[]): void {
     const maxIndices = shape.map((s, i) => Math.ceil(s / chunks[i]));
-    this.maxChunkIndices.set(arrayPath, maxIndices);
+    // Normalize: register both with and without leading slash for robust lookup
+    // (zarrita keys have leading '/', loader paths may not)
+    const normalized = arrayPath.replace(/^\/+/, '');
+    this.maxChunkIndices.set(normalized, maxIndices);
+    if (normalized !== arrayPath) {
+      this.maxChunkIndices.set(arrayPath, maxIndices);
+    }
   }
 
   /**
@@ -201,8 +207,14 @@ export class ChunkPrefetcher {
     const isV3 = key.includes('/c/');
     const basePath = isV3 ? key.replace(/\/c\/[\d/]+$/, '') : key.replace(/\/[\d.]+$/, '');
 
+    // Normalize: strip leading slash for consistent lookup
+    // (zarrita resolves paths with leading '/', but registerArrayBounds strips it)
+    const normalizedBasePath = basePath.replace(/^\/+/, '');
+
     // Look up upper bounds for this array (if registered)
-    const maxIndices = this.maxChunkIndices.get(basePath);
+    // Try both with and without leading slash for robustness
+    const maxIndices =
+      this.maxChunkIndices.get(normalizedBasePath) ?? this.maxChunkIndices.get(basePath);
 
     // Debug logging for troubleshooting
     if (this.debug) {
@@ -213,7 +225,15 @@ export class ChunkPrefetcher {
 
     const adjacent: string[] = [];
 
+    // Without registered bounds we cannot safely determine which neighbors exist.
+    // Prefetching blindly would produce out-of-bounds 404s for small arrays
+    // (e.g. chunk_bounds with a single chunk in every dimension).
+    if (!maxIndices) return adjacent;
+
     for (let dim = 0; dim < indices.length; dim++) {
+      // Skip dimensions with only 1 chunk — no neighbors to prefetch
+      if (dim < maxIndices.length && maxIndices[dim] <= 1) continue;
+
       for (const delta of [-1, 1]) {
         const newIndices = [...indices];
         newIndices[dim] += delta;
@@ -222,7 +242,7 @@ export class ChunkPrefetcher {
         if (newIndices[dim] < 0) continue;
 
         // Skip indices beyond array bounds (upper bounds)
-        if (maxIndices && dim < maxIndices.length && newIndices[dim] >= maxIndices[dim]) continue;
+        if (dim < maxIndices.length && newIndices[dim] >= maxIndices[dim]) continue;
 
         // Generate key in same format as input
         const indexStr = isV3 ? 'c/' + newIndices.join('/') : newIndices.join('.');

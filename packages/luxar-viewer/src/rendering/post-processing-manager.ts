@@ -1214,6 +1214,7 @@ export class PostProcessingManager {
 
     this.msaaEnabled = enabled;
     this.recreateComposer();
+    this.updateRendererSize();
 
     // Verify MSAA was applied
     if (enabled) {
@@ -1253,6 +1254,7 @@ export class PostProcessingManager {
     this.msaaSamples = samples;
     if (this.msaaEnabled) {
       this.recreateComposer();
+      this.updateRendererSize();
       log.info(
         Modules.POST_PROCESSING,
         `MSAA samples set to ${samples} (actual: ${(this.composer as any).multisampling || 0})`
@@ -1421,21 +1423,16 @@ export class PostProcessingManager {
     // Dispose old composer
     this.composer.dispose();
 
-    // Calculate effective size for SSAA
-    const effectiveWidth = this.ssaaEnabled
-      ? Math.round(this.renderSize.width * this.ssaaMultiplier)
-      : this.renderSize.width;
-    const effectiveHeight = this.ssaaEnabled
-      ? Math.round(this.renderSize.height * this.ssaaMultiplier)
-      : this.renderSize.height;
-
     // Recreate composer with new settings
     this.composer = new EffectComposer(this.renderer, {
       frameBufferType: THREE.HalfFloatType,
       multisampling: this.msaaEnabled ? this.msaaSamples : 0,
     });
 
-    this.composer.setSize(effectiveWidth, effectiveHeight);
+    // NOTE: Do NOT call composer.setSize() here — all callers
+    // (setSSAAEnabled, setSSAAMultiplier, setMSAAEnabled, setMSAASamples)
+    // call updateRendererSize() afterward which handles both
+    // renderer.setSize() and composer.setSize() in one pass.
 
     // Re-add render pass
     this.renderPass = new RenderPass(this.scene, this.camera);
