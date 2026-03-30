@@ -941,10 +941,8 @@ export class SceneLoader {
         }
 
         // Load next LOD level for each progressive loader
-        let anyMore = false;
         for (const [path, loader] of this.gsplatLoaders) {
           if (loader.hasMoreLODs !== true) continue;
-          anyMore = true;
 
           try {
             // Build the gsplats view state (same as main update)
@@ -1006,6 +1004,10 @@ export class SceneLoader {
         // Update monitor after refinement commit
         this.updateVisibleCountsInMonitor();
 
+        // Check if any progressive loaders still have more LODs after this pass
+        const anyMore = [...this.gsplatLoaders.values()].some(
+          (l) => l.hasMoreLODs === true
+        );
         if (!anyMore) break; // All LODs loaded
       }
     } finally {

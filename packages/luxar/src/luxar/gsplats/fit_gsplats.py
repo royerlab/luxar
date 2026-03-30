@@ -612,13 +612,14 @@ def fit_gaussian_splats(
         n_removed = n_before - result.n_splats
         amp_after = float(np.sum(result.amplitudes))
         amp_retained_pct = 100.0 * amp_after / amp_before if amp_before > 0 else 100.0
-        from arbol import aprint
+        if verbose:
+            from arbol import aprint
 
-        aprint(
-            f"Post-fit culling (cumulative, retention={cull_retention:.0%}): "
-            f"{n_before} -> {result.n_splats} splats "
-            f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%; "
-            f"amplitude retained: {amp_retained_pct:.1f}%)"
-        )
+            aprint(
+                f"Post-fit culling (cumulative, retention={cull_retention:.0%}): "
+                f"{n_before} -> {result.n_splats} splats "
+                f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%; "
+                f"amplitude retained: {amp_retained_pct:.1f}%)"
+            )
 
     return result

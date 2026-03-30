@@ -469,10 +469,11 @@ def fit_progressive_gaussian_splats(
         n_before = final_result.n_splats
         final_result = final_result.cull(method="cumulative", retention=cull_retention)
         n_removed = n_before - final_result.n_splats
-        aprint(
-            f"Post-fit culling (cumulative, retention={cull_retention:.0%}): "
-            f"{n_before} -> {final_result.n_splats} splats "
-            f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%)"
-        )
+        if verbose:
+            aprint(
+                f"Post-fit culling (cumulative, retention={cull_retention:.0%}): "
+                f"{n_before} -> {final_result.n_splats} splats "
+                f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%)"
+            )
 
     return final_result
