@@ -733,15 +733,20 @@ class TestCompression:
 
     def test_roundtrip_with_compression(self):
         """Compressed files load correctly."""
-        splats = create_test_splats_3d(200)
+        rng = np.random.RandomState(42)
+        splats = {
+            "centers": rng.rand(200, 3).astype(np.float32) * 10,
+            "amplitudes": rng.rand(200).astype(np.float32) * 2,
+            "cholesky_factors": rng.rand(200, 6).astype(np.float32),
+        }
         g = GSplatData(**splats)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
-            g.save(path, ordering="none")
+            g.save(path, ordering="none", encoding_mode=EncodingMode.PRECISION)
 
             g2 = GSplatData.load(path)
             np.testing.assert_allclose(g.centers, g2.centers, atol=1e-6)
-            np.testing.assert_allclose(g.amplitudes, g2.amplitudes, atol=1e-3)
+            np.testing.assert_allclose(g.amplitudes, g2.amplitudes, atol=1e-6)
             np.testing.assert_allclose(
                 g.cholesky_factors, g2.cholesky_factors, atol=1e-6
             )
