@@ -76,7 +76,7 @@ def fit_progressive_gaussian_splats(
     max_passes: Optional[int] = None,
     asymmetric_penalty: Optional[float] = 10.0,
     enable_dynamic_ops: bool = True,
-    cull_retention: float | None = 0.95,
+    cull_retention: float | None = 0.98,
     on_pass_complete: Optional[Callable[[int, GSplatLOD, float], None]] = None,
     device: Optional[str] = None,
     verbose: bool = True,
@@ -111,7 +111,7 @@ def fit_progressive_gaussian_splats(
         Asymmetric loss penalty factor (default 10.0).
     enable_dynamic_ops : bool
         Whether to enable dynamic splat relocation within each pass.
-    cull_retention : float or None, default=0.95
+    cull_retention : float or None, default=0.98
         Post-fit cumulative culling on the final accumulated result.  Keeps the
         top splats that account for this fraction of total amplitude (0--1).
         Set to ``None`` to disable.
@@ -213,6 +213,7 @@ def fit_progressive_gaussian_splats(
                 V_tensor = torch.from_numpy(V_original).to(rendered.device)
                 residual_tensor = torch.clamp(V_tensor - rendered, min=0)
                 target = residual_tensor.cpu().numpy()
+                del V_tensor, residual_tensor
 
             # Check if residual is negligible
             residual_max = float(target.max())
@@ -350,6 +351,7 @@ def fit_progressive_gaussian_splats(
             )
             V_tensor = torch.from_numpy(V_original).to(cached_rendered.device)
             quality = compute_quality_metrics(cached_rendered, V_tensor)
+            del V_tensor
 
         current_psnr = quality["psnr_db"]
         delta_psnr = current_psnr - prev_psnr
@@ -388,6 +390,12 @@ def fit_progressive_gaussian_splats(
             stop_reason = "psnr_patience"
             break
         pass_i += 1
+
+    # Free GPU tensors from the last pass
+    if cached_rendered is not None:
+        del cached_rendered
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # --- Build result ---
     total_time = time.time() - start_time
@@ -455,10 +463,11 @@ def fit_progressive_gaussian_splats(
     if cull_retention is not None and 0 < cull_retention < 1.0 and final_result.n_splats > 0:
         n_before = final_result.n_splats
         final_result = final_result.cull(method="cumulative", retention=cull_retention)
-        if verbose and final_result.n_splats < n_before:
-            aprint(
-                f"Post-fit culling: {n_before} -> {final_result.n_splats} splats "
-                f"(retained {cull_retention * 100:.0f}% of amplitude)"
-            )
+        n_removed = n_before - final_result.n_splats
+        aprint(
+            f"Post-fit culling (cumulative, retention={cull_retention:.0%}): "
+            f"{n_before} -> {final_result.n_splats} splats "
+            f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%)"
+        )
 
     return final_result

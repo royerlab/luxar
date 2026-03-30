@@ -142,9 +142,11 @@ from luxar.utils.paths import get_demos_output_dir
 # Configuration
 # =============================================================================
 
-# Fitting parameters
-N_SEEDS = 50000  # Splats per channel
-N_ITERS = 8000  # Optimization iterations
+# Progressive fitting parameters
+MAX_SPLATS = 8000
+MAX_SPLATS_PER_PASS = 1500
+ITERS_PER_PASS = 3000
+PSNR_PATIENCE = 0.2
 
 # Voxel spacing (Z, Y, X) in micrometres for kidney dataset
 VOXEL_SIZE_ZYX = (1.25, 1.24, 1.24)
@@ -285,15 +287,21 @@ def fit_channel(volume, channel_name, cache_file):
 
         DEVICE = detect_device()
 
-    from luxar.gsplats import fit_gaussian_splats
+    from luxar.gsplats import fit_progressive_gaussian_splats
 
-    aprint(f"Fitting {channel_name} ({N_ITERS} iterations, {N_SEEDS} seeds)...")
+    aprint(
+        f"Fitting {channel_name} (progressive: max_splats={MAX_SPLATS}, "
+        f"max_splats_per_pass={MAX_SPLATS_PER_PASS}, "
+        f"iters_per_pass={ITERS_PER_PASS})..."
+    )
 
-    result = fit_gaussian_splats(
+    result = fit_progressive_gaussian_splats(
         volume,
         lr=0.01,
-        seeds=N_SEEDS,
-        n_iters=N_ITERS,
+        max_splats=MAX_SPLATS,
+        max_splats_per_pass=MAX_SPLATS_PER_PASS,
+        iters_per_pass=ITERS_PER_PASS,
+        psnr_patience=PSNR_PATIENCE,
         device=DEVICE,
         verbose=True,
         enable_dynamic_ops=True,

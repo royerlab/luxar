@@ -210,6 +210,11 @@ class GaussianSplatFitter:
             **seed_kwargs,
         )
 
+        # Clear cached rendering grids from previous fitting sessions
+        from luxar.gsplats.models.gsplats.rendering_core import clear_grid_cache
+
+        clear_grid_cache()
+
         # Step 2: Preprocess data and generate candidates
         preprocessed_data = preprocess_data(config)
 
@@ -602,11 +607,18 @@ def fit_gaussian_splats(
     # Post-fit cumulative culling (keeps top cull_retention of amplitude)
     if cull_retention is not None and 0 < cull_retention < 1.0 and result.n_splats > 0:
         n_before = result.n_splats
+        amp_before = float(np.sum(result.amplitudes))
         result = result.cull(method="cumulative", retention=cull_retention)
-        if verbose and result.n_splats < n_before:
-            aprint(
-                f"Post-fit culling: {n_before} -> {result.n_splats} splats "
-                f"(retained {cull_retention * 100:.0f}% of amplitude)"
-            )
+        n_removed = n_before - result.n_splats
+        amp_after = float(np.sum(result.amplitudes))
+        amp_retained_pct = 100.0 * amp_after / amp_before if amp_before > 0 else 100.0
+        from arbol import aprint
+
+        aprint(
+            f"Post-fit culling (cumulative, retention={cull_retention:.0%}): "
+            f"{n_before} -> {result.n_splats} splats "
+            f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%; "
+            f"amplitude retained: {amp_retained_pct:.1f}%)"
+        )
 
     return result

@@ -346,6 +346,9 @@ def finalize_results(
                 )
                 ref = torch.from_numpy(config.V.astype(np.float32)).to(rendered.device)
                 quality = compute_quality_metrics(rendered, ref)
+                del rendered, ref
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             stats["mse"] = quality["mse"]
             stats["psnr_db"] = quality["psnr_db"]
             stats["ssim"] = quality["ssim"]

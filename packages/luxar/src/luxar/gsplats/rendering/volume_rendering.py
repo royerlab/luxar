@@ -80,30 +80,32 @@ def render_to_volume_tensor(
     # Unpack Cholesky factors from packed format (N, d*(d+1)/2) to (N, d, d) lower-triangular
     chol = gsplat_data.cholesky_factors
     ndim = gsplat_data.centers.shape[1]
+    chol_t = torch.from_numpy(chol).to(device)
 
     Ls_t = torch.zeros((len(chol), ndim, ndim), device=device, dtype=torch.float32)
 
-    # Unpack based on dimensionality
+    # Unpack based on dimensionality (slicing on-device avoids temporary GPU tensors)
     if ndim == 2:
         # 2D: [L00, L10, L11]
-        Ls_t[:, 0, 0] = torch.from_numpy(chol[:, 0]).to(device)
-        Ls_t[:, 1, 0] = torch.from_numpy(chol[:, 1]).to(device)
-        Ls_t[:, 1, 1] = torch.from_numpy(chol[:, 2]).to(device)
+        Ls_t[:, 0, 0] = chol_t[:, 0]
+        Ls_t[:, 1, 0] = chol_t[:, 1]
+        Ls_t[:, 1, 1] = chol_t[:, 2]
     elif ndim == 3:
         # 3D: [L00, L10, L11, L20, L21, L22]
-        Ls_t[:, 0, 0] = torch.from_numpy(chol[:, 0]).to(device)
-        Ls_t[:, 1, 0] = torch.from_numpy(chol[:, 1]).to(device)
-        Ls_t[:, 1, 1] = torch.from_numpy(chol[:, 2]).to(device)
-        Ls_t[:, 2, 0] = torch.from_numpy(chol[:, 3]).to(device)
-        Ls_t[:, 2, 1] = torch.from_numpy(chol[:, 4]).to(device)
-        Ls_t[:, 2, 2] = torch.from_numpy(chol[:, 5]).to(device)
+        Ls_t[:, 0, 0] = chol_t[:, 0]
+        Ls_t[:, 1, 0] = chol_t[:, 1]
+        Ls_t[:, 1, 1] = chol_t[:, 2]
+        Ls_t[:, 2, 0] = chol_t[:, 3]
+        Ls_t[:, 2, 1] = chol_t[:, 4]
+        Ls_t[:, 2, 2] = chol_t[:, 5]
     else:
         # nD: Generic unpacking (row-major lower triangular)
         idx = 0
         for i in range(ndim):
             for j in range(i + 1):
-                Ls_t[:, i, j] = torch.from_numpy(chol[:, idx]).to(device)
+                Ls_t[:, i, j] = chol_t[:, idx]
                 idx += 1
+    del chol_t
 
     # Render using GPU-accelerated renderer
     return render_gaussians(
