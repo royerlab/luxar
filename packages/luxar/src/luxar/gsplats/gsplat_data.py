@@ -1141,6 +1141,7 @@ class GSplatData(_SplatArrayMixin):
         include_provenance: bool = False,
         description: Optional[str] = None,
         compress: Optional[Literal["zip", "tar.gz"]] = None,
+        compressor: Optional[Any] = None,
     ) -> None:
         """Save splats to .gsplats.zarr format.
 
@@ -1165,10 +1166,15 @@ class GSplatData(_SplatArrayMixin):
         """
         from luxar.encoding import EncodingMode
         from luxar.gsplats.io.save_gsplats import save_gsplats
+        from luxar.io.reader import DEFAULT_COMP
 
         # Use AUTO as default
         if encoding_mode is None:
             encoding_mode = EncodingMode.AUTO
+
+        # Use Blosc(zstd) compression by default
+        if compressor is None:
+            compressor = DEFAULT_COMP
 
         # Extract fitting info from stats
         fitting_info = None
@@ -1234,6 +1240,7 @@ class GSplatData(_SplatArrayMixin):
                 provenance_info=provenance_info,
                 description=description,
                 compress=compress,
+                compressor=compressor,
             )
         else:
             # Multi-LOD: use v1.1 format with per-LOD groups
@@ -1248,6 +1255,7 @@ class GSplatData(_SplatArrayMixin):
                 provenance_info=provenance_info,
                 description=description,
                 compress=compress,
+                compressor=compressor,
             )
 
     def _save_multi_lod(
@@ -1262,6 +1270,7 @@ class GSplatData(_SplatArrayMixin):
         provenance_info: Optional[Dict[str, Any]],
         description: Optional[str],
         compress: Optional[Literal["zip", "tar.gz"]],
+        compressor: Optional[Any] = None,
     ) -> None:
         """Write multi-LOD data as v1.1 zarr format with per-LOD groups."""
         import datetime
@@ -1342,6 +1351,7 @@ class GSplatData(_SplatArrayMixin):
                 positive_scalar_encoding=positive_scalar_encoding,
                 float16_allowed=False,
                 lod_stats=lod_stats,
+                compressor=compressor,
             )
 
         # Write fitting info (optional, root level)
@@ -1621,26 +1631,28 @@ class GSplatData(_SplatArrayMixin):
         # Unpack Cholesky factors: (N, d*(d+1)/2) -> (N, d, d) lower-triangular
         chol = self.cholesky_factors
         ndim = self.ndim
+        chol_t = torch.from_numpy(chol).to(device)
         Ls_t = torch.zeros(
             (len(chol), ndim, ndim), device=device, dtype=torch.float32
         )
         if ndim == 2:
-            Ls_t[:, 0, 0] = torch.from_numpy(chol[:, 0]).to(device)
-            Ls_t[:, 1, 0] = torch.from_numpy(chol[:, 1]).to(device)
-            Ls_t[:, 1, 1] = torch.from_numpy(chol[:, 2]).to(device)
+            Ls_t[:, 0, 0] = chol_t[:, 0]
+            Ls_t[:, 1, 0] = chol_t[:, 1]
+            Ls_t[:, 1, 1] = chol_t[:, 2]
         elif ndim == 3:
-            Ls_t[:, 0, 0] = torch.from_numpy(chol[:, 0]).to(device)
-            Ls_t[:, 1, 0] = torch.from_numpy(chol[:, 1]).to(device)
-            Ls_t[:, 1, 1] = torch.from_numpy(chol[:, 2]).to(device)
-            Ls_t[:, 2, 0] = torch.from_numpy(chol[:, 3]).to(device)
-            Ls_t[:, 2, 1] = torch.from_numpy(chol[:, 4]).to(device)
-            Ls_t[:, 2, 2] = torch.from_numpy(chol[:, 5]).to(device)
+            Ls_t[:, 0, 0] = chol_t[:, 0]
+            Ls_t[:, 1, 0] = chol_t[:, 1]
+            Ls_t[:, 1, 1] = chol_t[:, 2]
+            Ls_t[:, 2, 0] = chol_t[:, 3]
+            Ls_t[:, 2, 1] = chol_t[:, 4]
+            Ls_t[:, 2, 2] = chol_t[:, 5]
         else:
             idx = 0
             for i in range(ndim):
                 for j in range(i + 1):
-                    Ls_t[:, i, j] = torch.from_numpy(chol[:, idx]).to(device)
+                    Ls_t[:, i, j] = chol_t[:, idx]
                     idx += 1
+        del chol_t
 
         result = cull_by_contribution(
             centers_t,
@@ -1656,6 +1668,13 @@ class GSplatData(_SplatArrayMixin):
             intensity_floor=intensity_floor,
             verbose=verbose,
         )
+
+        # Free GPU tensors used for culling
+        del centers_t, amps_t, Ls_t
+        if target_t is not None:
+            del target_t
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         culled = self.filter(result.keep_mask)
         culled.stats.update(

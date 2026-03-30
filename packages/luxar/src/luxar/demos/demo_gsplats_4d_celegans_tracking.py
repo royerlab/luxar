@@ -116,10 +116,13 @@ VOXEL_SIZE_ZYX = (0.75, 0.15, 0.15)  # Micrometres
 IMAGE_SHAPE = (41, 512, 512)  # Z, Y, X per timepoint
 
 # Progressive fitting parameters
-MAX_SPLATS = 8000  # Total splats per timepoint
+# Note: peak GPU memory scales with accumulated splats * volume_size.
+# For 41x512x512 volumes on a 24 GB GPU, ~4000 accumulated splats is the
+# safe ceiling (~18 GB peak during quality-evaluation rendering).
+MAX_SPLATS = 4000  # Total splats per timepoint
 MAX_SPLATS_PER_PASS = 1000  # Splats added per progressive pass
 ITERS_PER_PASS = 3000  # Iterations per pass
-PSNR_PATIENCE = 0.2  # Stop if ΔPSNR < this (dB)
+PSNR_PATIENCE = 0.3  # Stop if ΔPSNR < this (dB) — tighter to save a pass
 
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_celegans"
@@ -127,8 +130,8 @@ CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_celegans"
 # Preprocessing parameters (CLAHE + Noise2Self-calibrated NLM)
 PREPROCESS_CLAHE_TILE = 16
 PREPROCESS_CLAHE_CLIP = 2.0
-PREPROCESS_NLM_PATCH_SIZE = 3
-PREPROCESS_NLM_PATCH_DISTANCE = 5
+PREPROCESS_NLM_PATCH_SIZE = 5
+PREPROCESS_NLM_PATCH_DISTANCE = 7
 
 # Parse command-line flags
 FLAGS = parse_demo_flags()
@@ -332,10 +335,17 @@ def load_timepoint_volume(tiff_path: Path) -> np.ndarray:
             f"got {volume.ndim}D with shape {volume.shape}"
         )
 
-    # Normalise
-    vmin, vmax = volume.min(), volume.max()
+    # Robust normalisation: subtract camera background and clip hot pixels.
+    # This confocal data has a high dark-current offset (~2070 counts) that
+    # dominates the signal.  A single saturated pixel (65535 at t=100, t=130)
+    # would compress the real signal into <2% of [0,1] under naive min-max.
+    # P1 floor removes camera dark current; P99.999 ceiling clips only ~108
+    # hot/dead pixels per volume while preserving >99.9% of nuclei signal.
+    # (P99.9 is too aggressive — it saturates the top 10% of nuclei peaks.)
+    vmin = np.percentile(volume, 1.0)
+    vmax = np.percentile(volume, 99.999)
     if vmax > vmin:
-        volume = (volume - vmin) / (vmax - vmin)
+        volume = np.clip((volume - vmin) / (vmax - vmin), 0.0, 1.0)
     else:
         volume = np.zeros_like(volume)
 
@@ -713,6 +723,11 @@ def preprocess_volume(volume: np.ndarray, nlm_h: float) -> np.ndarray:
     )
     result = result.cpu().numpy()
 
+    # Free GPU tensors from preprocessing
+    del vol_tensor, denoised
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     # Re-normalise to [0, 1]
     rmin, rmax = result.min(), result.max()
     if rmax > rmin:
@@ -928,6 +943,17 @@ def preprocess_and_fit_all_timepoints(tiff_files: list) -> list:
                 # Fit GSplats on preprocessed volume
                 gsplats = fit_timepoint(volume, f"T={t}", gsplat_cache_files[t])
                 gsplats_list.append(gsplats)
+                del volume  # Free numpy array early
+
+                # Aggressively free GPU memory between timepoints to
+                # prevent OOM from CUDA allocator fragmentation
+                import gc
+
+                import torch
+
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         return gsplats_list
 

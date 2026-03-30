@@ -650,3 +650,98 @@ class TestInspectGsplats:
 
             except ImportError:
                 pytest.skip("hilbertcurve package not installed")
+
+
+class TestCompression:
+    """Test blosc compression and chunk sizing."""
+
+    def test_default_compression_applied(self):
+        """save_gsplats uses Blosc(zstd) compression by default."""
+        from numcodecs import Blosc
+
+        splats = create_test_splats_3d(100)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.gsplats.zarr"
+            save_gsplats(path=path, **splats)
+
+            root = zarr.open(str(path), "r")
+            centers = root["splats/centers"]
+            assert isinstance(centers.compressor, Blosc)
+            assert centers.compressor.cname == "zstd"
+
+    def test_compression_disabled(self):
+        """compressor=None disables compression."""
+        splats = create_test_splats_3d(100)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.gsplats.zarr"
+            save_gsplats(path=path, compressor=None, **splats)
+
+            root = zarr.open(str(path), "r")
+            assert root["splats/centers"].compressor is None
+
+    def test_chunk_capping_small_array(self):
+        """Chunk rows should not exceed n_splats."""
+        splats = create_test_splats_3d(50)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.gsplats.zarr"
+            save_gsplats(path=path, **splats)
+
+            root = zarr.open(str(path), "r")
+            assert root["splats/centers"].chunks[0] <= 50
+            assert root["splats/amplitudes"].chunks[0] <= 50
+            assert root["splats/cholesky_factors"].chunks[0] <= 50
+
+    def test_gsplatdata_save_default_compression(self):
+        """GSplatData.save() uses Blosc compression by default."""
+        from numcodecs import Blosc
+
+        splats = create_test_splats_3d(100)
+        g = GSplatData(**splats)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.gsplats.zarr"
+            g.save(path)
+
+            root = zarr.open(str(path), "r")
+            assert isinstance(root["splats/centers"].compressor, Blosc)
+
+    def test_multi_lod_compression(self):
+        """Multi-LOD save applies compression to each LOD."""
+        from numcodecs import Blosc
+
+        from luxar.gsplats.gsplat_data import GSplatLOD
+
+        lods = [
+            GSplatLOD(
+                centers=np.random.randn(n, 3).astype(np.float32),
+                amplitudes=np.random.rand(n).astype(np.float32),
+                cholesky_factors=np.random.randn(n, 6).astype(np.float32),
+            )
+            for n in [50, 80]
+        ]
+        g = GSplatData(lods=lods)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.gsplats.zarr"
+            g.save(path)
+
+            root = zarr.open(str(path), "r")
+            # Both LODs should have compression
+            assert isinstance(root["splats/lod_0/centers"].compressor, Blosc)
+            assert isinstance(root["splats/lod_1/centers"].compressor, Blosc)
+            # Chunks capped at LOD size
+            assert root["splats/lod_0/centers"].chunks[0] <= 50
+            assert root["splats/lod_1/centers"].chunks[0] <= 80
+
+    def test_roundtrip_with_compression(self):
+        """Compressed files load correctly."""
+        splats = create_test_splats_3d(200)
+        g = GSplatData(**splats)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.gsplats.zarr"
+            g.save(path, ordering="none")
+
+            g2 = GSplatData.load(path)
+            np.testing.assert_allclose(g.centers, g2.centers, atol=1e-6)
+            np.testing.assert_allclose(g.amplitudes, g2.amplitudes, atol=1e-3)
+            np.testing.assert_allclose(
+                g.cholesky_factors, g2.cholesky_factors, atol=1e-6
+            )
