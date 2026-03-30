@@ -124,7 +124,7 @@ def render_to_volume_tensor(
                 batch_size = 128 if ndim == 3 else 256
 
                 with torch.no_grad():
-                    output = CUDASplatFunction.apply(
+                    output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call]
                         centers_t,
                         Ls_t,
                         amps_t,
