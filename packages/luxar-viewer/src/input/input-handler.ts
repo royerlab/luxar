@@ -656,22 +656,13 @@ export class InputHandler {
       document.documentElement.style.backgroundColor = '';
     }
 
-    // Wait for fullscreen transition to complete before updating
-    // This prevents intermediate size updates that can confuse the renderer
-    setTimeout(() => {
-      // Update canvas size after fullscreen transition
+    // Single resize after browser has applied fullscreen layout.
+    // Modern browsers fire fullscreenchange after the transition completes,
+    // so one rAF is sufficient to capture final dimensions.
+    requestAnimationFrame(() => {
       this.sceneManager.updateSize();
-
-      // Restart animation to ensure smooth transition
       this.animationController.startAnimation();
-
-      // One more update to catch any final adjustments
-      setTimeout(() => {
-        this.sceneManager.updateSize();
-        // Ensure animation continues for the final update
-        this.animationController.startAnimation();
-      }, 100);
-    }, 200); // Wait 200ms for transition to complete
+    });
   }
 
   /**

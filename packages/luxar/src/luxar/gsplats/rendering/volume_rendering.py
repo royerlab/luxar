@@ -107,7 +107,41 @@ def render_to_volume_tensor(
                 idx += 1
     del chol_t
 
-    # Render using GPU-accelerated renderer
+    # Use CUDA splatting backend if available — it's tiled, memory-efficient,
+    # and much faster than the pure-PyTorch renderer (which creates massive
+    # meshgrid intermediates that can OOM on large volumes).
+    if device == "cuda" or (isinstance(device, str) and device.startswith("cuda")):
+        try:
+            from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+                CUDA_BACKEND_AVAILABLE,
+                CUDASplatFunction,
+            )
+
+            if CUDA_BACKEND_AVAILABLE:
+                # Use safe defaults for tile/batch size.  These match the
+                # CUDAGSplatModel defaults for Ampere+ GPUs in 3D.
+                tile_size = 16
+                batch_size = 128 if ndim == 3 else 256
+
+                with torch.no_grad():
+                    output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call]
+                        centers_t,
+                        Ls_t,
+                        amps_t,
+                        tuple(shape),
+                        truncate,
+                        intensity_floor,
+                        tile_size,
+                        batch_size,
+                        False,  # use_fp16
+                    )
+                    if output.shape != tuple(shape):
+                        output = output.view(shape)
+                    return output
+        except (ImportError, Exception):
+            pass  # Fall through to PyTorch renderer
+
+    # Fallback: pure PyTorch renderer (works on all devices)
     return render_gaussians(
         shape=shape,
         centers=centers_t,

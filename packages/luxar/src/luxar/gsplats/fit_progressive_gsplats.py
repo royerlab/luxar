@@ -57,6 +57,8 @@ Additional optimisations live in the fitting sub-modules:
 
 from __future__ import annotations
 
+import gc
+import math
 import time
 from typing import Any, Callable, Optional
 
@@ -65,6 +67,56 @@ import torch
 from arbol import aprint, asection
 
 from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+
+
+def _compute_psnr_chunked(
+    rendered_gpu: torch.Tensor,
+    original_np: np.ndarray,
+    chunk_voxels: int = 50_000_000,
+) -> float:
+    """Compute PSNR without loading the full original volume onto GPU.
+
+    Iterates over chunks of ~50M voxels (~200 MB), loading each chunk of
+    ``original_np`` to GPU, computing partial sum-of-squared-errors, and
+    accumulating as Python float (float64 precision).
+
+    Peak GPU overhead beyond ``rendered_gpu``: one ~200 MB chunk.
+
+    Parameters
+    ----------
+    rendered_gpu : torch.Tensor
+        Full rendered volume on GPU.
+    original_np : np.ndarray
+        Original volume as numpy array (CPU).
+    chunk_voxels : int
+        Number of voxels per chunk.
+
+    Returns
+    -------
+    float
+        PSNR in dB.  Returns ``float('inf')`` when MSE is zero.
+    """
+    n = original_np.size
+    flat_rendered = rendered_gpu.reshape(-1)
+    flat_original = original_np.ravel()
+
+    sse = 0.0
+    for i in range(0, n, chunk_voxels):
+        end = min(i + chunk_voxels, n)
+        chunk_orig = torch.from_numpy(flat_original[i:end]).to(rendered_gpu.device)
+        chunk_sse = (flat_rendered[i:end] - chunk_orig).square_().sum().item()
+        sse += chunk_sse
+        del chunk_orig
+
+    mse = sse / n
+    if mse == 0.0:
+        return float("inf")
+
+    data_range = float(original_np.max()) - float(original_np.min())
+    if data_range == 0.0:
+        return float("inf")
+
+    return 10.0 * math.log10(data_range**2 / mse)
 
 
 def fit_progressive_gaussian_splats(
@@ -142,7 +194,6 @@ def fit_progressive_gaussian_splats(
     on the same GPU and fill the utilization gap.
     """
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-    from luxar.gsplats.metrics import compute_quality_metrics
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
     if max_passes is not None and max_passes < 1:
@@ -172,9 +223,10 @@ def fit_progressive_gaussian_splats(
     accumulated_lods: list[GSplatLOD] = []
     prev_psnr = 0.0
     stop_reason = "max_splats"
-    # Cache the rendered tensor from PSNR computation to avoid re-rendering
-    # at the start of the next pass (same accumulated splats).
-    cached_rendered: Optional[torch.Tensor] = None
+    # Cache the rendered volume (CPU numpy) from PSNR computation to avoid
+    # re-rendering at the start of the next pass (same accumulated splats).
+    # Stored on CPU to free GPU memory for the next pass's fitting.
+    cached_rendered_np: Optional[np.ndarray] = None
 
     if verbose:
         with asection("Progressive Gaussian splat fitting"):
@@ -205,15 +257,13 @@ def fit_progressive_gaussian_splats(
         if pass_i == 0:
             target = V_original
         else:
-            # Reuse the rendered tensor from the previous pass's PSNR computation
-            # (same accumulated splats — avoids a redundant full render).
-            with torch.no_grad():
-                rendered = cached_rendered
-                assert rendered is not None  # guaranteed after pass 0
-                V_tensor = torch.from_numpy(V_original).to(rendered.device)
-                residual_tensor = torch.clamp(V_tensor - rendered, min=0)
-                target = residual_tensor.cpu().numpy()
-                del V_tensor, residual_tensor
+            # Reuse the cached render (CPU numpy) from the previous pass's
+            # PSNR computation.  Residual is computed entirely on CPU to
+            # keep GPU memory free for the upcoming fit.
+            assert cached_rendered_np is not None  # guaranteed after pass 0
+            target = np.clip(V_original - cached_rendered_np, 0, None).astype(
+                np.float32
+            )
 
             # Check if residual is negligible
             residual_max = float(target.max())
@@ -340,20 +390,35 @@ def fit_progressive_gaussian_splats(
         )
         accumulated_lods.append(lod)
 
+        # --- Free GPU memory from the per-pass fit before rendering ---
+        # The fitter's optimizer state, gradients, and V_tensor are
+        # unreferenced but PyTorch's caching allocator may hold the blocks.
+        # The rendering grid cache (_GRID_CACHE) also accumulates GPU tensors
+        # for each unique AABB box shape seen during optimization.
+        from luxar.gsplats.models.gsplats.rendering_core import clear_grid_cache
+
+        clear_grid_cache()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         # --- Compute global PSNR (and cache render for next pass's residual) ---
+        # Memory-efficient: render on GPU (CUDA backend is tiled and uses
+        # minimal intermediates), compute PSNR in chunks (only ~200 MB of
+        # V_original on GPU at a time), then move render to CPU.
         accumulated_data = GSplatData.from_lods(accumulated_lods)
         with torch.no_grad():
-            cached_rendered = render_to_volume_tensor(
+            rendered_gpu = render_to_volume_tensor(
                 accumulated_data,
                 shape=V.shape,
                 device=device,
                 truncate=truncate,
             )
-            V_tensor = torch.from_numpy(V_original).to(cached_rendered.device)
-            quality = compute_quality_metrics(cached_rendered, V_tensor)
-            del V_tensor
-
-        current_psnr = quality["psnr_db"]
+            current_psnr = _compute_psnr_chunked(rendered_gpu, V_original)
+            cached_rendered_np = rendered_gpu.cpu().numpy()
+            del rendered_gpu
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         delta_psnr = current_psnr - prev_psnr
         pass_time = time.time() - pass_start
 
@@ -391,9 +456,8 @@ def fit_progressive_gaussian_splats(
             break
         pass_i += 1
 
-    # Free GPU tensors from the last pass
-    if cached_rendered is not None:
-        del cached_rendered
+    # Free cached render (CPU numpy) from the last pass
+    del cached_rendered_np
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 

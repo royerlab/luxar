@@ -422,6 +422,25 @@ export class SceneLoader {
     }
 
     log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
+
+    // Schedule progressive GSplats LOD refinement after initial load.
+    // loadGSplats() loads LOD 0 for each progressive loader, but LODs 1-N
+    // are only loaded by the refinement loop. Without this trigger, higher
+    // LODs would not load until the first updateView() call (user interaction).
+    const needsPostLoadRefinement = [...this.gsplatLoaders.values()].some(
+      (l) => l.hasMoreLODs === true
+    );
+    if (needsPostLoadRefinement) {
+      log.info(
+        Modules.SCENE_LOADER,
+        'Scheduling post-load GSplats LOD refinement (higher LODs pending)'
+      );
+      // Hold the serialization lock during refinement so any updateView() calls
+      // queue as _pendingViewState (which naturally cancels the refinement loop)
+      this._updateInProgress = true;
+      this.scheduleGSplatsRefinement();
+    }
+
     return this.rootGroup;
   }
 
@@ -882,6 +901,10 @@ export class SceneLoader {
         if (needsRefinement) {
           // Keep _updateInProgress = true during refinement so slider/animation
           // events queue as _pendingViewState (which naturally cancels refinement)
+          log.info(
+            Modules.SCENE_LOADER,
+            'Scheduling GSplats LOD refinement (hasMoreLODs=true after update)'
+          );
           this.scheduleGSplatsRefinement();
         } else {
           // No pending update, no refinement needed - release the lock now
@@ -1005,9 +1028,7 @@ export class SceneLoader {
         this.updateVisibleCountsInMonitor();
 
         // Check if any progressive loaders still have more LODs after this pass
-        const anyMore = [...this.gsplatLoaders.values()].some(
-          (l) => l.hasMoreLODs === true
-        );
+        const anyMore = [...this.gsplatLoaders.values()].some((l) => l.hasMoreLODs === true);
         if (!anyMore) break; // All LODs loaded
       }
     } finally {

@@ -28,10 +28,19 @@ describe('ChunkPrefetcher - Unit Tests', () => {
     vi.clearAllMocks();
     mockStore = new MockStore();
     prefetcher = new ChunkPrefetcher(mockStore as any, { enabled: true });
+    // Register bounds for common test paths so prefetcher can compute valid neighbors.
+    // Without bounds, getAdjacentChunks returns [] to avoid out-of-bounds 404s.
+    prefetcher.registerArrayBounds('points/positions', [10240, 10240, 10240], [1024, 1024, 1024]);
+    prefetcher.registerArrayBounds('data/volume', [100, 100, 100, 30], [10, 10, 10, 10]);
+    prefetcher.registerArrayBounds('data/values', [10240], [1024]);
+    prefetcher.registerArrayBounds('test', [10240, 4], [1024, 4]);
   });
 
   describe('Chunk Index Parsing', () => {
     it('should parse zarr v2 chunk keys (dot notation)', async () => {
+      // Register bounds so prefetcher knows valid chunk range (large enough for all neighbors)
+      prefetcher.registerArrayBounds('points/positions', [10240, 10240, 10240], [1024, 1024, 1024]);
+
       prefetcher.onAccess('points/positions/0.1.2');
 
       // Wait for async prefetch operations to start
@@ -59,6 +68,9 @@ describe('ChunkPrefetcher - Unit Tests', () => {
         debug: true,
       });
 
+      // Register bounds so prefetcher knows valid chunk range
+      debugPrefetcher.registerArrayBounds('points/positions', [10240, 10240, 10240], [1024, 1024, 1024]);
+
       debugPrefetcher.onAccess('points/positions/c/0/1/2');
 
       // Wait for async prefetch operations to start
@@ -85,6 +97,9 @@ describe('ChunkPrefetcher - Unit Tests', () => {
     });
 
     it('should handle 1D chunks', () => {
+      // Register bounds for 1D array with multiple chunks
+      prefetcher.registerArrayBounds('data', [10240], [1024]);
+
       prefetcher.onAccess('data/0');
 
       const calls = mockStore.get.mock.calls.map((call: any[]) => call[0]);
@@ -96,6 +111,9 @@ describe('ChunkPrefetcher - Unit Tests', () => {
     });
 
     it('should handle 4D chunks', async () => {
+      // Register bounds for 4D array with multiple chunks per dimension
+      prefetcher.registerArrayBounds('data', [10240, 10240, 10240, 10240], [1024, 1024, 1024, 1024]);
+
       prefetcher.onAccess('data/1.2.3.4');
 
       // Wait for all async prefetch operations to complete
@@ -141,6 +159,9 @@ describe('ChunkPrefetcher - Unit Tests', () => {
         enabled: true,
         maxConcurrent: 1,
       });
+
+      // Register bounds so prefetcher knows valid chunk range
+      limitedPrefetcher.registerArrayBounds('data', [10240, 10240], [1024, 1024]);
 
       // Trigger prefetch (will queue 4 neighbors)
       limitedPrefetcher.onAccess('data/1.1');
@@ -243,6 +264,9 @@ describe('ChunkPrefetcher - Unit Tests', () => {
         enabled: true,
       });
 
+      // Register bounds so prefetcher generates adjacent chunks
+      errorPrefetcher.registerArrayBounds('data', [10240, 10240], [1024, 1024]);
+
       // Should not throw
       expect(() => {
         errorPrefetcher.onAccess('data/1.1');
@@ -262,6 +286,9 @@ describe('ChunkPrefetcher - Unit Tests', () => {
         enabled: true,
         maxConcurrent: 2,
       });
+
+      // Register bounds so prefetcher generates adjacent chunks
+      statsPrefetcher.registerArrayBounds('data', [10240, 10240], [1024, 1024]);
 
       statsPrefetcher.onAccess('data/1.1'); // 4 neighbors
 
@@ -321,6 +348,9 @@ describe('ChunkPrefetcher - Integration Tests', () => {
     });
 
     const onAccessSpy = vi.spyOn(prefetcher, 'onAccess');
+
+    // Register bounds so prefetcher knows valid chunk range
+    prefetcher.registerArrayBounds('test', [2048, 4], [1024, 4]);
 
     // Simulate store calling onAccess after L2/L3 hit
     prefetcher.onAccess('test/0.0');
