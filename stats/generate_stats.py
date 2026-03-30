@@ -1075,7 +1075,7 @@ def generate_html_report(stats, output_file):
                 </div>
                 <div class="stat-card">
                     <h3>Languages</h3>
-                    <div class="value">{len([l for l in stats["languages"] if stats["languages"][l]["files"] > 0])}</div>
+                    <div class="value">{len([lang for lang in stats["languages"] if stats["languages"][lang]["files"] > 0])}</div>
                     <div class="label">Active in codebase</div>
                 </div>
                 <div class="stat-card">
@@ -1507,9 +1507,9 @@ def generate_html_report(stats, output_file):
     # Key Insights
     code_density = (total_code_lines / total_lines * 100) if total_lines > 0 else 0
     primary_code_lines = sum(
-        stats["languages"][l]["code_lines"]
-        for l in primary_langs
-        if stats["languages"].get(l, {}).get("code_lines", 0) > 0
+        stats["languages"][lang]["code_lines"]
+        for lang in primary_langs
+        if stats["languages"].get(lang, {}).get("code_lines", 0) > 0
     )
     py_pct = (
         (py["code_lines"] / primary_code_lines * 100) if primary_code_lines > 0 else 0

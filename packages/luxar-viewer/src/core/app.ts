@@ -254,19 +254,23 @@ export class LuxarApp {
     ];
 
     try {
-      const results = await Promise.allSettled(zarrChecks);
-      const hasZarrMetadata = results.some((r) => r.status === 'fulfilled' && r.value.ok);
-      if (hasZarrMetadata) {
-        return false; // It's a Zarr dataset, load directly
-      }
+      // Short-circuit: return as soon as any probe confirms zarr metadata exists.
+      // This avoids waiting for the zarr.json 404 on v2 stores (~200ms on slow networks).
+      await Promise.any(
+        zarrChecks.map((p) =>
+          p.then((r) => {
+            if (!r.ok) throw new Error('not ok');
+            return r;
+          })
+        )
+      );
+      return false; // At least one zarr metadata file exists — load directly
     } catch {
-      // Ignore errors, proceed with directory assumption
+      // All probes failed or errored — likely a directory, show browser
     } finally {
       clearTimeout(timeoutId);
     }
 
-    // If none of the zarr metadata files exist, it's likely a directory
-    // Show the browser so user can navigate to a dataset
     return true;
   }
 

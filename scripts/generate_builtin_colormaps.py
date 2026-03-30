@@ -130,9 +130,6 @@ def generate_all() -> dict[str, np.ndarray]:
 def format_lut_python(name: str, lut: np.ndarray) -> str:
     """Format a LUT as a Python bytes literal."""
     data = lut.tobytes()
-    hex_str = data.hex()
-    # Split into 96-char lines (32 pixels * 3 bytes * 2 hex chars = 192 hex chars per line is too long)
-    # Use 48 pixels per line = 288 hex chars... let's just use bytes()
     return f'    "{name}": {data!r},'
 
 
