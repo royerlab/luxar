@@ -136,8 +136,7 @@ if not NO_NAPARI:
             psnr_val = psnrs[t]
             viewer.text_overlay.visible = True
             viewer.text_overlay.text = (
-                f"LOD 0..{t}  |  {n_at_level:,} splats  |  "
-                f"PSNR = {psnr_val:.2f} dB"
+                f"LOD 0..{t}  |  {n_at_level:,} splats  |  PSNR = {psnr_val:.2f} dB"
             )
 
     _update_overlay()

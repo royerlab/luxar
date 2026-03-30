@@ -942,9 +942,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         centers: NDArray[np.float32],
         amplitudes: Union[NDArray[np.float32], float],
         cholesky_factors: NDArray[np.float32],
-        colors: Optional[
-            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
-        ],
+        colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
         n_splats: int,
         n_dims: int,
         cholesky_is_uniform: bool,
@@ -1009,9 +1007,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         centers: NDArray[np.float32],
         amplitudes: Union[NDArray[np.float32], float],
         cholesky_factors: NDArray[np.float32],
-        colors: Optional[
-            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
-        ],
+        colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
         n_splats: int,
         n_dims: int,
         cholesky_is_uniform: bool,
@@ -1321,14 +1317,26 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             colors,
             ordering_data,
         ) = self._apply_gsplat_spatial_ordering(
-            centers, amplitudes, cholesky_factors, colors,
-            n_splats, n_dims, cholesky_is_uniform,
+            centers,
+            amplitudes,
+            cholesky_factors,
+            colors,
+            n_splats,
+            n_dims,
+            cholesky_is_uniform,
         )
 
         # Write arrays
         metadata = self._write_gsplat_arrays(
-            group, centers, amplitudes, cholesky_factors, colors,
-            n_splats, n_dims, cholesky_is_uniform, ordering_data,
+            group,
+            centers,
+            amplitudes,
+            cholesky_factors,
+            colors,
+            n_splats,
+            n_dims,
+            cholesky_is_uniform,
+            ordering_data,
         )
 
         # Set group attrs
@@ -1345,12 +1353,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     def write_gsplats_multi_lod(
         self,
         path: NodePath,
-        lods: list[Tuple[
-            NDArray[np.float32],
-            Union[NDArray[np.float32], float],
-            NDArray[np.float32],
-            Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
-        ]],
+        lods: list[
+            Tuple[
+                NDArray[np.float32],
+                Union[NDArray[np.float32], float],
+                NDArray[np.float32],
+                Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
+            ]
+        ],
         lod_stats: Optional[list[dict[str, Any]]] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
@@ -1388,30 +1398,50 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         for i, (ctr, amp, chol, col) in enumerate(lods):
             (
-                ctr, amp, chol, col,
-                ns, nd, chol_uniform,
+                ctr,
+                amp,
+                chol,
+                col,
+                ns,
+                nd,
+                chol_uniform,
             ) = self._validate_gsplat_inputs(ctr, amp, chol, col)
 
             if n_dims is None:
                 n_dims = nd
             elif nd != n_dims:
-                raise ValueError(
-                    f"LOD {i} has {nd}D data but LOD 0 has {n_dims}D"
-                )
+                raise ValueError(f"LOD {i} has {nd}D data but LOD 0 has {n_dims}D")
 
             # Write per-LOD subgroup
             lod_group = group.require_group(f"lod_{i}")
             aprint(f"📝 Writing LOD {i}: {ns:,} gsplats ({nd}D)")
 
             (
-                ctr, amp, chol, col, ordering_data,
+                ctr,
+                amp,
+                chol,
+                col,
+                ordering_data,
             ) = self._apply_gsplat_spatial_ordering(
-                ctr, amp, chol, col, ns, nd, chol_uniform,
+                ctr,
+                amp,
+                chol,
+                col,
+                ns,
+                nd,
+                chol_uniform,
             )
 
             lod_meta = self._write_gsplat_arrays(
-                lod_group, ctr, amp, chol, col,
-                ns, nd, chol_uniform, ordering_data,
+                lod_group,
+                ctr,
+                amp,
+                chol,
+                col,
+                ns,
+                nd,
+                chol_uniform,
+                ordering_data,
             )
 
             # Write per-LOD group attrs (lightweight — no rendering defaults)
@@ -1424,8 +1454,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             lod_group.attrs["ordering"] = lod_meta["ordering"]
             if lod_meta["ordering"] != "none":
                 for key in [
-                    "ordering_min", "ordering_max",
-                    "ordering_bits_per_dim", "chunk_size",
+                    "ordering_min",
+                    "ordering_max",
+                    "ordering_bits_per_dim",
+                    "chunk_size",
                 ]:
                     if key in lod_meta:
                         lod_group.attrs[key] = lod_meta[key]
@@ -1476,7 +1508,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._update_scene_bounds(metadata["position_bounds"])
 
         self._metadata_cache[path] = metadata
-        aprint(f"✅ Multi-LOD GSplats written to {path} ({n_lods} LODs, {total_splats:,} total)")
+        aprint(
+            f"✅ Multi-LOD GSplats written to {path} ({n_lods} LODs, {total_splats:,} total)"
+        )
 
         return metadata
 

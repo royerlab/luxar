@@ -659,12 +659,14 @@ class Group(Node):
 
                 scene._validate_data_dimensions(ctr_arr, name, data_type="centers")
 
-                lod_tuples.append((
-                    ctr_arr.astype(np.float32),
-                    lod.amplitudes,
-                    chol_arr,
-                    lod.colors,
-                ))
+                lod_tuples.append(
+                    (
+                        ctr_arr.astype(np.float32),
+                        lod.amplitudes,
+                        chol_arr,
+                        lod.colors,
+                    )
+                )
                 lod_stats_list.append(dict(lod.stats))
 
             n_splats = result.n_splats

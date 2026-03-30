@@ -20,9 +20,7 @@ def _get_morton_numba_kernel():  # type: ignore[no-untyped-def]
     import numba  # type: ignore[import-untyped]
 
     @numba.njit(cache=True)  # type: ignore[untyped-decorator]
-    def _morton_kernel(
-        coords: np.ndarray, bits_per_dim: int, out: np.ndarray
-    ) -> None:
+    def _morton_kernel(coords: np.ndarray, bits_per_dim: int, out: np.ndarray) -> None:
         n_points = coords.shape[0]
         n_dims = coords.shape[1]
         for idx in range(n_points):
@@ -84,9 +82,7 @@ def _get_hilbert_numba_kernel():  # type: ignore[no-untyped-def]
     import numba
 
     @numba.njit(cache=True)  # type: ignore[untyped-decorator]
-    def _hilbert_kernel(
-        coords: np.ndarray, bits_per_dim: int, out: np.ndarray
-    ) -> None:
+    def _hilbert_kernel(coords: np.ndarray, bits_per_dim: int, out: np.ndarray) -> None:
         """Numba-accelerated Hilbert curve encoding.
 
         Implements the same algorithm as the hilbertcurve library

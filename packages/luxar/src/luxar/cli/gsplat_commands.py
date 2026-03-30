@@ -822,7 +822,9 @@ def cull_dataset(
                 n_culled = n_original - culled_data.n_splats
                 aprint("\nResults:")
                 aprint(f"  Original: {n_original:,} splats")
-                aprint(f"  Removed:  {n_culled:,} ({100 * n_culled / max(n_original, 1):.1f}%)")
+                aprint(
+                    f"  Removed:  {n_culled:,} ({100 * n_culled / max(n_original, 1):.1f}%)"
+                )
                 aprint(f"  Kept:     {culled_data.n_splats:,} splats")
                 aprint(f"  Method:   {resolved}")
 
@@ -834,11 +836,17 @@ def cull_dataset(
                 bits_culled = culled_data.n_splats * floats_per_splat * 32
                 if target_np is not None:
                     vol_bits = int(target_np.size) * 32
-                    aprint(f"  Compression: {vol_bits / max(bits_orig, 1):.1f}x -> {vol_bits / max(bits_culled, 1):.1f}x")
+                    aprint(
+                        f"  Compression: {vol_bits / max(bits_orig, 1):.1f}x -> {vol_bits / max(bits_culled, 1):.1f}x"
+                    )
 
                 if resolved in ("error_budget", "redundancy"):
-                    aprint(f"  Error budget: {culled_data.stats.get('error_budget', 'N/A')}")
-                    aprint(f"  Phase 2 iters: {culled_data.stats.get('phase2_iterations', 'N/A')}")
+                    aprint(
+                        f"  Error budget: {culled_data.stats.get('error_budget', 'N/A')}"
+                    )
+                    aprint(
+                        f"  Phase 2 iters: {culled_data.stats.get('phase2_iterations', 'N/A')}"
+                    )
                 if resolved in ("cumulative", "amplitude_percentile", "combined"):
                     amp_ret = culled_data.stats.get("amplitude_retention")
                     if amp_ret is not None:

@@ -117,7 +117,9 @@ def test_convergence_early_stopping(simple_2d_setup) -> None:
     config, preprocessed_data = simple_2d_setup
 
     # Set very loose convergence criterion to trigger early stopping
-    preprocessed_data.max_abs_error = 0.8  # Very loose (must be achievable in 50 CPU iters)
+    preprocessed_data.max_abs_error = (
+        0.8  # Very loose (must be achievable in 50 CPU iters)
+    )
 
     components = initialize_optimization(config, preprocessed_data)
     loss_fn = create_loss_function(config, preprocessed_data, components.model)

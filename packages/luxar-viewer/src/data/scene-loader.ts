@@ -1867,16 +1867,20 @@ export class SceneLoader {
     const attrs = node.attrs as unknown as GSplatsMetadata;
     const nLods = attrs.n_lods ?? 0;
     log.custom('🔮', Modules.SCENE_LOADER, `Loading gsplats: ${node.path}`);
-    log.info(Modules.SCENE_LOADER, `  Splats: ${(nLods > 1 ? attrs.n_splats_total ?? attrs.n_splats : attrs.n_splats)?.toLocaleString() || 'unknown'}`);
+    log.info(
+      Modules.SCENE_LOADER,
+      `  Splats: ${(nLods > 1 ? (attrs.n_splats_total ?? attrs.n_splats) : attrs.n_splats)?.toLocaleString() || 'unknown'}`
+    );
     log.info(Modules.SCENE_LOADER, `  Dimensions: ${attrs.ndim || 'unknown'}D`);
     if (nLods > 1) {
       log.info(Modules.SCENE_LOADER, `  LODs: ${nLods} (progressive loading enabled)`);
     }
 
     // Create gsplats loader — progressive for multi-LOD, standard for single-LOD
-    const loader = nLods > 1
-      ? await this.createProgressiveGSplatsLoader(node, loc, nLods)
-      : this.createGSplatsLoader(node, loc);
+    const loader =
+      nLods > 1
+        ? await this.createProgressiveGSplatsLoader(node, loc, nLods)
+        : this.createGSplatsLoader(node, loc);
 
     // Store loader for updates
     this.gsplatLoaders.set(node.path, loader);
@@ -2067,9 +2071,7 @@ export class SceneLoader {
     _loc: zarr.Location<zarr.Readable>,
     nLods: number
   ): Promise<GSplatsDataLoader> {
-    const parentLoc = zarr.root(this.store!).resolve(
-      node.path === '/' ? '' : node.path.slice(1)
-    );
+    const parentLoc = zarr.root(this.store!).resolve(node.path === '/' ? '' : node.path.slice(1));
 
     log.query(
       Modules.SCENE_LOADER,

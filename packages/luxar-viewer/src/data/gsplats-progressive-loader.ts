@@ -18,11 +18,7 @@
  * @module data/gsplats-progressive-loader
  */
 
-import type {
-  GSplatsDataLoader,
-  GSplatsViewState,
-  LoadedGSplatsData,
-} from '../types/gsplats';
+import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
 import type { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
 import type { UpdateSession } from '../profiling/update-profiler';
 import { log, Modules, LogEmoji } from '../utils/log';
@@ -108,7 +104,8 @@ function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplatsData {
       colors.set(part.colors, offset * 3);
     } else if (colors && !part.colors) {
       // Fill with white (1.0 for Float32, 255 for Uint8, 65535 for Uint16)
-      const fillValue = colors instanceof Uint8Array ? 255 : colors instanceof Uint16Array ? 65535 : 1.0;
+      const fillValue =
+        colors instanceof Uint8Array ? 255 : colors instanceof Uint16Array ? 65535 : 1.0;
       for (let i = 0; i < part.splatCount * 3; i++) {
         colors[offset * 3 + i] = fillValue;
       }

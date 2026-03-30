@@ -99,9 +99,7 @@ def _print_amplitude_histogram(
             bar = color + "█" * bar_len + _RESET
             pad = " " * (bar_width - bar_len)
 
-            aprint(
-                f"  {lo:9.6f} ┤{bar}{pad} {count:>{count_width}} ({pct:5.1f}%)"
-            )
+            aprint(f"  {lo:9.6f} ┤{bar}{pad} {count:>{count_width}} ({pct:5.1f}%)")
 
         aprint(f"  {max_val:9.6f} ┘")
 

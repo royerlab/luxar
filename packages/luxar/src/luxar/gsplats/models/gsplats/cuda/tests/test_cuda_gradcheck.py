@@ -77,7 +77,9 @@ class TestGradcheckForwardBackward:
         # Check all leaf parameter gradients (raw_mu, raw_L_diag, L_off, raw_a)
         for name, param in model.named_parameters():
             assert param.grad is not None, f"{name}.grad is None"
-            assert torch.isfinite(param.grad).all(), f"{name}.grad has non-finite values"
+            assert torch.isfinite(param.grad).all(), (
+                f"{name}.grad has non-finite values"
+            )
             # At least some gradients should be non-zero
             if "raw_a" in name or "raw_mu" in name:
                 assert param.grad.abs().sum() > 0, f"{name}.grad is all zeros"
@@ -99,16 +101,24 @@ class TestGradcheckForwardBackward:
 
         # PyTorch reference
         ref_model = GaussianSplatModel(
-            shape=shape, centers0=centers, L0=L, amps0=amps,
-            sigma_min_diag=[0.5] * dim, device="cuda",
+            shape=shape,
+            centers0=centers,
+            L0=L,
+            amps0=amps,
+            sigma_min_diag=[0.5] * dim,
+            device="cuda",
         )
         ref_model.train()
         ref_model().sum().backward()
 
         # CUDA model
         cuda_model = GaussianSplatModelCUDA(
-            shape=shape, centers0=centers, L0=L, amps0=amps,
-            sigma_min_diag=[0.5] * dim, device="cuda",
+            shape=shape,
+            centers0=centers,
+            L0=L,
+            amps0=amps,
+            sigma_min_diag=[0.5] * dim,
+            device="cuda",
         )
         cuda_model.train()
         cuda_model().sum().backward()
@@ -137,7 +147,12 @@ class TestGradcheckForwardBackward:
                 nonzero = (r.abs() > 1e-6) & (c.abs() > 1e-6)
                 sign_match = 0.0
                 if nonzero.sum() > 0:
-                    sign_match = (torch.sign(r[nonzero]) == torch.sign(c[nonzero])).float().mean().item()
+                    sign_match = (
+                        (torch.sign(r[nonzero]) == torch.sign(c[nonzero]))
+                        .float()
+                        .mean()
+                        .item()
+                    )
                 print(f"{dim}D {name}: corr={corr:.4f}, sign_match={sign_match:.3f}")
                 # Correlation > 0.5 means gradients agree in overall direction
                 # (good enough for SGD convergence, verified by multi_iteration test)
@@ -180,9 +195,14 @@ class TestGradcheckEdgeCases:
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             GaussianSplatModelCUDA,
         )
+
         model = GaussianSplatModelCUDA(
-            shape=shape, centers0=centers, L0=L, amps0=amps,
-            sigma_min_diag=[0.5] * dim, device="cuda",
+            shape=shape,
+            centers0=centers,
+            L0=L,
+            amps0=amps,
+            sigma_min_diag=[0.5] * dim,
+            device="cuda",
         )
         model.train()
         model().sum().backward()
@@ -194,19 +214,29 @@ class TestGradcheckEdgeCases:
         N = 4
         dim = 3
         shape = (16, 16, 16)
-        centers = np.array([
-            [0.5, 0.5, 0.5], [15.5, 15.5, 15.5],
-            [0.0, 8.0, 15.0], [8.0, 0.0, 8.0],
-        ], dtype=np.float32)
+        centers = np.array(
+            [
+                [0.5, 0.5, 0.5],
+                [15.5, 15.5, 15.5],
+                [0.0, 8.0, 15.0],
+                [8.0, 0.0, 8.0],
+            ],
+            dtype=np.float32,
+        )
         L = np.eye(dim, dtype=np.float32)[None].repeat(N, axis=0) * 2.0
         amps = np.ones(N, dtype=np.float32)
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             GaussianSplatModelCUDA,
         )
+
         model = GaussianSplatModelCUDA(
-            shape=shape, centers0=centers, L0=L, amps0=amps,
-            sigma_min_diag=[0.5] * dim, device="cuda",
+            shape=shape,
+            centers0=centers,
+            L0=L,
+            amps0=amps,
+            sigma_min_diag=[0.5] * dim,
+            device="cuda",
         )
         model.train()
         model().sum().backward()
@@ -227,9 +257,13 @@ class TestGradcheckEdgeCases:
             loss.backward()
             optimizer.step()
             losses.append(loss.item())
-            assert torch.isfinite(torch.tensor(loss.item())), f"Loss non-finite at iter {i}"
+            assert torch.isfinite(torch.tensor(loss.item())), (
+                f"Loss non-finite at iter {i}"
+            )
 
         # Loss should be changing (not stuck)
         assert losses[0] != losses[-1], "Loss unchanged over 20 iterations"
         # All losses should be finite
-        assert all(np.isfinite(val) for val in losses), "Non-finite loss during training"
+        assert all(np.isfinite(val) for val in losses), (
+            "Non-finite loss during training"
+        )

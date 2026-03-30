@@ -422,8 +422,7 @@ def fit_progressive_gaussian_splats(
 
         # Culling efficiency hint
         total_requested = sum(
-            lod.stats.get("seeds_requested", lod.n_splats)
-            for lod in accumulated_lods
+            lod.stats.get("seeds_requested", lod.n_splats) for lod in accumulated_lods
         )
         if total_requested > 0:
             culled_pct = 100.0 * (1.0 - total_splats / total_requested)
@@ -457,10 +456,16 @@ def fit_progressive_gaussian_splats(
             )
         final_result = GSplatData.from_lods(converted_lods, stats=overall_stats)
         if verbose:
-            aprint(f"Converted output to physical coordinates (voxel_size={vs.tolist()})")
+            aprint(
+                f"Converted output to physical coordinates (voxel_size={vs.tolist()})"
+            )
 
     # Post-fit cumulative culling on the full accumulated result
-    if cull_retention is not None and 0 < cull_retention < 1.0 and final_result.n_splats > 0:
+    if (
+        cull_retention is not None
+        and 0 < cull_retention < 1.0
+        and final_result.n_splats > 0
+    ):
         n_before = final_result.n_splats
         final_result = final_result.cull(method="cumulative", retention=cull_retention)
         n_removed = n_before - final_result.n_splats

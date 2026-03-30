@@ -1632,9 +1632,7 @@ class GSplatData(_SplatArrayMixin):
         chol = self.cholesky_factors
         ndim = self.ndim
         chol_t = torch.from_numpy(chol).to(device)
-        Ls_t = torch.zeros(
-            (len(chol), ndim, ndim), device=device, dtype=torch.float32
-        )
+        Ls_t = torch.zeros((len(chol), ndim, ndim), device=device, dtype=torch.float32)
         if ndim == 2:
             Ls_t[:, 0, 0] = chol_t[:, 0]
             Ls_t[:, 1, 0] = chol_t[:, 1]

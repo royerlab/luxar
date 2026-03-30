@@ -103,9 +103,7 @@ def seed_from_peaks(
             return GSplatData(
                 centers=np.zeros((0, ndim), dtype=np.float32),
                 amplitudes=np.zeros(0, dtype=np.float32),
-                cholesky_factors=np.zeros(
-                    (0, tril_size(ndim)), dtype=np.float32
-                ),
+                cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
             )
 
         # Get intensities at non-zero locations

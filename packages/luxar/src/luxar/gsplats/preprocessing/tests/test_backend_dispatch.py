@@ -47,9 +47,7 @@ class TestDispatchIntegration:
         assert result.device.type == "cpu"
         assert result.shape == noisy.shape
 
-    @pytest.mark.skipif(
-        not torch.cuda.is_available(), reason="CUDA not available"
-    )
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_pytorch_backend_on_cuda(self, noisy_2d):
         _, noisy = noisy_2d
         result = denoise_nlm(noisy.cuda(), h=0.05, backend="pytorch")

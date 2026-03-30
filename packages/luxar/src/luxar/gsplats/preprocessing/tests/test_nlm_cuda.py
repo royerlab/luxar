@@ -15,12 +15,8 @@ from luxar.gsplats.preprocessing.cuda import NLM_CUDA_AVAILABLE
 from .conftest import Tolerances, psnr
 
 pytestmark = [
-    pytest.mark.skipif(
-        not torch.cuda.is_available(), reason="CUDA not available"
-    ),
-    pytest.mark.skipif(
-        not NLM_CUDA_AVAILABLE, reason="NLM CUDA backend not compiled"
-    ),
+    pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available"),
+    pytest.mark.skipif(not NLM_CUDA_AVAILABLE, reason="NLM CUDA backend not compiled"),
 ]
 
 
@@ -87,7 +83,8 @@ class TestCudaVsPytorch:
         cuda_result = denoise_nlm(noisy_cuda, **kwargs, backend="cuda")
 
         assert torch.allclose(
-            cuda_result, ref,
+            cuda_result,
+            ref,
             atol=Tolerances.CUDA_VS_PYTORCH_ATOL,
         ), (
             f"patch_size={patch_size}, search_distance={search_distance}: "
@@ -106,7 +103,8 @@ class TestCudaVsPytorch:
         cuda_result = denoise_nlm(noisy_cuda, **kwargs, backend="cuda")
 
         assert torch.allclose(
-            cuda_result, ref,
+            cuda_result,
+            ref,
             atol=Tolerances.CUDA_VS_PYTORCH_ATOL,
         ), (
             f"patch_size={patch_size}, search_distance={search_distance}: "
@@ -126,6 +124,4 @@ class TestCudaParameterValidation:
     def test_unsupported_search_distance_raises(self, noisy_2d):
         _, noisy = noisy_2d
         with pytest.raises(ValueError, match="CUDA NLM supports"):
-            denoise_nlm(
-                noisy.cuda(), h=0.05, search_distance=3, backend="cuda"
-            )
+            denoise_nlm(noisy.cuda(), h=0.05, search_distance=3, backend="cuda")

@@ -186,7 +186,9 @@ def fit_channel(volume, channel_name, cache_file):
 
     from luxar.gsplats import fit_progressive_gaussian_splats
 
-    aprint(f"Fitting {channel_name} (progressive: max_splats={MAX_SPLATS}, iters_per_pass={ITERS_PER_PASS})...")
+    aprint(
+        f"Fitting {channel_name} (progressive: max_splats={MAX_SPLATS}, iters_per_pass={ITERS_PER_PASS})..."
+    )
 
     result = fit_progressive_gaussian_splats(
         volume,
