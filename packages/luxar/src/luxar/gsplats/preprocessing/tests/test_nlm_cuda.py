@@ -114,14 +114,18 @@ class TestCudaVsPytorch:
 
 
 class TestCudaParameterValidation:
-    """Unsupported parameter combos should raise."""
+    """Unsupported parameter combos should warn and fall back to PyTorch."""
 
-    def test_unsupported_patch_size_raises(self, noisy_2d):
+    def test_unsupported_patch_size_warns_and_falls_back(self, noisy_2d):
         _, noisy = noisy_2d
-        with pytest.raises(ValueError, match="CUDA NLM supports"):
-            denoise_nlm(noisy.cuda(), h=0.05, patch_size=7, backend="cuda")
+        with pytest.warns(UserWarning, match="CUDA NLM"):
+            result = denoise_nlm(noisy.cuda(), h=0.05, patch_size=7, backend="cuda")
+        # Should still return a valid result via PyTorch fallback
+        assert result.shape == noisy.shape
 
-    def test_unsupported_search_distance_raises(self, noisy_2d):
+    def test_unsupported_search_distance_warns_and_falls_back(self, noisy_2d):
         _, noisy = noisy_2d
-        with pytest.raises(ValueError, match="CUDA NLM supports"):
-            denoise_nlm(noisy.cuda(), h=0.05, search_distance=3, backend="cuda")
+        with pytest.warns(UserWarning, match="CUDA NLM"):
+            result = denoise_nlm(noisy.cuda(), h=0.05, search_distance=3, backend="cuda")
+        # Should still return a valid result via PyTorch fallback
+        assert result.shape == noisy.shape

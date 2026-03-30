@@ -1018,11 +1018,23 @@ export class SceneManager extends THREE.EventDispatcher<{
       updateCameraAspect(this.camera, width, height);
     }
 
-    this.updateRendererSize(width, height);
+    // Ensure pixel ratio stays current (matters when dragging between monitors
+    // with different DPI — devicePixelRatio changes and a resize fires).
+    this.renderer.setPixelRatio(window.devicePixelRatio);
 
-    // Update post-processing pipeline for new dimensions
+    // PostProcessingManager owns renderer + composer sizing — it calls
+    // renderer.setSize() and composer.setSize() internally via resize().
+    // Only fall back to direct updateRendererSize() during early init
+    // before PostProcessingManager has been created.
     if (this.postProcessing) {
       this.postProcessing.resize(width, height);
+    } else {
+      this.updateRendererSize(width, height);
+    }
+
+    // Update material uniforms for world-space point sizing
+    if (this.camera) {
+      this.updateMaterialsForCurrentCamera();
     }
   }
 
@@ -1060,15 +1072,13 @@ export class SceneManager extends THREE.EventDispatcher<{
     const w = window.innerWidth;
     const h = window.innerHeight;
 
-    // Set new pixel ratio
+    // Set new pixel ratio — PostProcessingManager's updateRendererSize()
+    // will pick this up when it calls renderer.setSize().
     this.renderer.setPixelRatio(dpr);
 
-    // Update size with updateStyle=false to keep CSS dimensions constant
-    // This allows the internal render buffer to be smaller while the canvas
-    // still fills the viewport
-    this.renderer.setSize(w, h, false);
-
-    // Update post-processing pipeline for new buffer dimensions
+    // PostProcessingManager owns renderer + composer sizing.
+    // Its resize() → updateRendererSize() calls renderer.setSize(w, h, false)
+    // which keeps CSS dimensions constant while reducing the render buffer.
     if (this.postProcessing) {
       this.postProcessing.resize(w, h);
 

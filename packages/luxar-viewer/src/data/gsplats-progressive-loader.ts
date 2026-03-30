@@ -229,6 +229,21 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       this._initialLoadDone = true;
     }
 
+    // Log LOD loading summary (compact, always shown for progressive loaders)
+    const totalSplats = this.loadedLODs.reduce((s, d) => s + d.splatCount, 0);
+    if (this.loadedLODs.length < this.nLods) {
+      log.info(
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+        `Progressive: ${this.loadedLODs.length}/${this.nLods} LODs loaded (${totalSplats} splats) — refining`
+      );
+    } else if (startLevel < this.nLods) {
+      // Only log "all loaded" when we actually loaded something new this call
+      log.info(
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+        `Progressive: ${this.nLods}/${this.nLods} LODs loaded (${totalSplats} splats) — complete`
+      );
+    }
+
     // Fire-and-forget: prefetch next unloaded LOD to warm cache
     this.prefetchNextLOD(viewState);
 
