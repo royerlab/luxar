@@ -1141,6 +1141,7 @@ class GSplatData(_SplatArrayMixin):
         include_provenance: bool = False,
         description: Optional[str] = None,
         compress: Optional[Literal["zip", "tar.gz"]] = None,
+        compressor: Optional[Any] = None,
     ) -> None:
         """Save splats to .gsplats.zarr format.
 
@@ -1165,10 +1166,15 @@ class GSplatData(_SplatArrayMixin):
         """
         from luxar.encoding import EncodingMode
         from luxar.gsplats.io.save_gsplats import save_gsplats
+        from luxar.io.reader import DEFAULT_COMP
 
         # Use AUTO as default
         if encoding_mode is None:
             encoding_mode = EncodingMode.AUTO
+
+        # Use Blosc(zstd) compression by default
+        if compressor is None:
+            compressor = DEFAULT_COMP
 
         # Extract fitting info from stats
         fitting_info = None
@@ -1176,7 +1182,7 @@ class GSplatData(_SplatArrayMixin):
         provenance_info = None
 
         if include_fitting_info and self.stats:
-            # Extract common fitting fields (including quality metrics and pruning stats)
+            # Extract common fitting fields (quality metrics, culling/filtering stats)
             fitting_info = {
                 k: v
                 for k, v in self.stats.items()
@@ -1191,13 +1197,12 @@ class GSplatData(_SplatArrayMixin):
                     "final_max_abs_error",
                     "final_rel_l2",
                     "n_splats",
-                    "n_splats_before_culling",
                     "n_culled",
                     "fitter_name",
                     "fitter_version",
                     "timestamp",
-                    "pruned",
-                    "pruning_method",
+                    "culled",
+                    "culling_method",
                     "n_original",
                     "n_removed",
                     "amplitude_retention",
@@ -1235,6 +1240,7 @@ class GSplatData(_SplatArrayMixin):
                 provenance_info=provenance_info,
                 description=description,
                 compress=compress,
+                compressor=compressor,
             )
         else:
             # Multi-LOD: use v1.1 format with per-LOD groups
@@ -1249,6 +1255,7 @@ class GSplatData(_SplatArrayMixin):
                 provenance_info=provenance_info,
                 description=description,
                 compress=compress,
+                compressor=compressor,
             )
 
     def _save_multi_lod(
@@ -1263,6 +1270,7 @@ class GSplatData(_SplatArrayMixin):
         provenance_info: Optional[Dict[str, Any]],
         description: Optional[str],
         compress: Optional[Literal["zip", "tar.gz"]],
+        compressor: Optional[Any] = None,
     ) -> None:
         """Write multi-LOD data as v1.1 zarr format with per-LOD groups."""
         import datetime
@@ -1343,6 +1351,7 @@ class GSplatData(_SplatArrayMixin):
                 positive_scalar_encoding=positive_scalar_encoding,
                 float16_allowed=False,
                 lod_stats=lod_stats,
+                compressor=compressor,
             )
 
         # Write fitting info (optional, root level)
@@ -1459,189 +1468,140 @@ class GSplatData(_SplatArrayMixin):
         """
         return self._with_new_amplitudes(self.amplitudes * factor)
 
-    def prune(
-        self,
-        method: Literal[
-            "cumulative", "amplitude_percentile", "combined"
-        ] = "cumulative",
-        target_retention: float = 0.95,
-        amplitude_percentile: float = 5.0,
-        volume_percentile: float = 95.0,
-    ) -> "GSplatData":
-        """Prune low-impact splats to reduce file size while preserving quality.
-
-        Removes splats that contribute minimally to the reconstruction. This is
-        useful for reducing file size, memory usage, and rendering cost.
-
-        Args:
-            method: Pruning strategy:
-                - "cumulative": Keep top splats that contribute target_retention of total amplitude
-                - "amplitude_percentile": Remove bottom amplitude_percentile by amplitude
-                - "combined": Remove splats with (low amplitude OR large volume outliers)
-            target_retention: For "cumulative": fraction of amplitude to retain (0.0-1.0)
-            amplitude_percentile: For "amplitude_percentile"/"combined": bottom percentile to remove (0-100)
-            volume_percentile: For "combined": remove splats above this volume percentile (0-100)
-
-        Returns:
-            New GSplatData with pruned splats
-
-        Examples:
-            >>> # Recommended: Keep 95% of amplitude (removes ~80-90% of splats)
-            >>> pruned = data.prune(method="cumulative", target_retention=0.95)
-            >>>
-            >>> # More aggressive: Keep 90% of amplitude
-            >>> pruned = data.prune(method="cumulative", target_retention=0.90)
-            >>>
-            >>> # Remove bottom 10% by amplitude
-            >>> pruned = data.prune(method="amplitude_percentile", amplitude_percentile=10)
-            >>>
-            >>> # Remove artifacts (low amp OR large volume)
-            >>> pruned = data.prune(method="combined", amplitude_percentile=5, volume_percentile=95)
-
-        Notes:
-            The "cumulative" method is recommended as it provides a quality guarantee
-            (e.g., "retain 95% of signal") and automatically determines the optimal threshold.
-        """
-        N_original = self.n_splats
-
-        # Validate method
-        valid_methods = ("cumulative", "amplitude_percentile", "combined")
-        if method not in valid_methods:
-            raise ValueError(f"Unknown pruning method: {method}")
-
-        # Short-circuit for empty data
-        if N_original == 0:
-            result = self.filter(np.ones(0, dtype=bool))
-            result.stats.update(
-                {
-                    "pruned": True,
-                    "pruning_method": method,
-                    "n_original": 0,
-                    "n_removed": 0,
-                }
-            )
-            return result
-
-        # Compute mask based on pruning strategy
-        mask = np.ones(N_original, dtype=bool)
-
-        if method == "cumulative":
-            sorted_indices = np.argsort(self.amplitudes)[::-1]
-            sorted_amps = self.amplitudes[sorted_indices]
-            cumsum_amps = np.cumsum(sorted_amps)
-            total_amp = cumsum_amps[-1]
-            if total_amp == 0:
-                mask = (
-                    np.ones(N_original, dtype=bool)
-                    if target_retention > 0
-                    else np.zeros(N_original, dtype=bool)
-                )
-            else:
-                cumsum_norm = cumsum_amps / total_amp
-                n_keep = np.searchsorted(cumsum_norm, target_retention) + 1
-                n_keep = min(n_keep, N_original)
-                keep_indices = sorted_indices[:n_keep]
-                mask = np.zeros(N_original, dtype=bool)
-                mask[keep_indices] = True
-
-        elif method == "amplitude_percentile":
-            threshold = np.percentile(self.amplitudes, amplitude_percentile)
-            mask = self.amplitudes >= threshold
-
-        elif method == "combined":
-            vols = self.volumes()
-            amp_threshold = np.percentile(self.amplitudes, amplitude_percentile)
-            vol_threshold = np.percentile(vols, volume_percentile)
-            mask = (self.amplitudes >= amp_threshold) & (vols <= vol_threshold)
-
-        # Apply mask via filter()
-        result = self.filter(mask)
-
-        # Update stats with pruning metadata
-        total_amp = np.sum(self.amplitudes)
-        result.stats.update(
-            {
-                "pruned": True,
-                "pruning_method": method,
-                "n_original": N_original,
-                "n_removed": N_original - result.n_splats,
-                "amplitude_retention": (
-                    float(np.sum(result.amplitudes) / total_amp)
-                    if total_amp > 0
-                    else 1.0
-                ),
-            }
-        )
-
-        return result
-
     def cull(
         self,
         target: np.ndarray | None = None,
+        *,
+        method: str = "auto",
         shape: tuple[int, ...] | None = None,
         truncate: float = 3.0,
+        # --- error_budget / redundancy params ---
         error_percentile: float = 99.0,
         error_tolerance: float = 1.0,
         redundancy_threshold: float = 0.01,
         max_binary_search_iters: int = 8,
         device: str | None = None,
         intensity_floor: float = 1e-5,
+        # --- heuristic params ---
+        retention: float = 0.95,
+        amplitude_percentile: float = 5.0,
+        volume_percentile: float = 95.0,
         verbose: bool = False,
     ) -> "GSplatData":
         """Cull splats that contribute negligibly to the reconstruction.
 
-        Two modes are available, selected by whether *target* is provided:
+        This is the unified entry point for all splat removal strategies,
+        from fast heuristics to principled contribution-based methods.
+        The ``method`` parameter selects which strategy to use.
 
-        **Error-budget mode** (``target`` provided):
-            Compares the reconstruction against the original volume that was
-            fitted.  Uses the residual ``R = target - V_pred`` to set an error
-            budget: a splat is safe to remove when its deletion does not
-            increase the worst-case local error beyond the budget.  This is the
-            most principled mode but requires the original volume.
+        Methods (ordered from cheapest to most principled)
+        --------------------------------------------------
 
-        **Redundancy mode** (``target=None``, the default):
-            Works from the splats alone — no target volume needed.  For each
-            splat, measures the maximum fraction of the local signal it
-            contributes: ``g_j(x) / V_pred(x)``.  A splat is redundant when
-            this fraction is below ``redundancy_threshold`` everywhere in its
-            support — other splats already cover its region.  This mode is
-            useful when the original volume is unavailable.
+        **"cumulative"** — Keep the top splats that account for a target
+        fraction of the total amplitude.  Fast (no rendering), but blind
+        to spatial overlap: a low-amplitude splat covering a unique region
+        will be removed even though it is the sole contributor there.
 
-        Both modes include a Phase 2 compounding check to ensure the joint
-        removal of all candidates does not exceed the budget.
+            >>> data.cull(method="cumulative", retention=0.95)
+
+        **"amplitude_percentile"** — Remove splats in the bottom X
+        percentile of amplitude.  Same limitation as cumulative: ignores
+        spatial context.
+
+            >>> data.cull(method="amplitude_percentile", amplitude_percentile=10)
+
+        **"combined"** — Remove splats that have low amplitude OR unusually
+        large volume (artifacts).  Useful as a quick cleanup pass.
+
+            >>> data.cull(method="combined", amplitude_percentile=5, volume_percentile=95)
+
+        **"redundancy"** — Render the full reconstruction and measure each
+        splat's maximum *fractional contribution* ``g_j(x) / V_pred(x)``.
+        If a splat never contributes more than ``redundancy_threshold`` of
+        the local signal, it is redundant.  Does not need the target volume
+        but requires GPU rendering.
+
+            >>> data.cull(method="redundancy", shape=(128,128,128), redundancy_threshold=0.02)
+
+        **"error_budget"** — The most principled mode.  Requires the
+        original target volume.  Computes the residual ``R = target - V_pred``
+        and derives an error budget from it.  A splat is safe to remove when
+        the worst-case error *increase* from its removal is below the budget.
+        Robust to pre-existing noise and accounts for spatial redundancy.
+
+            >>> data.cull(target_volume, method="error_budget", error_percentile=99)
+
+        **"auto"** (default) — Selects automatically:
+        ``"error_budget"`` if *target* is provided, ``"redundancy"`` if
+        *shape* is provided, ``"cumulative"`` otherwise.
+
+        Phase 2 compounding check (error_budget and redundancy only)
+        ------------------------------------------------------------
+        After identifying individual candidates, verifies that their
+        *joint* removal does not exceed the budget.  If it does, a binary
+        search tightens the per-splat threshold until the joint constraint
+        holds, guaranteeing that the combined removal is safe.
 
         Args:
-            target: Original target volume that was fitted.  If provided,
-                error-budget mode is used.  If ``None`` (default), redundancy
-                mode is used instead.
-            shape: Volume shape for rendering.  Required when ``target`` is
-                None; otherwise defaults to ``target.shape``.
+            target: Original target volume.  If provided and ``method="auto"``,
+                selects error-budget mode.
+            method: Culling strategy.  One of ``"auto"``, ``"error_budget"``,
+                ``"redundancy"``, ``"cumulative"``, ``"amplitude_percentile"``,
+                ``"combined"``.
+            shape: Volume shape for rendering (error_budget / redundancy).
+                Defaults to ``target.shape`` when target is provided.
             truncate: Truncation radius in standard deviations.
-            error_percentile: *Error-budget mode only.*  Percentile of
-                |residual| for the budget (0--100).  Higher = more conservative.
-            error_tolerance: *Error-budget mode only.*  Multiplier on the budget.
-            redundancy_threshold: *Redundancy mode only.*  Maximum fractional
-                contribution below which a splat is considered redundant (0--1).
-                E.g. 0.01 means "remove splats contributing < 1% of the local
-                signal everywhere."
-            max_binary_search_iters: Max binary-search iterations for Phase 2.
+            error_percentile: *error_budget only.*  Percentile of |residual|
+                for the budget (0--100).
+            error_tolerance: *error_budget only.*  Multiplier on the budget.
+            redundancy_threshold: *redundancy only.*  Max fractional
+                contribution (0--1) below which a splat is redundant.
+            max_binary_search_iters: *error_budget / redundancy only.*
+                Max iterations for Phase 2 binary search.
             device: Device for GPU computation.  Auto-detected if None.
-            intensity_floor: Minimum intensity threshold for AABB computation.
+            intensity_floor: Min intensity threshold for AABB computation.
+            retention: *cumulative only.*  Fraction of total amplitude to
+                retain (0--1).
+            amplitude_percentile: *amplitude_percentile / combined only.*
+                Bottom percentile to remove (0--100).
+            volume_percentile: *combined only.*  Remove splats above this
+                volume percentile (0--100).
             verbose: Print progress information.
 
         Returns:
-            New GSplatData with culled splats removed.  Stats include culling
-            metadata (``culled``, ``culling_method``, ``n_culled``, etc.).
-
-        Examples:
-            >>> # Redundancy mode (no target needed)
-            >>> culled = data.cull(shape=(128, 128, 128))
-            >>> culled = data.cull(shape=(128, 128, 128), redundancy_threshold=0.02)
-            >>>
-            >>> # Error-budget mode (target available)
-            >>> culled = data.cull(original_volume)
-            >>> culled = data.cull(original_volume, error_tolerance=1.5)
+            New GSplatData with culled splats removed.  Stats include
+            ``culled``, ``culling_method``, ``n_original``, ``n_culled``.
         """
+        # --- Resolve "auto" method ---
+        if method == "auto":
+            if target is not None:
+                method = "error_budget"
+            elif shape is not None:
+                method = "redundancy"
+            else:
+                method = "cumulative"
+
+        # =================================================================
+        # Heuristic methods (no rendering, CPU-only, fast)
+        # =================================================================
+        if method in ("cumulative", "amplitude_percentile", "combined"):
+            return self._cull_heuristic(
+                method=method,
+                retention=retention,
+                amplitude_percentile=amplitude_percentile,
+                volume_percentile=volume_percentile,
+            )
+
+        # =================================================================
+        # Rendering-based methods (GPU, contribution-aware)
+        # =================================================================
+        if method not in ("error_budget", "redundancy"):
+            raise ValueError(
+                f"Unknown culling method: {method!r}. "
+                "Choose from: 'auto', 'error_budget', 'redundancy', "
+                "'cumulative', 'amplitude_percentile', 'combined'."
+            )
+
         import torch
 
         from luxar.gsplats.culling import cull_by_contribution
@@ -1651,8 +1611,9 @@ class GSplatData(_SplatArrayMixin):
             shape = target.shape
         if shape is None:
             raise ValueError(
-                "shape is required when target is None (redundancy mode). "
-                "Pass the volume shape, e.g. shape=(128, 128, 128)."
+                "shape is required for error_budget/redundancy modes. "
+                "Pass the volume shape, e.g. shape=(128, 128, 128), "
+                "or provide a target volume."
             )
 
         if device is None:
@@ -1670,26 +1631,26 @@ class GSplatData(_SplatArrayMixin):
         # Unpack Cholesky factors: (N, d*(d+1)/2) -> (N, d, d) lower-triangular
         chol = self.cholesky_factors
         ndim = self.ndim
-        Ls_t = torch.zeros(
-            (len(chol), ndim, ndim), device=device, dtype=torch.float32
-        )
+        chol_t = torch.from_numpy(chol).to(device)
+        Ls_t = torch.zeros((len(chol), ndim, ndim), device=device, dtype=torch.float32)
         if ndim == 2:
-            Ls_t[:, 0, 0] = torch.from_numpy(chol[:, 0]).to(device)
-            Ls_t[:, 1, 0] = torch.from_numpy(chol[:, 1]).to(device)
-            Ls_t[:, 1, 1] = torch.from_numpy(chol[:, 2]).to(device)
+            Ls_t[:, 0, 0] = chol_t[:, 0]
+            Ls_t[:, 1, 0] = chol_t[:, 1]
+            Ls_t[:, 1, 1] = chol_t[:, 2]
         elif ndim == 3:
-            Ls_t[:, 0, 0] = torch.from_numpy(chol[:, 0]).to(device)
-            Ls_t[:, 1, 0] = torch.from_numpy(chol[:, 1]).to(device)
-            Ls_t[:, 1, 1] = torch.from_numpy(chol[:, 2]).to(device)
-            Ls_t[:, 2, 0] = torch.from_numpy(chol[:, 3]).to(device)
-            Ls_t[:, 2, 1] = torch.from_numpy(chol[:, 4]).to(device)
-            Ls_t[:, 2, 2] = torch.from_numpy(chol[:, 5]).to(device)
+            Ls_t[:, 0, 0] = chol_t[:, 0]
+            Ls_t[:, 1, 0] = chol_t[:, 1]
+            Ls_t[:, 1, 1] = chol_t[:, 2]
+            Ls_t[:, 2, 0] = chol_t[:, 3]
+            Ls_t[:, 2, 1] = chol_t[:, 4]
+            Ls_t[:, 2, 2] = chol_t[:, 5]
         else:
             idx = 0
             for i in range(ndim):
                 for j in range(i + 1):
-                    Ls_t[:, i, j] = torch.from_numpy(chol[:, idx]).to(device)
+                    Ls_t[:, i, j] = chol_t[:, idx]
                     idx += 1
+        del chol_t
 
         result = cull_by_contribution(
             centers_t,
@@ -1706,6 +1667,13 @@ class GSplatData(_SplatArrayMixin):
             verbose=verbose,
         )
 
+        # Free GPU tensors used for culling
+        del centers_t, amps_t, Ls_t
+        if target_t is not None:
+            del target_t
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         culled = self.filter(result.keep_mask)
         culled.stats.update(
             {
@@ -1714,13 +1682,86 @@ class GSplatData(_SplatArrayMixin):
                 "n_original": self.n_splats,
                 "n_culled": result.n_culled,
                 "error_budget": result.error_budget,
-                "redundancy_threshold": redundancy_threshold,
                 "phase1_candidates": result.phase1_candidates,
                 "phase2_iterations": result.phase2_iterations,
                 "max_joint_error": result.max_joint_error,
             }
         )
         return culled
+
+    def _cull_heuristic(
+        self,
+        method: str,
+        retention: float = 0.95,
+        amplitude_percentile: float = 5.0,
+        volume_percentile: float = 95.0,
+    ) -> "GSplatData":
+        """Heuristic culling methods (no rendering needed)."""
+        N_original = self.n_splats
+
+        if N_original == 0:
+            result = self.filter(np.ones(0, dtype=bool))
+            result.stats.update(
+                {
+                    "culled": True,
+                    "culling_method": method,
+                    "n_original": 0,
+                    "n_culled": 0,
+                }
+            )
+            return result
+
+        mask = np.ones(N_original, dtype=bool)
+
+        if method == "cumulative":
+            sorted_indices = np.argsort(self.amplitudes)[::-1]
+            sorted_amps = self.amplitudes[sorted_indices]
+            cumsum_amps = np.cumsum(sorted_amps)
+            total_amp = cumsum_amps[-1]
+            if total_amp == 0:
+                mask = (
+                    np.ones(N_original, dtype=bool)
+                    if retention > 0
+                    else np.zeros(N_original, dtype=bool)
+                )
+            else:
+                cumsum_norm = cumsum_amps / total_amp
+                n_keep = np.searchsorted(cumsum_norm, retention) + 1
+                n_keep = min(n_keep, N_original)
+                keep_indices = sorted_indices[:n_keep]
+                mask = np.zeros(N_original, dtype=bool)
+                mask[keep_indices] = True
+
+        elif method == "amplitude_percentile":
+            threshold = np.percentile(self.amplitudes, amplitude_percentile)
+            mask = self.amplitudes >= threshold
+
+        elif method == "combined":
+            vols = self.volumes()
+            amp_threshold = np.percentile(self.amplitudes, amplitude_percentile)
+            vol_threshold = np.percentile(vols, volume_percentile)
+            mask = (self.amplitudes >= amp_threshold) & (vols <= vol_threshold)
+
+        else:
+            raise ValueError(f"Unknown heuristic method: {method!r}")
+
+        result = self.filter(mask)
+
+        total_amp = np.sum(self.amplitudes)
+        result.stats.update(
+            {
+                "culled": True,
+                "culling_method": method,
+                "n_original": N_original,
+                "n_culled": N_original - result.n_splats,
+                "amplitude_retention": (
+                    float(np.sum(result.amplitudes) / total_amp)
+                    if total_amp > 0
+                    else 1.0
+                ),
+            }
+        )
+        return result
 
     def render_to_volume(
         self,

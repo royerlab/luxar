@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Astronaut progressive Gaussian splatting demo.
+Human mitosis progressive Gaussian splatting demo.
 
-The astronaut image is a challenging target for Gaussian splatting: rich
-textures, sharp edges, fine facial detail, and high-frequency patterns in the
-helmet and suit.  Progressive fitting handles this well by starting with the
-large-scale structure (face, helmet silhouette) and adding detail in later
-passes (wrinkles, reflections, text on suit).
+Progressive (multi-pass) fitting on the scikit-image human mitosis dataset.
+Each pass fits splats to the residual of the previous approximation, building
+a multi-LOD representation from coarse to fine.
 
 Features:
-- Progressive residual fitting on a hard natural image
+- Progressive residual fitting with automatic PSNR-based stopping
 - Per-LOD visualization: scrub from coarse to full detail
-- Comparison of progressive vs the original single-fit approach
+- Biological histology data with mitotic figures and nuclear detail
 - Compression analysis at each LOD level
+
+Data source: scikit-image human_mitosis (256x256 crop)
 """
 
 import sys
@@ -29,9 +29,9 @@ if NO_NAPARI:
     aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
-MAX_SPLATS = 4000  # Total splat budget
-MAX_SPLATS_PER_PASS = 1000  # Max splats per pass
-ITERS_PER_PASS = 3000  # Optimization iterations per pass
+MAX_SPLATS = 3000  # Total splat budget (1000 seeds in single-shot version)
+MAX_SPLATS_PER_PASS = 500  # Max splats per pass
+ITERS_PER_PASS = 2000  # Optimization iterations per pass
 PSNR_PATIENCE = 0.2  # Stop if ΔPSNR < 0.2 dB between passes
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps"
 TRUNCATE_SIG = 3.0  # Rendering support truncation
@@ -40,19 +40,16 @@ TRUNCATE_SIG = 3.0  # Rendering support truncation
 Arbol.max_depth = 4
 
 
-with asection("Astronaut Progressive Gaussian Splatting Demo"):
-    aprint("Complex photograph with faces, textures, and fine detail")
+with asection("Mitosis Progressive Gaussian Splatting Demo"):
+    aprint("Progressive fitting on biological histology data")
 
     # --- Load and preprocess ---
     with asection("Loading and preprocessing data"):
-        img = data.astronaut()  # RGB (512, 512, 3)
+        img = data.human_mitosis()
         if img.ndim == 3 and img.shape[-1] in (3, 4):
-            img = color.rgb2gray(img)
-        V = img_as_float32(img) * 100.0  # Scale to [0, 100]
-
-        # Crop to astronaut face and helmet region
-        V = V[80:400, 120:440]  # 320x320
-
+            img = color.rgb2gray(img) * 100
+        V = img_as_float32(img)
+        V = V[100:356, 100:356]  # Crop to 256x256
         aprint(f"Image shape: {V.shape}, range: [{V.min():.4f}, {V.max():.4f}]")
 
     # --- Progressive fitting ---
@@ -106,24 +103,24 @@ with asection("Astronaut Progressive Gaussian Splatting Demo"):
 if not NO_NAPARI:
     import napari
 
-    viewer = napari.Viewer(title="Astronaut Progressive GSplat Fitting")
+    viewer = napari.Viewer(title="Mitosis Progressive GSplat Fitting")
 
     viewer.add_image(
         V,
-        name="Astronaut (input)",
-        colormap="gray",
+        name="Input (human mitosis)",
+        colormap="magma",
         contrast_limits=[0, float(V.max())],
     )
     viewer.add_image(
         stack_recon,
         name="Reconstruction (LOD levels)",
-        colormap="gray",
+        colormap="magma",
         contrast_limits=[0, float(V.max())],
     )
     viewer.add_image(
         np.abs(stack_resid),
         name="Absolute residual",
-        colormap="hot",
+        colormap="inferno",
         contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
     )
 
@@ -146,7 +143,7 @@ if not NO_NAPARI:
     viewer.dims.events.current_step.connect(_update_overlay)
 
     aprint("Ready. Use the LOD slider to see coarse-to-fine reconstruction.")
-    aprint("Notice: LOD 0 captures face/helmet silhouette, later LODs add fine detail.")
+    aprint("Notice: LOD 0 captures large nuclei, later LODs add mitotic detail.")
     napari.run()
 else:
     aprint("\nDemo completed successfully (napari visualization disabled)")

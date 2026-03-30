@@ -90,9 +90,11 @@ from luxar.utils.paths import get_demos_output_dir
 # Data source
 ZENODO_URL = "https://zenodo.org/api/records/1211599/files/cxcr4aMO2_290112.lsm/content"
 
-# Fitting parameters
-N_SEEDS = 8000
-N_ITERS = 6000
+# Fitting parameters (progressive)
+MAX_SPLATS = 4000
+MAX_SPLATS_PER_PASS = 1000
+ITERS_PER_PASS = 3000
+PSNR_PATIENCE = 0.2
 
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_zebrafish"
@@ -322,14 +324,19 @@ def fit_timepoint(
 
         DEVICE = detect_device()
 
-    from luxar.gsplats import fit_gaussian_splats
+    from luxar.gsplats import fit_progressive_gaussian_splats
 
-    aprint(f"  Fitting {label} ({N_ITERS} iters, {N_SEEDS} seeds)...")
+    aprint(
+        f"  Fitting {label} (progressive: max_splats={MAX_SPLATS}, "
+        f"{MAX_SPLATS_PER_PASS}/pass, {ITERS_PER_PASS} iters/pass)..."
+    )
 
-    result = fit_gaussian_splats(
+    result = fit_progressive_gaussian_splats(
         volume,
-        seeds=N_SEEDS,
-        n_iters=N_ITERS,
+        max_splats=MAX_SPLATS,
+        max_splats_per_pass=MAX_SPLATS_PER_PASS,
+        iters_per_pass=ITERS_PER_PASS,
+        psnr_patience=PSNR_PATIENCE,
         device=DEVICE,
         verbose=True,
         enable_dynamic_ops=True,
@@ -418,7 +425,7 @@ def create_luxar_scene(
         aprint(f"Output: {output_path.name}")
         aprint(f"Timepoints: {n_timepoints}")
 
-        # When voxel_size is provided to fit_gaussian_splats, output centers
+        # When voxel_size is provided to the fitting function, output centers
         # are in physical coordinates (µm) by default (output_space="real").
         dims = Dimensions(
             [

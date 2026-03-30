@@ -131,11 +131,7 @@ def _write_build_info(so_path: Path) -> None:
             modules = []
             for line in output.split("\n"):
                 line = line.strip()
-                if (
-                    not line
-                    or line.startswith("Currently")
-                    or line.startswith("No ")
-                ):
+                if not line or line.startswith("Currently") or line.startswith("No "):
                     continue
                 for prefix_end in (") ", ". "):
                     idx = line.find(prefix_end)

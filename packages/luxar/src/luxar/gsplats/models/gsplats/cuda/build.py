@@ -149,7 +149,9 @@ def _write_build_info(so_path: Path) -> None:
         try:
             result = subprocess.run(
                 ["bash", "-c", "module list 2>&1"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             output = result.stdout.strip()
             modules = []
@@ -160,7 +162,7 @@ def _write_build_info(so_path: Path) -> None:
                 for prefix_end in (") ", ". "):
                     idx = line.find(prefix_end)
                     if idx != -1 and idx < 5:
-                        line = line[idx + len(prefix_end):].strip()
+                        line = line[idx + len(prefix_end) :].strip()
                         break
                 for part in line.split():
                     if part and "/" in part:
@@ -187,8 +189,10 @@ def _write_build_info(so_path: Path) -> None:
     print(f"  Build info: {info_path}")
     if info["loaded_modules"]:
         print(f"  Modules at build time: {', '.join(info['loaded_modules'])}")
-        print(f"  ⚠  Load these modules before submitting Slurm fit jobs:"
-              f"\n     module load {' '.join(info['loaded_modules'])}")
+        print(
+            f"  ⚠  Load these modules before submitting Slurm fit jobs:"
+            f"\n     module load {' '.join(info['loaded_modules'])}"
+        )
 
 
 if __name__ == "__main__":

@@ -108,6 +108,9 @@ def apply_clahe(
         # Uniform image - return unchanged
         return V.clone()
 
+    # Pre-compute bin edges once (invariant across tiles)
+    bin_edges = torch.linspace(V_min, V_max, nbins + 1, device=device)
+
     # For each tile, compute local histogram equalization
     for tile_idx in itertools.product(*[range(n) for n in n_tiles]):
         # Extract tile boundaries
@@ -141,8 +144,6 @@ def apply_clahe(
             cdf_normalized = cdf
 
         # Map tile intensities through CDF
-        # Digitize values into bins
-        bin_edges = torch.linspace(V_min, V_max, nbins + 1, device=device)
         bin_indices = torch.searchsorted(bin_edges[1:], tile_flat.contiguous())
         bin_indices = torch.clamp(bin_indices, 0, nbins - 1)
 

@@ -64,9 +64,9 @@ def render_gaussians_numpy(
     ls = unpack_tril(packed_L, d)
 
     # Convert to PyTorch tensors (CPU, no gradients needed)
-    centers_torch = torch.tensor(centers, dtype=torch.float32, device="cpu")
-    ls_torch = torch.tensor(ls, dtype=torch.float32, device="cpu")
-    amps_torch = torch.tensor(amps, dtype=torch.float32, device="cpu")
+    centers_torch = torch.from_numpy(centers)
+    ls_torch = torch.from_numpy(ls)
+    amps_torch = torch.from_numpy(amps)
 
     # Render using the PyTorch function
     with torch.no_grad():
@@ -127,19 +127,20 @@ def render_gaussians_pytorch(
     ls = unpack_tril(packed_L, d)
 
     # Convert to PyTorch tensors
-    centers_torch = torch.tensor(centers, dtype=torch.float32, device=device)
-    ls_torch = torch.tensor(ls, dtype=torch.float32, device=device)
-    amps_torch = torch.tensor(amps, dtype=torch.float32, device=device)
+    centers_torch = torch.from_numpy(centers).to(device=device)
+    ls_torch = torch.from_numpy(ls).to(device=device)
+    amps_torch = torch.from_numpy(amps).to(device=device)
 
-    # Render using the PyTorch function
-    rendered = render_gaussians(
-        shape,
-        centers_torch,
-        ls_torch,
-        amps_torch,
-        truncate=truncate,
-        chunk_size=chunk_size,
-    )
+    # Render using the PyTorch function (no gradients needed for inference)
+    with torch.no_grad():
+        rendered = render_gaussians(
+            shape,
+            centers_torch,
+            ls_torch,
+            amps_torch,
+            truncate=truncate,
+            chunk_size=chunk_size,
+        )
 
     return rendered
 

@@ -245,66 +245,64 @@ class TestScaleIntensity:
         assert np.allclose(scaled.amplitudes, 0.0)
 
 
-# ── Prune ───────────────────────────────────────────────────
+# ── Cull (heuristic methods) ──────────────────────────────
 
 
-class TestPrune:
+class TestCullHeuristic:
     def test_cumulative_retains_signal(self):
-        """Cumulative pruning should retain the target fraction of total amplitude."""
+        """Cumulative culling should retain the target fraction of total amplitude."""
         gs = _make_3d_gsplat(n=100)
-        pruned = gs.prune(method="cumulative", target_retention=0.95)
+        culled = gs.cull(method="cumulative", retention=0.95)
         total_orig = gs.amplitudes.sum()
-        total_pruned = pruned.amplitudes.sum()
-        assert total_pruned / total_orig >= 0.95 - 1e-6
-        assert pruned.n_splats <= gs.n_splats
+        total_culled = culled.amplitudes.sum()
+        assert total_culled / total_orig >= 0.95 - 1e-6
+        assert culled.n_splats <= gs.n_splats
 
     def test_cumulative_reduces_count(self):
-        """Cumulative pruning should remove some splats."""
+        """Cumulative culling should remove some splats."""
         gs = _make_3d_gsplat(n=100)
-        pruned = gs.prune(method="cumulative", target_retention=0.5)
-        assert pruned.n_splats < gs.n_splats
+        culled = gs.cull(method="cumulative", retention=0.5)
+        assert culled.n_splats < gs.n_splats
 
     def test_amplitude_percentile(self):
         gs = _make_3d_gsplat(n=100)
-        pruned = gs.prune(method="amplitude_percentile", amplitude_percentile=20)
-        assert pruned.n_splats < gs.n_splats
+        culled = gs.cull(method="amplitude_percentile", amplitude_percentile=20)
+        assert culled.n_splats < gs.n_splats
 
     def test_combined(self):
         gs = _make_3d_gsplat(n=100)
-        pruned = gs.prune(
+        culled = gs.cull(
             method="combined", amplitude_percentile=10, volume_percentile=90
         )
-        assert pruned.n_splats <= gs.n_splats
+        assert culled.n_splats <= gs.n_splats
 
-    def test_prune_empty(self):
+    def test_cull_empty(self):
         gs = _make_empty_gsplat()
-        pruned = gs.prune()
-        assert pruned.n_splats == 0
-        assert pruned.stats["pruned"] is True
+        culled = gs.cull(method="cumulative")
+        assert culled.n_splats == 0
+        assert culled.stats["culled"] is True
 
-    def test_prune_all_zero_amplitudes(self):
+    def test_cull_all_zero_amplitudes(self):
         gs = GSplatData(
             centers=np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32),
             amplitudes=np.array([0.0, 0.0], dtype=np.float32),
             cholesky_factors=np.zeros((2, 6), dtype=np.float32),
         )
-        pruned = gs.prune(method="cumulative", target_retention=0.95)
-        # With zero retention request, should keep all
-        assert pruned.n_splats == 2
+        culled = gs.cull(method="cumulative", retention=0.95)
+        assert culled.n_splats == 2
 
-    def test_prune_stats_updated(self):
+    def test_cull_stats_updated(self):
         gs = _make_3d_gsplat(n=50)
         gs.stats["time_seconds"] = 5.0
-        pruned = gs.prune(method="cumulative", target_retention=0.5)
-        assert pruned.stats["pruned"] is True
-        assert pruned.stats["pruning_method"] == "cumulative"
-        assert pruned.stats["n_original"] == 50
-        assert "n_removed" in pruned.stats
-        assert "amplitude_retention" in pruned.stats
-        # Original stats should be preserved
-        assert pruned.stats["time_seconds"] == 5.0
+        culled = gs.cull(method="cumulative", retention=0.5)
+        assert culled.stats["culled"] is True
+        assert culled.stats["culling_method"] == "cumulative"
+        assert culled.stats["n_original"] == 50
+        assert "n_culled" in culled.stats
+        assert "amplitude_retention" in culled.stats
+        assert culled.stats["time_seconds"] == 5.0
 
-    def test_prune_preserves_colors(self):
+    def test_cull_preserves_colors(self):
         gs = GSplatData(
             centers=np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32),
             amplitudes=np.array([1.0, 0.001], dtype=np.float32),
@@ -313,14 +311,20 @@ class TestPrune:
             ),
             colors=np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32),
         )
-        pruned = gs.prune(method="cumulative", target_retention=0.5)
-        assert pruned.colors is not None
-        assert pruned.colors.shape[1] == 3
+        culled = gs.cull(method="cumulative", retention=0.5)
+        assert culled.colors is not None
+        assert culled.colors.shape[1] == 3
 
-    def test_prune_invalid_method(self):
+    def test_cull_invalid_method(self):
         gs = _make_3d_gsplat()
-        with pytest.raises(ValueError, match="Unknown pruning method"):
-            gs.prune(method="invalid")
+        with pytest.raises(ValueError, match="Unknown"):
+            gs.cull(method="invalid")
+
+    def test_auto_selects_cumulative_without_args(self):
+        """Auto method should default to cumulative when no target/shape given."""
+        gs = _make_3d_gsplat(n=100)
+        culled = gs.cull()  # method="auto", no target, no shape
+        assert culled.stats["culling_method"] == "cumulative"
 
 
 # ── Save whitelist ──────────────────────────────────────────
@@ -345,7 +349,6 @@ class TestSaveWhitelist:
                 "final_max_abs_error": 0.005,
                 "final_rel_l2": 0.01,
                 "n_splats": 1,
-                "n_splats_before_culling": 5,
                 "n_culled": 4,
                 "movie_frames": None,  # Should NOT be saved
             },
@@ -363,7 +366,6 @@ class TestSaveWhitelist:
             "final_max_abs_error",
             "final_rel_l2",
             "n_splats",
-            "n_splats_before_culling",
             "n_culled",
         ]
 
@@ -382,13 +384,12 @@ class TestSaveWhitelist:
                 "final_max_abs_error",
                 "final_rel_l2",
                 "n_splats",
-                "n_splats_before_culling",
                 "n_culled",
                 "fitter_name",
                 "fitter_version",
                 "timestamp",
-                "pruned",
-                "pruning_method",
+                "culled",
+                "culling_method",
                 "n_original",
                 "n_removed",
                 "amplitude_retention",

@@ -567,7 +567,7 @@ Tests: Python 3.10+ available, hatch installed and functional, hatch env show wo
 hatch run python scripts/test_batch_plan_fixes.py
 ```
 
-Tests: zarr.zip support, custom axes parsing, axes override validation, array selection consistency, auto-tile logic, cull_ratio defaults, 6D slicing, manifest serialization, LD_LIBRARY_PATH handling.
+Tests: zarr.zip support, custom axes parsing, axes override validation, array selection consistency, auto-tile logic, cull_retention defaults, 6D slicing, manifest serialization, LD_LIBRARY_PATH handling.
 
 ---
 

@@ -120,9 +120,7 @@ with asection("C. elegans — Contribution-Based Culling Demo"):
     # --- Load pre-computed splats ---
     from luxar.utils.demos import load_precomputed_bundle
 
-    file_names = [
-        f"celegans_s1_t{t:04d}.gsplats.zarr.zip" for t in TIMEPOINTS
-    ]
+    file_names = [f"celegans_s1_t{t:04d}.gsplats.zarr.zip" for t in TIMEPOINTS]
 
     gsplats_list = load_precomputed_bundle(
         "gsplats_celegans",
@@ -174,7 +172,8 @@ with asection("C. elegans — Contribution-Based Culling Demo"):
         tiff_files = []
         for d in [sample_dir] + [s for s in sample_dir.iterdir() if s.is_dir()]:
             tiff_files.extend(
-                f for f in d.iterdir()
+                f
+                for f in d.iterdir()
                 if f.is_file() and f.suffix.lower() in (".tif", ".tiff")
             )
         tiff_files = sorted(set(tiff_files))
@@ -204,7 +203,9 @@ with asection("C. elegans — Contribution-Based Culling Demo"):
         volumes = []
         for t in TIMEPOINTS:
             if t >= len(tiff_files):
-                raise ValueError(f"Timepoint {t} not available ({len(tiff_files)} files)")
+                raise ValueError(
+                    f"Timepoint {t} not available ({len(tiff_files)} files)"
+                )
 
             with asection(f"Preprocessing t={t}"):
                 V = tifffile.imread(str(tiff_files[t])).astype(np.float32)
@@ -242,7 +243,9 @@ with asection("C. elegans — Contribution-Based Culling Demo"):
                     V_np = (V_np - rmin) / (rmax - rmin)
 
                 volumes.append(V_np)
-                aprint(f"shape={V_np.shape}, range=[{V_np.min():.2f}, {V_np.max():.2f}]")
+                aprint(
+                    f"shape={V_np.shape}, range=[{V_np.min():.2f}, {V_np.max():.2f}]"
+                )
 
     # --- Cull at each level and collect stats ---
     from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
@@ -259,9 +262,7 @@ with asection("C. elegans — Contribution-Based Culling Demo"):
                 unculled_renders.append(V_unculled)
 
                 mse_full = float(np.mean((V - V_unculled) ** 2))
-                psnr_full = 10.0 * np.log10(
-                    float(V.max()) ** 2 / (mse_full + 1e-12)
-                )
+                psnr_full = 10.0 * np.log10(float(V.max()) ** 2 / (mse_full + 1e-12))
                 comp_full = _compute_compression(gsplats.n_splats, gsplats.ndim, V.size)
 
                 aprint(
@@ -296,16 +297,18 @@ with asection("C. elegans — Contribution-Based Culling Demo"):
                         f"{comp['fold']:.1f}x compression"
                     )
 
-                    tp_results.append({
-                        "level": level,
-                        "culled": culled,
-                        "rendered": V_culled,
-                        "psnr": psnr,
-                        "n_splats": culled.n_splats,
-                        "n_removed": n_removed,
-                        "pct_removed": pct_removed,
-                        "compression_fold": comp["fold"],
-                    })
+                    tp_results.append(
+                        {
+                            "level": level,
+                            "culled": culled,
+                            "rendered": V_culled,
+                            "psnr": psnr,
+                            "n_splats": culled.n_splats,
+                            "n_removed": n_removed,
+                            "pct_removed": pct_removed,
+                            "compression_fold": comp["fold"],
+                        }
+                    )
 
             all_results.append(tp_results)
 
@@ -368,7 +371,9 @@ if not NO_NAPARI:
             splat_counts[ti, 0] = gsplats_list[ti].n_splats
             mse = float(np.mean((V - unculled_renders[ti]) ** 2))
             psnr_values[ti, 0] = 10.0 * np.log10(float(V.max()) ** 2 / (mse + 1e-12))
-            comp = _compute_compression(gsplats_list[ti].n_splats, gsplats_list[ti].ndim, V.size)
+            comp = _compute_compression(
+                gsplats_list[ti].n_splats, gsplats_list[ti].ndim, V.size
+            )
             compression_folds[ti, 0] = comp["fold"]
 
             for li, r in enumerate(all_results[ti]):

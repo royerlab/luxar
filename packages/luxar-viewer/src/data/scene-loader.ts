@@ -46,6 +46,7 @@ import type {
   LoadedGSplatsData,
 } from '../types/gsplats';
 import { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
+import { GSplatsProgressiveLoader } from './gsplats-progressive-loader';
 import { processGSplats } from './gsplats-processor';
 import {
   GSplatMaterial,
@@ -873,7 +874,145 @@ export class SceneLoader {
           this.updateView(pendingState);
         }
       } else {
-        // No pending update - release the lock now
+        // No pending update — check if progressive GSplats loaders need refinement
+        const needsRefinement = [...this.gsplatLoaders.values()].some(
+          (l) => l.hasMoreLODs === true
+        );
+
+        if (needsRefinement) {
+          // Keep _updateInProgress = true during refinement so slider/animation
+          // events queue as _pendingViewState (which naturally cancels refinement)
+          this.scheduleGSplatsRefinement();
+        } else {
+          // No pending update, no refinement needed - release the lock now
+          this._updateInProgress = false;
+        }
+      }
+    }
+  }
+
+  /**
+   * Schedule progressive GSplats LOD refinement.
+   *
+   * Runs after the main updateView() commits LOD 0, loading additional LODs
+   * one pass at a time with a rAF yield between each pass (so each LOD level
+   * is painted as a separate frame, giving visible progressive refinement).
+   *
+   * Cancellation: if _pendingViewState is set (user navigated), the loop
+   * aborts and drains the pending state via the normal serialization path.
+   *
+   * IMPORTANT: This method does NOT go through the updateView() entry point
+   * (which has the serialization lock). It directly calls loader.updateView()
+   * + process + commit for GSplats loaders only.
+   */
+  private async scheduleGSplatsRefinement(): Promise<void> {
+    // Track whether cancellation has taken ownership of the lock
+    let lockHandedOff = false;
+    try {
+      while (true) {
+        // Yield to let browser paint the current LOD level
+        await new Promise<void>((resolve) => {
+          if (typeof requestAnimationFrame !== 'undefined') {
+            requestAnimationFrame(() => resolve());
+          } else {
+            resolve(); // Test environment: proceed immediately
+          }
+        });
+
+        // Check cancellation: did the user navigate?
+        if (this._pendingViewState !== null) {
+          const pendingState = this._pendingViewState;
+          this._pendingViewState = null;
+
+          // Drain pending state via the normal path.
+          // The rAF branch keeps the lock until the callback fires,
+          // so we must not release it in finally.
+          lockHandedOff = true;
+          if (typeof requestAnimationFrame !== 'undefined') {
+            requestAnimationFrame(() => {
+              this._updateInProgress = false;
+              this.updateView(pendingState);
+            });
+          } else {
+            this._updateInProgress = false;
+            this.updateView(pendingState);
+          }
+          return;
+        }
+
+        // Load next LOD level for each progressive loader
+        for (const [path, loader] of this.gsplatLoaders) {
+          if (loader.hasMoreLODs !== true) continue;
+
+          try {
+            // Build the gsplats view state (same as main update)
+            const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+            const nodeAttrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
+            const extendDims: string[] = nodeAttrs?.extend_to_all || [];
+
+            let gsplatsViewState: GSplatsViewState = {
+              displayDims: this.viewState.displayDims,
+              slicePosition: this.viewState.slicePosition,
+              tolerance: this.viewState.tolerance,
+              dimensions: this.viewState.dimensions?.metadata,
+            };
+
+            if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
+              const tolerance = [...this.viewState.tolerance];
+              for (const dimName of extendDims) {
+                const dimIndex = this.viewState.dimensions.metadata.findIndex(
+                  (d: { name?: string }) => d.name === dimName
+                );
+                if (dimIndex >= 0 && dimIndex < tolerance.length) {
+                  tolerance[dimIndex] = 1e10;
+                }
+              }
+              gsplatsViewState = { ...gsplatsViewState, tolerance };
+            }
+
+            // Apply nd_transform inverse
+            if (this._sceneGraph && gsplatsViewState.dimensions) {
+              const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
+              if (Object.keys(worldNdT).length > 0) {
+                const dimNames = gsplatsViewState.dimensions.map(
+                  (d: { name?: string }) => d.name ?? ''
+                );
+                const inverted = invertNdTransformForQuery(
+                  gsplatsViewState.slicePosition,
+                  gsplatsViewState.tolerance,
+                  worldNdT,
+                  dimNames,
+                  gsplatsViewState.displayDims
+                );
+                gsplatsViewState = { ...gsplatsViewState, ...inverted };
+              }
+            }
+
+            const data = await loader.updateView(gsplatsViewState);
+            if (data) {
+              const staged = await this.processGSplatsData(path, data, gsplatsViewState);
+              if (staged) this.commitGSplatsGeometry(staged);
+            }
+          } catch (error) {
+            log.error(
+              Modules.SCENE_LOADER,
+              `GSplats refinement failed for ${path}: ${(error as Error).message}`
+            );
+          }
+        }
+
+        // Update monitor after refinement commit
+        this.updateVisibleCountsInMonitor();
+
+        // Check if any progressive loaders still have more LODs after this pass
+        const anyMore = [...this.gsplatLoaders.values()].some(
+          (l) => l.hasMoreLODs === true
+        );
+        if (!anyMore) break; // All LODs loaded
+      }
+    } finally {
+      // Release the lock unless cancellation handed it off to a rAF callback
+      if (!lockHandedOff) {
         this._updateInProgress = false;
       }
     }
@@ -1728,12 +1867,22 @@ export class SceneLoader {
     loc: zarr.Location<zarr.Readable>
   ): Promise<THREE.Mesh | null> {
     const attrs = node.attrs as unknown as GSplatsMetadata;
+    const nLods = attrs.n_lods ?? 0;
     log.custom('🔮', Modules.SCENE_LOADER, `Loading gsplats: ${node.path}`);
-    log.info(Modules.SCENE_LOADER, `  Splats: ${attrs.n_splats?.toLocaleString() || 'unknown'}`);
+    log.info(
+      Modules.SCENE_LOADER,
+      `  Splats: ${(nLods > 1 ? (attrs.n_splats_total ?? attrs.n_splats) : attrs.n_splats)?.toLocaleString() || 'unknown'}`
+    );
     log.info(Modules.SCENE_LOADER, `  Dimensions: ${attrs.ndim || 'unknown'}D`);
+    if (nLods > 1) {
+      log.info(Modules.SCENE_LOADER, `  LODs: ${nLods} (progressive loading enabled)`);
+    }
 
-    // Create gsplats loader
-    const loader = this.createGSplatsLoader(node, loc);
+    // Create gsplats loader — progressive for multi-LOD, standard for single-LOD
+    const loader =
+      nLods > 1
+        ? await this.createProgressiveGSplatsLoader(node, loc, nLods)
+        : this.createGSplatsLoader(node, loc);
 
     // Store loader for updates
     this.gsplatLoaders.set(node.path, loader);
@@ -1910,6 +2059,67 @@ export class SceneLoader {
     );
 
     return loader;
+  }
+
+  /**
+   * Create a progressive gsplats loader for a multi-LOD node.
+   *
+   * Opens each lod_i/ zarr subgroup, reads its attrs to build a synthetic
+   * SceneNode, and creates a GSplatsSpatialIndexLoader per LOD. Wraps them
+   * all in a GSplatsProgressiveLoader.
+   */
+  private async createProgressiveGSplatsLoader(
+    node: SceneNode,
+    _loc: zarr.Location<zarr.Readable>,
+    nLods: number
+  ): Promise<GSplatsDataLoader> {
+    const parentLoc = zarr.root(this.store!).resolve(node.path === '/' ? '' : node.path.slice(1));
+
+    log.query(
+      Modules.SCENE_LOADER,
+      `Creating progressive GSplats loader for ${node.path} (${nLods} LODs)`
+    );
+
+    const lodLoaders: GSplatsSpatialIndexLoader[] = [];
+
+    for (let i = 0; i < nLods; i++) {
+      const lodLoc = parentLoc.resolve(`lod_${i}`);
+
+      // Read per-LOD attrs from zarr to build a synthetic SceneNode
+      const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
+      const lodAttrs = lodGroup.attrs as Record<string, unknown>;
+
+      const lodNode: SceneNode = {
+        path: `${node.path}/lod_${i}`,
+        type: 'gsplats',
+        attrs: {
+          ...lodAttrs,
+          // Inherit rendering attrs from parent (opacity, gamma, transform, etc.)
+          opacity: node.attrs.opacity,
+          gamma: node.attrs.gamma,
+          intensity: node.attrs.intensity,
+          offset: node.attrs.offset,
+          blending_mode: node.attrs.blending_mode,
+          extend_to_all: node.attrs.extend_to_all,
+        },
+        hasSpatialIndex: false,
+        children: [],
+      };
+
+      const loader = new GSplatsSpatialIndexLoader(
+        lodLoc,
+        lodNode,
+        this.arrayRefRegistry,
+        this.store!,
+        this.profiler ?? undefined,
+        this.l0Cache ?? undefined,
+        this.cachingStore?.getPrefetcher() ?? undefined
+      );
+
+      lodLoaders.push(loader);
+    }
+
+    return new GSplatsProgressiveLoader(lodLoaders, nLods);
   }
 
   /**

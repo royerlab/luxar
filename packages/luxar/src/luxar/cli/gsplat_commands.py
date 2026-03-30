@@ -278,10 +278,10 @@ def info_dataset(
                 "ssim",
                 "mse",
                 "convergence_time",
-                "pruned",
-                "pruning_method",
+                "culled",
+                "culling_method",
                 "n_original",
-                "n_removed",
+                "n_culled",
                 "amplitude_retention",
             ]
 
@@ -331,12 +331,12 @@ def info_dataset(
         if n_for_95pct < n_splats * 0.5:  # If less than 50% needed for 95%
             removable = n_splats - n_for_95pct
             pct_removable = (removable / n_splats) * 100
-            aprint("\n💡 Pruning Suggestion:")
+            aprint("\n💡 Culling Suggestion:")
             aprint(
                 f"   You could remove {removable:,} splats ({pct_removable:.1f}%) while retaining 95% of amplitude"
             )
             aprint(
-                f"   Command: luxar gsplat prune {path.name} pruned.gsplats.zarr.zip --method cumulative --retention 0.95"
+                f"   Command: luxar gsplat cull {path.name} culled.gsplats.zarr.zip --method cumulative --retention 0.95"
             )
 
     except typer.Exit:
@@ -597,23 +597,79 @@ def quick_view(
         raise typer.Exit(1)
 
 
-@app_gsplat.command("prune")
-def prune_dataset(
+@app_gsplat.command("cull")
+def cull_dataset(
     input_path: Path = typer.Argument(
         ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
     ),
     output_path: Path = typer.Argument(..., help="Output .gsplats.zarr dataset"),
-    method: Literal["cumulative", "amplitude_percentile", "combined"] = typer.Option(
-        "cumulative",
+    method: str = typer.Option(
+        "auto",
         "--method",
         "-m",
-        help="Pruning strategy: cumulative (retain X% amplitude), amplitude_percentile (remove bottom X%), or combined (low amp OR large vol)",
+        help=(
+            "Culling method: "
+            "error_budget (most principled, needs --target), "
+            "redundancy (GPU, no target), "
+            "cumulative (fast, keep top N%% amplitude), "
+            "amplitude_percentile (remove bottom X%%), "
+            "combined (low amp OR large vol), "
+            "auto (error_budget if --target, redundancy if --shape, else cumulative)"
+        ),
     ),
+    target_path: Optional[Path] = typer.Option(
+        None,
+        "--target",
+        exists=True,
+        help="[error_budget] Original volume the splats were fitted to. "
+        "Required for error_budget mode, which compares the reconstruction "
+        "against this reference to decide which splats are dispensable.",
+    ),
+    volume_shape: Optional[str] = typer.Option(
+        None,
+        "--shape",
+        help="[redundancy] Volume shape as comma-separated ints (e.g. '41,512,512'). "
+        "Required for redundancy mode, which renders the splats to measure "
+        "each one's fractional contribution — no target volume needed.",
+    ),
+    # --- error_budget params ---
+    error_percentile: float = typer.Option(
+        99.0,
+        "--error-percentile",
+        "-p",
+        help="[error_budget] Controls aggressiveness. The error budget is set "
+        "at this percentile of the existing residual |target - reconstruction|. "
+        "Higher = more conservative. 99 means 'allow each splat's removal to "
+        "increase local error by up to the 99th-percentile error level'.",
+        min=0.0,
+        max=100.0,
+    ),
+    error_tolerance: float = typer.Option(
+        1.0,
+        "--error-tolerance",
+        help="[error_budget] Multiplier on the error budget. "
+        ">1 allows more removal, <1 is more conservative.",
+        min=0.0,
+    ),
+    # --- redundancy params ---
+    redundancy_threshold: float = typer.Option(
+        0.01,
+        "--redundancy-threshold",
+        help="[redundancy] A splat is removed if it never contributes more "
+        "than this fraction of the local signal anywhere in its support. "
+        "0.01 means 'remove splats contributing < 1%% of the signal at every "
+        "point they cover — other splats already handle those regions'.",
+        min=0.0,
+        max=1.0,
+    ),
+    # --- heuristic params ---
     retention: float = typer.Option(
         0.95,
         "--retention",
         "-r",
-        help="For cumulative method: fraction of amplitude to retain (0.0-1.0)",
+        help="[cumulative] Keep the top splats that account for this fraction "
+        "of the total amplitude. 0.95 keeps 95%% of total signal, discarding "
+        "the weakest ~10-30%% of splats. Fast but ignores spatial overlap.",
         min=0.0,
         max=1.0,
     ),
@@ -621,7 +677,8 @@ def prune_dataset(
         5.0,
         "--amplitude-percentile",
         "-a",
-        help="For amplitude_percentile/combined methods: bottom percentile to remove (0-100)",
+        help="[amplitude_percentile / combined] Remove splats in the bottom "
+        "X percentile of amplitude. 5.0 removes the weakest 5%% by amplitude.",
         min=0.0,
         max=100.0,
     ),
@@ -629,298 +686,24 @@ def prune_dataset(
         95.0,
         "--volume-percentile",
         "-v",
-        help="For combined method: remove splats above this volume percentile (0-100)",
+        help="[combined] Also remove splats above this volume percentile. "
+        "Targets artifacts: unusually large, diffuse splats.",
         min=0.0,
         max=100.0,
     ),
-    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
-        "auto",
-        "--encoding",
-        "-e",
-        help="Encoding mode for output",
-    ),
-    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
-        None,
-        "--compress",
-        "-c",
-        help="Compress output as .zip or .tar.gz archive",
-    ),
-    napari: bool = typer.Option(
-        False,
-        "--napari",
-        "-n",
-        help="Open napari comparison viewer after pruning (original vs pruned)",
-    ),
-) -> None:
-    """Prune low-impact splats from a Gaussian splat dataset.
-
-    Pruning removes splats that contribute minimally to the reconstruction,
-    reducing file size and rendering cost while preserving quality.
-
-    Methods:
-        cumulative (RECOMMENDED): Keep top splats that contribute X% of total amplitude.
-            Use --retention to control quality (0.90-0.99, default 0.95).
-            Example: --method cumulative --retention 0.95 (keeps 95% of signal)
-
-        amplitude_percentile: Remove bottom X percentile by amplitude.
-            Use --amplitude-percentile to set threshold (0-100).
-            Example: --method amplitude_percentile --amplitude-percentile 10
-
-        combined: Remove splats with (low amplitude OR large volume).
-            Useful for removing artifacts. Use --amplitude-percentile and --volume-percentile.
-            Example: --method combined --amplitude-percentile 5 --volume-percentile 95
-
-    Examples:
-        # Recommended: Keep 95% of amplitude (removes ~80-90% of splats)
-        luxar gsplat prune input.gsplats.zarr.zip output.gsplats.zarr.zip \\
-            --method cumulative --retention 0.95
-
-        # With compression (auto-detect format from output extension)
-        luxar gsplat prune input.gsplats.zarr.zip output.gsplats.zarr.zip \\
-            --method cumulative --retention 0.95 --compress zip
-
-        # Compare before/after in napari
-        luxar gsplat prune input.gsplats.zarr.zip output.gsplats.zarr.zip \\
-            --method cumulative --retention 0.95 --napari
-
-        # More aggressive: Keep 90% of amplitude
-        luxar gsplat prune input.gsplats.zarr output.gsplats.zarr \\
-            --method cumulative --retention 0.90
-
-        # Remove artifacts (low amp OR large volume outliers)
-        luxar gsplat prune input.gsplats.zarr output.gsplats.zarr \\
-            --method combined --amplitude-percentile 5 --volume-percentile 95
-
-    Args:
-        input_path: Input .gsplats.zarr or .gsplats.zarr.zip dataset
-        output_path: Output path for pruned dataset
-        method: Pruning strategy
-        retention: Amplitude retention fraction (for cumulative method)
-        amplitude_percentile: Bottom percentile to remove (for amplitude_percentile/combined)
-        volume_percentile: Volume percentile threshold (for combined method)
-        encoding_mode: Encoding mode for output (auto/precision/memory)
-        compress: Optional compression format (zip or tar.gz)
-        napari: Open napari to compare original vs pruned
-    """
-    try:
-        from luxar.encoding import EncodingMode
-        from luxar.gsplats.gsplat_data import GSplatData
-
-        # Map string to EncodingMode
-        encoding_map = {
-            "auto": EncodingMode.AUTO,
-            "precision": EncodingMode.PRECISION,
-            "memory": EncodingMode.MEMORY,
-        }
-        encoding_mode_obj = encoding_map[encoding_mode]
-
-        with asection(f"Pruning: {input_path.name}"):
-            # Load dataset
-            with asection("Loading dataset"):
-                data = GSplatData.load(input_path, include_stats=True)
-                n_original = len(data.amplitudes)
-                total_amp_original = data.amplitudes.sum()
-                aprint(f"Loaded {n_original:,} splats")
-                aprint(f"Total amplitude: {total_amp_original:.6f}")
-
-            # Prune
-            with asection(f"Pruning ({method})"):
-                if method == "cumulative":
-                    aprint(f"Target retention: {retention * 100:.0f}%")
-                    pruned_data = data.prune(
-                        method="cumulative",
-                        target_retention=retention,
-                    )
-                elif method == "amplitude_percentile":
-                    aprint(f"Removing bottom {amplitude_percentile}%")
-                    pruned_data = data.prune(
-                        method="amplitude_percentile",
-                        amplitude_percentile=amplitude_percentile,
-                    )
-                elif method == "combined":
-                    aprint(
-                        f"Removing: (amp < p{amplitude_percentile}) OR (vol > p{volume_percentile})"
-                    )
-                    pruned_data = data.prune(
-                        method="combined",
-                        amplitude_percentile=amplitude_percentile,
-                        volume_percentile=volume_percentile,
-                    )
-
-                n_pruned = len(pruned_data.amplitudes)
-                n_removed = n_original - n_pruned
-                total_amp_pruned = pruned_data.amplitudes.sum()
-                amp_retention = total_amp_pruned / total_amp_original
-
-                aprint("\nResults:")
-                aprint(f"  Original splats: {n_original:,}")
-                aprint(f"  Pruned splats:   {n_pruned:,}")
-                aprint(
-                    f"  Removed:         {n_removed:,} ({100 * n_removed / n_original:.1f}%)"
-                )
-                aprint(f"  Amplitude retention: {100 * amp_retention:.2f}%")
-
-            # Save pruned dataset
-            with asection(f"Saving to {output_path.name}"):
-                pruned_data.save(
-                    output_path,
-                    encoding_mode=encoding_mode_obj,
-                    include_fitting_info=True,
-                    compress=compress,
-                )
-                aprint(f"Saved pruned dataset: {output_path}")
-
-                # Show file size
-                if output_path.exists():
-                    output_size = output_path.stat().st_size
-                    if output_size < 1024 * 1024:
-                        aprint(f"Output size: {output_size / 1024:.1f} KB")
-                    else:
-                        aprint(f"Output size: {output_size / (1024 * 1024):.2f} MB")
-
-        aprint(
-            f"\n✅ Done! Removed {n_removed:,} splats, retained {100 * amp_retention:.1f}% amplitude"
-        )
-
-        # Open napari comparison if requested
-        if napari:
-            try:
-                import napari as napari_module
-            except ImportError:
-                aprint("\n⚠️  napari not installed, skipping comparison view")
-                aprint("Install with: pip install napari[all]")
-                return
-
-            with asection("Opening napari comparison"):
-                aprint("Rendering both datasets to volumes for comparison...")
-
-                # Determine rendering shape from original data
-                import numpy as np
-
-                mins_orig = data.centers.min(axis=0)
-                maxs_orig = data.centers.max(axis=0)
-                shape_orig = tuple(
-                    int(maxs_orig[i] - mins_orig[i]) + 1 for i in range(len(mins_orig))
-                )
-
-                # Render original
-                aprint(f"Rendering original ({n_original:,} splats)...")
-                volume_orig = data.render_to_volume(
-                    shape=shape_orig, device=None, truncate=3.0
-                )
-
-                # Render pruned
-                aprint(f"Rendering pruned ({n_pruned:,} splats)...")
-                volume_pruned = pruned_data.render_to_volume(
-                    shape=shape_orig, device=None, truncate=3.0
-                )
-
-                # Compute difference
-                volume_diff = np.abs(volume_orig - volume_pruned)
-
-                # Open napari
-                viewer = napari_module.Viewer(
-                    title=f"Pruning Comparison: {input_path.name}"
-                )
-
-                # Add layers
-                viewer.add_image(
-                    volume_orig,
-                    name=f"Original ({n_original:,} splats)",
-                    colormap="green",
-                    blending="additive",
-                    visible=True,
-                )
-                viewer.add_image(
-                    volume_pruned,
-                    name=f"Pruned ({n_pruned:,} splats, {100 * amp_retention:.1f}% amp)",
-                    colormap="magenta",
-                    blending="additive",
-                    visible=True,
-                )
-                viewer.add_image(
-                    volume_diff,
-                    name="Difference (|orig - pruned|)",
-                    colormap="red",
-                    blending="additive",
-                    visible=False,
-                )
-
-                # Add splat centers as points
-                viewer.add_points(
-                    data.centers,
-                    name="Original Centers",
-                    size=2,
-                    opacity=0.3,
-                    face_color="green",
-                    visible=False,
-                )
-                viewer.add_points(
-                    pruned_data.centers,
-                    name="Pruned Centers",
-                    size=2,
-                    opacity=0.3,
-                    face_color="magenta",
-                    visible=False,
-                )
-
-                aprint("\n✓ Napari opened with comparison layers:")
-                aprint("  • Green: Original dataset")
-                aprint("  • Magenta: Pruned dataset")
-                aprint("  • Red: Absolute difference (hidden by default)")
-                aprint("  • Points: Splat centers (hidden by default)")
-                aprint("\nToggle layers to compare datasets!")
-
-                napari_module.run()
-
-    except typer.Exit:
-        raise
-    except Exception as e:
-        aprint(f"❌ Error: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# cull — Contribution-based culling (requires target volume)
-# ═══════════════════════════════════════════════════════════════════════
-
-
-@app_gsplat.command("cull")
-def cull_dataset(
-    input_path: Path = typer.Argument(
-        ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
-    ),
-    target_path: Path = typer.Argument(
-        ...,
-        exists=True,
-        help="Target volume that was fitted (.npy/.npz/.tiff/.zarr/.zarr.zip)",
-    ),
-    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr dataset"),
-    error_percentile: float = typer.Option(
-        99.0,
-        "--error-percentile",
-        "-p",
-        help="Percentile of |residual| for error budget (0-100). Higher = more conservative.",
-        min=0.0,
-        max=100.0,
-    ),
-    error_tolerance: float = typer.Option(
-        1.0,
-        "--error-tolerance",
-        "-t",
-        help="Multiplier on the error budget. >1 = more culling, <1 = less culling.",
-        min=0.0,
-    ),
+    # --- common params ---
     truncate: float = typer.Option(
-        3.0, "--truncate", help="Truncation radius in standard deviations"
+        3.0,
+        "--truncate",
+        help="Gaussian truncation radius in standard deviations. "
+        "Affects AABB size for per-splat evaluation in GPU-based modes.",
     ),
     max_iters: int = typer.Option(
         8,
         "--max-iters",
-        help="Maximum binary-search iterations for Phase 2 compounding check",
+        help="[error_budget / redundancy] Max binary-search iterations for "
+        "Phase 2, which tightens the threshold if joint removal of all "
+        "candidates exceeds the budget due to compounding overlap.",
     ),
     device: Optional[str] = typer.Option(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
@@ -935,25 +718,42 @@ def cull_dataset(
         "auto", "--encoding", "-e", help="Encoding mode for output"
     ),
     compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
-        None, "--compress", help="Compress output as .zip or .tar.gz archive"
+        None, "--compress", help="Compress output"
     ),
 ) -> None:
-    """Cull splats using contribution-based error budget analysis.
+    """Remove splats that contribute negligibly to the reconstruction.
 
-    Unlike 'prune' (which uses amplitude/volume heuristics), 'cull' tests
-    each splat's actual contribution to the reconstruction. A splat is
-    removed only if its deletion does not increase the local reconstruction
-    error beyond a budget derived from the existing residual.
+    Five methods are available, from fastest to most principled:
 
-    Requires the original target volume for comparison.
+    \b
+    HEURISTIC METHODS (fast, no rendering):
+      cumulative            Keep top splats that account for --retention of
+                            total amplitude. Fast but ignores spatial overlap.
+      amplitude_percentile  Remove bottom --amplitude-percentile by amplitude.
+      combined              Remove (low amplitude OR large volume) artifacts.
+
+    \b
+    CONTRIBUTION-BASED METHODS (GPU rendering, spatially aware):
+      redundancy            No target needed. Measures each splat's fractional
+                            contribution g_j/V_pred. Removes splats below
+                            --redundancy-threshold everywhere in their support.
+      error_budget          Most principled. Requires --target. Measures the
+                            error *increase* from removing each splat against
+                            the fitting residual. Robust to noise.
+
+    \b
+    AUTO MODE (default):
+      Selects error_budget if --target is given, redundancy if --shape is
+      given, cumulative otherwise.
 
     Examples:
-        luxar gsplat cull fitted.gsplats.zarr volume.npy culled.gsplats.zarr
-        luxar gsplat cull fitted.gsplats.zarr volume.tiff culled.gsplats.zarr -t 1.5
-        luxar gsplat cull fitted.gsplats.zarr volume.zarr culled.gsplats.zarr -p 95
+        luxar gsplat cull input.gsplats.zarr output.gsplats.zarr
+        luxar gsplat cull input.gsplats.zarr output.gsplats.zarr -m cumulative -r 0.90
+        luxar gsplat cull input.gsplats.zarr output.gsplats.zarr -m redundancy --shape 41,512,512
+        luxar gsplat cull input.gsplats.zarr output.gsplats.zarr -m error_budget --target volume.npy
+        luxar gsplat cull input.gsplats.zarr output.gsplats.zarr --target vol.tiff -p 95
     """
     try:
-        from luxar.cli.gsplat_config import load_volume
         from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
 
@@ -964,58 +764,94 @@ def cull_dataset(
         }
         encoding_mode_obj = encoding_map[encoding_mode]
 
-        with asection(f"Contribution-based culling: {input_path.name}"):
-            # Load gsplat dataset
+        with asection(f"Culling: {input_path.name}"):
             with asection("Loading dataset"):
                 data = GSplatData.load(input_path, include_stats=True)
                 n_original = data.n_splats
                 aprint(f"Loaded {n_original:,} splats ({data.ndim}D)")
 
-            # Load target volume
-            with asection("Loading target volume"):
-                target_np = load_volume(
-                    target_path, channel=channel, timepoint=timepoint
-                )
-                aprint(f"Target shape: {target_np.shape}")
+            # Load target volume if provided
+            target_np = None
+            if target_path is not None:
+                from luxar.cli.gsplat_config import load_volume
 
-                if len(target_np.shape) != data.ndim:
-                    aprint(
-                        f"Dimension mismatch: gsplats are {data.ndim}D but "
-                        f"target is {len(target_np.shape)}D"
+                with asection("Loading target volume"):
+                    target_np = load_volume(
+                        target_path, channel=channel, timepoint=timepoint
                     )
-                    raise typer.Exit(1)
+                    aprint(f"Target shape: {target_np.shape}")
+                    if len(target_np.shape) != data.ndim:
+                        aprint(
+                            f"Dimension mismatch: gsplats are {data.ndim}D "
+                            f"but target is {len(target_np.shape)}D"
+                        )
+                        raise typer.Exit(1)
 
-            # Cull
-            with asection("Culling"):
-                aprint(f"Error percentile: {error_percentile}")
-                aprint(f"Error tolerance: {error_tolerance}")
+            # Parse --shape if provided
+            parsed_shape = None
+            if volume_shape is not None:
+                parsed_shape = tuple(int(x.strip()) for x in volume_shape.split(","))
+
+            # Resolve method
+            resolved = method
+            if resolved == "auto":
+                if target_np is not None:
+                    resolved = "error_budget"
+                elif parsed_shape is not None:
+                    resolved = "redundancy"
+                else:
+                    resolved = "cumulative"
+
+            with asection(f"Culling (method={resolved})"):
                 culled_data = data.cull(
-                    target_np,
+                    target=target_np,
+                    method=resolved,
+                    shape=parsed_shape,
                     truncate=truncate,
                     error_percentile=error_percentile,
                     error_tolerance=error_tolerance,
+                    redundancy_threshold=redundancy_threshold,
                     max_binary_search_iters=max_iters,
                     device=device,
+                    retention=retention,
+                    amplitude_percentile=amplitude_percentile,
+                    volume_percentile=volume_percentile,
                     verbose=True,
                 )
 
                 n_culled = n_original - culled_data.n_splats
+                aprint("\nResults:")
+                aprint(f"  Original: {n_original:,} splats")
+                aprint(
+                    f"  Removed:  {n_culled:,} ({100 * n_culled / max(n_original, 1):.1f}%)"
+                )
+                aprint(f"  Kept:     {culled_data.n_splats:,} splats")
+                aprint(f"  Method:   {resolved}")
+
+                # Compression stats
                 ndim = data.ndim
                 tril = ndim * (ndim + 1) // 2
                 floats_per_splat = ndim + tril + 1
-                bits_original = n_original * floats_per_splat * 32
+                bits_orig = n_original * floats_per_splat * 32
                 bits_culled = culled_data.n_splats * floats_per_splat * 32
-                vol_bits = int(target_np.size) * 32
+                if target_np is not None:
+                    vol_bits = int(target_np.size) * 32
+                    aprint(
+                        f"  Compression: {vol_bits / max(bits_orig, 1):.1f}x -> {vol_bits / max(bits_culled, 1):.1f}x"
+                    )
 
-                aprint("\nResults:")
-                aprint(f"  Original: {n_original:,} splats")
-                aprint(f"  Culled:   {n_culled:,} splats ({100 * n_culled / max(n_original, 1):.1f}%)")
-                aprint(f"  Kept:     {culled_data.n_splats:,} splats")
-                aprint(f"  Compression: {vol_bits / max(bits_original, 1):.1f}x -> {vol_bits / max(bits_culled, 1):.1f}x")
-                aprint(f"  Error budget: {culled_data.stats.get('error_budget', 'N/A')}")
-                aprint(f"  Phase 2 iters: {culled_data.stats.get('phase2_iterations', 'N/A')}")
+                if resolved in ("error_budget", "redundancy"):
+                    aprint(
+                        f"  Error budget: {culled_data.stats.get('error_budget', 'N/A')}"
+                    )
+                    aprint(
+                        f"  Phase 2 iters: {culled_data.stats.get('phase2_iterations', 'N/A')}"
+                    )
+                if resolved in ("cumulative", "amplitude_percentile", "combined"):
+                    amp_ret = culled_data.stats.get("amplitude_retention")
+                    if amp_ret is not None:
+                        aprint(f"  Amplitude retention: {100 * amp_ret:.2f}%")
 
-            # Save
             with asection("Saving"):
                 culled_data.save(
                     output_path,
@@ -2027,6 +1863,16 @@ def fit_volume(
         "--max-passes",
         help="Maximum number of progressive passes (default: unlimited, stops by budget or PSNR patience)",
     ),
+    # Post-fit culling
+    cull_retention: Optional[float] = typer.Option(
+        None,
+        "--cull-retention",
+        help="After fitting, remove the weakest splats that collectively "
+        "contribute less than (1 - value) of the total amplitude. "
+        "For example, 0.95 (the default) discards splats in the bottom 5%% "
+        "of cumulative amplitude — typically removing 10-30%% of splats with "
+        "negligible quality loss. Set to 0 to keep every splat.",
+    ),
     # Denoising
     denoise: bool = typer.Option(
         False, "--denoise", help="Denoise volume before fitting (NLM)"
@@ -2176,6 +2022,7 @@ def fit_volume(
                 "lr": lr,
                 "seed_method": seed_method,
                 "verbose": verbose,
+                "cull_retention": cull_retention,
             }
             fit_config = load_fit_config(preset, config, cli_overrides)
 
@@ -3151,6 +2998,14 @@ def batch_plan(
     batch_max_passes: Optional[int] = typer.Option(
         None, "--max-passes", help="Max progressive passes per tile"
     ),
+    # Post-fit culling
+    batch_cull_retention: Optional[float] = typer.Option(
+        None,
+        "--cull-retention",
+        help="After fitting each tile, remove the weakest splats that "
+        "collectively contribute less than (1 - value) of the total amplitude. "
+        "Default 0.95 (discard bottom 5%%). Set to 0 to keep every splat.",
+    ),
     # Denoising
     batch_denoise: bool = typer.Option(
         False,
@@ -3559,6 +3414,8 @@ def batch_plan(
             fit_args["psnr-patience"] = str(batch_psnr_patience)
         if batch_max_passes is not None:
             fit_args["max-passes"] = str(batch_max_passes)
+        if batch_cull_retention is not None:
+            fit_args["cull-retention"] = str(batch_cull_retention)
 
         # Denoise mode detection
         denoise_mode = None

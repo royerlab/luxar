@@ -167,9 +167,7 @@ class TestCullByContribution:
 
         target = render_gaussians(shape, centers, Ls, amps, truncate=3.0)
 
-        result = cull_by_contribution(
-            centers, Ls, amps, target, shape, truncate=3.0
-        )
+        result = cull_by_contribution(centers, Ls, amps, target, shape, truncate=3.0)
 
         assert isinstance(result, CullResult)
         assert result.n_culled == 0
@@ -191,7 +189,12 @@ class TestCullByContribution:
         centers, Ls, amps = _concat_splats(s1, s2, s_tiny)
 
         result = cull_by_contribution(
-            centers, Ls, amps, target, shape, truncate=3.0,
+            centers,
+            Ls,
+            amps,
+            target,
+            shape,
+            truncate=3.0,
             error_percentile=99.0,
         )
 
@@ -208,9 +211,7 @@ class TestCullByContribution:
 
         target = render_gaussians(shape, centers, Ls, amps, truncate=3.0)
 
-        result = cull_by_contribution(
-            centers, Ls, amps, target, shape, truncate=3.0
-        )
+        result = cull_by_contribution(centers, Ls, amps, target, shape, truncate=3.0)
 
         # Zero-amplitude splat should be culled
         assert not result.keep_mask[1]
@@ -229,7 +230,12 @@ class TestCullByContribution:
         centers, Ls, amps = _concat_splats(s1, s_tiny)
 
         result = cull_by_contribution(
-            centers, Ls, amps, target, shape, truncate=3.0,
+            centers,
+            Ls,
+            amps,
+            target,
+            shape,
+            truncate=3.0,
             error_percentile=99.0,
         )
 
@@ -243,9 +249,7 @@ class TestCullByContribution:
         amps = torch.zeros((0,), device=device)
         target = torch.zeros(shape, device=device)
 
-        result = cull_by_contribution(
-            centers, Ls, amps, target, shape, truncate=3.0
-        )
+        result = cull_by_contribution(centers, Ls, amps, target, shape, truncate=3.0)
 
         assert result.n_culled == 0
         assert result.keep_mask.shape == (0,)
@@ -271,7 +275,12 @@ class TestCullByContribution:
         target = render_gaussians(shape, centers, Ls, amps, truncate=3.0)
 
         result = cull_by_contribution(
-            centers, Ls, amps, target, shape, truncate=3.0,
+            centers,
+            Ls,
+            amps,
+            target,
+            shape,
+            truncate=3.0,
             error_percentile=99.0,
         )
 
@@ -298,9 +307,7 @@ class TestCullByContribution:
         centers, Ls, amps = _make_splat_2d((16.0, 16.0), 1.0, 3.0, device)
         target = render_gaussians(shape, centers, Ls, amps, truncate=3.0)
 
-        result = cull_by_contribution(
-            centers, Ls, amps, target, shape, truncate=3.0
-        )
+        result = cull_by_contribution(centers, Ls, amps, target, shape, truncate=3.0)
 
         assert result.error_budget >= 0
         assert result.phase1_candidates >= 0
@@ -348,7 +355,12 @@ class TestRedundancyMode:
         centers, Ls, amps = _concat_splats(s_real, s_tiny)
 
         result = cull_by_contribution(
-            centers, Ls, amps, None, shape, truncate=3.0,
+            centers,
+            Ls,
+            amps,
+            None,
+            shape,
+            truncate=3.0,
             redundancy_threshold=0.01,
         )
 
@@ -364,7 +376,12 @@ class TestRedundancyMode:
         centers, Ls, amps = _concat_splats(s1, s2)
 
         result = cull_by_contribution(
-            centers, Ls, amps, None, shape, truncate=3.0,
+            centers,
+            Ls,
+            amps,
+            None,
+            shape,
+            truncate=3.0,
             redundancy_threshold=0.01,
         )
 
@@ -379,7 +396,12 @@ class TestRedundancyMode:
         amps = torch.zeros((0,), device=device)
 
         result = cull_by_contribution(
-            centers, Ls, amps, None, shape, truncate=3.0,
+            centers,
+            Ls,
+            amps,
+            None,
+            shape,
+            truncate=3.0,
         )
 
         assert result.mode == "redundancy"
@@ -419,7 +441,12 @@ class TestNdSupport:
         target = render_gaussians(shape, c1, L, amps[:1], truncate=2.0)
 
         result = cull_by_contribution(
-            centers, Ls, amps, target, shape, truncate=2.0,
+            centers,
+            Ls,
+            amps,
+            target,
+            shape,
+            truncate=2.0,
         )
 
         assert result.n_culled >= 1
@@ -438,7 +465,12 @@ class TestPhase2BinarySearch:
         centers, Ls, amps = _concat_splats(s1, s2)
 
         result = cull_by_contribution(
-            centers, Ls, amps, target, shape, truncate=3.0,
+            centers,
+            Ls,
+            amps,
+            target,
+            shape,
+            truncate=3.0,
             verbose=True,
         )
         assert isinstance(result, CullResult)
@@ -468,7 +500,9 @@ class TestGSplatDataCull:
         Ls_t = torch.zeros((2, 2, 2), dtype=torch.float32, device=device)
         Ls_t[:, 0, 0] = torch.tensor([3.0, 3.0], device=device)
         Ls_t[:, 1, 1] = torch.tensor([3.0, 3.0], device=device)
-        target_np = render_gaussians(shape, centers_t, Ls_t, amps_t, truncate=3.0).cpu().numpy()
+        target_np = (
+            render_gaussians(shape, centers_t, Ls_t, amps_t, truncate=3.0).cpu().numpy()
+        )
 
         culled = data.cull(target_np, device=str(device))
 
@@ -495,7 +529,9 @@ class TestGSplatDataCull:
         Ls_t = torch.zeros((1, 2, 2), dtype=torch.float32, device=device)
         Ls_t[0, 0, 0] = 3.0
         Ls_t[0, 1, 1] = 3.0
-        target_np = render_gaussians(shape, centers_t, Ls_t, amps_t, truncate=3.0).cpu().numpy()
+        target_np = (
+            render_gaussians(shape, centers_t, Ls_t, amps_t, truncate=3.0).cpu().numpy()
+        )
 
         culled = data.cull(target_np, device=str(device))
 

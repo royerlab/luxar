@@ -280,9 +280,7 @@ if not NO_NAPARI:
     import napari
 
     aprint("🔬 Launching napari viewer with full results...")
-    viewer = napari.Viewer(
-        title="3D DAPI Progressive Gaussian Splatting", ndisplay=3
-    )
+    viewer = napari.Viewer(title="3D DAPI Progressive Gaussian Splatting", ndisplay=3)
 
     # Denoising layers
     viewer.add_image(
@@ -328,8 +326,7 @@ if not NO_NAPARI:
             psnr_val = psnrs[t]
             viewer.text_overlay.visible = True
             viewer.text_overlay.text = (
-                f"LOD 0..{t}  |  {n_at_level:,} splats  |  "
-                f"PSNR = {psnr_val:.2f} dB"
+                f"LOD 0..{t}  |  {n_at_level:,} splats  |  PSNR = {psnr_val:.2f} dB"
             )
 
     _update_overlay()

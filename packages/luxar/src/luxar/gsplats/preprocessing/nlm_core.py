@@ -41,15 +41,11 @@ def _validate_params(
 ) -> None:
     """Validate NLM parameters."""
     if volume.ndim not in (2, 3):
-        raise ValueError(
-            f"denoise_nlm supports 2D and 3D tensors, got {volume.ndim}D"
-        )
+        raise ValueError(f"denoise_nlm supports 2D and 3D tensors, got {volume.ndim}D")
     if patch_size < 1 or patch_size % 2 == 0:
         raise ValueError(f"patch_size must be a positive odd integer, got {patch_size}")
     if search_distance < 1:
-        raise ValueError(
-            f"search_distance must be >= 1, got {search_distance}"
-        )
+        raise ValueError(f"search_distance must be >= 1, got {search_distance}")
     if h <= 0:
         raise ValueError(f"h must be positive, got {h}")
 

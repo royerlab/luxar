@@ -643,14 +643,14 @@ This section provides a quick reference for the most important terms. For compre
 - **Dynamic seeding**: Adding new splats in high-residual regions during optimization
 - Use "seeding" for initial generation, "adding" for dynamic operations
 
-**Pruning**
+**Culling**
 - **Quality-based removal**: Removing low-importance splats based on reconstruction quality
 - Distinct from generic "removing" which includes any deletion operation
-- Use "pruning" when referring to quality-based removal
+- Use "culling" when referring to quality-based removal (see ``GSplatData.cull()``)
 
 **Dynamic Operations**
 - Umbrella term for adaptive topology changes during optimization
-- Includes: seeding new splats, pruning low-quality splats, learning rate boosting
+- Includes: seeding new splats, culling low-quality splats, learning rate boosting
 - Also called: adaptive operations, topology management
 - NOT: splat management (too vague)
 
