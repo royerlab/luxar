@@ -230,7 +230,7 @@ def diagnose_perspective_distortion():
     # Test isotropic Gaussian (σ = 10 in all dimensions)
     sigma = 10.0
     Sigma = sigma**2 * np.eye(3)
-    L = sigma * np.eye(3)
+    _L = sigma * np.eye(3)  # noqa: F841 (kept for documentation)
 
     print(f"\nTest: Isotropic Gaussian with σ = {sigma}")
     print(f"Camera distance: {distance}, FOV: {fov_deg}°")

@@ -18,7 +18,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 LOCAL_BIN = Path.home() / ".local" / "bin"
 
 
@@ -107,7 +106,7 @@ def test_hatch_can_list_envs():
     assert result.returncode == 0, (
         f"hatch env show failed (pyproject.toml issue?):\n{result.stderr}"
     )
-    print(f"PASS: hatch env show succeeded")
+    print("PASS: hatch env show succeeded")
 
 
 def test_hatch_uses_python_310_plus():
@@ -156,7 +155,7 @@ def test_local_bin_in_path():
             "Add 'export PATH=\"$HOME/.local/bin:$PATH\"' to your ~/.bashrc"
         )
     else:
-        print(f"PASS: ~/.local/bin is in PATH")
+        print("PASS: ~/.local/bin is in PATH")
 
 
 def test_npm_prefix_fallback_works():

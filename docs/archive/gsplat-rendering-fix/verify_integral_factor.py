@@ -8,6 +8,7 @@ For s=2 (standard Gaussian): √(2π) ≈ 2.5066
 """
 
 import numpy as np
+from scipy.optimize import curve_fit  # noqa: E402
 from scipy.special import gamma
 
 
@@ -61,7 +62,6 @@ print("Trying improved approximation...")
 print("=" * 70)
 
 # Fit a better approximation
-from scipy.optimize import curve_fit
 
 
 def fit_func(s, a, b, c, d):

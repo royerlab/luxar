@@ -31,7 +31,6 @@ import sys
 import textwrap
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -432,7 +431,7 @@ def main() -> None:
         if cuda_module is None:
             print("NOT FOUND")
             print(f"\n⚠️  No available cuda/ module matches PyTorch CUDA {torch_cuda}.")
-            print(f"\n  Available CUDA modules on this system:")
+            print("\n  Available CUDA modules on this system:")
             for m in available_modules:
                 print(f"    {m}")
             print(
@@ -462,10 +461,10 @@ def main() -> None:
         if cuda_module not in available_modules:
             print("WARNING")
             print(f"\n⚠️  Module '{cuda_module}' was not found in 'module spider cuda' output.")
-            print(f"  Available modules:")
+            print("  Available modules:")
             for m in available_modules:
                 print(f"    {m}")
-            print(f"\n  Continuing anyway — module load will fail at runtime if it's wrong.")
+            print("\n  Continuing anyway — module load will fail at runtime if it's wrong.")
         else:
             print(f"{cuda_module}  (user-specified)")
 
@@ -550,7 +549,7 @@ def main() -> None:
     if args.dry_run:
         banner("DRY RUN — sbatch script contents")
         print(script)
-        print(f"\n  To submit for real, run:")
+        print("\n  To submit for real, run:")
         print(f"    make build-cuda SLURM=1 SLURM_PARTITION={args.partition}")
         return
 
@@ -570,7 +569,7 @@ def main() -> None:
 
     # Parse job ID from "Submitted batch job 12345"
     output = result.stdout.strip()
-    print(f"submitted!")
+    print("submitted!")
     job_id = output.split()[-1] if output else "unknown"
 
     banner(f"✅  Build job submitted — Job ID {job_id}")
@@ -584,8 +583,8 @@ def main() -> None:
     print(f"    scancel {job_id}                   # cancel if needed")
     print()
     print("  When the job completes, verify the build:")
-    print(f"    make test-cuda")
-    print(f"    make check-cuda-deps")
+    print("    make test-cuda")
+    print("    make check-cuda-deps")
     print()
     print("  Then run splat fitting on a GPU node:")
     print(f"    hatch run luxar gsplat batch <input.zarr> <output/> --partition {args.partition} --submit")
