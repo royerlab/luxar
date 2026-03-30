@@ -167,7 +167,7 @@ luxar export my_scene.zarr -o my_export/ --open
 - `luxar gsplat info` - Show detailed dataset statistics
 - `luxar gsplat napari` - Open dataset in napari for inspection
 - `luxar gsplat view` - Quick view in the Luxar web viewer
-- `luxar gsplat prune` - Remove low-impact splats to reduce dataset size
+- `luxar gsplat cull` - Remove low-impact splats to reduce dataset size
 - `luxar gsplat fit` - Fit Gaussian splats to a volume (presets + YAML config)
 - `luxar gsplat convert` - Convert gsplats to Luxar scene for web viewer
 - `luxar gsplat render` - Render gsplats back to volume
@@ -243,44 +243,49 @@ luxar gsplat info dataset.gsplats.zarr.zip --bins 60
 
 ---
 
-### `luxar gsplat prune`
+### `luxar gsplat cull`
 
-**Purpose**: Remove low-impact splats from a dataset to reduce file size and rendering cost while preserving quality.
+**Purpose**: Remove splats that contribute negligibly to the reconstruction. Unified command supporting five methods from fast heuristics to principled contribution-based culling.
 
 **Parameters**:
 - `input_path`: Input `.gsplats.zarr` dataset (required, positional)
 - `output_path`: Output `.gsplats.zarr` dataset (required, positional)
-- `--method, -m`: Pruning strategy (default: "cumulative")
-  - `"cumulative"`: Keep top splats contributing X% of total amplitude
-  - `"amplitude_percentile"`: Remove bottom X percentile by amplitude
-  - `"combined"`: Remove splats with low amplitude OR large volume
-- `--retention, -r`: Amplitude retention fraction for cumulative method (default: 0.95, range: 0.0-1.0)
-- `--amplitude-percentile, -a`: Bottom percentile to remove (default: 5.0, range: 0-100)
-- `--volume-percentile, -v`: Volume percentile threshold for combined method (default: 95.0, range: 0-100)
-- `--encoding, -e`: Encoding mode for output: "auto", "precision", or "memory" (default: "auto")
-- `--compress, -c`: Compress output as "zip" or "tar.gz" (default: None)
-- `--napari, -n`: Open napari comparison viewer after pruning (default: False)
-
-**Behavior**:
-1. Load the input dataset with statistics
-2. Apply the chosen pruning method
-3. Save the pruned dataset with optional compression
-4. Report removal statistics (count, percentage, amplitude retention)
-5. If `--napari`: Render both original and pruned to volumes and open napari with comparison layers (green=original, magenta=pruned, red=difference)
+- `--method, -m`: Culling method (default: "auto")
+  - `"cumulative"`: Keep top splats contributing X% of total amplitude (fast, no rendering)
+  - `"amplitude_percentile"`: Remove bottom X percentile by amplitude (fast)
+  - `"combined"`: Remove splats with low amplitude OR large volume (fast)
+  - `"redundancy"`: GPU-based, measures fractional contribution g_j/V_pred (no target needed)
+  - `"error_budget"`: Most principled, measures error increase from removal (needs --target)
+  - `"auto"`: Selects error_budget if --target given, redundancy if --shape given, else cumulative
+- `--target`: Target volume for error_budget mode (.npy/.npz/.tiff/.zarr)
+- `--shape`: Volume shape for redundancy mode (e.g. "41,512,512")
+- `--retention, -r`: Amplitude retention for cumulative (default: 0.95)
+- `--amplitude-percentile, -a`: Bottom percentile to remove (default: 5.0)
+- `--volume-percentile, -v`: Volume percentile for combined (default: 95.0)
+- `--error-percentile, -p`: Residual percentile for error_budget (default: 99.0)
+- `--redundancy-threshold`: Max fractional contribution for redundancy (default: 0.01)
+- `--error-tolerance`: Multiplier on error budget (default: 1.0)
+- `--truncate`: Truncation radius in standard deviations (default: 3.0)
+- `--max-iters`: Max binary-search iterations for Phase 2 (default: 8)
+- `--device, -d`: Device for GPU computation: auto/cpu/cuda/mps (default: auto)
+- `--channel, -c`: Channel index for OME-Zarr target
+- `--timepoint`: Timepoint index for OME-Zarr target
+- `--encoding, -e`: Encoding mode: "auto", "precision", or "memory" (default: "auto")
+- `--compress`: Compress output as "zip" or "tar.gz"
 
 **Example**:
 ```bash
-# Keep 95% of amplitude (recommended)
-luxar gsplat prune input.gsplats.zarr.zip output.gsplats.zarr.zip \
-    --method cumulative --retention 0.95
+# Auto (cumulative, keep 95% amplitude)
+luxar gsplat cull input.gsplats.zarr output.gsplats.zarr
 
-# With compression
-luxar gsplat prune input.gsplats.zarr.zip output.gsplats.zarr.zip \
-    --method cumulative --retention 0.95 --compress zip
+# Heuristic: keep 90% amplitude
+luxar gsplat cull input.gsplats.zarr output.gsplats.zarr -m cumulative -r 0.90
 
-# Compare before/after in napari
-luxar gsplat prune input.gsplats.zarr.zip output.gsplats.zarr.zip \
-    --method cumulative --retention 0.95 --napari
+# Redundancy: GPU-based, no target needed
+luxar gsplat cull input.gsplats.zarr output.gsplats.zarr -m redundancy --shape 41,512,512
+
+# Error-budget: most principled, needs original volume
+luxar gsplat cull input.gsplats.zarr output.gsplats.zarr --target volume.npy -p 95
 ```
 
 ---
@@ -320,7 +325,6 @@ When `--tiled` is enabled, the volume is split into overlapping tiles with Hann 
 |---|---|---|---|
 | n_iters | 500 | 3000 | 6000 |
 | early_stop_patience | 100 | 300 | 500 |
-| cull_ratio | 0.05 | 0.01 | 0.005 |
 | max_eccentricity | 10.0 | 10.0 | 15.0 |
 
 **Config priority chain**: CLI flags > YAML config > preset > function defaults
@@ -795,7 +799,7 @@ If all fail: return None
 - Added `luxar gsplat info` command documentation (dataset statistics)
 - Added `luxar gsplat napari` command documentation (napari viewer)
 - Added `luxar gsplat view` command documentation (quick web viewer)
-- Added `luxar gsplat prune` command documentation (dataset pruning)
+- Added `luxar gsplat cull` command documentation (unified culling)
 
 ### v1.1.0 (2025-12-11)
 - Added network simulation documentation (Section "Network Simulation")

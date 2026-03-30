@@ -237,6 +237,11 @@ def calibrate_h_for_channel(
             )
             h_values.append(h)
             aprint(f"  T={tp}: h={h:.4f}")
+
+            # Free memory between calibration iterations
+            del vol, norm_vol, t_vol
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         except Exception as e:
             aprint(f"  T={tp}: calibration failed ({e}), skipping")
 

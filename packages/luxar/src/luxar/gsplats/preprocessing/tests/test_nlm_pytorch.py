@@ -49,9 +49,7 @@ class TestPytorchBasic:
         result = denoise_nlm(noisy.cpu(), h=0.05, backend="pytorch")
         assert result.device.type == "cpu"
 
-    @pytest.mark.skipif(
-        not torch.cuda.is_available(), reason="CUDA not available"
-    )
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_cuda_device_preserved(self, noisy_2d):
         _, noisy = noisy_2d
         noisy_cuda = noisy.cuda()
@@ -93,7 +91,8 @@ class TestPytorchVsSkimage:
         ref = denoise_nlm(noisy, **kwargs, backend="skimage")
         pt = denoise_nlm(noisy, **kwargs, backend="pytorch")
         assert torch.allclose(
-            pt, ref,
+            pt,
+            ref,
             atol=Tolerances.PYTORCH_VS_SKIMAGE_ATOL,
             rtol=Tolerances.PYTORCH_VS_SKIMAGE_RTOL,
         ), (
@@ -108,7 +107,8 @@ class TestPytorchVsSkimage:
         ref = denoise_nlm(noisy, **kwargs, backend="skimage")
         pt = denoise_nlm(noisy, **kwargs, backend="pytorch")
         assert torch.allclose(
-            pt, ref,
+            pt,
+            ref,
             atol=Tolerances.PYTORCH_VS_SKIMAGE_ATOL,
             rtol=Tolerances.PYTORCH_VS_SKIMAGE_RTOL,
         ), (
@@ -132,7 +132,5 @@ class TestPytorchChunked:
 
     def test_chunked_shape_preserved(self, noisy_3d):
         _, noisy = noisy_3d
-        result = denoise_nlm(
-            noisy, h=0.05, backend="pytorch", chunk_size=8
-        )
+        result = denoise_nlm(noisy, h=0.05, backend="pytorch", chunk_size=8)
         assert result.shape == noisy.shape

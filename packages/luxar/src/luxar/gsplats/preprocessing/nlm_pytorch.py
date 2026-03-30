@@ -60,11 +60,15 @@ def _nlm_2d(
 
     # Pad by search_distance + half_patch on each side (reflect for borders)
     pad = search_distance + half_patch
-    padded = F.pad(
-        image.unsqueeze(0).unsqueeze(0),
-        [pad, pad, pad, pad],
-        mode="reflect",
-    ).squeeze(0).squeeze(0)
+    padded = (
+        F.pad(
+            image.unsqueeze(0).unsqueeze(0),
+            [pad, pad, pad, pad],
+            mode="reflect",
+        )
+        .squeeze(0)
+        .squeeze(0)
+    )
 
     output = torch.zeros(H, W, device=device, dtype=dtype)
     weight_sum = torch.zeros(H, W, device=device, dtype=dtype)
@@ -141,11 +145,15 @@ def _nlm_3d(
     half_patch = patch_size // 2
 
     pad = search_distance + half_patch
-    padded = F.pad(
-        volume.unsqueeze(0).unsqueeze(0),
-        [pad, pad, pad, pad, pad, pad],
-        mode="reflect",
-    ).squeeze(0).squeeze(0)
+    padded = (
+        F.pad(
+            volume.unsqueeze(0).unsqueeze(0),
+            [pad, pad, pad, pad, pad, pad],
+            mode="reflect",
+        )
+        .squeeze(0)
+        .squeeze(0)
+    )
 
     output = torch.zeros(D, H, W, device=device, dtype=dtype)
     weight_sum = torch.zeros(D, H, W, device=device, dtype=dtype)
@@ -155,8 +163,16 @@ def _nlm_3d(
         for dy in range(-search_distance, search_distance + 1):
             for dx in range(-search_distance, search_distance + 1):
                 dist_sq = _patch_distance_3d(
-                    padded, D, H, W, pad, half_patch, patch_size,
-                    dz, dy, dx,
+                    padded,
+                    D,
+                    H,
+                    W,
+                    pad,
+                    half_patch,
+                    patch_size,
+                    dz,
+                    dy,
+                    dx,
                 )
 
                 weights = torch.exp(-dist_sq / h_sq)
@@ -247,9 +263,7 @@ def nlm_pytorch_denoise(
         result = _nlm_2d(vol, h, patch_size, search_distance)
     elif vol.ndim == 3:
         if chunk_size is not None and chunk_size < vol.shape[0]:
-            result = _nlm_3d_chunked(
-                vol, h, patch_size, search_distance, chunk_size
-            )
+            result = _nlm_3d_chunked(vol, h, patch_size, search_distance, chunk_size)
         else:
             result = _nlm_3d(vol, h, patch_size, search_distance)
     else:

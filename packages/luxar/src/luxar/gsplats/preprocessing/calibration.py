@@ -155,9 +155,7 @@ def calibrate_nlm_h(
 
     cal_data = cal_data.float()
 
-    masks = _generate_j_invariant_masks(
-        cal_data.shape, stride, device=cal_data.device
-    )
+    masks = _generate_j_invariant_masks(cal_data.shape, stride, device=cal_data.device)
 
     best_h = h_range[0]
     best_mse = float("inf")

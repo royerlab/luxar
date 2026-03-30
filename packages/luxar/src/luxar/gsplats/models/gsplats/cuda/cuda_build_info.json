@@ -1,0 +1,9 @@
+{
+  "so_file": "cuda_splatting_backend.so",
+  "torch_version": "2.5.1+cu121",
+  "torch_cuda_version": "12.1",
+  "python_version": "3.12.3",
+  "loaded_modules": [],
+  "cxx_compiler": "",
+  "cuda_home": ""
+}

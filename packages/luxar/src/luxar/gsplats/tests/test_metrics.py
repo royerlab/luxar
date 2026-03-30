@@ -233,7 +233,9 @@ class TestTiledSSIM:
         dr = 1.0
 
         s_ref, n_ref = _ssim_nd(a, b, window_size=11, data_range=dr)
-        s_tiled, n_tiled = _ssim_nd_tiled(a, b, window_size=11, data_range=dr, tile_size=32)
+        s_tiled, n_tiled = _ssim_nd_tiled(
+            a, b, window_size=11, data_range=dr, tile_size=32
+        )
 
         assert n_tiled == n_ref
         assert s_tiled / n_tiled == pytest.approx(s_ref / n_ref, abs=1e-4)
@@ -245,7 +247,9 @@ class TestTiledSSIM:
         dr = 1.0
 
         s_ref, n_ref = _ssim_nd(a, b, window_size=11, data_range=dr)
-        s_tiled, n_tiled = _ssim_nd_tiled(a, b, window_size=11, data_range=dr, tile_size=48)
+        s_tiled, n_tiled = _ssim_nd_tiled(
+            a, b, window_size=11, data_range=dr, tile_size=48
+        )
 
         assert n_tiled == n_ref
         assert s_tiled / n_tiled == pytest.approx(s_ref / n_ref, abs=1e-4)
@@ -258,7 +262,9 @@ class TestTiledSSIM:
         dr = 1.0
 
         s_ref, n_ref = _ssim_nd(a, b, window_size=11, data_range=dr)
-        s_tiled, n_tiled = _ssim_nd_tiled(a, b, window_size=11, data_range=dr, tile_size=128)
+        s_tiled, n_tiled = _ssim_nd_tiled(
+            a, b, window_size=11, data_range=dr, tile_size=128
+        )
 
         assert s_tiled == pytest.approx(s_ref, abs=1e-7)
         assert n_tiled == n_ref
@@ -266,7 +272,9 @@ class TestTiledSSIM:
     def test_tiled_identical_volumes(self, device: torch.device) -> None:
         """Identical volumes give SSIM ~1.0 even through tiled path."""
         a = torch.rand(64, 64, 64, device=device)
-        s, n = _ssim_nd_tiled(a, a.clone(), window_size=11, data_range=1.0, tile_size=32)
+        s, n = _ssim_nd_tiled(
+            a, a.clone(), window_size=11, data_range=1.0, tile_size=32
+        )
         assert s / n == pytest.approx(1.0, abs=1e-5)
 
     def test_num_voxels_consistency(self, device: torch.device) -> None:
@@ -288,7 +296,9 @@ class TestTiledSSIM:
         dr = 1.0
 
         s_ref, n_ref = _ssim_nd(a, b, window_size=11, data_range=dr)
-        s_tiled, n_tiled = _ssim_nd_tiled(a, b, window_size=11, data_range=dr, tile_size=32)
+        s_tiled, n_tiled = _ssim_nd_tiled(
+            a, b, window_size=11, data_range=dr, tile_size=32
+        )
 
         assert n_tiled == n_ref
         assert s_tiled / n_tiled == pytest.approx(s_ref / n_ref, abs=1e-4)

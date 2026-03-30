@@ -164,6 +164,7 @@ class TestProgressiveFitting:
             iters_per_pass=30,
             psnr_patience=0.01,
             verbose=False,
+            cull_retention=None,  # Disable for deterministic count
         )
         assert result.stats["fitter_name"] == "progressive"
         assert result.stats["n_passes"] == result.n_lods
@@ -229,31 +230,28 @@ class TestProgressiveFitting:
                 verbose=False,
             )
 
-    def test_cull_ratio_removes_weak_splats(self):
-        """Verify aggressive cull_ratio reduces splat count below seeds requested."""
+    def test_cull_retention_removes_weak_splats(self):
+        """Verify post-fit cull_retention reduces splat count."""
         V = _make_synthetic_volume(shape=(32, 32))
-        # Aggressive culling
-        result_aggressive = fit_progressive_gaussian_splats(
+        result_culled = fit_progressive_gaussian_splats(
             V,
             max_splats=200,
             max_splats_per_pass=200,
             iters_per_pass=50,
             max_passes=1,
-            cull_ratio=1.0,
+            cull_retention=0.5,
             verbose=False,
         )
-        # No culling
         result_no_cull = fit_progressive_gaussian_splats(
             V,
             max_splats=200,
             max_splats_per_pass=200,
             iters_per_pass=50,
             max_passes=1,
-            cull_ratio=0.0,
+            cull_retention=None,
             verbose=False,
         )
-        # Aggressive culling should produce fewer splats
-        assert result_aggressive.n_splats <= result_no_cull.n_splats
+        assert result_culled.n_splats <= result_no_cull.n_splats
 
     def test_adaptive_seed_reduction_tracked(self):
         """Verify per-LOD stats track seeds_requested and splats_after_culling."""
@@ -265,6 +263,7 @@ class TestProgressiveFitting:
             iters_per_pass=30,
             psnr_patience=0.01,
             verbose=False,
+            cull_retention=None,  # Disable for deterministic per-LOD counts
         )
         for lod in result.lods:
             assert "seeds_requested" in lod.stats

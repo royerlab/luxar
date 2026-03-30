@@ -65,7 +65,8 @@ def nlm_cuda_denoise(
         device_idx = vol.device.index or 0
         props = torch.cuda.get_device_properties(device_idx)
         max_smem = getattr(
-            props, "shared_memory_per_block_optin",
+            props,
+            "shared_memory_per_block_optin",
             getattr(props, "max_shared_memory_per_block_optin", 48 * 1024),
         )
         if smem_bytes > max_smem:
@@ -77,7 +78,9 @@ def nlm_cuda_denoise(
             )
 
     if vol.ndim == 2:
-        result: torch.Tensor = nlm_cuda_backend.nlm_denoise_2d(vol, h, patch_half, search_distance)
+        result: torch.Tensor = nlm_cuda_backend.nlm_denoise_2d(
+            vol, h, patch_half, search_distance
+        )
     elif vol.ndim == 3:
         result = nlm_cuda_backend.nlm_denoise_3d(vol, h, patch_half, search_distance)
     else:

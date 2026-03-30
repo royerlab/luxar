@@ -447,14 +447,18 @@ class TestTiledProgressive:
         rng = np.random.RandomState(42)
 
         # Tile A: 3 LODs, Tile B: 1 LOD
-        tile_a = GSplatData.from_lods([
-            GSplatLOD(
-                centers=rng.rand(5, 2).astype(np.float32),
-                amplitudes=rng.rand(5).astype(np.float32),
-                cholesky_factors=np.tile(np.array([1, 0, 1], dtype=np.float32), (5, 1)),
-            )
-            for _ in range(3)
-        ])
+        tile_a = GSplatData.from_lods(
+            [
+                GSplatLOD(
+                    centers=rng.rand(5, 2).astype(np.float32),
+                    amplitudes=rng.rand(5).astype(np.float32),
+                    cholesky_factors=np.tile(
+                        np.array([1, 0, 1], dtype=np.float32), (5, 1)
+                    ),
+                )
+                for _ in range(3)
+            ]
+        )
         tile_b = GSplatData(
             centers=rng.rand(8, 2).astype(np.float32),
             amplitudes=rng.rand(8).astype(np.float32),

@@ -185,8 +185,7 @@ def run_optimization_loop(
     _best_loss_t = torch.tensor(float("inf"), device=V_t.device)
     # Determine scheduler type once (avoid repeated string checks)
     _is_plateau_scheduler = (
-        scheduler is not None
-        and "Plateau" in type(scheduler).__name__
+        scheduler is not None and "Plateau" in type(scheduler).__name__
     )
     for it in range(1, config.n_iters + 1):
         actual_iters = it
@@ -232,14 +231,9 @@ def run_optimization_loop(
 
         # --- Periodic full evaluation (expensive — involves second forward pass) ---
         need_dynamic = (
-            config.enable_dynamic_ops
-            and it % config.dynamic_config.step_every == 0
+            config.enable_dynamic_ops and it % config.dynamic_config.step_every == 0
         )
-        need_eval = (
-            it % _EVAL_INTERVAL == 0
-            or it <= 5
-            or need_dynamic
-        )
+        need_eval = it % _EVAL_INTERVAL == 0 or it <= 5 or need_dynamic
 
         if need_eval:
             # Sync best_loss to CPU (only on eval iterations, not every iter)
@@ -322,7 +316,9 @@ def run_optimization_loop(
             and it % config.movie_every == 0
         ):
             with torch.no_grad():
-                _movie_pred = pred_eval if (need_eval and pred_eval is not None) else model()
+                _movie_pred = (
+                    pred_eval if (need_eval and pred_eval is not None) else model()
+                )
             _record_movie_frame(model, _movie_pred, V_t, movie_frames, config, it)
 
         # Periodic Z-order sort for memory locality
@@ -331,7 +327,11 @@ def run_optimization_loop(
 
         # Logging (only on eval iterations when we have fresh metrics)
         N = model.n_splats() if hasattr(model, "n_splats") else preprocessed_data.N
-        if need_eval and config.verbose and (it % max(1, config.n_iters // 10) == 0 or it <= 5):
+        if (
+            need_eval
+            and config.verbose
+            and (it % max(1, config.n_iters // 10) == 0 or it <= 5)
+        ):
             aprint(
                 f"[{it:4d}/{config.n_iters}] loss={best_loss:.5g}  "
                 f"relL2={current_rel_l2:.4f}  maxAbsErr={current_max_abs_error:.5g}  N={N}"

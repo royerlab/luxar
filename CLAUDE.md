@@ -243,12 +243,13 @@ luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00
 luxar gsplat slice input.gsplats.zarr output.gsplats.zarr "0:50, :, 10:90"
 luxar gsplat slice input.gsplats.zarr output.gsplats.zarr ":50, 20:80, :"
 
-# Inspect, prune, and filter
+# Inspect, cull, and filter
 luxar gsplat info splats.gsplats.zarr          # Dataset statistics
-luxar gsplat prune splats.gsplats.zarr pruned.gsplats.zarr --retention 0.95
-luxar gsplat cull fitted.gsplats.zarr original.tiff culled.gsplats.zarr             # Contribution-based culling
-luxar gsplat cull fitted.gsplats.zarr original.npy culled.gsplats.zarr -t 1.5       # More aggressive
-luxar gsplat cull fitted.gsplats.zarr original.npy culled.gsplats.zarr -p 95        # Lower percentile = more culling
+luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr                            # Auto (cumulative, keep 95%)
+luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr -m cumulative -r 0.90      # Keep 90% amplitude
+luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr -m redundancy --shape 41,512,512  # GPU, no target
+luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr --target vol.npy           # Error-budget (most principled)
+luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr --target vol.npy -p 95     # More aggressive error-budget
 luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --amplitude-min 0.1 --eccentricity-max 5
 luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --bbox "0,50,0,50,0,50" --volume-max 100
 luxar gsplat view splats.gsplats.zarr          # Quick web viewer

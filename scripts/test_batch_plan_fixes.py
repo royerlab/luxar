@@ -9,7 +9,7 @@ Validates:
   - Auto-tile: small volumes produce 1 tile (no unnecessary tiling)
   - tasks_per_job packing: auto-calculated and reduces Slurm array size
   - 6D array slicing via flat channel index
-  - cull_ratio defaults are all 0.0
+  - cull_retention default is 0.95
 
 Run with:
     hatch run python scripts/test_batch_plan_fixes.py
@@ -75,6 +75,7 @@ def test_custom_axes_parsing():
 def test_axes_override_validation():
     """axes_override must match array ndim."""
     import zarr
+
     from luxar.cli.gsplat_config import discover_ome_zarr_shape
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -100,7 +101,8 @@ def test_axes_override_validation():
 def test_array_selection_consistency():
     """Both discover_ome_zarr_shape and _load_zarr_volume pick the largest array."""
     import zarr
-    from luxar.cli.gsplat_config import discover_ome_zarr_shape, _load_zarr_volume
+
+    from luxar.cli.gsplat_config import _load_zarr_volume, discover_ome_zarr_shape
 
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "test.zarr"
@@ -132,24 +134,17 @@ def test_auto_tile_small_volume():
     print("PASS: auto-tile small volume → 1 tile")
 
 
-def test_cull_ratio_defaults():
-    """All presets and function defaults should have cull_ratio=0.0."""
-    from luxar.cli.gsplat_config import PRESETS
-
-    for name, preset in PRESETS.items():
-        assert preset["cull_ratio"] == 0.0, (
-            f"Preset '{name}' has cull_ratio={preset['cull_ratio']}, expected 0.0"
-        )
-
-    # Check function defaults
+def test_cull_retention_defaults():
+    """fit_gaussian_splats should default to cull_retention=0.95."""
     import inspect
+
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 
     sig = inspect.signature(fit_gaussian_splats)
-    default = sig.parameters["cull_ratio"].default
-    assert default == 0.0, f"fit_gaussian_splats cull_ratio default={default}, expected 0.0"
+    default = sig.parameters["cull_retention"].default
+    assert default == 0.95, f"fit_gaussian_splats cull_retention default={default}, expected 0.95"
 
-    print("PASS: cull_ratio defaults are all 0.0")
+    print("PASS: cull_retention default is 0.95")
 
 
 def test_6d_channel_decoding():
@@ -269,7 +264,7 @@ if __name__ == "__main__":
         test_axes_override_validation,
         test_array_selection_consistency,
         test_auto_tile_small_volume,
-        test_cull_ratio_defaults,
+        test_cull_retention_defaults,
         test_6d_channel_decoding,
         test_tasks_per_job_manifest,
         test_env_capture_ld_library_path_prepend,

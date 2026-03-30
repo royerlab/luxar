@@ -126,7 +126,6 @@ class GaussianSplatFitter:
         lr_reduction_factor: float = 0.98,
         early_stop_patience: Optional[int] = 300,
         dynamic_ops_verbose: bool = False,
-        cull_ratio: float = 0.0,
         voxel_footprint_correction: bool | float = False,
         boundary_penalty: Optional[float] = None,
         clip_to_bounds: bool = False,
@@ -201,7 +200,6 @@ class GaussianSplatFitter:
             early_stop_patience=early_stop_patience,
             dynamic_ops_verbose=dynamic_ops_verbose,
             seed_method=seed_method,
-            cull_ratio=cull_ratio,
             voxel_footprint_correction=voxel_footprint_correction,
             boundary_penalty=boundary_penalty,
             clip_to_bounds=clip_to_bounds,
@@ -211,6 +209,11 @@ class GaussianSplatFitter:
             sort_splats_interval=sort_splats_interval,
             **seed_kwargs,
         )
+
+        # Clear cached rendering grids from previous fitting sessions
+        from luxar.gsplats.models.gsplats.rendering_core import clear_grid_cache
+
+        clear_grid_cache()
 
         # Step 2: Preprocess data and generate candidates
         preprocessed_data = preprocess_data(config)
@@ -280,7 +283,7 @@ def fit_gaussian_splats(
     use_metal: bool = True,
     use_cuda: bool = True,
     # Post-processing
-    cull_ratio: float = 0.0,
+    cull_retention: float | None = 0.95,
     voxel_footprint_correction: bool | float = False,
     # Boundary containment
     boundary_penalty: Optional[float] = None,
@@ -461,14 +464,11 @@ def fit_gaussian_splats(
     use_cuda : bool, default=True
         Enable custom CUDA kernels on NVIDIA GPUs.
         Provides 10-50x speedup for 2D-8D volumes. Automatically disabled if not available.
-    cull_ratio : float, default=0.0
-        Post-fit culling threshold as a fraction of max_abs_error. Splats with
-        amplitude below ``cull_ratio * max_abs_error`` are removed after fitting.
-        Disabled by default (0.0) to preserve the full fitted result.
-        Use ``luxar gsplat prune`` as a separate step if pruning is desired.
-        - 0.0 (default): Disable culling (keep all splats)
-        - 0.01: Cull splats below 1% of the convergence threshold
-        - 1.0: Cull at the full convergence threshold (aggressive)
+    cull_retention : float or None, default=0.95
+        Post-fit cumulative culling.  Keeps the top splats that account for
+        this fraction of the total amplitude (0--1).  At 0.95, roughly 5% of
+        splats are removed — those that collectively contribute only 5% of
+        the total signal.  Set to ``None`` to disable.
     voxel_footprint_correction : bool | float, default=False
         Post-fit correction to inflate splat covariances by the voxel footprint.
         This ensures that upsampling doesn't invent detail beyond what the original
@@ -569,7 +569,6 @@ def fit_gaussian_splats(
             patience=patience,
             lr_reduction_factor=lr_reduction_factor,
             early_stop_patience=early_stop_patience,
-            cull_ratio=cull_ratio,
             voxel_footprint_correction=voxel_footprint_correction,
             boundary_penalty=boundary_penalty,
             clip_to_bounds=clip_to_bounds,
@@ -604,5 +603,23 @@ def fit_gaussian_splats(
         show_optimization_movie(
             result.stats["movie_frames"], result.stats["movie_shape"]
         )
+
+    # Post-fit cumulative culling (keeps top cull_retention of amplitude)
+    if cull_retention is not None and 0 < cull_retention < 1.0 and result.n_splats > 0:
+        n_before = result.n_splats
+        amp_before = float(np.sum(result.amplitudes))
+        result = result.cull(method="cumulative", retention=cull_retention)
+        n_removed = n_before - result.n_splats
+        amp_after = float(np.sum(result.amplitudes))
+        amp_retained_pct = 100.0 * amp_after / amp_before if amp_before > 0 else 100.0
+        if verbose:
+            from arbol import aprint
+
+            aprint(
+                f"Post-fit culling (cumulative, retention={cull_retention:.0%}): "
+                f"{n_before} -> {result.n_splats} splats "
+                f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%; "
+                f"amplitude retained: {amp_retained_pct:.1f}%)"
+            )
 
     return result
