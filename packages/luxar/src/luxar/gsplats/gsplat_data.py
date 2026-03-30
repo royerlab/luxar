@@ -1081,6 +1081,51 @@ class GSplatData(_SplatArrayMixin):
             stats=dict(self.stats),
         )
 
+    def with_colors(
+        self, colors: "np.ndarray | tuple[float, float, float]"
+    ) -> "GSplatData":
+        """Return a new GSplatData with replaced colors, preserving LODs.
+
+        Args:
+            colors: Either an (N, 3) array of per-splat colors, or a single
+                (r, g, b) tuple/array to broadcast to all splats.
+
+        Returns:
+            New GSplatData with the specified colors.
+        """
+        if not isinstance(colors, np.ndarray):
+            colors = np.asarray(colors, dtype=np.float32)
+        if colors.ndim == 1 and colors.shape == (3,):
+            # Broadcast single color to all splats
+            colors = np.tile(colors.astype(np.float32), (self.n_splats, 1))
+        if colors.shape != (self.n_splats, 3):
+            raise ValueError(
+                f"colors shape {colors.shape} doesn't match ({self.n_splats}, 3)"
+            )
+        if self.n_lods > 1:
+            new_lods = []
+            offset = 0
+            for lod in self.lods:
+                n = lod.n_splats
+                new_lods.append(
+                    GSplatLOD(
+                        centers=lod.centers,
+                        amplitudes=lod.amplitudes,
+                        cholesky_factors=lod.cholesky_factors,
+                        colors=colors[offset : offset + n],
+                        stats=dict(lod.stats),
+                    )
+                )
+                offset += n
+            return GSplatData.from_lods(new_lods, stats=dict(self.stats))
+        return GSplatData(
+            centers=self.centers,
+            amplitudes=self.amplitudes,
+            cholesky_factors=self.cholesky_factors,
+            colors=colors,
+            stats=dict(self.stats),
+        )
+
     def affine_intensity(self, scale: float = 1.0, offset: float = 0.0) -> "GSplatData":
         """Apply affine transform to amplitudes: new_amp = scale * amp + offset.
 

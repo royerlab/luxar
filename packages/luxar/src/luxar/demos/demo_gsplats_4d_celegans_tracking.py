@@ -1150,20 +1150,10 @@ def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
                 # Normalise per-timepoint so max amplitude = 0.1,
                 # and assign soft green fluorescence colour.
                 if n_after > 0:
-                    amps = gsplats.amplitudes
-                    amp_max = amps.max()
+                    amp_max = gsplats.amplitudes.max()
                     if amp_max > 0:
-                        amps = amps * (0.1 / amp_max)
-                    gsplats = GSplatData(
-                        centers=gsplats.centers,
-                        amplitudes=amps,
-                        cholesky_factors=gsplats.cholesky_factors,
-                        colors=np.tile(
-                            np.array([0.4, 1.0, 0.5], dtype=np.float32),
-                            (n_after, 1),
-                        ),
-                        stats=dict(gsplats.stats),
-                    )
+                        gsplats = gsplats.scale_intensity(0.1 / amp_max)
+                    gsplats = gsplats.with_colors((0.4, 1.0, 0.5))
 
                 processed.append(gsplats)
                 aprint(f"  {n_after:,} splats ready")
