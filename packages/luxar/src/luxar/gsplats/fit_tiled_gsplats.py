@@ -97,6 +97,9 @@ def fit_tile(
         with _asection(f"Denoising tile {spec.index} (h={_denoise_h:.4f})"):
             tile_data = denoise_volume_array(tile_data, h=_denoise_h, **_denoise_params)
 
+    # Pop cull_retention — per-tile culling is disabled (fit_tiled culls the merged result)
+    fit_kwargs.pop("cull_retention", None)
+
     # 2. Apply cosine apodization window
     window = cosine_window(spec)
     tile_data = tile_data * window
@@ -141,6 +144,7 @@ def fit_tile(
             iters_per_pass=prog_iters,
             psnr_patience=psnr_patience,
             max_passes=max_passes,
+            cull_retention=None,  # Disable per-tile; fit_tiled culls the merged result
             **fit_kwargs,
         )
     else:
@@ -148,6 +152,7 @@ def fit_tile(
             tile_data,
             voxel_size=voxel_size,
             output_space=output_space,
+            cull_retention=None,  # Disable per-tile; fit_tiled culls the merged result
             **fit_kwargs,
         )
 
@@ -186,6 +191,7 @@ def fit_tiled(
     max_splats_per_pass: int = 5000,
     psnr_patience: float = 0.5,
     max_passes: Optional[int] = None,
+    cull_retention: float | None = 0.95,
     **fit_kwargs: Any,
 ) -> GSplatData:
     """Fit Gaussian splats to a large volume using tiled decomposition.
@@ -221,6 +227,11 @@ def fit_tiled(
         Stop progressive passes if ΔPSNR < this value in dB.
     max_passes : int, optional
         Maximum number of progressive passes (None = unlimited).
+    cull_retention : float or None, default=0.95
+        Post-fit cumulative culling on the merged result.  Keeps the top
+        splats that account for this fraction of total amplitude (0--1).
+        Per-tile culling is disabled automatically; only the merged result
+        is culled.  Set to ``None`` to disable.
     **fit_kwargs
         All other keyword arguments forwarded to the per-tile fitting function
         (e.g. ``seeds``, ``n_iters``, ``preset``, ``device``).
@@ -318,6 +329,16 @@ def fit_tiled(
             f"Total: {merged.n_splats:,} splats from {len(specs)} tiles "
             f"in {elapsed:.1f}s{lod_info}"
         )
+
+    # Post-fit cumulative culling on merged result
+    if cull_retention is not None and 0 < cull_retention < 1.0 and merged.n_splats > 0:
+        n_before = merged.n_splats
+        merged = merged.cull(method="cumulative", retention=cull_retention)
+        if verbose and merged.n_splats < n_before:
+            aprint(
+                f"Post-fit culling: {n_before} -> {merged.n_splats} splats "
+                f"(retained {cull_retention * 100:.0f}% of amplitude)"
+            )
 
     return merged
 

@@ -117,7 +117,9 @@ def test_convergence_early_stopping(simple_2d_setup) -> None:
     config, preprocessed_data = simple_2d_setup
 
     # Set very loose convergence criterion to trigger early stopping
-    preprocessed_data.max_abs_error = 0.8  # Very loose (must be achievable in 50 CPU iters)
+    preprocessed_data.max_abs_error = (
+        0.8  # Very loose (must be achievable in 50 CPU iters)
+    )
 
     components = initialize_optimization(config, preprocessed_data)
     loss_fn = create_loss_function(config, preprocessed_data, components.model)
@@ -283,11 +285,7 @@ def test_dynamic_operations_enabled(simple_2d_setup) -> None:
     # Create DynamicOpsConfig and set attributes
     dynamic_config = DynamicOpsConfig()
     dynamic_config.step_every = 5
-    dynamic_config.seeding_error_threshold = 0.2
-    dynamic_config.seeding_radius = 2.0
-    dynamic_config.pruning_amp_threshold = 0.01
-    dynamic_config.pruning_enabled = True
-    dynamic_config.seeding_enabled = True
+    dynamic_config.nms_radius_vox = 2.0
     config.dynamic_config = dynamic_config
     config.n_iters = 20
 
@@ -296,8 +294,7 @@ def test_dynamic_operations_enabled(simple_2d_setup) -> None:
 
     results = run_optimization_loop(components, loss_fn, config, preprocessed_data)
 
-    # Dynamic ops may have changed splat count
-    # (could be more or less depending on seeding/pruning)
+    # Dynamic ops use fixed-pool relocation (no topology changes)
     final_n_splats = len(results.amps)
     # Just verify it ran without crashing
     assert final_n_splats > 0

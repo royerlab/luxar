@@ -147,23 +147,23 @@ def _ssim_nd(
 
     # --- Step 4: numerator in-place (reuse mu_pt, sigma_pt) ---
     # numerator = (2*mu_pt + C1) * (2*sigma_pt + C2)
-    mu_pt.mul_(2.0).add_(C1)       # mu_pt -> numerator_a
-    sigma_pt.mul_(2.0).add_(C2)    # sigma_pt -> numerator_b
-    mu_pt.mul_(sigma_pt)           # mu_pt -> full numerator
-    del sigma_pt                   # live: mu_p_sq, mu_t_sq, sigma_p_sq, sigma_t_sq, mu_pt = 5
+    mu_pt.mul_(2.0).add_(C1)  # mu_pt -> numerator_a
+    sigma_pt.mul_(2.0).add_(C2)  # sigma_pt -> numerator_b
+    mu_pt.mul_(sigma_pt)  # mu_pt -> full numerator
+    del sigma_pt  # live: mu_p_sq, mu_t_sq, sigma_p_sq, sigma_t_sq, mu_pt = 5
 
     # --- Step 5: denominator in-place (reuse mu_p_sq, sigma_p_sq) ---
     # denominator = (mu_p_sq + mu_t_sq + C1) * (sigma_p_sq + sigma_t_sq + C2)
-    mu_p_sq.add_(mu_t_sq).add_(C1)         # mu_p_sq -> denom_a
-    del mu_t_sq                             # live: 4
-    sigma_p_sq.add_(sigma_t_sq).add_(C2)   # sigma_p_sq -> denom_b
-    del sigma_t_sq                          # live: 3
-    mu_p_sq.mul_(sigma_p_sq)               # mu_p_sq -> full denominator
-    del sigma_p_sq                          # live: mu_pt(=num), mu_p_sq(=den) = 2
+    mu_p_sq.add_(mu_t_sq).add_(C1)  # mu_p_sq -> denom_a
+    del mu_t_sq  # live: 4
+    sigma_p_sq.add_(sigma_t_sq).add_(C2)  # sigma_p_sq -> denom_b
+    del sigma_t_sq  # live: 3
+    mu_p_sq.mul_(sigma_p_sq)  # mu_p_sq -> full denominator
+    del sigma_p_sq  # live: mu_pt(=num), mu_p_sq(=den) = 2
 
     # --- Step 6: SSIM map ---
     mu_pt.div_(mu_p_sq)  # mu_pt -> ssim_map
-    del mu_p_sq           # live: 1
+    del mu_p_sq  # live: 1
 
     ssim_sum = float(mu_pt.sum().item())
     num_voxels = mu_pt.numel()

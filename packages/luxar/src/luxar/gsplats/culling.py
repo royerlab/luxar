@@ -446,17 +446,38 @@ def _compute_per_splat_error(
 
     if d == 2:
         return _deletion_error_2d(
-            centers, Ls, amps, reference_flat, shape,
-            truncate, intensity_floor, chunk_size, fractional,
+            centers,
+            Ls,
+            amps,
+            reference_flat,
+            shape,
+            truncate,
+            intensity_floor,
+            chunk_size,
+            fractional,
         )
     if d == 3:
         return _deletion_error_3d(
-            centers, Ls, amps, reference_flat, shape,
-            truncate, intensity_floor, chunk_size, fractional,
+            centers,
+            Ls,
+            amps,
+            reference_flat,
+            shape,
+            truncate,
+            intensity_floor,
+            chunk_size,
+            fractional,
         )
     return _deletion_error_nd(
-        centers, Ls, amps, reference_flat, shape,
-        truncate, intensity_floor, chunk_size, fractional,
+        centers,
+        Ls,
+        amps,
+        reference_flat,
+        shape,
+        truncate,
+        intensity_floor,
+        chunk_size,
+        fractional,
     )
 
 
@@ -477,8 +498,15 @@ def compute_per_splat_deletion_error(
     ``fractional=False``.  See that function for details.
     """
     return _compute_per_splat_error(
-        centers, Ls, amps, residual, shape,
-        truncate, intensity_floor, chunk_size, fractional=False,
+        centers,
+        Ls,
+        amps,
+        residual,
+        shape,
+        truncate,
+        intensity_floor,
+        chunk_size,
+        fractional=False,
     )
 
 
@@ -632,20 +660,34 @@ def cull_by_contribution(
                 aprint(f"Mode: {mode}")
                 if use_error_budget:
                     aprint(f"Error budget (tau): {tau:.6f}")
-                    aprint(f"  percentile={error_percentile}, "
-                           f"tolerance={error_tolerance}")
-                    aprint(f"  residual max={abs_R.max().item():.6f}, "
-                           f"mean={abs_R.mean().item():.6f}")
+                    aprint(
+                        f"  percentile={error_percentile}, tolerance={error_tolerance}"
+                    )
+                    aprint(
+                        f"  residual max={abs_R.max().item():.6f}, "
+                        f"mean={abs_R.mean().item():.6f}"
+                    )
                 else:
-                    aprint(f"Redundancy threshold: {tau:.4f} "
-                           f"({tau * 100:.1f}% max fractional contribution)")
-                    aprint(f"  V_pred max={V_pred.max().item():.6f}, "
-                           f"mean={V_pred.mean().item():.6f}")
+                    aprint(
+                        f"Redundancy threshold: {tau:.4f} "
+                        f"({tau * 100:.1f}% max fractional contribution)"
+                    )
+                    aprint(
+                        f"  V_pred max={V_pred.max().item():.6f}, "
+                        f"mean={V_pred.mean().item():.6f}"
+                    )
 
         # --- Step 2: Phase 1 — per-splat metric ---
         per_splat_errors = _compute_per_splat_error(
-            centers, Ls, amps, reference, shape,
-            truncate, intensity_floor, chunk_size, fractional,
+            centers,
+            Ls,
+            amps,
+            reference,
+            shape,
+            truncate,
+            intensity_floor,
+            chunk_size,
+            fractional,
         )
 
         safe_mask = per_splat_errors <= tau
@@ -656,7 +698,8 @@ def cull_by_contribution(
 
         if n_phase1 == 0:
             max_ref = (
-                abs_R.max().item() if use_error_budget
+                abs_R.max().item()
+                if use_error_budget
                 else per_splat_errors.max().item()
             )
             return CullResult(
@@ -692,15 +735,17 @@ def cull_by_contribution(
             indices = mask.nonzero(as_tuple=True)[0]
             G_s = render_gaussians(
                 shape,
-                centers[indices], Ls[indices], amps[indices],
-                truncate, intensity_floor, chunk_size,
+                centers[indices],
+                Ls[indices],
+                amps[indices],
+                truncate,
+                intensity_floor,
+                chunk_size,
             )
 
             if use_error_budget:
                 R_joint = R + G_s
-                joint_damage = torch.clamp(
-                    torch.abs(R_joint) - torch.abs(R), min=0.0
-                )
+                joint_damage = torch.clamp(torch.abs(R_joint) - torch.abs(R), min=0.0)
                 max_err = joint_damage.max().item()
                 ok = max_err <= tau
             else:
@@ -756,9 +801,11 @@ def cull_by_contribution(
         keep_mask = ~safe_mask
 
         if verbose:
-            aprint(f"Final: culled {n_culled}/{N} splats "
-                   f"({100.0 * n_culled / N:.1f}%), "
-                   f"keeping {N - n_culled}")
+            aprint(
+                f"Final: culled {n_culled}/{N} splats "
+                f"({100.0 * n_culled / N:.1f}%), "
+                f"keeping {N - n_culled}"
+            )
 
     return CullResult(
         keep_mask=keep_mask.cpu().numpy(),

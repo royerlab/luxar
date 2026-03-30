@@ -127,6 +127,7 @@ class TestFitGaussianSplatsBasic:
             verbose=False,
             enable_dynamic_ops=False,  # Disable for predictable test results
             napari_movie=False,  # Disable movie for testing
+            cull_retention=None,  # Disable post-fit culling for deterministic count
         )
 
         # Check output shapes
@@ -799,6 +800,7 @@ class TestConvergence:
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
+            cull_retention=None,
         )
 
         result_high_lr = fit_gaussian_splats(
@@ -809,6 +811,7 @@ class TestConvergence:
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
+            cull_retention=None,
         )
 
         # Reconstruct params_full for comparison

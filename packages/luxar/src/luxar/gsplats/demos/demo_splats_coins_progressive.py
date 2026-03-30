@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """
-Astronaut progressive Gaussian splatting demo.
+Coins progressive Gaussian splatting demo.
 
-The astronaut image is a challenging target for Gaussian splatting: rich
-textures, sharp edges, fine facial detail, and high-frequency patterns in the
-helmet and suit.  Progressive fitting handles this well by starting with the
-large-scale structure (face, helmet silhouette) and adding detail in later
-passes (wrinkles, reflections, text on suit).
+Progressive (multi-pass) fitting on the scikit-image coins dataset.
+Each pass fits splats to the residual of the previous approximation, building
+a multi-LOD representation from coarse to fine.
 
 Features:
-- Progressive residual fitting on a hard natural image
+- Progressive residual fitting on metallic textures with circular objects
 - Per-LOD visualization: scrub from coarse to full detail
-- Comparison of progressive vs the original single-fit approach
+- Illumination gradients and fine surface texture capture
 - Compression analysis at each LOD level
+
+Data source: scikit-image coins (303x384 grayscale)
 """
 
 import sys
 
 import numpy as np
 from arbol import Arbol, aprint, asection
-from skimage import color, data, img_as_float32
+from skimage import data, img_as_float32
 
 from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
@@ -29,7 +29,7 @@ if NO_NAPARI:
     aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
-MAX_SPLATS = 4000  # Total splat budget
+MAX_SPLATS = 6000  # Total splat budget (0.3 ratio = rich texture in single-shot)
 MAX_SPLATS_PER_PASS = 1000  # Max splats per pass
 ITERS_PER_PASS = 3000  # Optimization iterations per pass
 PSNR_PATIENCE = 0.2  # Stop if ΔPSNR < 0.2 dB between passes
@@ -40,19 +40,13 @@ TRUNCATE_SIG = 3.0  # Rendering support truncation
 Arbol.max_depth = 4
 
 
-with asection("Astronaut Progressive Gaussian Splatting Demo"):
-    aprint("Complex photograph with faces, textures, and fine detail")
+with asection("Coins Progressive Gaussian Splatting Demo"):
+    aprint("Progressive fitting on metallic textures with circular objects")
 
     # --- Load and preprocess ---
     with asection("Loading and preprocessing data"):
-        img = data.astronaut()  # RGB (512, 512, 3)
-        if img.ndim == 3 and img.shape[-1] in (3, 4):
-            img = color.rgb2gray(img)
+        img = data.coins()  # Grayscale (303, 384)
         V = img_as_float32(img) * 100.0  # Scale to [0, 100]
-
-        # Crop to astronaut face and helmet region
-        V = V[80:400, 120:440]  # 320x320
-
         aprint(f"Image shape: {V.shape}, range: [{V.min():.4f}, {V.max():.4f}]")
 
     # --- Progressive fitting ---
@@ -66,7 +60,6 @@ with asection("Astronaut Progressive Gaussian Splatting Demo"):
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
-            max_eccentricity=4.0,
         )
 
     # --- Summary ---
@@ -106,11 +99,11 @@ with asection("Astronaut Progressive Gaussian Splatting Demo"):
 if not NO_NAPARI:
     import napari
 
-    viewer = napari.Viewer(title="Astronaut Progressive GSplat Fitting")
+    viewer = napari.Viewer(title="Coins Progressive GSplat Fitting")
 
     viewer.add_image(
         V,
-        name="Astronaut (input)",
+        name="Input (coins)",
         colormap="gray",
         contrast_limits=[0, float(V.max())],
     )
@@ -123,7 +116,7 @@ if not NO_NAPARI:
     viewer.add_image(
         np.abs(stack_resid),
         name="Absolute residual",
-        colormap="hot",
+        colormap="copper",
         contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
     )
 
@@ -146,7 +139,7 @@ if not NO_NAPARI:
     viewer.dims.events.current_step.connect(_update_overlay)
 
     aprint("Ready. Use the LOD slider to see coarse-to-fine reconstruction.")
-    aprint("Notice: LOD 0 captures face/helmet silhouette, later LODs add fine detail.")
+    aprint("Notice: LOD 0 captures coin outlines, later LODs add metallic detail.")
     napari.run()
 else:
     aprint("\nDemo completed successfully (napari visualization disabled)")

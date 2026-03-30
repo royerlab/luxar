@@ -10,6 +10,7 @@ import torch
 # Reproducibility
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def set_random_seed():
     """Set random seeds for reproducibility."""
@@ -25,6 +26,7 @@ def set_random_seed():
 # Device helpers
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="session")
 def cuda_available():
     return torch.cuda.is_available()
@@ -39,6 +41,7 @@ def require_cuda(cuda_available):
 # ---------------------------------------------------------------------------
 # Tolerance constants
 # ---------------------------------------------------------------------------
+
 
 class Tolerances:
     """Cross-backend comparison tolerances."""
@@ -60,6 +63,7 @@ class Tolerances:
 # ---------------------------------------------------------------------------
 # Synthetic test data
 # ---------------------------------------------------------------------------
+
 
 def _make_smooth_2d(H: int = 128, W: int = 128) -> torch.Tensor:
     """Create a smooth 2D image with Gaussian blobs."""
@@ -107,6 +111,7 @@ def noisy_3d() -> tuple[torch.Tensor, torch.Tensor]:
 # ---------------------------------------------------------------------------
 # Metric helpers
 # ---------------------------------------------------------------------------
+
 
 def psnr(clean: torch.Tensor, estimate: torch.Tensor) -> float:
     """Peak Signal-to-Noise Ratio in dB (assumes data range [0, 1])."""

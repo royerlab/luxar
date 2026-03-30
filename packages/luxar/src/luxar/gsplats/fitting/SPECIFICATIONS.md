@@ -13,7 +13,7 @@ The fitting package implements a modular, type-safe pipeline for fitting n-dimen
 - **Model & Rendering**: [models/SPECIFICATIONS.md](../models/SPECIFICATIONS.md)
 - **Optimizers**: [optim/SPECIFICATIONS.md](../optim/SPECIFICATIONS.md)
 - **Utilities**: [utils/SPECIFICATIONS.md](../utils/SPECIFICATIONS.md)
-- **Dynamic Operations**: [dynamic_ops/README.md](dynamic_ops/README.md) - Adaptive seeding and pruning
+- **Dynamic Operations**: [dynamic_ops/README.md](dynamic_ops/README.md) - Fixed-pool splat relocation
 
 ## Design Principles
 
@@ -77,7 +77,7 @@ class FitConfig:
     early_stop_patience: Optional[int]       # Stop if no better state for N iters (None=off, default=200)
 
     # Dynamic operations
-    enable_dynamic_ops: bool                 # Enable adaptive seeding/pruning
+    enable_dynamic_ops: bool                 # Enable fixed-pool splat relocation
     dynamic_config: DynamicOpsConfig         # Configuration for dynamic operations
     dynamic_ops_verbose: bool                # Verbose logging for dynamic operations
 
@@ -787,13 +787,12 @@ def finalize_results(
 
     Steps:
     1. Extract parameters from OptimizationResults (already contains best tensors)
-    2. Post-fit culling: remove splats below noise floor (cull_ratio × max_abs_error)
-    3. Convert tensors to numpy
-    4. Pack Cholesky factors (lower triangular only)
-    5. Rescale amplitudes to original intensity range
-    6. Compute quality metrics (PSNR, SSIM, MSE) in voxel space
-    7. Compile comprehensive statistics
-    8. Return GSplatData dataclass
+    2. Convert tensors to numpy
+    3. Pack Cholesky factors (lower triangular only)
+    4. Rescale amplitudes to original intensity range
+    5. Compute quality metrics (PSNR, SSIM, MSE) in voxel space
+    6. Compile comprehensive statistics
+    7. Return GSplatData dataclass
     """
 ```
 
@@ -805,16 +804,11 @@ Ls_np = optimization_results.Ls.cpu().numpy()                # Shape: (N, d, d)
 amps_np = optimization_results.amps.cpu().numpy()            # Shape: (N,)
 ```
 
-**Post-fit Culling** (disabled by default):
-Optionally, splats with amplitude below a noise floor can be removed:
-```python
-threshold = cull_ratio * max_abs_error  # cull_ratio=0.0 by default (disabled)
-mask = amps > threshold
-# Apply mask to all arrays (centers, Ls, amps)
-```
-Culling is **disabled by default** (`cull_ratio=0.0` in all presets) to preserve the
-full fitted result and avoid silently removing valid splats with a poorly-tuned threshold.
-Use `luxar gsplat prune` as a separate, explicit step when pruning is desired.
+**Post-fit Culling** (via ``cull_retention``, enabled by default):
+After ``finalize_results`` returns, the fitting functions apply cumulative
+amplitude culling via ``GSplatData.cull(method="cumulative", retention=0.95)``.
+This keeps the top splats that account for 95% of total amplitude, removing
+the negligible tail.  Set ``cull_retention=None`` to disable.
 
 **Cholesky Factor Packing**:
 ```python

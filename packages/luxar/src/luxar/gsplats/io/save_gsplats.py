@@ -15,6 +15,7 @@ from luxar.io.ordering import (
     compute_chunk_bounds_gsplats,
     sort_splats_spatial,
 )
+from luxar.io.reader import DEFAULT_COMP
 from luxar.typing_utils import TARGET_CHUNK_BYTES
 
 # Get luxar.gsplats version
@@ -64,6 +65,7 @@ def _save_splat_arrays_to_group(
     positive_scalar_encoding: Literal["linear", "log"],
     float16_allowed: bool,
     lod_stats: Optional[Dict[str, Any]] = None,
+    compressor: Optional[Any] = None,
 ) -> None:
     """Write splat arrays into an existing zarr group.
 
@@ -137,16 +139,19 @@ def _save_splat_arrays_to_group(
     # Create ArrayEncoder
     encoder = ArrayEncoder(float16_allowed=float16_allowed)
 
-    # Compute chunks for arrays
+    # Compute chunks for arrays, capped at n_splats to avoid zero-padding
+    # in small LODs (e.g. 464 splats in a 5461-row chunk).
+    cap = max(1, n_splats)
+
     centers_bytes_per_row = ndim * 4
-    centers_chunk_elements = TARGET_CHUNK_BYTES // centers_bytes_per_row
+    centers_chunk_elements = min(TARGET_CHUNK_BYTES // centers_bytes_per_row, cap)
     centers_chunks = (centers_chunk_elements, ndim)
 
     chol_bytes_per_row = expected_chol_size * 4
-    chol_chunk_elements = TARGET_CHUNK_BYTES // chol_bytes_per_row
+    chol_chunk_elements = min(TARGET_CHUNK_BYTES // chol_bytes_per_row, cap)
     chol_chunks = (chol_chunk_elements, expected_chol_size)
 
-    scalar_chunk_elements = TARGET_CHUNK_BYTES // 4
+    scalar_chunk_elements = min(TARGET_CHUNK_BYTES // 4, cap)
     scalar_chunks = (scalar_chunk_elements,)
 
     # Write centers
@@ -157,6 +162,7 @@ def _save_splat_arrays_to_group(
         semantic_type=SemanticType.COORDINATE,
         mode=encoding_mode,
         chunks=centers_chunks,
+        compressor=compressor,
     )
 
     # Write amplitudes
@@ -168,6 +174,7 @@ def _save_splat_arrays_to_group(
         mode=encoding_mode,
         positive_scalar_encoding=positive_scalar_encoding,
         chunks=scalar_chunks,
+        compressor=compressor,
     )
 
     # Write cholesky_factors
@@ -178,12 +185,13 @@ def _save_splat_arrays_to_group(
         semantic_type=SemanticType.CHOLESKY,
         mode=encoding_mode,
         chunks=chol_chunks,
+        compressor=compressor,
     )
 
     # Write colors (optional)
     if colors is not None:
         colors_bytes_per_row = 3 if colors.dtype == np.uint8 else 12
-        colors_chunk_elements = TARGET_CHUNK_BYTES // colors_bytes_per_row
+        colors_chunk_elements = min(TARGET_CHUNK_BYTES // colors_bytes_per_row, cap)
         colors_chunks = (colors_chunk_elements, 3)
         encoder.encode(
             data=colors,
@@ -193,6 +201,7 @@ def _save_splat_arrays_to_group(
             mode=encoding_mode,
             color_mode=color_mode,
             chunks=colors_chunks,
+            compressor=compressor,
         )
 
     # Write chunk_bounds (no encoding, single chunk)
@@ -220,6 +229,7 @@ def save_gsplats(
     description: Optional[str] = None,
     float16_allowed: bool = False,
     compress: Optional[Literal["zip", "tar.gz"]] = None,
+    compressor: Optional[Any] = DEFAULT_COMP,
 ) -> None:
     """Save Gaussian splats to .gsplats.zarr format.
 
@@ -294,6 +304,7 @@ def save_gsplats(
         color_mode=color_mode,
         positive_scalar_encoding=positive_scalar_encoding,
         float16_allowed=float16_allowed,
+        compressor=compressor,
     )
 
     # Write fitting info (optional)

@@ -117,9 +117,11 @@ CHANNELS = [
     {"index": 2, "name": "TNNI3 (Cardiac Tissue)", "color": (0.0, 1.0, 0.3)},  # Green
 ]
 
-# Fitting parameters
-N_SEEDS = 32_000
-N_ITERS = 6_000
+# Fitting parameters (progressive)
+MAX_SPLATS = 6000
+MAX_SPLATS_PER_PASS = 1000
+ITERS_PER_PASS = 3000
+PSNR_PATIENCE = 0.2
 
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_acto3d_heart"
@@ -427,7 +429,7 @@ def fit_channel(
     Returns:
         Fitted GSplatData.
     """
-    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+    from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
 
     global DEVICE
     if DEVICE is None:
@@ -435,13 +437,19 @@ def fit_channel(
 
         DEVICE = detect_device()
 
-    aprint(f"Fitting {channel_name} ({N_ITERS} iters, {N_SEEDS} seeds)...")
+    aprint(
+        f"Fitting {channel_name} (progressive: "
+        f"max_splats={MAX_SPLATS}, {MAX_SPLATS_PER_PASS}/pass, "
+        f"{ITERS_PER_PASS} iters/pass, patience={PSNR_PATIENCE} dB)..."
+    )
     aprint(f"  Volume: {volume.shape}, Device: {DEVICE}")
 
-    result = fit_gaussian_splats(
+    result = fit_progressive_gaussian_splats(
         volume,
-        seeds=N_SEEDS,
-        n_iters=N_ITERS,
+        max_splats=MAX_SPLATS,
+        max_splats_per_pass=MAX_SPLATS_PER_PASS,
+        iters_per_pass=ITERS_PER_PASS,
+        psnr_patience=PSNR_PATIENCE,
         device=DEVICE,
         voxel_size=voxel_size,
         verbose=True,

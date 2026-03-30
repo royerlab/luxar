@@ -100,6 +100,17 @@ export interface GSplatsMetadata {
    * and all channels regardless of the current slice position.
    */
   extend_to_all?: string[];
+
+  /**
+   * Number of LOD levels (v1.1 multi-LOD format).
+   * When present and > 1, the gsplats group contains lod_0/, lod_1/, ... subgroups
+   * instead of flat arrays. Each subgroup is structurally identical to a v1.0 dataset.
+   * LOD 0 is the coarsest (highest-amplitude splats); LODs are additive.
+   */
+  n_lods?: number;
+
+  /** Total splat count across all LODs (v1.1 multi-LOD format). */
+  n_splats_total?: number;
 }
 
 // ============================================================================
@@ -222,6 +233,13 @@ export interface GSplatsDataLoader {
 
   /** Clean up resources */
   dispose(): void;
+
+  /**
+   * Whether this loader has more LOD levels to load for the current view state.
+   * Used by the scene loader to schedule refinement passes after the initial commit.
+   * Always false for non-progressive (single-LOD) loaders.
+   */
+  readonly hasMoreLODs?: boolean;
 }
 
 /**

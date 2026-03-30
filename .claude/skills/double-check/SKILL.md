@@ -112,14 +112,15 @@ Execute the following loop. Track your iteration count starting at 1.
 
 1. **Read all changed files in full** (use the Read tool, not the diff — you need full context)
 2. Review each file for:
-   - **Correctness**: Logic errors, off-by-one, wrong variable names, incorrect types
-   - **Consistency**: Does new code match surrounding patterns, naming conventions, imports?
-   - **Completeness**: Missing error handling, missing test cases, incomplete implementations?
-   - **Omissions**: TODO/FIXME left behind, commented-out code, placeholder values?
-   - **Cross-file consistency**: Do changes in one file require updates in another?
-   - **Type safety**: Are type hints correct and complete?
-   - **Imports**: Missing imports, unused imports, wrong import paths?
-   - **Docstrings/comments**: Are they accurate after the changes?
+   - **Correctness**: e.g. Logic errors, math errors, conceptual errors, off-by-one, wrong variable names, incorrect types
+   - **Consistency**: e.g. Does new code match surrounding patterns, naming conventions, imports?
+   - **Completeness**: e.g. Missing error handling, missing test cases, incomplete implementations?
+   - **Omissions**: e.g. TODO/FIXME left behind, commented-out code, placeholder values?
+   - **Cross-file consistency**: e.g. Do changes in one file require updates in another?
+   - **Type safety**: e.g. Are type hints correct and complete?
+   - **Imports**: e.g. Missing imports, unused imports, wrong import paths?
+   - **Docstrings/comments**: e.g. Are they accurate after the changes?
+   - **README**: e.g. Do changes affect usage instructions or examples that need updating?
 3. For each issue found:
    - **Re-read the file** right before editing (concurrency safety!)
    - Fix the issue
