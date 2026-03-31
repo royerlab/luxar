@@ -523,6 +523,11 @@ kernel void rasterize_fwd_nd(
 
     float accum = 0.0f;
 
+    // Precompute shifted Gaussian constants (truncate is uniform across all threads)
+    float truncate_sq = truncate * truncate;
+    float shift_C = exp(-0.5f * truncate_sq);
+    float inv_one_minus_C = 1.0f / (1.0f - shift_C);
+
     for (uint i = 0; i < n_splats; i++) {
         // AABB check using diagonal of Sigma
         bool possible = true;
@@ -564,10 +569,10 @@ kernel void rasterize_fwd_nd(
             dist_sq += y[d] * y[d];
         }
 
-        // Standard Gaussian truncation
-        float truncate_sq = truncate * truncate;
+        // Shifted Gaussian truncation
         if (dist_sq <= truncate_sq) {
-            float val = amps[i] * exp(-0.5f * dist_sq);
+            // Shifted Gaussian: a·scale·max(0, exp(-0.5·D²) - C)
+            float val = amps[i] * inv_one_minus_C * max(exp(-0.5f * dist_sq) - shift_C, 0.0f);
 
             // Early culling for intensity_floor
             if (val < intensity_floor) continue;
@@ -617,6 +622,11 @@ kernel void rasterize_bwd_nd(
 
     float d_L_d_I = active ? grad_output[gid] : 0.0f;
 
+    // Precompute shifted Gaussian constants (truncate is uniform across all threads)
+    float truncate_sq = truncate * truncate;
+    float shift_C = exp(-0.5f * truncate_sq);
+    float inv_one_minus_C = 1.0f / (1.0f - shift_C);
+
     // Process each splat
     for (uint i = 0; i < n_splats; i++) {
         // === A. Compute local gradients (per thread) ===
@@ -661,21 +671,24 @@ kernel void rasterize_bwd_nd(
                     dist_sq += y[d] * y[d];
                 }
 
-                // Standard Gaussian truncation (consistent with forward)
-                float truncate_sq = truncate * truncate;
+                // Shifted Gaussian truncation (consistent with forward)
                 if (dist_sq <= truncate_sq) {
                     float a = amps[i];
                     float exp_val = exp(-0.5f * dist_sq);
-                    float intensity = a * exp_val;
+
+                    // Shifted Gaussian: a·scale·max(0, exp(-0.5·D²) - C)
+                    float intensity = a * inv_one_minus_C * max(exp_val - shift_C, 0.0f);
 
                     // CRITICAL: Must match forward pass intensity_floor culling
                     if (intensity < intensity_floor) continue;
 
-                    // 1. Amplitude gradient: ∂I/∂a = exp(-0.5*D²)
-                    val_amps = exp_val * d_L_d_I;
+                    // 1. Amplitude gradient: ∂I/∂a = I/a (shifted Gaussian)
+                    val_amps = (intensity / max(a, 1e-10f)) * d_L_d_I;
 
-                    // 2. Distance gradient: ∂I/∂D² = -0.5 * I
-                    float grad_dist = intensity * d_L_d_I * (-0.5f);
+                    // 2. Distance gradient (shifted): ∂I/∂D² = -0.5·a·scale·exp(-0.5·D²)
+                    //    = -0.5·(I + a·scale·C)
+                    float unshifted = intensity + a * inv_one_minus_C * shift_C;
+                    float grad_dist = unshifted * d_L_d_I * (-0.5f);
 
                     // 4. Center gradient: ∂D/∂μ = -2 × y (via chain rule)
                     for (uint d = 0; d < dim; d++) {
