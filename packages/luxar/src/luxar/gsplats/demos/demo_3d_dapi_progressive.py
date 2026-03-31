@@ -58,7 +58,7 @@ DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps"
 TRUNCATE_SIG = 3.0  # Rendering support truncation
 ZARR_URL = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.2/6001240.zarr"
 DAPI_CHANNEL = 1  # DAPI is typically channel 1 (0-indexed)
-TARGET_SIZE = 128  # Downscale to this cube size
+TARGET_SIZE = None  # Downscale to this cube size
 TIME_POINT = 0  # First time point
 # NLM denoising parameters
 NLM_PATCH_SIZE = 3
@@ -117,7 +117,8 @@ def _load_dapi_volume() -> np.ndarray:
         aprint(f"Remote load failed: {e}")
         aprint("Falling back to synthetic nucleus-like data")
 
-        shape = (TARGET_SIZE, TARGET_SIZE, TARGET_SIZE)
+        fallback_size = TARGET_SIZE if TARGET_SIZE is not None else 128
+        shape = (fallback_size, fallback_size, fallback_size)
         V = np.zeros(shape, dtype=np.float32)
         rng = np.random.RandomState(42)
         for _ in range(10):
@@ -156,9 +157,10 @@ with asection("3D DAPI Progressive Gaussian Splatting Demo"):
         with asection("Calibrating NLM h (Noise2Self / J-invariant)"):
             h = calibrate_nlm_h(
                 vol_tensor,
+                h_range=(1.5, 2),
                 patch_size=NLM_PATCH_SIZE,
                 search_distance=NLM_PATCH_DISTANCE,
-                use_2d_slice=True,
+                use_2d_slice=False,
                 device=denoise_device,
             )
             aprint(f"Calibrated h = {h:.6f}")
