@@ -23,6 +23,12 @@ export class NumberController extends Controller<number> {
   private slider?: HTMLInputElement;
   private input!: HTMLInputElement;
 
+  /** Debounce timer for wheel finishChange */
+  private wheelFinishTimer?: ReturnType<typeof setTimeout>;
+
+  /** Initial value at construction time (for double-click reset) */
+  private initialValue: number;
+
   /** Custom display override (for logarithmic patterns) */
   private customUpdateDisplay?: () => void;
 
@@ -32,6 +38,7 @@ export class NumberController extends Controller<number> {
     this.minValue = options.min;
     this.maxValue = options.max;
     this.stepValue = options.step ?? (this.hasRange() ? this.getDefaultStep() : undefined);
+    this.initialValue = object[property];
 
     // Initialize DOM after properties are set
     this.initializeDOMElement();
@@ -67,6 +74,49 @@ export class NumberController extends Controller<number> {
       this.eventManager.add(this.slider, 'touchend', () => {
         this.triggerFinishChange();
       });
+
+      // Mousewheel fine-tuning: scroll = 1/10th step, Shift+scroll = 10x step
+      this.eventManager.add(
+        this.slider,
+        'wheel',
+        (e: Event) => {
+          const wheelEvent = e as WheelEvent;
+          wheelEvent.preventDefault();
+          if (!this.slider || !this.stepValue) return;
+          const multiplier = wheelEvent.shiftKey ? 10 : 0.1;
+          const delta = this.stepValue * multiplier;
+          const direction = wheelEvent.deltaY < 0 ? 1 : -1;
+          const value = this.constrainValue(this.getValue() + direction * delta);
+          this.object[this.property] = value;
+          this.updateDisplay();
+          this.triggerChange();
+
+          // Debounced finishChange — fires once scrolling stops (like mouseup for dragging)
+          clearTimeout(this.wheelFinishTimer);
+          this.wheelFinishTimer = setTimeout(() => this.triggerFinishChange(), 150);
+        },
+        { passive: false }
+      );
+
+      // Double-click to reset to initial value
+      this.eventManager.add(this.slider, 'dblclick', () => {
+        this.object[this.property] = this.constrainValue(this.initialValue);
+        this.updateDisplay();
+        this.triggerChange();
+        this.triggerFinishChange();
+      });
+
+      // Alt+click to focus the number input for direct keyboard entry
+      this.eventManager.add(this.slider, 'click', (e: Event) => {
+        if ((e as MouseEvent).altKey) {
+          e.preventDefault();
+          this.input.focus();
+          this.input.select();
+        }
+      });
+
+      // Cursor hint and tooltip
+      this.slider.title = 'Scroll: fine-tune · Shift+Scroll: coarse · Double-click: reset';
 
       // Auto-blur after interaction
       applyAutoBlur(this.slider, this.eventManager);
@@ -112,15 +162,7 @@ export class NumberController extends Controller<number> {
       }
     });
 
-    // Blur on Enter key
-    this.eventManager.add(this.input, 'keydown', (e: Event) => {
-      const keyEvent = e as KeyboardEvent;
-      if (keyEvent.key === 'Enter') {
-        this.input.blur();
-      }
-    });
-
-    // Auto-blur after interaction
+    // Auto-blur after interaction (handles Enter + Escape blur)
     applyAutoBlur(this.input, this.eventManager);
 
     widget.appendChild(this.input);
@@ -197,5 +239,10 @@ export class NumberController extends Controller<number> {
 
   private constrainValue(value: number): number {
     return clamp(value, this.minValue, this.maxValue);
+  }
+
+  public override dispose(): void {
+    clearTimeout(this.wheelFinishTimer);
+    super.dispose();
   }
 }

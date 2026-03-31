@@ -41,18 +41,17 @@ export function applyAutoBlur(
       eventManager.add(element, 'touchend', () => {
         setTimeout(() => element.blur(), 10);
       });
-    } else if (element.type === 'number' || element.type === 'text') {
-      // Blur on Enter key
-      eventManager.add(element, 'keydown', (e: Event) => {
-        const keyEvent = e as KeyboardEvent;
-        if (keyEvent.key === 'Enter') {
-          element.blur();
-        }
+      // Blur after wheel scrolling stops (debounced)
+      let wheelBlurTimer: ReturnType<typeof setTimeout> | undefined;
+      eventManager.add(element, 'wheel', () => {
+        clearTimeout(wheelBlurTimer);
+        wheelBlurTimer = setTimeout(() => element.blur(), 200);
       });
-      // Blur on Escape key (cancel editing)
+    } else if (element.type === 'number' || element.type === 'text') {
+      // Blur on Enter (commit) or Escape (cancel)
       eventManager.add(element, 'keydown', (e: Event) => {
         const keyEvent = e as KeyboardEvent;
-        if (keyEvent.key === 'Escape') {
+        if (keyEvent.key === 'Enter' || keyEvent.key === 'Escape') {
           element.blur();
         }
       });

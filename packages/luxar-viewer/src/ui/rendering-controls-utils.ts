@@ -255,7 +255,9 @@ export function calculatePerformanceImpact(settings: RenderingSettings): number 
   if (settings.ssaaEnabled) score += 20 + settings.ssaaMultiplier * 10;
 
   // Post-processing impact
-  score += 5 + settings.bloomStrength * 5;
+  if (settings.bloomEnabled) {
+    score += 5 + settings.bloomStrength * 5;
+  }
 
   // Tone mapping impact
   if (settings.toneMapping !== 'None') {

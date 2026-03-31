@@ -300,6 +300,11 @@ export class Folder {
       caret.textContent = this.isOpen ? '▼' : '▶';
     }
 
+    const title = this.domElement.querySelector('.luxar-gui__folder-title');
+    if (title) {
+      title.setAttribute('aria-expanded', String(this.isOpen));
+    }
+
     this.childrenContainer.style.display = this.isOpen ? '' : 'none';
 
     if (this.isOpen) {

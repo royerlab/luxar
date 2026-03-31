@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { LuxarOrbitControls } from '../../../controls/luxar-orbit-controls';
 
 // Polyfill ImageData for jsdom (not available in jsdom by default)
 if (typeof globalThis.ImageData === 'undefined') {
@@ -188,9 +189,14 @@ function createMockSceneManager() {
       background: { clone: vi.fn() },
     },
     controls: {
-      getControls: vi.fn().mockReturnValue({
-        target: { x: 0, y: 0, z: 0, clone: vi.fn().mockReturnValue({ x: 0, y: 0, z: 0 }) },
-      }),
+      getControls: vi.fn().mockReturnValue(
+        Object.assign(Object.create(LuxarOrbitControls.prototype), {
+          target: { x: 0, y: 0, z: 0, clone: vi.fn().mockReturnValue({ x: 0, y: 0, z: 0 }) },
+          applyOrbitRotation: vi.fn(),
+        })
+      ),
+      getAutoRotate: vi.fn().mockReturnValue(false),
+      setAutoRotate: vi.fn(),
     },
     setAdaptivePixelRatio: vi.fn(),
   } as any;

@@ -543,12 +543,18 @@ export class InputContextManager {
       return true;
     }
 
-    // Also check if focus is in an input element
+    // Also check if focus is in a text-entry element
+    // Range inputs (sliders) and checkboxes are NOT text entry — don't block shortcuts
     const activeElement = document.activeElement;
     if (activeElement) {
       const tagName = activeElement.tagName.toLowerCase();
-      if (
-        tagName === 'input' ||
+      if (tagName === 'input') {
+        const inputType = (activeElement as HTMLInputElement).type?.toLowerCase();
+        // Only block shortcuts for actual text-entry input types
+        if (inputType !== 'range' && inputType !== 'checkbox' && inputType !== 'radio') {
+          return true;
+        }
+      } else if (
         tagName === 'textarea' ||
         tagName === 'select' ||
         activeElement.getAttribute('contenteditable') === 'true'
