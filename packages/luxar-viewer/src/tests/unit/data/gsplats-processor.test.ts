@@ -511,8 +511,11 @@ describe('workspace reuse safety', () => {
     const result = processGSplatsTo3D(loaded, viewState);
 
     expect(result.splatCount).toBe(1);
-    // Attenuation = exp(-0.5 * (1.0 / sqrt(1.75))^2) = exp(-0.5 / 1.75) ≈ exp(-0.2857) ≈ 0.7514
-    const expectedAttenuation = Math.exp(-0.5 * (1.0 / Math.sqrt(1.75)) ** 2);
+    // Shifted Gaussian attenuation: scale * max(0, exp(-0.5 * D²) - C) where C = exp(-4.5)
+    const shiftC = Math.exp(-0.5 * 3.0 * 3.0);
+    const invOneMinusC = 1.0 / (1.0 - shiftC);
+    const mahalSq = (1.0 / Math.sqrt(1.75)) ** 2;
+    const expectedAttenuation = invOneMinusC * (Math.exp(-0.5 * mahalSq) - shiftC);
     expect(result.amplitudes[0]).toBeCloseTo(expectedAttenuation, 4);
   });
 
@@ -619,8 +622,10 @@ describe('workspace reuse safety', () => {
     expect(result.colors[1]).toBeCloseTo(0.0, 5); // G
     expect(result.colors[2]).toBeCloseTo(0.0, 5); // B
 
-    // Splat 2: 0.5 units away, attenuation = exp(-0.5 * 0.5^2) = exp(-0.125) ≈ 0.8825
-    const expectedAtt = Math.exp(-0.5 * 0.25);
+    // Splat 2: 0.5 units away, shifted Gaussian attenuation
+    const shiftC2 = Math.exp(-0.5 * 3.0 * 3.0);
+    const invScale2 = 1.0 / (1.0 - shiftC2);
+    const expectedAtt = invScale2 * (Math.exp(-0.5 * 0.25) - shiftC2);
     expect(result.amplitudes[1]).toBeCloseTo(expectedAtt, 4);
     // Color should be blue (from splat 2)
     expect(result.colors[3]).toBeCloseTo(0.0, 5); // R
@@ -722,9 +727,11 @@ describe('discrete dimension handling', () => {
 
     // Time passes (discrete, exact match), wavelength offset = 2.0
     // Continuous Mahalanobis for dim 4 only: diff=2.0, sigma=1 → mahal=2.0
-    // Attenuation = exp(-0.5 * 2.0^2) = exp(-2.0) ≈ 0.1353
+    // Shifted Gaussian attenuation
     expect(result.splatCount).toBe(1);
-    const expected = Math.exp(-0.5 * 4.0);
+    const shiftC3 = Math.exp(-0.5 * 9.0);
+    const invScale3 = 1.0 / (1.0 - shiftC3);
+    const expected = invScale3 * (Math.exp(-0.5 * 4.0) - shiftC3);
     expect(result.amplitudes[0]).toBeCloseTo(expected, 4);
   });
 
@@ -785,8 +792,10 @@ describe('discrete dimension handling', () => {
     const result = processGSplatsTo3D(loaded, viewState);
 
     expect(result.splatCount).toBe(1);
-    // Gaussian attenuation: mahal=0.5 → exp(-0.5 * 0.25) ≈ 0.8825
-    const expected = Math.exp(-0.5 * 0.25);
+    // Shifted Gaussian attenuation: mahal=0.5
+    const shiftC4 = Math.exp(-0.5 * 9.0);
+    const invScale4 = 1.0 / (1.0 - shiftC4);
+    const expected = invScale4 * (Math.exp(-0.5 * 0.25) - shiftC4);
     expect(result.amplitudes[0]).toBeCloseTo(expected, 4);
   });
 });

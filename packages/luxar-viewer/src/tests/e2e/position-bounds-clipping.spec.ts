@@ -275,12 +275,11 @@ test.describe('Position Bounds and Clipping Planes', () => {
       }
     });
 
-    // Get bounds and camera info to verify margin is applied
-    // The actual implementation in scene-manager-utils.ts uses:
-    // - calculateDistancesToBoundingBox to find nearDist/farDist (to corners AND face centers)
-    // - near = nearDist * (1 - CLIPPING_SAFETY_MARGIN) = nearDist * 0.5
-    // - far = farDist * (1 + CLIPPING_SAFETY_MARGIN) = farDist * 1.5
-    // where CLIPPING_SAFETY_MARGIN = 0.5 (50%)
+    // Get bounds and camera info to verify clipping planes match sphere-based computation.
+    // The implementation uses calculateClippingPlanesFromSphere():
+    // - Converts bounding box to circumscribed sphere (center + radius)
+    // - Expands radius by SPHERE_SAFETY_EXPANSION (5%)
+    // - near = max(MIN_NEAR_PLANE, dist - R), far = dist + R
     const info = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       let foundBounds: { min: number[]; max: number[] } | null = null;
@@ -298,59 +297,26 @@ test.describe('Position Bounds and Clipping Planes', () => {
       const bMin = bounds.min;
       const bMax = bounds.max;
 
-      // Convert to 3D bounding box format
-      const box = {
-        min: { x: bMin[0], y: bMin[1], z: bMin[2] },
-        max: { x: bMax[0], y: bMax[1], z: bMax[2] },
-      };
+      // Compute bounding sphere (matching scene-manager-utils.ts boundingBoxToSphere)
+      const cx = (bMin[0] + bMax[0]) / 2;
+      const cy = (bMin[1] + bMax[1]) / 2;
+      const cz = (bMin[2] + bMax[2]) / 2;
+      const sx = bMax[0] - bMin[0];
+      const sy = bMax[1] - bMin[1];
+      const sz = bMax[2] - bMin[2];
+      const radius = 0.5 * Math.sqrt(sx * sx + sy * sy + sz * sz);
+      const SPHERE_SAFETY_EXPANSION = 1.05;
+      const R = radius * SPHERE_SAFETY_EXPANSION;
 
       const cameraPos = debug.camera.position;
-      const point = { x: cameraPos.x, y: cameraPos.y, z: cameraPos.z };
+      const dx = cameraPos.x - cx;
+      const dy = cameraPos.y - cy;
+      const dz = cameraPos.z - cz;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-      // Calculate distances to all 8 corners AND 6 face centers (matching scene-manager-utils.ts)
-      const cx = (box.min.x + box.max.x) / 2;
-      const cy = (box.min.y + box.max.y) / 2;
-      const cz = (box.min.z + box.max.z) / 2;
-
-      const corners = [
-        { x: box.min.x, y: box.min.y, z: box.min.z },
-        { x: box.max.x, y: box.min.y, z: box.min.z },
-        { x: box.min.x, y: box.max.y, z: box.min.z },
-        { x: box.max.x, y: box.max.y, z: box.min.z },
-        { x: box.min.x, y: box.min.y, z: box.max.z },
-        { x: box.max.x, y: box.min.y, z: box.max.z },
-        { x: box.min.x, y: box.max.y, z: box.max.z },
-        { x: box.max.x, y: box.max.y, z: box.max.z },
-      ];
-
-      const faceCenters = [
-        { x: box.min.x, y: cy, z: cz },
-        { x: box.max.x, y: cy, z: cz },
-        { x: cx, y: box.min.y, z: cz },
-        { x: cx, y: box.max.y, z: cz },
-        { x: cx, y: cy, z: box.min.z },
-        { x: cx, y: cy, z: box.max.z },
-      ];
-
-      const testPoints = [...corners, ...faceCenters];
-
-      let nearDist = Infinity;
-      let farDist = 0;
-
-      for (const p of testPoints) {
-        const dx = point.x - p.x;
-        const dy = point.y - p.y;
-        const dz = point.z - p.z;
-        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        nearDist = Math.min(nearDist, dist);
-        farDist = Math.max(farDist, dist);
-      }
-
-      // Apply 50% safety margin (CLIPPING_SAFETY_MARGIN = 0.5)
       const MIN_NEAR_PLANE = 0.0001;
-      const MARGIN = 0.5;
-      const expectedNear = Math.max(MIN_NEAR_PLANE, nearDist * (1 - MARGIN));
-      const expectedFar = farDist * (1 + MARGIN);
+      const expectedFar = dist + R;
+      const expectedNear = dist < R ? MIN_NEAR_PLANE : Math.max(MIN_NEAR_PLANE, dist - R);
 
       return {
         actual: {
@@ -361,8 +327,8 @@ test.describe('Position Bounds and Clipping Planes', () => {
           near: expectedNear,
           far: expectedFar,
         },
-        nearDist,
-        farDist,
+        dist,
+        R,
       };
     });
 

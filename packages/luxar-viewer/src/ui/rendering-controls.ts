@@ -467,15 +467,6 @@ export class RenderingControls {
     // Update clipping controls state
     this.updateClippingControlsState(this.settings.dynamicClippingEnabled);
 
-    // Show/hide adapt speed based on dynamic clipping
-    if (this.controllers.clippingAdaptSpeed) {
-      if (this.settings.dynamicClippingEnabled) {
-        this.controllers.clippingAdaptSpeed.show();
-      } else {
-        this.controllers.clippingAdaptSpeed.hide();
-      }
-    }
-
     // Show/hide fly damping controls based on inertial mode
     if (this.controllers.flyDamping) {
       if (this.settings.flyInertialMode) {
@@ -1193,22 +1184,10 @@ export class RenderingControls {
     // Sync dynamic clipping state from scene manager
     const dynamicClippingState = this.sceneManager.getDynamicClippingState();
     this.settings.dynamicClippingEnabled = dynamicClippingState.enabled;
-    this.settings.clippingAdaptSpeed = dynamicClippingState.adaptSpeed;
 
     if (this.controllers.dynamicClippingEnabled) {
       this.controllers.dynamicClippingEnabled.setValue(this.settings.dynamicClippingEnabled);
       this.controllers.dynamicClippingEnabled.updateDisplay();
-    }
-
-    if (this.controllers.clippingAdaptSpeed) {
-      this.controllers.clippingAdaptSpeed.setValue(this.settings.clippingAdaptSpeed);
-      this.controllers.clippingAdaptSpeed.updateDisplay();
-      // Show/hide adapt speed based on dynamic clipping state
-      if (this.settings.dynamicClippingEnabled) {
-        this.controllers.clippingAdaptSpeed.show();
-      } else {
-        this.controllers.clippingAdaptSpeed.hide();
-      }
     }
 
     // Update near/far control state based on dynamic clipping
@@ -1309,10 +1288,7 @@ export class RenderingControls {
     this.postProcessing.setAOEnabled(this.settings.aoEnabled, this.settings.aoQuality);
 
     // Apply dynamic clipping settings
-    this.sceneManager.setDynamicClipping(
-      this.settings.dynamicClippingEnabled,
-      this.settings.clippingAdaptSpeed
-    );
+    this.sceneManager.setDynamicClipping(this.settings.dynamicClippingEnabled);
 
     // Update near/far control state based on dynamic clipping
     this.updateClippingControlsState(this.settings.dynamicClippingEnabled);

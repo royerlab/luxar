@@ -1017,6 +1017,7 @@ describe('TypeScript Reference Implementation Tests', () => {
         3,
         2,
         0.1,
+        3.0,
         visibility,
         attenuation
       );
@@ -1077,6 +1078,7 @@ describe('TypeScript Reference Implementation Tests', () => {
         4,
         2,
         0.01, // Low threshold
+        3.0,
         visibility,
         attenuation
       );
@@ -1085,7 +1087,7 @@ describe('TypeScript Reference Implementation Tests', () => {
       expect(visibility[0]).toBe(1);
       expect(attenuation[0]).toBeCloseTo(1.0, 5);
 
-      // Splat 1: mahal = 5.0, attenuation = exp(-0.5 * 25) ≈ 3.7e-6 (hidden)
+      // Splat 1: mahal = 5.0, beyond 3σ truncation → attenuation ≈ 0
       expect(visibility[1]).toBe(0);
       expect(attenuation[1]).toBeLessThan(0.001);
 
@@ -1553,6 +1555,7 @@ describe('TypeScript Reference Implementation Tests', () => {
         4,
         1,
         0.001,
+        3.0,
         visibility,
         attenuation
       );

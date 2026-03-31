@@ -299,6 +299,11 @@ kernel void rasterize_fwd_3d(
     // Accumulate contributions
     float accum = 0.0f;
 
+    // Precompute shifted Gaussian constants (truncate is uniform across all threads)
+    float truncate_sq = truncate * truncate;
+    float shift_C = exp(-0.5f * truncate_sq);
+    float inv_one_minus_C = 1.0f / (1.0f - shift_C);
+
     for (int i = 0; i < count; i++) {
         int splat_id = tile_content[start + i];
 
@@ -328,13 +333,11 @@ kernel void rasterize_fwd_3d(
         float dist_sq = dx * dx * c_xx + dy * dy * c_yy + dz * dz * c_zz
                       + 2.0f * (dx * dy * c_xy + dx * dz * c_xz + dy * dz * c_yz);
 
-        // Truncation check (standard Gaussian: truncate^2)
-        float truncate_sq = truncate * truncate;
         if (dist_sq <= truncate_sq) {
             float a = amps[splat_id];
 
-            // Standard Gaussian: a * exp(-0.5 * dist_sq)
-            float val = a * exp(-0.5f * dist_sq);
+            // Shifted Gaussian: a·scale·max(0, exp(-0.5·D²) - C)
+            float val = a * inv_one_minus_C * max(exp(-0.5f * dist_sq) - shift_C, 0.0f);
 
             // Early culling: skip invisible contributions (saves GPU cycles)
             if (val < intensity_floor) continue;
@@ -385,6 +388,11 @@ kernel void rasterize_bwd_3d(
     // Pixel position in [Z,Y,X] coordinates
     float3 px = float3(gid.z, gid.y, gid.x);  // [Z,Y,X]
 
+    // Precompute shifted Gaussian constants (truncate is uniform across all threads)
+    float truncate_sq = truncate * truncate;
+    float shift_C = exp(-0.5f * truncate_sq);
+    float inv_one_minus_C = 1.0f / (1.0f - shift_C);
+
     // Process each splat in tile
     for (int i = 0; i < count; i++) {
         int splat_id = tile_content[start + i];
@@ -416,24 +424,23 @@ kernel void rasterize_bwd_3d(
             float dist_sq = dx * dx * c_xx + dy * dy * c_yy + dz * dz * c_zz
                           + 2.0f * (dx * dy * c_xy + dx * dz * c_xz + dy * dz * c_yz);
 
-            // Standard Gaussian truncation (must match forward pass)
-            float truncate_sq = truncate * truncate;
-
             if (dist_sq <= truncate_sq) {
                 float a = amps[splat_id];
 
-                // Recompute forward values (standard Gaussian)
+                // Recompute forward values (shifted Gaussian)
                 float exp_val = exp(-0.5f * dist_sq);
-                float intensity = a * exp_val;
+                float intensity = a * inv_one_minus_C * max(exp_val - shift_C, 0.0f);
 
                 // CRITICAL: Must match forward pass intensity_floor culling!
                 if (intensity < intensity_floor) continue;
 
-                // 1. Amplitude gradient: ∂I/∂a = exp(-0.5*D²)
-                val_amps = exp_val * d_L_d_I;
+                // 1. Amplitude gradient: ∂I/∂a = I/a (unchanged for shifted Gaussian)
+                val_amps = (intensity / max(a, 1e-10f)) * d_L_d_I;
 
-                // 2. Distance gradient: ∂I/∂D² = -0.5 * I
-                float grad_dist = intensity * d_L_d_I * (-0.5f);
+                // 2. Distance gradient (shifted): ∂I/∂D² = -0.5·a·scale·exp(-0.5·D²)
+                // = -0.5·(I + a·scale·C)
+                float unshifted = intensity + a * inv_one_minus_C * shift_C;
+                float grad_dist = unshifted * d_L_d_I * (-0.5f);
 
                 // 4. Center gradient: ∂D/∂μ = -2 × Σ^-1 × d
                 // d = [dz, dy, dx] (already extracted above), conic in [X,Y,Z]

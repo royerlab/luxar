@@ -180,18 +180,27 @@ describe('GSplatMaterial', () => {
       expect(material.vertexShader).toContain('return vec3(invL00, L10, invL11)');
     });
 
-    it('should use hardcoded integral factor for standard Gaussian', () => {
+    it('should use uniform ray integral factor for shifted Gaussian', () => {
       const material = new GSplatMaterial();
 
-      // c_s = sharpnessIntegralFactor(2.0) ≈ sqrt(2π) ≈ 2.507 (standard Gaussian ray integral)
-      expect(material.vertexShader).toContain('sigmaRay * 2.507');
+      // Shifted Gaussian ray integral factor passed as uniform (precomputed in TypeScript)
+      expect(material.vertexShader).toContain('sigmaRay * uRayIntegralFactor');
     });
 
-    it('should have near-plane guard', () => {
+    it('should have near-plane guard with smooth fade and screen-coverage cull', () => {
       const material = new GSplatMaterial();
 
-      expect(material.vertexShader).toContain('if (-centerCam.z < 0.1)');
+      // Near-cull uses smoothstep fade (not hard discard) with uNearCull uniform
+      expect(material.vertexShader).toContain('smoothstep(uNearCull');
+      // Screen-coverage fade uses projected extent and uMaxExtentFactor
+      expect(material.vertexShader).toContain('uMaxExtentFactor');
+      expect(material.vertexShader).toContain('projectedExtent');
+      // Hard cull only when fully faded
       expect(material.vertexShader).toContain('gl_Position = vec4(0.0, 0.0, -2.0, 1.0)');
+      // Perspective-only guard (ortho has no 1/z singularity)
+      expect(material.vertexShader).toContain('if (uIsOrtho == 0)');
+      // nearFade applied to amplitude
+      expect(material.vertexShader).toContain('nearFade');
     });
 
     it('should NOT redeclare built-in THREE.js uniforms', () => {
@@ -238,12 +247,12 @@ describe('GSplatMaterial', () => {
       // Check for Mahalanobis distance
       expect(material.fragmentShader).toContain('float mahalSq = y0 * y0 + y1 * y1');
 
-      // Check for early discard at 3σ
-      expect(material.fragmentShader).toContain('if (mahalSq > 9.0) discard');
+      // Check for early discard at truncation radius (uniform, not hardcoded)
+      expect(material.fragmentShader).toContain('if (mahalSq > uTruncateSq) discard');
 
-      // Check for standard Gaussian falloff (no sharpness, no correction factor)
+      // Check for shifted Gaussian falloff with C⁰ continuity
       expect(material.fragmentShader).toContain(
-        'float intensity = vAmplitude2D * exp(-0.5 * mahalSq)'
+        'float intensity = vAmplitude2D * uInvOneMinusC * max(exp(-0.5 * mahalSq) - uShiftC, 0.0)'
       );
     });
 

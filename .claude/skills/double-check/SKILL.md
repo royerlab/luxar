@@ -1,13 +1,13 @@
 ---
 name: double-check
-description: "Iteratively review and fix changes until clean. Scope: latest (last N commits), uncommitted (default), branch (full PR). Add '?' for interactive mode."
+description: "Iteratively review and fix changes until clean. Scope: latest (last N commits), uncommitted (default), branch (full PR). Add '?' for interactive mode. IMPORTANT: When '?' is in the arguments and the subagent returns [FLAG] items in its report, YOU (the main agent) MUST use AskUserQuestion to present each flagged item to the user, then send the user's answers back to the subagent via SendMessage so it can apply the fixes."
 disable-model-invocation: true
 user-invocable: true
 context: fork
 agent: general-purpose
 model: opus
 effort: high
-allowed-tools: Read, Edit, Write, Glob, Grep, AskUserQuestion, Bash(git diff *), Bash(git log *), Bash(git status *), Bash(git merge-base *), Bash(hatch run *), Bash(cd packages/luxar-viewer && pnpm *)
+allowed-tools: Read, Edit, Write, Glob, Grep, Bash(git diff *), Bash(git log *), Bash(git status *), Bash(git merge-base *), Bash(hatch run *), Bash(cd packages/luxar-viewer && pnpm *)
 argument-hint: "[scope] [max-iterations] [?]"
 ---
 
@@ -168,21 +168,20 @@ Track a `consecutive_clean` counter (starts at 0):
 
 #### Interactive Resolution Phase (only if `?` mode is active AND there are `[FLAG]` items)
 
+**IMPORTANT**: You (the subagent) do NOT have access to `AskUserQuestion`. The main agent will handle user interaction. Your job is to output the flags in a structured format and STOP. The main agent reads your output, asks the user, and sends answers back to you via `SendMessage`.
+
 If interactive mode is enabled and you accumulated any `[FLAG]` items during the loop:
 
-1. **Present all flagged items** to the user via `AskUserQuestion`. Group related flags into a single question where possible (max 4 questions per call). For each flag, provide options like:
-   ```
-   Question: "<file>:<line> — <description>"
-   Options:
-     - "Fix: <your suggested approach>"
-     - "Alternative: <other valid approach>" (if applicable)
-     - "Intentional — leave as-is"
-     - "Skip — don't fix this"
-   ```
+1. **Output the final report** (see format below) with all `[FLAG]` items clearly listed. For each flag, include:
+   - The file path and line number
+   - A clear description of the issue
+   - Your suggested fix approach
+   - An alternative approach (if applicable)
+   - Why you're unsure (the reason it's a flag, not a fix)
 
-2. **Apply the user's answers**: For each item the user wants fixed, re-read the file and apply the fix. Log as `[FIXED-INTERACTIVE]`.
+2. **After outputting the report, STOP and WAIT.** The main agent will use `AskUserQuestion` to present these flags to the user, then send you the user's answers via `SendMessage`.
 
-3. **Run one final iteration** (Phase 1 + Phase 2) to verify the interactive fixes didn't introduce new issues. Log this as the "verification pass."
+3. **When you receive the user's answers** (via `SendMessage` from the main agent): For each item the user wants fixed, re-read the file and apply the fix. Log as `[FIXED-INTERACTIVE]`. Then run one final iteration (Phase 1 + Phase 2) to verify the interactive fixes didn't introduce new issues.
 
 #### Final Report
 

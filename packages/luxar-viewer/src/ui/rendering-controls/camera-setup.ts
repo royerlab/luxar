@@ -290,19 +290,12 @@ export function setupCameraControls(
     .add(settings, 'dynamicClippingEnabled')
     .name('Dynamic Clipping')
     .onChange((value: boolean) => {
-      sceneManager.setDynamicClipping(value, settings.clippingAdaptSpeed);
+      sceneManager.setDynamicClipping(value);
       saveSettings();
       triggerAnimation();
 
       // Enable/disable manual near/far controls
       updateClippingControlsState(value);
-
-      // Show/hide adapt speed slider
-      if (value) {
-        adaptSpeedControl.show();
-      } else {
-        adaptSpeedControl.hide();
-      }
     });
 
   // Store reference
@@ -311,42 +304,9 @@ export function setupCameraControls(
   dynamicClippingControl.domElement.setAttribute(
     'title',
     'Dynamic Clipping: Auto-adjust clipping planes each frame\n' +
-      '• Smoothly adapts to camera position and scene bounds\n' +
-      '• Uses exponential smoothing for stable transitions\n' +
-      '• Maximizes Z-buffer precision at all times\n' +
+      '• Sphere-based: smooth adaptation to camera position\n' +
       '• When enabled, manual near/far controls are disabled'
   );
-
-  // Adapt speed slider (only visible when dynamic clipping is enabled)
-  const adaptSpeedControl = clippingFolder
-    .add(settings, 'clippingAdaptSpeed', 0.01, 1.0, 0.01)
-    .name('Adapt Speed')
-    .onChange((value: number) => {
-      sceneManager.setClippingAdaptSpeed(value);
-      saveSettings();
-      triggerAnimation();
-    })
-    .onFinishChange((value: number) => {
-      sceneManager.setDynamicClipping(settings.dynamicClippingEnabled, value);
-    });
-
-  // Store reference
-  controllers.clippingAdaptSpeed = adaptSpeedControl;
-
-  adaptSpeedControl.domElement.setAttribute(
-    'title',
-    'Adapt Speed: How quickly clipping planes adjust\n' +
-      '• 0.01 = Very slow, smooth transitions\n' +
-      '• 0.1 = Balanced responsiveness\n' +
-      '• 0.5 = Fast adaptation (default)\n' +
-      '• 1.0 = Instant adaptation\n' +
-      '• Lower values = smoother but slower response'
-  );
-
-  // Initially show/hide adapt speed based on dynamic clipping state
-  if (!settings.dynamicClippingEnabled) {
-    adaptSpeedControl.hide();
-  }
 
   // Update manual controls state based on initial dynamic clipping setting
   updateClippingControlsState(settings.dynamicClippingEnabled);

@@ -861,12 +861,16 @@ __device__ __forceinline__ AABB<DIM> compute_splat_aabb(
     // For generalized Gaussian exp(-0.5 * D^s), the effective truncation scales
     float effective_truncate = powf(truncate, 2.0f / fmaxf(sharpness, 0.5f));
 
-    // Amplitude-aware shrinking: tighten bound to where contribution >= floor
-    // Solve: a × exp(-0.5 × r^s) = floor  →  r = (2 × ln(a/floor))^(1/s)
+    // Amplitude-aware shrinking (shifted formula for C⁰ continuity):
+    // Solve: a × scale × (exp(-0.5 × r^s) - C) = floor
+    //   →  r = (-2 × ln(floor/(a×scale) + C))^(1/s)
+    // where C = exp(-0.5 × T²), scale = 1/(1-C)
+    float C_boundary = expf(-0.5f * truncate * truncate);
+    float scale = 1.0f / (1.0f - C_boundary);
     if (intensity_floor > 0.0f) {
-        float log_ratio = logf(amplitude / intensity_floor);
-        if (log_ratio > 0.0f) {
-            float t_max = powf(2.0f * log_ratio, 1.0f / fmaxf(sharpness, 0.5f));
+        float inner = intensity_floor / (amplitude * scale) + C_boundary;
+        if (inner > 0.0f && inner < 1.0f) {
+            float t_max = powf(-2.0f * logf(inner), 1.0f / fmaxf(sharpness, 0.5f));
             effective_truncate = fminf(effective_truncate, t_max);
         }
     }
@@ -1953,8 +1957,10 @@ __global__ void rasterize_fwd_nd(
             float effective_truncate_radius_sq = powf(truncate, 4.0f / s);
 
             if (dist_sq <= effective_truncate_radius_sq) {
-                // Generalized Gaussian: exp(-0.5 × dist^s)
-                float val = a * expf(-0.5f * powf(fmaxf(dist_sq, 1e-10f), s * 0.5f));
+                // Shifted Gaussian (C⁰ continuous at truncation boundary):
+                // I = a × scale × max(0, exp(-0.5 × D^s) - C)
+                float raw = expf(-0.5f * powf(fmaxf(dist_sq, 1e-10f), s * 0.5f));
+                float val = a * scale * fmaxf(raw - C_boundary, 0.0f);
 
                 if (val >= intensity_floor) {
                     accum += val;
@@ -2111,25 +2117,27 @@ __global__ void rasterize_bwd_nd(
                 float dist_pow_s_minus_1 = powf(dist_sq_clamped, s * 0.5f - 1.0f);  // SINGLE powf!
                 float dist_pow_s = dist_pow_s_minus_1 * dist_sq_clamped;  // Derived cheaply
 
-                // Compute intensity
+                // Compute intensity (shifted Gaussian, C⁰ continuous)
+                // I = a × scale × max(0, exp(-0.5 × D^s) - C)
                 float exp_term = expf(-0.5f * dist_pow_s);
-                float intensity = a * exp_term;
+                float shifted = fmaxf(exp_term - C_boundary, 0.0f);
+                float intensity = a * scale * shifted;
                 if (intensity < intensity_floor) continue;
 
                 // ========================================
-                // GRADIENT COMPUTATION
+                // GRADIENT COMPUTATION (shifted Gaussian)
                 // ========================================
 
-                // grad_dist = ∂I/∂(D²) = I × (-0.25s) × D²^(s/2 - 1)
-                float grad_dist = intensity * (-0.25f * s) * dist_pow_s_minus_1;
+                // ∂I/∂D² = -0.5 × a × scale × exp(-0.5 × D^s) × ... = -0.5 × (I + a×scale×C)
+                // For generalized: grad_dist = -0.5 × a × scale × exp_term × (-0.25s) × D²^(s/2-1) simplified
+                float grad_dist = (-0.25f * s) * a * scale * exp_term * dist_pow_s_minus_1;
 
-                // ∂I/∂a = exp(-0.5 × D^s)
-                float g_amp = dL_dI * exp_term;
+                // ∂I/∂a = I / a (unchanged by shift)
+                float g_amp = dL_dI * scale * shifted;
 
-                // ∂I/∂s = I × (-0.25) × D^s × ln(D²)
-                // Clamp dist_sq to avoid log(0)
+                // ∂I/∂s = a × scale × exp_term × (-0.25) × D^s × ln(D²)
                 float log_dist_sq = logf(dist_sq_clamped);
-                float g_sharpness = dL_dI * intensity * (-0.25f) * dist_pow_s * log_dist_sq;
+                float g_sharpness = dL_dI * a * scale * exp_term * (-0.25f) * dist_pow_s * log_dist_sq;
 
                 // ∂I/∂μ = grad_dist × 2 × Σ⁻¹ × d × (-1)
                 float g_centers[DIM];
@@ -2382,12 +2390,14 @@ void rasterize_fwd_2d(
             if (dist_sq > effective_truncate_sq) continue;
 
             // ========================================
-            // INTENSITY COMPUTATION
+            // INTENSITY COMPUTATION (shifted Gaussian, C⁰ continuous)
             // ========================================
-            // I = a × exp(-0.5 × D^s) where D² = dist_sq, so D^s = dist_sq^(s/2)
+            // I = a × scale × max(0, exp(-0.5 × D^s) - C)
+            // where C = exp(-0.5 × T²), scale = 1/(1-C)
             const float dist_sq_safe = fmaxf(dist_sq, 1e-10f);
             const float dist_pow_s = powf(dist_sq_safe, s * 0.5f);
-            const float contribution = a * expf(-0.5f * dist_pow_s);
+            const float raw_gauss = expf(-0.5f * dist_pow_s);
+            const float contribution = a * scale * fmaxf(raw_gauss - C_boundary, 0.0f);
 
             // Floor check (skip negligible contributions)
             if (contribution >= intensity_floor) {
@@ -2548,10 +2558,11 @@ void rasterize_fwd_3d(
             const float effective_truncate_sq = powf(truncate, 4.0f / fmaxf(s, 0.5f));
             if (dist_sq > effective_truncate_sq) continue;
 
-            // Intensity
+            // Intensity (shifted Gaussian, C⁰ continuous)
             const float dist_sq_safe = fmaxf(dist_sq, 1e-10f);
             const float dist_pow_s = powf(dist_sq_safe, s * 0.5f);
-            const float contribution = a * expf(-0.5f * dist_pow_s);
+            const float raw_gauss = expf(-0.5f * dist_pow_s);
+            const float contribution = a * scale * fmaxf(raw_gauss - C_boundary, 0.0f);
 
             if (contribution >= intensity_floor) {
                 intensity += contribution;
@@ -2661,20 +2672,21 @@ void rasterize_bwd_2d(
                 const float dist_pow_s_m1 = powf(dist_sq_safe, s * 0.5f - 1.0f);
                 const float dist_pow_s = dist_pow_s_m1 * dist_sq_safe;
                 const float exp_term = expf(-0.5f * dist_pow_s);
-                const float intensity = a * exp_term;
+                const float shifted = fmaxf(exp_term - C_boundary, 0.0f);
+                const float intensity = a * scale * shifted;
 
                 if (intensity < intensity_floor) continue;
 
                 // ========================================
-                // GRADIENT COMPUTATION (2D SPECIALIZED)
+                // GRADIENT COMPUTATION (2D SPECIALIZED, shifted Gaussian)
                 // ========================================
-                const float grad_dist = intensity * (-0.25f * s) * dist_pow_s_m1;
+                const float grad_dist = (-0.25f * s) * a * scale * exp_term * dist_pow_s_m1;
 
-                // ∂I/∂a
-                const float g_amp = dL_dI * exp_term;
+                // ∂I/∂a = I / a = scale × shifted
+                const float g_amp = dL_dI * scale * shifted;
 
-                // ∂I/∂s
-                const float g_sharpness = dL_dI * intensity * (-0.25f) * dist_pow_s * logf(dist_sq_safe);
+                // ∂I/∂s (derivative of exp_term only, C is constant w.r.t. s in per-splat sense)
+                const float g_sharpness = dL_dI * a * scale * exp_term * (-0.25f) * dist_pow_s * logf(dist_sq_safe);
 
                 // ∂I/∂μ = grad_dist × ∂D²/∂μ = grad_dist × (-2) × Σ⁻¹ × d
                 // For 2D: [c00*dx + c01*dy, c01*dx + c11*dy] × (-2) × grad_dist
@@ -3613,56 +3625,58 @@ on latest hardware.
 
 ### 7.1 Mathematical Formulation
 
-The generalized Gaussian intensity is:
+The shifted Gaussian intensity (C⁰ continuous at truncation boundary) is:
 
 ```
-I(x) = a × exp(-0.5 × D^s)
+C     = exp(-0.5 × T²)              // boundary value (T=truncate, T=3 → 0.01111)
+scale = 1 / (1 - C)                 // peak-preserving rescale (T=3 → 1.01123)
+I(x)  = a × scale × max(0, exp(-0.5 × D^s) - C)
 ```
 
 where:
 - `D² = (x - μ)ᵀ × Σ⁻¹ × (x - μ)` (Mahalanobis distance squared)
 - `s` is the sharpness parameter
 - `a` is the amplitude
+- The shift by C ensures the intensity is exactly zero at the truncation boundary, eliminating the discontinuity from hard truncation.
 
 ### 7.2 Gradient Derivations
 
-**Let** `inner = -0.5 × D^s` and `d = x - μ`
+**Let** `G = exp(-0.5 × D^s)`, `d = x - μ`, and `I = a × scale × max(0, G - C)`
+
+Within the truncation boundary (where G > C):
 
 1. **Amplitude gradient**:
    ```
-   ∂I/∂a = exp(inner)
+   ∂I/∂a = I / a = scale × (G - C)
    ```
 
 2. **Sharpness gradient** (VERIFIED DERIVATION):
    ```
-   ∂I/∂s = I × inner × 0.5 × ln(D²) = I × (-0.25) × D^s × ln(D²)
+   ∂I/∂s = a × scale × ∂G/∂s = a × scale × G × (-0.25) × D^s × ln(D²)
    ```
 
    **Derivation**:
    ```
-   I = a × exp(inner), where inner = -0.5 × (D²)^(s/2)
+   G = exp(-0.5 × (D²)^(s/2))
 
    Let f(s) = (D²)^(s/2)
    df/ds = (D²)^(s/2) × ln(D²) × 0.5     [derivative of a^x is a^x × ln(a)]
 
-   ∂inner/∂s = -0.5 × df/ds = -0.5 × (D²)^(s/2) × ln(D²) × 0.5
-             = -0.25 × (D²)^(s/2) × ln(D²)
+   ∂G/∂s = G × (-0.5) × df/ds = G × (-0.25) × (D²)^(s/2) × ln(D²)
 
-   ∂I/∂s = I × ∂inner/∂s = I × (-0.25) × (D²)^(s/2) × ln(D²)
-
-   Since inner = -0.5 × (D²)^(s/2), we have (D²)^(s/2) = -2 × inner
-   ∂I/∂s = I × (-0.25) × (-2 × inner) × ln(D²) = I × inner × 0.5 × ln(D²)  ✓
+   ∂I/∂s = a × scale × ∂G/∂s   (C is constant w.r.t. s per splat)
    ```
 
    **In kernel code**:
    ```cuda
    float dist_pow_s = powf(dist_sq, s * 0.5f);  // = (D²)^(s/2)
-   float g_sharpness = dL_dI * intensity * (-0.25f) * dist_pow_s * log_dist_sq;
+   float g_sharpness = dL_dI * a * scale * exp_term * (-0.25f) * dist_pow_s * log_dist_sq;
    ```
 
 3. **Distance gradient**:
    ```
-   ∂I/∂D² = I × (-0.25 × s) × D^(s-2)
+   ∂I/∂D² = -0.5 × a × scale × G × (s/2) × D^(s-2)
+          = -0.5 × (I + a × scale × C)   [for s=2 case]
    ```
 
 4. **Center gradient** (CRITICAL: all components negative):
@@ -3673,6 +3687,10 @@ where:
    ∂I/∂μ = (∂I/∂D²) × (∂D²/∂d) × (∂d/∂μ)
          = grad_dist × 2 × Σ⁻¹ × d × (-1)
    ```
+
+**Effective truncation (amplitude-aware tightening)**:
+- Old: `D² = 2 × ln(a / floor)`
+- New: `D² = -2 × ln(floor / (a × scale) + C)`
 
 5. **Conic (Σ⁻¹) gradient**:
    ```

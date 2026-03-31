@@ -1343,6 +1343,10 @@ export class SceneLoader {
         staged.path,
         processed.splatCount
       );
+      // Read truncation radius from material for correct frustum culling
+      const truncationRadius =
+        (mesh.material as { uniforms?: { uTruncate?: { value: number } } })?.uniforms?.uTruncate
+          ?.value ?? 3.0;
       this._gpuBufferPool.updateGSplatsGeometry(
         geometry,
         {
@@ -1354,7 +1358,8 @@ export class SceneLoader {
           colors: processed.colors,
           splatCount: processed.splatCount,
         },
-        processed.splatCount
+        processed.splatCount,
+        truncationRadius
       );
       mesh.geometry = geometry;
     } else {

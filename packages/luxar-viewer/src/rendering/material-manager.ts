@@ -69,6 +69,7 @@ export class MaterialManager {
   private currentFov = (60 * Math.PI) / 180; // Current FOV in radians (or frustumHeight for ortho)
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
   private currentIsOrtho = false;
+  private currentNearCull: number | undefined = undefined;
   // Note: Global HDR multiplier has been replaced by exposure/offset/gamma in post-processing
 
   /**
@@ -258,11 +259,17 @@ export class MaterialManager {
   /**
    * Update camera parameters for all registered materials
    */
-  updateCameraParams(fov: number, resolution: THREE.Vector2, isOrtho: boolean = false): void {
+  updateCameraParams(
+    fov: number,
+    resolution: THREE.Vector2,
+    isOrtho: boolean = false,
+    nearCull?: number
+  ): void {
     // Store current values for future material creation
     this.currentFov = fov;
     this.currentResolution.copy(resolution);
     this.currentIsOrtho = isOrtho;
+    this.currentNearCull = nearCull;
 
     // Update all registered materials
     this.registeredMaterials.forEach((material) => {
@@ -271,7 +278,7 @@ export class MaterialManager {
         'updateCameraParams' in material &&
         typeof (material as any).updateCameraParams === 'function'
       ) {
-        (material as any).updateCameraParams(fov, resolution, isOrtho);
+        (material as any).updateCameraParams(fov, resolution, isOrtho, nearCull);
       }
     });
   }
@@ -290,7 +297,8 @@ export class MaterialManager {
       (material as any).updateCameraParams(
         this.currentFov,
         this.currentResolution,
-        this.currentIsOrtho
+        this.currentIsOrtho,
+        this.currentNearCull
       );
     }
   }

@@ -235,6 +235,60 @@ export const CLIPPING_SAFETY_MARGIN = 0.5;
 export const MIN_NEAR_PLANE = 0.0001;
 
 /**
+ * 3D bounding sphere representation
+ */
+export interface BoundingSphere {
+  center: { x: number; y: number; z: number };
+  radius: number;
+}
+
+/** Safety expansion factor for bounding sphere (5%) */
+export const SPHERE_SAFETY_EXPANSION = 1.05;
+
+/**
+ * Converts a bounding box to a bounding sphere (circumscribed sphere).
+ */
+export function boundingBoxToSphere(box: BoundingBox): BoundingSphere {
+  const center = getBoundingBoxCenter(box);
+  const size = getBoundingBoxSize(box);
+  const radius = 0.5 * Math.sqrt(size.x * size.x + size.y * size.y + size.z * size.z);
+  return { center, radius };
+}
+
+/**
+ * Calculates camera clipping planes based on a bounding sphere.
+ *
+ * Uses a sphere instead of a bounding box to avoid discontinuities at box
+ * edges/corners. The sphere produces smooth near/far values as the camera
+ * moves, eliminating the need for exponential smoothing.
+ *
+ * @param sphere - Scene bounding sphere
+ * @param cameraPosition - Camera position in world coordinates
+ * @returns Near and far clipping plane distances
+ */
+export function calculateClippingPlanesFromSphere(
+  sphere: BoundingSphere,
+  cameraPosition: { x: number; y: number; z: number }
+): { near: number; far: number } {
+  const dx = cameraPosition.x - sphere.center.x;
+  const dy = cameraPosition.y - sphere.center.y;
+  const dz = cameraPosition.z - sphere.center.z;
+  const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
+
+  const far = dist + R;
+
+  if (dist < R) {
+    // Inside sphere: use minimum near plane to see all surrounding geometry
+    return { near: MIN_NEAR_PLANE, far };
+  }
+
+  // Outside sphere: nearest point on sphere surface
+  const near = Math.max(MIN_NEAR_PLANE, dist - R);
+  return { near, far };
+}
+
+/**
  * Calculate distances from a point to all significant points on a bounding box.
  *
  * Returns distances to all 8 corners AND 6 face centers for more accurate

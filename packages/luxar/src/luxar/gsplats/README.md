@@ -66,7 +66,13 @@ Each Gaussian splat is parameterized using covariance matrix representation:
 - **Amplitudes (a)**: Softplus activation for non-negativity
 - **Sharpness (s)**: Exponential mapping `s = 2 * exp(s')` controls edge falloff (default s=2 for standard Gaussian)
 
-Mathematical form: `f(x) = a * exp(-0.5 * ||y||^2)` where `y = Σ^(-1/2) @ (x-μ)` (standard Gaussian)
+Mathematical form (shifted Gaussian for C⁰ continuity at truncation boundary):
+```
+C     = exp(-0.5 * T²)              // boundary value (T = truncation radius)
+scale = 1 / (1 - C)                 // peak-preserving rescale
+f(x)  = a * scale * max(0, exp(-0.5 * ||y||²) - C)
+```
+where `y = Σ^(-1/2) @ (x-μ)`. The shift ensures zero intensity at the truncation boundary (no discontinuity from hard truncation).
 
 The implementation avoids explicit matrix inversion by solving the triangular system `L @ y = (x-μ)`
 and computing the quadratic form as `||y||²`.
