@@ -374,16 +374,16 @@ The scene manager supports automatic per-frame clipping plane adjustment:
 
 **How It Works:**
 
-1. Each frame, calculates distances to all 8 corners AND 6 face centers of the bounding box
-2. **Detects if camera is inside the bounding box** - if so, uses minimum near plane (0.0001) to ensure all geometry is visible
-3. When outside, applies 50% safety margin to nearest point distance (accounts for rotation + edge cases)
+1. Each frame, computes a bounding sphere from the scene bounding box (with 20% safety margin)
+2. Near plane = `max(MIN_NEAR_PLANE, distToCenter - radius)` -- smoothly transitions to minimum as camera enters the sphere
+3. Far plane = `distToCenter + radius` -- distance to farthest point on the sphere
 4. Uses exponential smoothing for stable transitions: `z_new = (1-α)·z_old + α·z_optimal`
 
 **Benefits:**
 
 - Always-optimal Z-buffer precision as camera moves
-- **No clipping when exploring inside point clouds** - near plane drops to minimum when inside bounding box
-- More accurate distance calculation using face centers (not just corners)
+- **Smooth, direction-independent clipping** -- no sharp jumps at bounding box edges
+- Near plane continuously drops to minimum as camera enters the scene
 - Smooth transitions prevent visual artifacts
 - Eliminates need for manual clipping adjustment
 - Perfect for exploring large-scale scenes from any viewpoint
@@ -391,19 +391,19 @@ The scene manager supports automatic per-frame clipping plane adjustment:
 **Configuration:**
 
 ```typescript
-// Enable with default adapt speed (0.1)
+// Enable with default adapt speed (0.5)
 sceneManager.setDynamicClipping(true);
 
 // Fine-tune responsiveness
 sceneManager.setDynamicClipping(true, 0.05); // Slower, smoother
-sceneManager.setDynamicClipping(true, 0.3); // Faster, more responsive
+sceneManager.setDynamicClipping(true, 0.3); // Moderate responsiveness
 ```
 
 **Adapt Speed Values:**
 
 - **0.01**: Very smooth, slow adaptation (good for cinematic)
-- **0.1**: Balanced (default) - stable yet responsive
-- **0.5**: Fast adaptation (may cause slight jitter)
+- **0.1**: Balanced - stable yet responsive
+- **0.5**: Fast adaptation (default)
 
 ### Centering Modes
 

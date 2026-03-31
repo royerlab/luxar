@@ -326,7 +326,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                 vol_tensor,
                 patch_size=NLM_PATCH_SIZE,
                 search_distance=NLM_PATCH_DISTANCE,
-                use_2d_slice=True,
+                use_2d_slice=False,
                 device=denoise_device,
             )
             aprint(f"Calibrated h = {h:.6f}")
