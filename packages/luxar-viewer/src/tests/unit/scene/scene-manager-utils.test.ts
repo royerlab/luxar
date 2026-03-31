@@ -11,7 +11,10 @@ import {
   getBoundingBoxMaxDimension,
   calculateCameraDistance,
   validateFOV,
-  calculateClippingPlanes,
+  boundingBoxToSphere,
+  calculateClippingPlanesFromSphere,
+  SPHERE_SAFETY_EXPANSION,
+  MIN_NEAR_PLANE,
   isValidBoundingBox,
   expandBoundingBox,
   isPointInBoundingBox,
@@ -270,52 +273,78 @@ describe('scene-manager-utils', () => {
     });
   });
 
-  describe('calculateClippingPlanes', () => {
-    it('should calculate appropriate clipping planes when outside bounding sphere', () => {
+  describe('boundingBoxToSphere', () => {
+    it('should compute circumscribed sphere from bounding box', () => {
       const box: BoundingBox = {
         min: { x: -10, y: -10, z: -10 },
         max: { x: 10, y: 10, z: 10 },
       };
 
+      const sphere = boundingBoxToSphere(box);
+
+      expect(sphere.center).toEqual({ x: 0, y: 0, z: 0 });
+      // half-diagonal = sqrt(20^2 + 20^2 + 20^2) / 2 = sqrt(1200) / 2 ≈ 17.32
+      expect(sphere.radius).toBeCloseTo(17.32, 1);
+    });
+
+    it('should handle offset box', () => {
+      const box: BoundingBox = {
+        min: { x: 10, y: 20, z: 30 },
+        max: { x: 20, y: 30, z: 40 },
+      };
+
+      const sphere = boundingBoxToSphere(box);
+
+      expect(sphere.center).toEqual({ x: 15, y: 25, z: 35 });
+      // half-diagonal of 10x10x10 cube = sqrt(300)/2 ≈ 8.66
+      expect(sphere.radius).toBeCloseTo(8.66, 1);
+    });
+  });
+
+  describe('calculateClippingPlanesFromSphere', () => {
+    it('should calculate clipping planes when outside sphere', () => {
+      const box: BoundingBox = {
+        min: { x: -10, y: -10, z: -10 },
+        max: { x: 10, y: 10, z: 10 },
+      };
+
+      const sphere = boundingBoxToSphere(box);
+      const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
       // Camera at z=50, facing center
-      // Bounding sphere: center=(0,0,0), half-diag=sqrt(1200)/2≈17.32, radius=17.32*1.2≈20.78
-      // near = 50 - 20.78 ≈ 29.2
-      // far = 50 + 20.78 ≈ 70.8
       const cameraPos = { x: 0, y: 0, z: 50 };
-      const planes = calculateClippingPlanes(box, cameraPos);
+      const planes = calculateClippingPlanesFromSphere(sphere, cameraPos);
 
-      expect(planes.near).toBeCloseTo(29.2, 0);
-      expect(planes.far).toBeCloseTo(70.8, 0);
+      expect(planes.near).toBeCloseTo(50 - R, 1);
+      expect(planes.far).toBeCloseTo(50 + R, 1);
     });
 
-    it('should use minimum near plane when inside bounding sphere', () => {
+    it('should use minimum near plane when inside sphere', () => {
       const box: BoundingBox = {
         min: { x: -10, y: -10, z: -10 },
         max: { x: 10, y: 10, z: 10 },
       };
 
-      // Camera inside the sphere at (0,0,8): distToCenter=8, radius≈20.78
-      // near = max(0.0001, 8 - 20.78) = 0.0001
-      // far = 8 + 20.78 ≈ 28.78
+      const sphere = boundingBoxToSphere(box);
+      const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
+      // Camera inside the sphere at (0,0,8)
       const cameraPos = { x: 0, y: 0, z: 8 };
-      const planes = calculateClippingPlanes(box, cameraPos);
+      const planes = calculateClippingPlanesFromSphere(sphere, cameraPos);
 
-      expect(planes.near).toBe(0.0001);
-      expect(planes.far).toBeCloseTo(28.8, 0);
+      expect(planes.near).toBe(MIN_NEAR_PLANE);
+      expect(planes.far).toBeCloseTo(8 + R, 1);
     });
 
-    it('should enforce minimum near plane', () => {
+    it('should enforce minimum near plane for tiny scenes', () => {
       const box: BoundingBox = {
         min: { x: 0, y: 0, z: 0 },
         max: { x: 0.01, y: 0.01, z: 0.01 },
       };
 
-      // Camera very close to tiny box
+      const sphere = boundingBoxToSphere(box);
       const cameraPos = { x: 0.005, y: 0.005, z: 0.02 };
-      const planes = calculateClippingPlanes(box, cameraPos);
+      const planes = calculateClippingPlanesFromSphere(sphere, cameraPos);
 
-      // Minimum near is MIN_NEAR_PLANE = 0.0001
-      expect(planes.near).toBeGreaterThanOrEqual(0.0001);
+      expect(planes.near).toBeGreaterThanOrEqual(MIN_NEAR_PLANE);
     });
 
     it('should provide smooth near-plane transition approaching the sphere', () => {
@@ -324,15 +353,15 @@ describe('scene-manager-utils', () => {
         max: { x: 10, y: 10, z: 10 },
       };
 
-      // Bounding sphere radius ≈ 20.78
+      const sphere = boundingBoxToSphere(box);
       // Camera moving from z=50 toward center — near should decrease smoothly
-      const far = calculateClippingPlanes(box, { x: 0, y: 0, z: 50 });
-      const mid = calculateClippingPlanes(box, { x: 0, y: 0, z: 30 });
-      const close = calculateClippingPlanes(box, { x: 0, y: 0, z: 22 });
+      const far = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: 50 });
+      const mid = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: 30 });
+      const close = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: 22 });
 
       expect(far.near).toBeGreaterThan(mid.near);
       expect(mid.near).toBeGreaterThan(close.near);
-      expect(close.near).toBeGreaterThan(0); // Still outside sphere
+      expect(close.near).toBeGreaterThan(0);
     });
   });
 

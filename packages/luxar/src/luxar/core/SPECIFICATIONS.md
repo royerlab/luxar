@@ -257,7 +257,6 @@ All fields are `Optional` and default to `None`. Only non-None fields are serial
 | `fly_damping` | `Optional[float]` | -- |
 | `fly_rotation_damping` | `Optional[float]` | -- |
 | `dynamic_clipping_enabled` | `Optional[bool]` | -- |
-| `clipping_adapt_speed` | `Optional[float]` | -- |
 | `adaptive_dpr_enabled` | `Optional[bool]` | -- |
 | `ui` | `Optional[UIConfig]` | Nested: `show_help`, `show_rendering_controls`, `show_performance_monitor`, `show_dimensions`, `show_scale_bar`, `show_layers` |
 | `theme` | `Optional[str]` | One of: `"dark"`, `"light"`, `"frosted-glass"`, `"liquid-glass"` |

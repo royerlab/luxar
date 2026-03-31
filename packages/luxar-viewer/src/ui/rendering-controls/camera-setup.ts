@@ -4,7 +4,7 @@
  * Creates controls for camera-specific settings:
  * - FOV presets (28mm, 35mm, 50mm, 85mm, 135mm, Custom)
  * - FOV slider
- * - Clipping planes (near, far, dynamic clipping with adapt speed)
+ * - Clipping planes (near, far, dynamic clipping)
  */
 
 import { config } from '../../config';
