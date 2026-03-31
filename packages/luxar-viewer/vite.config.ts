@@ -7,6 +7,13 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     target: 'esnext', // Required for Workers and WASM support
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          three: ['three'],
+        },
+      },
+    },
   },
   resolve: { alias: { '@': resolve(__dirname, 'src') } },
   worker: {

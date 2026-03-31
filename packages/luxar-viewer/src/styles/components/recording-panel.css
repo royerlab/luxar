@@ -28,7 +28,7 @@
 
 /* ========== Recording Button ========== */
 
-.luxar-recording-btn .luxar-gui__widget button {
+.luxar-recording-btn .luxar-gui__button {
   background: var(--luxar-error, #e74c3c) !important;
   color: #fff !important;
   border: none !important;
@@ -45,12 +45,12 @@
   letter-spacing: 0.5px;
 }
 
-.luxar-recording-btn .luxar-gui__widget button:hover {
+.luxar-recording-btn .luxar-gui__button:hover {
   background: #c0392b !important;
   transform: scale(1.02);
 }
 
-.luxar-recording-btn .luxar-gui__widget button:active {
+.luxar-recording-btn .luxar-gui__button:active {
   transform: scale(0.98);
 }
 
@@ -310,7 +310,7 @@
     opacity: 1;
   }
 
-  .luxar-recording-btn .luxar-gui__widget button {
+  .luxar-recording-btn .luxar-gui__button {
     transition: none !important;
   }
 }
