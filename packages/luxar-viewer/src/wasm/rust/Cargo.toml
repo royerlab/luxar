@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Luxar Contributors"]
 description = "WASM acceleration for Luxar spatial queries and nD visibility computation"
-license = "MIT"
+license = "BSD-3-Clause"
+repository = "https://github.com/royerlab/luxar"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

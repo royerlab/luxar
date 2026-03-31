@@ -7,7 +7,7 @@ name = "luxar"
 dynamic = ["version"]
 description = "High-performance nD scene compiler for arbitrary-sized scientific visualization with points, lines, surfaces, volumes and more."
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "BSD-3-Clause" }
 authors = [
     { name = "Loic Royer", email = "loic.royer@czbiohub.org" }
 ]
@@ -32,7 +32,7 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: BSD License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",

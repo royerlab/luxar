@@ -455,6 +455,11 @@ export class LayersPanel {
 
     this.colormapSelect = document.createElement('select');
     this.colormapSelect.className = 'luxar-layers-panel__select';
+    // "None" option for layers using direct RGB colors
+    const noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = '(direct colors)';
+    this.colormapSelect.appendChild(noneOpt);
 
     // Add categorized options
     for (const [category, names] of Object.entries(COLORMAP_CATEGORIES)) {
@@ -471,7 +476,7 @@ export class LayersPanel {
 
     this.colormapSelect.addEventListener('change', () => {
       this.controlsInteracting = true;
-      const cmName = this.colormapSelect!.value;
+      const cmName = this.colormapSelect!.value || undefined;
       this.state.applyToSelected((l) => {
         l.colormap = cmName;
       });
@@ -509,9 +514,7 @@ export class LayersPanel {
     if (this.colormapSelect) {
       if (primary.supportsColormap) {
         this.colormapSelect.parentElement!.style.display = '';
-        if (primary.colormap) {
-          this.colormapSelect.value = primary.colormap;
-        }
+        this.colormapSelect.value = primary.colormap ?? '';
       } else {
         // Hide colormap control for layers that don't support it
         this.colormapSelect.parentElement!.style.display = 'none';

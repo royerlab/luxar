@@ -178,6 +178,9 @@ export class RenderingControls {
   /** Timer ID for periodic clipping display updates when dynamic clipping is enabled */
   private clippingDisplayUpdateInterval: ReturnType<typeof setInterval> | null = null;
 
+  /** Cleanup callbacks collected during setup, called on dispose */
+  private cleanupCallbacks: (() => void)[] = [];
+
   /** Snapshot of settings before cinematic mode was enabled (null when cinematic is off) */
   private cinematicSnapshot: CinematicSnapshot | null = null;
 
@@ -669,12 +672,8 @@ export class RenderingControls {
       }
     }, 500);
 
-    // Store cleanup reference
-    const originalDispose = this.dispose.bind(this);
-    this.dispose = () => {
-      clearInterval(updateInterval);
-      originalDispose();
-    };
+    // Register cleanup for the update interval
+    this.cleanupCallbacks.push(() => clearInterval(updateInterval));
 
     // Close folder by default
     performanceFolder.close();
@@ -858,7 +857,7 @@ export class RenderingControls {
     const pointerEvents = dynamicEnabled ? 'none' : 'auto';
 
     if (this.controllers.nearPlane) {
-      const container = this.controllers.nearPlane.domElement.closest('.controller');
+      const container = this.controllers.nearPlane.domElement.closest('.luxar-gui__controller');
       if (container instanceof HTMLElement) {
         container.style.opacity = opacity;
         container.style.pointerEvents = pointerEvents;
@@ -866,7 +865,7 @@ export class RenderingControls {
     }
 
     if (this.controllers.farPlane) {
-      const container = this.controllers.farPlane.domElement.closest('.controller');
+      const container = this.controllers.farPlane.domElement.closest('.luxar-gui__controller');
       if (container instanceof HTMLElement) {
         container.style.opacity = opacity;
         container.style.pointerEvents = pointerEvents;
@@ -1640,6 +1639,12 @@ export class RenderingControls {
       clearInterval(this.clippingDisplayUpdateInterval);
       this.clippingDisplayUpdateInterval = null;
     }
+
+    // Run all registered cleanup callbacks (e.g., adaptive DPR update interval)
+    for (const cb of this.cleanupCallbacks) {
+      cb();
+    }
+    this.cleanupCallbacks = [];
 
     // Auto-blur cleanup is now handled by the custom GUI library
     this.gui.destroy();
