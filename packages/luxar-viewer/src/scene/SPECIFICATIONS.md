@@ -542,13 +542,13 @@ Automatically adjust near and far clipping planes as the camera moves to maintai
 
 ```typescript
 // Constants from scene-manager-utils.ts
-const CLIPPING_SAFETY_MARGIN = 0.5; // 50% margin for rotation/edge cases
+const BOUNDING_SPHERE_MARGIN = 1.2; // 20% safety margin on sphere radius
 const MIN_NEAR_PLANE = 0.0001; // Minimum near plane
 
 class SceneManager {
   // Dynamic clipping state
   private dynamicClippingEnabled: boolean = true;
-  private clippingAdaptSpeed: number = 0.1; // 0.01 to 0.5
+  private clippingAdaptSpeed: number = 0.5; // 0.01 to 1.0
   private smoothedNear: number = 0.1;
   private smoothedFar: number = 1000;
 
@@ -559,24 +559,20 @@ class SceneManager {
     const bounds = this.getSceneBoundsFromMetadata();
     if (!bounds) return;
 
-    // Calculate distances to all 8 corners AND 6 face centers (14 points total)
-    // Face centers give more accurate near plane when camera faces a side
-    const { nearDist, farDist, isInside } = calculateDistancesToBoundingBox(cameraPos, bounds);
+    // Use bounding sphere for smooth, direction-independent clipping.
+    // The sphere already includes 20% safety margin on the radius.
+    const { center, radius } = getBoundingSphere(bounds);
+    const dx = cameraPos.x - center.x;
+    const dy = cameraPos.y - center.y;
+    const dz = cameraPos.z - center.z;
+    const distToCenter = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-    // Calculate optimal clipping planes using unified 50% margin
-    let optimalNear: number;
-    if (isInside) {
-      // When inside the bounding box, use minimum near plane
-      // This ensures we can see all geometry around us without clipping
-      optimalNear = MIN_NEAR_PLANE;
-    } else {
-      // When outside, use nearest point distance with 50% margin
-      // near = nearDist * 0.5
-      optimalNear = Math.max(MIN_NEAR_PLANE, nearDist * (1 - CLIPPING_SAFETY_MARGIN));
-    }
+    // Near plane: distance to the nearest point on the sphere surface.
+    // Smoothly goes to 0 as camera approaches the sphere, then stays at MIN_NEAR_PLANE inside.
+    const optimalNear = Math.max(MIN_NEAR_PLANE, distToCenter - radius);
 
-    // Far plane: farthest point plus 50% margin (~150% of distance)
-    const optimalFar = farDist * (1 + CLIPPING_SAFETY_MARGIN);
+    // Far plane: distance to the farthest point on the sphere (opposite side).
+    const optimalFar = distToCenter + radius;
 
     // Exponential smoothing: new = (1-α)*current + α*optimal
     const α = this.clippingAdaptSpeed;
@@ -694,7 +690,7 @@ interface RenderingSettings {
 
   // Dynamic clipping planes
   dynamicClippingEnabled: boolean; // Default: true
-  clippingAdaptSpeed: number; // Default: 0.1, range: 0.01-0.5
+  clippingAdaptSpeed: number; // Default: 0.5, range: 0.01-1.0
 }
 ```
 
@@ -1385,7 +1381,7 @@ interface SceneDimsManager {
 - **v1.3.0** (2025-12-09): Dynamic clipping planes
   - **ADDED**: Section 5 "Dynamic Clipping Planes" with exponential smoothing algorithm
   - **ADDED**: Per-frame clipping plane adjustment based on camera-to-bounds distance
-  - **ADDED**: Configurable adapt speed parameter (0.01-0.5)
+  - **ADDED**: Configurable adapt speed parameter (0.01-1.0)
   - **ADDED**: Safety clamps for near plane minimum and far/near ratio
   - **UPDATED**: AnimationController integration for per-frame updates
   - **UPDATED**: Section numbering (Window Resize → 6, WebGL Context Loss → 7, Dimension Coordination → 8)

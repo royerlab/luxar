@@ -1188,7 +1188,7 @@ interface RenderingSettings {
 **Dynamic Clipping Planes**:
 
 - **dynamicClippingEnabled**: true (auto-adjust clipping planes based on camera position)
-- **clippingAdaptSpeed**: 0.1 (exponential smoothing factor, range 0.01-0.5)
+- **clippingAdaptSpeed**: 0.5 (exponential smoothing factor, range 0.01-1.0)
 
 **Bloom** (single source of truth):
 
@@ -1300,7 +1300,7 @@ function onBloomStrengthChange(value: number) {
 
 ### 13.5 Validation Rules
 
-- **clippingAdaptSpeed**: 0.01-0.5 (lower = smoother, higher = faster response)
+- **clippingAdaptSpeed**: 0.01-1.0 (lower = smoother, higher = faster response)
 - **bloomThreshold**: 0-1
 - **bloomStrength**: Typical 0-2
 - **bloomRadius**: Typical 0-2
@@ -1376,7 +1376,7 @@ if (!isValid) {
 
 - **v1.2.0** (2025-12-09): Dynamic clipping planes configuration
   - **ADDED**: `dynamicClippingEnabled` setting (default: true)
-  - **ADDED**: `clippingAdaptSpeed` setting (default: 0.1, range: 0.01-0.5)
+  - **ADDED**: `clippingAdaptSpeed` setting (default: 0.5, range: 0.01-1.0)
   - **UPDATED**: RenderingSettings interface with dynamic clipping fields
   - **UPDATED**: Validation rules for clippingAdaptSpeed
   - Enables smooth automatic clipping plane adjustment as camera moves

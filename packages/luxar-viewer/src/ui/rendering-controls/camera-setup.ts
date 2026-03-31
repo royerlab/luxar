@@ -319,7 +319,7 @@ export function setupCameraControls(
 
   // Adapt speed slider (only visible when dynamic clipping is enabled)
   const adaptSpeedControl = clippingFolder
-    .add(settings, 'clippingAdaptSpeed', 0.01, 0.5, 0.01)
+    .add(settings, 'clippingAdaptSpeed', 0.01, 1.0, 0.01)
     .name('Adapt Speed')
     .onChange((value: number) => {
       sceneManager.setClippingAdaptSpeed(value);
@@ -337,8 +337,9 @@ export function setupCameraControls(
     'title',
     'Adapt Speed: How quickly clipping planes adjust\n' +
       '• 0.01 = Very slow, smooth transitions\n' +
-      '• 0.1 = Balanced responsiveness (default)\n' +
-      '• 0.5 = Fast adaptation, may cause jitter\n' +
+      '• 0.1 = Balanced responsiveness\n' +
+      '• 0.5 = Fast adaptation (default)\n' +
+      '• 1.0 = Instant adaptation\n' +
       '• Lower values = smoother but slower response'
   );
 

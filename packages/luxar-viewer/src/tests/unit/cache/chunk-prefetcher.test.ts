@@ -69,7 +69,11 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       });
 
       // Register bounds so prefetcher knows valid chunk range
-      debugPrefetcher.registerArrayBounds('points/positions', [10240, 10240, 10240], [1024, 1024, 1024]);
+      debugPrefetcher.registerArrayBounds(
+        'points/positions',
+        [10240, 10240, 10240],
+        [1024, 1024, 1024]
+      );
 
       debugPrefetcher.onAccess('points/positions/c/0/1/2');
 
@@ -112,7 +116,11 @@ describe('ChunkPrefetcher - Unit Tests', () => {
 
     it('should handle 4D chunks', async () => {
       // Register bounds for 4D array with multiple chunks per dimension
-      prefetcher.registerArrayBounds('data', [10240, 10240, 10240, 10240], [1024, 1024, 1024, 1024]);
+      prefetcher.registerArrayBounds(
+        'data',
+        [10240, 10240, 10240, 10240],
+        [1024, 1024, 1024, 1024]
+      );
 
       prefetcher.onAccess('data/1.2.3.4');
 

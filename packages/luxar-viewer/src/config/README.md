@@ -131,7 +131,7 @@ renderingControls: {
   defaults: {
     // Camera clipping
     dynamicClippingEnabled: true,   // Auto-adjust clipping planes per frame
-    clippingAdaptSpeed: 0.1,        // Exponential smoothing (0.01-0.5)
+    clippingAdaptSpeed: 0.5,        // Exponential smoothing (0.01-1.0)
     // Bloom and HDR
     bloomThreshold: 0.01,
     bloomStrength: 0.5,

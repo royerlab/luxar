@@ -25,11 +25,10 @@ import {
   validateFOV,
   calculateClippingPlanes,
   calculateCameraDistance,
-  calculateDistancesToBoundingBox,
   getBoundingBoxDiagonal,
   getBoundingBoxCenter,
+  getBoundingSphere,
   BoundingBox,
-  CLIPPING_SAFETY_MARGIN,
   MIN_NEAR_PLANE,
 } from './scene-manager-utils';
 import { log, Modules, LogEmoji } from '../utils/log';
@@ -1330,9 +1329,10 @@ export class SceneManager extends THREE.EventDispatcher<{
    * based on camera position relative to scene bounds. This prevents clipping
    * artifacts when navigating and maintains optimal Z-buffer precision.
    *
-   * Uses unified calculation with CLIPPING_SAFETY_MARGIN (50%) for consistency
-   * with autoAdjustClippingPlanes(). When inside the bounding box, uses distance
-   * to nearest surface to prevent clipping nearby geometry.
+   * Uses a bounding sphere (with 20% safety margin) for smooth, direction-independent
+   * clipping. The near plane is derived from `distToCenter - radius`, which transitions
+   * continuously as the camera approaches and enters the scene — no sharp jumps at
+   * bounding box edges.
    */
   updateDynamicClippingPlanes(): void {
     if (!this.dynamicClippingEnabled) return;
@@ -1348,23 +1348,20 @@ export class SceneManager extends THREE.EventDispatcher<{
       z: this.camera.position.z,
     };
 
-    // Calculate distances from camera to bounding box (includes face centers)
-    const { nearDist, farDist, isInside } = calculateDistancesToBoundingBox(cameraPos, bounds);
+    // Use bounding sphere for smooth, direction-independent clipping.
+    // The sphere already includes 20% safety margin on the radius.
+    const { center, radius } = getBoundingSphere(bounds);
+    const dx = cameraPos.x - center.x;
+    const dy = cameraPos.y - center.y;
+    const dz = cameraPos.z - center.z;
+    const distToCenter = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-    // Calculate optimal clipping planes using unified margin (50%)
-    let optimalNear: number;
-    if (isInside) {
-      // When inside the bounding box, use minimum near plane
-      // This ensures we can see all geometry around us without clipping
-      optimalNear = MIN_NEAR_PLANE;
-    } else {
-      // When outside, use nearest point distance with margin
-      // margin of 0.5 means near = nearDist * 0.5
-      optimalNear = Math.max(MIN_NEAR_PLANE, nearDist * (1 - CLIPPING_SAFETY_MARGIN));
-    }
+    // Near plane: distance to the nearest point on the sphere surface.
+    // Smoothly goes to 0 as camera approaches the sphere, then stays at MIN_NEAR_PLANE inside.
+    const optimalNear = Math.max(MIN_NEAR_PLANE, distToCenter - radius);
 
-    // Far plane: farthest point plus margin (~150% of distance)
-    const optimalFar = farDist * (1 + CLIPPING_SAFETY_MARGIN);
+    // Far plane: distance to the farthest point on the sphere (opposite side).
+    const optimalFar = distToCenter + radius;
 
     // Exponential smoothing: new = (1-α)*current + α*optimal
     const α = this.clippingAdaptSpeed;
@@ -1391,19 +1388,16 @@ export class SceneManager extends THREE.EventDispatcher<{
     }
   }
 
-  // NOTE: calculateDistancesToBounds removed - now using calculateDistancesToBoundingBox
-  // from scene-manager-utils.ts which includes face centers for better accuracy
-
   /**
    * Set dynamic clipping configuration.
    *
    * @param enabled - Whether dynamic clipping is enabled
-   * @param adaptSpeed - Exponential smoothing factor (0.01-0.5)
+   * @param adaptSpeed - Exponential smoothing factor (0.01-1.0)
    */
   setDynamicClipping(enabled: boolean, adaptSpeed?: number): void {
     this.dynamicClippingEnabled = enabled;
     if (adaptSpeed !== undefined) {
-      this.clippingAdaptSpeed = Math.max(0.01, Math.min(0.5, adaptSpeed));
+      this.clippingAdaptSpeed = Math.max(0.01, Math.min(1.0, adaptSpeed));
     }
 
     log.info(
@@ -1416,10 +1410,10 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Set clipping adapt speed without logging.
    * Use this for continuous updates (e.g., slider drag) to avoid log spam.
    *
-   * @param speed - Exponential smoothing factor (0.01-0.5)
+   * @param speed - Exponential smoothing factor (0.01-1.0)
    */
   setClippingAdaptSpeed(speed: number): void {
-    this.clippingAdaptSpeed = Math.max(0.01, Math.min(0.5, speed));
+    this.clippingAdaptSpeed = Math.max(0.01, Math.min(1.0, speed));
   }
 
   /**
