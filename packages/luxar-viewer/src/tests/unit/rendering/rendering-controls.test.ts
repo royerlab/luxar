@@ -126,7 +126,7 @@ describe('RenderingControls', () => {
       setClippingAdaptSpeed: vi.fn(),
       getDynamicClippingState: vi.fn(() => ({
         enabled: false,
-        adaptSpeed: 0.1,
+        adaptSpeed: 0.5,
         near: 0.1,
         far: 1000,
       })),
