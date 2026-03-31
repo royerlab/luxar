@@ -6,32 +6,34 @@
 
   position: fixed;
   bottom: 48px; /* Above the scale bar */
-  right: 16px;
+  right: var(--luxar-spacing-8, 16px);
   z-index: var(--luxar-z-tooltip, 900);
   flex-direction: column;
-  gap: 6px;
+  gap: var(--luxar-spacing-3, 6px);
   pointer-events: none;
   user-select: none;
   font-family: var(--luxar-font-mono, monospace);
-  font-size: 11px;
+  font-size: var(--luxar-text-base, 11px);
 }
 
 .luxar-colormap-legend--visible {
   display: flex;
+  animation: luxar-legend-fade-in 0.2s ease-out forwards;
 }
 
 .luxar-colormap-legend__entry {
-  background: rgba(0, 0, 0, 0.55);
-  border-radius: 4px;
-  padding: 4px 8px;
+  background: var(--luxar-bg-tertiary, rgba(0, 0, 0, 0.3));
+  border-radius: var(--luxar-radius-sm, 4px);
+  padding: var(--luxar-spacing-2, 4px) var(--luxar-spacing-4, 8px);
   min-width: 140px;
 }
 
 .luxar-colormap-legend__name {
-  color: rgba(255, 255, 255, 0.9);
-  margin-bottom: 2px;
-  font-weight: 500;
+  color: var(--luxar-text-primary, #e0e0e0);
+  margin-bottom: var(--luxar-spacing-1, 2px);
+  font-weight: var(--luxar-font-medium, 500);
   white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
 
 .luxar-colormap-legend__bar-row {
@@ -40,7 +42,7 @@
 }
 
 .luxar-colormap-legend__gradient {
-  border-radius: 2px;
+  border-radius: var(--luxar-radius-xs, 2px);
   width: 120px;
   height: 12px;
   image-rendering: pixelated;
@@ -49,7 +51,35 @@
 .luxar-colormap-legend__labels {
   display: flex;
   justify-content: space-between;
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 9px;
-  margin-top: 1px;
+  color: var(--luxar-text-muted, rgba(255, 255, 255, 0.6));
+  font-size: var(--luxar-text-xs, 9px);
+  margin-top: var(--luxar-spacing-0, 1px);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.luxar-colormap-legend__hint {
+  background: var(--luxar-bg-tertiary, rgba(0, 0, 0, 0.3));
+  border-radius: var(--luxar-radius-sm, 4px);
+  padding: var(--luxar-spacing-2, 4px) var(--luxar-spacing-4, 8px);
+  color: var(--luxar-text-secondary, #888888);
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+/* ========== Animation ========== */
+
+@keyframes luxar-legend-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luxar-colormap-legend--visible {
+    animation: none !important;
+    opacity: 1 !important;
+  }
 }

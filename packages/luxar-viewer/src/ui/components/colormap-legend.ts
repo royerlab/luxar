@@ -81,6 +81,11 @@ export class ColormapLegend extends UIComponent<ColormapLegendConfig> {
     this.element.innerHTML = '';
 
     if (visibleWithColormap.length === 0) {
+      // Show hint so user knows the legend is active but no colormaps are set
+      const hint = document.createElement('div');
+      hint.className = `${this.getClassName()}__hint`;
+      hint.textContent = 'No colormaps active';
+      this.element.appendChild(hint);
       return;
     }
 
@@ -133,7 +138,7 @@ export class ColormapLegend extends UIComponent<ColormapLegendConfig> {
    */
   show(): void {
     super.show();
-    this.lastHash = ''; // Force rebuild
+    this.lastHash = '\0'; // Sentinel that never matches a real hash (forces rebuild)
     this.updateLegend();
   }
 

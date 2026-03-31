@@ -192,7 +192,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     if (this.autoRotate && this.enableRotate) {
       const dt = deltaTime ?? 1 / 60;
       const angle = ((2 * Math.PI) / 60) * this.autoRotateSpeed * dt;
-      // Screen-up in world space = camera's up vector
+      // Inline quaternion math (applyOrbitRotation also calls applyToCamera, redundant in update())
       const screenUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.orientation);
       const autoQuat = new THREE.Quaternion().setFromAxisAngle(screenUp, angle);
       this.orientation.premultiply(autoQuat);
@@ -302,6 +302,24 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.rollDelta = 0;
     this.applyToCamera();
     this.update();
+  }
+
+  /**
+   * Apply an orbit rotation by the given angle (radians).
+   *
+   * @param angle - Rotation angle in radians (positive = counter-clockwise when looking along the axis).
+   * @param axis  - World-space axis to rotate around. Defaults to the camera's screen-up direction
+   *               (same axis used by auto-rotation), which always appears vertical on screen.
+   *
+   * This is the same quaternion math that auto-rotation uses — call it from turntable
+   * recording or any other code that needs to orbit the camera programmatically.
+   */
+  public applyOrbitRotation(angle: number, axis?: THREE.Vector3): void {
+    const rotAxis = axis ?? new THREE.Vector3(0, 1, 0).applyQuaternion(this.orientation);
+    const q = new THREE.Quaternion().setFromAxisAngle(rotAxis, angle);
+    this.orientation.premultiply(q);
+    this.orientation.normalize();
+    this.applyToCamera();
   }
 
   /**

@@ -26,6 +26,7 @@ import type { SceneManager } from '../scene/scene-manager';
 import type { AnimationController } from '../scene/animation-controller';
 import type { DimensionAnimationManager } from '../scene/dimension-animation-manager';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
+import { LuxarOrbitControls } from '../controls/luxar-orbit-controls';
 
 type RecordingMode = 'image' | 'video' | 'turntable';
 
@@ -115,6 +116,7 @@ export class RecordingPanel {
   private keepAliveCallbackId = 'recording-keepalive';
   private turntableCallbackId = 'recording-turntable';
   private syncCompleteHandler: (() => void) | null = null;
+  private savedAutoRotate: boolean = false;
 
   // EXR sequence recording state
   private exrFrames: Uint8Array[] = [];
@@ -166,6 +168,7 @@ export class RecordingPanel {
     this.gui.domElement.classList.add('luxar-recording-panel');
 
     Object.assign(this.gui.domElement.style, {
+      position: 'fixed',
       top: 'auto',
       bottom: '20px',
       left: '20px',
@@ -390,6 +393,7 @@ export class RecordingPanel {
         this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
         this.animationController.removePerFrameCallback(this.turntableCallbackId);
         this.cleanupSyncListener();
+        this.restoreAutoRotate();
         this.restoreRecordingState();
         showToast('Video saved');
       }
@@ -450,7 +454,7 @@ export class RecordingPanel {
    *
    * Unlike real-time MediaRecorder capture, this loop is fully decoupled from the
    * browser's animation frame rate. Each frame is:
-   * 1. Camera positioned at the exact angle for this frame
+   * 1. Camera orbited by one step (quaternion rotation, same as auto-rotate)
    * 2. Scene rendered (full pipeline)
    * 3. Pixels read back (synchronous GPU stall — intentional)
    * 4. Frame stored / encoded
@@ -482,13 +486,20 @@ export class RecordingPanel {
     const durationSeconds = 360 / this.options.turntableSpeed;
     const totalFrames = Math.ceil(durationSeconds * fps);
 
-    const camera = this.sceneManager.camera;
     const controls = this.sceneManager.controls.getControls();
-    const target = (controls as any)?.target?.clone() ?? new THREE.Vector3();
-    const offset = new THREE.Vector3().subVectors(camera.position, target);
-    const radius = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
-    const startAngle = Math.atan2(offset.z, offset.x);
-    const startY = camera.position.y;
+    if (!(controls instanceof LuxarOrbitControls)) {
+      log.warning(Modules.RECORDING, 'Turntable requires orbit controls');
+      this.restoreRecordingState();
+      return;
+    }
+
+    // Pause auto-rotation so it doesn't compound with the turntable
+    this.savedAutoRotate = this.sceneManager.controls.getAutoRotate();
+    this.sceneManager.controls.setAutoRotate(false);
+
+    // Per-frame rotation step: frame 0 captures the starting view without rotation,
+    // then frames 1..N-1 each advance by one step to complete exactly 2π total.
+    const anglePerFrame = totalFrames > 1 ? (2 * Math.PI) / (totalFrames - 1) : 0;
 
     log.info(
       Modules.RECORDING,
@@ -612,10 +623,8 @@ export class RecordingPanel {
     // Frame-by-frame capture using the live animation loop.
     //
     // The animation loop runs: controls.update() → per-frame callbacks → render().
-    // We register a per-frame callback that:
-    //   1. Overrides the camera position for the current frame (after controls.update)
-    //   2. After the render, reads the freshly-drawn pixels via renderToImageData
-    //   3. Resolves a promise so the outer loop can process the captured data
+    // We register a per-frame callback that applies an incremental quaternion rotation
+    // (same math as auto-rotate), then the animation loop renders and we read pixels.
     //
     // This guarantees we read pixels from a properly rendered frame — the same
     // pipeline that produces visible on-screen output.
@@ -629,27 +638,18 @@ export class RecordingPanel {
     for (let i = 0; i < totalFrames; i++) {
       if (!this.isRecording) break;
 
-      // Position camera and capture in a single animation frame via callback.
-      // The callback positions the camera (overriding controls.update), then
-      // after the animation loop renders, we read the pixels.
-      const progress = i / totalFrames;
-      const angle = startAngle + progress * Math.PI * 2;
-
-      // Register callback to position camera AFTER controls.update, BEFORE render
+      // Orbit camera by one step and capture in a single animation frame.
+      // The callback applies a quaternion rotation (same as auto-rotate) AFTER
+      // controls.update, BEFORE render, so the frame is rendered at the new angle.
       this.animationController.addPerFrameCallback(captureCallbackId, () => {
-        camera.position.x = target.x + radius * Math.cos(angle);
-        camera.position.z = target.z + radius * Math.sin(angle);
-        camera.position.y = startY;
-        camera.lookAt(target);
+        if (i > 0) controls.applyOrbitRotation(anglePerFrame);
       });
 
       // Wait for one full animation frame (callback + render)
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-      // The animation loop has rendered with our camera position.
+      // The animation loop has rendered with the rotated camera.
       // Now capture the pixels from the default framebuffer.
-      // We call renderToImageData which re-renders (composer.render + readPixels)
-      // with the camera still in our turntable position.
       try {
         if (mode === 'png' || mode === 'webp' || mode === 'jpeg') {
           captureCanvas = this.renderFrameToCanvas();
@@ -784,6 +784,7 @@ export class RecordingPanel {
 
     // Remove overlay, restore all saved state
     overlay.remove();
+    this.restoreAutoRotate();
     this.restoreRecordingState();
   }
 
@@ -828,37 +829,49 @@ export class RecordingPanel {
     }
   }
 
+  /** Restore auto-rotation to its pre-turntable state. */
+  private restoreAutoRotate(): void {
+    if (this.savedAutoRotate) {
+      this.sceneManager.controls.setAutoRotate(true);
+      this.savedAutoRotate = false;
+    }
+  }
+
   // ========== Turntable Rotation ==========
 
   /**
    * Start time-based turntable rotation for the standard MediaRecorder path.
    *
-   * Uses wall clock time because MediaRecorder operates in real time —
-   * it captures whatever is on the canvas at its framerate. The rotation
-   * completes after the correct wall clock duration regardless of GPU FPS.
+   * Uses the same quaternion-based orbit rotation as auto-rotate (screen-up axis),
+   * driven by wall clock time because MediaRecorder operates in real time.
+   * The rotation completes after the correct wall clock duration regardless of GPU FPS.
    *
    * Note: The offline capture loop (for EXR/HDR video) uses its own
-   * frame-index-based camera positioning and does NOT use this method.
+   * frame-index-based stepping and does NOT use this method.
    */
   private startTurntableRotation(): void {
-    const camera = this.sceneManager.camera;
     const controls = this.sceneManager.controls.getControls();
-    const target = (controls as any)?.target?.clone() ?? new THREE.Vector3();
-    const offset = new THREE.Vector3().subVectors(camera.position, target);
-    const radius = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
-    const startAngle = Math.atan2(offset.z, offset.x);
-    const startY = camera.position.y;
+    if (!(controls instanceof LuxarOrbitControls)) {
+      log.warning(Modules.RECORDING, 'Turntable requires orbit controls');
+      return;
+    }
+
+    // Pause auto-rotation so it doesn't compound with the turntable
+    this.savedAutoRotate = this.sceneManager.controls.getAutoRotate();
+    this.sceneManager.controls.setAutoRotate(false);
+
     const totalDuration = (360 / this.options.turntableSpeed) * 1000;
     const startTime = Date.now();
 
     log.info(
       Modules.RECORDING,
       `Turntable started: speed=${this.options.turntableSpeed}°/s, ` +
-        `duration=${(totalDuration / 1000).toFixed(1)}s, radius=${radius.toFixed(1)}`
+        `duration=${(totalDuration / 1000).toFixed(1)}s`
     );
 
     let turntableDone = false;
     let frameCount = 0;
+    let lastProgress = 0;
     this.animationController.addPerFrameCallback(this.turntableCallbackId, () => {
       if (turntableDone) return;
       frameCount++;
@@ -866,12 +879,11 @@ export class RecordingPanel {
       // Time-based progress — rotation completes after the correct wall clock duration
       const elapsed = Date.now() - startTime;
       const progress = Math.min(elapsed / totalDuration, 1);
-      const angle = startAngle + progress * Math.PI * 2;
+      const deltaAngle = (progress - lastProgress) * Math.PI * 2;
+      lastProgress = progress;
 
-      camera.position.x = target.x + radius * Math.cos(angle);
-      camera.position.z = target.z + radius * Math.sin(angle);
-      camera.position.y = startY;
-      camera.lookAt(target);
+      // Quaternion orbit — same math as auto-rotation (screen-up axis)
+      controls.applyOrbitRotation(deltaAngle);
 
       if (progress >= 1) {
         turntableDone = true;
