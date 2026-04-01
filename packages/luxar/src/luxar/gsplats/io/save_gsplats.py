@@ -210,6 +210,7 @@ def _save_splat_arrays_to_group(
         data=chunk_bounds,
         chunks=(chunk_bounds.shape[0], ndim, 2),
         dtype=np.float32,
+        compressor=compressor,
     )
 
 
@@ -230,6 +231,7 @@ def save_gsplats(
     float16_allowed: bool = False,
     compress: Optional[Literal["zip", "tar.gz"]] = None,
     compressor: Optional[Any] = DEFAULT_COMP,
+    zip_deflate: bool = False,
 ) -> None:
     """Save Gaussian splats to .gsplats.zarr format.
 
@@ -249,6 +251,7 @@ def save_gsplats(
         description: Optional user description
         float16_allowed: Enable float16 encoding (default: False for compatibility)
         compress: Optional compression format ("zip" or "tar.gz"). Creates compressed archive.
+        zip_deflate: Use DEFLATE compression for the outer zip (default: STORED).
 
     Raises:
         ValueError: If arrays have incompatible shapes or invalid parameters
@@ -332,10 +335,10 @@ def save_gsplats(
             import zipfile
 
             if compress == "zip":
-                # Use ZIP_STORED (no compression) because zarr data is already
-                # compressed internally (Blosc/zstd). Double-compressing with
-                # deflate wastes CPU time for negligible size benefit.
-                with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as zipf:
+                zip_method = (
+                    zipfile.ZIP_DEFLATED if zip_deflate else zipfile.ZIP_STORED
+                )
+                with zipfile.ZipFile(path, "w", zip_method) as zipf:
                     for file_path in zarr_path.rglob("*"):
                         if file_path.is_file():
                             arcname = file_path.relative_to(zarr_path.parent)
