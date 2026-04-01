@@ -47,8 +47,14 @@ if __name__ == "__main__":
         ("cull_retention_defaults", inst.test_cull_retention_defaults),
         ("6d_channel_decoding", inst.test_6d_channel_decoding),
         ("tasks_per_job_manifest", inst.test_tasks_per_job_manifest),
-        ("env_capture_ld_library_path_prepend", inst.test_env_capture_ld_library_path_prepend),
-        ("sbatch_omits_channel_when_single", inst.test_sbatch_omits_channel_when_single),
+        (
+            "env_capture_ld_library_path_prepend",
+            inst.test_env_capture_ld_library_path_prepend,
+        ),
+        (
+            "sbatch_omits_channel_when_single",
+            inst.test_sbatch_omits_channel_when_single,
+        ),
     ]
 
     tests_with_tmp_path = [

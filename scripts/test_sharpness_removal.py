@@ -11,8 +11,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-import numpy as np
-
 # Re-export test functions from the pytest suite
 from luxar.gsplats.tests.test_gsplat_data import TestGSplatsWithoutSharpness
 
@@ -33,8 +31,14 @@ if __name__ == "__main__":
     passed = failed = 0
 
     tests_no_fixture = [
-        ("gsplat_data_no_sharpnesses_field", inst.test_gsplat_data_no_sharpnesses_field),
-        ("add_gsplats_signature_no_sharpness", inst.test_add_gsplats_signature_no_sharpness),
+        (
+            "gsplat_data_no_sharpnesses_field",
+            inst.test_gsplat_data_no_sharpnesses_field,
+        ),
+        (
+            "add_gsplats_signature_no_sharpness",
+            inst.test_add_gsplats_signature_no_sharpness,
+        ),
         ("fitting_returns_no_sharpness", inst.test_fitting_returns_no_sharpness),
     ]
 

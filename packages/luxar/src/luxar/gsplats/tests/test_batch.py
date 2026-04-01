@@ -525,9 +525,7 @@ class TestBatchPlanRegression:
         path = tmp_path / "test.zarr"
         z = zarr.open(str(path), mode="w")
         z.create_dataset("session1", data=np.ones((3, 10, 10), dtype=np.float32))
-        z.create_dataset(
-            "session2", data=np.ones((100, 20, 20), dtype=np.float32) * 2
-        )
+        z.create_dataset("session2", data=np.ones((100, 20, 20), dtype=np.float32) * 2)
 
         info = discover_ome_zarr_shape(path)
         assert info.shape == (100, 20, 20)

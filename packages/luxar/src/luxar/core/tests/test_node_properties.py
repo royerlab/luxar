@@ -763,5 +763,7 @@ class TestNodeColormap:
             points = scene.add_points("test", positions)
 
             lut = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
-            with pytest.raises(TypeError, match="Colormap property setter only accepts string"):
+            with pytest.raises(
+                TypeError, match="Colormap property setter only accepts string"
+            ):
                 points.colormap = lut

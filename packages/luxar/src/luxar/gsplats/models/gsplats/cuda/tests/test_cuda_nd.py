@@ -1571,7 +1571,12 @@ class TestBackward4D:
         cuda_output = cuda_model()
         cuda_target = torch.zeros_like(cuda_output)
         if cuda_output.dim() == 1:
-            center_idx = 4 * shape[1] * shape[2] * shape[3] + 4 * shape[2] * shape[3] + 4 * shape[3] + 4
+            center_idx = (
+                4 * shape[1] * shape[2] * shape[3]
+                + 4 * shape[2] * shape[3]
+                + 4 * shape[3]
+                + 4
+            )
             cuda_target[center_idx] = 1.0
         else:
             cuda_target[4, 4, 4, 4] = 1.0
@@ -1587,9 +1592,7 @@ class TestBackward4D:
         cuda_grad_cpu = cuda_grad.cpu()
 
         # Check gradient signs match for majority of elements
-        sign_match = (
-            (torch.sign(cpu_grad) == torch.sign(cuda_grad_cpu)).float().mean()
-        )
+        sign_match = (torch.sign(cpu_grad) == torch.sign(cuda_grad_cpu)).float().mean()
         assert sign_match > Tolerances.BACKWARD_SIGN_MATCH, (
             f"4D raw_a gradient sign match {sign_match:.2f} "
             f"< {Tolerances.BACKWARD_SIGN_MATCH}"
