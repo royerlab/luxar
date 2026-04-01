@@ -6,18 +6,33 @@
 
 ---
 
+## Status (Updated 2026-03-31)
+
+The following issues from the original review were **fixed in PR #53**:
+
+| Fixed Issue | Original Severity | File | Details |
+|-------------|-------------------|------|---------|
+| `test_positions_and_colors` missing value assertions | HIGH | `test_roundtrip.py` | Now uses `np.lexsort` to match points and `np.testing.assert_allclose` with `atol=2.0/255` for colors. |
+| `test_full_point_attributes` only checks shapes | HIGH | `test_roundtrip.py` | Now verifies positions, colors, radii, and sharpness values with appropriate tolerances (e.g., `atol=0.15` for uint8-quantized sharpness). |
+| `test_nested_groups_no_duplicates` used incorrect API and asserted wrong behavior | CRITICAL | `test_reader_nodes.py` | Rewritten to use full paths (`"GroupA/GroupAPoints"`) instead of `parent=` kwarg. Assertions now check full hierarchical names. Misleading "writer bug" comments removed. |
+| `test_compiler_with_memory_config` flaky due to unseeded RNG | MEDIUM (from cross-cutting #3) | `test_dtype_support.py` | Now uses `np.random.RandomState(42)` with a comment explaining the uint8/uint16 threshold sensitivity. |
+
+**Remaining issue counts:**
+
+| Severity | Original | Fixed | Remaining |
+|----------|----------|-------|-----------|
+| CRITICAL | 1 | 1 | 0 |
+| HIGH | 5 | 2 | 3 |
+| MEDIUM | 11 | 1 | 10 |
+| LOW | 8 | 0 | 8 |
+
+---
+
 ## Executive Summary
 
 The test suites are generally **well-structured and thorough**, with meaningful assertions, good edge case coverage, and clear separation of concerns. The encoding tests are particularly strong, with excellent boundary testing and real-world scenario validation (e.g., gsplat amplitudes). However, several issues ranging from medium to high severity were identified, primarily around missing coverage, weak assertions that could mask regressions, and a few tests that enforce potentially incorrect behavior.
 
-**Overall quality**: 7.5/10
-
-| Severity | Count |
-|----------|-------|
-| CRITICAL | 1 |
-| HIGH | 5 |
-| MEDIUM | 11 |
-| LOW | 8 |
+**Overall quality**: 7.5/10 (up from initial review, after PR #53 fixes)
 
 ---
 
@@ -74,7 +89,6 @@ The test suites are generally **well-structured and thorough**, with meaningful 
 
 | Finding | Severity | Description |
 |---------|----------|-------------|
-| `test_positions_and_colors` in test_roundtrip.py does not verify color VALUES | HIGH | Line 91 in test_roundtrip.py (cross-reference): `assert data["colors"].shape == colors.shape` -- only checks shape, not values. But in test_encoder.py's `test_color_sdr_auto_mode`, only dtype and encoding name are checked, not roundtrip value accuracy. The quantization error bound for SDR colors is only tested via test_decoder.py's `test_decode_color_uint8` with `atol=1/255`. Color roundtrip through the full pipeline (encoder -> zarr -> decoder) is not thoroughly tested for value accuracy. |
 | `test_lut_not_used_for_uint8` -- assertion could be stronger | LOW | Line 147: Only checks `enc["name"] != "lut_uint8"`. Should also verify the actual encoding used (e.g., `assert enc["name"] == "uint8"`). |
 | `test_non_uniform_not_broadcasted` -- weak assertion | MEDIUM | Line 68: Only checks `enc["name"] != "broadcasted"` for a 3-element array `[1.0, 2.0, 3.0]`. This small array will likely become a LUT. Test should assert the specific encoding used, not just "not broadcasted". |
 | No test for CHOLESKY encoding in AUTO mode | MEDIUM | Only MEMORY mode is tested for CHOLESKY (in test_edge_cases.py). AUTO mode behavior is untested. |
@@ -223,24 +237,6 @@ The test suites are generally **well-structured and thorough**, with meaningful 
 
 ---
 
-### test_reader_nodes.py
-
-**Purpose**: Guards against duplicate node collection in reader.
-
-| Finding | Severity | Description |
-|---------|----------|-------------|
-| Uses emoji in test output | LOW | Line 63: Uses emoji in `aprint`. Violates the project's convention of avoiding emoji (from CLAUDE.md). |
-| Comments reference a "writer bug" that may be fixed | CRITICAL | Lines 73-79: `# NOTE: Due to writer bug, points are at root level, not under parents`. The test then asserts `GroupAPoints` is at root level. If this bug was fixed in the writer, this test would FAIL on the correct behavior. Cross-referencing with `test_writer_parent_parameter.py`, the writer bug appears to be about using the `parent=` kwarg of `compiler.write_points()` vs. using full paths. The test uses `parent="GroupA"` style, and the comment says this places points at root. **However**, looking at the actual test code (lines 44-46), it uses `compiler.write_points("GroupAPoints", ..., parent="GroupA")` -- which according to the INVESTIGATION RESULT in test_writer_parent_parameter.py, is actually correct API usage. The assertion on line 77 (`assert "GroupAPoints" in names`) checks for root-level presence, which would be WRONG if the writer correctly nests under GroupA. This test may be enforcing incorrect behavior. |
-| Version check tests are good | -- | The `TestReaderVersionCheck` class properly tests warning on version mismatch and no-warning on matching version. |
-
-**Detailed analysis of the CRITICAL finding**: In `test_nested_groups_no_duplicates`, the test writes points using `compiler.write_points("GroupAPoints", ..., parent="GroupA")`. According to `test_writer_parent_parameter.py`, the CORRECT way to nest is to use full paths: `compiler.write_points("GroupA/GroupAPoints", ...)`. The `parent=` kwarg behavior is documented as working correctly in that test file. So either:
-1. The `parent=` kwarg silently writes to root (a bug that this test inadvertently encodes as "correct"), OR
-2. The `parent=` kwarg works correctly and this test's assertions are wrong.
-
-Either way, this test needs investigation and correction.
-
----
-
 ### test_roundtrip.py
 
 **Purpose**: Comprehensive round-trip tests for the Luxar zarr format.
@@ -248,7 +244,6 @@ Either way, this test needs investigation and correction.
 | Finding | Severity | Description |
 |---------|----------|-------------|
 | `test_positions_only` -- sorts before comparing | MEDIUM | Lines 53-54: The test sorts both arrays before comparison to account for spatial reordering. This is correct but means the test cannot detect if spatial reordering corrupts individual point coordinates (e.g., swapping x and y). A better approach would be to match points by nearest-neighbor. |
-| `test_full_point_attributes` -- only checks shapes | HIGH | Lines 117-120: After writing positions, colors, radii, and sharpness, the test only asserts on shapes. No value comparison at all. This test would pass even if all values were zeroed out during writing. |
 | No round-trip test for lines | MEDIUM | The file has extensive point round-trip tests but zero line round-trip tests. Lines have a more complex encoding (dual ordering, segments, widths) that would benefit from round-trip verification. |
 | No round-trip test for gsplats | MEDIUM | Same as above -- no gsplat round-trip tests despite gsplats being a first-class geometry type. |
 | `test_hdr_colors_preserved` uses `enable_spatial_index=False` | LOW | This avoids the sorting issue but means HDR colors are not tested through the spatial ordering path. |
@@ -300,7 +295,7 @@ There is no dedicated file that tests `ArrayEncoder.encode()` followed by `Array
 
 ### 3. Random Seeds and Test Determinism (MEDIUM)
 
-Most tests use `np.random.rand()` or `np.random.randn()` without seeds. While this provides broader coverage through randomization, it can cause intermittent failures. The encoding tests are especially sensitive because quantization boundaries depend on the exact data distribution. Two files use `np.random.seed(42)` (test_dynamic_range.py line 133, test_compiler_improvements.py line 807), but most do not.
+Most tests use `np.random.rand()` or `np.random.randn()` without seeds. While this provides broader coverage through randomization, it can cause intermittent failures. The encoding tests are especially sensitive because quantization boundaries depend on the exact data distribution. One file was fixed in PR #53 (`test_dtype_support.py`), but the pattern remains widespread. Two files use `np.random.seed(42)` (test_dynamic_range.py line 133, test_compiler_improvements.py line 807), but most do not.
 
 ### 4. Missing Coverage: UNIT_VECTOR in AUTO mode (MEDIUM)
 
@@ -314,22 +309,49 @@ MEMORY mode is tested for COORDINATE, CHOLESKY, and UNIT_VECTOR, but not for POS
 
 ## Recommendations (Priority Order)
 
-1. **CRITICAL**: Investigate and fix `test_reader_nodes.py::test_nested_groups_no_duplicates` -- it may be asserting wrong behavior for the `parent=` kwarg. Cross-reference with actual `compiler.write_points()` parent handling.
+1. **HIGH**: Create a dedicated encode-decode round-trip test that covers every encoding type (`bounded_scalar_uint8`, `bounded_scalar_uint16`, `log_scalar_uint8`, `log_scalar_uint16`, `rgb_uint8`, `rgb_uint16`, `lut_uint8`, `broadcasted`, `array_ref`, `float32`, `float16`, `none`).
 
-2. **HIGH**: Add value assertions to `test_roundtrip.py::test_full_point_attributes`. Currently only checks shapes.
+2. **HIGH**: Fix `test_ordering_lines.py::test_order_lines_preserves_connectivity` to actually verify edge connectivity preservation, not just index range validity.
 
-3. **HIGH**: Create a dedicated encode-decode round-trip test that covers every encoding type (`bounded_scalar_uint8`, `bounded_scalar_uint16`, `log_scalar_uint8`, `log_scalar_uint16`, `rgb_uint8`, `rgb_uint16`, `lut_uint8`, `broadcasted`, `array_ref`, `float32`, `float16`, `none`).
+3. **HIGH**: Expand `test_io_metadata.py` beyond a single test. It should cover dimension metadata, encoding metadata, version metadata, and node type metadata.
 
-4. **HIGH**: Fix `test_ordering_lines.py::test_order_lines_preserves_connectivity` to actually verify edge connectivity preservation, not just index range validity.
+4. **MEDIUM**: Add round-trip tests for Lines and GSplats geometry types.
 
-5. **HIGH**: Expand `test_io_metadata.py` beyond a single test. It should cover dimension metadata, encoding metadata, version metadata, and node type metadata.
+5. **MEDIUM**: Test `_full_map` fallback paths in `ArrayRefRegistry` (small arrays with same dtype/shape but different content, then same content with different dtype/shape).
 
-6. **MEDIUM**: Add round-trip tests for Lines and GSplats geometry types.
+6. **MEDIUM**: Add UNIT_VECTOR and CHOLESKY tests for AUTO mode.
 
-7. **MEDIUM**: Test `_full_map` fallback paths in `ArrayRefRegistry` (small arrays with same dtype/shape but different content, then same content with different dtype/shape).
+7. **MEDIUM**: Fix `test_zarr_nd_chunking.py::test_no_hardcoded_dimensions` to use matching Dimensions objects for non-3D data.
 
-8. **MEDIUM**: Add UNIT_VECTOR and CHOLESKY tests for AUTO mode.
+8. **LOW**: Extract cholesky factor construction helper in test_compiler_colormap.py to reduce repetition.
 
-9. **MEDIUM**: Fix `test_zarr_nd_chunking.py::test_no_hardcoded_dimensions` to use matching Dimensions objects for non-3D data.
+---
 
-10. **LOW**: Extract cholesky factor construction helper in test_compiler_colormap.py to reduce repetition.
+## Recommended Next Batch
+
+The following 5 issues represent the highest-impact remaining work, ordered by value:
+
+### 1. Create encode-decode round-trip test suite (HIGH -- Cross-Cutting #2)
+**Why**: This is the single highest-leverage addition. The encoder and decoder are tested separately, but no test verifies they agree on every encoding type end-to-end. A mismatch (e.g., encoder writes `log_scalar_uint16` but decoder expects different normalization) would be invisible to current tests.
+**Effort**: Medium. One new test file with a parametrized test over all ~12 encoding types.
+**File**: New `packages/luxar/src/luxar/encoding/tests/test_encode_decode_roundtrip.py`
+
+### 2. Fix line connectivity assertion (HIGH -- test_ordering_lines.py)
+**Why**: The test claims to verify a critical invariant (spatial reordering preserves line connectivity) but actually only checks index bounds. A bug that scrambles connectivity would pass silently. This is a correctness-critical code path.
+**Effort**: Low. Replace the range check with an edge-set comparison (extract position pairs from segments, compare as sets of frozensets).
+**File**: `packages/luxar/src/luxar/io/tests/test_ordering_lines.py`
+
+### 3. Expand test_io_metadata.py (HIGH)
+**Why**: One 19-line test for the entire IO metadata system is a coverage gap. Version, dimension, encoding, and node-type metadata are all load-bearing for cross-version compatibility.
+**Effort**: Medium. Add 4-5 focused tests covering each metadata category.
+**File**: `packages/luxar/src/luxar/io/tests/test_io_metadata.py`
+
+### 4. Add Lines and GSplats round-trip tests (MEDIUM -- test_roundtrip.py)
+**Why**: Lines (dual ordering, segments, widths) and GSplats (cholesky factors, amplitudes) are first-class geometry types with complex encoding, yet have zero round-trip coverage. Points are well-tested after PR #53, but the other two types are not.
+**Effort**: Medium. Two new test classes in `test_roundtrip.py`, following the existing Points pattern.
+**File**: `packages/luxar/src/luxar/io/tests/test_roundtrip.py`
+
+### 5. Test ArrayRefRegistry collision and fallback paths (MEDIUM -- test_registry.py)
+**Why**: The registry's `_full_map` fallback and hash collision handling are untested code paths that handle data deduplication correctness. A bug here could cause silent data corruption (wrong array referenced) or unnecessary duplication (wasted storage).
+**Effort**: Low-Medium. Create synthetic arrays that trigger the small-array `_full_map` fallback path.
+**File**: `packages/luxar/src/luxar/encoding/tests/test_registry.py`

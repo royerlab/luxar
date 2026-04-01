@@ -3,6 +3,30 @@
 **Date**: 2026-03-31
 **Scope**: All 29 spec files in `packages/luxar-viewer/src/tests/e2e/`
 **Reviewer**: Claude Code (automated review)
+**Last updated**: 2026-03-31 (post PR #53 fixes)
+
+---
+
+## Status: Issues Fixed in PR #53
+
+The following issues from the original review have been addressed:
+
+### error-recovery.spec.ts (3 CRITICAL issues resolved)
+- **Corrupted .zmetadata test**: Was navigating to a non-existent `http://localhost:9000/corrupted.zarr` (testing 404, not corruption). Now uses `page.route('**/.zmetadata', ...)` to intercept and return corrupted JSON `'{"this is not valid json: {{[[[' ` against a real dataset. **(CRITICAL -> FIXED)**
+- **Missing positions test**: Was navigating to non-existent `no-positions.zarr` (testing 404 again). Now uses `page.route('**/positions/**', ...)` and `page.route('**/positions/.zarray', ...)` to return 404 for position data while letting metadata through. **(CRITICAL -> FIXED)**
+- **Network failure mid-load test**: Was loading `/?debug` with no dataset and asserting `initialized === true` (tested nothing). Now uses `page.route()` to let metadata through and abort chunk requests after the first 2 succeed, simulating real mid-load failure. **(CRITICAL -> FIXED)**
+
+### data-monitor-metrics.spec.ts (1 CRITICAL + 1 HIGH issue resolved)
+- **No assertion on monitorVisible (line 66)**: Was `console.log(...)` only, always passed. Now asserts `expect(monitorVisible).toBe(true)`. **(CRITICAL -> FIXED)**
+- **Silent if/return guards**: `if (!metrics) { return; }` patterns replaced with `expect(metrics).toBeTruthy()` and `expect(metrics!.hasMonitor).toBe(true)`, so missing monitor API now fails the test. **(HIGH -> FIXED)**
+
+### controls-interaction.spec.ts (3 HIGH issues resolved)
+- **Fullscreen no-op test**: Was always passing regardless of outcome. Now marked as `test.fixme('fullscreen is blocked in headless Chromium')` so it is explicitly skipped and visible in reports. **(HIGH -> FIXED)**
+- **Camera test used JS property assignment**: Was directly mutating `camera.position.z` and reading it back (tested nothing). Now performs a real mouse drag (`page.mouse.down() -> move -> up()`) and verifies camera position changed. **(HIGH -> FIXED)**
+- **Control mode switching didn't verify change**: `expect(['orbit', 'arcball', 'fly']).toContain(newType)` passed even without mode change. Now also asserts `expect(newType).not.toBe(initialType)`. **(HIGH -> FIXED)**
+
+### Partially addressed
+- **Help overlay selector (controls-interaction.spec.ts)**: The ultra-broad `body.includes('Help')` fallback was tightened, but still uses `body.includes('Keyboard Shortcuts')` which is fragile (see remaining finding #4.2). **(MEDIUM -> PARTIALLY FIXED)**
 
 ---
 
@@ -67,15 +91,12 @@ However, there are systemic issues: **weak assertions** (many tests verify only 
 
 ### 4. controls-interaction.spec.ts
 
-**Severity: MEDIUM**
+**Severity: LOW** (improved from MEDIUM after PR #53 fixes)
 
 **Rigor**: Reasonable for basic keyboard shortcut verification.
 
-**Issues**:
-- **`should toggle fullscreen with Space key`** (line 15): The test acknowledges fullscreen is blocked in headless Chromium and passes regardless of outcome. This is effectively a no-op test -- it verifies "pressing Space doesn't crash", not that fullscreen works. (HIGH)
-- **`should show help overlay with H key`** (line 50): Fallback check `body.includes('Keyboard Shortcuts') || body.includes('Controls') || body.includes('Help')` is extremely broad. Any DOM element containing the word "Help" would pass. (MEDIUM)
-- **`should track camera position changes`** (line 79): Directly mutates `camera.position.z` and reads it back. This doesn't test any user interaction -- it tests that JavaScript property assignment works. (HIGH)
-- **`should switch control modes`** (line 105): Presses 'v' once and checks the control type is valid. Doesn't verify it actually _changed_. The assertion `expect(['orbit', 'arcball', 'fly']).toContain(newType)` would pass even if the mode didn't change. (HIGH)
+**Remaining Issues**:
+- **`should show help overlay with H key`**: The tightened selector still falls back to `body.includes('Keyboard Shortcuts')` which is fragile -- any DOM element containing that string would pass. Should use a specific CSS selector. (MEDIUM)
 - **Overlap with `keyboard-input-system.spec.ts`**: Both test 'v' for control switching, 'h' for help. (MEDIUM)
 
 ---
@@ -95,13 +116,11 @@ However, there are systemic issues: **weak assertions** (many tests verify only 
 
 ### 6. data-monitor-metrics.spec.ts
 
-**Severity: MEDIUM**
+**Severity: LOW** (improved from MEDIUM after PR #53 fixes)
 
-**Rigor**: Tests the data monitor API but assertions are very loose.
+**Rigor**: Tests the data monitor API with proper assertions.
 
-**Issues**:
-- **`should show monitor UI via M key press`** (line 66): After pressing M and checking for a monitor panel, the test only does `console.log('Monitor visible after M key:', monitorVisible)` -- **no assertion on `monitorVisible`**. This test always passes. (CRITICAL)
-- **Optional monitor pattern** (lines 53, 102): Multiple tests use `if (!metrics) { return; }` or `if (metrics && metrics.hasMonitor)` guards. If the monitor API changes or breaks, these tests silently pass. (HIGH)
+**Remaining Issues**:
 - **`should not grow infinitely with interactions`** (line 86): Uses `page.mouse.wheel(0, 100)` which may not trigger re-queries for a 3D dataset. The test may not actually exercise the accumulation bug it claims to catch. (MEDIUM)
 
 ---
@@ -149,17 +168,14 @@ However, there are systemic issues: **weak assertions** (many tests verify only 
 
 ### 10. error-recovery.spec.ts
 
-**Severity: HIGH**
+**Severity: MEDIUM** (improved from HIGH after PR #53 fixes)
 
-**Rigor**: Tests error conditions but many assertions are tautological.
+**Rigor**: Tests error conditions with proper route interception for corruption and network failure scenarios.
 
-**Issues**:
-- **`should handle corrupted .zmetadata gracefully`** (line 45): Navigates to `http://localhost:9000/corrupted.zarr` which almost certainly doesn't exist. The test is actually testing "non-existent dataset" again, not "corrupted metadata". (CRITICAL)
-- **`should handle missing positions array`** (line 66): Same issue -- `no-positions.zarr` doesn't exist. Tests the same 404 path as the first test. (CRITICAL)
-- **`should recover if network fails mid-load`** (line 108): Loads `/?debug` (no dataset), waits for init, and asserts `state.initialized === true`. This doesn't test network-mid-load failure at all. (CRITICAL)
-- **`should handle empty dataset gracefully`** (line 187): Loads `/?debug` (no dataset). Tests that the viewer initializes without a dataset, not that it handles an empty dataset. (HIGH)
-- **WebGL context loss test** (line 128): Loses and restores context via extension, but the GL context returned by `getContext('webgl2')` after loss is likely `null`, making the `restoreContext()` call fail silently. The test should get the extension before loss. (HIGH)
-- **Memory limit test** (line 263): Uses `performance.memory` which is Chrome-only and non-standard. Test may not work in Firefox/Safari Playwright runs. Has a guard (`if (!perf.memory) return true`) but this means the test always passes on those browsers. (MEDIUM)
+**Remaining Issues**:
+- **`should handle empty dataset gracefully`** (line 248): Loads `/?debug` (no dataset). Tests that the viewer initializes without a dataset, not that it handles an empty dataset (a dataset with 0 points). (HIGH)
+- **WebGL context loss test** (line 189): Loses and restores context via extension, but the GL context returned by `getContext('webgl2')` after loss is likely `null`, making the `restoreContext()` call fail silently. The test should get the extension before loss. (HIGH)
+- **Memory limit test** (line 324): Uses `performance.memory` which is Chrome-only and non-standard. Test may not work in Firefox/Safari Playwright runs. Has a guard (`if (!perf.memory) return true`) but this means the test always passes on those browsers. (MEDIUM)
 
 ---
 
@@ -458,7 +474,6 @@ Several groups of specs cover substantially the same ground:
 ### 4. Tests That Can Never Fail (CRITICAL)
 
 Several tests have assertion patterns that always pass:
-- `data-monitor-metrics.spec.ts:66` -- No assertion on `monitorVisible`
 - `nd-navigation.spec.ts:269` -- Falls through to "feature not implemented, test passes"
 - `python-typescript-integration.spec.ts:72` -- `typeof boolean === 'boolean'` always true
 - `real-dataset-loading.spec.ts:183` -- Same pattern
@@ -479,35 +494,59 @@ The helpers in `helpers.ts` correctly standardize this with fallbacks, but indiv
 
 ---
 
-## Summary of Findings by Severity
+## Summary of Remaining Findings by Severity
 
 | Severity | Count | Key Examples |
 |----------|-------|-------------|
-| CRITICAL | 10 | No-op tests in `data-monitor-metrics`, `worker-wasm-integration`; wrong behavior in `error-recovery` (tests 404 not corruption); wrong selector in `real-dataset-loading` (`attrs.size` vs `attrs.radius`); race condition in performance baselines; spatial-index tests verify nothing |
-| HIGH | 19 | Weak assertions that always pass; missing dataset reference; inconsistent selectors; tests that skip silently on failure; console-log-dependent assertions |
-| MEDIUM | 25 | Overlapping coverage; waitForTimeout overuse; hardcoded strings; debug path inconsistency; loose visual regression tolerances |
+| CRITICAL | 6 | No-op tests in `worker-wasm-integration`; wrong attribute name in `real-dataset-loading` (`attrs.size` vs `attrs.radius`); race condition in performance baselines; spatial-index tests verify nothing |
+| HIGH | 16 | Weak assertions that always pass; missing dataset reference; inconsistent selectors; tests that skip silently on failure; console-log-dependent assertions |
+| MEDIUM | 24 | Overlapping coverage; waitForTimeout overuse; hardcoded strings; debug path inconsistency; loose visual regression tolerances |
 | LOW | 15 | Minor style issues; redundant screenshots; hard-coded magic values |
 
 ---
 
 ## Recommendations (Priority Order)
 
-1. **Fix CRITICAL no-op tests**: `data-monitor-metrics:66` needs an actual assertion. `worker-wasm-integration` needs to verify Worker/WASM are actually used (check console logs for WASM init, or expose worker status on debug interface).
+1. **Fix CRITICAL no-op tests**: `worker-wasm-integration` needs to verify Worker/WASM are actually used (check console logs for WASM init, or expose worker status on debug interface).
 
-2. **Fix `error-recovery.spec.ts`**: Create actual corrupted/malformed test fixtures instead of relying on 404s from non-existent files. Three tests are testing the exact same 404 path.
+2. **Fix wrong selector**: `real-dataset-loading.spec.ts:236` checks `attrs.size` but the attribute name is `radius`.
 
-3. **Fix wrong selector**: `real-dataset-loading.spec.ts:236` checks `attrs.size` but the attribute name is `radius`.
+3. **Unify dimension slider selectors**: Determine whether the correct class is `.dimension-sliders` or `.luxar-dimension-sliders` and fix all specs.
 
-4. **Unify dimension slider selectors**: Determine whether the correct class is `.dimension-sliders` or `.luxar-dimension-sliders` and fix all specs.
+4. **Add missing dataset**: Either add `time_animated_example.zarr` to the required datasets list and example scripts, or update `dimension-initialization.spec.ts` to use an existing dataset.
 
-5. **Add missing dataset**: Either add `time_animated_example.zarr` to the required datasets list and example scripts, or update `dimension-initialization.spec.ts` to use an existing dataset.
+5. **Strengthen assertions in spatial-index-accuracy.spec.ts**: The spec should verify actual query results (expected point counts at known positions), not just `state.initialized === true`.
 
-6. **Strengthen assertions in spatial-index-accuracy.spec.ts**: The spec should verify actual query results (expected point counts at known positions), not just `state.initialized === true`.
+6. **Replace `waitForTimeout` with condition-based waits**: Systematic pass through all specs replacing arbitrary timeouts with the condition-based helpers already available.
 
-7. **Replace `waitForTimeout` with condition-based waits**: Systematic pass through all specs replacing arbitrary timeouts with the condition-based helpers already available.
+7. **Consider consolidating overlapping specs**: Merge `basic-rendering` + `viewer-initialization`, merge `spatial-index-accuracy` into `nd-navigation`, and reduce the 4 dataset-loading specs to 2 (smoke test + detailed fixture test).
 
-8. **Consider consolidating overlapping specs**: Merge `basic-rendering` + `viewer-initialization`, merge `spatial-index-accuracy` into `nd-navigation`, and reduce the 4 dataset-loading specs to 2 (smoke test + detailed fixture test).
+8. **Fix performance baseline race condition**: Use a mutex/lock file or run performance tests serially.
 
-9. **Fix performance baseline race condition**: Use a mutex/lock file or run performance tests serially.
+9. **Add real Worker/WASM verification**: Expose `wasmLoaded` and `workerPoolActive` on the debug interface so tests can verify the actual execution path.
 
-10. **Add real Worker/WASM verification**: Expose `wasmLoaded` and `workerPoolActive` on the debug interface so tests can verify the actual execution path.
+---
+
+## Recommended Next Batch
+
+The following 5 issues represent the highest-impact remaining fixes, ordered by value:
+
+### 1. worker-wasm-integration.spec.ts -- Rewrite to actually test Workers and WASM (CRITICAL)
+**Impact**: 5 tests (3 CRITICAL, 1 HIGH, 1 MEDIUM) currently give complete false confidence. None verify that Workers or WASM are actually used. This is the single largest gap in the test suite.
+**Fix**: Expose `wasmLoaded` and `workerPoolActive` booleans on `window.__luxarDebug`. For the worker-fallback test, use `page.route()` to intercept and break the worker script URL, then verify main-thread fallback activates. For WASM, check for WASM-specific console logs or the debug flag.
+
+### 2. spatial-index-accuracy.spec.ts -- Add real accuracy assertions (CRITICAL)
+**Impact**: 6 tests claiming to verify spatial index correctness verify nothing beyond `state.initialized === true`. A completely broken spatial index would pass all tests.
+**Fix**: Use a known test fixture (e.g., `dense_grid_5d_example.zarr`) where exact point counts at specific slice positions are deterministic. Assert `state.totalPoints === expectedCount` after navigating to known positions.
+
+### 3. real-dataset-loading.spec.ts -- Fix `attrs.size` to `attrs.radius` (CRITICAL)
+**Impact**: The rendering properties test has always had `hasRadii === false` because it checks the wrong attribute name. This means radius data loading has zero E2E test coverage.
+**Fix**: Change `attrs.size` to `attrs.radius` (one-line fix, high value).
+
+### 4. nd-navigation.spec.ts -- Fix selector inconsistency and strengthen assertions (HIGH)
+**Impact**: 4 HIGH-severity issues. The wrong `.dimension-sliders` selector means slider visibility tests may not be finding the real element. Weak fallback assertions mean spatial query failures are invisible.
+**Fix**: Change `.dimension-sliders` to `.luxar-dimension-sliders` in both locations. Replace `expect(state.initialized).toBe(true)` fallbacks with `expect.fail('No spatial query logs found')` to surface real failures.
+
+### 5. performance-tracking.spec.ts -- Fix baseline file race condition (CRITICAL)
+**Impact**: Parallel test workers doing read-modify-write on `performance-baselines.json` without locking can corrupt the file, causing cascading flaky failures.
+**Fix**: Either run performance tests with `test.describe.serial()`, use a file lock (e.g., `proper-lockfile`), or eliminate the shared baseline file entirely by using inline thresholds.

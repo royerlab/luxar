@@ -6,6 +6,14 @@
 
 ---
 
+## Status
+
+**Last reviewed**: 2026-03-31
+**Last status update**: 2026-03-31
+**Fixes applied**: None. All 5 MEDIUM and 12 LOW issues remain open. PR #53 did not address any findings from this report (the gsplats suite was already graded A-). All issues were re-verified against the current codebase on 2026-03-31 and confirmed still present.
+
+---
+
 ## Executive Summary
 
 The gsplats test suite is **well-structured and comprehensive overall**. Test organization follows the source code layout closely, assertions are generally meaningful, and edge cases are well-covered. The suite demonstrates mature engineering practices: parametric fixtures, round-trip testing, numerical stability checks, and cross-device/cross-backend validation.
@@ -416,3 +424,25 @@ The test suite is well above average for a research/scientific computing codebas
 - Quality gate assertions (PSNR, SSIM, MSE thresholds)
 
 The main gaps are a handful of loose assertions in integration tests and some code duplication in test utilities. No tests were found to be enforcing incorrect behavior, and no deprecated API references were detected.
+
+---
+
+## Recommended Next Batch
+
+The following 5 issues are the highest-impact fixes remaining, ordered by value:
+
+1. **Extract shared `validate_gsplatdata` to `conftest.py`** (MEDIUM, cross-cutting, 5 files)
+   Files: `seeds/tests/test_edges.py`, `test_generate_seeds.py`, `test_grid.py`, `test_multiscale_decomposition.py`, `test_seeds_integration.py`.
+   **Why first**: This is pure code hygiene with zero risk of breakage. A single shared helper in `seeds/tests/conftest.py` eliminates ~100 lines of near-identical duplication and makes future validation changes propagate automatically.
+
+2. **Strengthen `test_cumulative_psnr_increases`** (MEDIUM, `test_progressive_fitting.py`)
+   The test name promises monotonically increasing PSNR but only asserts `p > 0`. Either use a larger test volume (e.g., 64x64 with a clear gradient) so PSNR genuinely increases across passes, or rename to `test_cumulative_psnr_positive` to match reality. A misleading test name is worse than a weak assertion because it gives false confidence.
+
+3. **Tighten `test_volume_proportional_scaling`** (MEDIUM, `test_fit_gsplats.py`)
+   Both the 16x16 and 32x32 volumes likely hit the 50-seed minimum floor, making the `>=` assertion trivially true. Use volumes of at least 64x64 and 128x128 (or lower the minimum seed count in the test) so the scaling logic is actually exercised. This is a straightforward parameter change.
+
+4. **Add exact scaling factor assertion in `test_3d_gradient_dilution`** (MEDIUM, `optim/tests/test_integration.py`)
+   Currently asserts `actual_lr > 0.1` which passes for any positive scaling. Assert the expected ~1.8x factor with a reasonable tolerance (e.g., `pytest.approx(0.18, rel=0.1)`) to catch formula regressions.
+
+5. **Strengthen `test_fitting_config.py` beyond constructor smoke tests** (MEDIUM, `fitting/tests/test_fitting_config.py`)
+   All four test classes only verify that dataclass construction works. Add tests for: default value correctness, validation logic (if any), and `asdict()` roundtrip. If the dataclasses truly have no logic, consider removing these tests to avoid giving false coverage credit -- or add validation constraints to the dataclasses and test those.

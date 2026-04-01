@@ -372,7 +372,7 @@ describe('GeometryUpdateManager', () => {
       const metadata = { color_mode: 'hdr' };
 
       manager.validateColorMode(colors, metadata);
-      // Should log a warning about mismatch
+      expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
     });
   });

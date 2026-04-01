@@ -233,7 +233,7 @@ test.describe('Real Dataset Loading', () => {
         if (obj.type === 'Points' && obj.geometry) {
           const attrs = obj.geometry.attributes;
           if (attrs.color) hasColors = true;
-          if (attrs.size) hasRadii = true;
+          if (attrs.radius) hasRadii = true;
         }
       });
 
