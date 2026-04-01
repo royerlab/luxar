@@ -10,7 +10,7 @@ import { SceneLoader, type LoaderConfig, type ViewState } from '../../../data';
 import * as THREE from 'three';
 import * as zarr from 'zarrita';
 
-// Mock THREE.js
+// Mock THREE.js (external dependency - requires WebGL context, must be mocked in unit tests)
 vi.mock('three', () => ({
   Group: vi.fn().mockImplementation(() => ({
     add: vi.fn(),
@@ -178,7 +178,7 @@ vi.mock('three', () => ({
   AdditiveBlending: 2,
 }));
 
-// Mock zarrita
+// Mock zarrita (external dependency - network I/O for zarr stores)
 vi.mock('zarrita', () => ({
   FetchStore: vi.fn(),
   tryWithConsolidated: vi.fn(),
@@ -188,7 +188,9 @@ vi.mock('zarrita', () => ({
   slice: vi.fn((start, end) => ({ start, end })),
 }));
 
-// Mock material manager
+// Mock material manager (depends on WebGL shader compilation - must be mocked)
+// TODO: Consider extracting material creation logic into pure functions that can be tested
+// without WebGL, reducing the need for this mock.
 vi.mock('../../../rendering/material-manager', () => ({
   materialManager: {
     getPointMaterial: vi.fn().mockReturnValue({
@@ -201,69 +203,18 @@ vi.mock('../../../rendering/material-manager', () => ({
   },
 }));
 
-// Mock DataLoadingMonitor
-vi.mock('../ui/data-loading-monitor', () => ({
-  DataLoadingMonitor: vi.fn().mockImplementation(() => ({
-    connectLoader: vi.fn(),
-    show: vi.fn(),
-    hide: vi.fn(),
-    toggle: vi.fn(),
-    dispose: vi.fn(),
-  })),
-}));
-
-// Mock PointSpatialIndexLoader
-vi.mock('../data/point-spatial-index-loader', () => ({
-  PointSpatialIndexLoader: vi.fn().mockImplementation(() => ({
-    loadPoints: vi.fn().mockResolvedValue({
-      positions: new Float32Array([1, 2, 3, 4, 5, 6]),
-      colors: new Float32Array([1, 0, 0, 0, 1, 0]),
-      radii: new Float32Array([0.1, 0.2]),
-      metadata: {
-        totalPoints: 2,
-        loadedPoints: 2,
-        bounds: {
-          clone: vi.fn().mockReturnThis(),
-          expandByPoint: vi.fn(),
-        },
-        ndim: 3,
-        usedSpatialIndex: true,
-      },
-    }),
-    updateView: vi.fn().mockResolvedValue({
-      positions: new Float32Array([1, 2, 3]),
-      metadata: {
-        totalPoints: 1,
-        loadedPoints: 1,
-        bounds: {
-          clone: vi.fn().mockReturnThis(),
-          expandByPoint: vi.fn(),
-        },
-        ndim: 3,
-        usedSpatialIndex: true,
-      },
-    }),
-    dispose: vi.fn(),
-  })),
-}));
-
-// Mock DataMonitorManager before importing SceneLoader
-vi.mock('../data/data-monitor-manager', () => ({
-  DataMonitorManager: {
-    getInstance: vi.fn(() => ({
-      getMonitor: vi.fn(() => null),
-      hasMonitor: vi.fn(() => false),
-      createMonitor: vi.fn(() => ({
-        show: vi.fn(),
-        hide: vi.fn(),
-        toggle: vi.fn(),
-      })),
-      showMonitor: vi.fn(),
-      hideMonitor: vi.fn(),
-      toggleMonitor: vi.fn(),
-    })),
-  },
-}));
+// NOTE: Previous mocks for DataLoadingMonitor ('../ui/data-loading-monitor'),
+// PointSpatialIndexLoader ('../data/point-spatial-index-loader'), and
+// DataMonitorManager ('../data/data-monitor-manager') were removed because
+// their paths were relative to the test file location (src/tests/unit/data/)
+// and resolved to non-existent modules, making them dead code that never
+// intercepted any real imports. The SceneLoader's actual imports resolve
+// from src/data/ and are not affected by those mock paths.
+//
+// If mocking these becomes necessary in the future, use paths relative to
+// the test file that resolve to the actual source modules, e.g.:
+//   vi.mock('../../../data/point-spatial-index-loader', ...)
+//   vi.mock('../../../data/data-monitor-manager', ...)
 
 describe('SceneLoader', () => {
   let sceneLoader: SceneLoader;

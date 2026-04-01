@@ -26,7 +26,7 @@ export default [
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
       'semi': ['error', 'always'],
-      'quotes': ['error', 'single'],
+      'quotes': ['error', 'single', { avoidEscape: true }],
       'indent': 'off', // Handled by prettier — eslint indent conflicts with prettier ternary formatting
       'no-undef': 'off', // TypeScript handles this
     },

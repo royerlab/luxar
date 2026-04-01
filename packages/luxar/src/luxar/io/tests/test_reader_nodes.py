@@ -33,6 +33,7 @@ class TestReaderNodeCollection:
         output_path = tmp_path / "nested_groups.zarr"
 
         # Create nested structure: Root -> GroupA -> GroupB -> Points
+        # Use full paths (not parent= kwarg which doesn't exist on write_points)
         with LuxarZarrCompiler(output_path) as compiler:
             scene_node = compiler.create_scene(dimensions=Dimensions.default_3d())
 
@@ -42,15 +43,15 @@ class TestReaderNodeCollection:
             # Create nested groups
             group_a = scene_node.add_group("GroupA")
             compiler.write_points(
-                "GroupAPoints", np.array([[1, 1, 1]], dtype=np.float32), parent="GroupA"
+                "GroupA/GroupAPoints",
+                np.array([[1, 1, 1]], dtype=np.float32),
             )
 
             # Create nested group under GroupA
             _group_b = group_a.add_group("GroupB")
             compiler.write_points(
-                "GroupBPoints",
+                "GroupA/GroupB/GroupBPoints",
                 np.array([[2, 2, 2]], dtype=np.float32),
-                parent="GroupA/GroupB",
             )
 
         # Load and verify
@@ -58,7 +59,7 @@ class TestReaderNodeCollection:
         nodes = scene.nodes
 
         # Check total count
-        aprint(f"\n📊 Total nodes found: {len(nodes)}")
+        aprint(f"\nTotal nodes found: {len(nodes)}")
         for node in nodes:
             aprint(f"  - {node['name']} ({node['type']})")
 
@@ -69,14 +70,12 @@ class TestReaderNodeCollection:
         # Assertion: No duplicates should exist
         assert len(duplicates) == 0, f"Found duplicate nodes: {duplicates}"
 
-        # Verify expected nodes are present
-        # NOTE: Due to writer bug, points are at root level, not under parents
-        # This test verifies reader works correctly for the actual structure written
+        # Verify expected nodes are present with correct hierarchy
         assert "RootPoints" in names
         assert "GroupA" in names
-        assert "GroupAPoints" in names  # Currently at root (writer bug)
+        assert "GroupA/GroupAPoints" in names
         assert "GroupA/GroupB" in names
-        assert "GroupBPoints" in names  # Currently at root (writer bug)
+        assert "GroupA/GroupB/GroupBPoints" in names
 
         # Verify each node appears exactly once
         for name in names:
@@ -129,7 +128,8 @@ class TestReaderNodeCollection:
             # Add group with nested content
             _group = scene_node.add_group("MyGroup")
             compiler.write_points(
-                "GroupPoints", np.array([[2, 2, 2]], dtype=np.float32), parent="MyGroup"
+                "MyGroup/GroupPoints",
+                np.array([[2, 2, 2]], dtype=np.float32),
             )
 
         scene = LuxarScene.load(output_path)

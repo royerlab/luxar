@@ -43,20 +43,35 @@ test.describe('Error Recovery - Invalid Datasets', () => {
   });
 
   test('should handle corrupted .zmetadata gracefully', async ({ page }) => {
+    const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));
 
-    // Try to load dataset that will fail during metadata parsing
-    await page.goto('/?src=http://localhost:9000/corrupted.zarr&debug');
+    // Intercept .zmetadata requests and return corrupted JSON
+    await page.route('**/.zmetadata', (route) => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: '{"this is not valid json: {{[[[',
+      });
+    });
 
-    // Should either show error or fallback gracefully
-    await page.waitForTimeout(5000);
+    await page.goto(`/?src=${DATASET}&debug`);
 
-    // Verify app didn't crash (error message OR dataset browser should appear)
+    // Should show error dialog or dataset browser (graceful handling, not crash)
+    await page.waitForSelector(
+      '.error-message, .luxar-error-dialog, .dataset-browser, .luxar-dataset-browser',
+      {
+        timeout: 30000,
+      }
+    );
+
     const hasErrorOrBrowser = await page.evaluate(() => {
       return (
         document.querySelector('.error-message') !== null ||
-        document.querySelector('.dataset-browser') !== null
+        document.querySelector('.luxar-error-dialog') !== null ||
+        document.querySelector('.dataset-browser') !== null ||
+        document.querySelector('.luxar-dataset-browser') !== null
       );
     });
 
@@ -64,22 +79,38 @@ test.describe('Error Recovery - Invalid Datasets', () => {
   });
 
   test('should handle missing positions array', async ({ page }) => {
-    // This would be a dataset with .zmetadata but missing critical data
-    // For now, test that missing dataset URL shows proper error
-    await page.goto('/?src=http://localhost:9000/no-positions.zarr&debug');
+    const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
+    const errors: string[] = [];
+    page.on('pageerror', (err) => errors.push(err.message));
 
-    await page.waitForTimeout(3000);
+    // Intercept requests for positions data and return 404
+    await page.route('**/positions/**', (route) => {
+      route.fulfill({ status: 404, body: 'Not Found' });
+    });
+    await page.route('**/positions/.zarray', (route) => {
+      route.fulfill({ status: 404, body: 'Not Found' });
+    });
 
-    // Should show error or dataset browser (graceful handling)
-    const recovered = await page.evaluate(() => {
+    await page.goto(`/?src=${DATASET}&debug`);
+
+    // Should show error dialog or dataset browser (graceful handling, not crash)
+    await page.waitForSelector(
+      '.error-message, .luxar-error-dialog, .dataset-browser, .luxar-dataset-browser',
+      {
+        timeout: 30000,
+      }
+    );
+
+    const hasErrorOrBrowser = await page.evaluate(() => {
       return (
         document.querySelector('.error-message') !== null ||
+        document.querySelector('.luxar-error-dialog') !== null ||
         document.querySelector('.dataset-browser') !== null ||
-        (window as any).__luxarDebug?.getState()?.initialized === true
+        document.querySelector('.luxar-dataset-browser') !== null
       );
     });
 
-    expect(recovered).toBe(true);
+    expect(hasErrorOrBrowser).toBe(true);
   });
 });
 
@@ -105,22 +136,52 @@ test.describe('Error Recovery - Network Failures', () => {
     expect(hasRecovery).toBe(true);
   });
 
-  test('should recover if network fails mid-load', async ({ page }) => {
-    // Load a valid dataset, then simulate network failure
-    // This is tricky to test without mocking, so we verify error handling exists
-
+  test('should handle network failure mid-load gracefully', async ({ page }) => {
+    const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));
 
-    await page.goto('/?debug');
-    await waitForLuxarReady(page);
+    // Let metadata requests through, but abort chunk data requests
+    let requestCount = 0;
+    await page.route(`${DATASET}/**`, (route) => {
+      const url = route.request().url();
+      // Let .zmetadata and .zarray (metadata) through
+      if (
+        url.includes('.zmetadata') ||
+        url.includes('.zarray') ||
+        url.includes('.zattrs') ||
+        url.includes('.zgroup')
+      ) {
+        route.continue();
+        return;
+      }
+      // Let the first few data chunk requests through, then abort the rest
+      requestCount++;
+      if (requestCount <= 2) {
+        route.continue();
+      } else {
+        route.abort('connectionfailed');
+      }
+    });
 
-    // Should initialize without crashing
-    const state = await getLuxarState(page);
-    expect(state.initialized).toBe(true);
+    await page.goto(`/?src=${DATASET}&debug`);
 
-    // Even if errors occurred during optional resource loading, app should work
-    // (Some 404s are expected for optional features)
+    // Wait for the viewer to handle the partial load
+    await page.waitForTimeout(10000);
+
+    // The app should not have crashed with unhandled exceptions
+    // It should show an error, dataset browser, or still be initialized (partial load)
+    const handled = await page.evaluate(() => {
+      return (
+        document.querySelector('.error-message') !== null ||
+        document.querySelector('.luxar-error-dialog') !== null ||
+        document.querySelector('.dataset-browser') !== null ||
+        document.querySelector('.luxar-dataset-browser') !== null ||
+        (window as any).__luxarDebug?.getState?.()?.initialized === true
+      );
+    });
+
+    expect(handled).toBe(true);
   });
 });
 

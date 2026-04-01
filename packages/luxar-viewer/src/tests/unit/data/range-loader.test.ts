@@ -1,27 +1,756 @@
-import { describe, expect, it } from 'vitest';
+/**
+ * Tests for RangeLoader - encoding detection and range-based decoding
+ *
+ * Tests cover:
+ * - detectEncoding: All encoding types
+ * - loadDirect: Unencoded float32/uint8 data
+ * - loadBroadcasted: Single value expansion
+ * - loadQuantized: Dequantization math (linear and log-space)
+ * - loadLUT: Lookup table index-based decoding (row and scalar modes)
+ *
+ * Mocking strategy: Only zarr I/O (external) is mocked. RangeLoader's
+ * internal logic (encoding detection, dequantization, broadcast, LUT)
+ * is tested with real code.
+ */
 
-import { type ArrayMetadata } from '../../../data/array-decoder';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import type { ArrayMetadata } from '../../../data/array-decoder';
+import { ArrayRefRegistry } from '../../../data/array-decoder';
 import { RangeLoader } from '../../../data/loaders/range-loader';
+import type { LoadRange } from '../../../data/loaders/range-loader';
+
+// ---------------------------------------------------------------------------
+// Mock zarr I/O and worker infrastructure (external dependencies only)
+// ---------------------------------------------------------------------------
+
+// Mock the config to disable workers (test main-thread paths)
+vi.mock('../../../config', () => ({
+  config: {
+    dataLoading: {
+      performance: {
+        useWebWorkers: false,
+      },
+    },
+  },
+}));
+
+// Mock worker-pool so it's never called
+vi.mock('../../../workers/worker-pool', () => ({
+  getWorkerPool: () => {
+    throw new Error('Workers should not be used in tests');
+  },
+}));
+
+// Mock zarrita get/slice to return controlled data
+vi.mock('zarrita', async () => {
+  const actual = await vi.importActual('zarrita');
+  return {
+    ...actual,
+    // get() is replaced per-test via mockZarrGet
+    get: vi.fn(),
+    slice: (start: number | null, end?: number | null) => ({ start, end }),
+  };
+});
+
+import { get as zarrGet } from 'zarrita';
+const mockZarrGet = vi.mocked(zarrGet);
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Create a minimal mock zarr array with the given dtype and shape */
+function mockZarrArray(dtype: string, shape: number[]) {
+  return { dtype, shape, attrs: {} } as any;
+}
+
+/** Configure mockZarrGet to return the given typed array data for every call */
+function setMockData(data: Float32Array | Uint8Array | Uint16Array) {
+  mockZarrGet.mockResolvedValue({ data } as any);
+}
+
+/** Create a RangeLoader with workers disabled */
+function createLoader(): RangeLoader {
+  const loader = new RangeLoader(new ArrayRefRegistry(), { workerThreshold: Infinity });
+  loader.setVerbose(false);
+  return loader;
+}
+
+// ---------------------------------------------------------------------------
+// detectEncoding
+// ---------------------------------------------------------------------------
 
 describe('RangeLoader.detectEncoding', () => {
+  it('returns direct when attrs is undefined', () => {
+    expect(RangeLoader.detectEncoding(undefined)).toBe('direct');
+  });
+
+  it('returns direct when encoding is absent', () => {
+    expect(RangeLoader.detectEncoding({})).toBe('direct');
+  });
+
+  it('returns direct for float32 data with no encoding metadata', () => {
+    const attrs: ArrayMetadata = { dtype: 'float32' };
+    expect(RangeLoader.detectEncoding(attrs)).toBe('direct');
+  });
+
+  // --- Broadcasted ---
+
+  it('detects broadcasted encoding', () => {
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'broadcasted', n_elements: 1000 },
+    };
+    expect(RangeLoader.detectEncoding(attrs)).toBe('broadcasted');
+  });
+
+  // --- Array ref ---
+
   it('detects array_ref when target is present without name', () => {
     const attrs: ArrayMetadata = {
-      encoding: {
-        target: '/SharedNode/colors',
-      },
+      encoding: { target: '/SharedNode/colors' },
     };
-
     expect(RangeLoader.detectEncoding(attrs)).toBe('array_ref');
   });
 
   it('detects array_ref when name is explicit', () => {
     const attrs: ArrayMetadata = {
+      encoding: { name: 'array_ref', target: '/SharedNode/colors' },
+    };
+    expect(RangeLoader.detectEncoding(attrs)).toBe('array_ref');
+  });
+
+  // --- LUT ---
+
+  it('detects lut encoding (lut_uint8)', () => {
+    const attrs: ArrayMetadata = {
       encoding: {
-        name: 'array_ref',
-        target: '/SharedNode/colors',
+        name: 'lut_uint8',
+        lut: [
+          [1.0, 0.0, 0.0],
+          [0.0, 1.0, 0.0],
+        ],
+        lut_mode: 'row',
+        original_shape: [100, 3],
       },
     };
+    expect(RangeLoader.detectEncoding(attrs)).toBe('lut');
+  });
 
+  it('detects lut encoding (lut_uint16)', () => {
+    const attrs: ArrayMetadata = {
+      encoding: {
+        name: 'lut_uint16',
+        lut: [0.5, 1.5, 2.5],
+        lut_mode: 'scalar',
+        original_shape: [100, 1],
+      },
+    };
+    expect(RangeLoader.detectEncoding(attrs)).toBe('lut');
+  });
+
+  it('does NOT detect lut when lut data is missing', () => {
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'lut_uint8' },
+    };
+    // No lut field => falls through to quantized (name contains 'uint')
+    expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
+  });
+
+  // --- Quantized ---
+
+  it('detects quantized for rgb_uint8 with bounds', () => {
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'rgb_uint8', bounds: [0, 1] },
+    };
+    expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
+  });
+
+  it('detects quantized for rgb_uint16 with min/max', () => {
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'rgb_uint16', min: 0, max: 1 },
+    };
+    expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
+  });
+
+  it('detects quantized for bounded_scalar_uint8', () => {
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'bounded_scalar_uint8', bounds: [0.1, 5.0] },
+    };
+    expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
+  });
+
+  it('detects quantized for bounded_scalar_uint16', () => {
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'bounded_scalar_uint16', min: 0, max: 10 },
+    };
+    expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
+  });
+
+  it('detects quantized for log_scalar_uint8', () => {
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'log_scalar_uint8', max_log: 3.5 },
+    };
+    expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
+  });
+
+  it('detects quantized for log_scalar_uint16', () => {
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'log_scalar_uint16', max_log: 5.0 },
+    };
+    expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
+  });
+
+  it('detects quantized when encoding has bounds but no name', () => {
+    const attrs: ArrayMetadata = {
+      encoding: { bounds: [0, 1] },
+    };
+    expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
+  });
+
+  it('detects quantized when encoding has min/max but no name', () => {
+    const attrs: ArrayMetadata = {
+      encoding: { min: 0, max: 100 },
+    };
+    expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
+  });
+
+  // --- Priority ---
+
+  it('broadcasted takes priority over target (array_ref)', () => {
+    // Unlikely in practice, but validates the priority chain
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'broadcasted', target: '/foo' },
+    };
+    expect(RangeLoader.detectEncoding(attrs)).toBe('broadcasted');
+  });
+
+  it('array_ref (target) takes priority over lut', () => {
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'lut_uint8', target: '/foo', lut: [1, 2, 3] },
+    };
     expect(RangeLoader.detectEncoding(attrs)).toBe('array_ref');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadDirect
+// ---------------------------------------------------------------------------
+
+describe('RangeLoader.loadDirect (via loadRanges)', () => {
+  let loader: RangeLoader;
+
+  beforeEach(() => {
+    loader = createLoader();
+    mockZarrGet.mockReset();
+  });
+
+  it('loads a single range of float32 data', async () => {
+    const srcData = new Float32Array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    setMockData(srcData);
+
+    const output = new Float32Array(6);
+    const ranges: LoadRange[] = [{ start: 0, end: 2 }];
+    const array = mockZarrArray('float32', [10, 3]);
+
+    const written = await loader.loadRanges(array, undefined, ranges, output, 2, 3);
+
+    expect(written).toBe(6);
+    expect(Array.from(output)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it('loads multiple disjoint ranges into a contiguous output', async () => {
+    // First range returns [10, 20], second returns [30, 40]
+    mockZarrGet
+      .mockResolvedValueOnce({ data: new Float32Array([10, 20]) } as any)
+      .mockResolvedValueOnce({ data: new Float32Array([30, 40]) } as any);
+
+    const output = new Float32Array(4);
+    const ranges: LoadRange[] = [
+      { start: 0, end: 2 },
+      { start: 5, end: 7 },
+    ];
+    const array = mockZarrArray('float32', [10]);
+
+    const written = await loader.loadRanges(array, undefined, ranges, output, 4, 1);
+
+    expect(written).toBe(4);
+    expect(Array.from(output)).toEqual([10, 20, 30, 40]);
+  });
+
+  it('converts uint8 source data to float32', async () => {
+    setMockData(new Uint8Array([0, 128, 255]));
+
+    const output = new Float32Array(3);
+    const ranges: LoadRange[] = [{ start: 0, end: 3 }];
+    const array = mockZarrArray('uint8', [100]);
+
+    const written = await loader.loadRanges(array, undefined, ranges, output, 3, 1);
+
+    expect(written).toBe(3);
+    expect(output[0]).toBe(0);
+    expect(output[1]).toBe(128);
+    expect(output[2]).toBe(255);
+  });
+
+  it('returns 0 written for empty ranges', async () => {
+    const output = new Float32Array(10);
+    const ranges: LoadRange[] = [];
+    const array = mockZarrArray('float32', [100]);
+
+    const written = await loader.loadRanges(array, undefined, ranges, output, 0, 1);
+
+    expect(written).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadBroadcasted
+// ---------------------------------------------------------------------------
+
+describe('RangeLoader.loadBroadcasted (via loadRanges)', () => {
+  let loader: RangeLoader;
+
+  beforeEach(() => {
+    loader = createLoader();
+    mockZarrGet.mockReset();
+  });
+
+  it('replicates a single scalar to all elements', async () => {
+    // Broadcasted value: [0.5]
+    setMockData(new Float32Array([0.5]));
+
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'broadcasted', n_elements: 4 },
+    };
+    const output = new Float32Array(4);
+    const ranges: LoadRange[] = [{ start: 0, end: 4 }];
+    const array = mockZarrArray('float32', [1]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 4, 1);
+
+    expect(written).toBe(4);
+    expect(Array.from(output)).toEqual([0.5, 0.5, 0.5, 0.5]);
+  });
+
+  it('replicates a 3-component vector (e.g. RGB color) to all elements', async () => {
+    // Broadcasted color: [1.0, 0.0, 0.5]
+    setMockData(new Float32Array([1.0, 0.0, 0.5]));
+
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'broadcasted', n_elements: 3 },
+    };
+    const output = new Float32Array(9);
+    const ranges: LoadRange[] = [{ start: 0, end: 3 }];
+    const array = mockZarrArray('float32', [1, 3]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 3, 3);
+
+    expect(written).toBe(9);
+    // Each of the 3 elements should have [1.0, 0.0, 0.5]
+    expect(Array.from(output)).toEqual([1.0, 0.0, 0.5, 1.0, 0.0, 0.5, 1.0, 0.0, 0.5]);
+  });
+
+  it('handles uint8 broadcast source by converting to float32', async () => {
+    // Uint8 color [255, 0, 128] should be converted to Float32
+    setMockData(new Uint8Array([255, 0, 128]));
+
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'broadcasted', n_elements: 2 },
+    };
+    const output = new Float32Array(6);
+    const ranges: LoadRange[] = [{ start: 0, end: 2 }];
+    const array = mockZarrArray('uint8', [1, 3]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 2, 3);
+
+    expect(written).toBe(6);
+    expect(output[0]).toBe(255);
+    expect(output[1]).toBe(0);
+    expect(output[2]).toBe(128);
+    expect(output[3]).toBe(255);
+    expect(output[4]).toBe(0);
+    expect(output[5]).toBe(128);
+  });
+
+  it('replicates single value to multi-component when source has fewer values', async () => {
+    // If source is [7.0] but elementsPerItem is 3, each component fills with valueAsFloat32[0]
+    setMockData(new Float32Array([7.0]));
+
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'broadcasted', n_elements: 2 },
+    };
+    const output = new Float32Array(6);
+    const ranges: LoadRange[] = [{ start: 0, end: 2 }];
+    const array = mockZarrArray('float32', [1]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 2, 3);
+
+    expect(written).toBe(6);
+    // valueAsFloat32[j] ?? valueAsFloat32[0] => all 7.0
+    expect(Array.from(output)).toEqual([7, 7, 7, 7, 7, 7]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadQuantized
+// ---------------------------------------------------------------------------
+
+describe('RangeLoader.loadQuantized (via loadRanges)', () => {
+  let loader: RangeLoader;
+
+  beforeEach(() => {
+    loader = createLoader();
+    mockZarrGet.mockReset();
+  });
+
+  it('dequantizes uint8 data with bounds [0, 1]', async () => {
+    // uint8 values: 0, 127, 255 => normalized: 0, 127/255, 1
+    // with bounds [0, 1]: same as normalized
+    setMockData(new Uint8Array([0, 127, 255]));
+
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'rgb_uint8', bounds: [0, 1] as [number, number] },
+    };
+    const output = new Float32Array(3);
+    const ranges: LoadRange[] = [{ start: 0, end: 3 }];
+    const array = mockZarrArray('uint8', [3]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 3, 1);
+
+    expect(written).toBe(3);
+    expect(output[0]).toBeCloseTo(0.0, 5);
+    expect(output[1]).toBeCloseTo(127 / 255, 5);
+    expect(output[2]).toBeCloseTo(1.0, 5);
+  });
+
+  it('dequantizes uint8 data with arbitrary bounds [2.0, 10.0]', async () => {
+    // uint8 0   => 2.0 + (0/255) * 8.0 = 2.0
+    // uint8 128 => 2.0 + (128/255) * 8.0 ~= 6.016
+    // uint8 255 => 2.0 + (255/255) * 8.0 = 10.0
+    setMockData(new Uint8Array([0, 128, 255]));
+
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'bounded_scalar_uint8', bounds: [2.0, 10.0] as [number, number] },
+    };
+    const output = new Float32Array(3);
+    const ranges: LoadRange[] = [{ start: 0, end: 3 }];
+    const array = mockZarrArray('uint8', [3]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 3, 1);
+
+    expect(written).toBe(3);
+    expect(output[0]).toBeCloseTo(2.0, 5);
+    expect(output[1]).toBeCloseTo(2.0 + (128 / 255) * 8.0, 3);
+    expect(output[2]).toBeCloseTo(10.0, 5);
+  });
+
+  it('dequantizes uint16 data with bounds [0, 1]', async () => {
+    // uint16 values: 0, 32767, 65535
+    setMockData(new Uint16Array([0, 32767, 65535]));
+
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'rgb_uint16', bounds: [0, 1] as [number, number] },
+    };
+    const output = new Float32Array(3);
+    const ranges: LoadRange[] = [{ start: 0, end: 3 }];
+    const array = mockZarrArray('uint16', [3]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 3, 1);
+
+    expect(written).toBe(3);
+    expect(output[0]).toBeCloseTo(0.0, 5);
+    expect(output[1]).toBeCloseTo(32767 / 65535, 4);
+    expect(output[2]).toBeCloseTo(1.0, 5);
+  });
+
+  it('dequantizes with min/max format (not bounds)', async () => {
+    setMockData(new Uint8Array([0, 255]));
+
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'bounded_scalar_uint8', min: -5.0, max: 5.0 },
+    };
+    const output = new Float32Array(2);
+    const ranges: LoadRange[] = [{ start: 0, end: 2 }];
+    const array = mockZarrArray('uint8', [2]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 2, 1);
+
+    expect(written).toBe(2);
+    expect(output[0]).toBeCloseTo(-5.0, 5);
+    expect(output[1]).toBeCloseTo(5.0, 5);
+  });
+
+  it('dequantizes 2D quantized data (e.g. rgb colors [N, 3])', async () => {
+    // Two RGB pixels, uint8: [0,0,0] and [255,128,64]
+    setMockData(new Uint8Array([0, 0, 0, 255, 128, 64]));
+
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'rgb_uint8', bounds: [0, 1] as [number, number] },
+    };
+    const output = new Float32Array(6);
+    const ranges: LoadRange[] = [{ start: 0, end: 2 }];
+    const array = mockZarrArray('uint8', [10, 3]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 2, 3);
+
+    expect(written).toBe(6);
+    expect(output[0]).toBeCloseTo(0.0, 5);
+    expect(output[3]).toBeCloseTo(1.0, 5);
+    expect(output[4]).toBeCloseTo(128 / 255, 4);
+    expect(output[5]).toBeCloseTo(64 / 255, 4);
+  });
+
+  it('dequantizes log_scalar_uint8 (log-space encoding)', async () => {
+    // log_scalar: normalized = val / 255, result = expm1(normalized * max_log)
+    const maxLog = 3.5;
+    // uint8 0 => expm1(0) = 0
+    // uint8 255 => expm1(3.5) = e^3.5 - 1
+    // uint8 128 => expm1((128/255) * 3.5)
+    setMockData(new Uint8Array([0, 128, 255]));
+
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'log_scalar_uint8', max_log: maxLog },
+    };
+    const output = new Float32Array(3);
+    const ranges: LoadRange[] = [{ start: 0, end: 3 }];
+    const array = mockZarrArray('uint8', [3]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 3, 1);
+
+    expect(written).toBe(3);
+    expect(output[0]).toBeCloseTo(0.0, 5);
+    expect(output[1]).toBeCloseTo(Math.expm1((128 / 255) * maxLog), 3);
+    expect(output[2]).toBeCloseTo(Math.expm1(maxLog), 3);
+  });
+
+  it('dequantizes log_scalar_uint16', async () => {
+    const maxLog = 5.0;
+    setMockData(new Uint16Array([0, 65535]));
+
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'log_scalar_uint16', max_log: maxLog },
+    };
+    const output = new Float32Array(2);
+    const ranges: LoadRange[] = [{ start: 0, end: 2 }];
+    const array = mockZarrArray('uint16', [2]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 2, 1);
+
+    expect(written).toBe(2);
+    expect(output[0]).toBeCloseTo(0.0, 5);
+    expect(output[1]).toBeCloseTo(Math.expm1(maxLog), 2);
+  });
+
+  it('handles multiple ranges for quantized data', async () => {
+    // First range: [0, 255], second range: [128]
+    mockZarrGet
+      .mockResolvedValueOnce({ data: new Uint8Array([0, 255]) } as any)
+      .mockResolvedValueOnce({ data: new Uint8Array([128]) } as any);
+
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'bounded_scalar_uint8', bounds: [0, 10] as [number, number] },
+    };
+    const output = new Float32Array(3);
+    const ranges: LoadRange[] = [
+      { start: 0, end: 2 },
+      { start: 5, end: 6 },
+    ];
+    const array = mockZarrArray('uint8', [10]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 3, 1);
+
+    expect(written).toBe(3);
+    expect(output[0]).toBeCloseTo(0.0, 5);
+    expect(output[1]).toBeCloseTo(10.0, 5);
+    expect(output[2]).toBeCloseTo((128 / 255) * 10.0, 3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadLUT
+// ---------------------------------------------------------------------------
+
+describe('RangeLoader.loadLUT (via loadRanges)', () => {
+  let loader: RangeLoader;
+
+  beforeEach(() => {
+    loader = createLoader();
+    mockZarrGet.mockReset();
+  });
+
+  it('decodes LUT row mode with 3-component vectors (e.g. RGB)', async () => {
+    // LUT: index 0 -> [1.0, 0.0, 0.0] (red), index 1 -> [0.0, 1.0, 0.0] (green)
+    // Indices: [0, 1, 0]
+    setMockData(new Uint8Array([0, 1, 0]));
+
+    const attrs: ArrayMetadata = {
+      encoding: {
+        name: 'lut_uint8',
+        lut: [
+          [1.0, 0.0, 0.0],
+          [0.0, 1.0, 0.0],
+        ],
+        lut_mode: 'row',
+        original_shape: [3, 3],
+      },
+    };
+    const output = new Float32Array(9);
+    const ranges: LoadRange[] = [{ start: 0, end: 3 }];
+    const array = mockZarrArray('uint8', [3]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 3, 3);
+
+    expect(written).toBe(9);
+    // Element 0: red [1, 0, 0]
+    expect(Array.from(output.subarray(0, 3))).toEqual([1.0, 0.0, 0.0]);
+    // Element 1: green [0, 1, 0]
+    expect(Array.from(output.subarray(3, 6))).toEqual([0.0, 1.0, 0.0]);
+    // Element 2: red [1, 0, 0]
+    expect(Array.from(output.subarray(6, 9))).toEqual([1.0, 0.0, 0.0]);
+  });
+
+  it('decodes LUT scalar mode', async () => {
+    // LUT: flat list of scalar values [10.0, 20.0, 30.0]
+    // Indices: [2, 0, 1, 2]
+    setMockData(new Uint8Array([2, 0, 1, 2]));
+
+    const attrs: ArrayMetadata = {
+      encoding: {
+        name: 'lut_uint8',
+        lut: [10.0, 20.0, 30.0],
+        lut_mode: 'scalar',
+        original_shape: [4, 1],
+      },
+    };
+    const output = new Float32Array(4);
+    const ranges: LoadRange[] = [{ start: 0, end: 4 }];
+    const array = mockZarrArray('uint8', [4]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 4, 1);
+
+    expect(written).toBe(4);
+    expect(Array.from(output)).toEqual([30.0, 10.0, 20.0, 30.0]);
+  });
+
+  it('decodes LUT with flat lut array in row mode', async () => {
+    // LUT as flat array (not nested): [1,0, 0,1] representing 2 rows of k=2
+    // Indices: [1, 0]
+    setMockData(new Uint8Array([1, 0]));
+
+    const attrs: ArrayMetadata = {
+      encoding: {
+        name: 'lut_uint8',
+        lut: [1.0, 0.0, 0.0, 1.0], // flat: row0=[1,0], row1=[0,1]
+        lut_mode: 'row',
+        original_shape: [2, 2],
+      },
+    };
+    const output = new Float32Array(4);
+    const ranges: LoadRange[] = [{ start: 0, end: 2 }];
+    const array = mockZarrArray('uint8', [2]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 2, 2);
+
+    expect(written).toBe(4);
+    // Index 1 -> [0.0, 1.0], Index 0 -> [1.0, 0.0]
+    expect(Array.from(output)).toEqual([0.0, 1.0, 1.0, 0.0]);
+  });
+
+  it('decodes LUT with uint16 indices', async () => {
+    setMockData(new Uint16Array([0, 2]));
+
+    const attrs: ArrayMetadata = {
+      encoding: {
+        name: 'lut_uint16',
+        lut: [[100.0], [200.0], [300.0]],
+        lut_mode: 'row',
+        original_shape: [2, 1],
+      },
+    };
+    const output = new Float32Array(2);
+    const ranges: LoadRange[] = [{ start: 0, end: 2 }];
+    const array = mockZarrArray('uint16', [2]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 2, 1);
+
+    expect(written).toBe(2);
+    expect(Array.from(output)).toEqual([100.0, 300.0]);
+  });
+
+  it('handles multiple ranges for LUT data', async () => {
+    mockZarrGet
+      .mockResolvedValueOnce({ data: new Uint8Array([0]) } as any)
+      .mockResolvedValueOnce({ data: new Uint8Array([1]) } as any);
+
+    const attrs: ArrayMetadata = {
+      encoding: {
+        name: 'lut_uint8',
+        lut: [
+          [1.0, 2.0],
+          [3.0, 4.0],
+        ],
+        lut_mode: 'row',
+        original_shape: [10, 2],
+      },
+    };
+    const output = new Float32Array(4);
+    const ranges: LoadRange[] = [
+      { start: 0, end: 1 },
+      { start: 5, end: 6 },
+    ];
+    const array = mockZarrArray('uint8', [10]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 2, 2);
+
+    expect(written).toBe(4);
+    // Range 1: index 0 -> [1, 2], Range 2: index 1 -> [3, 4]
+    expect(Array.from(output)).toEqual([1.0, 2.0, 3.0, 4.0]);
+  });
+
+  it('defaults to row mode when lut_mode is not specified', async () => {
+    setMockData(new Uint8Array([0, 1]));
+
+    const attrs: ArrayMetadata = {
+      encoding: {
+        name: 'lut_uint8',
+        lut: [[5.0], [10.0]],
+        // lut_mode not set => defaults to 'row'
+        original_shape: [2, 1],
+      },
+    };
+    const output = new Float32Array(2);
+    const ranges: LoadRange[] = [{ start: 0, end: 2 }];
+    const array = mockZarrArray('uint8', [2]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 2, 1);
+
+    expect(written).toBe(2);
+    expect(Array.from(output)).toEqual([5.0, 10.0]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadArrayRef
+// ---------------------------------------------------------------------------
+
+describe('RangeLoader.loadArrayRef (via loadRanges)', () => {
+  let loader: RangeLoader;
+
+  beforeEach(() => {
+    loader = createLoader();
+    mockZarrGet.mockReset();
+  });
+
+  it('throws when array_ref encoding is encountered (not yet implemented)', async () => {
+    const attrs: ArrayMetadata = {
+      encoding: { target: '/SharedNode/colors', hash: 'abc123' },
+    };
+    const output = new Float32Array(10);
+    const ranges: LoadRange[] = [{ start: 0, end: 5 }];
+    const array = mockZarrArray('float32', [100, 3]);
+
+    await expect(loader.loadRanges(array, attrs, ranges, output, 5, 3)).rejects.toThrow(
+      'Array reference range loading not yet implemented'
+    );
   });
 });

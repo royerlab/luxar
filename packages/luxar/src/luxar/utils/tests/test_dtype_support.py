@@ -22,10 +22,13 @@ class TestCompilerWithDtypes:
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
 
-            # Create test data
-            positions = np.random.randn(100, 3).astype(np.float32)
-            colors = np.random.rand(100, 3).astype(np.float32)
-            radii = np.random.rand(100).astype(np.float32) * 0.5
+            # Fixed seed: the encoder's uint8 vs uint16 decision depends on
+            # max/min_nonzero ratio (threshold=256). Without a seed, random
+            # minimum values can push the ratio above 256, selecting uint16.
+            rng = np.random.RandomState(42)
+            positions = rng.randn(100, 3).astype(np.float32)
+            colors = rng.rand(100, 3).astype(np.float32)
+            radii = rng.rand(100).astype(np.float32) * 0.5
 
             # Write with MEMORY encoding mode
             with LuxarZarrCompiler(
