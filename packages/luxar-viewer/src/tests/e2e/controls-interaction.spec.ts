@@ -12,39 +12,12 @@ import { test, expect } from '@playwright/test';
 import { waitForLuxarReady, getLuxarState, waitForNextRender } from './helpers';
 
 test.describe('Luxar Controls & Keyboard Shortcuts', () => {
-  test('should toggle fullscreen with Space key', async ({ page }) => {
+  test.fixme('fullscreen is blocked in headless Chromium', async ({ page }) => {
+    // Fullscreen API requires user gesture and is blocked by security policy
+    // in headless Chromium. This test cannot meaningfully verify fullscreen toggling.
     await page.goto('/?debug');
     await waitForLuxarReady(page);
-
-    // Get initial fullscreen state
-    const isFullscreenBefore = await page.evaluate(() => {
-      return !!document.fullscreenElement;
-    });
-
-    // Press Space to toggle fullscreen
     await page.keyboard.press('Space');
-
-    // Wait for fullscreen API response
-    await waitForNextRender(page);
-
-    // Get new state
-    const isFullscreenAfter = await page.evaluate(() => {
-      return !!document.fullscreenElement;
-    });
-
-    // Verify we got valid responses (both should be booleans)
-    expect(typeof isFullscreenBefore).toBe('boolean');
-    expect(typeof isFullscreenAfter).toBe('boolean');
-
-    // Note: In headless Chromium, fullscreen may be blocked by security policy.
-    // The key verification is that pressing Space doesn't throw an error.
-    // If fullscreen works, state should have toggled. If blocked, states are both false.
-    // Either outcome is acceptable for E2E testing - we verify the key handler runs.
-    if (isFullscreenBefore !== isFullscreenAfter) {
-      // Fullscreen actually toggled - this is the ideal case
-      expect(isFullscreenAfter).toBe(!isFullscreenBefore);
-    }
-    // Test passes if no errors thrown during key handling
   });
 
   test('should show help overlay with H key', async ({ page }) => {
@@ -57,26 +30,23 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
     // Wait for overlay to appear
     await waitForNextRender(page);
 
-    // Check if help content is visible after pressing H
+    // Check if help overlay is visible after pressing H
+    // Use specific selectors — do not fall back to matching any text containing "Help"
     const helpVisibleAfter = await page.evaluate(() => {
       const helpOverlay = document.querySelector(
         '.help-overlay, #help-overlay, [data-help-overlay]'
       );
       if (helpOverlay) return true;
-      // Also check for text content that indicates help is showing
+      // Check for the specific help content heading
       const body = document.body.innerHTML;
-      return (
-        body.includes('Keyboard Shortcuts') || body.includes('Controls') || body.includes('Help')
-      );
+      return body.includes('Keyboard Shortcuts');
     });
 
     // Help overlay should appear after pressing H
-    // If help system exists, it should show after keypress
-    // At minimum, verify the help content exists somewhere in the DOM
     expect(helpVisibleAfter).toBe(true);
   });
 
-  test('should track camera position changes', async ({ page }) => {
+  test('should track camera position changes via mouse drag', async ({ page }) => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
 
@@ -90,16 +60,35 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
       };
     });
 
-    // Move camera and read position immediately (before controls can reset it)
-    const newZ = await page.evaluate(() => {
+    // Perform a mouse drag to move the camera via orbit controls
+    const viewport = page.viewportSize()!;
+    const centerX = viewport.width / 2;
+    const centerY = viewport.height / 2;
+
+    await page.mouse.move(centerX, centerY);
+    await page.mouse.down();
+    await page.mouse.move(centerX + 100, centerY, { steps: 5 });
+    await page.mouse.up();
+
+    // Wait for the controls to update the camera
+    await waitForNextRender(page);
+
+    // Get new camera position
+    const newPosition = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      debug.camera.position.z += 5;
-      // Read immediately before render loop can reset
-      return debug.camera.position.z;
+      return {
+        x: debug.camera.position.x,
+        y: debug.camera.position.y,
+        z: debug.camera.position.z,
+      };
     });
 
-    // Position should have changed
-    expect(newZ).toBeGreaterThan(initialPosition.z);
+    // Camera position should have changed from the mouse drag
+    const positionChanged =
+      newPosition.x !== initialPosition.x ||
+      newPosition.y !== initialPosition.y ||
+      newPosition.z !== initialPosition.z;
+    expect(positionChanged).toBe(true);
   });
 
   test('should switch control modes', async ({ page }) => {
@@ -128,8 +117,9 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
       return debug.controls?.getControlType?.();
     });
 
-    // Control type should be valid (might have changed or might be same)
+    // Control type should be valid and different from initial
     expect(['orbit', 'arcball', 'fly']).toContain(newType);
+    expect(newType).not.toBe(initialType);
   });
 
   test('should access console interceptor', async ({ page }) => {

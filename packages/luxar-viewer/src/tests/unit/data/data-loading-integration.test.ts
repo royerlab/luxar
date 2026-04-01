@@ -28,7 +28,7 @@ import { loadScene, updateView, updateSceneForDimensions, dispose } from '../../
 import { SimpleDims } from '../../../types/dims';
 import * as THREE from 'three';
 
-// Mock THREE.js with more complete implementation
+// Mock THREE.js (external dependency - requires WebGL context, must be mocked in unit tests)
 vi.mock('three', () => {
   const mockPoints = vi.fn().mockImplementation((geometry, material) => ({
     name: '',
@@ -122,40 +122,20 @@ vi.mock('three', () => {
   };
 });
 
-// Mock scene-loader and scene-loader-manager
-vi.mock('../data/scene-loader', () => ({
-  SceneLoader: vi.fn().mockImplementation(() => ({
-    loadScene: vi.fn().mockImplementation(async (_url) => {
-      // Import the mocked THREE to use the proper Group mock
-      const THREE = await import('three');
-      const group = new THREE.Group();
-      group.name = 'LuxarScene';
-      group.userData = {
-        sceneDimensions: {
-          dimensions: [
-            { name: 'x', unit: 'um', range: [0, 100], display: true },
-            { name: 'y', unit: 'um', range: [0, 100], display: true },
-            { name: 'z', unit: 'um', range: [0, 50], display: true },
-            { name: 'time', unit: 's', range: [0, 10], display: false },
-          ],
-        },
-        maxRadius: 0.5,
-      };
-      return group;
-    }),
-    updateView: vi.fn().mockResolvedValue(undefined),
-    getCacheStats: vi
-      .fn()
-      .mockReturnValue(new Map([['/points', { hits: 10, misses: 5, hitRate: 0.67 }]])),
-    clearCaches: vi.fn(),
-    dispose: vi.fn(),
-    showMonitor: vi.fn(),
-    hideMonitor: vi.fn(),
-    toggleMonitor: vi.fn(),
-  })),
-}));
+// NOTE: A mock for '../data/scene-loader' was removed because the path resolved
+// relative to this test file (src/tests/unit/data/) to a non-existent module,
+// making it dead code. The actual SceneLoader is imported from '../../../data'.
 
-// Mock SceneLoaderManager
+// TODO: This test file mocks SceneLoaderManager (owned code) heavily. The tests verify
+// that the thin zarr-loader facade correctly delegates to SceneLoaderManager, but
+// because SceneLoaderManager is fully mocked, we're mostly testing mock behavior.
+// Consider refactoring to either:
+// 1. Test zarr-loader.ts functions with a real SceneLoaderManager + mocked SceneLoader
+// 2. Or test SceneLoaderManager directly with mocked external deps (zarr, THREE.js)
+
+// Mock SceneLoaderManager (owned code - mocked because it internally creates SceneLoader
+// which depends on zarr I/O and WebGL. Ideally the facade tests would use a real manager
+// with the SceneLoader mocked at a lower level.)
 vi.mock('../../../data/scene-loader-manager', () => {
   const mockLoader = {
     loadScene: vi.fn().mockImplementation(async (_url) => {
@@ -209,86 +189,16 @@ vi.mock('../../../data/scene-loader-manager', () => {
   };
 });
 
-vi.mock('../data/point-spatial-index-loader', () => ({
-  PointSpatialIndexLoader: vi.fn().mockImplementation(() => ({
-    loadPoints: vi.fn().mockResolvedValue({
-      positions: new Float32Array([1, 2, 3, 4, 5, 6]),
-      colors: new Float32Array([1, 0, 0, 0, 1, 0]),
-      metadata: {
-        totalPoints: 2,
-        loadedPoints: 2,
-        bounds: { min: [0, 0, 0], max: [10, 10, 10] },
-        ndim: 3,
-        usedSpatialIndex: true,
-      },
-    }),
-    updateView: vi.fn().mockResolvedValue({
-      positions: new Float32Array([1, 2, 3]),
-      metadata: {
-        totalPoints: 1,
-        loadedPoints: 1,
-        bounds: { min: [0, 0, 0], max: [5, 5, 5] },
-        ndim: 3,
-        usedSpatialIndex: true,
-      },
-    }),
-    getCacheStats: vi.fn(),
-    clearCache: vi.fn(),
-    dispose: vi.fn(),
-  })),
-}));
-
-// Mock material manager
-vi.mock('../rendering/material-manager', () => ({
-  materialManager: {
-    getMaterial: vi.fn().mockReturnValue({
-      uniforms: {},
-    }),
-  },
-}));
-
-// Mock UI components
-vi.mock('../ui/data-loading-monitor', () => ({
-  DataLoadingMonitor: vi.fn().mockImplementation(() => ({
-    connectLoader: vi.fn(),
-    show: vi.fn(),
-    hide: vi.fn(),
-    toggle: vi.fn(),
-    dispose: vi.fn(),
-  })),
-}));
-
-// Helper to access mocked functions
-const getMockLoader = () => {
-  // Need to import actual class for type reference
-  void vi.importActual('../../../data/scene-loader-manager');
-  // Return a mock object with all needed methods
-  return {
-    loadScene: vi.fn().mockImplementation(async () => {
-      const THREE = await import('three');
-      const group = new THREE.Group();
-      group.name = 'LuxarScene';
-      group.userData = {
-        sceneDimensions: {
-          dimensions: [],
-        },
-        maxRadius: 0.5,
-      };
-      return group;
-    }),
-    updateView: vi.fn().mockResolvedValue(undefined),
-    getCacheStats: vi
-      .fn()
-      .mockReturnValue(new Map([['/points', { hits: 10, misses: 5, hitRate: 0.67 }]])),
-    clearCaches: vi.fn(),
-    dispose: vi.fn(),
-  };
-};
+// NOTE: Previous mocks for PointSpatialIndexLoader ('../data/point-spatial-index-loader'),
+// materialManager ('../rendering/material-manager'), and DataLoadingMonitor
+// ('../ui/data-loading-monitor') were removed because their paths resolved relative
+// to this test file (src/tests/unit/data/) to non-existent modules, making them dead
+// code. These tests operate through the zarr-loader facade which delegates to the
+// mocked SceneLoaderManager above, so these lower-level mocks were never needed.
 
 describe('Data Loading Integration', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    void getMockLoader(); // Create mock loader but don't store reference
 
     // Reset the SceneLoaderManager state
     const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
