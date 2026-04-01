@@ -312,6 +312,9 @@ test.describe('Spatial Index - Cache Behavior', () => {
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 1);
 
+    const initialState = await getLuxarState(page);
+    const initialPoints = initialState.totalPoints;
+
     // Navigate forward
     await page.keyboard.press('4');
     await page.waitForTimeout(200);
