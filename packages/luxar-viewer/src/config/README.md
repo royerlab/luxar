@@ -155,7 +155,7 @@ renderingControls: {
     detectorNoiseFpnSigma: 0.005,     // Fixed pattern noise
     vignetteEnabled: false,
     aoEnabled: false,           // Ambient occlusion
-    controlType: 'orbit',       // vs 'arcball' or 'fly'
+    controlType: 'orbit',       // vs 'fly' or 'ortho'
     autoRotate: false
   }
 }
@@ -292,7 +292,7 @@ interface RenderingSettings {
   bloomStrength: number;
   // ... all user-adjustable settings
   toneMapping: 'None' | 'Linear' | 'Reinhard' | 'Cineon' | 'ACES' | 'AgX' | 'Neutral';
-  controlType: 'orbit' | 'arcball' | 'fly';
+  controlType: 'orbit' | 'fly' | 'ortho';
 }
 ```
 

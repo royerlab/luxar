@@ -49,9 +49,9 @@ For each splat k:
 **Location**: `packages/luxar/src/luxar/gsplats/models/gsplats/rendering_core.py`
 
 **Key functions**:
-- `render_gaussians()` - Main entry point (line 446)
-- `_render_gaussians_3d()` - Specialized 3D renderer (line 334)
-- `_fwd_norm2_3d()` - Forward substitution for Mahalanobis distance (line 163)
+- `render_gaussians()` - Main entry point
+- `_render_gaussians_3d()` - Specialized 3D renderer
+- `fwd_norm2_3d()` - Forward substitution for Mahalanobis distance
 
 ### 1.2 Performance Bottleneck
 

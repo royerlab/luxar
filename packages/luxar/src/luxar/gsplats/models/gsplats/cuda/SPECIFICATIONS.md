@@ -2,7 +2,7 @@
 
 **Version**: 0.1.0
 **Status**: Implementation Complete
-**Last Updated**: 2026-01-10
+**Last Updated**: 2026-03-31
 
 > **Note**: This is Part 1 of the CUDA Backend Specification (Core Algorithms).
 > See also:
@@ -23,7 +23,7 @@
 
 ## 1. Overview
 
-The CUDA backend provides GPU-accelerated Gaussian splatting for NVIDIA GPUs using custom CUDA kernels. It replaces the PyTorch rendering path for 2D/3D/nD volumes with highly optimized tile-based rasterization.
+The CUDA backend provides GPU-accelerated Gaussian splatting for NVIDIA GPUs using custom CUDA kernels. It replaces the PyTorch rendering path for 2D/3D/nD volumes with a splat-centric rasterization architecture (previously tile-based; see `OPTIMIZATION_REPORT.md`).
 
 ### Volumetric Gaussian Fitting vs 3D Gaussian Splatting (3DGS)
 
@@ -564,33 +564,40 @@ if (lane_id == 0) {
 
 ### 4.1 High-Level Pipeline
 
+> **Historical note**: The original architecture used a tile-based pipeline
+> (preprocess -> prefix_sum -> bin -> rasterize). This was refactored to a
+> splat-centric architecture achieving 3.16x training speedup. See
+> `OPTIMIZATION_REPORT.md` for the full transition history.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         Python Layer                                     │
 │   GaussianSplatModelCUDA → CUDASplatFunction (torch.autograd.Function)  │
+│   torch.compile(cholesky_to_conic) fuses L→conic into 1 kernel          │
 └─────────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                    PyTorch C++ Extension                                 │
-│   cuda_splatting_backend.forward_nd() / backward_nd()                   │
-│   (pybind11 bindings)                                                    │
+│   forward_wrapper() / backward_wrapper()  (pybind11 bindings)           │
+│   See bindings.cpp for Python-facing signatures                          │
 └─────────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                     CUDA Kernel Dispatcher                               │
-│   dispatch_forward<DIM>() / dispatch_backward<DIM>()                    │
-│   Template instantiation for D=2,3,4,...,8                               │
+│                     CUDA Dispatch Layer (cuda_splatting.cu)              │
+│   dispatch_forward_impl<InputDType>() / dispatch_backward_impl<>()     │
+│   DIM_DISPATCH macro for D=2,3,4,...,8 template instantiation           │
 └─────────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                       CUDA Compute Kernels                               │
-│   Forward:  preprocess → prefix_sum → bin → rasterize_fwd               │
-│   Backward: rasterize_bwd (reuses tile data from forward)               │
+│                  Splat-Centric CUDA Kernels                              │
+│   Forward:  output.zero_() → splat_fwd (1 kernel, N blocks)            │
+│   Backward: splat_bwd (1 kernel, N blocks)                              │
 │                                                                          │
-│   NOTE: No depth sorting needed! Intensity summation is commutative.    │
+│   Each CUDA block processes ONE splat (natural parallelism).            │
+│   No tile binning, no prefix sum, no sorting.                           │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -599,36 +606,38 @@ if (lane_id == 0) {
 ```mermaid
 graph LR
     subgraph Forward Pass
-        A[Preprocess<br/>AABB + Tile Count] --> B[CUB Prefix Sum<br/>Tile Offsets]
-        B --> C[Binning<br/>Populate Tile Lists]
-        C --> D[Rasterize Forward<br/>Sum Intensities]
+        A[output.zero_] --> B["splat_fwd_kernel<br/>(1 block per splat)<br/>atomicAdd to output"]
     end
 
     subgraph Backward Pass
-        E[Rasterize Backward<br/>Compute Gradients] --> F[Atomic Accumulate<br/>d_centers, d_conic, d_amps]
+        C["splat_bwd_kernel<br/>(1 block per splat)<br/>block-local gradient reduction"]
     end
 
-    D -.->|tile_offsets, tile_content| E
+    B -.->|shape_tensor, tile_dims_tensor| C
 
     style A fill:#e1f5fe
-    style B fill:#fff3e0
-    style C fill:#e8f5e9
-    style D fill:#fce4ec
-    style E fill:#f3e5f5
-    style F fill:#fff8e1
+    style B fill:#fce4ec
+    style C fill:#f3e5f5
 ```
 
-**Simplified Pipeline (vs 3DGS)**:
+**Pipeline Comparison**:
 
-| Stage | 3DGS (Alpha-Compositing) | Luxar (Intensity Summation) |
-|-------|--------------------------|----------------------------|
-| 1 | Preprocess (AABB) | Preprocess (AABB) |
-| 2 | Prefix sum (tile offsets) | Prefix sum (tile offsets) |
-| 3 | Binning (tile→splat lists) | Binning (tile→splat lists) |
-| 4 | **Radix sort (by depth)** | **(SKIP - not needed!)** |
-| 5 | Rasterize (ordered blend) | Rasterize (unordered sum) |
+| | Old Tile-Based (removed) | Current Splat-Centric |
+|---|---|---|
+| Forward kernels | preprocess + CUB prefix_sum + bin + rasterize_fwd + global_fwd | **1 kernel** (`rasterize_forward_splat_centric_kernel`) |
+| Backward kernels | rasterize_bwd + global_bwd | **1 kernel** (`rasterize_backward_splat_centric_kernel`) |
+| Kernel launches/iter | 20+ | **3** (L->conic fused + fwd + bwd) |
+| Tensor allocs/fwd | ~13 | **3** |
+| Synchronization | 1 full `cudaStreamSynchronize` | diagnostics only |
+| Tile binning | Required | **Eliminated** |
+| Shared memory barriers | Multiple `__syncthreads` | None in hot path |
+| Global atomics (bwd) | Per-tile atomics | **Zero** (block-local reduction) |
 
-This simplification saves ~20-30% of forward pass time.
+**Splat-Centric Design**: Each CUDA block owns exactly one splat. Threads within
+the block cooperatively iterate over the splat's AABB (axis-aligned bounding box)
+of affected voxels. Forward uses `atomicAdd` to scatter contributions to the output.
+Backward reads `grad_output` and reduces gradients within the block, writing the
+final gradient for that splat without global atomics.
 
 ### 4.2 Dimensional Generalization
 
@@ -729,70 +738,67 @@ __device__ __forceinline__ void compute_L_row_norms(
 
 ### 4.4 State Structures
 
+The `BinningState` struct (see `cuda_splatting.h`) stores workspace and cached
+tensors passed between forward and backward. In the splat-centric architecture,
+most tile-related fields are populated for API compatibility but not used by kernels.
+
 ```cpp
-// Per-frame binning state (allocated once, reused)
-// NOTE: No sorting buffers needed for intensity summation!
 struct BinningState {
-    // Tile metadata (simple binning, no sorting)
-    int* tile_counts;              // (num_tiles,) Number of splats per tile
-    int* tile_offsets;             // (num_tiles,) Prefix sum of tile_counts
-    int* tile_content;             // (total_pairs,) Flat array of splat IDs per tile
-    int* tile_write_heads;         // (num_tiles,) Atomic write counters for binning
+    // Tile metadata (populated for diagnostic/API compatibility, not used by splat-centric kernels)
+    torch::Tensor tile_counts;      // (num_tiles,) int32 - splats per tile
+    torch::Tensor tile_offsets;     // (num_tiles,) int64 - exclusive prefix sum
+    torch::Tensor tile_content;     // (0,) int32 - empty (tile binning eliminated)
+    torch::Tensor tile_write_heads; // (num_tiles,) int32 - unused
 
-    // PERSISTENT CUB temp storage (allocated once, reused across iterations)
-    // IMPORTANT: Allocate at init time, not per-frame!
-    void* scan_temp_storage;       // Persistent buffer for CUB prefix sum
-    size_t scan_temp_bytes;        // Size determined by CUB query at init
+    // CUB scan temp storage (unused in splat-centric path)
+    torch::Tensor scan_temp_storage;
+    size_t scan_temp_bytes;
 
-    // Initialization flag
-    bool initialized;
-};
+    // Global splat detection (set as side effect in splat-centric forward kernel)
+    torch::Tensor global_splat_flags; // (N,) bool
+    torch::Tensor global_splat_ids;   // (num_global,) int32
+    int num_global_splats;
 
-// Per-tile ranges for backward pass
-struct TileRanges {
-    int2* ranges;                  // (num_tiles,) (start, end) indices in tile_content
-};
+    // AABB cache (unused in splat-centric path -- AABB computed inline)
+    torch::Tensor aabb_lo;          // (N, DIM) int32
+    torch::Tensor aabb_hi;          // (N, DIM) int32
 
-// Gradient accumulation buffers (zeroed before each backward pass)
-struct GradientState {
-    float* d_centers;              // (N, DIM) - atomic accumulation
-    float* d_conic;                // (N, DIM*(DIM+1)/2) - atomic accumulation
-    float* d_amps;                 // (N,) - atomic accumulation
-    float* d_sharpness;            // (N,) - atomic accumulation
+    // Metadata
+    int64_t num_tiles;
+    int64_t total_pairs;
+
+    // OPTIMIZATION: Cached device tensors for backward pass reuse
+    // Eliminates redundant host-to-device copies in backward pass
+    torch::Tensor shape_tensor;     // (dim,) int32 - volume shape on device
+    torch::Tensor tile_dims_tensor; // (dim,) int32 - tile dimensions on device
+    int tile_size;                  // Cached tile size
 };
 ```
 
-**Memory Comparison (No Sorting)**:
-
-| Buffer | With Sorting (3DGS) | Without Sorting (Luxar) | Savings |
-|--------|--------------------|-----------------------|---------|
-| Keys unsorted | N×8 bytes | 0 | 100% |
-| Keys sorted | N×8 bytes | 0 | 100% |
-| Values unsorted | N×4 bytes | 0 | 100% |
-| Values sorted | N×4 bytes | 0 | 100% |
-| Sort temp | ~N×4 bytes | 0 | 100% |
-| **Total** | **~N×28 bytes** | **0** | **100%** |
-
-For N=100K splats, this saves ~2.8 MB of GPU memory.
+**Splat-centric memory usage**: The forward pass allocates only 3 tensors:
+`tile_counts` (diagnostic), `global_splat_flags` (N bools), and
+`global_count_tensor` (1 int). Compare this with the old tile-based pipeline
+which allocated ~13 tensors per forward call.
 
 ---
 
 ## 5. Kernel Design
 
+> **Historical note**: The tile-based kernels (`preprocess_kernel`, `bin_kernel`,
+> `rasterize_forward_kernel`, `rasterize_backward_kernel`) and global splat kernels
+> (`rasterize_global_forward_kernel`, `rasterize_global_backward_kernel`) still exist
+> in the codebase for reference and fallback, but the primary pipeline uses the
+> splat-centric kernels described below. Template instantiations for all kernel
+> families are in `cuda_splatting.cu`.
+
 ### 5.0 Shared Device Functions
 
-#### AABB Computation (CRITICAL: Single Source of Truth)
+#### AABB Computation
 
-The AABB (Axis-Aligned Bounding Box) computation **MUST be identical** in:
-- `preprocess_nd` (counting tiles)
-- `bin_nd` (populating tile lists)
-- `rasterize_bwd_nd` (if truncation checks are performed)
-
-**Failure mode**: If AABB differs between kernels, a splat may be counted in a tile
-during preprocessing but NOT written during binning (or vice versa). This causes:
-- Array index out-of-bounds
-- Missing gradient contributions
-- Silent numerical errors
+The AABB (Axis-Aligned Bounding Box) is computed inline in each splat-centric kernel.
+Both the forward and backward splat-centric kernels compute the AABB identically using
+the same `ceilf`-based formula (see `rasterize_forward_splat_centric_kernel()` and
+`rasterize_backward_splat_centric_kernel()` in `kernels_core.cuh`).
 
 **CRITICAL: Correct AABB for Anisotropic Gaussians**
 
@@ -1144,9 +1150,13 @@ __device__ __forceinline__ void unravel_index(
 }
 ```
 
-**Usage Pattern**:
+**Usage Pattern** (in splat-centric kernels, the AABB is computed inline):
 ```cuda
-// In preprocess_nd AND bin_nd - IDENTICAL calls:
+// In rasterize_forward_splat_centric_kernel and rasterize_backward_splat_centric_kernel:
+// AABB computed from conic diagonal, using ceilf-based radius formula.
+// See kernels_core.cuh for the actual inline computation.
+
+// Legacy preprocess_kernel uses L_row_norms for AABB:
 float mu[DIM], L_row_norms[DIM];
 load_center<DIM>(centers, idx, mu);
 compute_L_row_norms<DIM>(&L[idx * DIM * DIM], L_row_norms);
@@ -1160,20 +1170,16 @@ AABB<DIM> aabb = compute_splat_aabb<DIM>(
 if (aabb_is_empty<DIM>(aabb)) return;
 ```
 
-#### Large Splat Handling (REQUIRED)
+#### Large Splat Handling
 
-**Problem**: A splat with very large covariance (large L) can touch **every tile** in the volume,
-making binning O(N × num_tiles) instead of O(N × avg_tiles_per_splat). A single "background"
-splat covering the entire volume could dominate runtime.
+> **Note**: In the splat-centric architecture, large splats are handled
+> uniformly -- each block processes its splat's AABB regardless of size.
+> The "global splat" detection below is performed as a diagnostic side effect
+> in `rasterize_forward_splat_centric_kernel()` (thread 0 checks tile count
+> and sets `global_splat_flags`). It does NOT affect the rendering pipeline.
 
-**CRITICAL**: In volumetric fitting (unlike view synthesis), the optimization process often
-initializes splats with high variance (covering a large % of the volume). If a single splat
-covers 50% of the tiles:
-1. **Binning bottleneck**: That single splat triggers millions of atomic writes to `tile_counts`
-   and `tile_content`, serializing the binning kernel.
-2. **Rasterization bottleneck**: Every tile processes this splat.
-
-This is NOT a rare edge case—it WILL occur during early optimization iterations.
+**Problem**: A splat with very large covariance (large L) can touch **every tile** in the volume.
+In volumetric fitting, the optimization process often initializes splats with high variance.
 
 **Detection**:
 ```cuda
@@ -1187,7 +1193,7 @@ __device__ __forceinline__ int count_tiles_in_aabb(const AABB<DIM>& aabb) {
     return count;
 }
 
-// In preprocess_nd:
+// In rasterize_forward_splat_centric_kernel (thread 0 per block):
 int tiles_touched = count_tiles_in_aabb<DIM>(aabb);
 
 // Threshold: if splat touches > 10% of all tiles, flag as "global"
@@ -1200,108 +1206,21 @@ if (tiles_touched > threshold) {
 }
 ```
 
-**REQUIRED Implementation: Global Splat List**
+**Splat-Centric Implementation**
 
-Splats exceeding the threshold are NOT binned. Instead, they are placed in a separate
-`global_splat_ids` list and processed via broadcast to all pixels:
+In the current architecture, global splat detection is a **side effect** of the forward kernel:
+- Thread 0 in each block checks the AABB tile count against `GLOBAL_SPLAT_THRESHOLD` (10%)
+- If exceeded, it sets `global_splat_flags[splat_idx] = true` and increments `global_splat_count`
+- After the kernel, `dispatch_forward_impl()` reads the count and compacts the IDs via `torch::nonzero()`
+- The `global_splat_ids` tensor is stored in `BinningState` for diagnostic purposes
 
-```cuda
-// Forward pass pipeline (REQUIRED structure):
-void forward_pass(...) {
-    // 1. Preprocess: Classify splats as local vs global
-    preprocess_nd<DIM><<<...>>>(
-        ..., global_splat_flags, global_splat_count, ...
-    );
+The splat-centric forward and backward kernels process all splats uniformly (including global
+ones), so no separate global splat kernel is needed in the current pipeline.
 
-    // 2. Compact global splat IDs (CUB select_if)
-    int num_global_splats;
-    cudaMemcpy(&num_global_splats, global_splat_count, sizeof(int), D2H);
+The legacy `rasterize_global_forward_kernel()` and `rasterize_global_backward_kernel()` in
+`kernels_global.cuh` are retained for the fallback tile-based path.
 
-    if (num_global_splats > 0) {
-        compact_global_splats<<<...>>>(global_splat_flags, global_splat_ids, N);
-    }
-
-    // 3. Standard binning for LOCAL splats only
-    //    (Global splats were skipped in preprocess, so tile_counts excludes them)
-    bin_nd<DIM><<<...>>>(...);
-
-    // 4. Rasterize local splats (tile-parallel)
-    rasterize_fwd_nd<DIM><<<...>>>(...);
-
-    // 5. Rasterize global splats (pixel-parallel broadcast)
-    if (num_global_splats > 0) {
-        rasterize_global_splats_nd<DIM><<<pixel_blocks, 256>>>(
-            global_splat_ids, num_global_splats,
-            centers, conic, amps, sharpness,
-            output, shape, truncate, intensity_floor
-        );
-    }
-}
-
-// Global splat kernel: each thread handles one pixel, iterates ALL global splats
-template<int DIM>
-__global__ void rasterize_global_splats_nd(
-    const int* __restrict__ global_splat_ids,
-    int num_global_splats,
-    const float* __restrict__ centers,
-    const float* __restrict__ conic,
-    const float* __restrict__ amps,
-    const float* __restrict__ sharpness,
-    float* __restrict__ output,
-    const int* __restrict__ shape,
-    float truncate,
-    float intensity_floor
-) {
-    int pixel_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (pixel_idx >= total_pixels) return;
-
-    // Compute pixel coordinates
-    float px[DIM];
-    unravel_index<DIM>(pixel_idx, shape, px);
-
-    float accum = 0.0f;
-
-    // Load global splats to shared memory for efficiency
-    extern __shared__ float smem[];
-    // ... batch loading similar to rasterize_fwd_nd ...
-
-    for (int i = 0; i < num_global_splats; i++) {
-        int splat_id = global_splat_ids[i];
-        float contribution = compute_splat_contribution<DIM>(
-            px, splat_id, centers, conic, amps, sharpness, truncate, intensity_floor
-        );
-        accum += contribution;
-    }
-
-    // Add to output (atomicAdd since local splats may have written here too)
-    if (accum > 0.0f) {
-        atomicAdd(&output[pixel_idx], accum);
-    }
-}
-```
-
-**Backward Pass Global Splat Handling (REQUIRED)**
-
-The backward pass MUST also handle global splats separately to avoid atomic contention:
-
-```cuda
-void backward_pass(...) {
-    // 1. Backward for local splats (tile-parallel, per-tile SMEM accumulation)
-    rasterize_bwd_nd<DIM><<<...>>>(...);
-
-    // 2. Backward for global splats (pixel-parallel, direct gradient accumulation)
-    if (num_global_splats > 0) {
-        rasterize_global_splats_bwd_nd<DIM><<<pixel_blocks, 256>>>(
-            global_splat_ids, num_global_splats,
-            grad_output, centers, conic, amps, sharpness,
-            d_centers, d_conic, d_amps, d_sharpness,
-            shape, truncate, intensity_floor
-        );
-    }
-}
-```
-
-**Memory Overhead**: ~4 bytes per splat for `global_splat_flags`, plus compact buffer.
+**Memory Overhead**: ~5 bytes per splat (`global_splat_flags` bool + counter).
 Negligible compared to the binning disaster it prevents.
 
 **Alternative Strategies (NOT recommended as primary, but useful as fallbacks)**:
@@ -1322,1500 +1241,212 @@ Negligible compared to the binning disaster it prevents.
    ```
    Changes the mathematical model—use only if user explicitly opts in.
 
-### 5.1 Forward Pass Kernels
+### 5.1 Splat-Centric Forward Kernel
 
-#### Kernel 1: Preprocess (`preprocess_nd`)
+#### Primary: `rasterize_forward_splat_centric_kernel()` (kernels_core.cuh)
 
-**Purpose**: Compute AABB for each splat, count tile overlaps
+This is the main forward kernel. It replaces the entire tile-based pipeline
+(preprocess + prefix_sum + bin + rasterize_fwd + global_fwd).
 
+**Grid**: `N` blocks (one per splat), 256 threads per block.
+
+**Algorithm**:
+1. Thread 0 loads splat data (center, conic, amplitude) into shared memory
+2. Thread 0 computes the AABB using `ceilf`-based radius from conic diagonal,
+   with `effective_truncate_sq()` for amplitude-aware tightening
+3. All threads cooperatively iterate over voxels in the AABB
+4. For each voxel: compute Mahalanobis distance, shifted Gaussian intensity,
+   and `atomicAdd` the contribution to the output volume
+5. As a side effect, thread 0 detects "global" splats (touching >10% of tiles)
+   and sets `global_splat_flags[splat_idx]`
+
+**Signature** (see `kernels_core.cuh`):
 ```cuda
-template<int DIM>
-__global__ void preprocess_nd(
-    const float* __restrict__ centers,      // (N, DIM)
-    const float* __restrict__ L,            // (N, DIM, DIM) lower triangular
-    const float* __restrict__ sharpness,    // (N,)
-    const float* __restrict__ amps,         // (N,)
-    int* __restrict__ tile_counts,          // (num_tiles,) atomic output
-    const int* __restrict__ shape,          // (DIM,)
-    const int* __restrict__ tile_size,      // (DIM,) voxels per tile axis
-    const int* __restrict__ tile_dims,      // (DIM,) tiles per axis
+template <int DIM, typename InputDType = float>
+__global__ void rasterize_forward_splat_centric_kernel(
+    const InputDType* __restrict__ centers,   // (N, DIM)
+    const InputDType* __restrict__ conic,     // (N, DIM*(DIM+1)/2)
+    const InputDType* __restrict__ amps,      // (N,)
+    int N,
+    const int* __restrict__ shape,            // (DIM,)
     float truncate,
     float intensity_floor,
-    int N
-) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= N) return;
-
-    // Load splat center
-    float mu[DIM];
-    #pragma unroll
-    for (int d = 0; d < DIM; d++) {
-        mu[d] = centers[idx * DIM + d];
-    }
-
-    // Compute L row norms for AABB (using shared function)
-    float L_row_norms[DIM];
-    compute_L_row_norms<DIM>(&L[idx * DIM * DIM], L_row_norms);
-
-    // Compute AABB using SHARED FUNCTION (single source of truth!)
-    AABB<DIM> aabb = compute_splat_aabb<DIM>(
-        mu, L_row_norms, sharpness[idx], amps[idx],
-        truncate, intensity_floor, tile_size, tile_dims, shape
-    );
-
-    // Skip splats with empty AABB
-    if (aabb_is_empty<DIM>(aabb)) return;
-
-    // Increment tile counts for each tile in AABB
-    iterate_tile_range<DIM>(aabb.lo, aabb.hi, tile_dims, [&](int tile_idx) {
-        atomicAdd(&tile_counts[tile_idx], 1);
-    });
-}
-```
-
-#### Kernel 2: Compute Tile Offsets
-
-Use **CUB prefix sum** for computing tile offsets with **persistent temp storage**:
-
-```cpp
-// Initialization (called once at setup)
-void init_binning_state(BinningState& state, int num_tiles, cudaStream_t stream) {
-    // Query temp storage size (dry run)
-    state.scan_temp_bytes = 0;
-    cub::DeviceScan::ExclusiveSum(
-        nullptr, state.scan_temp_bytes,
-        (int*)nullptr, (int*)nullptr, num_tiles, stream
-    );
-
-    // Allocate persistent temp storage (reused across all iterations)
-    cudaMalloc(&state.scan_temp_storage, state.scan_temp_bytes);
-    state.initialized = true;
-}
-
-// Per-frame prefix sum (uses persistent temp storage)
-void compute_tile_offsets(
-    BinningState& state,
-    int* tile_counts,
-    int* tile_offsets,
-    int num_tiles,
-    cudaStream_t stream
-) {
-    assert(state.initialized && "BinningState not initialized!");
-
-    // Execute prefix sum using persistent temp storage
-    // NO allocation/deallocation per frame!
-    cub::DeviceScan::ExclusiveSum(
-        state.scan_temp_storage, state.scan_temp_bytes,
-        tile_counts, tile_offsets, num_tiles, stream
-    );
-}
-
-// Cleanup (called once at teardown)
-void destroy_binning_state(BinningState& state) {
-    if (state.scan_temp_storage) {
-        cudaFree(state.scan_temp_storage);
-        state.scan_temp_storage = nullptr;
-    }
-    state.initialized = false;
-}
-```
-
-**IMPORTANT**: CUB temp storage allocation is surprisingly expensive (~100-500µs).
-Persisting it across iterations avoids this overhead on every forward pass.
-
-#### Computing total_pairs for tile_content Buffer
-
-The `tile_content` buffer holds all (tile, splat) pairs. Its size is the sum of tile_counts.
-
-**IMPORTANT: Use int64_t to Prevent Overflow**
-
-With 1M tiles and average 1000 splats/tile, total_pairs = 1 billion, approaching INT32_MAX (2.1B).
-High-D volumes with many overlapping splats can exceed this limit. Always use `int64_t` for:
-- `total_pairs` computation and storage
-- `tile_offsets` array (CUB supports 64-bit offsets via `OffsetT` template parameter)
-- Buffer capacity tracking
-
-```cpp
-// After prefix sum, total_pairs = tile_offsets[last] + tile_counts[last]
-// CRITICAL: Use int64_t to prevent overflow for large workloads
-int64_t compute_total_pairs(
-    const int64_t* tile_offsets,  // Use int64_t offsets
-    const int* tile_counts,        // Counts per tile fit in int32
+    float* __restrict__ output,               // (prod(shape),) - must be pre-zeroed
+    bool* __restrict__ global_splat_flags,    // (N,) optional diagnostic output
+    int* __restrict__ global_splat_count,     // scalar atomic counter
     int64_t num_tiles,
-    cudaStream_t stream
-) {
-    // Method 1: Read last elements from device (requires sync)
-    int64_t last_offset;
-    int last_count;
-    CUDA_CHECK(cudaMemcpyAsync(&last_offset, &tile_offsets[num_tiles - 1],
-                               sizeof(int64_t), cudaMemcpyDeviceToHost, stream));
-    CUDA_CHECK(cudaMemcpyAsync(&last_count, &tile_counts[num_tiles - 1],
-                               sizeof(int), cudaMemcpyDeviceToHost, stream));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-    return last_offset + static_cast<int64_t>(last_count);
-
-    // Method 2: Use CUB reduction (avoids sync but adds kernel launch)
-    // int64_t total;
-    // cub::DeviceReduce::Sum(temp, temp_bytes, tile_counts, &total, num_tiles, stream);
-}
-
-// CUB prefix sum with 64-bit offsets
-void compute_tile_offsets_64(
-    BinningState& state,
-    const int* tile_counts,      // Input: 32-bit counts
-    int64_t* tile_offsets,       // Output: 64-bit offsets
-    int64_t num_tiles,
-    cudaStream_t stream
-) {
-    // CUB supports 64-bit output via template parameter
-    cub::DeviceScan::ExclusiveSum<const int*, int64_t*>(
-        state.scan_temp_storage, state.scan_temp_bytes,
-        tile_counts, tile_offsets, num_tiles, stream
-    );
-}
-
-// Usage in forward pass:
-void forward(BinningState& state, ...) {
-    // 1. Preprocess: count tiles per splat
-    preprocess_nd<DIM><<<...>>>(... , state.tile_counts, ...);
-
-    // 2. Prefix sum: compute 64-bit offsets from 32-bit counts
-    compute_tile_offsets_64(state, state.tile_counts, state.tile_offsets, num_tiles, stream);
-
-    // 3. Compute total pairs and resize buffer if needed
-    int64_t total_pairs = compute_total_pairs(state.tile_offsets, state.tile_counts, num_tiles, stream);
-
-    // Validate against maximum supported size (e.g., 4 billion pairs)
-    constexpr int64_t MAX_TOTAL_PAIRS = 4'000'000'000LL;
-    if (total_pairs > MAX_TOTAL_PAIRS) {
-        throw std::runtime_error("total_pairs exceeds maximum supported size");
-    }
-
-    if (total_pairs > state.tile_content_capacity) {
-        // Reallocate with some headroom (1.5x)
-        state.resize_tile_content(total_pairs * 3 / 2);
-    }
-
-    // 4. Zero write heads
-    CUDA_CHECK(cudaMemsetAsync(state.tile_write_heads, 0, num_tiles * sizeof(int), stream));
-
-    // 5. Binning: populate tile_content
-    bin_nd<DIM><<<...>>>(... , state.tile_content, ...);
-
-    // 6. Rasterize
-    rasterize_fwd_nd<DIM><<<...>>>(...);
-}
+    int tile_size_param,
+    int* __restrict__ tile_counts_out,        // optional diagnostic output
+    const int* __restrict__ tile_dims
+);
 ```
 
-**Buffer Overflow Protection**:
+**Shared memory usage**: `DIM + CONIC_SIZE + 1` floats for splat data broadcast,
+plus `DIM` ints each for AABB lo/hi, shape, and truncation. No batch loading,
+no `__syncthreads` barriers in the hot loop.
+
+**Key optimizations**:
+- **No tile binning**: Each block computes its own AABB directly from the conic
+- **`atomicAdd` scatter**: Contributions written directly to global output
+- **Global splat detection as side effect**: No separate preprocess kernel needed
+- **`__expf` fast math**: ~2 ULP error for ~15% speedup
+
+#### Dispatch: `dispatch_forward_impl<InputDType>()` (cuda_splatting.cu)
+
+The host-side entry point validates inputs, allocates the output buffer, creates
+minimal `BinningState` for API compatibility, and calls
+`launch_rasterize_forward_splat_centric()` via the `DIM_DISPATCH` macro.
+
+**Output buffer reuse**: If an `output_buffer` tensor is provided (pre-zeroed from
+a previous backward pass), it is reused to avoid the `output.zero_()` overhead.
+See `forward_impl()` in `cuda_splatting.cu`.
+
+#### Legacy tile-based forward (retained, not used)
+
+The following kernels are still compiled but not called in the default pipeline:
+- `preprocess_kernel()` in `kernels_core.cuh` -- AABB + tile counting
+- `bin_kernel()` in `kernels_core.cuh` -- splat-to-tile assignment (uses cached int AABBs, not InputDType)
+- `rasterize_forward_kernel()` in `kernels_core.cuh` -- tile-parallel forward with shared memory batch loading
+- `rasterize_global_forward_kernel()` in `kernels_global.cuh` -- pixel-parallel forward for global splats
+
+These are retained for potential future hybrid strategies and as reference implementations.
+
+### 5.2 Splat-Centric Backward Kernel
+
+#### Primary: `rasterize_backward_splat_centric_kernel()` (kernels_core.cuh)
+
+**Grid**: `N` blocks (one per splat), 256 threads per block.
+
+**Algorithm**:
+1. Thread 0 loads splat data into shared memory, computes AABB (identical to forward)
+2. All threads cooperatively iterate over voxels in the AABB
+3. For each voxel: read `grad_output`, recompute Mahalanobis distance and intensity,
+   compute per-voxel gradient contributions for centers, conic, and amplitude
+4. Per-thread gradients are accumulated in registers, then reduced within the block
+   using `warp_reduce_sum()` (see `reduction_utils.cuh`) and a final cross-warp
+   shared memory reduction
+5. Thread 0 writes the final gradient for this splat to global memory (single write,
+   no atomics needed since each block exclusively owns its splat)
+6. **Optional**: If `output_to_zero` is non-null, threads zero the forward output
+   tensor as a side effect, eliminating the next iteration's `output.zero_()` call
+
+**Signature** (see `kernels_core.cuh`):
 ```cuda
-// In bin_nd, check bounds before writing:
-int slot = atomicAdd(&tile_write_heads[tile_idx], 1);
-int offset = tile_offsets[tile_idx];
-int capacity = (tile_idx < num_tiles - 1)
-    ? tile_offsets[tile_idx + 1] - offset
-    : total_pairs - offset;
-
-if (slot < capacity) {
-    tile_content[offset + slot] = idx;
-} else {
-    // Overflow detected - set error flag
-    atomicMax(&overflow_flag, 1);
-}
-```
-
-#### Kernel 3: Binning (`bin_nd`)
-
-**Purpose**: Populate per-tile splat lists
-
-```cuda
-template<int DIM>
-__global__ void bin_nd(
-    const float* __restrict__ centers,       // (N, DIM)
-    const float* __restrict__ L,             // (N, DIM, DIM) lower triangular
-    const float* __restrict__ sharpness,     // (N,)
-    const float* __restrict__ amps,          // (N,)
-    const int* __restrict__ tile_offsets,    // (num_tiles,) from prefix sum
-    int* __restrict__ tile_write_heads,      // (num_tiles,) atomic counters
-    int* __restrict__ tile_content,          // (total_pairs,) output
-    const int* __restrict__ shape,           // (DIM,)
-    const int* __restrict__ tile_size,       // (DIM,) voxels per tile axis
-    const int* __restrict__ tile_dims,       // (DIM,) tiles per axis
+template <int DIM, typename InputDType = float>
+__global__ void rasterize_backward_splat_centric_kernel(
+    const float* __restrict__ grad_output,    // (prod(shape),) always FP32
+    const InputDType* __restrict__ centers,   // (N, DIM)
+    const InputDType* __restrict__ conic,     // (N, DIM*(DIM+1)/2)
+    const InputDType* __restrict__ amps,      // (N,)
+    int N,
+    const int* __restrict__ shape,            // (DIM,)
     float truncate,
     float intensity_floor,
-    int N
-) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= N) return;
-
-    // Load splat center (IDENTICAL to preprocess)
-    float mu[DIM];
-    #pragma unroll
-    for (int d = 0; d < DIM; d++) {
-        mu[d] = centers[idx * DIM + d];
-    }
-
-    // Compute L row norms (IDENTICAL to preprocess)
-    float L_row_norms[DIM];
-    compute_L_row_norms<DIM>(&L[idx * DIM * DIM], L_row_norms);
-
-    // Compute AABB using SHARED FUNCTION (MUST match preprocess exactly!)
-    AABB<DIM> aabb = compute_splat_aabb<DIM>(
-        mu, L_row_norms, sharpness[idx], amps[idx],
-        truncate, intensity_floor, tile_size, tile_dims, shape
-    );
-
-    // Skip splats with empty AABB (MUST match preprocess behavior)
-    if (aabb_is_empty<DIM>(aabb)) return;
-
-    // Write splat ID to each tile's list
-    iterate_tile_range<DIM>(aabb.lo, aabb.hi, tile_dims, [&](int tile_idx) {
-        int slot = atomicAdd(&tile_write_heads[tile_idx], 1);
-        int offset = tile_offsets[tile_idx];
-        tile_content[offset + slot] = idx;
-    });
-}
+    float* __restrict__ d_centers,            // (N, DIM) output gradients (FP32)
+    float* __restrict__ d_conic,              // (N, CONIC_SIZE) output gradients (FP32)
+    float* __restrict__ d_amps,               // (N,) output gradients (FP32)
+    float* __restrict__ output_to_zero        // optional: zero forward output as side effect
+);
 ```
 
-#### Helper: iterate_tile_range
+**Key design advantages over the old tile-based backward**:
+- **Zero global atomics**: Each block owns its splat exclusively, so the final
+  gradient write is a direct store (no `atomicAdd` contention)
+- **No tile binning dependency**: No need for `tile_offsets`, `tile_counts`, or
+  `tile_content` from the forward pass
+- **Handles all splats uniformly**: No separate "global splat backward" kernel;
+  large splats are processed the same way as small ones
+- **Block-local reduction**: Gradients accumulated in registers, reduced via
+  warp shuffles (`warp_reduce_sum()` in `reduction_utils.cuh`), then cross-warp
+  reduction in shared memory
 
-Iterates over all tiles in an nD AABB, computing linear tile index:
+**Gradient dispatch helpers**: The `compute_pixel_gradients<DIM>()` template in
+`kernels_core.cuh` computes per-voxel gradient contributions. Specialized 2D and
+3D versions (`backward_pixel_splat_2d()`, `backward_pixel_splat_3d()` in
+`reduction_utils.cuh`) provide 25-35% speedup via explicit formula expansion.
 
-```cuda
-// Compile-time recursive iteration over nD tile range
-template<int DIM, int D = 0>
-struct TileIterator {
-    template<typename Func>
-    __device__ __forceinline__ static void iterate(
-        const int* lo,
-        const int* hi,
-        const int* tile_dims,
-        int* current,      // Current tile coordinates being built
-        int& linear_idx,   // Running linear index
-        Func&& func
-    ) {
-        for (current[D] = lo[D]; current[D] <= hi[D]; current[D]++) {
-            TileIterator<DIM, D + 1>::iterate(lo, hi, tile_dims, current, linear_idx, func);
-        }
-    }
-};
+#### Dispatch: `dispatch_backward_impl<InputDType>()` (cuda_splatting.cu)
 
-// Base case: innermost dimension
-template<int DIM>
-struct TileIterator<DIM, DIM> {
-    template<typename Func>
-    __device__ __forceinline__ static void iterate(
-        const int* lo,
-        const int* hi,
-        const int* tile_dims,
-        int* current,
-        int& linear_idx,
-        Func&& func
-    ) {
-        // Compute linear index from current tile coordinates
-        // Using row-major order: idx = t[0] * stride[0] + t[1] * stride[1] + ...
-        int idx = 0;
-        int stride = 1;
-        #pragma unroll
-        for (int d = DIM - 1; d >= 0; d--) {
-            idx += current[d] * stride;
-            stride *= tile_dims[d];
-        }
-        func(idx);
-    }
-};
+The host-side entry point allocates gradient buffers (always FP32), then calls
+`launch_rasterize_backward_splat_centric()` via the `DIM_DISPATCH` macro.
+Cached `shape_tensor` and `tile_dims_tensor` from the forward pass are reused
+to avoid redundant host-to-device copies.
 
-// Convenience wrapper
-template<int DIM, typename Func>
-__device__ __forceinline__ void iterate_tile_range(
-    const int* lo,
-    const int* hi,
-    const int* tile_dims,
-    Func&& func
-) {
-    int current[DIM];
-    int linear_idx = 0;
-    TileIterator<DIM, 0>::iterate(lo, hi, tile_dims, current, linear_idx,
-                                   std::forward<Func>(func));
-}
+#### Legacy tile-based backward (retained, not used)
+
+- `rasterize_backward_kernel()` in `kernels_core.cuh` -- tile-parallel backward with shared memory gradient accumulators
+- `rasterize_global_backward_kernel()` in `kernels_global.cuh` -- pixel-parallel backward for global splats with warp-aggregated atomic adds
+
+### 5.3 FP16 (Half Precision) Support
+
+All kernels are templated on `InputDType` (either `float` or `__half`). The
+dispatch layer in `cuda_splatting.cu` provides non-templated wrapper functions:
+- `forward()` / `backward()` for FP32
+- `forward_fp16()` / `backward_fp16()` for FP16
+
+**How FP16 works**:
+1. FP16 tensors are loaded from global memory (2x bandwidth)
+2. `DTypeTraits<__half>::load()` (in `dtype_traits.cuh`) converts to FP32 during load
+3. All computation is FP32
+4. Output and gradients are always FP32
+
+The Python `forward_wrapper()` in `bindings.cpp` accepts a `use_fp16` flag and
+handles the FP32-to-FP16 conversion of input tensors before calling the
+appropriate dispatch function.
+
+### 5.4 Template Instantiation and Batch Size Selection
+
+Template instantiations for all DIM x InputDType x BATCH_SIZE combinations are
+in `cuda_splatting.cu`. The splat-centric kernels have no `BATCH_SIZE` template
+parameter (they process one splat per block).
+
+The legacy tile-based rasterize kernels are instantiated for:
+- **Batch size 32**: All dimensions (2-8) -- minimum safe batch size
+- **Batch size 128**: Dimensions 2-6 (fits in 48KB shared memory)
+- **Batch size 256**: Dimensions 2-4 (fits in 48KB shared memory)
+
+DIM=7,8 with BATCH=128 and DIM>=5 with BATCH=256 exceed the 48KB shared memory
+limit and are intentionally not instantiated.
+
+### 5.5 Shared Device Utility Functions
+
+The kernels rely on utility functions organized into four headers:
+
+| Header | Functions | Purpose |
+|--------|-----------|---------|
+| `math_utils.cuh` | `conic_size<DIM>()`, `tri_index<DIM>()`, `mahalanobis_distance_sq<DIM>()`, `gaussian_intensity()`, `effective_truncate_sq()`, `compute_shift_params()` | Triangular indexing, distance, intensity |
+| `tile_utils.cuh` | `AABB<DIM>`, `compute_aabb_from_L_row_norms()`, `get_tile_info_2d()`, `get_tile_info_3d()` | Spatial binning, tile indexing |
+| `reduction_utils.cuh` | `warp_reduce_sum()`, `warp_aggregated_atomic_add()`, `grad_intensity_wrt_dist_sq()`, `backward_pixel_splat_2d()`, `backward_pixel_splat_3d()` | Warp reduction, gradient helpers |
+| `dtype_traits.cuh` | `DTypeTraits<float>`, `DTypeTraits<__half>` | FP16 load/convert, vectorized access |
+
+**Shifted Gaussian with C0 continuity**: The intensity function uses:
+```
+C     = exp(-0.5 * T^2)          // boundary value at truncation
+scale = 1 / (1 - C)              // peak-preserving rescale
+I(x)  = a * scale * max(0, exp(-0.5 * D^2) - C)
 ```
 
-**Important: Hybrid Iteration Strategy**
-
-Template unrolling causes PTX code bloat for DIM > 4, potentially causing register spills
-and reduced occupancy. Use a **hybrid approach**:
-
-```cuda
-// For DIM <= 3: Use template recursion (fully unrolled, fast)
-// For DIM > 3:  Use runtime loops (avoid code bloat, ~10% slower but stable)
-
-template<int DIM, typename Func>
-__device__ __forceinline__ void iterate_tile_range_hybrid(
-    const int* lo, const int* hi, const int* tile_dims, Func&& func
-) {
-    if constexpr (DIM <= 3) {
-        // Template recursion - compiler unrolls completely
-        int current[DIM];
-        TileIterator<DIM, 0>::iterate(lo, hi, tile_dims, current, 0,
-                                       std::forward<Func>(func));
-    } else {
-        // Runtime nested loops for high-D (avoid code bloat)
-        int current[DIM];
-        int indices[DIM];  // Stack for manual iteration
-
-        // Initialize
-        for (int d = 0; d < DIM; d++) {
-            current[d] = lo[d];
-        }
-
-        while (true) {
-            // Compute linear index and call function
-            int idx = 0, stride = 1;
-            for (int d = DIM - 1; d >= 0; d--) {
-                idx += current[d] * stride;
-                stride *= tile_dims[d];
-            }
-            func(idx);
-
-            // Increment (like an odometer)
-            int d = DIM - 1;
-            while (d >= 0 && ++current[d] > hi[d]) {
-                current[d] = lo[d];
-                d--;
-            }
-            if (d < 0) break;  // All done
-        }
-    }
-}
-```
-
-**Trade-off**: ~10% performance loss for DIM > 3, but avoids register pressure issues
-that could cause 50%+ slowdown from spills.
-
-#### Helper: Thread-to-Pixel Mapping
-
-Maps CUDA thread/block IDs to pixel positions within the volume. Critical for correct rasterization.
-
-**Grid/Block Configuration**:
-- **Grid**: One block per tile, so `gridDim = tile_dims`
-- **Block**: Threads cover pixels within a tile, so `blockDim = tile_size^DIM` (capped at 1024)
-
-```cuda
-// Compute pixel index from thread position within a tile
-// Returns -1 if pixel is outside volume bounds
-template<int DIM>
-__device__ __forceinline__ int compute_pixel_index(
-    const dim3& blockIdx,
-    const dim3& threadIdx,
-    const int* tile_size,
-    const int* tile_dims,
-    const int* shape
-) {
-    // Compute tile coordinates from blockIdx (for 2D/3D)
-    int tile_coords[DIM];
-    if constexpr (DIM == 2) {
-        tile_coords[0] = blockIdx.y;
-        tile_coords[1] = blockIdx.x;
-    } else if constexpr (DIM == 3) {
-        tile_coords[0] = blockIdx.z;
-        tile_coords[1] = blockIdx.y;
-        tile_coords[2] = blockIdx.x;
-    } else {
-        // For DIM > 3, flatten blockIdx.x into tile coordinates
-        int flat_idx = blockIdx.x;
-        for (int d = DIM - 1; d >= 0; d--) {
-            tile_coords[d] = flat_idx % tile_dims[d];
-            flat_idx /= tile_dims[d];
-        }
-    }
-
-    // Compute local pixel position within tile from threadIdx
-    int local_pos[DIM];
-    int flat_thread = threadIdx.x;
-    for (int d = DIM - 1; d >= 0; d--) {
-        local_pos[d] = flat_thread % tile_size[d];
-        flat_thread /= tile_size[d];
-    }
-
-    // Compute global pixel position
-    int pixel_coords[DIM];
-    for (int d = 0; d < DIM; d++) {
-        pixel_coords[d] = tile_coords[d] * tile_size[d] + local_pos[d];
-        // Bounds check
-        if (pixel_coords[d] >= shape[d]) return -1;
-    }
-
-    // Convert to linear index (row-major)
-    int pixel_idx = 0;
-    int stride = 1;
-    for (int d = DIM - 1; d >= 0; d--) {
-        pixel_idx += pixel_coords[d] * stride;
-        stride *= shape[d];
-    }
-
-    return pixel_idx;
-}
-
-// Compute tile index from block position
-template<int DIM>
-__device__ __forceinline__ int compute_tile_index(
-    const dim3& blockIdx,
-    const int* tile_dims
-) {
-    if constexpr (DIM == 2) {
-        return blockIdx.y * tile_dims[1] + blockIdx.x;
-    } else if constexpr (DIM == 3) {
-        return blockIdx.z * tile_dims[1] * tile_dims[2] +
-               blockIdx.y * tile_dims[2] +
-               blockIdx.x;
-    } else {
-        // For DIM > 3, blockIdx.x is already the linear tile index
-        return blockIdx.x;
-    }
-}
-
-// Convert linear pixel index to nD coordinates
-template<int DIM>
-__device__ __forceinline__ void unravel_index(
-    int linear_idx,
-    const int* shape,
-    float* coords  // Output: floating point coordinates
-) {
-    for (int d = DIM - 1; d >= 0; d--) {
-        coords[d] = static_cast<float>(linear_idx % shape[d]);
-        linear_idx /= shape[d];
-    }
-}
-
-// Grid configuration for kernel launch
-template<int DIM>
-struct GridConfig {
-    dim3 grid;
-    dim3 block;
-    int pixels_per_tile;
-
-    static GridConfig compute(const int* tile_dims, const int* tile_size) {
-        GridConfig cfg;
-
-        // Compute pixels per tile
-        cfg.pixels_per_tile = 1;
-        for (int d = 0; d < DIM; d++) {
-            cfg.pixels_per_tile *= tile_size[d];
-        }
-
-        // Block size = pixels per tile (capped at 1024)
-        cfg.block = dim3(min(cfg.pixels_per_tile, 1024), 1, 1);
-
-        // Grid configuration depends on dimension
-        if constexpr (DIM == 2) {
-            cfg.grid = dim3(tile_dims[1], tile_dims[0], 1);
-        } else if constexpr (DIM == 3) {
-            cfg.grid = dim3(tile_dims[2], tile_dims[1], tile_dims[0]);
-        } else {
-            // For DIM > 3, use 1D grid with linear tile index
-            int num_tiles = 1;
-            for (int d = 0; d < DIM; d++) num_tiles *= tile_dims[d];
-            cfg.grid = dim3(num_tiles, 1, 1);
-        }
-
-        return cfg;
-    }
-};
-```
-
-**Thread Assignment Examples**:
-
-| Dimension | Tile Size | Pixels/Tile | Block Size | Grid Configuration |
-|-----------|-----------|-------------|------------|-------------------|
-| 2D | 16×16 | 256 | 256 | `(tile_dims[1], tile_dims[0], 1)` |
-| 3D | 8×8×8 | 512 | 512 | `(tile_dims[2], tile_dims[1], tile_dims[0])` |
-| 4D | 4×4×4×4 | 256 | 256 | `(num_tiles, 1, 1)` |
-| 5D+ | 2^(10/D) | varies | varies | `(num_tiles, 1, 1)` |
-
-#### Kernel 4: Rasterize Forward (`rasterize_fwd_nd`)
-
-**Purpose**: Pixel-parallel rendering with generalized Gaussian
-
-```cuda
-template<int DIM>
-__global__ void rasterize_fwd_nd(
-    const float* __restrict__ centers,       // (N, DIM)
-    const float* __restrict__ conic,         // (N, DIM*(DIM+1)/2) packed upper-tri Σ⁻¹
-    const float* __restrict__ amps,          // (N,)
-    const float* __restrict__ sharpness,     // (N,)
-    const int* __restrict__ tile_offsets,    // (num_tiles,)
-    const int* __restrict__ tile_counts,     // (num_tiles,)
-    const int* __restrict__ tile_content,    // (total_pairs,)
-    float* __restrict__ output,              // (prod(shape),) flattened
-    const int* shape,
-    const int* tile_size,                    // (DIM,) voxels per tile axis - ADDED
-    const int* tile_dims,
-    float truncate,
-    float intensity_floor
-) {
-    // ========================================
-    // COMPILE-TIME CONSTANTS
-    // ========================================
-    constexpr int CONIC_SIZE = (DIM * (DIM + 1)) / 2;
-    constexpr int BATCH_SIZE = compute_batch_size_forward<DIM>();
-
-    // Shared memory layout per splat:
-    // [center0..centerD-1, conic0..conicK-1, amp, sharpness]
-    // Total floats per splat: DIM + CONIC_SIZE + 2
-    constexpr int FLOATS_PER_SPLAT = DIM + CONIC_SIZE + 2;
-
-    // ========================================
-    // COMPUTE PIXEL AND TILE POSITION
-    // ========================================
-    int pixel_idx = compute_pixel_index<DIM>(blockIdx, threadIdx, tile_size, tile_dims, shape);
-    if (pixel_idx < 0) return;  // Out of bounds (edge tile)
-
-    float px[DIM];
-    unravel_index<DIM>(pixel_idx, shape, px);
-
-    int tile_idx = compute_tile_index<DIM>(blockIdx, tile_dims);
-    int count = tile_counts[tile_idx];
-    int start = tile_offsets[tile_idx];
-
-    // Early exit for empty tiles
-    if (count == 0) {
-        output[pixel_idx] = 0.0f;
-        return;
-    }
-
-    // ========================================
-    // SHARED MEMORY SETUP
-    // ========================================
-    // Dynamic shared memory for batch loading (BalanceGS optimization)
-    extern __shared__ float smem[];
-
-    // Pointers into shared memory for different attributes
-    float* centers_smem   = smem;                                    // [BATCH_SIZE * DIM]
-    float* conic_smem     = smem + BATCH_SIZE * DIM;                 // [BATCH_SIZE * CONIC_SIZE]
-    float* amps_smem      = smem + BATCH_SIZE * (DIM + CONIC_SIZE);  // [BATCH_SIZE]
-    float* sharpness_smem = smem + BATCH_SIZE * (DIM + CONIC_SIZE + 1); // [BATCH_SIZE]
-
-    float accum = 0.0f;
-
-    // ========================================
-    // MAIN LOOP: PROCESS SPLATS IN BATCHES
-    // ========================================
-    for (int batch_start = 0; batch_start < count; batch_start += BATCH_SIZE) {
-        int batch_end = min(batch_start + BATCH_SIZE, count);
-        int batch_count = batch_end - batch_start;
-
-        // -------------------------------------
-        // COOPERATIVE BATCH LOAD INTO SHARED MEMORY
-        // All threads participate in loading to maximize bandwidth
-        // -------------------------------------
-        for (int i = threadIdx.x; i < batch_count; i += blockDim.x) {
-            int splat_id = tile_content[start + batch_start + i];
-
-            // Load ALL splat data to shared memory (not just centers/conic!)
-            load_splat_to_smem<DIM>(
-                centers, conic, amps, sharpness, splat_id,
-                centers_smem, conic_smem, amps_smem, sharpness_smem, i
-            );
-        }
-        __syncthreads();
-
-        // -------------------------------------
-        // PROCESS BATCH FROM SHARED MEMORY
-        // No global memory reads in inner loop!
-        // -------------------------------------
-        for (int i = 0; i < batch_count; i++) {
-            // Load ALL parameters from shared memory
-            float mu[DIM];
-            #pragma unroll
-            for (int d = 0; d < DIM; d++) {
-                mu[d] = centers_smem[i * DIM + d];
-            }
-
-            float C[CONIC_SIZE];
-            #pragma unroll
-            for (int k = 0; k < CONIC_SIZE; k++) {
-                C[k] = conic_smem[i * CONIC_SIZE + k];
-            }
-
-            float a = amps_smem[i];
-            float s = fmaxf(sharpness_smem[i], 0.5f);  // Clamped in smem load or here
-
-            // Compute displacement
-            float d[DIM];
-            #pragma unroll
-            for (int dim = 0; dim < DIM; dim++) {
-                d[dim] = px[dim] - mu[dim];
-            }
-
-            // Mahalanobis distance: d^T × Σ⁻¹ × d
-            float dist_sq = mahalanobis_distance<DIM>(d, C);
-
-            // Sharpness-adjusted truncation
-            // TODO (Phase 3 optimization): Precompute per-splat during batch load
-            // since effective_truncate_radius_sq only depends on splat params, not pixel.
-            // See Section 6.3 for powf() optimization strategies.
-            float effective_truncate_radius_sq = powf(truncate, 4.0f / s);
-
-            if (dist_sq <= effective_truncate_radius_sq) {
-                // Shifted Gaussian (C⁰ continuous at truncation boundary):
-                // I = a × scale × max(0, exp(-0.5 × D^s) - C)
-                float raw = expf(-0.5f * powf(fmaxf(dist_sq, 1e-10f), s * 0.5f));
-                float val = a * scale * fmaxf(raw - C_boundary, 0.0f);
-
-                if (val >= intensity_floor) {
-                    accum += val;
-                }
-            }
-        }
-        __syncthreads();  // Ensure all threads done before next batch load
-    }
-
-    output[pixel_idx] = accum;
-}
-
-// ========================================
-// HELPER: Load splat data to shared memory
-// ========================================
-template<int DIM>
-__device__ __forceinline__ void load_splat_to_smem(
-    const float* __restrict__ centers,
-    const float* __restrict__ conic,
-    const float* __restrict__ amps,
-    const float* __restrict__ sharpness,
-    int splat_id,
-    float* centers_smem,
-    float* conic_smem,
-    float* amps_smem,
-    float* sharpness_smem,
-    int smem_idx
-) {
-    constexpr int CONIC_SIZE = (DIM * (DIM + 1)) / 2;
-
-    // Use __ldg for read-only texture cache path
-    #pragma unroll
-    for (int d = 0; d < DIM; d++) {
-        centers_smem[smem_idx * DIM + d] = __ldg(&centers[splat_id * DIM + d]);
-    }
-
-    #pragma unroll
-    for (int k = 0; k < CONIC_SIZE; k++) {
-        conic_smem[smem_idx * CONIC_SIZE + k] = __ldg(&conic[splat_id * CONIC_SIZE + k]);
-    }
-
-    amps_smem[smem_idx] = __ldg(&amps[splat_id]);
-    sharpness_smem[smem_idx] = __ldg(&sharpness[splat_id]);
-}
-```
-
-### 5.2 Backward Pass Kernel
-
-#### Kernel 5: Rasterize Backward (`rasterize_bwd_nd`)
-
-**Purpose**: Compute gradients with per-tile shared memory accumulation
-
-**IMPORTANT**: Naive warp-level reduction does NOT work here because threads process
-different pixels that contribute to the SAME splat with DIFFERENT values. We cannot
-simply sum across warps - each thread has a unique gradient contribution.
-
-**Strategy**: Use shared memory to accumulate per-splat gradients within a tile,
-then perform ONE atomic per splat per tile (instead of one per pixel per splat).
-
-```cuda
-template<int DIM>
-__global__ void rasterize_bwd_nd(
-    const float* __restrict__ grad_output,   // (prod(shape),)
-    const float* __restrict__ centers,       // (N, DIM)
-    const float* __restrict__ conic,         // (N, conic_size)
-    const float* __restrict__ amps,          // (N,)
-    const float* __restrict__ sharpness,     // (N,)
-    const int* __restrict__ tile_offsets,    // (num_tiles,)
-    const int* __restrict__ tile_counts,     // (num_tiles,)
-    const int* __restrict__ tile_content,    // (total_pairs,)
-    float* __restrict__ d_centers,           // (N, DIM) atomic
-    float* __restrict__ d_conic,             // (N, conic_size) atomic
-    float* __restrict__ d_amps,              // (N,) atomic
-    float* __restrict__ d_sharpness,         // (N,) atomic
-    const int* __restrict__ shape,           // (DIM,)
-    const int* __restrict__ tile_size,       // (DIM,)
-    const int* __restrict__ tile_dims,       // (DIM,)
-    float truncate,
-    float intensity_floor
-) {
-    constexpr int CONIC_SIZE = DIM * (DIM + 1) / 2;
-    constexpr int GRAD_SIZE = DIM + CONIC_SIZE + 2;  // centers + conic + amp + sharpness
-
-    // Shared memory for per-splat gradient accumulation within this tile
-    // Layout: [splat0_grads..., splat1_grads..., ...]
-    extern __shared__ float smem[];
-
-    // Compute pixel position
-    int pixel_idx = compute_pixel_index<DIM>(blockIdx, threadIdx, tile_size, tile_dims, shape);
-    if (pixel_idx < 0) return;  // Out of bounds
-
-    float px[DIM];
-    unravel_index<DIM>(pixel_idx, shape, px);
-
-    float dL_dI = grad_output[pixel_idx];
-
-    // Compute tile index
-    int tile_idx = compute_tile_index<DIM>(blockIdx, tile_dims);
-    int count = tile_counts[tile_idx];
-    int start = tile_offsets[tile_idx];
-
-    // Early exit for empty tiles
-    if (count == 0) return;
-
-    // Use dimension-aware batch size that accounts for gradient storage
-    // See Section 6.2: compute_batch_size_backward<DIM>()
-    constexpr int BATCH_SIZE = compute_batch_size_backward<DIM>();
-
-    // CRITICAL: Ensure BATCH_SIZE fits within thread block for cooperative write-back
-    // If BATCH_SIZE > blockDim.x, some splats would be silently dropped!
-    static_assert(BATCH_SIZE <= 1024, "BATCH_SIZE must fit in max block size");
-
-    for (int batch_start = 0; batch_start < count; batch_start += BATCH_SIZE) {
-        int batch_end = min(batch_start + BATCH_SIZE, count);
-        int batch_count = batch_end - batch_start;
-
-        // Zero shared memory for this batch (cooperative)
-        for (int i = threadIdx.x; i < batch_count * GRAD_SIZE; i += blockDim.x) {
-            smem[i] = 0.0f;
-        }
-        __syncthreads();
-
-        // Each thread accumulates its gradient contributions to shared memory
-        if (fabsf(dL_dI) > 1e-9f) {  // Skip if no upstream gradient
-            for (int b = 0; b < batch_count; b++) {
-                int splat_id = tile_content[start + batch_start + b];
-
-                // Load splat parameters
-                float mu[DIM], C[CONIC_SIZE];
-                load_splat_params<DIM>(centers, conic, splat_id, mu, C);
-                float s = sharpness[splat_id];
-                float a = amps[splat_id];
-
-                // Compute displacement and Mahalanobis distance
-                float d[DIM];
-                for (int dim = 0; dim < DIM; dim++) {
-                    d[dim] = px[dim] - mu[dim];
-                }
-                float dist_sq = mahalanobis_distance<DIM>(d, C);
-
-                // Check truncation
-                // NOTE: effective_truncate_radius_sq = (truncate^(2/s))^2 = truncate^(4/s)
-                float effective_truncate_radius_sq = powf(truncate, 4.0f / fmaxf(s, 0.5f));
-                if (dist_sq > effective_truncate_radius_sq) continue;
-
-                // ========================================
-                // OPTIMIZED: Compute powf ONCE, derive other terms
-                // ========================================
-                // We need: dist_pow_s = dist_sq^(s/2)
-                //          dist_pow_s_minus_1 = dist_sq^(s/2 - 1) = dist_pow_s / dist_sq
-                // Strategy: compute dist_pow_s_minus_1 first, then multiply by dist_sq
-
-                float dist_sq_clamped = fmaxf(dist_sq, 1e-10f);
-                float dist_pow_s_minus_1 = powf(dist_sq_clamped, s * 0.5f - 1.0f);  // SINGLE powf!
-                float dist_pow_s = dist_pow_s_minus_1 * dist_sq_clamped;  // Derived cheaply
-
-                // Compute intensity (shifted Gaussian, C⁰ continuous)
-                // I = a × scale × max(0, exp(-0.5 × D^s) - C)
-                float exp_term = expf(-0.5f * dist_pow_s);
-                float shifted = fmaxf(exp_term - C_boundary, 0.0f);
-                float intensity = a * scale * shifted;
-                if (intensity < intensity_floor) continue;
-
-                // ========================================
-                // GRADIENT COMPUTATION (shifted Gaussian)
-                // ========================================
-
-                // ∂I/∂D² = -0.5 × a × scale × exp(-0.5 × D^s) × ... = -0.5 × (I + a×scale×C)
-                // For generalized: grad_dist = -0.5 × a × scale × exp_term × (-0.25s) × D²^(s/2-1) simplified
-                float grad_dist = (-0.25f * s) * a * scale * exp_term * dist_pow_s_minus_1;
-
-                // ∂I/∂a = I / a (unchanged by shift)
-                float g_amp = dL_dI * scale * shifted;
-
-                // ∂I/∂s = a × scale × exp_term × (-0.25) × D^s × ln(D²)
-                float log_dist_sq = logf(dist_sq_clamped);
-                float g_sharpness = dL_dI * a * scale * exp_term * (-0.25f) * dist_pow_s * log_dist_sq;
-
-                // ∂I/∂μ = grad_dist × 2 × Σ⁻¹ × d × (-1)
-                float g_centers[DIM];
-                compute_center_gradient<DIM>(grad_dist, d, C, dL_dI, g_centers);
-
-                // ∂I/∂conic (with 2× for off-diagonal)
-                float g_conic[CONIC_SIZE];
-                compute_conic_gradient<DIM>(grad_dist, d, dL_dI, g_conic);
-
-                // Accumulate to shared memory using atomicAdd (within block)
-                float* splat_grads = &smem[b * GRAD_SIZE];
-                atomicAdd(&splat_grads[0], g_amp);
-                atomicAdd(&splat_grads[1], g_sharpness);
-                for (int dim = 0; dim < DIM; dim++) {
-                    atomicAdd(&splat_grads[2 + dim], g_centers[dim]);
-                }
-                for (int k = 0; k < CONIC_SIZE; k++) {
-                    atomicAdd(&splat_grads[2 + DIM + k], g_conic[k]);
-                }
-            }
-        }
-        __syncthreads();
-
-        // Write accumulated gradients to global memory (one thread per splat)
-        if (threadIdx.x < batch_count) {
-            int splat_id = tile_content[start + batch_start + threadIdx.x];
-            float* splat_grads = &smem[threadIdx.x * GRAD_SIZE];
-
-            // Single atomic per splat per tile (vs one per pixel per splat!)
-            if (fabsf(splat_grads[0]) > 1e-12f) {
-                atomicAdd(&d_amps[splat_id], splat_grads[0]);
-            }
-            if (fabsf(splat_grads[1]) > 1e-12f) {
-                atomicAdd(&d_sharpness[splat_id], splat_grads[1]);
-            }
-            for (int dim = 0; dim < DIM; dim++) {
-                if (fabsf(splat_grads[2 + dim]) > 1e-12f) {
-                    atomicAdd(&d_centers[splat_id * DIM + dim], splat_grads[2 + dim]);
-                }
-            }
-            for (int k = 0; k < CONIC_SIZE; k++) {
-                if (fabsf(splat_grads[2 + DIM + k]) > 1e-12f) {
-                    atomicAdd(&d_conic[splat_id * CONIC_SIZE + k], splat_grads[2 + DIM + k]);
-                }
-            }
-        }
-        __syncthreads();
-    }
-}
-
-// ========================================
-// GRADIENT HELPER FUNCTIONS
-// ========================================
-
-template<int DIM>
-__device__ __forceinline__ void compute_center_gradient(
-    float grad_dist,
-    const float* d,
-    const float* C,  // Conic (upper triangle of Σ⁻¹)
-    float dL_dI,
-    float* g_centers
-) {
-    // ∂D²/∂d = 2 × Σ⁻¹ × d
-    // ∂d/∂μ = -I
-    // ∂I/∂μ = grad_dist × 2 × Σ⁻¹ × d × (-1) × dL_dI
-    constexpr int CONIC_SIZE = DIM * (DIM + 1) / 2;
-
-    for (int i = 0; i < DIM; i++) {
-        float sum = 0.0f;
-        for (int j = 0; j < DIM; j++) {
-            // Access C[i,j] from upper triangle storage
-            int idx = (i <= j) ? tri_index(i, j, DIM) : tri_index(j, i, DIM);
-            sum += C[idx] * d[j];
-        }
-        // Note: negative sign because ∂d/∂μ = -I
-        g_centers[i] = dL_dI * grad_dist * (-2.0f) * sum;
-    }
-}
-
-template<int DIM>
-__device__ __forceinline__ void compute_conic_gradient(
-    float grad_dist,
-    const float* d,
-    float dL_dI,
-    float* g_conic
-) {
-    // ∂D²/∂c_ij = d_i × d_j (diagonal) or 2 × d_i × d_j (off-diagonal)
-    int k = 0;
-    for (int i = 0; i < DIM; i++) {
-        for (int j = i; j < DIM; j++) {
-            float grad = d[i] * d[j];
-            if (i != j) grad *= 2.0f;  // Off-diagonal: appears twice in symmetric matrix
-            g_conic[k++] = dL_dI * grad_dist * grad;
-        }
-    }
-}
-
-// Upper triangle index: (i,j) where i <= j
-// Storage: [c_00, c_01, c_02, ..., c_0(n-1), c_11, c_12, ..., c_1(n-1), c_22, ...]
-__device__ __forceinline__ int tri_index(int i, int j, int DIM) {
-    // VERIFIED FORMULA:
-    // Row i starts at: sum_{k=0}^{i-1}(DIM-k) = i*DIM - i*(i-1)/2
-    // Within row i, column j is at offset (j - i)
-    // Total: i*DIM - i*(i-1)/2 + j - i = i*DIM - i*(i+1)/2 + j
-    //
-    // Example for DIM=3 (6 elements: [c00,c01,c02,c11,c12,c22]):
-    //   (0,0)→0, (0,1)→1, (0,2)→2, (1,1)→3, (1,2)→4, (2,2)→5 ✓
-    return i * DIM - (i * (i + 1)) / 2 + j;
-}
-```
-
-**Atomic Reduction Analysis**:
-
-| Approach | Atomics per Splat | Notes |
-|----------|------------------|-------|
-| Naive (per-pixel) | pixels_in_tile × splats_in_tile | Very high contention |
-| Per-tile accumulation | num_tiles_containing_splat | **32-512× fewer atomics** |
-| Warp reduction | N/A | **DOES NOT WORK** (different values) |
-
-The per-tile accumulation reduces global atomics dramatically while using fast
-shared memory atomics within the block.
-
-### 5.3 Specialized 2D/3D Kernel Implementations (P0 Critical)
-
-**Rationale**: 2D and 3D are the primary use cases (images, volumes, microscopy).
-These dimensions MUST be maximally optimized with hand-tuned, specialized kernels.
-Generic templated kernels sacrifice significant performance for generality.
-
-#### Design Principles for 2D/3D Kernels
-
-1. **Hardcoded dimensions** - No runtime branching on DIM
-2. **Fully unrolled loops** - Compiler sees all iterations
-3. **Vectorized memory access** - `float2`, `float3` for coalesced access
-4. **Optimal block sizes** - 16×16 for 2D (256 threads), 8×8×4 for 3D (256 threads)
-5. **Register allocation** - Explicit register management with `__launch_bounds__`
-6. **Inlined Mahalanobis** - No function call overhead for distance computation
-
-#### 5.3.1 Specialized 2D Forward Kernel
-
-```cuda
-// ================================================================
-// SPECIALIZED 2D RASTERIZATION - MAXIMUM PERFORMANCE
-// ================================================================
-// - Hardcoded DIM=2, CONIC_SIZE=3
-// - Uses float2 for center access
-// - Fully unrolled, zero branching in hot path
-// - Target: 100-200× speedup over PyTorch CPU
-
-__global__ __launch_bounds__(256, 4)  // 256 threads, 4 blocks/SM → 64 regs/thread max
-void rasterize_fwd_2d(
-    // Outputs
-    float* __restrict__ output,           // (H, W)
-    // Inputs - optimized layout
-    const float2* __restrict__ centers,   // (N,) packed [x, y]
-    const float3* __restrict__ conics,    // (N,) packed [c00, c01, c11]
-    const float* __restrict__ amps,       // (N,)
-    const float* __restrict__ sharpness,  // (N,)
-    // Tile data
-    const int* __restrict__ tile_offsets,
-    const int* __restrict__ tile_counts,
-    const int* __restrict__ tile_content,
-    // Dimensions (compile-time known for 2D)
-    const int H,                          // shape[0]
-    const int W,                          // shape[1]
-    const int tile_H,                     // tile_dims[0]
-    const int tile_W,                     // tile_dims[1]
-    // Parameters
-    const float truncate,
-    const float intensity_floor
-) {
-    // ========================================
-    // Thread/Block Configuration (16×16 tile)
-    // ========================================
-    constexpr int TILE_SIZE_Y = 16;
-    constexpr int TILE_SIZE_X = 16;
-    constexpr int BATCH_SIZE = 64;  // Splats per batch in shared memory
-
-    // Shared memory layout: centers(2), conic(3), amp(1), sharpness(1) = 7 floats/splat
-    __shared__ float2 centers_smem[BATCH_SIZE];
-    __shared__ float3 conics_smem[BATCH_SIZE];
-    __shared__ float amps_smem[BATCH_SIZE];
-    __shared__ float sharpness_smem[BATCH_SIZE];
-
-    // Compute global pixel coordinates
-    const int tile_y = blockIdx.y;
-    const int tile_x = blockIdx.x;
-    const int local_y = threadIdx.y;
-    const int local_x = threadIdx.x;
-
-    const int py = tile_y * TILE_SIZE_Y + local_y;
-    const int px = tile_x * TILE_SIZE_X + local_x;
-
-    // Bounds check (handle edge tiles)
-    if (py >= H || px >= W) return;
-
-    // Pixel coordinates as float
-    const float pxf = static_cast<float>(px);
-    const float pyf = static_cast<float>(py);
-
-    // Get tile information
-    const int tile_idx = tile_y * tile_W + tile_x;
-    const int count = tile_counts[tile_idx];
-    const int start = tile_offsets[tile_idx];
-
-    // Thread-local intensity accumulator
-    float intensity = 0.0f;
-
-    // Process splats in batches
-    for (int batch_start = 0; batch_start < count; batch_start += BATCH_SIZE) {
-        const int batch_end = min(batch_start + BATCH_SIZE, count);
-        const int batch_count = batch_end - batch_start;
-
-        // ========================================
-        // Cooperative Load (COALESCED)
-        // ========================================
-        const int tid = threadIdx.y * TILE_SIZE_X + threadIdx.x;  // Linear thread ID
-        if (tid < batch_count) {
-            const int splat_id = tile_content[start + batch_start + tid];
-            centers_smem[tid] = centers[splat_id];      // Single float2 load
-            conics_smem[tid] = conics[splat_id];        // Single float3 load
-            amps_smem[tid] = amps[splat_id];
-            sharpness_smem[tid] = sharpness[splat_id];
-        }
-        __syncthreads();
-
-        // ========================================
-        // Process Batch (FULLY UNROLLED INNER LOOP)
-        // ========================================
-        #pragma unroll 8  // Unroll in chunks of 8
-        for (int b = 0; b < batch_count; b++) {
-            // Load from shared memory (broadcast-efficient)
-            const float2 mu = centers_smem[b];
-            const float3 C = conics_smem[b];
-            const float a = amps_smem[b];
-            const float s = sharpness_smem[b];
-
-            // Displacement vector (2D inlined)
-            const float dx = pxf - mu.x;
-            const float dy = pyf - mu.y;
-
-            // ========================================
-            // INLINED MAHALANOBIS DISTANCE (2D)
-            // ========================================
-            // D² = d^T × Σ⁻¹ × d = c00*dx² + 2*c01*dx*dy + c11*dy²
-            // C = [c00, c01, c11] (upper triangle, c01 stored once with 2× in formula)
-            const float dist_sq = C.x * dx * dx + 2.0f * C.y * dx * dy + C.z * dy * dy;
-
-            // Truncation check (avoid expensive powf/expf)
-            const float effective_truncate_sq = powf(truncate, 4.0f / fmaxf(s, 0.5f));
-            if (dist_sq > effective_truncate_sq) continue;
-
-            // ========================================
-            // INTENSITY COMPUTATION (shifted Gaussian, C⁰ continuous)
-            // ========================================
-            // I = a × scale × max(0, exp(-0.5 × D^s) - C)
-            // where C = exp(-0.5 × T²), scale = 1/(1-C)
-            const float dist_sq_safe = fmaxf(dist_sq, 1e-10f);
-            const float dist_pow_s = powf(dist_sq_safe, s * 0.5f);
-            const float raw_gauss = expf(-0.5f * dist_pow_s);
-            const float contribution = a * scale * fmaxf(raw_gauss - C_boundary, 0.0f);
-
-            // Floor check (skip negligible contributions)
-            if (contribution >= intensity_floor) {
-                intensity += contribution;
-            }
-        }
-        __syncthreads();
-    }
-
-    // Write result (coalesced within warp)
-    output[py * W + px] = intensity;
-}
-```
-
-#### 5.3.2 Specialized 3D Forward Kernel
-
-```cuda
-// ================================================================
-// SPECIALIZED 3D RASTERIZATION - MAXIMUM PERFORMANCE
-// ================================================================
-// - Hardcoded DIM=3, CONIC_SIZE=6
-// - Uses float3 for center access, float2 pairs for conic
-// - Target: 50-100× speedup over PyTorch CPU
-
-__global__ __launch_bounds__(256, 3)  // 256 threads, 3 blocks/SM → ~85 regs/thread
-void rasterize_fwd_3d(
-    // Outputs
-    float* __restrict__ output,           // (D, H, W)
-    // Inputs - optimized layout
-    const float* __restrict__ centers,    // (N, 3) - could use float3* if aligned
-    const float* __restrict__ conic,      // (N, 6) - upper triangle
-    const float* __restrict__ amps,       // (N,)
-    const float* __restrict__ sharpness,  // (N,)
-    // Tile data
-    const int* __restrict__ tile_offsets,
-    const int* __restrict__ tile_counts,
-    const int* __restrict__ tile_content,
-    // Dimensions
-    const int D,                          // shape[0] (depth)
-    const int H,                          // shape[1] (height)
-    const int W,                          // shape[2] (width)
-    const int tile_D,
-    const int tile_H,
-    const int tile_W,
-    // Parameters
-    const float truncate,
-    const float intensity_floor
-) {
-    // ========================================
-    // Thread/Block Configuration (8×8×4 tile = 256 threads)
-    // ========================================
-    constexpr int TILE_SIZE_Z = 4;
-    constexpr int TILE_SIZE_Y = 8;
-    constexpr int TILE_SIZE_X = 8;
-    constexpr int BATCH_SIZE = 32;  // Fewer splats due to larger data per splat
-    constexpr int CONIC_SIZE = 6;
-
-    // Shared memory (3 + 6 + 1 + 1 = 11 floats/splat × 32 = 352 floats)
-    __shared__ float centers_smem[BATCH_SIZE * 3];
-    __shared__ float conic_smem[BATCH_SIZE * CONIC_SIZE];
-    __shared__ float amps_smem[BATCH_SIZE];
-    __shared__ float sharpness_smem[BATCH_SIZE];
-
-    // Compute global voxel coordinates
-    const int tile_z = blockIdx.z;
-    const int tile_y = blockIdx.y;
-    const int tile_x = blockIdx.x;
-
-    const int pz = tile_z * TILE_SIZE_Z + threadIdx.z;
-    const int py = tile_y * TILE_SIZE_Y + threadIdx.y;
-    const int px = tile_x * TILE_SIZE_X + threadIdx.x;
-
-    // Bounds check
-    if (pz >= D || py >= H || px >= W) return;
-
-    // Voxel coordinates as float
-    const float pzf = static_cast<float>(pz);
-    const float pyf = static_cast<float>(py);
-    const float pxf = static_cast<float>(px);
-
-    // Get tile information (3D tile index)
-    const int tile_idx = tile_z * (tile_H * tile_W) + tile_y * tile_W + tile_x;
-    const int count = tile_counts[tile_idx];
-    const int start = tile_offsets[tile_idx];
-
-    // Thread-local accumulator
-    float intensity = 0.0f;
-
-    // Linear thread ID for cooperative loading
-    const int tid = threadIdx.z * (TILE_SIZE_Y * TILE_SIZE_X) +
-                    threadIdx.y * TILE_SIZE_X + threadIdx.x;
-
-    for (int batch_start = 0; batch_start < count; batch_start += BATCH_SIZE) {
-        const int batch_end = min(batch_start + BATCH_SIZE, count);
-        const int batch_count = batch_end - batch_start;
-
-        // ========================================
-        // Cooperative Load
-        // ========================================
-        if (tid < batch_count) {
-            const int splat_id = tile_content[start + batch_start + tid];
-
-            // Load center (3 floats)
-            centers_smem[tid * 3 + 0] = centers[splat_id * 3 + 0];
-            centers_smem[tid * 3 + 1] = centers[splat_id * 3 + 1];
-            centers_smem[tid * 3 + 2] = centers[splat_id * 3 + 2];
-
-            // Load conic (6 floats) - upper triangle [c00, c01, c02, c11, c12, c22]
-            #pragma unroll
-            for (int k = 0; k < CONIC_SIZE; k++) {
-                conic_smem[tid * CONIC_SIZE + k] = conic[splat_id * CONIC_SIZE + k];
-            }
-
-            amps_smem[tid] = amps[splat_id];
-            sharpness_smem[tid] = sharpness[splat_id];
-        }
-        __syncthreads();
-
-        // ========================================
-        // Process Batch
-        // ========================================
-        #pragma unroll 4
-        for (int b = 0; b < batch_count; b++) {
-            // Load from shared memory
-            const float mu_x = centers_smem[b * 3 + 0];
-            const float mu_y = centers_smem[b * 3 + 1];
-            const float mu_z = centers_smem[b * 3 + 2];
-
-            // Conic: [c00, c01, c02, c11, c12, c22]
-            const float c00 = conic_smem[b * CONIC_SIZE + 0];
-            const float c01 = conic_smem[b * CONIC_SIZE + 1];
-            const float c02 = conic_smem[b * CONIC_SIZE + 2];
-            const float c11 = conic_smem[b * CONIC_SIZE + 3];
-            const float c12 = conic_smem[b * CONIC_SIZE + 4];
-            const float c22 = conic_smem[b * CONIC_SIZE + 5];
-
-            const float a = amps_smem[b];
-            const float s = sharpness_smem[b];
-
-            // Displacement vector
-            const float dx = pxf - mu_x;
-            const float dy = pyf - mu_y;
-            const float dz = pzf - mu_z;
-
-            // ========================================
-            // INLINED MAHALANOBIS DISTANCE (3D)
-            // ========================================
-            // D² = d^T × Σ⁻¹ × d (symmetric matrix, off-diagonals have 2×)
-            // = c00*dx² + c11*dy² + c22*dz² + 2*c01*dx*dy + 2*c02*dx*dz + 2*c12*dy*dz
-            const float dist_sq = c00 * dx * dx +
-                                  c11 * dy * dy +
-                                  c22 * dz * dz +
-                                  2.0f * c01 * dx * dy +
-                                  2.0f * c02 * dx * dz +
-                                  2.0f * c12 * dy * dz;
-
-            // Truncation
-            const float effective_truncate_sq = powf(truncate, 4.0f / fmaxf(s, 0.5f));
-            if (dist_sq > effective_truncate_sq) continue;
-
-            // Intensity (shifted Gaussian, C⁰ continuous)
-            const float dist_sq_safe = fmaxf(dist_sq, 1e-10f);
-            const float dist_pow_s = powf(dist_sq_safe, s * 0.5f);
-            const float raw_gauss = expf(-0.5f * dist_pow_s);
-            const float contribution = a * scale * fmaxf(raw_gauss - C_boundary, 0.0f);
-
-            if (contribution >= intensity_floor) {
-                intensity += contribution;
-            }
-        }
-        __syncthreads();
-    }
-
-    // Write result
-    output[pz * (H * W) + py * W + px] = intensity;
-}
-```
-
-#### 5.3.3 Specialized 2D Backward Kernel
-
-```cuda
-// ================================================================
-// SPECIALIZED 2D BACKWARD - GRADIENT COMPUTATION
-// ================================================================
-
-__global__ __launch_bounds__(256, 3)  // More registers needed for gradients
-void rasterize_bwd_2d(
-    // Inputs
-    const float* __restrict__ grad_output,   // (H, W)
-    const float2* __restrict__ centers,      // (N,) packed
-    const float3* __restrict__ conics,       // (N,) packed
-    const float* __restrict__ amps,          // (N,)
-    const float* __restrict__ sharpness,     // (N,)
-    const int* __restrict__ tile_offsets,
-    const int* __restrict__ tile_counts,
-    const int* __restrict__ tile_content,
-    // Outputs (atomically accumulated)
-    float2* __restrict__ d_centers,          // (N,)
-    float3* __restrict__ d_conics,           // (N,)
-    float* __restrict__ d_amps,              // (N,)
-    float* __restrict__ d_sharpness,         // (N,)
-    // Dimensions
-    const int H, const int W,
-    const int tile_H, const int tile_W,
-    const float truncate, const float intensity_floor
-) {
-    constexpr int TILE_SIZE = 16;
-    constexpr int BATCH_SIZE = 32;
-    constexpr int GRAD_SIZE = 2 + 3 + 1 + 1;  // centers(2) + conic(3) + amp + sharpness = 7
-
-    // Shared memory for gradient accumulation
-    __shared__ float2 centers_smem[BATCH_SIZE];
-    __shared__ float3 conics_smem[BATCH_SIZE];
-    __shared__ float amps_smem[BATCH_SIZE];
-    __shared__ float sharpness_smem[BATCH_SIZE];
-    __shared__ float grad_accum[BATCH_SIZE * GRAD_SIZE];  // Per-splat gradient accumulation
-
-    const int tile_y = blockIdx.y;
-    const int tile_x = blockIdx.x;
-    const int py = tile_y * TILE_SIZE + threadIdx.y;
-    const int px = tile_x * TILE_SIZE + threadIdx.x;
-
-    if (py >= H || px >= W) return;
-
-    const float pxf = static_cast<float>(px);
-    const float pyf = static_cast<float>(py);
-
-    const int tile_idx = tile_y * tile_W + tile_x;
-    const int count = tile_counts[tile_idx];
-    const int start = tile_offsets[tile_idx];
-    const int tid = threadIdx.y * TILE_SIZE + threadIdx.x;
-
-    const float dL_dI = grad_output[py * W + px];
-
-    for (int batch_start = 0; batch_start < count; batch_start += BATCH_SIZE) {
-        const int batch_end = min(batch_start + BATCH_SIZE, count);
-        const int batch_count = batch_end - batch_start;
-
-        // Load data
-        if (tid < batch_count) {
-            const int splat_id = tile_content[start + batch_start + tid];
-            centers_smem[tid] = centers[splat_id];
-            conics_smem[tid] = conics[splat_id];
-            amps_smem[tid] = amps[splat_id];
-            sharpness_smem[tid] = sharpness[splat_id];
-        }
-
-        // Zero gradient accumulators
-        if (tid < batch_count * GRAD_SIZE) {
-            grad_accum[tid] = 0.0f;
-        }
-        __syncthreads();
-
-        // Compute gradients
-        if (fabsf(dL_dI) > 1e-9f) {
-            for (int b = 0; b < batch_count; b++) {
-                const float2 mu = centers_smem[b];
-                const float3 C = conics_smem[b];
-                const float a = amps_smem[b];
-                const float s = sharpness_smem[b];
-
-                const float dx = pxf - mu.x;
-                const float dy = pyf - mu.y;
-
-                // Mahalanobis distance (2D)
-                const float dist_sq = C.x * dx * dx + 2.0f * C.y * dx * dy + C.z * dy * dy;
-
-                const float effective_truncate_sq = powf(truncate, 4.0f / fmaxf(s, 0.5f));
-                if (dist_sq > effective_truncate_sq) continue;
-
-                const float dist_sq_safe = fmaxf(dist_sq, 1e-10f);
-                const float dist_pow_s_m1 = powf(dist_sq_safe, s * 0.5f - 1.0f);
-                const float dist_pow_s = dist_pow_s_m1 * dist_sq_safe;
-                const float exp_term = expf(-0.5f * dist_pow_s);
-                const float shifted = fmaxf(exp_term - C_boundary, 0.0f);
-                const float intensity = a * scale * shifted;
-
-                if (intensity < intensity_floor) continue;
-
-                // ========================================
-                // GRADIENT COMPUTATION (2D SPECIALIZED, shifted Gaussian)
-                // ========================================
-                const float grad_dist = (-0.25f * s) * a * scale * exp_term * dist_pow_s_m1;
-
-                // ∂I/∂a = I / a = scale × shifted
-                const float g_amp = dL_dI * scale * shifted;
-
-                // ∂I/∂s (derivative of exp_term only, C is constant w.r.t. s in per-splat sense)
-                const float g_sharpness = dL_dI * a * scale * exp_term * (-0.25f) * dist_pow_s * logf(dist_sq_safe);
-
-                // ∂I/∂μ = grad_dist × ∂D²/∂μ = grad_dist × (-2) × Σ⁻¹ × d
-                // For 2D: [c00*dx + c01*dy, c01*dx + c11*dy] × (-2) × grad_dist
-                const float g_mu_x = dL_dI * grad_dist * (-2.0f) * (C.x * dx + C.y * dy);
-                const float g_mu_y = dL_dI * grad_dist * (-2.0f) * (C.y * dx + C.z * dy);
-
-                // ∂I/∂conic = grad_dist × ∂D²/∂conic
-                // ∂D²/∂c00 = dx², ∂D²/∂c01 = 2*dx*dy (2× factor!), ∂D²/∂c11 = dy²
-                const float g_c00 = dL_dI * grad_dist * dx * dx;
-                const float g_c01 = dL_dI * grad_dist * 2.0f * dx * dy;  // 2× for off-diagonal!
-                const float g_c11 = dL_dI * grad_dist * dy * dy;
-
-                // Accumulate to shared memory
-                float* splat_grad = &grad_accum[b * GRAD_SIZE];
-                atomicAdd(&splat_grad[0], g_mu_x);
-                atomicAdd(&splat_grad[1], g_mu_y);
-                atomicAdd(&splat_grad[2], g_c00);
-                atomicAdd(&splat_grad[3], g_c01);
-                atomicAdd(&splat_grad[4], g_c11);
-                atomicAdd(&splat_grad[5], g_amp);
-                atomicAdd(&splat_grad[6], g_sharpness);
-            }
-        }
-        __syncthreads();
-
-        // Write accumulated gradients to global memory
-        if (tid < batch_count) {
-            const int splat_id = tile_content[start + batch_start + tid];
-            const float* splat_grad = &grad_accum[tid * GRAD_SIZE];
-
-            atomicAdd(&d_centers[splat_id].x, splat_grad[0]);
-            atomicAdd(&d_centers[splat_id].y, splat_grad[1]);
-            atomicAdd(&d_conics[splat_id].x, splat_grad[2]);
-            atomicAdd(&d_conics[splat_id].y, splat_grad[3]);
-            atomicAdd(&d_conics[splat_id].z, splat_grad[4]);
-            atomicAdd(&d_amps[splat_id], splat_grad[5]);
-            atomicAdd(&d_sharpness[splat_id], splat_grad[6]);
-        }
-        __syncthreads();
-    }
-}
-```
-
-#### 5.3.4 Kernel Selection at Runtime
-
-```cpp
-// ================================================================
-// DISPATCH FUNCTION - SELECT OPTIMAL KERNEL
-// ================================================================
-
-template<typename T>
-void dispatch_forward(
-    const T* centers,
-    const T* conic,
-    const T* amps,
-    const T* sharpness,
-    const int* tile_offsets,
-    const int* tile_counts,
-    const int* tile_content,
-    T* output,
-    const std::vector<int>& shape,
-    const std::vector<int>& tile_dims,
-    float truncate,
-    float intensity_floor,
-    cudaStream_t stream
-) {
-    const int ndim = shape.size();
-
-    switch (ndim) {
-        case 2: {
-            // SPECIALIZED 2D KERNEL - Maximum performance
-            dim3 block(16, 16);
-            dim3 grid((shape[1] + 15) / 16, (shape[0] + 15) / 16);
-            rasterize_fwd_2d<<<grid, block, 0, stream>>>(
-                output,
-                reinterpret_cast<const float2*>(centers),  // Requires aligned storage!
-                reinterpret_cast<const float3*>(conic),
-                amps, sharpness,
-                tile_offsets, tile_counts, tile_content,
-                shape[0], shape[1],
-                tile_dims[0], tile_dims[1],
-                truncate, intensity_floor
-            );
-            break;
-        }
-        case 3: {
-            // SPECIALIZED 3D KERNEL - High performance
-            dim3 block(8, 8, 4);
-            dim3 grid(
-                (shape[2] + 7) / 8,   // W
-                (shape[1] + 7) / 8,   // H
-                (shape[0] + 3) / 4    // D
-            );
-            rasterize_fwd_3d<<<grid, block, 0, stream>>>(
-                output, centers, conic, amps, sharpness,
-                tile_offsets, tile_counts, tile_content,
-                shape[0], shape[1], shape[2],
-                tile_dims[0], tile_dims[1], tile_dims[2],
-                truncate, intensity_floor
-            );
-            break;
-        }
-        case 4:
-            // TEMPLATED KERNEL - Full unrolling
-            rasterize_fwd_nd<4><<<compute_grid<4>(shape, tile_dims),
-                                  compute_block<4>(), 0, stream>>>(...);
-            break;
-        default:
-            // GENERIC KERNEL (5D-8D) - No unrolling, accepts performance hit
-            rasterize_fwd_generic<<<compute_grid_generic(ndim, shape, tile_dims),
-                                    128, 0, stream>>>(ndim, ...);
-            break;
-    }
-}
-```
-
-#### 5.3.5 Performance Comparison
-
-| Dimension | Kernel Type | Block Size | Expected Speedup | Occupancy Target |
-|-----------|-------------|------------|------------------|------------------|
-| **2D** | Specialized | 16×16 (256) | **100-200×** vs CPU | 100% (256 threads, ≤64 regs) |
-| **3D** | Specialized | 8×8×4 (256) | **50-100×** vs CPU | 75% (256 threads, ≤85 regs) |
-| 4D | Templated | 4×4×4×4 (256) | 20-50× vs CPU | 50% (register pressure) |
-| 5D+ | Generic | 128 flat | 10-20× vs CPU | Best effort |
-
-**Critical**: 2D and 3D kernels represent >90% of expected usage. Any regression in these
-dimensions is unacceptable. Benchmark these dimensions first and most frequently.
+This is computed by `gaussian_intensity()` and `compute_shift_params()` in
+`math_utils.cuh`. The `GaussianShiftParams` struct holds precomputed `shift_C`
+and `inv_one_minus_C` values.
+
+**Performance comparison**:
+
+| Metric | Tile-Based (old) | Splat-Centric (current) | Speedup |
+|--------|-----------------|------------------------|---------|
+| 3D 512^3 50K FP32 Train | 13.92ms | 4.41ms | 3.16x |
+| 3D 512^3 50K FP32 Backward | 9.52ms | 2.33ms | 4.08x |
+| 3D 512^3 50K FP32 Forward | 4.42ms | 2.07ms | 2.13x |
+
+See `OPTIMIZATION_REPORT.md` for full benchmark results across all configurations.
 
 ---
+
+_The old tile-based kernel descriptions (preprocess_nd, bin_nd, rasterize_fwd_nd,
+rasterize_bwd_nd, specialized 2D/3D kernels, etc.) have been removed from this
+spec. The actual kernel code in `kernels_core.cuh` retains all tile-based kernels
+for reference. See git history for the original Section 5 content._
+
 
 ## 6. Memory Optimization
 

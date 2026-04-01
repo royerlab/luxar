@@ -975,7 +975,7 @@ from .network_simulation import (
 )
 
 # In serve() function, CORRECT integration:
-# (Based on existing code in main.py lines 215-259)
+# (Based on existing code in the `serve()` function in main.py)
 
 # 1. Create FastAPI app
 api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)

@@ -2,37 +2,6 @@
 
 This file tracks known issues, planned features, and improvements for the Luxar project.
 
-## Paper-Blocking (HIGH Priority)
-
-11 - ~~**Screenshot export**~~: **DONE.** Press `G` for quick screenshot or `T` to open the Recording panel. Supports PNG/WebP/JPEG with quality slider, transparent background (alpha channel), and automatic max-DPR for highest resolution capture. Uses `canvas.toBlob()` with `preserveDrawingBuffer: false` safety (synchronous pixel read). Implemented in `packages/luxar-viewer/src/ui/recording-panel.ts`.
-
-12 - ~~**Video export / animation recording**~~: **DONE.** Recording panel (`T` key) supports three modes: **Image** (screenshot), **Video** (canvas recording via `MediaRecorder` + `captureStream`), and **Turntable** (auto-rotate camera 360° then stop). Video mode includes: confirmation dialog, pulsing REC indicator with elapsed time, duration limit slider, FPS/codec selection, and **Sync to Slider** (record synced to a dimension animation — auto-stops at end). All browser-native, zero npm dependencies. Implemented in `packages/luxar-viewer/src/ui/recording-panel.ts` with 32 unit tests and 8 E2E tests.
-
-13 - ~~**Scale bar overlay**~~: **DONE.** Press `B` to toggle a physical scale bar overlay. Computes bar width from camera distance and FOV at the orbit target depth, snaps to nice numbers (1/2/5 × 10^n), and displays the unit from dimension metadata (e.g., "10 μm"). Implemented in `packages/luxar-viewer/src/ui/components/scale-bar.ts`. Now pixel-exact in orthographic mode (TODO #6 completed).
-
-14 - ~~**Colorbar / channel legend**~~: **DONE.** Press `J` to toggle the colormap legend overlay. Displays per-layer entries with layer name, colormap gradient bar (120×12px canvas from `BUILTIN_COLORMAPS`), and formatted min/max data range labels. Reactively updates via `LayerStateManager` subscription with hash-based rebuild optimization to avoid redundant DOM updates. Implemented in `packages/luxar-viewer/src/ui/components/colormap-legend.ts` with styles in `packages/luxar-viewer/src/styles/components/colormap-legend.css`.
-
-16 - ~~**PSNR/SSIM quality metrics in CLI**~~: **DONE.** New `luxar gsplat compare fitted.gsplats.zarr original.tiff` command computes PSNR, SSIM, MSE, relative L2, and max absolute error. All metrics computed on GPU via PyTorch (SSIM uses `F.conv2d`/`F.conv3d`). Supports `--output-json` for paper tables and `--quiet` for scripting. Post-fit metrics (PSNR, SSIM, MSE) are now computed automatically after fitting and stored in the `.gsplats.zarr` metadata, visible via `luxar gsplat info`. Implemented in `gsplats/metrics.py` (PyTorch SSIM/PSNR), `cli/gsplat_commands.py` (compare command), and `fitting/results.py` (post-fit metrics).
-
-18 - ~~**Tiled fitting for large volumes**~~: **DONE.** Fit arbitrarily large volumes by splitting into overlapping tiles with Hann cosine apodization (partition-of-unity windowing), fitting gsplats independently per tile, and concatenating. No post-merge pruning needed — the Hann window guarantees seamless blending. CLI: `luxar gsplat fit volume.tiff -o splats.gsplats.zarr --tiled --tile-size 256 --overlap 32` (all-in-one) or `luxar gsplat fit volume.tiff -o tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32` (single-tile, Slurm-ready). Python API: `fit_tiled(volume, tile_size=256, overlap=32)` and `fit_tile(volume, spec)`. Supports zarr lazy loading for out-of-core processing. Implemented in `gsplats/tiling.py` (tile geometry + cosine windows), `gsplats/fit_tiled_gsplats.py` (fitting orchestration), and CLI options on `fit_volume()`.
-
-## Feature Requests (MEDIUM Priority)
-
-5 - ~~**Layers panel (per-node controllability)**~~: **DONE.** Napari-inspired per-layer control panel. Nodes marked with `layer=True` in the Python API are exposed as controllable layers in the viewer (press `L` to toggle). Each layer provides: **visibility toggle** (eye icon), **display range** [min, max] mapped to shader intensity/offset uniforms, **gamma** correction, and **blending mode** (additive, normal, max, opaque, luminous). Material cloning ensures independent per-layer rendering. Python side: `layer` attribute on `Node` with validation. Viewer side: `layers-panel.ts` (panel UI), `layer-state.ts` (state management), `range-slider.ts` (custom dual-handle slider). Includes CSS styling for all themes, 217+ unit tests for layer state, and demo `demo_gsplats_3d_kidney_multichannel_layers.py`. Implemented in `packages/luxar-viewer/src/ui/layers/` and `packages/luxar/src/luxar/core/node.py`.
-
-6 - ~~**Orthographic projection mode**~~: **DONE.** Toggle via rendering controls or keyboard shortcut. Uses `THREE.OrthographicCamera` with `LuxarCamera` type union (`camera-utils.ts`). In ortho mode: pan and zoom only, rotation restricted to view-axis roll (Shift+wheel). Custom `LuxarOrbitControls` (quaternion-based, no gimbal lock) handles both perspective and ortho modes. Scene-manager tracks ortho zoom level for material frustum updates. Clean front-view alignment for 2D microscopy data. Auto-framing computes correct camera distance from bounding-box diagonal. Implemented across `camera-utils.ts`, `luxar-orbit-controls.ts`, `scene-manager.ts`, and `controls-manager.ts`.
-
-15 - ~~**Viewer-side colormaps**~~: **DONE.** Full colormap (CLUT) support for all geometry types. Python side: `colormap` attribute on nodes (e.g., `"green"`, `"magenta"`, `"fire"`, `"viridis"`) serialized to zarr. Viewer side: interactive per-layer colormap selection dropdown in the Layers panel (`L` key), with LUT applied via 256×1 RGB `DataTexture` in shaders. Includes 60+ built-in colormaps organized by category (sequential, diverging, cyclic, microscopy/BOP). Custom LUT data also supported. Colormap legend overlay (`J` key) shows active colormaps with gradient bars (see #14). Implemented in `packages/luxar/src/luxar/colormaps/` (Python), `packages/luxar-viewer/src/rendering/colormap-data.ts` and `colormap-textures.ts` (viewer LUT textures), and `packages/luxar-viewer/src/ui/layers/layers-panel.ts` (interactive selection).
-
-20 - ~~**nD Transforms on non-displayed dimensions**~~: **DONE.** Per-dimension affine (scale/offset) and permutation transforms on non-displayed dimensions, separate from the 4x4 spatial transform. Enables time alignment, unit conversion, and channel remapping between datasets in the same scene. Uses **inverse-query** approach in the viewer: the query (slicePosition + tolerance) is inverse-transformed from world to local space once (O(1)), leaving all loader internals untouched. Hierarchical composition works on Python side (`world_nd_transform`); viewer reads composed transforms from scene graph (`computeWorldNdTransform`). Full stack: Python (validation, Node property, compiler, reader — 41 tests), TypeScript (types, inverse-query utility, scene-loader integration — 18 unit tests), E2E Playwright test (3 tests verifying time-shifted visibility). Spec: `docs/guides/specs/ND_TRANSFORMS_SPEC.md`. Demo: `demo_nd_transforms.py`. **Bounds expansion** wired into compiler `finalize()` — scene-level `position_bounds` now reflects world-space ranges for non-displayed dimensions. Viewer auto-ranges dimension sliders from these bounds when `Dimension.range` is not set. Documentation propagated to core, io, scene, and data READMEs.
-
-
-17 - ~~**OME-Zarr (NGFF) input support**~~: **DONE.** `luxar gsplat fit` supports OME-Zarr with full 5D TCZYX handling via `--channel` and `--timepoint` flags. Auto-detects OME-Zarr layout (key `"0"` for highest resolution). Implemented in `gsplat_config.py:_load_zarr_volume()`.
-
-19 - ~~**Slurm batch fitting for 3D+t OME-ZARR**~~: **DONE.** `luxar gsplat batch` CLI command converts entire 3D+t OME-ZARR datasets to splats via Slurm array jobs. Full implementation: `batch plan` (generates Slurm scripts with GPU profiling and time estimation), `batch status` (checks job completion), `batch merge` (combines fitted tiles/timepoints with channel color support). Includes environment capture (`env_capture.py`), manifest tracking (`manifest.py`), merge orchestration (`merge_orchestrator.py`), Slurm script generation (`slurm_gen.py`), and time estimation (`time_estimate.py`). Supports tiled fitting with `--tile-size`/`--overlap` flags. CLI: `luxar gsplat batch data.ome.zarr output/ --partition gpu --submit`. Implemented in `gsplats/batch/` module and `cli/gsplat_commands.py` with tests in `gsplats/tests/test_batch.py`.
-
-21 - ~~**Transform model review & fixes**~~: **DONE.** Systematic review of the 4x4 transform pipeline (Python → zarr → TypeScript). Fixed: flat array ambiguity in `prepare_transform_for_zarr` (lists now row-major), `transform=None` persistence via `delete_group_attr` protocol method, bottom-row `[0,0,0,1]` affine validation, reader group transform support (`get_group()`), `world_transform` property. Added `nd_transform` support (see #20). All 1197 Python tests + 18 TS unit tests + 3 E2E tests passing.
-
 ## Infrastructure & Polish
 
 4 - **Cache eviction policy**: Clarify and verify the cache eviction behavior — eviction does not appear to trigger when expected.
@@ -42,8 +11,6 @@ This file tracks known issues, planned features, and improvements for the Luxar 
 8 - **Panel visibility configuration**: Allow configuring which panels are visible (Logs, Rendering Controls, Data Monitor, Dimensions, etc.) from the Python side. Optionally lock panel visibility to enforce a particular look and prevent user modifications.
 
 9 - **UI ergonomics**: The current UI relies heavily on hidden keyboard shortcuts to reveal panels, which is poor discoverability. Improve with visible affordances (buttons, menus, or indicators).
-
-0 - ~~**Retire gsplat sharpness from the viewer**~~: **DONE.** Sharpness attribute fully removed from GSplats across Python, TypeScript, and WASM. Commits `91be25c` (refactor: remove sharpness attribute from GSplats and update docs) and `f437c1f` (fix: remove sharpness refs from sorting and add edge case tests).
 
 ## Rendering & Performance (MEDIUM Priority)
 
@@ -71,9 +38,49 @@ This file tracks known issues, planned features, and improvements for the Luxar 
 
 3 - **VR/AR mode**: Add the ability to activate VR/AR rendering for immersive exploration of 3D scenes.
 
+---
+
+## Completed (Archive)
+
+<details>
+<summary>Click to expand completed items</summary>
+
+### Paper-Blocking (completed)
+
+11 - ~~**Screenshot export**~~: **DONE.** Press `G` for quick screenshot or `T` to open the Recording panel. Supports PNG/WebP/JPEG with quality slider, transparent background (alpha channel), and automatic max-DPR for highest resolution capture.
+
+12 - ~~**Video export / animation recording**~~: **DONE.** Recording panel (`T` key) supports three modes: Image, Video, and Turntable.
+
+13 - ~~**Scale bar overlay**~~: **DONE.** Press `B` to toggle a physical scale bar overlay.
+
+14 - ~~**Colorbar / channel legend**~~: **DONE.** Press `J` to toggle the colormap legend overlay.
+
+16 - ~~**PSNR/SSIM quality metrics in CLI**~~: **DONE.** `luxar gsplat compare` command.
+
+18 - ~~**Tiled fitting for large volumes**~~: **DONE.** `luxar gsplat fit --tiled`.
+
+### Feature Requests (completed)
+
+5 - ~~**Layers panel**~~: **DONE.** Press `L` to toggle per-layer control panel.
+
+6 - ~~**Orthographic projection mode**~~: **DONE.** Toggle via rendering controls or keyboard shortcut.
+
+15 - ~~**Viewer-side colormaps**~~: **DONE.** Full colormap (CLUT) support for all geometry types.
+
+17 - ~~**OME-Zarr (NGFF) input support**~~: **DONE.** `luxar gsplat fit` supports OME-Zarr.
+
+19 - ~~**Slurm batch fitting**~~: **DONE.** `luxar gsplat batch` CLI command.
+
+20 - ~~**nD Transforms**~~: **DONE.** Per-dimension affine and permutation transforms.
+
+21 - ~~**Transform model review & fixes**~~: **DONE.**
+
+0 - ~~**Retire gsplat sharpness from the viewer**~~: **DONE.**
+
+</details>
+
 ## Notes
 
 - Review and update this list regularly.
-- Items marked HIGH priority should be addressed before the first preprint.
 - Consider creating GitHub issues for tracking progress on individual items.
 - Update CLAUDE.md when implementing significant changes.

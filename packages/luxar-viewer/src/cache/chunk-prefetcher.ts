@@ -47,6 +47,8 @@ export class ChunkPrefetcher {
   // Tracks all keys whose neighbors have already been enqueued, preventing
   // cascading prefetch amplification: without this, prefetched chunks trigger
   // their own neighbor prefetches, which cascade across the entire dataset.
+  // Bounded to prevent unbounded memory growth during long browsing sessions.
+  private static readonly MAX_SEEN_SIZE = 10000;
   private seen = new Set<string>();
 
   /** Upper bounds per array path for suppressing out-of-range prefetch requests */
@@ -85,6 +87,13 @@ export class ChunkPrefetcher {
     // dataset is fetched (O(N^D) for D-dimensional data with N chunks/dim).
     if (this.seen.has(key)) return;
     this.seen.add(key);
+
+    // Prevent unbounded memory growth — clear when limit reached.
+    // Queue dedup (below) prevents actual duplicate fetches.
+    if (this.seen.size > ChunkPrefetcher.MAX_SEEN_SIZE) {
+      this.seen.clear();
+      this.seen.add(key);
+    }
 
     const adjacent = this.getAdjacentChunks(key);
     if (adjacent.length === 0) {

@@ -329,14 +329,11 @@ export class UpdateProfiler {
     this.activeSessions.set(sessionId, session);
 
     try {
-      // Run the function with this session as context
-      // Save and restore context to handle nested sequential operations
-      const prevContext = this.currentSessionContext;
-      this.currentSessionContext = session;
-
+      // Session is passed explicitly to fn — do NOT modify currentSessionContext
+      // here since concurrent timeTopLevel calls (via Promise.all in scene-loader)
+      // would corrupt the save/restore interleaving.
       const result = await fn(session);
 
-      this.currentSessionContext = prevContext;
       session.end();
       this.activeSessions.delete(sessionId);
 

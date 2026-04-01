@@ -50,7 +50,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
   private initPromise: Promise<void> | null = null;
-  private initLock = false;
   private rangeLoader: RangeLoader;
   private zarrStore: zarr.Readable | null = null;
 
@@ -216,17 +215,14 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     viewState: GSplatsViewState,
     session?: UpdateSession
   ): Promise<LoadedGSplatsData> {
-    // Prevent race conditions during initialization
-    if (!this.initPromise && !this.initLock) {
-      this.initLock = true;
-      this.initPromise = this.initialize().finally(() => {
-        this.initLock = false;
+    // Prevent race conditions during initialization; null on rejection allows retry
+    if (!this.initPromise) {
+      this.initPromise = this.initialize().catch((err) => {
+        this.initPromise = null; // Allow retry on next call
+        throw err;
       });
     }
-
-    if (this.initPromise) {
-      await this.initPromise;
-    }
+    await this.initPromise;
 
     if (!this.arrays.centers || !this.arrays.amplitudes || !this.arrays.cholesky_factors) {
       throw new Error('GSplats loader not properly initialized');
@@ -288,9 +284,9 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       }
 
       // Get direct buffer references for zero-allocation loading (now colorBuffer has correct type!)
-      const centerBuffer = this._accumulator['centerBuffer'] as Float32Array;
-      const amplitudeBuffer = this._accumulator['amplitudeBuffer'] as Float32Array;
-      const choleskyBuffer = this._accumulator['choleskyBuffer'] as Float32Array;
+      const centerBuffer = this._accumulator.getCenterBuffer();
+      const amplitudeBuffer = this._accumulator.getAmplitudeBuffer();
+      const choleskyBuffer = this._accumulator.getCholeskyBuffer();
 
       // Load directly into accumulator buffers (ZERO intermediate allocations!)
       const loadSession = session?.begin('Load Arrays');
@@ -310,10 +306,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
           // NOTE: For LUT encoding, loadColorRanges may return a different buffer type
           // (Float32Array) than the accumulator's colorBuffer (Uint8Array based on stored dtype).
           // We MUST use the returned buffer since it contains the decoded colors.
-          const colorBuffer = this._accumulator['colorBuffer'] as
-            | Float32Array
-            | Uint8Array
-            | Uint16Array;
+          const colorBuffer = this._accumulator.getColorBuffer();
           const loadedColors = await this.loadColorRanges(splatRanges, colorBuffer);
 
           // If loadColorRanges returned a different buffer (e.g., LUT decoded to Float32Array),
@@ -321,8 +314,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
           if (loadedColors !== colorBuffer) {
             // Replace accumulator's color buffer with the decoded colors
             // This handles LUT encoding where decoded output is Float32Array
-            (this._accumulator as unknown as { colorBuffer: typeof loadedColors }).colorBuffer =
-              loadedColors;
+            this._accumulator.setColorBuffer(loadedColors);
           }
         }
       } finally {
@@ -793,6 +785,58 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       splatCount: 0,
       ndim: attrs.ndim,
     };
+  }
+
+  /**
+   * Prefetch chunks for the given view state into the cache without decoding.
+   *
+   * Performs the same spatial index query as updateView() and issues zarr
+   * get() calls for each visible range on every array.  The fetched data
+   * populates the HTTP cache and L0 decompressed-chunk cache but is NOT
+   * accumulated into output buffers — the typed-array results are immediately
+   * discarded.  This makes the subsequent updateView() call a fast cache hit
+   * without the memory cost of allocating full-size output arrays that would
+   * only be thrown away.
+   */
+  async prefetchChunks(viewState: GSplatsViewState): Promise<void> {
+    // Ensure initialization (same guard as loadGSplats)
+    if (!this.initPromise) {
+      this.initPromise = this.initialize().catch((err) => {
+        this.initPromise = null;
+        throw err;
+      });
+    }
+    await this.initPromise;
+
+    // Query which splat ranges are visible
+    const splatRanges = await this.queryVisibleSplatRanges(viewState);
+    if (splatRanges.length === 0) return;
+
+    // Fire get() on every array × every range.  The zarr get() populates
+    // both the HTTP cache (L1) and the decompressed-chunk cache (L0) as a
+    // side-effect.  We deliberately do NOT allocate output buffers — the
+    // returned typed arrays are discarded immediately.
+    const arrays = [
+      this.arrays.centers,
+      this.arrays.amplitudes,
+      this.arrays.cholesky_factors,
+      this.arrays.colors,
+    ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
+
+    const fetches: Promise<unknown>[] = [];
+
+    for (const array of arrays) {
+      const shape = array.shape;
+      for (const range of splatRanges) {
+        const sliceSpec: zarr.Slice[] =
+          shape.length === 2
+            ? [slice(range.start, range.end), slice(null)]
+            : [slice(range.start, range.end)];
+        fetches.push(get(array, sliceSpec));
+      }
+    }
+
+    await Promise.all(fetches);
   }
 
   /**

@@ -205,10 +205,46 @@ export class ArrayDecoder {
     const rawData = await get(zarrArray);
     const rawArray = rawData.data;
 
-    const data =
-      rawArray instanceof Float32Array
-        ? rawArray
-        : new Float32Array(rawArray as ArrayBuffer | number[]);
+    // Convert raw zarr data to Float32Array safely.
+    // If rawArray is a typed array view, new Float32Array(view) does element-wise conversion.
+    // If rawArray is a raw ArrayBuffer, we must NOT reinterpret bytes — create a typed view first.
+    const data = (() => {
+      if (rawArray instanceof Float32Array) return rawArray;
+      if (rawArray instanceof Uint8Array) return new Float32Array(rawArray);
+      if (rawArray instanceof Uint16Array) return new Float32Array(rawArray);
+      if (rawArray instanceof Uint32Array) return new Float32Array(rawArray);
+      if (rawArray instanceof Int8Array) return new Float32Array(rawArray);
+      if (rawArray instanceof Int16Array) return new Float32Array(rawArray);
+      if (rawArray instanceof Int32Array) return new Float32Array(rawArray);
+      if (rawArray instanceof Float64Array) return new Float32Array(rawArray);
+      if (rawArray instanceof ArrayBuffer) {
+        // Raw ArrayBuffer — interpret bytes based on zarr dtype, then convert to Float32
+        const dtype = String(zarrArray.dtype);
+        if (dtype.includes('f4') || dtype === 'float32') return new Float32Array(rawArray);
+        if (dtype.includes('f8') || dtype === 'float64')
+          return new Float32Array(new Float64Array(rawArray));
+        if (dtype.includes('u1') || dtype === 'uint8')
+          return new Float32Array(new Uint8Array(rawArray));
+        if (dtype.includes('u2') || dtype === 'uint16')
+          return new Float32Array(new Uint16Array(rawArray));
+        if (dtype.includes('u4') || dtype === 'uint32')
+          return new Float32Array(new Uint32Array(rawArray));
+        if (dtype.includes('i1') || dtype === 'int8')
+          return new Float32Array(new Int8Array(rawArray));
+        if (dtype.includes('i2') || dtype === 'int16')
+          return new Float32Array(new Int16Array(rawArray));
+        if (dtype.includes('i4') || dtype === 'int32')
+          return new Float32Array(new Int32Array(rawArray));
+        // Fallback: assume float32 layout (preserves existing behavior)
+        log.warning(
+          Modules.ZARR_LOADER,
+          `Unknown dtype "${dtype}" for ArrayBuffer, assuming float32`
+        );
+        return new Float32Array(rawArray);
+      }
+      // number[] — element-wise conversion
+      return new Float32Array(rawArray as number[]);
+    })();
 
     // PRIORITY 3: Check for LUT encoding (third priority per spec)
     // Python generates names like: lut_uint8, lut_uint16

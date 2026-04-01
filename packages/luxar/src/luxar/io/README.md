@@ -296,7 +296,7 @@ dims = Dimensions([
     Dimension("X", unit="um", display=True),
     Dimension("Y", unit="um", display=True),
     Dimension("Z", unit="um", display=True),
-    Dimension("Time", discrete=True, display=False),  // Discrete dimension
+    Dimension("Time", discrete=True, display=False),  # Discrete dimension
 ])
 
 with LuxarZarrCompiler('scene.zarr', ordering_method="hilbert") as compiler:

@@ -446,6 +446,29 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<LoadedPoints
     };
   }
 
+  // --- Public accessors for direct buffer access (used by loaders) ---
+
+  /** Whether attribute types have been initialized via fill() */
+  hasTypes(): boolean {
+    return this.types !== null;
+  }
+
+  getPositionBuffer(): Float32Array {
+    return this.positionBuffer;
+  }
+
+  getColorBuffer(): Float32Array | Uint8Array | Uint16Array {
+    return this.colorBuffer;
+  }
+
+  getRadiiBuffer(): Float32Array | Uint8Array {
+    return this.radiiBuffer;
+  }
+
+  getSharpnessBuffer(): Float32Array | Uint8Array {
+    return this.sharpnessBuffer;
+  }
+
   dispose(): void {
     this.positionBuffer = new Float32Array(0);
     this.colorBuffer = new Float32Array(0);
@@ -703,6 +726,28 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
     };
   }
 
+  // --- Public accessors for direct buffer access (used by loaders) ---
+
+  getVertexBuffer(): Float32Array {
+    return this.vertexBuffer;
+  }
+
+  getSegmentBuffer(): Uint32Array {
+    return this.segmentBuffer;
+  }
+
+  getWidthBuffer(): Float32Array {
+    return this.widthBuffer;
+  }
+
+  getColorBuffer(): Float32Array | Uint8Array | Uint16Array {
+    return this.colorBuffer;
+  }
+
+  getSharpnessBuffer(): Float32Array {
+    return this.sharpnessBuffer;
+  }
+
   dispose(): void {
     this.vertexBuffer = new Float32Array(0);
     this.segmentBuffer = new Uint32Array(0);
@@ -907,6 +952,28 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
       growthEvents: this.totalGrowths,
       memoryMB: (this.capacity * bytesPerSplat) / 1024 / 1024,
     };
+  }
+
+  // --- Public accessors for direct buffer access (used by loaders) ---
+
+  getCenterBuffer(): Float32Array {
+    return this.centerBuffer;
+  }
+
+  getAmplitudeBuffer(): Float32Array {
+    return this.amplitudeBuffer;
+  }
+
+  getCholeskyBuffer(): Float32Array {
+    return this.choleskyBuffer;
+  }
+
+  getColorBuffer(): Float32Array | Uint8Array | Uint16Array {
+    return this.colorBuffer;
+  }
+
+  setColorBuffer(buffer: Float32Array | Uint8Array | Uint16Array): void {
+    this.colorBuffer = buffer;
   }
 
   dispose(): void {

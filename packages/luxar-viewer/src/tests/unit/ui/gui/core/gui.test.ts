@@ -126,7 +126,7 @@ describe('GUI', () => {
 
     it('should create option controller from array', () => {
       const obj = { mode: 'orbit' };
-      const controller = gui.add(obj, 'mode', ['orbit', 'arcball', 'fly']);
+      const controller = gui.add(obj, 'mode', ['orbit', 'ortho', 'fly']);
 
       expect(controller).toBeDefined();
       const select = controller.domElement.querySelector('.luxar-gui__select');

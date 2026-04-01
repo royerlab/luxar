@@ -45,7 +45,7 @@ Scientific visualization is often software-limited. Luxar changes this by separa
 
 ### Prerequisites
 
-- Python 3.9+ (usually pre-installed on Linux/macOS)
+- Python 3.10+ (usually pre-installed on Linux/macOS)
 - Modern browser with WebGL 2.0
 - **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
 
@@ -532,7 +532,7 @@ Built with:
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+BSD-3-Clause License. See [LICENSE](LICENSE) for details.
 
 ---
 

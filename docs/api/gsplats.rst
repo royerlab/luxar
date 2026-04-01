@@ -79,15 +79,7 @@ Per-splat Adam optimizer with gradient dilution compensation.
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: luxar.gsplats.optim.PerSplatAdam
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-.. autoclass:: luxar.gsplats.optim.PerSplatScheduler
-   :members:
-   :undoc-members:
-   :show-inheritance:
+.. autofunction:: luxar.gsplats.optim.create_optimizer_and_scheduler
 
 Models
 ------
@@ -168,11 +160,13 @@ Strategies for generating initial seed points for splat fitting.
 
 .. autofunction:: luxar.gsplats.seeds.generate_seeds
 
-.. autofunction:: luxar.gsplats.seeds.seed_from_gaussian
-
 .. autofunction:: luxar.gsplats.seeds.seed_from_decomposition
 
-.. autofunction:: luxar.gsplats.seeds.seed_from_moments
+.. autofunction:: luxar.gsplats.seeds.seed_from_edges
+
+.. autofunction:: luxar.gsplats.seeds.seed_from_grid
+
+.. autofunction:: luxar.gsplats.seeds.seed_from_peaks
 
 CLAHE Enhancement
 -----------------

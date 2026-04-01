@@ -101,7 +101,7 @@ Lines datasets with discrete non-displayed dimensions (e.g., time-animated parti
 
 ### 2.2 Root Cause #1: Hardcoded ±0.5 Padding
 
-**Location**: `packages/luxar/src/luxar/io/ordering.py` lines 771-776
+**Location**: `compute_segment_chunk_bounds()` in `packages/luxar/src/luxar/io/ordering.py`
 
 **Current Code**:
 ```python
@@ -127,7 +127,7 @@ if d in discrete_dims:
 
 ### 2.3 Root Cause #2: Chunks Spanning Discrete Boundaries
 
-**Location**: `packages/luxar/src/luxar/io/compiler.py` lines 1524-1527
+**Location**: `_build_lines_spatial_ordering_if_enabled()` in `packages/luxar/src/luxar/io/compiler.py`
 
 **Current Code**:
 ```python
@@ -233,9 +233,9 @@ Efficiency: 92-99.6% (varies by frame)
 
 | File | Function | Issue | Lines |
 |------|----------|-------|-------|
-| `io/ordering.py` | `compute_segment_chunk_bounds()` | Hardcoded ±0.5 padding | 771-776 |
-| `io/ordering.py` | `compute_segment_chunk_bounds()` | No discrete boundary awareness | 756-786 |
-| `io/compiler.py` | `_build_lines_spatial_ordering_if_enabled()` | Fixed chunk size, no boundary splitting | 1524-1527 |
+| `io/ordering.py` | `compute_segment_chunk_bounds()` | Hardcoded ±0.5 padding | discrete_dims padding block |
+| `io/ordering.py` | `compute_segment_chunk_bounds()` | No discrete boundary awareness | chunk bounds loop |
+| `io/compiler.py` | `_build_lines_spatial_ordering_if_enabled()` | Fixed chunk size, no boundary splitting | segment_chunk_size calculation |
 
 ### 4.2 TypeScript Decoder (luxar-viewer package)
 
@@ -265,7 +265,7 @@ Efficiency: 92-99.6% (varies by frame)
 **Function**: `compute_segment_chunk_bounds()`
 **Change**: Replace hardcoded 0.5 with step-based padding
 
-**Current** (lines 724-730):
+**Current** (see `compute_segment_chunk_bounds()`):
 ```python
 def compute_segment_chunk_bounds(
     vertices: np.ndarray,
@@ -288,7 +288,7 @@ def compute_segment_chunk_bounds(
 ) -> np.ndarray:
 ```
 
-**Implementation** (lines 771-776):
+**Implementation** (in the discrete_dims padding block):
 ```python
 if d in discrete_dims:
     # Use dimension-aware padding
@@ -305,7 +305,7 @@ if d in discrete_dims:
     )
 ```
 
-**Caller Update** (`io/compiler.py` lines 1550-1556):
+**Caller Update** (see `_build_lines_spatial_ordering_if_enabled()` in `io/compiler.py`):
 ```python
 segment_chunk_bounds = compute_segment_chunk_bounds(
     sorted_vertices,
@@ -412,7 +412,7 @@ def split_chunks_at_discrete_boundaries(
 - Uses range overlap logic (not exact equality) for robustness
 - Handles multiple discrete dimensions via numpy arrays
 
-**Integration Point** (`io/ordering.py` around line 685):
+**Integration Point** (in `compute_segment_chunk_bounds()` in `io/ordering.py`):
 
 **Current**:
 ```python
@@ -462,7 +462,7 @@ def compute_segment_chunk_bounds(
 
 ### 5.3 Caller Updates
 
-**Location**: `io/compiler.py` lines 1550-1556
+**Location**: `_build_lines_spatial_ordering_if_enabled()` in `io/compiler.py`
 
 Add `dimensions` parameter to call:
 ```python
@@ -480,7 +480,7 @@ Also update function signature to accept dimensions.
 
 ### 5.4 Vertex Chunk Bounds (Consistency)
 
-**Location**: `packages/luxar/src/luxar/io/ordering.py` lines 712-715
+**Location**: `compute_segment_chunk_bounds()` in `packages/luxar/src/luxar/io/ordering.py`
 
 For consistency, vertex chunk bounds should also use dimension-aware padding:
 
@@ -678,7 +678,7 @@ test('time-animated lines load efficiently', async ({ page }) => {
 **Problem**: Initial implementation checked only `segments[i, 0]` (start vertex) for discrete value changes.
 
 **Why This Is Wrong**:
-- Segment bounds computation (line 772-775) uses **min/max of BOTH endpoints**
+- Segment bounds computation in `compute_segment_chunk_bounds()` uses **min/max of BOTH endpoints**
 - Segments can span discrete boundaries (e.g., trajectory from time=5 to time=7)
 - Checking only start vertex would miss segments where `t_start ≠ t_end`
 
@@ -726,7 +726,7 @@ else:
 **Critical Assumption**: The split function assumes segments are ALREADY sorted by compound ordering with discrete dims as primary key.
 
 **Verification**:
-- `sort_segments_compound()` (ordering.py:483-602) DOES sort by discrete dims first ✓
+- `sort_segments_compound()` in `ordering.py` DOES sort by discrete dims first ✓
 - Lexsort order: `[spatial_codes] + [slice_values[:, i] for i in reversed(slice_dims)]`
 - This means discrete dims are PRIMARY sort key ✓
 
@@ -911,18 +911,18 @@ Note: Exact results depend on segments-per-frame distribution
 ## Appendix: Code References
 
 ### A. Segment Chunk Bounds Computation
-`packages/luxar/src/luxar/io/ordering.py` lines 724-786
+`compute_segment_chunk_bounds()` in `packages/luxar/src/luxar/io/ordering.py`
 
 ### B. Segment Spatial Ordering
-`packages/luxar/src/luxar/io/ordering.py` lines 616-682
+`sort_segments_compound()` in `packages/luxar/src/luxar/io/ordering.py`
 
 ### C. Compiler Integration
-`packages/luxar/src/luxar/io/compiler.py` lines 1457-1570
+`_build_lines_spatial_ordering_if_enabled()` in `packages/luxar/src/luxar/io/compiler.py`
 
 ### D. Viewer Segment Query
-`packages/luxar-viewer/src/data/lines-spatial-index-loader.ts` lines 251-320
+`queryVisibleSegmentRanges()` in `packages/luxar-viewer/src/data/lines-spatial-index-loader.ts`
 
 ### E. Diagnostic Evidence
 - Small dataset: `/Users/loic.royer/workspace/python/luxar/delme/diagnose_vertex_order.py` output
 - Large dataset: Browser console logs from viewer testing
-- Viewer diagnostic logging: `lines-spatial-index-loader.ts` lines 190-218
+- Viewer diagnostic logging: `lines-spatial-index-loader.ts`

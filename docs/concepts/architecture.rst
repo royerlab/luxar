@@ -6,13 +6,13 @@ This guide explains the fundamental ideas, design philosophy, and architectural 
 Big Picture: What is Luxar?
 ----------------------------
 
-Luxar is a **high-performance system for compiling and visualizing arbitrary-sized n-dimensional scenes** containing points, lines, surfaces, volumes, and more. It enables:
+Luxar is a **high-performance system for compiling and visualizing arbitrary-sized n-dimensional scenes** containing points, lines, and Gaussian splats. It enables:
 
 * **Interactive exploration** of billion-primitive datasets (points, lines, splats) at 60 FPS
 * **Arbitrary dimensionality** (3D, 4D, 5D, nD) with intuitive navigation
 * **Memory efficiency** through progressive loading and intelligent caching
 * **High quality rendering** with HDR support and post-processing effects
-* **Multi-primitive scenes**: Points, lines, Gaussian splats, with future support for meshes and volumes
+* **Multi-primitive scenes**: Points, lines, and Gaussian splats
 
 **Key Innovation**: Combine spatial indexing with nD hypersphere slicing to enable interactive exploration of datasets that don't fit in memory.
 
@@ -106,7 +106,7 @@ The server layer sits between storage and viewer, providing:
 *Why directory listing?*
 
 * Viewer needs to discover Zarr structure
-* Standard HTTP directory indices don not work for all browsers
+* Standard HTTP directory indices do not work for all browsers
 * JSON format enables programmatic access
 
 **Server Creation Example**::
@@ -527,7 +527,7 @@ Consider Alternatives For:
 
 * ❌ **Small datasets** (<10K points) - overhead not worth it, use matplotlib/plotly
 * ❌ **Real-time streaming** - Luxar is for static datasets, not live data streams
-* ❌ **Triangle meshes** - Luxar is for points/lines, not surfaces (use three.js directly)
+* ❌ **Triangle meshes** - Luxar is for points, lines, and Gaussian splats (use three.js for meshes)
 * ❌ **2D plots** - Use specialized 2D libraries (bokeh, plotly)
 
 Common Workflows
@@ -550,7 +550,7 @@ Workflow 1: Microscopy Time-Series
        Dimension("X", unit="um", spatial=True, display=True),
        Dimension("Y", unit="um", spatial=True, display=True),
        Dimension("Z", unit="um", spatial=True, display=True),
-       Dimension("Time", unit="s", discrete=True, display=False, step=0.5),
+       Dimension("Time", discrete=True, display=False, step=0.5),
    ])
 
    # Write with compound ordering for efficient time navigation
@@ -600,16 +600,15 @@ Workflow 3: Gaussian Splat Fitting
        n_iters=300,
        lr=0.01,
        loss_type="l1",
-       seed_method="gaussian",  # Use Gaussian blob detection
-       seed_kwargs={"apply_clahe": True}  # With CLAHE enhancement
+       seed_method="edges",  # Edge-based seeding
    )
 
    # Save for visualization
    result.save("fitted.gsplats.zarr")
 
-   # Reconstruction
-   reconstructed = result.model.render_numpy()
-   compression_ratio = image.nbytes / result.get_storage_size()
+   # Reconstruction (render back to image/volume)
+   reconstructed = result.render_to_volume(shape=image.shape)
+   compression_ratio = image.nbytes / result.centers.nbytes
    print(f"Compression: {compression_ratio:.1f}×")
 
 Key Takeaways

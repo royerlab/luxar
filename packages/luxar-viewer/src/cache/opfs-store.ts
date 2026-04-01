@@ -109,21 +109,14 @@ export class OPFSStore {
       return;
     }
 
-    // LRU eviction until we have space
+    // LRU eviction until we have space — O(1) per eviction via Map insertion order
     while (this.totalSize + size > this.maxSize && this.index.size > 0) {
-      // Find LRU entry (lowest order number)
-      let lruKey: string | null = null;
-      let lruOrder = Infinity;
-      for (const [k, v] of this.index) {
-        if (v.order < lruOrder) {
-          lruOrder = v.order;
-          lruKey = k;
-        }
-      }
-
-      if (lruKey) {
+      const lruKey = this.index.keys().next().value;
+      if (lruKey !== undefined) {
         // Note: delete() already decrements totalSize, don't double-decrement
         await this.delete(lruKey);
+      } else {
+        break;
       }
     }
 
@@ -142,10 +135,11 @@ export class OPFSStore {
       await writable.write(bytes);
       await writable.close();
 
-      // Update index
+      // Update index — delete+re-insert to move to end (MRU position)
       const existingEntry = this.index.get(key);
       if (existingEntry) {
         this.totalSize -= existingEntry.size;
+        this.index.delete(key);
       }
       this.index.set(key, { size, order: this.orderCounter++ });
       this.totalSize += size;
@@ -241,7 +235,9 @@ export class OPFSStore {
   touch(key: string): void {
     const entry = this.index.get(key);
     if (entry) {
-      entry.order = this.orderCounter++;
+      // Delete+re-insert to move to end (MRU position) — O(1) with Map
+      this.index.delete(key);
+      this.index.set(key, { size: entry.size, order: this.orderCounter++ });
       this.scheduleMetadataSave();
     }
   }
@@ -352,8 +348,10 @@ export class OPFSStore {
       const file = await metaHandle.getFile();
       const meta: OPFSMetadata = JSON.parse(await file.text());
 
-      // Reconstruct Map from stored array
-      this.index = new Map(meta.entries || []);
+      // Reconstruct Map sorted by ascending order so Map insertion order = LRU order
+      const entries = (meta.entries || []).slice();
+      entries.sort((a, b) => a[1].order - b[1].order);
+      this.index = new Map(entries);
       this.totalSize = meta.totalSize || 0;
       this.orderCounter = meta.orderCounter || 0;
       this.contentHash = meta.contentHash || null;

@@ -131,7 +131,7 @@ export function isOrbitControls(control: ControlInstance | null): control is Lux
  * Type guard for LuxarFlyControls
  */
 export function isFlyControls(control: ControlInstance | null): control is LuxarFlyControls {
-  return control !== null && 'inertialMode' in control && 'arrowLookSpeed' in control;
+  return control !== null && 'inertialMode' in control && 'lookSpeed' in control;
 }
 
 /**

@@ -688,7 +688,7 @@ export class InputHandler {
       // Update rendering controls display if available
       if (this.renderingControls) {
         // Ctrl+wheel FOV change should switch to Custom preset
-        (this.renderingControls as any).settings.fovPreset = 'Custom';
+        this.renderingControls.settings.fovPreset = 'Custom';
         this.renderingControls.syncCurrentState();
       }
     }
@@ -1354,8 +1354,15 @@ export class InputHandler {
 
     const tagName = activeElement.tagName.toLowerCase();
     // Check if it's an input field or contenteditable element
+    // Exclude non-text input types (range sliders, checkboxes, radios) that don't capture typing
+    if (tagName === 'input') {
+      const inputType = (activeElement as HTMLInputElement).type?.toLowerCase();
+      if (inputType === 'range' || inputType === 'checkbox' || inputType === 'radio') {
+        return false;
+      }
+      return true;
+    }
     return (
-      tagName === 'input' ||
       tagName === 'textarea' ||
       tagName === 'select' ||
       activeElement.getAttribute('contenteditable') === 'true'
@@ -1591,6 +1598,12 @@ export class InputHandler {
     if (this.dimensionSliders) {
       this.dimensionSliders.dispose();
       this.dimensionSliders = undefined;
+    }
+
+    // Dispose animation manager
+    if (this.animationManager) {
+      this.animationManager.dispose();
+      this.animationManager = undefined;
     }
 
     // Dispose debug console
