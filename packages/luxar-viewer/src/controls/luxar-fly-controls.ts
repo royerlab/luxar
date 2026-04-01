@@ -325,11 +325,11 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     switch (event.key) {
       case 'ArrowUp':
       case 'ArrowDown':
-        this.stopLookChange();
+        this.lookState.vertical = 0;
         break;
       case 'ArrowLeft':
       case 'ArrowRight':
-        this.stopLookChange();
+        this.lookState.horizontal = 0;
         break;
     }
 
@@ -630,14 +630,6 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   private startLookChange(horizontal: number, vertical: number): void {
     this.lookState.horizontal = horizontal;
     this.lookState.vertical = vertical;
-  }
-
-  /**
-   * Stop continuous look change
-   */
-  private stopLookChange(): void {
-    this.lookState.horizontal = 0;
-    this.lookState.vertical = 0;
   }
 
   /**

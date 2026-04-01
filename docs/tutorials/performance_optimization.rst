@@ -64,21 +64,15 @@ Optimization 1: Chunk Size Selection
 .. code-block:: python
 
    # For static 3D data (no time dimension)
-   compiler = LuxarZarrCompiler(
-       'scene.zarr',
-       chunk_size=2048  # Good balance: 2K points per chunk
-   )
+   compiler = LuxarZarrCompiler('scene.zarr')
 
    # For time-series (4D with time animation)
-   compiler = LuxarZarrCompiler(
-       'timeseries.zarr',
-       chunk_size=512  # Smaller chunks for finer time granularity
-   )
+   compiler = LuxarZarrCompiler('timeseries.zarr')
 
-   # For massive static datasets (>100M points)
+   # For massive static datasets with best compression
    compiler = LuxarZarrCompiler(
        'huge.zarr',
-       chunk_size=4096  # Larger chunks reduce metadata overhead
+       ordering_method="hilbert",  # Better compression for large datasets
    )
 
 **Calculation**:
@@ -264,7 +258,6 @@ Billion-Point Dataset Strategy
 
    with LuxarZarrCompiler(
        'billion_points.zarr',
-       chunk_size=2048,           # 2K points per chunk = 488K chunks
        encoding_mode=EncodingMode.MEMORY,  # Aggressive compression
        ordering_method="hilbert",  # Best compression
    ) as compiler:
@@ -442,9 +435,8 @@ Issue: Slow Initial Load
        ordering_method="morton",   # Or hilbert
    )
 
-   # Adjust chunk size for your data
-   # Rule: 32KB - 1MB per chunk
-   compiler = LuxarZarrCompiler('scene.zarr', chunk_size=2048)
+   # Use spatial ordering for best query performance
+   compiler = LuxarZarrCompiler('scene.zarr', ordering_method="morton")
 
 Issue: Low FPS During Navigation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

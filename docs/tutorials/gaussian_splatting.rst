@@ -67,15 +67,15 @@ Basic Gaussian Splat Fitting
        n_iters=300,           # More iterations = better fit
        lr=0.01,               # Learning rate
        loss_type="l1",        # L1 loss is robust to outliers
-       seed_method="gaussian"  # Smart initialization
+       seed_method="edges",   # Edge-based initialization
    )
 
    # Results
    print(f"Fitted {len(result.centers)} splats")
    print(f"Final loss: {result.stats['final_loss']:.4f}")
 
-   # Reconstruction
-   reconstructed = result.model.render_numpy()
+   # Reconstruction (render back to volume/image)
+   reconstructed = result.render_to_volume(shape=image.shape)
 
    # Quality metrics
    mse = np.mean((image - reconstructed) ** 2)
@@ -86,10 +86,11 @@ Basic Gaussian Splat Fitting
 
 1. **Seed Generation**: Find initial splat centers
 
-   * ``gaussian``: Multiscale Gaussian blob detection (fast)
+   * ``auto``: Fast edges + grid combination (default, recommended)
+   * ``edges``: Edge-based seeding via Sobel gradients (fast)
    * ``decomposition``: Scale-hierarchical detection (principled)
-   * ``both``: Combined gaussian + decomposition (default, best quality)
-   * ``moments``: Moment-based with full covariance (anisotropic features)
+   * ``grid``: Uniform grid seeding for spatial coverage
+   * ``peaks``: Local maxima detection
 
 2. **Initialization**: Create splats with reasonable parameters
 
@@ -114,43 +115,32 @@ Seed Selection is Critical
 
 **Why it matters**: Poor initialization → poor fit, slow convergence
 
-**Gaussian Method (Fast)**:
+**Edges Method (Fast, Default)**:
 
-* Detects features at multiple scales (large + small structures)
-* Uses Laplacian of Gaussian pyramid
+* Uses Sobel gradients for edge detection and Poisson disk sampling
+* Finds features at boundaries and transitions
 * **Best for**: General-purpose microscopy images
-* **Tradeoff**: Slightly slower initialization (~1s for 512×512)
+* **Tradeoff**: May miss interior features
 
 .. code-block:: python
 
    result = fit_gaussian_splats(
        image,
-       seed_method="gaussian",
-       seed_kwargs={
-           "scales": (2.0, 4.0, 8.0, 16.0),  # Detection scales
-           "percentile_thresh": 75.0,         # Intensity threshold
-           "min_distance": 2.0,               # Min distance between seeds
-       }
+       seed_method="edges",
+       num_seeds=1000,        # Number of seeds to generate
    )
 
-**CLAHE (Best for Low-Contrast)**:
+**Auto Method (Recommended)**:
 
-* Enhances local contrast before detection
-* Finds features in dim regions
-* **Best for**: Low-SNR images, uneven illumination
-* **Tradeoff**: Can detect noise as features
+* Combines edges + grid for balanced coverage
+* Fast and robust default
+* **Best for**: Most use cases
 
 .. code-block:: python
 
    result = fit_gaussian_splats(
        image,
-       seed_method="gaussian",
-       seed_kwargs={
-           "apply_clahe": True,         # Enable CLAHE preprocessing
-           "clahe_tile_size": 32,       # Local region size
-           "clahe_clip_limit": 16.0,    # Contrast limit
-           "percentile_thresh": 70.0,   # Detection threshold
-       }
+       seed_method="auto",    # Default — fast edges + grid combination
    )
 
 **Decomposition Method (Principled)**:
@@ -158,17 +148,13 @@ Seed Selection is Critical
 * Scale-hierarchical detection via image decomposition
 * Explicitly separates features by scale (coarse → fine)
 * **Best for**: Noisy data, hierarchical structures
-* **Tradeoff**: Slightly slower than gaussian method
+* **Tradeoff**: Slightly slower than edges method
 
 .. code-block:: python
 
    result = fit_gaussian_splats(
        image,
        seed_method="decomposition",
-       seed_kwargs={
-           "scales": [1, 2, 4, 8, 16],  # Decomposition scales
-           "ignore_finest_k": 1,        # Skip finest scale (noise)
-       }
    )
 
 Optimization Parameters
@@ -237,15 +223,13 @@ Advanced: Dynamic Operations
 
 .. code-block:: python
 
+   from luxar.gsplats import DynamicOpsConfig
+
    result = fit_gaussian_splats(
        image,
        n_iters=500,
        enable_dynamic_ops=True,
-       dynamic_config={
-           "split_threshold": 0.1,    # Split high-gradient splats
-           "prune_threshold": 0.01,   # Remove low-amplitude splats
-           "split_interval": 50,      # Check every 50 iterations
-       }
+       dynamic_config=DynamicOpsConfig(),  # Uses sensible defaults
    )
 
 **Operations**:
@@ -260,6 +244,8 @@ Saving and Visualizing Results
 -------------------------------
 
 .. code-block:: python
+
+   from luxar.encoding import EncodingMode
 
    # Fit splats
    result = fit_gaussian_splats(image, n_iters=300)
@@ -285,7 +271,7 @@ Quality vs Compression Tradeoff
    # High quality (more splats, more iterations)
    result_hq = fit_gaussian_splats(
        image,
-       seed_method="gaussian",
+       seed_method="edges",
        n_iters=1000,
        lr=0.005,  # Smaller steps for fine-tuning
        # Result: 2000 splats, PSNR 35dB, 50× compression
@@ -304,7 +290,7 @@ Quality vs Compression Tradeoff
        image,
        n_iters=100,
        lr=0.02,
-       seed_method="gaussian",  # Faster seeding
+       seed_method="edges",  # Faster seeding
        # Result: 200 splats, PSNR 28dB, 500× compression
    )
 

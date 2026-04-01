@@ -364,7 +364,9 @@ export class RecordingPanel {
     );
 
     this.animationController.startAnimation();
-    this.animationController.addPerFrameCallback(this.keepAliveCallbackId, () => {});
+    this.animationController.addPerFrameCallback(this.keepAliveCallbackId, () => {}, {
+      continuous: true,
+    });
 
     const stream = canvas.captureStream(this.options.videoFPS);
     this.mediaRecorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond });
@@ -641,9 +643,13 @@ export class RecordingPanel {
       // Orbit camera by one step and capture in a single animation frame.
       // The callback applies a quaternion rotation (same as auto-rotate) AFTER
       // controls.update, BEFORE render, so the frame is rendered at the new angle.
-      this.animationController.addPerFrameCallback(captureCallbackId, () => {
-        if (i > 0) controls.applyOrbitRotation(anglePerFrame);
-      });
+      this.animationController.addPerFrameCallback(
+        captureCallbackId,
+        () => {
+          if (i > 0) controls.applyOrbitRotation(anglePerFrame);
+        },
+        { continuous: true }
+      );
 
       // Wait for one full animation frame (callback + render)
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -872,29 +878,33 @@ export class RecordingPanel {
     let turntableDone = false;
     let frameCount = 0;
     let lastProgress = 0;
-    this.animationController.addPerFrameCallback(this.turntableCallbackId, () => {
-      if (turntableDone) return;
-      frameCount++;
+    this.animationController.addPerFrameCallback(
+      this.turntableCallbackId,
+      () => {
+        if (turntableDone) return;
+        frameCount++;
 
-      // Time-based progress — rotation completes after the correct wall clock duration
-      const elapsed = Date.now() - startTime;
-      const progress = Math.min(elapsed / totalDuration, 1);
-      const deltaAngle = (progress - lastProgress) * Math.PI * 2;
-      lastProgress = progress;
+        // Time-based progress — rotation completes after the correct wall clock duration
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / totalDuration, 1);
+        const deltaAngle = (progress - lastProgress) * Math.PI * 2;
+        lastProgress = progress;
 
-      // Quaternion orbit — same math as auto-rotation (screen-up axis)
-      controls.applyOrbitRotation(deltaAngle);
+        // Quaternion orbit — same math as auto-rotation (screen-up axis)
+        controls.applyOrbitRotation(deltaAngle);
 
-      if (progress >= 1) {
-        turntableDone = true;
-        log.info(
-          Modules.RECORDING,
-          `Turntable completed: ${frameCount} rendered frames in ` +
-            `${(elapsed / 1000).toFixed(1)}s (${(frameCount / (elapsed / 1000)).toFixed(1)} FPS)`
-        );
-        this.stopVideoRecording();
-      }
-    });
+        if (progress >= 1) {
+          turntableDone = true;
+          log.info(
+            Modules.RECORDING,
+            `Turntable completed: ${frameCount} rendered frames in ` +
+              `${(elapsed / 1000).toFixed(1)}s (${(frameCount / (elapsed / 1000)).toFixed(1)} FPS)`
+          );
+          this.stopVideoRecording();
+        }
+      },
+      { continuous: true }
+    );
   }
 
   // ========== GUI Construction ==========

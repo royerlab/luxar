@@ -119,7 +119,7 @@ test.describe('Camera and Navigation Settings', () => {
     });
 
     // Should be one of the valid control types
-    expect(['orbit', 'arcball', 'fly']).toContain(controlType);
+    expect(['orbit', 'fly', 'ortho']).toContain(controlType);
   });
 
   test('should be able to switch control types', async ({ page }) => {

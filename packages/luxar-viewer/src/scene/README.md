@@ -61,7 +61,7 @@ class SceneManager {
 
   // Camera control
   updateFOV(delta: number): void;
-  setControlType(type: 'orbit' | 'fly'): void;
+  setControlType(type: 'orbit' | 'fly' | 'ortho'): void;
 
   // Centering
   toggleCentering(): void;

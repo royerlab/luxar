@@ -62,7 +62,7 @@ interface SetupContext {
 
   // State management callbacks
   updateClippingControlsState: (enabled: boolean) => void;
-  updateNavigationControls: (type: 'orbit' | 'arcball' | 'fly') => void;
+  updateNavigationControls: (type: 'orbit' | 'fly' | 'ortho') => void;
 }
 ```
 
@@ -133,7 +133,7 @@ function setupNavigationControls(context: SetupContext): SetupResult;
 **Creates**:
 
 - Navigation folder (open by default)
-  - Control type dropdown (orbit, arcball, fly)
+  - Control type dropdown (orbit, fly, ortho)
   - Orbit Controls subfolder
     - Auto Rotate checkbox
     - Rotation Speed slider (0.1-5)

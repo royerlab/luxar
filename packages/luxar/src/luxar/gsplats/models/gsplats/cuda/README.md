@@ -9,28 +9,36 @@ This module provides GPU-accelerated Gaussian splatting for NVIDIA GPUs using cu
 The CUDA backend is designed to provide 10-100x speedup over CPU PyTorch for Gaussian splatting operations. It supports:
 
 - **2D-8D rendering**: Not just 3D, but arbitrary dimensions up to 8D
-- **Tile-based rasterization**: Efficient spatial binning with configurable tile sizes
-- **Optimized gradient computation**: Warp-level reduction to minimize atomic operations
-- **Memory efficiency**: 4x less memory than naive implementations
+- **Splat-centric architecture**: Each CUDA block processes one splat (no tile binning)
+- **3.16x training speedup**: Over the original tile-based pipeline (see `OPTIMIZATION_REPORT.md`)
+- **Zero global atomics in backward**: Block-local gradient reduction
 - **Optional FP16 mode**: Reduced memory bandwidth with FP16 inputs (output stays FP32)
 
 ## Architecture
 
 ```
 Python Layer (GaussianSplatModelCUDA)
+  torch.compile(cholesky_to_conic) fuses L→conic into 1 kernel
            │
            ▼
 PyTorch C++ Extension (pybind11)
+  forward_wrapper() / backward_wrapper()  [bindings.cpp]
            │
            ▼
-CUDA Kernel Dispatcher
+CUDA Dispatch Layer  [cuda_splatting.cu]
+  dispatch_forward_impl<InputDType>() / dispatch_backward_impl<>()
+  DIM_DISPATCH macro for D=2..8 template instantiation
            │
            ▼
-┌──────────────────────────────────────┐
-│         CUDA Compute Kernels         │
-│  preprocess → bin → rasterize_fwd    │
-│           rasterize_bwd              │
-└──────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│        Splat-Centric CUDA Kernels            │
+│  Forward:  output.zero_() → splat_fwd        │
+│            (1 kernel, N blocks, atomicAdd)    │
+│  Backward: splat_bwd                          │
+│            (1 kernel, N blocks, block-local)  │
+│                                               │
+│  No tile binning. No prefix sum. No sorting.  │
+└──────────────────────────────────────────────┘
 ```
 
 ## Requirements
@@ -94,44 +102,27 @@ loss.backward()  # Gradients computed via CUDA kernels
 
 ## Key Optimizations
 
-### 1. Tile-Based Binning
+### 1. Splat-Centric Architecture
 
-Instead of checking all splats for every pixel, we:
-1. Compute axis-aligned bounding boxes (AABBs) for each splat
-2. Bin splats into spatial tiles based on AABB overlap
-3. Each pixel only processes splats in its tile
+Instead of tile-based binning (preprocess -> prefix_sum -> bin -> rasterize), each
+CUDA block processes exactly one splat:
+1. Thread 0 loads splat data and computes the AABB
+2. All 256 threads cooperatively iterate over voxels in the AABB
+3. Forward: `atomicAdd` contributions to the output volume
+4. Backward: block-local reduction, single write per splat (no global atomics)
 
-### 2. Warp-Level Gradient Reduction
+This eliminates ~13 tensor allocations, 4 kernel launches, and all tile binning.
 
-To minimize atomic operation contention:
-```cuda
-// Sum across 32 threads in warp
-float grad_sum = warp_reduce_sum(local_grad);
+### 2. Block-Local Gradient Reduction (Backward)
 
-// Only lane 0 writes to global memory
-if (lane_id == 0) {
-    atomicAdd(&grad_global[splat_id], grad_sum);
-}
-```
+Each block exclusively owns its splat, so gradients are accumulated in registers
+and reduced via warp shuffles (`warp_reduce_sum()` in `reduction_utils.cuh`),
+then written once to global memory. Zero global `atomicAdd` contention.
 
-This reduces atomic operations by 32x.
+### 3. torch.compile Fusion
 
-### 3. Shared Memory Batch Loading
-
-Following BalanceGS patterns:
-```cuda
-// Cooperative load into shared memory
-__shared__ float splat_data[BATCH_SIZE];
-for (int i = tid; i < batch_size; i += blockDim.x) {
-    splat_data[i] = global_data[batch_start + i];
-}
-__syncthreads();
-
-// Process from fast shared memory
-for (int i = 0; i < batch_size; i++) {
-    process(splat_data[i]);
-}
-```
+`torch.compile(cholesky_to_conic)` fuses the 12 kernel launches of the L->conic
+forward+backward into a single fused kernel, saving ~4% of training time.
 
 ## Performance Targets
 
@@ -158,26 +149,41 @@ hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/cuda/tests/test
 
 ```
 cuda/
-├── src/
-│   ├── cuda_splatting.cu      # CUDA kernels
-│   ├── cuda_splatting.h       # Header declarations
-│   ├── bindings.cpp           # pybind11 bindings
-│   └── utils.cuh              # Device utilities
-├── gsplat_model_cuda.py       # Python model class
-├── build.py                   # Build script (uses torch.utils.cpp_extension)
-├── setup.py                   # Legacy setuptools config (optional)
-├── benchmark.py               # Performance benchmarks
+├── src/                                   # 11 source files
+│   ├── cuda_splatting.cu                  # Dispatch layer: entry points, template instantiations
+│   ├── cuda_splatting.h                   # Public API: forward(), backward(), BinningState
+│   ├── bindings.cpp                       # pybind11: forward_wrapper(), backward_wrapper()
+│   ├── kernels_core.cuh                   # Core kernels: splat-centric fwd/bwd, tile-based (legacy)
+│   ├── kernels_global.cuh                 # Global splat kernels (pixel-parallel, legacy path)
+│   ├── kernel_launchers.cuh               # Launch wrappers for all kernels
+│   ├── utils.cuh                          # Umbrella header (includes all sub-headers)
+│   ├── math_utils.cuh                     # Mahalanobis distance, Gaussian intensity, shift params
+│   ├── tile_utils.cuh                     # AABB struct, tile indexing, grid optimization
+│   ├── reduction_utils.cuh                # Warp reduction, gradient helpers
+│   └── dtype_traits.cuh                   # DTypeTraits for FP16/FP32 load abstraction
+├── gsplat_model_cuda.py                   # Python model class (GaussianSplatModelCUDA)
+├── build.py                               # Build script (torch.utils.cpp_extension)
+├── setup.py                               # Legacy setuptools config (optional)
+├── benchmark.py                           # Performance benchmarks
 ├── __init__.py
 ├── tests/
-│   ├── test_cuda_backend.py
-│   ├── test_cuda_numerical.py
-│   ├── test_cuda_performance.py
-│   └── test_cuda_fp16.py
-├── SPECIFICATIONS.md                    # Core algorithms spec
+│   ├── conftest.py                        # Pytest fixtures and configuration
+│   ├── test_cuda_forward.py               # Forward pass correctness
+│   ├── test_cuda_backward.py              # Backward pass correctness
+│   ├── test_cuda_gradcheck.py             # Gradient correctness (autograd comparison)
+│   ├── test_cuda_numerical.py             # Numerical precision
+│   ├── test_cuda_comparison.py            # CUDA vs PyTorch reference
+│   ├── test_cuda_model.py                 # Full model integration
+│   ├── test_cuda_nd.py                    # nD (4D-8D) tests
+│   ├── test_cuda_fp16.py                  # FP16 mode tests
+│   ├── test_cuda_performance.py           # Performance benchmarks
+│   └── test_cuda_review_fixes.py          # Regression tests
+├── SPECIFICATIONS.md                      # Core algorithms spec
 ├── SPECIFICATIONS_PYTORCH_INTEGRATION.md  # PyTorch integration spec
-├── SPECIFICATIONS_TESTING.md            # Testing strategy spec
-├── OPTIMIZATION_ROADMAP.md              # Future optimization plans
-└── README.md                            # This file
+├── SPECIFICATIONS_TESTING.md              # Testing strategy spec
+├── OPTIMIZATION_REPORT.md                 # Tile-based -> splat-centric transition
+├── OPTIMIZATION_ROADMAP.md                # Future optimization plans
+└── README.md                              # This file
 ```
 
 ## Documentation
@@ -204,14 +210,17 @@ Key implementations studied:
 - [x] Backward pass kernels
 - [x] nD extension (4D-8D)
 - [x] Standard Gaussian (s=2) fast path optimization
-- [x] Global splat handling (large splats processed via dedicated kernel)
-- [x] FP16 support (Phase 2: true FP16 kernels with direct global memory load)
+- [x] Global splat handling (detected as side effect in splat-centric kernel)
+- [x] FP16 support (true FP16 kernels with direct global memory load)
+- [x] Splat-centric architecture (3.16x speedup, see OPTIMIZATION_REPORT.md)
+- [x] torch.compile fusion for L->conic conversion
 - [ ] Additional performance optimizations (see OPTIMIZATION_ROADMAP.md)
 
 ## Known Limitations
 
 1. **Dimension limit**: Maximum 8 dimensions supported (template instantiation limit).
-2. **Global splat performance**: Very large splats (>10% of tiles) use a simpler kernel that processes all pixels, which is less efficient than tile-based rasterization.
+2. **`__expf` fast math precision**: ~2 ULP error for ~15% speedup. Causes center and off-diagonal L gradients to have ~59% and ~75% relative error vs PyTorch reference. Convergence verified by multi-iteration stability tests.
+3. **2D 4096^2 50K inference**: Minor regression (+6%) from `atomicAdd` scatter in splat-centric forward (training time still improved by 25%).
 
 ## Mixed-Precision Training with AMP (Recommended)
 

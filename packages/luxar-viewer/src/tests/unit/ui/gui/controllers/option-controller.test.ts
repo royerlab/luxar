@@ -19,7 +19,7 @@ describe('OptionController', () => {
     beforeEach(() => {
       object = { mode: 'orbit' };
       controller = new OptionController(object, 'mode', {
-        options: ['orbit', 'arcball', 'fly'],
+        options: ['orbit', 'ortho', 'fly'],
       });
     });
 
@@ -34,7 +34,7 @@ describe('OptionController', () => {
 
       expect(options.length).toBe(3);
       expect(options[0].textContent).toBe('orbit');
-      expect(options[1].textContent).toBe('arcball');
+      expect(options[1].textContent).toBe('ortho');
       expect(options[2].textContent).toBe('fly');
     });
 
@@ -60,7 +60,7 @@ describe('OptionController', () => {
       controller = new OptionController(object, 'mode', {
         options: {
           'Orbit Camera': 'orbit',
-          'Arcball Camera': 'arcball',
+          'Ortho Camera': 'ortho',
           'Fly Camera': 'fly',
         },
       });
@@ -71,7 +71,7 @@ describe('OptionController', () => {
 
       expect(options.length).toBe(3);
       expect(options[0].textContent).toBe('Orbit Camera');
-      expect(options[1].textContent).toBe('Arcball Camera');
+      expect(options[1].textContent).toBe('Ortho Camera');
       expect(options[2].textContent).toBe('Fly Camera');
     });
 
@@ -85,11 +85,11 @@ describe('OptionController', () => {
     });
 
     it('should select correct label for current value', () => {
-      object.mode = 'arcball';
+      object.mode = 'ortho';
       controller.updateDisplay();
 
       const select = controller.domElement.querySelector('.luxar-gui__select') as HTMLSelectElement;
-      expect(select.value).toBe('Arcball Camera');
+      expect(select.value).toBe('Ortho Camera');
     });
   });
 
@@ -97,7 +97,7 @@ describe('OptionController', () => {
     beforeEach(() => {
       object = { mode: 'orbit' };
       controller = new OptionController(object, 'mode', {
-        options: ['orbit', 'arcball', 'fly'],
+        options: ['orbit', 'ortho', 'fly'],
       });
     });
 
@@ -116,7 +116,7 @@ describe('OptionController', () => {
     beforeEach(() => {
       object = { mode: 'orbit' };
       controller = new OptionController(object, 'mode', {
-        options: ['orbit', 'arcball', 'fly'],
+        options: ['orbit', 'ortho', 'fly'],
       });
     });
 
@@ -125,10 +125,10 @@ describe('OptionController', () => {
       controller.onChange(onChange);
 
       const select = controller.domElement.querySelector('.luxar-gui__select') as HTMLSelectElement;
-      select.value = 'arcball';
+      select.value = 'ortho';
       select.dispatchEvent(new Event('change'));
 
-      expect(onChange).toHaveBeenCalledWith('arcball');
+      expect(onChange).toHaveBeenCalledWith('ortho');
     });
 
     it('should trigger onFinishChange when selection changes', () => {

@@ -43,7 +43,6 @@ data/
 ├── data-loader-types.ts           # TypeScript interfaces and types
 ├── data-accumulator.ts            # Zero-allocation buffer pooling
 ├── geometry-update-manager.ts     # GPU buffer & geometry updates (extracted from SceneLoader)
-├── loader-orchestrator.ts         # Loader factory & lifecycle (extracted from SceneLoader)
 ├── scene-graph-builder.ts         # Scene hierarchy builder (extracted from SceneLoader)
 ├── index.ts                       # Package exports
 ├── README.md                      # This documentation
@@ -122,13 +121,6 @@ The SceneLoader has been refactored into focused, testable modules:
 - Builds hierarchical scene structure from Zarr metadata
 - Pure data structure building (no THREE.js dependencies)
 - Enumerates store contents
-
-**LoaderOrchestrator** (`loader-orchestrator.ts`):
-
-- Factory for Points/Lines/GSplats loaders
-- Loader lifecycle management
-- Failed loader tracking and retry support
-- Aggregated statistics collection
 
 **GeometryUpdateManager** (`geometry-update-manager.ts`):
 
@@ -994,19 +986,6 @@ location /data/ {
 | `constructor(store, rootLoc)` | Create builder with store and location |
 | `buildSceneGraph(rootAttrs)`  | Build complete scene graph             |
 | `getNodesOfType(node, type)`  | Get all nodes of a specific type       |
-
-### Loader Orchestrator (loader-orchestrator.ts)
-
-| Class/Method                     | Description                      |
-| -------------------------------- | -------------------------------- |
-| `LoaderOrchestrator`             | Creates and manages data loaders |
-| `constructor(config)`            | Create orchestrator with config  |
-| `createPointsLoader(node, loc)`  | Create Points loader             |
-| `createLinesLoader(node, loc)`   | Create Lines loader              |
-| `createGSplatsLoader(node, loc)` | Create GSplats loader            |
-| `getFailedLoaders()`             | Get map of failed loaders        |
-| `getAggregatedStats(type)`       | Get aggregated accumulator stats |
-| `dispose()`                      | Dispose all loaders              |
 
 ### Geometry Update Manager (geometry-update-manager.ts)
 

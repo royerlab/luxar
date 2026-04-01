@@ -251,20 +251,21 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   }
 
   /**
-   * Prefetch the next unloaded LOD's data into cache.
+   * Prefetch the next unloaded LOD's chunks into cache.
    *
    * This is fire-and-forget: the prefetched chunks land in the L0/L1 cache
    * and become fast cache hits on the next updateView() call.
-   * Uses the loader's built-in spatial index query + zarr fetch path,
-   * but discards the result (only the cache side-effect matters).
+   *
+   * Uses prefetchChunks() which performs the spatial index query and zarr
+   * get() calls (populating the cache) WITHOUT allocating full-size output
+   * buffers or running the accumulator — avoiding wasted memory.
    */
   private prefetchNextLOD(viewState: GSplatsViewState): void {
     const nextLevel = this.loadedLODs.length;
     if (nextLevel >= this.nLods) return;
 
-    // Fire and forget — load the LOD data (which populates the cache)
-    // but don't store or commit the result
-    this.lodLoaders[nextLevel].updateView(viewState).catch(() => {
+    // Fire and forget — fetch chunks into cache without decoding to output buffers
+    this.lodLoaders[nextLevel].prefetchChunks(viewState).catch(() => {
       // Ignore errors from prefetch (network failures, aborts)
     });
   }

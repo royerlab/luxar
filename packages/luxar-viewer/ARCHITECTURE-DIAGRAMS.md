@@ -108,7 +108,7 @@ graph TB
     end
 
     subgraph "Supporting Managers"
-        Controls[ControlsManager<br/>Orbit/Arcball/Fly<br/>Mode switching]
+        Controls[ControlsManager<br/>Orbit/Fly/Ortho<br/>Mode switching]
         PostProc[PostProcessingManager<br/>HDR pipeline<br/>Bloom, DOF, AA]
         Materials[MaterialManager<br/>Shader caching<br/>Global updates]
         Dims[SceneDimsManager<br/>nD state<br/>Observer pattern]

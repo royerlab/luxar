@@ -394,7 +394,7 @@ Comprehensive UI for controlling all rendering parameters in real-time using a c
 - Cinematic mode presets with intelligent toggle
 - Settings persistence per-scene using localStorage
 - FOV presets with realistic lens distortion
-- Navigation controls (orbit, arcball, fly)
+- Navigation controls (orbit, fly, ortho)
 - **Adaptive resolution controls** with manual DPR adjustment
 
 **Folder Icons**:
@@ -2084,7 +2084,7 @@ interface DataLoadingMonitor {
 ```typescript
 interface RenderingSettings {
   // Navigation
-  controlType: 'orbit' | 'arcball' | 'fly';
+  controlType: 'orbit' | 'fly' | 'ortho';
   autoRotate: boolean;
   autoRotateSpeed: number;
   flyMovementSpeed: number;

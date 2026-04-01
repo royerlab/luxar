@@ -698,6 +698,9 @@ export class PostProcessingManager {
       ULTRA: SMAAPreset.ULTRA,
     };
 
+    // Dispose old SMAA effect before recreating
+    this.safeDisposeEffect(this.smaaEffect, 'SMAA (preset change)');
+
     // Need to recreate SMAA effect with new preset
     this.smaaEffect = new SMAAEffect({
       preset: presetMap[preset] ?? SMAAPreset.HIGH,
@@ -1606,6 +1609,9 @@ export class PostProcessingManager {
           bloom.luminanceMaterial?.threshold || config.renderingControls.defaults.bloomThreshold,
         radius: bloom.mipmapBlurPass?.radius || config.renderingControls.defaults.bloomRadius,
       };
+
+      // Dispose old bloom effect before recreating
+      this.safeDisposeEffect(this.bloomEffect, 'Bloom (levels change)');
 
       // Recreate bloom with new levels setting
       // Levels control the quality/performance of mipmap blur

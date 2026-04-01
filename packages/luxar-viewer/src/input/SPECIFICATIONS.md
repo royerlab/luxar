@@ -32,7 +32,7 @@ The `luxar-viewer.input` package provides context-aware keyboard and mouse input
 
 ```typescript
 enum InputContext {
-  NAVIGATION = 'navigation', // Default 3D navigation (orbit/arcball)
+  NAVIGATION = 'navigation', // Default 3D navigation (orbit/ortho)
   FLY_CONTROLS = 'fly_controls', // Fly mode active (WASD enabled)
   TYPING = 'typing', // Text input focused (all shortcuts disabled)
   UI_INTERACTION = 'ui_interaction', // UI panels and controls
@@ -118,13 +118,13 @@ The InputContextManager provides a **dynamic key binding registration system** f
 - Registration API: `registerBinding()`, `unregisterBinding()`, `clearContextBindings()`
 - Event routing: `handleKeyEvent()` checks registered bindings and returns boolean
 
-**Implementation**: `input-context-manager.ts:31-394`
+**Implementation**: `InputContextManager` class in `input-context-manager.ts`
 
 ---
 
 ### 2.2 KeyBinding Interface
 
-**Definition** (`input-context-manager.ts:31-43`):
+**Definition** (see `KeyBinding` interface in `input-context-manager.ts`):
 
 ```typescript
 export interface KeyBinding {
@@ -191,7 +191,7 @@ const flyBinding: KeyBinding = {
 
 ### 2.3 Context Configuration
 
-**Definition** (`input-context-manager.ts:44-59`):
+**Definition** (see `ContextConfig` interface in `input-context-manager.ts`):
 
 ```typescript
 interface ContextConfig {
@@ -202,7 +202,7 @@ interface ContextConfig {
 }
 ```
 
-**Initialization** (`input-context-manager.ts:75-117`):
+**Initialization** (see `InputContextManager` constructor in `input-context-manager.ts`):
 
 Contexts are initialized from `config.input.keyboard.*` with appropriate allowed/blocked keys:
 
@@ -247,7 +247,7 @@ this.contextConfigs.set(InputContext.TYPING, {
 
 ### 2.4 Registration API
 
-**registerBinding(context: InputContext, binding: KeyBinding)** (`input-context-manager.ts:290-308`):
+**registerBinding(context: InputContext, binding: KeyBinding)** (see `registerBinding()` in `input-context-manager.ts`):
 
 **Purpose**: Register a key handler for a specific context.
 
@@ -305,11 +305,11 @@ inputContextManager.registerBinding(InputContext.FLY_CONTROLS, {
 });
 ```
 
-**unregisterBinding(context: InputContext, key: string, modifiers?)** (`input-context-manager.ts:333-343`):
+**unregisterBinding(context: InputContext, key: string, modifiers?)** (see `unregisterBinding()` in `input-context-manager.ts`):
 
 **Purpose**: Remove a previously registered binding.
 
-**clearContextBindings(context: InputContext)** (`input-context-manager.ts:663-665`):
+**clearContextBindings(context: InputContext)** (see `clearContextBindings()` in `input-context-manager.ts`):
 
 **Purpose**: Remove all bindings for a specific context (useful for cleanup).
 
@@ -317,7 +317,7 @@ inputContextManager.registerBinding(InputContext.FLY_CONTROLS, {
 
 ### 2.5 Event Routing Algorithm
 
-**Method**: `handleKeyEvent(event: KeyboardEvent, type: 'down' | 'up'): boolean` (`input-context-manager.ts:376-423`)
+**Method**: `handleKeyEvent(event: KeyboardEvent, type: 'down' | 'up'): boolean` (see `handleKeyEvent()` in `input-context-manager.ts`)
 
 **Purpose**: Central event router that dispatches keyboard events to registered handlers based on current context. Supports separate keydown and keyup handlers.
 
@@ -394,7 +394,7 @@ public handleKeyEvent(event: KeyboardEvent, type: 'down' | 'up'): boolean {
 
 ### 2.6 Passthrough Mechanism
 
-**Method**: `tryLowerContexts(event: KeyboardEvent): boolean` (`input-context-manager.ts:270-295`)
+**Method**: `tryLowerContexts(event: KeyboardEvent): boolean` (see `tryLowerContexts()` in `input-context-manager.ts`)
 
 **Purpose**: When current context doesn't handle a key, try contexts with lower priority (if passthrough enabled).
 
@@ -444,7 +444,7 @@ private tryLowerContexts(event: KeyboardEvent): boolean {
 
 ### 2.7 Binding Key Generation
 
-**Method**: `getBindingKeyFromEvent(event: KeyboardEvent): string` (`input-context-manager.ts:250-268`)
+**Method**: `getBindingKeyFromEvent(event: KeyboardEvent): string` (see `getBindingKeyFromEvent()` in `input-context-manager.ts`)
 
 **Purpose**: Create unique key string from keyboard event including modifiers.
 
@@ -476,7 +476,7 @@ const bindingKey = modifiers.length > 0 ? `${modifiers.join('+')}+${key}` : key;
 
 **Purpose**: Block keyboard shortcuts when user is typing in text fields to prevent conflicts.
 
-**Method**: `isTypingContext(): boolean` (`input-context-manager.ts:300-320`)
+**Method**: `isTypingContext(): boolean` (see `isTypingContext()` in `input-context-manager.ts`)
 
 **Algorithm** (Dual-check approach):
 
@@ -518,26 +518,31 @@ public isTypingContext(): boolean {
 
 ### 3.2 Usage in InputHandler
 
-**InputHandler also has typing detection** (`input-handler.ts:713-725`):
+**InputHandler also has typing detection** (`input-handler.ts`):
 
 ```typescript
 private isTypingInInput(): boolean {
   const activeElement = document.activeElement;
   if (!activeElement) return false;
 
-  if (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA') {
+  const tagName = activeElement.tagName.toLowerCase();
+  // Exclude non-text input types (range sliders, checkboxes, radios)
+  if (tagName === 'input') {
+    const inputType = (activeElement as HTMLInputElement).type?.toLowerCase();
+    if (inputType === 'range' || inputType === 'checkbox' || inputType === 'radio') {
+      return false;
+    }
     return true;
   }
-
-  if (activeElement.getAttribute('contenteditable') === 'true') {
-    return true;
-  }
-
-  return false;
+  return (
+    tagName === 'textarea' ||
+    tagName === 'select' ||
+    activeElement.getAttribute('contenteditable') === 'true'
+  );
 }
 ```
 
-**Note**: InputHandler uses simpler DOM-only check. This is intentional - InputHandler performs direct key handling and doesn't rely on context manager for typing detection.
+**Note**: InputHandler uses DOM-only check that excludes non-text input types (range, checkbox, radio) so keyboard shortcuts work while interacting with sliders and toggles. This is aligned with `InputContextManager.isTypingContext()`.
 
 ---
 
@@ -589,7 +594,7 @@ if (this.isTypingContext()) {
 
 ### 4.2 InputHandler Key Registration
 
-**Method**: `registerAllKeyBindings()` (`input-handler.ts:549-799`)
+**Method**: `registerAllKeyBindings()` (see `registerAllKeyBindings()` in `input-handler.ts`)
 
 **Total Bindings Registered**: 58
 
@@ -679,13 +684,13 @@ private registerAllKeyBindings(): void {
 }
 ```
 
-**Registration happens once** during `setupWindowEvents()` initialization (line 368).
+**Registration happens once** during `setupWindowEvents()` initialization.
 
 ---
 
 ### 4.3 InputHandler Key Routing
 
-**Methods**: `onKeyDown()` and `onKeyUp()` (`input-handler.ts:807-828`)
+**Methods**: `onKeyDown()` and `onKeyUp()` (see `onKeyDown()` / `onKeyUp()` in `input-handler.ts`)
 
 **Ultra-Simplified Implementation**:
 
@@ -725,17 +730,17 @@ private onKeyUp(event: KeyboardEvent): void {
 // Switching context when toggling control mode
 private toggleControlMode(): void {
   const currentType = this.sceneManager.controls.getControlType();
-  let newType: 'orbit' | 'arcball' | 'fly';
+  let newType: 'orbit' | 'fly' | 'ortho';
 
-  // Cycle through modes
+  // Cycle through modes: orbit -> fly -> ortho -> orbit
   switch (currentType) {
     case 'orbit':
-      newType = 'arcball';
-      break;
-    case 'arcball':
       newType = 'fly';
       break;
     case 'fly':
+      newType = 'ortho';
+      break;
+    case 'ortho':
       newType = 'orbit';
       break;
   }
@@ -759,7 +764,7 @@ private toggleControlMode(): void {
 
 ### InputContextManager (Actual Implementation)
 
-**Location**: `input-context-manager.ts:18-394`
+**Location**: `InputContextManager` class in `input-context-manager.ts`
 
 ```typescript
 export class InputContextManager {
@@ -806,7 +811,7 @@ export class InputContextManager {
 
 ### InputHandler (Actual Implementation)
 
-**Location**: `input-handler.ts:27-829`
+**Location**: `InputHandler` class in `input-handler.ts`
 
 ```typescript
 export class InputHandler {
@@ -874,10 +879,10 @@ export class InputHandler {
   - **UNIFIED**: All keys route through InputContextManager.handleKeyEvent()
 
   **Bug Fixes**:
-  - **FIXED**: Passthrough not working when key not in allowedKeys (line 394-399)
+  - **FIXED**: Passthrough not working when key not in allowedKeys in `handleKeyEvent()`
     - Now checks passthrough BEFORE returning false
     - Global shortcuts (h, p, r) now work in FLY_CONTROLS mode
-  - **FIXED**: Shift blocked in NAVIGATION context (line 123-125)
+  - **FIXED**: Shift blocked in NAVIGATION context
     - Filtered Shift from blockedKeys
     - Shift now works for FOV wheel control in orbit mode
   - **FIXED**: Browser shortcuts blocked incorrectly

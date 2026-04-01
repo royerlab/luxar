@@ -65,13 +65,14 @@ http://localhost:5173
 ## 🎮 Controls
 
 ### Control Modes
-Luxar Player supports two navigation modes:
-- **Orbit Mode** (default): Traditional 3D viewer controls - rotate around a target point
+Luxar Player supports three navigation modes:
+- **Orbit Mode** (default): Quaternion-based rotation around a target point (no gimbal lock)
 - **Fly Mode**: First-person navigation with WASD movement and inertial physics
+- **Ortho Mode**: Orthographic pan + zoom for 2D viewing
 
 | Key | Action |
 |-----|--------|
-| **V** | Toggle between Orbit and Fly control modes |
+| **V** | Cycle control modes: Orbit -> Fly -> Ortho -> Orbit |
 | **I** | Toggle inertial mode (Fly mode only) |
 | **F** | Recenter camera on scene |
 | **C** | Toggle between native center and bounding box center |
@@ -79,10 +80,10 @@ Luxar Player supports two navigation modes:
 ### Orbit Mode Controls
 | Input | Action |
 |-------|--------|
-| **Mouse Drag** | Rotate camera around scene |
-| **Mouse Wheel** | Zoom in/out |
+| **Left Mouse Drag** | Rotate camera around scene |
 | **Right Click + Drag** | Pan camera |
-| **Shift + Mouse Wheel** | Change field of view |
+| **Mouse Wheel** | Zoom in/out |
+| **Shift + Mouse Wheel** | Roll (view-axis rotation) |
 
 ### Fly Mode Controls
 | Input | Action |
@@ -91,8 +92,18 @@ Luxar Player supports two navigation modes:
 | **A/D** | Strafe left/right |
 | **Alt+W / Alt+S** | Move up/down |
 | **Arrow Keys** | Look up/down/left/right |
-| **Mouse Drag** | Free look (rotate camera) |
+| **Left Mouse Drag** | Strafe (screen-space translation) |
+| **Right Mouse Drag** | Free look (rotate camera) |
+| **Mouse Wheel** | Forward/backward velocity impulse |
+| **Shift + Mouse Wheel** | Roll (view-axis rotation) |
 | **I** | Toggle inertial physics (drift/momentum) |
+
+### Ortho Mode Controls
+| Input | Action |
+|-------|--------|
+| **Left Mouse Drag** | Pan (Napari/Google Maps convention) |
+| **Mouse Wheel** | Zoom in/out |
+| **Shift + Mouse Wheel** | Roll (view-axis rotation) |
 
 ### General Controls
 | Input | Action |
