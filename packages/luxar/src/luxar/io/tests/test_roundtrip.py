@@ -74,8 +74,9 @@ class TestBasicRoundTrip:
         output_path = tmp_path / "test.zarr"
         n_points = 500
 
-        positions = np.random.randn(n_points, 3).astype(np.float32)
-        colors = np.random.rand(n_points, 3).astype(np.float32)
+        rng = np.random.RandomState(123)
+        positions = rng.randn(n_points, 3).astype(np.float32)
+        colors = rng.rand(n_points, 3).astype(np.float32)
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -86,20 +87,36 @@ class TestBasicRoundTrip:
 
         assert data["positions"].shape == positions.shape
         assert data["colors"].shape == colors.shape
-
-        # Colors should be preserved (may be encoded as uint8 then decoded)
-        # Allow small tolerance for quantization
         assert data["colors"].dtype == np.float32
+
+        # Verify actual values survive round-trip (sort to handle spatial reordering)
+        sort_idx_orig = np.lexsort(positions.T)
+        sort_idx_load = np.lexsort(data["positions"].T)
+        np.testing.assert_allclose(
+            data["positions"][sort_idx_load],
+            positions[sort_idx_orig],
+            rtol=1e-6,
+            atol=1e-6,
+            err_msg="Position values differ after round-trip",
+        )
+        # SDR colors go through uint8 quantization: allow ~1/255 error per channel
+        np.testing.assert_allclose(
+            data["colors"][sort_idx_load],
+            colors[sort_idx_orig],
+            atol=2.0 / 255,
+            err_msg="Color values differ beyond uint8 quantization tolerance",
+        )
 
     def test_full_point_attributes(self, tmp_path) -> None:
         """Test round-trip with all point attributes."""
         output_path = tmp_path / "test.zarr"
         n_points = 200
 
-        positions = np.random.randn(n_points, 3).astype(np.float32)
-        colors = np.random.rand(n_points, 3).astype(np.float32)
-        radii = np.random.rand(n_points).astype(np.float32) * 0.5 + 0.1
-        sharpness = np.random.rand(n_points).astype(np.float32) * 10.0
+        rng = np.random.RandomState(42)
+        positions = rng.randn(n_points, 3).astype(np.float32)
+        colors = rng.rand(n_points, 3).astype(np.float32)
+        radii = rng.rand(n_points).astype(np.float32) * 0.5 + 0.1
+        sharpness = rng.rand(n_points).astype(np.float32) * 10.0
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -118,6 +135,38 @@ class TestBasicRoundTrip:
         assert data["colors"].shape == colors.shape
         assert data["radii"].shape == radii.shape
         assert data["sharpness"].shape == sharpness.shape
+
+        # Verify actual values survive round-trip (sort to handle spatial reordering)
+        sort_idx_orig = np.lexsort(positions.T)
+        sort_idx_load = np.lexsort(data["positions"].T)
+        np.testing.assert_allclose(
+            data["positions"][sort_idx_load],
+            positions[sort_idx_orig],
+            rtol=1e-6,
+            atol=1e-6,
+            err_msg="Position values differ after round-trip",
+        )
+        np.testing.assert_allclose(
+            data["colors"][sort_idx_load],
+            colors[sort_idx_orig],
+            atol=2.0 / 255,
+            err_msg="Color values differ beyond uint8 quantization tolerance",
+        )
+        # Radii/sharpness are encoded as positive_scalar with dynamic quantization.
+        # Sharpness uses uint8 over [0, 31] range: step ≈ 31/255 ≈ 0.12.
+        # Use atol based on quantization step size rather than rtol.
+        np.testing.assert_allclose(
+            data["radii"][sort_idx_load],
+            radii[sort_idx_orig],
+            atol=0.01,
+            err_msg="Radii values differ after round-trip",
+        )
+        np.testing.assert_allclose(
+            data["sharpness"][sort_idx_load],
+            sharpness[sort_idx_orig],
+            atol=0.15,  # uint8 quantized to [0,31]: step ≈ 0.12
+            err_msg="Sharpness values differ after round-trip",
+        )
 
 
 class TestHDRColors:
