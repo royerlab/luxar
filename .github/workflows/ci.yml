@@ -28,6 +28,9 @@ jobs:
       - name: Install Hatch
         run: pipx install hatch
 
+      - name: Create viewer dist placeholder
+        run: mkdir -p packages/luxar-viewer/dist
+
       - name: Lint (ruff)
         run: hatch run python -m ruff check packages/luxar/src/luxar/
 
@@ -70,6 +73,10 @@ jobs:
 
       - name: Install Hatch
         run: pipx install hatch
+
+      - name: Create viewer dist placeholder
+        working-directory: .
+        run: mkdir -p packages/luxar-viewer/dist
 
       - name: Generate test fixtures
         working-directory: .
