@@ -50,15 +50,17 @@ export async function loadGSplatsChunkSpatialIndex(
     const chunkBounds = new Float32Array(boundsData.data as ArrayBuffer | ArrayLike<number>);
 
     // Compute chunk count from metadata
-    const chunkCount = Math.ceil(attrs.n_splats / attrs.chunk_size);
+    let chunkCount = Math.ceil(attrs.n_splats / attrs.chunk_size);
 
-    // Validate bounds array size
-    const expectedSize = chunkCount * attrs.ndim * 2;
-    if (chunkBounds.length !== expectedSize) {
+    // Validate against actual chunkBounds array length
+    const actualChunks = Math.floor(chunkBounds.length / (attrs.ndim * 2));
+    if (chunkCount !== actualChunks) {
       log.warning(
         Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-        `GSplats bounds size mismatch: got ${chunkBounds.length}, expected ${expectedSize}`
+        `GSplats chunk count mismatch: metadata implies ${chunkCount} chunks, ` +
+          `but chunkBounds array has ${actualChunks} chunks — using min`
       );
+      chunkCount = Math.min(chunkCount, actualChunks);
     }
 
     log.info(

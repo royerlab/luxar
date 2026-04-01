@@ -233,7 +233,7 @@ subtle indexing bugs that are extremely hard to debug.
 | `img_size` | `(W, H, D)` | Volume dimensions: Width, Height, Depth |
 | `grid_dims` | `(tiles_x, tiles_y, tiles_z)` | Tile grid dimensions |
 | `gid` | `(x, y, z)` | Thread position (pixel coordinates) |
-| `centers` | `(x, y, z)` per splat | Splat center coordinates |
+| `centers` | `(z, y, x)` per splat | Splat center coordinates (stored in [Z,Y,X] order throughout; see Metal SPECIFICATIONS.md for coordinate conventions) |
 | `conic` | `(c_xx, c_xy, c_xz, c_yy, c_yz, c_zz)` | Upper triangle of Σ⁻¹ |
 
 ### Output Index Calculation (Row-Major)

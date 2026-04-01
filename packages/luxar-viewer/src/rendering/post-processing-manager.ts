@@ -615,7 +615,11 @@ export class PostProcessingManager {
     const reverseMap: Record<ToneMappingMode, THREE.ToneMapping> = {
       [ToneMappingMode.LINEAR]: THREE.LinearToneMapping,
       [ToneMappingMode.REINHARD]: THREE.ReinhardToneMapping,
+      [ToneMappingMode.REINHARD2]: THREE.ReinhardToneMapping,
+      [ToneMappingMode.REINHARD2_ADAPTIVE]: THREE.ReinhardToneMapping,
+      [ToneMappingMode.UNCHARTED2]: THREE.CineonToneMapping,
       [ToneMappingMode.OPTIMIZED_CINEON]: THREE.CineonToneMapping,
+      [ToneMappingMode.CINEON]: THREE.CineonToneMapping,
       [ToneMappingMode.ACES_FILMIC]: THREE.ACESFilmicToneMapping,
       [ToneMappingMode.AGX]: THREE.AgXToneMapping,
       [ToneMappingMode.NEUTRAL]: THREE.NeutralToneMapping,
@@ -1457,6 +1461,15 @@ export class PostProcessingManager {
       this.toneMappingEffect.mode = savedEffects.toneMapping.mode;
       if (savedEffects.toneMapping.whitePoint !== undefined) {
         this.toneMappingEffect.whitePoint = savedEffects.toneMapping.whitePoint;
+      }
+      if (savedEffects.toneMapping.exposure !== undefined) {
+        this.toneMappingEffect.exposure = savedEffects.toneMapping.exposure;
+      }
+      if (savedEffects.toneMapping.globalOffset !== undefined) {
+        this.toneMappingEffect.globalOffset = savedEffects.toneMapping.globalOffset;
+      }
+      if (savedEffects.toneMapping.globalGamma !== undefined) {
+        this.toneMappingEffect.globalGamma = savedEffects.toneMapping.globalGamma;
       }
     }
 

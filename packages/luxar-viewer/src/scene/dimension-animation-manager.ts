@@ -65,6 +65,9 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   /** Per-dimension update tracking — prevents advancing faster than data loads */
   private pendingUpdates = new Set<number>();
 
+  /** Unsubscribe function for sceneDimsManager listener */
+  private removeDimsListener: (() => void) | null = null;
+
   /**
    * Create dimension animation manager
    *
@@ -81,9 +84,13 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     this.updateDimensionCache();
 
     // Listen for dimension changes to invalidate cache
-    this.sceneDimsManager.addListener(() => {
+    const listener = () => {
       this.updateDimensionCache();
-    });
+    };
+    this.sceneDimsManager.addListener(listener);
+    this.removeDimsListener = () => {
+      this.sceneDimsManager.removeListener(listener);
+    };
   }
 
   /**
@@ -622,6 +629,12 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     if (this.isRegistered) {
       this.animationController.removePerFrameCallback('dimension-animation');
       this.isRegistered = false;
+    }
+
+    // Unsubscribe from sceneDimsManager to prevent memory leak
+    if (this.removeDimsListener) {
+      this.removeDimsListener();
+      this.removeDimsListener = null;
     }
 
     log.info(Modules.ANIMATION, 'Disposed dimension animation manager');

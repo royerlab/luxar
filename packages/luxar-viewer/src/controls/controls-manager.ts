@@ -21,8 +21,8 @@ import { LuxarFlyControls } from './luxar-fly-controls';
 import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
 import type { LuxarCamera } from '../scene/camera-utils';
-
-export type ControlType = 'orbit' | 'fly' | 'ortho';
+import type { ControlType } from './types';
+export type { ControlType };
 
 export interface ControlsManagerConfig {
   autoRotate?: boolean;

@@ -614,7 +614,7 @@ Install **Document This** extension for quick JSDoc scaffolding:
 
 ### Linting
 
-Add to `.eslintrc.js`:
+Add to `eslint.config.js`:
 ```javascript
 {
   "plugins": ["jsdoc"],
@@ -638,11 +638,7 @@ Add to `.eslintrc.js`:
 
 ### Coverage Checking
 
-Run periodically:
-```bash
-cd packages/luxar-viewer
-node scripts/check-jsdoc-coverage.js
-```
+JSDoc coverage checking is not yet automated. Manually review public API files to ensure all exported functions, classes, and interfaces have JSDoc comments.
 
 ---
 
@@ -653,4 +649,4 @@ See existing examples in:
 - `src/types/dims.ts` - Good interface documentation
 - `src/scene/scene-dims-manager.ts` - Complete method documentation
 
-For Python docstrings, see `docs/DOCSTRING_STYLE_GUIDE.md` (to be created).
+For Python docstrings, follow the conventions in `CLAUDE.md` and the per-package `README.md` files.

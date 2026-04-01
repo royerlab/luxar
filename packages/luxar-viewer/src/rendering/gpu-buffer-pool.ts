@@ -691,29 +691,23 @@ export class GPUBufferPool {
     // Without this, frustum culling uses stale bounds from previous frame/time slice
     // This causes geometry to disappear when zooming close (small frustum excludes stale box)
     // Performance: O(n) in segment count, but only runs when geometry updates (not every frame)
-    const positions = new Float32Array(count * 6);
+    const box = new THREE.Box3();
+    const v = new THREE.Vector3();
     for (let i = 0; i < count; i++) {
-      positions[i * 6 + 0] = data.startPositions[i * 3 + 0];
-      positions[i * 6 + 1] = data.startPositions[i * 3 + 1];
-      positions[i * 6 + 2] = data.startPositions[i * 3 + 2];
-      positions[i * 6 + 3] = data.endPositions[i * 3 + 0];
-      positions[i * 6 + 4] = data.endPositions[i * 3 + 1];
-      positions[i * 6 + 5] = data.endPositions[i * 3 + 2];
+      v.set(
+        data.startPositions[i * 3],
+        data.startPositions[i * 3 + 1],
+        data.startPositions[i * 3 + 2]
+      );
+      box.expandByPoint(v);
+      v.set(data.endPositions[i * 3], data.endPositions[i * 3 + 1], data.endPositions[i * 3 + 2]);
+      box.expandByPoint(v);
     }
 
-    const tempGeometry = new THREE.BufferGeometry();
-    tempGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    tempGeometry.computeBoundingBox();
-    tempGeometry.computeBoundingSphere();
-
-    if (tempGeometry.boundingBox) {
-      geometry.boundingBox = tempGeometry.boundingBox.clone();
-    }
-    if (tempGeometry.boundingSphere) {
-      geometry.boundingSphere = tempGeometry.boundingSphere.clone();
-    }
-
-    tempGeometry.dispose();
+    geometry.boundingBox = box;
+    const sphere = new THREE.Sphere();
+    box.getBoundingSphere(sphere);
+    geometry.boundingSphere = sphere;
   }
 
   // =========================================================================
@@ -891,13 +885,12 @@ export class GPUBufferPool {
 
     // CRITICAL: Recompute bounding box from updated center positions
     // GSplats use aCenter attribute for positions in frustum culling
-    const tempGeometry = new THREE.BufferGeometry();
-    tempGeometry.setAttribute(
-      'position',
-      new THREE.BufferAttribute(data.centers3D.subarray(0, count * 3), 3)
-    );
-    tempGeometry.computeBoundingBox();
-    tempGeometry.computeBoundingSphere();
+    const box = new THREE.Box3();
+    const v = new THREE.Vector3();
+    for (let i = 0; i < count; i++) {
+      v.set(data.centers3D[i * 3], data.centers3D[i * 3 + 1], data.centers3D[i * 3 + 2]);
+      box.expandByPoint(v);
+    }
 
     // Expand bounding box by max splat extent for correct frustum culling.
     // Without this, large splats whose center is outside the frustum but whose
@@ -926,17 +919,12 @@ export class GPUBufferPool {
       maxRowNorm = Math.max(maxRowNorm, row0, row1, row2);
     }
     const expansion = maxRowNorm * truncationRadius;
+    box.expandByScalar(expansion);
 
-    if (tempGeometry.boundingBox) {
-      geometry.boundingBox = tempGeometry.boundingBox.clone();
-      geometry.boundingBox.expandByScalar(expansion);
-    }
-    if (tempGeometry.boundingSphere) {
-      geometry.boundingSphere = tempGeometry.boundingSphere.clone();
-      geometry.boundingSphere.radius += expansion;
-    }
-
-    tempGeometry.dispose();
+    geometry.boundingBox = box;
+    const sphere = new THREE.Sphere();
+    box.getBoundingSphere(sphere);
+    geometry.boundingSphere = sphere;
   }
 
   // =========================================================================

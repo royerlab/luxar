@@ -520,12 +520,15 @@ describe('createInstancedGSplatsMesh', () => {
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
 
     expect(geometry.boundingBox).not.toBeNull();
-    expect(geometry.boundingBox!.min.x).toBe(0);
-    expect(geometry.boundingBox!.min.y).toBe(0);
-    expect(geometry.boundingBox!.min.z).toBe(0);
-    expect(geometry.boundingBox!.max.x).toBe(10);
-    expect(geometry.boundingBox!.max.y).toBe(20);
-    expect(geometry.boundingBox!.max.z).toBe(30);
+    // Bounding box is expanded by maxRowNorm * truncationRadius (default 3.0)
+    // Cholesky factors give maxRowNorm=1, so expansion=3.0
+    const expansion = 3.0;
+    expect(geometry.boundingBox!.min.x).toBe(0 - expansion);
+    expect(geometry.boundingBox!.min.y).toBe(0 - expansion);
+    expect(geometry.boundingBox!.min.z).toBe(0 - expansion);
+    expect(geometry.boundingBox!.max.x).toBe(10 + expansion);
+    expect(geometry.boundingBox!.max.y).toBe(20 + expansion);
+    expect(geometry.boundingBox!.max.z).toBe(30 + expansion);
   });
 });
 

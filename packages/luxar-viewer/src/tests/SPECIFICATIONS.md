@@ -49,7 +49,7 @@ tests/
 │   ├── wasm/          # WASM vs TypeScript comparison and performance
 │   └── workers/       # Worker pool tests
 │
-├── e2e/               # Slow, integrated, real browser (Playwright, 28 spec files)
+├── e2e/               # Slow, integrated, real browser (Playwright, 29 spec files)
 │   ├── basic-rendering.spec.ts         # Core rendering pipeline
 │   ├── all-examples-smoke-test.spec.ts # All example datasets render
 │   ├── cache-system.spec.ts            # Cache system behavior

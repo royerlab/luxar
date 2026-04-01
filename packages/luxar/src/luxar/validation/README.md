@@ -71,8 +71,7 @@ Provides basic validation functions used for type guards, property validation, a
 - `validate_opacity()`: Validate opacity values (0.0-1.0)
 - `validate_gamma()`: Validate gamma values (0.1-10.0)
 - `validate_blending_mode()`: Validate blending mode strings
-- **`validate_categories()`**: **NEW** - Validate category lists for categorical dimensions
-- **`validate_category_indices()`**: **NEW** - Validate category index arrays
+- `validate_category_indices()`: Validate category index arrays
 
 **Type Guards:**
 - `is_position_array()`: Check if object is valid position array
@@ -110,6 +109,26 @@ Provides detailed validation functions specifically for write-time validation, w
 - Shape validation
 - Type coercion where safe
 - Range checking with warnings
+
+### `nd_transforms.py`
+Validation and composition for nD transforms on non-displayed dimensions.
+
+**Purpose:**
+Validates and composes per-dimension transforms (affine or categorical permutation) that operate on non-displayed dimensions, separate from the 4x4 spatial transform.
+
+**Key Functions:**
+- `validate_nd_transform()`: Validate an nD transform dictionary, optionally checking dimension names and domain compatibility against a `Dimensions` object
+- `compose_nd_transforms()`: Compose multiple nD transforms into one (affine: multiply scales, add offsets; categorical: compose permutations)
+- `apply_nd_transform_to_bounds()`: Apply an nD transform to bounding-box ranges for each dimension
+
+### `category_validation.py`
+Categorical dimension validation.
+
+**Purpose:**
+Validates category lists for categorical dimensions. Imported at the package level (`from luxar.validation import validate_categories`).
+
+**Key Functions:**
+- `validate_categories()`: Validate category lists for categorical dimensions (uniqueness, non-empty, etc.)
 
 ### `nd.py`
 Validation for n-dimensional data and dimensional coverage.

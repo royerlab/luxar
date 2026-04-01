@@ -93,6 +93,7 @@ export class ChunkPrefetcher {
     if (this.seen.size > ChunkPrefetcher.MAX_SEEN_SIZE) {
       this.seen.clear();
       this.seen.add(key);
+      this.maxChunkIndices.clear();
     }
 
     const adjacent = this.getAdjacentChunks(key);
