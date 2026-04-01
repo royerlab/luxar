@@ -91,7 +91,6 @@ function createMockRenderingControls() {
       flyDamping: 0.9,
       flyRotationDamping: 0.9,
       dynamicClippingEnabled: true,
-      clippingAdaptSpeed: 0.5,
       adaptiveDPREnabled: true,
     },
   } as any;

@@ -31,6 +31,8 @@ __device__ __forceinline__ void compute_pixel_gradients(
     float amp,
     const float* __restrict__ d_vec,
     const float* __restrict__ conic,
+    float shift_C,
+    float inv_one_minus_C,
     float* __restrict__ local_d_centers,
     float* __restrict__ local_d_conic,
     float& local_d_amp
@@ -38,8 +40,8 @@ __device__ __forceinline__ void compute_pixel_gradients(
     // Gradient w.r.t. amplitude
     local_d_amp += dL_dI * grad_intensity_wrt_amplitude(intensity, amp);
 
-    // Gradient w.r.t. dist_sq
-    float grad_dist = grad_intensity_wrt_dist_sq(intensity);
+    // Gradient w.r.t. dist_sq (shifted Gaussian)
+    float grad_dist = grad_intensity_wrt_dist_sq(intensity, amp, shift_C, inv_one_minus_C);
 
     // Pre-compute the common factor (CSE: used DIM + CONIC_SIZE times below)
     float outer = dL_dI * grad_dist;
@@ -96,11 +98,14 @@ __device__ __forceinline__ void compute_pixel_gradients<3>(
     float amp,
     const float* __restrict__ d_vec,
     const float* __restrict__ conic,
+    float shift_C,
+    float inv_one_minus_C,
     float* __restrict__ local_d_centers,
     float* __restrict__ local_d_conic,
     float& local_d_amp
 ) {
     backward_pixel_splat_3d(dL_dI, intensity, amp, d_vec, conic,
+                           shift_C, inv_one_minus_C,
                            local_d_centers, local_d_conic, local_d_amp);
 }
 
@@ -114,11 +119,14 @@ __device__ __forceinline__ void compute_pixel_gradients<2>(
     float amp,
     const float* __restrict__ d_vec,
     const float* __restrict__ conic,
+    float shift_C,
+    float inv_one_minus_C,
     float* __restrict__ local_d_centers,
     float* __restrict__ local_d_conic,
     float& local_d_amp
 ) {
     backward_pixel_splat_2d(dL_dI, intensity, amp, d_vec, conic,
+                           shift_C, inv_one_minus_C,
                            local_d_centers, local_d_conic, local_d_amp);
 }
 
@@ -157,6 +165,11 @@ __global__ void preprocess_kernel(
     int64_t num_tiles,
     int* __restrict__ global_count  // Atomic counter for global splats
 ) {
+    // Precompute shifted Gaussian truncation parameters (once per kernel)
+    const GaussianShiftParams gsp = compute_shift_params(truncate);
+    const float shift_C = gsp.shift_C;
+    const float inv_one_minus_C = gsp.inv_one_minus_C;
+
     int splat_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (splat_idx >= N) return;
 
@@ -191,7 +204,8 @@ __global__ void preprocess_kernel(
     // Compute AABB using exact L_row_norms
     AABB<DIM> aabb = compute_splat_aabb<DIM>(
         mu, L_row_norms_local, amp, truncate, intensity_floor,
-        tile_size_arr, tile_dims_local, shape_local
+        tile_size_arr, tile_dims_local, shape_local,
+        shift_C, inv_one_minus_C
     );
 
     // Check if AABB is empty (splat outside volume or culled)
@@ -353,6 +367,11 @@ __global__ void rasterize_forward_kernel(
     const int* __restrict__ tile_content,
     float* __restrict__ output
 ) {
+    // Precompute shifted Gaussian truncation parameters (once per kernel)
+    const GaussianShiftParams gsp = compute_shift_params(truncate);
+    const float shift_C = gsp.shift_C;
+    const float inv_one_minus_C = gsp.inv_one_minus_C;
+
     // Each block handles one tile
     // OPTIMIZATION: For 2D/3D, use dim3 grid and extract tile coords directly from blockIdx
     // This eliminates expensive division/modulo operations (20-40 cycles -> 1 cycle)
@@ -413,7 +432,7 @@ __global__ void rasterize_forward_kernel(
                 con[c] = DTypeTraits<InputDType>::load(conic, splat_idx * CONIC_SIZE + c);
             }
             float amp_val = DTypeTraits<InputDType>::load(amps, splat_idx);
-            float trunc_sq = effective_truncate_sq(truncate, amp_val, intensity_floor);
+            float trunc_sq = effective_truncate_sq(truncate, amp_val, intensity_floor, shift_C, inv_one_minus_C);
 
             // Compute fast path flags
             const bool fast_3d = (DIM == 3) && (tile_size == 8) &&
@@ -438,7 +457,7 @@ __global__ void rasterize_forward_kernel(
                 float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, con);
 
                 if (dist_sq <= trunc_sq) {
-                    float intensity = gaussian_intensity(dist_sq, amp_val);
+                    float intensity = gaussian_intensity(dist_sq, amp_val, shift_C, inv_one_minus_C);
                     if (intensity >= intensity_floor) {
                         int64_t global_px_idx = voxel_to_linear<DIM>(voxel_coords, shape);
                         output[global_px_idx] = intensity;
@@ -564,7 +583,7 @@ __global__ void rasterize_forward_kernel(
                     // OPTIMIZATION 1.2: Precompute effective truncation squared
                     // This moves the expensive computation out of the hot inner loop
                     // Includes amplitude-based tightening for better early rejection
-                    s_truncate_sq[i] = effective_truncate_sq(truncate, s_amps[i], intensity_floor);
+                    s_truncate_sq[i] = effective_truncate_sq(truncate, s_amps[i], intensity_floor, shift_C, inv_one_minus_C);
                 }
                 __syncthreads();
 
@@ -588,7 +607,7 @@ __global__ void rasterize_forward_kernel(
 
                     if (within_range) {
                         // Compute intensity (only for pixels within truncation radius)
-                        float intensity = gaussian_intensity(dist_sq, s_amps[i]);
+                        float intensity = gaussian_intensity(dist_sq, s_amps[i], shift_C, inv_one_minus_C);
 
                         // Skip if below threshold
                         if (intensity >= intensity_floor) {
@@ -632,7 +651,7 @@ __global__ void rasterize_forward_kernel(
                 }
 
                 s_amps[i] = DTypeTraits<InputDType>::load(amps, splat_idx);
-                s_truncate_sq[i] = effective_truncate_sq(truncate, s_amps[i], intensity_floor);
+                s_truncate_sq[i] = effective_truncate_sq(truncate, s_amps[i], intensity_floor, shift_C, inv_one_minus_C);
             }
             __syncthreads();
 
@@ -656,7 +675,7 @@ __global__ void rasterize_forward_kernel(
                     }
                     float dist_sq = mahalanobis_distance_sq<DIM>(d, &s_conic[i * CONIC_SIZE]);
                     if (dist_sq > s_truncate_sq[i]) continue;
-                    float intensity = gaussian_intensity(dist_sq, s_amps[i]);
+                    float intensity = gaussian_intensity(dist_sq, s_amps[i], shift_C, inv_one_minus_C);
                     if (intensity >= intensity_floor) {
                         pixel_intensity += intensity;
                     }
@@ -695,6 +714,11 @@ void rasterize_backward_kernel(
     float* __restrict__ d_conic,
     float* __restrict__ d_amps
 ) {
+    // Precompute shifted Gaussian truncation parameters (once per kernel)
+    const GaussianShiftParams gsp = compute_shift_params(truncate);
+    const float shift_C = gsp.shift_C;
+    const float inv_one_minus_C = gsp.inv_one_minus_C;
+
     // Each block handles one tile
     // OPTIMIZATION: For 2D/3D, use dim3 grid and extract tile coords directly from blockIdx
     int tile_idx;
@@ -859,7 +883,7 @@ void rasterize_backward_kernel(
 
             // OPTIMIZATION 1.2: Precompute effective truncation squared
             // Includes amplitude-based tightening for better early rejection
-            s_truncate_sq[i] = effective_truncate_sq(truncate, s_amps[i], intensity_floor);
+            s_truncate_sq[i] = effective_truncate_sq(truncate, s_amps[i], intensity_floor, shift_C, inv_one_minus_C);
 
             // OPTIMIZATION 3.2: Initialize gradient accumulators for this batch
             s_d_amps_tile[i] = 0.0f;
@@ -908,11 +932,12 @@ void rasterize_backward_kernel(
                     float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, &s_conic[si * CONIC_SIZE]);
 
                     if (dist_sq <= truncate_sq) {
-                        float intensity = gaussian_intensity(dist_sq, amp);
+                        float intensity = gaussian_intensity(dist_sq, amp, shift_C, inv_one_minus_C);
                         if (intensity >= intensity_floor) {
                             compute_pixel_gradients<DIM>(
                                 precomp_dL_dI, intensity, amp, d_vec,
                                 &s_conic[si * CONIC_SIZE],
+                                shift_C, inv_one_minus_C,
                                 local_d_centers, local_d_conic,
                                 local_d_amp
                             );
@@ -949,12 +974,13 @@ void rasterize_backward_kernel(
 
                     if (dist_sq > truncate_sq) continue;
 
-                    float intensity = gaussian_intensity(dist_sq, amp);
+                    float intensity = gaussian_intensity(dist_sq, amp, shift_C, inv_one_minus_C);
                     if (intensity < intensity_floor) continue;
 
                     compute_pixel_gradients<DIM>(
                         dL_dI, intensity, amp, d_vec,
                         &s_conic[si * CONIC_SIZE],
+                        shift_C, inv_one_minus_C,
                         local_d_centers, local_d_conic,
                         local_d_amp
                     );
@@ -1051,6 +1077,11 @@ void rasterize_forward_splat_centric_kernel(
     int* __restrict__ tile_counts_out,
     const int* __restrict__ tile_dims
 ) {
+    // Precompute shifted Gaussian truncation parameters (once per kernel)
+    const GaussianShiftParams gsp = compute_shift_params(truncate);
+    const float shift_C = gsp.shift_C;
+    const float inv_one_minus_C = gsp.inv_one_minus_C;
+
     int splat_idx = blockIdx.x;
     if (splat_idx >= N) return;
 
@@ -1067,7 +1098,7 @@ void rasterize_forward_splat_centric_kernel(
 
     if (threadIdx.x == 0) {
         s_amp = DTypeTraits<InputDType>::load(amps, splat_idx);
-        s_truncate_sq = effective_truncate_sq(truncate, s_amp, intensity_floor);
+        s_truncate_sq = effective_truncate_sq(truncate, s_amp, intensity_floor, shift_C, inv_one_minus_C);
 
         #pragma unroll
         for (int d = 0; d < DIM; d++) {
@@ -1079,7 +1110,7 @@ void rasterize_forward_splat_centric_kernel(
         }
 
         // Compute voxel AABB from conic (Sigma^-1) via cofactor/determinant
-        float t_eff = effective_truncation(truncate, s_amp, intensity_floor);
+        float t_eff = effective_truncation(truncate, s_amp, intensity_floor, shift_C, inv_one_minus_C);
 
         if constexpr (DIM == 3) {
             float c00 = s_conic[0], c01 = s_conic[1], c02 = s_conic[2];
@@ -1225,7 +1256,7 @@ void rasterize_forward_splat_centric_kernel(
         float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, conic_reg);
         if (dist_sq > truncate_sq) continue;
 
-        float intensity = gaussian_intensity(dist_sq, amp);
+        float intensity = gaussian_intensity(dist_sq, amp, shift_C, inv_one_minus_C);
         if (intensity >= intensity_floor) {
             int64_t global_px_idx = voxel_to_linear<DIM>(voxel, shape);
             atomicAdd(&output[global_px_idx], intensity);
@@ -1265,6 +1296,11 @@ void rasterize_backward_splat_centric_kernel(
     // Optional: zero the forward output tensor as a side effect (eliminates output.zero_() on next call)
     float* __restrict__ output_to_zero
 ) {
+    // Precompute shifted Gaussian truncation parameters (once per kernel)
+    const GaussianShiftParams gsp = compute_shift_params(truncate);
+    const float shift_C = gsp.shift_C;
+    const float inv_one_minus_C = gsp.inv_one_minus_C;
+
     int splat_idx = blockIdx.x;
     if (splat_idx >= N) return;
 
@@ -1281,7 +1317,7 @@ void rasterize_backward_splat_centric_kernel(
 
     if (threadIdx.x == 0) {
         s_amp = DTypeTraits<InputDType>::load(amps, splat_idx);
-        s_truncate_sq = effective_truncate_sq(truncate, s_amp, intensity_floor);
+        s_truncate_sq = effective_truncate_sq(truncate, s_amp, intensity_floor, shift_C, inv_one_minus_C);
 
         #pragma unroll
         for (int d = 0; d < DIM; d++) {
@@ -1294,7 +1330,7 @@ void rasterize_backward_splat_centric_kernel(
 
         // Compute voxel AABB from conic (Sigma^-1) by extracting Sigma diagonals
         // via cofactor / determinant. This gives the exact per-axis standard deviation.
-        float t_eff = effective_truncation(truncate, s_amp, intensity_floor);
+        float t_eff = effective_truncation(truncate, s_amp, intensity_floor, shift_C, inv_one_minus_C);
 
         if constexpr (DIM == 3) {
             float c00 = s_conic[0], c01 = s_conic[1], c02 = s_conic[2];
@@ -1409,7 +1445,7 @@ void rasterize_backward_splat_centric_kernel(
         float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, conic_reg);
         if (dist_sq > truncate_sq) continue;
 
-        float intensity = gaussian_intensity(dist_sq, amp);
+        float intensity = gaussian_intensity(dist_sq, amp, shift_C, inv_one_minus_C);
         if (intensity < intensity_floor) continue;
 
         // OPTIMIZATION: Zero ONLY the pixels that the forward actually wrote to.
@@ -1425,6 +1461,7 @@ void rasterize_backward_splat_centric_kernel(
         // Accumulate gradients (template-specialized for 2D/3D)
         compute_pixel_gradients<DIM>(
             dL_dI, intensity, amp, d_vec, conic_reg,
+            shift_C, inv_one_minus_C,
             local_d_centers, local_d_conic, local_d_amp
         );
     }

@@ -86,15 +86,20 @@ This is the same approach used by:
 
 ### 2.1 Gaussian Splat Formulation
 
-Each splat k contributes intensity at position x:
+Each splat k contributes intensity at position x using a shifted Gaussian that ensures
+C⁰ continuity (exactly zero) at the truncation boundary:
 
 ```
-I_k(x) = a_k × exp(-0.5 × D_k(x))
+C     = exp(-0.5 × T²)              // boundary value (T=3 → 0.01111)
+scale = 1 / (1 - C)                 // peak-preserving rescale (T=3 → 1.01123)
+I_k(x) = a_k × scale × max(0, exp(-0.5 × D_k(x)) - C)
 ```
 
 Where:
 - `a_k` = amplitude (scalar)
 - `D_k(x)` = squared Mahalanobis distance (standard Gaussian, hardcoded s=2)
+- `T` = truncation radius (default 3.0)
+- `C` = boundary shift ensuring the function reaches exactly zero at D = T²
 
 ### 2.2 Mahalanobis Distance
 
@@ -174,13 +179,15 @@ r = truncate  # standard Gaussian truncation radius
 
 ### 2.6 Gradient Derivation
 
-**Forward**: `I = a × exp(inner)` where `inner = -0.5 × D`
+**Forward (shifted Gaussian)**: `I = a × scale × max(0, exp(-0.5 × D) - C)` where `C = exp(-0.5 × T²)`, `scale = 1/(1-C)`
+
+Let `g = exp(-0.5 × D) - C`. The gradient is nonzero only when `g > 0`.
 
 **Gradients** (for backward pass):
 
 1. **Amplitude**:
    ```
-   ∂I/∂a = exp(inner) = I/a
+   ∂I/∂a = scale × max(0, g) = I/a    (when g > 0)
    ```
 
 2. **Sharpness**:
@@ -2445,8 +2452,11 @@ kernel void rasterize_fwd_3d(
         if (dist_sq <= trunc_sq) {
             float a = amps[splat_id];
 
-            // Standard Gaussian: exp(-0.5 × dist_sq)
-            float val = a * exp(-0.5f * dist_sq);
+            // Shifted Gaussian for C⁰ continuity at truncation boundary:
+            // I = a * scale * max(0, exp(-0.5 * D) - C)
+            float C_boundary = exp(-0.5f * trunc_sq);
+            float raw = exp(-0.5f * dist_sq);
+            float val = a * max(0.0f, raw - C_boundary) / (1.0f - C_boundary);
 
             // Early culling: skip invisible contributions (saves GPU cycles)
             if (val < intensity_floor) continue;
@@ -2527,10 +2537,13 @@ kernel void rasterize_bwd_3d(
             if (dist_sq <= trunc_sq) {
                 float a = amps[splat_id];
 
-                // Standard Gaussian: exp(-0.5 × dist_sq)
+                // Shifted Gaussian for C⁰ continuity (must match forward pass)
+                float C_boundary = exp(-0.5f * trunc_sq);
+                float inv_scale = 1.0f / (1.0f - C_boundary);
                 float inner = -0.5f * dist_sq;
                 float exp_val = exp(inner);
-                float intensity = a * exp_val;
+                float shifted = max(0.0f, exp_val - C_boundary);
+                float intensity = a * shifted * inv_scale;
 
                 // CRITICAL: Must match forward pass intensity_floor culling!
                 if (intensity < intensity_floor) continue;
@@ -2662,8 +2675,10 @@ kernel void rasterize_fwd_nd(
 
         float trunc_sq = truncate * truncate;
         if (dist_sq <= trunc_sq) {
-            // Standard Gaussian: exp(-0.5 × dist_sq)
-            float val = amps[i] * exp(-0.5f * dist_sq);
+            // Shifted Gaussian for C⁰ continuity at truncation boundary
+            float C_boundary = exp(-0.5f * trunc_sq);
+            float raw = exp(-0.5f * dist_sq);
+            float val = amps[i] * max(0.0f, raw - C_boundary) / (1.0f - C_boundary);
 
             // Early culling for intensity_floor
             if (val < intensity_floor) continue;
@@ -2761,14 +2776,17 @@ kernel void rasterize_bwd_nd(
                 if (dist_sq <= trunc_sq) {
                     float a = amps[i];
 
-                    // Standard Gaussian: exp(-0.5 × dist_sq)
+                    // Shifted Gaussian for C⁰ continuity (must match forward pass)
+                    float C_boundary = exp(-0.5f * trunc_sq);
+                    float inv_scale = 1.0f / (1.0f - C_boundary);
                     float inner = -0.5f * dist_sq;
                     float exp_val = exp(inner);
-                    float intensity = a * exp_val;
+                    float shifted = max(0.0f, exp_val - C_boundary);
+                    float intensity = a * shifted * inv_scale;
                     float d_common = intensity * d_L_d_I;
 
-                    // 1. Amplitude gradient: dI/da = exp(inner)
-                    val_amps = exp_val * d_L_d_I;
+                    // 1. Amplitude gradient: dI/da = shifted * inv_scale
+                    val_amps = shifted * inv_scale * d_L_d_I;
 
                     // 2. Distance gradient: dI/dD = I * (-0.5)
                     float grad_dist = d_common * (-0.5f);

@@ -368,7 +368,6 @@ class ViewerConfig:
 
     # Dynamic clipping
     dynamic_clipping_enabled: Optional[bool] = None
-    clipping_adapt_speed: Optional[float] = None
 
     # Adaptive resolution
     adaptive_dpr_enabled: Optional[bool] = None
@@ -444,7 +443,6 @@ class ViewerConfig:
         _validate_min(self.auto_rotate_speed, "auto_rotate_speed", 0)
         _validate_min(self.fly_movement_speed, "fly_movement_speed", 0)
         _validate_min(self.fly_rotation_speed, "fly_rotation_speed", 0)
-        _validate_min(self.clipping_adapt_speed, "clipping_adapt_speed", 0)
         _validate_range(self.fly_damping, "fly_damping", 0, 1)
         _validate_range(self.fly_rotation_damping, "fly_rotation_damping", 0, 1)
         _validate_min(self.vignette_offset, "vignette_offset", 0)
@@ -501,7 +499,6 @@ class ViewerConfig:
         "fly_damping",
         "fly_rotation_damping",
         "dynamic_clipping_enabled",
-        "clipping_adapt_speed",
         "adaptive_dpr_enabled",
         "theme",
     ]

@@ -82,7 +82,16 @@ Container for Gaussian splat fitting results with transformation methods.
 
 ## Overview
 
-Implement an n-dimensional Gaussian splatting system for image/volume reconstruction using collections of oriented Gaussian functions. Each "splat" represents: `f_k(x) = a_k * exp(-0.5 * (x - μ_k)^T * Σ_k^(-1) * (x - μ_k))` where μ_k is the center, Σ_k is the covariance matrix, and a_k is the amplitude.
+Implement an n-dimensional Gaussian splatting system for image/volume reconstruction using collections of oriented Gaussian functions. Each "splat" uses a shifted Gaussian truncation formula for C⁰ continuity at the truncation boundary (no discontinuity when hard-truncated at T sigma):
+
+```
+D² = (x - μ_k)^T * Σ_k^(-1) * (x - μ_k)   (Mahalanobis distance squared)
+C     = exp(-0.5 * T²)                       (boundary value, T=3 → 0.01111)
+scale = 1 / (1 - C)                          (peak-preserving rescale, T=3 → 1.01123)
+f_k(x) = a_k * scale * max(0, exp(-0.5 * D²) - C)
+```
+
+where μ_k is the center, Σ_k is the covariance matrix, a_k is the amplitude, and T is the truncation radius.
 
 Key requirements:
 - Support arbitrary dimensions with optimized 2D/3D fast paths
@@ -163,13 +172,13 @@ All seeding methods accept an optional `device` parameter (`'cuda'`, `'mps'`, `'
 **Algorithm:**
 1. **Compute AABB per splat**:
    - Compute radii: `radii = ceil(truncate * sqrt(diag(Sigma)))`
-2. **Optional amplitude-aware shrinking**: if `a * exp(-0.5 * t^2) < intensity_floor`, reduce radius
+2. **Optional amplitude-aware shrinking**: if `a * scale * (exp(-0.5 * t^2) - C) < intensity_floor`, reduce radius (where `C = exp(-0.5 * T²)`, `scale = 1/(1-C)`)
 3. Group splats by box dimensions for grid reuse: `{(h1,h2,...): [indices]}`
 4. For each group:
    - Generate coordinate grid using `meshgrid`
    - Process in memory chunks to prevent OOM
    - Solve `L * y = (x - mu)` for all points (avoid matrix inversion)
-   - **Apply standard Gaussian**: Compute `exp(-0.5 * ||y||^2) * amplitude`
+   - **Apply shifted Gaussian**: Compute `amplitude * scale * max(0, exp(-0.5 * ||y||^2) - C)` (C⁰ continuous at truncation boundary)
    - Accumulate into output using `index_add_`
 
 **Fast paths for 2D/3D:**
@@ -183,7 +192,7 @@ All seeding methods accept an optional `device` parameter (`'cuda'`, `'mps'`, `'
 - Account for tensor memory: `K * (2*d + 2) * bytes_per_element * 1.5`
 - Clamp chunk sizes to [1024, 1048576]
 
-**Note:** GSplats use the standard Gaussian falloff `I(x) = a * exp(-0.5 * ||y||^2)`. Per-splat sharpness has been removed as of March 2026. All splats use s=2 (standard Gaussian).
+**Note:** GSplats use a shifted Gaussian truncation formula `I(x) = a * scale * max(0, exp(-0.5 * D²) - C)` where `C = exp(-0.5 * T²)` and `scale = 1/(1-C)`. This ensures C⁰ continuity at the truncation boundary. Per-splat sharpness has been removed as of March 2026. All splats use s=2 (standard Gaussian).
 
 ## 3. Standard Optimizer Integration (`optim/`)
 
@@ -305,7 +314,7 @@ For each matched (splat_idx, peak_coords) pair:
 - Low importance = small AND dim → candidate for relocation
 
 **Influence Detection**:
-- For point (i,j), compute each splat's contribution: `contribution_k = a_k * exp(-0.5 * (x_ij - μ_k)^T * Σ_k^(-1) * (x_ij - μ_k))`
+- For point (i,j), compute each splat's contribution: `contribution_k = a_k * scale * max(0, exp(-0.5 * (x_ij - μ_k)^T * Σ_k^(-1) * (x_ij - μ_k)) - C)` where `C = exp(-0.5 * T²)`, `scale = 1/(1-C)`
 - Use early filtering with max reach: `candidates = splats where ||p - center|| ≤ 6 × max_sigma`
 
 ### **Operational Flow**
@@ -617,7 +626,7 @@ This section provides a quick reference for the most important terms. For compre
 ### Core Concepts
 
 **Splat**
-- A single oriented Gaussian function: `f(x) = a * exp(-0.5 * (x-μ)^T * Σ^(-1) * (x-μ))`
+- A single oriented Gaussian function with shifted truncation: `f(x) = a * scale * max(0, exp(-0.5 * (x-μ)^T * Σ^(-1) * (x-μ)) - C)` where `C = exp(-0.5 * T²)`, `scale = 1/(1-C)` for C⁰ continuity at truncation boundary
 - Also called: Gaussian splat, oriented Gaussian
 - NOT: blob, particle, or kernel (avoid these terms for consistency)
 
@@ -745,7 +754,7 @@ This section provides a quick reference for the most important terms. For compre
 **Configuration Parameters**:
 - `sigma_min_diag`: Minimum diagonal values (per-dimension sequence or float, broadcast across dimensions)
 - `sigma_max_diag`: Maximum diagonal values (per-dimension sequence)
-- `truncate`: Gaussian truncation radius in standard deviations
+- `truncate`: Gaussian truncation radius T in standard deviations (shifted formula uses C=exp(-0.5*T²) for C⁰ continuity)
 - `init_sigma_vox`: Initial sigma for isotropic covariances
 
 ### Mathematical Notation

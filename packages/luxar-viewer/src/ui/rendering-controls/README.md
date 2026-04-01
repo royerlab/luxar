@@ -70,7 +70,7 @@ Creates controls for:
 
 - FOV presets (28mm, 35mm, 50mm, 85mm, 135mm, Custom)
 - FOV slider with real-time adjustment
-- Clipping planes (near, far, dynamic clipping with adapt speed)
+- Clipping planes (near, far, dynamic clipping)
 
 **Special behavior:** Takes `controllersRef` parameter to enable FOV preset synchronization with lens distortion controls (defined in post-processing module).
 

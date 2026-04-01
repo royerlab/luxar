@@ -4,7 +4,7 @@
  * This header provides mathematical functions for Gaussian computation:
  * - Triangular matrix indexing for packed covariance matrices
  * - Mahalanobis distance calculation (generic + optimized 2D/3D)
- * - Standard Gaussian intensity computation
+ * - Shifted Gaussian intensity with C⁰ continuous truncation
  * - Effective truncation radius for early rejection
  */
 
@@ -145,28 +145,70 @@ __device__ __forceinline__ float mahalanobis_distance_sq<3>(
 }
 
 // =============================================================================
+// SHIFTED GAUSSIAN TRUNCATION PARAMETERS
+// =============================================================================
+
+/**
+ * Precomputed constants for shifted Gaussian truncation.
+ *
+ * The shifted Gaussian ensures C⁰ continuity at the truncation boundary:
+ *
+ *   I(x) = a · scale · max(0, exp(-0.5·D²) - C)
+ *
+ * where C = exp(-0.5·T²) is the boundary value, and scale = 1/(1-C)
+ * preserves peak amplitude (I(0) = a).
+ *
+ * For the default T=3: C ≈ 0.01111, scale ≈ 1.01123.
+ */
+struct GaussianShiftParams {
+    float shift_C;          // exp(-0.5 * T²) — boundary value to subtract
+    float inv_one_minus_C;  // 1/(1-C) — peak-preserving rescale factor
+};
+
+/**
+ * Compute shift parameters from truncation radius.
+ * Call once per kernel launch (not per pixel).
+ */
+__device__ __forceinline__ GaussianShiftParams
+compute_shift_params(float truncate) {
+    float C = __expf(-0.5f * truncate * truncate);
+    return {C, 1.0f / (1.0f - C)};
+}
+
+// =============================================================================
 // GAUSSIAN INTENSITY COMPUTATION
 // =============================================================================
 
 /**
- * Compute standard Gaussian intensity.
+ * Compute shifted Gaussian intensity with C⁰ continuous truncation.
  *
- * I(x) = a × exp(-0.5 × D²)
+ * I(x) = a · scale · max(0, exp(-0.5·D²) - C)
  *
- * where D² is Mahalanobis distance squared.
+ * where:
+ *   C     = exp(-0.5·T²) — boundary value (shifts Gaussian to zero at cutoff)
+ *   scale = 1/(1-C)      — rescales so I(0) = a (peak amplitude preserved)
+ *   D²   = Mahalanobis distance squared
+ *
+ * This eliminates the discontinuity at D² = T² that the unshifted formula
+ * a·exp(-0.5·D²) would produce when hard-truncated.
  *
  * OPTIMIZATION: Uses __expf() fast math intrinsic for ~15% speedup.
- * Slightly lower precision (~2 ULP vs 1 ULP) but acceptable for rendering.
+ * shift_C and inv_one_minus_C should be precomputed via compute_shift_params().
  *
- * @param dist_sq   Mahalanobis distance squared (D²)
- * @param amplitude Amplitude (a)
- * @return          Gaussian intensity
+ * @param dist_sq          Mahalanobis distance squared (D²)
+ * @param amplitude        Amplitude (a)
+ * @param shift_C          Precomputed exp(-0.5 * truncate²)
+ * @param inv_one_minus_C  Precomputed 1/(1 - shift_C)
+ * @return                 Shifted Gaussian intensity
  */
 __device__ __forceinline__ float gaussian_intensity(
     float dist_sq,
-    float amplitude
+    float amplitude,
+    float shift_C,
+    float inv_one_minus_C
 ) {
-    return amplitude * __expf(-0.5f * dist_sq);
+    return amplitude * inv_one_minus_C *
+           fmaxf(__expf(-0.5f * dist_sq) - shift_C, 0.0f);
 }
 
 // =============================================================================
@@ -174,34 +216,40 @@ __device__ __forceinline__ float gaussian_intensity(
 // =============================================================================
 
 /**
- * Compute effective truncation distance for standard Gaussian.
+ * Compute effective truncation distance for shifted Gaussian.
  *
- * radius = truncate * σ
+ * Finds D where a·scale·(exp(-0.5·D²) - C) = intensity_floor, then
+ * takes min(truncate, D) to get the tighter bound.
  *
- * Additionally, account for amplitude-based culling:
- * Find t_max where a * exp(-0.5 * t²) = intensity_floor
- *   t_max = sqrt(2 * ln(a/intensity_floor))
+ * Solving:  exp(-0.5·D²) = floor/(a·scale) + C
+ *       →  D = sqrt(-2·ln(floor/(a·scale) + C))
  *
  * @param truncate        Base truncation radius (typically 3.0)
  * @param amplitude       Amplitude
  * @param intensity_floor Minimum intensity threshold
+ * @param shift_C         Precomputed exp(-0.5 * truncate²)
+ * @param inv_one_minus_C Precomputed 1/(1 - shift_C)
  * @return                Effective truncation in units of sqrt(eigenvalue)
  */
 __device__ __forceinline__ float effective_truncation(
     float truncate,
     float amplitude,
-    float intensity_floor
+    float intensity_floor,
+    float shift_C,
+    float inv_one_minus_C
 ) {
     float t_base = truncate;
 
-    // Amplitude-based truncation (where intensity drops below floor)
-    float ratio = amplitude / fmaxf(intensity_floor, 1e-10f);
-    float t_amp = 1e6f;  // Large default if amplitude check not needed
-    if (ratio > 1.0f) {
-        t_amp = sqrtf(2.0f * __logf(ratio));
+    // Amplitude-based truncation: find D where shifted intensity = floor
+    // a·scale·(exp(-0.5·D²) - C) = floor
+    // exp(-0.5·D²) = floor/(a·scale) + C
+    float threshold = intensity_floor / fmaxf(amplitude * inv_one_minus_C, 1e-10f) + shift_C;
+    if (threshold >= 1.0f) {
+        // Splat amplitude too low — entirely below floor
+        return 0.0f;
     }
 
-    // Use minimum of both truncations
+    float t_amp = sqrtf(-2.0f * __logf(threshold));
     return fminf(t_base, t_amp);
 }
 
@@ -214,30 +262,34 @@ __device__ __forceinline__ float effective_truncation(
  *
  * Combines two truncation criteria (taking the tighter bound):
  * 1. Base truncation: D² <= truncate²
- * 2. Amplitude-based: D² where intensity drops below intensity_floor
- *    Solving a * exp(-0.5 * D²) = floor => D² = 2*ln(a/floor)
+ * 2. Amplitude-based: D² where shifted intensity drops below intensity_floor
+ *    Solving a·scale·(exp(-0.5·D²) - C) = floor
+ *        →  D² = -2·ln(floor/(a·scale) + C)
  *
  * @param truncate        Base truncation radius (typically 3.0)
  * @param amplitude       Splat amplitude (for amplitude-based tightening)
  * @param intensity_floor Minimum intensity threshold
+ * @param shift_C         Precomputed exp(-0.5 * truncate²)
+ * @param inv_one_minus_C Precomputed 1/(1 - shift_C)
  * @return                Squared effective truncation distance (in Mahalanobis space)
  */
 __device__ __forceinline__ float effective_truncate_sq(
     float truncate,
     float amplitude,
-    float intensity_floor
+    float intensity_floor,
+    float shift_C,
+    float inv_one_minus_C
 ) {
     float t_base_sq = truncate * truncate;
 
-    // Amplitude-based tightening: find D² where intensity drops below floor
-    // a * exp(-0.5 * D²) = floor => D² = 2*ln(a/floor)
-    float ratio = amplitude / fmaxf(intensity_floor, 1e-10f);
-    if (ratio <= 1.0f) {
-        // amplitude <= intensity_floor: splat contributes nothing
+    // Amplitude-based tightening for shifted Gaussian
+    float threshold = intensity_floor / fmaxf(amplitude * inv_one_minus_C, 1e-10f) + shift_C;
+    if (threshold >= 1.0f) {
+        // amplitude too low: splat contributes nothing
         return 0.0f;
     }
 
-    float t_amp_sq = 2.0f * __logf(ratio);
+    float t_amp_sq = -2.0f * __logf(threshold);
     return fminf(t_base_sq, t_amp_sq);
 }
 

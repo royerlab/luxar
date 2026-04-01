@@ -70,7 +70,6 @@ export interface RenderingControllers {
   farPlane?: Controller;
   // Dynamic clipping controls
   dynamicClippingEnabled?: Controller;
-  clippingAdaptSpeed?: Controller;
   // HDR controls (global EOG)
   exposure?: Controller;
   globalOffset?: Controller;

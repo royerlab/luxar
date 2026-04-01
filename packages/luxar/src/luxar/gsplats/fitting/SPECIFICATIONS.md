@@ -56,7 +56,7 @@ class FitConfig:
     sigma_min_diag: Optional[Sequence[float] | float]  # Minimum diagonal values per dimension (float is broadcast)
     sigma_max_diag: Optional[Sequence[float]]  # Maximum diagonal values per dimension
     amp_max: Optional[float]                 # Maximum amplitude (default: 1.0, prevents explosion)
-    truncate: float                          # Gaussian truncation radius in standard deviations
+    truncate: float                          # Gaussian truncation radius T in standard deviations (shifted formula: C=exp(-0.5*T²), scale=1/(1-C), I=a*scale*max(0,exp(-0.5*D²)-C) for C⁰ continuity)
 
     # Optimization parameters
     n_iters: int                             # Maximum number of optimization iterations

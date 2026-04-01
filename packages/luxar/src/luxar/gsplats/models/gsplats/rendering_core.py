@@ -11,6 +11,7 @@ This module contains the main rendering implementation including:
 
 from __future__ import annotations
 
+import math
 from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
@@ -296,13 +297,20 @@ def compute_aabb_with_intensity_floor(
         torch.tensor(shape, device=device, dtype=torch.long),
     )
 
-    # Optional amplitude-aware shrinking
+    # Optional amplitude-aware shrinking (shifted Gaussian)
     if intensity_floor is not None and intensity_floor > 0:
         eps = torch.tensor(intensity_floor, device=device, dtype=torch.float32)
         a = torch.clamp(amps, min=1e-12)
-        log_ratio = torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
-        # For standard Gaussian exp(-0.5 * r^2), threshold is sqrt(log_ratio)
-        tmax = torch.sqrt(log_ratio)  # (N,)
+
+        # Shifted Gaussian: a·scale·(exp(-0.5·D²) - C) = floor
+        # → exp(-0.5·D²) = floor/(a·scale) + C
+        # → D = sqrt(-2·ln(floor/(a·scale) + C))
+        shift_C = math.exp(-0.5 * truncate * truncate)
+        inv_one_minus_C = 1.0 / (1.0 - shift_C)
+        threshold = eps / (a * inv_one_minus_C) + shift_C
+        # Guard: where threshold >= 1, splat is invisible
+        threshold = torch.clamp(threshold, max=1.0 - 1e-7)
+        tmax = torch.sqrt(torch.clamp(-2.0 * torch.log(threshold), min=0.0))  # (N,)
 
         shrink = torch.clamp(
             (tmax[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
@@ -333,6 +341,9 @@ def _render_gaussians_2d(
 ) -> torch.Tensor:
     """Specialized 2D renderer with explicit forward substitution."""
     device = centers.device
+    # Shifted Gaussian constants for C⁰ continuous truncation
+    shift_C = math.exp(-0.5 * truncate * truncate)
+    scale = 1.0 / (1.0 - shift_C)
     out = torch.zeros(tuple(shape), dtype=torch.float32, device=device)
     out_flat = out.view(-1)
     strides = linear_strides(shape, device)  # (2,)
@@ -383,8 +394,10 @@ def _render_gaussians_2d(
             # ||y||^2 via explicit forward-substitution
             dist_sq = fwd_norm2_2d(L, d0, d1)  # (K,Pc)
 
-            # Standard Gaussian: exp(-0.5 * ||y||^2)
-            vals = torch.exp(-0.5 * dist_sq) * a[:, None]
+            # Shifted Gaussian: a·scale·max(0, exp(-0.5·D²) - C)
+            vals = a[:, None] * scale * torch.clamp(
+                torch.exp(-0.5 * dist_sq) - shift_C, min=0.0
+            )
 
             idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
             out_flat.index_add_(0, idx_flat, vals.reshape(-1))
@@ -403,6 +416,9 @@ def _render_gaussians_3d(
 ) -> torch.Tensor:
     """Specialized 3D renderer with explicit forward substitution."""
     device = centers.device
+    # Shifted Gaussian constants for C⁰ continuous truncation
+    shift_C = math.exp(-0.5 * truncate * truncate)
+    scale = 1.0 / (1.0 - shift_C)
     out = torch.zeros(tuple(shape), dtype=torch.float32, device=device)
     out_flat = out.view(-1)
     strides = linear_strides(shape, device)  # (3,)
@@ -453,8 +469,10 @@ def _render_gaussians_3d(
 
             dist_sq = fwd_norm2_3d(L, d0, d1, d2)  # (K,Pc)
 
-            # Standard Gaussian: exp(-0.5 * ||y||^2)
-            vals = torch.exp(-0.5 * dist_sq) * a[:, None]
+            # Shifted Gaussian: a·scale·max(0, exp(-0.5·D²) - C)
+            vals = a[:, None] * scale * torch.clamp(
+                torch.exp(-0.5 * dist_sq) - shift_C, min=0.0
+            )
 
             idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
             out_flat.index_add_(0, idx_flat, vals.reshape(-1))
@@ -478,7 +496,9 @@ def render_gaussians(
     Fast vectorized renderer with 2D/3D fast-paths.
     Falls back to the generic nD implementation for d != 2 and d != 3.
 
-    Renders standard Gaussians: exp(-0.5 * ||y||^2) where y = L^{-1}(x - mu).
+    Renders shifted Gaussians: a * scale * max(0, exp(-0.5 * ||y||^2) - C)
+    where y = L^{-1}(x - mu), C = exp(-0.5 * T^2), scale = 1/(1-C).
+    The shift ensures C^0 continuity at the truncation boundary.
 
     Parameters
     ----------
@@ -514,6 +534,9 @@ def render_gaussians(
 
     # --- Generic nD implementation ---
     device = centers.device
+    # Shifted Gaussian constants for C⁰ continuous truncation
+    shift_C = math.exp(-0.5 * truncate * truncate)
+    scale = 1.0 / (1.0 - shift_C)
     out = torch.zeros(tuple(shape), dtype=torch.float32, device=device)
     out_flat = out.view(-1)
     strides = linear_strides(shape, device)  # (d,)
@@ -588,9 +611,11 @@ def render_gaussians(
                 # Note: triangular_solve returns (solution, cloned_matrix) tuple
                 y, _ = torch.triangular_solve(delta, L, upper=False)
 
-            # Standard Gaussian: exp(-0.5 * ||y||^2) * a
+            # Shifted Gaussian: a·scale·max(0, exp(-0.5·D²) - C)
             dist_sq = torch.sum(y * y, dim=1)  # (K, Pc)
-            vals = torch.exp(-0.5 * dist_sq) * a[:, None]  # (K, Pc)
+            vals = a[:, None] * scale * torch.clamp(
+                torch.exp(-0.5 * dist_sq) - shift_C, min=0.0
+            )  # (K, Pc)
 
             # Absolute flat indices (K, Pc) -> (K*Pc,)
             idx_flat = (base_idx[:, None] + lin_offsets_chunk[None, :]).reshape(-1)

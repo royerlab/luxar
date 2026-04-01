@@ -1377,6 +1377,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
             ndim,
             size,
             0.01,
+            3.0,
             tsVisibility,
             tsAttenuation
           );
@@ -1396,6 +1397,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
             ndim,
             size,
             0.01,
+            3.0,
             wasmVisibility,
             wasmAttenuation
           );

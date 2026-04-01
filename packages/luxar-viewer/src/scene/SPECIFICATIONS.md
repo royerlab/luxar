@@ -542,59 +542,30 @@ Automatically adjust near and far clipping planes as the camera moves to maintai
 
 ```typescript
 // Constants from scene-manager-utils.ts
-const BOUNDING_SPHERE_MARGIN = 1.2; // 20% safety margin on sphere radius
+const SPHERE_SAFETY_EXPANSION = 1.05; // 5% safety margin
 const MIN_NEAR_PLANE = 0.0001; // Minimum near plane
 
 class SceneManager {
-  // Dynamic clipping state
   private dynamicClippingEnabled: boolean = true;
-  private clippingAdaptSpeed: number = 0.5; // 0.01 to 1.0
-  private smoothedNear: number = 0.1;
-  private smoothedFar: number = 1000;
 
   updateDynamicClippingPlanes(): void {
     if (!this.dynamicClippingEnabled) return;
 
-    // Get scene bounds
     const bounds = this.getSceneBoundsFromMetadata();
     if (!bounds) return;
 
-    // Use bounding sphere for smooth, direction-independent clipping.
-    // The sphere already includes 20% safety margin on the radius.
-    const { center, radius } = getBoundingSphere(bounds);
-    const dx = cameraPos.x - center.x;
-    const dy = cameraPos.y - center.y;
-    const dz = cameraPos.z - center.z;
-    const distToCenter = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-    // Near plane: distance to the nearest point on the sphere surface.
-    // Smoothly goes to 0 as camera approaches the sphere, then stays at MIN_NEAR_PLANE inside.
-    const optimalNear = Math.max(MIN_NEAR_PLANE, distToCenter - radius);
-
-    // Far plane: distance to the farthest point on the sphere (opposite side).
-    const optimalFar = distToCenter + radius;
-
-    // Exponential smoothing: new = (1-α)*current + α*optimal
-    const α = this.clippingAdaptSpeed;
-    this.smoothedNear = (1 - α) * this.smoothedNear + α * optimalNear;
-    this.smoothedFar = (1 - α) * this.smoothedFar + α * optimalFar;
-
-    // Apply safety clamps
-    this.smoothedNear = Math.max(MIN_NEAR_PLANE, this.smoothedNear);
-
-    // Prevent excessive far/near ratio (Z-buffer precision)
-    const maxRatio = 100000;
-    if (this.smoothedFar / this.smoothedNear > maxRatio) {
-      this.smoothedNear = this.smoothedFar / maxRatio;
-    }
+    // Bounding sphere produces smooth near/far (no box-edge discontinuities),
+    // eliminating the need for exponential smoothing.
+    const sphere = boundingBoxToSphere(bounds);
+    const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos);
 
     // Only update camera if values changed significantly (>0.1%)
-    const nearChanged = Math.abs(this.camera.near - this.smoothedNear) / this.camera.near > 0.001;
-    const farChanged = Math.abs(this.camera.far - this.smoothedFar) / this.camera.far > 0.001;
+    const nearChanged = Math.abs(this.camera.near - near) / this.camera.near > 0.001;
+    const farChanged = Math.abs(this.camera.far - far) / this.camera.far > 0.001;
 
     if (nearChanged || farChanged) {
-      this.camera.near = this.smoothedNear;
-      this.camera.far = this.smoothedFar;
+      this.camera.near = near;
+      this.camera.far = far;
       this.camera.updateProjectionMatrix();
     }
   }
@@ -690,14 +661,12 @@ interface RenderingSettings {
 
   // Dynamic clipping planes
   dynamicClippingEnabled: boolean; // Default: true
-  clippingAdaptSpeed: number; // Default: 0.5, range: 0.01-1.0
 }
 ```
 
 **UI Controls**:
 
 - **Auto Clipping** (checkbox): Enables/disables dynamic adjustment
-- **Adapt Speed** (slider): Controls responsiveness (0.01 = slow/smooth, 0.5 = fast/responsive)
 
 **Behavior when disabled**: Near/Far sliders become editable for manual control.
 
@@ -705,13 +674,11 @@ interface RenderingSettings {
 
 **Computational Cost**: Minimal (~0.01ms per frame)
 
-- 8 distance calculations (corners to camera)
-- 2 exponential smoothing operations
+- 1 bounding sphere computation (center + half-diagonal)
+- 1 distance calculation (camera to sphere center)
 - Conditional projection matrix update
 
 **Optimization**: Only update projection matrix when values change >0.1%, avoiding unnecessary GPU state changes.
-
-**Smoothing Factor Guidelines**:
 
 - `0.01`: Very smooth, ~5 seconds to 95% convergence (cinematic)
 - `0.1`: Balanced, ~0.5 seconds to 95% convergence (default)
@@ -1379,10 +1346,9 @@ interface SceneDimsManager {
   - Eliminates clipping artifacts when exploring inside dense datasets
 
 - **v1.3.0** (2025-12-09): Dynamic clipping planes
-  - **ADDED**: Section 5 "Dynamic Clipping Planes" with exponential smoothing algorithm
-  - **ADDED**: Per-frame clipping plane adjustment based on camera-to-bounds distance
-  - **ADDED**: Configurable adapt speed parameter (0.01-1.0)
-  - **ADDED**: Safety clamps for near plane minimum and far/near ratio
+  - **ADDED**: Section 5 "Dynamic Clipping Planes" with bounding-sphere projection
+  - **ADDED**: Per-frame clipping plane adjustment based on camera-to-sphere distance
+  - **ADDED**: Safety clamp for minimum near plane
   - **UPDATED**: AnimationController integration for per-frame updates
   - **UPDATED**: Section numbering (Window Resize → 6, WebGL Context Loss → 7, Dimension Coordination → 8)
   - Smooth camera navigation without clipping artifacts

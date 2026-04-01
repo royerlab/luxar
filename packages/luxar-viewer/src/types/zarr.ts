@@ -164,7 +164,6 @@ export interface ZarrViewerConfig {
 
   // Dynamic clipping
   dynamic_clipping_enabled?: boolean;
-  clipping_adapt_speed?: number;
 
   // Adaptive resolution
   adaptive_dpr_enabled?: boolean;
