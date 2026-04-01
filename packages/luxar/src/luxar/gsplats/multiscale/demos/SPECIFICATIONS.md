@@ -3,6 +3,8 @@
 **Version**: 1.0.0
 **Last Updated**: 2026-01-02
 
+> **Note:** The demo scripts in this package are self-documenting. See each script's module docstring for details.
+
 ## Purpose
 
 Runnable demo scripts and example workflows for this package.

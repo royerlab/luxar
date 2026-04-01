@@ -1,6 +1,6 @@
 # Gaussian Splats Dimension Mapping Specification
 
-**Status**: Design Proposal
+**Status**: Implemented (via `dim_order`, `fill`, and `fill_sigma` parameters in `Group.add_gsplats()` and related methods in `packages/luxar/src/luxar/core/group.py`)
 **Created**: 2026-01-15
 **Author**: Royer Lab
 

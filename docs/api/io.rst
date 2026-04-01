@@ -85,7 +85,7 @@ Example::
 
    # Get node data (lazy loading)
    points_node = scene.get_points('cloud')
-   positions = points_node.positions[:]  # Fetch from disk
+   positions = points_node.positions  # NumPy array attribute
 
 Spatial Ordering
 ----------------

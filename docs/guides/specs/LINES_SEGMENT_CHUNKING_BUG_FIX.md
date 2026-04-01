@@ -795,35 +795,35 @@ if slice_dims:
 ## 9. Implementation Checklist
 
 ### Phase 1: Core Fix
-- [ ] Add `dimensions` parameter to `compute_segment_chunk_bounds()`
-- [ ] Implement dimension-aware padding (step_size/2)
-- [ ] Update `compute_vertex_chunk_bounds()` for consistency
-- [ ] Update caller in `compiler.py` to pass dimensions
+- [x] Add `dimensions` parameter to `compute_segment_chunk_bounds()`
+- [x] Implement dimension-aware padding (step_size/2)
+- [x] Update `compute_vertex_chunk_bounds()` for consistency
+- [x] Update caller in `compiler.py` to pass dimensions
 
 ### Phase 2: Discrete Boundary Splitting
-- [ ] Implement `split_chunks_at_discrete_boundaries()`
-- [ ] Integrate into `compute_segment_chunk_bounds()`
-- [ ] Add logging to show chunk count before/after splitting
+- [x] Implement `split_chunks_at_discrete_boundaries()`
+- [x] Integrate into `compute_segment_chunk_bounds()`
+- [x] Add logging to show chunk count before/after splitting
 
 ### Phase 3: Testing
-- [ ] Write unit tests for boundary splitting
-- [ ] Write unit tests for dimension-aware padding
-- [ ] Run existing test suite (ensure no regressions)
-- [ ] Manual test with particle collision demo
-- [ ] Verify 9× performance improvement
+- [x] Write unit tests for boundary splitting
+- [x] Write unit tests for dimension-aware padding
+- [x] Run existing test suite (ensure no regressions)
+- [x] Manual test with particle collision demo
+- [x] Verify 9x performance improvement
 
 ### Phase 4: Documentation
-- [ ] Update `io/SPECIFICATIONS.md` - discrete-aware chunking algorithm
-- [ ] Update `io/README.md` - mention performance benefit
-- [ ] Update `data/SPECIFICATIONS.md` (viewer) - chunk behavior
-- [ ] Update `guides/user/LUXAR_ZARR_FORMAT.md` - spatial index format
-- [ ] Add entry to CHANGELOG.md
+- [x] Update `io/SPECIFICATIONS.md` - discrete-aware chunking algorithm
+- [x] Update `io/README.md` - mention performance benefit
+- [x] Update `data/SPECIFICATIONS.md` (viewer) - chunk behavior
+- [x] Update `guides/user/LUXAR_ZARR_FORMAT.md` - spatial index format
+- [x] Add entry to CHANGELOG.md
 
 ### Phase 5: Validation
-- [ ] Run `make test-all`
-- [ ] Generate large dataset, verify encoding logs show more chunks
-- [ ] Load in viewer, verify ~31K vertices per frame (not 294K)
-- [ ] Measure time scrubbing performance improvement
+- [x] Run `make test-all`
+- [x] Generate large dataset, verify encoding logs show more chunks
+- [x] Load in viewer, verify ~31K vertices per frame (not 294K)
+- [x] Measure time scrubbing performance improvement
 
 ---
 
@@ -881,7 +881,7 @@ Note: Exact results depend on segments-per-frame distribution
 
 ---
 
-## 10. Alternative Approaches Considered
+## 11. Alternative Approaches Considered
 
 ### Alt 1: Increase Query Tolerance Precision
 - **Idea**: Use tighter tolerance (0.01 instead of 0.5) for time queries

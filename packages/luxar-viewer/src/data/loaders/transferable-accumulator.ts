@@ -321,6 +321,11 @@ export class TransferableAccumulator<TBuffers extends TransferableBuffers> {
     let totalBytes = 0;
 
     for (const shape of this.shapes) {
+      if (shape.optional) {
+        // Skip allocation for optional buffers — use enableBuffer() when needed
+        continue;
+      }
+
       const elements = this.capacity * shape.elementsPerItem;
       let buf: Float32Array | Uint8Array | Uint16Array;
 
@@ -339,9 +344,7 @@ export class TransferableAccumulator<TBuffers extends TransferableBuffers> {
           break;
       }
 
-      if (!shape.optional) {
-        buffers[shape.name] = buf;
-      }
+      buffers[shape.name] = buf;
     }
 
     this.buffers = buffers as TBuffers;

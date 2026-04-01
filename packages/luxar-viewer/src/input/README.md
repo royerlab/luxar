@@ -390,16 +390,11 @@ inputElement.addEventListener('blur', () => {
 
 ```typescript
 import { InputHandler } from './input/input-handler';
-import { InputContextManager, InputContext } from './input/input-context-manager';
+import { SceneManager } from './scene/scene-manager';
+import { AnimationController } from './scene/animation-controller';
 
-// Initialize context manager
-const contextManager = new InputContextManager();
-
-// Create input handler
-const inputHandler = new InputHandler(document.body, controlsManager, contextManager);
-
-// Set initial context
-contextManager.setContext(InputContext.NAVIGATION);
+// Create input handler (context manager and debug console are created internally)
+const inputHandler = new InputHandler(sceneManager, animationController);
 ```
 
 ### Mode Switching

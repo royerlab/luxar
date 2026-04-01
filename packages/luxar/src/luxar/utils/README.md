@@ -54,6 +54,28 @@ Array manipulation utilities.
 - Automatic type conversion with validation
 - Shape validation with helpful error messages
 
+### `download.py`
+Robust download utilities with retry logic, resume capability, and progress tracking.
+
+**Key Functions:**
+- `robust_download()`: Download a file from a URL with automatic retry on failure, partial download resume, and integrity verification
+
+### `paths.py`
+Path utilities for Luxar dataset generation.
+
+**Key Functions:**
+- `get_project_root()`: Find the Luxar project root directory (cached)
+- `get_examples_output_dir()`: Resolve the centralized `datasets/examples/` output directory
+- `get_demos_output_dir()`: Resolve the centralized `datasets/demos/` output directory
+
+### `_umap_utils.py`
+Shared utilities for UMAP demo scripts (internal module).
+
+**Key Features:**
+- Color palettes and colormap functions for UMAP visualizations
+- Legend generation utilities
+- Attribute-to-color mapping used by multiome UMAP demos (human, mouse, zebrahub)
+
 ### `demos.py`
 Demo scene generators for examples and testing.
 

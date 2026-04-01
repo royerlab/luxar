@@ -352,6 +352,7 @@ export class AnimationController {
    */
   dispose(): void {
     this.stopAnimation();
+    this.perFrameCallbacks.clear();
     this.performanceMonitor.dispose();
   }
 }

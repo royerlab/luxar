@@ -274,7 +274,9 @@ export class TwoLevelCachingStore implements AsyncReadable {
       if (this.enabled) {
         this.l1Cache.set(key, data);
         if (this.l2Store) {
-          this.l2Store.set(key, data).catch(() => {});
+          this.l2Store.set(key, data).catch((e) => {
+            log.warning(Modules.CACHE, `L2 write failed for ${key}: ${e?.message || e}`);
+          });
         }
       }
 

@@ -50,6 +50,12 @@ function viewStatesEqual(a: GSplatsViewState, b: GSplatsViewState): boolean {
     if (a.tolerance[i] !== b.tolerance[i]) return false;
   }
 
+  // Compare dimensions (reference equality or JSON for rare metadata changes)
+  if (a.dimensions !== b.dimensions) {
+    if (!a.dimensions || !b.dimensions) return false;
+    if (JSON.stringify(a.dimensions) !== JSON.stringify(b.dimensions)) return false;
+  }
+
   return true;
 }
 

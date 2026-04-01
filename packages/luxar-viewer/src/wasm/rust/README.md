@@ -44,7 +44,8 @@ src/wasm/
 │       ├── projection.rs      # nD → 3D projection
 │       ├── effective_radii.rs # Effective radius calculation
 │       ├── gsplats_processing.rs # GSplat-specific processing
-│       └── lines_clipping.rs  # Line segment clipping
+│       ├── lines_clipping.rs  # Line segment clipping
+│       └── common.rs          # Shared utilities and constants
 ├── index.ts                   # WASM loader with fallback detection
 ├── types.ts                   # WasmModule interface (525 lines)
 └── typescript/                # TypeScript fallback implementations
@@ -117,7 +118,7 @@ pnpm build:wasm:dev
 
 ## Testing
 
-### Run Rust Unit Tests (39 tests)
+### Run Rust Unit Tests (55 tests)
 
 ```bash
 # From project root:
@@ -319,7 +320,7 @@ The TypeScript fallback in `src/wasm/typescript/` provides full parity with Rust
 ## Development Workflow
 
 1. **Make changes** to Rust files in `src/`
-2. **Run Rust tests**: `cargo test` (39 tests)
+2. **Run Rust tests**: `cargo test` (55 tests)
 3. **Build WASM**: `pnpm build:wasm`
 4. **Run TypeScript tests**: `pnpm test` (includes WASM comparison)
 5. **Test in browser**: `pnpm dev` and check console
@@ -328,7 +329,7 @@ The TypeScript fallback in `src/wasm/typescript/` provides full parity with Rust
 
 ```bash
 # From project root
-make test-wasm       # Run 39 Rust tests
+make test-wasm       # Run 55 Rust tests
 make build-wasm      # Build WASM module
 
 # From luxar-viewer

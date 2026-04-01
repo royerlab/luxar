@@ -461,7 +461,9 @@ with LuxarZarrCompiler("output.zarr") as compiler:
 luxar demo [OPTIONS]                    # Create demo visualization
 luxar serve PATH [OPTIONS]              # Serve Zarr dataset
 luxar info PATH [--stats]               # Dataset information
+luxar export SOURCE -o DIR              # Export standalone viewer + data bundle
 luxar profiles                          # List network simulation profiles
+luxar gsplat <subcommand> [OPTIONS]     # Gaussian splatting tools (fit, convert, render, merge, ...)
 ```
 
 **Serve Options:**

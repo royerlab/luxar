@@ -157,7 +157,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     // OPTIMIZATION: vL2D stores [1/L00, L10, 1/L11] to replace fragment divisions with multiplications
     flat out highp vec3 vL2D;                // 2D Cholesky packed as [invL00, L10, invL11]
     flat out highp vec2 vCenterScreen;       // Splat center in screen pixels
-    flat out highp float vAspectRatio;       // Ray elongation ratio for projection correction
     flat out int vProjectionMode;            // 0=sum (additive), 1=max
 
     // Unpack 3D Cholesky to matrix (column-major order for GLSL mat3)
@@ -306,12 +305,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         float lambda1 = max(0.5 * (trace + sqrtDisc), 1e-6);
         float lambda2 = max(0.5 * (trace - sqrtDisc), 1e-6);
 
-        // Compute aspect ratio for projection correction factor
-        // aspectRatio = sigmaRay / sigma2D_avg measures elongation along viewing direction
-        // For sum projection: used to correct non-separability of generalized Gaussian integral
-        // For max projection: not used (set to 1.0 for safety)
-        float sigma2D_avg = sqrt(0.5 * (lambda1 + lambda2));
-        vAspectRatio = (uProjectionMode == 0) ? sigmaRay / max(sigma2D_avg, 1e-8) : 1.0;
         vProjectionMode = uProjectionMode;
 
         // Eigenvector for major axis (for oriented quad)
@@ -405,7 +398,6 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     // OPTIMIZATION: vL2D stores [1/L00, L10, 1/L11] for MUL instead of DIV
     flat in highp vec3 vL2D;          // 2D Cholesky packed as [invL00, L10, invL11]
     flat in highp vec2 vCenterScreen;
-    flat in highp float vAspectRatio; // Ray elongation ratio for projection correction
     flat in int vProjectionMode;      // 0=sum (additive), 1=max
 
     uniform mediump float uOpacity;
@@ -931,20 +923,40 @@ export function createInstancedGSplatsMesh(
   // Set instance count
   geometry.instanceCount = meshConfig.splatCount;
 
-  // Compute bounding box from centers
-  const tempGeometry = new THREE.BufferGeometry();
-  tempGeometry.setAttribute('position', new THREE.BufferAttribute(meshConfig.centers, 3));
-  tempGeometry.computeBoundingBox();
-  tempGeometry.computeBoundingSphere();
-
-  if (tempGeometry.boundingBox) {
-    geometry.boundingBox = tempGeometry.boundingBox.clone();
-  }
-  if (tempGeometry.boundingSphere) {
-    geometry.boundingSphere = tempGeometry.boundingSphere.clone();
+  // Compute bounding box from centers using direct min/max loop (no temp geometry allocation)
+  const box = new THREE.Box3();
+  const v = new THREE.Vector3();
+  for (let i = 0; i < meshConfig.splatCount; i++) {
+    v.set(meshConfig.centers[i * 3], meshConfig.centers[i * 3 + 1], meshConfig.centers[i * 3 + 2]);
+    box.expandByPoint(v);
   }
 
-  tempGeometry.dispose();
+  // Expand bounding box by max splat extent for correct frustum culling.
+  // Uses same logic as updateGSplatsGeometry in gpu-buffer-pool.ts:
+  // max row norm of Cholesky factors × truncation radius.
+  // Cholesky layout: cholesky01=[L00,L10], cholesky23=[L11,L20], cholesky45=[L21,L22]
+  let maxRowNorm = 0;
+  for (let i = 0; i < meshConfig.splatCount; i++) {
+    const L00 = meshConfig.cholesky01[i * 2];
+    const L10 = meshConfig.cholesky01[i * 2 + 1];
+    const L11 = meshConfig.cholesky23[i * 2];
+    const L20 = meshConfig.cholesky23[i * 2 + 1];
+    const L21 = meshConfig.cholesky45[i * 2];
+    const L22 = meshConfig.cholesky45[i * 2 + 1];
+
+    const row0 = Math.abs(L00);
+    const row1 = Math.sqrt(L10 * L10 + L11 * L11);
+    const row2 = Math.sqrt(L20 * L20 + L21 * L21 + L22 * L22);
+    maxRowNorm = Math.max(maxRowNorm, row0, row1, row2);
+  }
+  const truncationRadius = material.uniforms.uTruncate.value;
+  const expansion = maxRowNorm * truncationRadius;
+  box.expandByScalar(expansion);
+
+  geometry.boundingBox = box;
+  const sphere = new THREE.Sphere();
+  box.getBoundingSphere(sphere);
+  geometry.boundingSphere = sphere;
 
   // Create mesh with instanced geometry
   const mesh = new THREE.Mesh(geometry, material);

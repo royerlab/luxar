@@ -252,7 +252,7 @@ Create `.vscode/settings.json`:
     "python.linting.mypyEnabled": true,
     "python.testing.pytestEnabled": true,
     "python.testing.pytestArgs": [
-        "packages/luxar/src/luxar/tests"
+        "packages/luxar/"
     ],
     "files.exclude": {
         "**/__pycache__": true,
