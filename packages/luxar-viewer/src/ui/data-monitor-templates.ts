@@ -560,7 +560,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
             value: formatBytes(cacheMetrics.l2!.size),
             subtitle: `${cacheMetrics.l2!.count} entries`,
             tooltip:
-              'L2 persistent cache: stored in browser\'s Origin Private File System, survives page reloads',
+              "L2 persistent cache: stored in browser's Origin Private File System, survives page reloads",
             colorClass: getColorClass('info'),
             dataField: 'l2-size',
           },

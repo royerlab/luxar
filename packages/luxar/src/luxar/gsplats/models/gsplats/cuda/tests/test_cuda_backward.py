@@ -130,28 +130,41 @@ class TestCUDABackward:
         cuda_loss = torch.nn.functional.mse_loss(cuda_output, cuda_target)
         cuda_loss.backward()
 
-        # Compare gradient magnitudes (not exact values due to different code paths)
-        # Focus on amplitude gradients as they're most directly comparable
-        cpu_amp_grad = cpu_model.raw_a.grad
-        cuda_amp_grad = cuda_model.raw_a.grad.cpu()
+        # Compare gradients for all leaf parameters, not just amplitude.
+        # Per-parameter sign-match thresholds account for differing numerical
+        # sensitivity (centers and L factors propagate through more non-linear
+        # transforms, so CUDA vs CPU divergence is higher).
+        sign_match_thresholds = {
+            "raw_a": 0.85,
+            "raw_mu": 0.80,
+            "raw_L_diag": 0.75,
+            "L_off": 0.75,
+        }
 
-        # Check gradient signs match for majority of splats
-        if cpu_amp_grad is not None and cuda_amp_grad is not None:
+        for name in ("raw_a", "raw_mu", "raw_L_diag", "L_off"):
+            cpu_grad = getattr(cpu_model, name).grad
+            cuda_grad = getattr(cuda_model, name).grad
+            if cpu_grad is None or cuda_grad is None:
+                continue
+
+            cuda_grad_cpu = cuda_grad.cpu()
+            threshold = sign_match_thresholds[name]
+
+            # Check gradient signs match for majority of elements
             sign_match = (
-                (torch.sign(cpu_amp_grad) == torch.sign(cuda_amp_grad)).float().mean()
+                (torch.sign(cpu_grad) == torch.sign(cuda_grad_cpu)).float().mean()
             )
-            # Allow some sign differences due to numerical precision
-            assert sign_match > Tolerances.BACKWARD_SIGN_MATCH, (
-                f"Gradient sign match {sign_match:.2f} too low"
+            assert sign_match > threshold, (
+                f"{name} gradient sign match {sign_match:.2f} < {threshold}"
             )
 
             # Check gradient magnitudes are in similar range
-            cpu_mag = cpu_amp_grad.abs().mean()
-            cuda_mag = cuda_amp_grad.abs().mean()
+            cpu_mag = cpu_grad.abs().mean()
+            cuda_mag = cuda_grad_cpu.abs().mean()
             if cpu_mag > 1e-8 and cuda_mag > 1e-8:
                 mag_ratio = max(cpu_mag / cuda_mag, cuda_mag / cpu_mag)
                 assert mag_ratio < Tolerances.BACKWARD_MAG_RATIO, (
-                    f"Gradient magnitude ratio {mag_ratio:.2f} too large"
+                    f"{name} gradient magnitude ratio {mag_ratio:.2f} too large"
                 )
 
 

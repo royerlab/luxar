@@ -50,17 +50,19 @@ test.describe('Data Loading Monitor Metrics', () => {
     // Log metrics for debugging
     console.log('Monitor metrics:', JSON.stringify(metrics, null, 2));
 
-    if (metrics && metrics.hasMonitor) {
-      // visiblePoints should be less than or equal to datasetSize
-      // (can't see more points than exist in the dataset)
-      if (metrics.datasetSize > 0) {
-        expect(metrics.visiblePoints).toBeLessThanOrEqual(metrics.datasetSize);
-      }
+    // Monitor must be available — if it's not, the test should fail
+    expect(metrics).toBeTruthy();
+    expect(metrics!.hasMonitor).toBe(true);
 
-      // visiblePoints should be reasonable (not millions when dataset is small)
-      // If dataset is 1M points, visible should be <= 1M
-      expect(metrics.visiblePoints).toBeGreaterThanOrEqual(0);
+    // visiblePoints should be less than or equal to datasetSize
+    // (can't see more points than exist in the dataset)
+    if (metrics!.datasetSize > 0) {
+      expect(metrics!.visiblePoints).toBeLessThanOrEqual(metrics!.datasetSize);
     }
+
+    // visiblePoints should be reasonable (not millions when dataset is small)
+    // If dataset is 1M points, visible should be <= 1M
+    expect(metrics!.visiblePoints).toBeGreaterThanOrEqual(0);
   });
 
   test('should show monitor UI via M key press', async ({ page }) => {
@@ -79,8 +81,7 @@ test.describe('Data Loading Monitor Metrics', () => {
     });
 
     // The monitor should be visible after pressing M
-    // Note: This test may fail if the monitor is not enabled by default
-    console.log('Monitor visible after M key:', monitorVisible);
+    expect(monitorVisible).toBe(true);
   });
 
   test('visiblePoints should not grow infinitely with interactions', async ({ page }) => {
@@ -99,12 +100,8 @@ test.describe('Data Loading Monitor Metrics', () => {
       return monitor.getGlobalStats();
     });
 
-    if (!initialMetrics) {
-      console.log('No monitor available, skipping test');
-      return;
-    }
-
-    console.log('Initial visible points:', initialMetrics.visiblePoints);
+    // Monitor must be available — fail if it's not
+    expect(initialMetrics).toBeTruthy();
 
     // Perform some interactions that would trigger more queries
     for (let i = 0; i < 5; i++) {
@@ -124,19 +121,20 @@ test.describe('Data Loading Monitor Metrics', () => {
       return monitor.getGlobalStats();
     });
 
-    console.log('After interactions visible points:', afterMetrics?.visiblePoints);
+    // After-interaction metrics must be available
+    expect(afterMetrics).toBeTruthy();
 
     // visiblePoints should still be reasonable (not 100x or 1000x larger)
     // This catches the bug where points were counted cumulatively
-    if (afterMetrics && initialMetrics.datasetSize > 0) {
-      // Visible points should never exceed dataset size
-      expect(afterMetrics.visiblePoints).toBeLessThanOrEqual(afterMetrics.datasetSize);
+    expect(initialMetrics!.datasetSize).toBeGreaterThan(0);
 
-      // If dataset is 1M points, after 5 zoom interactions, we shouldn't have 200M visible
-      // (which would happen if counting cumulatively)
-      const maxReasonable = afterMetrics.datasetSize * 2; // Allow 2x for safety margin
-      expect(afterMetrics.visiblePoints).toBeLessThanOrEqual(maxReasonable);
-    }
+    // Visible points should never exceed dataset size
+    expect(afterMetrics!.visiblePoints).toBeLessThanOrEqual(afterMetrics!.datasetSize);
+
+    // If dataset is 1M points, after 5 zoom interactions, we shouldn't have 200M visible
+    // (which would happen if counting cumulatively)
+    const maxReasonable = afterMetrics!.datasetSize * 2; // Allow 2x for safety margin
+    expect(afterMetrics!.visiblePoints).toBeLessThanOrEqual(maxReasonable);
   });
 
   test('datasetSize should match zarr metadata total_points', async ({ page }) => {
@@ -171,25 +169,22 @@ test.describe('Data Loading Monitor Metrics', () => {
       };
     });
 
-    console.log('Dataset comparison:', JSON.stringify(comparison, null, 2));
+    // Comparison data must be available
+    expect(comparison).toBeTruthy();
 
-    if (comparison) {
-      // If we have a dataset size from metadata, it should be positive
-      if (comparison.datasetSize > 0) {
-        expect(comparison.datasetSize).toBeGreaterThan(0);
+    // Dataset size from metadata should be positive
+    expect(comparison!.datasetSize).toBeGreaterThan(0);
 
-        // Visible points should not exceed dataset size
-        expect(comparison.visiblePoints).toBeLessThanOrEqual(comparison.datasetSize);
-      }
+    // Visible points should not exceed dataset size
+    expect(comparison!.visiblePoints).toBeLessThanOrEqual(comparison!.datasetSize);
 
-      // Scene point count should match visible points (they're what's actually rendered)
-      // Allow some tolerance for rounding/timing
-      if (comparison.scenePointCount > 0 && comparison.visiblePoints > 0) {
-        const ratio = comparison.scenePointCount / comparison.visiblePoints;
-        // Should be within 50% (temporal differences during loading)
-        expect(ratio).toBeGreaterThan(0.5);
-        expect(ratio).toBeLessThan(2.0);
-      }
+    // Scene point count should match visible points (they're what's actually rendered)
+    // Allow some tolerance for rounding/timing
+    if (comparison!.scenePointCount > 0 && comparison!.visiblePoints > 0) {
+      const ratio = comparison!.scenePointCount / comparison!.visiblePoints;
+      // Should be within 50% (temporal differences during loading)
+      expect(ratio).toBeGreaterThan(0.5);
+      expect(ratio).toBeLessThan(2.0);
     }
   });
 });
