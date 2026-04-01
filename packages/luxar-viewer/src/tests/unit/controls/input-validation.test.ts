@@ -12,6 +12,11 @@ import {
   shouldBlockShortcut,
 } from '../../../input/input-handler-utils';
 
+// NOTE: Pure-function tests for isNavigationKey, calculateFovChange, and shouldBlockShortcut
+// also exist in src/tests/unit/input/input-handler.test.ts. That file tests the same
+// utility functions as part of the InputHandler utility suite. Both suites are intentionally
+// kept — this file focuses on input validation edge cases (textarea, custom sensitivity),
+// while input-handler.test.ts covers broader input-handler-utils coverage.
 describe('Input Validation Utilities', () => {
   describe('isNavigationKey', () => {
     it('should identify navigation keys', () => {

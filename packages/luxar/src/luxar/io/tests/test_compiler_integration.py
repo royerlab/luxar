@@ -186,3 +186,109 @@ class TestCompilerIntegration:
         # Even with error, context manager should clean up
         # Store should still be finalized (though incomplete)
         assert output_path.exists()
+
+
+# ─── Layer flag on Node via add_points ──────────────────
+
+
+_DIMS_2D = Dimensions(
+    [Dimension(name="x", range=(0, 10)), Dimension(name="y", range=(0, 10))]
+)
+
+
+class TestLayerOnNode:
+    def test_layer_true_persisted(self, tmp_path) -> None:
+        """layer=True flows through add_points and is stored in attrs."""
+        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=_DIMS_2D)
+            pts = scene.add_points(
+                "ch0",
+                positions=np.random.rand(10, 2).astype(np.float32),
+                layer=True,
+            )
+            assert pts.layer is True
+            assert pts.attrs["layer"] is True
+
+    def test_layer_false_persisted(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=_DIMS_2D)
+            pts = scene.add_points(
+                "ch0",
+                positions=np.random.rand(10, 2).astype(np.float32),
+                layer=False,
+            )
+            assert pts.layer is False
+
+    def test_layer_default_false(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=_DIMS_2D)
+            pts = scene.add_points(
+                "ch0",
+                positions=np.random.rand(10, 2).astype(np.float32),
+            )
+            assert pts.layer is False
+
+    def test_layer_on_group(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=_DIMS_2D)
+            grp = scene.add_group("overlay", layer=True)
+            assert grp.layer is True
+
+    def test_layer_on_lines(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=_DIMS_2D)
+            verts = np.array([[0, 0], [5, 5], [10, 10]], dtype=np.float32)
+            widths = np.array([0.1, 0.1, 0.1], dtype=np.float32)
+            lines = scene.add_lines(
+                "mylines", vertices=verts, widths=widths, layer=True
+            )
+            assert lines.layer is True
+
+    def test_layer_invalid_type_raises(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=_DIMS_2D)
+            with pytest.raises((TypeError, ValueError)):
+                scene.add_points(
+                    "ch0",
+                    positions=np.random.rand(10, 2).astype(np.float32),
+                    layer="yes",
+                )
+
+
+# ─── color_data_range in zarr ───────────────────────────
+
+
+class TestColorDataRange:
+    def test_color_data_range_written(self, tmp_path) -> None:
+        """color_data_range should be written to zarr attrs when colors are provided."""
+        zarr_path = tmp_path / "scene.zarr"
+        with LuxarZarrCompiler(zarr_path) as compiler:
+            scene = compiler.create_scene(dimensions=_DIMS_2D)
+            colors = np.array([[0.1, 0.2, 0.3], [0.8, 0.9, 1.0]], dtype=np.float32)
+            scene.add_points(
+                "ch0",
+                positions=np.array([[1, 2], [3, 4]], dtype=np.float32),
+                colors=colors,
+            )
+
+        # Read back from zarr
+        store = zarr.open(str(zarr_path), mode="r")
+        data_range = store["ch0"].attrs.get("color_data_range")
+        assert data_range is not None
+        assert len(data_range) == 2
+        assert abs(data_range[0] - 0.1) < 1e-5
+        assert abs(data_range[1] - 1.0) < 1e-5
+
+    def test_no_color_data_range_without_colors(self, tmp_path) -> None:
+        """color_data_range should not be present when no colors are provided."""
+        zarr_path = tmp_path / "scene.zarr"
+        with LuxarZarrCompiler(zarr_path) as compiler:
+            scene = compiler.create_scene(dimensions=_DIMS_2D)
+            scene.add_points(
+                "ch0",
+                positions=np.array([[1, 2], [3, 4]], dtype=np.float32),
+            )
+
+        store = zarr.open(str(zarr_path), mode="r")
+        data_range = store["ch0"].attrs.get("color_data_range")
+        assert data_range is None
