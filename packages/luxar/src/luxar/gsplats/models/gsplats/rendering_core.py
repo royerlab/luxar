@@ -85,6 +85,8 @@ def calculate_optimal_chunk_size(
 
 # Simple process-wide cache for base grids and linear offsets.
 # Keyed by (device, dtype, strides_tuple, box_shape_tuple).
+_GRID_CACHE_MAX_ENTRIES = 512  # ~34 MB typical, prevents unbounded GPU memory growth
+
 _GRID_CACHE: Dict[
     Tuple[str, str, Tuple[int, ...], Tuple[int, ...]], Tuple[torch.Tensor, torch.Tensor]
 ] = {}
@@ -127,9 +129,18 @@ def cached_base_and_offsets(
     grids = torch.meshgrid(*ranges, indexing="ij")  # list of d arrays
     base = torch.stack([g.reshape(-1) for g in grids], dim=0)  # (d, P)
 
-    # Compute row-major offsets once for this box shape.
-    base_l = torch.stack([g.reshape(-1).to(torch.long) for g in grids], dim=0)  # (d, P)
-    lin_offsets = (base_l.T * strides).sum(dim=1)  # (P,)
+    # Compute row-major offsets without materializing a full (d, P) int64 tensor.
+    # For large boxes (e.g. 767³), base_l would be 10.8 GB — instead we accumulate
+    # per-dimension contributions into a single (P,) int64 output.
+    lin_offsets = torch.zeros(base.shape[1], dtype=torch.long, device=device)
+    for g, s in zip(grids, strides):
+        lin_offsets.add_(g.reshape(-1).to(torch.long) * s.item())
+    del grids, ranges  # Free meshgrid tensors immediately
+
+    # Evict oldest entry if cache is full (prevents unbounded GPU memory growth)
+    if len(_GRID_CACHE) >= _GRID_CACHE_MAX_ENTRIES:
+        oldest_key = next(iter(_GRID_CACHE))
+        del _GRID_CACHE[oldest_key]
 
     _GRID_CACHE[key] = (base, lin_offsets)
     return _GRID_CACHE[key]
@@ -395,8 +406,10 @@ def _render_gaussians_2d(
             dist_sq = fwd_norm2_2d(L, d0, d1)  # (K,Pc)
 
             # Shifted Gaussian: a·scale·max(0, exp(-0.5·D²) - C)
-            vals = a[:, None] * scale * torch.clamp(
-                torch.exp(-0.5 * dist_sq) - shift_C, min=0.0
+            vals = (
+                a[:, None]
+                * scale
+                * torch.clamp(torch.exp(-0.5 * dist_sq) - shift_C, min=0.0)
             )
 
             idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
@@ -470,8 +483,10 @@ def _render_gaussians_3d(
             dist_sq = fwd_norm2_3d(L, d0, d1, d2)  # (K,Pc)
 
             # Shifted Gaussian: a·scale·max(0, exp(-0.5·D²) - C)
-            vals = a[:, None] * scale * torch.clamp(
-                torch.exp(-0.5 * dist_sq) - shift_C, min=0.0
+            vals = (
+                a[:, None]
+                * scale
+                * torch.clamp(torch.exp(-0.5 * dist_sq) - shift_C, min=0.0)
             )
 
             idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
@@ -613,8 +628,10 @@ def render_gaussians(
 
             # Shifted Gaussian: a·scale·max(0, exp(-0.5·D²) - C)
             dist_sq = torch.sum(y * y, dim=1)  # (K, Pc)
-            vals = a[:, None] * scale * torch.clamp(
-                torch.exp(-0.5 * dist_sq) - shift_C, min=0.0
+            vals = (
+                a[:, None]
+                * scale
+                * torch.clamp(torch.exp(-0.5 * dist_sq) - shift_C, min=0.0)
             )  # (K, Pc)
 
             # Absolute flat indices (K, Pc) -> (K*Pc,)
