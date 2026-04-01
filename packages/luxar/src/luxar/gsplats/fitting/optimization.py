@@ -76,6 +76,30 @@ def _compute_rel_l2(pred: torch.Tensor, target: torch.Tensor) -> float:
     )
 
 
+def _compute_eval_metrics(
+    pred: torch.Tensor, target: torch.Tensor
+) -> tuple[float, float]:
+    """Compute max absolute error and relative L2 in one pass.
+
+    Shares the ``(pred - target)`` diff tensor between both metrics,
+    halving peak GPU memory compared to calling them separately.
+    For a 767³ volume this saves ~1.8 GB.
+
+    Returns
+    -------
+    tuple[float, float]
+        (max_abs_error, rel_l2)
+    """
+    diff = pred - target
+    max_abs_err = torch.max(torch.abs(diff)).item()
+    rel_l2 = float(
+        torch.linalg.norm(diff.reshape(-1))
+        / (torch.linalg.norm(target.reshape(-1)) + 1e-12)
+    )
+    del diff
+    return max_abs_err, rel_l2
+
+
 def run_optimization_loop(
     components: ModelComponents,
     loss_fn: Callable[[torch.Tensor], torch.Tensor],
@@ -243,8 +267,9 @@ def run_optimization_loop(
 
             with torch.no_grad():
                 pred_eval = model()
-                current_max_abs_error = _compute_max_abs_error(pred_eval, V_t)
-                current_rel_l2 = _compute_rel_l2(pred_eval, V_t)
+                current_max_abs_error, current_rel_l2 = _compute_eval_metrics(
+                    pred_eval, V_t
+                )
                 last_max_abs_error = current_max_abs_error
 
                 # Update best_state metrics if this is at or near the best iteration
@@ -320,6 +345,11 @@ def run_optimization_loop(
                     pred_eval if (need_eval and pred_eval is not None) else model()
                 )
             _record_movie_frame(model, _movie_pred, V_t, movie_frames, config, it)
+
+        # Free eval prediction to reclaim GPU memory for next training iteration
+        if need_eval and pred_eval is not None:
+            del pred_eval
+            pred_eval = None
 
         # Periodic Z-order sort for memory locality
         if config.sort_splats_enabled and it % config.sort_splats_interval == 0:
