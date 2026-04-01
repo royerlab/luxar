@@ -577,6 +577,180 @@ mod tests {
     }
 
     #[test]
+    fn test_interpolate_clipped_positions() {
+        // 2 segments, 4D positions, display_dims=[0,1,2]
+        // Segment 0: visible, t1=0.0, t2=0.5 (half clipped)
+        // Segment 1: hidden (visibility=0)
+        let ndim = 4;
+        let positions: Vec<f32> = vec![
+            0.0, 0.0, 0.0, 0.0,   // v0
+            10.0, 0.0, 0.0, 5.0,  // v1
+            0.0, 10.0, 0.0, 5.0,  // v2
+            10.0, 10.0, 0.0, 5.0, // v3
+        ];
+        let segments: Vec<u32> = vec![0, 1, 2, 3];
+        let visibility: Vec<u8> = vec![1, 0];
+        let t1_params: Vec<f32> = vec![0.0, 0.0];
+        let t2_params: Vec<f32> = vec![0.5, 1.0];
+        let display_dims: Vec<u32> = vec![0, 1, 2];
+
+        let mut output_start = vec![0.0f32; 1 * 3]; // 1 visible segment
+        let mut output_end = vec![0.0f32; 1 * 3];
+
+        let count = interpolate_clipped_positions(
+            &positions,
+            &segments,
+            &visibility,
+            &t1_params,
+            &t2_params,
+            &display_dims,
+            ndim,
+            2,
+            &mut output_start,
+            &mut output_end,
+        );
+
+        assert_eq!(count, 1);
+        // Start: v0 + 0.0 * (v1 - v0) = [0, 0, 0]
+        assert!((output_start[0] - 0.0).abs() < 1e-6);
+        assert!((output_start[1] - 0.0).abs() < 1e-6);
+        assert!((output_start[2] - 0.0).abs() < 1e-6);
+        // End: v0 + 0.5 * (v1 - v0) = [5, 0, 0]
+        assert!((output_end[0] - 5.0).abs() < 1e-6);
+        assert!((output_end[1] - 0.0).abs() < 1e-6);
+        assert!((output_end[2] - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_interpolate_scalars_batch() {
+        // 3 segments, 2 visible (indices 0 and 2)
+        let values: Vec<f32> = vec![1.0, 3.0, 5.0, 7.0];
+        let segments: Vec<u32> = vec![0, 1, 1, 2, 2, 3];
+        let visibility: Vec<u8> = vec![1, 0, 1];
+        let t1_params: Vec<f32> = vec![0.0, 0.0, 0.25];
+        let t2_params: Vec<f32> = vec![0.5, 1.0, 1.0];
+
+        let mut output_start = vec![0.0f32; 2];
+        let mut output_end = vec![0.0f32; 2];
+
+        let count = interpolate_scalars_batch(
+            &values,
+            &segments,
+            &visibility,
+            &t1_params,
+            &t2_params,
+            3,
+            &mut output_start,
+            &mut output_end,
+        );
+
+        assert_eq!(count, 2);
+        // Segment 0: v0=1.0, v1=3.0, t1=0.0, t2=0.5
+        // start = 1.0 + 0.0*(3.0-1.0) = 1.0
+        // end   = 1.0 + 0.5*(3.0-1.0) = 2.0
+        assert!((output_start[0] - 1.0).abs() < 1e-6);
+        assert!((output_end[0] - 2.0).abs() < 1e-6);
+        // Segment 2: v2=5.0, v3=7.0, t1=0.25, t2=1.0
+        // start = 5.0 + 0.25*(7.0-5.0) = 5.5
+        // end   = 5.0 + 1.0*(7.0-5.0)  = 7.0
+        assert!((output_start[1] - 5.5).abs() < 1e-6);
+        assert!((output_end[1] - 7.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_interpolate_colors_batch() {
+        // 2 segments, both visible, RGB colors
+        let colors: Vec<f32> = vec![
+            1.0, 0.0, 0.0, // v0: red
+            0.0, 1.0, 0.0, // v1: green
+        ];
+        let segments: Vec<u32> = vec![0, 1];
+        let visibility: Vec<u8> = vec![1];
+        let t1_params: Vec<f32> = vec![0.0];
+        let t2_params: Vec<f32> = vec![1.0];
+
+        let mut output_start = vec![0.0f32; 3];
+        let mut output_end = vec![0.0f32; 3];
+
+        let count = interpolate_colors_batch(
+            &colors,
+            &segments,
+            &visibility,
+            &t1_params,
+            &t2_params,
+            1,
+            &mut output_start,
+            &mut output_end,
+        );
+
+        assert_eq!(count, 1);
+        // start at t=0: [1, 0, 0]
+        assert!((output_start[0] - 1.0).abs() < 1e-6);
+        assert!((output_start[1] - 0.0).abs() < 1e-6);
+        assert!((output_start[2] - 0.0).abs() < 1e-6);
+        // end at t=1: [0, 1, 0]
+        assert!((output_end[0] - 0.0).abs() < 1e-6);
+        assert!((output_end[1] - 1.0).abs() < 1e-6);
+        assert!((output_end[2] - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_calculate_segment_lengths() {
+        // 3 segments with known distances
+        let starts: Vec<f32> = vec![
+            0.0, 0.0, 0.0, // seg0 start
+            0.0, 0.0, 0.0, // seg1 start
+            0.0, 0.0, 0.0, // seg2 start
+        ];
+        let ends: Vec<f32> = vec![
+            3.0, 4.0, 0.0, // seg0 end -> length 5.0
+            1.0, 0.0, 0.0, // seg1 end -> length 1.0
+            0.0, 0.0, 0.0, // seg2 end -> length 0.0
+        ];
+        let mut output = vec![0.0f32; 3];
+
+        calculate_segment_lengths(&starts, &ends, 3, &mut output);
+
+        assert!((output[0] - 5.0).abs() < 1e-6);
+        assert!((output[1] - 1.0).abs() < 1e-6);
+        assert!((output[2] - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_mark_clipped_endpoints() {
+        // 4 segments, all visible, various clipping states
+        let visibility: Vec<u8> = vec![1, 1, 1, 1];
+        let t1_params: Vec<f32> = vec![0.0, 0.3, 0.0, 0.2];
+        let t2_params: Vec<f32> = vec![1.0, 1.0, 0.7, 0.8];
+
+        let mut out_start = vec![0u8; 4];
+        let mut out_end = vec![0u8; 4];
+
+        let count = mark_clipped_endpoints(
+            &visibility,
+            &t1_params,
+            &t2_params,
+            4,
+            &mut out_start,
+            &mut out_end,
+        );
+
+        assert_eq!(count, 4);
+        // t1=0.0, t2=1.0 -> neither clipped
+        assert_eq!(out_start[0], 0);
+        assert_eq!(out_end[0], 0);
+        // t1=0.3, t2=1.0 -> start clipped
+        assert_eq!(out_start[1], 1);
+        assert_eq!(out_end[1], 0);
+        // t1=0.0, t2=0.7 -> end clipped
+        assert_eq!(out_start[2], 0);
+        assert_eq!(out_end[2], 1);
+        // t1=0.2, t2=0.8 -> both clipped
+        assert_eq!(out_start[3], 1);
+        assert_eq!(out_end[3], 1);
+    }
+
+    #[test]
     fn test_clip_segments_batch() {
         // Two segments: one visible, one not
         let positions = vec![

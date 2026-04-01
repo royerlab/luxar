@@ -446,3 +446,195 @@ class TestOMEZarrDiscovery:
         assert info.voxel_size == (0.5, 0.3, 0.3)
         assert info.unit == "micrometer"
         assert info.resolution_levels == 1
+
+
+# ====================================================================
+# Batch plan regression tests (from scripts/test_batch_plan_fixes.py)
+# ====================================================================
+
+
+class TestBatchPlanRegression:
+    """Regression tests for batch plan HPC fixes."""
+
+    def test_zarr_zip_suffix_detection(self) -> None:
+        """Path('.zarr.zip') should be routed to zarr loading."""
+        p = Path("foo.zarr.zip")
+        assert p.suffix.lower() == ".zip"
+        assert p.stem.endswith(".zarr")
+
+        p2 = Path("bar.zarr")
+        assert p2.suffix.lower() == ".zarr"
+
+    def test_custom_axes_parsing(self) -> None:
+        """_parse_custom_axes_attr correctly identifies T, C, and spatial dims."""
+        from luxar.cli.gsplat_config import _parse_custom_axes_attr
+
+        # 6D Keller-style
+        info = _parse_custom_axes_attr(
+            ["time", "camera", "channel", "z", "y", "x"],
+            (10, 2, 4, 97, 627, 1383),
+            Path("test.zarr"),
+        )
+        assert info.n_timepoints == 10
+        assert info.n_channels == 8  # 2*4
+        assert info.spatial_shape == (97, 627, 1383)
+
+        # 4D TimeFused-style
+        info2 = _parse_custom_axes_attr(
+            ["time", "z", "y", "x"],
+            (1434, 108, 1352, 532),
+            Path("test.zarr"),
+        )
+        assert info2.n_timepoints == 1434
+        assert info2.n_channels == 1
+        assert info2.spatial_shape == (108, 1352, 532)
+
+        # All spatial (no time, no channel)
+        info3 = _parse_custom_axes_attr(
+            ["z", "y", "x"],
+            (100, 200, 300),
+            Path("test.zarr"),
+        )
+        assert info3.n_timepoints == 1
+        assert info3.n_channels == 1
+        assert info3.spatial_shape == (100, 200, 300)
+
+    def test_axes_override_validation(self, tmp_path: Path) -> None:
+        """axes_override must match array ndim."""
+        import zarr
+
+        from luxar.cli.gsplat_config import discover_ome_zarr_shape
+
+        path = tmp_path / "test.zarr"
+        z = zarr.open(str(path), mode="w")
+        z.create_dataset("data", data=np.zeros((5, 10, 20), dtype=np.float32))
+        z.attrs["axes"] = ["z", "y", "x"]
+
+        info = discover_ome_zarr_shape(path, axes_override=["time", "y", "x"])
+        assert info.n_timepoints == 5
+
+        with pytest.raises(ValueError):
+            discover_ome_zarr_shape(path, axes_override=["t", "c", "z", "y", "x"])
+
+    def test_array_selection_consistency(self, tmp_path: Path) -> None:
+        """Both discover_ome_zarr_shape and _load_zarr_volume pick the largest array."""
+        import zarr
+
+        from luxar.cli.gsplat_config import _load_zarr_volume, discover_ome_zarr_shape
+
+        path = tmp_path / "test.zarr"
+        z = zarr.open(str(path), mode="w")
+        z.create_dataset("session1", data=np.ones((3, 10, 10), dtype=np.float32))
+        z.create_dataset("session2", data=np.ones((100, 20, 20), dtype=np.float32) * 2)
+
+        info = discover_ome_zarr_shape(path)
+        assert info.shape == (100, 20, 20)
+
+        vol = _load_zarr_volume(path, channel=None, timepoint=None, array_key=None)
+        assert vol.shape == (100, 20, 20)
+
+    def test_auto_tile_small_volume(self) -> None:
+        """Volumes that fit in GPU capacity should produce 1 tile."""
+        from luxar.gsplats.tiling import compute_tile_specs
+
+        spatial = (108, 1352, 532)
+        tile_size = max(spatial) + 32
+        specs = compute_tile_specs(spatial, tile_size, 32)
+        assert len(specs) == 1
+
+    def test_cull_retention_defaults(self) -> None:
+        """fit_gaussian_splats should default to cull_retention=0.95."""
+        import inspect
+
+        from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+        sig = inspect.signature(fit_gaussian_splats)
+        default = sig.parameters["cull_retention"].default
+        assert default == 0.95
+
+    def test_6d_channel_decoding(self) -> None:
+        """Flat channel index should correctly decode to multi-dim indices for 6D."""
+        shape = (10, 2, 4, 97, 627, 1383)
+        ndim = len(shape)
+        timepoint = 3
+        channel = 5  # flat index
+
+        t = timepoint
+        idx = [t]
+        remaining_non_spatial = ndim - 4
+        c_flat = channel
+        non_spatial_shape = shape[1 : 1 + remaining_non_spatial]
+        for dim_size in reversed(non_spatial_shape):
+            idx.insert(1, c_flat % dim_size)
+            c_flat //= dim_size
+
+        assert idx == [3, 1, 1]
+
+    def test_tasks_per_job_manifest(self) -> None:
+        """Manifest fields are serializable and have correct defaults."""
+        import json
+        from dataclasses import asdict
+
+        from luxar.gsplats.batch.manifest import BatchManifest
+
+        m = BatchManifest()
+        assert m.tasks_per_job == 1
+        assert m.parallel_tasks_per_job is False
+
+        d = asdict(m)
+        json.dumps(d)  # should not raise
+
+    def test_env_capture_ld_library_path_prepend(self) -> None:
+        """LD_LIBRARY_PATH should be prepended, not replaced, in preamble."""
+        from luxar.gsplats.batch.env_capture import CapturedEnv, generate_env_preamble
+
+        env = CapturedEnv(
+            env_vars={"LD_LIBRARY_PATH": "/some/path"},
+            loaded_modules=["cuda/12.8"],
+        )
+        preamble = generate_env_preamble(env)
+        assert "${LD_LIBRARY_PATH:-}" in preamble
+        assert "export LD_LIBRARY_PATH='/some/path'\n" not in preamble
+
+        ld_line_idx = preamble.find("export LD_LIBRARY_PATH=")
+        module_line_idx = preamble.find("module load")
+        assert ld_line_idx < module_line_idx, (
+            "LD_LIBRARY_PATH export must appear before module load in preamble"
+        )
+
+    def test_sbatch_omits_channel_when_single(self) -> None:
+        """When n_channels=1, sbatch script must NOT pass --channel."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch
+
+        m = BatchManifest(
+            input_path="/data/test.zarr.zip",
+            output_dir="/output/test",
+            n_timepoints=10,
+            n_channels=1,
+            tile_size=1384,
+            tile_overlap=32,
+            n_tiles=1,
+            total_tasks=10,
+            preset="draft",
+            slurm_partition="gpu",
+            slurm_time_limit="00:15:00",
+        )
+        script = generate_fit_sbatch(m, "# preamble\n")
+        assert "--channel" not in script
+        assert "--timepoint" in script
+
+        # Multi-channel, single timepoint
+        m.n_channels = 4
+        m.n_timepoints = 1
+        m.total_tasks = 4
+        script2 = generate_fit_sbatch(m, "# preamble\n")
+        assert "--channel" in script2
+        assert "--timepoint" not in script2
+
+        # Both multi
+        m.n_timepoints = 5
+        m.total_tasks = 20
+        script3 = generate_fit_sbatch(m, "# preamble\n")
+        assert "--channel" in script3
+        assert "--timepoint" in script3
