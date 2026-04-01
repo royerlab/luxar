@@ -6,6 +6,19 @@
 
 ---
 
+## Status (Updated 2026-03-31)
+
+### Fixed in PR #53
+- **Section 8.3 (partial):** `test_dtype_support.py::test_compiler_with_memory_config` now uses a seeded RNG (`np.random.RandomState(42)`) to fix flaky uint8/uint16 encoding decisions. The remaining unseeded tests in that file and in `test_validation_nd.py`, `test_builder_helpers.py`, and `test_types_validation.py` are still unfixed.
+
+### Remaining Unfixed Issues
+- CRITICAL: 0
+- HIGH: 3
+- MEDIUM: 8
+- LOW: 7
+
+---
+
 ## Executive Summary
 
 The test suite is **generally well-structured and thorough**. Most modules have good coverage of happy paths, edge cases, and error conditions. However, there are several areas of concern: **duplicated test coverage** across files, **ad-hoc scripts that should be integrated** into the proper pytest suite, a few **weak tests** that could pass vacuously, and some **missing edge case coverage**. No critical correctness issues were found -- tests are enforcing correct behavior.
@@ -342,6 +355,9 @@ Several test files use `np.random.randn()` or `np.random.rand()` without setting
 - `test_validation_nd.py` lines 57, 79, 145, etc.
 - `test_builder_helpers.py` line 19
 - `test_types_validation.py` line 284
+- `test_dtype_support.py` lines 66-69, 104-105, 131 (other tests besides `test_compiler_with_memory_config`)
+
+**Note:** `test_dtype_support.py::test_compiler_with_memory_config` was fixed in PR #53 (seeded RNG to resolve flaky uint8/uint16 encoding decision). The remaining unseeded usages in that file and others listed above are still unfixed.
 
 **Recommendation:** Use `np.random.default_rng(seed)` for reproducibility in all tests that generate random data.
 
@@ -349,28 +365,29 @@ Several test files use `np.random.randn()` or `np.random.rand()` without setting
 
 ## Summary Table
 
-| Area | File | Issue | Severity |
-|------|------|-------|----------|
-| Redundancy | `test_layer_attribute.py` + `test_types_validation.py` | Duplicate `validate_layer` tests | HIGH |
-| Ad-hoc | `scripts/test_sharpness_removal.py` | Should be in pytest suite | HIGH |
-| Ad-hoc | `scripts/test_batch_plan_fixes.py` | Should be in pytest suite | HIGH |
-| Weakness | `test_validation_module.py` | `try/except` without `pytest.raises` | MEDIUM |
-| Staleness | `test_cli_integration.py` | Wrong group name `"Lorenz"` -> assertions never run | MEDIUM |
-| Redundancy | `test_cli.py` + `test_cli_enhanced.py` | Overlapping info/demo/serve tests | MEDIUM |
-| Redundancy | `test_cli_enhanced.py` + `test_cli_utils.py` | Duplicate utility function tests | MEDIUM |
-| Completeness | `test_types_validation.py` | No NaN/Inf tests for positions | MEDIUM |
-| Completeness | `test_cli_integration.py` | Port conflict test too weak | MEDIUM |
-| Ad-hoc | `scripts/test_cholesky_fix.py` | Should be in pytest suite | MEDIUM |
-| Rigor | `test_cli_integration.py` | Silent `pytest.skip` on server failure | MEDIUM |
-| Rigor | `test_network_simulation.py` | Timing-sensitive without flaky marker | LOW |
-| Rigor | `test_cli_enhanced.py` | Weak `or` assertion on mock calls | LOW |
-| Rigor | `test_cli.py` | Emoji/non-emoji `or` assertions | LOW |
-| Completeness | `test_colormap_validation.py` | No boundary size=2 test | LOW |
-| Completeness | `test_config.py` | No zero/negative input for `check_dataset_size_warning` | LOW |
-| Staleness | `test_cli_integration.py` | Old `"version"` key fallback | LOW |
-| Redundancy | `test_config_validation.py` + `test_base_validation.py` | Empty stub files | LOW |
-| Weakness | `test_cli_utils.py` | `test_available_port` only checks type | LOW |
-| Other | `test_demo_validation.py` | Empty file | LOW |
+| Area | File | Issue | Severity | Status |
+|------|------|-------|----------|--------|
+| Redundancy | `test_layer_attribute.py` + `test_types_validation.py` | Duplicate `validate_layer` tests | HIGH | Unfixed |
+| Ad-hoc | `scripts/test_sharpness_removal.py` | Should be in pytest suite | HIGH | Unfixed |
+| Ad-hoc | `scripts/test_batch_plan_fixes.py` | Should be in pytest suite | HIGH | Unfixed |
+| Weakness | `test_validation_module.py` | `try/except` without `pytest.raises` | MEDIUM | Unfixed |
+| Staleness | `test_cli_integration.py` | Wrong group name `"Lorenz"` -> assertions never run | MEDIUM | Unfixed |
+| Redundancy | `test_cli.py` + `test_cli_enhanced.py` | Overlapping info/demo/serve tests | MEDIUM | Unfixed |
+| Redundancy | `test_cli_enhanced.py` + `test_cli_utils.py` | Duplicate utility function tests | MEDIUM | Unfixed |
+| Completeness | `test_types_validation.py` | No NaN/Inf tests for positions | MEDIUM | Unfixed |
+| Completeness | `test_cli_integration.py` | Port conflict test too weak | MEDIUM | Unfixed |
+| Ad-hoc | `scripts/test_cholesky_fix.py` | Should be in pytest suite | MEDIUM | Unfixed |
+| Rigor | `test_cli_integration.py` | Silent `pytest.skip` on server failure | MEDIUM | Unfixed |
+| Rigor | `test_network_simulation.py` | Timing-sensitive without flaky marker | LOW | Unfixed |
+| Rigor | `test_cli_enhanced.py` | Weak `or` assertion on mock calls | LOW | Unfixed |
+| Rigor | `test_cli.py` | Emoji/non-emoji `or` assertions | LOW | Unfixed |
+| Completeness | `test_colormap_validation.py` | No boundary size=2 test | LOW | Unfixed |
+| Completeness | `test_config.py` | No zero/negative input for `check_dataset_size_warning` | LOW | Unfixed |
+| Staleness | `test_cli_integration.py` | Old `"version"` key fallback | LOW | Unfixed |
+| Redundancy | `test_config_validation.py` + `test_base_validation.py` | Empty stub files | LOW | Unfixed |
+| Weakness | `test_cli_utils.py` | `test_available_port` only checks type | LOW | Unfixed |
+| Other | `test_demo_validation.py` | Empty file | LOW | Unfixed |
+| Other | `test_dtype_support.py` (partial) | Unseeded RNG in remaining tests | LOW | Partial (PR #53 fixed `test_compiler_with_memory_config` only) |
 
 ---
 
@@ -382,3 +399,19 @@ Several test files use `np.random.randn()` or `np.random.rand()` without setting
 4. **Consolidate duplicate `validate_layer` tests** into a single canonical location.
 5. **Delete empty stub files** (`test_config_validation.py`, `test_base_validation.py`, `test_demo_validation.py`).
 6. **Remove duplicate utility tests** from `test_cli_enhanced.py` (keep in `test_cli_utils.py`).
+
+---
+
+## Recommended Next Batch
+
+The following 5 issues represent the highest-impact fixes that can be done in a single focused batch, ordered by impact:
+
+1. **Integrate `scripts/test_sharpness_removal.py` and `scripts/test_batch_plan_fixes.py` into the pytest suite** (HIGH x2). These 16 tests cover critical GSplat and HPC functionality but run outside CI entirely. Moving them is low-effort (they already use `test_*` naming and assert patterns) with high payoff -- any regressions in sharpness handling or batch planning will be caught automatically.
+
+2. **Fix `test_validation_module.py::test_validation_error_has_suggestions`** (MEDIUM). Replace the `try/except` with `pytest.raises`. This is a one-line fix that prevents the test from silently passing when the validation function stops raising errors -- a real correctness risk.
+
+3. **Fix stale `"Lorenz"` path in `test_cli_integration.py`** (MEDIUM). The test at line 134 requests `/Lorenz/positions/.zarray` but the demo creates `"LorenzAttractor"`. The 404 is silently swallowed by `if response.status_code == 200:`, so the zarr-array-structure assertions inside never execute. Fix the path and change the conditional to `assert response.status_code == 200`.
+
+4. **Consolidate duplicate `validate_layer` tests** (HIGH). Remove the 7 tests in `packages/luxar/tests/test_layer_attribute.py::TestValidateLayer` that duplicate the 8 tests in `test_types_validation.py::TestLayerValidation`. This reduces maintenance burden and eliminates confusion about which is canonical.
+
+5. **Remove duplicate utility tests from `test_cli_enhanced.py`** (MEDIUM). The `TestCLIUtils` class duplicates coverage already in `test_cli_utils.py`. Deleting it reduces test runtime and removes a maintenance trap where fixes to utility behavior need to be verified in two places.

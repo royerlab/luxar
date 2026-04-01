@@ -7,6 +7,21 @@
 
 ---
 
+## Status
+
+**Last updated:** 2026-03-31
+**Related PRs:** None of the issues in this report were addressed in PR #53 or any subsequent PR.
+**All findings below remain UNFIXED.**
+
+| Severity | Count | Fixed | Remaining |
+|----------|-------|-------|-----------|
+| CRITICAL | 0 | 0 | 0 |
+| HIGH | 3 | 0 | **3** |
+| MEDIUM | 5 | 0 | **5** |
+| LOW | ~10 | 0 | **~10** |
+
+---
+
 ## Severity Legend
 
 | Rating | Meaning |
@@ -394,3 +409,24 @@
 4. **cached-zarr-array private field compatibility tests** prevent regression of a real production bug with zarrita's private fields.
 5. **EventManager tests** properly test the `bind()` memory leak pattern that caused real issues.
 6. **ThemeManager tests** comprehensively cover the observer pattern including error resilience.
+
+---
+
+## Recommended Next Batch
+
+The following 5 issues are recommended for the next round of fixes, ordered by impact:
+
+1. **[HIGH] worker-pool.test.ts -- Zero effective coverage** (Section 5.1)
+   All tests are skipped in the standard Node.js/jsdom test environment because `Worker` is undefined. This means worker pool logic (concurrency, task distribution, error recovery) has no unit test coverage whatsoever. **Fix:** Mock the Worker API in the test setup so tests execute in `pnpm test`, or add equivalent Playwright-based tests that run in a real browser.
+
+2. **[HIGH] worker-integration.test.ts -- Mock-on-mock tests** (Section 11.3)
+   Tests verify their own mock setup rather than real integration points. The "initialize worker" test just checks a config value exists; the "worker query params" test asserts properties of a literal it just created. **Fix:** Restructure tests to exercise the actual fallback code paths in loaders (e.g., verify that when workers are unavailable, the main-thread fallback produces correct results).
+
+3. **[HIGH] app.test.ts -- 7 mocked modules** (Section 10.1)
+   The test file itself acknowledges it tests "mock wiring, not real component behavior." With 7 internal modules mocked, the test cannot catch regressions in initialization order, cross-component communication, or lifecycle management. **Fix:** Add at least one integration-level test that instantiates `LuxarApp` with fewer mocks (e.g., only mock WebGL context and fetch) to verify the real initialization flow.
+
+4. **[MEDIUM] chunk-prefetcher.test.ts -- Timing-dependent assertions** (Section 2.5)
+   Multiple tests use `await new Promise(resolve => setTimeout(resolve, 50))` for async assertions. These are flaky in CI under load. **Fix:** Replace `setTimeout`-based waits with `vi.useFakeTimers()` + `vi.advanceTimersByTime()`, or restructure to await explicit promise resolution from the prefetcher API.
+
+5. **[MEDIUM] recording-panel.test.ts -- GUI mock obscures structure** (Section 1.6)
+   The `createMockController` pattern returns a mock for every `add()` call, so the test cannot verify that the panel builds the correct GUI structure (correct labels, correct value ranges, correct order). **Fix:** Use a lightweight real `Folder`/`GUI` instance (from the custom gui implementation already in the codebase) instead of fully mocking it, and assert on the resulting controller tree.
