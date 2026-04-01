@@ -61,6 +61,11 @@ function saveBaselines(metrics: Partial<PerformanceBaselines>) {
 const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
 
 test.describe('Performance Regression Tracking', () => {
+  // Force serial execution: saveBaselines() does non-atomic read-modify-write
+  // on a shared file, causing data loss when tests run in parallel.
+  // Performance tests also interfere with each other's measurements.
+  test.describe.configure({ mode: 'serial' });
+
   test('should track dataset load time', async ({ page }) => {
     const startTime = Date.now();
 

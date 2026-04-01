@@ -3,6 +3,7 @@ Tests for triangular matrix packing/unpacking utilities.
 """
 
 import numpy as np
+import pytest
 
 from luxar.gsplats.utils.trils import (
     calculate_gradient_dilution_factor,
@@ -429,3 +430,73 @@ class TestValidateCholeskShape:
 
         with pytest.raises(ValueError, match="must be 1D .* or 2D"):
             validate_cholesky_shape(chol, ndim=2)
+
+
+# ── Cholesky embedding regression tests ──────────────────────
+
+
+class TestEmbedCholeskyPackedNoNan:
+    """Verify embed_cholesky_packed produces no NaN/Inf for degenerate inputs."""
+
+    @pytest.fixture
+    def good_packed(self) -> np.ndarray:
+        """Well-conditioned packed Cholesky factors (N=100, d=3)."""
+        from luxar.gsplats.utils.trils import pack_tril
+
+        rng = np.random.default_rng(42)
+        N, d = 100, 3
+        A = rng.standard_normal((N, d, d))
+        Sigma = A @ A.transpose(0, 2, 1) + np.eye(d) * 0.1
+        L = np.linalg.cholesky(Sigma)
+        return pack_tril(L.astype(np.float32))
+
+    def _assert_finite(self, packed, d_src, d_dst, dim_mapping, fill_sigma):
+        from luxar.gsplats.utils.trils import embed_cholesky_packed
+
+        result = embed_cholesky_packed(
+            packed,
+            d_src=d_src,
+            d_dst=d_dst,
+            dim_mapping=dim_mapping,
+            fill_sigma=fill_sigma,
+        )
+        assert np.all(np.isfinite(result)), (
+            f"Non-finite values in result with shape {result.shape}"
+        )
+        return result
+
+    def test_good_splats(self, good_packed):
+        """All well-conditioned splats should embed without NaN."""
+        self._assert_finite(good_packed, 3, 4, [1, 2, 3], {0: 1e-7})
+
+    def test_some_degenerate_zeros(self, good_packed):
+        """Splats with some all-zero rows should still produce finite output."""
+        p = good_packed.copy()
+        p[5] = 0
+        p[50] = 0
+        self._assert_finite(p, 3, 4, [1, 2, 3], {0: 1e-7})
+
+    def test_all_degenerate_zeros(self, good_packed):
+        """All-zero packed factors should still produce finite output."""
+        p = np.zeros_like(good_packed)
+        self._assert_finite(p, 3, 4, [1, 2, 3], {0: 1e-7})
+
+    def test_near_singular(self, good_packed):
+        """Near-singular (tiny values) packed factors should produce finite output."""
+        p = good_packed.copy()
+        p *= 1e-15
+        self._assert_finite(p, 3, 4, [1, 2, 3], {0: 1e-7})
+
+    def test_empty(self):
+        """Empty input (N=0) should produce finite output with correct shape."""
+        from luxar.gsplats.utils.trils import embed_cholesky_packed
+
+        p = np.empty((0, 6), dtype=np.float32)
+        result = embed_cholesky_packed(
+            p, d_src=3, d_dst=4, dim_mapping=[1, 2, 3], fill_sigma={0: 1e-7}
+        )
+        assert result.shape[0] == 0
+
+    def test_single_splat(self, good_packed):
+        """Single splat should embed without NaN."""
+        self._assert_finite(good_packed[:1], 3, 4, [1, 2, 3], {0: 1e-7})

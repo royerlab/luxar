@@ -630,8 +630,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     const shiftC = Math.exp(-0.5 * radius * radius);
     this.uniforms.uShiftC.value = shiftC;
     this.uniforms.uInvOneMinusC.value = 1.0 / (1.0 - shiftC);
-    this.uniforms.uRayIntegralFactor.value =
-      GSplatMaterial.computeRayIntegralFactor(radius);
+    this.uniforms.uRayIntegralFactor.value = GSplatMaterial.computeRayIntegralFactor(radius);
   }
 
   /**
@@ -726,9 +725,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
       1.0 -
       t *
         (0.254829592 +
-          t *
-            (-0.284496736 +
-              t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) *
+          t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) *
         Math.exp(-x * x);
     const erf = x >= 0 ? erfVal : -erfVal;
     return SQRT_2PI * erf - 2 * truncate * Math.exp(-0.5 * truncate * truncate);

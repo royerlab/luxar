@@ -1931,3 +1931,104 @@ class TestLODPreservation:
         # 2 tiles × 5 splats × 2 timepoints × 2 channels = 40 splats per LOD
         assert final.at_lod(0).n_splats == 40
         assert final.at_lod(1).n_splats == 40
+
+
+# ── Sharpness removal regression tests ───────────────────────
+
+
+class TestGSplatsWithoutSharpness:
+    """Verify that GSplats work without sharpness while Points/Lines retain it."""
+
+    def test_gsplats_roundtrip_no_sharpness(self, tmp_path):
+        """GSplats should round-trip through zarr without a sharpness attribute."""
+        from luxar import Dimensions, LuxarScene, LuxarZarrCompiler
+
+        path = tmp_path / "test.zarr"
+        with LuxarZarrCompiler(path) as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats(
+                "test",
+                centers=np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32),
+                amplitudes=np.array([1.0, 2.0], dtype=np.float32),
+                cholesky_factors=np.array(
+                    [[1, 0, 1, 0, 0, 1], [1, 0, 1, 0, 0, 1]], dtype=np.float32
+                ),
+                colors=np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32),
+            )
+
+        s = LuxarScene.load(path)
+        data = s.get_gsplats("test")
+        assert len(data["centers"]) == 2
+        assert data.get("sharpness") is None, "GSplats should NOT have sharpness"
+
+    def test_gsplat_data_no_sharpnesses_field(self):
+        """GSplatData should not require a sharpnesses field."""
+        result = GSplatData(
+            centers=np.array([[0, 0, 0]], dtype=np.float32),
+            amplitudes=np.array([1.0], dtype=np.float32),
+            cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
+        )
+        assert not hasattr(result, "sharpnesses") or not hasattr(
+            result.__dataclass_fields__, "sharpnesses"
+        )
+
+    def test_add_gsplats_signature_no_sharpness(self):
+        """add_gsplats() signature should not include sharpness."""
+        import inspect
+
+        from luxar.core.group import Group
+
+        sig = inspect.signature(Group.add_gsplats)
+        params = list(sig.parameters.keys())
+        assert "sharpness" not in params, (
+            f"sharpness should not be in add_gsplats params: {params}"
+        )
+
+    def test_points_still_have_sharpness(self, tmp_path):
+        """Points should still support the sharpness parameter."""
+        from luxar import Dimensions, LuxarScene, LuxarZarrCompiler
+
+        path = tmp_path / "test.zarr"
+        with LuxarZarrCompiler(path) as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "pts",
+                positions=np.array([[1, 2, 3]], dtype=np.float32),
+                radii=np.array([0.5], dtype=np.float32),
+                sharpness=np.array([3.0], dtype=np.float32),
+            )
+
+        s = LuxarScene.load(path)
+        data = s.get_points("pts")
+        assert data["sharpness"] is not None
+        np.testing.assert_allclose(data["sharpness"], [3.0])
+
+    def test_lines_still_have_sharpness(self, tmp_path):
+        """Lines should still support the sharpness parameter."""
+        from luxar import Dimensions, LuxarScene, LuxarZarrCompiler
+
+        path = tmp_path / "test.zarr"
+        with LuxarZarrCompiler(path) as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "ln",
+                vertices=np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32),
+                widths=np.array([0.1, 0.1], dtype=np.float32),
+                sharpness=np.array([1.5, 1.5], dtype=np.float32),
+            )
+
+        s = LuxarScene.load(path)
+        data = s.get_lines("ln")
+        assert data["sharpness"] is not None
+
+    def test_fitting_returns_no_sharpness(self):
+        """fit_gaussian_splats should work and not return sharpness."""
+        from luxar.gsplats import fit_gaussian_splats
+
+        img = np.random.rand(16, 16).astype(np.float32) * 0.5
+        img[5:10, 5:10] = 1.0
+
+        result = fit_gaussian_splats(img, seeds=5, max_iterations=10, verbose=False)
+        assert isinstance(result, GSplatData)
+        assert not hasattr(result, "sharpnesses")
+        assert result.centers.shape[1] == 2
