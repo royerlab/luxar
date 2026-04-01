@@ -150,4 +150,81 @@ mod tests {
         assert_eq!(output[1], 0, "Splat 1 should be hidden (t=10 > 2.0)");
         assert_eq!(count, 1);
     }
+
+    #[test]
+    fn test_gsplat_visibility_anisotropic_3d() {
+        // 2 splats in 3D with anisotropic Cholesky
+        // Cholesky packed [L00, L10, L11, L20, L21, L22]
+        // L = [[0.5, 0, 0], [0, 0.5, 0], [0, 0, 5.0]]
+        // Sigma = L * L^T -> diag(0.25, 0.25, 25.0) - elongated in z
+        let centers = vec![
+            0.0, 0.0, 0.0,   // Splat 0 at origin
+            0.0, 0.0, 20.0,  // Splat 1 at z=20
+        ];
+        let cholesky = vec![
+            0.5, 0.0, 0.5, 0.0, 0.0, 5.0, // Splat 0
+            0.5, 0.0, 0.5, 0.0, 0.0, 5.0, // Splat 1
+        ];
+        let slice_pos = vec![0.0, 0.0, 0.0];
+        let tolerance = vec![1.0, 1.0, 1.0];
+
+        let mut output = vec![0u8; 2];
+        let count = compute_nd_visibility_gsplats(
+            &centers,
+            &cholesky,
+            &slice_pos,
+            &tolerance,
+            3,
+            2,
+            &mut output,
+        );
+
+        // Splat 0: at origin, max_extent=5.0, effective_tolerance = tol + 5.0 = 6.0
+        // delta = [0,0,0], dist_sq = 0 <= 1.0 -> visible
+        assert_eq!(output[0], 1, "Splat 0 at origin should be visible");
+
+        // Splat 1: at z=20, max_extent=5.0, effective_tolerance = 1.0 + 5.0 = 6.0
+        // delta_z = 20, normalized = 20/6 = 3.33, dist_sq = 3.33^2 = 11.1 > 1.0 -> hidden
+        assert_eq!(output[1], 0, "Splat 1 at z=20 should be hidden");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_gsplat_visibility_anisotropic_2d() {
+        // 2D with anisotropic Cholesky (tilted ellipse)
+        // Cholesky packed [L00, L10, L11]
+        // L = [[2.0, 0], [1.0, 3.0]]
+        // Sigma = L * L^T = [[4, 2], [2, 10]]
+        // Max diagonal of L is 3.0
+        let centers = vec![
+            0.0, 0.0, // Splat 0 at origin
+            0.0, 5.0, // Splat 1 at y=5
+        ];
+        let cholesky = vec![
+            2.0, 1.0, 3.0, // Splat 0: L = [[2,0],[1,3]]
+            2.0, 1.0, 3.0, // Splat 1
+        ];
+        let slice_pos = vec![0.0, 0.0];
+        let tolerance = vec![1.0, 1.0];
+
+        let mut output = vec![0u8; 2];
+        let count = compute_nd_visibility_gsplats(
+            &centers,
+            &cholesky,
+            &slice_pos,
+            &tolerance,
+            2,
+            2,
+            &mut output,
+        );
+
+        // Splat 0: at origin, max_extent=3.0, effective_tol = 1+3 = 4.0
+        // delta = [0,0], dist_sq = 0 -> visible
+        assert_eq!(output[0], 1, "Splat 0 at origin should be visible");
+
+        // Splat 1: at y=5, max_extent=3.0, effective_tol = 1+3 = 4.0
+        // delta_y = 5, normalized = 5/4 = 1.25, dist_sq = 1.25^2 = 1.5625 > 1.0 -> hidden
+        assert_eq!(output[1], 0, "Splat 1 at y=5 should be hidden");
+        assert_eq!(count, 1);
+    }
 }

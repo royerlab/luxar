@@ -327,9 +327,10 @@ class TestMetalGradients:
 
         # Note: Numerical gradcheck on GPU compute is notoriously finicky
         # If this fails, it doesn't necessarily mean gradients are wrong
-        # The integration tests and convergence tests are more reliable
+        # The integration tests and convergence tests are more reliable.
+        # Using xfail (not skip) so failures are visible in CI reports.
         if not pass_gradcheck:
-            pytest.skip("gradcheck failed (expected for GPU - use integration tests)")
+            pytest.xfail("gradcheck failed (expected for GPU numerics)")
 
     def test_gradient_sign_correctness(self):
         """Test that gradient signs point in the correct direction to minimize loss.

@@ -281,7 +281,7 @@ class Tolerances:
     # Backward pass comparison (looser due to atomic accumulation)
     BACKWARD_RTOL = 1e-3
     BACKWARD_ATOL = 1e-5
-    BACKWARD_SIGN_MATCH = 0.70  # Minimum fraction of gradient signs matching
+    BACKWARD_SIGN_MATCH = 0.85  # Minimum fraction of gradient signs matching
     BACKWARD_MAG_RATIO = 10  # Maximum gradient magnitude ratio
 
     # FP16 comparison

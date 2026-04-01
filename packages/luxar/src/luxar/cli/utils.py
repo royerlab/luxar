@@ -99,10 +99,20 @@ def check_viewer_built() -> bool:
 def get_viewer_dist_path() -> Path:
     """Get the path to the viewer distribution directory.
 
+    Checks two locations in order:
+    1. Bundled viewer inside the installed package (``luxar/_viewer_dist/``)
+    2. Development source tree (``packages/luxar-viewer/dist/``)
+
     Returns:
         Path to the viewer dist directory.
     """
-    # Find the project root by looking for pyproject.toml
+    # 1. Check for viewer bundled inside the installed package
+    #    cli/utils.py → cli/ → luxar/ → _viewer_dist/
+    bundled = Path(__file__).resolve().parent.parent / "_viewer_dist"
+    if bundled.is_dir() and (bundled / "index.html").exists():
+        return bundled
+
+    # 2. Development: walk up to find pyproject.toml and use source tree layout
     current = Path(__file__).parent
     while current != current.parent:
         if (current / "pyproject.toml").exists():
@@ -111,7 +121,7 @@ def get_viewer_dist_path() -> Path:
                 return viewer_dist
         current = current.parent
 
-    # Fallback to relative path
+    # 3. Last-resort fallback for editable installs
     return (
         Path(__file__).parent.parent.parent.parent.parent
         / "packages"

@@ -48,6 +48,17 @@ from .utils import (
 )
 
 
+def _add_cors(api: FastAPI, cors_origin: str = "*") -> None:
+    """Add CORS middleware to a FastAPI application."""
+    api.add_middleware(
+        CORSMiddleware,
+        allow_origins=[cors_origin],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
 class DirectoryListingStaticFiles(StaticFiles):
     """Static files handler with JSON directory listing support."""
 
@@ -143,15 +154,7 @@ def create_server_app(path: str, serve_viewer: bool = False) -> FastAPI:
         FastAPI application instance
     """
     api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
-
-    # Add CORS middleware to allow requests from the viewer
-    api.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],  # Allow all origins for development
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    _add_cors(api)
 
     # Add health check endpoint
     @api.get("/health")
@@ -242,6 +245,11 @@ def serve(
         "--packet-loss",
         help="Packet loss rate (e.g., '1%', '0.01', '5%')",
     ),
+    cors_origin: str = typer.Option(
+        "*",
+        "--cors-origin",
+        help="Allowed CORS origin (default: '*' allows all)",
+    ),
 ) -> None:
     """Serve a directory, Zarr dataset, or viewer via HTTP.
 
@@ -280,6 +288,7 @@ def serve(
         latency (str, optional): Network latency.
         jitter (str, optional): Latency jitter percentage.
         packet_loss (str, optional): Packet loss rate.
+        cors_origin (str, optional): Allowed CORS origin. Defaults to "*".
     """
     try:
         # Warn about conflicting flags
@@ -369,15 +378,7 @@ def serve(
             )
 
         api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
-
-        # Add CORS middleware to allow requests from the viewer
-        api.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],  # Allow all origins for development
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+        _add_cors(api, cors_origin)
 
         # Mount the static files handler with directory listing
         api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
@@ -448,13 +449,7 @@ def _serve_viewer(
     viewer_dist = get_viewer_dist_path()
 
     api = FastAPI(title="Luxar Viewer", docs_url=None, redoc_url=None)
-    api.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    _add_cors(api)
 
     # Mount viewer static files
     api.mount("/", StaticFiles(directory=str(viewer_dist), html=True))
@@ -647,13 +642,7 @@ def _serve_data(
         packet_loss_rate: Packet loss rate (0.0-1.0)
     """
     api = FastAPI(title="Luxar Data Server", docs_url=None, redoc_url=None)
-    api.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    _add_cors(api)
 
     # Determine serve path
     if path.is_dir():
