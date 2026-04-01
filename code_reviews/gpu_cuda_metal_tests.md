@@ -7,9 +7,24 @@
 
 ---
 
+## Status (Updated 2026-03-31)
+
+The following issues from the original review were **fixed in PR #53**:
+
+| Issue | File | Original Severity | Fix |
+|-------|------|-------------------|-----|
+| No true `torch.autograd.gradcheck` call | `test_cuda_gradcheck.py` | CRITICAL | Added `TestTrueFiniteDifferenceGradcheck` class that calls `torch.autograd.gradcheck` per parameter with relaxed FP32 tolerances |
+| Correlation threshold too loose (0.5) | `test_cuda_gradcheck.py` | HIGH | Tightened from 0.5 to 0.80 |
+| Backward comparison only checks amplitude gradients | `test_cuda_backward.py` | HIGH | Extended gradient comparison to `raw_mu`, `raw_L_diag`, `L_off` with per-parameter thresholds (0.80, 0.75, 0.75) |
+| `BACKWARD_SIGN_MATCH` too permissive (0.70) | `conftest.py` | MEDIUM | Tightened from 0.70 to 0.85 |
+
+**Remaining findings: 0 CRITICAL, 2 HIGH, 14 MEDIUM, 15 LOW**
+
+---
+
 ## Executive Summary
 
-The GPU test suites are extensive and well-structured. The CUDA suite is significantly more mature, covering 2D-8D forward/backward, FP16, performance benchmarks, edge cases, and review-fix regression tests. The Metal suite is solid for 3D-only scope but lighter on numerical rigor. Key findings include: overly loose backward-pass tolerances that could mask real regressions, missing `torch.autograd.gradcheck` for CUDA (the most rigorous correctness check), dead code in numerical tests, redundant test coverage between files, and several performance tests that don't assert meaningful thresholds.
+The GPU test suites are extensive and well-structured. The CUDA suite is significantly more mature, covering 2D-8D forward/backward, FP16, performance benchmarks, edge cases, and review-fix regression tests. The Metal suite is solid for 3D-only scope but lighter on numerical rigor. Key remaining findings include: missing backward tests for 4D+ dimensions, Metal's `gradcheck` silently skipping on failure, performance tests without meaningful assertions, and several loose tolerances that could mask regressions.
 
 **Severity Legend:**
 - **CRITICAL** -- Could mask real bugs or cause false passes
@@ -33,7 +48,7 @@ The GPU test suites are extensive and well-structured. The CUDA suite is signifi
 
 **Issues:**
 
-1. **`BACKWARD_SIGN_MATCH = 0.70` is too loose (MEDIUM).** A 30% sign disagreement rate between CUDA and reference gradients is dangerously permissive. For a correct backward kernel, sign agreement on non-negligible gradients should be >90%. At 70%, you could have a sign-flipped dimension and still pass. Recommend: tighten to 0.85 and add per-parameter thresholds (amplitude gradients should match better than center gradients).
+1. ~~**`BACKWARD_SIGN_MATCH = 0.70` is too loose (MEDIUM).**~~ **FIXED in PR #53** -- tightened to 0.85.
 
 2. **`COMPARISON_MAX_REL_DIFF = 0.15` is lenient for same-algorithm comparison (MEDIUM).** 15% max relative difference between CUDA and PyTorch for the same mathematical operation suggests a real discrepancy, not just floating-point noise. FP32 should agree to within ~1e-5 for identical algorithms. This tolerance is appropriately loose for forward pass (different code paths, tiling vs sequential), but the name doesn't distinguish the two cases. Recommend: add `FORWARD_SAME_ALGO_MAX_REL_DIFF = 0.01` for optimized-vs-generic path tests.
 
@@ -66,7 +81,7 @@ The GPU test suites are extensive and well-structured. The CUDA suite is signifi
 
 ### 3. `test_cuda_backward.py` -- Backward Pass
 
-**Severity: HIGH**
+**Severity: MEDIUM** (downgraded from HIGH after PR #53 fixes)
 
 **Strengths:**
 - `TestOptimizedVsGenericPath` is a first-class testing strategy -- embedding 2D into 4D to cross-validate specialized vs generic code paths.
@@ -75,9 +90,9 @@ The GPU test suites are extensive and well-structured. The CUDA suite is signifi
 
 **Issues:**
 
-1. **`test_gradient_values_match_cpu` only checks amplitude gradients (HIGH).** Center gradients (`raw_mu`) and Cholesky factor gradients (`raw_L_diag`, `L_off`) are not compared. Since the backward kernel computes `d_centers`, `d_conic`, and `d_amps` in CUDA and then chains `d_conic -> d_Ls` in PyTorch, the center gradients are the most CUDA-specific and most likely to have bugs. This is a significant gap.
+1. ~~**`test_gradient_values_match_cpu` only checks amplitude gradients (HIGH).**~~ **FIXED in PR #53** -- now compares `raw_a`, `raw_mu`, `raw_L_diag`, and `L_off` with per-parameter thresholds.
 
-2. **Sign-match threshold of 0.70 for backward (HIGH).** As noted in conftest review, this is too loose. A backward kernel with 30% sign errors would not converge during optimization. The `test_gradient_numerical_accuracy_vs_reference` in `test_cuda_gradcheck.py` uses correlation > 0.5 which is even more permissive.
+2. ~~**Sign-match threshold of 0.70 for backward (HIGH).**~~ **FIXED in PR #53** -- tightened to 0.85 via `conftest.py`.
 
 3. **No backward pass test for 2D (MEDIUM).** `test_gradcheck_3d` only tests 3D. While `test_cuda_gradcheck.py` covers 2D, this file's class `TestCUDABackward` should have parity.
 
@@ -106,21 +121,20 @@ The GPU test suites are extensive and well-structured. The CUDA suite is signifi
 
 ### 5. `test_cuda_gradcheck.py` -- Gradient Correctness (Gold Standard)
 
-**Severity: HIGH**
+**Severity: MEDIUM** (downgraded from HIGH after PR #53 fixes)
 
 **Strengths:**
 - Explicitly labeled as "GOLD STANDARD" for gradient verification.
 - Tests edge cases: single splat, dense overlapping splats, boundary splats.
 - `test_multi_iteration_stability` catches accumulation drift over 20 iterations.
 - Tests both 2D and 3D via parametrize.
+- **[PR #53]** Now includes `TestTrueFiniteDifferenceGradcheck` using `torch.autograd.gradcheck` with per-parameter finite-difference verification.
 
 **Issues:**
 
-1. **Does NOT actually use `torch.autograd.gradcheck` (CRITICAL).** Despite the file name and docstring claiming "gradcheck uses finite differences to numerically verify analytical gradients", no test in this file calls `torch.autograd.gradcheck()`. The tests only verify: (a) gradients are finite, (b) sign consistency > 80%, (c) correlation > 0.5. This misses the entire purpose of gradcheck -- finite-difference verification of the Jacobian. This is the single most important missing test in the CUDA suite.
+1. ~~**Does NOT actually use `torch.autograd.gradcheck` (CRITICAL).**~~ **FIXED in PR #53** -- `TestTrueFiniteDifferenceGradcheck` class added with real `torch.autograd.gradcheck` calls.
 
-   **Recommendation:** Add a true `torch.autograd.gradcheck` test for the `CUDASplatFunction.apply()` with small N and small shape (e.g., N=3, shape=(8,8,8)). Use `eps=1e-3` and `atol=1e-2` to account for FP32 CUDA precision. If the custom autograd backward is correct, this should pass. If it doesn't pass, that's a real bug.
-
-2. **Correlation > 0.5 threshold is extremely loose (HIGH).** Line 159: `assert corr > 0.5`. A correlation of 0.5 means the CUDA and reference gradients explain only 25% of each other's variance. This would still pass with severely incorrect gradient computation. For parameter groups like `raw_a` (amplitude), correlation should be > 0.95. For `raw_mu` through the softplus chain, > 0.8 is reasonable.
+2. ~~**Correlation > 0.5 threshold is extremely loose (HIGH).**~~ **FIXED in PR #53** -- tightened from 0.5 to 0.80.
 
 3. **`test_multi_iteration_stability` only checks loss is changing, not decreasing (MEDIUM).** Line 265: `assert losses[0] != losses[-1]`. With `output.sum()` as the loss and SGD with lr=0.001, the loss should decrease (since all parameters contribute positively to the sum). Checking `losses[-1] < losses[0]` would be a stronger assertion. The current check would pass even if gradients are flipped and the loss increases.
 
@@ -397,23 +411,20 @@ Metal tests only cover 3D (by design -- the backend rejects non-3D input). CUDA 
 
 ## Summary of Findings by Severity
 
-### CRITICAL (1)
-| File | Issue |
-|------|-------|
-| `test_cuda_gradcheck.py` | File named "gradcheck" but never calls `torch.autograd.gradcheck` -- the most rigorous gradient verification is missing entirely |
+### CRITICAL (0 -- all resolved)
+| File | Issue | Status |
+|------|-------|--------|
+| ~~`test_cuda_gradcheck.py`~~ | ~~No `torch.autograd.gradcheck` call~~ | **FIXED in PR #53** |
 
-### HIGH (4)
+### HIGH (2 remaining)
 | File | Issue |
 |------|-------|
-| `test_cuda_backward.py` | Backward comparison only checks amplitude gradients; center and L gradients not compared |
-| `test_cuda_gradcheck.py` | Correlation > 0.5 threshold is far too loose for gradient correctness |
 | `test_cuda_nd.py` | No backward tests for 4D+ dimensions |
 | `test_metal_numerical.py` | `test_gradcheck_simple` silently skips on failure, masking potential bugs |
 
-### MEDIUM (16)
+### MEDIUM (14 remaining)
 | File | Issue |
 |------|-------|
-| `conftest.py` | `BACKWARD_SIGN_MATCH = 0.70` too permissive |
 | `conftest.py` | `COMPARISON_MAX_REL_DIFF = 0.15` too permissive for same-algorithm tests |
 | `test_cuda_forward.py` | GPU benchmark uses `time.time()` instead of CUDA events |
 | `test_cuda_forward.py` | Warning-only assertion for kernel activation check |
@@ -428,7 +439,6 @@ Metal tests only cover 3D (by design -- the backend rejects non-3D input). CUDA 
 | `test_cuda_numerical.py` | `TestGeneralizedGaussian` tests unimplemented sharpness parameter |
 | `test_cuda_fp16.py` | 50% median gradient tolerance for AMP is too loose |
 | `test_metal_numerical.py` | `test_gradcheck_simple` runs on CPU, not Metal |
-| `test_metal_performance.py` | No performance assertions for any configuration |
 
 ### LOW (15)
 Various cleanup items: dead code, missing minor test cases, loose tolerances, structural issues. See individual file sections above.
@@ -437,16 +447,28 @@ Various cleanup items: dead code, missing minor test cases, loose tolerances, st
 
 ## Recommended Priority Actions
 
-1. **Add true `torch.autograd.gradcheck` for `CUDASplatFunction`** (CRITICAL). Small N, small shape, relaxed tolerances for FP32 CUDA. This is the single most impactful improvement.
+1. **Add 4D+ backward tests** (HIGH). The generic nD backward path is untested against any reference. This is the highest-impact remaining gap.
 
-2. **Tighten backward gradient tolerances** (HIGH). `BACKWARD_SIGN_MATCH` from 0.70 to 0.85; gradcheck correlation from 0.5 to 0.8 for most parameters.
+2. **Fix Metal gradcheck** (HIGH). Either make it pass on MPS device or use `pytest.xfail` with issue tracker reference. Currently silently skipping masks real bugs.
 
-3. **Extend backward comparison to all gradient components** (HIGH). Compare center and L gradients, not just amplitudes.
+3. **Tighten AMP backward gradient tolerance** (MEDIUM/HIGH). 50% median tolerance in `test_cuda_fp16.py` likely masks a real precision problem in the AMP backward path. Investigate and fix or document.
 
-4. **Add 4D+ backward tests** (HIGH). The generic nD backward path is untested against any reference.
+4. **Add 5D/6D forward coverage** (MEDIUM). These dimensions use different tile sizes and exercise different code paths. Quick to add, catches dimension-specific bugs.
 
-5. **Fix Metal gradcheck** (HIGH). Either make it pass on MPS device or use `pytest.xfail` with issue tracker reference.
+5. **Use CUDA events for benchmarks** (MEDIUM). Replace `time.perf_counter()` with `torch.cuda.Event` for accurate GPU timing across `test_cuda_forward.py` and `test_cuda_performance.py`.
 
-6. **Add 5D/6D forward coverage** (MEDIUM). These dimensions use different tile sizes and exercise different code paths.
+---
 
-7. **Use CUDA events for benchmarks** (MEDIUM). Replace `time.perf_counter()` with `torch.cuda.Event` for accurate GPU timing.
+## Recommended Next Batch
+
+The top 5 remaining issues to fix next, ordered by impact:
+
+1. **Add 4D+ backward tests in `test_cuda_nd.py`** (HIGH). The generic nD backward path uses `torch.linalg.solve_triangular` which has different numerical characteristics than the explicit 2D/3D formulas. A single test comparing 4D backward output against PyTorch CPU reference would close this gap. Estimated effort: ~1 hour.
+
+2. **Fix Metal `test_gradcheck_simple` to either pass or `xfail`** (HIGH). Replace `pytest.skip` with `pytest.xfail(reason="...", strict=False)` and a ticket reference. Also change device from `"cpu"` to `"mps"` so it actually tests the Metal path. Estimated effort: ~30 minutes.
+
+3. **Investigate and tighten AMP backward tolerance in `test_cuda_fp16.py`** (MEDIUM/HIGH). Run the test with tighter tolerance (10%), analyze which gradient parameters diverge most, and either fix the AMP backward implementation or document the precision characteristics with per-parameter thresholds. Estimated effort: ~2 hours.
+
+4. **Add 5D and 6D forward-vs-PyTorch comparison in `test_cuda_nd.py`** (MEDIUM). Copy the existing 4D test pattern, parameterize over 5D and 6D. These exercise tile_size=3 paths not covered by 2D/3D/4D tests. Estimated effort: ~30 minutes.
+
+5. **Add backward comparison tests in `test_cuda_comparison.py`** (MEDIUM). The file thoroughly tests forward but has zero backward tests. Adding `test_backward_cuda_vs_pytorch_3d` using the same parametric pattern as the forward tests would complete the coverage matrix. Estimated effort: ~1 hour.
