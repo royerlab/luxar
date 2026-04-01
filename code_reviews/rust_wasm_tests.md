@@ -3,6 +3,13 @@
 **Date**: 2026-03-31
 **Reviewer**: Claude Opus 4.6 (1M context)
 **Scope**: All `#[cfg(test)]` modules in `packages/luxar-viewer/src/wasm/rust/src/`
+**Last Updated**: 2026-03-31
+
+---
+
+## Status
+
+**No fixes have been applied.** All 21 findings (1 CRITICAL reclassified to HIGH, 5 HIGH, 9 MEDIUM, 6 LOW) remain open. No commits have touched the WASM Rust source files since this review was created. The findings below are unchanged from the original review.
 
 ---
 
@@ -293,3 +300,39 @@ The following expected values in tests were manually verified:
 | `decode::test_decode_quantized_u8` | output[1] ~ 5.02 | 128/255 * 10 = 5.0196 |
 
 All mathematical expected values are **correct**.
+
+---
+
+## Recommended Next Batch
+
+The following 5 issues are recommended for the next fix cycle, ordered by impact (highest first):
+
+### 1. Add tests for batch functions in `lines_clipping.rs` [HIGH]
+
+**Findings**: `interpolate_clipped_positions`, `interpolate_scalars_batch`, `interpolate_colors_batch`, `calculate_segment_lengths`, `mark_clipped_endpoints` -- five exported batch functions with **zero test coverage**. These perform nD-to-3D interpolation, color/scalar lerping, and segment compaction. Off-by-one or stride errors here would silently corrupt rendered line geometry.
+
+**Effort**: Medium (requires constructing nD line data and verifying interpolated 3D output).
+
+### 2. Add anisotropic Cholesky tests for `gsplats.rs` [HIGH]
+
+**Finding**: Both existing `compute_nd_visibility_gsplats` tests use identity Cholesky factors. Real Gaussian splats are anisotropic. The `max_extent` extraction from non-diagonal Cholesky is completely untested, meaning a regression in extent computation would go undetected.
+
+**Effort**: Low (add one test with a known non-identity Cholesky, verify visibility boundary).
+
+### 3. Expand `spatial.rs` chunk query tests [HIGH]
+
+**Finding**: Only 2 tests exist for `query_chunks_for_view` -- a basic 3D case and an empty-input case. Missing: boundary intersection (touching edges), nD queries, and single-dimension rejection. This function gates which data chunks are loaded, so false negatives mean missing geometry and false positives mean wasted bandwidth.
+
+**Effort**: Low (add 3-4 small tests with crafted AABB configurations).
+
+### 4. Add nD tests for `lines.rs` visibility [HIGH]
+
+**Finding**: All 3 tests use 3D data only. The function operates in arbitrary nD. A 4D+ test (segments identical in XYZ but differing in a hidden dimension) would verify that nD visibility filtering actually works for the line geometry type.
+
+**Effort**: Low (add one 4D test case to existing test structure).
+
+### 5. Tighten assertion tolerances in `gsplats_processing.rs` [MEDIUM]
+
+**Finding**: `test_mahalanobis_with_marginal_cholesky` uses 10% relative tolerance (0.05 on a value of 0.5038), and `test_attenuation_with_correlated_cholesky` uses a 10% band (0.9-1.0 for expected ~0.970). These are deterministic math operations -- tolerances should be 1e-3 or tighter to catch numerical regressions.
+
+**Effort**: Trivial (change two assertion constants).

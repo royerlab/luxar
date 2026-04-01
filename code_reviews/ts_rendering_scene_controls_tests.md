@@ -2,8 +2,15 @@
 
 **Reviewer**: Claude Opus 4.6 (1M context)
 **Date**: 2026-03-31
+**Last updated**: 2026-03-31
 **Scope**: 27 test files across 4 directories
 **Severity Scale**: CRITICAL > HIGH > MEDIUM > LOW > INFO
+
+---
+
+## Status
+
+**No issues from this report have been fixed.** The commit `b810799` ("fix critical test suite issues from comprehensive review") addressed findings from other review reports (E2E, data unit tests, CUDA, Python) but did not touch any of the 27 test files covered here. All 29 findings (1 CRITICAL, 6 HIGH, 10 MEDIUM, 8 LOW, 4 INFO) remain open.
 
 ---
 
@@ -284,3 +291,29 @@ Several tests hardcode config values (idle timeout = 2000ms, max FPS = 120) rath
 4. **HIGH**: Review the THREE.js ShaderMaterial mock's clone behavior in material tests to ensure clone tests are not just testing mock logic.
 
 5. **MEDIUM**: Replace tautological "physics model validation" tests in `detector-noise-effect.test.ts` with tests that actually verify physics relationships (e.g., that higher gain produces more visible noise in the shader output).
+
+---
+
+## Recommended Next Batch
+
+The following 5 issues are the highest-impact fixes remaining, ordered by a combination of severity and ease of fix:
+
+1. **CRITICAL -- HDR export error-recovery test is misleading** (Section 1.10)
+   File: `post-processing-hdr-export.test.ts`
+   The test claims to verify effect restoration after render failure but does not assert it. Either add `expect(mockToneMappingEffect.enabled).toBe(true)` after the error path, or remove/rename the test so it does not give false confidence. This is the only CRITICAL finding in the report.
+
+2. **HIGH -- Vacuous assertions in postprocessing-manager** (Section 1.11, Cross-Cutting Issue B)
+   File: `postprocessing-manager.test.ts`
+   At least 6 tests (`updateBloomSettings`, `updateSMAASettings`, `updateDOF`, `updateChromaticLensDistortion`, etc.) end with `expect(manager).toBeDefined()` which always passes. Replace with assertions on the actual effect state (e.g., verify bloom strength was applied, DOF focus distance changed). Alternatively, rename to "should not throw" if that is the only intent.
+
+3. **HIGH -- THREE.js ShaderMaterial mock clone tests** (Sections 1.5, 1.6, Cross-Cutting Issue A)
+   Files: `gsplat-material.test.ts`, `line-material.test.ts`
+   The `clone()` tests verify mock clone behavior (shallow spread), not real THREE.js clone semantics. Either use the real `ShaderMaterial` for clone tests, or add an explicit comment that clone correctness is deferred to integration/E2E tests. The shader-content tests in these files are fine as-is.
+
+4. **MEDIUM -- Duplicate input validation tests** (Sections 3.3, 4.1, Cross-Cutting Issue C)
+   Files: `input-validation.test.ts`, `input-handler.test.ts`
+   Both test the same three functions (`isNavigationKey`, `calculateFovChange`, `shouldBlockShortcut`) from the same module. Remove `input-validation.test.ts` (the less comprehensive copy) and keep the tests in `input-handler.test.ts`.
+
+5. **MEDIUM -- Tautological physics model tests** (Section 1.3)
+   File: `detector-noise-effect.test.ts`
+   The "physics model validation" tests (lines 173-222) set a property and assert it reads back the same value. Replace with tests that verify actual physical relationships, e.g., that the combined noise variance is monotonically increasing with `photonGain`, or that the shader uniforms reflect the expected noise model parameters.

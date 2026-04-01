@@ -644,7 +644,7 @@ mod tests {
         // Or via forward substitution: y[0] = 1/2 = 0.5, y[1] = (0 - 0.5*0.5) / 4.031 ≈ -0.0621
         // ||y|| = sqrt(0.25 + 0.00386) ≈ 0.5038
         assert!(
-            (dist - 0.5).abs() < 0.05,
+            (dist - 0.5).abs() < 0.005,
             "Mahalanobis distance should be ~0.5, got {}",
             dist
         );
