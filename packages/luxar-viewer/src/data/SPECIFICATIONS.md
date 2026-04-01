@@ -1719,7 +1719,7 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Key Exports**: `SceneLoader`
 
-**Relationships**: Uses `LoaderOrchestrator` for loader creation, `GeometryUpdateManager` for GPU buffer management, `SceneGraphBuilder` for zarr metadata parsing, `ViewStateManager` for view state initialization, and `DataMonitorManager` for monitoring.
+**Relationships**: Uses `GeometryUpdateManager` for GPU buffer management, `SceneGraphBuilder` for zarr metadata parsing, `ViewStateManager` for view state initialization, and `DataMonitorManager` for monitoring.
 
 #### `scene-loader-manager.ts`
 
@@ -1728,14 +1728,6 @@ This section documents all TypeScript source files in the `data/` package with t
 **Key Exports**: `SceneLoaderManager`, `getSceneLoader()`
 
 **Relationships**: Wraps `SceneLoader`; provides centralized access for `zarr-loader.ts` and UI components.
-
-#### `loader-orchestrator.ts`
-
-**Purpose**: Manages creation, storage, and lifecycle of data loaders for Points, Lines, and GSplats nodes. Extracted from `SceneLoader` to reduce its complexity.
-
-**Key Exports**: `LoaderOrchestrator`, `FailedLoaderInfo`, `OrchestratorConfig`
-
-**Relationships**: Creates `PointSpatialIndexLoader`, `LinesSpatialIndexLoader`, and `GSplatsSpatialIndexLoader` instances. Tracks failed loaders for error recovery and aggregates accumulator statistics.
 
 #### `scene-graph-builder.ts`
 

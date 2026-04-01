@@ -24,7 +24,7 @@ This document describes the implementation plan for adding Gaussian Splat (gspla
 > - Verified ArrayDecoder compatibility (no changes needed)
 >
 > **Third Review - Mathematical Precision:**
-> - Fixed c(s) values at line 244 (was "c ≈ 61", now correct truncated values)
+> - Fixed c(s) values (was "c ≈ 61", now correct truncated values)
 > - **Added nD slicing limitation note**: Factored attenuation formula is only exact for s=2
 > - Documented zarr path mismatch between standalone `.gsplats.zarr` and scene-embedded format
 > - Verified shader math (Jacobian, covariance projection, eigenvalues) - all correct
@@ -35,7 +35,7 @@ This document describes the implementation plan for adding Gaussian Splat (gspla
 > - Verified all formulas, code examples, and cross-references are consistent
 >
 > **Phase 0 Implementation Complete:**
-> - ✅ Added `"type": "gsplats"` to `save_gsplats.py` (line 185) with test verification
+> - ✅ Added `"type": "gsplats"` to `splats_attrs` in `save_gsplats.py` with test verification
 > - ✅ Zarr path: Viewer only supports scene format (`luxar_zarr`), not standalone `.gsplats.zarr`
 > - ✅ Deferred truncate field (viewer defaults to 3.0)
 
@@ -1098,7 +1098,7 @@ From `array-decoder.ts`:
 
 ### Phase 0: Python Side Prerequisites ✅
 - [x] **CRITICAL**: Add `"type": "gsplats"` to `save_gsplats.py` metadata (required for SceneLoader)
-  - **DONE** (December 2024): Added `"type": "gsplats"` to splats_attrs in save_gsplats.py line 185
+  - **DONE** (December 2024): Added `"type": "gsplats"` to `splats_attrs` in `save_gsplats.py`
   - Test added to verify attribute is set in test_save_load.py
 - [x] **Zarr path structure**: No changes needed.
   - Viewer only supports scene format (`format_type: 'luxar_zarr'`) with arrays at `/{node_name}/`
@@ -1151,11 +1151,11 @@ From `array-decoder.ts`:
   - Spatial index queries for efficient chunk-based loading
   - `extend_to_all` support for dimension extension
 - [x] Integrate into SceneLoader (`data/scene-loader.ts`)
-  - `loadGSplats()` (line 900), `createGSplatsLoader()` (line 1002)
-  - `updateGSplatsGeometry()` (line 539), gsplatsUpdates in updateView() (line 365)
-  - Proper dispose() handling (line 1589), scene graph integration (line 1476)
+  - `loadGSplats()`, `createGSplatsLoader()`
+  - `updateGSplatsGeometry()`, gsplatsUpdates in `updateView()`
+  - Proper `dispose()` handling, scene graph integration
 - [x] Scene Manager integration (`scene/scene-manager.ts`)
-  - Added gsplats to bounding box calculation (line 596-601)
+  - Added gsplats to bounding box calculation in `scene-manager.ts`
 - [x] Data Monitor integration (3 files updated)
   - Scene graph display with 🔮 icon and counts
   - Overview tab metrics for visible splats
@@ -1163,22 +1163,22 @@ From `array-decoder.ts`:
 
 #### Critical Bug Fixes (December 2024):
 **TypeScript Bugs (7 fixed):**
-1. Broadcasted array indexing - direct (gsplats-spatial-index-loader.ts:319)
-2. Broadcasted array indexing - array_ref target (gsplats-spatial-index-loader.ts:469)
-3. Array_ref direct indexing (gsplats-spatial-index-loader.ts:488)
-4. Center/Cholesky dimension order mismatch (gsplats-processor.ts:194)
+1. Broadcasted array indexing - direct (gsplats-spatial-index-loader.ts)
+2. Broadcasted array indexing - array_ref target (gsplats-spatial-index-loader.ts)
+3. Array_ref direct indexing (gsplats-spatial-index-loader.ts)
+4. Center/Cholesky dimension order mismatch (gsplats-processor.ts)
 5. Test type errors (gsplats-chunk-spatial-index.test.ts)
-6. Test wrong expectations (gsplats-processor.test.ts:275)
-7. Shader uniform redefinition (gsplat-material.ts:99-100)
+6. Test wrong expectations (gsplats-processor.test.ts)
+7. Shader uniform redefinition (gsplat-material.ts)
 
 **Python Bugs (4 fixed):**
-8. Missing `ndim` in group.attrs (compiler.py:1025)
-9. Missing `has_colors` in attrs (compiler.py:1026-1027)
-11. Missing `ordering`, `chunk_size` in attrs (compiler.py:1031, 1047)
+8. Missing `ndim` in group.attrs (compiler.py)
+9. Missing `has_colors` in attrs (compiler.py)
+11. Missing `ordering`, `chunk_size` in attrs (compiler.py)
 
 **Integration Bugs (4 fixed):**
-12. GSplats excluded from scene bounding box (scene-manager.ts:601)
-13. GSplats not in scene-level position_bounds (compiler.py:1051)
+12. GSplats excluded from scene bounding box (scene-manager.ts)
+13. GSplats not in scene-level position_bounds (compiler.py)
 14. Data monitor missing gsplats display (data-monitor-templates.ts)
 15. Data monitor missing gsplats metrics (data-monitor-types.ts, data-loading-monitor.ts)
 
@@ -1204,7 +1204,7 @@ From `array-decoder.ts`:
 
 #### Known Issues:
 - **Amplitude Calibration**: Formula `a * σ_ray * c(s)` is ~10x too bright empirically
-  - Workaround: User scales intensity by 0.1x in demo (line 467)
+  - Workaround: User scales intensity by 0.1x in demo
   - Theory vs Practice: Mathematical formula correct, but mismatch with Python fitting calibration
   - Solution: Divide by 10.0 in shader or adjust Python fitting normalization
   - **NOT a math error** - all formulas verified correct, just needs empirical tuning
@@ -1294,10 +1294,10 @@ against the existing viewer architecture.
 
 **~~CRITICAL~~**: ~~The Python `save_gsplats.py` does NOT set `type: 'gsplats'` in the metadata~~
 
-**RESOLVED** (December 2024): Added `"type": "gsplats"` to `save_gsplats.py` line 185:
+**RESOLVED** (December 2024): Added `"type": "gsplats"` to `splats_attrs` in `save_gsplats.py`:
 
 ```python
-# Fixed save_gsplats.py (line 184-195):
+# Fixed save_gsplats.py (splats_attrs dict):
 splats_attrs = {
     "type": "gsplats",  # Required for SceneLoader node type identification
     "n_splats": n_splats,
@@ -1307,7 +1307,7 @@ splats_attrs = {
 }
 ```
 
-Test verification added to `test_save_load.py` line 62:
+Test verification added to `test_save_load.py`:
 ```python
 assert splats_group.attrs["type"] == "gsplats"  # Required for SceneLoader
 ```

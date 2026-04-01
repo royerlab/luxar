@@ -28,7 +28,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
 
     // Switch to fly mode
     await page.keyboard.press('v');
-    await page.keyboard.press('v'); // orbit → arcball → fly
+    await page.keyboard.press('v'); // orbit → fly → ortho
     await waitForNextRender(page);
 
     // Get initial camera position

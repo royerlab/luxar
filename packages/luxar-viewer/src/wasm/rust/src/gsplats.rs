@@ -21,12 +21,12 @@ use wasm_bindgen::prelude::*;
 ///
 /// # Algorithm
 /// For each splat:
-/// 1. Extract maximum ellipsoid extent from Cholesky diagonal elements
+/// 1. Extract maximum ellipsoid extent from Cholesky row norms
 /// 2. Check if center +/- max extent intersects the slice
-/// 3. Uses an optimistic estimate (max diagonal of L underestimates the true
-///    ellipsoid extent for correlated covariances). This is acceptable as a
-///    pre-filter since precise attenuation is computed later by
-///    `compute_gsplats_attenuation`.
+/// 3. Row norm of row i = sqrt(sum_j L[i,j]^2) gives the marginal standard
+///    deviation along axis i, which is the correct extent for correlated
+///    covariances. The max row norm is used as a conservative pre-filter;
+///    precise attenuation is computed later by `compute_gsplats_attenuation`.
 #[wasm_bindgen]
 pub fn compute_nd_visibility_gsplats(
     centers: &[f32],
@@ -44,16 +44,20 @@ pub fn compute_nd_visibility_gsplats(
         let center_offset = splat_idx * ndim;
         let cholesky_offset = splat_idx * cholesky_size;
 
-        // Compute maximum ellipsoid extent from Cholesky factors
-        // Diagonal elements of L give axis scales (L is lower triangular)
-        // OPTIMIZATION: Use direct formula instead of accumulating chol_idx
+        // Compute maximum ellipsoid extent from Cholesky row norms.
+        // Row norm of row i = sqrt(sum_j L[i,j]^2) gives the marginal
+        // standard deviation along axis i (correct for correlated covariances).
         let mut max_extent = 0.0_f32;
 
         for dim in 0..ndim {
-            // Diagonal element L[dim,dim] is at packed position: dim*(dim+1)/2 + dim = dim*(dim+3)/2
-            let diag_pos = cholesky_offset + (dim * (dim + 3)) / 2;
-            let scale = cholesky_factors[diag_pos].abs();
-            max_extent = max_extent.max(scale);
+            // Row `dim` has elements at packed positions dim*(dim+1)/2 + col for col in 0..=dim
+            let row_start = cholesky_offset + dim * (dim + 1) / 2;
+            let mut row_norm_sq = 0.0_f32;
+            for col in 0..=dim {
+                let val = cholesky_factors[row_start + col];
+                row_norm_sq += val * val;
+            }
+            max_extent = max_extent.max(row_norm_sq.sqrt());
         }
 
         // Check if center + max extent is within tolerance

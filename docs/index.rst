@@ -1,7 +1,7 @@
 Luxar Documentation
 ===================
 
-Welcome to Luxar's documentation! Luxar is a high-performance system for compiling and visualizing arbitrary-sized n-dimensional scenes containing points, lines, surfaces, volumes, and more. Luxar delivers visualization performance limited only by your graphics card, display resolution, and network bandwidth—not by software constraints.
+Welcome to Luxar's documentation! Luxar is a high-performance system for compiling and visualizing arbitrary-sized n-dimensional scenes containing points, lines, and Gaussian splats. Luxar delivers visualization performance limited only by your graphics card, display resolution, and network bandwidth—not by software constraints.
 
 .. toctree::
    :maxdepth: 2
@@ -14,7 +14,6 @@ Welcome to Luxar's documentation! Luxar is a high-performance system for compili
    :caption: Tutorials:
 
    tutorials/index
-   tutorials/basic_scene
 
 .. toctree::
    :maxdepth: 2

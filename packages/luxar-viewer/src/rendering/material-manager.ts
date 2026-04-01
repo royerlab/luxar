@@ -339,13 +339,15 @@ export class MaterialManager {
    * Dispose all cached materials
    */
   dispose(): void {
-    this.registeredMaterials.forEach((material) => {
-      material.dispose();
-    });
+    // Snapshot and clear first so unregister() calls during dispose are no-ops
+    const materials = [...this.registeredMaterials];
+    this.registeredMaterials.clear();
     this.pointMaterialCache.clear();
     this.lineMaterialCache.clear();
     this.gsplatMaterialCache.clear();
-    this.registeredMaterials.clear();
+    for (const material of materials) {
+      material.dispose();
+    }
   }
 
   /**

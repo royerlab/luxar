@@ -104,8 +104,6 @@ Step 4: Create Scene and Write Data
            positions=positions,
            colors=colors,
            radii=2.0,  # Scalar! Broadcasted to all points automatically
-           opacity=0.8,
-           blending_mode="additive"  # Beautiful overlapping points
        )
 
 **Encoding Mode Explanation**:

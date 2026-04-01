@@ -303,15 +303,15 @@ Always available regardless of context:
 
 #### Navigation Keys
 
-| Key | Action                                 |
-| --- | -------------------------------------- |
-| `F` | Recenter/focus camera on scene         |
-| `V` | Toggle between Orbit/Arcball/Fly modes |
-| `N` | Toggle dimension sliders               |
-| `O` | Open dataset browser                   |
-| `P` | Toggle performance stats               |
-| `R` | Toggle rendering controls              |
-| `C` | Toggle cinematic mode                  |
+| Key | Action                                              |
+| --- | --------------------------------------------------- |
+| `F` | Recenter/focus camera on scene                      |
+| `V` | Cycle control modes: Orbit -> Fly -> Ortho -> Orbit |
+| `N` | Toggle dimension sliders                            |
+| `O` | Open dataset browser                                |
+| `P` | Toggle performance stats                            |
+| `R` | Toggle rendering controls                           |
+| `C` | Toggle cinematic mode                               |
 
 #### Fly Mode
 
@@ -347,23 +347,22 @@ The system automatically detects when users are typing:
 ```typescript
 private isTypingInInput(): boolean {
   const activeElement = document.activeElement;
-
   if (!activeElement) return false;
 
-  // Check if focused element accepts text input
-  const isTextInput =
-    activeElement.tagName === 'INPUT' ||
-    activeElement.tagName === 'TEXTAREA' ||
-    activeElement.contentEditable === 'true';
-
-  // Check for specific input types
-  if (activeElement.tagName === 'INPUT') {
-    const type = (activeElement as HTMLInputElement).type;
-    const textTypes = ['text', 'search', 'url', 'email', 'password'];
-    return textTypes.includes(type);
+  const tagName = activeElement.tagName.toLowerCase();
+  // Exclude non-text input types (range sliders, checkboxes, radios)
+  if (tagName === 'input') {
+    const inputType = (activeElement as HTMLInputElement).type?.toLowerCase();
+    if (inputType === 'range' || inputType === 'checkbox' || inputType === 'radio') {
+      return false;
+    }
+    return true;
   }
-
-  return isTextInput;
+  return (
+    tagName === 'textarea' ||
+    tagName === 'select' ||
+    activeElement.getAttribute('contenteditable') === 'true'
+  );
 }
 ```
 

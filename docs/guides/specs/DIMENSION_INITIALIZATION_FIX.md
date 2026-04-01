@@ -58,7 +58,7 @@ The viewer uses a centralized dimension management system with three key compone
 
 ### Timeline of Bug
 
-**Initialization Sequence** (`packages/luxar-viewer/src/input/input-handler.ts:148-190`):
+**Initialization Sequence** (see `InputHandler` constructor in `packages/luxar-viewer/src/input/input-handler.ts`):
 
 1. **Scene data loads** → Data loaders initialize (likely at default position [0,0,0,0])
 2. **`sceneDimsManager.initFromScene()` called** → Initializes dimension state
@@ -66,7 +66,7 @@ The viewer uses a centralized dimension management system with three key compone
 4. **`DimensionSliders` constructor called** → Reads `currentStep[]` values
 5. **Sliders display** → Show position based on `currentStep[]`
 
-**The Bug** (`packages/luxar-viewer/src/scene/scene-dims-manager.ts:157`):
+**The Bug** (see `initFromScene()` in `packages/luxar-viewer/src/scene/scene-dims-manager.ts`):
 
 ```typescript
 // After setting up this.dims with currentStep values...
@@ -89,23 +89,23 @@ return true;
 ### Supporting Evidence
 
 **File**: `packages/luxar-viewer/src/scene/scene-dims-manager.ts`
-- **Line 65-158**: `initFromScene()` method sets `currentStep[]` but never notifies
-- **Line 221**: Only place `notifyListeners()` is called (in `setDimensionValue()`)
-- **Line 233-235**: Listeners registered for updates (slider update, data re-slice)
+- `initFromScene()` method sets `currentStep[]` but never notifies
+- `notifyListeners()` is only called from `setDimensionValue()`
+- Listeners registered for updates (slider update, data re-slice)
 
 **File**: `packages/luxar-viewer/src/ui/dimension-sliders.ts`
-- **Line 294-302**: Slider correctly reads `dims.currentStep[dimIndex]` on construction
-- **Line 463-485**: `update()` method called by listener to sync visuals
+- Slider correctly reads `dims.currentStep[dimIndex]` on construction
+- `update()` method called by listener to sync visuals
 
 **File**: `packages/luxar-viewer/src/input/input-handler.ts`
-- **Line 182-189**: Listener registered AFTER slider construction
+- Listener registered AFTER slider construction
 - Expects `notifyListeners()` to trigger initial data load at correct position
 
 ---
 
 ## Current Behavior
 
-### Initialization Logic (scene-dims-manager.ts:119-139)
+### Initialization Logic (see `initFromScene()` in scene-dims-manager.ts)
 
 ```typescript
 // Step 6: Initialize dimension positions
@@ -267,7 +267,7 @@ return true;
 
 ### Updated Comment Block
 
-Update the comment at line 118-120 to reflect new policy:
+Update the dimension position initialization comment in `initFromScene()` to reflect new policy:
 
 **Before**:
 ```typescript
@@ -499,4 +499,4 @@ After deployment, verify with real users:
 **Document Version**: 1.0
 **Last Updated**: 2025-12-11
 **Author**: Claude (with user specification)
-**Status**: ✅ Ready for Implementation
+**Status**: ✅ IMPLEMENTED

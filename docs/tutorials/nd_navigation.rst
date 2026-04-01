@@ -74,7 +74,7 @@ Example: Time-Series Cell Tracking
        Dimension("X", unit="um", spatial=True, display=True),
        Dimension("Y", unit="um", spatial=True, display=True),
        Dimension("Z", unit="um", spatial=True, display=True),
-       Dimension("Time", unit="seconds", discrete=True, display=False, step=0.1),
+       Dimension("Time", discrete=True, display=False, step=0.1),
    ])
 
    # Create cell trajectories

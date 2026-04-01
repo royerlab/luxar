@@ -633,7 +633,8 @@ describe('RecordingPanel', () => {
 
       expect(mockAnimController.addPerFrameCallback).toHaveBeenCalledWith(
         'recording-turntable',
-        expect.any(Function)
+        expect.any(Function),
+        { continuous: true }
       );
     });
   });

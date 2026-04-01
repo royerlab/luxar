@@ -68,7 +68,6 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
   private initPromise: Promise<void> | null = null;
-  private initLock = false;
   private arrays: {
     positions?: zarr.Array<zarr.DataType, zarr.Readable>;
     colors?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -373,18 +372,14 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const queryId = `${this.node.path}-${startTime}`;
 
     try {
-      // Prevent race conditions during initialization with atomic check-and-set
-      if (!this.initPromise && !this.initLock) {
-        this.initLock = true;
-        this.initPromise = this.initialize().finally(() => {
-          this.initLock = false;
+      // Prevent race conditions during initialization; null on rejection allows retry
+      if (!this.initPromise) {
+        this.initPromise = this.initialize().catch((err) => {
+          this.initPromise = null; // Allow retry on next call
+          throw err;
         });
       }
-
-      // Wait for initialization to complete
-      if (this.initPromise) {
-        await this.initPromise;
-      }
+      await this.initPromise;
 
       // Check if loader is properly initialized (chunk index OR fallback with total points count)
       if (!this.chunkIndex && this.totalPointsNoIndex === 0) {
@@ -513,7 +508,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         this._accumulator.ensureCapacity(totalPoints);
 
         // Initialize types if not already done
-        if (!this._accumulator['types']) {
+        if (!this._accumulator.hasTypes()) {
           this._accumulator.fill(0, {
             positions: new Float32Array(3),
             colors: colors
@@ -530,10 +525,10 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
         // Get references to accumulator buffers (ZERO allocations!)
         targetBuffers = {
-          positions3D: this._accumulator['positionBuffer'] as Float32Array,
-          colors: this._accumulator['colorBuffer'] as ColorArray,
-          radii: this._accumulator['radiiBuffer'] as ScalarArray,
-          sharpness: this._accumulator['sharpnessBuffer'] as ScalarArray,
+          positions3D: this._accumulator.getPositionBuffer(),
+          colors: this._accumulator.getColorBuffer() as ColorArray,
+          radii: this._accumulator.getRadiiBuffer() as ScalarArray,
+          sharpness: this._accumulator.getSharpnessBuffer() as ScalarArray,
         };
 
         // Copy source colors/sharpness to accumulator buffers (needed for filtering later)

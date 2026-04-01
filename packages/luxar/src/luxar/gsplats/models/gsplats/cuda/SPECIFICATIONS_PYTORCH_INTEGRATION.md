@@ -2,7 +2,7 @@
 
 **Version**: 0.1.0
 **Status**: Implementation Complete
-**Last Updated**: 2026-01-10
+**Last Updated**: 2026-03-31
 
 > **Note**: This is Part 2 of the CUDA Backend Specification (PyTorch Integration & Implementation).
 > See also:
@@ -44,167 +44,126 @@
 ```
 cuda/
 ├── src/
-│   ├── cuda_splatting.cu      # CUDA kernels
-│   ├── cuda_splatting.h       # Header declarations
-│   ├── bindings.cpp           # pybind11 bindings
-│   └── utils.cuh              # Device utilities
-├── gsplat_model_cuda.py       # Python model class
+│   ├── cuda_splatting.cu      # Dispatch layer: forward/backward entry points,
+│   │                          #   template instantiations, input validation
+│   ├── cuda_splatting.h       # Public API: forward(), backward(), BinningState,
+│   │                          #   forward_fp16(), backward_fp16()
+│   ├── bindings.cpp           # pybind11 bindings: forward_wrapper(), backward_wrapper()
+│   ├── kernels_core.cuh       # Core kernels: preprocess, bin, rasterize fwd/bwd (tile-based),
+│   │                          #   rasterize_forward_splat_centric_kernel,
+│   │                          #   rasterize_backward_splat_centric_kernel
+│   ├── kernels_global.cuh     # Global splat kernels (pixel-parallel, for legacy path)
+│   ├── kernel_launchers.cuh   # Launch wrappers for all kernels (grid/block config)
+│   ├── utils.cuh              # Umbrella header (includes all sub-headers below)
+│   ├── math_utils.cuh         # Mahalanobis distance, Gaussian intensity, shift params
+│   ├── tile_utils.cuh         # AABB struct, tile indexing, grid optimization
+│   ├── reduction_utils.cuh    # Warp reduction, gradient helpers, 2D/3D backward specializations
+│   └── dtype_traits.cuh       # DTypeTraits for FP16/FP32 load abstraction
+├── gsplat_model_cuda.py       # Python model class (GaussianSplatModelCUDA)
 ├── build.py                   # Build script (uses torch.utils.cpp_extension)
 ├── setup.py                   # Legacy setuptools config (optional)
+├── benchmark.py               # Performance benchmarks
 ├── __init__.py
 ├── tests/
 │   ├── conftest.py            # Pytest fixtures and configuration
-│   ├── test_cuda_backend.py
-│   ├── test_cuda_numerical.py
-│   ├── test_cuda_performance.py
-│   ├── test_cuda_vs_reference.py  # Comparison with PyTorch reference
-│   └── test_cuda_integration.py   # Full pipeline integration tests
-├── SPECIFICATIONS.md          # This file
+│   ├── test_cuda_forward.py   # Forward pass correctness tests
+│   ├── test_cuda_backward.py  # Backward pass correctness tests
+│   ├── test_cuda_gradcheck.py # Gradient correctness (autograd comparison)
+│   ├── test_cuda_numerical.py # Numerical precision tests
+│   ├── test_cuda_comparison.py # CUDA vs PyTorch reference comparison
+│   ├── test_cuda_model.py     # Full model integration tests
+│   ├── test_cuda_nd.py        # nD (4D-8D) tests
+│   ├── test_cuda_fp16.py      # FP16 mode tests
+│   ├── test_cuda_performance.py # Performance benchmarks
+│   └── test_cuda_review_fixes.py # Regression tests for specific bug fixes
+├── SPECIFICATIONS.md                    # Core algorithms spec
+├── SPECIFICATIONS_PYTORCH_INTEGRATION.md  # This file
+├── SPECIFICATIONS_TESTING.md            # Testing strategy spec
+├── OPTIMIZATION_REPORT.md               # Tile-based → splat-centric transition
+├── OPTIMIZATION_ROADMAP.md              # Future optimization plans
 └── README.md
 ```
 
-### 8.2 Backend Protocol (for Testability)
+### 8.2 Backend Protocol (Actual Signatures)
 
-To enable testing without a real CUDA backend (e.g., in CI without GPU, or for mock-based unit tests),
-define a protocol that both the real backend and mock implementations can satisfy:
+The actual C++ bindings are defined in `forward_wrapper()` and `backward_wrapper()`
+in `bindings.cpp`. These are the Python-facing signatures exposed as
+`cuda_splatting_backend.forward()` and `cuda_splatting_backend.backward()`.
+
+**Forward signature** (see `forward_wrapper()` in `bindings.cpp`):
 
 ```python
-from typing import Protocol, Tuple, runtime_checkable
-import torch
-from torch import Tensor
-
-
-@runtime_checkable
-class SplattingBackend(Protocol):
+def forward(
+    centers: Tensor,         # (N, d) float32 - splat centers in voxel coords
+    conic: Tensor,           # (N, d*(d+1)/2) float32 - packed upper-tri inverse covariance
+    amps: Tensor,            # (N,) float32 - amplitudes
+    L_row_norms: Tensor,     # (N, d) float32 - per-axis std dev from Cholesky row norms
+    shape: list[int],        # target volume shape (d elements)
+    truncate: float,         # base truncation radius in std devs
+    intensity_floor: float,  # minimum intensity threshold for culling
+    tile_size: int,          # tile size for spatial binning (legacy, still required)
+    batch_size: int = 128,   # shared memory batch size (32, 128, or 256; legacy)
+    use_fp16: bool = False,  # use FP16 precision for inputs
+    output_buffer: Optional[Tensor] = None,  # pre-zeroed buffer to reuse
+) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
     """
-    Protocol for splatting backends.
-
-    Implementations:
-    - cuda_splatting_backend: Real CUDA kernels (production)
-    - MockSplattingBackend: For testing Python logic without GPU
-    - PurePythonBackend: Reference implementation for validation
+    Returns 7-tuple:
+        output:           (prod(shape),) float32 - rendered volume (flattened)
+        tile_counts:      (num_tiles,) int32 - splats per tile (diagnostic)
+        tile_offsets:     (num_tiles,) int64 - exclusive prefix sum (diagnostic)
+        tile_content:     (0,) int32 - empty (tile binning eliminated)
+        global_splat_ids: (num_global,) int32 - global splat IDs
+        shape_tensor:     (d,) int32 - volume shape on device (for backward reuse)
+        tile_dims_tensor: (d,) int32 - tile dims on device (for backward reuse)
     """
-
-    def forward(
-        self,
-        centers: Tensor,
-        conic: Tensor,
-        amps: Tensor,
-        sharpness: Tensor,
-        shape: list[int],
-        truncate: float,
-        intensity_floor: float,
-        tile_size: int,
-    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-        """
-        Forward pass.
-
-        Returns:
-            output: (prod(shape),) rendered intensity
-            tile_counts: (num_tiles,) splats per tile
-            tile_offsets: (num_tiles,) prefix sum of counts
-            tile_content: (total_pairs,) splat IDs per tile
-        """
-        ...
-
-    def backward(
-        self,
-        grad_output: Tensor,
-        centers: Tensor,
-        conic: Tensor,
-        amps: Tensor,
-        sharpness: Tensor,
-        tile_offsets: Tensor,
-        tile_counts: Tensor,
-        tile_content: Tensor,
-        shape: list[int],
-        truncate: float,
-        intensity_floor: float,
-        tile_size: int,
-    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-        """
-        Backward pass.
-
-        Returns:
-            d_centers: (N, DIM) center gradients
-            d_conic: (N, conic_size) conic gradients
-            d_amps: (N,) amplitude gradients
-            d_sharpness: (N,) sharpness gradients
-        """
-        ...
-
-
-class MockSplattingBackend:
-    """
-    Mock backend for testing Python-level logic without GPU.
-
-    Returns tensors with correct shapes but arbitrary values.
-    Useful for testing:
-    - Input validation
-    - Shape propagation
-    - Error handling paths
-    - Python-level integration
-    """
-
-    def forward(
-        self,
-        centers: Tensor,
-        conic: Tensor,
-        amps: Tensor,
-        sharpness: Tensor,
-        shape: list[int],
-        truncate: float,
-        intensity_floor: float,
-        tile_size: int,
-    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-        import math
-        device = centers.device
-        N = centers.shape[0]
-        DIM = centers.shape[1]
-
-        # Output
-        output = torch.zeros(math.prod(shape), device=device)
-
-        # Tile metadata (approximate)
-        num_tiles = math.prod((s + tile_size - 1) // tile_size for s in shape)
-        tile_counts = torch.ones(num_tiles, device=device, dtype=torch.int32)
-        tile_offsets = torch.arange(num_tiles, device=device, dtype=torch.int64)
-        tile_content = torch.zeros(num_tiles, device=device, dtype=torch.int32)
-
-        return output, tile_counts, tile_offsets, tile_content
-
-    def backward(self, *args, **kwargs) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-        # Return zero gradients with correct shapes
-        centers = args[1]
-        conic = args[2]
-        amps = args[3]
-        sharpness = args[4]
-
-        return (
-            torch.zeros_like(centers),
-            torch.zeros_like(conic),
-            torch.zeros_like(amps),
-            torch.zeros_like(sharpness),
-        )
-
-
-# Usage in GaussianSplatModelCUDA for dependency injection:
-class GaussianSplatModelCUDA(torch.nn.Module):
-    def __init__(
-        self,
-        shape: Tuple[int, ...],
-        # ... other params ...
-        backend: SplattingBackend = None,  # Allow injection for testing
-    ):
-        super().__init__()
-        # Use injected backend or default to real CUDA backend
-        if backend is not None:
-            self._backend = backend
-        else:
-            import cuda_splatting_backend
-            self._backend = cuda_splatting_backend
-        # ... rest of init ...
 ```
+
+**Backward signature** (see `backward_wrapper()` in `bindings.cpp`):
+
+```python
+def backward(
+    grad_output: Tensor,             # (prod(shape),) float32 - upstream gradient
+    centers: Tensor,                 # (N, d) float32 - from forward
+    conic: Tensor,                   # (N, d*(d+1)/2) float32 - from forward
+    amps: Tensor,                    # (N,) float32 - from forward
+    tile_offsets: Tensor,            # from forward (unused by splat-centric path)
+    tile_counts: Tensor,             # from forward (unused by splat-centric path)
+    tile_content: Tensor,            # from forward (unused by splat-centric path)
+    global_splat_ids: Tensor,        # from forward (unused by splat-centric path)
+    shape: list[int],                # target volume shape
+    truncate: float,                 # base truncation radius
+    intensity_floor: float,          # minimum intensity threshold
+    tile_size: int,                  # tile size (legacy)
+    batch_size: int = 128,           # shared memory batch size (legacy)
+    use_fp16: bool = False,          # must match forward
+    shape_tensor_cached: Optional[Tensor] = None,     # cached from forward
+    tile_dims_tensor_cached: Optional[Tensor] = None,  # cached from forward
+    output_to_zero: Optional[Tensor] = None,           # forward output to zero as side effect
+) -> Tuple[Tensor, Tensor, Tensor]:
+    """
+    Returns 3-tuple:
+        d_centers: (N, d) float32 - center gradients
+        d_conic:   (N, d*(d+1)/2) float32 - conic gradients
+        d_amps:    (N,) float32 - amplitude gradients
+    """
+```
+
+> **Note on legacy parameters**: `tile_offsets`, `tile_counts`, `tile_content`,
+> `global_splat_ids`, `tile_size`, and `batch_size` are retained in the backward
+> signature for API compatibility. The splat-centric backward kernel ignores them
+> entirely -- it recomputes the AABB from the conic. The `shape_tensor_cached` and
+> `tile_dims_tensor_cached` parameters enable reuse of device tensors from the
+> forward pass, avoiding redundant host-to-device copies.
+
+> **Note on sharpness**: The original protocol included a `sharpness` parameter.
+> The current implementation uses a fixed standard Gaussian (s=2), so `sharpness`
+> has been removed from the CUDA backend interface. The shifted Gaussian formulas
+> in the kernels use `exp(-0.5 * D^2)` directly.
+
+> **Note on return tuple sizes**: Forward returns 7 tensors (up from the original
+> spec's 4), and backward returns 3 tensors (down from 4, since `d_sharpness` is
+> removed). The extra forward outputs (`global_splat_ids`, `shape_tensor`,
+> `tile_dims_tensor`) support backward pass optimizations.
 
 **Benefits of Backend Protocol**:
 

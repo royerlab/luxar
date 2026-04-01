@@ -27,7 +27,7 @@ ui/
 ├── rendering-controls.ts        # Visual parameter adjustments (main class)
 ├── rendering-controls/          # Modular setup functions
 │   ├── types.ts                 # Shared types (SetupContext, SetupResult)
-│   ├── navigation-setup.ts      # Navigation controls (orbit, arcball, fly)
+│   ├── navigation-setup.ts      # Navigation controls (orbit, fly, ortho)
 │   ├── camera-setup.ts          # Camera settings (FOV, clipping)
 │   ├── hdr-setup.ts             # HDR intensity & tone mapping
 │   ├── anti-aliasing-setup.ts   # AA techniques (FXAA, SMAA, MSAA, SSAA)
@@ -194,7 +194,7 @@ This ensures that moving the slider the same distance always produces the same p
 ```
 Rendering Controls
 ├── Navigation
-│   ├── Control Type (Orbit|Arcball|Fly)
+│   ├── Control Type (Orbit|Fly|Ortho)
 │   ├── Orbit Controls
 │   │   ├── Auto Rotate □
 │   │   └── Rotation Speed (slider)

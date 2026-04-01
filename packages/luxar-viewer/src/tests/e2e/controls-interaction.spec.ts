@@ -103,7 +103,7 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
 
     // Should have a control type
     expect(initialType).toBeDefined();
-    expect(['orbit', 'arcball', 'fly']).toContain(initialType);
+    expect(['orbit', 'fly', 'ortho']).toContain(initialType);
 
     // Try to switch control mode (press V)
     await page.keyboard.press('v');
@@ -118,7 +118,7 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
     });
 
     // Control type should be valid and different from initial
-    expect(['orbit', 'arcball', 'fly']).toContain(newType);
+    expect(['orbit', 'fly', 'ortho']).toContain(newType);
     expect(newType).not.toBe(initialType);
   });
 

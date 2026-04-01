@@ -11,7 +11,7 @@ The rendering controls UI was refactored from a monolithic 2,514-line file into 
 ```
 rendering-controls/
 ├── types.ts                    # Shared types (SetupContext, SetupResult)
-├── navigation-setup.ts         # Navigation controls (orbit, arcball, fly)
+├── navigation-setup.ts         # Navigation controls (orbit, fly, ortho)
 ├── camera-setup.ts             # Camera settings (FOV, clipping)
 ├── hdr-setup.ts                # HDR intensity & tone mapping
 ├── anti-aliasing-setup.ts      # AA techniques (FXAA, SMAA, MSAA, SSAA)
@@ -40,7 +40,7 @@ interface SetupContext {
   saveSettings: () => void; // Persist settings
   triggerAnimation: () => void; // Request render
   updateClippingControlsState: (enabled: boolean) => void;
-  updateNavigationControls: (type: 'orbit' | 'arcball' | 'fly') => void;
+  updateNavigationControls: (type: 'orbit' | 'fly' | 'ortho') => void;
 }
 
 interface SetupResult {
@@ -56,7 +56,7 @@ interface SetupResult {
 
 Creates controls for:
 
-- Control type selector (orbit, arcball, fly)
+- Control type selector (orbit, fly, ortho)
 - Orbit controls (auto-rotate, rotation speed)
 - Fly controls (movement speed, rotation speed, inertial mode, damping)
 
@@ -185,7 +185,7 @@ The navigation module returns folder references:
 
 - `orbitFolder` and `flyFolder` stored by main class
 - `updateNavigationControls()` shows/hides folders based on control type
-- Shared between orbit and arcball modes
+- Orbit folder shared between orbit and ortho modes
 
 ## Benefits of Modular Design
 
