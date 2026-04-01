@@ -6,6 +6,18 @@
 
 ---
 
+## Status
+
+**Last updated:** 2026-03-31
+
+The fixes shipped in PR #53 (`test_reader_nodes.py` parent= API misuse and `test_roundtrip.py` shape-only assertions) apply to the **IO tests report**, not this core tests report. All findings below remain **UNFIXED**.
+
+| Finding | Status |
+|---------|--------|
+| All 24 findings (1 CRITICAL, 5 HIGH, 10 MEDIUM, 8 LOW) | **UNFIXED** |
+
+---
+
 ## Executive Summary
 
 The test suite is **generally solid** with good coverage of the core API surface. The tests are well-organized, use proper fixtures (`tmp_path`), and exercise real code paths through the `LuxarZarrCompiler` rather than mocking. However, there are several notable gaps, a few correctness concerns, and significant redundancy between files. The most critical issue is that `compose()` in transforms has a subtle documentation/implementation inconsistency that the tests happen to match but could confuse future developers.
@@ -320,18 +332,18 @@ The `Node.__repr__` method (line 653 of node.py) is marked with `# pragma: no co
 
 ## Summary of Most Important Findings
 
-| # | Severity | File(s) | Finding |
-|---|----------|---------|---------|
-| 1 | CRITICAL | `test_transforms.py` / `transforms.py` | `compose()` internal comment is misleading; code is correct but fragile to "helpful" refactoring |
-| 2 | HIGH | (none) | `nd_transform` property has zero test coverage (~50 lines of untested code) |
-| 3 | HIGH | (none) | `intensity`, `offset`, `layer` Node properties have zero test coverage |
-| 4 | HIGH | (none) | `colormap` property and `set_colormap` have zero test coverage |
-| 5 | HIGH | `test_gsplats_extend_to_all.py` | ~150 lines of redundant tests duplicating `test_extend_to_all.py` |
-| 6 | HIGH | `test_hdr_colors.py` | Mixed API usage (`compiler.write_points` vs `scene.add_points`) tests different code paths |
-| 7 | MEDIUM | `test_spatial_dimensions.py` | Conditional assertion silently passes when attribute is missing |
-| 8 | MEDIUM | `test_scene_advanced.py` | Case-sensitivity of `extend_to_all="all"` not tested |
-| 9 | MEDIUM | `test_node_properties.py` | `nd_transform`, `intensity`, `offset` chain methods untested |
-| 10 | MEDIUM | `test_physical_units.py` | Invalid unit tested at wrong abstraction level |
+| # | Severity | File(s) | Finding | Status |
+|---|----------|---------|---------|--------|
+| 1 | CRITICAL | `test_transforms.py` / `transforms.py` | `compose()` internal comment is misleading; code is correct but fragile to "helpful" refactoring | UNFIXED |
+| 2 | HIGH | (none) | `nd_transform` property has zero test coverage (~50 lines of untested code) | UNFIXED |
+| 3 | HIGH | (none) | `intensity`, `offset`, `layer` Node properties have zero test coverage | UNFIXED |
+| 4 | HIGH | (none) | `colormap` property and `set_colormap` have zero test coverage | UNFIXED |
+| 5 | HIGH | `test_gsplats_extend_to_all.py` | ~150 lines of redundant tests duplicating `test_extend_to_all.py` | UNFIXED |
+| 6 | HIGH | `test_hdr_colors.py` | Mixed API usage (`compiler.write_points` vs `scene.add_points`) tests different code paths | UNFIXED |
+| 7 | MEDIUM | `test_spatial_dimensions.py` | Conditional assertion silently passes when attribute is missing | UNFIXED |
+| 8 | MEDIUM | `test_scene_advanced.py` | Case-sensitivity of `extend_to_all="all"` not tested | UNFIXED |
+| 9 | MEDIUM | `test_node_properties.py` | `nd_transform`, `intensity`, `offset` chain methods untested | UNFIXED |
+| 10 | MEDIUM | `test_physical_units.py` | Invalid unit tested at wrong abstraction level | UNFIXED |
 
 ---
 
@@ -348,3 +360,34 @@ The `Node.__repr__` method (line 653 of node.py) is marked with `# pragma: no co
 5. **Clarify the `compose()` implementation comment** in transforms.py to prevent future breakage by someone misunderstanding the loop direction.
 
 6. **Standardize API usage in tests** -- prefer `scene.add_points()` over `compiler.write_points()` unless explicitly testing the compiler layer.
+
+---
+
+## Recommended Next Batch
+
+The top 5 remaining issues worth fixing, ordered by impact:
+
+### 1. Add `test_nd_transforms.py` (HIGH -- zero coverage on ~50 lines of shipped code)
+**Files:** Create `packages/luxar/src/luxar/core/tests/test_nd_transforms.py`
+**Why:** `nd_transform` and `world_nd_transform` are documented features with per-dimension affine/categorical transforms and hierarchical composition. Zero test coverage means regressions will be silent. This is the single largest untested feature in core.
+**Effort:** Medium (need to test getter/setter, validation, composition through parent-child hierarchy, and categorical permutation).
+
+### 2. Add tests for `intensity`, `offset`, `layer`, and `colormap` Node properties (HIGH -- zero coverage on active features)
+**Files:** Extend `packages/luxar/src/luxar/core/tests/test_node_rendering.py` and `test_node_properties.py`
+**Why:** These are user-facing properties with validation ranges (`intensity` 0-100, `offset` -10 to 10) and zarr persistence. `colormap` is an actively developed feature (TODO #14/#15). All have zero coverage.
+**Effort:** Low-medium (properties follow the same pattern as `opacity`/`gamma` which are already tested -- can use those as templates).
+
+### 3. Fix the conditional assertion in `test_spatial_dimensions.py` (MEDIUM -- silent test pass)
+**File:** `packages/luxar/src/luxar/core/tests/test_spatial_dimensions.py`, line 244
+**Why:** The `if "spatial_extend_dims" in points_node.attrs:` guard means the test silently passes if the attribute is never written. Change to `assert "spatial_extend_dims" in points_node.attrs` followed by the value assertion. One-line fix with high safety value.
+**Effort:** Trivial.
+
+### 4. Clarify the `compose()` implementation comment (CRITICAL risk -- correct code, misleading docs)
+**File:** `packages/luxar/src/luxar/core/transforms.py`, line 271
+**Why:** The comment "Right-multiply: result = result @ next_transform" inside a `reversed()` loop is confusing. A well-meaning developer could "fix" the reversal, breaking all transform composition. Adding a clarifying comment explaining why the loop is reversed would prevent this.
+**Effort:** Trivial (comment-only change).
+
+### 5. Standardize `test_hdr_colors.py` to use `scene.add_points()` (HIGH -- testing wrong API layer)
+**File:** `packages/luxar/src/luxar/core/tests/test_hdr_colors.py`
+**Why:** Three tests (`test_hdr_colors_extreme`, `test_negative_color_rejection`, `test_color_channel_count`) use `compiler.write_points()` which bypasses Scene validation. If bugs exist in the Scene-level HDR path, these tests won't catch them. Switch to `scene.add_points()` to test the user-facing API.
+**Effort:** Low (change `compiler.write_points(...)` calls to `scene.add_points(...)` with appropriate dimension setup).

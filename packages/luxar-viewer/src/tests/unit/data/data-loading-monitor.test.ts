@@ -214,25 +214,22 @@ describe('DataLoadingMonitor', () => {
 
       // Find and click the minimize button
       const minimizeBtn = container.querySelector('[data-action="minimize"]') as HTMLElement;
-      if (minimizeBtn) {
-        minimizeBtn.click();
-        expect(monitor.isExpanded()).toBe(false);
-      }
+      expect(minimizeBtn).not.toBeNull();
+      minimizeBtn.click();
+      expect(monitor.isExpanded()).toBe(false);
 
       // Find and click the expand button
       monitor.minimize();
       const expandBtn = container.querySelector('[data-action="expand"]') as HTMLElement;
-      if (expandBtn) {
-        expandBtn.click();
-        expect(monitor.isExpanded()).toBe(true);
-      }
+      expect(expandBtn).not.toBeNull();
+      expandBtn.click();
+      expect(monitor.isExpanded()).toBe(true);
 
       // Find and click the hide button
       const hideBtn = container.querySelector('[data-action="hide"]') as HTMLElement;
-      if (hideBtn) {
-        hideBtn.click();
-        expect(monitor.isVisible()).toBe(false);
-      }
+      expect(hideBtn).not.toBeNull();
+      hideBtn.click();
+      expect(monitor.isVisible()).toBe(false);
     });
 
     it('should not expose any global window variables', () => {
