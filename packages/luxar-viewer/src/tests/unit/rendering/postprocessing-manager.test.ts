@@ -274,18 +274,20 @@ describe('PostProcessingManager', () => {
   describe('bloom settings', () => {
     it('should update bloom strength', () => {
       manager.updateBloomSettings(0.5, undefined, undefined);
-      // Verify internal state was updated (would need to expose for testing)
-      expect(manager).toBeDefined();
+      const bloom = (manager as any).bloomEffect;
+      expect(bloom.intensity).toBe(0.5);
     });
 
     it('should update bloom radius', () => {
       manager.updateBloomSettings(undefined, 0.8, undefined);
-      expect(manager).toBeDefined();
+      const bloom = (manager as any).bloomEffect;
+      expect(bloom.mipmapBlurPass.radius).toBe(0.8);
     });
 
     it('should update bloom threshold', () => {
       manager.updateBloomSettings(undefined, undefined, 0.02);
-      expect(manager).toBeDefined();
+      const bloom = (manager as any).bloomEffect;
+      expect(bloom.luminanceMaterial.threshold).toBe(0.02);
     });
   });
 
@@ -317,7 +319,9 @@ describe('PostProcessingManager', () => {
     it('should update SMAA settings', () => {
       manager.setSMAAEnabled(true);
       manager.updateSMAASettings('HIGH');
-      expect(manager).toBeDefined();
+      // updateSMAASettings recreates the SMAA effect with the new preset
+      expect((manager as any).smaaEffect).toBeDefined();
+      expect((manager as any).smaaEnabled).toBe(true);
     });
   });
 
@@ -338,7 +342,12 @@ describe('PostProcessingManager', () => {
     it('should update DOF parameters', () => {
       manager.setDOF(true, 10.0, 0.5);
       manager.updateDOF({ focus: 20.0, strength: 0.8 });
-      expect(manager).toBeDefined();
+      // DOF effect should still be active after update
+      const status = manager.getEffectsStatus();
+      expect(status.dof).toBe(true);
+      // The mock DOF lacks circleOfConfusionMaterial so focus/strength
+      // writes are no-ops, but the effect instance persists
+      expect((manager as any).dofEffect).toBeDefined();
     });
   });
 
@@ -364,7 +373,11 @@ describe('PostProcessingManager', () => {
     it('should update chromatic lens distortion parameters', () => {
       manager.setChromaticLensDistortionEnabled(true, -0.05, -0.05, 0.03);
       manager.updateChromaticLensDistortion({ dispersion: 0.1, distortionX: -0.08 });
-      expect(manager).toBeDefined();
+      const effect = (manager as any).chromaticLensDistortionEffect;
+      expect(effect.dispersion).toBe(0.1);
+      expect(effect.distortion.x).toBeCloseTo(-0.08);
+      // distortionY was not updated, should retain initial value
+      expect(effect.distortion.y).toBeCloseTo(-0.05);
     });
   });
 
@@ -395,7 +408,11 @@ describe('PostProcessingManager', () => {
         photonGain: 0.015,
         fpnSigma: 0.008,
       });
-      expect(manager).toBeDefined();
+      // Verify base noise settings were stored
+      const baseSettings = (manager as any).baseNoiseSettings;
+      expect(baseSettings.readoutSigma).toBe(0.03);
+      expect(baseSettings.photonGain).toBe(0.015);
+      expect(baseSettings.fpnSigma).toBe(0.008);
     });
 
     it('should report animation requirement for detector noise', () => {

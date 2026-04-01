@@ -275,10 +275,13 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/test.zarr');
+      const scene = await loadScene('http://localhost:8000/test.zarr');
 
+      expect(scene).toBeTruthy();
       expect(THREE.Group).toHaveBeenCalled();
-      // Store implementation may vary (FetchStore or TwoLevelCachingStore), test behavior instead
+      // TODO(test-review): The mock pipeline does not produce real THREE.Points children
+      // (SceneLoader sees 0 store items). To verify child count and scene.name,
+      // refactor to test SceneLoader.buildNode directly with focused mocks.
     });
 
     it('should handle empty scene', async () => {
@@ -295,9 +298,12 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/empty.zarr');
+      const scene = await loadScene('http://localhost:8000/empty.zarr');
 
+      expect(scene).toBeTruthy();
       expect(THREE.Group).toHaveBeenCalled();
+      // TODO(test-review): Verify scene has 0 children for empty scene.
+      // Current mock (Group.add is vi.fn()) does not track children array.
     });
 
     it('should load scene with multiple Points nodes', async () => {
@@ -333,10 +339,13 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/multi.zarr');
+      const scene = await loadScene('http://localhost:8000/multi.zarr');
 
+      expect(scene).toBeTruthy();
       // Should create Group for scene (Points objects require actual array data)
       expect(THREE.Group).toHaveBeenCalled();
+      // TODO(test-review): Verify scene has 2 children (Points1, Points2).
+      // Current mock Group does not populate children array from add() calls.
     });
   });
 
@@ -383,10 +392,13 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/nested.zarr');
+      const scene = await loadScene('http://localhost:8000/nested.zarr');
 
+      expect(scene).toBeTruthy();
       // Should create nested groups
       expect(THREE.Group).toHaveBeenCalled();
+      // TODO(test-review): Verify nested group hierarchy (Group1 > Group2 > Points1).
+      // Mock Group.add does not track children, so hierarchy cannot be asserted here.
     });
 
     it('should distinguish between Group and Points nodes', async () => {
@@ -423,10 +435,13 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/mixed.zarr');
+      const scene = await loadScene('http://localhost:8000/mixed.zarr');
 
+      expect(scene).toBeTruthy();
       // Should create Groups for scene hierarchy (Points objects require actual array data)
       expect(THREE.Group).toHaveBeenCalled();
+      // TODO(test-review): Verify scene distinguishes Group1 (group) from Points1 (points)
+      // by checking child types. Mock Group does not track children from add() calls.
     });
   });
 
