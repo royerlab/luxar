@@ -61,7 +61,10 @@ export class SegmentedLRUCache {
   }
 
   has(key: string): boolean {
-    return this.metadata.has(key) || this.chunks.has(key);
+    if (SegmentedLRUCache.isMetadataFile(key)) {
+      return this.metadata.has(key);
+    }
+    return this.chunks.has(key);
   }
 
   clear(): void {

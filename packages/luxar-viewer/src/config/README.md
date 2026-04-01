@@ -31,9 +31,11 @@ The config package provides a centralized configuration system that manages all 
 
 ```typescript
 config/
-├── index.ts           # Main configuration object and exports
-├── types.ts           # TypeScript interfaces for all config sections
-└── debug-console.ts   # Debug console specific configuration
+├── index.ts                 # Main configuration object and exports
+├── types.ts                 # TypeScript interfaces for all config sections
+├── validation.ts            # Runtime validation of configuration values
+├── viewer-config-utils.ts   # Viewer config utility functions
+└── viewer-state-capture.ts  # Viewer state capture for export
 ```
 
 The architecture follows a separation of concerns approach:
@@ -50,14 +52,12 @@ Controls 3D perspective, navigation, and viewing parameters:
 
 ```typescript
 camera: {
-  fov: 47,                    // Field of view (50mm Normal - natural human vision)
-  near: 0.1,                  // Near clipping plane
-  far: 1000,                  // Far clipping plane
-  initialPosition: { x: 0, y: 0, z: 8 },
+  // Note: fov, near, far live in renderingControls.defaults as the single source of truth
   fovMin: 10,                 // Zoom limits
   fovMax: 170,                // Must be <180°
-  fovSensitivity: 0.05        // Shift+wheel zoom sensitivity
+  fovSensitivity: 0.05        // Ctrl+wheel zoom sensitivity
 }
+// Default FOV (47, 50mm Normal) is in renderingControls.defaults.fov
 ```
 
 ### Shader Configuration

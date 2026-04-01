@@ -43,7 +43,26 @@ These classes define the hierarchical scene structure.
 | `DimensionsConfig` | `luxar.core.viewer_config` | nD dimension navigation state |
 | `AnimationConfig` | `luxar.core.viewer_config` | Per-dimension animation state |
 
-> **Note**: These viewer config classes are imported at module level but not in `__all__`. They are accessible via `luxar.ViewerConfig`, etc.
+### Gaussian Splatting (Optional)
+
+| Symbol | Source Module | Description |
+|--------|--------------|-------------|
+| `GSplatData` | `luxar.gsplats` | Data class for Gaussian splat fitting results |
+| `fit_gaussian_splats` | `luxar.gsplats` | Fit Gaussian splats to a volume |
+
+### nD Transform Utilities
+
+| Function | Source Module | Description |
+|----------|--------------|-------------|
+| `validate_nd_transform` | `luxar.validation.nd_transforms` | Validate an nD transform dictionary |
+| `compose_nd_transforms` | `luxar.validation.nd_transforms` | Compose two nD transforms |
+| `apply_nd_transform_to_bounds` | `luxar.validation.nd_transforms` | Apply an nD transform to dimension bounds |
+
+### Version
+
+| Symbol | Description |
+|--------|-------------|
+| `__version__` | Package version string (e.g., `"2025.08.03"`) |
 
 ### I/O Classes
 

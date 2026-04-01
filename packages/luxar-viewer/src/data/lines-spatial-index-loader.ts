@@ -388,7 +388,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     if (useAccumulator && this._accumulator) {
       // Ensure capacity FIRST using ACTUAL counts (not estimated!)
-      const segmentCount = segmentData.length / 2;
+      if (segmentData.length % 2 !== 0) {
+        log.warning(
+          Modules.LINES_LOADER,
+          `Segment data length ${segmentData.length} is not even — truncating to floor`
+        );
+      }
+      const segmentCount = Math.floor(segmentData.length / 2);
       const actualVertexCount = sortedIndices.length; // ACTUAL count from unique indices!
       // FIXED: Pass BOTH vertex count AND segment count to avoid buffer truncation
       // For particle tracks, N vertices → N-1 segments (ratio ~1:1, not 1.5:1)
@@ -541,7 +547,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       widths,
       colors,
       sharpness,
-      segmentCount: segmentData.length / 2,
+      segmentCount: Math.floor(segmentData.length / 2),
       vertexCount: vertexIndexMap.size,
       ndim: attrs.ndim,
     };

@@ -100,7 +100,7 @@ interface StagedGSplatsCommit {
  * - Memory-efficient loading with proper caching
  */
 export class SceneLoader {
-  private store: any | null = null;
+  private store: zarr.Readable | null = null;
   private cachingStore: TwoLevelCachingStore | null = null;
   // L0 decompressed chunk cache - caches decoded zarr chunks to avoid Blosc decompression
   private l0Cache: DecompressedChunkCache | null = null;
@@ -313,7 +313,7 @@ export class SceneLoader {
     } else {
       rawStore = new zarr.FetchStore(this.normalizeURL(url));
     }
-    this.store = await zarr.tryWithConsolidated(rawStore);
+    this.store = (await zarr.tryWithConsolidated(rawStore)) as zarr.Readable;
 
     // Create root THREE.js group
     this.rootGroup = new THREE.Group();

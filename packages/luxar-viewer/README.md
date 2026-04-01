@@ -65,7 +65,7 @@ http://localhost:5173
 ## 🎮 Controls
 
 ### Control Modes
-Luxar Player supports three navigation modes:
+Luxar Viewer supports three navigation modes:
 - **Orbit Mode** (default): Quaternion-based rotation around a target point (no gimbal lock)
 - **Fly Mode**: First-person navigation with WASD movement and inertial physics
 - **Ortho Mode**: Orthographic pan + zoom for 2D viewing
@@ -126,7 +126,7 @@ Luxar Player supports three navigation modes:
 
 ## 🗂️ Data Format
 
-Luxar Player expects Zarr datasets with the following structure:
+Luxar Viewer expects Zarr datasets with the following structure:
 
 ```
 dataset.zarr/
@@ -173,7 +173,7 @@ dataset.zarr/
 
 ## 🌟 nD Visualization
 
-Luxar Player supports visualization of n-dimensional data beyond traditional 3D:
+Luxar Viewer supports visualization of n-dimensional data beyond traditional 3D:
 
 ### Scene-Level Dimensions
 Every Zarr dataset defines its dimensions at the scene level:
@@ -233,49 +233,162 @@ src/
 ├── core/
 │   ├── main.ts                    # Application entry point
 │   └── app.ts                     # Main application class
+├── cache/
+│   ├── index.ts                   # Cache module exports
+│   ├── cached-zarr-array.ts       # Cached zarr array access
+│   ├── decompressed-chunk-cache.ts # Decompressed chunk caching
+│   ├── lru-cache.ts               # LRU cache implementation
+│   └── types.ts                   # Cache type definitions
 ├── config/
 │   ├── index.ts                   # Unified configuration system
-│   └── types.ts                   # Configuration type definitions
+│   ├── types.ts                   # Configuration type definitions
+│   ├── validation.ts              # Configuration validation
+│   ├── viewer-config-utils.ts     # Viewer config utilities
+│   └── viewer-state-capture.ts    # Viewer state capture
 ├── controls/
 │   ├── controls-manager.ts        # Control mode switching and management
 │   ├── luxar-fly-controls.ts      # Custom fly controls with inertial physics
-│   ├── control-config.ts          # Control system configuration
+│   ├── luxar-orbit-controls.ts    # Quaternion-based orbit controls
 │   └── types.ts                   # Control system type definitions
-├── scene/
-│   ├── scene-manager.ts           # 3D scene and renderer setup
-│   ├── scene-dims-manager.ts      # Scene-level dimension state management
-│   ├── animation-controller.ts    # Render loop and performance
-│   └── camera-utils.ts            # Camera type union, type guards, and projection helpers
-├── rendering/
-│   ├── post-processing.ts         # HDR pipeline and bloom effects
-│   ├── shader-manager.ts          # Custom GLSL shaders
-│   └── material-manager.ts        # Material caching and optimization
 ├── data/
-│   ├── zarr-loader.ts            # Zarr dataset loading with nD support
-│   └── nd-transform.ts           # nD transform inverse-query for non-displayed dimensions
+│   ├── array-decoder.ts           # Array decoding from zarr
+│   ├── chunk-spatial-index.ts     # Point chunk spatial indexing
+│   ├── data-accumulator.ts        # Data accumulation for progressive loading
+│   ├── data-loader-types.ts       # Data loader type definitions
+│   ├── data-monitor-manager.ts    # Data monitoring
+│   ├── directory-navigator.ts     # Directory navigation
+│   ├── effective-radius-calculator.ts # nD effective radius computation
+│   ├── geometry-update-manager.ts # Geometry update coordination
+│   ├── gsplats-chunk-spatial-index.ts # GSplats chunk spatial indexing
+│   ├── gsplats-processor.ts       # Gaussian splat processing
+│   ├── gsplats-progressive-loader.ts # Progressive GSplats loading
+│   ├── gsplats-spatial-index-loader.ts # GSplats spatial index loading
+│   ├── index.ts                   # Data module exports
+│   ├── lines-chunk-spatial-index.ts # Lines chunk spatial indexing
+│   ├── lines-spatial-index-loader.ts # Lines spatial index loading
+│   ├── nd-transform.ts            # nD transform inverse-query for non-displayed dimensions
+│   ├── point-spatial-index-loader.ts # Point spatial index loading
+│   ├── scene-graph-builder.ts     # Scene graph construction from zarr
+│   ├── scene-loader.ts            # Scene loading orchestration
+│   ├── scene-loader-manager.ts    # Scene loader management
+│   ├── view-state-manager.ts      # View state management
+│   ├── zarr-loader.ts             # Zarr dataset loading with nD support
+│   └── loaders/                   # Modular loader subsystem
+│       ├── base-types.ts          # Base loader type definitions
+│       ├── index.ts               # Loader module exports
+│       ├── integration-example.ts # Loader integration example
+│       ├── range-loader.ts        # Range-based loading
+│       ├── spatial-query-builder.ts # Spatial query construction
+│       └── transferable-accumulator.ts # Transferable data accumulation
 ├── input/
 │   ├── input-handler.ts           # User interaction handling
+│   ├── input-handler-utils.ts     # Input handler utilities
 │   └── input-context-manager.ts   # Keyboard conflict resolution
-├── ui/
-│   ├── dimension-sliders.ts       # nD navigation UI components
-│   ├── performance-monitor.ts     # FPS and timing metrics
-│   ├── rendering-controls.ts      # Advanced rendering controls panel
-│   ├── debug-console.ts           # In-app debug console (Ctrl+L)
-│   ├── recording-panel.ts         # Screenshot and video capture panel
-│   └── components/
-│       └── scale-bar.ts           # Physical scale bar overlay
-├── tests/
-│   ├── controls-manager.test.ts   # Control system unit tests
-│   ├── luxar-fly-controls.test.ts # Fly controls unit tests
-│   └── input-context-manager.test.ts # Input context tests
+├── rendering/
+│   ├── adaptive-dpr-manager.ts    # Adaptive device pixel ratio management
+│   ├── chromatic-lens-distortion-effect.ts # Chromatic lens distortion effect
+│   ├── colormap-data.ts           # Colormap data definitions
+│   ├── colormap-textures.ts       # Colormap texture generation
+│   ├── detector-noise-effect.ts   # Detector noise effect
+│   ├── gpu-buffer-pool.ts         # GPU buffer pooling and reuse
+│   ├── gsplat-material.ts         # Gaussian splat material
+│   ├── line-material.ts           # Line material
+│   ├── luxar-tone-mapping-effect.ts # Custom tone mapping effect
+│   ├── material-manager.ts        # Material caching and optimization
+│   ├── point-material.ts          # Point material with custom shaders
+│   ├── post-processing-manager.ts # HDR pipeline and bloom effects
+│   ├── postprocessing-types.ts    # Post-processing type definitions
+│   └── robust-vignette-effect.ts  # Vignette effect
+├── scene/
+│   ├── animation-controller.ts    # Render loop and performance
+│   ├── camera-utils.ts            # Camera type union, type guards, and projection helpers
+│   ├── dimension-animation-manager.ts # Dimension animation management
+│   ├── scene-dims-manager.ts      # Scene-level dimension state management
+│   ├── scene-manager.ts           # 3D scene and renderer setup
+│   └── scene-manager-utils.ts     # Scene manager utilities
+├── themes/
+│   ├── index.ts                   # Theme module exports
+│   ├── glass-filters.ts           # Glass filter effects
+│   ├── theme-manager.ts           # Theme management
+│   ├── types.ts                   # Theme type definitions
+│   └── themes/
+│       ├── dark.theme.ts          # Dark theme
+│       ├── frosted-glass.theme.ts # Frosted glass theme
+│       └── liquid-glass.theme.ts  # Liquid glass theme
 ├── types/
-│   └── dims.ts                   # Dimension type definitions
-└── utils/
-    ├── slicing.ts                # nD slicing algorithms
-    ├── console-interceptor.ts    # Console output capture
-    ├── hdr-detection.ts          # HDR display detection
-    ├── memory-detector.ts        # Memory availability detection
-    └── log.ts                    # Structured logging utility
+│   ├── animation.ts               # Animation type definitions
+│   ├── dims.ts                    # Dimension type definitions
+│   ├── float16array.d.ts          # Float16Array type declaration
+│   ├── gsplats.ts                 # Gaussian splats type definitions
+│   ├── index.ts                   # Type module exports
+│   ├── lines.ts                   # Lines type definitions
+│   ├── points.ts                  # Points type definitions
+│   └── zarr.ts                    # Zarr type definitions
+├── ui/
+│   ├── data-loading-monitor.ts    # Data loading progress monitor
+│   ├── data-monitor-templates.ts  # Data monitor HTML templates
+│   ├── data-monitor-types.ts      # Data monitor type definitions
+│   ├── dataset-browser.ts         # Dataset browser panel
+│   ├── debug-console.ts           # In-app debug console (Ctrl+L)
+│   ├── dimension-sliders.ts       # nD navigation UI components
+│   ├── helpers.ts                 # UI helper utilities
+│   ├── performance-monitor.ts     # FPS and timing metrics
+│   ├── recording-panel.ts         # Screenshot and video capture panel
+│   ├── rendering-controls.ts      # Advanced rendering controls panel
+│   ├── rendering-controls-utils.ts # Rendering controls utilities
+│   ├── components/
+│   │   ├── base/
+│   │   │   └── ui-component.ts    # Base UI component class
+│   │   ├── colormap-legend.ts     # Colormap legend overlay
+│   │   ├── event-queue.ts         # Event queue for UI updates
+│   │   ├── hierarchical-timing-panel.ts # Hierarchical timing panel
+│   │   ├── loading-advisor.ts     # Loading advisor overlay
+│   │   ├── polling-loop.ts        # Polling loop for UI updates
+│   │   ├── resolution-indicator.ts # Resolution indicator overlay
+│   │   └── scale-bar.ts           # Physical scale bar overlay
+│   └── gui/                       # Custom GUI framework
+│       ├── index.ts               # GUI module exports
+│       ├── controllers/
+│       │   ├── boolean-controller.ts  # Boolean controller
+│       │   ├── function-controller.ts # Function/button controller
+│       │   ├── number-controller.ts   # Number controller
+│       │   ├── option-controller.ts   # Option/select controller
+│       │   └── string-controller.ts   # String controller
+│       ├── core/
+│       │   ├── controller.ts      # Base controller class
+│       │   ├── folder.ts          # Folder/section container
+│       │   ├── gui.ts             # GUI root class
+│       │   └── types.ts           # GUI type definitions
+│       ├── dom/
+│       │   └── event-manager.ts   # DOM event management
+│       └── utils/
+│           ├── auto-blur.ts       # Auto-blur utility
+│           └── value-formatting.ts # Value formatting utility
+├── utils/
+│   ├── console-interceptor.ts     # Console output capture
+│   ├── escape-html.ts             # HTML escaping utility
+│   ├── hdr-color-conversion.ts    # HDR color conversion
+│   ├── hdr-detection.ts           # HDR display detection
+│   ├── hdr-video-encoder.ts       # HDR video encoding
+│   ├── log.ts                     # Structured logging utility
+│   └── memory-detector.ts         # Memory availability detection
+├── wasm/
+│   ├── index.ts                   # WASM module loader
+│   ├── types.ts                   # WASM type definitions
+│   └── typescript/                # TypeScript fallback implementations
+│       ├── decode.ts              # Array decoding
+│       ├── effective_radii.ts     # Effective radius computation
+│       ├── gsplats.ts             # Gaussian splat processing
+│       ├── gsplats_processing.ts  # GSplat processing utilities
+│       ├── index.ts               # TypeScript fallback exports
+│       ├── lines.ts               # Lines processing
+│       ├── lines_clipping.ts      # Lines clipping
+│       ├── points.ts              # Points processing
+│       ├── projection.ts          # Projection utilities
+│       └── spatial.ts             # Spatial utilities
+└── workers/
+    ├── data-worker.ts             # Background data processing worker
+    └── worker-pool.ts             # Worker pool management
 ```
 
 ### Available Scripts
@@ -301,7 +414,7 @@ pnpm test:watch      # Run tests in watch mode
 
 ### Configuration
 
-Luxar Player uses a unified configuration system in `src/config/`. Edit `src/config/index.ts` to customize:
+Luxar Viewer uses a unified configuration system in `src/config/`. Edit `src/config/index.ts` to customize:
 
 ```typescript
 export const config: AppConfig = {
@@ -390,7 +503,7 @@ postProcessing: {
 
 ### Anti-Aliasing Configuration
 
-Luxar Player supports multiple anti-aliasing techniques with important compatibility notes:
+Luxar Viewer supports multiple anti-aliasing techniques with important compatibility notes:
 
 ```typescript
 renderingControls: {
@@ -544,9 +657,9 @@ renderingControls.updateSettings({
 
 ## 📄 License
 
-Copyright (c) 2024 The Luxar Authors
+Copyright (c) 2025 The Luxar Authors
 
-[Add your license information here]
+This project is licensed under the BSD-3-Clause License. See the [LICENSE](../../LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
@@ -557,9 +670,9 @@ Copyright (c) 2024 The Luxar Authors
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](link-to-issues)
-- **Discussions**: [GitHub Discussions](link-to-discussions)
-- **Documentation**: [Project Wiki](link-to-wiki)
+- **Issues**: [GitHub Issues](https://github.com/royerlab/luxar/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/royerlab/luxar/discussions)
+- **Documentation**: [Project Repository](https://github.com/royerlab/luxar)
 
 ---
 

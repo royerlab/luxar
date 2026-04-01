@@ -2,6 +2,8 @@
 
 Three-level caching system with intelligent prefetching for zarr chunks enabling offline viewing, instant reloads, and reduced bandwidth.
 
+> **Note**: The main class is named `TwoLevelCachingStore` for historical reasons (it predates the addition of the L0 decompressed cache level). The system actually implements three cache levels (L0, L1, L2) as described below.
+
 ## Overview
 
 This package implements a transparent caching and prefetching layer for zarr datasets:

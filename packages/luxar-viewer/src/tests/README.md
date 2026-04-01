@@ -2,7 +2,7 @@
 
 This directory contains the comprehensive test suite for the Luxar Viewer TypeScript/WebGL application.
 
-**Current Status**: 696/701 tests passing (99.3%), 5 skipped
+**Current Status**: See CI for current test status
 
 ---
 
@@ -52,7 +52,7 @@ tests/
 │   ├── scene/                     # Scene management (3 tests)
 │   └── architecture/              # Global state, clean architecture (2 tests)
 │
-├── e2e/                           # End-to-end tests (21 files, full browser)
+├── e2e/                           # End-to-end tests (29 files, full browser)
 │   ├── *.spec.ts                  # Playwright E2E test files
 │   └── *-snapshots/               # Visual regression snapshots (auto-generated)
 │
@@ -181,7 +181,7 @@ installAllMocks(); // Sets up all mocks at once
 - Visual correctness requires E2E tests
 - Mock drift: Mocks must stay in sync with real APIs
 
-**Solution**: Comprehensive E2E test suite (21 tests) covers full browser integration
+**Solution**: Comprehensive E2E test suite (29 spec files) covers full browser integration
 
 ---
 
@@ -417,7 +417,7 @@ Tests for clean architecture and global state management.
 
 Full browser tests using Playwright that exercise the complete pipeline.
 
-**Scope**: Real browser, real WebGL, real OPFS, real datasets (21 test files)
+**Scope**: Real browser, real WebGL, real OPFS, real datasets (29 spec files)
 
 **Key Tests**:
 
@@ -830,8 +830,8 @@ Tests run automatically on:
 
 **CI Requirements**:
 
-- All unit tests pass (696/701 passing)
-- All E2E tests pass (21 tests)
+- All unit tests pass (see CI for current count)
+- All E2E tests pass (29 spec files)
 - Coverage ≥ 80%
 - No TypeScript errors
 - No linting errors
