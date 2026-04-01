@@ -170,54 +170,56 @@ describe('DetectorNoiseEffect', () => {
     });
   });
 
-  describe('physics model validation', () => {
-    it('should model low-light conditions with high shot noise', () => {
-      // Low-light: high gain = fewer effective photons = more visible shot noise
+  describe('parameter propagation', () => {
+    it('should propagate constructor options to uniforms', () => {
       const effect = new DetectorNoiseEffect({
-        photonGain: 0.1, // High gain = low-light
-        readoutSigma: 0.01,
+        photonGain: 0.1,
+        readoutSigma: 0.05,
+        fpnSigma: 0.03,
       });
-      expect(effect.photonGain).toBe(0.1);
+
+      // Verify uniforms reflect constructor values (not just property getters)
+      expect(effect.uniforms.get('photonGain')!.value).toBe(0.1);
+      expect(effect.uniforms.get('readoutSigma')!.value).toBe(0.05);
+      expect(effect.uniforms.get('fpnSigma')!.value).toBe(0.03);
     });
 
-    it('should model high-light conditions with low shot noise', () => {
-      // High-light: low gain = more effective photons = less visible shot noise
-      const effect = new DetectorNoiseEffect({
-        photonGain: 0.001, // Low gain = high-light
-        readoutSigma: 0.01,
-      });
-      expect(effect.photonGain).toBe(0.001);
+    it('should propagate property updates to uniforms', () => {
+      const effect = new DetectorNoiseEffect();
+
+      // Update via setters
+      effect.readoutSigma = 0.08;
+      effect.photonGain = 0.05;
+      effect.fpnSigma = 0.02;
+
+      // Verify uniforms were updated (the shader reads these, not the properties)
+      expect(effect.uniforms.get('readoutSigma')!.value).toBe(0.08);
+      expect(effect.uniforms.get('photonGain')!.value).toBe(0.05);
+      expect(effect.uniforms.get('fpnSigma')!.value).toBe(0.02);
     });
 
-    it('should model high readout noise scenarios', () => {
-      // High readout noise (noisy electronics, old detector)
-      const effect = new DetectorNoiseEffect({
-        photonGain: 0.01,
-        readoutSigma: 0.1, // High readout noise
-      });
-      expect(effect.readoutSigma).toBe(0.1);
+    it('should clamp negative readoutSigma to zero in uniform', () => {
+      const effect = new DetectorNoiseEffect();
+      effect.readoutSigma = -0.5;
+      expect(effect.uniforms.get('readoutSigma')!.value).toBe(0);
     });
 
-    it('should model scientific imaging with minimal noise', () => {
-      // Scientific imaging: low noise, cooled detector
-      const effect = new DetectorNoiseEffect({
-        photonGain: 0.001, // Bright illumination
-        readoutSigma: 0.001, // Low readout noise (cooled detector)
-        fpnSigma: 0.0001, // Minimal fixed pattern noise
-      });
-      expect(effect.photonGain).toBe(0.001);
-      expect(effect.readoutSigma).toBe(0.001);
-      expect(effect.fpnSigma).toBe(0.0001);
+    it('should clamp negative fpnSigma to zero in uniform', () => {
+      const effect = new DetectorNoiseEffect();
+      effect.fpnSigma = -1.0;
+      expect(effect.uniforms.get('fpnSigma')!.value).toBe(0);
     });
 
-    it('should model detector with high fixed pattern noise', () => {
-      // Old/uncooled detector with significant per-pixel variations
-      const effect = new DetectorNoiseEffect({
-        photonGain: 0.01,
-        readoutSigma: 0.02,
-        fpnSigma: 0.05, // High FPN - significant pixel-to-pixel variation
-      });
-      expect(effect.fpnSigma).toBe(0.05);
+    it('should clamp photonGain to minimum 0.0001 in uniform', () => {
+      const effect = new DetectorNoiseEffect();
+      effect.photonGain = -5.0;
+      expect(effect.uniforms.get('photonGain')!.value).toBe(0.0001);
+    });
+
+    it('should clamp photonGain of zero to minimum in uniform', () => {
+      const effect = new DetectorNoiseEffect();
+      effect.photonGain = 0;
+      expect(effect.uniforms.get('photonGain')!.value).toBe(0.0001);
     });
   });
 
