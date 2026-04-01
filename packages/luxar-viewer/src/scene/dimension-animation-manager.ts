@@ -62,8 +62,8 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   /** Cached dimension ranges for performance */
   private dimensionRanges: [number, number][] | null = null;
 
-  /** Tracks if a dimension update is currently in progress (for frame sync) */
-  private isUpdating = false;
+  /** Per-dimension update tracking — prevents advancing faster than data loads */
+  private pendingUpdates = new Set<number>();
 
   /**
    * Create dimension animation manager
@@ -101,9 +101,14 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     if (this.isRegistered) return;
 
     // Register per-frame callback with unique ID (won't overwrite other callbacks like dynamic clipping)
-    this.animationController.addPerFrameCallback('dimension-animation', () => {
-      this.onFrame();
-    });
+    // continuous: true because dimension animation needs every frame to advance
+    this.animationController.addPerFrameCallback(
+      'dimension-animation',
+      () => {
+        this.onFrame();
+      },
+      { continuous: true }
+    );
 
     this.isRegistered = true;
     log.info(Modules.ANIMATION, 'Registered with AnimationController');
@@ -136,9 +141,9 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
    */
   private updateDimension(dimIndex: number, currentTime: number): void {
     try {
-      // Skip if a previous update is still loading data
-      // This ensures we don't advance animation faster than data can load
-      if (this.isUpdating) {
+      // Skip if this dimension's previous update is still loading data
+      // Each dimension tracks independently so multi-dimension animation isn't serialized
+      if (this.pendingUpdates.has(dimIndex)) {
         return;
       }
 
@@ -232,8 +237,8 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
         });
       }
 
-      // Mark update in progress (prevents advancing to next frame until data loads)
-      this.isUpdating = true;
+      // Mark this dimension's update in progress
+      this.pendingUpdates.add(dimIndex);
 
       // Update dimension value (triggers async data loading via listeners)
       this.sceneDimsManager.setDimensionValue(dimIndex, nextValue);
@@ -243,11 +248,11 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       this.sceneDimsManager
         .waitForUpdate()
         .then(() => {
-          this.isUpdating = false;
+          this.pendingUpdates.delete(dimIndex);
         })
         .catch((error) => {
           log.error(Modules.ANIMATION, 'Dimension update failed', error);
-          this.isUpdating = false;
+          this.pendingUpdates.delete(dimIndex);
         });
 
       // Update last update time
@@ -611,6 +616,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
     // Clear state
     this.animationStates.clear();
+    this.pendingUpdates.clear();
 
     // Unregister from animation controller (only removes our callback, not others)
     if (this.isRegistered) {

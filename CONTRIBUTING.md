@@ -34,7 +34,7 @@ git push origin feature/amazing-feature
 ### Prerequisites
 
 The build system works on **fresh Linux/macOS machines** with minimal pre-installed tools:
-- Python 3.9+ (usually pre-installed)
+- Python 3.10+ (usually pre-installed)
 - Git and curl
 
 **Ubuntu/Debian only** (due to PEP 668):

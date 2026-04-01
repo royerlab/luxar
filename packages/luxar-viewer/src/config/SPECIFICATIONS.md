@@ -1163,7 +1163,7 @@ interface RenderingSettings {
   lensFocalLengthY: number;
   lensSkew: number;
   // Navigation
-  controlType: 'orbit' | 'arcball' | 'fly';
+  controlType: 'orbit' | 'fly' | 'ortho';
   autoRotate: boolean;
   autoRotateSpeed: number;
   // Fly controls (optional, added at runtime)

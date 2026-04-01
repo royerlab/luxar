@@ -1,7 +1,7 @@
 # luxar.validation.tests - Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2026-02-28
+**Version**: 1.2.0
+**Last Updated**: 2026-03-31
 
 ## Purpose
 
@@ -16,11 +16,13 @@ Tests for the Luxar validation module: input validation for positions, colors, r
 | `test_points_validation.py` | Validation of positions, colors, radii, and sharpness arrays |
 | `test_config_validation.py` | Validation functions in `config.py` module |
 | `test_base_validation.py` | Direct unit tests for `validation/base.py` functions |
+| `test_colormap_validation.py` | Colormap validation in `validation/types.py` (string, array, and invalid inputs) |
+| `test_nd_transforms.py` | nD transform validation and composition |
 | `test_validation_module.py` | Module-level validation with helpful error messages |
 | `test_validation_nd.py` | nD validation (multi-dimensional data constraints) |
 | `test_types_validation.py` | Validation functions in `types.py` module |
 
-**Total**: 6 test files
+**Total**: 8 test files
 
 ---
 
@@ -40,5 +42,6 @@ Tests for the Luxar validation module: input validation for positions, colors, r
 
 ## Changelog
 
+- **v1.2.0** (2026-03-31): Updated test file inventory (6 -> 8 files). Added test_colormap_validation, test_nd_transforms.
 - **v1.1.0** (2026-02-28): Rewritten with actual test file inventory (6 files).
 - **v1.0.0** (2026-01-02): Initial specification (boilerplate).

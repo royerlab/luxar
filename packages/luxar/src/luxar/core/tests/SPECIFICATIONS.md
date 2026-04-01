@@ -1,7 +1,7 @@
 # luxar.core.tests - Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2026-02-28
+**Version**: 1.2.0
+**Last Updated**: 2026-03-31
 
 ## Purpose
 
@@ -29,9 +29,10 @@ Tests for the Luxar core module: scene graph construction, node types (Points, L
 | `test_datanode_types.py` | DataNode types: Lines and GSplats |
 | `test_hdr_colors.py` | Edge case tests for HDR color support (values > 1.0) |
 | `test_physical_units.py` | Physical units support through Dimensions system |
+| `test_review_fixes.py` | Regression guards for fixes from the systematic API review (metadata keys, property setters, cross-scene inequality, dead code cleanup, re-exports) |
 | `test_viewer_config.py` | ViewerConfig and CameraConfig dataclasses |
 
-**Total**: 17 test files
+**Total**: 18 test files
 
 ---
 
@@ -60,5 +61,6 @@ Tests for the Luxar core module: scene graph construction, node types (Points, L
 
 ## Changelog
 
+- **v1.2.0** (2026-03-31): Updated test file inventory (17 -> 18 files). Added test_review_fixes.
 - **v1.1.0** (2026-02-28): Rewritten with actual test file inventory (17 files).
 - **v1.0.0** (2026-01-02): Initial specification (boilerplate).

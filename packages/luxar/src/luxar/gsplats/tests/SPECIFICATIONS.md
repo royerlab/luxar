@@ -1,7 +1,7 @@
 # luxar.gsplats.tests - Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2026-02-28
+**Version**: 1.2.0
+**Last Updated**: 2026-03-31
 
 ## Purpose
 
@@ -13,12 +13,19 @@ Top-level tests for the Gaussian splatting module: high-level fitting API (`fit_
 
 | File | Description |
 |------|-------------|
+| `test_batch.py` | Batch fitting infrastructure (manifest, env, slurm, time, merge) |
+| `test_cholesky_dim_ops.py` | Cholesky dimension permutation and embedding utilities (`permute_cholesky_packed`, `embed_cholesky_packed`, `pack_tril`, `unpack_tril`) |
+| `test_culling.py` | Contribution-based Gaussian splat culling |
 | `test_fit_gsplats.py` | `fit_gaussian_splats` function and optimization pipeline |
+| `test_gpu_profile.py` | GPU profile management (multi-GPU registry) |
 | `test_gsplat_data.py` | GSplatData class methods |
 | `test_gsplats_integration.py` | End-to-end pipeline tests (candidate generation to fitting to rendering) |
-| `test_cholesky_dim_ops.py` | Cholesky dimension permutation and embedding utilities (`permute_cholesky_packed`, `embed_cholesky_packed`, `pack_tril`, `unpack_tril`) |
+| `test_metrics.py` | Quality metrics (PSNR, SSIM, MSE, rel_l2, max_abs_error) |
+| `test_progressive_fitting.py` | Progressive Gaussian splat fitting |
+| `test_spatial_volume_filter.py` | Spatial volume computation and specific-brightness filtering |
+| `test_tiled_fitting.py` | Tiled Gaussian splat fitting |
 
-**Total**: 4 test files
+**Total**: 11 test files
 
 ---
 
@@ -54,5 +61,6 @@ Each gsplats subpackage has its own test directory:
 
 ## Changelog
 
+- **v1.2.0** (2026-03-31): Updated test file inventory (4 -> 11 files). Added test_batch, test_culling, test_gpu_profile, test_metrics, test_progressive_fitting, test_spatial_volume_filter, test_tiled_fitting.
 - **v1.1.0** (2026-02-28): Rewritten with actual test file inventory (5 files) and subpackage directory listing.
 - **v1.0.0** (2026-01-02): Initial specification (boilerplate).

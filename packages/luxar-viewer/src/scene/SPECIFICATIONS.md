@@ -1262,7 +1262,7 @@ interface SceneManager {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   renderer: THREE.WebGLRenderer;
-  controls: OrbitControls | ArcballControls | FlyControls;
+  controls: LuxarOrbitControls | LuxarFlyControls;
 
   // Post-processing
   postProcessing: PostProcessingManager;

@@ -95,7 +95,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
   private initPromise: Promise<void> | null = null;
-  private initLock = false;
   private rangeLoader: RangeLoader;
   private zarrStore: zarr.Readable | null = null;
 
@@ -288,17 +287,14 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    * @param session - Optional profiler session for nested timing
    */
   async loadLines(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData> {
-    // Prevent race conditions during initialization
-    if (!this.initPromise && !this.initLock) {
-      this.initLock = true;
-      this.initPromise = this.initialize().finally(() => {
-        this.initLock = false;
+    // Prevent race conditions during initialization; null on rejection allows retry
+    if (!this.initPromise) {
+      this.initPromise = this.initialize().catch((err) => {
+        this.initPromise = null; // Allow retry on next call
+        throw err;
       });
     }
-
-    if (this.initPromise) {
-      await this.initPromise;
-    }
+    await this.initPromise;
 
     if (!this.arrays.vertices || !this.arrays.segments) {
       throw new Error('Lines loader not properly initialized');
@@ -425,15 +421,11 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       }
 
       // Get direct buffer references (now colorBuffer has correct type!)
-      const vertexBuffer = this._accumulator['vertexBuffer'] as Float32Array;
-      const segmentBuffer = this._accumulator['segmentBuffer'] as Uint32Array;
-      const widthBuffer = this._accumulator['widthBuffer'] as Float32Array;
-      const colorBuffer = this.arrays.colors
-        ? (this._accumulator['colorBuffer'] as Float32Array | Uint8Array | Uint16Array)
-        : null;
-      const sharpnessBuffer = this.arrays.sharpness
-        ? (this._accumulator['sharpnessBuffer'] as Float32Array)
-        : null;
+      const vertexBuffer = this._accumulator.getVertexBuffer();
+      const segmentBuffer = this._accumulator.getSegmentBuffer();
+      const widthBuffer = this._accumulator.getWidthBuffer();
+      const colorBuffer = this.arrays.colors ? this._accumulator.getColorBuffer() : null;
+      const sharpnessBuffer = this.arrays.sharpness ? this._accumulator.getSharpnessBuffer() : null;
 
       // Profile vertex loading (accumulator path)
       const loadVertSession = session?.begin('Load Vertices');

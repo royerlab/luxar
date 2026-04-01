@@ -26,7 +26,7 @@ The E2E test suite has been significantly improved with these fixes:
 **1. Web Server Configuration** ✅
 - **Fixed**: Python HTTP server now uses `cwd` option instead of fragile `cd ../..`
 - **Result**: Example datasets now load reliably, no more path issues
-- **Location**: `playwright.config.ts:126`
+- **Location**: `webServer` configuration in `playwright.config.ts`
 
 **2. Pre-flight Dataset Checks** ✅
 - **Added**: `global-setup.ts` verifies all required datasets exist before tests run

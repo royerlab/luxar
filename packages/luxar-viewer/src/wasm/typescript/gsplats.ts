@@ -7,9 +7,10 @@
 /**
  * Compute nD visibility for GSplats using ellipsoid extent.
  *
- * Uses an optimistic estimate (max diagonal of L underestimates the true
- * ellipsoid extent for correlated covariances). This is acceptable as a
- * pre-filter since precise attenuation is computed later by
+ * Uses row norms of L to estimate the marginal standard deviation per axis.
+ * Row norm of row i = sqrt(sum_j L[i,j]^2) gives the correct extent even
+ * for correlated covariances. The max row norm is used as a conservative
+ * pre-filter; precise attenuation is computed later by
  * `compute_gsplats_attenuation`.
  *
  * @param centers - Splat centers [numSplats * ndim]
@@ -37,18 +38,20 @@ export function compute_nd_visibility_gsplats(
     const centerOffset = splatIdx * ndim;
     const choleskyOffset = splatIdx * choleskySize;
 
-    // Compute maximum ellipsoid extent from Cholesky factors
-    // Diagonal elements of L give axis scales (L is lower triangular)
+    // Compute maximum ellipsoid extent from Cholesky row norms.
+    // Row norm of row i = sqrt(sum_j L[i,j]^2) gives the marginal
+    // standard deviation along axis i (correct for correlated covariances).
     let maxExtent = 0;
-    let cholIdx = 0;
 
     for (let dim = 0; dim < ndim; dim++) {
-      // Diagonal element L[dim,dim] is at packed position:
-      // dim + (dim-1) + (dim-2) + ... + 0 = dim*(dim+1)/2
-      const diagPos = choleskyOffset + cholIdx + dim;
-      const scale = Math.abs(choleskyFactors[diagPos]);
-      maxExtent = Math.max(maxExtent, scale);
-      cholIdx += dim + 1; // Move to next row's diagonal
+      // Row `dim` has elements at packed positions dim*(dim+1)/2 + col for col in 0..=dim
+      const rowStart = choleskyOffset + (dim * (dim + 1)) / 2;
+      let rowNormSq = 0;
+      for (let col = 0; col <= dim; col++) {
+        const val = choleskyFactors[rowStart + col];
+        rowNormSq += val * val;
+      }
+      maxExtent = Math.max(maxExtent, Math.sqrt(rowNormSq));
     }
 
     // Check if center + max extent is within tolerance

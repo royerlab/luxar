@@ -5,9 +5,9 @@
 
 ## Purpose
 
-The `luxar-viewer.controls` package provides comprehensive 3D navigation systems for nD scientific visualization, including orbit controls, arcball controls, and quaternion-based fly controls with 6 degrees of freedom.
+The `luxar-viewer.controls` package provides comprehensive 3D navigation systems for nD scientific visualization, including quaternion-based orbit controls, fly controls with 6 degrees of freedom, and orthographic pan+zoom controls.
 
-**Core Responsibility**: Enable intuitive camera navigation through multiple control paradigms (orbit, arcball, fly) with seamless mode switching, physics-based movement, and gimbal-lock-free rotation.
+**Core Responsibility**: Enable intuitive camera navigation through multiple control paradigms (orbit, fly, ortho) with seamless mode switching, physics-based movement, and gimbal-lock-free rotation.
 
 ---
 
@@ -25,39 +25,36 @@ The `luxar-viewer.controls` package provides comprehensive 3D navigation systems
 
 ### 1.1 Orbit Controls
 
-**Type**: Trackball-style rotation around a target point
+**Type**: Quaternion-based rotation around a target point (no gimbal lock)
 
 **Features**:
 
-- Pan: Left mouse drag
-- Rotate: Right mouse drag (or Shift+left drag)
+- Rotate: Left mouse drag
+- Pan: Right mouse drag
 - Zoom: Scroll wheel
 - Roll: Shift+scroll
 
-**Limitations**:
+**Properties**:
 
-- Gimbal lock at poles (cannot rotate past ±90° pitch)
+- No gimbal lock (quaternion-based turntable)
+- Smooth damping
 - Camera always faces target point
+- Auto-rotate support
 
-**Use Cases**: Examining objects from outside, presentations
+**Use Cases**: Examining objects from outside, presentations, scientific visualization requiring arbitrary orientations
 
-### 1.2 Arcball Controls
+### 1.2 Ortho Controls
 
-**Type**: Quaternion-based rotation around target (no gimbal lock)
+**Type**: Orthographic pan + zoom (2D viewing mode)
 
 **Features**:
 
-- Unlimited rotation in any direction
-- Smooth quaternion interpolation
-- Same mouse controls as orbit
+- Pan: Left mouse drag (Napari/Google Maps convention)
+- Zoom: Scroll wheel (mouse middle button)
+- Roll: Shift+scroll
+- Rotation disabled
 
-**Advantages over Orbit**:
-
-- No gimbal lock
-- Smoother rotation
-- Full 360° freedom
-
-**Use Cases**: Scientific visualization requiring arbitrary orientations
+**Use Cases**: 2D viewing of slices, plan-view inspection
 
 ### 1.3 Fly Controls
 
@@ -378,48 +375,11 @@ function flyToOrbit() {
 - View direction preserved
 - Zoom level maintained (where applicable)
 
-### 4.3 Arcball Mode Switching - Critical Up Vector Fix
+### 4.3 Ortho Mode Switching
 
-**Problem**: ArcballControls modifies the camera's up vector during rotation. When switching TO arcball mode without resetting the up vector, the camera can "jump" or have incorrect orientation.
+**Orbit/Fly → Ortho**: Camera position and target are preserved. Rotation is disabled. Left-click is remapped to pan (Napari/Google Maps convention).
 
-**Critical Fix** (controls-manager.ts:280-295):
-
-```typescript
-function initializeArcballControls(): void {
-  // CRITICAL: Reset the camera's up vector to prevent jumps
-  // ArcballControls modifies the up vector during rotation
-  this.camera.up.set(0, 1, 0); // Reset to default (0, 1, 0)
-  this.camera.updateMatrixWorld();
-
-  // Initialize the control with current camera state
-  controls.setCamera(this.camera);
-
-  // IMPORTANT: Sync internal up vector states with camera's up vector
-  // This prevents "jump" at start/end of dragging
-  if (controls._up0 && controls._upState) {
-    controls._up0.copy(this.camera.up); // Reset saved up vector
-    controls._upState.copy(this.camera.up); // Reset current up state
-  }
-
-  // Update once to sync everything
-  controls.update();
-}
-```
-
-**Why This Matters**:
-
-1. **ArcballControls maintains internal up vector state** (`_up0`, `_upState`)
-2. **Previous control mode may have modified camera.up**
-3. **Without reset**: Arcball inherits wrong up vector → camera jumps
-4. **With reset**: Clean slate, predictable behavior
-
-**Symptoms Without Fix**:
-
-- Camera "snaps" to unexpected orientation when entering arcball mode
-- First drag after mode switch feels wrong
-- View direction appears tilted
-
-**Disposal**: Before disposing arcball controls, call `reset()` to prevent lingering state issues (controls-manager.ts:309-311)
+**Ortho → Orbit/Fly**: Camera position and target are restored. Rotation is re-enabled.
 
 ---
 
@@ -510,17 +470,18 @@ function setInertialMode(enabled: boolean): void {
 
 ```typescript
 interface ControlsManager {
-  currentControlType: 'orbit' | 'arcball' | 'fly';
-  orbitControls: OrbitControls | null;
-  arcballControls: ArcballControls | null;
-  flyControls: FlyControls | null;
+  currentControlType: 'orbit' | 'fly' | 'ortho';
+  currentControls: LuxarOrbitControls | LuxarFlyControls | null;
 
-  setControlType(type: 'orbit' | 'arcball' | 'fly'): void;
-  getControls(): OrbitControls | ArcballControls | FlyControls;
-  update(delta?: number): boolean; // Returns true if changed
+  setControlType(type: 'orbit' | 'fly' | 'ortho'): void;
+  getControlType(): 'orbit' | 'fly' | 'ortho';
+  getControls(): LuxarOrbitControls | LuxarFlyControls | null;
+  update(): void;
   dispose(): void;
 }
 ```
+
+**Note**: Both orbit and ortho modes use `LuxarOrbitControls` internally (ortho disables rotation and remaps left-click to pan).
 
 ### FlyControls State
 
@@ -597,21 +558,20 @@ function update(delta: number): boolean {
 
 ## Changelog
 
+- **v3.0.0** (2026-03-31): Arcball removal, ortho mode addition
+  - **REMOVED**: Arcball as a separate control type (orbit is now quaternion-based, no gimbal lock)
+  - **ADDED**: Ortho mode (orthographic pan + zoom, 2D viewing)
+  - **UPDATED**: Control types are now: orbit, fly, ortho
+  - **UPDATED**: Mode cycle (V key): orbit -> fly -> ortho -> orbit
+  - **UPDATED**: ControlsManager data structures to match actual implementation
+  - **UPDATED**: Section 4.3 now documents ortho mode switching (replaces arcball section)
+
 - **v2.1.0** (2026-01-16): Version alignment with README
   - Aligned specification version with README v2.x scheme
   - No functional changes
 
-- **v2.0.1** (2025-12-09): Arcball mode switching fix
-  - **ADDED**: Section 4.3 documenting critical up vector reset fix
-  - Documents why camera.up.set(0,1,0) is required before arcball initialization
-  - Explains \_up0 and \_upState synchronization to prevent camera jumps
-  - Documents disposal pattern (call reset() before dispose)
-  - Implementation at controls-manager.ts:280-318
-  - Fixes camera "snap" bug when entering arcball mode
-  - No functional changes - documentation only
-
 - **v2.0.0** (2025-01-30): Initial specification (aligns with README v2.0.0)
-  - Three control types: Orbit, Arcball, Fly
+  - Three control types: Orbit, Fly, Ortho
   - Fly controls physics with quaternion-based rotation
   - World-space angular velocity (prevents gimbal artifacts)
   - Frame-rate independent physics with timestep correction

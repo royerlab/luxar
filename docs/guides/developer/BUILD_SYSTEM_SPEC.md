@@ -22,7 +22,7 @@ Before running `make setup-dev`, you need:
 
 | Tool | Required Version | Notes |
 |------|-----------------|-------|
-| Python | 3.9+ | Usually pre-installed on Linux/macOS |
+| Python | 3.10+ | Usually pre-installed on Linux/macOS |
 | Git | Any | For cloning the repository |
 | curl | Any | For downloading installers |
 

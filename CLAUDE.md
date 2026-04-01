@@ -181,6 +181,9 @@ luxar demo                       # Quick demo with viewer
 luxar serve <data.zarr> --viewer # Serve with viewer
 luxar info <data.zarr> --stats   # Dataset info
 luxar profiles                   # Network simulation profiles
+luxar export scene.zarr -o my_export/             # Export scene + viewer as standalone offline folder
+luxar export scene.zarr -o my_export/ --open      # Export and serve in browser
+luxar export scene.zarr -o my_export/ --overwrite # Overwrite existing export
 ```
 
 ### GSplat CLI (fitting, converting, rendering, merging)
@@ -215,6 +218,9 @@ luxar gsplat batch plan data.zarr.zip output/ -p gpu \
     --iters 8000 --seeds 100000                                         # Override fit params
 luxar gsplat batch status output/                                       # Check job status
 luxar gsplat batch merge output/                                        # Merge completed tiles
+luxar gsplat batch validate output/                                     # Validate tile integrity
+luxar gsplat batch validate output/ --fix                               # Delete corrupt/stale tiles for re-fitting
+luxar gsplat batch cancel output/                                       # Cancel all Slurm jobs for a batch run
 
 # GPU benchmark (required for auto tile-size; --tile-size bypasses this)
 luxar gsplat benchmark --slurm --partition gpu        # Submit benchmark to Slurm
@@ -242,6 +248,20 @@ luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00
 # Slice by coordinate ranges (numpy-style)
 luxar gsplat slice input.gsplats.zarr output.gsplats.zarr "0:50, :, 10:90"
 luxar gsplat slice input.gsplats.zarr output.gsplats.zarr ":50, 20:80, :"
+
+# Apply spatial and intensity transforms to a gsplat dataset
+luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --scale 4,1,1,1 --center
+luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --rotate-z 90
+luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --normalize-intensity 1.0
+luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --translate 0,100,0 --scale-intensity 0.5
+
+# Denoise a volume using Non-Local Means (auto-calibrates h)
+luxar gsplat denoise volume.zarr denoised.zarr
+luxar gsplat denoise volume.zarr denoised.npy --h 0.03
+luxar gsplat denoise data.zarr.zip out.zarr --channel 0 --timepoint 5 --denoise-2d
+
+# Open gsplat dataset in napari for visual inspection
+luxar gsplat napari splats.gsplats.zarr
 
 # Inspect, cull, and filter
 luxar gsplat info splats.gsplats.zarr          # Dataset statistics

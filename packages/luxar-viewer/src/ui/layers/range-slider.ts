@@ -52,6 +52,10 @@ export class RangeSlider {
   private onWheelLow: (e: WheelEvent) => void;
   private onWheelHigh: (e: WheelEvent) => void;
 
+  // Bound click handlers (stored for removeEventListener in dispose)
+  private onClickLow: () => void;
+  private onClickHigh: () => void;
+
   constructor(options: RangeSliderOptions) {
     this.options = options;
 
@@ -96,14 +100,16 @@ export class RangeSlider {
     this.boundsLowLabel.className = 'luxar-range-slider__bound';
     this.boundsLowLabel.title = 'Click to edit · Scroll to adjust (Shift = fine)';
     this.boundsLowLabel.textContent = this.formatValue(options.min);
-    this.boundsLowLabel.addEventListener('click', () => this.editBound('low'));
+    this.onClickLow = () => this.editBound('low');
+    this.boundsLowLabel.addEventListener('click', this.onClickLow);
 
     // Editable bounds label — high (right of track)
     this.boundsHighLabel = document.createElement('span');
     this.boundsHighLabel.className = 'luxar-range-slider__bound';
     this.boundsHighLabel.title = 'Click to edit · Scroll to adjust (Shift = fine)';
     this.boundsHighLabel.textContent = this.formatValue(options.max);
-    this.boundsHighLabel.addEventListener('click', () => this.editBound('high'));
+    this.onClickHigh = () => this.editBound('high');
+    this.boundsHighLabel.addEventListener('click', this.onClickHigh);
 
     // Mousewheel adjustment on bound labels
     this.onWheelLow = (e: WheelEvent) => this.handleBoundWheel(e, 'low');
@@ -353,6 +359,8 @@ export class RangeSlider {
     this.highInput.removeEventListener('input', this.onHighChange);
     this.boundsLowLabel.removeEventListener('wheel', this.onWheelLow);
     this.boundsHighLabel.removeEventListener('wheel', this.onWheelHigh);
+    this.boundsLowLabel.removeEventListener('click', this.onClickLow);
+    this.boundsHighLabel.removeEventListener('click', this.onClickHigh);
     this.wrapper.remove();
   }
 }

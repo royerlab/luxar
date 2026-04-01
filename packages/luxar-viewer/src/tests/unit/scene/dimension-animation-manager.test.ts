@@ -82,7 +82,8 @@ describe('DimensionAnimationManager', () => {
       manager.play(3);
       expect(mockAnimationController.addPerFrameCallback).toHaveBeenCalledWith(
         'dimension-animation',
-        expect.any(Function)
+        expect.any(Function),
+        { continuous: true }
       );
       expect(mockAnimationController.startAnimation).toHaveBeenCalled();
     });

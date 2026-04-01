@@ -42,7 +42,7 @@ export class AnimationController {
   private performanceMonitor: PerformanceMonitor;
 
   /** Per-frame callbacks for additional updates (keyed by ID for safe add/remove) */
-  private perFrameCallbacks: Map<string, () => void> = new Map();
+  private perFrameCallbacks: Map<string, { callback: () => void; continuous: boolean }> = new Map();
 
   /** Adaptive DPR manager for dynamic resolution scaling */
   private adaptiveDPRManager: AdaptiveDPRManager | null = null;
@@ -89,22 +89,27 @@ export class AnimationController {
    *
    * @param id - Unique identifier for this callback (for later removal)
    * @param callback - Function to call each frame
+   * @param options - Options controlling callback behavior
+   * @param options.continuous - If true, this callback prevents the animation loop from
+   *   auto-pausing due to idle timeout. Use for callbacks that need every frame (e.g.,
+   *   dimension animation, recording). Default: false (on-demand callbacks that only run
+   *   when animation is active but don't prevent pausing).
    *
    * @example
    * ```typescript
-   * // Add dynamic clipping plane updates
+   * // On-demand callback: runs when animating but doesn't prevent idle pause
    * animController.addPerFrameCallback('dynamic-clipping', () => {
    *   sceneManager.updateDynamicClippingPlanes();
    * });
    *
-   * // Add dimension animation updates
+   * // Continuous callback: keeps animation loop alive
    * animController.addPerFrameCallback('dimension-animation', () => {
    *   animationManager.onFrame();
-   * });
+   * }, { continuous: true });
    * ```
    */
-  addPerFrameCallback(id: string, callback: () => void): void {
-    this.perFrameCallbacks.set(id, callback);
+  addPerFrameCallback(id: string, callback: () => void, options?: { continuous?: boolean }): void {
+    this.perFrameCallbacks.set(id, { callback, continuous: options?.continuous ?? false });
   }
 
   /**
@@ -145,7 +150,7 @@ export class AnimationController {
    */
   setPerFrameCallback(callback: (() => void) | null): void {
     if (callback) {
-      this.perFrameCallbacks.set('legacy', callback);
+      this.perFrameCallbacks.set('legacy', { callback, continuous: false });
     } else {
       this.perFrameCallbacks.delete('legacy');
     }
@@ -200,8 +205,8 @@ export class AnimationController {
     this.controls.update();
 
     // Call all registered per-frame callbacks (e.g., dynamic clipping, dimension animation)
-    for (const callback of this.perFrameCallbacks.values()) {
-      callback();
+    for (const entry of this.perFrameCallbacks.values()) {
+      entry.callback();
     }
 
     // Render through HDR post-processing pipeline
@@ -225,10 +230,13 @@ export class AnimationController {
     // Check if any post-processing effects need continuous updates
     const hasEffects = this.postProcessing.needsContinuousAnimation();
 
-    // Check if any per-frame callbacks are active (e.g., turntable recording, dimension animation)
-    const hasCallbacks = this.perFrameCallbacks.size > 0;
+    // Check if any continuous per-frame callbacks are active (e.g., turntable recording, dimension animation)
+    // On-demand callbacks (continuous: false) like dynamic-clipping and scale-bar don't prevent idle pause
+    const hasContinuousCallbacks = [...this.perFrameCallbacks.values()].some(
+      (entry) => entry.continuous
+    );
 
-    return autoRotate || hasEffects || hasCallbacks;
+    return autoRotate || hasEffects || hasContinuousCallbacks;
   }
 
   /**

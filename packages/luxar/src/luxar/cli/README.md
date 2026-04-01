@@ -31,7 +31,7 @@ luxar info my_data.zarr --stats
 
 - `__init__.py` - Package initialization, exports the main app
 - `main.py` - Main CLI application with all commands
-- `gsplat_commands.py` - Gaussian splat subcommands (info, view, prune, fit, convert, render, merge, filter, split, slice, compare)
+- `gsplat_commands.py` - Gaussian splat subcommands (info, view, prune, fit, convert, render, merge, filter, split, slice, compare, transform, denoise, napari, batch validate/cancel/denoise-calibrate/denoise-preprocess)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `utils.py` - Utility functions for CLI operations
 - `network_simulation.py` - Network simulation middleware and profile definitions
@@ -81,6 +81,18 @@ luxar profiles                # Display all network profiles with descriptions
 **Available profiles:** 3g, 4g, 5g, slow-broadband, broadband, fast-broadband, satellite, rural, congested
 
 Use these profiles with `serve`, `viewer`, or `demo` commands via the `--network-profile` option to simulate various network conditions for testing.
+
+
+### `luxar export`
+Export a zarr scene and the Luxar viewer as a standalone offline folder. The output is self-contained: anyone can view the scene with just Python 3 and a browser by running `serve.py`.
+```bash
+luxar export my_scene.zarr -o my_export/              # Export scene + viewer
+luxar export my_scene.zarr -o my_export/ --overwrite   # Overwrite existing export
+luxar export my_scene.zarr -o my_export/ --open        # Export and serve in browser
+luxar export my_scene.zarr -o my_export/ --open --port 9000  # Custom port
+```
+
+**Options**: `--output/-o` (required), `--overwrite`, `--open` (serve and launch browser), `--port/-p` (port for local server, default 8000).
 
 
 ### GSplat Processing Commands
@@ -155,6 +167,54 @@ For large volumes, use tiled fitting with Hann cosine apodization:
 luxar gsplat fit large.zarr splats.gsplats.zarr --tiled --tile-size 256 --overlap 32
 luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32
 ```
+
+#### `luxar gsplat transform`
+Apply spatial and intensity transforms to a Gaussian splat dataset. Multiple transforms can be combined; they are applied in fixed order: scale, rotate, translate, center, scale-intensity, normalize-intensity.
+```bash
+luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --scale 4,1,1,1 --center
+luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --rotate-z 90
+luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --normalize-intensity 1.0
+luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --translate 0,100,0 --scale-intensity 0.5
+```
+
+**Spatial options**: `--scale/-s` (per-axis factors), `--translate/-t` (per-axis offset), `--rotate-x/--rotate-y/--rotate-z` (degrees, 3D only), `--center` (center at amplitude-weighted centroid).
+**Intensity options**: `--scale-intensity` (multiply amplitudes), `--normalize-intensity` (normalize max amplitude to value).
+**Output options**: `--encoding/-e` (auto/precision/memory), `--compress/-c` (zip/tar.gz).
+
+#### `luxar gsplat denoise`
+Denoise a volume using Non-Local Means. Auto-calibrates the denoising strength `h` using Noise2Self unless `--h` is provided. Runs locally (no Slurm). For batch denoising on HPC, use `luxar gsplat batch plan --denoise`.
+```bash
+luxar gsplat denoise volume.zarr denoised.zarr
+luxar gsplat denoise volume.zarr denoised.npy --h 0.03
+luxar gsplat denoise data.zarr.zip out.zarr --channel 0 --timepoint 5 --denoise-2d
+```
+
+**Options**: `--h` (manual NLM h value), `--patch-size` (default 3), `--search-distance` (default 5), `--backend` (auto/cuda/pytorch/skimage), `--device/-d` (auto/cpu/cuda/mps), `--denoise-2d` (slice-by-slice), `--channel`, `--timepoint`, `--array-key`.
+
+#### `luxar gsplat napari`
+Open a Gaussian splat dataset in napari for visual inspection. Renders the splats back to a volume and displays them alongside splat center points. Requires `napari` to be installed (`pip install napari[all]`).
+```bash
+luxar gsplat napari splats.gsplats.zarr
+```
+
+#### `luxar gsplat batch validate`
+Validate integrity of all tiles in a batch output directory. Checks each tile for completeness (metadata, arrays, shapes) and reports OK, MISSING, CORRUPT, and STALE_TMP counts. Use `--fix` to delete corrupt tiles and leftover `.tmp` directories so they get re-fitted on the next submit.
+```bash
+luxar gsplat batch validate output_dir/
+luxar gsplat batch validate output_dir/ --fix
+```
+
+#### `luxar gsplat batch cancel`
+Cancel all Slurm jobs for a batch fitting run. Reads the manifest to find job IDs (calibrate, denoise, fit array, merge) and cancels them via `scancel`.
+```bash
+luxar gsplat batch cancel output_dir/
+```
+
+#### `luxar gsplat batch denoise-calibrate` (internal)
+Internal command called by the calibration Slurm job. Reads the batch manifest, calibrates NLM `h` per channel, and writes results back to `denoise_h_values.json`. Not intended for direct use.
+
+#### `luxar gsplat batch denoise-preprocess` (internal)
+Internal command called by the denoise Slurm array job, one task per (timepoint, channel) pair. Reads calibrated `h` values and denoises a single volume. Not intended for direct use.
 
 
 ## Key Features
