@@ -1,5 +1,9 @@
 # Luxar
 
+[![CI](https://github.com/royerlab/luxar/actions/workflows/ci.yml/badge.svg)](https://github.com/royerlab/luxar/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
+
 **High-performance n-dimensional scientific visualization.**
 
 Luxar is a system for compiling and visualizing large-scale n-dimensional point clouds, lines, and Gaussian splats. Built for scientists and researchers who need to explore datasets with millions of elements in 3D, 4D, or higher dimensions.
@@ -39,13 +43,15 @@ Scientific visualization is often software-limited. Luxar changes this by separa
 | **Gaussian Splatting** | Fit and visualize oriented Gaussians for volume reconstruction |
 | **Line Geometry** | Render line segments with width tapering and color gradients |
 
+> **Requirements:** The Luxar viewer targets **desktop browsers** with **WebGL2** support (Chrome, Firefox, Edge, Safari 15+). Touch/mobile devices are not currently supported.
+
 ---
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.9+ (usually pre-installed on Linux/macOS)
+- Python 3.10+ (usually pre-installed on Linux/macOS)
 - Modern browser with WebGL 2.0
 - **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
 
@@ -483,6 +489,36 @@ luxar profiles                          # List network simulation profiles
 
 ---
 
+## GPU Acceleration (Optional)
+
+Gaussian splat fitting runs on CPU by default. For 10-50x faster fitting, install with GPU support:
+
+```bash
+# Install gsplats dependencies (PyTorch, scipy, etc.)
+pip install 'luxar[gsplats]'
+
+# For NVIDIA CUDA acceleration (optional, requires CUDA toolkit + GPU):
+make build-cuda
+```
+
+**What gets accelerated:**
+
+| Component | CPU | CUDA GPU | Apple Metal (MPS) |
+|-----------|-----|----------|-------------------|
+| Splat fitting | Supported (slow) | 10-50x faster | Supported |
+| NLM denoising | Supported | Faster with `make build-cuda` | Not supported |
+| Seeding | Supported | 10-50x faster for large volumes | Supported |
+| **Viewer rendering** | N/A | N/A | N/A |
+
+> **Note:** The viewer uses **WebGL** (your browser's GPU) for rendering — no CUDA needed.
+> CUDA acceleration is only for the Python-side fitting pipeline.
+> The CUDA extension (`.so`) is compiled locally for your specific GPU architecture
+> and cannot be pre-built or distributed in the wheel.
+
+See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for HPC/Slurm build instructions.
+
+---
+
 ## Troubleshooting
 
 ### Common Issues
@@ -503,6 +539,15 @@ make setup-dev    # Set up environment
 - Lower bloom quality in rendering panel
 - Disable MSAA/SSAA, use FXAA instead
 
+**CUDA splatting backend not compiled**
+```bash
+make check-cuda-deps  # Check what's installed/missing
+make build-cuda       # Build for local GPU
+# On HPC clusters:
+make build-cuda SLURM=1 SLURM_PARTITION=gpu
+```
+If you see "GPU fitting will use slower PyTorch fallback", fitting still works — just slower.
+
 **nD navigation not working**
 - Verify `scene_dimensions` defined in `.zattrs`
 - Check dimension count matches position array shape
@@ -516,6 +561,18 @@ make setup-dev    # Set up environment
 | Firefox 88+ | Fully supported (recommended for large datasets) |
 | Safari 14+ | Supported |
 | Edge 90+ | Fully supported |
+
+### Viewer URL Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `?src=<url>` | Data source URL (Zarr store) |
+| `?theme=light` | Set UI theme (`light` or `dark`) |
+| `?debug` | Enable debug mode (`window.__luxarDebug`) |
+| `?no-cache` | Disable L1/L2 chunk caching |
+| `?cache-debug` | Show cache hit/miss statistics |
+| `?clear-cache` | Clear the OPFS persistent cache on load |
+| `?no-prefetch` | Disable predictive chunk prefetching |
 
 ---
 
@@ -532,7 +589,7 @@ Built with:
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+BSD-3-Clause License. See [LICENSE](LICENSE) for details.
 
 ---
 
