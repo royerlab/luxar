@@ -43,7 +43,7 @@ See: `ai-debugging-demo.spec.ts` for complete examples
 
 ## 🧪 Test Suite Organization
 
-### Test Files (226 tests total across 23 test suites)
+### Test Files (check `packages/luxar-viewer/src/tests/e2e/` for current count; 29 spec files as of 2026-03-31)
 
 Key test suites include:
 

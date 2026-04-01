@@ -18,7 +18,7 @@ The Luxar Data package provides the critical data loading infrastructure for vis
 - **Dimension Extension**: Explicit visibility extension of point groups across non-displayed dimensions
 - **Directory Navigation**: Multi-strategy server navigation (WebDAV, S3, nginx)
 - **GPU Optimization**: Automatic data format conversion for WebGL compatibility
-- **Efficient Caching**: Range-based caching with LRU/LFU eviction strategies
+- **Efficient Caching**: Chunk-based caching with LRU eviction
 
 ### Package Architecture
 

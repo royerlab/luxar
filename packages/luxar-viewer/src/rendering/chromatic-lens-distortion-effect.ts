@@ -80,9 +80,9 @@ const fragmentShader = /* glsl */ `
     vec2 uvB = applyDistortion(uv, distortionB);
 
     // Sample texture at distorted coordinates for each channel
-    float r = texture2D(inputBuffer, uvR).r * border(uvR);
-    float g = texture2D(inputBuffer, uvG).g * border(uvG);
-    float b = texture2D(inputBuffer, uvB).b * border(uvB);
+    float r = texture(inputBuffer, uvR).r * border(uvR);
+    float g = texture(inputBuffer, uvG).g * border(uvG);
+    float b = texture(inputBuffer, uvB).b * border(uvB);
 
     // Combine channels with boundary masking
     // Use the middle channel (green) for alpha to avoid edge artifacts

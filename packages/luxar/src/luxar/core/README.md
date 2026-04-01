@@ -195,7 +195,7 @@ group.nd_transform = {"Channel": {"permutation": [2, 0, 1]}}
   so scene-level bounds reflect world-space ranges for non-displayed dimensions
 - See `docs/guides/specs/ND_TRANSFORMS_SPEC.md` for full specification
 
-### 3. DataNode (`datanode.py`)
+### 4. DataNode (`datanode.py`)
 
 Abstract base class for all data-bearing nodes (Points, Lines, GSplats).
 
@@ -234,7 +234,7 @@ Node
       └── GSplats
 ```
 
-### 4. Points (`points.py`)
+### 5. Points (`points.py`)
 
 Specialized node for point cloud data. Lightweight metadata container in progressive mode.
 
@@ -266,7 +266,7 @@ print(f"Elements: {points.n_elements}")  # Alias for n_points
 - `has_sharpness` - Whether sharpness is present
 - `metadata` - Full metadata dictionary
 
-### 5. Lines (`lines.py`)
+### 6. Lines (`lines.py`)
 
 Node for line and curve data (polylines, segments, loops).
 
@@ -322,7 +322,7 @@ print(f"Max width: {lines.max_width}")
 - `segments` - Shape (S, 2) connectivity pairs (stored form)
 - `indices` - Vertex indices for indexed line type input (optional)
 
-### 6. GSplats (`gsplats.py`)
+### 7. GSplats (`gsplats.py`)
 
 Node for Gaussian splat data (oriented anisotropic Gaussians).
 
@@ -423,7 +423,7 @@ These methods automatically handle:
 - Passing all data (centers, amplitudes, cholesky_factors, colors, sharpness) to add_gsplats()
 - Preserving optional attributes (colors, sharpness) when present
 
-### 7. Dimensions (`dimensions.py`)
+### 8. Dimensions (`dimensions.py`)
 
 Scene-level coordinate system definitions with support for categorical dimensions.
 
@@ -517,7 +517,7 @@ positions = np.array([
 - Step sizes auto-calculated if not provided
 - Categorical dimensions auto-set discrete=True, range, and step
 
-### 8. Transforms (`transforms.py`)
+### 9. Transforms (`transforms.py`)
 
 Utilities for creating and manipulating 4x4 transformation matrices.
 
@@ -629,15 +629,24 @@ Node (base class)
 ## Testing
 
 Tests are located in `core/tests/`:
-- `test_dimensions.py` - Dimension system tests (including categorical)
-- `test_node_rendering.py` - Node rendering properties
-- `test_scene_methods.py` - Scene builder methods (all data types)
+- `test_datanode_types.py` - DataNode types: Lines and GSplats
+- `test_dim_order.py` - dim_order dimension mapping on add_points / add_lines / add_gsplats
+- `test_dimension_metadata.py` - Dimension functionality (current Dimension class)
+- `test_dimensions.py` - Scene-level dimensions
+- `test_extend_to_all.py` - extend_to_all functionality in Scene.add_points()
+- `test_group.py` - Group class with add_* methods
+- `test_gsplats_extend_to_all.py` - extend_to_all functionality in Scene.add_gsplats()
+- `test_hdr_colors.py` - Edge case tests for HDR color support
+- `test_node_properties.py` - Node properties and method chaining
+- `test_node_rendering.py` - Rendering attributes for Node class
+- `test_physical_units.py` - Physical units support through Dimensions system
+- `test_review_fixes.py` - Guards fixes from the systematic API review (regression tests)
+- `test_scene_advanced.py` - Advanced Scene class tests (initialization, error handling)
+- `test_scene_methods.py` - Scene class methods not covered elsewhere
 - `test_scene_structure.py` - Scene graph structure
-- `test_transforms.py` - Transform utilities
-- `test_spatial_dimensions.py` - Spatial dimension handling
-- `test_datanode.py` - DataNode base class tests
-- `test_lines.py` - Lines node tests
-- `test_gsplats.py` - GSplats node tests
+- `test_spatial_dimensions.py` - Spatial dimension functionality (spatial flag)
+- `test_transforms.py` - Transform utilities and functionality
+- `test_viewer_config.py` - ViewerConfig, CameraConfig, and related dataclasses
 
 Run tests:
 ```bash

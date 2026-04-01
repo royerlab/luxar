@@ -1,5 +1,6 @@
 import { SimpleDims, DimensionMetadata } from '../types/dims';
 import * as THREE from 'three';
+import { log, Modules } from '../utils/log';
 
 /**
  * Centralized dimension state manager ensuring consistency across all nD objects in the scene.
@@ -296,9 +297,17 @@ export class SceneDimsManager {
     const promises: Promise<void>[] = [];
 
     this.listeners.forEach((callback) => {
-      const result = callback();
-      if (result instanceof Promise) {
-        promises.push(result);
+      try {
+        const result = callback();
+        if (result instanceof Promise) {
+          promises.push(
+            result.catch((error) => {
+              log.error(Modules.SCENE_MANAGER, 'Dimension listener rejected:', error);
+            })
+          );
+        }
+      } catch (error) {
+        log.error(Modules.SCENE_MANAGER, 'Dimension listener threw:', error);
       }
     });
 
@@ -339,6 +348,8 @@ export class SceneDimsManager {
    */
   reset(): void {
     this.dims = null;
+    this.dimensionRanges = null;
+    this.pendingUpdatePromise = null;
     this.listeners.clear();
     // Scene dimension manager has been reset
   }

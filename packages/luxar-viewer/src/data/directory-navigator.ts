@@ -275,7 +275,15 @@ export class DirectoryNavigator {
         }
       });
 
-      return entries.length > 0 ? { entries } : null;
+      // Deduplicate entries from multiple HTML parsing strategies
+      const seen = new Set<string>();
+      const uniqueEntries = entries.filter((entry) => {
+        if (seen.has(entry.name)) return false;
+        seen.add(entry.name);
+        return true;
+      });
+
+      return uniqueEntries.length > 0 ? { entries: uniqueEntries } : null;
     } catch {
       return null;
     }

@@ -1,5 +1,14 @@
 # Colormaps — Specifications
 
+**Version**: 1.0.0
+**Last Updated**: 2026-03-31
+
+## Changelog
+
+- **v1.0.0** (2026-03-31): Initial version header added; content unchanged.
+
+---
+
 ## LUT Format
 
 All colormaps are normalized to a standard format:

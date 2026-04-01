@@ -78,9 +78,9 @@ Input Array (numpy float32)
     ↓
 ┌─────────────────────────────────────────────┐
 │ Encoding Mode Selection                     │ ← Quality vs compression
-│ • LOSSLESS: No quantization                 │
-│ • BALANCED: 16-bit quantization             │
-│ • AGGRESSIVE: 8-bit quantization            │
+│ • PRECISION: No quantization (float32)      │
+│ • AUTO: Balanced analysis + quantization    │
+│ • MEMORY: Aggressive 8/16-bit quantization  │
 └─────────────────────────────────────────────┘
     ↓
 ┌─────────────────────────────────────────────┐
@@ -757,10 +757,13 @@ Empty arrays (shape `(0,)` or `(0, d)`) are valid input:
 ## Testing
 
 Tests are located in `encoding/tests/`:
-- `test_encoder.py` - Encoder tests
-- `test_decoder.py` - Decoder tests
-- `test_registry.py` - Registry and deduplication tests
-- `test_semantic_types.py` - Semantic type validation tests
+- `test_decoder.py` - ArrayDecoder tests (broadcasting, LUT, array references, quantized encodings)
+- `test_dynamic_range.py` - Dynamic range-based dtype selection (range computation, dtype mapping)
+- `test_edge_cases.py` - Edge case tests (error paths, boundary conditions, unusual inputs)
+- `test_encoder.py` - ArrayEncoder tests (semantic types, encoding modes, special encodings)
+- `test_registry.py` - ArrayRefRegistry tests (duplicate detection, hashing, lifecycle)
+- `test_roundtrip_encoding.py` - Full encode-decode roundtrip tests (numerical tolerance per semantic type)
+- `test_scalar_input.py` - Scalar input support in ArrayEncoder (v0.6.0 feature)
 
 Run tests:
 ```bash

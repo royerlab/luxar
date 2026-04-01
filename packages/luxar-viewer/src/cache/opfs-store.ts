@@ -46,6 +46,9 @@ export class OPFSStore {
   private metadataSaveTimeout: ReturnType<typeof setTimeout> | null = null;
   private static readonly METADATA_SAVE_DELAY = 1000; // 1 second debounce
 
+  // Serialize concurrent writes to the same key to prevent race conditions
+  private pendingWrites = new Map<string, Promise<void>>();
+
   constructor(datasetId: string, baseUrl: string, maxSize: number) {
     this.datasetId = datasetId;
     this.baseUrl = baseUrl;
@@ -101,6 +104,27 @@ export class OPFSStore {
   async set(key: string, data: Uint8Array): Promise<void> {
     if (!this.opfsRoot) return;
 
+    // Await any pending write for this key to prevent race conditions
+    const pending = this.pendingWrites.get(key);
+    if (pending) {
+      await pending;
+    }
+
+    const writePromise = this.doSet(key, data);
+    this.pendingWrites.set(key, writePromise);
+    try {
+      await writePromise;
+    } finally {
+      this.pendingWrites.delete(key);
+    }
+  }
+
+  /**
+   * Internal write implementation (called by set() after serialization).
+   */
+  private async doSet(key: string, data: Uint8Array): Promise<void> {
+    if (!this.opfsRoot) return;
+
     const size = data.byteLength;
 
     // Check quota before writing
@@ -139,6 +163,7 @@ export class OPFSStore {
       const existingEntry = this.index.get(key);
       if (existingEntry) {
         this.totalSize -= existingEntry.size;
+        this.totalSize = Math.max(0, this.totalSize);
         this.index.delete(key);
       }
       this.index.set(key, { size, order: this.orderCounter++ });
@@ -165,6 +190,7 @@ export class OPFSStore {
       const entry = this.index.get(key);
       if (entry) {
         this.totalSize -= entry.size;
+        this.totalSize = Math.max(0, this.totalSize);
       }
 
       // Get bucket and delete file from it

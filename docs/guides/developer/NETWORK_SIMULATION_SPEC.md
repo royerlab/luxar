@@ -1,7 +1,7 @@
 # Network Simulation for Luxar CLI - Technical Specification
 
 **Version**: 1.1.0
-**Status**: ✅ Implemented (see `cli/network_simulation.py`)
+**Status**: ✅ Implemented (see `packages/luxar/src/luxar/cli/network_simulation.py`)
 **Created**: 2025-01-06
 **Last Updated**: 2025-12-15
 **Author**: Claude Code

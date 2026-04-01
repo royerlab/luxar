@@ -25,7 +25,7 @@ def identity() -> TransformMatrix:
 
     Example:
         >>> t = identity()
-        >>> aprint(t)
+        >>> print(t)
         [[1. 0. 0. 0.]
          [0. 1. 0. 0.]
          [0. 0. 1. 0.]
@@ -47,7 +47,7 @@ def translate(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> TransformMatrix
 
     Example:
         >>> t = translate(5, 0, 0)  # Move 5 units along X
-        >>> aprint(t[:, 3])  # Translation column
+        >>> print(t[:, 3])  # Translation column
         [5. 0. 0. 1.]
     """
     matrix = identity()
@@ -459,7 +459,7 @@ def read_transform_from_zarr(transform_list: list[float]) -> TransformMatrix:
         >>> # Read transform from zarr attributes
         >>> transform_list = node_attrs['transform']
         >>> matrix = read_transform_from_zarr(transform_list)
-        >>> aprint(matrix.shape)  # (4, 4)
+        >>> print(matrix.shape)  # (4, 4)
 
     See Also:
         prepare_transform_for_zarr: Inverse operation to write to storage

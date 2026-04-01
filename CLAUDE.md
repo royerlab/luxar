@@ -334,8 +334,9 @@ The Makefile follows consistent naming conventions with **action-first** pattern
 
 ```
 /packages/luxar/           # Python package
-  /src/luxar/              # Source (core/, io/, utils/, validation/, typing_utils/)
-  /tests/                  # Python tests
+  /src/luxar/              # Source (core/, io/, utils/, validation/, typing_utils/,
+                           #         encoding/, colormaps/, gsplats/, cli/, demos/)
+  /src/luxar/**/tests/     # Python tests (colocated with each subpackage)
   /examples/               # Example scripts (*_example.py naming)
 
 /packages/luxar-viewer/    # TypeScript/WebGL viewer

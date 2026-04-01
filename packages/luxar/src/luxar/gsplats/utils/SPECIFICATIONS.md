@@ -26,6 +26,18 @@ utils/
 
 ## Core Functions
 
+### Overview of All Exported Functions
+
+| Function | Purpose |
+|----------|---------|
+| `tril_size(d)` | Calculate number of lower-triangular elements for d-dimensional matrix |
+| `calculate_gradient_dilution_factor(d)` | Compute gradient dilution compensation factor |
+| `pack_tril(L)` | Pack lower-triangular matrices into compact vectors |
+| `unpack_tril(v, d)` | Unpack compact vectors into lower-triangular matrices |
+| `validate_cholesky_shape(...)` | Validate shape of packed Cholesky factors |
+| `embed_cholesky_packed(...)` | Embed lower-dimensional Cholesky factors into higher dimensions |
+| `permute_cholesky_packed(...)` | Permute dimensions of packed Cholesky factors |
+
 ### 1. Lower-Triangular Size Calculation
 
 ```python
@@ -253,6 +265,75 @@ def unpack_tril(v: np.ndarray, d: int) -> np.ndarray:
             k += 1
     return L
 ```
+
+### 5. Validate Cholesky Shape
+
+```python
+def validate_cholesky_shape(
+    cholesky_factors: np.ndarray,
+    ndim: int,
+    n_splats: Optional[int] = None,
+    allow_uniform: bool = True,
+) -> Tuple[bool, int]:
+```
+
+Validates that packed Cholesky factors have the correct shape for the given dimensionality.
+
+**Parameters:**
+- `cholesky_factors`: Packed Cholesky factors array to validate
+- `ndim`: Number of dimensions (d). Determines expected packed size k = d*(d+1)//2
+- `n_splats`: If provided, validates first dimension matches
+- `allow_uniform`: Whether to allow uniform Cholesky factors (shape (k,)) for all splats
+
+**Returns:** Tuple of `(is_uniform, actual_n_splats)` where `is_uniform` is True if shape is (k,).
+
+### 6. Permute Cholesky Packed
+
+```python
+def permute_cholesky_packed(
+    packed: np.ndarray,
+    d: int,
+    perm: Sequence[int],
+) -> np.ndarray:
+```
+
+Permutes dimensions of packed Cholesky factors. Given packed Cholesky factors L where Sigma = L @ L^T, reorders dimensions according to the permutation so that Sigma'[i,j] = Sigma[perm[i], perm[j]].
+
+**Algorithm:**
+1. Unpack to full matrices (in float64 for stability)
+2. Compute covariance: Sigma = L @ L^T
+3. Permute: Sigma_perm[i,j] = Sigma[perm[i], perm[j]]
+4. Re-decompose: L_new = cholesky(Sigma_perm)
+5. Pack result back to original dtype
+
+**Use Cases:**
+- Coordinate convention changes (e.g., [Z,Y,X] to [X,Y,Z])
+- Dimension reordering for compatibility between systems
+
+### 7. Embed Cholesky Packed
+
+```python
+def embed_cholesky_packed(
+    packed: np.ndarray,
+    d_src: int,
+    d_dst: int,
+    dim_mapping: List[int],
+    fill_sigma: Optional[Dict[int, float]] = None,
+) -> np.ndarray:
+```
+
+Embeds lower-dimensional packed Cholesky factors into a higher-dimensional space (d_dst >= d_src). Mapped dimensions carry over the original covariance; unmapped dimensions get independent Gaussian variance (diagonal only, no cross-terms).
+
+**Parameters:**
+- `packed`: Packed Cholesky factors in source dimensionality, shape (N, k_src)
+- `d_src`: Source dimensionality
+- `d_dst`: Target dimensionality (must be >= d_src)
+- `dim_mapping`: Maps source dimension i to target dimension dim_mapping[i]
+- `fill_sigma`: Standard deviations for unmapped target dimensions (default 1.0)
+
+**Use Cases:**
+- Upgrading 3D splats to 4D (adding time dimension)
+- Embedding spatial splats into higher-dimensional parameter spaces
 
 ## Mathematical Foundations
 

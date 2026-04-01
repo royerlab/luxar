@@ -183,7 +183,7 @@ session.end();
 | Component | File | Changes |
 |-----------|------|---------|
 | Profiler class | `src/profiling/update-profiler.ts` (new) | Core timing logic |
-| UI component | `src/ui/performance-panel.ts` (new) | Hierarchical tree view |
+| UI component | `src/profiling/update-profiler.ts` (new) | Hierarchical tree view |
 | Integration | `src/data/scene-loader.ts` | Add profiler calls |
 | Integration | `src/data/*-loader.ts` | Add profiler calls to loaders |
 | Monitor update | `src/ui/data-loading-monitor.ts` | Replace perf graph with tree |
