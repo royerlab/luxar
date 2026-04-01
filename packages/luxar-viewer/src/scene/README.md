@@ -355,11 +355,11 @@ sceneManager.updateClippingPlanes(near, far);
 const { near, far } = sceneManager.autoAdjustClippingPlanes();
 
 // Enable dynamic clipping (auto-adjusts each frame)
-sceneManager.setDynamicClipping(true, 0.1); // enabled, adaptSpeed
+sceneManager.setDynamicClipping(true); // enable sphere-based clipping
 
 // Get current dynamic clipping state
 const state = sceneManager.getDynamicClippingState();
-// { enabled: boolean, adaptSpeed: number, smoothedNear: number, smoothedFar: number }
+// { enabled: boolean, near: number, far: number }
 ```
 
 **Z-Buffer Best Practices:**
@@ -391,12 +391,8 @@ The scene manager supports automatic per-frame clipping plane adjustment:
 **Configuration:**
 
 ```typescript
-// Enable with default adapt speed (0.5)
+// Enable sphere-based dynamic clipping
 sceneManager.setDynamicClipping(true);
-
-// Fine-tune responsiveness
-sceneManager.setDynamicClipping(true, 0.05); // Slower, smoother
-sceneManager.setDynamicClipping(true, 0.3); // Moderate responsiveness
 ```
 
 **Adapt Speed Values:**

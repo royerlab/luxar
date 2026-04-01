@@ -43,6 +43,11 @@ __global__ void rasterize_global_forward_kernel(
     float* __restrict__ output,  // Output to add to (already has tile-based contributions)
     int64_t num_pixels
 ) {
+    // Precompute shifted Gaussian truncation parameters (once per kernel)
+    const GaussianShiftParams gsp = compute_shift_params(truncate);
+    const float shift_C = gsp.shift_C;
+    const float inv_one_minus_C = gsp.inv_one_minus_C;
+
     int64_t pixel_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (pixel_idx >= num_pixels) return;
 
@@ -96,11 +101,11 @@ __global__ void rasterize_global_forward_kernel(
         float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, c);
 
         // Early culling based on effective truncation
-        float eff_trunc_sq = effective_truncate_sq(truncate, amp, intensity_floor);
+        float eff_trunc_sq = effective_truncate_sq(truncate, amp, intensity_floor, shift_C, inv_one_minus_C);
         if (dist_sq > eff_trunc_sq) continue;
 
-        // Compute intensity
-        float intensity = gaussian_intensity(dist_sq, amp);
+        // Compute shifted Gaussian intensity
+        float intensity = gaussian_intensity(dist_sq, amp, shift_C, inv_one_minus_C);
 
         // Skip if below threshold (must match tile-based kernel behavior)
         if (intensity >= intensity_floor) {
@@ -145,6 +150,11 @@ __global__ void rasterize_global_backward_kernel(
     float* __restrict__ d_amps,
     int64_t num_pixels
 ) {
+    // Precompute shifted Gaussian truncation parameters (once per kernel)
+    const GaussianShiftParams gsp = compute_shift_params(truncate);
+    const float shift_C = gsp.shift_C;
+    const float inv_one_minus_C = gsp.inv_one_minus_C;
+
     int64_t pixel_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     constexpr int CONIC_SIZE = conic_size<DIM>();
@@ -213,15 +223,16 @@ __global__ void rasterize_global_backward_kernel(
             float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, c);
 
             // Compute gradients only if within truncation and above intensity floor
-            float eff_trunc_sq = effective_truncate_sq(truncate, amp, intensity_floor);
+            float eff_trunc_sq = effective_truncate_sq(truncate, amp, intensity_floor, shift_C, inv_one_minus_C);
             if (dist_sq <= eff_trunc_sq) {
-                float intensity = gaussian_intensity(dist_sq, amp);
+                float intensity = gaussian_intensity(dist_sq, amp, shift_C, inv_one_minus_C);
                 if (intensity >= intensity_floor) {
                     // d_amp = grad_out * (I / a)
                     local_d_amp = grad_out * (intensity / fmaxf(amp, 1e-10f));
 
-                    // Gradient w.r.t. dist_sq: dI/dD² = -0.5 * I
-                    float dI_dD_sq = -0.5f * intensity;
+                    // Gradient w.r.t. dist_sq (shifted Gaussian):
+                    // dI/dD² = -0.5 · (I + a·scale·C) where scale = inv_one_minus_C
+                    float dI_dD_sq = grad_intensity_wrt_dist_sq(intensity, amp, shift_C, inv_one_minus_C);
 
                     float outer_grad = grad_out * dI_dD_sq;
 

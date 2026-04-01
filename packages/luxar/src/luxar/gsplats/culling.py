@@ -45,6 +45,7 @@ redundant splats can be removed without degrading the reconstruction.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
@@ -127,6 +128,10 @@ def _deletion_error_2d(
     max_errors = torch.zeros(N, device=device)
     strides = linear_strides(shape, device)
 
+    # Shifted Gaussian constants (must match render_gaussians)
+    shift_C = math.exp(-0.5 * truncate * truncate)
+    shift_scale = 1.0 / (1.0 - shift_C)
+
     lo, hi, valid = compute_aabb_with_intensity_floor(
         centers, Ls, amps, shape, truncate, intensity_floor, device
     )
@@ -173,7 +178,10 @@ def _deletion_error_2d(
             d1 = base[1, p0:p1][None, :] + lo_sel[:, 1:2] - mu[:, 1:2]
 
             dist_sq = fwd_norm2_2d(L, d0, d1)
-            g_vals = torch.exp(-0.5 * dist_sq) * a[:, None]
+            # Shifted Gaussian: must match render_gaussians formula
+            g_vals = a[:, None] * shift_scale * torch.clamp(
+                torch.exp(-0.5 * dist_sq) - shift_C, min=0.0
+            )
 
             idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
             ref_vals = reference_flat[idx_flat].reshape(K, -1)
@@ -215,6 +223,10 @@ def _deletion_error_3d(
     N = centers.shape[0]
     max_errors = torch.zeros(N, device=device)
     strides = linear_strides(shape, device)
+
+    # Shifted Gaussian constants (must match render_gaussians)
+    shift_C = math.exp(-0.5 * truncate * truncate)
+    shift_scale = 1.0 / (1.0 - shift_C)
 
     lo, hi, valid = compute_aabb_with_intensity_floor(
         centers, Ls, amps, shape, truncate, intensity_floor, device
@@ -263,7 +275,10 @@ def _deletion_error_3d(
             d2 = base[2, p0:p1][None, :] + lo_sel[:, 2:3] - mu[:, 2:3]
 
             dist_sq = fwd_norm2_3d(L, d0, d1, d2)
-            g_vals = torch.exp(-0.5 * dist_sq) * a[:, None]
+            # Shifted Gaussian: must match render_gaussians formula
+            g_vals = a[:, None] * shift_scale * torch.clamp(
+                torch.exp(-0.5 * dist_sq) - shift_C, min=0.0
+            )
 
             idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
             ref_vals = reference_flat[idx_flat].reshape(K, -1)
@@ -306,6 +321,10 @@ def _deletion_error_nd(
     N = centers.shape[0]
     max_errors = torch.zeros(N, device=device)
     strides = linear_strides(shape, device)
+
+    # Shifted Gaussian constants (must match render_gaussians)
+    shift_C = math.exp(-0.5 * truncate * truncate)
+    shift_scale = 1.0 / (1.0 - shift_C)
 
     lo, hi, valid = compute_aabb_with_intensity_floor(
         centers, Ls, amps, shape, truncate, intensity_floor, device
@@ -372,7 +391,10 @@ def _deletion_error_nd(
                 y, _ = torch.triangular_solve(delta, L, upper=False)
 
             dist_sq = torch.sum(y * y, dim=1)
-            g_vals = torch.exp(-0.5 * dist_sq) * a[:, None]
+            # Shifted Gaussian: must match render_gaussians formula
+            g_vals = a[:, None] * shift_scale * torch.clamp(
+                torch.exp(-0.5 * dist_sq) - shift_C, min=0.0
+            )
 
             idx_flat = (base_idx[:, None] + lin_offsets_chunk[None, :]).reshape(-1)
             ref_vals = reference_flat[idx_flat].reshape(K, -1)

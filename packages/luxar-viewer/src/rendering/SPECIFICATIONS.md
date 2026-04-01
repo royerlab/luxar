@@ -1478,7 +1478,7 @@ The GSplat Material implements volumetric Gaussian splatting for rendering orien
 
 - Full 3D covariance representation via packed Cholesky factors
 - Perspective-correct projection of 3D covariance to 2D screen space
-- Generalized Gaussian falloff: `exp(-½ · r^sharpness)`
+- Shifted Gaussian falloff: `scale · max(0, exp(-½ · r^s) - C)` where C = exp(-½·T²), ensuring C⁰ continuity at truncation boundary
 - Sum and max projection modes with proper ray integration
 - Two-stage near-plane culling for performance
 
@@ -1604,23 +1604,31 @@ Packed into three vec2 attributes for GPU efficiency
 2. **Early Discard at 3σ**
 
    ```glsl
-   if (mahalSq > 9.0) discard;  // exp(-4.5) ≈ 0.011 (negligible)
+   if (mahalSq > 9.0) discard;  // shifted Gaussian reaches exactly 0 at T=3
    ```
 
-3. **Generalized Gaussian Falloff**
+3. **Shifted Gaussian Falloff (C⁰ continuity at truncation boundary)**
+
+   The Gaussian is shifted by `C = exp(-0.5 * T²)` and rescaled by `1/(1-C)` so that it
+   reaches exactly zero at the truncation radius T, avoiding discontinuities:
 
    ```glsl
-   // Standard Gaussian (s=2.0)
-   intensity = vAmplitude2D * exp(-0.5 * mahalSq);
+   float C_boundary = exp(-0.5 * uTruncate * uTruncate);
+   float inv_scale = 1.0 / (1.0 - C_boundary);
 
-   // Sum projection with s≠2 (non-separable correction)
+   // Standard Gaussian (s=2.0), shifted
+   float rawGauss = exp(-0.5 * mahalSq);
+   intensity = vAmplitude2D * max(0.0, rawGauss - C_boundary) * inv_scale;
+
+   // Sum projection with s≠2 (non-separable correction), shifted
    float gauss_2d = exp(-0.5 * mahalSq);
    float correction = correctionFactor(r_2D, vSharpness, vAspectRatio);
-   intensity = vAmplitude2D * gauss_2d * correction;
+   intensity = vAmplitude2D * max(0.0, gauss_2d * correction - C_boundary) * inv_scale;
 
-   // Max projection with s≠2
+   // Max projection with s≠2, shifted
    float rToTheS = pow(mahalSq, vSharpness * 0.5);
-   intensity = vAmplitude2D * exp(-0.5 * rToTheS);
+   float rawVal = exp(-0.5 * rToTheS);
+   intensity = vAmplitude2D * max(0.0, rawVal - C_boundary) * inv_scale;
    ```
 
 ### 8.5 Near-Plane Culling Strategy

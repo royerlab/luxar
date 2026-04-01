@@ -180,15 +180,27 @@ For maximum blending, we want the **peak value** along the ray (not the integral
 - 3D Gaussian: center μ, covariance Σ = LLᵀ, amplitude a
 - Ray: r(t) = o + t·d (origin o, direction d)
 
-**Ray integral:**
+**Ray integral (shifted Gaussian for C⁰ continuity at truncation boundary):**
+
+The Gaussian is shifted so that it reaches exactly zero at the truncation radius T:
 ```
-I = ∫_{-∞}^{∞} a · exp(-½ · ‖L⁻¹(r(t) - μ)‖²) dt
+C     = exp(-0.5 · T²)              // boundary value (T=3 → 0.01111)
+scale = 1 / (1 - C)                 // peak-preserving rescale (T=3 → 1.01123)
+G(t)  = scale · max(0, exp(-0.5 · t²) - C)
 ```
 
-**Result for s=2 (standard Gaussian):**
+The ray integral becomes:
 ```
-I = a · √(2π · σ²_ray) · exp(-½ · d²_perp)
+I = ∫_{-T·σ_ray}^{T·σ_ray} a · G(‖L⁻¹(r(t) - μ)‖²) dt
 ```
+
+**Result for s=2 (standard Gaussian, shifted truncation):**
+```
+I = a · σ_ray · c_T · exp(-½ · d²_perp)
+```
+
+Where c_T = sqrt(2*pi)*erf(T/sqrt(2)) - 2*T*exp(-0.5*T²) ≈ 2.433 for T=3
+(previously sqrt(2*pi) ≈ 2.507 without the shift).
 
 Where:
 - **σ²_ray = dᵀ Σ d** — variance along ray direction
@@ -200,7 +212,7 @@ Where:
 |-----------|----------------|----------------|
 | **Center** | μ_2D = perspective_project(μ_3D) | μ_2D = perspective_project(μ_3D) |
 | **Covariance** | Σ_2D = J · Σ_cam · Jᵀ | Σ_2D = J · Σ_cam · Jᵀ |
-| **Amplitude** | a_2D = a_3D · σ_ray · c(s) | a_2D = a_3D (peak value) |
+| **Amplitude** | a_2D = a_3D · σ_ray · c_T (≈2.433 for T=3) | a_2D = a_3D (peak value) |
 
 Where J is the Jacobian of perspective projection (see [Shader Design](#shader-design)).
 
@@ -226,7 +238,7 @@ a_2D = a_3D · σ_ray · c(s)
 
 ## Integral Factor (Historical Reference)
 
-> **Note**: The sharpness parameter has been removed from gsplats. The standard Gaussian (s=2) is now hardcoded. For s=2, c(s) = sqrt(2*pi) ~ 2.507. This section is retained for historical reference.
+> **Note**: The sharpness parameter has been removed from gsplats. The standard Gaussian (s=2) is now hardcoded. With the shifted truncation formula (C⁰ continuity), the ray integration constant for s=2 is c_T ≈ 2.433 (T=3), replacing the old unshifted value of sqrt(2*pi) ≈ 2.507. This section is retained for historical reference.
 
 ### The Integral
 
@@ -256,7 +268,7 @@ c(s) = (2/s) · 2^(1/s) · Γ(1/s)
 | 0.164 | 118,462 | Luxar minimum (extreme - use truncation!) |
 | 0.5 | 16.0 | |
 | 1.0 | 4.0 | Laplacian |
-| **2.0** | **2.507** | **Standard Gaussian √(2π)** |
+| **2.0** | **2.507** | **Standard Gaussian √(2π) (unshifted)** |
 | 24.5 | 2.01 | Luxar maximum (sharp edges) |
 | ∞ | 2.0 | Box function limit |
 
@@ -267,14 +279,14 @@ c(s) = (2/s) · 2^(1/s) · Γ(1/s)
 | 0.164 | 3.60 | Heavy tails clipped at 3σ |
 | 0.5 | 3.44 | |
 | 1.0 | 3.11 | |
-| **2.0** | **2.50** | Standard Gaussian (99.7% captured) |
+| **2.0** | **2.43** | Standard Gaussian, shifted (C⁰ continuity at T=3) |
 | 24.5 | 2.01 | Nearly all mass within 3σ |
 
 **Key insight:** With 3σ truncation, c(s) stays in the narrow range [2.0, 3.6] for all practical s values, avoiding numerical blowout.
 
 ### Practical Value in Luxar
 
-The standard Gaussian (s=2) is now hardcoded. For s=2, c(s) = sqrt(2*pi) ~ 2.507.
+The standard Gaussian (s=2) is now hardcoded. With the shifted truncation formula, c_T ≈ 2.433 for T=3 (previously sqrt(2*pi) ≈ 2.507 without the shift). The shift ensures C⁰ continuity at the truncation boundary.
 
 ### Implementation Options
 
@@ -336,9 +348,10 @@ const SHARPNESS_LUT = [
     2.0119,  // s = 25.0
 ];
 
-// Verification (scipy.integrate.quad with 3σ truncation):
-// c_trunc(0.5) = 3.44, c_trunc(1.0) = 3.11, c_trunc(2.0) = 2.50
+// Verification (scipy.integrate.quad with shifted 3σ truncation):
+// c_trunc(0.5) = 3.44, c_trunc(1.0) = 3.11, c_trunc(2.0) = 2.43
 // Compare to full integrals: c_full(0.5) = 16, c_full(2.0) = 2.507
+// Note: c_trunc(2.0) uses shifted formula for C⁰ continuity at boundary
 ```
 
 **Why truncation matters**: The full integral c(s) = (2/s) × 2^(1/s) × Γ(1/s) explodes
@@ -728,11 +741,14 @@ void main() {
     // Squared Mahalanobis distance
     float mahalSq = y0 * y0 + y1 * y1;
 
-    // Generalized Gaussian falloff: exp(-½ · r^s) where r = ||y||
-    // r^s = (r²)^(s/2) = mahalSq^(s/2)
-    // Branchless: pow(x, 1.0) == x, so this handles s=2 correctly
+    // Shifted Gaussian falloff for C⁰ continuity at truncation boundary:
+    //   C     = exp(-0.5 * T²)           // boundary value
+    //   scale = 1.0 / (1.0 - C)          // peak-preserving rescale
+    //   I(x)  = a * scale * max(0, exp(-0.5 * D²) - C)
     float rToTheS = pow(max(mahalSq, 1e-8), vSharpness * 0.5);
-    float intensity = vAmplitude2D * exp(-0.5 * rToTheS);
+    float rawGauss = exp(-0.5 * rToTheS);
+    float C_boundary = exp(-0.5 * uTruncate * uTruncate);
+    float intensity = vAmplitude2D * max(0.0, rawGauss - C_boundary) / (1.0 - C_boundary);
 
     // Early discard for negligible contribution
     if (intensity < 1e-6) discard;
@@ -843,9 +859,11 @@ function processGSplatsTo3D(
     const choleskyHidden = extractCholeskySubmatrix(loaded.choleskyFactors, i, hiddenDims);
     const distHidden = mahalanobisDistance(centerHidden, slicePosition, choleskyHidden);
 
-    // Amplitude attenuation
-    // Standard Gaussian attenuation
-    const attenuation = Math.exp(-0.5 * distHidden * distHidden);
+    // Amplitude attenuation (shifted Gaussian for C⁰ continuity at truncation boundary)
+    const T = 3.0; // truncation radius
+    const C_boundary = Math.exp(-0.5 * T * T);
+    const scale = 1.0 / (1.0 - C_boundary);
+    const attenuation = scale * Math.max(0, Math.exp(-0.5 * distHidden * distHidden) - C_boundary);
 
     // Skip if too attenuated
     if (attenuation < 1e-6) continue;
@@ -1210,9 +1228,9 @@ From `array-decoder.ts`:
 
 The following questions have been resolved:
 
-### 1. Truncation Value: **3σ (default)**
+### 1. Truncation Value: **3σ (default), shifted for C⁰ continuity**
 
-Use `truncate=3.0` as the codebase-wide default. This captures 99.7% of the Gaussian mass for s=2.
+Use `truncate=3.0` as the codebase-wide default. The shifted Gaussian formula `I(x) = a · scale · max(0, exp(-0.5·D²) - C)` where `C = exp(-0.5·T²)` and `scale = 1/(1-C)` ensures the function reaches exactly zero at the truncation boundary (C⁰ continuity), avoiding visible popping artifacts.
 
 **Future enhancement:** Store the truncation convention in gsplats metadata (post-fitting). The viewer
 can then read this value and use it automatically, ensuring consistency between fitting and rendering.

@@ -131,7 +131,6 @@ renderingControls: {
   defaults: {
     // Camera clipping
     dynamicClippingEnabled: true,   // Auto-adjust clipping planes per frame
-    clippingAdaptSpeed: 0.5,        // Exponential smoothing (0.01-1.0)
     // Bloom and HDR
     bloomThreshold: 0.01,
     bloomStrength: 0.5,
@@ -288,7 +287,6 @@ interface AppConfig {
 interface RenderingSettings {
   // Dynamic clipping planes
   dynamicClippingEnabled: boolean;
-  clippingAdaptSpeed: number;
   // Bloom and HDR
   bloomThreshold: number;
   bloomStrength: number;

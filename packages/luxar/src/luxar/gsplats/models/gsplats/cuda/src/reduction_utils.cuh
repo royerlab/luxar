@@ -57,21 +57,40 @@ __device__ __forceinline__ void warp_aggregated_atomic_add(
 // =============================================================================
 
 /**
- * Compute gradient of intensity w.r.t. dist_sq.
+ * Compute gradient of shifted Gaussian intensity w.r.t. dist_sq.
  *
- * For standard Gaussian: I = a * exp(-0.5 * D²)
- * ∂I/∂D² = I × (-0.5)
+ * For shifted Gaussian: I = a·scale·(exp(-0.5·D²) - C)
+ *
+ *   ∂I/∂D² = a·scale·(-0.5)·exp(-0.5·D²)
+ *           = -0.5 · (I + a·scale·C)
+ *
+ * The term (I + a·scale·C) recovers the unshifted Gaussian value
+ * a·scale·exp(-0.5·D²), which is needed because the derivative of exp()
+ * does not involve the shift constant C.
+ *
+ * @param intensity       Shifted Gaussian intensity I
+ * @param amplitude       Splat amplitude (a)
+ * @param shift_C         Precomputed exp(-0.5·T²)
+ * @param inv_one_minus_C Precomputed 1/(1-C) = scale
  */
 __device__ __forceinline__ float grad_intensity_wrt_dist_sq(
-    float intensity
+    float intensity,
+    float amplitude,
+    float shift_C,
+    float inv_one_minus_C
 ) {
-    return intensity * (-0.5f);
+    // Recover unshifted value: a·scale·exp(-0.5·D²) = I + a·scale·C
+    float unshifted = intensity + amplitude * inv_one_minus_C * shift_C;
+    return unshifted * (-0.5f);
 }
 
 /**
- * Compute gradient of intensity w.r.t. amplitude.
+ * Compute gradient of shifted Gaussian intensity w.r.t. amplitude.
  *
- * ∂I/∂a = exp(-0.5 × D²) = I / a
+ * I = a·scale·(exp(-0.5·D²) - C)
+ * ∂I/∂a = scale·(exp(-0.5·D²) - C) = I / a
+ *
+ * This relationship is preserved from the unshifted formula.
  */
 __device__ __forceinline__ float grad_intensity_wrt_amplitude(
     float intensity,
@@ -126,11 +145,13 @@ __device__ __forceinline__ void compute_dD2_dd_3d(
  * This is the complete backward computation for a single pixel-splat pair
  * in 3D, using explicit formulas instead of loops.
  *
- * @param dL_dI         Upstream gradient (∂L/∂I)
- * @param intensity     Computed intensity at this pixel
- * @param amp           Splat amplitude
- * @param d_vec         Displacement (px - center), length 3
- * @param conic         Packed conic, length 6
+ * @param dL_dI           Upstream gradient (∂L/∂I)
+ * @param intensity       Computed intensity at this pixel
+ * @param amp             Splat amplitude
+ * @param d_vec           Displacement (px - center), length 3
+ * @param conic           Packed conic, length 6
+ * @param shift_C         Precomputed exp(-0.5·T²)
+ * @param inv_one_minus_C Precomputed 1/(1-C)
  * @param local_d_centers Output: accumulated center gradients, length 3
  * @param local_d_conic   Output: accumulated conic gradients, length 6
  * @param local_d_amp     Output: accumulated amplitude gradient (single value)
@@ -141,6 +162,8 @@ __device__ __forceinline__ void backward_pixel_splat_3d(
     float amp,
     const float* __restrict__ d_vec,
     const float* __restrict__ conic,
+    float shift_C,
+    float inv_one_minus_C,
     float* __restrict__ local_d_centers,
     float* __restrict__ local_d_conic,
     float& local_d_amp
@@ -149,7 +172,7 @@ __device__ __forceinline__ void backward_pixel_splat_3d(
     local_d_amp += dL_dI * grad_intensity_wrt_amplitude(intensity, amp);
 
     // Gradient w.r.t dist_sq - pre-compute common factor (eliminates 8 redundant multiplies)
-    float grad_dist = grad_intensity_wrt_dist_sq(intensity);
+    float grad_dist = grad_intensity_wrt_dist_sq(intensity, amp, shift_C, inv_one_minus_C);
     float outer = dL_dI * grad_dist;
 
     // Compute ∂D²/∂d (3D explicit)
@@ -182,6 +205,8 @@ __device__ __forceinline__ void backward_pixel_splat_2d(
     float amp,
     const float* __restrict__ d_vec,
     const float* __restrict__ conic,
+    float shift_C,
+    float inv_one_minus_C,
     float* __restrict__ local_d_centers,
     float* __restrict__ local_d_conic,
     float& local_d_amp
@@ -190,7 +215,7 @@ __device__ __forceinline__ void backward_pixel_splat_2d(
     local_d_amp += dL_dI * grad_intensity_wrt_amplitude(intensity, amp);
 
     // Gradient w.r.t dist_sq - pre-compute common factor
-    float grad_dist = grad_intensity_wrt_dist_sq(intensity);
+    float grad_dist = grad_intensity_wrt_dist_sq(intensity, amp, shift_C, inv_one_minus_C);
     float outer = dL_dI * grad_dist;
 
     // For 2D, conic layout: [c00, c01, c11]

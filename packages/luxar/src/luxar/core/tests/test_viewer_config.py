@@ -316,8 +316,8 @@ class TestViewerConfig:
         assert vc.fly_movement_speed == 2.0
 
     def test_clipping_fields(self) -> None:
-        vc = ViewerConfig(dynamic_clipping_enabled=True, clipping_adapt_speed=0.5)
-        assert vc.clipping_adapt_speed == 0.5
+        vc = ViewerConfig(dynamic_clipping_enabled=True)
+        assert vc.dynamic_clipping_enabled is True
 
     def test_adaptive_dpr(self) -> None:
         vc = ViewerConfig(adaptive_dpr_enabled=True)

@@ -171,7 +171,8 @@ test.describe('Dynamic Clipping', () => {
 
     expect(clippingState).toBeDefined();
     expect(typeof clippingState.enabled).toBe('boolean');
-    expect(typeof clippingState.adaptSpeed).toBe('number');
+    expect(typeof clippingState.near).toBe('number');
+    expect(typeof clippingState.far).toBe('number');
   });
 
   test('should be able to toggle dynamic clipping', async ({ page }) => {

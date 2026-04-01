@@ -105,28 +105,31 @@ Computes gradients for all parameters:
 
 **Mathematical Formulation**:
 
-The Gaussian intensity is:
+The shifted Gaussian intensity (C⁰ continuous at truncation boundary) is:
 ```
-I(x) = a × exp(-0.5 × D^(s/2))
+C     = exp(-0.5 × T²)              // boundary value
+scale = 1 / (1 - C)                 // peak-preserving rescale
+I(x)  = a × scale × max(0, exp(-0.5 × D^(s/2)) - C)
 ```
-where `D² = d^T × Σ⁻¹ × d` (Mahalanobis distance squared) and `d = x - μ`.
+where `D² = d^T × Σ⁻¹ × d` (Mahalanobis distance squared) and `d = x - μ`. The shift by C eliminates the discontinuity from hard truncation at T sigma.
 
-**Gradient Derivations**:
+**Gradient Derivations** (within truncation boundary, where `G = exp(-0.5 × D^(s/2)) > C`):
 
 1. **Amplitude gradient**:
    ```
-   ∂I/∂a = exp(inner) = I/a
+   ∂I/∂a = I/a = scale × (G - C)
    ```
 
 2. **Sharpness gradient**:
    ```
-   ∂I/∂s = I × inner × 0.5 × ln(D²)
+   ∂I/∂s = a × scale × G × (-0.25) × D^s × ln(D²)
    ```
-   where `inner = -0.5 × D^(s/2)`
+   (C is constant w.r.t. s, so only the exp term contributes)
 
 3. **Distance gradient**:
    ```
-   ∂I/∂D² = I × (-0.25s) × D^(s/2-1)
+   ∂I/∂D² = -0.5 × a × scale × G × (s/2) × D^(s-2)
+          = -0.5 × (I + a × scale × C)   [for s=2]
    ```
 
 4. **Center gradient** (CRITICAL - this was the bug fix location):

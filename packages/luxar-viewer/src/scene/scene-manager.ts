@@ -23,13 +23,12 @@ import {
 } from '../utils/hdr-detection';
 import {
   validateFOV,
-  calculateClippingPlanes,
   calculateCameraDistance,
   getBoundingBoxDiagonal,
   getBoundingBoxCenter,
-  getBoundingSphere,
   BoundingBox,
-  MIN_NEAR_PLANE,
+  boundingBoxToSphere,
+  calculateClippingPlanesFromSphere,
 } from './scene-manager-utils';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { sceneDimsManager } from './scene-dims-manager';
@@ -114,9 +113,6 @@ export class SceneManager extends THREE.EventDispatcher<{
   /** Dynamic clipping planes state */
   private dynamicClippingEnabled: boolean =
     config.renderingControls.defaults.dynamicClippingEnabled;
-  private clippingAdaptSpeed: number = config.renderingControls.defaults.clippingAdaptSpeed;
-  private smoothedNear: number = config.renderingControls.defaults.near;
-  private smoothedFar: number = config.renderingControls.defaults.far;
 
   /** Current FOV in degrees (perspective) or the default FOV (orthographic). */
   get currentFov(): number {
@@ -1176,8 +1172,9 @@ export class SceneManager extends THREE.EventDispatcher<{
         this.controls.setSceneScale(diagonal);
       }
 
-      // Use unified utility function with camera position
-      const { near, far } = calculateClippingPlanes(sceneBounds, cameraPos);
+      // Use bounding sphere for smooth clipping (no box-edge discontinuities)
+      const sphere = boundingBoxToSphere(sceneBounds);
+      const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos);
 
       // Apply the calculated planes
       this.updateClippingPlanes(near, far);
@@ -1213,7 +1210,8 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.controls.setSceneScale(diagonal);
     }
 
-    const { near, far } = calculateClippingPlanes(fallbackBounds, cameraPos);
+    const sphere = boundingBoxToSphere(fallbackBounds);
+    const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos);
 
     // Apply the calculated planes
     this.updateClippingPlanes(near, far);
@@ -1323,108 +1321,57 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Update dynamic clipping planes using exponential smoothing.
+   * Update dynamic clipping planes using bounding sphere projection.
    *
-   * Called each frame by AnimationController to smoothly adjust clipping planes
-   * based on camera position relative to scene bounds. This prevents clipping
-   * artifacts when navigating and maintains optimal Z-buffer precision.
-   *
-   * Uses a bounding sphere (with 20% safety margin) for smooth, direction-independent
-   * clipping. The near plane is derived from `distToCenter - radius`, which transitions
-   * continuously as the camera approaches and enters the scene — no sharp jumps at
-   * bounding box edges.
+   * Called each frame by AnimationController to adjust clipping planes
+   * based on camera position relative to scene bounds. Uses a bounding
+   * sphere (circumscribed around the AABB) for smooth near/far values
+   * that avoid discontinuities at box edges/corners.
    */
   updateDynamicClippingPlanes(): void {
     if (!this.dynamicClippingEnabled) return;
 
-    // Get scene bounds
     const bounds = this.getSceneBoundsFromMetadata();
     if (!bounds) return;
 
-    // Get camera position
     const cameraPos = {
       x: this.camera.position.x,
       y: this.camera.position.y,
       z: this.camera.position.z,
     };
 
-    // Use bounding sphere for smooth, direction-independent clipping.
-    // The sphere already includes 20% safety margin on the radius.
-    const { center, radius } = getBoundingSphere(bounds);
-    const dx = cameraPos.x - center.x;
-    const dy = cameraPos.y - center.y;
-    const dz = cameraPos.z - center.z;
-    const distToCenter = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-    // Near plane: distance to the nearest point on the sphere surface.
-    // Smoothly goes to 0 as camera approaches the sphere, then stays at MIN_NEAR_PLANE inside.
-    const optimalNear = Math.max(MIN_NEAR_PLANE, distToCenter - radius);
-
-    // Far plane: distance to the farthest point on the sphere (opposite side).
-    const optimalFar = distToCenter + radius;
-
-    // Exponential smoothing: new = (1-α)*current + α*optimal
-    const α = this.clippingAdaptSpeed;
-    this.smoothedNear = (1 - α) * this.smoothedNear + α * optimalNear;
-    this.smoothedFar = (1 - α) * this.smoothedFar + α * optimalFar;
-
-    // Apply safety clamps
-    this.smoothedNear = Math.max(MIN_NEAR_PLANE, this.smoothedNear);
-
-    // Prevent excessive far/near ratio (Z-buffer precision)
-    const maxRatio = 100000;
-    if (this.smoothedFar / this.smoothedNear > maxRatio) {
-      this.smoothedNear = this.smoothedFar / maxRatio;
-    }
+    // Bounding sphere produces smooth near/far (no box-edge discontinuities),
+    // eliminating the need for exponential smoothing.
+    const sphere = boundingBoxToSphere(bounds);
+    const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos);
 
     // Only update camera if values changed significantly (>0.1%)
-    const nearChanged = Math.abs(this.camera.near - this.smoothedNear) / this.camera.near > 0.001;
-    const farChanged = Math.abs(this.camera.far - this.smoothedFar) / this.camera.far > 0.001;
+    const nearChanged = Math.abs(this.camera.near - near) / this.camera.near > 0.001;
+    const farChanged = Math.abs(this.camera.far - far) / this.camera.far > 0.001;
 
     if (nearChanged || farChanged) {
-      this.camera.near = this.smoothedNear;
-      this.camera.far = this.smoothedFar;
+      this.camera.near = near;
+      this.camera.far = far;
       this.camera.updateProjectionMatrix();
     }
   }
 
   /**
-   * Set dynamic clipping configuration.
-   *
-   * @param enabled - Whether dynamic clipping is enabled
-   * @param adaptSpeed - Exponential smoothing factor (0.01-1.0)
+   * Set dynamic clipping enabled/disabled.
    */
-  setDynamicClipping(enabled: boolean, adaptSpeed?: number): void {
+  setDynamicClipping(enabled: boolean): void {
     this.dynamicClippingEnabled = enabled;
-    if (adaptSpeed !== undefined) {
-      this.clippingAdaptSpeed = Math.max(0.01, Math.min(1.0, adaptSpeed));
-    }
-
-    log.info(
-      Modules.SCENE_MANAGER,
-      `Dynamic clipping ${enabled ? 'enabled' : 'disabled'}${adaptSpeed !== undefined ? ` (adapt speed: ${this.clippingAdaptSpeed})` : ''}`
-    );
-  }
-
-  /**
-   * Set clipping adapt speed without logging.
-   * Use this for continuous updates (e.g., slider drag) to avoid log spam.
-   *
-   * @param speed - Exponential smoothing factor (0.01-1.0)
-   */
-  setClippingAdaptSpeed(speed: number): void {
-    this.clippingAdaptSpeed = Math.max(0.01, Math.min(1.0, speed));
+    log.info(Modules.SCENE_MANAGER, `Dynamic clipping ${enabled ? 'enabled' : 'disabled'}`);
   }
 
   /**
    * Get current dynamic clipping state.
    */
-  getDynamicClippingState(): { enabled: boolean; adaptSpeed: number; near: number; far: number } {
+  getDynamicClippingState(): { enabled: boolean; near: number; far: number } {
     return {
       enabled: this.dynamicClippingEnabled,
-      adaptSpeed: this.clippingAdaptSpeed,
-      near: this.smoothedNear,
-      far: this.smoothedFar,
+      near: this.camera.near,
+      far: this.camera.far,
     };
   }
 
@@ -1713,14 +1660,20 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   updateMaterialsForCurrentCamera(): void {
     const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+
+    // Compute scene-scale-aware near cull distance for GSplat rendering
+    const bounds = this.getSceneBoundsFromMetadata();
+    const nearCull = bounds ? getBoundingBoxDiagonal(bounds) * 0.001 : 0.1;
+
     if (isOrthographicCamera(this.camera)) {
       const frustumHeight = getOrthoFrustumHeight(this.camera);
-      materialManager.updateCameraParams(frustumHeight, drawingBufferSize, true);
+      materialManager.updateCameraParams(frustumHeight, drawingBufferSize, true, nearCull);
     } else {
       materialManager.updateCameraParams(
         getCameraFovRadians(this.camera),
         drawingBufferSize,
-        false
+        false,
+        nearCull
       );
     }
   }

@@ -229,7 +229,6 @@ export const config: AppConfig = {
       far: 1000, // Far clipping plane (default matches camera.far)
       // Dynamic clipping planes
       dynamicClippingEnabled: true, // Auto-adjust clipping planes based on camera position
-      clippingAdaptSpeed: 0.5, // Exponential smoothing factor (0.01-1.0, lower = smoother)
       // Bloom settings - single source of truth (moved from config.rendering.bloom)
       bloomEnabled: false, // Enable/disable bloom effect (opt-in via zarr viewer_config)
       bloomThreshold: 0.01, // Luminance threshold (0-1), lower = more bloom, higher = less bloom

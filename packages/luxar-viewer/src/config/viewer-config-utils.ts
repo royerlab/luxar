@@ -86,7 +86,6 @@ export const RENDERING_SETTINGS_MAP: Record<string, keyof RenderingSettings> = {
 
   // Dynamic clipping
   dynamic_clipping_enabled: 'dynamicClippingEnabled',
-  clipping_adapt_speed: 'clippingAdaptSpeed',
 
   // Adaptive resolution
   adaptive_dpr_enabled: 'adaptiveDPREnabled',

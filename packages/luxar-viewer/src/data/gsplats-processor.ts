@@ -142,11 +142,13 @@ function mahalanobisDistanceReuse(
  *
  * @param loaded - Raw gsplats data from zarr
  * @param viewState - Current view state with display dims and slice position
+ * @param truncate - Truncation radius in sigmas for shifted Gaussian (default 3.0)
  * @returns Processed 3D gsplats data ready for GPU
  */
 export function processGSplatsTo3D(
   loaded: LoadedGSplatsData,
-  viewState: GSplatsViewState
+  viewState: GSplatsViewState,
+  truncate: number = 3.0
 ): ProcessedGSplatsData {
   const { displayDims, slicePosition } = viewState;
   const ndim = loaded.ndim;
@@ -197,6 +199,10 @@ export function processGSplatsTo3D(
     numContinuousHidden > 0 ? new Float32Array(continuousHiddenPackedSize) : null;
   const diff = numContinuousHidden > 0 ? new Array<number>(numContinuousHidden) : null;
   const yBuffer = numContinuousHidden > 0 ? new Array<number>(numContinuousHidden) : null;
+
+  // Shifted Gaussian constants (hoisted outside loop — these depend only on truncation radius)
+  const shiftedGaussianC = Math.exp(-0.5 * truncate * truncate);
+  const shiftedGaussianInvOneMinusC = 1.0 / (1.0 - shiftedGaussianC);
 
   // Single pass: compute attenuation for ALL splats, cache the values,
   // and collect visible indices. This avoids recomputing the expensive
@@ -256,8 +262,9 @@ export function processGSplatsTo3D(
         yBuffer!
       );
 
-      // Standard Gaussian attenuation (sharpness=2 hardcoded)
-      attenuation = Math.exp(-0.5 * mahalDist * mahalDist);
+      // Shifted Gaussian attenuation: scale · max(0, exp(-0.5·D²) - C)
+      const rawExp = Math.exp(-0.5 * mahalDist * mahalDist);
+      attenuation = Math.max(0.0, shiftedGaussianInvOneMinusC * (rawExp - shiftedGaussianC));
     }
 
     attenuations[i] = attenuation;

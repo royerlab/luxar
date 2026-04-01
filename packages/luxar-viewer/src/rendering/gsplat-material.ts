@@ -9,18 +9,18 @@
  * - Full 3D covariance via Cholesky factors
  * - Perspective-correct projection of covariance to 2D
  * - Blending-mode-aware projection (sum for additive/normal, max for max blending)
- * - Standard Gaussian falloff: exp(-½ · r²)
+ * - Shifted Gaussian falloff: scale · max(0, exp(-½ · r²) - C) with C⁰ continuity at truncation
  * - Per-splat attributes (center, cholesky, amplitude, color)
  *
  * GPU Optimizations (GLSL ES 3.0 / WebGL2):
  * - flat interpolation: skips GPU interpolation for per-instance varyings
  * - Reciprocal precomputation: DIV→MUL in vertex and fragment shaders
- * - Early discard at 3σ before expensive exp()
+ * - Early discard at truncation radius before expensive exp()
  * - Higher intensity threshold (1e-4) for fewer blended pixels
  * - mediump precision for color/amplitude to reduce register pressure
  *
  * Mathematical basis:
- * - GSplat density: G(x) = a · exp(-½ · ‖L⁻¹(x - μ)‖²)
+ * - GSplat density: G(x) = a · scale · max(0, exp(-½ · ‖L⁻¹(x - μ)‖²) - C)
  * - Sum projection: amplitude boost by σ_ray · c_s (ray integration)
  * - Max projection: amplitude = a (peak value, no integration)
  * - 2D covariance: Σ_2D = J · Σ_cam · Jᵀ (perspective Jacobian projection)
@@ -55,6 +55,8 @@ export interface GSplatMaterialConfig {
   colormapTexture?: THREE.DataTexture;
   /** Scalar data range [min, max] for normalization before LUT lookup */
   scalarRange?: [number, number];
+  /** Max projected splat extent as a fraction of viewport size before fade-out (default 0.33) */
+  maxExtentFactor?: number;
 }
 
 /**
@@ -75,6 +77,18 @@ export interface GSplatMaterialUniforms {
   uProjectionMode: { value: number };
   /** Pre-computed 1/gamma for performance */
   uInvGamma: { value: number };
+  /** Near cull distance in world units (scene-scale-aware, perspective only) */
+  uNearCull: { value: number };
+  /** Max projected splat extent as fraction of viewport before fade-out */
+  uMaxExtentFactor: { value: number };
+  /** Shifted Gaussian: exp(-0.5 * truncate²) — boundary value */
+  uShiftC: { value: number };
+  /** Shifted Gaussian: 1/(1 - shiftC) — peak-preserving rescale */
+  uInvOneMinusC: { value: number };
+  /** Shifted Gaussian: truncate² — replaces hardcoded 9.0 in fragment shader */
+  uTruncateSq: { value: number };
+  /** Ray integration factor for sum projection (shifted Gaussian integral) */
+  uRayIntegralFactor: { value: number };
 }
 
 /**
@@ -121,8 +135,12 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     uniform vec2 uResolution;
     uniform float uFx, uFy;           // Focal lengths in pixels
     uniform float uTruncate;          // Truncation radius (in sigmas)
+    uniform float uTruncateSq;        // Truncation radius squared
+    uniform float uRayIntegralFactor; // Shifted Gaussian ray integral factor
     uniform int uProjectionMode;      // 0 = sum projection (additive), 1 = max projection (max blending)
     uniform int uIsOrtho;             // 0 = perspective, 1 = orthographic
+    uniform float uNearCull;          // Near cull distance (scene-scale-aware)
+    uniform float uMaxExtentFactor;   // Max projected extent as fraction of viewport before fade
 
     // Colormap uniforms (only active when USE_COLORMAP is defined)
     #ifdef USE_COLORMAP
@@ -182,27 +200,46 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         mat3 L_cam = R * L3D;
         mat3 Sigma_cam = L_cam * transpose(L_cam);
 
-        // Two-stage near-plane culling for performance
-        // Stage 1: Fixed threshold catches most cases (fast path: 1 cycle)
-        if (-centerCam.z < 0.1) {
-            gl_Position = vec4(0.0, 0.0, -2.0, 1.0);  // Too close to camera
-            return;
-        }
+        // Positive depth (camera looks down -Z); reused by fades, Jacobian, and projection
+        float zDepth = -centerCam.z;
 
-        // Stage 2: Adaptive threshold for large splats only (slow path: ~6 cycles)
-        // Only execute for splats with sigma > 0.1 (rare cases)
-        float sigmaTraceSq = Sigma_cam[0][0] + Sigma_cam[1][1] + Sigma_cam[2][2];
-        if (sigmaTraceSq > 0.01) {  // sigma > 0.1
-            float sigmaTrace = sqrt(sigmaTraceSq);
-            if (-centerCam.z < sigmaTrace * uTruncate) {
-                gl_Position = vec4(0.0, 0.0, -2.0, 1.0);  // Large splat too close
+        // === Near-plane depth fade (perspective only; ortho has no 1/z singularity) ===
+        // Principled fade to prevent 1/z Jacobian singularity near camera.
+        // Scene-scale-aware via uNearCull uniform.
+        float depthFade = 1.0;
+        if (uIsOrtho == 0) {
+            depthFade = smoothstep(uNearCull, uNearCull * 2.0, zDepth);
+            if (depthFade < 0.01) {
+                gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
                 return;
             }
         }
 
+        // === Screen-coverage safety guard (independent of depth fade) ===
+        // Prevents GPU overload from splats whose projected quad is too large.
+        // Fade starts at 50% of the limit and reaches ~0% AT the limit, so the
+        // amplitude is negligible before the extent clamp (below) kicks in.
+        // This avoids visible hard edges from clamped quads.
+        // Applies in perspective only (ortho projection size is depth-independent).
+        float coverageFade = 1.0;
+        if (uIsOrtho == 0) {
+            float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));
+            if (maxLateralVar > 0.01) {
+                float projectedExtent = uFx * sqrt(maxLateralVar) * uTruncate / zDepth;
+                float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
+                coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
+                if (coverageFade < 0.01) {
+                    gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+                    return;
+                }
+            }
+        }
+
+        // Combined fade: most restrictive wins (both use smoothstep → no popping)
+        float nearFade = min(depthFade, coverageFade);
+
         // Precompute depth reciprocals (used by perspective Jacobian and screen projection)
-        float z = -centerCam.z;  // Positive depth (camera looks down -Z)
-        float invZ = 1.0 / z;
+        float invZ = 1.0 / zDepth;
         float invZ2 = invZ * invZ;
 
         // Projection Jacobian at splat center
@@ -249,12 +286,13 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
             vec3 rayDir = (uIsOrtho == 1) ? vec3(0.0, 0.0, -1.0) : normalize(centerCam);
             float sigmaRaySq = dot(rayDir, Sigma_cam * rayDir);
             sigmaRay = sqrt(max(sigmaRaySq, 1e-8));
-            // c_s = sharpnessIntegralFactor(2.0) ≈ sqrt(2π) ≈ 2.507 (standard Gaussian ray integral)
-            float rayIntegrationBoost = sigmaRay * 2.507;  // voxelSpacing = 1.0
-            vAmplitude2D = aAmplitude * rayIntegrationBoost;
+            // Shifted Gaussian ray integral: sqrt(2π)·erf(T/√2) - 2·T·exp(-0.5·T²)
+            // Precomputed in TypeScript as uRayIntegralFactor (≈2.433 for T=3)
+            float rayIntegrationBoost = sigmaRay * uRayIntegralFactor;  // voxelSpacing = 1.0
+            vAmplitude2D = aAmplitude * rayIntegrationBoost * nearFade;
         } else {
             // Max projection: no boost needed
-            vAmplitude2D = aAmplitude;
+            vAmplitude2D = aAmplitude * nearFade;
         }
 
         // Compute 2D Cholesky for fragment shader
@@ -286,9 +324,20 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         vec2 minorAxis = vec2(-majorAxis.y, majorAxis.x);
 
         // Quad extents: truncation radius × sqrt(eigenvalue)
-        // Standard Gaussian (sharpness=2): effectiveTruncate = uTruncate
+        // Shifted Gaussian: effectiveTruncate = uTruncate
         float extent1 = uTruncate * sqrt(lambda1);
         float extent2 = uTruncate * sqrt(lambda2);
+
+        // Clamp quad extents so no splat exceeds uMaxExtentFactor × viewport.
+        // The amplitude fade (nearFade) handles the visual transition smoothly;
+        // this clamp prevents the rasterizer from shading oversized quads.
+        float maxExtentPx = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
+        float largestExtent = max(extent1, extent2);
+        if (largestExtent > maxExtentPx) {
+            float clampScale = maxExtentPx / largestExtent;
+            extent1 *= clampScale;
+            extent2 *= clampScale;
+        }
 
         // Project center to screen (pixels)
         if (uIsOrtho == 1) {
@@ -340,9 +389,9 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
    * Optimizations:
    * - GLSL ES 3.0 with flat qualifier: skips GPU interpolation for per-instance values
    * - Reciprocal precomputation: 2 divisions replaced with 2 multiplications
-   * - Standard Gaussian: no pow() needed
+   * - Shifted Gaussian: no pow() needed
    * - mediump precision for color/amplitude (sufficient for visual quality)
-   * - Early discard at 3σ before exp()
+   * - Early discard at truncation radius before exp()
    * - Higher discard threshold (1e-4 is still invisible)
    */
   private static readonly FRAGMENT_SHADER = /* glsl */ `
@@ -363,6 +412,9 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     uniform mediump float uInvGamma; // Pre-computed 1/gamma for performance
     uniform mediump float uIntensity; // Per-node linear color multiplier (gain)
     uniform mediump float uOffset; // Per-node additive brightness shift (black level)
+    uniform highp float uShiftC;       // Shifted Gaussian: exp(-0.5 * T²)
+    uniform highp float uInvOneMinusC; // Shifted Gaussian: 1/(1-C)
+    uniform highp float uTruncateSq;   // Truncation radius squared (T²)
 
     // GLSL ES 3.0 requires explicit fragment output declaration
     out vec4 fragColor;
@@ -379,14 +431,12 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         // Squared Mahalanobis distance
         float mahalSq = y0 * y0 + y1 * y1;
 
-        // EARLY DISCARD: Skip pixels beyond ~3σ before expensive pow()
-        // At mahalSq=9 (3σ), Gaussian value is exp(-4.5) ≈ 0.011, negligible
-        // This saves the expensive pow() and exp() for edge pixels
-        if (mahalSq > 9.0) discard;
+        // EARLY DISCARD: Skip pixels beyond truncation radius
+        if (mahalSq > uTruncateSq) discard;
 
-        // Standard Gaussian falloff: exp(-½ · r²)
-        // Same formula for both sum and max projection modes
-        float intensity = vAmplitude2D * exp(-0.5 * mahalSq);
+        // Shifted Gaussian: a·scale·max(0, exp(-½·r²) - C)
+        // Ensures C⁰ continuity at truncation boundary (no discontinuity)
+        float intensity = vAmplitude2D * uInvOneMinusC * max(exp(-0.5 * mahalSq) - uShiftC, 0.0);
 
         // Early discard for negligible contribution (raised threshold for performance)
         if (intensity < 1e-4) discard;
@@ -443,18 +493,30 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
       blending = THREE.NormalBlending;
     }
 
+    const truncate = materialConfig.truncationRadius ?? 3.0;
+    const shiftC = Math.exp(-0.5 * truncate * truncate);
+    const invOneMinusC = 1.0 / (1.0 - shiftC);
+
     super({
       uniforms: {
         uResolution: { value: new THREE.Vector2(1, 1) },
         uFx: { value: 500 }, // Default focal length in pixels
         uFy: { value: 500 },
-        uTruncate: { value: materialConfig.truncationRadius ?? 3.0 },
+        uTruncate: { value: truncate },
+        uTruncateSq: { value: truncate * truncate },
+        uShiftC: { value: shiftC },
+        uInvOneMinusC: { value: invOneMinusC },
+        uRayIntegralFactor: {
+          value: GSplatMaterial.computeRayIntegralFactor(truncate),
+        },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
         uProjectionMode: { value: blendingMode === 'max' ? 1 : 0 }, // 0=sum, 1=max
         uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
         uOffset: { value: materialConfig.offset ?? 0.0 },
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
+        uNearCull: { value: 0.1 }, // Default; overridden per-scene by updateCameraParams
+        uMaxExtentFactor: { value: materialConfig.maxExtentFactor ?? 0.33 },
         // Colormap uniforms (only when USE_COLORMAP define is set)
         ...(materialConfig.colormapTexture
           ? {
@@ -524,7 +586,12 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
    * @param fov - Field of view in radians
    * @param resolution - Viewport resolution
    */
-  updateCameraParams(fov: number, resolution: THREE.Vector2, isOrtho: boolean = false): void {
+  updateCameraParams(
+    fov: number,
+    resolution: THREE.Vector2,
+    isOrtho: boolean = false,
+    nearCull?: number
+  ): void {
     this.uniforms.uResolution.value.copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
 
@@ -541,6 +608,10 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
       this.uniforms.uFx.value = fy;
       this.uniforms.uFy.value = fy;
     }
+
+    if (nearCull !== undefined) {
+      this.uniforms.uNearCull.value = nearCull;
+    }
   }
 
   /**
@@ -551,10 +622,25 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
   }
 
   /**
-   * Update truncation radius.
+   * Update truncation radius and recompute shifted Gaussian parameters.
    */
   updateTruncationRadius(radius: number): void {
     this.uniforms.uTruncate.value = radius;
+    this.uniforms.uTruncateSq.value = radius * radius;
+    const shiftC = Math.exp(-0.5 * radius * radius);
+    this.uniforms.uShiftC.value = shiftC;
+    this.uniforms.uInvOneMinusC.value = 1.0 / (1.0 - shiftC);
+    this.uniforms.uRayIntegralFactor.value =
+      GSplatMaterial.computeRayIntegralFactor(radius);
+  }
+
+  /**
+   * Update max extent factor (projected splat size limit as fraction of viewport).
+   * Lower values = more aggressive culling of close/large splats (better perf).
+   * Default 0.33 means fade starts when a splat fills ~1/3 of the viewport.
+   */
+  updateMaxExtentFactor(factor: number): void {
+    this.uniforms.uMaxExtentFactor.value = Math.max(0.01, factor);
   }
 
   /**
@@ -622,6 +708,30 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
       this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
     }
     this.userData.scalarRange = [min, max];
+  }
+
+  /**
+   * Compute the ray integration factor for the shifted Gaussian.
+   *
+   * For the unshifted Gaussian, this is sqrt(2π) ≈ 2.507.
+   * For the shifted Gaussian: sqrt(2π)·erf(T/√2) - 2·T·exp(-0.5·T²)
+   * For T=3: ≈ 2.433
+   */
+  private static computeRayIntegralFactor(truncate: number): number {
+    const SQRT_2PI = Math.sqrt(2 * Math.PI);
+    // Abramowitz & Stegun erf approximation (max error 1.5e-7)
+    const x = truncate / Math.SQRT2;
+    const t = 1.0 / (1.0 + 0.3275911 * Math.abs(x));
+    const erfVal =
+      1.0 -
+      t *
+        (0.254829592 +
+          t *
+            (-0.284496736 +
+              t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) *
+        Math.exp(-x * x);
+    const erf = x >= 0 ? erfVal : -erfVal;
+    return SQRT_2PI * erf - 2 * truncate * Math.exp(-0.5 * truncate * truncate);
   }
 
   /**

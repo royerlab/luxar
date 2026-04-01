@@ -189,11 +189,9 @@ describe('extractRenderingOverrides', () => {
   it('should map clipping and adaptive fields', () => {
     const overrides = extractRenderingOverrides({
       dynamic_clipping_enabled: true,
-      clipping_adapt_speed: 0.5,
       adaptive_dpr_enabled: true,
     });
     expect(overrides.dynamicClippingEnabled).toBe(true);
-    expect(overrides.clippingAdaptSpeed).toBe(0.5);
     expect(overrides.adaptiveDPREnabled).toBe(true);
   });
 
@@ -375,7 +373,6 @@ describe('RENDERING_SETTINGS_MAP completeness', () => {
       'fly_movement_speed',
       'fly_inertial_mode',
       'dynamic_clipping_enabled',
-      'clipping_adapt_speed',
       'adaptive_dpr_enabled',
     ];
 
