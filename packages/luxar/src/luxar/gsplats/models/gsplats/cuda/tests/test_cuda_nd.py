@@ -1476,3 +1476,134 @@ class TestLargeSplatCounts:
 
         del model
         torch.cuda.empty_cache()
+
+
+@pytest.mark.skipif(not CUDA_BACKEND_AVAILABLE, reason="CUDA backend not compiled")
+class TestBackward4D:
+    """Test backward pass specifically for 4D (generic nD path transition).
+
+    The 4D backward path uses generic nD code (torch.linalg.solve_triangular
+    for conic computation), which differs from the explicit 2D/3D paths.
+    These tests verify the transition is correct.
+    """
+
+    def test_4d_backward_gradients_finite(self):
+        """Test 4D backward pass produces finite, non-zero gradients."""
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            GaussianSplatModelCUDA,
+        )
+
+        np.random.seed(42)
+        N, d = 10, 4
+        shape = (8, 8, 8, 8)
+
+        centers0 = np.random.rand(N, d).astype(np.float32) * 6 + 1
+        L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0)
+        amps0 = np.random.rand(N).astype(np.float32) + 0.5
+
+        model = GaussianSplatModelCUDA(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.5,) * d,
+            device="cuda",
+        )
+
+        output = model()
+        loss = output.sum()
+        loss.backward()
+
+        # Check all parameter gradients exist, are finite, and non-zero
+        for name in ("raw_mu", "raw_L_diag", "L_off", "raw_a"):
+            param = getattr(model, name)
+            assert param.grad is not None, f"4D gradient for {name} is None"
+            assert torch.isfinite(param.grad).all(), (
+                f"4D gradient for {name} has non-finite values"
+            )
+            assert param.grad.abs().sum() > 0, (
+                f"4D gradient for {name} is all zeros (no gradient signal)"
+            )
+
+    def test_4d_backward_vs_cpu_reference(self):
+        """Test 4D backward gradients match CPU reference (generic nD path)."""
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            GaussianSplatModelCUDA,
+        )
+        from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+
+        np.random.seed(42)
+        N, d = 5, 4
+        shape = (8, 8, 8, 8)
+
+        centers0 = np.random.rand(N, d).astype(np.float32) * 6 + 1
+        L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0)
+        amps0 = np.ones(N, dtype=np.float32) * 0.5
+
+        # CPU reference model
+        cpu_model = GaussianSplatModel(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.5,) * d,
+            device="cpu",
+        )
+
+        # CUDA model
+        cuda_model = GaussianSplatModelCUDA(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.5,) * d,
+            device="cuda",
+        )
+
+        # Forward + backward on CPU
+        cpu_target = torch.zeros(shape, dtype=torch.float32, device="cpu")
+        cpu_target[4, 4, 4, 4] = 1.0
+        cpu_output = cpu_model()
+        cpu_loss = torch.nn.functional.mse_loss(cpu_output, cpu_target)
+        cpu_loss.backward()
+
+        # Forward + backward on CUDA
+        cuda_output = cuda_model()
+        cuda_target = torch.zeros_like(cuda_output)
+        if cuda_output.dim() == 1:
+            center_idx = (
+                4 * shape[1] * shape[2] * shape[3]
+                + 4 * shape[2] * shape[3]
+                + 4 * shape[3]
+                + 4
+            )
+            cuda_target[center_idx] = 1.0
+        else:
+            cuda_target[4, 4, 4, 4] = 1.0
+        cuda_loss = torch.nn.functional.mse_loss(cuda_output, cuda_target)
+        cuda_loss.backward()
+
+        # Compare amplitude gradients (raw_a) between CUDA and CPU
+        cpu_grad = cpu_model.raw_a.grad
+        cuda_grad = cuda_model.raw_a.grad
+        assert cpu_grad is not None, "CPU raw_a gradient is None"
+        assert cuda_grad is not None, "CUDA raw_a gradient is None"
+
+        cuda_grad_cpu = cuda_grad.cpu()
+
+        # Check gradient signs match for majority of elements
+        sign_match = (torch.sign(cpu_grad) == torch.sign(cuda_grad_cpu)).float().mean()
+        assert sign_match > Tolerances.BACKWARD_SIGN_MATCH, (
+            f"4D raw_a gradient sign match {sign_match:.2f} "
+            f"< {Tolerances.BACKWARD_SIGN_MATCH}"
+        )
+
+        # Check gradient magnitudes are in similar range
+        cpu_mag = cpu_grad.abs().mean()
+        cuda_mag = cuda_grad_cpu.abs().mean()
+        if cpu_mag > 1e-8 and cuda_mag > 1e-8:
+            mag_ratio = max(cpu_mag / cuda_mag, cuda_mag / cpu_mag)
+            assert mag_ratio < Tolerances.BACKWARD_MAG_RATIO, (
+                f"4D raw_a gradient magnitude ratio {mag_ratio:.2f} "
+                f"> {Tolerances.BACKWARD_MAG_RATIO}"
+            )

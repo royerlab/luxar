@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from luxar import Dimensions
+from luxar import Dimension, Dimensions
 from luxar.io.compiler import LuxarZarrCompiler
 
 
@@ -520,3 +520,250 @@ class TestNodeWalkDirect:
 
             _, points_node = hierarchy[2]
             assert points_node is points1
+
+
+class TestNodeNdTransform:
+    """Test Node nd_transform property."""
+
+    def test_nd_transform_set_affine(self, tmp_path: Path) -> None:
+        """Test setting an affine nd_transform and reading it back."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            dims = Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                    Dimension("time", unit="s", display=False, range=(0, 100)),
+                ]
+            )
+            scene = compiler.create_scene(dimensions=dims)
+            positions = np.array([[0.0, 0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            nd = {"time": {"scale": 2.0, "offset": 1.0}}
+            points.nd_transform = nd
+
+            assert points.nd_transform is not None
+            assert points.nd_transform["time"]["scale"] == 2.0
+            assert points.nd_transform["time"]["offset"] == 1.0
+
+    def test_nd_transform_delete(self, tmp_path: Path) -> None:
+        """Test setting nd_transform then removing it with None."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            points.nd_transform = {"dim0": {"scale": 1.0, "offset": 0.0}}
+            assert points.nd_transform is not None
+
+            points.nd_transform = None
+            assert points.nd_transform is None
+
+    def test_nd_transform_invalid_raises(self, tmp_path: Path) -> None:
+        """Test that invalid nd_transform raises an error."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            # Empty dict entry (no scale/offset or permutation)
+            with pytest.raises(ValueError):
+                points.nd_transform = {"time": {}}
+
+            # Non-dict value
+            with pytest.raises(TypeError):
+                points.nd_transform = "not_a_dict"  # type: ignore[assignment]
+
+
+class TestNodeIntensity:
+    """Test Node intensity property."""
+
+    def test_intensity_default(self, tmp_path: Path) -> None:
+        """Test that default intensity is 1.0."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            assert points.intensity == 1.0
+
+    def test_intensity_set_and_get(self, tmp_path: Path) -> None:
+        """Test setting and getting intensity."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            points.intensity = 50.0
+            assert points.intensity == 50.0
+
+    def test_intensity_boundaries(self, tmp_path: Path) -> None:
+        """Test intensity boundary values."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            # Valid boundaries
+            points.intensity = 0.0
+            assert points.intensity == 0.0
+
+            points.intensity = 100.0
+            assert points.intensity == 100.0
+
+            # Invalid: below minimum
+            with pytest.raises(ValueError):
+                points.intensity = -1.0
+
+            # Invalid: above maximum
+            with pytest.raises(ValueError):
+                points.intensity = 101.0
+
+    def test_intensity_chaining(self, tmp_path: Path) -> None:
+        """Test that set_intensity returns self for chaining."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            result = points.set_intensity(50.0).set_opacity(0.5)
+            assert result is points
+            assert points.intensity == 50.0
+            assert points.opacity == 0.5
+
+
+class TestNodeOffset:
+    """Test Node offset property."""
+
+    def test_offset_default(self, tmp_path: Path) -> None:
+        """Test that default offset is 0.0."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            assert points.offset == 0.0
+
+    def test_offset_set_and_get(self, tmp_path: Path) -> None:
+        """Test setting and getting offset."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            points.offset = -5.0
+            assert points.offset == -5.0
+
+    def test_offset_boundaries(self, tmp_path: Path) -> None:
+        """Test offset boundary values."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            # Valid boundaries
+            points.offset = -10.0
+            assert points.offset == -10.0
+
+            points.offset = 10.0
+            assert points.offset == 10.0
+
+            # Invalid: below minimum
+            with pytest.raises(ValueError):
+                points.offset = -11.0
+
+            # Invalid: above maximum
+            with pytest.raises(ValueError):
+                points.offset = 11.0
+
+    def test_offset_chaining(self, tmp_path: Path) -> None:
+        """Test that set_offset returns self for chaining."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            result = points.set_offset(-5.0).set_opacity(0.5)
+            assert result is points
+            assert points.offset == -5.0
+            assert points.opacity == 0.5
+
+
+class TestNodeLayer:
+    """Test Node layer property."""
+
+    def test_layer_default(self, tmp_path: Path) -> None:
+        """Test that default layer is False."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            assert points.layer is False
+
+    def test_layer_set_at_creation(self, tmp_path: Path) -> None:
+        """Test creating points with layer=True."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions, layer=True)
+
+            assert points.layer is True
+
+
+class TestNodeColormap:
+    """Test Node colormap property."""
+
+    def test_colormap_set_string(self, tmp_path: Path) -> None:
+        """Test setting colormap to a string name."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            points.colormap = "viridis"
+            assert points.colormap == "viridis"
+
+    def test_colormap_setter_rejects_array(self, tmp_path: Path) -> None:
+        """Test that setting a numpy array via the setter raises TypeError."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            lut = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
+            with pytest.raises(
+                TypeError, match="Colormap property setter only accepts string"
+            ):
+                points.colormap = lut
