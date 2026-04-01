@@ -7,7 +7,7 @@ This glossary defines standard terminology used throughout the gsplats package s
 ### Splat
 **Definition**: A single oriented Gaussian function in the reconstruction.
 
-**Mathematical form**: `f_k(x) = a_k * exp(-0.5 * (x-μ_k)^T * Σ_k^(-1) * (x-μ_k))`
+**Mathematical form** (shifted Gaussian for C⁰ continuity at truncation boundary): `f_k(x) = a_k * scale * max(0, exp(-0.5 * (x-μ_k)^T * Σ_k^(-1) * (x-μ_k)) - C)` where `C = exp(-0.5 * T²)`, `scale = 1/(1-C)`, T = truncation radius
 
 **Standard terms**:
 - ✅ **Splat** (preferred)
@@ -449,7 +449,7 @@ These are user-facing configuration options:
 ### s (sharpness)
 **Meaning**: Generalized Gaussian exponent
 
-**Formula**: `I(x) = a * exp(-0.5 * ||y||^s)`
+**Formula**: `I(x) = a * scale * max(0, exp(-0.5 * ||y||^s) - C)` (shifted truncation, C⁰ continuous)
 
 **Range**: s > 0 (positive real numbers)
 - s=2: Standard Gaussian

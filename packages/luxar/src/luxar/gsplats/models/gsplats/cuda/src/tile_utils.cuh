@@ -55,15 +55,17 @@ struct AABB {
  *
  * The bounding box is computed in tile coordinates and clipped to valid range.
  *
- * @param mu            Splat center in voxel coordinates, length DIM
- * @param L_row_norms   Row norms of Cholesky factor (approximates σ per axis), length DIM
- * @param amplitude     Amplitude
- * @param truncate      Base truncation radius
+ * @param mu              Splat center in voxel coordinates, length DIM
+ * @param L_row_norms     Row norms of Cholesky factor (approximates σ per axis), length DIM
+ * @param amplitude       Amplitude
+ * @param truncate        Base truncation radius
  * @param intensity_floor Minimum intensity threshold
- * @param tile_size     Voxels per tile in each dimension
- * @param tile_dims     Number of tiles in each dimension
- * @param shape         Volume shape in voxels
- * @return              AABB in tile coordinates
+ * @param tile_size       Voxels per tile in each dimension
+ * @param tile_dims       Number of tiles in each dimension
+ * @param shape           Volume shape in voxels
+ * @param shift_C         Precomputed exp(-0.5·T²) for shifted Gaussian
+ * @param inv_one_minus_C Precomputed 1/(1-C) for shifted Gaussian
+ * @return                AABB in tile coordinates
  */
 template <int DIM>
 __device__ AABB<DIM> compute_splat_aabb(
@@ -74,12 +76,14 @@ __device__ AABB<DIM> compute_splat_aabb(
     float intensity_floor,
     const int* __restrict__ tile_size,
     const int* __restrict__ tile_dims,
-    const int* __restrict__ shape
+    const int* __restrict__ shape,
+    float shift_C,
+    float inv_one_minus_C
 ) {
     AABB<DIM> aabb;
 
-    // Compute effective truncation
-    float t_eff = effective_truncation(truncate, amplitude, intensity_floor);
+    // Compute effective truncation (shifted Gaussian)
+    float t_eff = effective_truncation(truncate, amplitude, intensity_floor, shift_C, inv_one_minus_C);
 
     #pragma unroll
     for (int d = 0; d < DIM; d++) {

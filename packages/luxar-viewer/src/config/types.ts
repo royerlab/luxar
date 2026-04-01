@@ -430,7 +430,6 @@ export interface RenderingSettings {
   far: number;
   // Dynamic clipping planes
   dynamicClippingEnabled: boolean;
-  clippingAdaptSpeed: number;
   // Rendering effects (bloom is now the single source of truth)
   bloomEnabled: boolean;
   bloomThreshold: number;

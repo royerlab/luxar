@@ -203,12 +203,17 @@ export function compute_gsplats_attenuation(
   ndim: number,
   splatCount: number,
   minAmplitude: number,
+  truncate: number,
   outputVisibility: Uint8Array,
   outputAttenuation: Float32Array
 ): number {
   const numHidden = hiddenDims.length;
   const fullPackedSize = (ndim * (ndim + 1)) / 2;
   const hiddenPackedSize = (numHidden * (numHidden + 1)) / 2;
+
+  // Shifted Gaussian constants for C⁰ continuous truncation
+  const shiftC = Math.exp(-0.5 * truncate * truncate);
+  const invOneMinusC = 1.0 / (1.0 - shiftC);
 
   // Temporary buffers (pre-allocated, reused across all splats)
   const diff = new Float32Array(numHidden);
@@ -239,8 +244,9 @@ export function compute_gsplats_attenuation(
       // Compute Mahalanobis distance (reuses pre-allocated y buffer)
       const mahalDist = mahalanobisDistanceInternal(diff, hiddenCholesky, numHidden, y);
 
-      // Standard Gaussian attenuation (sharpness=2 hardcoded)
-      attenuation = Math.exp(-0.5 * mahalDist * mahalDist);
+      // Shifted Gaussian attenuation: scale · max(0, exp(-0.5·D²) - C)
+      const rawExp = Math.exp(-0.5 * mahalDist * mahalDist);
+      attenuation = Math.max(0.0, invOneMinusC * (rawExp - shiftC));
     }
 
     outputAttenuation[i] = attenuation;

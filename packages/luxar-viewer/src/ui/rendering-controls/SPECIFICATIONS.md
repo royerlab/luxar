@@ -202,14 +202,13 @@ function setupCameraControls(
     - Near Plane slider (0.001-10.0)
     - Far Plane slider (10-10000)
     - Dynamic Clipping checkbox
-    - Adapt Speed slider (conditional)
 
 **Returns**:
 
 ```typescript
 {
   controllers: {
-    (fovPreset, fov, nearPlane, farPlane, dynamicClippingEnabled, clippingAdaptSpeed);
+    (fovPreset, fov, nearPlane, farPlane, dynamicClippingEnabled);
   }
 }
 ```
@@ -218,7 +217,6 @@ function setupCameraControls(
 
 - **FOV Preset Sync**: When preset changes, updates lens distortion via `controllersRef`
 - **Bidirectional Binding**: FOV slider changes switch preset to "Custom"
-- **Conditional Controls**: Adapt speed only visible when dynamic clipping enabled
 - **Validation**: Near < far plane enforced
 
 **Cross-Module Dependencies**:

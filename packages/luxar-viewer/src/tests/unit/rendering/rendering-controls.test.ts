@@ -123,10 +123,8 @@ describe('RenderingControls', () => {
         mockCamera.far = far;
       }),
       setDynamicClipping: vi.fn(),
-      setClippingAdaptSpeed: vi.fn(),
       getDynamicClippingState: vi.fn(() => ({
         enabled: false,
-        adaptSpeed: 0.5,
         near: 0.1,
         far: 1000,
       })),
@@ -559,7 +557,6 @@ describe('RenderingControls', () => {
       });
       mockSceneManager.getDynamicClippingState.mockReturnValue({
         enabled: true,
-        adaptSpeed: 0.2,
         near: 0.2,
         far: 2000,
       });
@@ -578,7 +575,6 @@ describe('RenderingControls', () => {
       expect(controls.settings.flyDamping).toBe(0.95);
       expect(controls.settings.flyRotationDamping).toBe(0.96);
       expect(controls.settings.dynamicClippingEnabled).toBe(true);
-      expect(controls.settings.clippingAdaptSpeed).toBe(0.2);
     });
   });
 });

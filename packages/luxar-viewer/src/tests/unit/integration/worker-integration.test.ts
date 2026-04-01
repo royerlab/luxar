@@ -107,8 +107,8 @@ describe('Worker Integration Tests (Mocked)', () => {
       const result = await mockWorker.querySpatialIndex({});
       const endTime = Date.now();
 
-      // Verify async behavior (took some time)
-      expect(endTime - startTime).toBeGreaterThanOrEqual(10);
+      // Verify async behavior (took some time — timer precision allows ±2ms)
+      expect(endTime - startTime).toBeGreaterThanOrEqual(8);
 
       // Verify result received
       expect(result).toBeInstanceOf(Uint32Array);

@@ -639,6 +639,10 @@ export class GeometryUpdateManager {
         const geometry = this._gpuBufferPool.acquireGSplatsGeometry(path, processed.splatCount);
 
         // Update attributes in place (zero GPU allocations on reuse)
+        // Read truncation radius from material for correct frustum culling
+        const truncationRadius =
+          (mesh.material as { uniforms?: { uTruncate?: { value: number } } })?.uniforms?.uTruncate
+            ?.value ?? 3.0;
         this._gpuBufferPool.updateGSplatsGeometry(
           geometry,
           {
@@ -650,7 +654,8 @@ export class GeometryUpdateManager {
             colors: processed.colors,
             splatCount: processed.splatCount,
           },
-          processed.splatCount
+          processed.splatCount,
+          truncationRadius
         );
 
         // Assign to mesh (might be same geometry, reused)

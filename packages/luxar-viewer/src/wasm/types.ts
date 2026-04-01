@@ -278,12 +278,12 @@ export interface WasmModule {
    * @param positions - Splat centers [splatCount * ndim]
    * @param cholesky - Packed Cholesky factors [splatCount * packedSize]
    * @param amplitudes - Splat amplitudes [splatCount]
-   * @param sharpness - Per-splat sharpness values [splatCount]
    * @param slicePosition - Current slice position [ndim]
    * @param hiddenDims - Indices of hidden dimensions (sorted) [numHidden]
    * @param ndim - Total dimensionality
    * @param splatCount - Number of splats
    * @param minAmplitude - Visibility threshold
+   * @param truncate - Truncation radius for shifted Gaussian (typically 3.0)
    * @param outputVisibility - Output visibility mask [splatCount]
    * @param outputAttenuation - Output attenuation factors [splatCount]
    * @returns Number of visible splats
@@ -297,6 +297,7 @@ export interface WasmModule {
     ndim: number,
     splatCount: number,
     minAmplitude: number,
+    truncate: number,
     outputVisibility: Uint8Array,
     outputAttenuation: Float32Array
   ): number;

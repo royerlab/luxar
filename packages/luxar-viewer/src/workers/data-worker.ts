@@ -749,6 +749,8 @@ async function projectGSplatsTo3D(params: {
   discreteSteps?: Record<number, number>;
   /** Indices of dimensions to skip entirely (extend_to_all — always visible) */
   extendToAllDims?: number[];
+  /** Truncation radius in sigmas for shifted Gaussian attenuation (default 3.0) */
+  truncate?: number;
 }): Promise<{
   centers3D: Float32Array;
   choleskyFactors3D: Float32Array;
@@ -827,6 +829,7 @@ async function projectGSplatsTo3D(params: {
   const visibility = new Uint8Array(splatCount);
   const attenuation = new Float32Array(splatCount);
 
+  const truncate = params.truncate ?? 3.0;
   wasmModule.compute_gsplats_attenuation(
     positions,
     choleskyFactors,
@@ -836,6 +839,7 @@ async function projectGSplatsTo3D(params: {
     ndim,
     splatCount,
     minAmplitude,
+    truncate,
     visibility,
     attenuation
   );

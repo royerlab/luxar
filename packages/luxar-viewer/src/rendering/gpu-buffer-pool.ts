@@ -856,11 +856,15 @@ export class GPUBufferPool {
 
   /**
    * Update GSplats geometry in place.
+   *
+   * @param truncationRadius - Truncation radius in sigmas (default 3.0).
+   *   Must match the material's truncationRadius for correct frustum culling.
    */
   updateGSplatsGeometry(
     geometry: THREE.InstancedBufferGeometry,
     data: PackedGSplatsData,
-    count: number
+    count: number,
+    truncationRadius: number = 3.0
   ): void {
     const attrs = [
       ['aCenter', data.centers3D, 3],
@@ -895,11 +899,41 @@ export class GPUBufferPool {
     tempGeometry.computeBoundingBox();
     tempGeometry.computeBoundingSphere();
 
+    // Expand bounding box by max splat extent for correct frustum culling.
+    // Without this, large splats whose center is outside the frustum but whose
+    // visible body extends into view would cause the entire mesh to be culled.
+    //
+    // For each splat, the per-axis extent is truncationRadius × σ_d, where
+    // σ_d = ||L[d,:]|| (the row norm of the Cholesky factor). We use the max
+    // row norm across all splats and axes as a conservative expansion.
+    //
+    // Cholesky layout (packed as attribute pairs):
+    //   cholesky01 = [L00, L10], cholesky23 = [L11, L20], cholesky45 = [L21, L22]
+    // Row norms: ||row0|| = |L00|, ||row1|| = sqrt(L10² + L11²),
+    //            ||row2|| = sqrt(L20² + L21² + L22²)
+    let maxRowNorm = 0;
+    for (let i = 0; i < count; i++) {
+      const L00 = data.cholesky01[i * 2];
+      const L10 = data.cholesky01[i * 2 + 1];
+      const L11 = data.cholesky23[i * 2];
+      const L20 = data.cholesky23[i * 2 + 1];
+      const L21 = data.cholesky45[i * 2];
+      const L22 = data.cholesky45[i * 2 + 1];
+
+      const row0 = Math.abs(L00);
+      const row1 = Math.sqrt(L10 * L10 + L11 * L11);
+      const row2 = Math.sqrt(L20 * L20 + L21 * L21 + L22 * L22);
+      maxRowNorm = Math.max(maxRowNorm, row0, row1, row2);
+    }
+    const expansion = maxRowNorm * truncationRadius;
+
     if (tempGeometry.boundingBox) {
       geometry.boundingBox = tempGeometry.boundingBox.clone();
+      geometry.boundingBox.expandByScalar(expansion);
     }
     if (tempGeometry.boundingSphere) {
       geometry.boundingSphere = tempGeometry.boundingSphere.clone();
+      geometry.boundingSphere.radius += expansion;
     }
 
     tempGeometry.dispose();

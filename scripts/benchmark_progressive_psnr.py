@@ -14,6 +14,10 @@ Outputs a single METRIC line for autoresearch extraction.
 
 IMPORTANT: Budget parameters are CONSTANTS — do not change them.
 """
+import os  # noqa: I001 — must set env before torch import
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 from datetime import datetime
 from pathlib import Path
 
@@ -200,6 +204,9 @@ def run_fit_and_evaluate(
     import time as _time
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     fit_start = _time.perf_counter()
     with asection(f"Fitting: {label}"):

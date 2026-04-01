@@ -237,9 +237,14 @@ def group_by_box_gpu(lo: torch.Tensor, hi: torch.Tensor) -> Tuple[torch.Tensor, 
 ### 3. Sharpness Feature (Generalized Gaussians)
 
 **Mathematical Formulation**:
-- Standard Gaussian: `I(x) = a * exp(-0.5 * ||y||²)`
-- Generalized Gaussian: `I(x) = a * exp(-0.5 * ||y||^s)` where `s` is sharpness
-- Computational form: `exp(-0.5 * expo^(s/2))` where `expo = ||y||²`
+- Standard Gaussian (shifted truncation for C⁰ continuity at boundary):
+  ```
+  C     = exp(-0.5 * T²)              // boundary value (T=truncate radius)
+  scale = 1 / (1 - C)                 // peak-preserving rescale
+  I(x)  = a * scale * max(0, exp(-0.5 * ||y||²) - C)
+  ```
+- Generalized Gaussian: `I(x) = a * scale * max(0, exp(-0.5 * ||y||^s) - C)` where `s` is sharpness
+- Computational form: `scale * max(0, exp(-0.5 * expo^(s/2)) - C)` where `expo = ||y||²`
 
 **Sharpness Parameter s**:
 - `s = 2`: Standard Gaussian (smooth exponential falloff)
@@ -283,11 +288,11 @@ effective_truncate = truncate^(2/s)
 - `s=3.0` → `3^0.67 ≈ 2.08` (smaller for sharp splats)
 
 **Amplitude-Aware Shrinking**:
-When `intensity_floor > 0`, compute threshold per splat:
+When `intensity_floor > 0`, compute threshold per splat using the shifted formula:
 ```
-# Solve: a * exp(-0.5 * t^s) = intensity_floor
-# Result: t = (2 * log(a / intensity_floor))^(1/s)
-tmax = torch.pow(log_ratio, 1.0 / sharpness)
+# Solve: a * scale * (exp(-0.5 * t^s) - C) = intensity_floor
+# Result: t = (-2 * ln(intensity_floor / (a * scale) + C))^(1/s)
+tmax = torch.pow(-2.0 * torch.log(intensity_floor / (a * scale) + C), 1.0 / sharpness)
 ```
 Then shrink AABB radii to minimum of truncate-based and amplitude-based limits.
 
@@ -513,8 +518,8 @@ centers = u * torch.clamp(shape - 1.0, min=1.0)
 - Adjustment formula: `effective_truncate = truncate^(2/s)`
 
 **Amplitude-Aware Shrinking** (optional, when `intensity_floor > 0`):
-- Solves for radius where intensity drops to `intensity_floor`
-- `tmax = (2 * log(a / intensity_floor))^(1/s)`
+- Solves for radius where shifted intensity drops to `intensity_floor`
+- `tmax = (-2 * ln(intensity_floor / (a * scale) + C))^(1/s)` (shifted formula, where `C = exp(-0.5 * T²)`, `scale = 1/(1-C)`)
 - Takes minimum of truncate-based and amplitude-based radii
 - Prevents large AABBs for low-amplitude splats
 
@@ -558,9 +563,10 @@ for box_shape, indices in groups.items():
             y = torch.linalg.solve_triangular(L, delta, upper=False)
             expo = torch.sum(y * y, dim=1)  # (K, Pc)
 
-        # Step 7: Apply generalized Gaussian with sharpness
+        # Step 7: Apply shifted generalized Gaussian with sharpness (C⁰ continuous)
         expo_safe = torch.clamp(expo, min=1e-10)
-        vals = torch.exp(-0.5 * torch.pow(expo_safe, s[:, None] / 2.0)) * a[:, None]
+        raw_vals = torch.exp(-0.5 * torch.pow(expo_safe, s[:, None] / 2.0))
+        vals = a[:, None] * scale * torch.clamp(raw_vals - C, min=0.0)
 
         # Step 8: Accumulate into output
         idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)

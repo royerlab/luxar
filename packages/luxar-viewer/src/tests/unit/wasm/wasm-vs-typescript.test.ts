@@ -580,6 +580,7 @@ describe('WASM vs TypeScript Comparison', () => {
         4,
         2,
         0.01,
+        3.0,
         tsVisibility,
         tsAttenuation
       );
@@ -592,6 +593,7 @@ describe('WASM vs TypeScript Comparison', () => {
         4,
         2,
         0.01,
+        3.0,
         wasmVisibility,
         wasmAttenuation
       );

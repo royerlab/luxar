@@ -230,6 +230,7 @@ pub fn compute_gsplats_attenuation(
     ndim: usize,
     splat_count: usize,
     min_amplitude: f32,
+    truncate: f32,
     output_visibility: &mut [u8],
     output_attenuation: &mut [f32],
 ) -> u32 {
@@ -237,6 +238,10 @@ pub fn compute_gsplats_attenuation(
 
     let num_hidden = hidden_dims.len();
     let full_packed_size = (ndim * (ndim + 1)) / 2;
+
+    // Shifted Gaussian constants for C⁰ continuous truncation
+    let shift_c = (-0.5f32 * truncate * truncate).exp();
+    let inv_one_minus_c = 1.0 / (1.0 - shift_c);
 
     // Temporary buffers (use fixed-size arrays for performance)
     let mut diff = [0.0f32; MAX_SUPPORTED_DIMS];
@@ -271,8 +276,9 @@ pub fn compute_gsplats_attenuation(
             let mahal_dist =
                 mahalanobis_distance_internal(&diff[..num_hidden], &hidden_cholesky, num_hidden);
 
-            // Standard Gaussian attenuation (sharpness=2 hardcoded)
-            (-0.5 * mahal_dist * mahal_dist).exp()
+            // Shifted Gaussian attenuation: scale · max(0, exp(-0.5·D²) - C)
+            let raw_exp = (-0.5 * mahal_dist * mahal_dist).exp();
+            (inv_one_minus_c * (raw_exp - shift_c)).max(0.0)
         };
 
         output_attenuation[i] = attenuation;
@@ -481,6 +487,7 @@ mod tests {
             3,
             2,
             0.1,
+            3.0, // truncation radius
             &mut visibility,
             &mut attenuation,
         );
@@ -520,6 +527,7 @@ mod tests {
             4,
             2,
             0.01, // Low threshold
+            3.0, // truncation radius
             &mut visibility,
             &mut attenuation,
         );
@@ -528,9 +536,9 @@ mod tests {
         assert_eq!(visibility[0], 1);
         assert!((attenuation[0] - 1.0).abs() < 1e-5);
 
-        // Splat 1: mahal = 5.0, attenuation = exp(-0.5 * 25) ≈ 3.7e-6
+        // Splat 1: mahal = 5.0, beyond 3σ truncation → attenuation = 0
         assert_eq!(visibility[1], 0); // Below threshold
-        assert!(attenuation[1] < 0.001);
+        assert!(attenuation[1] < 1e-6);
 
         assert_eq!(count, 1);
     }
@@ -668,6 +676,7 @@ mod tests {
             4,
             1,
             0.001,
+            3.0, // truncation radius
             &mut visibility,
             &mut attenuation,
         );
