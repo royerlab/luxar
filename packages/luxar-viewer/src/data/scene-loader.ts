@@ -1810,7 +1810,9 @@ export class SceneLoader {
       const lnColormapName = node.attrs.colormap as string | undefined;
       const lnHasScalars = !!node.attrs.has_scalars;
       if (lnColormapName && lnHasScalars) {
-        // TODO: load custom LUT from zarr when lnColormapName === "custom"
+        // Known limitation: custom LUT data from zarr is not yet loaded.
+        // When colormapName is "custom", getColormapTexture returns undefined
+        // and the colormap is silently skipped. Built-in colormaps work fine.
         const lnColormapTex = getColormapTexture(lnColormapName);
         if (lnColormapTex) {
           material = material.clone() as typeof material;
@@ -1989,7 +1991,9 @@ export class SceneLoader {
       const gsColormapName = node.attrs.colormap as string | undefined;
       let gsplatMaterialCloned = false;
       if (gsColormapName) {
-        // TODO: load custom LUT from zarr when gsColormapName === "custom"
+        // Known limitation: custom LUT data from zarr is not yet loaded.
+        // When colormapName is "custom", getColormapTexture returns undefined
+        // and the colormap is silently skipped. Built-in colormaps work fine.
         const gsColormapTex = getColormapTexture(gsColormapName);
         if (gsColormapTex) {
           material = material.clone() as GSplatMaterial;
@@ -2415,7 +2419,9 @@ export class SceneLoader {
     const ptColormapName = attrs.colormap as string | undefined;
     const ptHasScalars = !!attrs.has_scalars;
     if (ptColormapName && ptHasScalars) {
-      // TODO: load custom LUT from zarr when ptColormapName === "custom"
+      // Known limitation: custom LUT data from zarr is not yet loaded.
+      // When colormapName is "custom", getColormapTexture returns undefined
+      // and the colormap is silently skipped. Built-in colormaps work fine.
       const ptColormapTex = getColormapTexture(ptColormapName);
       if (ptColormapTex) {
         material = material.clone() as typeof material;

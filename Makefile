@@ -362,6 +362,7 @@ help:  ## Show this help message
 
 # Installation
 install-dev:  ## Install Luxar Python package in editable mode for development
+	@mkdir -p packages/luxar-viewer/dist
 	pip install -e .
 
 # Code formatting (using Hatch)

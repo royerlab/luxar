@@ -78,10 +78,11 @@ jobs:
       - name: Unit tests
         run: pnpm test --run
 
-  # E2E tests temporarily disabled — will be reworked
-  # See: https://github.com/royerlab/luxar/issues/TBD
+  # E2E tests disabled — Playwright WebGL tests require GPU-capable runners
+  # which are not available on standard GitHub Actions ubuntu-latest.
+  # Re-enablement tracked as a release-readiness item.
   e2e-tests:
-    if: false  # Disabled: reworking E2E test infrastructure
+    if: false
     needs: [python-tests, typescript-tests]
     runs-on: ubuntu-latest
     steps:
