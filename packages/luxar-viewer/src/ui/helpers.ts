@@ -174,7 +174,7 @@ export function showError(message: string) {
     <div class="luxar-error-dialog__guidance-item">
       <strong>1. Add dataset to URL</strong><br/>
       <code class="luxar-error-dialog__guidance-code">
-        http://localhost:5173/?src=/path/to/dataset.zarr
+        ${window.location.origin}/?src=/path/to/dataset.zarr
       </code>
     </div>
     <div class="luxar-error-dialog__guidance-item">

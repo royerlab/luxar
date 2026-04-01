@@ -46,8 +46,9 @@ else:
 
         def _raise_gsplats_import_error(_exc: ImportError = exc) -> None:
             raise ImportError(
-                "luxar.gsplats requires optional dependencies. "
-                "Install with: pip install 'luxar[gsplats]'"
+                "luxar.gsplats requires optional dependencies (torch, scipy, etc.). "
+                "Install with: pip install 'luxar[gsplats]'\n"
+                f"Original error: {_exc}"
             ) from _exc
 
         def cull_by_contribution(*_args: Any, **_kwargs: Any) -> Any:
