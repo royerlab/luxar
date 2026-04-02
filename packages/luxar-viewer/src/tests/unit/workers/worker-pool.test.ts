@@ -2,7 +2,9 @@
  * Unit tests for Worker Pool and Data Worker communication
  *
  * NOTE: These tests are skipped in Node.js environment (no Worker API).
- * Worker functionality is tested through E2E tests in actual browser environment.
+ * Worker functionality is covered by:
+ * - E2E tests: worker-wasm-integration.spec.ts (verifies pool creation, WASM loading, fallback)
+ * - Integration tests: worker-integration.test.ts (verifies query interface and fallback logic)
  */
 
 import { describe, it, expect, afterEach } from 'vitest';

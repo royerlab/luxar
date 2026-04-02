@@ -129,14 +129,16 @@ class TestServeIntegration:
         response = requests.get(f"{test_server}/.zattrs")
         assert response.status_code == 200
 
-        # Try to access positions array (path may vary based on scene structure)
-        # For Lorenz attractor, it's typically at root level
-        response = requests.get(f"{test_server}/Lorenz/positions/.zarray")
-        if response.status_code == 200:
-            array_meta = response.json()
-            assert "shape" in array_meta
-            assert "dtype" in array_meta
-            assert array_meta["dtype"] in ["<f4", ">f4", "float32"]
+        # The Lorenz demo creates a node named "LorenzAttractor"
+        response = requests.get(f"{test_server}/LorenzAttractor/positions/.zarray")
+        assert response.status_code == 200, (
+            f"Expected 200 for LorenzAttractor/positions/.zarray, "
+            f"got {response.status_code}"
+        )
+        array_meta = response.json()
+        assert "shape" in array_meta
+        assert "dtype" in array_meta
+        assert array_meta["dtype"] in ["<f4", ">f4", "float32"]
 
     def test_cors_headers(self, test_server):
         """Test that CORS headers are set correctly."""

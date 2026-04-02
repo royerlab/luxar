@@ -116,8 +116,15 @@ class TestProgressiveFitting:
         # At least pass 0 must have splats
         assert result.at_lod(0).n_splats > 0
 
-    def test_cumulative_psnr_increases(self):
-        """Verify PSNR (approximately) increases with each pass."""
+    def test_cumulative_passes_produce_positive_psnr(self):
+        """Verify each progressive pass produces a positive PSNR value.
+
+        Note: monotonic PSNR increase cannot be guaranteed on tiny test
+        volumes because later passes may slightly degrade quality due to
+        overshoot from few splats and few iterations.  We therefore only
+        assert that every per-pass PSNR is positive (i.e. the fit is
+        better than pure noise).
+        """
         V = _make_synthetic_volume(shape=(32, 32))
         result = fit_progressive_gaussian_splats(
             V,
@@ -129,9 +136,6 @@ class TestProgressiveFitting:
         )
         if result.n_lods >= 2:
             psnrs = result.lod_psnrs()
-            # On real data, PSNR should increase. On tiny test volumes,
-            # later passes may slightly hurt due to overshoot from
-            # few splats + few iterations. Just verify PSNR values exist.
             assert all(p > 0 for p in psnrs)
 
     def test_callback_invoked(self):
