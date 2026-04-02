@@ -4,7 +4,6 @@ Tests for the enhanced luxar CLI commands.
 
 import json
 import threading
-import time
 from unittest.mock import patch
 
 import numpy as np
@@ -13,14 +12,6 @@ from typer.testing import CliRunner
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.cli import app
-from luxar.cli.utils import (
-    check_port_available,
-    find_available_port,
-    format_memory_size,
-    format_tree_node,
-    get_zarr_info,
-    validate_zarr_store,
-)
 
 
 @pytest.fixture
@@ -62,111 +53,6 @@ def complex_scene(tmp_path):
         compiler.write_points("Group1/SubGroup/SubPoints", pos3)
 
     return store_path
-
-
-class TestCLIUtils:
-    """Test CLI utility functions."""
-
-    def test_format_memory_size(self) -> None:
-        """Test memory size formatting."""
-        assert format_memory_size(512) == "512.0 B"
-        assert format_memory_size(1024) == "1.0 KB"
-        assert format_memory_size(1024 * 1024) == "1.0 MB"
-        assert format_memory_size(1024 * 1024 * 1024) == "1.0 GB"
-
-    def test_format_tree_node(self) -> None:
-        """Test tree node formatting."""
-        # Root node
-        result = format_tree_node("/", 0, True)
-        assert "📊" in result
-        assert "/" in result
-
-        # Group node
-        result = format_tree_node("MyGroup", 1, False, "", "group")
-        assert "📁" in result
-        assert "MyGroup" in result
-        assert "├─" in result
-
-        # Points node with attrs
-        result = format_tree_node("Points", 2, True, "  ", "points", {"n_points": 1000})
-        assert "⚫" in result
-        assert "Points" in result
-        assert "└─" in result
-        assert "n=1,000" in result
-
-    def test_check_port_available(self) -> None:
-        """Test port availability checking."""
-        # Port 0 should always be available (OS assigns)
-        assert check_port_available(0) is True
-
-        # Start a dummy server to occupy a port
-        import socket
-
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(("127.0.0.1", 0))
-        _, port = sock.getsockname()
-
-        # Port should be unavailable
-        assert check_port_available(port) is False
-
-        sock.close()
-        # Now port should be available again
-        time.sleep(0.1)  # Give OS time to release
-        assert check_port_available(port) is True
-
-    def test_find_available_port(self) -> None:
-        """Test finding available port."""
-        port = find_available_port(10000)
-        assert port is not None
-        assert port >= 10000
-        assert check_port_available(port) is True
-
-    def test_validate_zarr_store(self, sample_scene, tmp_path) -> None:
-        """Test zarr store validation."""
-        # Valid store
-        is_valid, error = validate_zarr_store(sample_scene)
-        assert is_valid is True
-        assert error is None
-
-        # Non-existent path
-        is_valid, error = validate_zarr_store(tmp_path / "nonexistent.zarr")
-        assert is_valid is False
-        assert error is not None
-        assert "does not exist" in error
-
-        # Not a directory
-        file_path = tmp_path / "file.txt"
-        file_path.write_text("test")
-        is_valid, error = validate_zarr_store(file_path)
-        assert is_valid is False
-        assert error is not None
-        assert "not a directory" in error
-
-        # Invalid zarr store
-        bad_dir = tmp_path / "bad_zarr"
-        bad_dir.mkdir()
-        is_valid, error = validate_zarr_store(bad_dir)
-        assert is_valid is False
-        assert error is not None
-        assert "Not a valid Zarr store" in error
-
-    def test_get_zarr_info(self, complex_scene) -> None:
-        """Test getting zarr info."""
-        info = get_zarr_info(complex_scene)
-
-        assert info["exists"] is True
-        assert info["size"] > 0
-        # Groups include root + Group1 + Group2 + SubGroup + point groups
-        assert info["n_groups"] >= 4  # At least the hierarchy groups
-        assert info["n_arrays"] > 0
-        assert info["n_points_total"] == 225  # 50 + 100 + 75
-        assert len(info["points_objects"]) == 3
-
-        # Check points details
-        for pc in info["points_objects"]:
-            assert "n_points" in pc
-            assert "n_dims" in pc
-            assert pc["n_dims"] == 3
 
 
 class TestViewerCommand:

@@ -640,33 +640,42 @@ class TestConvergence:
         assert params_full.shape[1] == 9  # 3D centers (3) + 3x3 packed L (6) = 9
 
     def test_volume_proportional_scaling(self) -> None:
-        """Test that candidate count scales with image volume."""
-        # Small image
-        V_small = np.random.random((16, 16)).astype(np.float32)
+        """Test that candidate count scales with image volume.
+
+        We pass explicit integer seed counts to bypass the auto-generation
+        minimum floor, which would otherwise clamp both volumes to the
+        same seed count and make the proportionality assertion vacuous.
+        """
+        # Small image (64x64 = 4096 voxels) with 10 seeds
+        V_small = np.random.random((64, 64)).astype(np.float32)
         result_small = fit_gaussian_splats(
             V_small,
+            seeds=10,
             n_iters=5,
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
+            cull_retention=None,
         )
 
-        # Large image (4x linear = 16x area)
-        V_large = np.random.random((32, 32)).astype(np.float32)
+        # Large image (128x128 = 16384 voxels) with 40 seeds (4x more)
+        V_large = np.random.random((128, 128)).astype(np.float32)
         result_large = fit_gaussian_splats(
             V_large,
+            seeds=40,
             n_iters=5,
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
+            cull_retention=None,
         )
 
-        # Large image should generate proportionally more candidates
-        # But both use minimum of 50, so this tests the scaling logic
+        # Large image with 4x seeds should produce more splats
         assert len(result_small.amplitudes) > 0
-        assert len(result_large.amplitudes) >= len(
-            result_small.amplitudes
-        )  # Should be at least as many
+        assert len(result_large.amplitudes) > len(result_small.amplitudes), (
+            f"Expected large image ({len(result_large.amplitudes)} splats) to have "
+            f"more splats than small image ({len(result_small.amplitudes)} splats)"
+        )
 
     def test_intensity_rescaling(self) -> None:
         """Test that amplitudes are correctly rescaled to original intensity range."""
