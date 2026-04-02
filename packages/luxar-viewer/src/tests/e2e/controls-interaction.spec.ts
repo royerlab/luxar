@@ -9,7 +9,12 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, getLuxarState, waitForNextRender } from './helpers';
+import {
+  waitForLuxarReady,
+  getLuxarState,
+  waitForNextRender,
+  dismissDatasetBrowser,
+} from './helpers';
 
 test.describe('Luxar Controls & Keyboard Shortcuts', () => {
   test.fixme('fullscreen is blocked in headless Chromium', async ({ page }) => {
@@ -24,31 +29,44 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
 
+    // Dismiss the dataset browser modal so keyboard events reach the app
+    await dismissDatasetBrowser(page);
+
     // Press H to show help
     await page.keyboard.press('h');
-
-    // Wait for overlay to appear
     await waitForNextRender(page);
 
-    // Check if help overlay is visible after pressing H
-    // Use specific selectors — do not fall back to matching any text containing "Help"
-    const helpVisibleAfter = await page.evaluate(() => {
-      const helpOverlay = document.querySelector(
-        '.help-overlay, #help-overlay, [data-help-overlay]'
-      );
-      if (helpOverlay) return true;
-      // Check for the specific help content heading
-      const body = document.body.innerHTML;
-      return body.includes('Keyboard Shortcuts');
+    // Verify the help overlay appeared using its actual DOM id and class
+    const helpVisible = await page.evaluate(() => {
+      const overlay = document.getElementById('help-overlay');
+      if (!overlay) return false;
+      return overlay.classList.contains('luxar-help-overlay');
     });
+    expect(helpVisible).toBe(true);
 
-    // Help overlay should appear after pressing H
-    expect(helpVisibleAfter).toBe(true);
+    // Verify the overlay has the expected title
+    const title = await page.evaluate(() => {
+      const el = document.getElementById('help-overlay-title');
+      return el?.textContent ?? '';
+    });
+    expect(title).toContain('Luxar Controls');
+
+    // Press H again to dismiss
+    await page.keyboard.press('h');
+    await waitForNextRender(page);
+
+    const helpGone = await page.evaluate(() => {
+      return document.getElementById('help-overlay') === null;
+    });
+    expect(helpGone).toBe(true);
   });
 
   test('should track camera position changes via mouse drag', async ({ page }) => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
+
+    // Dismiss the dataset browser modal so mouse events reach the canvas
+    await dismissDatasetBrowser(page);
 
     // Get initial camera position
     const initialPosition = await page.evaluate(() => {
@@ -60,18 +78,27 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
       };
     });
 
-    // Perform a mouse drag to move the camera via orbit controls
+    // Perform a mouse drag to rotate the camera via orbit controls.
+    // Orbit controls have damping (factor 0.25), so we need a large drag
+    // and must wait long enough for the damping to apply.
     const viewport = page.viewportSize()!;
     const centerX = viewport.width / 2;
     const centerY = viewport.height / 2;
 
     await page.mouse.move(centerX, centerY);
     await page.mouse.down();
-    await page.mouse.move(centerX + 100, centerY, { steps: 5 });
+    await page.mouse.move(centerX + 200, centerY + 100, { steps: 10 });
     await page.mouse.up();
 
-    // Wait for the controls to update the camera
-    await waitForNextRender(page);
+    // Force a render and wait for damping to apply (orbit controls update on render)
+    await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      // Trigger multiple renders to let damping settle
+      for (let i = 0; i < 5; i++) {
+        debug?.renderOnce?.();
+      }
+    });
+    await page.waitForTimeout(500);
 
     // Get new camera position
     const newPosition = await page.evaluate(() => {
@@ -83,17 +110,20 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
       };
     });
 
-    // Camera position should have changed from the mouse drag
-    const positionChanged =
-      newPosition.x !== initialPosition.x ||
-      newPosition.y !== initialPosition.y ||
-      newPosition.z !== initialPosition.z;
-    expect(positionChanged).toBe(true);
+    // Camera position should have changed from the orbit drag
+    const dx = Math.abs(newPosition.x - initialPosition.x);
+    const dy = Math.abs(newPosition.y - initialPosition.y);
+    const dz = Math.abs(newPosition.z - initialPosition.z);
+    const totalDelta = dx + dy + dz;
+    expect(totalDelta).toBeGreaterThan(0.01);
   });
 
   test('should switch control modes', async ({ page }) => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
+
+    // Dismiss the dataset browser modal so keyboard events reach the app
+    await dismissDatasetBrowser(page);
 
     // Get initial control type
     const initialType = await page.evaluate(() => {
@@ -101,25 +131,38 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
       return debug.controls?.getControlType?.();
     });
 
-    // Should have a control type
-    expect(initialType).toBeDefined();
-    expect(['orbit', 'fly', 'ortho']).toContain(initialType);
+    // Should start in orbit mode
+    expect(initialType).toBe('orbit');
 
-    // Try to switch control mode (press V)
+    // Press V to cycle through control modes (orbit → fly → ortho)
     await page.keyboard.press('v');
-
-    // Wait for change
     await waitForNextRender(page);
 
-    // Get new control type
-    const newType = await page.evaluate(() => {
+    const afterFirst = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       return debug.controls?.getControlType?.();
     });
+    expect(afterFirst).toBe('fly');
 
-    // Control type should be valid and different from initial
-    expect(['orbit', 'fly', 'ortho']).toContain(newType);
-    expect(newType).not.toBe(initialType);
+    // Press V again: fly → ortho
+    await page.keyboard.press('v');
+    await waitForNextRender(page);
+
+    const afterSecond = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      return debug.controls?.getControlType?.();
+    });
+    expect(afterSecond).toBe('ortho');
+
+    // Press V again: ortho → orbit (full cycle)
+    await page.keyboard.press('v');
+    await waitForNextRender(page);
+
+    const afterThird = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      return debug.controls?.getControlType?.();
+    });
+    expect(afterThird).toBe('orbit');
   });
 
   test('should access console interceptor', async ({ page }) => {

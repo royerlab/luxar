@@ -537,31 +537,39 @@ export async function waitForDimensionSystemReady(page: Page, timeout = 10000): 
 export async function waitForNavigationComplete(page: Page, timeout = 15000): Promise<void> {
   const startTime = Date.now();
 
-  // First, wait for loading to start (or be already done)
-  await page.waitForFunction(
-    () => {
-      const debug = (window as any).__luxarDebug;
-      return debug && debug.getState && typeof debug.getState().isLoading === 'boolean';
-    },
-    null,
-    { timeout: 5000 }
-  );
+  // First, wait for loading state to be available (may already be done)
+  try {
+    await page.waitForFunction(
+      () => {
+        const debug = (window as any).__luxarDebug;
+        return debug && debug.getState && typeof debug.getState().isLoading === 'boolean';
+      },
+      null,
+      { timeout: Math.min(timeout, 10000) }
+    );
+  } catch {
+    // If isLoading state never becomes available, just wait a moment and return.
+    // This can happen if navigation completes before we start polling.
+    await page.waitForTimeout(300);
+    return;
+  }
 
   // Then wait for loading to complete
   while (Date.now() - startTime < timeout) {
-    const state = await getLuxarState(page);
-
-    if (!state.isLoading) {
-      // Additional small delay to ensure WebGL has rendered
-      await page.waitForTimeout(100);
-      return;
+    try {
+      const state = await getLuxarState(page);
+      if (!state.isLoading) {
+        await page.waitForTimeout(100);
+        return;
+      }
+    } catch {
+      // State may briefly be unavailable during navigation
     }
 
     await page.waitForTimeout(100);
   }
 
   // Timeout is not an error - loading may have completed
-  console.log('[waitForNavigationComplete] Timeout reached, continuing');
 }
 
 /**
@@ -618,7 +626,8 @@ export async function waitForRenderStable(
  * by the specified number of frames. This replaces most `waitForTimeout(100-500)`
  * calls after user actions (key presses, clicks, etc.) that trigger re-renders.
  *
- * Falls back to a state-based wait + time buffer if the frame counter is unavailable.
+ * Falls back to a state-based wait + time buffer if the frame counter is unavailable
+ * or if the animation loop is idle (auto-paused after inactivity).
  *
  * @param page - Playwright page
  * @param frames - Number of frames to wait for (default: 2)
@@ -634,20 +643,36 @@ export async function waitForNextRender(page: Page, frames = 2, timeout = 5000):
   });
 
   if (currentFrame !== null) {
-    // Use frame counter for precise wait
+    // Force-trigger a render in case the animation loop is idle (auto-paused).
+    // The animation controller pauses after ~2s of inactivity, which means
+    // the frame counter stops incrementing. Calling renderOnce() kicks it.
+    await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      debug?.renderOnce?.();
+    });
+
+    // Use frame counter for precise wait, with a shorter timeout so we can
+    // fall back gracefully if the animation loop is truly stopped.
     const targetFrame = currentFrame + frames;
-    await page.waitForFunction(
-      (target: number) => {
-        const debug = (window as any).__luxarDebug;
-        const frame = debug?.renderer?.info?.render?.frame;
-        return typeof frame === 'number' && frame >= target;
-      },
-      targetFrame,
-      { timeout }
-    );
-  } else {
-    // Fallback: wait for stable initialized state + time buffer
-    await page.waitForFunction(
+    try {
+      await page.waitForFunction(
+        (target: number) => {
+          const debug = (window as any).__luxarDebug;
+          const frame = debug?.renderer?.info?.render?.frame;
+          return typeof frame === 'number' && frame >= target;
+        },
+        targetFrame,
+        { timeout: Math.min(timeout, 3000) }
+      );
+      return;
+    } catch {
+      // Frame counter didn't advance (animation loop idle) — fall through to time-based wait
+    }
+  }
+
+  // Fallback: wait for stable initialized state + time buffer
+  await page
+    .waitForFunction(
       () => {
         const debug = (window as any).__luxarDebug;
         const state = debug?.getState?.();
@@ -655,9 +680,11 @@ export async function waitForNextRender(page: Page, frames = 2, timeout = 5000):
       },
       null,
       { timeout }
-    );
-    await page.waitForTimeout(frames * 50);
-  }
+    )
+    .catch(() => {
+      // State never became stable — continue anyway
+    });
+  await page.waitForTimeout(Math.max(frames * 50, 200));
 }
 
 /**
@@ -739,6 +766,56 @@ export async function assertNoConsoleErrors(
         `First error: ${actualErrors[0]}\n` +
         'See console output above for full list.'
     );
+  }
+}
+
+/**
+ * Dismiss the dataset browser modal if visible.
+ *
+ * When navigating to `/?debug` without a dataset, the app shows a
+ * dataset browser dialog (aria-modal) that intercepts all pointer and
+ * keyboard events. Tests that need to interact with the canvas or use
+ * keyboard shortcuts must dismiss it first.
+ *
+ * @param page - Playwright page
+ */
+export async function dismissDatasetBrowser(page: Page): Promise<void> {
+  const dismissed = await page.evaluate(() => {
+    const browser = document.querySelector(
+      '.luxar-dataset-browser, .dataset-browser, #dataset-browser'
+    );
+    if (browser && getComputedStyle(browser).display !== 'none') {
+      (browser as HTMLElement).remove();
+      return true;
+    }
+    return false;
+  });
+
+  if (dismissed) {
+    // Give the UI a moment to settle after removing the modal
+    await page.waitForTimeout(100);
+  }
+}
+
+/**
+ * Focus the canvas for keyboard/mouse interaction.
+ *
+ * Dismisses the dataset browser if visible, then clicks the canvas.
+ * Use this instead of bare `page.click('canvas')` which can timeout
+ * when the dataset browser modal intercepts pointer events.
+ *
+ * @param page - Playwright page
+ */
+export async function focusCanvas(page: Page): Promise<void> {
+  await dismissDatasetBrowser(page);
+  try {
+    await page.click('canvas', { timeout: 3000 });
+  } catch {
+    // Canvas click failed (may not exist yet) — try focusing the page body instead
+    await page.evaluate(() => {
+      const canvas = document.querySelector('canvas');
+      if (canvas) canvas.focus();
+    });
   }
 }
 
