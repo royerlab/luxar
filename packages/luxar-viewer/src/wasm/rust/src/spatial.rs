@@ -30,6 +30,13 @@ pub fn query_chunks_for_view(
     num_chunks: usize,
     output: &mut [u32],
 ) -> u32 {
+    debug_assert!(
+        output.len() >= num_chunks,
+        "output too small: {} < {}",
+        output.len(),
+        num_chunks
+    );
+
     let mut match_count = 0;
     let stride = ndim * 2; // Hoisted: bytes per chunk in bounds array
 
@@ -93,5 +100,85 @@ mod tests {
         let mut output = vec![0u32; 0];
         let count = query_chunks_for_view(&[], &[0.0, 0.0], &[1.0, 1.0], 2, 0, &mut output);
         assert_eq!(count, 0, "Should handle empty input");
+    }
+
+    #[test]
+    fn test_query_chunks_2d() {
+        // 2 chunks in 2D space
+        let chunk_bounds = vec![
+            // Chunk 0: [0,0] to [1,1]
+            0.0, 1.0, 0.0, 1.0,
+            // Chunk 1: [3,3] to [4,4] (far away)
+            3.0, 4.0, 3.0, 4.0,
+        ];
+
+        let slice_pos = vec![0.5, 0.5];
+        let tolerance = vec![0.6, 0.6]; // Covers [-0.1, 1.1]
+
+        let mut output = vec![0u32; 2];
+        let count = query_chunks_for_view(&chunk_bounds, &slice_pos, &tolerance, 2, 2, &mut output);
+
+        assert_eq!(count, 1, "Should match only chunk 0 in 2D");
+        assert_eq!(output[0], 0);
+    }
+
+    #[test]
+    fn test_query_chunks_single_chunk() {
+        // 1 chunk that covers a large region
+        let chunk_bounds = vec![
+            // Chunk 0: [-100, -100, -100] to [100, 100, 100]
+            -100.0, 100.0, -100.0, 100.0, -100.0, 100.0,
+        ];
+
+        let slice_pos = vec![50.0, -30.0, 0.0];
+        let tolerance = vec![1.0, 1.0, 1.0];
+
+        let mut output = vec![0u32; 1];
+        let count = query_chunks_for_view(&chunk_bounds, &slice_pos, &tolerance, 3, 1, &mut output);
+
+        assert_eq!(count, 1, "Single all-encompassing chunk should always match");
+        assert_eq!(output[0], 0);
+    }
+
+    #[test]
+    fn test_query_chunks_no_match() {
+        // 2 chunks, query position far outside both
+        let chunk_bounds = vec![
+            // Chunk 0: [0,0,0] to [1,1,1]
+            0.0, 1.0, 0.0, 1.0, 0.0, 1.0,
+            // Chunk 1: [2,2,2] to [3,3,3]
+            2.0, 3.0, 2.0, 3.0, 2.0, 3.0,
+        ];
+
+        let slice_pos = vec![100.0, 100.0, 100.0];
+        let tolerance = vec![0.5, 0.5, 0.5];
+
+        let mut output = vec![0u32; 2];
+        let count = query_chunks_for_view(&chunk_bounds, &slice_pos, &tolerance, 3, 2, &mut output);
+
+        assert_eq!(count, 0, "No chunks should match when position is far outside");
+    }
+
+    #[test]
+    fn test_query_chunks_boundary() {
+        // Position exactly on chunk boundary
+        let chunk_bounds = vec![
+            // Chunk 0: [0,0,0] to [1,1,1]
+            0.0, 1.0, 0.0, 1.0, 0.0, 1.0,
+        ];
+
+        // Position at exact max boundary of chunk
+        let slice_pos = vec![1.0, 1.0, 1.0];
+        let tolerance = vec![0.0, 0.0, 0.0];
+
+        let mut output = vec![0u32; 1];
+        let count = query_chunks_for_view(&chunk_bounds, &slice_pos, &tolerance, 3, 1, &mut output);
+
+        // query_min = query_max = 1.0, chunk_max = 1.0
+        // Check: chunk_max < query_min? 1.0 < 1.0 = false
+        // Check: chunk_min > query_max? 0.0 > 1.0 = false
+        // So it intersects
+        assert_eq!(count, 1, "Chunk should match when position is exactly on boundary");
+        assert_eq!(output[0], 0);
     }
 }

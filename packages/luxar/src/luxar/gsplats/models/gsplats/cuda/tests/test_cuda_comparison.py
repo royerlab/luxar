@@ -1270,3 +1270,99 @@ class TestCUDAVsPyTorchComprehensive:
         assert correlation > min_correlation, (
             f"{test_name}: Correlation {correlation:.4f} < {min_correlation}"
         )
+
+
+@pytest.mark.skipif(not CUDA_BACKEND_AVAILABLE, reason="CUDA backend not compiled")
+class TestBackwardComparison:
+    """Compare CUDA backward pass gradients against PyTorch CPU reference.
+
+    The forward comparison tests above verify numerical correctness of the
+    forward kernel. These tests verify that the backward kernel produces
+    gradients consistent with PyTorch autograd on CPU.
+
+    Uses sign-match and magnitude-ratio metrics (not element-wise allclose)
+    because CUDA atomic accumulation introduces non-deterministic ordering
+    that affects gradient values.
+    """
+
+    def test_backward_cuda_vs_pytorch_3d(self):
+        """Compare 3D backward gradients between CUDA and PyTorch CPU.
+
+        Creates identical models on CPU and CUDA, runs forward+backward with
+        loss = output.sum(), and compares raw_a gradients using sign-match
+        and magnitude-ratio.
+        """
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            GaussianSplatModelCUDA,
+        )
+        from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+
+        np.random.seed(1234)
+        N, d = 10, 3
+        shape = (16, 16, 16)
+
+        centers0 = np.random.rand(N, d).astype(np.float32) * 12 + 2
+        L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0)
+        for i in range(N):
+            L0[i] *= np.random.uniform(0.5, 1.5)
+        amps0 = np.ones(N, dtype=np.float32) * 0.5
+
+        # CPU model
+        cpu_model = GaussianSplatModel(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.5, 0.5, 0.5),
+            device="cpu",
+        )
+
+        # CUDA model
+        cuda_model = GaussianSplatModelCUDA(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.5, 0.5, 0.5),
+            device="cuda",
+        )
+
+        # Forward + backward on CPU with loss = output.sum()
+        cpu_output = cpu_model()
+        cpu_loss = cpu_output.sum()
+        cpu_loss.backward()
+
+        # Forward + backward on CUDA with loss = output.sum()
+        cuda_output = cuda_model()
+        cuda_loss = cuda_output.sum()
+        cuda_loss.backward()
+
+        # Compare raw_a gradients (amplitude is the most directly comparable)
+        cpu_grad = cpu_model.raw_a.grad
+        cuda_grad = cuda_model.raw_a.grad
+
+        assert cpu_grad is not None, "CPU raw_a gradient is None"
+        assert cuda_grad is not None, "CUDA raw_a gradient is None"
+
+        cuda_grad_cpu = cuda_grad.cpu()
+
+        # Sign match: majority of gradient signs should agree
+        sign_match = (
+            (torch.sign(cpu_grad) == torch.sign(cuda_grad_cpu)).float().mean()
+        )
+        print(f"\n3D backward raw_a sign match: {sign_match:.4f}")
+        assert sign_match > Tolerances.BACKWARD_SIGN_MATCH, (
+            f"3D raw_a gradient sign match {sign_match:.2f} "
+            f"< {Tolerances.BACKWARD_SIGN_MATCH}"
+        )
+
+        # Magnitude ratio: gradient magnitudes should be in similar range
+        cpu_mag = cpu_grad.abs().mean()
+        cuda_mag = cuda_grad_cpu.abs().mean()
+        if cpu_mag > 1e-8 and cuda_mag > 1e-8:
+            mag_ratio = max(cpu_mag / cuda_mag, cuda_mag / cpu_mag)
+            print(f"  Magnitude ratio: {mag_ratio:.4f}")
+            assert mag_ratio < Tolerances.BACKWARD_MAG_RATIO, (
+                f"3D raw_a gradient magnitude ratio {mag_ratio:.2f} "
+                f"> {Tolerances.BACKWARD_MAG_RATIO}"
+            )

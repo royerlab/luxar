@@ -1607,3 +1607,177 @@ class TestBackward4D:
                 f"4D raw_a gradient magnitude ratio {mag_ratio:.2f} "
                 f"> {Tolerances.BACKWARD_MAG_RATIO}"
             )
+
+
+@pytest.mark.skipif(not CUDA_BACKEND_AVAILABLE, reason="CUDA backend not compiled")
+class Test5DAnd6DForwardVsCPU:
+    """Compare 5D and 6D CUDA forward output against PyTorch CPU reference.
+
+    Unlike the existing test_5d/6d_forward_matches_reference tests which only
+    check relative differences, these tests use the full comparison pattern
+    (correlation + relative difference) from test_cuda_comparison.py.
+    """
+
+    def test_5d_forward_vs_cpu_reference(self):
+        """Compare 5D CUDA forward output against PyTorch CPU using correlation
+        and relative difference metrics."""
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            GaussianSplatModelCUDA,
+        )
+        from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+
+        np.random.seed(42)
+        N, d = 20, 5
+        shape = (8, 8, 8, 8, 8)
+
+        centers0 = np.random.rand(N, d).astype(np.float32) * 6 + 1
+        L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0)
+        for i in range(N):
+            L0[i] *= np.random.uniform(0.5, 1.5)
+        amps0 = np.random.rand(N).astype(np.float32) * 0.5 + 0.5
+
+        # CPU reference
+        cpu_model = GaussianSplatModel(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.5,) * d,
+            device="cpu",
+        )
+
+        # CUDA model
+        cuda_model = GaussianSplatModelCUDA(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.5,) * d,
+            device="cuda",
+        )
+
+        with torch.no_grad():
+            cpu_output = cpu_model()
+            cuda_output = cuda_model().cpu()
+
+        if cuda_output.shape != cpu_output.shape:
+            cuda_output = cuda_output.reshape(cpu_output.shape)
+
+        max_val = max(cpu_output.abs().max().item(), cuda_output.abs().max().item())
+        if max_val < 1e-6:
+            return  # Both outputs essentially zero
+
+        abs_diff = (cpu_output - cuda_output).abs()
+        rel_diff = abs_diff / (max_val + 1e-8)
+
+        max_rel_diff = rel_diff.max().item()
+        mean_rel_diff = rel_diff.mean().item()
+
+        # Correlation
+        cpu_flat = cpu_output.flatten()
+        cuda_flat = cuda_output.flatten()
+        if cpu_flat.std() > 1e-6 and cuda_flat.std() > 1e-6:
+            corr = torch.corrcoef(torch.stack([cpu_flat, cuda_flat]))[0, 1].item()
+        else:
+            corr = 1.0
+
+        print("\n5D CUDA vs CPU comparison:")
+        print(f"  Max relative diff: {max_rel_diff:.4f}")
+        print(f"  Mean relative diff: {mean_rel_diff:.6f}")
+        print(f"  Correlation: {corr:.6f}")
+
+        assert max_rel_diff < Tolerances.COMPARISON_MAX_REL_DIFF, (
+            f"5D max relative diff {max_rel_diff:.4f} exceeds "
+            f"{Tolerances.COMPARISON_MAX_REL_DIFF}"
+        )
+        assert mean_rel_diff < Tolerances.COMPARISON_MEAN_REL_DIFF * 2, (
+            f"5D mean relative diff {mean_rel_diff:.6f} exceeds "
+            f"{Tolerances.COMPARISON_MEAN_REL_DIFF * 2}"
+        )
+        assert corr > Tolerances.COMPARISON_MIN_CORRELATION, (
+            f"5D correlation {corr:.4f} below {Tolerances.COMPARISON_MIN_CORRELATION}"
+        )
+
+    def test_6d_forward_vs_cpu_reference(self):
+        """Compare 6D CUDA forward output against PyTorch CPU using correlation
+        and relative difference metrics."""
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            GaussianSplatModelCUDA,
+        )
+        from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+
+        rng = np.random.RandomState(42)
+        torch.manual_seed(42)
+
+        N, d = 15, 6
+        shape = (4, 4, 4, 4, 4, 4)
+
+        centers0 = rng.rand(N, d).astype(np.float32) * 2 + 1
+        L0 = np.eye(d, dtype=np.float32)[None, :, :].repeat(N, axis=0)
+        for i in range(N):
+            L0[i] *= rng.uniform(0.3, 0.8)
+        amps0 = rng.rand(N).astype(np.float32) * 0.5 + 0.5
+
+        # CPU reference
+        cpu_model = GaussianSplatModel(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.3,) * d,
+            device="cpu",
+        )
+
+        # CUDA model
+        cuda_model = GaussianSplatModelCUDA(
+            shape=shape,
+            centers0=centers0,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=(0.3,) * d,
+            device="cuda",
+        )
+
+        with torch.no_grad():
+            cpu_output = cpu_model()
+            cuda_output = cuda_model().cpu()
+
+        if cuda_output.shape != cpu_output.shape:
+            cuda_output = cuda_output.reshape(cpu_output.shape)
+
+        max_val = max(cpu_output.abs().max().item(), cuda_output.abs().max().item())
+        if max_val < 1e-6:
+            return
+
+        abs_diff = (cpu_output - cuda_output).abs()
+        rel_diff = abs_diff / (max_val + 1e-8)
+
+        max_rel_diff = rel_diff.max().item()
+        mean_rel_diff = rel_diff.mean().item()
+
+        # Correlation
+        cpu_flat = cpu_output.flatten()
+        cuda_flat = cuda_output.flatten()
+        if cpu_flat.std() > 1e-6 and cuda_flat.std() > 1e-6:
+            corr = torch.corrcoef(torch.stack([cpu_flat, cuda_flat]))[0, 1].item()
+        else:
+            corr = 1.0
+
+        print("\n6D CUDA vs CPU comparison:")
+        print(f"  Max relative diff: {max_rel_diff:.4f}")
+        print(f"  Mean relative diff: {mean_rel_diff:.6f}")
+        print(f"  Correlation: {corr:.6f}")
+
+        # 6D uses relaxed tolerances due to deeper forward substitution
+        # and larger Mahalanobis accumulation error
+        assert max_rel_diff < Tolerances.COMPARISON_BOUNDARY_REL_DIFF, (
+            f"6D max relative diff {max_rel_diff:.4f} exceeds "
+            f"{Tolerances.COMPARISON_BOUNDARY_REL_DIFF}"
+        )
+        assert mean_rel_diff < Tolerances.COMPARISON_MEAN_REL_DIFF * 3, (
+            f"6D mean relative diff {mean_rel_diff:.6f} exceeds "
+            f"{Tolerances.COMPARISON_MEAN_REL_DIFF * 3}"
+        )
+        assert corr > Tolerances.COMPARISON_MIN_CORRELATION, (
+            f"6D correlation {corr:.4f} below {Tolerances.COMPARISON_MIN_CORRELATION}"
+        )

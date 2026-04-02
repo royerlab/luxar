@@ -1,7 +1,7 @@
 # Gaussian Splatting Utilities Specification
 
 **Version**: 1.0.0
-**Last Updated**: 2025-11-27
+**Last Updated**: 2026-03-31
 
 ## Overview
 

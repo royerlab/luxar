@@ -173,6 +173,7 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
 
       // Advance frames by acquiring active geometries
       for (let i = 0; i < 10; i++) {
+        shortEvictionPool.beginFrame();
         shortEvictionPool.acquirePointsGeometry(`active${i}`, createMockData(5000), 5000);
       }
 

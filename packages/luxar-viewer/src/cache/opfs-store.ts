@@ -170,6 +170,11 @@ export class OPFSStore {
       this.totalSize += size;
       this.writeCount++;
 
+      // Compact order counters to prevent overflow after long sessions
+      if (this.orderCounter > 1e12) {
+        this.compactOrderCounter();
+      }
+
       // Debounced metadata save
       this.scheduleMetadataSave();
     } catch (error) {
@@ -264,6 +269,12 @@ export class OPFSStore {
       // Delete+re-insert to move to end (MRU position) — O(1) with Map
       this.index.delete(key);
       this.index.set(key, { size: entry.size, order: this.orderCounter++ });
+
+      // Compact order counters to prevent overflow after long sessions
+      if (this.orderCounter > 1e12) {
+        this.compactOrderCounter();
+      }
+
       this.scheduleMetadataSave();
     }
   }
@@ -281,6 +292,20 @@ export class OPFSStore {
    */
   getContentHash(): string | null {
     return this.contentHash;
+  }
+
+  /**
+   * Renumber all order entries to prevent orderCounter overflow.
+   * Called when orderCounter exceeds a safe threshold (1e12).
+   */
+  private compactOrderCounter(): void {
+    const entries = [...this.index.entries()].sort((a, b) => a[1].order - b[1].order);
+    this.index.clear();
+    entries.forEach(([key, entry], i) => {
+      entry.order = i;
+      this.index.set(key, entry);
+    });
+    this.orderCounter = entries.length;
   }
 
   /**

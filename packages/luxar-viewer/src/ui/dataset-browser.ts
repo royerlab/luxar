@@ -155,6 +155,8 @@ export class DatasetBrowser {
     const closeBtn = document.createElement('button');
     closeBtn.className = 'luxar-dataset-browser__close-btn';
     closeBtn.textContent = '×';
+    closeBtn.title = 'Close (Escape)';
+    closeBtn.setAttribute('aria-label', 'Close dataset browser');
     closeBtn.onclick = () => this.close();
 
     header.appendChild(title);

@@ -5,6 +5,8 @@
 
 use wasm_bindgen::prelude::*;
 
+use crate::common::validate_ndim;
+
 /// Check if a single vertex is visible in the nD slice.
 ///
 /// # Arguments
@@ -83,6 +85,15 @@ pub fn compute_nd_visibility_lines(
     num_segments: usize,
     output_mask: &mut [u8],
 ) -> u32 {
+    validate_ndim(ndim, "compute_nd_visibility_lines");
+
+    debug_assert!(
+        output_mask.len() >= num_segments,
+        "output_mask too small: {} < {}",
+        output_mask.len(),
+        num_segments
+    );
+
     let mut visible_count = 0;
 
     // OPTIMIZATION: Process all segments with minimal branching
@@ -195,5 +206,66 @@ mod tests {
 
         assert_eq!(output[0], 0, "Segment should be hidden (both endpoints far)");
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_line_visibility_4d() {
+        // 4D line segment: both endpoints at same XYZ, different in dim 4
+        // Endpoint 0: [0,0,0, 0] (inside slice)
+        // Endpoint 1: [0,0,0, 10] (outside slice in dim 4)
+        let vertices = vec![
+            0.0, 0.0, 0.0, 0.0,  // Vertex 0
+            0.0, 0.0, 0.0, 10.0, // Vertex 1
+        ];
+        let segments = vec![0, 1];
+        let widths = vec![0.1, 0.1];
+        let slice_pos = vec![0.0, 0.0, 0.0, 0.0];
+        let tolerance = vec![f32::INFINITY, f32::INFINITY, f32::INFINITY, 2.0];
+
+        let mut output = vec![0u8; 1];
+        let count = compute_nd_visibility_lines(
+            &vertices,
+            &segments,
+            &widths,
+            &slice_pos,
+            &tolerance,
+            4,
+            1,
+            &mut output,
+        );
+
+        // Vertex 0 is at slice position exactly -> visible
+        // Vertex 1 is at dim4=10, tolerance=2.0 -> normalized dist = 10/2.1 ~ 4.76 -> hidden
+        // Segment visible because at least one endpoint (vertex 0) is visible
+        assert_eq!(output[0], 1, "Segment should be visible (endpoint 0 inside 4D slice)");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_line_visibility_2d() {
+        // 2D line segment with both endpoints inside the slice
+        let vertices = vec![
+            1.0, 2.0, // Vertex 0
+            3.0, 4.0, // Vertex 1
+        ];
+        let segments = vec![0, 1];
+        let widths = vec![0.5, 0.5];
+        let slice_pos = vec![2.0, 3.0];
+        let tolerance = vec![5.0, 5.0];
+
+        let mut output = vec![0u8; 1];
+        let count = compute_nd_visibility_lines(
+            &vertices,
+            &segments,
+            &widths,
+            &slice_pos,
+            &tolerance,
+            2,
+            1,
+            &mut output,
+        );
+
+        assert_eq!(output[0], 1, "2D segment should be visible (both endpoints inside)");
+        assert_eq!(count, 1);
     }
 }

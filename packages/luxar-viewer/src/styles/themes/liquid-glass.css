@@ -28,12 +28,12 @@
   box-sizing: border-box;
 
   /* Transparent - layers handle the glass look */
-  background: transparent !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 
   /* Brighter border for glass edge definition */
-  border: 1px solid rgba(255, 255, 255, 0.5) !important;
+  border: 1px solid rgba(255, 255, 255, 0.5);
 }
 
 /* ==========================================================================
@@ -150,7 +150,7 @@
 [data-theme='liquid-glass'] .luxar-timeline-canvas,
 [data-theme='liquid-glass'] .timing-header,
 [data-theme='liquid-glass'] .timing-footer {
-  background: rgba(255, 255, 255, 0.04) !important;
+  background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.12);
   backdrop-filter: none;
 }
@@ -178,35 +178,35 @@
 /* GUI inputs - more transparent */
 [data-theme='liquid-glass'] .luxar-gui__input,
 [data-theme='liquid-glass'] .luxar-gui__input--number {
-  background: rgba(255, 255, 255, 0.06) !important;
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 [data-theme='liquid-glass'] .luxar-gui__input:hover,
 [data-theme='liquid-glass'] .luxar-gui__input--number:hover {
-  background: rgba(255, 255, 255, 0.1) !important;
-  border-color: rgba(255, 255, 255, 0.25) !important;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.25);
 }
 
 [data-theme='liquid-glass'] .luxar-gui__input:focus,
 [data-theme='liquid-glass'] .luxar-gui__input--number:focus {
-  background: rgba(255, 255, 255, 0.12) !important;
-  border-color: var(--luxar-success) !important;
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--luxar-success);
 }
 
 /* GUI select - more transparent */
 [data-theme='liquid-glass'] .luxar-gui__select {
-  background: rgba(255, 255, 255, 0.06) !important;
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 [data-theme='liquid-glass'] .luxar-gui__select:hover {
-  background: rgba(255, 255, 255, 0.1) !important;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 [data-theme='liquid-glass'] .luxar-gui__select:focus {
-  background: rgba(255, 255, 255, 0.12) !important;
-  border-color: var(--luxar-success) !important;
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--luxar-success);
 }
 
 /* Select option elements - ensure readable on all platforms */
@@ -224,26 +224,26 @@
 
 /* GUI slider track - subtle */
 [data-theme='liquid-glass'] .luxar-gui__slider {
-  background: rgba(255, 255, 255, 0.12) !important;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 [data-theme='liquid-glass'] .luxar-gui__slider::-webkit-slider-track {
-  background: rgba(255, 255, 255, 0.12) !important;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 [data-theme='liquid-glass'] .luxar-gui__slider::-moz-range-track {
-  background: rgba(255, 255, 255, 0.12) !important;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 /* GUI button - glass style */
 [data-theme='liquid-glass'] .luxar-gui__button {
-  background: rgba(255, 255, 255, 0.08) !important;
-  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 [data-theme='liquid-glass'] .luxar-gui__button:hover {
-  background: rgba(255, 255, 255, 0.15) !important;
-  border-color: rgba(255, 255, 255, 0.3) !important;
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 /* ==========================================================================
@@ -268,15 +268,15 @@
    ========================================================================== */
 
 [data-theme='liquid-glass'] .luxar-recommendation--error {
-  background: rgba(255, 59, 48, 0.08) !important;
+  background: rgba(255, 59, 48, 0.08);
 }
 
 [data-theme='liquid-glass'] .luxar-recommendation--warning {
-  background: rgba(255, 193, 7, 0.08) !important;
+  background: rgba(255, 193, 7, 0.08);
 }
 
 [data-theme='liquid-glass'] .luxar-recommendation--info {
-  background: rgba(33, 150, 243, 0.08) !important;
+  background: rgba(33, 150, 243, 0.08);
 }
 
 /* ==========================================================================
@@ -286,23 +286,23 @@
 
 /* Debug console content area - was rgba(0, 0, 0, 0.3), too opaque */
 [data-theme='liquid-glass'] .luxar-debug-console__content {
-  background: rgba(255, 255, 255, 0.04) !important;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 /* Debug console filter input */
 [data-theme='liquid-glass'] .luxar-debug-console__filter {
-  background: rgba(255, 255, 255, 0.06) !important;
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 /* Debug console header border */
 [data-theme='liquid-glass'] .luxar-debug-console__header {
-  border-color: rgba(255, 255, 255, 0.15) !important;
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 /* Debug console status bar */
 [data-theme='liquid-glass'] .luxar-debug-console__status {
-  border-color: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 /* Console message hover - more transparent */
@@ -312,11 +312,11 @@
 
 /* Warning and error message backgrounds - more transparent */
 [data-theme='liquid-glass'] .luxar-console-message-warn {
-  background: rgba(255, 193, 7, 0.08) !important;
+  background: rgba(255, 193, 7, 0.08);
 }
 
 [data-theme='liquid-glass'] .luxar-console-message-error {
-  background: rgba(244, 67, 54, 0.08) !important;
+  background: rgba(244, 67, 54, 0.08);
 }
 
 /* ==========================================================================
@@ -326,54 +326,54 @@
 
 /* Banner section */
 [data-theme='liquid-glass'] .luxar-dataset-browser__banner {
-  background: rgba(76, 175, 80, 0.06) !important;
-  border-color: rgba(76, 175, 80, 0.15) !important;
+  background: rgba(76, 175, 80, 0.06);
+  border-color: rgba(76, 175, 80, 0.15);
 }
 
 /* Code snippet in banner */
 [data-theme='liquid-glass'] .luxar-dataset-browser__banner-code {
-  background: rgba(255, 255, 255, 0.08) !important;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 /* Breadcrumb navigation */
 [data-theme='liquid-glass'] .luxar-dataset-browser__breadcrumb {
-  background: rgba(255, 255, 255, 0.04) !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 /* File list items */
 [data-theme='liquid-glass'] .luxar-dataset-browser__file-item {
-  background: rgba(255, 255, 255, 0.04) !important;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 [data-theme='liquid-glass'] .luxar-dataset-browser__file-item:hover {
-  background: rgba(76, 175, 80, 0.12) !important;
+  background: rgba(76, 175, 80, 0.12);
 }
 
 [data-theme='liquid-glass'] .luxar-dataset-browser__file-item--current {
-  background: rgba(76, 175, 80, 0.1) !important;
-  border-color: rgba(76, 175, 80, 0.25) !important;
+  background: rgba(76, 175, 80, 0.1);
+  border-color: rgba(76, 175, 80, 0.25);
 }
 
 /* Manual entry input */
 [data-theme='liquid-glass'] .luxar-dataset-browser__manual-entry-input {
-  background: rgba(255, 255, 255, 0.06) !important;
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 [data-theme='liquid-glass'] .luxar-dataset-browser__manual-entry-input:focus {
-  background: rgba(255, 255, 255, 0.1) !important;
-  border-color: var(--luxar-success) !important;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--luxar-success);
 }
 
 /* Status bar */
 [data-theme='liquid-glass'] .luxar-dataset-browser__status {
-  border-color: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 /* Header border */
 [data-theme='liquid-glass'] .luxar-dataset-browser__header {
-  border-color: rgba(255, 255, 255, 0.15) !important;
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 /* ==========================================================================
@@ -383,17 +383,17 @@
 
 /* Header border */
 [data-theme='liquid-glass'] .luxar-help-overlay__header {
-  border-color: rgba(255, 255, 255, 0.15) !important;
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 /* Category content border */
 [data-theme='liquid-glass'] .luxar-help-overlay__category-content {
-  border-color: rgba(76, 175, 80, 0.15) !important;
+  border-color: rgba(76, 175, 80, 0.15);
 }
 
 /* Footer border */
 [data-theme='liquid-glass'] .luxar-help-overlay__footer {
-  border-color: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 /* ==========================================================================
@@ -402,7 +402,7 @@
    ========================================================================== */
 
 [data-theme='liquid-glass'] .luxar-error-dialog__header {
-  border-color: rgba(255, 255, 255, 0.15) !important;
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 /* Note: .luxar-error-dialog__content and __footer selectors removed - these classes don't exist in the error dialog DOM */
@@ -414,12 +414,12 @@
 
 /* Header border */
 [data-theme='liquid-glass'] .luxar-layers-panel__header {
-  border-color: rgba(255, 255, 255, 0.15) !important;
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 /* Controls separator border */
 [data-theme='liquid-glass'] .luxar-layers-panel__controls {
-  border-color: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 /* Layer row hover - more transparent */
@@ -429,35 +429,35 @@
 
 /* Layer row selected - more transparent */
 [data-theme='liquid-glass'] .luxar-layer-row--selected {
-  background: rgba(33, 150, 243, 0.1) !important;
+  background: rgba(33, 150, 243, 0.1);
 }
 
 /* Select controls - glass style (matches GUI selects) */
 [data-theme='liquid-glass'] .luxar-layers-panel__select {
-  background: rgba(255, 255, 255, 0.06) !important;
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 [data-theme='liquid-glass'] .luxar-layers-panel__select:hover {
-  background: rgba(255, 255, 255, 0.1) !important;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 [data-theme='liquid-glass'] .luxar-layers-panel__select:focus {
-  background: rgba(255, 255, 255, 0.12) !important;
-  border-color: var(--luxar-success) !important;
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--luxar-success);
 }
 
 /* Slider track - subtle (matches GUI slider) */
 [data-theme='liquid-glass'] .luxar-layers-panel__slider {
-  background: rgba(255, 255, 255, 0.12) !important;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 /* Range slider track - subtle */
 [data-theme='liquid-glass'] .luxar-range-slider__track {
-  background: rgba(255, 255, 255, 0.12) !important;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 /* Type badge - more transparent */
 [data-theme='liquid-glass'] .luxar-layer-row__badge {
-  background: rgba(255, 255, 255, 0.06) !important;
+  background: rgba(255, 255, 255, 0.06);
 }

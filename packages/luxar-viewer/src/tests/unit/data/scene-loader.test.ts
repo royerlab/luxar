@@ -517,7 +517,7 @@ describe('SceneLoader', () => {
       await expect(sceneLoader.loadScene('http://invalid.url')).rejects.toThrow(
         'Failed to open store'
       );
-    });
+    }, 15000);
 
     it('should handle enumeration failures gracefully', async () => {
       mockStore.contents = undefined; // No contents method

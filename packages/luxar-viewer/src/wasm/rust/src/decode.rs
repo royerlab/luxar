@@ -24,6 +24,8 @@ use wasm_bindgen::prelude::*;
 /// * `output` - Output float32 buffer (same length as data)
 #[wasm_bindgen]
 pub fn decode_quantized_u8(data: &[u8], min_val: f32, max_val: f32, output: &mut [f32]) {
+    debug_assert!(output.len() >= data.len(), "output too small: {} < {}", output.len(), data.len());
+
     let scale = (max_val - min_val) / 255.0;
 
     for i in 0..data.len() {
@@ -42,6 +44,8 @@ pub fn decode_quantized_u8(data: &[u8], min_val: f32, max_val: f32, output: &mut
 /// * `output` - Output float32 buffer (same length as data)
 #[wasm_bindgen]
 pub fn decode_quantized_u16(data: &[u16], min_val: f32, max_val: f32, output: &mut [f32]) {
+    debug_assert!(output.len() >= data.len(), "output too small: {} < {}", output.len(), data.len());
+
     let scale = (max_val - min_val) / 65535.0;
 
     for i in 0..data.len() {
@@ -60,6 +64,8 @@ pub fn decode_quantized_u16(data: &[u16], min_val: f32, max_val: f32, output: &m
 /// * `output` - Output float32 buffer
 #[wasm_bindgen]
 pub fn decode_log_scalar_u8(data: &[u8], max_log: f32, output: &mut [f32]) {
+    debug_assert!(output.len() >= data.len(), "output too small: {} < {}", output.len(), data.len());
+
     let inv_max = max_log / 255.0;
 
     for i in 0..data.len() {
@@ -72,6 +78,8 @@ pub fn decode_log_scalar_u8(data: &[u8], max_log: f32, output: &mut [f32]) {
 /// Decode log-space quantized uint16 data to float32.
 #[wasm_bindgen]
 pub fn decode_log_scalar_u16(data: &[u16], max_log: f32, output: &mut [f32]) {
+    debug_assert!(output.len() >= data.len(), "output too small: {} < {}", output.len(), data.len());
+
     let inv_max = max_log / 65535.0;
 
     for i in 0..data.len() {
@@ -90,6 +98,8 @@ pub fn decode_log_scalar_u16(data: &[u16], max_log: f32, output: &mut [f32]) {
 /// * `output` - Output float32 buffer (same length as indices)
 #[wasm_bindgen]
 pub fn decode_lut_scalar_u8(indices: &[u8], lut: &[f32], output: &mut [f32]) {
+    debug_assert!(output.len() >= indices.len(), "output too small: {} < {}", output.len(), indices.len());
+
     for i in 0..indices.len() {
         output[i] = lut[indices[i] as usize];
     }
@@ -98,6 +108,8 @@ pub fn decode_lut_scalar_u8(indices: &[u8], lut: &[f32], output: &mut [f32]) {
 /// Decode LUT-encoded uint16 indices to float32 (scalar mode).
 #[wasm_bindgen]
 pub fn decode_lut_scalar_u16(indices: &[u16], lut: &[f32], output: &mut [f32]) {
+    debug_assert!(output.len() >= indices.len(), "output too small: {} < {}", output.len(), indices.len());
+
     for i in 0..indices.len() {
         output[i] = lut[indices[i] as usize];
     }
@@ -115,6 +127,8 @@ pub fn decode_lut_scalar_u16(indices: &[u16], lut: &[f32], output: &mut [f32]) {
 /// * `output` - Output float32 buffer [indices.len() * k]
 #[wasm_bindgen]
 pub fn decode_lut_row_u8(indices: &[u8], lut: &[f32], k: usize, output: &mut [f32]) {
+    debug_assert!(output.len() >= indices.len() * k, "output too small: {} < {}", output.len(), indices.len() * k);
+
     for i in 0..indices.len() {
         let lut_offset = (indices[i] as usize) * k;
         let out_offset = i * k;
@@ -125,6 +139,8 @@ pub fn decode_lut_row_u8(indices: &[u8], lut: &[f32], k: usize, output: &mut [f3
 /// Decode LUT-encoded uint16 indices to float32 (row mode).
 #[wasm_bindgen]
 pub fn decode_lut_row_u16(indices: &[u16], lut: &[f32], k: usize, output: &mut [f32]) {
+    debug_assert!(output.len() >= indices.len() * k, "output too small: {} < {}", output.len(), indices.len() * k);
+
     for i in 0..indices.len() {
         let lut_offset = (indices[i] as usize) * k;
         let out_offset = i * k;
@@ -146,6 +162,13 @@ pub fn decode_broadcasted(
     elements_per_point: usize,
     output: &mut [f32],
 ) {
+    debug_assert!(
+        output.len() >= num_points * elements_per_point,
+        "output too small: {} < {}",
+        output.len(),
+        num_points * elements_per_point
+    );
+
     // OPTIMIZATION: Fast path when value has enough elements (common case)
     if value.len() >= elements_per_point {
         for i in 0..num_points {
