@@ -40,9 +40,10 @@ describe('DirectoryNavigator', () => {
 
       const result = await navigator.navigate('dataset.zarr');
 
-      expect(mockFetch).toHaveBeenCalledWith('http://localhost:8000/dataset.zarr.zgroup', {
-        method: 'HEAD',
-      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:8000/dataset.zarr.zgroup',
+        expect.objectContaining({ method: 'HEAD' })
+      );
       expect(result.isZarr).toBe(true);
       expect(result.entries).toEqual([]);
     });
@@ -170,7 +171,10 @@ describe('DirectoryNavigator', () => {
 
       const result = await navigator.navigate('datasets');
 
-      expect(mockFetch).toHaveBeenCalledWith('http://localhost:8000/datasets.luxar-index.json');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:8000/datasets.luxar-index.json',
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
       expect(result.strategy).toBe('index');
       expect(result.entries).toHaveLength(2);
     });

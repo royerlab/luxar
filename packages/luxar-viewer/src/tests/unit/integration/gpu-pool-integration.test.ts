@@ -247,6 +247,7 @@ describe('GPU Buffer Pool Integration Tests', () => {
 
       // Advance frames
       for (let i = 0; i < 5; i++) {
+        pool.beginFrame();
         pool.acquirePointsGeometry(
           `/active${i}`,
           {

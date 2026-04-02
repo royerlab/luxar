@@ -42,6 +42,9 @@ export class PointMaterial extends THREE.ShaderMaterial {
 
     in float radius;
     in float sharpness;
+    #ifndef USE_COLORMAP
+    in vec3 color;
+    #endif
     #ifdef USE_COLORMAP
     in float scalar;              // Per-point scalar for colormap lookup
     uniform sampler2D uColormapTex;   // 256x1 LUT texture
@@ -89,9 +92,8 @@ export class PointMaterial extends THREE.ShaderMaterial {
       // For falloff function f(r) = (1-r)^s, the visible radius where intensity drops to 1% is:
       // r_vis = 1 - 0.01^(1/s)
       // We need to scale the point size by 1/r_vis to maintain consistent visible size
-      // Using approximation: compensation = 1.0 + (s - 1.0) * 0.15
-      // This gives: s=1→1.0, s=2→1.15, s=4→1.45, s=8→2.05
-      float sharpnessCompensation = 1.0 + (vSharpness - 1.0) * 0.15;
+      // Exact formula: compensation = 1 / (1 - 0.01^(1/s)), guarded against s=0
+      float sharpnessCompensation = 1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)));
       float pointSize = basePointSize * sharpnessCompensation;
 
       // Clamp to hardware limits, with minimum of 1.0 to avoid undefined behavior
@@ -366,6 +368,8 @@ export class PointMaterial extends THREE.ShaderMaterial {
     cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;
+    cloned.uniforms.radiusScale.value = this.uniforms.radiusScale.value;
+    cloned.uniforms.sharpnessScale.value = this.uniforms.sharpnessScale.value;
 
     return cloned as this;
   }

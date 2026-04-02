@@ -69,10 +69,10 @@ export function compute_nd_visibility_lines(
     const width1 = widths[v1Idx];
 
     // Check if EITHER endpoint is visible
+    // Short-circuit: skip v1 check if v0 is already visible (matches Rust pattern)
     const v0Visible = checkPointVisibility(vertices, v0Idx, width0, slicePosition, tolerance, ndim);
-    const v1Visible = checkPointVisibility(vertices, v1Idx, width1, slicePosition, tolerance, ndim);
-
-    const visible = v0Visible || v1Visible;
+    const visible =
+      v0Visible || checkPointVisibility(vertices, v1Idx, width1, slicePosition, tolerance, ndim);
     output[segIdx] = visible ? 1 : 0;
     if (visible) {
       visibleCount++;

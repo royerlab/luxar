@@ -81,3 +81,12 @@ export type { GeometryUpdateManagerConfig } from './geometry-update-manager';
 // Scene graph builder (extracted from SceneLoader for modularity)
 export { SceneGraphBuilder } from './scene-graph-builder';
 export type { StoreEntry } from './scene-graph-builder';
+
+// Extracted modules (decomposed from SceneLoader)
+export {
+  getAggregatedPointsAccumulatorStats,
+  getAggregatedLinesAccumulatorStats,
+  getAggregatedGSplatsAccumulatorStats,
+} from './stats-aggregator';
+export { LoaderRegistry, type FailedLoaderInfo } from './loader-registry';
+export { computeTolerance, type GeometryType, type ToleranceOptions } from './tolerance-computer';

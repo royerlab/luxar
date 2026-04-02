@@ -170,6 +170,7 @@ describe('GPUBufferPool', () => {
 
       // Advance frameCount by 3 frames without touching the pooled geometries
       for (let i = 0; i < 3; i++) {
+        testPool.beginFrame();
         testPool.acquirePointsGeometry(`active${i}`, createMockLoadedPointsData(100000), 100000); // Different size bucket
         // Don't release - keep active
       }

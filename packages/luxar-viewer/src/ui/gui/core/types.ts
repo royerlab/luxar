@@ -16,6 +16,8 @@ export interface GUIOptions {
   container?: HTMLElement;
   /** Callback when close button is clicked (if provided, shows close button) */
   onClose?: () => void;
+  /** Tooltip text for the close button (e.g., "Close (R)") */
+  closeButtonTitle?: string;
 }
 
 /**

@@ -86,7 +86,7 @@ pub fn clip_segment_single(
 
         // Compute intersection parameters
         let dv = v2 - v1;
-        if dv.abs() < 1e-10 {
+        if dv.abs() < 1e-7 {
             continue; // Parallel to slice
         }
 
@@ -145,6 +145,10 @@ pub fn clip_segments_batch(
 ) -> u32 {
     validate_ndim(ndim, "clip_segments_batch");
 
+    debug_assert!(output_visibility.len() >= num_segments, "output_visibility too small: {} < {}", output_visibility.len(), num_segments);
+    debug_assert!(output_t1.len() >= num_segments, "output_t1 too small: {} < {}", output_t1.len(), num_segments);
+    debug_assert!(output_t2.len() >= num_segments, "output_t2 too small: {} < {}", output_t2.len(), num_segments);
+
     // OPTIMIZATION: Use fixed-size array instead of HashSet (zero allocation)
     let mut is_display_dim = [false; MAX_DIMS];
     for &d in display_dims {
@@ -195,7 +199,7 @@ pub fn clip_segments_batch(
             }
 
             let dv = v2_val - v1_val;
-            if dv.abs() < 1e-10 {
+            if dv.abs() < 1e-7 {
                 continue;
             }
 
@@ -459,6 +463,8 @@ pub fn calculate_segment_lengths(
     visible_count: usize,
     output: &mut [f32],
 ) {
+    debug_assert!(output.len() >= visible_count, "output too small: {} < {}", output.len(), visible_count);
+
     for i in 0..visible_count {
         let dx = end_positions[i * 3] - start_positions[i * 3];
         let dy = end_positions[i * 3 + 1] - start_positions[i * 3 + 1];

@@ -270,6 +270,18 @@ export class ChunkPrefetcher {
   }
 
   /**
+   * Dispose the prefetcher, clearing all internal state and stopping processing.
+   */
+  dispose(): void {
+    this.enabled = false;
+    this.seen.clear();
+    this.maxChunkIndices.clear();
+    this.queue.clear();
+    this.inFlight.clear();
+    this.processing = false;
+  }
+
+  /**
    * Get prefetch statistics.
    */
   getStats(): { queued: number; inFlight: number; enabled: boolean } {

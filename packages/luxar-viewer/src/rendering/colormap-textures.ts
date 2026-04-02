@@ -96,13 +96,9 @@ export function getColormapTexture(
  * @returns THREE.DataTexture
  */
 export function createCustomColormapTexture(lut: Uint8Array): THREE.DataTexture {
-  // Hash the full LUT for caching (sample every 8th byte for speed)
+  // Hash ALL bytes of the LUT for caching (DJB2 hash over every byte)
   let hash = 0;
-  for (let i = 0; i < lut.length; i += 8) {
-    hash = ((hash << 5) - hash + lut[i]) | 0;
-  }
-  // Also include last few bytes to catch suffix differences
-  for (let i = Math.max(0, lut.length - 12); i < lut.length; i++) {
+  for (let i = 0; i < lut.length; i++) {
     hash = ((hash << 5) - hash + lut[i]) | 0;
   }
   const key = `custom_${hash}`;
