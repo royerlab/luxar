@@ -6,7 +6,6 @@
  */
 
 import * as THREE from 'three';
-import { config } from '../config';
 import { materialManager } from './material-manager';
 
 /**
@@ -37,14 +36,18 @@ export class PointMaterial extends THREE.ShaderMaterial {
   // OPTIMIZATIONS:
   // - inversesqrt() instead of length() + divide (native GPU instruction)
   // - Pre-computed pointSizeFactor uniform (2.0 * resolution.y / tanHalfFov)
+  //
+  // IMPORTANT: Do NOT declare `in vec3 color;` here! When vertexColors is true,
+  // THREE.js automatically injects `in vec3 color;` into the shader. Declaring it
+  // manually causes a "'color' : redefinition" shader compilation error that silently
+  // breaks all point rendering. The vertexColors flag in the constructor controls this.
   private static readonly VERTEX_SHADER = /* glsl */ `
     precision highp float;
 
     in float radius;
     in float sharpness;
-    #ifndef USE_COLORMAP
-    in vec3 color;
-    #endif
+    // NOTE: "in vec3 color" is auto-injected by THREE.js when vertexColors=true (see constructor).
+    // In colormap mode, vertexColors=false so "color" is not available — use scalar + LUT instead.
     #ifdef USE_COLORMAP
     in float scalar;              // Per-point scalar for colormap lookup
     uniform sampler2D uColormapTex;   // 256x1 LUT texture
@@ -112,7 +115,6 @@ export class PointMaterial extends THREE.ShaderMaterial {
     precision highp float;
 
     uniform mediump float opacity;
-    uniform mediump float baseAlpha;
     uniform mediump float invGamma; // Pre-computed 1/gamma for performance
     uniform mediump float uIntensity; // Per-node linear color multiplier (gain)
     uniform mediump float uOffset; // Per-node additive brightness shift (black level)
@@ -155,7 +157,7 @@ export class PointMaterial extends THREE.ShaderMaterial {
       mediump vec3 finalColor = pow(adjusted, vec3(invGamma));
 
       // Calculate alpha (intensity) for additive blending
-      mediump float alpha = baseAlpha * falloff * opacity;
+      mediump float alpha = falloff * opacity;
 
       // Output final color with alpha for AdditiveBlending (SrcAlpha, One)
       fragColor = vec4(finalColor, alpha);
@@ -175,7 +177,6 @@ export class PointMaterial extends THREE.ShaderMaterial {
     super({
       uniforms: {
         // Color uniforms
-        baseAlpha: { value: config.shader.points.baseAlpha },
         opacity: { value: materialConfig.opacity ?? 1.0 },
         invGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
@@ -221,7 +222,7 @@ export class PointMaterial extends THREE.ShaderMaterial {
       glslVersion: THREE.GLSL3,
 
       // Material properties
-      vertexColors: true, // Enable per-vertex colors
+      vertexColors: !materialConfig.colormapTexture, // THREE.js injects `in vec3 color` when true; disable for colormap mode
       transparent: materialConfig.transparent ?? true, // Enable transparency for blending (false for opaque)
       depthWrite: materialConfig.depthWrite ?? false, // Usually false for additive blending
       depthTest: materialConfig.depthTest ?? true, // Default true; additive mode sets false
@@ -321,6 +322,9 @@ export class PointMaterial extends THREE.ShaderMaterial {
     }
 
     if (wasEnabled !== nowEnabled) {
+      // vertexColors controls whether THREE.js injects `in vec3 color` into the shader.
+      // Must be disabled for colormap mode (uses scalar + LUT instead of color attribute).
+      this.vertexColors = !nowEnabled;
       this.needsUpdate = true; // Triggers shader recompilation
     }
   }
@@ -364,7 +368,6 @@ export class PointMaterial extends THREE.ShaderMaterial {
     }
 
     // Copy current uniform values
-    cloned.uniforms.baseAlpha.value = this.uniforms.baseAlpha.value;
     cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;

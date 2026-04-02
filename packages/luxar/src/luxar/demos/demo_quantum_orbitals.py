@@ -279,6 +279,7 @@ def generate_quantum_orbitals(
                 radii=radii,
                 sharpness=sharpnesses,
                 opacity=0.6,  # Semi-transparent for volumetric effect
+                intensity=0.016,
             )
 
         aprint(f"✓ Written to {output_path}")

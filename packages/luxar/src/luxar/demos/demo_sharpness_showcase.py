@@ -82,6 +82,7 @@ def create_sharpness_gradient_example(scene, n_points: int = 5000) -> None:
             radii=radii,
             sharpness=sharpness,
             layer=True,
+            intensity=0.125,
         )
         aprint(f"✓ Added {len(positions):,} points (gradient: soft blue → sharp red)")
 
@@ -144,6 +145,7 @@ def create_sharpness_comparison_example(scene) -> None:
                 radii=radii,
                 sharpness=sharpness,
                 layer=True,
+                intensity=0.125,
             )
 
         aprint(
@@ -217,6 +219,7 @@ def create_mixed_sharpness_example(scene, n_points: int = 10000) -> None:
             radii=radii,
             sharpness=sharpness,
             layer=True,
+            intensity=0.125,
         )
         aprint(
             f"✓ Added {len(positions):,} points (mixed cloud: blue=soft, green=medium, red=sharp)"
@@ -273,6 +276,7 @@ def create_sharpness_wave_example(scene, n_points: int = 4000) -> None:
             radii=radii,
             sharpness=sharpness,
             layer=True,
+            intensity=0.125,
         )
         aprint(f"✓ Added {len(positions):,} points (sinusoidal wave pattern)")
 

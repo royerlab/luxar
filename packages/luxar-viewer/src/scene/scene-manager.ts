@@ -27,8 +27,11 @@ import {
   getBoundingBoxDiagonal,
   getBoundingBoxCenter,
   BoundingBox,
+  BoundingSphere,
   boundingBoxToSphere,
   calculateClippingPlanesFromSphere,
+  SPHERE_SAFETY_EXPANSION,
+  MIN_NEAR_PLANE,
 } from './scene-manager-utils';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { sceneDimsManager } from './scene-dims-manager';
@@ -113,6 +116,14 @@ export class SceneManager extends THREE.EventDispatcher<{
   /** Dynamic clipping planes state */
   private dynamicClippingEnabled: boolean =
     config.renderingControls.defaults.dynamicClippingEnabled;
+
+  /** Cached scene bounds (invalidated on scene load/clear, lazily recomputed) */
+  private _cachedBounds: BoundingBox | null = null;
+  private _cachedSphere: BoundingSphere | null = null;
+  private _cachedNearCull: number = 0.1;
+
+  /** Reusable Vector2 for getDrawingBufferSize (avoids per-call allocation) */
+  private readonly _bufferSize = new THREE.Vector2();
 
   /** Current FOV in degrees (perspective) or the default FOV (orthographic). */
   get currentFov(): number {
@@ -496,6 +507,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       const root = await loadScene(src);
       hideLoadingIndicator();
       this.scene.add(root);
+      this.invalidateBoundsCache();
 
       // NOTE: Material parameters were already updated BEFORE loadScene() above
       // Materials created during loading already have correct FOV/resolution
@@ -640,6 +652,8 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Clear all loaded content from the scene, keeping lights and background
    */
   private clearSceneContent(): void {
+    this.invalidateBoundsCache();
+
     // Helper function to recursively dispose of objects
     const disposeObject = (obj: THREE.Object3D) => {
       // Handle Mesh, Points, and InstancedMesh (used for lines)
@@ -1321,29 +1335,49 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Update dynamic clipping planes using bounding sphere projection.
+   * Invalidate cached scene bounds. Called on scene load and scene clear.
+   * Display dims (sceneDimsManager.getDims().displayed) are immutable per scene,
+   * so no invalidation is needed for dimension navigation.
+   */
+  private invalidateBoundsCache(): void {
+    this._cachedBounds = null;
+    this._cachedSphere = null;
+    this._cachedNearCull = 0.1;
+  }
+
+  /** Lazily recompute cached bounds/sphere/nearCull from scene metadata. */
+  private ensureBoundsCache(): void {
+    if (this._cachedBounds !== null) return;
+    const bounds = this.getSceneBoundsFromMetadata();
+    if (!bounds) return;
+    this._cachedBounds = bounds;
+    this._cachedSphere = boundingBoxToSphere(bounds);
+    this._cachedNearCull = getBoundingBoxDiagonal(bounds) * 0.001;
+  }
+
+  /**
+   * Update dynamic clipping planes using cached bounding sphere projection.
    *
-   * Called each frame by AnimationController to adjust clipping planes
-   * based on camera position relative to scene bounds. Uses a bounding
-   * sphere (circumscribed around the AABB) for smooth near/far values
-   * that avoid discontinuities at box edges/corners.
+   * Called each frame by AnimationController. Uses a cached bounding sphere
+   * (invalidated on scene load/clear) for smooth near/far values with zero
+   * per-frame scene graph traversal or object allocations.
    */
   updateDynamicClippingPlanes(): void {
     if (!this.dynamicClippingEnabled) return;
 
-    const bounds = this.getSceneBoundsFromMetadata();
-    if (!bounds) return;
+    this.ensureBoundsCache();
+    const s = this._cachedSphere;
+    if (!s) return;
 
-    const cameraPos = {
-      x: this.camera.position.x,
-      y: this.camera.position.y,
-      z: this.camera.position.z,
-    };
-
-    // Bounding sphere produces smooth near/far (no box-edge discontinuities),
-    // eliminating the need for exponential smoothing.
-    const sphere = boundingBoxToSphere(bounds);
-    const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos);
+    // Inline sphere-based clipping math (no intermediate object allocations)
+    const cam = this.camera.position;
+    const dx = cam.x - s.center.x;
+    const dy = cam.y - s.center.y;
+    const dz = cam.z - s.center.z;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const R = s.radius * SPHERE_SAFETY_EXPANSION;
+    const far = dist + R;
+    const near = dist < R ? MIN_NEAR_PLANE : Math.max(MIN_NEAR_PLANE, dist - R);
 
     // Only update camera if values changed significantly (>0.1%)
     const nearChanged = Math.abs(this.camera.near - near) / this.camera.near > 0.001;
@@ -1659,19 +1693,17 @@ export class SceneManager extends THREE.EventDispatcher<{
    * RecordingPanel when the renderer is resized for offline capture.
    */
   updateMaterialsForCurrentCamera(): void {
-    const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
-
-    // Compute scene-scale-aware near cull distance for GSplat rendering
-    const bounds = this.getSceneBoundsFromMetadata();
-    const nearCull = bounds ? getBoundingBoxDiagonal(bounds) * 0.001 : 0.1;
+    this.renderer.getDrawingBufferSize(this._bufferSize);
+    this.ensureBoundsCache();
+    const nearCull = this._cachedNearCull;
 
     if (isOrthographicCamera(this.camera)) {
       const frustumHeight = getOrthoFrustumHeight(this.camera);
-      materialManager.updateCameraParams(frustumHeight, drawingBufferSize, true, nearCull);
+      materialManager.updateCameraParams(frustumHeight, this._bufferSize, true, nearCull);
     } else {
       materialManager.updateCameraParams(
         getCameraFovRadians(this.camera),
-        drawingBufferSize,
+        this._bufferSize,
         false,
         nearCull
       );

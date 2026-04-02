@@ -146,6 +146,7 @@ def generate_rainbow_sphere(
                 sharpness=sharpness_array,
                 opacity=1.0,
                 blending_mode="additive",
+                intensity=0.5,
             )
 
         aprint(f"✓ Written to {output_path}")

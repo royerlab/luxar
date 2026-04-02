@@ -51,6 +51,9 @@ export class ChunkPrefetcher {
   private static readonly MAX_SEEN_SIZE = 10000;
   private seen = new Set<string>();
 
+  /** Cache for parsed chunk indices (avoids repeated regex parsing per access) */
+  private parsedCache = new Map<string, number[] | null>();
+
   /** Upper bounds per array path for suppressing out-of-range prefetch requests */
   private maxChunkIndices = new Map<string, number[]>();
 
@@ -88,12 +91,20 @@ export class ChunkPrefetcher {
     if (this.seen.has(key)) return;
     this.seen.add(key);
 
-    // Prevent unbounded memory growth — clear when limit reached.
-    // Queue dedup (below) prevents actual duplicate fetches.
+    // Prevent unbounded memory growth — evict oldest half when limit reached.
+    // Do NOT clear maxChunkIndices: they're registered once per array and losing
+    // them causes out-of-range prefetch requests (404s) until arrays re-register.
     if (this.seen.size > ChunkPrefetcher.MAX_SEEN_SIZE) {
-      this.seen.clear();
-      this.seen.add(key);
-      this.maxChunkIndices.clear();
+      const evictCount = Math.floor(ChunkPrefetcher.MAX_SEEN_SIZE / 2);
+      let count = 0;
+      for (const k of this.seen) {
+        if (count++ >= evictCount) break;
+        this.seen.delete(k);
+      }
+      // Trim parsed cache alongside seen eviction
+      if (this.parsedCache.size > ChunkPrefetcher.MAX_SEEN_SIZE * 2) {
+        this.parsedCache.clear();
+      }
     }
 
     const adjacent = this.getAdjacentChunks(key);
@@ -163,22 +174,27 @@ export class ChunkPrefetcher {
    * parseChunkIndices('.zattrs') → null (not a chunk)
    */
   private parseChunkIndices(key: string): number[] | null {
+    const cached = this.parsedCache.get(key);
+    if (cached !== undefined) return cached;
+
     // CRITICAL: Check v3 FIRST before v2!
     // v2 regex can match the trailing digits of v3 paths (e.g., /2 in /c/0/1/2)
+    let result: number[] | null = null;
 
     // Check for v3 path notation: /c/ followed by path segments
     const v3Match = key.match(/\/c\/(\d+(?:\/\d+)*)$/);
     if (v3Match) {
-      return v3Match[1].split('/').map(Number);
+      result = v3Match[1].split('/').map(Number);
+    } else {
+      // Check for v2 dot notation: ends with digits separated by dots
+      const v2Match = key.match(/\/(\d+(?:\.\d+)*)$/);
+      if (v2Match) {
+        result = v2Match[1].split('.').map(Number);
+      }
     }
 
-    // Check for v2 dot notation: ends with digits separated by dots
-    const v2Match = key.match(/\/(\d+(?:\.\d+)*)$/);
-    if (v2Match) {
-      return v2Match[1].split('.').map(Number);
-    }
-
-    return null; // Not a chunk key (metadata file)
+    this.parsedCache.set(key, result);
+    return result;
   }
 
   /**
@@ -275,6 +291,7 @@ export class ChunkPrefetcher {
   dispose(): void {
     this.enabled = false;
     this.seen.clear();
+    this.parsedCache.clear();
     this.maxChunkIndices.clear();
     this.queue.clear();
     this.inFlight.clear();

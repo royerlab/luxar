@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { PointMaterial } from '../../../rendering/point-material';
-import { config } from '../../../config';
 
 // Mock THREE.ShaderMaterial
 vi.mock('three', async () => {
@@ -39,7 +38,6 @@ describe('PointMaterial', () => {
     it('should create a material with default values', () => {
       const material = new PointMaterial();
 
-      expect(material.uniforms.baseAlpha.value).toBe(config.shader.points.baseAlpha);
       expect(material.uniforms.opacity.value).toBe(1.0);
       expect(material.uniforms.invGamma.value).toBe(1.0);
       expect(material.userData.gamma).toBe(1.0); // gamma stored in userData, not uniforms
@@ -136,7 +134,6 @@ describe('PointMaterial', () => {
 
       // Check for uniforms (gamma removed from fragment shader, only invGamma used)
       expect(material.fragmentShader).toContain('uniform mediump float opacity');
-      expect(material.fragmentShader).toContain('uniform mediump float baseAlpha');
       expect(material.fragmentShader).toContain('uniform mediump float invGamma');
       expect(material.fragmentShader).not.toContain('uniform float gamma'); // gamma removed
 

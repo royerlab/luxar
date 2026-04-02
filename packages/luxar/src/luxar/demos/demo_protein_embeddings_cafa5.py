@@ -559,9 +559,9 @@ def generate_protein_landscape(
         radii = np.zeros(n_proteins, dtype=np.float32)
         for i, func in enumerate(functions):
             if func == "other":
-                radii[i] = 0.02  # Small gray background points
+                radii[i] = 0.007  # Small gray background points
             else:
-                radii[i] = 0.06  # 3x larger for annotated proteins!
+                radii[i] = 0.02  # 3x larger for annotated proteins!
 
         n_annotated = sum(1 for f in functions if f != "other")
         aprint(
@@ -590,6 +590,7 @@ def generate_protein_landscape(
                 radii=radii,
                 sharpness=sharpness,
                 opacity=0.9,
+                intensity=0.124,
             )
 
         aprint(f"✓ Visualization created with {n_proteins:,} proteins")

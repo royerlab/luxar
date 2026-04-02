@@ -1175,6 +1175,7 @@ def generate_detector_scene(
                     radii=deposit_radii,
                     sharpness=deposit_sharpness,
                     layer=True,
+                    intensity=0.125,
                 )
                 aprint(f"Calorimeter deposits: {len(deposit_positions):,} points")
                 total_points += len(deposit_positions)
@@ -1201,6 +1202,7 @@ def generate_detector_scene(
                 radii=np.array(vertex_radii, dtype=np.float32),
                 sharpness=0.8,
                 layer=True,
+                intensity=0.125,
             )
             aprint(f"Vertex markers: {n_vertex_points} points")
             total_points += n_vertex_points

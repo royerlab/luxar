@@ -208,6 +208,7 @@ def create_mouse_scene(
                 radii=radii,
                 sharpness=sharpnesses,
                 opacity=0.8,
+                intensity=0.25,
             )
 
         aprint(f"Scene created with {n_points:,} points")

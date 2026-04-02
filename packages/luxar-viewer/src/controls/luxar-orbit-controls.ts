@@ -38,6 +38,8 @@ type ControlAction = 'rotate' | 'pan' | 'zoom' | 'none';
 
 const _IDENTITY_QUAT = new THREE.Quaternion();
 const _v = new THREE.Vector3();
+const _v2 = new THREE.Vector3();
+const _q1 = new THREE.Quaternion();
 
 export class LuxarOrbitControls extends THREE.EventDispatcher<{
   change: {};
@@ -193,20 +195,16 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       const dt = deltaTime ?? 1 / 60;
       const angle = ((2 * Math.PI) / 60) * this.autoRotateSpeed * dt;
       // Inline quaternion math (applyOrbitRotation also calls applyToCamera, redundant in update())
-      const screenUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.orientation);
-      const autoQuat = new THREE.Quaternion().setFromAxisAngle(screenUp, angle);
-      this.orientation.premultiply(autoQuat);
+      _v2.set(0, 1, 0).applyQuaternion(this.orientation);
+      _q1.setFromAxisAngle(_v2, angle);
+      this.orientation.premultiply(_q1);
       this.orientation.normalize();
     }
 
     // 2. Apply trackball rotation with damping (local frame)
     if (this.enableDamping) {
-      const applied = new THREE.Quaternion().slerpQuaternions(
-        _IDENTITY_QUAT,
-        this.rotationDelta,
-        this.dampingFactor
-      );
-      this.orientation.multiply(applied);
+      _q1.slerpQuaternions(_IDENTITY_QUAT, this.rotationDelta, this.dampingFactor);
+      this.orientation.multiply(_q1);
       this.orientation.normalize();
       this.rotationDelta.slerp(_IDENTITY_QUAT, this.dampingFactor);
     } else {
@@ -217,16 +215,16 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
 
     // 3. Apply view-axis roll with damping
     if (Math.abs(this.rollDelta) > 1e-6) {
-      const viewDir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation).normalize();
+      _v2.set(0, 0, -1).applyQuaternion(this.orientation).normalize();
       if (this.enableDamping) {
         const rollApply = this.rollDelta * this.dampingFactor;
-        const rollQuat = new THREE.Quaternion().setFromAxisAngle(viewDir, rollApply);
-        this.orientation.premultiply(rollQuat);
+        _q1.setFromAxisAngle(_v2, rollApply);
+        this.orientation.premultiply(_q1);
         this.orientation.normalize();
         this.rollDelta *= 1 - this.dampingFactor;
       } else {
-        const rollQuat = new THREE.Quaternion().setFromAxisAngle(viewDir, this.rollDelta);
-        this.orientation.premultiply(rollQuat);
+        _q1.setFromAxisAngle(_v2, this.rollDelta);
+        this.orientation.premultiply(_q1);
         this.orientation.normalize();
         this.rollDelta = 0;
       }
@@ -495,9 +493,8 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
 
   /** Apply orientation + distance + target to camera transform. */
   private applyToCamera(): void {
-    const offset = new THREE.Vector3(0, 0, this.distance);
-    offset.applyQuaternion(this.orientation);
-    this.camera.position.copy(this.target).add(offset);
+    _v.set(0, 0, this.distance).applyQuaternion(this.orientation);
+    this.camera.position.copy(this.target).add(_v);
     this.camera.up.set(0, 1, 0).applyQuaternion(this.orientation);
     this.camera.lookAt(this.target);
     // Ensure camera.matrix is up-to-date (needed by pan math which reads matrix columns)

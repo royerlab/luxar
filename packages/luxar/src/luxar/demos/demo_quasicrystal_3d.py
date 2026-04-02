@@ -368,6 +368,7 @@ def generate_quasicrystal_3d(
                 radii=radii,
                 sharpness=sharpnesses,
                 opacity=0.9,
+                intensity=0.125,
             )
 
         aprint(f"✓ Written to {output_path}")

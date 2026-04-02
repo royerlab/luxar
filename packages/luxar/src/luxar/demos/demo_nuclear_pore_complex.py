@@ -577,6 +577,7 @@ def generate_nuclear_pore_complex(
                     radii=radii,
                     sharpness=sharpness,
                     opacity=0.95,
+                    intensity=0.125,
                 )
 
             aprint(f"✓ Scene created with {len(sym_positions):,} atoms")
