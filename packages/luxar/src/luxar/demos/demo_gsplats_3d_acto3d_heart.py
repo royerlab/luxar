@@ -466,6 +466,7 @@ def fit_channel(
         encoding_mode=EncodingMode.MEMORY,
         include_fitting_info=True,
         compress="zip",
+        zip_deflate=True,
     )
 
     return result

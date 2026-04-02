@@ -179,8 +179,10 @@ def _deletion_error_2d(
 
             dist_sq = fwd_norm2_2d(L, d0, d1)
             # Shifted Gaussian: must match render_gaussians formula
-            g_vals = a[:, None] * shift_scale * torch.clamp(
-                torch.exp(-0.5 * dist_sq) - shift_C, min=0.0
+            g_vals = (
+                a[:, None]
+                * shift_scale
+                * torch.clamp(torch.exp(-0.5 * dist_sq) - shift_C, min=0.0)
             )
 
             idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
@@ -276,8 +278,10 @@ def _deletion_error_3d(
 
             dist_sq = fwd_norm2_3d(L, d0, d1, d2)
             # Shifted Gaussian: must match render_gaussians formula
-            g_vals = a[:, None] * shift_scale * torch.clamp(
-                torch.exp(-0.5 * dist_sq) - shift_C, min=0.0
+            g_vals = (
+                a[:, None]
+                * shift_scale
+                * torch.clamp(torch.exp(-0.5 * dist_sq) - shift_C, min=0.0)
             )
 
             idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
@@ -392,8 +396,10 @@ def _deletion_error_nd(
 
             dist_sq = torch.sum(y * y, dim=1)
             # Shifted Gaussian: must match render_gaussians formula
-            g_vals = a[:, None] * shift_scale * torch.clamp(
-                torch.exp(-0.5 * dist_sq) - shift_C, min=0.0
+            g_vals = (
+                a[:, None]
+                * shift_scale
+                * torch.clamp(torch.exp(-0.5 * dist_sq) - shift_C, min=0.0)
             )
 
             idx_flat = (base_idx[:, None] + lin_offsets_chunk[None, :]).reshape(-1)

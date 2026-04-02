@@ -50,16 +50,16 @@ WORKFLOW:
 
 USAGE:
 ======
-    python demo_gsplats_3d_opencell_map4.py --data-path=<path_to_tiff> [--recompute] [--no-serve] [--serve-only]
+    python demo_gsplats_3d_opencell_map4.py [--recompute] [--no-serve] [--serve-only]
 
 Options:
-    --data-path=PATH: Path to the downloaded OpenCell TIFF (required for first run)
+    --data-path=PATH: Path to a local OpenCell TIFF (overrides auto-download)
     --recompute:      Force re-fitting from scratch
     --no-serve:       Generate scene without launching viewer
     --serve-only:     Just serve a previously generated scene
 
-Download the TIFF from: https://opencell.sf.czbiohub.org/target/828
-(Click "Download" > "3D" to get the stack TIFF)
+The TIFF is auto-downloaded from the OpenCell S3 bucket on first run.
+You can also provide a local path with: --data-path=<path_to_tiff>
 
 Output:
     - Scene saved to:  datasets/demos/gsplats_3d_opencell_map4.zarr
@@ -105,6 +105,13 @@ MAX_SPLATS = 8000
 MAX_SPLATS_PER_PASS = 1500
 ITERS_PER_PASS = 3000
 PSNR_PATIENCE = 0.2
+
+# Data source URL (OpenCell S3 bucket)
+TIFF_URL = (
+    "https://czb-opencell.s3.amazonaws.com/microscopy/raw/"
+    "MAP4_ENSG00000047849/"
+    "OC-FOV_MAP4_ENSG00000047849_CID000828_FID00002848_stack.tif"
+)
 
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_opencell_map4"
@@ -249,6 +256,7 @@ def fit_channel(
         encoding_mode=EncodingMode.MEMORY,
         include_fitting_info=True,
         compress="zip",
+        zip_deflate=True,
     )
 
     return result
@@ -421,30 +429,39 @@ def main():
     if precomputed is not None:
         gsplats_list = precomputed
     else:
-        # Need data path
+        # Resolve TIFF: CLI arg > cached file > auto-download
         tiff_path = None
         for arg in sys.argv:
             if arg.startswith("--data-path="):
                 tiff_path = Path(arg.split("=", 1)[1])
                 break
 
-        # Also check cache for previously copied TIFF
         cached_tiff = CACHE_DIR / "opencell_map4_stack.tif"
-        if tiff_path is None and cached_tiff.exists():
-            tiff_path = cached_tiff
-        elif tiff_path is not None and not cached_tiff.exists():
-            # Cache the TIFF for future runs
+        if tiff_path is not None and not cached_tiff.exists():
             import shutil
 
             aprint(f"Caching TIFF to {cached_tiff}")
             shutil.copy2(tiff_path, cached_tiff)
+        elif tiff_path is None and cached_tiff.exists():
+            tiff_path = cached_tiff
+        elif tiff_path is None:
+            # Auto-download from OpenCell S3 bucket
+            import tempfile
+            import urllib.request
 
-        if tiff_path is None:
-            aprint("Error: No data source available.")
-            aprint("Download the MAP4 3D stack from:")
-            aprint("  https://opencell.sf.czbiohub.org/target/828")
-            aprint("Then run with: --data-path=<path_to_tiff>")
-            return
+            with asection("Downloading OpenCell MAP4 TIFF (~70 MB)"):
+                aprint(f"URL: {TIFF_URL}")
+                tmp_fd, tmp_path = tempfile.mkstemp(dir=CACHE_DIR, suffix=".tif.tmp")
+                os.close(tmp_fd)
+                try:
+                    urllib.request.urlretrieve(TIFF_URL, tmp_path)
+                    os.replace(tmp_path, cached_tiff)
+                except BaseException:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+                    raise
+                aprint(f"Saved to {cached_tiff}")
+            tiff_path = cached_tiff
 
         warn_if_no_cuda_gpu()
         volumes = load_opencell_data(tiff_path)
