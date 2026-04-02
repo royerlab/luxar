@@ -750,7 +750,7 @@ describe('RangeLoader.loadArrayRef (via loadRanges)', () => {
     const array = mockZarrArray('float32', [100, 3]);
 
     await expect(loader.loadRanges(array, attrs, ranges, output, 5, 3)).rejects.toThrow(
-      'Array reference range loading not yet implemented'
+      'Array reference encountered in RangeLoader but not pre-resolved'
     );
   });
 });

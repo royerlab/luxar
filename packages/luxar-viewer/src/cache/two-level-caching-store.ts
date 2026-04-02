@@ -33,10 +33,16 @@ export class TwoLevelCachingStore implements AsyncReadable {
   private static readonly DEFAULT_L1_SIZE = config.cache.l1MaxSizeMB * 1024 * 1024;
   private static readonly DEFAULT_L2_SIZE = config.cache.l2MaxSizeMB * 1024 * 1024;
 
+  // Invalidation callbacks (e.g., L0 DecompressedChunkCache clearing on L1/L2 invalidation)
+  private invalidationCallbacks: (() => void)[] = [];
+
   // Network I/O tracking
   private networkBytesTransferred = 0;
   private networkRequestCount = 0;
-  private networkStartTime = Date.now();
+
+  // Sliding window bandwidth tracking (last ~10 seconds)
+  private bandwidthWindow: { timestamp: number; bytes: number }[] = [];
+  private static readonly BANDWIDTH_WINDOW_MS = 10_000;
 
   constructor(baseUrl: string, options?: TwoLevelCachingStoreOptions) {
     this.baseUrl = baseUrl;
@@ -60,6 +66,14 @@ export class TwoLevelCachingStore implements AsyncReadable {
 
     // Save L2 max size for later initialization
     this.l2MaxSize = options?.l2MaxSize ?? TwoLevelCachingStore.DEFAULT_L2_SIZE;
+  }
+
+  /**
+   * Register a callback to be invoked when caches are invalidated (e.g., clearAll, validateCache).
+   * Used by L0 DecompressedChunkCache to clear itself when L1/L2 are invalidated.
+   */
+  onInvalidate(callback: () => void): void {
+    this.invalidationCallbacks.push(callback);
   }
 
   /**
@@ -269,6 +283,7 @@ export class TwoLevelCachingStore implements AsyncReadable {
       // Track network I/O
       this.networkRequestCount++;
       this.networkBytesTransferred += data.byteLength;
+      this.bandwidthWindow.push({ timestamp: Date.now(), bytes: data.byteLength });
 
       // Populate caches (only if caching is enabled via URL params)
       if (this.enabled) {
@@ -314,6 +329,7 @@ export class TwoLevelCachingStore implements AsyncReadable {
         this.log(`Old: ${cachedHash.slice(0, 16)}...`);
         this.log(`New: ${remoteHash.slice(0, 16)}...`);
         await this.clearL2();
+        this.invalidationCallbacks.forEach((cb) => cb());
       }
 
       this.l2Store?.setContentHash(remoteHash);
@@ -411,9 +427,23 @@ export class TwoLevelCachingStore implements AsyncReadable {
     l2: { size: number; count: number; reads: number; writes: number };
     network: { bytesTransferred: number; requestCount: number; bandwidth: number };
   } {
-    // Calculate average bandwidth (bytes per second since start)
-    const elapsedSeconds = Math.max(1, (Date.now() - this.networkStartTime) / 1000);
-    const bandwidth = this.networkBytesTransferred / elapsedSeconds;
+    // Calculate bandwidth using sliding window (last ~10 seconds)
+    const now = Date.now();
+    const windowStart = now - TwoLevelCachingStore.BANDWIDTH_WINDOW_MS;
+
+    // Prune entries older than the window
+    while (this.bandwidthWindow.length > 0 && this.bandwidthWindow[0].timestamp < windowStart) {
+      this.bandwidthWindow.shift();
+    }
+
+    let bandwidth: number;
+    if (this.bandwidthWindow.length === 0) {
+      bandwidth = 0;
+    } else {
+      const windowBytes = this.bandwidthWindow.reduce((sum, e) => sum + e.bytes, 0);
+      const windowSpan = Math.max(1, (now - this.bandwidthWindow[0].timestamp) / 1000);
+      bandwidth = windowBytes / windowSpan;
+    }
 
     return {
       l1: this.l1Cache.getStats(),
@@ -456,6 +486,7 @@ export class TwoLevelCachingStore implements AsyncReadable {
   async clearAll(): Promise<void> {
     this.clearL1();
     await this.clearL2();
+    this.invalidationCallbacks.forEach((cb) => cb());
   }
 
   /**

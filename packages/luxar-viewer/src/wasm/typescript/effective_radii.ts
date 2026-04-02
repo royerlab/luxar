@@ -43,18 +43,25 @@ export function calculate_effective_radii(
     const originalRadius = radii[i];
     const posOffset = i * ndim;
 
-    // Check discrete dimensions for exact match
+    // Fused loop: check discrete match AND compute spatial distance in one pass
+    // Matches the Rust implementation in effective_radii.rs
     let discreteMatch = true;
+    let distanceSquared = 0;
     for (let d = 0; d < ndim; d++) {
       if (isDisplayDim[d]) continue;
 
       // Check if this is a spatial or discrete dimension
       const isSpatial = d < spatialExtendDims.length ? spatialExtendDims[d] !== 0 : true;
 
-      if (!isSpatial) {
+      const value = positions[posOffset + d];
+      const target = slicePosition[d];
+
+      if (isSpatial) {
+        // Spatial dimension: accumulate squared distance
+        const diff = value - target;
+        distanceSquared += diff * diff;
+      } else {
         // Discrete dimension: must match exactly (within tolerance)
-        const value = positions[posOffset + d];
-        const target = slicePosition[d];
         if (Math.abs(value - target) > discreteTolerance) {
           discreteMatch = false;
           break;
@@ -65,21 +72,6 @@ export function calculate_effective_radii(
     if (!discreteMatch) {
       output[i] = 0;
       continue;
-    }
-
-    // Calculate squared distance in non-displayed spatial dimensions
-    let distanceSquared = 0;
-    for (let d = 0; d < ndim; d++) {
-      if (isDisplayDim[d]) continue;
-
-      const isSpatial = d < spatialExtendDims.length ? spatialExtendDims[d] !== 0 : true;
-
-      if (isSpatial) {
-        const value = positions[posOffset + d];
-        const target = slicePosition[d];
-        const diff = value - target;
-        distanceSquared += diff * diff;
-      }
     }
 
     // Apply Pythagorean theorem: R_effective = sqrt(R² - D²)

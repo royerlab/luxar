@@ -325,7 +325,14 @@ export function setupGlassRefractionObserver(): () => void {
     }
   });
 
-  observer.observe(document.body, {
+  // Scope observer to a specific container if available, falling back to document.body.
+  // Using subtree: true on body is expensive; scoping reduces DOM mutation noise.
+  const container =
+    document.querySelector('.luxar-viewer') ||
+    document.getElementById('luxar-container') ||
+    document.body;
+
+  observer.observe(container, {
     childList: true,
     subtree: true,
   });

@@ -236,6 +236,9 @@ pub fn compute_gsplats_attenuation(
 ) -> u32 {
     validate_ndim(ndim, "compute_gsplats_attenuation");
 
+    debug_assert!(output_visibility.len() >= splat_count, "output_visibility too small: {} < {}", output_visibility.len(), splat_count);
+    debug_assert!(output_attenuation.len() >= splat_count, "output_attenuation too small: {} < {}", output_attenuation.len(), splat_count);
+
     let num_hidden = hidden_dims.len();
     let full_packed_size = (ndim * (ndim + 1)) / 2;
 
@@ -353,6 +356,10 @@ pub fn extract_visible_cholesky_3d(
     output: &mut [f32],
 ) -> u32 {
     validate_ndim(ndim, "extract_visible_cholesky_3d");
+
+    // output size depends on visible count which is unknown upfront;
+    // assert minimum based on splat_count (upper bound for visible)
+    debug_assert!(output.len() >= 6, "output must hold at least one 3D Cholesky (6 elements)");
 
     let full_packed_size = (ndim * (ndim + 1)) / 2;
     let mut out_splat = 0u32;

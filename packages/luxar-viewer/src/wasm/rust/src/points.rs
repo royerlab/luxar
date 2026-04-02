@@ -5,6 +5,8 @@
 
 use wasm_bindgen::prelude::*;
 
+use crate::common::validate_ndim;
+
 /// Compute nD visibility for Points using hypersphere intersection.
 ///
 /// # Arguments
@@ -33,6 +35,15 @@ pub fn compute_nd_visibility_points(
     num_points: usize,
     output_mask: &mut [u8],
 ) -> u32 {
+    validate_ndim(ndim, "compute_nd_visibility_points");
+
+    debug_assert!(
+        output_mask.len() >= num_points,
+        "output_mask too small: {} < {}",
+        output_mask.len(),
+        num_points
+    );
+
     let mut visible_count = 0;
 
     // OPTIMIZATION: Cache visibility threshold (avoids branch in inner loop)

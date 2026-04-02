@@ -27,6 +27,13 @@ pub fn extract_3d_positions(
     num_points: usize,
     output: &mut [f32],
 ) {
+    debug_assert!(
+        output.len() >= num_points * 3,
+        "output too small: {} < {}",
+        output.len(),
+        num_points * 3
+    );
+
     let num_display_dims = display_dims.len().min(3);
 
     for i in 0..num_points {
@@ -57,6 +64,8 @@ pub fn extract_3d_positions(
 /// Number of points processed (for validation)
 #[wasm_bindgen]
 pub fn calculate_bounds_3d(positions_3d: &[f32], num_points: usize, output: &mut [f32]) -> u32 {
+    debug_assert!(output.len() >= 6, "output too small: {} < 6", output.len());
+
     if num_points == 0 {
         // Empty case: return zero bounds
         for i in 0..6 {
@@ -200,6 +209,8 @@ pub fn radii_to_visibility_mask(
     count: usize,
     output: &mut [u8],
 ) -> u32 {
+    debug_assert!(output.len() >= count, "output too small: {} < {}", output.len(), count);
+
     let mut visible = 0u32;
 
     for i in 0..count {

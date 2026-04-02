@@ -5,6 +5,8 @@
 
 use wasm_bindgen::prelude::*;
 
+use crate::common::validate_ndim;
+
 /// Check if a single vertex is visible in the nD slice.
 ///
 /// # Arguments
@@ -83,6 +85,15 @@ pub fn compute_nd_visibility_lines(
     num_segments: usize,
     output_mask: &mut [u8],
 ) -> u32 {
+    validate_ndim(ndim, "compute_nd_visibility_lines");
+
+    debug_assert!(
+        output_mask.len() >= num_segments,
+        "output_mask too small: {} < {}",
+        output_mask.len(),
+        num_segments
+    );
+
     let mut visible_count = 0;
 
     // OPTIMIZATION: Process all segments with minimal branching

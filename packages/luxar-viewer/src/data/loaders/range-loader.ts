@@ -208,13 +208,15 @@ export class RangeLoader {
       throw new Error('Quantization metadata missing');
     }
 
-    const useWorkers = appConfig.dataLoading.performance.useWebWorkers;
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    const useWorkers = appConfig.dataLoading.performance.useWebWorkers;
+    // Decide once whether to use workers based on total points across all ranges
+    const shouldUseWorkers = useWorkers && totalPoints > this.config.workerThreshold;
 
     if (this._verbose) {
       log.info(
         this.config.logModule,
-        `Quantized: ${totalPoints} values (${ArrayDecoder.getEncodingMode(attrs)}, dtype=${quantMetadata.dtype}, worker=${useWorkers})`
+        `Quantized: ${totalPoints} values (${ArrayDecoder.getEncodingMode(attrs)}, dtype=${quantMetadata.dtype}, worker=${shouldUseWorkers})`
       );
     }
 
@@ -233,7 +235,7 @@ export class RangeLoader {
 
       let dequantized: Float32Array;
 
-      if (useWorkers && totalPoints > this.config.workerThreshold) {
+      if (shouldUseWorkers) {
         try {
           const worker = await getWorkerPool().getWorker();
 
@@ -283,13 +285,15 @@ export class RangeLoader {
       throw new Error('LUT metadata missing');
     }
 
-    const useWorkers = appConfig.dataLoading.performance.useWebWorkers;
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    const useWorkers = appConfig.dataLoading.performance.useWebWorkers;
+    // Decide once whether to use workers based on total points across all ranges
+    const shouldUseWorkers = useWorkers && totalPoints > this.config.workerThreshold;
 
     if (this._verbose) {
       log.info(
         this.config.logModule,
-        `LUT: ${totalPoints} indices, k=${lutMetadata.k}, mode=${lutMetadata.lutMode} (worker=${useWorkers})`
+        `LUT: ${totalPoints} indices, k=${lutMetadata.k}, mode=${lutMetadata.lutMode} (worker=${shouldUseWorkers})`
       );
     }
 
@@ -316,7 +320,7 @@ export class RangeLoader {
 
       let decoded: Float32Array;
 
-      if (useWorkers && totalPoints > this.config.workerThreshold) {
+      if (shouldUseWorkers) {
         try {
           const worker = await getWorkerPool().getWorker();
           decoded = await worker.decodeLUT({
@@ -345,7 +349,15 @@ export class RangeLoader {
   }
 
   /**
-   * Load array reference (resolve target and recurse)
+   * Load array reference (resolve target and recurse).
+   *
+   * This method should never be reached in practice. All spatial index loaders
+   * (point-spatial-index-loader, lines-spatial-index-loader, gsplats-spatial-index-loader)
+   * check for array_ref encoding via `ArrayDecoder.isArrayRef(attrs)` BEFORE calling
+   * RangeLoader, and resolve the target array themselves using the zarrStore.
+   *
+   * If this is reached, it indicates a code path that bypasses the spatial index
+   * loaders' array_ref resolution. Check the call stack to find the missing resolution.
    */
   private async loadArrayRef(
     _array: zarr.Array<zarr.DataType, zarr.FetchStore>,
@@ -361,12 +373,18 @@ export class RangeLoader {
       log.info(this.config.logModule, `Array ref: target=${enc.target}, hash=${enc.hash}`);
     }
 
-    // For now, array_ref handling requires the full ArrayDecoder flow
-    // This is a placeholder - in practice, array_refs should be resolved
-    // at initialization time and the target array used directly
+    // Array refs are resolved by spatial index loaders before reaching RangeLoader.
+    // See isArrayRef checks in point-spatial-index-loader.ts, lines-spatial-index-loader.ts,
+    // and gsplats-spatial-index-loader.ts. If this error is thrown, a new code path is
+    // calling RangeLoader.loadRanges() without first resolving the array_ref.
     throw new Error(
-      'Array reference range loading not yet implemented. ' +
-        'Resolve array_ref at initialization and use target array directly.'
+      'Array reference encountered in RangeLoader but not pre-resolved. ' +
+        'target=' +
+        enc.target +
+        ', hash=' +
+        enc.hash +
+        '. ' +
+        'Array refs must be resolved by the spatial index loader before calling RangeLoader.'
     );
   }
 
@@ -419,24 +437,31 @@ export class RangeLoader {
 }
 
 /**
- * Singleton RangeLoader instance for shared use
+ * Singleton RangeLoader instance for shared use.
+ * Uses a single ArrayRefRegistry so all loaders share the same ref cache.
  */
 let sharedRangeLoader: RangeLoader | null = null;
 let sharedRefRegistry: ArrayRefRegistry | null = null;
 
 /**
- * Get shared RangeLoader instance
+ * Get shared RangeLoader instance.
+ *
+ * @param registry - Optional ArrayRefRegistry to use. If provided on first call,
+ *                   it becomes the shared registry. Subsequent calls ignore this
+ *                   parameter (singleton is already created). Pass a registry when
+ *                   you need the RangeLoader to share a registry with other components.
  */
-export function getSharedRangeLoader(): RangeLoader {
+export function getSharedRangeLoader(registry?: ArrayRefRegistry): RangeLoader {
   if (!sharedRangeLoader) {
-    sharedRefRegistry = new ArrayRefRegistry();
+    sharedRefRegistry = registry ?? new ArrayRefRegistry();
     sharedRangeLoader = new RangeLoader(sharedRefRegistry);
   }
   return sharedRangeLoader;
 }
 
 /**
- * Get shared ArrayRefRegistry
+ * Get shared ArrayRefRegistry (creates one if needed).
+ * Prefer passing a registry to getSharedRangeLoader() instead of using this directly.
  */
 export function getSharedRefRegistry(): ArrayRefRegistry {
   if (!sharedRefRegistry) {

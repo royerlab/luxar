@@ -1840,6 +1840,11 @@ export class PostProcessingManager {
    * because readPixels forces a GPU sync, and we read synchronously before the
    * browser compositor clears the buffer (preserveDrawingBuffer:false only clears
    * AFTER compositing, which happens at the end of the current JS task).
+   *
+   * Note: When SSAA (super-sample anti-aliasing) is enabled, the returned
+   * ImageData is at the upscaled resolution (e.g., 2x display resolution),
+   * not the display resolution. Callers that need display-size output should
+   * downscale the result accordingly.
    */
   renderToImageData(): ImageData {
     // Render to screen with the full pipeline (tone mapping, sRGB, AA — everything)

@@ -83,3 +83,30 @@ Example usage::
    luxar serve data.zarr --profile 4g --latency 300ms
 
 See the :doc:`../guides/developer/NETWORK_SIMULATION_SPEC` for detailed specifications.
+
+Export
+------
+
+Export Luxar scenes as standalone offline viewer bundles.
+
+.. automodule:: luxar.cli.export
+   :members:
+   :undoc-members:
+
+GSplat Commands
+---------------
+
+CLI commands for fitting, converting, rendering, merging, and managing Gaussian splats.
+
+.. automodule:: luxar.cli.gsplat_commands
+   :members:
+   :undoc-members:
+
+GSplat Configuration
+~~~~~~~~~~~~~~~~~~~~
+
+Configuration loading and validation for GSplat CLI commands.
+
+.. automodule:: luxar.cli.gsplat_config
+   :members:
+   :undoc-members:

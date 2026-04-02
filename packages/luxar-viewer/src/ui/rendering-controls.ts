@@ -222,6 +222,7 @@ export class RenderingControls {
       width: 300,
       closeFolders: false,
       onClose: () => this.hide(),
+      closeButtonTitle: 'Close (R)',
     });
 
     // Position on the left side with standard margins
