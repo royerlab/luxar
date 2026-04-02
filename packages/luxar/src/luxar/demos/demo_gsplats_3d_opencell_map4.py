@@ -451,9 +451,7 @@ def main():
 
             with asection("Downloading OpenCell MAP4 TIFF (~70 MB)"):
                 aprint(f"URL: {TIFF_URL}")
-                tmp_fd, tmp_path = tempfile.mkstemp(
-                    dir=CACHE_DIR, suffix=".tif.tmp"
-                )
+                tmp_fd, tmp_path = tempfile.mkstemp(dir=CACHE_DIR, suffix=".tif.tmp")
                 os.close(tmp_fd)
                 try:
                     urllib.request.urlretrieve(TIFF_URL, tmp_path)

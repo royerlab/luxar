@@ -335,9 +335,7 @@ def save_gsplats(
             import zipfile
 
             if compress == "zip":
-                zip_method = (
-                    zipfile.ZIP_DEFLATED if zip_deflate else zipfile.ZIP_STORED
-                )
+                zip_method = zipfile.ZIP_DEFLATED if zip_deflate else zipfile.ZIP_STORED
                 with zipfile.ZipFile(path, "w", zip_method) as zipf:
                     for file_path in zarr_path.rglob("*"):
                         if file_path.is_file():

@@ -316,7 +316,7 @@ class CUDASplatFunction(torch.autograd.Function):
             # torch.compile fuses both forward and backward into optimized kernels,
             # giving ~0.3ms (vs ~1.6ms without compile). Autograd is correct by
             # construction — compile just fuses the kernel launches.
-            with torch.enable_grad():
+            with torch.enable_grad():  # type: ignore[no-untyped-call]
                 conic_recomputed = _cholesky_to_conic_compiled(Ls_for_conic)
             (d_Ls,) = torch.autograd.grad(
                 outputs=conic_recomputed,
@@ -330,7 +330,7 @@ class CUDASplatFunction(torch.autograd.Function):
             from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
             # Recompute with gradient tracking
-            with torch.enable_grad():
+            with torch.enable_grad():  # type: ignore[no-untyped-call]
                 centers_grad = centers.detach().clone().requires_grad_(True)
                 Ls_grad = Ls.detach().clone().requires_grad_(True)
                 amps_grad = amps.detach().clone().requires_grad_(True)

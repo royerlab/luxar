@@ -1347,9 +1347,7 @@ class TestBackwardComparison:
         cuda_grad_cpu = cuda_grad.cpu()
 
         # Sign match: majority of gradient signs should agree
-        sign_match = (
-            (torch.sign(cpu_grad) == torch.sign(cuda_grad_cpu)).float().mean()
-        )
+        sign_match = (torch.sign(cpu_grad) == torch.sign(cuda_grad_cpu)).float().mean()
         print(f"\n3D backward raw_a sign match: {sign_match:.4f}")
         assert sign_match > Tolerances.BACKWARD_SIGN_MATCH, (
             f"3D raw_a gradient sign match {sign_match:.2f} "
