@@ -1046,6 +1046,44 @@ export const ShaderMaterial = vi.fn().mockImplementation((parameters: any = {}) 
   // Copy parameters
   Object.assign(mat, parameters);
 
+  // Override clone to deep-copy shader-specific properties
+  mat.clone = vi.fn(function (this: any) {
+    const cloned = new (ShaderMaterial as any)({
+      vertexShader: this.vertexShader,
+      fragmentShader: this.fragmentShader,
+      defines: { ...this.defines },
+      uniforms: Object.fromEntries(
+        Object.entries(this.uniforms).map(([k, u]: [string, any]) => [
+          k,
+          {
+            value:
+              u &&
+              typeof u.value === 'object' &&
+              u.value !== null &&
+              typeof u.value.clone === 'function'
+                ? u.value.clone()
+                : u?.value,
+          },
+        ])
+      ),
+    });
+    // Copy material base properties
+    cloned.transparent = this.transparent;
+    cloned.depthWrite = this.depthWrite;
+    cloned.depthTest = this.depthTest;
+    cloned.toneMapped = this.toneMapped;
+    cloned.blending = this.blending;
+    cloned.blendEquation = this.blendEquation;
+    cloned.blendSrc = this.blendSrc;
+    cloned.blendDst = this.blendDst;
+    cloned.blendEquationAlpha = this.blendEquationAlpha;
+    cloned.blendSrcAlpha = this.blendSrcAlpha;
+    cloned.blendDstAlpha = this.blendDstAlpha;
+    cloned.side = this.side;
+    cloned.userData = JSON.parse(JSON.stringify(this.userData || {}));
+    return cloned;
+  });
+
   return mat;
 });
 

@@ -1,8 +1,10 @@
 /**
  * Integration tests for Worker usage in spatial index loaders
  *
- * These tests verify that loaders dispatch queries to workers when enabled.
- * Uses mocked workers to test in Node.js environment (fast, no browser needed).
+ * These tests verify integration points and fallback logic using mocked workers.
+ * They do NOT test actual Worker execution (that requires a browser — see E2E tests).
+ * Specifically tests: config structure, query parameter shapes, result processing,
+ * main-thread fallback on worker failure, and concurrent query handling.
  */
 
 import { describe, it, expect, vi } from 'vitest';

@@ -3,6 +3,12 @@
  *
  * Tests screenshot capture, video recording lifecycle,
  * panel state management, and edge cases.
+ *
+ * NOTE: The GUI is heavily mocked (createMockController/createMockFolder). This means
+ * tests verify orchestration logic but cannot verify correct GUI structure, DOM event
+ * propagation, or real user interactions. For GUI correctness, rely on E2E tests.
+ * TODO(test-review): Consider using a lightweight real DOM (jsdom + real GUI classes)
+ * for tests that verify dialog interactions and button click handlers.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
