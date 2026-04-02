@@ -10,12 +10,14 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady } from './helpers';
+import { waitForLuxarReady, dismissDatasetBrowser } from './helpers';
 
 test.describe('Recording Panel', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
+    // Dismiss the dataset browser modal so keyboard shortcuts reach the app
+    await dismissDatasetBrowser(page);
   });
 
   test('should toggle recording panel with T key', async ({ page }) => {
@@ -212,19 +214,25 @@ test.describe('Recording Panel', () => {
     await expect(indicator).not.toBeVisible();
   });
 
-  test('should have Show Panels toggle', async ({ page }) => {
+  test('should have Show Panels toggle in Advanced Options', async ({ page }) => {
     // Open panel
     await page.keyboard.press('t');
     await page.waitForTimeout(300);
 
-    // Check for Show Panels checkbox
+    // Expand the Advanced Options folder (collapsed by default)
+    const advancedFolder = page
+      .locator('.luxar-gui.luxar-recording-panel .luxar-gui__folder-title')
+      .filter({ hasText: 'Advanced' });
+    if ((await advancedFolder.count()) > 0) {
+      await advancedFolder.click();
+      await page.waitForTimeout(200);
+    }
+
+    // Check for Show Panels checkbox (label class is luxar-gui__controller-name)
     const hasShowPanels = await page.evaluate(() => {
       const panel = document.querySelector('.luxar-gui.luxar-recording-panel');
-      const labels = Array.from(panel?.querySelectorAll('.luxar-gui__name') ?? []);
-      for (let i = 0; i < labels.length; i++) {
-        if (labels[i].textContent?.includes('Show Panels')) return true;
-      }
-      return false;
+      const labels = Array.from(panel?.querySelectorAll('.luxar-gui__controller-name') ?? []);
+      return labels.some((el) => el.textContent?.includes('Show Panels'));
     });
     expect(hasShowPanels).toBe(true);
   });

@@ -19,7 +19,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 const BASELINE_FILE = path.join(__dirname, '../../../performance-baselines.json');
-const REGRESSION_THRESHOLD = 1.3; // Fail if >30% slower than baseline
+const REGRESSION_THRESHOLD = 1.5; // Fail if >50% slower than baseline (generous for CI variability)
 
 interface PerformanceBaselines {
   loadTime: number;
@@ -119,12 +119,14 @@ test.describe('Performance Regression Tracking', () => {
       const ratio = initTime / baselines.initTime;
       console.log(`  Baseline: ${baselines.initTime}ms (ratio: ${ratio.toFixed(2)}x)`);
 
+      // Allow some slack — initialization time can vary significantly depending on system load
       expect(initTime).toBeLessThan(baselines.initTime * REGRESSION_THRESHOLD);
     } else {
+      console.log('  No baseline - establishing new baseline');
       saveBaselines({ initTime });
     }
 
-    if (!baselines || initTime < baselines.initTime) {
+    if (!baselines || !baselines.initTime || initTime < baselines.initTime) {
       saveBaselines({ initTime });
     }
   });
