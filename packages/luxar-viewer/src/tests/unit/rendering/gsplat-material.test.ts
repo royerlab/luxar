@@ -14,18 +14,55 @@ vi.mock('three', async () => {
 
   const ShaderMaterial = vi.fn(function (this: any, params: any) {
     Object.assign(this, {
-      uniforms: params.uniforms,
-      vertexShader: params.vertexShader,
-      fragmentShader: params.fragmentShader,
-      transparent: params.transparent,
-      depthWrite: params.depthWrite,
-      toneMapped: params.toneMapped,
-      blending: params.blending,
-      side: params.side,
+      uniforms: params?.uniforms ?? {},
+      vertexShader: params?.vertexShader ?? '',
+      fragmentShader: params?.fragmentShader ?? '',
+      transparent: params?.transparent,
+      depthWrite: params?.depthWrite,
+      toneMapped: params?.toneMapped,
+      blending: params?.blending,
+      side: params?.side,
+      defines: params?.defines ?? {},
       userData: {},
       dispose: vi.fn(),
     });
   });
+
+  // Add clone to prototype so subclasses (GSplatMaterial) can call super.clone() if needed
+  ShaderMaterial.prototype.clone = function (this: any) {
+    const cloned = new (ShaderMaterial as any)({
+      vertexShader: this.vertexShader,
+      fragmentShader: this.fragmentShader,
+      defines: { ...this.defines },
+      uniforms: Object.fromEntries(
+        Object.entries(this.uniforms).map(([k, u]: [string, any]) => [
+          k,
+          {
+            value:
+              u &&
+              typeof u.value === 'object' &&
+              u.value !== null &&
+              typeof u.value.clone === 'function'
+                ? u.value.clone()
+                : u?.value,
+          },
+        ])
+      ),
+      transparent: this.transparent,
+      depthWrite: this.depthWrite,
+      toneMapped: this.toneMapped,
+      blending: this.blending,
+      side: this.side,
+    });
+    cloned.blendEquation = this.blendEquation;
+    cloned.blendSrc = this.blendSrc;
+    cloned.blendDst = this.blendDst;
+    cloned.blendEquationAlpha = this.blendEquationAlpha;
+    cloned.blendSrcAlpha = this.blendSrcAlpha;
+    cloned.blendDstAlpha = this.blendDstAlpha;
+    cloned.userData = JSON.parse(JSON.stringify(this.userData || {}));
+    return cloned;
+  };
 
   return {
     ...actual,

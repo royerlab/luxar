@@ -14,6 +14,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ChunkPrefetcher } from '../../../cache/chunk-prefetcher';
 
+/**
+ * Deterministic polling helper — waits for a condition to become true.
+ * Replaces hardcoded setTimeout delays that can flake on slow CI.
+ */
+async function waitFor(condition: () => boolean, timeout = 2000): Promise<void> {
+  const start = Date.now();
+  while (!condition() && Date.now() - start < timeout) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 // Mock TwoLevelCachingStore for unit tests
 class MockStore {
   get = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]));
@@ -43,8 +54,11 @@ describe('ChunkPrefetcher - Unit Tests', () => {
 
       prefetcher.onAccess('points/positions/0.1.2');
 
-      // Wait for async prefetch operations to start
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Wait for all prefetch operations to complete
+      await waitFor(() => {
+        const s = prefetcher.getStats();
+        return s.inFlight === 0 && s.queued === 0;
+      });
 
       // Verify adjacent chunks were generated (v2 format)
       expect(mockStore.get).toHaveBeenCalled();
@@ -77,8 +91,11 @@ describe('ChunkPrefetcher - Unit Tests', () => {
 
       debugPrefetcher.onAccess('points/positions/c/0/1/2');
 
-      // Wait for async prefetch operations to start
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Wait for all prefetch operations to complete
+      await waitFor(() => {
+        const s = debugPrefetcher.getStats();
+        return s.inFlight === 0 && s.queued === 0;
+      });
 
       const calls = mockStore.get.mock.calls.map((call: any[]) => call[0]);
 
@@ -124,8 +141,11 @@ describe('ChunkPrefetcher - Unit Tests', () => {
 
       prefetcher.onAccess('data/1.2.3.4');
 
-      // Wait for all async prefetch operations to complete
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Wait for all prefetch operations to complete
+      await waitFor(() => {
+        const s = prefetcher.getStats();
+        return s.inFlight === 0 && s.queued === 0;
+      });
 
       const calls = mockStore.get.mock.calls.map((call: any[]) => call[0]);
 
@@ -144,22 +164,40 @@ describe('ChunkPrefetcher - Unit Tests', () => {
 
   describe('Concurrency Limiting', () => {
     it('should limit concurrent prefetches to maxConcurrent', async () => {
-      // Create prefetcher with limit of 2
-      const limitedPrefetcher = new ChunkPrefetcher(mockStore as any, {
+      // Use a controlled store whose gets never resolve until we say so,
+      // so we can inspect the in-flight count deterministically.
+      const resolvers: Array<() => void> = [];
+      const controlledStore = {
+        get: vi.fn().mockImplementation(
+          () =>
+            new Promise<Uint8Array>((resolve) => {
+              resolvers.push(() => resolve(new Uint8Array([1])));
+            })
+        ),
+        setPrefetcher: vi.fn(),
+      };
+
+      const limitedPrefetcher = new ChunkPrefetcher(controlledStore as any, {
         enabled: true,
         maxConcurrent: 2,
       });
 
-      // Trigger prefetch (will queue 4 neighbors for v2 2D chunk)
+      // Register bounds so neighbors are generated
+      limitedPrefetcher.registerArrayBounds('data', [10240, 10240], [1024, 1024]);
+
+      // Trigger prefetch (will queue 4 neighbors for v2 2D chunk at center)
       limitedPrefetcher.onAccess('data/1.1');
 
-      // Wait for some prefetches to start
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Wait for the queue to be drained into in-flight slots
+      await waitFor(() => controlledStore.get.mock.calls.length >= 2);
 
       const stats = limitedPrefetcher.getStats();
 
-      // Should have at most 2 in flight
+      // Should have at most 2 in flight (the controlled promises are pending)
       expect(stats.inFlight).toBeLessThanOrEqual(2);
+
+      // Resolve all to clean up
+      resolvers.forEach((r) => r());
     });
 
     it('should process queue when slots free up', async () => {
@@ -175,7 +213,10 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       limitedPrefetcher.onAccess('data/1.1');
 
       // Wait for all to complete
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await waitFor(() => {
+        const s = limitedPrefetcher.getStats();
+        return s.inFlight === 0 && s.queued === 0;
+      });
 
       // All should eventually be fetched
       expect(mockStore.get).toHaveBeenCalledTimes(4);
@@ -195,8 +236,15 @@ describe('ChunkPrefetcher - Unit Tests', () => {
     });
 
     it('should not queue chunks already in flight', async () => {
+      // Use controlled promises so gets stay pending until we resolve them
+      const resolvers: Array<() => void> = [];
       const slowMockStore = {
-        get: vi.fn().mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 100))),
+        get: vi.fn().mockImplementation(
+          () =>
+            new Promise<void>((resolve) => {
+              resolvers.push(resolve);
+            })
+        ),
         setPrefetcher: vi.fn(),
       };
 
@@ -205,18 +253,24 @@ describe('ChunkPrefetcher - Unit Tests', () => {
         maxConcurrent: 4,
       });
 
+      // Register bounds so prefetcher generates adjacent chunks
+      slowPrefetcher.registerArrayBounds('data', [10240, 10240], [1024, 1024]);
+
       // Trigger first access
       slowPrefetcher.onAccess('data/1.1');
 
-      // Wait a bit for requests to start
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Wait for requests to start (they will be in-flight, pending)
+      await waitFor(() => slowMockStore.get.mock.calls.length > 0);
 
-      // Trigger second access (should deduplicate)
+      // Trigger second access (should deduplicate via the seen-set)
       slowPrefetcher.onAccess('data/1.1');
 
       // Should not have duplicate requests
       const stats = slowPrefetcher.getStats();
       expect(stats.queued + stats.inFlight).toBeLessThanOrEqual(4);
+
+      // Resolve all to clean up
+      resolvers.forEach((r) => r());
     });
   });
 
@@ -249,9 +303,16 @@ describe('ChunkPrefetcher - Unit Tests', () => {
         maxConcurrent: 10,
       });
 
+      // Register bounds so prefetcher generates adjacent chunks
+      customPrefetcher.registerArrayBounds('data', [10240, 10240, 10240], [1024, 1024, 1024]);
+
       customPrefetcher.onAccess('data/1.1.1'); // 3D → 6 neighbors
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Wait for all to be dispatched (no queuing needed with maxConcurrent=10)
+      await waitFor(() => {
+        const s = customPrefetcher.getStats();
+        return s.queued === 0;
+      });
 
       const stats = customPrefetcher.getStats();
 
@@ -280,8 +341,11 @@ describe('ChunkPrefetcher - Unit Tests', () => {
         errorPrefetcher.onAccess('data/1.1');
       }).not.toThrow();
 
-      // Wait for errors to propagate
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Wait for all error responses to settle
+      await waitFor(() => {
+        const s = errorPrefetcher.getStats();
+        return s.inFlight === 0 && s.queued === 0;
+      });
 
       // Should have attempted prefetch
       expect(errorMockStore.get).toHaveBeenCalled();
@@ -306,7 +370,10 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       expect(stats1.queued + stats1.inFlight).toBe(4);
 
       // Wait for completion
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await waitFor(() => {
+        const s = statsPrefetcher.getStats();
+        return s.inFlight === 0 && s.queued === 0;
+      });
 
       // Check final state
       const stats2 = statsPrefetcher.getStats();
@@ -367,7 +434,7 @@ describe('ChunkPrefetcher - Integration Tests', () => {
     expect(onAccessSpy).toHaveBeenCalledWith('test/0.0');
 
     // Wait for prefetch to attempt store.get()
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitFor(() => mockIntegrationStore.get.mock.calls.length > 0);
 
     // Verify prefetcher tried to fetch chunks
     expect(mockIntegrationStore.get).toHaveBeenCalled();
