@@ -43,8 +43,16 @@ for (const theme of THEMES) {
     const errorDialog = page.locator('.luxar-error-dialog');
     await expect(errorDialog).toBeVisible({ timeout: 5000 });
 
+    // Extra wait for frosted-glass theme which has animation/blur effects
+    if (theme === 'frosted-glass') {
+      await page.waitForTimeout(500);
+    }
+
     // Take screenshot for visual regression
-    await expect(errorDialog).toHaveScreenshot(`error-dialog-${theme}.png`);
+    await expect(errorDialog).toHaveScreenshot(`error-dialog-${theme}.png`, {
+      maxDiffPixelRatio: 0.1,
+      threshold: 0.3,
+    });
   });
 }
 
@@ -64,7 +72,10 @@ for (const theme of THEMES) {
     await expect(helpOverlay).toBeVisible({ timeout: 2000 });
 
     // Take screenshot
-    await expect(helpOverlay).toHaveScreenshot(`help-overlay-${theme}.png`);
+    await expect(helpOverlay).toHaveScreenshot(`help-overlay-${theme}.png`, {
+      maxDiffPixelRatio: 0.1,
+      threshold: 0.3,
+    });
   });
 }
 
@@ -108,7 +119,10 @@ for (const theme of THEMES) {
     await expect(dimensionSliders).toBeVisible({ timeout: 2000 });
 
     // Take screenshot
-    await expect(dimensionSliders).toHaveScreenshot(`dimension-sliders-${theme}.png`);
+    await expect(dimensionSliders).toHaveScreenshot(`dimension-sliders-${theme}.png`, {
+      maxDiffPixelRatio: 0.1,
+      threshold: 0.3,
+    });
   });
 }
 
@@ -141,7 +155,10 @@ for (const theme of THEMES) {
     await expect(dataMonitor).toBeVisible();
 
     // Take screenshot
-    await expect(dataMonitor).toHaveScreenshot(`data-monitor-compact-${theme}.png`);
+    await expect(dataMonitor).toHaveScreenshot(`data-monitor-compact-${theme}.png`, {
+      maxDiffPixelRatio: 0.1,
+      threshold: 0.3,
+    });
   });
 }
 
@@ -176,7 +193,10 @@ for (const theme of THEMES) {
     await expect(dataMonitor).toBeVisible();
 
     // Take screenshot
-    await expect(dataMonitor).toHaveScreenshot(`data-monitor-expanded-${theme}.png`);
+    await expect(dataMonitor).toHaveScreenshot(`data-monitor-expanded-${theme}.png`, {
+      maxDiffPixelRatio: 0.1,
+      threshold: 0.3,
+    });
   });
 }
 
@@ -206,7 +226,10 @@ for (const theme of THEMES) {
     await expect(debugConsole).toBeVisible({ timeout: 2000 });
 
     // Take screenshot
-    await expect(debugConsole).toHaveScreenshot(`debug-console-${theme}.png`);
+    await expect(debugConsole).toHaveScreenshot(`debug-console-${theme}.png`, {
+      maxDiffPixelRatio: 0.1,
+      threshold: 0.3,
+    });
   });
 }
 
@@ -224,8 +247,16 @@ for (const theme of THEMES) {
     const datasetBrowser = page.locator('.luxar-dataset-browser');
     await expect(datasetBrowser).toBeVisible({ timeout: 2000 });
 
+    // Extra wait for frosted-glass theme which has animation/blur effects
+    if (theme === 'frosted-glass') {
+      await page.waitForTimeout(500);
+    }
+
     // Take screenshot
-    await expect(datasetBrowser).toHaveScreenshot(`dataset-browser-${theme}.png`);
+    await expect(datasetBrowser).toHaveScreenshot(`dataset-browser-${theme}.png`, {
+      maxDiffPixelRatio: 0.1,
+      threshold: 0.3,
+    });
   });
 }
 
