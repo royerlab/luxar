@@ -267,6 +267,7 @@ def generate_turing_patterns(
                 radii=radii,
                 sharpness=sharpnesses,
                 opacity=0.9,
+                intensity=0.1,
             )
 
         aprint(f"✓ Written to {output_path}")

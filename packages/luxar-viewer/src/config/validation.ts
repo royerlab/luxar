@@ -92,7 +92,6 @@ function validateCamera(config: AppConfig, errors: string[], warnings: string[])
  * Validate rendering configuration
  */
 function validateRendering(config: AppConfig, errors: string[], _warnings: string[]): void {
-  const { shader } = config;
   const defaults = config.renderingControls.defaults;
 
   // Global EOG validation (lives in renderingControls.defaults)
@@ -104,9 +103,6 @@ function validateRendering(config: AppConfig, errors: string[], _warnings: strin
   }
   if (defaults.globalGamma < 0.1 || defaults.globalGamma > 10) {
     errors.push(`Invalid globalGamma: ${defaults.globalGamma} (must be 0.1 to 10)`);
-  }
-  if (shader.points.baseAlpha < 0 || shader.points.baseAlpha > 1) {
-    errors.push(`Invalid base alpha: ${shader.points.baseAlpha} (must be between 0 and 1)`);
   }
 }
 

@@ -299,9 +299,6 @@ def generate_spiral_galaxy(
         aprint("Generating realistic stellar colors...")
         colors = age_to_color(ages)
 
-        # Boost brightness for visibility (HDR rendering)
-        colors *= 3.0  # Multiplier to make stars visible against dark background
-
         aprint("✓ Colors: Blue (young) → Yellow (middle) → Red (old)")
 
         # Generate radii based on stellar type
@@ -337,6 +334,7 @@ def generate_spiral_galaxy(
                 sharpness=sharpnesses,
                 opacity=0.9,
                 blending_mode="additive",
+                intensity=0.278,
             )
 
         aprint(f"✓ Written to {output_path}")

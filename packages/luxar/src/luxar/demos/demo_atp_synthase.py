@@ -479,6 +479,7 @@ def generate_atp_synthase(
                     radii=radii,
                     sharpness=sharpness,
                     opacity=0.95,
+                    intensity=0.0625,
                 )
 
             aprint(f"✓ Scene created with {len(positions):,} atoms")

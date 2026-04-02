@@ -127,6 +127,7 @@ def main() -> None:
                     radii=np.full(len(positions), 0.02, dtype=np.float32),
                     sharpness=np.full(len(positions), 4.0, dtype=np.float32),
                     opacity=0.8,
+                    intensity=0.25,
                 )
 
             aprint(f"{len(positions):,} total points ({len(coords):,} per view)")
@@ -175,6 +176,7 @@ def main() -> None:
                     radii=np.full(len(positions), 0.02, dtype=np.float32),
                     sharpness=np.full(len(positions), 4.0, dtype=np.float32),
                     opacity=0.8,
+                    intensity=0.25,
                 )
 
             aprint(f"{len(positions):,} total points ({len(coords):,} per view)")

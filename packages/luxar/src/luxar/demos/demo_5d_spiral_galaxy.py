@@ -207,6 +207,7 @@ def generate_5d_spiral_galaxy(
                 opacity=0.85,
                 gamma=1.0,
                 blending_mode="additive",
+                intensity=5.58,
             )
 
         aprint(f"Written to {output_path}")

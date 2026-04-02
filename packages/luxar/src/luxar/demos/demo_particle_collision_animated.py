@@ -1408,6 +1408,7 @@ def generate_animated_detector_scene(
                         radii=all_radii,
                         sharpness=all_sharp,
                         layer=True,
+                        intensity=0.125,
                     )
 
                     total_pts = len(all_positions)
@@ -1474,6 +1475,7 @@ def generate_animated_detector_scene(
                 radii=vertex_radii_4d,
                 sharpness=0.8,
                 layer=True,
+                intensity=0.125,
             )
             aprint(f"  Vertex markers: {n_vertex_points} points x {n_frames} frames")
             total_points += n_vertex_points * n_frames

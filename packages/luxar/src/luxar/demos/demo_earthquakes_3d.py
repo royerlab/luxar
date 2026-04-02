@@ -1344,6 +1344,7 @@ def generate_earthquake_scene(
                     opacity=0.15,  # Very subtle - don't overwhelm the visualization
                     blending_mode="luminous",
                     layer=True,
+                    intensity=0.5,
                 )
 
             # Add earthquake lines with luminous blending - glowing additive effect

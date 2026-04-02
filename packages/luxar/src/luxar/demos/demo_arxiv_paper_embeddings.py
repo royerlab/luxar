@@ -505,6 +505,7 @@ def generate_paper_landscape(
                 radii=radii,
                 sharpness=sharpness,
                 opacity=0.9,
+                intensity=0.1,
             )
 
         aprint(f"✓ Scene created with {n_papers:,} papers")
