@@ -322,6 +322,7 @@ def fit_channel(volume, channel_name, cache_file):
         encoding_mode=EncodingMode.MEMORY,
         include_fitting_info=True,
         compress="zip",
+        zip_deflate=True,
     )
 
     return result

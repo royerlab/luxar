@@ -314,6 +314,7 @@ def fit_dapi_gsplats(volume):
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
             compress="zip",
+            zip_deflate=True,
         )
 
         return result

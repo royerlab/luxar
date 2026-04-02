@@ -865,6 +865,7 @@ def fit_timepoint(
         encoding_mode=EncodingMode.MEMORY,
         include_fitting_info=True,
         compress="zip",
+        zip_deflate=True,
     )
     tmp_file.unlink(missing_ok=True)  # save complete — remove marker
 
@@ -1179,6 +1180,7 @@ def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
             include_fitting_info=True,
             color_mode="sdr",
             compress="zip",
+            zip_deflate=True,
         )
         tmp_file.unlink(missing_ok=True)
         aprint(f"Cached combined 4D dataset: {cache_file.name}")
@@ -1268,6 +1270,7 @@ def filter_background_splats(
             include_fitting_info=True,
             color_mode="sdr",
             compress="zip",
+            zip_deflate=True,
         )
         tmp_file.unlink(missing_ok=True)
         aprint(f"Cached filtered 4D dataset: {cache_file.name}")

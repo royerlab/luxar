@@ -14,6 +14,7 @@ Outputs a single METRIC line for autoresearch extraction.
 
 IMPORTANT: Budget parameters are CONSTANTS — do not change them.
 """
+
 import os  # noqa: I001 — must set env before torch import
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -118,7 +119,9 @@ def load_3d_chimera() -> np.ndarray:
                     sig = rng.uniform(4, 8)
                     amp = rng.uniform(60, 100)
                     grids = np.meshgrid(*[np.arange(s) for s in shape], indexing="ij")
-                    V += amp * np.exp(-sum((g - ci) ** 2 for g, ci in zip(grids, c)) / (2 * sig**2))
+                    V += amp * np.exp(
+                        -sum((g - ci) ** 2 for g, ci in zip(grids, c)) / (2 * sig**2)
+                    )
 
         # Normalize raw volumes to [0, 100]
         raw_ch1 = _normalize_to_100(raw_ch1)
@@ -145,7 +148,9 @@ def load_3d_chimera() -> np.ndarray:
         # Bottom-right: noisy ch0
         chimera[mz:, my:, :] = raw_ch0[mz:, my:, :]
 
-        aprint(f"Chimera shape: {chimera.shape}, range: [{chimera.min():.1f}, {chimera.max():.1f}]")
+        aprint(
+            f"Chimera shape: {chimera.shape}, range: [{chimera.min():.1f}, {chimera.max():.1f}]"
+        )
 
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         np.save(str(cache_path), chimera)
@@ -188,7 +193,9 @@ def load_2d_composite() -> np.ndarray:
         composite[:, :256] = mitosis
         composite[:, 256:] = astro
 
-        aprint(f"2D composite shape: {composite.shape}, range: [{composite.min():.1f}, {composite.max():.1f}]")
+        aprint(
+            f"2D composite shape: {composite.shape}, range: [{composite.min():.1f}, {composite.max():.1f}]"
+        )
 
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         np.save(str(cache_path), composite)
@@ -197,9 +204,7 @@ def load_2d_composite() -> np.ndarray:
     return composite
 
 
-def run_fit_and_evaluate(
-    V: np.ndarray, max_splats: int, label: str
-) -> dict:
+def run_fit_and_evaluate(V: np.ndarray, max_splats: int, label: str) -> dict:
     """Run progressive fitting and compute PSNR + SSIM."""
     import time as _time
 
@@ -325,7 +330,9 @@ def main():
         # 2. Run fitting on each
         results = {}
         results["3D chimera"] = run_fit_and_evaluate(V_3d, MAX_SPLATS_3D, "3D chimera")
-        results["2D composite"] = run_fit_and_evaluate(V_2d, MAX_SPLATS_2D, "2D composite")
+        results["2D composite"] = run_fit_and_evaluate(
+            V_2d, MAX_SPLATS_2D, "2D composite"
+        )
 
         # 3. Compute combined metrics (geometric mean)
         psnrs = [results[k]["psnr"] for k in results]
