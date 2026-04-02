@@ -175,8 +175,9 @@ export class RenderingControls {
   /** Callback to update adaptive DPR control visibility (set by setAdaptiveDPRManager) */
   private updateAdaptiveDPRVisibility?: (enabled: boolean) => void;
 
-  /** Timer ID for periodic clipping display updates when dynamic clipping is enabled */
-  private clippingDisplayUpdateInterval: ReturnType<typeof setInterval> | null = null;
+  /** RAF ID for periodic clipping display updates when dynamic clipping is enabled */
+  private clippingDisplayRAF: number | null = null;
+  private lastClippingDisplayUpdate: number = 0;
 
   /** Cleanup callbacks collected during setup, called on dispose */
   private cleanupCallbacks: (() => void)[] = [];
@@ -864,22 +865,27 @@ export class RenderingControls {
       }
     }
 
-    // Clear any existing interval
-    if (this.clippingDisplayUpdateInterval !== null) {
-      clearInterval(this.clippingDisplayUpdateInterval);
-      this.clippingDisplayUpdateInterval = null;
+    // Cancel any existing RAF loop
+    if (this.clippingDisplayRAF !== null) {
+      cancelAnimationFrame(this.clippingDisplayRAF);
+      this.clippingDisplayRAF = null;
     }
 
-    // When dynamic clipping is enabled, periodically update slider displays
-    // to show the actual camera clipping values
+    // When dynamic clipping is enabled, update slider displays synced to RAF
+    // (throttled to ~100ms to avoid excessive DOM updates)
     if (dynamicEnabled) {
-      // Initial update
       this.updateClippingSliderDisplays();
 
-      // Periodic updates every 100ms to keep displays in sync
-      this.clippingDisplayUpdateInterval = setInterval(() => {
-        this.updateClippingSliderDisplays();
-      }, 100);
+      const scheduleClippingUpdate = () => {
+        this.clippingDisplayRAF = requestAnimationFrame((timestamp) => {
+          if (timestamp - this.lastClippingDisplayUpdate >= 100) {
+            this.updateClippingSliderDisplays();
+            this.lastClippingDisplayUpdate = timestamp;
+          }
+          scheduleClippingUpdate();
+        });
+      };
+      scheduleClippingUpdate();
     }
   }
 
@@ -1611,10 +1617,10 @@ export class RenderingControls {
    * After calling dispose(), the RenderingControls instance cannot be reused.
    */
   dispose(): void {
-    // Clean up clipping display update interval
-    if (this.clippingDisplayUpdateInterval !== null) {
-      clearInterval(this.clippingDisplayUpdateInterval);
-      this.clippingDisplayUpdateInterval = null;
+    // Clean up clipping display RAF loop
+    if (this.clippingDisplayRAF !== null) {
+      cancelAnimationFrame(this.clippingDisplayRAF);
+      this.clippingDisplayRAF = null;
     }
 
     // Run all registered cleanup callbacks (e.g., adaptive DPR update interval)
