@@ -1681,7 +1681,7 @@ class Test5DAnd6DForwardVsCPU:
         else:
             corr = 1.0
 
-        print(f"\n5D CUDA vs CPU comparison:")
+        print("\n5D CUDA vs CPU comparison:")
         print(f"  Max relative diff: {max_rel_diff:.4f}")
         print(f"  Mean relative diff: {mean_rel_diff:.6f}")
         print(f"  Correlation: {corr:.6f}")
@@ -1763,7 +1763,7 @@ class Test5DAnd6DForwardVsCPU:
         else:
             corr = 1.0
 
-        print(f"\n6D CUDA vs CPU comparison:")
+        print("\n6D CUDA vs CPU comparison:")
         print(f"  Max relative diff: {max_rel_diff:.4f}")
         print(f"  Mean relative diff: {mean_rel_diff:.6f}")
         print(f"  Correlation: {corr:.6f}")
