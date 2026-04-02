@@ -163,6 +163,7 @@ export class RecordingPanel {
       width: 280,
       closeFolders: false,
       onClose: () => this.hide(),
+      closeButtonTitle: 'Close (T)',
     });
 
     this.gui.domElement.classList.add('luxar-recording-panel');

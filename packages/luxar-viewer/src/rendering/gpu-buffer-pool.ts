@@ -131,6 +131,14 @@ export class GPUBufferPool {
     this.evictionFrames = evictionFrames;
   }
 
+  /**
+   * Advance the frame counter. Call once per frame before any acquire calls.
+   * This ensures eviction timing is based on rendered frames, not acquire calls.
+   */
+  beginFrame(): void {
+    this.frameCount++;
+  }
+
   // =========================================================================
   // Points Geometry Management
   // =========================================================================
@@ -182,8 +190,6 @@ export class GPUBufferPool {
     data: LoadedPointsData,
     pointCount: number
   ): THREE.BufferGeometry {
-    this.frameCount++;
-
     // Detect attribute types from data
     const types = this.detectAttributeTypes(data);
 
@@ -509,8 +515,6 @@ export class GPUBufferPool {
    * Acquire geometry for Lines (instanced per-segment attributes).
    */
   acquireLinesGeometry(nodeId: string, segmentCount: number): THREE.InstancedBufferGeometry {
-    this.frameCount++;
-
     const active = this.activeBuffers.get(nodeId);
     if (active && active.type === 'lines') {
       if (active.capacity >= segmentCount) {
@@ -718,8 +722,6 @@ export class GPUBufferPool {
    * Acquire geometry for GSplats (instanced per-splat attributes).
    */
   acquireGSplatsGeometry(nodeId: string, splatCount: number): THREE.InstancedBufferGeometry {
-    this.frameCount++;
-
     const active = this.activeBuffers.get(nodeId);
     if (active && active.type === 'gsplats') {
       if (active.capacity >= splatCount) {

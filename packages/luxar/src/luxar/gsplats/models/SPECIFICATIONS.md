@@ -1,7 +1,7 @@
 # Gaussian Splat Models Specification
 
 **Version**: 1.0.0
-**Last Updated**: 2025-11-27
+**Last Updated**: 2026-03-31
 
 ## Overview
 
@@ -51,11 +51,12 @@ models/
 
 This includes:
 - Complete mathematical formulation
-- Parameter parameterizations (centers, covariances, amplitudes, sharpness)
+- Parameter parameterizations (centers, covariances, amplitudes)
 - Rendering algorithm with AABB truncation
 - Fast paths for 2D/3D with explicit forward substitution
 - Memory management and chunking
-- Sharpness feature specification (generalized Gaussians)
+
+> **Note (March 2026)**: Per-splat sharpness was removed from the model. Some sections below still reference sharpness for historical context. The current model uses standard Gaussian (s=2) with shifted C⁰ continuity. See `gsplats/SPECIFICATIONS.md` for the authoritative spec.
 
 Please refer to the main SPECIFICATIONS.md file for complete implementation details.
 
@@ -70,11 +71,10 @@ Please refer to the main SPECIFICATIONS.md file for complete implementation deta
 - `raw_L_diag`: Diagonal Cholesky elements via softplus → positive definiteness
 - `L_off`: Off-diagonal Cholesky elements (unconstrained)
 - `raw_a`: Amplitudes via softplus → non-negativity
-- `sharpness_offsets_raw`: Sharpness offsets → `s = 2 * exp(s')` for generalized Gaussians
 
 **Key Methods**:
 ```python
-def current_params() -> Tuple[centers, Ls, amps, sharpness]:
+def current_params() -> Tuple[centers, Ls, amps]:
     """Extract transformed parameters from raw learnable params."""
 
 def forward() -> torch.Tensor:
@@ -83,10 +83,10 @@ def forward() -> torch.Tensor:
 def prune_(keep_mask: torch.Tensor) -> None:
     """Remove splats by boolean mask."""
 
-def append_(centers_new, Ls_new, amps_new, sharpness_new) -> None:
+def append_(centers_new, Ls_new, amps_new) -> None:
     """Add new splats to the model."""
 
-def replace_with(centers, Ls, amps, sharpness) -> None:
+def replace_with(centers, Ls, amps) -> None:
     """Replace all splats (complete reset)."""
 
 def n_splats() -> int:

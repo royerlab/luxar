@@ -36,7 +36,6 @@ Welcome to Luxar's documentation! Luxar is a high-performance system for compili
    guides/developer/ERROR_HANDLING_GUIDE
    guides/developer/PERFORMANCE_OPTIMIZATION_SPEC
    guides/developer/SCENE_UPDATE_OPTIMIZATION
-   guides/developer/GSPLATS_VIEWER_IMPLEMENTATION
    guides/developer/METAL_SPLATTING_IMPLEMENTATION_SPEC
    guides/developer/SPLAT_MODEL_METAL
 

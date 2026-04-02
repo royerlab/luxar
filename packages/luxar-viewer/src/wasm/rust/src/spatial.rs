@@ -30,6 +30,13 @@ pub fn query_chunks_for_view(
     num_chunks: usize,
     output: &mut [u32],
 ) -> u32 {
+    debug_assert!(
+        output.len() >= num_chunks,
+        "output too small: {} < {}",
+        output.len(),
+        num_chunks
+    );
+
     let mut match_count = 0;
     let stride = ndim * 2; // Hoisted: bytes per chunk in bounds array
 

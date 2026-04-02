@@ -5,6 +5,8 @@
 
 use wasm_bindgen::prelude::*;
 
+use crate::common::validate_ndim;
+
 /// Compute nD visibility for GSplats using ellipsoid extent.
 ///
 /// # Arguments
@@ -37,6 +39,15 @@ pub fn compute_nd_visibility_gsplats(
     num_splats: usize,
     output_mask: &mut [u8],
 ) -> u32 {
+    validate_ndim(ndim, "compute_nd_visibility_gsplats");
+
+    debug_assert!(
+        output_mask.len() >= num_splats,
+        "output_mask too small: {} < {}",
+        output_mask.len(),
+        num_splats
+    );
+
     let cholesky_size = (ndim * (ndim + 1)) / 2;
     let mut visible_count = 0;
 

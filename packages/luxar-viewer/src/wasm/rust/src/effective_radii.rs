@@ -56,6 +56,13 @@ pub fn calculate_effective_radii(
 ) -> u32 {
     validate_ndim(ndim, "calculate_effective_radii");
 
+    debug_assert!(
+        output.len() >= num_points,
+        "output too small: {} < {}",
+        output.len(),
+        num_points
+    );
+
     let discrete_tolerance = 0.5_f32;
     let mut visible_count = 0u32;
 

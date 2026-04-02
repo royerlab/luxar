@@ -22,6 +22,55 @@ const UI_CONFIG = config.ui;
 /** Module-level reference to the active help overlay click handler, for cleanup */
 let activeHelpClickHandler: ((event: MouseEvent) => void) | null = null;
 
+/** Module-level reference to the active help overlay focus trap release, for cleanup */
+let activeHelpFocusTrapRelease: (() => void) | null = null;
+
+/**
+ * Create a focus trap within a container element.
+ *
+ * Keeps Tab/Shift+Tab cycling within the container's focusable elements,
+ * preventing focus from escaping to the background page while a modal
+ * dialog is open.  On cleanup the previously-focused element is restored.
+ *
+ * @param container - The modal/dialog element to trap focus within
+ * @returns A cleanup function that removes the trap and restores focus
+ */
+function trapFocus(container: HTMLElement): () => void {
+  const focusableSelectors =
+    'a[href], button, textarea, input, select, [tabindex]:not([tabindex="-1"])';
+  const previouslyFocused = document.activeElement as HTMLElement;
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key !== 'Tab') return;
+    const focusable = Array.from(container.querySelectorAll<HTMLElement>(focusableSelectors));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey) {
+      if (document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      if (document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  };
+
+  container.addEventListener('keydown', handleKeyDown);
+
+  // Focus first focusable element
+  const firstFocusable = container.querySelector<HTMLElement>(focusableSelectors);
+  if (firstFocusable) setTimeout(() => firstFocusable.focus(), 0);
+
+  return () => {
+    container.removeEventListener('keydown', handleKeyDown);
+    if (previouslyFocused) previouslyFocused.focus();
+  };
+}
+
 /**
  * Create and show animated loading indicator.
  *
@@ -194,29 +243,50 @@ export function showError(message: string) {
   guidance.appendChild(guidanceTitle);
   guidance.appendChild(guidanceList);
 
-  // Dismiss instructions
-  const dismissText = document.createElement('div');
-  dismissText.className = 'luxar-error-dialog__dismiss';
-  dismissText.textContent = 'Click anywhere or press Escape to dismiss';
+  // Dismiss button (focusable target for accessibility)
+  const dismissBtn = document.createElement('button');
+  dismissBtn.className = 'luxar-error-dialog__dismiss';
+  dismissBtn.textContent = 'Click anywhere or press Escape to dismiss';
+  dismissBtn.style.background = 'none';
+  dismissBtn.style.border = 'none';
+  dismissBtn.style.color = 'inherit';
+  dismissBtn.style.font = 'inherit';
+  dismissBtn.style.cursor = 'pointer';
+  dismissBtn.style.width = '100%';
+  dismissBtn.style.padding = '0';
 
   errorDiv.appendChild(header);
   errorDiv.appendChild(messageText);
   errorDiv.appendChild(guidance);
-  errorDiv.appendChild(dismissText);
+  errorDiv.appendChild(dismissBtn);
+
+  // Track focus trap release function
+  let releaseTrap: (() => void) | null = null;
+
+  const dismissError = () => {
+    if (releaseTrap) {
+      releaseTrap();
+      releaseTrap = null;
+    }
+    errorDiv.remove();
+  };
 
   // Add click handler to dismiss
   errorDiv.addEventListener('click', () => {
-    errorDiv.remove();
+    dismissError();
   });
 
   // Auto-dismiss after configured timeout
   setTimeout(() => {
     if (errorDiv.parentNode) {
-      errorDiv.remove();
+      dismissError();
     }
   }, UI_CONFIG.timings.errorAutoDismissMs);
 
   document.body.appendChild(errorDiv);
+
+  // Trap focus within the error dialog
+  releaseTrap = trapFocus(errorDiv);
 }
 
 /**
@@ -306,6 +376,8 @@ export function showHelpOverlay() {
   closeBtn.className = 'luxar-help-overlay__close-btn';
   closeBtn.textContent = '×';
   closeBtn.title = 'Close (Escape)';
+  closeBtn.setAttribute('aria-label', 'Close help overlay');
+  closeBtn.setAttribute('aria-keyshortcuts', 'Escape');
 
   header.appendChild(title);
   header.appendChild(closeBtn);
@@ -481,6 +553,12 @@ export function showHelpOverlay() {
     if (isClosing) return;
     isClosing = true;
 
+    // Release focus trap before removing element
+    if (activeHelpFocusTrapRelease) {
+      activeHelpFocusTrapRelease();
+      activeHelpFocusTrapRelease = null;
+    }
+
     const help = document.getElementById('help-overlay');
     if (help) {
       // Remove global click listener first
@@ -506,6 +584,9 @@ export function showHelpOverlay() {
 
   document.body.appendChild(helpDiv);
 
+  // Trap focus within the help overlay
+  activeHelpFocusTrapRelease = trapFocus(helpDiv);
+
   // Add global click listener after a short delay to prevent immediate closure
   setTimeout(() => {
     // Only add if the help div still exists and hasn't been closed
@@ -530,6 +611,11 @@ export function showHelpOverlay() {
 export function hideHelpOverlay() {
   const helpDiv = document.getElementById('help-overlay');
   if (helpDiv) {
+    // Release focus trap before removing element
+    if (activeHelpFocusTrapRelease) {
+      activeHelpFocusTrapRelease();
+      activeHelpFocusTrapRelease = null;
+    }
     if (activeHelpClickHandler) {
       document.removeEventListener('click', activeHelpClickHandler);
       activeHelpClickHandler = null;
@@ -564,23 +650,9 @@ export function showToast(message: string, durationMs: number = 2000): void {
 
   const toast = document.createElement('div');
   toast.id = 'luxar-toast';
+  toast.className = 'luxar-toast';
   toast.textContent = message;
-  Object.assign(toast.style, {
-    position: 'fixed',
-    bottom: '20px',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    padding: '10px 20px',
-    borderRadius: '8px',
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-    color: '#fff',
-    fontSize: '14px',
-    fontFamily: 'system-ui, sans-serif',
-    zIndex: '99999',
-    pointerEvents: 'none',
-    transition: 'opacity 0.3s ease',
-    opacity: '1',
-  });
+  toast.style.opacity = '1';
 
   document.body.appendChild(toast);
 
