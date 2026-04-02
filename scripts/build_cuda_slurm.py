@@ -35,6 +35,7 @@ from pathlib import Path
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
 
@@ -153,6 +154,7 @@ def list_gpu_partitions() -> list[str]:
 # Script generation
 # ---------------------------------------------------------------------------
 
+
 def generate_sbatch_script(
     *,
     partition: str,
@@ -176,8 +178,16 @@ def generate_sbatch_script(
     # re-submit another job instead of actually building.
     make_cmd = f"make -C {project_root} build-cuda SLURM=0"
 
-    account_line = f"#SBATCH --account={account}" if account else "# (no --account set; add SLURM_ACCOUNT=... to make command if needed)"
-    qos_line = f"#SBATCH --qos={qos}" if qos else "# (no --qos set; add SLURM_QOS=... to make command if needed)"
+    account_line = (
+        f"#SBATCH --account={account}"
+        if account
+        else "# (no --account set; add SLURM_ACCOUNT=... to make command if needed)"
+    )
+    qos_line = (
+        f"#SBATCH --qos={qos}"
+        if qos
+        else "# (no --qos set; add SLURM_QOS=... to make command if needed)"
+    )
 
     # gcc_load_block is injected at column 0 in the template (see placeholder
     # below).  textwrap.dedent strips the MINIMUM leading whitespace across all
@@ -368,6 +378,7 @@ def generate_sbatch_script(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Submit a CUDA extension build job to Slurm.",
@@ -380,23 +391,34 @@ def main() -> None:
               python scripts/build_cuda_slurm.py --partition gpu --dry-run
         """),
     )
-    parser.add_argument("--partition", "-p", default="gpu",
-                        help="Slurm partition to submit to (default: gpu)")
-    parser.add_argument("--cuda-module", default="auto",
-                        help="CUDA module to load, e.g. cuda/12.8.0_570.86.10 "
-                             "(default: auto-detect from torch.version.cuda)")
-    parser.add_argument("--account", "-A", default="",
-                        help="Slurm account (optional)")
-    parser.add_argument("--qos", default="",
-                        help="Slurm QOS (optional)")
-    parser.add_argument("--time", default="01:00:00",
-                        help="Wall-time limit (default: 01:00:00)")
-    parser.add_argument("--cpus", type=int, default=4,
-                        help="CPUs per task (default: 4)")
-    parser.add_argument("--mem", type=int, default=16,
-                        help="Memory in GB (default: 16)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Print the sbatch script but do not submit")
+    parser.add_argument(
+        "--partition",
+        "-p",
+        default="gpu",
+        help="Slurm partition to submit to (default: gpu)",
+    )
+    parser.add_argument(
+        "--cuda-module",
+        default="auto",
+        help="CUDA module to load, e.g. cuda/12.8.0_570.86.10 "
+        "(default: auto-detect from torch.version.cuda)",
+    )
+    parser.add_argument("--account", "-A", default="", help="Slurm account (optional)")
+    parser.add_argument("--qos", default="", help="Slurm QOS (optional)")
+    parser.add_argument(
+        "--time", default="01:00:00", help="Wall-time limit (default: 01:00:00)"
+    )
+    parser.add_argument(
+        "--cpus", type=int, default=4, help="CPUs per task (default: 4)"
+    )
+    parser.add_argument(
+        "--mem", type=int, default=16, help="Memory in GB (default: 16)"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the sbatch script but do not submit",
+    )
     args = parser.parse_args()
 
     project_root = get_project_root()
@@ -460,11 +482,15 @@ def main() -> None:
         cuda_module = args.cuda_module
         if cuda_module not in available_modules:
             print("WARNING")
-            print(f"\n⚠️  Module '{cuda_module}' was not found in 'module spider cuda' output.")
+            print(
+                f"\n⚠️  Module '{cuda_module}' was not found in 'module spider cuda' output."
+            )
             print("  Available modules:")
             for m in available_modules:
                 print(f"    {m}")
-            print("\n  Continuing anyway — module load will fail at runtime if it's wrong.")
+            print(
+                "\n  Continuing anyway — module load will fail at runtime if it's wrong."
+            )
         else:
             print(f"{cuda_module}  (user-specified)")
 
@@ -501,7 +527,9 @@ def main() -> None:
     available_gcc = list_available_gcc_modules()
     gcc_module = best_gcc_module(available_gcc)
     if gcc_module:
-        print(f"{gcc_module}  (auto-selected; system GCC 8.5.0 is too old for PyTorch 2.x)")
+        print(
+            f"{gcc_module}  (auto-selected; system GCC 8.5.0 is too old for PyTorch 2.x)"
+        )
     else:
         print("none needed (system GCC >= 9 assumed)")
 
@@ -515,7 +543,9 @@ def main() -> None:
             hint = ""
             if gpu_parts:
                 hint = f"\n  GPU-capable partitions on this cluster: {', '.join(gpu_parts)}"
-                hint += f"\n  Try: make build-cuda SLURM=1 SLURM_PARTITION={gpu_parts[0]}"
+                hint += (
+                    f"\n  Try: make build-cuda SLURM=1 SLURM_PARTITION={gpu_parts[0]}"
+                )
             die(
                 f"Partition '{args.partition}' not found.{hint}\n\n"
                 f"  Run 'sinfo' to see all available partitions."
@@ -587,7 +617,9 @@ def main() -> None:
     print("    make check-cuda-deps")
     print()
     print("  Then run splat fitting on a GPU node:")
-    print(f"    hatch run luxar gsplat batch <input.zarr> <output/> --partition {args.partition} --submit")
+    print(
+        f"    hatch run luxar gsplat batch <input.zarr> <output/> --partition {args.partition} --submit"
+    )
     print()
 
 

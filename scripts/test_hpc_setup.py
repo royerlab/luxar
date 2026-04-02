@@ -29,6 +29,7 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def find_python_310_plus() -> str | None:
     """Replicate the for-loop in install-hatch: find first Python >= 3.10."""
     candidates = ["python3.13", "python3.12", "python3.11", "python3.10", "python3"]
@@ -36,7 +37,13 @@ def find_python_310_plus() -> str | None:
         exe = shutil.which(py)
         if exe is None:
             continue
-        result = run([exe, "-c", "import sys; print(sys.version_info.major, sys.version_info.minor)"])
+        result = run(
+            [
+                exe,
+                "-c",
+                "import sys; print(sys.version_info.major, sys.version_info.minor)",
+            ]
+        )
         if result.returncode != 0:
             continue
         parts = result.stdout.strip().split()
@@ -72,6 +79,7 @@ def pnpm_cmd() -> str | None:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_python_310_available():
     """A Python 3.10+ interpreter must be reachable (needed by install-hatch fallback)."""
@@ -119,12 +127,11 @@ def test_hatch_uses_python_310_plus():
         [h, "run", "python", "-c", "import sys; print(sys.version_info[:2])"],
         cwd=str(Path(__file__).parent.parent),
     )
-    assert result.returncode == 0, (
-        f"hatch run python failed:\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"hatch run python failed:\n{result.stderr}"
     version_str = result.stdout.strip()
     # Output like "(3, 12)"
     import ast
+
     major, minor = ast.literal_eval(version_str)
     assert major == 3 and minor >= 10, (
         f"hatch env Python is {major}.{minor}, need >=3.10. "
@@ -171,7 +178,9 @@ def test_npm_prefix_fallback_works():
     assert os.access(local_pnpm, os.X_OK), f"{local_pnpm} exists but is not executable"
     result = run([str(local_pnpm), "--version"])
     assert result.returncode == 0
-    print(f"PASS: npm --prefix ~/.local fallback verified: {local_pnpm} → {result.stdout.strip()}")
+    print(
+        f"PASS: npm --prefix ~/.local fallback verified: {local_pnpm} → {result.stdout.strip()}"
+    )
 
 
 def test_hatch_env_venv_uses_correct_python():
@@ -185,8 +194,13 @@ def test_hatch_env_venv_uses_correct_python():
         print("SKIP: hatch not installed")
         return
     result = run(
-        [h, "run", "python", "-c",
-         "import sys; v=sys.version_info; assert (v.major,v.minor)>=(3,10), 'Python '+str(v[:2])+' < 3.10'"],
+        [
+            h,
+            "run",
+            "python",
+            "-c",
+            "import sys; v=sys.version_info; assert (v.major,v.minor)>=(3,10), 'Python '+str(v[:2])+' < 3.10'",
+        ],
         cwd=str(Path(__file__).parent.parent),
     )
     assert result.returncode == 0, (
@@ -212,9 +226,9 @@ if __name__ == "__main__":
     ]
 
     passed = failed = skipped = 0
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("HPC Setup Smoke Tests")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     for test in tests:
         name = test.__name__
@@ -228,8 +242,8 @@ if __name__ == "__main__":
             print(f"ERROR: {name}\n  {type(e).__name__}: {e}")
             failed += 1
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Results: {passed} passed, {failed} failed")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     sys.exit(0 if failed == 0 else 1)

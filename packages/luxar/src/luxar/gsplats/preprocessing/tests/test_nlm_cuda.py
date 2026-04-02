@@ -126,6 +126,8 @@ class TestCudaParameterValidation:
     def test_unsupported_search_distance_warns_and_falls_back(self, noisy_2d):
         _, noisy = noisy_2d
         with pytest.warns(UserWarning, match="CUDA NLM"):
-            result = denoise_nlm(noisy.cuda(), h=0.05, search_distance=3, backend="cuda")
+            result = denoise_nlm(
+                noisy.cuda(), h=0.05, search_distance=3, backend="cuda"
+            )
         # Should still return a valid result via PyTorch fallback
         assert result.shape == noisy.shape

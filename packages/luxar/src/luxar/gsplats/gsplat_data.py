@@ -1187,6 +1187,7 @@ class GSplatData(_SplatArrayMixin):
         description: Optional[str] = None,
         compress: Optional[Literal["zip", "tar.gz"]] = None,
         compressor: Optional[Any] = None,
+        zip_deflate: bool = False,
     ) -> None:
         """Save splats to .gsplats.zarr format.
 
@@ -1200,6 +1201,8 @@ class GSplatData(_SplatArrayMixin):
             include_provenance: Whether to include provenance info from stats
             description: Optional user description
             compress: Optional compression format ("zip" or "tar.gz"). Creates compressed archive.
+            zip_deflate: Use DEFLATE compression for the outer zip (default: STORED).
+                Useful when metadata overhead matters, e.g. for Git LFS storage.
 
         Example:
             >>> result = fit_gaussian_splats(image, n_iters=1000)
@@ -1286,6 +1289,7 @@ class GSplatData(_SplatArrayMixin):
                 description=description,
                 compress=compress,
                 compressor=compressor,
+                zip_deflate=zip_deflate,
             )
         else:
             # Multi-LOD: use v1.1 format with per-LOD groups
@@ -1301,6 +1305,7 @@ class GSplatData(_SplatArrayMixin):
                 description=description,
                 compress=compress,
                 compressor=compressor,
+                zip_deflate=zip_deflate,
             )
 
     def _save_multi_lod(
@@ -1316,6 +1321,7 @@ class GSplatData(_SplatArrayMixin):
         description: Optional[str],
         compress: Optional[Literal["zip", "tar.gz"]],
         compressor: Optional[Any] = None,
+        zip_deflate: bool = False,
     ) -> None:
         """Write multi-LOD data as v1.1 zarr format with per-LOD groups."""
         import datetime
@@ -1421,7 +1427,10 @@ class GSplatData(_SplatArrayMixin):
                 import zipfile
 
                 if compress == "zip":
-                    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as zipf:
+                    zip_method = (
+                        zipfile.ZIP_DEFLATED if zip_deflate else zipfile.ZIP_STORED
+                    )
+                    with zipfile.ZipFile(path, "w", zip_method) as zipf:
                         for file_path in zarr_path.rglob("*"):
                             if file_path.is_file():
                                 arcname = file_path.relative_to(zarr_path.parent)

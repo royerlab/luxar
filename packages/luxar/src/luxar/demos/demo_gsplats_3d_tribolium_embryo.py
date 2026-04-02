@@ -319,6 +319,7 @@ def fit_tribolium(volume: np.ndarray) -> GSplatData:
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
             compress="zip",
+            zip_deflate=True,
         )
 
     return result
