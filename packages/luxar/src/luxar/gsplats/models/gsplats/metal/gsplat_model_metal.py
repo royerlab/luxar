@@ -338,7 +338,7 @@ class MetalSplatFunction(torch.autograd.Function):
             # === PyTorch: Chain rule d_conic → d_Ls ===
             # CRITICAL: Custom autograd.Function.backward runs with grad mode disabled!
             # Must explicitly enable grad mode for the recomputation.
-            with torch.enable_grad():  # type: ignore[no-untyped-call]
+            with torch.enable_grad():
                 conic_recomputed = cholesky_to_conic(Ls_for_conic)  # In [Z,Y,X]
 
             # CRITICAL: d_conic is in [X,Y,Z], but recomputed conic is in [Z,Y,X]
