@@ -227,7 +227,6 @@ vi.mock('../rendering/material-manager', () => ({
       uniforms: {
         opacity: { value: 1.0 },
         gamma: { value: 1.0 },
-        baseAlpha: { value: 0.01 },
         fov: { value: 1.047 },
         resolution: { value: { x: 1, y: 1 } },
       },

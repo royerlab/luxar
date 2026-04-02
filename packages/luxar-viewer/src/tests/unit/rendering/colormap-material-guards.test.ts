@@ -50,20 +50,24 @@ describe('Material colormap guards', () => {
     it('updateColormapTexture enables colormap and sets needsUpdate', () => {
       const mat = new PointMaterial();
       expect(mat.defines.USE_COLORMAP).toBeUndefined();
+      expect(mat.vertexColors).toBe(true);
 
       const tex = new THREE.DataTexture(new Uint8Array(1024), 256, 1, THREE.RGBAFormat);
       mat.updateColormapTexture(tex);
       expect(mat.defines.USE_COLORMAP).toBe('');
       expect(mat.uniforms.uColormapTex.value).toBe(tex);
+      expect(mat.vertexColors).toBe(false);
     });
 
     it('updateColormapTexture(null) disables colormap', () => {
       const tex = new THREE.DataTexture(new Uint8Array(1024), 256, 1, THREE.RGBAFormat);
       const mat = new PointMaterial({ colormapTexture: tex });
       expect(mat.defines.USE_COLORMAP).toBe('');
+      expect(mat.vertexColors).toBe(false);
 
       mat.updateColormapTexture(null);
       expect(mat.defines.USE_COLORMAP).toBeUndefined();
+      expect(mat.vertexColors).toBe(true);
     });
 
     it('vertex shader contains #ifdef USE_COLORMAP guard', () => {

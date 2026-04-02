@@ -166,6 +166,7 @@ def generate_cubic_array(
                 sharpness=sharpness_array,
                 opacity=1.0,
                 blending_mode="additive",
+                intensity=0.384,
             )
             aprint(f"✓ Added {len(positions):,} points (cubic array)")
 

@@ -237,6 +237,7 @@ def generate_performance_test_dataset(
                 radii=radii,
                 opacity=0.8,
                 blending_mode="additive",
+                intensity=0.1,
             )
 
         total_points = len(positions)

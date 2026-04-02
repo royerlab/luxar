@@ -112,9 +112,7 @@ export const config: AppConfig = {
   // Shader configuration for point rendering
   // Note: global exposure/offset/gamma live in renderingControls.defaults (applied in post-processing)
   shader: {
-    points: {
-      baseAlpha: 0.01, // Base alpha intensity
-    },
+    points: {},
   },
 
   // UI configuration for overlays and visual elements

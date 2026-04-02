@@ -62,17 +62,7 @@ camera: {
 
 ### Shader Configuration
 
-Point rendering shader constants:
-
-```typescript
-shader: {
-  points: {
-    baseAlpha: 0.01,         // Base alpha intensity
-  }
-}
-```
-
-**Note**: Per-node color adjustment (intensity, offset, gamma) is configured per-material. Global exposure/offset/gamma are in `renderingControls.defaults` and applied in the `LuxarToneMappingEffect` post-processing pass. Post-processing pipeline internals (HalfFloatType, tone mapping modes) are managed directly by the PostProcessingManager.
+Point rendering uses `falloff * opacity` for alpha, matching line material behavior. Per-node color adjustment (intensity, offset, gamma) is configured per-material. Global exposure/offset/gamma are in `renderingControls.defaults` and applied in the `LuxarToneMappingEffect` post-processing pass.
 
 ### User Interface Configuration
 

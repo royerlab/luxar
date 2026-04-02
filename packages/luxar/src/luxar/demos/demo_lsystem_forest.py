@@ -734,6 +734,7 @@ def generate_forest(
                     colors=leaf_colors,
                     radii=leaf_radii,
                     sharpness=leaf_sharpness,
+                    intensity=0.031,
                 )
                 aprint(f"  Foliage: {len(leaf_positions):,} fluffy leaf points")
 

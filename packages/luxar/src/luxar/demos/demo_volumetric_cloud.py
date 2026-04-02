@@ -368,6 +368,7 @@ def generate_volumetric_cloud(
                 sharpness=sharpness,
                 opacity=0.95,  # Slightly transparent
                 blending_mode="additive",  # Clouds accumulate light
+                intensity=0.016,
             )
 
         aprint(f"✓ Written {len(positions):,} points to {output_path}")

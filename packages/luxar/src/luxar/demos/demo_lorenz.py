@@ -145,6 +145,7 @@ def generate_lorenz_attractor(
                 radii=1.0,  # Uniform radius for visibility
                 opacity=0.9,
                 blending_mode="additive",
+                intensity=0.0625,
             )
 
         aprint(f"✓ Written to {output_path}")

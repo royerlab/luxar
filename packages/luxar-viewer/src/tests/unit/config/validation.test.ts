@@ -182,35 +182,6 @@ describe('validateConfig', () => {
       cfg.renderingControls.defaults.exposure = -5;
       expect(validateConfig(cfg).errors.filter((e) => e.includes('exposure'))).toHaveLength(0);
     });
-
-    it('should error when baseAlpha is less than 0', () => {
-      const cfg = cloneConfig();
-      cfg.shader.points.baseAlpha = -0.5;
-
-      const result = validateConfig(cfg);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(expect.stringContaining('Invalid base alpha'));
-    });
-
-    it('should error when baseAlpha is greater than 1', () => {
-      const cfg = cloneConfig();
-      cfg.shader.points.baseAlpha = 1.5;
-
-      const result = validateConfig(cfg);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(expect.stringContaining('Invalid base alpha'));
-    });
-
-    it('should accept baseAlpha at boundary values (0 and 1)', () => {
-      const cfg = cloneConfig();
-      cfg.shader.points.baseAlpha = 0;
-      expect(validateConfig(cfg).errors.filter((e) => e.includes('base alpha'))).toHaveLength(0);
-
-      cfg.shader.points.baseAlpha = 1;
-      expect(validateConfig(cfg).errors.filter((e) => e.includes('base alpha'))).toHaveLength(0);
-    });
   });
 
   describe('bloom consistency validation', () => {
