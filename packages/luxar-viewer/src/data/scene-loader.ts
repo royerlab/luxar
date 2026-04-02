@@ -10,7 +10,6 @@ import type { Readable } from '@zarrita/storage';
 import * as THREE from 'three';
 import { PointSpatialIndexLoader } from './point-spatial-index-loader';
 import { LinesSpatialIndexLoader, buildInstanceBuffers } from './lines-spatial-index-loader';
-import { computeLinesTolerance } from './lines-chunk-spatial-index';
 import {
   DataLoader,
   ViewState,
@@ -57,9 +56,15 @@ import {
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { getColormapTexture } from '../rendering/colormap-textures';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './nd-transform';
-import type { AccumulatorStats } from './data-accumulator';
 import { UpdateProfiler } from '../profiling/update-profiler';
 import { getWorkerPool } from '../workers/worker-pool';
+import {
+  getAggregatedPointsAccumulatorStats,
+  getAggregatedLinesAccumulatorStats,
+  getAggregatedGSplatsAccumulatorStats,
+} from './stats-aggregator';
+import { LoaderRegistry } from './loader-registry';
+import { computeTolerance } from './tolerance-computer';
 
 // ============================================================================
 // Staged commit types for atomic geometry updates
@@ -104,9 +109,22 @@ export class SceneLoader {
   private cachingStore: TwoLevelCachingStore | null = null;
   // L0 decompressed chunk cache - caches decoded zarr chunks to avoid Blosc decompression
   private l0Cache: DecompressedChunkCache | null = null;
-  private loaders = new Map<string, DataLoader>();
-  private linesLoaders = new Map<string, LinesDataLoader>();
-  private gsplatLoaders = new Map<string, GSplatsDataLoader>();
+  private registry = new LoaderRegistry();
+
+  // Delegate to registry for backwards compatibility within this class
+  private get loaders() {
+    return this.registry.loaders;
+  }
+  private get linesLoaders() {
+    return this.registry.linesLoaders;
+  }
+  private get gsplatLoaders() {
+    return this.registry.gsplatLoaders;
+  }
+  private get failedLoaders() {
+    return this.registry.failedLoaders;
+  }
+
   private viewState: ViewState;
   private config: LoaderConfig;
   private rootGroup: THREE.Group | null = null;
@@ -117,12 +135,6 @@ export class SceneLoader {
   // Integrated into updatePointsGeometry/updateLinesGeometry/updateGSplatsGeometry
   // Enabled via config.dataLoading.performance.useGPUBufferPool
   private _gpuBufferPool: GPUBufferPool | null = null;
-
-  // Error recovery tracking
-  private failedLoaders = new Map<
-    string,
-    { error: Error; timestamp: number; retryCount: number }
-  >();
 
   // Update profiler for timing scene updates (optional, provided by SceneLoaderManager)
   private profiler: UpdateProfiler | null = null;
@@ -308,6 +320,16 @@ export class SceneLoader {
       });
       cachingStore.setPrefetcher(prefetcher);
 
+      // Register L0 invalidation: when L1/L2 are cleared (e.g., content hash change),
+      // also clear the L0 decompressed chunk cache to prevent stale data.
+      if (this.l0Cache) {
+        const l0 = this.l0Cache;
+        cachingStore.onInvalidate(() => {
+          l0.clear();
+          log.info(Modules.SCENE_LOADER, 'L0 cache cleared due to L1/L2 invalidation');
+        });
+      }
+
       rawStore = cachingStore;
       this.cachingStore = cachingStore;
     } else {
@@ -396,13 +418,13 @@ export class SceneLoader {
 
         // Connect accumulator providers for Memory tab (aggregate stats across all loaders)
         monitor.setAccumulatorProvider('points', {
-          getStats: () => this.getAggregatedPointsAccumulatorStats(),
+          getStats: () => getAggregatedPointsAccumulatorStats(this.loaders),
         });
         monitor.setAccumulatorProvider('lines', {
-          getStats: () => this.getAggregatedLinesAccumulatorStats(),
+          getStats: () => getAggregatedLinesAccumulatorStats(this.linesLoaders),
         });
         monitor.setAccumulatorProvider('gsplats', {
-          getStats: () => this.getAggregatedGSplatsAccumulatorStats(),
+          getStats: () => getAggregatedGSplatsAccumulatorStats(this.gsplatLoaders),
         });
 
         // Connect profiler for Performance tab timing display
@@ -469,31 +491,30 @@ export class SceneLoader {
     this._updateVersion++;
     const currentVersion = this._updateVersion;
 
-    // CRITICAL: Deep copy arrays to prevent mutation during async operations
-    // The spread operator only does shallow copy - arrays must be explicitly copied
-    this.viewState = {
-      ...this.viewState,
-      ...viewState,
-      // Always copy arrays to prevent external mutation affecting in-flight updates
-      displayDims: viewState.displayDims
-        ? [...viewState.displayDims]
-        : [...this.viewState.displayDims],
-      slicePosition: viewState.slicePosition
-        ? [...viewState.slicePosition]
-        : [...this.viewState.slicePosition],
-      tolerance: viewState.tolerance ? [...viewState.tolerance] : [...this.viewState.tolerance],
-    };
-
-    const totalLoaders = this.loaders.size + this.linesLoaders.size + this.gsplatLoaders.size;
-    log.update(
-      Modules.SCENE_LOADER,
-      `Updating view v${currentVersion} for ${totalLoaders} loaders`
-    );
-
-    // Start profiling update cycle
-    this.profiler?.beginUpdate();
-
     try {
+      // CRITICAL: Deep copy arrays to prevent mutation during async operations
+      // The spread operator only does shallow copy - arrays must be explicitly copied
+      this.viewState = {
+        ...this.viewState,
+        ...viewState,
+        // Always copy arrays to prevent external mutation affecting in-flight updates
+        displayDims: viewState.displayDims
+          ? [...viewState.displayDims]
+          : [...this.viewState.displayDims],
+        slicePosition: viewState.slicePosition
+          ? [...viewState.slicePosition]
+          : [...this.viewState.slicePosition],
+        tolerance: viewState.tolerance ? [...viewState.tolerance] : [...this.viewState.tolerance],
+      };
+
+      const totalLoaders = this.loaders.size + this.linesLoaders.size + this.gsplatLoaders.size;
+      log.update(
+        Modules.SCENE_LOADER,
+        `Updating view v${currentVersion} for ${totalLoaders} loaders`
+      );
+
+      // Start profiling update cycle
+      this.profiler?.beginUpdate();
       // Noop session for when no profiler is available
       const noopSession = {
         begin: () => ({ end: () => {}, setMetadata: () => {}, markSkipped: () => {} }) as any,
@@ -841,6 +862,12 @@ export class SceneLoader {
       // during this block. All meshes update in the same rendered frame.
       // ================================================================
 
+      // Advance GPU buffer pool frame counter once per update cycle
+      // (not per-acquire) so eviction timing reflects actual frames
+      if (this._gpuBufferPool) {
+        this._gpuBufferPool.beginFrame();
+      }
+
       for (const staged of pointsStaged) {
         if (staged) this.updatePointsGeometry(staged.path, staged.data);
       }
@@ -1085,9 +1112,7 @@ export class SceneLoader {
 
     // Build new instance buffers
     const ndim = data.ndim;
-    let tolerance = viewState.dimensions
-      ? computeLinesTolerance(viewState.dimensions, viewState.displayDims)
-      : new Array(ndim).fill(0).map((_, i) => (viewState.displayDims.includes(i) ? 1e10 : 0));
+    let tolerance = computeTolerance('lines', viewState.displayDims, ndim, viewState.dimensions);
 
     // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
     const attrs = mesh.userData.attrs as { extend_to_all?: string[] };
@@ -1764,11 +1789,12 @@ export class SceneLoader {
       }
 
       // Build instance buffers with nD clipping
-      let tolerance = linesViewState.dimensions
-        ? computeLinesTolerance(linesViewState.dimensions, linesViewState.displayDims)
-        : new Array(attrs.ndim || 3)
-            .fill(0)
-            .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
+      let tolerance = computeTolerance(
+        'lines',
+        linesViewState.displayDims,
+        attrs.ndim || 3,
+        linesViewState.dimensions
+      );
 
       // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
       // This ensures segments aren't clipped when navigating through extended dimensions
@@ -2770,11 +2796,7 @@ export class SceneLoader {
    * Useful for retry operations or after user acknowledges errors
    */
   clearFailures(): void {
-    const count = this.failedLoaders.size;
-    this.failedLoaders.clear();
-    if (count > 0) {
-      log.info(Modules.SCENE_LOADER, `Cleared ${count} failed loader(s) from tracking`);
-    }
+    this.registry.clearAllFailures();
   }
 
   /**
@@ -2928,107 +2950,11 @@ export class SceneLoader {
   }
 
   /**
-   * Get aggregated accumulator stats for all points loaders
-   */
-  private getAggregatedPointsAccumulatorStats(): AccumulatorStats {
-    let totalCapacity = 0;
-    let totalAllocations = 0;
-    let totalGrowthEvents = 0;
-    let totalMemoryMB = 0;
-
-    for (const loader of this.loaders.values()) {
-      const stats = (loader as PointSpatialIndexLoader).getAccumulatorStats?.();
-      if (stats) {
-        totalCapacity += stats.capacity;
-        totalAllocations += stats.allocations;
-        totalGrowthEvents += stats.growthEvents;
-        totalMemoryMB += stats.memoryMB;
-      }
-    }
-
-    return {
-      capacity: totalCapacity,
-      allocations: totalAllocations,
-      growthEvents: totalGrowthEvents,
-      memoryMB: totalMemoryMB,
-    };
-  }
-
-  /**
-   * Get aggregated accumulator stats for all lines loaders
-   */
-  private getAggregatedLinesAccumulatorStats(): AccumulatorStats {
-    let totalCapacity = 0;
-    let totalAllocations = 0;
-    let totalGrowthEvents = 0;
-    let totalMemoryMB = 0;
-
-    for (const loader of this.linesLoaders.values()) {
-      const stats = (loader as LinesSpatialIndexLoader).getAccumulatorStats?.();
-      if (stats) {
-        totalCapacity += stats.capacity;
-        totalAllocations += stats.allocations;
-        totalGrowthEvents += stats.growthEvents;
-        totalMemoryMB += stats.memoryMB;
-      }
-    }
-
-    return {
-      capacity: totalCapacity,
-      allocations: totalAllocations,
-      growthEvents: totalGrowthEvents,
-      memoryMB: totalMemoryMB,
-    };
-  }
-
-  /**
-   * Get aggregated accumulator stats for all gsplats loaders
-   */
-  private getAggregatedGSplatsAccumulatorStats(): AccumulatorStats {
-    let totalCapacity = 0;
-    let totalAllocations = 0;
-    let totalGrowthEvents = 0;
-    let totalMemoryMB = 0;
-
-    for (const loader of this.gsplatLoaders.values()) {
-      const stats = (loader as GSplatsSpatialIndexLoader).getAccumulatorStats?.();
-      if (stats) {
-        totalCapacity += stats.capacity;
-        totalAllocations += stats.allocations;
-        totalGrowthEvents += stats.growthEvents;
-        totalMemoryMB += stats.memoryMB;
-      }
-    }
-
-    return {
-      capacity: totalCapacity,
-      allocations: totalAllocations,
-      growthEvents: totalGrowthEvents,
-      memoryMB: totalMemoryMB,
-    };
-  }
-
-  /**
    * Dispose of all resources
    */
   dispose(): void {
-    // Dispose points loaders
-    for (const loader of this.loaders.values()) {
-      loader.dispose();
-    }
-    this.loaders.clear();
-
-    // Dispose lines loaders
-    for (const loader of this.linesLoaders.values()) {
-      loader.dispose();
-    }
-    this.linesLoaders.clear();
-
-    // Dispose gsplat loaders
-    for (const loader of this.gsplatLoaders.values()) {
-      loader.dispose();
-    }
-    this.gsplatLoaders.clear();
+    // Dispose all geometry loaders via registry
+    this.registry.disposeAll();
 
     // Dispose caching store (flushes L2 metadata, clears L1)
     if (this.cachingStore) {

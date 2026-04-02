@@ -90,7 +90,9 @@ export class MaterialManager {
       ? Math.round(Math.max(0, props.sharpnessScale) * 1000)
       : 1000;
 
-    const key = `point_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_s${sharpnessBucket}`;
+    const isOpaque = this.isOpaqueMode(props.blendingMode);
+    const transparent = !isOpaque;
+    const key = `point_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_s${sharpnessBucket}_t${transparent ? 1 : 0}`;
 
     // Check cache first
     let material = this.pointMaterialCache.get(key);
@@ -99,7 +101,6 @@ export class MaterialManager {
     }
 
     // Determine material properties based on mode
-    const isOpaque = this.isOpaqueMode(props.blendingMode);
     const isAdditive = props.blendingMode === 'additive';
 
     // Create new PointMaterial instance
@@ -155,7 +156,8 @@ export class MaterialManager {
     const intensityBucket = Math.round(Math.max(0, Math.min(100, props.intensity)) * 100);
     const offsetBucket = Math.round((Math.max(-10, Math.min(10, props.offset)) + 10) * 10);
 
-    const key = `line_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}`;
+    const lineTransparent = props.blendingMode !== 'opaque';
+    const key = `line_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${lineTransparent ? 1 : 0}`;
 
     // Check cache first
     let material = this.lineMaterialCache.get(key);
@@ -196,7 +198,8 @@ export class MaterialManager {
     const offsetBucket = Math.round((Math.max(-10, Math.min(10, props.offset)) + 10) * 10);
     const truncBucket = Math.round((props.truncationRadius ?? 3.0) * 10);
 
-    const key = `gsplat_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${truncBucket}`;
+    const gsplatTransparent = props.blendingMode !== 'opaque';
+    const key = `gsplat_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_tr${truncBucket}_t${gsplatTransparent ? 1 : 0}`;
 
     // Check cache first
     let material = this.gsplatMaterialCache.get(key);

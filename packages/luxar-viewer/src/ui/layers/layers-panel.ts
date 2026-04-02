@@ -221,6 +221,9 @@ export class LayersPanel {
     const closeBtn = document.createElement('button');
     closeBtn.className = 'luxar-layers-panel__close';
     closeBtn.textContent = '\u00d7';
+    closeBtn.title = 'Close (L)';
+    closeBtn.setAttribute('aria-label', 'Close layers panel');
+    closeBtn.setAttribute('aria-keyshortcuts', 'l');
     closeBtn.addEventListener('click', () => this.hide());
     header.appendChild(title);
     header.appendChild(closeBtn);

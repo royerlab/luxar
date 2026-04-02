@@ -179,3 +179,50 @@ Contrast-Limited Adaptive Histogram Equalization for nD data.
    :show-inheritance:
 
 .. autofunction:: luxar.gsplats.clahe.apply_clahe
+
+Batch Fitting
+-------------
+
+HPC/Slurm batch orchestration for large-scale Gaussian splat fitting.
+
+.. automodule:: luxar.gsplats.batch
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Culling
+-------
+
+Gaussian splat culling strategies for reducing splat count while preserving quality.
+
+.. automodule:: luxar.gsplats.culling
+   :members:
+   :undoc-members:
+
+Quality Metrics
+---------------
+
+PSNR, SSIM, and MSE metrics for evaluating reconstruction quality.
+
+.. automodule:: luxar.gsplats.metrics
+   :members:
+   :undoc-members:
+
+GPU Profiling
+-------------
+
+GPU memory and performance profiling for automatic tile-size selection.
+
+.. automodule:: luxar.gsplats.gpu_profile
+   :members:
+   :undoc-members:
+
+Volume Rendering
+----------------
+
+Render Gaussian splats back to volume arrays for quality comparison.
+
+.. automodule:: luxar.gsplats.rendering
+   :members:
+   :undoc-members:
+   :show-inheritance:

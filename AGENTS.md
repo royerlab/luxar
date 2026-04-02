@@ -33,5 +33,33 @@
 - PRs should describe the change, list tests run, and include screenshots for viewer/UI changes.
 - Update `CHANGELOG.md`, `CLAUDE.md`, and `docs/guides/user/LUXAR_ZARR_FORMAT.md` when the change affects them.
 
+## GSplats Subsystem
+- `packages/luxar/src/luxar/gsplats/` is the Gaussian splatting subsystem with these subpackages:
+  - `fitting/` — Modular 6-stage fitting pipeline with `DynamicOpsConfig` for splat add/remove
+  - `seeds/` — 4 seeding strategies: decomposition, edges, grid, peaks (GPU-accelerated)
+  - `models/gsplats/` — PyTorch `GaussianSplatModel` with CUDA and Metal backends
+  - `batch/` — HPC/Slurm batch orchestration (plan, status, merge, validate, cancel)
+  - `rendering/` — Render splats back to volume arrays (`render_to_volume`)
+  - `preprocessing/` — NLM denoising with CUDA/PyTorch/skimage backends
+  - `io/` — Save/load `.gsplats.zarr` format
+  - `optim/` — Per-splat Adam optimizer with gradient dilution compensation
+  - `clahe/` — Contrast-limited adaptive histogram equalization
+  - `multiscale/` — Hierarchical multiscale decomposition
+  - `culling.py`, `metrics.py`, `gpu_profile.py`, `tiling.py` — Standalone utilities
+- Install optional deps: `pip install "luxar[gsplats]"` (adds PyTorch, scipy, etc.)
+
+## CUDA / Metal Backends
+- CUDA: `packages/luxar/src/luxar/gsplats/models/gsplats/cuda/` — splat-centric forward/backward kernels
+  - Build: `make build-cuda` (local GPU) or `make build-cuda SLURM=1` (HPC)
+  - Tests: `make test-cuda`
+- Metal: `packages/luxar/src/luxar/gsplats/models/gsplats/metal/` — Apple GPU splatting
+- NLM CUDA: `packages/luxar/src/luxar/gsplats/preprocessing/cuda/` — CUDA NLM denoising extension
+
+## CLI Modules
+- `packages/luxar/src/luxar/cli/main.py` — Core commands: `serve`, `demo`, `info`, `profiles`, `export`
+- `packages/luxar/src/luxar/cli/gsplat_commands.py` — GSplat commands: `fit`, `convert`, `render`, `compare`, `merge`, `split`, `slice`, `filter`, `cull`, `info`, `view`, `benchmark`, `batch`, `transform`, `denoise`, `napari`
+- `packages/luxar/src/luxar/cli/gsplat_config.py` — Config loading/validation for gsplat commands
+- `packages/luxar/src/luxar/cli/export.py` — Standalone viewer export
+
 ## Agent-Specific Notes
 - Keep docs in sync with code changes and follow gotchas in `CLAUDE.md` for tests and data formats.

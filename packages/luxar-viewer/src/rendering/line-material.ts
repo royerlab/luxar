@@ -136,10 +136,13 @@ export class LineMaterial extends THREE.ShaderMaterial {
       float width = mix(aStartWidth, aEndWidth, t);
       vSharpness = mix(aStartSharpness, aEndSharpness, t);
 
-      // Project to clip space
-      vec4 clipStart = projectionMatrix * modelViewMatrix * vec4(aStartPos, 1.0);
-      vec4 clipEnd = projectionMatrix * modelViewMatrix * vec4(aEndPos, 1.0);
-      vec4 clipPos = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
+      // Project to clip space (pre-multiply modelViewMatrix once per endpoint)
+      vec4 mvStart = modelViewMatrix * vec4(aStartPos, 1.0);
+      vec4 mvEnd = modelViewMatrix * vec4(aEndPos, 1.0);
+      vec4 mvPos = mix(mvStart, mvEnd, t);
+      vec4 clipStart = projectionMatrix * mvStart;
+      vec4 clipEnd = projectionMatrix * mvEnd;
+      vec4 clipPos = projectionMatrix * mvPos;
 
       // Convert clip-space endpoints to pixel coordinates for correct aspect ratio handling
       // NDC to pixels: ndc * resolution / 2 (NDC range -1 to +1, pixels range 0 to resolution)
@@ -163,7 +166,7 @@ export class LineMaterial extends THREE.ShaderMaterial {
         // uFOV stores frustumHeight in ortho mode
         rawPixelWidth = width * uResolution.y / uFOV;
       } else {
-        float dist = length((modelViewMatrix * vec4(worldPos, 1.0)).xyz);
+        float dist = length(mvPos.xyz);
         float tanHalfFov = tan(uFOV * 0.5);
         rawPixelWidth = width * uResolution.y / (dist * tanHalfFov);
       }
@@ -271,7 +274,7 @@ export class LineMaterial extends THREE.ShaderMaterial {
       vec3 gammaColor = pow(adjusted, vec3(uInvGamma));
 
       // Output color with alpha for AdditiveBlending (SrcAlpha, One)
-      vec3 finalColor = gammaColor * intensity;
+      vec3 finalColor = gammaColor;
       fragColor = vec4(finalColor, intensity * uOpacity);
     }
   `;

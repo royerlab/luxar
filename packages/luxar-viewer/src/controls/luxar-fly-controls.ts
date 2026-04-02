@@ -77,6 +77,10 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   // Quaternion-based orientation
   private orientation = new THREE.Quaternion();
 
+  // Saved state for saveState/reset
+  private savedPosition = new THREE.Vector3();
+  private savedOrientation = new THREE.Quaternion();
+
   // Mouse state — tracks which button is down for different drag actions
   // Left drag = strafe (translate), Right drag = rotate (look)
   private activeMouseAction: 'none' | 'strafe' | 'rotate' = 'none';
@@ -111,6 +115,9 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
     // Initialize orientation from current camera
     this.initializeFromCamera();
+
+    // Save initial state so reset() has a valid baseline
+    this.saveState();
 
     // Only add event listeners if not using external input management
     // This will be controlled by setExternalInputManagement()
@@ -659,14 +666,18 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
    * Save current state (for reset functionality)
    */
   public saveState(): void {
-    // Store current camera position and orientation
-    // This would be used by a reset() method if needed
+    this.savedPosition.copy(this.camera.position);
+    this.savedOrientation.copy(this.orientation);
   }
 
   /**
    * Reset to saved state
    */
   public reset(): void {
+    // Restore saved position and orientation
+    this.camera.position.copy(this.savedPosition);
+    this.orientation.copy(this.savedOrientation);
+
     // Reset velocities
     this.velocity.set(0, 0, 0);
     this.angularVelocity.set(0, 0, 0);
@@ -687,9 +698,6 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     // Reset speed boost and mouse state
     this.speedBoost = false;
     this.activeMouseAction = 'none';
-
-    // Reset to identity quaternion (looking forward)
-    this.orientation.set(0, 0, 0, 1);
 
     this.updateOrientation();
   }

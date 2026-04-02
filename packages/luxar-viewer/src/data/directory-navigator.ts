@@ -100,15 +100,22 @@ export class DirectoryNavigator {
     };
   }
 
+  /** Default timeout for fetch requests (ms) */
+  private static readonly FETCH_TIMEOUT = 10000;
+
   /**
    * Check if a path is a Zarr dataset by looking for .zgroup file.
    */
   private async checkIfZarr(url: string): Promise<boolean> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DirectoryNavigator.FETCH_TIMEOUT);
     try {
-      const response = await fetch(url + '.zgroup', { method: 'HEAD' });
+      const response = await fetch(url + '.zgroup', { method: 'HEAD', signal: controller.signal });
       return response.ok;
     } catch {
       return false;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -116,6 +123,8 @@ export class DirectoryNavigator {
    * Try WebDAV PROPFIND method for directory listing.
    */
   private async tryWebDAV(url: string): Promise<{ entries: DirectoryEntry[] } | null> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DirectoryNavigator.FETCH_TIMEOUT);
     try {
       const response = await fetch(url, {
         method: 'PROPFIND',
@@ -123,6 +132,7 @@ export class DirectoryNavigator {
           Depth: '1',
           'Content-Type': 'application/xml',
         },
+        signal: controller.signal,
       });
 
       if (!response.ok) return null;
@@ -161,6 +171,8 @@ export class DirectoryNavigator {
       return { entries };
     } catch {
       return null;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -168,12 +180,15 @@ export class DirectoryNavigator {
    * Try parsing HTML directory listing (works with nginx, Apache, etc.).
    */
   private async tryHTMLParsing(url: string): Promise<{ entries: DirectoryEntry[] } | null> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DirectoryNavigator.FETCH_TIMEOUT);
     try {
       // First try to get JSON response
       const jsonResponse = await fetch(url, {
         headers: {
           Accept: 'application/json',
         },
+        signal: controller.signal,
       });
 
       if (jsonResponse.ok) {
@@ -194,7 +209,7 @@ export class DirectoryNavigator {
       }
 
       // Fall back to HTML parsing
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: controller.signal });
       if (!response.ok) return null;
 
       const html = await response.text();
@@ -286,6 +301,8 @@ export class DirectoryNavigator {
       return uniqueEntries.length > 0 ? { entries: uniqueEntries } : null;
     } catch {
       return null;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -293,8 +310,10 @@ export class DirectoryNavigator {
    * Try loading a .luxar-index.json file with directory contents.
    */
   private async tryIndexFile(url: string): Promise<{ entries: DirectoryEntry[] } | null> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DirectoryNavigator.FETCH_TIMEOUT);
     try {
-      const response = await fetch(url + '.luxar-index.json');
+      const response = await fetch(url + '.luxar-index.json', { signal: controller.signal });
       if (!response.ok) return null;
 
       const index = await response.json();
@@ -313,6 +332,8 @@ export class DirectoryNavigator {
       return { entries };
     } catch {
       return null;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 

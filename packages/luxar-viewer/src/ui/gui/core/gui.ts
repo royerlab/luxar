@@ -20,6 +20,7 @@ interface InternalGUIOptions {
   closeFolders: boolean;
   container: HTMLElement;
   onClose?: () => void;
+  closeButtonTitle?: string;
 }
 
 export class GUI extends Folder {
@@ -53,6 +54,7 @@ export class GUI extends Folder {
       closeFolders: options.closeFolders ?? false,
       container: options.container ?? document.body,
       onClose: options.onClose,
+      closeButtonTitle: options.closeButtonTitle,
     };
 
     // Initialize Folder base class with null parent (this is root)
@@ -103,7 +105,10 @@ export class GUI extends Folder {
       const closeBtn = document.createElement('button');
       closeBtn.className = 'luxar-gui__close-btn';
       closeBtn.textContent = '×';
-      closeBtn.setAttribute('aria-label', 'Close');
+      closeBtn.setAttribute('aria-label', 'Close panel');
+      if (this.guiOptions.closeButtonTitle) {
+        closeBtn.title = this.guiOptions.closeButtonTitle;
+      }
       this.eventManager.add(closeBtn, 'click', () => {
         this.guiOptions.onClose?.();
       });

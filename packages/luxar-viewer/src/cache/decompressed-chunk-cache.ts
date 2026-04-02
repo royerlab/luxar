@@ -174,6 +174,13 @@ export class DecompressedChunkCache {
   }
 
   /**
+   * Dispose the cache, releasing all cached chunks.
+   */
+  dispose(): void {
+    this.clear();
+  }
+
+  /**
    * Get cache statistics for monitoring.
    *
    * @returns Cache statistics including size, count, hits, misses, and hit rate

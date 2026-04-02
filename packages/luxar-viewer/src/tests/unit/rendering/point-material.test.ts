@@ -97,7 +97,7 @@ describe('PointMaterial', () => {
 
       // Check that sharpness compensation IS applied
       expect(material.vertexShader).toContain(
-        'float sharpnessCompensation = 1.0 + (vSharpness - 1.0) * 0.15'
+        '1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)))'
       );
       expect(material.vertexShader).toContain(
         'float pointSize = basePointSize * sharpnessCompensation'
@@ -214,7 +214,9 @@ describe('PointMaterial', () => {
 
       // The new correct compensation should be present
       expect(material.vertexShader).toContain('sharpnessCompensation');
-      expect(material.vertexShader).toContain('1.0 + (vSharpness - 1.0) * 0.15');
+      expect(material.vertexShader).toContain(
+        '1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)))'
+      );
     });
 
     it('should clamp point size to avoid undefined behavior', () => {

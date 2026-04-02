@@ -112,11 +112,14 @@ export function wrapWithCache<D extends zarr.DataType>(
           // Cache miss - call original getChunk (triggers Blosc decompression)
           const chunk = await target.getChunk(chunkCoords, options);
 
-          // Cache the decompressed result
+          // Cache the decompressed result.
+          // Clone the data to prevent callers from mutating the cached copy
+          // (ArrayBufferViews are references to underlying ArrayBuffers).
+          const clonedData = (chunk.data as any).slice() as ArrayBufferView;
           const cacheEntry: DecompressedChunk = {
-            data: chunk.data as ArrayBufferView,
-            shape: chunk.shape,
-            stride: chunk.stride,
+            data: clonedData,
+            shape: chunk.shape.slice(),
+            stride: chunk.stride.slice(),
           };
           cache.set(key, cacheEntry);
 
