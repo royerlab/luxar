@@ -23,12 +23,14 @@ import * as THREE from 'three';
 import { config } from '../config';
 import type { LuxarCamera } from '../scene/camera-utils';
 
-// Reusable temps to avoid per-frame/per-event allocations
-const _forward = new THREE.Vector3();
-const _right = new THREE.Vector3();
-const _up = new THREE.Vector3();
-const _tempV = new THREE.Vector3();
-const _q1 = new THREE.Quaternion();
+// Reusable scratch vectors/quaternions to avoid per-frame/per-event allocations.
+// Names are neutral (v0-v3) because these hold different semantic values depending
+// on the call site (e.g., _v0 may be "forward" in update() but "cameraRight" in onMouseMove()).
+const _v0 = new THREE.Vector3();
+const _v1 = new THREE.Vector3();
+const _v2 = new THREE.Vector3();
+const _v3 = new THREE.Vector3();
+const _q0 = new THREE.Quaternion();
 
 export interface LuxarFlyControlsConfig {
   movementSpeed?: number; // Units per second
@@ -395,16 +397,16 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
       const torquePitch = -deltaY * this.lookSpeed * 2.5;
       const torqueYaw = -deltaX * this.lookSpeed * 2.5;
 
-      _forward.set(1, 0, 0).applyQuaternion(this.orientation);
-      _right.set(0, 1, 0).applyQuaternion(this.orientation);
+      _v0.set(1, 0, 0).applyQuaternion(this.orientation);
+      _v1.set(0, 1, 0).applyQuaternion(this.orientation);
 
-      this.angularVelocity.addScaledVector(_forward, torquePitch);
-      this.angularVelocity.addScaledVector(_right, torqueYaw);
+      this.angularVelocity.addScaledVector(_v0, torquePitch);
+      this.angularVelocity.addScaledVector(_v1, torqueYaw);
     } else if (this.activeMouseAction === 'strafe') {
       // Left-drag: screen-space translation (strafe up/down/left/right)
       // Drag direction matches on-screen movement, consistent with pan in orbit/ortho.
-      _forward.set(1, 0, 0).applyQuaternion(this.orientation);
-      _right.set(0, 1, 0).applyQuaternion(this.orientation);
+      _v0.set(1, 0, 0).applyQuaternion(this.orientation);
+      _v1.set(0, 1, 0).applyQuaternion(this.orientation);
 
       // Scale by movementSpeed for scene-appropriate sensitivity.
       // The 0.005 factor converts pixel deltas to reasonable world-space distances.
@@ -412,12 +414,12 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
       if (this.inertialMode) {
         // Inertial: add velocity impulse
-        this.velocity.addScaledVector(_forward, -deltaX * strafeScale);
-        this.velocity.addScaledVector(_right, deltaY * strafeScale);
+        this.velocity.addScaledVector(_v0, -deltaX * strafeScale);
+        this.velocity.addScaledVector(_v1, deltaY * strafeScale);
       } else {
         // Non-inertial: move directly
-        this.camera.position.addScaledVector(_forward, -deltaX * strafeScale);
-        this.camera.position.addScaledVector(_right, deltaY * strafeScale);
+        this.camera.position.addScaledVector(_v0, -deltaX * strafeScale);
+        this.camera.position.addScaledVector(_v1, deltaY * strafeScale);
       }
     }
 
@@ -443,27 +445,27 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
     if (event.shiftKey) {
       // Shift+scroll: roll around viewing axis
-      _forward.set(0, 0, -1).applyQuaternion(this.orientation);
+      _v0.set(0, 0, -1).applyQuaternion(this.orientation);
       const rollImpulse = delta * this.rotationSpeed * 0.06;
 
       if (this.inertialMode) {
-        this.angularVelocity.addScaledVector(_forward, rollImpulse);
+        this.angularVelocity.addScaledVector(_v0, rollImpulse);
       } else {
         // Non-inertial: apply rotation directly
-        _q1.setFromAxisAngle(_forward, rollImpulse);
-        this.orientation.premultiply(_q1);
+        _q0.setFromAxisAngle(_v0, rollImpulse);
+        this.orientation.premultiply(_q0);
         this.orientation.normalize();
       }
     } else {
       // Plain scroll: move forward/backward
-      _forward.set(0, 0, -1).applyQuaternion(this.orientation);
+      _v0.set(0, 0, -1).applyQuaternion(this.orientation);
       const impulse = delta * this.movementSpeed * 0.3;
 
       if (this.inertialMode) {
-        this.velocity.addScaledVector(_forward, impulse);
+        this.velocity.addScaledVector(_v0, impulse);
       } else {
         // Non-inertial: move directly
-        this.camera.position.addScaledVector(_forward, impulse * 0.2);
+        this.camera.position.addScaledVector(_v0, impulse * 0.2);
       }
     }
 
@@ -492,9 +494,9 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
     // Get movement vectors from orientation quaternion for consistency
     // This ensures movement is perfectly tied to the control model
-    _forward.set(0, 0, -1).applyQuaternion(this.orientation).normalize();
-    _right.set(1, 0, 0).applyQuaternion(this.orientation).normalize();
-    _up.set(0, 1, 0); // Keep world up for vertical rise/fall
+    _v0.set(0, 0, -1).applyQuaternion(this.orientation).normalize();
+    _v1.set(1, 0, 0).applyQuaternion(this.orientation).normalize();
+    _v2.set(0, 1, 0); // Keep world up for vertical rise/fall
 
     let isMoving = false;
 
@@ -510,22 +512,22 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     // Calculate acceleration from input.
     // movementSpeed is the user-facing "speed" parameter (controlled by UI slider
     // and scale-aware system).
-    _tempV.set(0, 0, 0);
-    _tempV.addScaledVector(
-      _forward,
+    _v3.set(0, 0, 0);
+    _v3.addScaledVector(
+      _v0,
       (this.moveState.forward - this.moveState.back) * this.movementSpeed * speedMultiplier
     );
-    _tempV.addScaledVector(
-      _right,
+    _v3.addScaledVector(
+      _v1,
       (this.moveState.right - this.moveState.left) * this.movementSpeed * speedMultiplier
     );
-    _tempV.addScaledVector(
-      _up,
+    _v3.addScaledVector(
+      _v2,
       (this.moveState.up - this.moveState.down) * this.movementSpeed * speedMultiplier
     );
 
     // Update velocity
-    this.velocity.addScaledVector(_tempV, delta);
+    this.velocity.addScaledVector(_v3, delta);
 
     // Apply damping
     this.velocity.multiplyScalar(
@@ -549,40 +551,34 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
       this.lookState.vertical !== 0 ||
       this.lookState.roll !== 0
     ) {
-      // Get camera's local axes in world space (reuse _forward/_right/_up, dead after accel)
+      // Get camera's local axes in world space (reuse _v0/_v1/_v2 — dead after accel at line 530)
       // These define the rotation axes for consistent airplane-like controls
-      _forward.set(1, 0, 0).applyQuaternion(this.orientation);
-      _right.set(0, 1, 0).applyQuaternion(this.orientation);
-      _up.set(0, 0, -1).applyQuaternion(this.orientation);
+      _v0.set(1, 0, 0).applyQuaternion(this.orientation);
+      _v1.set(0, 1, 0).applyQuaternion(this.orientation);
+      _v2.set(0, 0, -1).applyQuaternion(this.orientation);
 
       if (this.inertialMode) {
         // Apply angular acceleration (torque)
-        _tempV.set(0, 0, 0);
+        _v3.set(0, 0, 0);
         // Pitch: rotate around camera's local right axis (negative for correct up/down)
-        _tempV.addScaledVector(_forward, -this.lookState.vertical * this.rotationSpeed);
+        _v3.addScaledVector(_v0, -this.lookState.vertical * this.rotationSpeed);
         // Yaw: rotate around camera's local up axis
-        _tempV.addScaledVector(_right, -this.lookState.horizontal * this.rotationSpeed);
+        _v3.addScaledVector(_v1, -this.lookState.horizontal * this.rotationSpeed);
         // Roll: rotate around camera's local forward axis
-        _tempV.addScaledVector(_up, this.lookState.roll * this.rotationSpeed);
+        _v3.addScaledVector(_v2, this.lookState.roll * this.rotationSpeed);
         if (this.lookState.roll !== 0) {
           // Debug logging - commented out for production
           // log.info(Modules.CONTROLS, 'Applying roll torque:', this.lookState.roll * this.rotationSpeed);
         }
 
         // Add torque to world-space angular velocity
-        this.angularVelocity.addScaledVector(_tempV, delta);
+        this.angularVelocity.addScaledVector(_v3, delta);
       } else {
         // Non-inertial: directly set angular velocity
         this.angularVelocity.set(0, 0, 0);
-        this.angularVelocity.addScaledVector(
-          _forward,
-          -this.lookState.vertical * this.rotationSpeed
-        );
-        this.angularVelocity.addScaledVector(
-          _right,
-          -this.lookState.horizontal * this.rotationSpeed
-        );
-        this.angularVelocity.addScaledVector(_up, this.lookState.roll * this.rotationSpeed);
+        this.angularVelocity.addScaledVector(_v0, -this.lookState.vertical * this.rotationSpeed);
+        this.angularVelocity.addScaledVector(_v1, -this.lookState.horizontal * this.rotationSpeed);
+        this.angularVelocity.addScaledVector(_v2, this.lookState.roll * this.rotationSpeed);
       }
     } else if (!this.inertialMode) {
       // In non-inertial mode, stop rotation when keys are released
@@ -594,11 +590,11 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     if (angularSpeed > config.controls.fly.physics.angularVelocityThreshold) {
       // Create rotation from angular velocity
       const angle = angularSpeed * delta;
-      _tempV.copy(this.angularVelocity).normalize();
-      _q1.setFromAxisAngle(_tempV, angle);
+      _v3.copy(this.angularVelocity).normalize();
+      _q0.setFromAxisAngle(_v3, angle);
 
       // Apply WORLD-space delta rotation (pre-multiply)
-      this.orientation.premultiply(_q1);
+      this.orientation.premultiply(_q0);
       this.orientation.normalize();
 
       isMoving = true;

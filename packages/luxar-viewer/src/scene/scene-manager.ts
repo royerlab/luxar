@@ -1334,7 +1334,11 @@ export class SceneManager extends THREE.EventDispatcher<{
     );
   }
 
-  /** Invalidate cached scene bounds. Call when scene graph or display dims change. */
+  /**
+   * Invalidate cached scene bounds. Called on scene load and scene clear.
+   * Display dims (sceneDimsManager.getDims().displayed) are immutable per scene,
+   * so no invalidation is needed for dimension navigation.
+   */
   private invalidateBoundsCache(): void {
     this._cachedBounds = null;
     this._cachedSphere = null;
