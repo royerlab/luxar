@@ -779,6 +779,7 @@ def generate_ocean_scene(
                 colors=all_col.astype(np.float32),
                 radii=all_rad.astype(np.float32),
                 sharpness=all_shrp.astype(np.float32),
+                intensity=0.5,
                 layer=True,
             )
             total_points = len(all_pos)
@@ -798,6 +799,7 @@ def generate_ocean_scene(
                 colors=all_colors.astype(np.float32),
                 sharpness=all_shrp.astype(np.float32),
                 line_type="segments",
+                intensity=0.5,
                 layer=True,
             )
             total_segments = len(all_verts) // 2

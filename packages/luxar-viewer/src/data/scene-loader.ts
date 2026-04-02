@@ -66,6 +66,38 @@ import {
 import { LoaderRegistry } from './loader-registry';
 import { computeTolerance } from './tolerance-computer';
 
+/** Check if an object has any own properties (avoids Object.keys() allocation). */
+function hasOwnProperties(obj: Record<string, unknown>): boolean {
+  for (const k in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, k)) return true;
+  }
+  return false;
+}
+
+/**
+ * Get or compute an extended tolerance array for extend_to_all dimensions.
+ * Nodes with the same extendDims share a single cached array.
+ */
+function getOrComputeExtendedTolerance(
+  baseTolerance: number[],
+  extendDims: string[],
+  dimensionMetadata: Array<{ name?: string }>,
+  cache: Map<string, number[]>
+): number[] {
+  const key = extendDims.slice().sort().join(',');
+  let cached = cache.get(key);
+  if (cached) return cached;
+  cached = [...baseTolerance];
+  for (const dimName of extendDims) {
+    const dimIndex = dimensionMetadata.findIndex((d) => d.name === dimName);
+    if (dimIndex >= 0 && dimIndex < cached.length) {
+      cached[dimIndex] = 1e10;
+    }
+  }
+  cache.set(key, cached);
+  return cached;
+}
+
 // ============================================================================
 // Staged commit types for atomic geometry updates
 // ============================================================================
@@ -515,6 +547,11 @@ export class SceneLoader {
 
       // Start profiling update cycle
       this.profiler?.beginUpdate();
+
+      // Cache for extended tolerance arrays — nodes with the same extend_to_all
+      // dimensions share a single tolerance array instead of each copying their own.
+      const extendedToleranceCache = new Map<string, number[]>();
+
       // Noop session for when no profiler is available
       const noopSession = {
         begin: () => ({ end: () => {}, setMetadata: () => {}, markSkipped: () => {} }) as any,
@@ -567,15 +604,12 @@ export class SceneLoader {
             // Build viewState with tolerance override for extend_to_all dimensions
             let pointsViewState = this.viewState;
             if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
-              const tolerance = [...this.viewState.tolerance];
-              for (const dimName of extendDims) {
-                const dimIndex = this.viewState.dimensions.metadata.findIndex(
-                  (d: { name?: string }) => d.name === dimName
-                );
-                if (dimIndex >= 0 && dimIndex < tolerance.length) {
-                  tolerance[dimIndex] = 1e10;
-                }
-              }
+              const tolerance = getOrComputeExtendedTolerance(
+                this.viewState.tolerance,
+                extendDims,
+                this.viewState.dimensions.metadata,
+                extendedToleranceCache
+              );
               pointsViewState = { ...this.viewState, tolerance };
             }
 
@@ -583,7 +617,7 @@ export class SceneLoader {
             // Uses composed world nd_transform (inherits from parent groups)
             if (this._sceneGraph && pointsViewState.dimensions?.metadata) {
               const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
-              if (Object.keys(worldNdT).length > 0) {
+              if (hasOwnProperties(worldNdT)) {
                 const dimNames = pointsViewState.dimensions.metadata.map(
                   (d: { name?: string }) => d.name ?? ''
                 );
@@ -689,7 +723,7 @@ export class SceneLoader {
             // Uses composed world nd_transform (inherits from parent groups)
             if (this._sceneGraph && linesViewState.dimensions) {
               const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
-              if (Object.keys(worldNdT).length > 0) {
+              if (hasOwnProperties(worldNdT)) {
                 const dimNames = linesViewState.dimensions.map(
                   (d: { name?: string }) => d.name ?? ''
                 );
@@ -785,15 +819,12 @@ export class SceneLoader {
                 dimensions: this.viewState.dimensions?.metadata,
               };
               if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
-                const tolerance = [...this.viewState.tolerance];
-                for (const dimName of extendDims) {
-                  const dimIndex = this.viewState.dimensions.metadata.findIndex(
-                    (d: { name?: string }) => d.name === dimName
-                  );
-                  if (dimIndex >= 0 && dimIndex < tolerance.length) {
-                    tolerance[dimIndex] = 1e10;
-                  }
-                }
+                const tolerance = getOrComputeExtendedTolerance(
+                  this.viewState.tolerance,
+                  extendDims,
+                  this.viewState.dimensions.metadata,
+                  extendedToleranceCache
+                );
                 gsplatsViewState = { ...gsplatsViewState, tolerance };
               }
 
@@ -801,7 +832,7 @@ export class SceneLoader {
               // Uses composed world nd_transform (inherits from parent groups)
               if (this._sceneGraph && gsplatsViewState.dimensions) {
                 const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
-                if (Object.keys(worldNdT).length > 0) {
+                if (hasOwnProperties(worldNdT)) {
                   const dimNames = gsplatsViewState.dimensions.map(
                     (d: { name?: string }) => d.name ?? ''
                   );
@@ -1023,7 +1054,7 @@ export class SceneLoader {
             // Apply nd_transform inverse
             if (this._sceneGraph && gsplatsViewState.dimensions) {
               const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
-              if (Object.keys(worldNdT).length > 0) {
+              if (hasOwnProperties(worldNdT)) {
                 const dimNames = gsplatsViewState.dimensions.map(
                   (d: { name?: string }) => d.name ?? ''
                 );
@@ -1649,7 +1680,7 @@ export class SceneLoader {
       // Apply nd_transform inverse for initial load (same as update path)
       if (this._sceneGraph && pointsViewState.dimensions?.metadata) {
         const worldNdT = computeWorldNdTransform(this._sceneGraph, node.path);
-        if (Object.keys(worldNdT).length > 0) {
+        if (hasOwnProperties(worldNdT)) {
           const dimNames = pointsViewState.dimensions.metadata.map(
             (d: { name?: string }) => d.name ?? ''
           );
@@ -1766,7 +1797,7 @@ export class SceneLoader {
       // Apply nd_transform inverse for initial load
       if (this._sceneGraph && linesViewState.dimensions) {
         const worldNdT = computeWorldNdTransform(this._sceneGraph, node.path);
-        if (Object.keys(worldNdT).length > 0) {
+        if (hasOwnProperties(worldNdT)) {
           const dimNames = linesViewState.dimensions.map((d: { name?: string }) => d.name ?? '');
           const inverted = invertNdTransformForQuery(
             linesViewState.slicePosition,
@@ -1966,7 +1997,7 @@ export class SceneLoader {
       // Apply nd_transform inverse for initial load
       if (this._sceneGraph && gsplatsViewState.dimensions) {
         const worldNdT = computeWorldNdTransform(this._sceneGraph, node.path);
-        if (Object.keys(worldNdT).length > 0) {
+        if (hasOwnProperties(worldNdT)) {
           const dimNames = gsplatsViewState.dimensions.map((d: { name?: string }) => d.name ?? '');
           const inverted = invertNdTransformForQuery(
             gsplatsViewState.slicePosition,

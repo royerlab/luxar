@@ -15,6 +15,8 @@ vi.mock('three', async (importOriginal) => {
   return {
     ...actual,
     Box3: vi.fn().mockImplementation(() => ({
+      min: { x: Infinity, y: Infinity, z: Infinity, set: vi.fn() },
+      max: { x: -Infinity, y: -Infinity, z: -Infinity, set: vi.fn() },
       expandByPoint: vi.fn(),
       clone: vi.fn().mockReturnThis(),
     })),

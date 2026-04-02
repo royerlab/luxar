@@ -878,6 +878,31 @@ export function packCholeskyForShader(
 }
 
 /**
+ * Compute max Cholesky row norm across all splats (for bounding box expansion).
+ * The row norms determine the maximum spatial extent of any splat, used to expand
+ * the bounding box so frustum culling doesn't clip visible splats at screen edges.
+ *
+ * Cholesky layout: cholesky01=[L00,L10], cholesky23=[L11,L20], cholesky45=[L21,L22]
+ */
+function computeMaxCholeskyRowNorm(meshConfig: InstancedGSplatsMeshConfig): number {
+  let maxRowNorm = 0;
+  for (let i = 0; i < meshConfig.splatCount; i++) {
+    const L00 = meshConfig.cholesky01[i * 2];
+    const L10 = meshConfig.cholesky01[i * 2 + 1];
+    const L11 = meshConfig.cholesky23[i * 2];
+    const L20 = meshConfig.cholesky23[i * 2 + 1];
+    const L21 = meshConfig.cholesky45[i * 2];
+    const L22 = meshConfig.cholesky45[i * 2 + 1];
+
+    const row0 = Math.abs(L00);
+    const row1 = Math.sqrt(L10 * L10 + L11 * L11);
+    const row2 = Math.sqrt(L20 * L20 + L21 * L21 + L22 * L22);
+    maxRowNorm = Math.max(maxRowNorm, row0, row1, row2);
+  }
+  return maxRowNorm;
+}
+
+/**
  * Create an instanced mesh for gsplats rendering.
  *
  * Sets up the instanced geometry with all per-splat attributes.
@@ -931,27 +956,10 @@ export function createInstancedGSplatsMesh(
     box.expandByPoint(v);
   }
 
-  // Expand bounding box by max splat extent for correct frustum culling.
-  // Uses same logic as updateGSplatsGeometry in gpu-buffer-pool.ts:
-  // max row norm of Cholesky factors × truncation radius.
-  // Cholesky layout: cholesky01=[L00,L10], cholesky23=[L11,L20], cholesky45=[L21,L22]
-  let maxRowNorm = 0;
-  for (let i = 0; i < meshConfig.splatCount; i++) {
-    const L00 = meshConfig.cholesky01[i * 2];
-    const L10 = meshConfig.cholesky01[i * 2 + 1];
-    const L11 = meshConfig.cholesky23[i * 2];
-    const L20 = meshConfig.cholesky23[i * 2 + 1];
-    const L21 = meshConfig.cholesky45[i * 2];
-    const L22 = meshConfig.cholesky45[i * 2 + 1];
-
-    const row0 = Math.abs(L00);
-    const row1 = Math.sqrt(L10 * L10 + L11 * L11);
-    const row2 = Math.sqrt(L20 * L20 + L21 * L21 + L22 * L22);
-    maxRowNorm = Math.max(maxRowNorm, row0, row1, row2);
-  }
+  // Expand bounding box by max splat extent for correct frustum culling
+  const maxRowNorm = computeMaxCholeskyRowNorm(meshConfig);
   const truncationRadius = material.uniforms.uTruncate.value;
-  const expansion = maxRowNorm * truncationRadius;
-  box.expandByScalar(expansion);
+  box.expandByScalar(maxRowNorm * truncationRadius);
 
   geometry.boundingBox = box;
   const sphere = new THREE.Sphere();
@@ -1036,18 +1044,22 @@ export function updateInstancedGSplatsMesh(
     colorAttr.needsUpdate = true;
   }
 
-  // Update bounding box
-  const tempGeometry = new THREE.BufferGeometry();
-  tempGeometry.setAttribute('position', new THREE.BufferAttribute(meshConfig.centers, 3));
-  tempGeometry.computeBoundingBox();
-  tempGeometry.computeBoundingSphere();
-
-  if (tempGeometry.boundingBox) {
-    geometry.boundingBox = tempGeometry.boundingBox.clone();
-  }
-  if (tempGeometry.boundingSphere) {
-    geometry.boundingSphere = tempGeometry.boundingSphere.clone();
+  // Update bounding box from centers (direct loop, no temp geometry allocation)
+  const box = new THREE.Box3();
+  const _v = new THREE.Vector3();
+  for (let i = 0; i < meshConfig.splatCount; i++) {
+    _v.set(meshConfig.centers[i * 3], meshConfig.centers[i * 3 + 1], meshConfig.centers[i * 3 + 2]);
+    box.expandByPoint(_v);
   }
 
-  tempGeometry.dispose();
+  // Expand by max splat extent (Cholesky row norm × truncation radius)
+  const maxRowNorm = computeMaxCholeskyRowNorm(meshConfig);
+  const material = mesh.material as GSplatMaterial;
+  const truncationRadius = material.uniforms.uTruncate?.value ?? 3.0;
+  box.expandByScalar(maxRowNorm * truncationRadius);
+
+  geometry.boundingBox = box;
+  const sphere = new THREE.Sphere();
+  box.getBoundingSphere(sphere);
+  geometry.boundingSphere = sphere;
 }

@@ -200,6 +200,7 @@ def generate_demo(output_path: Path) -> int:
                         radii=radii,
                         sharpness=4.0,
                         extend_to_all=[],
+                        intensity=0.125,
                     )
                     total_points += n
                     aprint(f"  Channel {ch_idx}: {n:,} points")
@@ -241,6 +242,7 @@ def generate_demo(output_path: Path) -> int:
                     radii=radii * 1.5,
                     sharpness=2.5,
                     extend_to_all=[],
+                    intensity=0.125,
                 )
                 total_points += n
                 aprint(f"  Radio emission: {n:,} points (time offset=5)")
@@ -295,6 +297,7 @@ def generate_demo(output_path: Path) -> int:
                         sharpness=6.0,
                         blending_mode="additive",
                         extend_to_all=[],
+                        intensity=0.125,
                     )
                     total_points += n
                     aprint(f"  X-ray ch{ch_idx}: {n:,} points (scale=2, permuted)")

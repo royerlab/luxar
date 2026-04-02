@@ -252,6 +252,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 radii=radii,
                 opacity=0.9,
                 blending_mode="additive",
+                intensity=0.031,
                 layer=True,
             )
 

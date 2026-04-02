@@ -268,14 +268,28 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<LoadedPoints
       throw new Error(`Cannot get ${count} points from accumulator with capacity ${this.capacity}`);
     }
 
-    // Compute bounds from loaded positions
-    // Always create fresh bounds to avoid any corruption issues
+    // Compute bounds from loaded positions (zero allocations — no Vector3 per point)
     const bounds = new THREE.Box3();
-    for (let i = 0; i < count; i++) {
-      const x = this.positionBuffer[i * 3 + 0];
-      const y = this.positionBuffer[i * 3 + 1];
-      const z = this.positionBuffer[i * 3 + 2];
-      bounds.expandByPoint(new THREE.Vector3(x, y, z));
+    if (count > 0) {
+      let minX = Infinity,
+        minY = Infinity,
+        minZ = Infinity;
+      let maxX = -Infinity,
+        maxY = -Infinity,
+        maxZ = -Infinity;
+      for (let i = 0; i < count; i++) {
+        const x = this.positionBuffer[i * 3];
+        const y = this.positionBuffer[i * 3 + 1];
+        const z = this.positionBuffer[i * 3 + 2];
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z;
+        if (z > maxZ) maxZ = z;
+      }
+      bounds.min.set(minX, minY, minZ);
+      bounds.max.set(maxX, maxY, maxZ);
     }
 
     // Return LoadedPointsData with NATIVE types (matches what was filled!)

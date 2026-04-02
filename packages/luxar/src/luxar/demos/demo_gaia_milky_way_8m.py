@@ -174,6 +174,7 @@ def load_and_convert_gaia_small(
                 radii=radii,
                 opacity=0.8,
                 blending_mode="additive",
+                intensity=0.016,
             )
 
         total_size = sum(

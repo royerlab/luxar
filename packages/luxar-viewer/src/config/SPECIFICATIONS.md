@@ -385,46 +385,11 @@ Controls shader-specific rendering parameters for point rendering, including alp
 
 ```typescript
 interface ShaderConfig {
-  points: {
-    baseAlpha: number;
-  };
+  points: Record<string, never>;
 }
 ```
 
-### 6.3 Defaults
-
-- **points.baseAlpha**: 0.01 (base alpha intensity for additive blending)
-
-**Note**: Per-node color adjustment (intensity, offset, gamma) is configured per-material via `MaterialConfig`. Global exposure/offset/gamma are applied in the `LuxarToneMappingEffect` post-processing pass.
-
-### 6.4 Usage Example
-
-```typescript
-import { config } from '../config';
-
-const pointsMaterial = new THREE.ShaderMaterial({
-  uniforms: {
-    uIntensity: { value: 1.0 }, // Per-node color multiplier
-    uOffset: { value: 0.0 }, // Per-node color offset
-    uBaseAlpha: { value: config.shader.points.baseAlpha },
-  },
-  vertexShader: `...`,
-  fragmentShader: `
-    void main() {
-      vec3 color = vColor * uIntensity + uOffset;
-      color = clamp(color, 0.0, 1e6);
-      color = pow(color, vec3(1.0 / uGamma));
-      gl_FragColor = vec4(color, ${config.shader.points.baseAlpha});
-    }
-  `,
-  blending: THREE.AdditiveBlending,
-  transparent: true,
-});
-```
-
-### 6.5 Validation Rules
-
-- **baseAlpha**: Must be 0-1 (typical: 0.001-0.1 for additive)
+**Note**: Per-node color adjustment (intensity, offset, gamma) is configured per-material via `MaterialConfig`. Global exposure/offset/gamma are applied in the `LuxarToneMappingEffect` post-processing pass. Point alpha is computed as `falloff * opacity`, matching line material behavior.
 
 ---
 

@@ -253,6 +253,7 @@ def generate_mandelbulb_volumetric(
                 sharpness=sharpnesses,
                 opacity=0.9,
                 blending_mode="additive",
+                intensity=0.0625,
             )
 
         aprint(f"✓ Written to {output_path}")

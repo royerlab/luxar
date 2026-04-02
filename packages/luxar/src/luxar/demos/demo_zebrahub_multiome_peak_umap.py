@@ -236,6 +236,7 @@ def create_zebrahub_scene(
                 radii=radii,
                 sharpness=sharpnesses,
                 opacity=0.8,
+                intensity=0.067,
             )
 
         aprint(f"✓ Scene created with {n_points:,} points")

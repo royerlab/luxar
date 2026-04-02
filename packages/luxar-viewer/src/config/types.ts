@@ -72,10 +72,7 @@ export interface SceneConfig {
  * Shader configuration for point rendering
  */
 export interface ShaderConfig {
-  points: {
-    // Note: hdrMultiplier lives in RenderingSettings (renderingControls.defaults) as the single source of truth
-    baseAlpha: number;
-  };
+  points: Record<string, never>;
 }
 
 /**
