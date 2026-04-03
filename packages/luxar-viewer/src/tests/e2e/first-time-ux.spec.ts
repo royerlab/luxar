@@ -10,6 +10,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { waitForNextRender } from './helpers';
 
 test.describe('First-Time User Experience', () => {
   test('should show dataset browser when no dataset specified', async ({ page }) => {
@@ -137,7 +138,7 @@ test.describe('First-Time User Experience', () => {
 
     // Dismiss with Escape or click
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     // At least one of the dismissal methods should work
     const errorStillVisible = await page

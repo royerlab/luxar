@@ -20,6 +20,7 @@ import {
   waitForSpatialQuery,
   validateSceneAttributes,
   focusCanvas,
+  waitForNextRender,
 } from './helpers';
 
 const DATASET = 'http://localhost:9000/datasets/examples/sharpness_showcase_example.zarr';
@@ -138,10 +139,9 @@ test.describe('Data Integrity - Attribute Alignment', () => {
     // Navigate to a different slice
     await focusCanvas(page);
     await page.keyboard.press('4');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQuery(page);
-    await page.waitForTimeout(500);
 
     // Verify integrity after navigation
     const after = await validateSceneAttributes(page);

@@ -9,7 +9,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, waitForRenderStable } from './helpers';
+import { waitForLuxarReady, waitForRenderStable, waitForNextRender } from './helpers';
 
 // Dataset paths (served from Python HTTP server on port 9000)
 const DATASETS = {
@@ -26,9 +26,6 @@ test.describe('Visual Regression - Basic Rendering', () => {
     // Wait for render to stabilize using condition-based wait
     await waitForRenderStable(page, 5);
 
-    // Small buffer for GPU to fully flush
-    await page.waitForTimeout(500);
-
     // Take screenshot
     await expect(page).toHaveScreenshot('nav-dataset-default-view.png', {
       maxDiffPixelRatio: 0.08, // 8% tolerance for WebGL variability
@@ -42,9 +39,6 @@ test.describe('Visual Regression - Basic Rendering', () => {
 
     // Wait for render to stabilize using condition-based wait
     await waitForRenderStable(page, 5);
-
-    // Small buffer for GPU to fully flush
-    await page.waitForTimeout(500);
 
     await expect(page).toHaveScreenshot('grid-5d-initial-slice.png', {
       maxDiffPixelRatio: 0.08,
@@ -75,7 +69,7 @@ test.describe('Visual Regression - HDR & Tone Mapping', () => {
       (window as any).__luxarDebug.renderOnce();
     });
 
-    await page.waitForTimeout(1000);
+    await waitForNextRender(page);
 
     await expect(page).toHaveScreenshot('exposure-0.0.png', {
       maxDiffPixelRatio: 0.08,
@@ -104,7 +98,7 @@ test.describe('Visual Regression - HDR & Tone Mapping', () => {
       (window as any).__luxarDebug.renderOnce();
     });
 
-    await page.waitForTimeout(1000);
+    await waitForNextRender(page);
 
     await expect(page).toHaveScreenshot('exposure-3.32.png', {
       maxDiffPixelRatio: 0.08,
@@ -129,9 +123,8 @@ test.describe('Visual Regression - HDR & Tone Mapping', () => {
     await page.keyboard.press('4');
     await page.keyboard.press(']');
 
-    // Wait for slice navigation (keyboard navigation may not trigger loading state)
-    // Use time-based wait here since cached data may not trigger isLoading
-    await page.waitForTimeout(2000);
+    // Wait for slice navigation to complete and render to stabilize
+    await waitForNextRender(page);
     await waitForRenderStable(page, 3);
 
     // Slice 1 (should look different)
@@ -147,7 +140,7 @@ test.describe('Visual Regression - Camera Views', () => {
     await page.goto(`/?src=${DATASETS.nav}&debug`);
     await waitForLuxarReady(page);
 
-    await page.waitForTimeout(2000);
+    await waitForRenderStable(page, 5);
 
     await expect(page).toHaveScreenshot('fov-47-default.png', {
       maxDiffPixelRatio: 0.08,
@@ -176,7 +169,7 @@ test.describe('Visual Regression - Camera Views', () => {
       debug.renderOnce();
     }, hasFOVAPI);
 
-    await page.waitForTimeout(1000);
+    await waitForNextRender(page);
 
     await expect(page).toHaveScreenshot('fov-90-wide.png', {
       maxDiffPixelRatio: 0.08,
@@ -190,7 +183,7 @@ test.describe('Visual Regression - Camera Views', () => {
 
     // Press 'F' to center on bounding box
     await page.keyboard.press('f');
-    await page.waitForTimeout(2000);
+    await waitForNextRender(page);
 
     await expect(page).toHaveScreenshot('centered-on-bbox.png', {
       maxDiffPixelRatio: 0.08,
@@ -209,7 +202,7 @@ test.describe('Visual Regression - Control Modes', () => {
       (window as any).__luxarDebug.controls.setControlType('orbit');
     });
 
-    await page.waitForTimeout(1000);
+    await waitForNextRender(page);
 
     await expect(page).toHaveScreenshot('orbit-mode-view.png', {
       maxDiffPixelRatio: 0.08,
@@ -223,7 +216,7 @@ test.describe('Visual Regression - Control Modes', () => {
 
     // Switch to fly mode
     await page.keyboard.press('v');
-    await page.waitForTimeout(1000);
+    await waitForNextRender(page);
 
     await expect(page).toHaveScreenshot('fly-mode-view.png', {
       maxDiffPixelRatio: 0.08,

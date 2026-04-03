@@ -180,7 +180,6 @@ test.describe('Layers Panel', () => {
       { path: targetLayer.path, mode: newMode }
     );
     await waitForNextRender(page);
-    await page.waitForTimeout(300);
 
     // Read back the blending mode
     const updatedMode = await page.evaluate((path) => {
@@ -211,7 +210,6 @@ test.describe('Layers Panel', () => {
       debug.app.layersPanel.layerState.setGamma(path, 2.0);
     }, layerPath);
     await waitForNextRender(page);
-    await page.waitForTimeout(300);
 
     // Verify gamma was set on the layer state
     const gamma = await page.evaluate((path) => {

@@ -15,6 +15,7 @@ import {
   waitForDataLoaded,
   waitForDimensionNavigation,
   waitForSpatialQuery,
+  waitForNextRender,
 } from './helpers';
 
 // Test datasets (served from Python HTTP server on port 9000)
@@ -33,8 +34,8 @@ test.describe('nD Navigation - Dimension Selection', () => {
     // Press '4' to select 4th dimension (index 3)
     await page.keyboard.press('4');
 
-    // Wait for input to be processed (small fixed delay is OK here since it's just key processing)
-    await page.waitForTimeout(100);
+    // Wait for input to be processed
+    await waitForNextRender(page);
 
     // Verify dimension was selected (check state is stable)
     const state = await getLuxarState(page);
@@ -60,7 +61,7 @@ test.describe('nD Navigation - Dimension Selection', () => {
 
     // Select dimension and navigate
     await page.keyboard.press('4'); // Select 4th dim
-    await page.waitForTimeout(100); // Brief wait for key processing
+    await waitForNextRender(page);
 
     await page.keyboard.press(']'); // Navigate forward
 
@@ -91,7 +92,7 @@ test.describe('nD Navigation - Dimension Selection', () => {
 
     // Navigate forward first
     await page.keyboard.press('5');
-    await page.waitForTimeout(100); // Brief wait for key processing
+    await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForDimensionNavigation(page, initialPoints, 8000);
 
@@ -123,7 +124,7 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
 
     // Navigate through dimension
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQuery(page);
 
@@ -152,7 +153,7 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
 
     // Navigate to different slice
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQuery(page);
 
@@ -171,7 +172,7 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
 
     // Select dimension
     await page.keyboard.press('4');
-    await page.waitForTimeout(100); // Brief wait for key processing
+    await waitForNextRender(page);
 
     // Navigate forward multiple times
     for (let i = 0; i < 3; i++) {
@@ -201,7 +202,7 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
 
     // Navigate forward (cache miss)
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQuery(page);
 
@@ -252,8 +253,8 @@ test.describe('nD Navigation - Dimension Sliders UI', () => {
     // Press 'N' to toggle dimension sliders
     await page.keyboard.press('n');
 
-    // Wait for UI to update (or timeout if feature not implemented)
-    await page.waitForTimeout(300);
+    // Wait for UI to update
+    await waitForNextRender(page);
 
     // Check if sliders exist and might be visible
     const slidersInfo = await page.evaluate(() => {
@@ -280,11 +281,11 @@ test.describe('nD Navigation - Dimension Sliders UI', () => {
 
     // Show sliders
     await page.keyboard.press('n');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Hide sliders
     await page.keyboard.press('n');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     const slidersVisible = await page.evaluate(() => {
       const sliders = document.querySelector('.dimension-sliders');
@@ -309,7 +310,7 @@ test.describe('nD Navigation - Performance', () => {
     const startTime = Date.now();
 
     await page.keyboard.press('4');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
     await page.keyboard.press(']');
 
     // Wait for navigation to complete
@@ -337,7 +338,7 @@ test.describe('nD Navigation - Performance', () => {
     // Rapid navigation (stress test)
     for (let i = 0; i < 5; i++) {
       await page.keyboard.press(']');
-      await page.waitForTimeout(400); // Quick succession but allow processing
+      await waitForNextRender(page); // Allow processing between rapid presses
     }
 
     // Should handle without crashing
