@@ -85,13 +85,13 @@ jobs:
       - name: Unit tests
         run: pnpm test --run
 
-  # E2E tests disabled — Playwright WebGL tests require GPU-capable runners
-  # which are not available on standard GitHub Actions ubuntu-latest.
-  # Re-enablement tracked as a release-readiness item.
+  # E2E smoke tests run with software rendering on standard runners.
+  # Many tests may fail under software rendering — this job is informational,
+  # not a merge blocker. Use a GPU runner for full E2E CI.
   e2e-tests:
-    if: false
     needs: [python-tests, typescript-tests]
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -120,11 +120,26 @@ jobs:
       - name: Install Playwright browsers
         run: cd packages/luxar-viewer && npx playwright install --with-deps chromium
 
+      - name: Install software OpenGL for headless WebGL
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1-mesa-dri libegl-mesa0 libgbm1
+
       - name: Generate example datasets
         run: make run-examples
 
-      - name: Run E2E tests
-        run: cd packages/luxar-viewer && pnpm test:e2e
+      - name: Run E2E tests (CI smoke subset)
+        run: |
+          cd packages/luxar-viewer && npx playwright test \
+            basic-rendering.spec.ts \
+            viewer-initialization.spec.ts \
+            data-integrity.spec.ts \
+            url-parameters.spec.ts \
+            controls-interaction.spec.ts \
+            layers-panel.spec.ts \
+            dataset-switching.spec.ts \
+            --retries 2 --timeout 120000
+        timeout-minutes: 45
+        env:
+          CI: true
 
       - name: Upload test results
         if: failure()

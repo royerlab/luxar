@@ -24,7 +24,7 @@ export default defineConfig({
   testDir: './src/tests/e2e',
 
   // Run tests in files in parallel
-  fullyParallel: false,  // WebGL tests can be GPU-intensive, run serially
+  fullyParallel: false, // WebGL tests can be GPU-intensive, run serially
 
   // Fail the build on CI if you accidentally left test.only
   forbidOnly: !!process.env.CI,
@@ -35,14 +35,15 @@ export default defineConfig({
   // - CI: 2 retries (CI environments have more variability)
   retries: process.env.CI ? 2 : 1,
 
-  // Single worker for GPU stability (can increase if GPU allows)
-  workers: 1,
+  // Local: 2 workers for ~2x speedup (most GPUs handle 2 concurrent WebGL contexts)
+  // CI: 1 worker (software rendering is slower and less stable with concurrency)
+  workers: process.env.CI ? 1 : 2,
 
   // Reporter to use
   reporter: [
     ['html', { outputFolder: 'playwright-report' }],
     ['list'],
-    ...(process.env.CI ? [['github' as const]] : [])
+    ...(process.env.CI ? [['github' as const]] : []),
   ],
 
   // Shared settings for all projects
@@ -55,7 +56,7 @@ export default defineConfig({
 
     // Screenshot settings - capture visual state for inspection
     // All artifacts (screenshots, videos, traces) saved to test-results/
-    screenshot: 'on',  // Always take screenshots for visual debugging
+    screenshot: 'on', // Always take screenshots for visual debugging
 
     // Video on failure (useful but large files)
     video: 'retain-on-failure',
@@ -76,14 +77,14 @@ export default defineConfig({
     // - May cause timeouts or crashes
     launchOptions: {
       args: [
-        '--use-gl=egl',                          // Force GPU acceleration
-        '--ignore-gpu-blocklist',                // Unblock older/CI GPUs
-        '--enable-webgl-developer-extensions',   // Enable WebGL extensions
-        '--enable-webgl-draft-extensions',       // Enable draft extensions
-        '--disable-web-security',                // Allow CORS for local testing
-        '--no-sandbox',                          // Often needed in CI environments
+        '--use-gl=egl', // Force GPU acceleration
+        '--ignore-gpu-blocklist', // Unblock older/CI GPUs
+        '--enable-webgl-developer-extensions', // Enable WebGL extensions
+        '--enable-webgl-draft-extensions', // Enable draft extensions
+        '--disable-web-security', // Allow CORS for local testing
+        '--no-sandbox', // Often needed in CI environments
         '--disable-setuid-sandbox',
-      ]
+      ],
     },
   },
 
@@ -132,17 +133,17 @@ export default defineConfig({
       // Use cwd to set working directory to project root (2 levels up from this file)
       cwd: path.resolve(__dirname, '../..'),
       reuseExistingServer: !process.env.CI,
-      timeout: 15000,  // Increased timeout for reliability
-      stdout: 'ignore',  // Reduce noise in test output
-      stderr: 'pipe',    // Still capture errors
-    }
+      timeout: 15000, // Increased timeout for reliability
+      stdout: 'ignore', // Reduce noise in test output
+      stderr: 'pipe', // Still capture errors
+    },
   ],
 
   // Output directory for test artifacts
   outputDir: 'test-results/',
 
   // Test timeout (individual test)
-  timeout: 60000,  // 60 seconds per test (WebGL init can be slow)
+  timeout: 60000, // 60 seconds per test (WebGL init can be slow)
 
   // Expect timeout (for assertions)
   expect: {
@@ -176,6 +177,6 @@ export default defineConfig({
 
     // Timeout for expect() assertions
     // Increased for E2E tests with real dataset loading
-    timeout: 60000,  // 60 seconds for dataset loading + rendering
+    timeout: 60000, // 60 seconds for dataset loading + rendering
   },
 });
