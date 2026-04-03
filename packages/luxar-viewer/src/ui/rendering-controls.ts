@@ -38,7 +38,7 @@ const TONE_MAPPING_MAP: Record<string, THREE.ToneMapping> = {
 };
 
 /** Keys of RenderingSettings that cinematic mode touches */
-type CinematicSnapshotKeys =
+export type CinematicSnapshotKeys =
   | 'toneMapping'
   | 'detectorNoiseEnabled'
   | 'detectorNoiseReadoutSigma'
@@ -57,7 +57,7 @@ type CinematicSnapshotKeys =
   | 'fov'
   | 'fovPreset';
 
-type CinematicSnapshot = Pick<RenderingSettings, CinematicSnapshotKeys>;
+export type CinematicSnapshot = Pick<RenderingSettings, CinematicSnapshotKeys>;
 
 /** All snapshot keys as an array for iteration */
 const CINEMATIC_SNAPSHOT_KEYS: CinematicSnapshotKeys[] = [

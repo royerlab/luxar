@@ -29,7 +29,8 @@ def stable_inverse_softplus(y: np.ndarray, beta: float = 1.0) -> np.ndarray:
 
     Notes
     -----
-    Mathematical relationship:
+    Mathematical relationship::
+
         softplus(x) = (1/beta) * log(1 + exp(beta*x))
         inverse_softplus(y) = (1/beta) * log(exp(beta*y) - 1)
                             = (1/beta) * log(expm1(beta*y))  # numerically stable
@@ -95,7 +96,8 @@ def stable_inverse_softplus_torch(y: torch.Tensor, beta: float = 1.0) -> torch.T
 
     Notes
     -----
-    Mathematical relationship:
+    Mathematical relationship::
+
         softplus(x) = (1/beta) * log(1 + exp(beta*x))
         inverse_softplus(y) = (1/beta) * log(exp(beta*y) - 1)
                             = (1/beta) * log(expm1(beta*y))  # numerically stable

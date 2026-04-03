@@ -27,7 +27,7 @@ import type { BaseViewState, LoadRange } from './base-types';
 /**
  * Example parameters for worker projection.
  */
-interface ProjectionParams {
+export interface ProjectionParams {
   /** Source positions (nD) */
   positions: Float32Array;
 

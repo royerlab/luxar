@@ -93,6 +93,9 @@ Features
    guides/developer/SCENE_UPDATE_OPTIMIZATION
    guides/developer/METAL_SPLATTING_IMPLEMENTATION_SPEC
    guides/developer/DEBUG_INTERFACE_GUIDE
+   guides/developer/E2E_COVERAGE_GAPS
+   guides/developer/E2E_TEST_AUDIT
+   guides/developer/INTENSITY_GAMMA_DESIGN
 
 .. toctree::
    :maxdepth: 2

@@ -48,14 +48,14 @@ export interface PackedGSplatsData {
  * Attribute type information for Points geometry
  * Tracks the TypedArray type for each attribute to enable proper reuse
  */
-interface PointsAttributeTypes {
+export interface PointsAttributeTypes {
   position: 'Float32Array'; // Always Float32Array for positions
   color: 'Float32Array' | 'Uint8Array' | 'Uint16Array';
   radius: 'Float32Array' | 'Uint8Array';
   sharpness: 'Float32Array' | 'Uint8Array';
 }
 
-interface PooledBuffer {
+export interface PooledBuffer {
   geometry: THREE.BufferGeometry | THREE.InstancedBufferGeometry;
   capacity: number;
   type: 'points' | 'lines' | 'gsplats';

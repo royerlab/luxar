@@ -40,11 +40,12 @@ def seed_from_grid(
         Input n-dimensional image/volume. Shape: (s_0, s_1, ..., s_{n-1}).
     spacing : float or Sequence[float] or None, optional
         Grid spacing in voxels. Can be:
+
         - float: Same spacing for all dimensions
         - Sequence[float]: Per-dimension spacing
         - None: Auto-compute with aspect-ratio-aware spacing (default).
           Spacing is proportional to each dimension's size, respecting anisotropy.
-          Example: 1000×1000×10 image → [136, 136, 1.4] spacing (not [29, 29, 29])
+          Example: 1000x1000x10 image gives [136, 136, 1.4] spacing (not [29, 29, 29])
     jitter : float, default=0.0
         Jitter fraction (0.0 to 0.5). Random offset applied to each grid point
         as a fraction of spacing. 0.0 = no jitter, 0.5 = up to half spacing.

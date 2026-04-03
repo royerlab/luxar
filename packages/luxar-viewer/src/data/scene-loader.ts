@@ -112,13 +112,13 @@ interface StagedPointsCommit {
 }
 
 /** Staged lines data ready for GPU commit (already projected to 3D) */
-interface StagedLinesCommit {
+export interface StagedLinesCommit {
   path: string;
   processed: ProcessedLinesData;
 }
 
 /** Staged gsplats data ready for GPU commit (already projected + Cholesky packed) */
-interface StagedGSplatsCommit {
+export interface StagedGSplatsCommit {
   path: string;
   processed: ReturnType<typeof processGSplats>;
   cholesky01: Float32Array;
@@ -282,8 +282,8 @@ export class SceneLoader {
    * }
    * ```
    *
-   * @see {@link ../cache/two-level-caching-store.ts} for caching implementation
-   * @see {@link SPECIFICATIONS.md} Section 4 for complete scene loading protocol
+   * @see {@link TwoLevelCachingStore} for caching implementation
+   * @see SPECIFICATIONS.md - Section 4 for complete scene loading protocol
    */
   async loadScene(url: string): Promise<THREE.Group> {
     log.custom(LogEmoji.SCENE, Modules.SCENE_LOADER, `Loading scene from ${url}`);

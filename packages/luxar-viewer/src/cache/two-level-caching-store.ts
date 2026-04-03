@@ -138,8 +138,8 @@ export class TwoLevelCachingStore implements AsyncReadable {
    * ```
    *
    * @see {@link validateCache} for cache validation algorithm
-   * @see {@link SPECIFICATIONS.md} Section 4 for OPFS architecture
-   * @performance First init: ~100ms (OPFS setup + validation), Subsequent: ~10ms (validation only)
+   * @see SPECIFICATIONS.md - Section 4 for OPFS architecture
+   * @remarks Performance: First init: ~100ms (OPFS setup + validation), Subsequent: ~10ms (validation only)
    */
   async init(): Promise<void> {
     if (!this.enabled) {
@@ -239,14 +239,14 @@ export class TwoLevelCachingStore implements AsyncReadable {
    * console.timeEnd('second'); // ~0.001ms
    * ```
    *
-   * @performance Typical access pattern:
+   * @remarks Performance: Typical access pattern:
    *              - First load: 90% L3 fetches (cold cache)
    *              - Subsequent loads: 95% L1 hits, 4% L2 hits, 1% L3 fetches
    *              - Memory usage: L1 ~100MB, L2 ~2GB (configurable)
    *
    * @see {@link init} for cache initialization and validation
    * @see {@link setPrefetcher} for enabling automatic adjacent chunk loading
-   * @see {@link SPECIFICATIONS.md} Section 3 for complete cache algorithm
+   * @see SPECIFICATIONS.md - Section 3 for complete cache algorithm
    */
   async get(key: string, _options?: any): Promise<Uint8Array | undefined> {
     // L1: Memory check (fastest, ~1μs)

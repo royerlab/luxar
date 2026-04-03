@@ -39,7 +39,7 @@ export class LRUCache<V> {
    * }
    * ```
    *
-   * @performance O(1) - two Map operations (delete + set for reordering)
+   * @remarks Performance: O(1) - two Map operations (delete + set for reordering)
    */
   get(key: string): V | undefined {
     const value = this.cache.get(key);
@@ -87,7 +87,7 @@ export class LRUCache<V> {
    * console.log(cache.has('b')); // true - still cached
    * ```
    *
-   * @performance O(k) where k = number of evictions needed (typically 0-2)
+   * @remarks Performance: O(k) where k = number of evictions needed (typically 0-2)
    */
   set(key: string, value: V): void {
     const size = this.getSize(value);

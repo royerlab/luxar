@@ -9,7 +9,7 @@ import { log, Modules } from '../utils/log';
  *
  * @interface SliderConfig
  */
-interface SliderConfig {
+export interface SliderConfig {
   /** DOM container where slider UI will be mounted */
   container: HTMLElement;
 
