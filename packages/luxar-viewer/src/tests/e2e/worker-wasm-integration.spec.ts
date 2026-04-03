@@ -17,6 +17,7 @@ import {
   waitForPointsLoaded,
   getConsoleMessages,
   waitForConsoleInterceptor,
+  waitForNextRender,
 } from './helpers';
 
 const DATASET_3D = 'http://localhost:9000/datasets/examples/radius_basic_example.zarr';
@@ -114,7 +115,7 @@ test.describe('Worker Integration E2E', () => {
     await waitForPointsLoaded(page);
 
     // Wait for interactions to settle
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     // Rapid navigation should queue queries correctly
     for (let i = 0; i < 5; i++) {
@@ -122,7 +123,7 @@ test.describe('Worker Integration E2E', () => {
       await page.waitForTimeout(50); // Rapid updates
     }
 
-    await page.waitForTimeout(1000); // Let queries settle
+    await waitForNextRender(page); // Let queries settle
 
     // Should have completed without crashes
     const state = await page.evaluate(() => {
@@ -183,12 +184,12 @@ test.describe('WASM Integration E2E', () => {
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
 
     // Navigate to trigger spatial query on nD dataset (exercises WASM or TS code path)
     await page.keyboard.press('4'); // Select dimension 4
     await page.keyboard.press(']'); // Navigate forward
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     // Core assertion: queries completed and app is stable after navigation
     const state = await page.evaluate(() => {
@@ -237,16 +238,16 @@ test.describe('WASM Integration E2E', () => {
 
     // Click canvas for focus
     await page.click('canvas');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
 
     // Navigate multiple times to stress test WASM
     for (let i = 0; i < 10; i++) {
       await page.keyboard.press(']');
-      await page.waitForTimeout(100);
+      await page.waitForTimeout(100); // Rapid sequential navigation
     }
 
     // Wait for operations to settle
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     // Should have no crashes - state should still be accessible
     const state = await page.evaluate(() => {

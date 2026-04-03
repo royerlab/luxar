@@ -6,6 +6,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { waitForNextRender } from './helpers';
 
 // Extend Window type for test-specific properties
 declare global {
@@ -52,7 +53,7 @@ test.describe('Custom GUI Library', () => {
 
     // Change slider value
     await fovSlider.fill('60');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
 
     // Verify value updated in settings
     const newValue = await page.evaluate(() => (window as Window).settings.fov);
@@ -68,7 +69,7 @@ test.describe('Custom GUI Library', () => {
 
     // Click light theme button
     await page.click('.theme-btn[data-theme="light"]');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Get light theme background color
     const lightBg = await page.locator('.luxar-gui').evaluate((el) => {
@@ -80,7 +81,7 @@ test.describe('Custom GUI Library', () => {
 
     // Switch back to dark
     await page.click('.theme-btn[data-theme="dark"]');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     const backToDarkBg = await page.locator('.luxar-gui').evaluate((el) => {
       return getComputedStyle(el).backgroundColor;
@@ -102,7 +103,7 @@ test.describe('Custom GUI Library', () => {
 
     // Click to close
     await folderTitle.click();
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Should be closed
     await expect(cameraFolder).toHaveClass(/luxar-gui__folder--closed/);
@@ -110,7 +111,7 @@ test.describe('Custom GUI Library', () => {
 
     // Click to open again
     await folderTitle.click();
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Should be open
     await expect(cameraFolder).toHaveClass(/luxar-gui__folder--open/);
@@ -124,7 +125,7 @@ test.describe('Custom GUI Library', () => {
 
     // Change preset to 35mm
     await presetSelect.selectOption('35mm');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
 
     // Verify settings object updated (35mm = 63 degrees)
     const fovValue = await page.evaluate(() => (window as Window).settings.fov);
@@ -132,7 +133,7 @@ test.describe('Custom GUI Library', () => {
 
     // Change to 85mm
     await presetSelect.selectOption('85mm');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
 
     // Verify settings object updated (85mm = 28 degrees)
     const newFovValue = await page.evaluate(() => (window as Window).settings.fov);
@@ -155,14 +156,14 @@ test.describe('Custom GUI Library', () => {
 
     // Enable inertial mode
     await inertialCheckbox.check();
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
 
     // Damping should now be visible
     await expect(dampingController).toBeVisible();
 
     // Disable inertial mode
     await inertialCheckbox.uncheck();
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
 
     // Damping should be hidden again
     await expect(dampingController).toBeHidden();
@@ -186,7 +187,7 @@ test.describe('Custom GUI Library', () => {
   test('should match visual snapshot (dark theme)', async ({ page }) => {
     // Ensure dark theme is active
     await page.click('.theme-btn[data-theme="dark"]');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Take visual snapshot of the GUI
     const gui = page.locator('.luxar-gui');

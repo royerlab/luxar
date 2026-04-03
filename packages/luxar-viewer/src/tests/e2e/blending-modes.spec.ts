@@ -114,7 +114,7 @@ test.describe('Blending Modes', () => {
       const debug = (window as any).__luxarDebug;
       for (let i = 0; i < 5; i++) debug.renderOnce();
     });
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     const webglErrors = await getWebGLErrors(page);
     expect(webglErrors.length).toBe(0);
@@ -156,7 +156,6 @@ test.describe('Blending Modes', () => {
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);
     await waitForNextRender(page, 5);
-    await page.waitForTimeout(500);
 
     // Take screenshot — this establishes a baseline for blending correctness
     await expect(page).toHaveScreenshot('blending-modes-rendering.png', {
