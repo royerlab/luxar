@@ -18,6 +18,7 @@ const REQUIRED_DATASETS = [
   'dimension_navigation_example.zarr',
   'dimension_sliders_5d_example.zarr',
   'dense_grid_5d_example.zarr',
+  'layers_test_example.zarr',
 ];
 
 export default async function globalSetup() {
