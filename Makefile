@@ -1505,7 +1505,19 @@ SLURM_TIME      ?= 01:00:00
 # CUDA_MODULE: auto = detect from torch.version.cuda; or e.g. cuda/12.8.0_570.86.10
 CUDA_MODULE     ?= auto
 
+# Guard: exit early on macOS where CUDA is not supported
+define CHECK_MACOS_CUDA
+	@if [ "$(OS)" = "macos" ]; then \
+		echo "❌ CUDA is not supported on macOS."; \
+		echo ""; \
+		echo "   NVIDIA dropped CUDA support for macOS after toolkit 10.2 (2020)."; \
+		echo "   To build/run CUDA extensions, use a Linux machine with an NVIDIA GPU."; \
+		exit 1; \
+	fi
+endef
+
 setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
+	$(CHECK_MACOS_CUDA)
 	@echo "🔧 Setting up CUDA development environment..."
 	@echo ""
 	@# Step 1: Check/install system dependencies (may need sudo)
@@ -1675,6 +1687,7 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 	@echo ""
 
 check-cuda-deps:  ## Check CUDA development dependencies
+	$(CHECK_MACOS_CUDA)
 	@echo "🔍 Checking CUDA dependencies..."
 	@echo ""
 	@echo "=== 1. CUDA Toolkit ==="
@@ -1706,8 +1719,12 @@ check-cuda-deps:  ## Check CUDA development dependencies
 			echo "✅ NVIDIA driver: $$DRIVER_VERSION"; \
 			echo "   GPU: $$GPU_NAME"; \
 		else \
-			echo "⚠️  nvidia-smi found but GPU not accessible (login node? driver not loaded?)"; \
-			echo "   On HPC: load the driver module or run on a GPU node"; \
+			echo "⚠️  nvidia-smi found but GPU not accessible (driver not loaded?)"; \
+			if command -v sbatch >/dev/null 2>&1; then \
+				echo "   On HPC: load the driver module or run on a GPU node"; \
+			else \
+				echo "   Check that NVIDIA drivers are properly installed"; \
+			fi; \
 		fi; \
 	else \
 		echo "❌ NVIDIA driver not found (nvidia-smi not available)"; \
@@ -1793,6 +1810,7 @@ check-cuda-deps:  ## Check CUDA development dependencies
 	@echo ""
 
 build-cuda:  ## Build the CUDA splatting extension  [SLURM=1 to build on a GPU node via Slurm]
+	$(CHECK_MACOS_CUDA)
 	@if [ "$(SLURM)" = "1" ]; then \
 		echo "🚀 Submitting CUDA build to Slurm (partition: $(SLURM_PARTITION))..."; \
 		echo ""; \
@@ -1806,19 +1824,29 @@ build-cuda:  ## Build the CUDA splatting extension  [SLURM=1 to build on a GPU n
 	else \
 		echo "🔧 Building CUDA splatting extension..."; \
 		echo ""; \
-		echo "   💡 On an HPC cluster without a GPU on the login node, use:"; \
-		echo "        make build-cuda SLURM=1"; \
-		echo "        make build-cuda SLURM=1 SLURM_PARTITION=gpu"; \
-		echo ""; \
+		if command -v sbatch >/dev/null 2>&1; then \
+			echo "   💡 On an HPC cluster without a GPU on the login node, use:"; \
+			echo "        make build-cuda SLURM=1"; \
+			echo "        make build-cuda SLURM=1 SLURM_PARTITION=gpu"; \
+			echo ""; \
+		fi; \
 		if ! command -v nvcc >/dev/null 2>&1; then \
 			echo "❌ CUDA toolkit not found (nvcc not in PATH)"; \
 			echo ""; \
-			echo "   On this HPC system, load the CUDA module first:"; \
-			echo "     module load cuda/12.8.0_570.86.10   # match your PyTorch CUDA version"; \
-			echo "     make build-cuda"; \
-			echo ""; \
-			echo "   Or build on a GPU node automatically:"; \
-			echo "     make build-cuda SLURM=1"; \
+			if command -v sbatch >/dev/null 2>&1 || type module >/dev/null 2>&1; then \
+				echo "   On an HPC system, load the CUDA module first:"; \
+				echo "     module load cuda/12.8.0_570.86.10   # match your PyTorch CUDA version"; \
+				echo "     make build-cuda"; \
+				echo ""; \
+				echo "   Or build on a GPU node automatically:"; \
+				echo "     make build-cuda SLURM=1"; \
+			else \
+				echo "   Install the CUDA toolkit:"; \
+				echo "     https://developer.nvidia.com/cuda-downloads"; \
+				echo ""; \
+				echo "   After installing, ensure nvcc is in PATH:"; \
+				echo "     export PATH=/usr/local/cuda/bin:\$$PATH"; \
+			fi; \
 			echo ""; \
 			echo "   Run 'make check-cuda-deps' for a full diagnosis."; \
 			exit 1; \
@@ -1826,10 +1854,16 @@ build-cuda:  ## Build the CUDA splatting extension  [SLURM=1 to build on a GPU n
 		if ! nvidia-smi >/dev/null 2>&1; then \
 			echo "❌ GPU not accessible (nvidia-smi failed)"; \
 			echo ""; \
-			echo "   You are likely on a login node without direct GPU access."; \
-			echo "   Build on a GPU node via Slurm:"; \
-			echo "     make build-cuda SLURM=1"; \
-			echo "     make build-cuda SLURM=1 SLURM_PARTITION=gpu"; \
+			if command -v sbatch >/dev/null 2>&1; then \
+				echo "   You are likely on a login node without direct GPU access."; \
+				echo "   Build on a GPU node via Slurm:"; \
+				echo "     make build-cuda SLURM=1"; \
+				echo "     make build-cuda SLURM=1 SLURM_PARTITION=gpu"; \
+			else \
+				echo "   No NVIDIA GPU detected. Ensure you have:"; \
+				echo "     - An NVIDIA GPU installed"; \
+				echo "     - NVIDIA drivers installed (https://www.nvidia.com/drivers)"; \
+			fi; \
 			echo ""; \
 			exit 1; \
 		fi; \
@@ -1838,9 +1872,11 @@ build-cuda:  ## Build the CUDA splatting extension  [SLURM=1 to build on a GPU n
 			echo ""; \
 			TORCH_CUDA=$$(hatch run python -c "import torch; print(torch.version.cuda)" 2>/dev/null || echo "unknown"); \
 			echo "   PyTorch CUDA version: $$TORCH_CUDA"; \
-			echo "   Did you load the matching CUDA module?"; \
-			echo "     module load cuda/$$TORCH_CUDA.x  (find exact name with: module spider cuda)"; \
-			echo ""; \
+			if command -v sbatch >/dev/null 2>&1 || type module >/dev/null 2>&1; then \
+				echo "   Did you load the matching CUDA module?"; \
+				echo "     module load cuda/$$TORCH_CUDA.x  (find exact name with: module spider cuda)"; \
+				echo ""; \
+			fi; \
 			echo "   Or reinstall PyTorch with CUDA:"; \
 			echo "     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu128"; \
 			echo ""; \
@@ -1887,6 +1923,7 @@ clean-cuda:  ## Clean CUDA build artifacts
 	@echo "✅ CUDA artifacts cleaned!"
 
 test-cuda:  ## Run CUDA extension tests
+	$(CHECK_MACOS_CUDA)
 	@echo "🧪 Running CUDA extension tests..."
 	@echo ""
 	@# Check if extension is built and up-to-date
@@ -1905,6 +1942,7 @@ test-cuda:  ## Run CUDA extension tests
 	@echo "✅ CUDA tests completed!"
 
 benchmark-cuda:  ## Run CUDA performance benchmarks
+	$(CHECK_MACOS_CUDA)
 	@echo "🚀 Running CUDA performance benchmarks..."
 	@echo ""
 	@# Check if extension is built and up-to-date
@@ -1927,6 +1965,7 @@ benchmark-cuda:  ## Run CUDA performance benchmarks
 # ============================================================================
 
 build-nlm-cuda:  ## Build the NLM CUDA denoising extension
+	$(CHECK_MACOS_CUDA)
 	@echo "🔧 Building NLM CUDA extension..."
 	@echo ""
 	@if ! command -v nvcc >/dev/null 2>&1; then \
