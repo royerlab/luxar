@@ -15,7 +15,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady } from './helpers';
+import { waitForLuxarReady, waitForNextRender } from './helpers';
 
 // Use pre-generated hierarchy example
 const HIERARCHY_DATASET = 'http://localhost:9000/datasets/examples/hierarchy_example.zarr';
@@ -265,7 +265,7 @@ test.describe('Transform Hierarchy - Matrix Correctness', () => {
     await page.evaluate(() => {
       (window as any).__luxarDebug.renderOnce();
     });
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
 
     const positions2 = await getPositions();
 

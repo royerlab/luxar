@@ -12,7 +12,12 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, getLuxarState, waitForSpatialQuery } from './helpers';
+import {
+  waitForLuxarReady,
+  getLuxarState,
+  waitForSpatialQuery,
+  waitForNextRender,
+} from './helpers';
 
 test.describe('Error Recovery - Invalid Datasets', () => {
   test('should show error for non-existent dataset', async ({ page }) => {
@@ -331,7 +336,7 @@ test.describe('Error Recovery - Memory Limits', () => {
 
     // Navigate several times to accumulate cache
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
 
     for (let i = 0; i < 5; i++) {
       await page.keyboard.press(']');
@@ -358,7 +363,7 @@ test.describe('Error Recovery - Memory Limits', () => {
 
     // Navigate to populate cache
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQuery(page);
 

@@ -14,7 +14,13 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, getLuxarState, waitForNextRender } from './helpers';
+import {
+  waitForLuxarReady,
+  getLuxarState,
+  waitForNextRender,
+  waitForNavigationComplete,
+  waitForDataLoaded,
+} from './helpers';
 
 // Test datasets
 const DATASETS = {
@@ -73,7 +79,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
 
     // Reset position for fair comparison
     await page.keyboard.press('f'); // Recenter
-    await page.waitForTimeout(500);
+    await waitForNavigationComplete(page);
 
     // Test 2: Shift+W speed
     const initial2 = await getLuxarState(page);
@@ -353,7 +359,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
     await waitForLuxarReady(page);
 
     // Extra wait to ensure scene is fully loaded (avoid "Loading scene..." state)
-    await page.waitForTimeout(500);
+    await waitForDataLoaded(page);
 
     // Switch to fly mode via API (more reliable than counting V key presses)
     await page.evaluate(() => {
@@ -383,7 +389,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
 
     // Press F to recenter (this changes where camera LOOKS, not position)
     await page.keyboard.press('f');
-    await page.waitForTimeout(1500); // Wait for smooth animation
+    await waitForNavigationComplete(page);
 
     // Get camera's new quaternion
     const finalQ = await page.evaluate(() => {
@@ -418,7 +424,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
     await waitForLuxarReady(page);
 
     // Wait for dimension sliders to initialize
-    await page.waitForTimeout(1000);
+    await waitForDataLoaded(page);
 
     // Check initial slider visibility (use proper class selector and check display)
     const initialVisible = await page.evaluate(() => {
@@ -567,7 +573,7 @@ test.describe('Keyboard Input System - Browser Shortcuts Protection', () => {
   test('Ctrl+1 should not be blocked by 1 key binding', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.sliders5D}&debug`);
     await waitForLuxarReady(page);
-    await page.waitForTimeout(1000);
+    await waitForDataLoaded(page);
 
     // Get current dimension state
     const initialDimension = await page.evaluate(() => {

@@ -11,6 +11,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
+import { waitForNextRender } from './helpers';
 
 // Themes to test
 const THEMES = ['dark', 'light', 'frosted-glass'] as const;
@@ -183,7 +184,7 @@ for (const theme of THEMES) {
 
     // Press M twice to cycle to expanded view
     await page.keyboard.press('m');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
     await page.keyboard.press('m');
 
     // Wait for expanded monitor to appear

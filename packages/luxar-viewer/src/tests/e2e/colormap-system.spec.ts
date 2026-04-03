@@ -86,7 +86,6 @@ test.describe('Colormap System', () => {
     // Press J to show legend
     await page.keyboard.press('j');
     await waitForNextRender(page);
-    await page.waitForTimeout(300);
 
     // Legend should now be visible
     const legendAfter = await page
@@ -98,7 +97,6 @@ test.describe('Colormap System', () => {
     // Press J again to hide
     await page.keyboard.press('j');
     await waitForNextRender(page);
-    await page.waitForTimeout(300);
 
     const legendHidden = await page
       .locator('.luxar-colormap-legend')
@@ -111,7 +109,7 @@ test.describe('Colormap System', () => {
     // Open legend
     await focusCanvas(page);
     await page.keyboard.press('j');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Check legend content — may show "No colormaps active" or entries
     const legendContent = await page.evaluate(() => {
@@ -142,7 +140,7 @@ test.describe('Colormap System', () => {
     // Open legend
     await focusCanvas(page);
     await page.keyboard.press('j');
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     // Check if legend has canvas elements (gradient previews)
     const canvasCount = await page

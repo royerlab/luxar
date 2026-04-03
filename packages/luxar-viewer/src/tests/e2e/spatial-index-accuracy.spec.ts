@@ -18,6 +18,7 @@ import {
   waitForSpatialQuery,
   waitForPointsLoaded,
   waitForNavigationComplete,
+  waitForNextRender,
 } from './helpers';
 
 // Dataset paths (served from Python HTTP server on port 9000)
@@ -69,7 +70,7 @@ test.describe('Spatial Index Query Accuracy', () => {
 
     // Navigate in dimension 4 (Time) to trigger spatial query
     await page.keyboard.press('4');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQuery(page);
     await waitForNavigationComplete(page);
@@ -104,7 +105,7 @@ test.describe('Spatial Index Query Accuracy', () => {
 
     // Navigate to trigger a fresh spatial query
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQuery(page);
 
@@ -140,7 +141,7 @@ test.describe('Spatial Index Query Accuracy', () => {
 
     // Navigate through non-displayed dimension to trigger radius computation
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQuery(page);
 
@@ -218,7 +219,7 @@ test.describe('Spatial Index Query Accuracy', () => {
 
     // Navigate to a different time slice to ensure we're away from edges
     await page.keyboard.press('4');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
     await page.keyboard.press(']');
     await page.keyboard.press(']');
     await page.keyboard.press(']');
@@ -254,11 +255,11 @@ test.describe('Spatial Index - Navigation Outside Bounds', () => {
     // Navigate far outside data bounds in the Time dimension
     // Time range is 0-9, so navigating forward 20+ steps should go well beyond
     await page.keyboard.press('4');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     for (let i = 0; i < 25; i++) {
       await page.keyboard.press(']');
-      await page.waitForTimeout(100);
+      await page.waitForTimeout(100); // Rapid sequential navigation
     }
     await waitForSpatialQuery(page);
     await waitForNavigationComplete(page);
@@ -302,7 +303,7 @@ test.describe('Spatial Index - Cache Behavior', () => {
 
     // First navigation - should miss cache or load data
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQuery(page);
 
@@ -321,7 +322,7 @@ test.describe('Spatial Index - Cache Behavior', () => {
 
     // Navigate forward
     await page.keyboard.press('4');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQuery(page);
     await waitForNavigationComplete(page);
@@ -404,12 +405,12 @@ test.describe('Spatial Index - Error Handling', () => {
 
     // Navigate to extreme position
     await page.keyboard.press('4');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Navigate forward many times (will go well outside bounds)
     for (let i = 0; i < 20; i++) {
       await page.keyboard.press(']');
-      await page.waitForTimeout(200);
+      await page.waitForTimeout(200); // Rapid sequential navigation
     }
 
     await waitForSpatialQuery(page);

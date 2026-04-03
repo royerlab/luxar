@@ -18,6 +18,8 @@ import {
   getLuxarState,
   waitForDataLoaded,
   waitForNextRender,
+  waitForAnimationStep,
+  waitForNavigationComplete,
   focusCanvas,
 } from './helpers';
 
@@ -135,7 +137,7 @@ test.describe('Dimension Animation - UI Controls', () => {
 
     // Right-click play button to open animation settings panel
     await playButton.click({ button: 'right' });
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Check for animation settings panel (context menu or radio button panel)
     const settingsPanel = await page.evaluate(() => {
@@ -226,7 +228,7 @@ test.describe('Dimension Animation - UI Controls', () => {
     const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
     await playButton.waitFor({ state: 'visible', timeout: 5000 });
     await playButton.click({ button: 'right' });
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Set 30 FPS via API (more reliable than clicking radio buttons which may resolve to multiple elements)
     await page.evaluate(() => {
@@ -234,7 +236,7 @@ test.describe('Dimension Animation - UI Controls', () => {
       const ih = debug?.app?.inputHandler ?? debug?.inputHandler;
       ih?.animationManager?.setTargetFPS?.(3, 30);
     });
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
 
     // Start animation
     await page.click('.luxar-dimension-slider__play-btn');
@@ -263,7 +265,7 @@ test.describe('Dimension Animation - UI Controls', () => {
     const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
     await playButton.waitFor({ state: 'visible', timeout: 5000 });
     await playButton.click({ button: 'right' });
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Set bounce mode via API (more reliable than clicking radio buttons)
     await page.evaluate(() => {
@@ -271,7 +273,7 @@ test.describe('Dimension Animation - UI Controls', () => {
       const ih = debug?.app?.inputHandler ?? debug?.inputHandler;
       ih?.animationManager?.setLoopMode?.(3, 'bounce');
     });
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
 
     // Start animation
     await page.click('.luxar-dimension-slider__play-btn');
@@ -328,11 +330,11 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page, 1);
 
-    // Navigate forward a few steps (wait long enough for spatial query to complete)
+    // Navigate forward a few steps (wait for spatial query to complete)
     await page.keyboard.press(']');
-    await page.waitForTimeout(1500);
+    await waitForAnimationStep(page, 3);
     await page.keyboard.press(']');
-    await page.waitForTimeout(1500);
+    await waitForAnimationStep(page, 3);
 
     // Get current value (should not be at start)
     const beforeValue = await getDimensionValue(page, 3);
@@ -340,7 +342,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
 
     // Press Home to jump to start
     await page.keyboard.press('Home');
-    await page.waitForTimeout(1000); // Home key sets position immediately, wait for render
+    await waitForNavigationComplete(page);
 
     // Check dimension is at start (value 0)
     const afterValue = await getDimensionValue(page, 3);
@@ -372,7 +374,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
 
     // Press End to jump to end
     await page.keyboard.press('End');
-    await page.waitForTimeout(1000); // End key sets position immediately, wait for render
+    await waitForNavigationComplete(page);
 
     // Check dimension is at end
     const value = await getDimensionValue(page, 3);
@@ -487,7 +489,7 @@ test.describe('Dimension Animation - Animation Behavior', () => {
       const ih = debug?.app?.inputHandler ?? debug?.inputHandler;
       ih?.animationManager?.setTargetFPS?.(3, 30);
     });
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
 
     await page.keyboard.press('k'); // Start animation
     await waitForNextRender(page);
@@ -526,7 +528,7 @@ test.describe('Dimension Animation - Animation Behavior', () => {
       ih?.animationManager?.setLoopMode?.(3, 'loop');
       ih?.animationManager?.setTargetFPS?.(3, 30);
     });
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
 
     // Jump to near end via API (more reliable than End key + waitForAnimationStep)
     await page.evaluate(() => {
@@ -538,7 +540,7 @@ test.describe('Dimension Animation - Animation Behavior', () => {
         sdm.setDimensionValue(3, ranges[3][1] - 1);
       }
     });
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     // Start animation
     await page.keyboard.press('k');
@@ -678,7 +680,7 @@ test.describe('Dimension Animation - Animation Behavior', () => {
       ih?.animationManager?.setLoopMode?.(3, 'bounce');
       ih?.animationManager?.setTargetFPS?.(3, 60);
     });
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
 
     // Jump to near end via API
     await page.evaluate(() => {
@@ -689,7 +691,7 @@ test.describe('Dimension Animation - Animation Behavior', () => {
         sdm.setDimensionValue(3, ranges[3][1] - 1);
       }
     });
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     // Start animation
     await page.keyboard.press('k');
@@ -806,7 +808,7 @@ test.describe('Dimension Animation - Error Handling', () => {
 
     // Try to use animation shortcuts immediately (might not be initialized)
     await page.keyboard.press('k');
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Should not have errors
     expect(errors.length).toBe(0);
@@ -830,7 +832,7 @@ test.describe('Dimension Animation - Error Handling', () => {
       }
     });
 
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     // Should not crash
     const state = await getLuxarState(page);

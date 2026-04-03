@@ -18,6 +18,7 @@ import {
   getLuxarState,
   waitForDataLoaded,
   waitForDimensionSystemReady,
+  waitForNextRender,
 } from './helpers';
 
 // Test datasets with different dimension types
@@ -91,7 +92,7 @@ test.describe('Dimension Initialization - Policy Compliance', () => {
     }
 
     // Wait a bit for sliders to render (they're created after dimension init)
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     // Get slider value and dimension state
     const sliderData = await page.evaluate(() => {
@@ -153,7 +154,7 @@ test.describe('Dimension Initialization - Policy Compliance', () => {
     });
 
     // Wait for update
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     // After small movement, points should change smoothly (not jump dramatically)
     const finalState = await getLuxarState(page);
