@@ -269,25 +269,6 @@ All features described in this document are **fully implemented**:
 
 ---
 
-## Migration Plan (Completed)
-
-All migration steps below have been completed as part of the full implementation described in the Current State section above.
-
-1. ~~Add per-node `intensity` and `offset` to the Python Node class and compiler~~
-2. ~~Add `intensity` and `offset` uniforms to all three material shaders~~
-3. ~~Implement GOG model in shaders with early discard for negative results~~
-4. ~~Vendor `ToneMappingEffect` → `LuxarToneMappingEffect` with EOG uniforms~~
-5. ~~Replace original `ToneMappingEffect` in `PostProcessingManager` with vendored version~~
-6. ~~Remove `hdr_multiplier` from Python `ViewerConfig`; add `exposure`, `global_offset`, `global_gamma`~~
-7. ~~Remove hdrMultiplier uniform from all three material shaders and MaterialManager loop~~
-8. ~~Update `RENDERING_SETTINGS_MAP`: remove `hdr_multiplier`, add new mappings~~
-9. ~~Update `RenderingSettings` type and config defaults (remove `hdrMultiplier`, add new fields)~~
-10. ~~Update UI: replace "Intensity" slider with Exposure/Offset/Gamma controls~~
-11. ~~Update `validateRenderingSettings()` with ranges for new fields~~
-12. (Future) Add per-node interactive UI controls
-
----
-
 ## Files Affected
 
 ### Python
