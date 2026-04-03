@@ -80,14 +80,12 @@ Creates controls for:
 
 Creates controls for:
 
-- Exposure (logarithmic slider for perceptual linearity)
+- Exposure (log2 stops for perceptual linearity, -5 to +5)
 - Global Offset (linear slider, -1.0 to 1.0)
 - Global Gamma (linear slider, 0.1 to 10.0)
 - Tone mapping selector (None, Linear, Reinhard, Cineon, ACES, AgX, Neutral)
 
 Global EOG is applied in the vendored `LuxarToneMappingEffect` before tone mapping in a single shader pass.
-
-**Special behavior:** Takes `exposureLogValue` shadow object for the logarithmic slider implementation.
 
 ### anti-aliasing-setup.ts
 
@@ -147,8 +145,8 @@ private setupControls(): void {
   const camResult = setupCameraControls(context, this.controllers);
   Object.assign(this.controllers, camResult.controllers);
 
-  // HDR (needs shadow object for logarithmic slider)
-  const hdrResult = setupHDRControls(context, this.exposureLogValue);
+  // HDR
+  const hdrResult = setupHDRControls(context);
   Object.assign(this.controllers, hdrResult.controllers);
 
   // Anti-aliasing
@@ -171,13 +169,13 @@ When a FOV preset is selected, the camera module updates the corresponding lens 
 - Post-processing module exports lens distortion controller references
 - FOV preset onChange updates both FOV and lens distortion settings
 
-### Exposure Logarithmic Slider
+### Exposure Slider
 
-The exposure slider uses a shadow object pattern:
+The exposure slider uses log2 stops (photography-standard units):
 
-- Slider controls `exposureLogValue.log` (logarithmic value)
-- onChange converts to actual value: `10^log`
-- Custom `updateDisplay()` shows actual value, not log value
+- Slider controls `settings.exposure` directly (-5 to +5 stops)
+- 0 = neutral, +1 = 2x brighter, -1 = half brightness
+- Applied via `sceneManager.updateExposure(value)` in the HDR effect pass
 
 ### Navigation Folder Visibility
 

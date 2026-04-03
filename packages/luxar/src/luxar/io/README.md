@@ -62,7 +62,7 @@ with LuxarZarrCompiler(
     # Full arrays
     scene.add_points('cloud', positions, colors, radii)
 
-    # Scalar convenience (v1.4.0) - no intermediate arrays!
+    # Scalar convenience - no intermediate arrays!
     scene.add_points('uniform', positions,
                      radii=0.5,              # Scalar instead of np.full(N, 0.5)
                      colors=(1.0, 0, 0),     # Tuple instead of np.full((N,3), [1,0,0])
@@ -71,7 +71,7 @@ with LuxarZarrCompiler(
 
 **Key Features**:
 - Progressive writing (data written immediately, not cached)
-- **Scalar convenience (v1.4.0)**: Pass uniform values directly (no `np.full()` needed)
+- **Scalar convenience**: Pass uniform values directly (no `np.full()` needed)
 - Morton/Hilbert spatial ordering for better compression
 - Compound ordering for nD data (discrete dims → spatial curve)
 - **Dimension-aware spatial indexing**: Optimized for time-series and nD slicing
@@ -125,6 +125,11 @@ print(splats['centers'].shape)           # (N, 3)
 print(splats['cholesky_factors'].shape)  # (N, 6)
 ```
 
+**Return Types** (dataclasses with dict-compatible access):
+- `PointsData`: positions, colors, radii, sharpness, chunk_bounds, metadata
+- `LinesData`: vertices, colors, widths, sharpness, segments, chunk_bounds, metadata
+- `GSplatsData`: centers, amplitudes, cholesky_factors, colors, chunk_bounds, metadata
+
 **Key Features**:
 - Automatic decoding (broadcasting, LUT, quantization, array_ref)
 - Full scene introspection (list nodes, check types, get metadata)
@@ -134,7 +139,7 @@ print(splats['cholesky_factors'].shape)  # (N, 6)
 
 ### Spatial Ordering Module
 
-**New in v1.3.0**: `luxar.io.ordering` provides Morton and Hilbert curve ordering.
+`luxar.io.ordering` provides Morton and Hilbert curve ordering.
 
 ```python
 from luxar.io.ordering import sort_points_compound, compute_chunk_bounds_points
@@ -166,9 +171,11 @@ This ensures:
 **Functions**:
 - `sort_points_compound()`: Compound ordering for Points
 - `sort_splats_spatial()`: Simple spatial ordering for GSplats
+- `sort_segments_compound()`: Compound ordering for Lines segments
 - `compute_chunk_bounds_points()`: Chunk bounds with radius extent
 - `compute_chunk_bounds_gsplats()`: Chunk bounds with ellipsoidal extent
 - `morton_encode_nd()`: Morton (Z-order) encoding
+- `morton_encode_128bit()`: Morton encoding for 128-bit coordinates
 - `hilbert_encode_nd()`: Hilbert curve encoding
 
 ### Writer Protocol

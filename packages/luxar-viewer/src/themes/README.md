@@ -33,6 +33,15 @@ const tm = ThemeManager.getInstance();
 // Switch theme
 tm.setTheme('dark');
 
+// Get current theme
+const current = tm.getCurrentTheme();
+
+// List all registered themes
+const allThemes = tm.getAllThemes();
+
+// Register a custom theme
+tm.registerTheme(myCustomTheme);
+
 // Listen for changes (returns unsubscribe function)
 const unsubscribe = tm.onChange((theme) => {
   console.log('Theme changed to:', theme.name);
@@ -43,6 +52,9 @@ const dark = tm.getTheme('dark');
 
 // Later: stop listening
 unsubscribe();
+
+// For testing: reset singleton
+ThemeManager.resetInstance();
 ```
 
 ## Theme Structure

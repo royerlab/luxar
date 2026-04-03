@@ -90,7 +90,7 @@ export default defineConfig({
       url: 'http://localhost:9000',
       cwd: path.resolve(__dirname, '../..'),
       reuseExistingServer: true,
-      timeout: 30000,
+      timeout: 60000,
       stdout: 'ignore',
       stderr: 'pipe',
     },

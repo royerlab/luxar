@@ -109,6 +109,10 @@ Example: Time-Series Cell Tracking
 Viewing 4D Data
 ---------------
 
+.. image:: ../images/docs/nd-navigation-sliders.png
+   :alt: Luxar viewer showing nD dimension sliders
+   :width: 100%
+
 In the viewer:
 
 1. **Initial view**: See all cells at time=0
@@ -185,4 +189,4 @@ Summary
 * Extend-to-all provides reference visibility
 * Categorical dimensions improve clarity
 
-**Next Tutorial**: Gaussian splat fitting for image compression and denoising.
+**Next**: :doc:`programmatic_server` - Create and test servers programmatically, or skip to :doc:`gaussian_splatting` for Gaussian splat fitting.

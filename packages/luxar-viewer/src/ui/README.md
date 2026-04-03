@@ -17,6 +17,9 @@ The Luxar UI package provides a comprehensive set of user interface components f
 - **Helper Overlays**: Keyboard shortcuts and tips
 - **Recording Panel**: Screenshot and video capture with turntable mode
 - **Scale Bar**: Physical scale bar overlay using dimension units
+- **Colormap Legend**: Per-layer colormap gradient overlay
+- **Layers Panel**: Napari-inspired per-layer visibility, range, gamma, blending
+- **Custom GUI Library**: Drop-in lil-gui replacement with theme integration
 - **Responsive Design**: Mobile and desktop friendly
 
 ### Package Architecture
@@ -25,6 +28,7 @@ The Luxar UI package provides a comprehensive set of user interface components f
 ui/
 ├── dimension-sliders.ts         # nD navigation controls
 ├── rendering-controls.ts        # Visual parameter adjustments (main class)
+├── rendering-controls-utils.ts  # Settings validation, serialization, merging
 ├── rendering-controls/          # Modular setup functions
 │   ├── types.ts                 # Shared types (SetupContext, SetupResult)
 │   ├── navigation-setup.ts      # Navigation controls (orbit, fly, ortho)
@@ -36,13 +40,21 @@ ui/
 ├── performance-monitor.ts       # FPS and performance stats
 ├── data-loading-monitor.ts      # Data loading performance monitoring
 ├── data-monitor-types.ts        # Type definitions for monitoring
+├── data-monitor-templates.ts    # HTML template functions for monitor
 ├── debug-console.ts             # Developer console overlay
-├── helpers.ts                   # Help overlays and tooltips
+├── helpers.ts                   # Help overlays, loading indicators, toasts
 ├── recording-panel.ts           # Screenshot and video capture panel
+├── layers/                      # Per-layer control panel (see layers/README.md)
+├── gui/                         # Custom GUI library (see gui/README.md)
 ├── components/                  # Reusable UI components
+│   ├── base/ui-component.ts     # Base UI component class
 │   ├── loading-advisor.ts       # Smart recommendations engine
+│   ├── event-queue.ts           # Event queue for monitor
+│   ├── polling-loop.ts          # Polling loop utility
 │   ├── hierarchical-timing-panel.ts  # Hierarchical timing breakdown UI
-│   └── scale-bar.ts            # Physical scale bar overlay
+│   ├── scale-bar.ts             # Physical scale bar overlay
+│   ├── colormap-legend.ts       # Colormap legend overlay
+│   └── resolution-indicator.ts  # Resolution/DPR indicator
 └── README.md                    # This documentation
 ```
 
@@ -172,22 +184,22 @@ Comprehensive controls for adjusting rendering parameters in real-time.
 
 **Control Categories:**
 
-- **Visual Effects**: Bloom, tone mapping, noise, DOF, vignette, chromatic aberration, lens distortion
-- **HDR**: Intensity control with **logarithmic slider** (0.01-100, equal slider distance per order of magnitude)
+- **Visual Effects**: Bloom, tone mapping, detector noise, DOF, vignette, chromatic lens distortion, ambient occlusion
+- **HDR**: Exposure (log2 stops, -5 to +5), offset, gamma, and tone mapping
 - **Anti-Aliasing**: FXAA, SMAA (HIGH preset), MSAA, SSAA toggles
 - **Performance**: Quality presets, FPS targets
 - **Camera**: FOV presets (28mm-135mm equivalents), manual FOV control, clipping plane adjustments
 - **Materials**: Opacity, gamma, blending modes
 
-**Logarithmic HDR Intensity Slider:**
+**HDR Exposure Slider:**
 
-The HDR intensity slider uses a logarithmic scale to provide equal perceptual control across its entire range:
+The HDR exposure slider uses log2 stops (photography-standard units):
 
-- **Left edge**: 0.01 (very dim)
-- **Center**: 1.0 (neutral)
-- **Right edge**: 100 (very bright)
+- **-5 stops**: very dim (1/32 brightness)
+- **0 stops**: neutral (no change)
+- **+5 stops**: very bright (32x brightness)
 
-This ensures that moving the slider the same distance always produces the same perceived change in brightness, regardless of the current value.
+Each stop doubles or halves the brightness, providing perceptually uniform control.
 
 **Panel Layout:**
 
@@ -210,7 +222,9 @@ Rendering Controls
 │       ├── Far Plane (slider, 10-10000)
 │       └── Auto Adjust (button)
 ├── HDR
-│   ├── Intensity (logarithmic slider, 0.01-100)
+│   ├── Exposure (log2 stops slider, -5 to +5)
+│   ├── Global Offset (slider, -1.0 to 1.0)
+│   ├── Global Gamma (slider, 0.1 to 10.0)
 │   └── Tone Mapping (type selector)
 ├── Anti-Aliasing
 │   ├── SSAA □ (with resolution multiplier)
@@ -223,18 +237,21 @@ Rendering Controls
     │   ├── Strength (slider)
     │   ├── Radius (slider)
     │   └── Mipmap Levels (slider)
-    ├── Noise
+    ├── Detector Noise
     │   ├── Enabled □
-    │   ├── Intensity (slider)
-    │   ├── Film Grain Mode □
-    │   └── Blend Mode (selector)
+    │   ├── Readout Sigma (slider)
+    │   ├── Photon Gain (slider)
+    │   └── FPN Sigma (slider)
     ├── Depth of Field
     │   ├── Enabled □
     │   ├── Focus Distance (slider)
     │   └── Strength (slider)
-    ├── Chromatic Aberration
+    ├── Chromatic Lens Distortion
     │   ├── Enabled □
-    │   └── Strength (slider)
+    │   ├── Distortion X/Y (sliders)
+    │   ├── Principal Point (sliders)
+    │   ├── Focal Length (sliders)
+    │   └── Skew (slider)
     ├── Ambient Occlusion
     │   ├── Enabled □
     │   └── Quality (selector)
@@ -261,15 +278,15 @@ File browser for navigating and loading Zarr datasets from servers.
 
 ```typescript
 class DatasetBrowser {
-  // Navigation
-  navigate(path: string): Promise<void>;
+  constructor(config: DatasetBrowserConfig);
+  show(): void;
+  hide(): void;
+}
 
-  // Selection
-  onSelect(callback: (dataset: string) => void);
-
-  // History
-  addRecent(path: string): void;
-  clearRecent(): void;
+interface DatasetBrowserConfig {
+  container: HTMLElement;
+  onDatasetSelect: (fullUrl: string) => void;
+  onClose?: () => void;
 }
 ```
 
@@ -277,25 +294,15 @@ class DatasetBrowser {
 
 Real-time performance statistics overlay.
 
-**Metrics Displayed:**
+**Metrics Displayed (via stats.js panels):**
 
-- FPS (current, average, min/max)
-- Frame time (ms)
-- GPU memory usage
-- Point count
-- Draw calls
-- Render resolution
+- FPS (frames per second) - green panel
+- Frame time (ms) - yellow panel
+- Memory usage (JS heap MB) - purple panel
 
-**Visualization:**
+**Keyboard Shortcut:** `P` to toggle visibility
 
-```
-┌─────────────────┐
-│ FPS: 60 (58-60) │
-│ Frame: 16.7ms   │
-│ Points: 1.2M    │
-│ Memory: 128MB   │
-└─────────────────┘
-```
+Panels can be cycled via `cyclePanels()` method.
 
 ### 5. Data Loading Monitor
 
@@ -404,16 +411,16 @@ document.addEventListener('keydown', (e) => {
 ```typescript
 interface MonitorConfig {
   position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
-  theme: 'dark' | 'light';
-  defaultView: 'compact' | 'detailed';
-  updateInterval: number; // UI update frequency (ms)
-  maxEvents: number; // Maximum events to store
+  theme: 'dark' | 'light' | 'auto';
+  defaultView: 'compact' | 'detailed' | 'debug';
+  updateInterval: number; // ms between UI updates
+  maxEvents: number; // Maximum events to keep in history
   showSpatialGrid: boolean; // Show spatial index visualization
   showTimeline: boolean; // Show performance timeline
   showRecommendations: boolean; // Show LoadingAdvisor tips
   autoExpand: boolean; // Auto-expand on warnings
   enableProfiling: boolean; // Enable detailed profiling
-  sampleRate: number; // Event sampling rate (0-1)
+  sampleRate: number; // Sample 1 in N events for profiling
 }
 ```
 
@@ -431,12 +438,14 @@ In-app developer console for debugging and diagnostics.
 
 **Features:**
 
-- Console output capture and display
-- Command execution
-- Network request logging
+- Console output capture and display (log, warn, error, info, debug)
+- Message history from app startup via global console interceptor
+- Syntax-highlighted output (objects, numbers, strings)
+- Filtering by keyword
+- Copy all messages to clipboard
+- Auto-scroll option
 - Error stack traces
-- Performance profiling
-- Local storage inspection
+- Draggable and resizable panel
 
 **Keyboard Shortcut:** `Ctrl+L` to toggle
 
@@ -444,10 +453,12 @@ In-app developer console for debugging and diagnostics.
 
 ```typescript
 class DebugConsole {
-  toggle(): void;
-  clear(): void;
-  log(message: string, level?: 'info' | 'warn' | 'error'): void;
-  executeCommand(command: string): void;
+  show(): void; // Show with full message history
+  hide(): void; // Hide panel
+  toggle(): void; // Toggle visibility
+  clear(): void; // Clear all messages
+  getIsVisible(): boolean;
+  dispose(): void; // Clean up resources
 }
 ```
 
@@ -496,6 +507,33 @@ Physical scale bar overlay that automatically computes width from camera distanc
 **Keyboard Shortcut:** `B` to toggle visibility
 
 **CSS:** `styles/components/scale-bar.css`
+
+### 10. Colormap Legend
+
+Compact overlay showing each visible layer's colormap gradient, name, and data range.
+
+**Features:**
+
+- Reactive updates when layer state changes (colormap, visibility, range)
+- Gradient rendering from built-in colormap LUTs
+- Only shows layers that have a colormap assigned
+
+**Keyboard Shortcut:** `J` to toggle visibility
+
+### 11. Layers Panel
+
+Napari-inspired per-layer control panel. See [`./layers/README.md`](./layers/README.md) for details.
+
+**Features:**
+
+- Visibility toggle per layer
+- Display range [min, max] with dual-thumb slider
+- Gamma correction
+- Blending mode (additive, normal, max, opaque, luminous)
+- Colormap selection
+- Multi-select: Click, Ctrl+Click, Shift+Click
+
+**Keyboard Shortcut:** `L` to toggle
 
 ---
 
@@ -719,6 +757,8 @@ Global keyboard shortcuts managed by the UI system:
 | `T`       | Toggle recording panel     | Global                   |
 | `G`       | Quick screenshot           | Global                   |
 | `B`       | Toggle scale bar           | Global                   |
+| `J`       | Toggle colormap legend     | Global                   |
+| `L`       | Toggle layers panel        | Global                   |
 | `Ctrl+L`  | Toggle debug console       | Development mode         |
 | `Esc`     | Close active panel         | Any panel open           |
 | `K`       | Toggle dimension animation | When dimension selected  |
@@ -733,101 +773,6 @@ Global keyboard shortcuts managed by the UI system:
 - **Scroll**: Adjust slider values with precision
 - **Right-click**: Context menus
 - **Double-click**: Reset to default values
-
-### Touch Support
-
-Mobile-friendly interactions:
-
-- Touch drag for panel movement
-- Pinch to zoom in browser view
-- Tap outside to close panels
-- Swipe for slider adjustments
-
----
-
-## Layout Management
-
-### Panel System
-
-Flexible panel layout with:
-
-```typescript
-interface PanelConfig {
-  position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center';
-  size: 'small' | 'medium' | 'large' | 'auto';
-  collapsible: boolean;
-  draggable: boolean;
-  resizable: boolean;
-  persistent: boolean; // Remember state
-}
-```
-
-### Responsive Design
-
-Automatic layout adjustments:
-
-```typescript
-// Desktop: Multi-column layout
-// Tablet: Stacked panels
-// Mobile: Full-screen panels
-
-function adaptLayout() {
-  const width = window.innerWidth;
-
-  if (width < 768) {
-    // Mobile: full-screen panels
-    setLayout('mobile');
-  } else if (width < 1024) {
-    // Tablet: stacked layout
-    setLayout('tablet');
-  } else {
-    // Desktop: floating panels
-    setLayout('desktop');
-  }
-}
-```
-
----
-
-## State Management
-
-### UI State
-
-Centralized state management for UI components:
-
-```typescript
-interface UIState {
-  panels: {
-    rendering: { visible: boolean; collapsed: boolean };
-    dimensions: { visible: boolean; position: Point };
-    performance: { visible: boolean };
-    debug: { visible: boolean };
-  };
-
-  settings: {
-    theme: 'dark' | 'light';
-    compactMode: boolean;
-    animations: boolean;
-  };
-}
-```
-
-### Persistence
-
-Save UI preferences:
-
-```typescript
-// Save to localStorage
-function saveUIState(state: UIState) {
-  localStorage.setItem('luxar-ui-state', JSON.stringify(state));
-}
-
-// Restore on load
-function restoreUIState(): UIState {
-  const saved = localStorage.getItem('luxar-ui-state');
-  return saved ? JSON.parse(saved) : defaultState;
-}
-```
 
 ---
 
@@ -861,30 +806,6 @@ ui.rendering.on('change', updateRendering);
 ui.browser.on('select', loadDataset);
 ```
 
-### Custom Panel Creation
-
-```typescript
-class CustomPanel extends UIPanel {
-  constructor() {
-    super({
-      title: 'Custom Controls',
-      position: 'top-right',
-      collapsible: true,
-    });
-  }
-
-  render() {
-    return `
-      <div class="custom-panel">
-        <button onclick="this.handleAction()">
-          Custom Action
-        </button>
-      </div>
-    `;
-  }
-}
-```
-
 ### Responsive UI Updates
 
 ```typescript
@@ -904,43 +825,6 @@ function updateUIForDataset(dataset) {
   // Configure rendering controls
   ui.rendering.setDefaults(dataset.renderingConfig);
 }
-```
-
----
-
-## Accessibility
-
-### ARIA Support
-
-All UI components include proper ARIA attributes:
-
-```html
-<div
-  role="slider"
-  aria-label="Time dimension"
-  aria-valuenow="50"
-  aria-valuemin="0"
-  aria-valuemax="100"
-></div>
-```
-
-### Keyboard Navigation
-
-Full keyboard support for all controls:
-
-- Tab navigation between controls
-- Arrow keys for sliders
-- Enter/Space for buttons
-- Escape to close panels
-
-### Screen Reader Support
-
-Descriptive labels and live regions:
-
-```typescript
-<div aria-live="polite" aria-atomic="true">
-  Dimension changed: Time = 50ms
-</div>
 ```
 
 ---
@@ -1032,32 +916,40 @@ Override default styles:
 
 ### RenderingControls
 
-| Method                                  | Description          |
-| --------------------------------------- | -------------------- |
-| `setBloom(strength, radius, threshold)` | Configure bloom      |
-| `setToneMapping(type)`                  | Set tone mapping     |
-| `setAntiAliasing(type, enabled)`        | Toggle AA methods    |
-| `getState()`                            | Get current settings |
+| Method                               | Description                                         |
+| ------------------------------------ | --------------------------------------------------- |
+| `show()` / `hide()` / `toggle()`     | Control panel visibility                            |
+| `isVisible()`                        | Check if panel is visible                           |
+| `setAnimationController(controller)` | Connect animation controller for render triggers    |
+| `setAdaptiveDPRManager(manager)`     | Connect adaptive DPR manager for performance UI     |
+| `setSceneId(url, name?)`             | Set scene ID for settings persistence               |
+| `setZarrViewerConfig(config)`        | Apply viewer config defaults from zarr metadata     |
+| `syncCurrentState()`                 | Sync UI controls with current post-processing state |
+| `updateSceneScale()`                 | Update scale-dependent controls after scene load    |
+| `toggleCinematicMode()`              | Toggle cinematic mode (bloom + ACES + vignette)     |
+| `dispose()`                          | Clean up resources and event listeners              |
 
 **Architecture**: RenderingControls uses a modular setup architecture where each category of controls (navigation, camera, HDR, anti-aliasing, post-processing) is initialized by a dedicated setup module in `./rendering-controls/`. This improves maintainability and keeps files under token limits. See [`./rendering-controls/README.md`](./rendering-controls/README.md) for details.
 
 ### PerformanceMonitor
 
-| Method                 | Description          |
-| ---------------------- | -------------------- |
-| `begin()/end()`        | Frame timing markers |
-| `setPointCount(count)` | Update point counter |
-| `show()/hide()`        | Toggle visibility    |
-| `reset()`              | Clear statistics     |
+| Method          | Description                                |
+| --------------- | ------------------------------------------ |
+| `begin()/end()` | Frame timing markers (call in render loop) |
+| `toggle()`      | Toggle visibility                          |
+| `show()/hide()` | Explicit show/hide                         |
+| `cyclePanels()` | Cycle FPS/MS/MB panels                     |
+| `visible`       | Get current visibility state (getter)      |
+| `dispose()`     | Clean up resources                         |
 
 ### DatasetBrowser
 
-| Method           | Description              |
-| ---------------- | ------------------------ |
-| `navigate(path)` | Browse to path           |
-| `refresh()`      | Reload current directory |
-| `setServer(url)` | Change data server       |
-| `getSelection()` | Get selected dataset     |
+| Method   | Description                    |
+| -------- | ------------------------------ |
+| `show()` | Show the dataset browser panel |
+| `hide()` | Hide the dataset browser panel |
+
+Constructor takes `DatasetBrowserConfig` with `container`, `onDatasetSelect` callback, and optional `onClose` callback. Navigation is internal.
 
 ### DataLoadingMonitor
 

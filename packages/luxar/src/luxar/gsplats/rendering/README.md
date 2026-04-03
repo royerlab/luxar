@@ -6,7 +6,10 @@ GPU-accelerated volume rendering of Gaussian splats, with automatic backend sele
 
 - **`render_to_volume(gsplat_data, shape, ...)`** — Render Gaussian splats to a NumPy volume array. This is the primary entry point for quality comparison and visualization.
 - **`render_to_volume_tensor(gsplat_data, shape, ...)`** — Same as above but returns a `torch.Tensor` on the rendering device, avoiding a GPU-to-CPU copy when the result feeds into further GPU operations (e.g., metric computation).
-- **`auto_detect_device()`** — Select the best available device (CUDA > MPS > CPU).
+
+### Internal Helpers (not exported)
+
+- **`auto_detect_device()`** — Select the best available device (CUDA > MPS > CPU). Used internally by the render functions when no device is specified.
 
 ## Module Structure
 
@@ -41,6 +44,9 @@ mse = ((rendered - original) ** 2).mean()
 
 ## Parameters
 
+- **`gsplat_data`** (`GSplatData`) — The Gaussian splat data to render, containing centers, Cholesky factors, and amplitudes.
+- **`shape`** (`Tuple[int, ...]`) — Output volume shape (e.g., `(128, 128, 128)` for 3D).
+- **`device`** (default `None`) — Device for rendering: `"cuda"`, `"mps"`, `"cpu"`, or `None` for auto-detection.
 - **`truncate`** (default 3.0) — Truncation radius in standard deviations. Gaussians are evaluated within this radius from their centers.
 - **`intensity_floor`** (default 1e-5) — Minimum intensity threshold for amplitude-aware culling.
 - **`chunk_size`** — Optional chunk size for memory management on large volumes.

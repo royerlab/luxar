@@ -15,27 +15,18 @@ positions = np.random.randn(1000, 3).astype(np.float32)
 colors = np.random.rand(1000, 3).astype(np.float32)
 
 # 2. Validate positions (catches NaN, Inf, shape issues)
-validated_pos = validate_positions_for_writing(
-    positions,
-    expected_shape=(1000, 3),
-    name="particle_positions"
-)
+n_points, n_dims = validate_positions_for_writing(positions, context="particle_positions")
 
-# 3. Validate colors with mode checking
-validated_colors = validate_colors_for_writing(
-    colors,
-    expected_shape=(1000, 3),
-    color_mode="sdr",  # Ensures values in [0, 1]
-    name="particle_colors"
-)
+# 3. Validate colors
+validate_colors_for_writing(colors, n_points, context="particle_colors")
 
-print("✓ Data validated and ready for writing")
+print("Data validated and ready for writing")
 ```
 
 **What Gets Checked**:
-- Shape validation - ensures correct dimensions
-- Type conversion - automatically converts to float32 if needed
-- Range validation - checks for NaN, Inf, out-of-bounds values
+- Shape validation - ensures 2D array with correct dimensions
+- Type checking - verifies numpy array input
+- Range validation - checks for NaN, Inf values
 - Helpful errors - messages tell you exactly what's wrong and how to fix it
 
 **When to Use**:
@@ -103,6 +94,10 @@ Provides detailed validation functions specifically for write-time validation, w
 - `validate_colors_for_writing()`: Validate colors with HDR support
 - `validate_radii_for_writing()`: Validate point radii arrays
 - `validate_sharpness_for_writing()`: Validate sharpness values
+- `validate_zarr_attributes()`: Validate zarr group attributes dictionary
+
+**Classes:**
+- `ValidationError`: Custom error with optional suggestion message
 
 **Features:**
 - Detailed error messages with suggestions
@@ -403,13 +398,9 @@ ValueError: "non-integer category index 1.5 at position 10 in time_phase"
 ```python
 from luxar.validation import validate_positions_for_writing
 
-# Validate before writing
+# Validate before writing (returns n_points, n_dims)
 positions = np.random.randn(1000, 3)
-validated = validate_positions_for_writing(
-    positions,
-    expected_shape=(1000, 3),
-    name="trajectory"
-)
+n_points, n_dims = validate_positions_for_writing(positions, context="trajectory")
 ```
 
 ### Custom Validation
@@ -561,10 +552,10 @@ External:
 
 Tests are located in `validation/tests/`:
 - `test_types_validation.py` - Type validation tests (includes categorical dimension tests)
-- `test_base_validation.py` - Write-time validation tests
 - `test_validation_nd.py` - nD validation tests
-- `test_config_validation.py` - Config validation tests
+- `test_nd_transforms.py` - nD transform validation and composition tests
 - `test_points_validation.py` - Points-specific validation tests
+- `test_colormap_validation.py` - Colormap validation tests
 - `test_validation_module.py` - Module-level integration tests
 
 Run tests:

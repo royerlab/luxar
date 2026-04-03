@@ -1,4 +1,4 @@
-Tutorial 3: Gaussian Splatting for Images
+Gaussian Splatting for Images
 ===========================================
 
 Learn the concepts behind Gaussian splatting and when/how to use it effectively.
@@ -127,7 +127,7 @@ Seed Selection is Critical
    result = fit_gaussian_splats(
        image,
        seed_method="edges",
-       num_seeds=1000,        # Number of seeds to generate
+       seeds=1000,            # Number of seeds to generate (int = count)
    )
 
 **Auto Method (Recommended)**:
@@ -256,6 +256,10 @@ Saving and Visualizing Results
    # Visualize in viewer
    # Terminal: luxar serve fitted_splats.gsplats.zarr --viewer
 
+.. image:: ../images/docs/gsplats-scene.png
+   :alt: Luxar viewer showing Gaussian splats
+   :width: 100%
+
 **What you'll see**:
 
 * Each Gaussian rendered as a smooth blob
@@ -318,4 +322,4 @@ Summary
 * Need extreme compression
 * Want denoising + compression together
 
-**Next Tutorial**: Performance optimization for billion-point datasets.
+**Next**: :doc:`performance_optimization` - Handle billion-point datasets efficiently.

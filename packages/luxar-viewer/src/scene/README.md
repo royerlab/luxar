@@ -20,6 +20,7 @@ The Luxar Scene package provides comprehensive scene management, animation contr
 ```
 scene/
 ├── scene-manager.ts              # Main scene orchestrator
+├── scene-manager-utils.ts        # Pure utility functions (bounding box, camera distance, clipping)
 ├── animation-controller.ts        # Render loop management
 ├── scene-dims-manager.ts         # nD dimension coordination
 ├── dimension-animation-manager.ts # Dimension playback automation
@@ -50,7 +51,7 @@ The `SceneManager` is the central hub for all 3D scene operations.
 class SceneManager {
   // Scene setup
   scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera;
+  camera: LuxarCamera; // PerspectiveCamera | OrthographicCamera
   renderer: THREE.WebGLRenderer;
   controls: ControlsManager;
 
@@ -76,7 +77,8 @@ class SceneManager {
 **Usage Example:**
 
 ```typescript
-const sceneManager = new SceneManager('canvas-id');
+const sceneManager = new SceneManager();
+await sceneManager.init();
 
 // Add objects to scene
 sceneManager.addToScene(pointCloud);
@@ -110,8 +112,8 @@ animationController.startAnimation();
 // Default: 2000ms of no activity
 
 // Manual control
-animationController.pause();
-animationController.resume();
+animationController.stopAnimation();
+animationController.startAnimation();
 ```
 
 **Render Loop:**
@@ -653,8 +655,12 @@ import { AnimationController } from './scene/animation-controller';
 import { sceneDimsManager } from './scene/scene-dims-manager';
 
 // Initialize scene
-const sceneManager = new SceneManager('canvas');
-const animationController = new AnimationController(sceneManager, postProcessing);
+const sceneManager = new SceneManager();
+await sceneManager.init();
+const animationController = new AnimationController(
+  sceneManager.controls,
+  sceneManager.postProcessing
+);
 
 // Setup dimensions for nD data
 sceneDimsManager.initFromScene(sceneManager.scene);

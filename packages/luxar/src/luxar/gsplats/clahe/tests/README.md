@@ -1,8 +1,19 @@
 # luxar.gsplats.clahe.tests
 
-Test helpers and test cases for this package.
+Tests for the CLAHE (Contrast Limited Adaptive Histogram Equalization) implementation.
 
-## Scope
+## What is Tested
 
-- Defines module behavior and public entry points.
-- Keeps tests/demos aligned with package semantics.
+- **Basic functionality**: uniform image unchanged, range/shape/dtype preservation
+- **Contrast enhancement**: low-contrast region enhancement, heterogeneous balancing, clip_limit effect
+- **nD support**: 1D, 2D, 3D, 4D, non-square shapes
+- **Edge cases**: small images, single tile, exact/inexact tile division, near-uniform, all-zero
+- **Sampling probabilities**: probability properties, sampling, uniform image probabilities
+- **Parameter validation**: various tile sizes, clip limits, nbins values
+- **Numerical stability**: extreme values, negative values, mixed signs, small range
+
+## How to Run
+
+```bash
+hatch run pytest packages/luxar/src/luxar/gsplats/clahe/tests/ -v
+```

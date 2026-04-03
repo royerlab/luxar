@@ -14,20 +14,19 @@ import numpy as np
 # 1. Type-safe array conversion
 data = np.array([1, 2, 3], dtype=np.float64)
 data_f32 = ensure_float32(data)  # Now guaranteed float32
-print(f"Converted: {data.dtype} → {data_f32.dtype}")
+print(f"Converted: {data.dtype} -> {data_f32.dtype}")
 
 # 2. Shape validation with clear errors
 positions = np.random.rand(100, 3).astype(np.float32)
-validate_array_shape(positions, (100, 3), name="positions")  # ✓ Passes
+validate_array_shape(positions, (100, 3), name="positions")  # Passes
 
 # 3. Generate demo data for testing
 create_lorenz_attractor(
     'lorenz_demo.zarr',
     n_points=10000,
-    color_mode='time_based',  # Color by time
     seed=42  # Reproducible
 )
-print("✓ Demo scene created at lorenz_demo.zarr")
+print("Demo scene created at lorenz_demo.zarr")
 ```
 
 **Key Use Cases**:
@@ -39,7 +38,7 @@ print("✓ Demo scene created at lorenz_demo.zarr")
 
 This package contains helper functions that simplify common tasks and provide convenient demo data generators for testing and examples.
 
-**Note**: As of Luxar v1.1.0, scalar broadcasting (e.g., `colors=(1,0,0)`, `radii=0.5`) is handled by `ArrayEncoder` in `luxar.encoding`. The previous `broadcast_*_to_points()` functions have been removed.
+**Note**: Scalar broadcasting (e.g., `colors=(1,0,0)`, `radii=0.5`) is handled by `ArrayEncoder` in `luxar.encoding`. The previous `broadcast_*_to_points()` functions have been removed.
 
 ## Modules
 
@@ -65,6 +64,7 @@ Path utilities for Luxar dataset generation.
 
 **Key Functions:**
 - `get_project_root()`: Find the Luxar project root directory (cached)
+- `get_datasets_dir()`: Get the `datasets/` directory at project root
 - `get_examples_output_dir()`: Resolve the centralized `datasets/examples/` output directory
 - `get_demos_output_dir()`: Resolve the centralized `datasets/demos/` output directory
 
@@ -77,16 +77,24 @@ Shared utilities for UMAP demo scripts (internal module).
 - Attribute-to-color mapping used by multiome UMAP demos (human, mouse, zebrahub)
 
 ### `demos.py`
-Demo scene generators for examples and testing.
+Demo scene generators, precomputed data helpers, and viewer launch utilities.
 
 **Key Functions:**
 - `create_lorenz_attractor()`: Generate Lorenz attractor visualization
 - `create_random_spheres()`: Create random spherical points
 - `create_time_series_demo()`: Generate time-varying data
+- `launch_viewer()`: Launch the Luxar viewer for a given dataset path
+- `detect_device()`: Auto-detect the best available compute device (cuda > mps > cpu)
+- `warn_if_no_cuda_gpu()`: Print a warning if no CUDA GPU is available
+- `load_precomputed_gsplats()`: Load precomputed GSplat data from Git LFS or cache
+- `load_precomputed_bundle()`: Load a precomputed bundle zip (timelapse demos)
+- `parse_demo_flags()`: Parse common demo CLI flags (--recompute, --device, etc.)
+- `is_lfs_pointer()`: Check if a file is a Git LFS pointer (not actual data)
 
 **Features:**
 - Ready-to-use demo scenes
 - Configurable parameters
+- Git LFS data loading with local cache fallback
 - Educational examples of Luxar features
 
 ## Usage Examples
@@ -132,7 +140,7 @@ validate_array_shape(colors, [(100, 3), (100, 4)], name="colors")
 ### Lorenz Attractor
 ```python
 def create_lorenz_attractor(
-    store_path: str,
+    store_path: PathLike,  # str or Path
     n_points: int = 10_000,
     seed: Optional[int] = None
 ) -> None:
@@ -145,7 +153,7 @@ Generates the famous Lorenz attractor with:
 ### Random Spheres
 ```python
 def create_random_spheres(
-    store_path: str,
+    store_path: PathLike,  # str or Path
     n_spheres: int = 100,
     points_per_sphere: int = 1000,
     seed: Optional[int] = None
@@ -159,7 +167,7 @@ Creates multiple spherical points:
 ### Time Series Demo
 ```python
 def create_time_series_demo(
-    store_path: PathLike,
+    store_path: PathLike,  # str or Path
     n_timepoints: int = 10,
     n_points_per_time: int = 1000,
     seed: Optional[int] = None

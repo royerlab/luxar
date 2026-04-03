@@ -31,9 +31,10 @@ luxar info my_data.zarr --stats
 
 - `__init__.py` - Package initialization, exports the main app
 - `main.py` - Main CLI application with all commands
-- `gsplat_commands.py` - Gaussian splat subcommands (info, view, prune, fit, convert, render, merge, filter, split, slice, compare, transform, denoise, napari, batch validate/cancel/denoise-calibrate/denoise-preprocess)
+- `gsplat_commands.py` - Gaussian splat subcommands (info, view, cull, fit, convert, render, merge, filter, split, slice, compare, transform, denoise, napari, benchmark, batch plan/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `utils.py` - Utility functions for CLI operations
+- `export.py` - Standalone scene export (viewer + data + serve script)
 - `network_simulation.py` - Network simulation middleware and profile definitions
 
 ## Available Commands
@@ -105,7 +106,7 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --config params.yaml
 luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config template
 ```
 
-**Presets:** `draft` (fast preview), `standard` (balanced), `hifi` (max quality)
+**Presets:** `draft` (fast preview), `standard` (balanced), `hifi` (high quality), `ultra` (max quality)
 
 #### `luxar gsplat convert`
 Convert .gsplats.zarr to a Luxar scene for the web viewer.
@@ -127,6 +128,15 @@ Combine multiple gsplat datasets (concatenation, new dimension, or channel color
 luxar gsplat merge a.zarr b.zarr -o merged.zarr
 luxar gsplat merge t0.zarr t1.zarr t2.zarr -o 4d.zarr --as-dimension --values 0,1,2
 luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00ff00"
+```
+
+#### `luxar gsplat cull`
+Remove low-contribution splats to reduce dataset size while preserving visual quality.
+```bash
+luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr                            # Auto (cumulative, keep 95%)
+luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr -m cumulative -r 0.90      # Keep 90% amplitude
+luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr -m redundancy --shape 41,512,512  # GPU, no target
+luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr --target vol.npy           # Error-budget (most principled)
 ```
 
 #### `luxar gsplat filter`
@@ -197,6 +207,33 @@ Open a Gaussian splat dataset in napari for visual inspection. Renders the splat
 luxar gsplat napari splats.gsplats.zarr
 ```
 
+#### `luxar gsplat benchmark`
+Benchmark GPU performance for Gaussian splatting to determine optimal tile sizes.
+```bash
+luxar gsplat benchmark --slurm --partition gpu        # Submit benchmark to Slurm
+luxar gsplat benchmark --list                         # Show profiled GPUs
+```
+
+#### `luxar gsplat batch plan`
+Plan and submit HPC batch fitting jobs for large OME-Zarr datasets.
+```bash
+luxar gsplat batch plan data.zarr.zip output/ -p gpu                    # Dry-run plan
+luxar gsplat batch plan data.zarr.zip output/ -p gpu --submit           # Submit to Slurm
+luxar gsplat batch plan data.zarr.zip output/ -p gpu --preset draft     # Fast preview
+```
+
+#### `luxar gsplat batch status`
+Check the status of a batch fitting run.
+```bash
+luxar gsplat batch status output/
+```
+
+#### `luxar gsplat batch merge`
+Merge completed tiles from a batch fitting run into a single dataset.
+```bash
+luxar gsplat batch merge output/
+```
+
 #### `luxar gsplat batch validate`
 Validate integrity of all tiles in a batch output directory. Checks each tile for completeness (metadata, arrays, shapes) and reports OK, MISSING, CORRUPT, and STALE_TMP counts. Use `--fix` to delete corrupt tiles and leftover `.tmp` directories so they get re-fitted on the next submit.
 ```bash
@@ -242,11 +279,15 @@ Custom static file handler that provides:
 
 ### Utilities
 - `open_browser()` - Cross-platform browser opening
+- `check_port_available()` - Check if a port is available for binding
 - `check_viewer_built()` - Verify viewer dist exists
+- `get_viewer_dist_path()` - Get path to viewer distribution directory
 - `build_viewer()` - Build viewer using pnpm
 - `find_available_port()` - Find free ports for servers (supports end_port shorthand)
 - `format_tree_node()` - Format hierarchical displays
+- `format_memory_size()` - Format bytes to human-readable string
 - `get_zarr_info()` - Extract comprehensive zarr metadata
+- `validate_zarr_store()` - Validate that a path is a valid Zarr store
 
 ## Testing
 

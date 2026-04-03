@@ -44,18 +44,29 @@ try {
 
 ## API Overview
 
-| Method                   | Purpose                                |
-| ------------------------ | -------------------------------------- |
-| `beginUpdate()`          | Start timing cycle (root session)      |
-| `endUpdate()`            | End cycle, notify listeners            |
-| `time(name, fn)`         | Time a function with automatic nesting |
-| `timeWithMeta(name, fn)` | Time with metadata callback            |
-| `begin(name)`            | Start manual timing entry              |
-| `skip(name, reason)`     | Mark operation as skipped              |
-| `getTimings()`           | Get timing hierarchy for UI            |
-| `addListener(fn)`        | Add update listener                    |
-| `removeListener(fn)`     | Remove update listener                 |
-| `reset()`                | Clear all timing data                  |
+| Method                   | Purpose                                                      |
+| ------------------------ | ------------------------------------------------------------ |
+| `beginUpdate()`          | Start timing cycle (root session)                            |
+| `endUpdate()`            | End cycle, notify listeners                                  |
+| `time(name, fn)`         | Time a function with automatic nesting                       |
+| `timeWithMeta(name, fn)` | Time with metadata callback                                  |
+| `timeTopLevel(name, fn)` | Time a top-level parallel operation (safe for `Promise.all`) |
+| `begin(name)`            | Start manual timing entry (child of current)                 |
+| `beginTopLevel(name)`    | Start timing entry directly under root                       |
+| `skip(name, reason)`     | Mark operation as skipped                                    |
+| `isActive()`             | Check if profiling is active                                 |
+| `current()`              | Get current innermost session                                |
+| `getTimings()`           | Get timing hierarchy for UI                                  |
+| `addListener(fn)`        | Add update listener                                          |
+| `removeListener(fn)`     | Remove update listener                                       |
+| `reset()`                | Clear all timing data                                        |
+
+### Utility Functions
+
+| Function               | Purpose                                       |
+| ---------------------- | --------------------------------------------- |
+| `formatMs(ms)`         | Format milliseconds for display               |
+| `hasOverBudget(entry)` | Check if entry or children exceed 16ms budget |
 
 ## Session Stack Pattern
 
