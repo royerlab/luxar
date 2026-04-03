@@ -20,7 +20,7 @@ import * as fs from 'fs';
 const OUTPUT_DIR = path.resolve(__dirname, '../../../../../docs/images/readme');
 
 // Server URLs
-const DATA_SERVER = 'http://localhost:9000';
+const DATA_SERVER = 'http://localhost:9876';
 const VIEWER_URL = 'http://localhost:5173';
 
 // Demo configurations

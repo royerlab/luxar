@@ -3,71 +3,6 @@ Luxar Documentation
 
 Welcome to Luxar's documentation! Luxar is a high-performance system for compiling and visualizing arbitrary-sized n-dimensional scenes containing points, lines, and Gaussian splats. Luxar delivers visualization performance limited only by your graphics card, display resolution, and network bandwidth—not by software constraints.
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Concepts & Architecture:
-
-   concepts/architecture
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Tutorials:
-
-   tutorials/index
-
-.. toctree::
-   :maxdepth: 2
-   :caption: User Guides:
-
-   guides/user/LUXAR_ZARR_FORMAT
-   guides/user/HDR_GUIDE
-   guides/user/E2E_TESTING_GUIDE
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Developer Guides:
-
-   guides/developer/BUILD_SYSTEM_SPEC
-   guides/developer/JSDOC_STYLE_GUIDE
-   guides/developer/CONSOLE_OUTPUT_STYLE
-   guides/developer/NETWORK_SIMULATION_SPEC
-   guides/developer/PLAYWRIGHT_GUIDE
-   guides/developer/TESTING_GUIDELINES
-   guides/developer/ERROR_HANDLING_GUIDE
-   guides/developer/PERFORMANCE_OPTIMIZATION_SPEC
-   guides/developer/SCENE_UPDATE_OPTIMIZATION
-   guides/developer/METAL_SPLATTING_IMPLEMENTATION_SPEC
-   guides/developer/SPLAT_MODEL_METAL
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Technical Specifications:
-
-   guides/specs/CACHE_PREFETCHING_SPEC
-   guides/specs/DIMENSION_INITIALIZATION_FIX
-   guides/specs/LINES_SEGMENT_CHUNKING_BUG_FIX
-   specs/GSPLATS_DIMENSION_MAPPING
-
-.. toctree::
-   :maxdepth: 3
-   :caption: API Reference:
-
-   api/core
-   api/io
-   api/encoding
-   api/validation
-   api/utils
-   api/typing_utils
-   api/cli
-   api/gsplats
-
-Quick Links
------------
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
-
 Quick Start
 -----------
 
@@ -80,6 +15,7 @@ Installation
    # or for development:
    git clone https://github.com/royerlab/luxar.git
    cd luxar
+   make setup-dev
    hatch shell
 
 Basic Usage
@@ -106,14 +42,87 @@ Create and visualize a scene with points:
    # Serve with viewer
    # Terminal: luxar serve scene.zarr --viewer
 
+.. image:: images/docs/basic-3d-pointcloud.png
+   :alt: Luxar viewer showing a 3D point cloud
+   :width: 100%
+
 Features
 --------
 
 * **nD Visualization**: Handle arbitrary-dimensional data with interactive slicing
+* **Three Geometry Types**: Points (soft-edged spheres), Lines (width-tapered curves), and Gaussian Splats (oriented Gaussians)
 * **Performance**: 100K-10M points at 60 FPS with WebGL rendering
-* **Compression**: 4-40× data compression with lossy/lossless options
+* **Compression**: 4-40x data compression with lossy/lossless options
 * **Streaming**: Memory-efficient lazy loading with intelligent caching
 * **Spatial Indexing**: Morton/Hilbert ordering for efficient queries
+* **Gaussian Splatting**: Fit splats to volumes for compression, denoising, and visualization
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Concepts & Architecture:
+
+   concepts/architecture
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Tutorials:
+
+   tutorials/index
+
+.. toctree::
+   :maxdepth: 2
+   :caption: User Guides:
+
+   guides/user/VIEWER_GUIDE
+   guides/user/LUXAR_ZARR_FORMAT
+   guides/user/HDR_GUIDE
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Developer Guides:
+
+   guides/developer/BUILD_SYSTEM_SPEC
+   guides/developer/TESTING_GUIDELINES
+   guides/developer/PLAYWRIGHT_GUIDE
+   guides/user/E2E_TESTING_GUIDE
+   guides/developer/JSDOC_STYLE_GUIDE
+   guides/developer/CONSOLE_OUTPUT_STYLE
+   guides/developer/NETWORK_SIMULATION_SPEC
+   guides/developer/ERROR_HANDLING_GUIDE
+   guides/developer/PERFORMANCE_OPTIMIZATION_SPEC
+   guides/developer/SCENE_UPDATE_OPTIMIZATION
+   guides/developer/METAL_SPLATTING_IMPLEMENTATION_SPEC
+   guides/developer/DEBUG_INTERFACE_GUIDE
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Technical Specifications:
+
+   guides/specs/CACHE_PREFETCHING_SPEC
+   guides/specs/DIMENSION_INITIALIZATION_FIX
+   guides/specs/LINES_SEGMENT_CHUNKING_BUG_FIX
+   guides/specs/ND_TRANSFORMS_SPEC
+   specs/GSPLATS_DIMENSION_MAPPING
+
+.. toctree::
+   :maxdepth: 3
+   :caption: API Reference:
+
+   api/core
+   api/io
+   api/encoding
+   api/validation
+   api/utils
+   api/typing_utils
+   api/cli
+   api/gsplats
+
+TypeScript Viewer API
+~~~~~~~~~~~~~~~~~~~~~
+
+The TypeScript viewer API documentation is generated separately with TypeDoc:
+
+* `Viewer API Reference <api/viewer/index.html>`_ -- Full TypeDoc-generated API for the luxar-viewer package
 
 Packages Overview
 -----------------
@@ -132,7 +141,7 @@ Core Packages
 Gaussian Splatting
 ~~~~~~~~~~~~~~~~~~
 
-* **luxar.gsplats** - Fit and render Gaussian splats to images
+* **luxar.gsplats** - Fit and render Gaussian splats to volumes
 * **luxar.gsplats.fitting** - Modular fitting pipeline
 * **luxar.gsplats.optim** - Per-splat Adam optimizer
 * **luxar.gsplats.models** - Rendering models
@@ -140,6 +149,13 @@ Gaussian Splatting
 * **luxar.gsplats.utils** - Matrix utilities
 * **luxar.gsplats.seeds** - Seed generation strategies
 * **luxar.gsplats.clahe** - CLAHE-based sampling
+
+Quick Links
+-----------
+
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`
 
 Support
 -------

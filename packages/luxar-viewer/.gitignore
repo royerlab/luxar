@@ -1,3 +1,6 @@
 # WASM build output (Phase 3)
 public/wasm/
 viewer_code_reviews/
+
+# Generated TypeDoc output
+docs/

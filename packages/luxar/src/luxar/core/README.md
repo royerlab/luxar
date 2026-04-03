@@ -101,7 +101,9 @@ with LuxarZarrCompiler('output.zarr') as compiler:
 - `add_gsplats(name, centers, amplitudes, ..., dim_order=..., fill=..., fill_sigma=...)` - Add Gaussian splats
 - `add_gsplats_from_data(name, result, ..., dim_order=..., fill=..., fill_sigma=...)` - Add from GSplatData
 - `add_gsplats_from_file(name, path, ...)` - Add from .gsplats.zarr file
+- `add_gsplats_from_volume(name, volume, ...)` - Fit and add Gaussian splats in one step
 - `dimensions` (property) - Get/set scene-level dimensions
+- `viewer_config` (property) - Get/set ViewerConfig hints
 
 ### 2. Group (`group.py`)
 
@@ -155,7 +157,7 @@ group = scene.add_group('my_group',
 group.transform = luxar.translate(5, 0, 0)
 
 # Or chained
-group.set_opacity(0.5).set_gamma(1.0)
+group.set_opacity(0.5).set_gamma(1.0).set_intensity(2.0).set_blending_mode('additive')
 ```
 
 **Key Properties:**
@@ -163,9 +165,11 @@ group.set_opacity(0.5).set_gamma(1.0)
 - `nd_transform` - Per-dimension transforms on non-displayed dimensions (see below)
 - `opacity` - Rendering opacity (0.0-1.0)
 - `gamma` - Gamma correction (0.1-10.0)
-- `intensity` - Per-node color multiplier (>=0.0, default 1.0)
-- `offset` - Per-node color offset (any float, default 0.0)
-- `blending_mode` - Blending mode ('normal', 'additive')
+- `intensity` - Per-node color multiplier (0.0-100.0, default 1.0)
+- `offset` - Per-node color offset (-10.0 to 10.0, default 0.0)
+- `blending_mode` - Blending mode ('normal', 'additive', 'max', 'opaque', 'luminous')
+- `colormap` - Colormap name or LUT array (string names only via property setter)
+- `layer` - Whether this node appears in the viewer's Layers panel
 - `children` - List of child nodes
 - `parent` - Parent node reference
 
@@ -264,6 +268,7 @@ print(f"Elements: {points.n_elements}")  # Alias for n_points
 - `has_colors` - Whether colors are present
 - `has_radii` - Whether radii are present
 - `has_sharpness` - Whether sharpness is present
+- `has_scalars` - Whether scalar values for colormap lookup are present
 - `metadata` - Full metadata dictionary
 
 ### 6. Lines (`lines.py`)
@@ -312,7 +317,10 @@ print(f"Max width: {lines.max_width}")
 - `line_type` - Type of line connectivity
 - `has_colors` - Whether per-vertex colors are present
 - `has_sharpness` - Whether per-vertex sharpness is present
+- `has_scalars` - Whether scalar values for colormap lookup are present
 - `max_width` - Maximum line width
+- `has_spatial_index` - Whether spatial indexing is enabled
+- `ordering` - Spatial ordering method (e.g., 'morton', 'hilbert', 'none')
 
 **Arrays:**
 - `vertices` - Shape (N, D) vertex positions
@@ -377,7 +385,6 @@ print(f"Center bounds: {splats.center_bounds}")
 - `n_splats` - Number of splats
 - `n_elements` - Alias for n_splats (DataNode protocol)
 - `has_colors` - Whether splat colors are present
-- `has_sharpness` - Whether sharpness values are present
 - `ordering` - Spatial ordering type (e.g., 'morton', 'none')
 - `amplitude_range` - Min/max amplitude values
 - `center_bounds` - Bounding box of centers
@@ -530,8 +537,15 @@ Utilities for creating and manipulating 4x4 transformation matrices.
 - `compose(*transforms)` - Combine multiple transforms
 - `inverse(transform)` - Compute inverse
 - `look_at(eye, target, up)` - Camera-style transform
-- `to_list(transform)` - Convert to storage format
-- `from_list(values)` - Convert from storage format
+- `to_list(transform)` - Convert to storage format (column-major for THREE.js)
+- `from_list(values)` - Convert from storage format (column-major from THREE.js)
+- `prepare_transform_for_zarr(transform)` - Convert any format to zarr-compatible list
+- `read_transform_from_zarr(transform_list)` - Read transform from zarr attributes
+
+**Convenience Aliases:**
+- `translation()` - Alias for `translate()`
+- `scaling()` - Alias for `scale()`
+- `rotation()` - Alias for `rotate()`
 
 **Usage Example:**
 ```python
@@ -568,6 +582,41 @@ Point (1,0,0) → Translate → (6,0,0) → Rotate → (0,6,0) → Scale → (0,
 - Use `to_list()` and `from_list()` for serialization (handles transpose)
 - Composition order: `compose(A, B, C)` applies A first, then B, then C (LEFT-to-RIGHT)
 - In matrix math: `result = result @ A @ B @ C` (right-multiplication)
+
+### 10. ViewerConfig (`viewer_config.py`)
+
+Dataclasses for viewer configuration hints stored in the zarr file.
+
+**Key Classes:**
+- `ViewerConfig` - Top-level viewer configuration (camera, rendering, bloom, effects, UI, theme)
+- `CameraConfig` - Camera position, target, FOV, clipping planes, target_node
+- `UIConfig` - Panel visibility (help, rendering controls, performance, dimensions, scale bar, layers)
+- `DimensionsConfig` - nD navigation state (current step, selected dimension)
+- `AnimationConfig` - Per-dimension animation (playing, fps, loop mode, direction)
+
+**Usage Example:**
+```python
+from luxar import ViewerConfig, CameraConfig
+
+vc = ViewerConfig(
+    camera=CameraConfig(position=(0, 5, 20), target_node="embryo"),
+    bloom_strength=0.5,
+    theme="dark",
+)
+
+# From JSON exported by viewer (Ctrl+Shift+S)
+vc = ViewerConfig.from_file("my_view.json")
+
+# Apply to scene
+with LuxarZarrCompiler('output.zarr') as compiler:
+    scene = compiler.create_scene(dimensions=dims, viewer_config=vc)
+```
+
+**Key Methods:**
+- `to_dict()` / `from_dict()` - Serialize/deserialize (sparse, omitting None fields)
+- `from_file(path)` / `to_file(path)` - JSON file I/O
+- `from_json(string)` / `to_json()` - JSON string I/O
+- `validate()` - Validate all configuration values
 
 ## Architecture
 

@@ -32,6 +32,8 @@ rendering/
 ├── detector-noise-effect.ts            # Physics-based detector noise
 ├── gpu-buffer-pool.ts                  # Geometry reuse with size-based bucketing and LRU eviction
 ├── adaptive-dpr-manager.ts             # Dynamic resolution scaling based on real-time FPS
+├── colormap-data.ts                    # Built-in colormap lookup tables (auto-generated)
+├── colormap-textures.ts                # Colormap texture management (DataTexture creation + caching)
 ├── postprocessing-types.ts             # Type utilities and depth mapper
 ├── SPECIFICATIONS.md                   # Technical specification
 └── README.md                           # This documentation
@@ -275,7 +277,15 @@ The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-ti
 - Scales DPR up when FPS exceeds `maxFPS` for `hysteresisSeconds`
 - DPR clamped between `minDPR` and `window.devicePixelRatio`
 
-### 8. Luxar Tone Mapping Effect
+### 8. Colormap Data
+
+`colormap-data.ts` contains the auto-generated lookup tables (LUTs) for all built-in colormaps (e.g., viridis, magma, turbo). Each LUT is a flat Uint8 array of RGBA values.
+
+### 9. Colormap Textures
+
+`colormap-textures.ts` manages creation and caching of `THREE.DataTexture` instances from colormap LUTs. It provides a single function to get a 1D texture for any named colormap, creating it on first access and reusing it on subsequent calls.
+
+### 10. Luxar Tone Mapping Effect
 
 Vendored from pmndrs/postprocessing with injected Exposure-Offset-Gamma (EOG) uniforms applied in a single shader pass before tone mapping. Zero extra bandwidth cost.
 

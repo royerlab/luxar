@@ -225,7 +225,7 @@ Initialize OPFS storage and validate cache. Must be called before first use.
 
 Get a zarr chunk with L1 → L2 → HTTP cascade. Implements zarrita's AsyncReadable interface.
 
-**`getStats(): { l1, l2 }`**
+**`getStats(): { l1, l2, network }`**
 
 Get cache statistics:
 
@@ -235,11 +235,21 @@ Get cache statistics:
     metadataSize: number,    // Bytes in metadata segment
     chunksSize: number,      // Bytes in chunks segment
     metadataCount: number,   // Files in metadata segment
-    chunksCount: number      // Files in chunks segment
+    chunksCount: number,     // Files in chunks segment
+    hits: number,            // Total cache hits
+    misses: number,          // Total cache misses
+    evictions: number        // Total evictions
   },
   l2: {
     size: number,            // Total bytes in OPFS
-    count: number            // Total files in OPFS
+    count: number,           // Total files in OPFS
+    reads: number,           // Total reads from L2
+    writes: number           // Total writes to L2
+  },
+  network: {
+    bytesTransferred: number, // Total bytes fetched from network
+    requestCount: number,     // Total HTTP requests
+    bandwidth: number         // Current bandwidth (bytes/sec, sliding window)
   }
 }
 ```
@@ -256,6 +266,14 @@ Clear L2 OPFS cache only (L1 untouched).
 
 Clear both L1 and L2 caches.
 
+**`isEnabled(): boolean`**
+
+Check if caching is enabled. Returns `false` when `?no-cache` URL parameter is present.
+
+**`onInvalidate(callback: () => void): void`**
+
+Register a callback invoked when caches are invalidated (e.g., `clearAll()`, content hash mismatch). Used by the L0 DecompressedChunkCache to clear itself when L1/L2 are invalidated.
+
 **`setPrefetcher(prefetcher: ChunkPrefetcher | null): void`**
 
 Attach a prefetcher to enable intelligent adjacent chunk prefetching. Pass `null` to disable.
@@ -264,6 +282,10 @@ Attach a prefetcher to enable intelligent adjacent chunk prefetching. Pass `null
 const prefetcher = new ChunkPrefetcher(store, { maxConcurrent: 4 });
 store.setPrefetcher(prefetcher); // Enable prefetching
 ```
+
+**`getPrefetcher(): ChunkPrefetcher | null`**
+
+Get the attached prefetcher instance (if any).
 
 **`async dispose(): Promise<void>`**
 
@@ -307,6 +329,14 @@ new ChunkPrefetcher(store: TwoLevelCachingStore, options?: {
 
 Called by store when a chunk is accessed from L2 or L3. Enqueues adjacent chunks for prefetching. Called automatically - not for direct use.
 
+**`registerArrayBounds(arrayPath: string, shape: number[], chunks: number[]): void`**
+
+Register array shape and chunk sizes for bounds checking during prefetch. When registered, adjacent chunk generation skips indices beyond valid bounds, preventing 404s for small arrays.
+
+```typescript
+prefetcher.registerArrayBounds('gsplats_t0023/centers', [2096, 4], [1024, 4]);
+```
+
 **`getStats(): { queued, inFlight, enabled }`**
 
 Get prefetch queue statistics:
@@ -318,6 +348,10 @@ Get prefetch queue statistics:
   enabled: boolean   // Whether prefetching is enabled
 }
 ```
+
+**`dispose(): void`**
+
+Dispose the prefetcher, clearing all internal state (seen set, parsed cache, bounds, queue) and stopping processing.
 
 ### Modules
 

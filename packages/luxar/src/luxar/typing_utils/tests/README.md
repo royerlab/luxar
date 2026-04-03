@@ -1,8 +1,14 @@
 # luxar.typing_utils.tests
 
-Test helpers and test cases for this package.
+Tests for the Luxar type utilities package.
 
-## Scope
+## Test Files
 
-- Defines module behavior and public entry points.
-- Keeps tests/demos aligned with package semantics.
+- `test_config.py` - Tests for configuration settings (chunk size validation, compression level, memory estimation)
+- `test_enums.py` - Tests for enum types (BlendingMode, NodeType, PhysicalUnit, RenderingLimits, Defaults)
+
+## Running
+
+```bash
+hatch run pytest packages/luxar/src/luxar/typing_utils/tests/
+```

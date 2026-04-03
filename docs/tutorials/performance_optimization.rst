@@ -79,16 +79,16 @@ Optimization 1: Chunk Size Selection
 
 Target chunk size in bytes: 32KB - 1MB
 
-.. code-block:: python
+.. code-block:: text
 
-   # 3D positions (3 × float32 = 12 bytes per point)
-   # + RGB colors (3 × uint8 = 3 bytes per point)
-   # = 15 bytes per point
+   3D positions (3 x float32 = 12 bytes per point)
+   + RGB colors (3 x uint8 = 3 bytes per point)
+   = 15 bytes per point
 
-   # Target 64KB chunks:
-   chunk_size = 64 * 1024 / 15 ≈ 4369 points
+   Target 64KB chunks:
+   chunk_size = 64 * 1024 / 15 = ~4369 points
 
-   # Round to power of 2: 4096 points
+   Round to power of 2: 4096 points
 
 Optimization 2: Spatial Ordering Strategy
 ------------------------------------------
@@ -192,52 +192,37 @@ Optimization 4: Prefetching Configuration
 
 .. code-block:: text
 
-   ?src=data.zarr&prefetch=aggressive  # Prefetch all adjacent
-   ?src=data.zarr&prefetch=conservative  # Prefetch only likely direction
-   ?src=data.zarr&prefetch=off  # No prefetching (debugging)
+   ?src=data.zarr                # Prefetching enabled by default
+   ?src=data.zarr&no-prefetch    # Disable prefetching (debugging)
+   ?src=data.zarr&prefetch-debug # Enable prefetch debug logging
 
 **Impact**:
 
-* Aggressive: 90-95% cache hit rate, 3× bandwidth usage
-* Conservative: 80-85% cache hit rate, 1.5× bandwidth
-* Off: 20-30% cache hit rate (only repeat views cached)
+* Prefetching enabled (default): 80-95% cache hit rate
+* Prefetching disabled (``no-prefetch``): 20-30% cache hit rate (only repeat views cached)
 
 Optimization 5: Viewer Configuration
 -------------------------------------
 
-**Point Rendering Budget**:
+**Automatic Optimizations**:
 
-Limit rendered points for consistent frame rate:
+The viewer applies several optimizations automatically:
 
-.. code-block:: text
+* **World-space point sizing**: Points specified in world units are sized based on camera distance
+* **Frustum culling**: Only points in the camera's field of view are rendered (typically excludes 90%+ of points)
+* **Chunk-based spatial queries**: Only chunks overlapping the view are loaded
 
-   URL: ?src=data.zarr&maxPoints=1000000
-
-   # Viewer will load up to 1M points
-   # If more are visible, shows furthest points first
-   # Ensures 60 FPS even with billions of points
-
-**LOD (Level of Detail)**:
-
-Reduce point detail at distance:
+**Cache Control** (URL parameters):
 
 .. code-block:: text
 
-   # Points far from camera rendered smaller
-   # Automatically handled by world-space sizing
-   # Can configure minimum pixel size:
+   ?src=data.zarr                # Default: all caching enabled
+   ?src=data.zarr&no-cache       # Disable L0/L1/L2 caching
+   ?src=data.zarr&clear-cache    # Clear all caches on startup
+   ?src=data.zarr&cache-debug    # Enable cache debug logging
 
-   ?src=data.zarr&minPixelSize=0.5
-
-**Frustum Culling**:
-
-Only render points in view:
-
-.. code-block:: text
-
-   # Automatically enabled
-   # Points outside camera view not rendered
-   # Typically excludes 90%+ of points
+**Rendering Configuration** can be controlled via ``viewer_config`` in the Zarr scene metadata
+(set at write time in Python) or interactively via the rendering controls panel (press **R**).
 
 Billion-Point Dataset Strategy
 -------------------------------
@@ -311,14 +296,9 @@ The viewer provides real-time performance monitoring:
 
 .. code-block:: text
 
-   Press ` (backtick) to toggle performance overlay:
-
-   FPS: 60
-   Points: 145,234 / 1,000,000,000 (0.01%)
-   Chunks: 71 loaded, 12 visible
-   Cache: L1: 45 hits, L2: 26 hits, L3: 12 fetches
-   Memory: 142 MB / 2048 MB (cache limit)
-   GPU: Vertex 3ms, Fragment 7ms, Total 10ms
+   Press P to toggle performance stats (FPS, frame time, memory)
+   Press M to cycle the data loading monitor (chunk loading, cache stats)
+   Press H for help overlay with all keyboard shortcuts
 
 **Interpreting Metrics**:
 
@@ -396,7 +376,7 @@ GPU Optimizations
 Expected Performance
 --------------------
 
-**Realistic Targets**:
+**Realistic Targets** (approximate, hardware-dependent):
 
 .. code-block:: text
 
@@ -407,6 +387,10 @@ Expected Performance
    10M points   │   ~10s     │   ~5s     │   ~100ms │  60
    100M points  │   ~100s    │   ~10s    │   ~100ms │  60
    1B points    │   ~1000s   │   ~20s    │   ~150ms │  60
+
+.. note::
+
+   These are order-of-magnitude estimates on typical hardware (modern laptop/desktop with dedicated GPU, SSD, broadband). Actual performance varies with hardware, dataset structure, and network conditions.
 
 **Key Insight**: Performance scales logarithmically with dataset size due to spatial indexing!
 
@@ -451,12 +435,9 @@ Issue: Low FPS During Navigation
 
 **Solutions**:
 
-.. code-block:: text
-
-   # URL parameters:
-   ?src=data.zarr&maxPoints=500000     # Limit rendered points
-   ?src=data.zarr&bloom=off            # Disable expensive effects
-   ?src=data.zarr&pointSize=1.0        # Smaller points = faster
+* Reduce point count by using smaller datasets or chunked loading
+* Disable expensive post-processing effects via the rendering controls panel (press **R**)
+* Configure rendering settings via ``viewer_config`` in scene metadata at write time
 
 Issue: High Memory Usage
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -471,13 +452,10 @@ Issue: High Memory Usage
 
 **Solutions**:
 
-.. code-block:: text
-
-   # Configure cache sizes (URL or config):
-   ?src=data.zarr&l1Cache=50MB   # Reduce L1 from default 100MB
-   ?src=data.zarr&l2Cache=500MB  # Reduce L2 from default 2GB
-
-   # Browser automatically evicts LRU chunks when full
+* The viewer uses LRU eviction automatically when caches are full
+* Use ``?clear-cache`` URL parameter to reset caches on startup
+* Use ``?no-cache`` to disable caching entirely for debugging
+* Cache sizes are managed automatically by the viewer
 
 Advanced: Custom Culling
 -------------------------

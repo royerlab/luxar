@@ -9,6 +9,8 @@ The optim package provides a simple factory function that creates a standard PyT
 **Key Features:**
 - **Standard PyTorch Adam**: Fast, vectorized optimization (50x+ faster than per-splat alternatives)
 - **Gradient dilution compensation**: Automatic LR scaling for different dimensions
+- **Per-parameter-group LR**: Amplitudes get 3x the base learning rate for faster convergence (inspired by AbsGS / Taming 3DGS, ECCV 2024)
+- **Fused Adam on CUDA**: Automatic use of fused single-kernel Adam when all parameters are on CUDA (PyTorch 2.0+)
 - **Flexible scheduling**: Supports plateau and exponential LR schedulers
 - **Simple API**: Single factory function for complete setup
 
@@ -111,6 +113,16 @@ The optimizer automatically applies gradient dilution compensation:
 | 4D | 8.5× | 0.085 |
 
 This compensation is applied transparently - you specify a base learning rate and the optimizer adjusts it based on the model's dimensionality.
+
+## Per-Parameter-Group Learning Rates
+
+Amplitudes converge faster than positions and Cholesky (shape) parameters in Gaussian splatting. To exploit this, the optimizer assigns **3x the base learning rate** to amplitude parameters (`raw_a`), while positions and Cholesky factors use the standard (dilution-compensated) LR. This accelerates convergence without destabilizing the more sensitive center/Cholesky optimization.
+
+This technique is inspired by AbsGS / Taming 3DGS (ECCV 2024).
+
+## Fused Adam on CUDA
+
+When all model parameters reside on CUDA and PyTorch 2.0+ is available, the optimizer automatically enables **fused Adam**, which performs the entire Adam update in a single CUDA kernel. This reduces kernel launch overhead and improves training throughput. Fused Adam is disabled when `amsgrad=True` (unsupported by the fused backend).
 
 ## Usage Examples
 

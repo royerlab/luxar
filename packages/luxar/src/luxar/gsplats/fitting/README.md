@@ -1,6 +1,6 @@
 # Fitting Pipeline Architecture
 
-This directory contains the refactored modular fitting pipeline for Gaussian splat optimization. The pipeline was refactored from a monolithic 480+ line method into focused, maintainable modules following clean architecture principles.
+This directory contains the modular fitting pipeline for Gaussian splat optimization, organized into focused, maintainable modules following clean architecture principles.
 
 ## Overview
 
@@ -60,7 +60,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 │ │ • Applies asymmetric penalty (10× for over-prediction)          │ │
 │ │ • Adds L1 regularization on amplitudes (sparsity)               │ │
 │ │ • Adds L1 regularization on diagonals (shape control)           │ │
-│ │ • Adds L1 regularization on sharpness (standard Gaussian bias)  │ │
+│ │ • Adds boundary penalty for splats extending beyond bounds       │ │
 │ │ • Returns closure that computes total loss                      │ │
 │ └─────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────┘
@@ -74,6 +74,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 │ │ • Tracks best state based on loss                               │ │
 │ │ • Checks convergence criteria                                   │ │
 │ │ • Applies dynamic operations (splat relocation)                 │ │
+│ │ • Periodic Z-order sorting for cache locality (sorting.py)      │ │
 │ │ • Records movie frames (optional)                               │ │
 │ │ • Returns OptimizationResults dataclass                         │ │
 │ └─────────────────────────────────────────────────────────────────┘ │
@@ -85,12 +86,13 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 │ ┌─────────────────────────────────────────────────────────────────┐ │
 │ │ results.py: finalize_results()                                  │ │
 │ │ • Extracts final parameters from best state                     │ │
-│ │ • Post-fit culling (removes splats below noise floor)           │ │
 │ │ • Rescales amplitudes to original intensity range               │ │
+│ │ • Applies post-processing (clip-to-bounds, voxel footprint)     │ │
+│ │ • Rescales from downscaled to original coordinates              │ │
 │ │ • Computes quality metrics (PSNR, SSIM, MSE) in voxel space    │ │
 │ │ • Compiles optimization statistics                              │ │
 │ │ • Stores movie frames for visualization                         │ │
-│ │ • Returns GSplatData dataclass                         │ │
+│ │ • Returns GSplatData dataclass                                  │ │
 │ └─────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────┘
                                   │
@@ -111,12 +113,15 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 **Purpose:** Defines dataclasses for type-safe configuration and data passing.
 
 **Key Classes:**
-- `FitConfig`: All parameters needed for fitting
+- `FitConfig`: All parameters needed for fitting (mutable dataclass)
 - `PreprocessedData`: Normalized data and metadata
 - `OptimizationResults`: Results from optimization
 - `ModelComponents`: Model, optimizer, scheduler
+- `OptimConfig`: Frozen dataclass for optimization hyperparameters (n_iters, lr, etc.)
+- `LossConfig`: Frozen dataclass for loss function configuration (loss_type, asymmetric_penalty, etc.)
+- `ConstraintConfig`: Frozen dataclass for constraint configuration (amp_max, max_eccentricity, etc.)
 
-**Design Pattern:** Immutable configuration objects with validation at boundaries.
+**Design Pattern:** Configuration objects with validation at boundaries.
 
 ### `validation.py` - Input Validation
 **Purpose:** Validates all user inputs at the API boundary before processing.
@@ -172,7 +177,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 **Regularization:**
 - **L1 on amplitudes**: Encourages sparsity (fewer active splats)
 - **L1 on diagonal**: Encourages smaller, more isotropic splats
-- **L1 on sharpness**: Encourages standard Gaussian (s=2) unless sharper edges improve fit
+- **Boundary penalty**: Penalizes splats extending beyond volume bounds
 
 ### `optimization.py` - Training Loop
 **Purpose:** Runs the main optimization loop.
@@ -201,15 +206,19 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 2. Converts tensors to numpy arrays with separate fields:
    - `centers`: Shape `(N, d)` - splat center positions
    - `cholesky_factors`: Shape `(N, d*(d+1)//2)` - packed lower-triangular Cholesky factors
-   - `sharpnesses`: Shape `(N,)` - per-splat sharpness values
    - `amplitudes`: Shape `(N,)` - rescaled to original intensity range
+3. Applies optional post-processing:
+   - Clip-to-bounds (ensures splats stay within volume)
+   - Voxel footprint correction (inflates covariances)
+   - Downscale rescaling (restores original resolution coordinates)
+   - Physical coordinate conversion (voxel to real space via voxel_size)
 4. Computes quality metrics (PSNR, SSIM, MSE) by rendering splats back to a volume and comparing against the original input. Only computed in voxel space (skipped when `output_space="real"`)
-5. Compiles comprehensive statistics (including sharpness statistics and quality metrics)
+5. Compiles comprehensive statistics and quality metrics
 6. Stores movie frames for visualization
 7. Returns `GSplatData` dataclass containing all results
 
 **Critical Details:**
-- Returns a structured dataclass (not a tuple) with named fields for clarity
+- Returns a structured `GSplatData` dataclass with named fields (centers, amplitudes, cholesky_factors, stats)
 - Amplitudes are rescaled using the original intensity range, allowing direct comparison with input data
 - All arrays are separate fields, not concatenated (easier to work with)
 
@@ -221,6 +230,22 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 - `show_optimization_movie()`: Displays napari convergence movie
 
 **Design Choice:** Visualization is separate from core fitting pipeline, allowing headless operation.
+
+### `sorting.py` - Z-Order Sorting
+**Purpose:** Reorders splats by Morton (Z-order) code for GPU cache locality.
+
+**Key Function:** `sort_splats_by_morton_order(model, optimizer, relocation_tracker)`
+
+Permutes all model parameters, optimizer state, and relocation tracker state to match the Morton code ordering of splat centers. Applied at initialization and periodically during optimization.
+
+### `downscale.py` - Volume Downscaling
+**Purpose:** Anti-aliased integer downscaling of volumes before fitting, with coordinate rescaling back to original resolution after fitting.
+
+**Key Functions:**
+- `normalize_downscale(downscale, ndim)` - Normalize downscale parameter to per-axis tuple
+- `downscale_volume(V, factors)` - Gaussian blur + decimation
+- `rescale_centers(centers, factors)` - Scale centers back to original coordinates
+- `rescale_cholesky_packed(cholesky_packed, factors)` - Scale packed Cholesky factors back
 
 ## Data Flow
 
@@ -260,10 +285,12 @@ finalize_results()
     │
     ├─> Extract best state parameters
     ├─> Rescale amplitudes to original range
+    ├─> Apply post-processing (clip-to-bounds, voxel footprint, downscale rescaling)
+    ├─> Compute quality metrics (PSNR, SSIM, MSE)
     ├─> Compile statistics
     └─> Package movie frames
     ↓
-(params, amps, stats) - Ready for use
+GSplatData (centers, amplitudes, cholesky_factors, stats)
 ```
 
 ## Design Principles
@@ -306,9 +333,7 @@ gradient_dilution_factor = dimensional_complexity * parameter_complexity
 effective_lr = base_lr * gradient_dilution_factor
 ```
 
-**Impact:** 2D: 1.0×, 3D: 1.8×, 4D: 8.5× learning rate multiplier.
-
-**Sharpness Exception:** Sharpness parameters always use `base_lr` without gradient dilution, since sharpness is a single scalar value regardless of dimension (no parameter dilution occurs).
+**Impact:** 2D: 1.0x, 3D: 1.8x, 4D: 8.5x learning rate multiplier.
 
 ### Best State Tracking
 **Problem:** Optimization may not be monotonic, especially with dynamic operations.
@@ -367,21 +392,23 @@ Key extension points in `optimization.py`:
 
 ## Testing Strategy
 
-The fitting pipeline has comprehensive test coverage in `fitting/tests/` (84 tests, 100% module coverage).
+The fitting pipeline has comprehensive test coverage in `fitting/tests/`.
 
 ### Unit Tests (`fitting/tests/`)
 
 **Configuration & Validation:**
-- `test_fitting_config.py` (4 tests) - Dataclass creation and validation
-- `test_fitting_preprocessing.py` (8 tests) - Data normalization and seed generation
-- `test_fitting_validation.py` (16 tests) - Input validation and error handling
+- `test_fitting_config.py` - Dataclass creation and validation
+- `test_fitting_preprocessing.py` - Data normalization and seed generation
+- `test_fitting_validation.py` - Input validation and error handling
 
 **Pipeline Components:**
-- `test_initialization.py` (9 tests) - Model, optimizer, and scheduler initialization
-- `test_losses.py` (12 tests) - Loss functions, asymmetric penalties, L1 regularization
-- `test_optimization.py` (15 tests) - Training loop, convergence, dynamic operations
-- `test_results.py` (12 tests) - Result finalization, amplitude rescaling, statistics
-- `test_visualization.py` (9 tests) - Compression analysis, napari movie (mocked)
+- `test_initialization.py` - Model, optimizer, and scheduler initialization
+- `test_losses.py` - Loss functions, asymmetric penalties, L1 regularization
+- `test_optimization.py` - Training loop, convergence, dynamic operations
+- `test_results.py` - Result finalization, amplitude rescaling, statistics
+- `test_visualization.py` - Compression analysis, napari movie (mocked)
+- `test_sorting.py` - Z-order Morton code sorting
+- `test_downscale.py` - Volume downscaling and coordinate rescaling
 
 **Test Coverage:**
 - All modules tested with normal cases, edge cases, and error conditions
@@ -425,23 +452,14 @@ Verify mathematical invariants:
 - Preprocessing and finalization are fast (<1% of total time)
 - GPU acceleration primarily benefits optimization loop
 
-## Migration Notes
-
-### From Monolithic to Modular (January 2025)
-The refactoring preserved all functionality while improving:
-- **Maintainability**: Each module is ~100-200 lines vs 480+ line method
-- **Testability**: Individual components can be tested in isolation
-- **Clarity**: Pipeline flow is explicit and documented
-- **Type Safety**: Configuration passed via typed dataclasses
-
-**Breaking Changes:** None - the public API (`fit_gaussian_splats()`) remains identical.
-
 ## References
 
 **Related Modules:**
 - `../models/gsplats/gsplat_model.py` - PyTorch model definition
 - `../optim/integration.py` - Optimizer factory with gradient dilution
 - `./dynamic_ops/` - Fixed-pool splat relocation operations
+- `./sorting.py` - Z-order (Morton code) sorting for cache locality
+- `./downscale.py` - Volume downscaling and coordinate rescaling
 - `../seeds/` - Seed generation
 
 **Documentation:**

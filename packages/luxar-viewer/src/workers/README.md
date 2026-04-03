@@ -24,7 +24,7 @@ import { getWorkerPool, disposeWorkerPool } from './workers';
 const pool = getWorkerPool();
 await pool.initialize();
 
-// Simple: get a worker (least-busy selection, no tracking)
+// Simple: get a worker (round-robin selection, no tracking)
 const worker = await pool.getWorker();
 const result = await worker.querySpatialIndex(/* ... */);
 

@@ -9,9 +9,9 @@
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures test-wasm test-viewer test-viewer-fixtures test-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
         check-all check-typescript check-rust check-wasm-deps setup-dev \
-        check-docs check-docs-verbose clean-docs build-docs serve-docs \
+        check-docs check-docs-verbose clean-docs build-docs build-typedoc serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer rebuild-viewer \
-        install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-readme-videos \
+        install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images generate-readme-videos \
         stats show-env prune-env shell build publish-test publish \
         check-deps install-node install-pnpm install-hatch \
         setup-cuda check-cuda-deps build-cuda build-cuda-slurm clean-cuda test-cuda benchmark-cuda \
@@ -551,7 +551,7 @@ clean-docs:  ## Clean built documentation
 	rm -rf docs/_build/
 	rm -rf docs/_autosummary/
 	rm -rf packages/luxar-viewer/docs/api/
-	@echo "✅ Documentation artifacts cleaned"
+	@echo "✅ Documentation artifacts cleaned (Sphinx + TypeDoc)"
 
 # Clean up
 clean-all:  ## Clean all artifacts (Python, TypeScript, WASM, CUDA, datasets, cache)
@@ -1177,6 +1177,26 @@ generate-readme-images: generate-readme-demos  ## Generate README screenshots us
 	@ls -la docs/images/readme/*.png 2>/dev/null || echo "   No images found"
 	@echo ""
 	@echo "💡 Commit these images to include them in the README"
+
+generate-doc-images: generate-readme-demos  ## Generate documentation screenshots using Playwright
+	@echo "📸 Generating documentation screenshots..."
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	@# Source nvm if available
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	cd packages/luxar-viewer && pnpm doc-images
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "✅ Documentation screenshots generated!"
+	@echo ""
+	@echo "📁 Generated images in docs/images/docs/:"
+	@ls -la docs/images/docs/*.png 2>/dev/null || echo "   No images found"
 
 generate-readme-videos: generate-readme-demos  ## Generate README videos (GIF/WebP) using Playwright
 	@echo "🎬 Generating README videos..."
@@ -2034,8 +2054,26 @@ check-wasm-deps:  ## Check WASM development dependencies (Rust, wasm-pack)
 	@echo ""
 
 # Documentation
-build-docs:  ## Build documentation with Sphinx
+build-typedoc:  ## Generate TypeScript API documentation with TypeDoc
+	@echo "📘 Generating TypeScript API documentation..."
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	cd packages/luxar-viewer && pnpm typedoc
+	@# Copy TypeDoc output into Sphinx build for unified docs
+	@mkdir -p docs/_build/html/api/viewer
+	@cp -r packages/luxar-viewer/docs/api/* docs/_build/html/api/viewer/ 2>/dev/null || true
+	@echo "✅ TypeScript API docs generated at docs/_build/html/api/viewer/"
+
+build-docs: generate-doc-images  ## Build documentation with Sphinx (auto-generates screenshots + TypeDoc)
 	hatch run docs:build
+	@# Build TypeDoc after Sphinx so we can copy into the output
+	@$(MAKE) build-typedoc
 
 serve-docs:  ## Serve documentation locally
 	hatch run docs:serve

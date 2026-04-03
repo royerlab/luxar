@@ -1,7 +1,6 @@
 # Unified Loader Architecture
 
 **Status**: PHASE 1 & 2 COMPLETE - All loaders migrated to RangeLoader + TransferableAccumulator
-**Date**: 2025-12-27
 
 ## Overview
 
@@ -302,18 +301,18 @@ src/data/loaders/
 ## Testing
 
 ```bash
-# Run all tests (61 tests)
+# Run all tests
 pnpm test src/tests/unit/data/loaders/
 
 # Run specific tests
-pnpm test src/tests/unit/data/loaders/spatial-query-builder.test.ts  # 24 tests
-pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts  # 27 tests
-pnpm test src/tests/unit/data/loaders/integration-example.test.ts  # 10 tests
+pnpm test src/tests/unit/data/loaders/spatial-query-builder.test.ts
+pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
+pnpm test src/tests/unit/data/loaders/integration-example.test.ts
 ```
 
 ### Test Coverage
 
-- **spatial-query-builder.test.ts** (24 tests)
+- **spatial-query-builder.test.ts**
   - `computeQueryTolerance`: Displayed dims, hidden dims with step/tolerance/fallback
   - `buildQueryPosition`: Position array building
   - `chunkIndicesToRanges`: Chunk → range conversion
@@ -321,14 +320,14 @@ pnpm test src/tests/unit/data/loaders/integration-example.test.ts  # 10 tests
   - `shouldExtendVisibility`: extend_to_all handling
   - `SpatialQueryBuilder`: Full query execution
 
-- **transferable-accumulator.test.ts** (27 tests)
+- **transferable-accumulator.test.ts**
   - Basic operations, capacity management
   - Detach/adopt cycle for worker transfer
   - Optional buffer enabling
   - Points, Lines, GSplats factory functions
   - Memory tracking statistics
 
-- **integration-example.test.ts** (10 tests)
+- **integration-example.test.ts**
   - PointsLoaderIntegrationExample lifecycle
   - 3D projection with colors and radii
   - Capacity growth and buffer reuse tracking

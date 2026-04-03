@@ -31,11 +31,11 @@ The config package provides a centralized configuration system that manages all 
 
 ```typescript
 config/
-├── index.ts                 # Main configuration object and exports
+├── index.ts                 # Main configuration object (`config`) and type exports
 ├── types.ts                 # TypeScript interfaces for all config sections
 ├── validation.ts            # Runtime validation of configuration values
-├── viewer-config-utils.ts   # Viewer config utility functions
-└── viewer-state-capture.ts  # Viewer state capture for export
+├── viewer-config-utils.ts   # snake_case ↔ camelCase conversion for zarr viewer_config
+└── viewer-state-capture.ts  # Captures complete viewer state for export (Ctrl+Shift+S)
 ```
 
 The architecture follows a separation of concerns approach:
@@ -43,6 +43,8 @@ The architecture follows a separation of concerns approach:
 - `index.ts` contains the actual configuration values and imports
 - `types.ts` defines all TypeScript interfaces
 - `validation.ts` provides runtime validation of configuration values
+- `viewer-config-utils.ts` converts between zarr `viewer_config` (snake_case) and TypeScript `RenderingSettings` (camelCase), extracts camera overrides and background color
+- `viewer-state-capture.ts` captures the live viewer state (camera, rendering settings, theme, dimensions, animation) as a `ZarrViewerConfig` JSON object for clipboard export
 
 ## Configuration Sections
 
@@ -93,7 +95,6 @@ Dynamic resolution scaling to maintain smooth frame rates:
 ```typescript
 adaptiveDPR: {
   enabled: true,               // Enable adaptive DPR system
-  targetFPS: 55,               // Target FPS (slightly below 60 to prevent toggling)
   minFPS: 50,                  // FPS threshold for scaling down resolution
   maxFPS: 58,                  // FPS threshold for scaling up resolution
   minDPR: 0.5,                 // Minimum allowed DPR (quality floor)
@@ -122,9 +123,10 @@ renderingControls: {
     // Camera clipping
     dynamicClippingEnabled: true,   // Auto-adjust clipping planes per frame
     // Bloom and HDR
+    bloomEnabled: false,
     bloomThreshold: 0.01,
-    bloomStrength: 0.5,
-    bloomRadius: 0.6,
+    bloomStrength: 0.25,
+    bloomRadius: 1.0,
     bloomLevels: 8,
     // Global EOG (Exposure-Offset-Gamma) in LuxarToneMappingEffect
     exposure: 1.0,
@@ -177,13 +179,100 @@ webgl: {
     stencilBuffer: false,              // No stencil
     samples: 0,                        // MSAA samples
   },
-  profiles: {
-    quality: { /* high-performance settings */ },
-    balanced: { /* default settings */ },
-    performance: { /* low-power settings */ }
+}
+```
+
+### Cache Configuration
+
+OPFS-based zarr caching with a three-level hierarchy:
+
+```typescript
+cache: {
+  enabled: true,              // Enable OPFS caching
+  l0Enabled: true,            // L0: decompressed chunk cache (fastest)
+  l0MaxSizeMB: 200,           // L0 memory budget
+  l1MaxSizeMB: 100,           // L1: in-memory LRU cache
+  l2MaxSizeMB: 2048,          // L2: persistent OPFS cache (largest)
+  debug: false                // Enable cache debug logging
+}
+```
+
+**Cache Levels**:
+
+- **L0** (Decompressed chunks): Fastest access, holds decompressed zarr chunks in memory
+- **L1** (Memory LRU): In-memory cache with LRU eviction
+- **L2** (OPFS): Browser-native persistent storage, survives page reloads
+
+### Dimension Animation Configuration
+
+Controls FPS-based animation through dimension ranges (e.g., animating through time slices):
+
+```typescript
+dimensionAnimation: {
+  defaults: {
+    targetFPS: 10,                    // Default animation speed
+    loop: 'loop',                     // 'once' | 'loop' | 'bounce'
+    direction: 'forward'              // 'forward' | 'backward'
+  },
+  presets: {
+    fps: [1, 2, 5, 10, 15, 30],      // Quick FPS presets
+    customMin: 0.1,                   // Minimum custom FPS
+    customMax: 60                     // Maximum custom FPS
+  },
+  timing: {
+    minFrameTimeMs: 16,               // Minimum frame duration
+    continuousTraverseSeconds: 10     // Duration for continuous traverse mode
+  },
+  ui: {
+    showFPSFeedback: true,            // Show FPS feedback in UI
+    feedbackThreshold: 0.8            // Warning when actual FPS < target * threshold
   }
 }
 ```
+
+**Loop Modes**:
+
+- **once**: Play through the range once and stop
+- **loop**: Restart from beginning when reaching the end
+- **bounce**: Reverse direction at each end (ping-pong)
+
+### Data Loading Performance Configuration
+
+Multi-phase performance optimization pipeline:
+
+```typescript
+dataLoading: {
+  performance: {
+    // Phase 1: Object pooling (reuse buffers across updates)
+    useAccumulators: true,
+    initialAccumulatorCapacity: 10000,
+    accumulatorGrowthFactor: 1.5,
+
+    // Phase 2: Web Workers (offload CPU work)
+    useWebWorkers: true,
+    workerCount: 4,
+
+    // Phase 3: WASM acceleration
+    useWASM: true,
+    wasmModulePath: '/wasm/luxar_wasm_bg.wasm',
+
+    // Phase 4: GPU buffer pool (reuse WebGL buffers)
+    useGPUBufferPool: true,
+    gpuPoolMaxSize: 50,
+    gpuPoolEvictionFrames: 120,
+
+    // Debugging
+    enablePerformanceMonitoring: false
+  }
+}
+```
+
+**Phases**:
+
+- **Phase 1 (Accumulators)**: Pre-allocate and reuse typed arrays to avoid GC pressure
+- **Phase 2 (Workers)**: Offload nD projection and visibility computation to Web Workers
+- **Phase 3 (WASM)**: Rust-compiled WebAssembly for spatial queries, visibility, and decoding
+- **Phase 4 (GPU Buffer Pool)**: Reuse WebGL buffer objects to avoid GPU allocation overhead
 
 ### Debug Console Configuration
 
@@ -262,6 +351,7 @@ The config package provides complete TypeScript interfaces for all configuration
 interface AppConfig {
   camera: CameraConfig;
   animation: AnimationConfig;
+  adaptiveDPR: AdaptiveDPRConfig;
   scene: SceneConfig;
   shader: ShaderConfig;
   ui: UIConfig;
@@ -270,6 +360,8 @@ interface AppConfig {
   input: InputConfig;
   dataLoading: DataLoadingConfig;
   webgl: WebGLConfig;
+  cache: CacheConfig;
+  dimensionAnimation: DimensionAnimationConfig;
   defaultZarrPath: string;
   canvasId: string;
 }
@@ -319,7 +411,7 @@ export const config: AppConfig = {
 ```typescript
 // ✅ Good: Import specific sections when possible
 import { config } from '../config';
-const { fov, near, far } = config.camera;
+const { fov, near, far } = config.renderingControls.defaults;
 
 // ✅ Good: Use type imports for interfaces
 import type { CameraConfig } from '../config';

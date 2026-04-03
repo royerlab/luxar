@@ -8,10 +8,12 @@ This package provides low-level utilities for working with Gaussian splat parame
 
 **Key Functions**:
 - `tril_size(d)` - Calculate size of lower triangular matrix
-- `pack_tril(L)` - Pack lower triangular matrices to flat arrays
-- `unpack_tril(v, d)` - Unpack flat arrays to lower triangular matrices
+- `pack_tril(L)` - Pack batch of lower triangular matrices to flat arrays
+- `unpack_tril(v, d)` - Unpack flat arrays to batch of lower triangular matrices
 - `calculate_gradient_dilution_factor(d)` - Compute gradient compensation for nD spaces
 - `validate_cholesky_shape(cholesky_factors, ndim, ...)` - Validate packed Cholesky factor shapes
+- `permute_cholesky_packed(packed, d, perm)` - Reorder dimensions of packed Cholesky factors
+- `embed_cholesky_packed(packed, d_src, d_dst, dim_mapping, ...)` - Embed lower-dim Cholesky into higher-dim space
 
 ## Installation
 
@@ -23,12 +25,12 @@ Part of `luxar.gsplats` package. No additional installation required.
 from luxar.gsplats.utils import pack_tril, unpack_tril, calculate_gradient_dilution_factor
 import numpy as np
 
-# Pack Cholesky factors for storage
-L = np.array([[1.0, 0.0], [0.5, 0.8]])  # 2x2 lower triangular
-packed = pack_tril(L)  # Returns [1.0, 0.5, 0.8]
+# Pack a batch of Cholesky factors for storage
+L = np.array([[[1.0, 0.0], [0.5, 0.8]]])  # Shape (1, 2, 2) - batch of one 2x2 matrix
+packed = pack_tril(L)  # Returns [[1.0, 0.5, 0.8]], shape (1, 3)
 
 # Unpack for computation
-L_restored = unpack_tril(packed, d=2)  # Returns 2x2 matrix
+L_restored = unpack_tril(packed, d=2)  # Returns shape (1, 2, 2)
 
 # Calculate gradient dilution for 3D optimization
 factor = calculate_gradient_dilution_factor(3)  # Returns ~1.8
@@ -57,11 +59,11 @@ tril_size(10)  # Returns 55
 
 ### pack_tril(L: np.ndarray) -> np.ndarray
 
-Pack lower triangular matrix into flat array using row-major ordering.
+Pack batch of lower triangular matrices into flat arrays using row-major ordering.
 
 **Parameters**:
-- `L`: Lower triangular matrix (d, d) - upper triangle values are ignored
-- Returns: Flat array with d×(d+1)/2 elements
+- `L`: Batch of lower triangular matrices, shape (N, d, d) - upper triangle values are ignored
+- Returns: Array of shape (N, d*(d+1)/2)
 
 **Row-Major Ordering**:
 ```python
@@ -75,13 +77,13 @@ Pack lower triangular matrix into flat array using row-major ordering.
 
 **Example**:
 ```python
-L = np.array([
+L = np.array([[
     [1.0, 0.0, 0.0],
     [0.5, 0.8, 0.0],
     [0.2, 0.3, 0.6]
-])
+]])  # Shape (1, 3, 3)
 packed = pack_tril(L)
-# Returns: [1.0, 0.5, 0.8, 0.2, 0.3, 0.6]
+# Returns: [[1.0, 0.5, 0.8, 0.2, 0.3, 0.6]], shape (1, 6)
 ```
 
 **Dtype Preservation**: Output has same dtype as input
@@ -92,24 +94,22 @@ packed = pack_tril(L)
 
 ### unpack_tril(v: np.ndarray, d: int) -> np.ndarray
 
-Unpack flat array to lower triangular matrix.
+Unpack batch of flat arrays to lower triangular matrices.
 
 **Parameters**:
-- `v`: Flat array with d×(d+1)/2 elements
+- `v`: Array of shape (N, d*(d+1)/2)
 - `d`: Matrix dimension
-- Returns: Lower triangular matrix (d, d) with zeros in upper triangle
+- Returns: Batch of lower triangular matrices, shape (N, d, d) with zeros in upper triangle
 
 **Example**:
 ```python
-packed = np.array([1.0, 0.5, 0.8, 0.2, 0.3, 0.6])
+packed = np.array([[1.0, 0.5, 0.8, 0.2, 0.3, 0.6]])  # Shape (1, 6)
 L = unpack_tril(packed, d=3)
-# Returns:
-# [[1.0, 0.0, 0.0],
-#  [0.5, 0.8, 0.0],
-#  [0.2, 0.3, 0.6]]
+# Returns shape (1, 3, 3):
+# [[[1.0, 0.0, 0.0],
+#   [0.5, 0.8, 0.0],
+#   [0.2, 0.3, 0.6]]]
 ```
-
-**Validation**: Shape mismatch raises ValueError
 
 **Use Case**: Reconstruct Cholesky factors from storage for rendering or analysis
 
@@ -153,6 +153,75 @@ factor_4d = calculate_gradient_dilution_factor(4)
 **See Also**:
 - `../optim/SPECIFICATIONS.md` - Optimizer factory and gradient dilution integration
 - `../SPECIFICATIONS.md` - Gradient dilution rationale
+
+---
+
+### permute_cholesky_packed(packed, d, perm) -> np.ndarray
+
+Reorder the dimensions of packed Cholesky factors according to a permutation.
+
+**Purpose**: When dimensions need to be reordered (e.g., swapping X and Y axes), the packed Cholesky factors must be updated to reflect the new ordering. This function recomputes Cholesky factors for the permuted covariance matrix.
+
+**Parameters**:
+- `packed`: np.ndarray, shape (N, k) where k = d*(d+1)//2 -- Packed lower-triangular Cholesky factors
+- `d`: int -- Number of dimensions
+- `perm`: sequence of int -- Permutation of dimension indices. `perm[new_i] = old_i`. E.g., `[2, 0, 1]` means new dim 0 was old dim 2
+
+**Returns**: np.ndarray, shape (N, k) -- Packed Cholesky factors with permuted dimensions
+
+**Algorithm**:
+1. Unpack to full lower-triangular matrices L (in float64 for numerical stability)
+2. Compute covariance: Sigma = L @ L^T
+3. Permute: Sigma_new[i,j] = Sigma[perm[i], perm[j]]
+4. Re-decompose: L_new = cholesky(Sigma_perm)
+5. Pack and cast back to input dtype
+
+**Example**:
+```python
+from luxar.gsplats.utils import permute_cholesky_packed
+
+# Swap X and Y in 2D
+packed = np.array([[1.0, 0.5, 2.0]])  # L00, L10, L11
+swapped = permute_cholesky_packed(packed, 2, [1, 0])
+```
+
+**Complexity**: O(N * d^3) due to Cholesky decomposition
+
+---
+
+### embed_cholesky_packed(packed, d_src, d_dst, dim_mapping, fill_sigma=None) -> np.ndarray
+
+Embed lower-dimensional packed Cholesky factors into a higher-dimensional space.
+
+**Purpose**: When lifting splats from a lower-dimensional space (e.g., 2D) into a higher-dimensional space (e.g., 3D), the Cholesky factors need to be embedded. Mapped dimensions carry over the original covariance; unmapped dimensions get independent Gaussian variance (diagonal only, no cross-terms).
+
+**Parameters**:
+- `packed`: np.ndarray, shape (N, k_src) where k_src = d_src*(d_src+1)//2 -- Packed Cholesky factors in source dimensionality
+- `d_src`: int -- Source dimensionality
+- `d_dst`: int -- Target dimensionality (must be >= d_src)
+- `dim_mapping`: list of int, length d_src -- Maps source dimension i to target dimension dim_mapping[i]. E.g., `[1, 2, 3]` maps src dims 0,1,2 to dst dims 1,2,3
+- `fill_sigma`: dict of {target_dim_index: sigma_value}, optional -- Standard deviations for unmapped target dimensions. Unmapped dims not in fill_sigma default to 1.0. A value of 0 is replaced with 1e-7 to maintain positive-definiteness
+
+**Returns**: np.ndarray, shape (N, k_dst) where k_dst = d_dst*(d_dst+1)//2 -- Packed Cholesky factors in target dimensionality
+
+**Algorithm**:
+1. Unpack source Cholesky and compute source covariance (in float64)
+2. Build target covariance matrix (d_dst x d_dst) initialized to zeros
+3. Copy source covariance block into mapped positions
+4. Fill unmapped diagonal positions with sigma^2
+5. Cholesky-decompose the target covariance (with regularization for degenerate cases)
+6. Pack and cast back to input dtype
+
+**Example**:
+```python
+from luxar.gsplats.utils import embed_cholesky_packed
+
+# Embed 2D into 3D: src dims [0,1] -> dst dims [0,1], new dim 2 has sigma=0.5
+packed_2d = np.array([[1.0, 0.0, 1.0]])  # isotropic 2D
+packed_3d = embed_cholesky_packed(packed_2d, 2, 3, [0, 1], fill_sigma={2: 0.5})
+```
+
+**Complexity**: O(N * d_dst^3) due to Cholesky decomposition
 
 ---
 
@@ -213,18 +282,17 @@ except ValueError as e:
 
 ## Testing
 
-**Test File**: `tests/test_trils.py` (250 lines)
+**Test File**: `tests/test_trils.py`
 
-**Coverage**: 73% (8/30 statements missing - see below)
-- Pack/unpack round-trip tests
-- Edge cases (d=1, d=10, empty arrays)
-- Dtype preservation
-- Consistency with numpy.tril_indices
-
-**Missing Tests**: `calculate_gradient_dilution_factor()`
-- **Action Needed**: Add comprehensive tests for gradient dilution
-- Should verify expected values (2D=1.0, 3D=1.8, 4D≈8.5)
-- Should test conservative vs enhanced scaling boundary
+**Test Classes**:
+- `TestCalculateGradientDilutionFactor` - Gradient dilution factor for 1D through 8D, monotonic increase, type checks
+- `TestTrilSize` - Formula validation for various dimensions
+- `TestPackTril` - Single/batch packing, upper triangle ignored, dtype preservation
+- `TestUnpackTril` - Single/batch unpacking, dtype preservation
+- `TestPackUnpackRoundTrip` - Round-trip for dimensions 1-5 with various batch sizes
+- `TestEdgeCases` - 1x1 matrices, consistency with numpy.tril_indices
+- `TestValidateCholeskShape` - Per-splat/uniform validation, error cases
+- `TestEmbedCholeskyPackedNoNan` - Regression tests for degenerate inputs (zeros, near-singular)
 
 ---
 
@@ -234,10 +302,10 @@ except ValueError as e:
 ```
 gsplats/utils/
 ├── __init__.py              # Public API exports
-├── trils.py                 # Implementation (174 lines)
+├── trils.py                 # Implementation
 ├── tests/
-│   └── test_trils.py        # Tests (250 lines, 30 tests)
-├── SPECIFICATIONS.md        # Technical specification (500 lines)
+│   └── test_trils.py        # Comprehensive test suite
+├── SPECIFICATIONS.md        # Technical specification
 └── README.md                # This file
 ```
 
@@ -258,15 +326,14 @@ from luxar.gsplats.utils import (
 
 ## Performance
 
-All functions are implemented in pure NumPy with O(d²) complexity:
+All functions are implemented in pure NumPy:
 - `tril_size`: O(1) arithmetic
-- `pack_tril`: O(d²) element copy
-- `unpack_tril`: O(d²) element copy with zero-filling
+- `pack_tril`: O(N * d^2) element copy
+- `unpack_tril`: O(N * d^2) element copy with zero-filling
 - `calculate_gradient_dilution_factor`: O(1) arithmetic
-
-Typical performance (d=3):
-- pack/unpack: <1μs
-- gradient calculation: <100ns
+- `validate_cholesky_shape`: O(1) shape checks
+- `permute_cholesky_packed`: O(N * d^3) - requires Cholesky decomposition
+- `embed_cholesky_packed`: O(N * d_dst^3) - requires Cholesky decomposition
 
 ---
 
@@ -292,9 +359,6 @@ Typical performance (d=3):
 ## Version
 
 **Package**: luxar.gsplats.utils
-**Version**: 1.0.0
-**Last Updated**: 2025-12-12
-**Status**: Production-ready, comprehensive test coverage
 
 ## License
 

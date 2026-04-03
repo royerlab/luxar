@@ -554,6 +554,10 @@ export class LuxarApp {
         let totalPoints = 0;
         const pointClouds: any[] = [];
 
+        // Count gsplats across all gsplat meshes
+        let totalGSplats = 0;
+        const gsplatMeshes: any[] = [];
+
         scene.traverse((object) => {
           if (object.type === 'Points') {
             const geometry = (object as any).geometry;
@@ -577,6 +581,21 @@ export class LuxarApp {
               hasSharpness: !!geometry?.attributes?.sharpness,
             });
           }
+
+          // Count gsplat instances (Mesh with InstancedBufferGeometry and nodeType 'gsplats')
+          if (
+            object instanceof THREE.Mesh &&
+            (object as any).userData?.nodeType === 'gsplats' &&
+            object.geometry instanceof THREE.InstancedBufferGeometry
+          ) {
+            const splatCount = (object.geometry as THREE.InstancedBufferGeometry).instanceCount;
+            totalGSplats += splatCount;
+            gsplatMeshes.push({
+              name: object.name || 'unnamed',
+              splatCount,
+              visible: object.visible,
+            });
+          }
         });
 
         // Get dimensions from sceneDimsManager
@@ -587,7 +606,10 @@ export class LuxarApp {
 
         return {
           totalPoints,
+          totalGSplats,
+          totalElements: totalPoints + totalGSplats,
           pointClouds,
+          gsplatMeshes,
           dimensions: dimensionsInfo,
           camera: {
             position: {

@@ -57,7 +57,7 @@ Loss = L1(reconstruction, target) + λ × Σₖ(αᵏ × ∫Vₖ)
 - **`alpha`** (float): Energy penalty growth (default: 1.5)
   - Higher = more energy to coarse scales
   - Try 2.0-3.0 if energy stays in finest scale
-- **`energy_weight`** (float): Energy penalty strength (default: 0.001)
+- **`energy_weight`** (float): Energy penalty strength (default: 0.01)
   - Higher = stronger coarse preference
   - Increase if alpha alone isn't enough
 
@@ -517,6 +517,16 @@ decomposition_loss(
 ### Visualization
 
 ```python
+upsample_for_visualization(
+    img: np.ndarray,
+    target_shape: Tuple[int, ...],
+    interpolation: str = 'cubic'
+) -> np.ndarray
+```
+
+Upsample a numpy array to the target shape for visualization purposes, using the same interpolation methods as the optimization to ensure visual consistency. The `interpolation` parameter should match what was used during `decompose_image()`.
+
+```python
 show_optimization_movie(
     movie_frames: Dict[str, Any],
     shape: Tuple[int, ...],
@@ -717,5 +727,5 @@ If you use this package in your research, please cite:
 ## See Also
 
 - [SPECIFICATIONS.md](SPECIFICATIONS.md) - Detailed technical specifications
-- [Main Luxar Documentation](../../../README.md) - Gaussian splatting framework
+- [Main Luxar Documentation](../../README.md) - Luxar Python package
 - [Gaussian Splat Fitting](../README.md) - Core fitting algorithms

@@ -9,28 +9,29 @@ This package centralizes all type-related code to ensure consistency and type sa
 ## Modules
 
 ### `protocols.py`
-Protocol definitions for type checking and validation function imports.
+Protocol definitions for type checking.
 
 **Key Components:**
 - **Protocols**: `CompressorProtocol`, `NodeProtocol`, `PointsProtocol`, `SceneProtocol`
-- **Validation Functions**: Imported from `validation/types.py` and re-exported for convenience
-- **Type Guards**: `is_position_array()`, `is_color_array()`, `is_transform_matrix()`
 - **Generic Type Variables**: `NodeT`, `NumericT`, `ArrayT`, `ZarrDataT`
 
-**Purpose**: Define contracts for duck typing and centralize validation imports
+**Purpose**: Define contracts for duck typing
 
-**Note**: Validation functions are now defined in `validation/types.py` to avoid duplication
+**Note**: Validation functions and type guards (e.g., `validate_positions()`, `is_position_array()`) are defined in `validation/types.py` and re-exported from the `typing_utils` package `__init__.py` for convenience
 
 ### `aliases.py`
 Simple type aliases for improved readability.
 
 **Key Aliases:**
-- **Arrays**: `Float32Array`, `Uint8Array`, `ColorArray`, `PositionArray`
-- **Transforms**: `TransformMatrix`, `TransformList`
+- **Arrays**: `Float32Array`, `Uint8Array`, `ColorArray`, `PositionArray`, `RadiusArray`, `SharpnessArray`, `ArrayLike`
+- **Transforms**: `TransformMatrix`, `TransformList`, `NdTransform`, `NdTransformEntry`
 - **Paths**: `PathLike`
 - **Zarr**: `ChunkSpec`, `MaxShape`, `ZarrAttrs`
-- **Scene**: `NodePath`, `NodeAttributes`, `SceneHierarchy`
+- **Scene**: `NodePath`, `NodeAttributes`, `SceneHierarchy`, `GroupAttrs`
+- **Dimensions**: `DimensionRange`, `DimensionIndex`, `DimensionIndices`, `CategoryList`
 - **Colors**: `ColorValue`, `ColorRGB`, `ColorRGBA`
+- **Metadata**: `PointsMetadata`, `LinesMetadata`, `GSplatsMetadata`, `SceneMetadata`
+- **Validation**: `ValidationResult`
 
 **Purpose**: Simplify complex type annotations
 
@@ -38,8 +39,8 @@ Simple type aliases for improved readability.
 Enumeration types and configuration classes.
 
 **Key Enums:**
-- `BlendingMode`: Rendering blend modes (normal, additive, etc.)
-- `NodeType`: Scene graph node types (points, group, scene)
+- `BlendingMode`: Rendering blend modes (normal, additive, max, opaque, luminous)
+- `NodeType`: Scene graph node types (scene, group, points, lines, gsplats)
 - `PhysicalUnit`: Supported physical units (nm, um, mm, etc.)
 
 **Key Classes:**
@@ -53,24 +54,32 @@ Constant values used throughout Luxar.
 
 **Categories:**
 - **Version**: `LUXAR_VERSION_CURRENT`, `DEFAULT_ZARR_VERSION`
-- **Rendering**: `OPACITY_MIN/MAX`, `GAMMA_MIN/MAX`, `DEFAULT_BLENDING_MODE`
-- **Chunks**: `CHUNK_SIZE_MIN/DEFAULT/MAX`
+- **Rendering**: `OPACITY_MIN/MAX`, `GAMMA_MIN/MAX`, `DEFAULT_BLENDING_MODE`, `SHARPNESS_MIN/MAX`
+- **Chunks**: `TARGET_CHUNK_BYTES`, `MIN_CHUNK_BYTES`, `MAX_CHUNK_BYTES` (byte-based, preferred), legacy `CHUNK_SIZE_MIN/DEFAULT/MAX` (element-based, deprecated)
 - **Memory**: `KB_TO_BYTES`, `MB_TO_BYTES`, `GB_TO_BYTES`
-- **Limits**: `MAX_POINTS_RECOMMENDED`, `MAX_POINTS_WARNING`
+- **Limits**: `MAX_POINTS_RECOMMENDED`, `MAX_POINTS_WARNING`, `MIN_POINT_RADIUS`, `MAX_POINT_RADIUS`
+- **Categorical**: `MIN_CATEGORIES`, `MAX_CATEGORY_LABEL_LENGTH`, `CATEGORICAL_STEP`
+- **Node Types**: `NODE_TYPE_SCENE`, `NODE_TYPE_POINTS`, `NODE_TYPE_LINES`, `NODE_TYPE_GSPLATS`
 - **Validation**: Error message templates
 
 **Purpose**: Centralize magic numbers and limits
 
 ### `config.py`
-Configuration settings and defaults.
+Configuration settings, defaults, and validation functions.
 
-**Key Components:**
-- Compression settings and defaults
-- Supported versions and units
-- Logging configuration
-- File path defaults
+**Key Constants:**
+- `DEFAULT_CHUNK_SIZE`, `MIN_CHUNK_SIZE`, `MAX_CHUNK_SIZE` - Chunk size bounds
+- `DEFAULT_VERSION`, `SUPPORTED_VERSIONS` - Luxar version management
+- `SUPPORTED_COMPRESSION`, `SUPPORTED_UNITS` - Supported values
+- `MAX_RECOMMENDED_POINTS`, `LARGE_DATASET_WARNING` - Performance thresholds
 
-**Purpose**: Centralize configuration management
+**Key Functions:**
+- `validate_chunk_size()` - Validate chunk size within bounds
+- `validate_compression_level()` - Validate compression level (1-9)
+- `estimate_memory_usage()` - Estimate memory for a points dataset
+- `check_dataset_size_warning()` - Check if dataset size warrants a warning
+
+**Purpose**: Centralize configuration management and validation
 
 ## Design Philosophy
 

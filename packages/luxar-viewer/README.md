@@ -27,7 +27,7 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 
 ### Prerequisites
 
-- Node.js 18+ and pnpm (preferred package manager)
+- Node.js 22+ and pnpm (preferred package manager)
 - Modern web browser with WebGL 2.0 support
 - Zarr dataset (see [Data Format](#data-format) section)
 
@@ -236,8 +236,12 @@ src/
 ├── cache/
 │   ├── index.ts                   # Cache module exports
 │   ├── cached-zarr-array.ts       # Cached zarr array access
+│   ├── chunk-prefetcher.ts        # Chunk prefetching logic
 │   ├── decompressed-chunk-cache.ts # Decompressed chunk caching
 │   ├── lru-cache.ts               # LRU cache implementation
+│   ├── opfs-store.ts              # Origin Private File System store
+│   ├── segmented-lru-cache.ts     # Segmented LRU cache
+│   ├── two-level-caching-store.ts # Two-level caching store
 │   └── types.ts                   # Cache type definitions
 ├── config/
 │   ├── index.ts                   # Unified configuration system
@@ -266,11 +270,14 @@ src/
 │   ├── index.ts                   # Data module exports
 │   ├── lines-chunk-spatial-index.ts # Lines chunk spatial indexing
 │   ├── lines-spatial-index-loader.ts # Lines spatial index loading
+│   ├── loader-registry.ts         # Loader registry
 │   ├── nd-transform.ts            # nD transform inverse-query for non-displayed dimensions
 │   ├── point-spatial-index-loader.ts # Point spatial index loading
 │   ├── scene-graph-builder.ts     # Scene graph construction from zarr
 │   ├── scene-loader.ts            # Scene loading orchestration
 │   ├── scene-loader-manager.ts    # Scene loader management
+│   ├── stats-aggregator.ts        # Statistics aggregation
+│   ├── tolerance-computer.ts      # Tolerance computation
 │   ├── view-state-manager.ts      # View state management
 │   ├── zarr-loader.ts             # Zarr dataset loading with nD support
 │   └── loaders/                   # Modular loader subsystem
@@ -284,6 +291,8 @@ src/
 │   ├── input-handler.ts           # User interaction handling
 │   ├── input-handler-utils.ts     # Input handler utilities
 │   └── input-context-manager.ts   # Keyboard conflict resolution
+├── profiling/
+│   └── update-profiler.ts         # Update profiling
 ├── rendering/
 │   ├── adaptive-dpr-manager.ts    # Adaptive device pixel ratio management
 │   ├── chromatic-lens-distortion-effect.ts # Chromatic lens distortion effect
@@ -306,6 +315,12 @@ src/
 │   ├── scene-dims-manager.ts      # Scene-level dimension state management
 │   ├── scene-manager.ts           # 3D scene and renderer setup
 │   └── scene-manager-utils.ts     # Scene manager utilities
+├── styles/                        # CSS styles
+│   ├── index.css                  # Main stylesheet
+│   ├── reset.css                  # CSS reset
+│   ├── base/                      # Base styles
+│   ├── components/                # Component styles
+│   └── themes/                    # Theme stylesheets
 ├── themes/
 │   ├── index.ts                   # Theme module exports
 │   ├── glass-filters.ts           # Glass filter effects
@@ -314,6 +329,7 @@ src/
 │   └── themes/
 │       ├── dark.theme.ts          # Dark theme
 │       ├── frosted-glass.theme.ts # Frosted glass theme
+│       ├── light.theme.ts         # Light theme
 │       └── liquid-glass.theme.ts  # Liquid glass theme
 ├── types/
 │   ├── animation.ts               # Animation type definitions
@@ -346,6 +362,18 @@ src/
 │   │   ├── polling-loop.ts        # Polling loop for UI updates
 │   │   ├── resolution-indicator.ts # Resolution indicator overlay
 │   │   └── scale-bar.ts           # Physical scale bar overlay
+│   ├── layers/                    # Layer management UI
+│   │   ├── index.ts               # Layer module exports
+│   │   ├── layers-panel.ts        # Layers panel
+│   │   ├── layer-state.ts         # Layer state management
+│   │   └── range-slider.ts        # Range slider component
+│   ├── rendering-controls/        # Rendering controls sub-modules
+│   │   ├── anti-aliasing-setup.ts # Anti-aliasing setup
+│   │   ├── camera-setup.ts        # Camera setup
+│   │   ├── hdr-setup.ts           # HDR setup
+│   │   ├── navigation-setup.ts    # Navigation setup
+│   │   ├── post-processing-setup.ts # Post-processing setup
+│   │   └── types.ts               # Rendering controls type definitions
 │   └── gui/                       # Custom GUI framework
 │       ├── index.ts               # GUI module exports
 │       ├── controllers/
@@ -361,6 +389,10 @@ src/
 │       │   └── types.ts           # GUI type definitions
 │       ├── dom/
 │       │   └── event-manager.ts   # DOM event management
+│       ├── styles/                # GUI CSS styles
+│       │   ├── controller.css
+│       │   ├── folder.css
+│       │   └── gui.css
 │       └── utils/
 │           ├── auto-blur.ts       # Auto-blur utility
 │           └── value-formatting.ts # Value formatting utility
@@ -375,6 +407,8 @@ src/
 ├── wasm/
 │   ├── index.ts                   # WASM module loader
 │   ├── types.ts                   # WASM type definitions
+│   ├── rust/                      # Rust WASM source
+│   │   └── src/                   # Rust source files
 │   └── typescript/                # TypeScript fallback implementations
 │       ├── decode.ts              # Array decoding
 │       ├── effective_radii.ts     # Effective radius computation
@@ -396,7 +430,7 @@ src/
 ```bash
 # Development
 pnpm dev             # Start development server with hot reload
-pnpm build           # Build for production
+pnpm build           # Build for production (includes WASM build)
 pnpm preview         # Preview production build
 
 # Code Quality
@@ -405,11 +439,33 @@ pnpm typecheck       # Run TypeScript type checking
 pnpm format          # Format code with Prettier
 pnpm check           # Run all quality checks (typecheck + lint + test)
 
-# Testing
+# Unit Testing
 pnpm test            # Run unit tests with Vitest
 pnpm test:coverage   # Run tests with coverage report
 pnpm test:ui         # Run tests with interactive UI
 pnpm test:watch      # Run tests in watch mode
+pnpm test:with-fixtures  # Generate test fixtures, then run tests
+
+# E2E Testing (Playwright)
+pnpm test:e2e        # Run all E2E tests
+pnpm test:e2e:ui     # Run E2E tests with interactive UI
+pnpm test:e2e:debug  # Run E2E tests in debug mode
+pnpm test:e2e:report # Show E2E test report
+
+# WASM
+pnpm build:wasm      # Build Rust WASM module
+pnpm build:wasm:dev  # Build WASM in development mode
+pnpm test:wasm       # Run Rust unit tests (cargo test)
+pnpm bench:wasm      # Run WASM vs TypeScript benchmarks
+
+# Fixtures & Media
+pnpm test:generate-fixtures  # Generate test fixtures from Python
+pnpm readme-images   # Generate README screenshot images
+pnpm readme-videos   # Generate README video recordings
+
+# AI Debugging
+pnpm agent:debug     # Run Playwright agent driver (headless)
+pnpm agent:debug:visible  # Run agent driver with visible browser
 ```
 
 ### Configuration
@@ -419,10 +475,9 @@ Luxar Viewer uses a unified configuration system in `src/config/`. Edit `src/con
 ```typescript
 export const config: AppConfig = {
   camera: {
-    fov: 60,                    // Field of view (degrees)
     initialPosition: { x: 0, y: 0, z: 8 },
     fovMin: 10,
-    fovMax: 200,
+    fovMax: 170,
   },
   scene: {
     backgroundColor: 0x111111,  // Dark gray background
@@ -432,7 +487,12 @@ export const config: AppConfig = {
   },
   renderingControls: {
     defaults: {
-      fxaaEnabled: true,        // FXAA anti-aliasing (recommended)
+      fov: 47,                  // Field of view in degrees (50mm Normal)
+      bloomEnabled: false,      // Bloom effect (opt-in via zarr viewer_config)
+      bloomStrength: 0.25,      // Bloom intensity multiplier
+      bloomRadius: 1.0,         // Blur radius for bloom spread
+      bloomThreshold: 0.01,     // Luminance threshold for bloom
+      fxaaEnabled: false,       // FXAA anti-aliasing
       msaaEnabled: false,       // MSAA (hardware-accelerated, fast and sharp)
       ssaaEnabled: false,       // SSAA (supersampling, highest quality, heavy cost)
       // ... more rendering options
@@ -460,43 +520,27 @@ const material = materialManager.getMaterial({
 });
 ```
 
-### Custom Shader Parameters
+### Per-Point Attributes
 
-Modify shader configuration in `src/config/index.ts`:
-
-```typescript
-shader: {
-  points: {
-    size: 8.0,                  // Default point size in pixels
-    hdrMultiplier: 13.0,        // Bloom intensity
-    baseAlpha: 0.01,            // Base transparency
-    falloffSteepness: 20.0,     // Edge softness
-  },
-},
-```
-
-Point rendering now supports per-point attributes:
+Point rendering supports per-point attributes:
 - **radius**: Individual point sizes for visual hierarchy
 - **sharpness**: Control edge falloff (0.5 = soft glow, 10.0 = sharp edges)
 - **Automatic compensation**: Shader adjusts intensity based on sharpness
 
 ### HDR Post-Processing
 
-Customize bloom effects in `src/config/index.ts`:
+Customize bloom and tone mapping in `src/config/index.ts` under `renderingControls.defaults`:
 
 ```typescript
-postProcessing: {
-  bloom: {
-    threshold: 0.01,            // Bloom threshold (0.0 = everything glows)
-    strength: 0.1,              // Bloom intensity
-    radius: 0.5,                // Bloom spread
-    resolutionScale: 4,         // Performance vs quality
-  },
-  toneMapping: {
-    final: {
-      outputColorSpace: THREE.SRGBColorSpace,
-      toneMapping: THREE.ACESFilmicToneMapping,
-    },
+renderingControls: {
+  defaults: {
+    bloomEnabled: false,        // Enable/disable bloom effect
+    bloomThreshold: 0.01,       // Luminance threshold (0.0 = everything glows)
+    bloomStrength: 0.25,        // Bloom intensity multiplier
+    bloomRadius: 1.0,           // Bloom spread
+    bloomLevels: 8,             // Mipmap levels (1-12, lower = faster)
+    toneMapping: 'Neutral',     // Options: None, Linear, Reinhard, Cineon, ACES, AgX, Neutral
+    exposure: 0.0,              // Log2 stops (0 = neutral, +1 = 2x brighter)
   },
 },
 ```
@@ -508,10 +552,12 @@ Luxar Viewer supports multiple anti-aliasing techniques with important compatibi
 ```typescript
 renderingControls: {
   defaults: {
-    fxaaEnabled: true,          // FXAA: Works well with additive blending
+    fxaaEnabled: false,         // FXAA: Fast post-process AA (disabled by default)
     msaaEnabled: false,         // MSAA: Hardware-accelerated, fast and sharp
-    ssaaEnabled: false,         // SSAA: Supersampling, highest quality, heavy cost
+    msaaSamples: 4,             // MSAA sample count (2, 4, 8)
     smaaEnabled: false,         // SMAA: Advanced edge-detection AA
+    ssaaEnabled: false,         // SSAA: Supersampling, highest quality, heavy cost
+    ssaaMultiplier: 2.0,        // SSAA resolution multiplier (1.5x, 2x, 4x)
   },
 },
 ```
@@ -531,25 +577,26 @@ renderingControls: {
 
 ### Performance Monitoring
 
-Built-in performance monitoring in `src/ui/performance-monitor.ts` provides:
+Built-in performance monitoring in `src/ui/performance-monitor.ts` wraps [stats.js](https://github.com/mrdoob/stats.js/) and provides:
 
 ```typescript
-// Access performance metrics
+// PerformanceMonitor wraps stats.js for FPS, frame time, and memory tracking
 const monitor = new PerformanceMonitor();
-monitor.startFrame();
+monitor.begin();    // Call at the start of each frame
 // ... rendering work ...
-monitor.endFrame();
+monitor.end();      // Call at the end of each frame
 
-// Get metrics
-const fps = monitor.getFPS();
-const frameTime = monitor.getAverageFrameTime();
+// Visibility control
+monitor.show();     // Show the stats panel
+monitor.hide();     // Hide the stats panel
+monitor.toggle();   // Toggle visibility
 ```
 
-- **Real-time FPS**: Continuously updated frame rate display
-- **Frame timing**: Average and instantaneous frame time measurements
-- **GPU performance**: WebGL timing queries when available
-- **Memory usage**: WebGL resource monitoring
-- **Automatic idle detection**: Pauses monitoring during idle periods
+- **Real-time FPS**: Continuously updated frame rate display (panel 0)
+- **Frame timing**: Milliseconds per frame (panel 1)
+- **Memory usage**: JavaScript heap size monitoring (panel 2)
+- **Panel cycling**: `cyclePanels()` rotates through FPS, frame time, and memory views
+- **Idle optimization**: Only measures when visible to avoid overhead
 
 ## 🎯 Performance Tips
 
@@ -622,21 +669,21 @@ import { config } from './src/config/index.js';
 const app = new LuxarApp();
 await app.init('/path/to/dataset.zarr');
 
-// Access components
-const { sceneManager, animationController } = app.components;
+// Access components (available after init)
+const { sceneManager, animationController, renderingControls } = app.components;
 
-// Update bloom settings through configuration
-config.postProcessing.bloom.strength = 0.2;
-config.postProcessing.bloom.radius = 0.8;
-config.postProcessing.bloom.threshold = 0.1;
+// Modify bloom defaults before initialization (or for next scene load)
+config.renderingControls.defaults.bloomEnabled = true;
+config.renderingControls.defaults.bloomStrength = 0.2;
+config.renderingControls.defaults.bloomRadius = 0.8;
+config.renderingControls.defaults.bloomThreshold = 0.1;
 
-// Update rendering controls
-const renderingControls = app.components.renderingControls;
-renderingControls.updateSettings({
-  fxaaEnabled: true,
-  bloomStrength: 0.15,
-  exposure: 1.2,
-});
+// Available components:
+//   sceneManager          - 3D scene, renderer, camera, controls
+//   animationController   - Render loop, per-frame callbacks
+//   inputHandler          - Keyboard/mouse input
+//   renderingControls     - UI panel for rendering settings
+//   adaptiveDPRManager    - Dynamic resolution scaling
 ```
 
 ## 🤝 Contributing
@@ -657,7 +704,7 @@ renderingControls.updateSettings({
 
 ## 📄 License
 
-Copyright (c) 2025 The Luxar Authors
+Copyright (c) 2025-2026 The Luxar Authors
 
 This project is licensed under the BSD-3-Clause License. See the [LICENSE](../../LICENSE) file for details.
 

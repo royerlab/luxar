@@ -45,7 +45,8 @@ const visibility = wasm.compute_nd_visibility_points(/* ... */);
 
 - `decode_quantized_u8()` / `decode_quantized_u16()` — Dequantize compressed arrays
 - `decode_log_scalar_u8()` / `decode_log_scalar_u16()` — Log-space decoding
-- `decode_lut_scalar()` / `decode_lut_row()` — Lookup table decoding
+- `decode_lut_scalar_u8()` / `decode_lut_scalar_u16()` — Lookup table scalar decoding
+- `decode_lut_row_u8()` / `decode_lut_row_u16()` — Lookup table row (vector) decoding
 - `decode_broadcasted()` — Expand broadcast-encoded arrays
 
 ### Projection
@@ -53,6 +54,7 @@ const visibility = wasm.compute_nd_visibility_points(/* ... */);
 - `extract_3d_positions()` — Extract display dimensions from nD positions
 - `calculate_bounds_3d()` — Compute 3D bounding box from nD data
 - `compact_by_mask()` — Remove invisible elements by boolean mask
+- `count_visible()` — Count non-zero mask values
 - `radii_to_visibility_mask()` — Convert effective radii to visibility mask
 
 ### Gaussian Splats
@@ -60,14 +62,18 @@ const visibility = wasm.compute_nd_visibility_points(/* ... */);
 - `compute_gsplats_attenuation()` — Gaussian attenuation from nD distance
 - `extract_visible_cholesky_3d()` — Extract 3D Cholesky factors from nD
 - `compact_attenuated_amplitudes()` — Remove fully attenuated splats
+- `extract_cholesky_submatrix()` — Extract raw Cholesky submatrix for specified dimensions
 - `mahalanobis_distance()` — nD Mahalanobis distance
 
 ### Line Clipping
 
+- `clip_segment_single()` — Clip a single segment and return interpolation parameters
 - `clip_segments_batch()` — Clip line segments to nD slice bounds
 - `interpolate_clipped_positions()` — Interpolate positions at clip boundaries
 - `interpolate_scalars_batch()` / `interpolate_colors_batch()` — Interpolate attributes
 - `calculate_segment_lengths()` — Compute segment lengths for LOD
+- `mark_clipped_endpoints()` — Mark clipped endpoints for cap factor adjustment
+- `lerp()` / `lerp_vec3()` / `distance_3d()` — Math helpers
 
 ## 16-Dimension Limit
 
