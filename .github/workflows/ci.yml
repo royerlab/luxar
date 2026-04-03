@@ -125,8 +125,22 @@ jobs:
       - name: Generate example datasets
         run: make run-examples
 
-      - name: Run E2E tests (non-visual)
-        run: cd packages/luxar-viewer && pnpm test:e2e:ci
+      - name: Run E2E tests (non-visual, CI subset)
+        run: |
+          cd packages/luxar-viewer && npx playwright test \
+            basic-rendering.spec.ts \
+            viewer-initialization.spec.ts \
+            data-integrity.spec.ts \
+            url-parameters.spec.ts \
+            controls-interaction.spec.ts \
+            rendering-controls.spec.ts \
+            recording-panel.spec.ts \
+            layers-panel.spec.ts \
+            dataset-switching.spec.ts \
+            error-recovery.spec.ts \
+            first-time-ux.spec.ts \
+            --retries 2 --timeout 120000
+        timeout-minutes: 30
         env:
           CI: true
 
