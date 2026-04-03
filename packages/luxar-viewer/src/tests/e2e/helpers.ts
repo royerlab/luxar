@@ -857,3 +857,198 @@ export async function getSceneDimsManager(page: Page): Promise<any> {
     return ih?.sceneDimsManager ?? debug?.sceneDimsManager ?? null;
   });
 }
+
+// ============================================================================
+// Layer, Material & Scene Inspection Helpers
+// ============================================================================
+
+/**
+ * Open the layers panel (press L, wait for it to appear).
+ * If already open, does nothing.
+ */
+export async function openLayersPanel(page: Page): Promise<void> {
+  const alreadyOpen = await page
+    .locator('.luxar-layers-panel')
+    .isVisible()
+    .catch(() => false);
+
+  if (!alreadyOpen) {
+    await focusCanvas(page);
+    await page.keyboard.press('l');
+    await page.waitForSelector('.luxar-layers-panel', { state: 'visible', timeout: 5000 });
+  }
+}
+
+/**
+ * Get material state for a named Three.js object.
+ * Returns blending, depth, and transparency properties.
+ */
+export async function getLayerMaterialState(
+  page: Page,
+  objectName: string
+): Promise<{
+  found: boolean;
+  blending: number;
+  depthTest: boolean;
+  depthWrite: boolean;
+  transparent: boolean;
+  visible: boolean;
+} | null> {
+  return await page.evaluate((name) => {
+    const debug = (window as any).__luxarDebug;
+    if (!debug?.scene) return null;
+
+    let result: any = null;
+    debug.scene.traverse((obj: any) => {
+      if (result) return;
+      if (obj.name === name && obj.material) {
+        result = {
+          found: true,
+          blending: obj.material.blending,
+          depthTest: obj.material.depthTest,
+          depthWrite: obj.material.depthWrite,
+          transparent: obj.material.transparent,
+          visible: obj.visible,
+        };
+      }
+    });
+    return result;
+  }, objectName);
+}
+
+/**
+ * Get all named objects in the Three.js scene.
+ */
+export async function getSceneObjectNames(page: Page): Promise<string[]> {
+  return await page.evaluate(() => {
+    const debug = (window as any).__luxarDebug;
+    if (!debug?.scene) return [];
+    const names: string[] = [];
+    debug.scene.traverse((obj: any) => {
+      if (obj.name) names.push(obj.name);
+    });
+    return names;
+  });
+}
+
+/**
+ * Get post-processing state from the debug interface.
+ */
+export async function getPostProcessingState(page: Page): Promise<{
+  hasPostProcessing: boolean;
+  bloomStrength: number | null;
+  exposure: number | null;
+  vignetteEnabled: boolean | null;
+  smaaEnabled: boolean | null;
+} | null> {
+  return await page.evaluate(() => {
+    const debug = (window as any).__luxarDebug;
+    const rc = debug?.renderingControls;
+    if (!rc) return null;
+    const settings = rc.settings;
+    return {
+      hasPostProcessing: !!debug.postProcessing,
+      bloomStrength: settings?.bloomStrength ?? null,
+      exposure: settings?.exposure ?? null,
+      vignetteEnabled: settings?.vignetteEnabled ?? null,
+      smaaEnabled: settings?.smaaEnabled ?? null,
+    };
+  });
+}
+
+/**
+ * Perform a Ctrl+Scroll interaction (changes FOV in Luxar).
+ * Uses a custom WheelEvent with ctrlKey=true since Playwright's
+ * keyboard.down('Control') + mouse.wheel() doesn't set ctrlKey on the event.
+ */
+export async function ctrlScroll(page: Page, deltaY: number): Promise<void> {
+  await page.evaluate((dy) => {
+    const canvas = document.querySelector('canvas');
+    if (!canvas) return;
+    canvas.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, ctrlKey: true, bubbles: true }));
+  }, deltaY);
+  await waitForNextRender(page);
+}
+
+/**
+ * Perform a Shift+Scroll interaction (rotates view axis in Luxar).
+ */
+export async function shiftScroll(page: Page, deltaY: number): Promise<void> {
+  await page.evaluate((dy) => {
+    const canvas = document.querySelector('canvas');
+    if (!canvas) return;
+    canvas.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, shiftKey: true, bubbles: true }));
+  }, deltaY);
+  await waitForNextRender(page);
+}
+
+/**
+ * Validate attribute alignment for all Points geometry in the scene.
+ * Returns per-cloud validation results.
+ */
+export async function validateSceneAttributes(page: Page): Promise<
+  Array<{
+    name: string;
+    positionCount: number;
+    colorCount: number;
+    radiusCount: number;
+    sharpnessCount: number;
+    drawRangeCount: number;
+    aligned: boolean;
+    hasNaN: boolean;
+    hasInfinity: boolean;
+  }>
+> {
+  return await page.evaluate(() => {
+    const debug = (window as any).__luxarDebug;
+    if (!debug?.scene) return [];
+
+    const results: any[] = [];
+    debug.scene.traverse((obj: any) => {
+      if (obj.type !== 'Points' || !obj.geometry?.attributes?.position) return;
+
+      const pos = obj.geometry.attributes.position;
+      const col = obj.geometry.attributes.color;
+      const rad = obj.geometry.attributes.radius;
+      const shp = obj.geometry.attributes.sharpness;
+      const dr = obj.geometry.drawRange;
+
+      const posCount = pos.count;
+      const colCount = col ? col.count : -1;
+      const radCount = rad ? rad.count : -1;
+      const shpCount = shp ? shp.count : -1;
+      const drawCount = dr.count < Infinity ? Math.min(dr.count, posCount) : posCount;
+
+      // Check for NaN/Infinity in positions (sample first 1000)
+      let hasNaN = false;
+      let hasInfinity = false;
+      const checkCount = Math.min(posCount * 3, 3000);
+      for (let i = 0; i < checkCount; i++) {
+        const v = pos.array[i];
+        if (Number.isNaN(v)) hasNaN = true;
+        if (!Number.isNaN(v) && !Number.isFinite(v)) hasInfinity = true;
+      }
+
+      // Check alignment: all present attributes should have same count
+      const counts = [posCount];
+      if (colCount >= 0) counts.push(colCount);
+      if (radCount >= 0) counts.push(radCount);
+      if (shpCount >= 0) counts.push(shpCount);
+      const aligned = counts.every((c) => c === counts[0]);
+
+      results.push({
+        name: obj.name || 'unnamed',
+        positionCount: posCount,
+        colorCount: colCount,
+        radiusCount: radCount,
+        sharpnessCount: shpCount,
+        drawRangeCount: drawCount,
+        aligned,
+        hasNaN,
+        hasInfinity,
+      });
+    });
+
+    return results;
+  });
+}
