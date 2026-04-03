@@ -282,7 +282,7 @@ export class LineMaterial extends THREE.ShaderMaterial {
   /**
    * Create a new LineMaterial with the specified configuration.
    *
-   * @param config - Material configuration options
+   * @param materialConfig - Material configuration options
    */
   constructor(materialConfig: LineMaterialConfig = {}) {
     const blendingMode = materialConfig.blendingMode ?? 'additive';

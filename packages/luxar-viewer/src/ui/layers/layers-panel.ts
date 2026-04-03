@@ -32,7 +32,7 @@ function clampGamma(gamma: number): number {
 }
 
 // Type guard: does this material have our update* methods?
-interface LuxarMaterial extends THREE.Material {
+export interface LuxarMaterial extends THREE.Material {
   updateIntensity(v: number): void;
   updateOffset(v: number): void;
   updateGamma(v: number): void;

@@ -28,22 +28,22 @@ import type { DimensionAnimationManager } from '../scene/dimension-animation-man
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import { LuxarOrbitControls } from '../controls/luxar-orbit-controls';
 
-type RecordingMode = 'image' | 'video' | 'turntable';
+export type RecordingMode = 'image' | 'video' | 'turntable';
 
 /** Video quality presets — maps to bits-per-pixel multiplier */
-type VideoQuality = 'low' | 'medium' | 'high' | 'max';
+export type VideoQuality = 'low' | 'medium' | 'high' | 'max';
 
 /** Video resolution presets — 0 means native canvas size */
-type VideoResolution = 0 | 1080 | 1440 | 2160;
+export type VideoResolution = 0 | 1080 | 1440 | 2160;
 
 /** Output format — what file type you get */
-type OutputFormat = 'png' | 'webp' | 'jpeg' | 'exr' | 'mp4' | 'webm' | 'mkv';
+export type OutputFormat = 'png' | 'webp' | 'jpeg' | 'exr' | 'mp4' | 'webm' | 'mkv';
 
 /** Video codec for MP4/WebM encoding (ordered by modernity) */
-type VideoCodecOption = 'h265' | 'vp9' | 'h264' | 'vp8';
+export type VideoCodecOption = 'h265' | 'vp9' | 'h264' | 'vp8';
 
 /** Recording options for image and video capture */
-interface RecordingOptions {
+export interface RecordingOptions {
   // Image options
   outputFormat: OutputFormat;
   imageQuality: number;
@@ -65,7 +65,7 @@ interface RecordingOptions {
 }
 
 /** Panel visibility state snapshot for hide/restore */
-type PanelStates = Map<string, boolean>;
+export type PanelStates = Map<string, boolean>;
 
 /**
  * Recording panel for capturing screenshots and recording video.

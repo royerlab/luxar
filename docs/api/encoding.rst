@@ -4,9 +4,7 @@ Encoding Package
 The encoding package provides semantic type-aware array encoding and quantization.
 
 .. automodule:: luxar.encoding
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   :no-members:
 
 ArrayEncoder
 ------------

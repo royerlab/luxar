@@ -104,7 +104,7 @@ export abstract class UIComponent<TConfig = any> {
    * Called when theme changes.
    * Override for theme-specific logic (e.g., canvas colors).
    *
-   * @param theme - New theme
+   * @param _theme - New theme
    */
   protected onThemeChange(_theme: Theme): void {
     // Override in subclass if needed

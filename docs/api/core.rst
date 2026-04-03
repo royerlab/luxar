@@ -4,9 +4,7 @@ Core Package
 The core package provides fundamental data structures for building Luxar scenes.
 
 .. automodule:: luxar.core
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   :no-members:
 
 Scene
 -----

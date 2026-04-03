@@ -88,8 +88,8 @@ def apply_clahe(
 
     References
     ----------
-    .. [1] Zuiderveld, K. (1994). "Contrast Limited Adaptive Histogram Equalization."
-           Graphics Gems IV, Academic Press.
+    .. [CLAHE1994] Zuiderveld, K. (1994). "Contrast Limited Adaptive Histogram
+       Equalization." Graphics Gems IV, Academic Press.
     """
     shape = V.shape
     device = V.device

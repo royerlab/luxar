@@ -59,10 +59,12 @@ def calculate_gradient_dilution_factor(d: int) -> float:
     **Formula rationale:**
 
     For 2D/3D: Simple linear scaling by parameter count ratio.
+
     - 2D: 2 + 3 = 5 params per splat (baseline)
-    - 3D: 3 + 6 = 9 params → factor = 9/5 = 1.8
+    - 3D: 3 + 6 = 9 params, factor = 9/5 = 1.8
 
     For 4D+: Two additional effects compound:
+
     1. **Parameter dilution** (params_current / params_2d): More parameters need updates
     2. **Spatial complexity** (d^0.8): Higher-dimensional spaces have exponentially more
        "room" for splats to move, requiring larger position updates to achieve equivalent
@@ -70,16 +72,18 @@ def calculate_gradient_dilution_factor(d: int) -> float:
        on 4D-8D synthetic datasets, balancing convergence speed vs. stability.
 
     **Empirical validation:**
+
     - Without compensation: 4D+ fitting converges 3-10x slower than 2D/3D
     - With d^0.8 factor: Convergence rates across dimensions within 2x of each other
     - The 0.8 exponent is a compromise: d^1.0 caused instability in 6D+, d^0.5 was
       insufficient for 4D-5D
 
     **Example factors:**
+
     - 2D: 1.0 (baseline)
     - 3D: 1.8
-    - 4D: 3.0 * 3.5 / 5 = 2.1 (d^0.8 ≈ 3.0, params = 4+10 = 14)
-    - 6D: 4.2 * 5.2 / 5 = 4.4 (d^0.8 ≈ 4.2, params = 6+21 = 27)
+    - 4D: 3.0 * 3.5 / 5 = 2.1 (d^0.8 approx 3.0, params = 4+10 = 14)
+    - 6D: 4.2 * 5.2 / 5 = 4.4 (d^0.8 approx 4.2, params = 6+21 = 27)
     """
     # Calculate number of parameters per splat
     params_2d = 2 + tril_size(2)  # 5 parameters (baseline)

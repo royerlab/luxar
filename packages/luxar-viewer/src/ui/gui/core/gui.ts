@@ -14,7 +14,7 @@ import { Folder } from './folder';
 import type { GUIOptions } from './types';
 
 /** Internal type with optional onClose */
-interface InternalGUIOptions {
+export interface InternalGUIOptions {
   title: string;
   width: number;
   closeFolders: boolean;

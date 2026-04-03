@@ -5,7 +5,7 @@ to the reconstruction, going beyond simple amplitude thresholds by evaluating
 each splat's *actual* impact on the rendered volume.
 
 Two modes are available
-----------------------
+------------------------
 
 **Error-budget mode** (``target`` provided):
     Uses the original volume that was fitted.  Computes the residual
@@ -84,7 +84,7 @@ class CullResult:
     phase2_iterations : int
         Number of binary-search iterations in Phase 2.
     max_joint_error : float
-        The max |R_joint| (error-budget) or max fractional contribution
+        The max ``|R_joint|`` (error-budget) or max fractional contribution
         (redundancy) after removing the final set of culled splats.
     mode : str
         ``"error_budget"`` or ``"redundancy"`` — which mode was used.
@@ -608,7 +608,7 @@ def cull_by_contribution(
     truncate : float
         Truncation radius in standard deviations.
     error_percentile : float
-        *Error-budget mode only.*  Percentile of |residual| used to set
+        *Error-budget mode only.*  Percentile of ``|residual|`` used to set
         the budget (0--100).  Higher = more conservative.
     error_tolerance : float
         *Error-budget mode only.*  Multiplier on the budget.

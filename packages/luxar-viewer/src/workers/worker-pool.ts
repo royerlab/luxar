@@ -10,13 +10,13 @@ import type { DataWorkerAPI } from './data-worker';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 
-interface WorkerInstance {
+export interface WorkerInstance {
   worker: Worker;
   api: Remote<DataWorkerAPI>;
   activeQueries: number;
 }
 
-class WorkerPool {
+export class WorkerPool {
   private workers: WorkerInstance[] = [];
   private initPromise: Promise<void> | null = null;
   private nextWorkerIndex = 0;

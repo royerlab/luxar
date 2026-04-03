@@ -17,7 +17,7 @@ import type { SetupContext, SetupResult } from './types';
  * Set up post-processing effects controls in the rendering controls GUI.
  *
  * @param context - Setup context with GUI, settings, and callbacks
- * @param controllersRef - Reference to controllers object (needed for FOV preset lens distortion sync)
+ * @param _controllersRef - Reference to controllers object (needed for FOV preset lens distortion sync)
  * @returns Setup result with controller references
  */
 export function setupPostProcessingControls(

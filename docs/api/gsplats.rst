@@ -4,9 +4,7 @@ Gaussian Splatting Package
 The gsplats package provides tools for fitting and rendering Gaussian splats to images.
 
 .. automodule:: luxar.gsplats
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   :no-members:
 
 Main API
 --------
@@ -75,9 +73,7 @@ Optimization
 Per-splat Adam optimizer with gradient dilution compensation.
 
 .. automodule:: luxar.gsplats.optim
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   :no-members:
 
 .. autofunction:: luxar.gsplats.optim.create_optimizer_and_scheduler
 
@@ -95,8 +91,7 @@ Gaussian Splat Models
 ~~~~~~~~~~~~~~~~~~~~~
 
 .. automodule:: luxar.gsplats.models.gsplats
-   :members:
-   :undoc-members:
+   :no-members:
 
 .. autoclass:: luxar.gsplats.models.gsplats.GaussianSplatModel
    :members:
@@ -126,9 +121,7 @@ I/O Operations
 Save and load Gaussian splat results.
 
 .. automodule:: luxar.gsplats.io
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   :no-members:
 
 .. autofunction:: luxar.gsplats.io.save_gsplats
 
@@ -154,9 +147,7 @@ Seed Generation
 Strategies for generating initial seed points for splat fitting.
 
 .. automodule:: luxar.gsplats.seeds
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   :no-members:
 
 .. autofunction:: luxar.gsplats.seeds.generate_seeds
 
@@ -174,9 +165,7 @@ CLAHE Enhancement
 Contrast-Limited Adaptive Histogram Equalization for nD data.
 
 .. automodule:: luxar.gsplats.clahe
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   :no-members:
 
 .. autofunction:: luxar.gsplats.clahe.apply_clahe
 

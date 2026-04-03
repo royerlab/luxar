@@ -112,8 +112,8 @@ export interface ChunkSpatialIndex {
  * ```
  *
  * @see {@link queryChunksForView} for querying the loaded index
- * @see {@link SPECIFICATIONS.md} Section 2.1 for chunk spatial index format
- * @see {@link ../../luxar/io/SPECIFICATIONS.md} for Python encoding details
+ * @see SPECIFICATIONS.md - Section 2.1 for chunk spatial index format
+ * @see luxar/io/SPECIFICATIONS.md - for Python encoding details
  */
 export async function loadChunkSpatialIndex(
   zarrLocation: zarr.Location<zarr.Readable>,
@@ -268,11 +268,11 @@ export async function loadChunkSpatialIndex(
  * console.log(`Total chunks: ${allChunks.length}`);
  * ```
  *
- * @performance O(total_chunks × ndim), typically 500-5000 comparisons for standard datasets.
+ * @remarks Performance: O(total_chunks × ndim), typically 500-5000 comparisons for standard datasets.
  *              Fast due to early exit optimization and linear memory access pattern.
  *
  * @see {@link loadChunkSpatialIndex} for index creation
- * @see {@link SPECIFICATIONS.md} Section 2.2 for AABB intersection algorithm
+ * @see SPECIFICATIONS.md - Section 2.2 for AABB intersection algorithm
  */
 export function queryChunksForView(
   index: ChunkSpatialIndex,
