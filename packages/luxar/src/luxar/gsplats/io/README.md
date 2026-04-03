@@ -26,17 +26,21 @@ save_gsplats(
     centers=centers,              # (N, d) float32
     amplitudes=amplitudes,        # (N,) float32
     cholesky_factors=cholesky,    # (N, d*(d+1)//2) float32
-    sharpnesses=sharpnesses,      # (N,) float32
     colors=colors,                # (N, 3) float32/uint8 (optional)
     ordering="hilbert",           # "morton", "hilbert", or "none"
     encoding_mode=EncodingMode.AUTO,  # AUTO, PRECISION, or MEMORY
     color_mode="sdr",             # Required if colors are float32
     fitting_info={"time_seconds": 45.3, "iterations": 850},
     description="DAPI nuclei fitting",
+    compress=None,                # "zip" or "tar.gz" for compressed archive
+    zip_deflate=False,            # Use DEFLATE compression for outer zip
+    compressor=None,              # Custom Blosc compressor (default: zstd level 3)
 )
 ```
 
 **`load_gsplats()`** - Load splats from .gsplats.zarr
+
+Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically. Arrays are decoded from their stored encoding (quantization, broadcasting, etc.) to float32.
 
 ```python
 from luxar.gsplats.io import load_gsplats
@@ -44,6 +48,10 @@ from luxar.gsplats.io import load_gsplats
 result = load_gsplats("fitted.gsplats.zarr", include_stats=True)
 print(result.centers.shape)  # (N, d)
 print(result.stats["time_seconds"])  # Fitting time
+
+# Compressed formats work transparently
+result = load_gsplats("fitted.gsplats.zarr.zip")
+result = load_gsplats("fitted.gsplats.zarr.tar.gz")
 ```
 
 **`inspect_gsplats_zarr()`** - Inspect metadata without loading arrays
@@ -137,7 +145,6 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 | `centers` | COORDINATE | `float16` (half precision) |
 | `amplitudes` | POSITIVE_SCALAR | `log_scalar_uint8` (log scale) |
 | `cholesky_factors` | CHOLESKY | `float16` (~0.1% error) |
-| `sharpnesses` | BOUNDED_SCALAR | `bounded_scalar_uint8` (bounds [0, 31]) |
 | `colors` | COLOR | `rgb_uint8` (SDR) or `float32` (HDR) |
 
 **Encoding modes**:
@@ -147,7 +154,7 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 
 **Broadcasting**: Uniform values stored once with metadata:
 ```python
-# If all sharpnesses are 2.0, stored as shape (1,) with:
+# If all amplitudes are 1.0, stored as shape (1,) with:
 # encoding = {"name": "broadcasted", "n_elements": 10000}
 ```
 
@@ -165,7 +172,6 @@ fitted.gsplats.zarr/
 │   ├── amplitudes               # (N,) or (1,) spatially ordered
 │   ├── cholesky_factors         # (N, k) spatially ordered
 │   ├── colors                   # (N, 3) or (1, 3) (optional)
-│   ├── sharpnesses              # (N,) or (1,) (optional)
 │   ├── chunk_bounds             # (num_chunks, d, 2)
 │   └── .zattrs                  # n_splats, ndim, ordering, ranges
 │
@@ -196,14 +202,12 @@ fitted.gsplats.zarr/
   "n_splats": 10000,
   "ndim": 3,
   "has_colors": true,
-  "has_sharpness": true,
   "ordering": "hilbert",
-  "morton_min": [0.0, 0.0, 0.0],
-  "morton_max": [256.0, 256.0, 128.0],
-  "morton_bits_per_dim": 21,
+  "ordering_min": [0.0, 0.0, 0.0],
+  "ordering_max": [256.0, 256.0, 128.0],
+  "ordering_bits_per_dim": 21,
   "chunk_size": 2048,
   "amplitude_range": {"min": 0.01, "max": 1.5},
-  "sharpness_bounds": {"min": 0.0, "max": 31.0},
   "center_bounds": {
     "min": [0.0, 0.0, 0.0],
     "max": [256.0, 256.0, 128.0]
@@ -254,6 +258,29 @@ result.save(
 )
 ```
 
+### Compressed Archive Save
+
+```python
+# Save as compressed zip archive
+save_gsplats(
+    "fitted.gsplats.zarr.zip",
+    centers=centers,
+    amplitudes=amplitudes,
+    cholesky_factors=cholesky,
+    compress="zip",               # Creates .zip archive
+    zip_deflate=True,             # Use DEFLATE for additional compression
+)
+
+# Save as tar.gz archive
+save_gsplats(
+    "fitted.gsplats.zarr.tar.gz",
+    centers=centers,
+    amplitudes=amplitudes,
+    cholesky_factors=cholesky,
+    compress="tar.gz",
+)
+```
+
 ### Save with Provenance
 
 ```python
@@ -299,7 +326,7 @@ print(f"Compression: {info['compression_ratio']}x")
 - **`save_gsplats.py`**: Save function with validation and encoding
 - **`load_gsplats.py`**: Load function with automatic decoding
 - **`inspect_gsplats.py`**: Metadata inspection without loading arrays
-- **`tests/`**: Comprehensive tests (53 tests total)
+- **`tests/`**: Comprehensive tests
 
 **Note**: Spatial ordering functions are imported from `luxar.io.ordering` and re-exported for convenience.
 
@@ -321,14 +348,14 @@ This package uses the same core principles as `luxar.io` but for standalone spla
 
 The package includes comprehensive tests covering:
 
-**Ordering tests** (17 tests):
+**Ordering tests**:
 - Morton encoding (2D, 3D, nD)
 - Hilbert encoding (2D, 3D, nD)
 - Coordinate normalization
 - Auto-resolution computation
 - Chunk bounds calculation
 
-**Save/Load tests** (21 tests):
+**Save/Load tests**:
 - Basic save/load
 - Encoding modes (AUTO, PRECISION, MEMORY)
 - Spatial ordering (Morton, Hilbert, none)
@@ -337,7 +364,7 @@ The package includes comprehensive tests covering:
 - Round-trip accuracy
 - Error validation
 
-**Format compliance tests** (15 tests):
+**Format compliance tests**:
 - Root attributes
 - Splats group structure
 - Array shapes

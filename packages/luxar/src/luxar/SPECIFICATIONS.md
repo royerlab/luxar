@@ -199,7 +199,7 @@ assert np.allclose(data.positions, positions, atol=1e-3)
 
 - **v2.0.0** (2026-02-28): Complete rewrite documenting actual public API
   - Documented all classes exported via `__all__`: Scene, Group, Points, Lines, GSplats, Node, LuxarZarrCompiler, LuxarScene, Dimensions, Dimension
-  - Documented viewer config classes (imported at module level, not in `__all__`): CameraConfig, ViewerConfig, UIConfig, DimensionsConfig, AnimationConfig
+  - Documented viewer config classes (exported via `__all__`): CameraConfig, ViewerConfig, UIConfig, DimensionsConfig, AnimationConfig
   - Documented all enumerations and constant classes: BlendingMode, NodeType, PhysicalUnit, RenderingLimits, Defaults
   - Documented all transform functions: identity, translate, rotate, scale, compose, inverse, look_at, etc.
   - Documented type aliases: PositionArray, ColorArray, TransformMatrix, PathLike

@@ -42,10 +42,10 @@ export default defineConfig({
     },
     {
       // Use luxar serve for proper CORS headers
-      command: 'cd ../.. && hatch run luxar serve . -p 9000',
-      port: 9000,
+      command: 'cd ../.. && hatch run luxar serve . -p 9876',
+      port: 9876,
       reuseExistingServer: true,
-      timeout: 30000,
+      timeout: 60000,
     },
   ],
 });

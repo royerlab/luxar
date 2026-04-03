@@ -113,7 +113,18 @@ python hierarchy_example.py
 luxar serve hierarchy_example.zarr
 ```
 
-#### 7b. **lines_basic_example.py** - Line Rendering
+#### 7b. **layers_test_example.py** - Layer System Testing
+Tests the layer/group system with rendering attributes:
+- Multiple layers with different blending modes
+- Opacity and gamma settings
+- Useful for verifying layer rendering behavior
+
+```bash
+python layers_test_example.py
+luxar serve layers_test_example.zarr
+```
+
+#### 7c. **lines_basic_example.py** - Line Rendering
 Creates 3D scenes with line primitives:
 - Basic line creation with segments
 - Polylines (connected vertices)
@@ -373,6 +384,18 @@ python performance_benchmark_example.py
 luxar serve performance_benchmark_example.zarr
 ```
 
+### GPU Acceleration
+
+#### 28. **metal_acceleration_example.py** - Metal/MPS Backend
+Demonstrates Apple Metal GPU acceleration for Gaussian splat fitting:
+- Checking Metal availability at runtime
+- Fitting with `use_metal=True` for MPS-accelerated training
+- Comparison of CPU vs Metal performance
+
+```bash
+python metal_acceleration_example.py
+```
+
 ## Keyboard Navigation Controls
 
 When viewing nD data (>3D), use these controls:
@@ -439,7 +462,7 @@ This example demonstrates:
 import numpy as np
 from pathlib import Path
 from arbol import aprint
-from luxar import Scene, Dimensions, Dimension
+from luxar import LuxarZarrCompiler, Dimensions, Dimension
 
 def main():
     """Create an example demonstrating [feature]."""
@@ -448,36 +471,35 @@ def main():
 
     # Define dimensions if using nD data
     dimensions = Dimensions([
-        Dimension("x", unit="μm", range=(-50, 50), display=True),
-        Dimension("y", unit="μm", range=(-50, 50), display=True),
-        Dimension("z", unit="μm", range=(-50, 50), display=True),
+        Dimension("x", unit="um", range=(-50, 50), display=True),
+        Dimension("y", unit="um", range=(-50, 50), display=True),
+        Dimension("z", unit="um", range=(-50, 50), display=True),
         Dimension("time", unit="s", range=(0, 10), display=False, discrete=True)
     ])
 
-    # Create scene
-    scene = Scene(output_path, dimensions=dimensions)
+    # Create scene using compiler (context manager handles finalization)
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=dimensions)
 
-    # Generate your data
-    n_points = 1000
-    positions = np.random.randn(n_points, 4).astype(np.float32) * 10
-    colors = np.random.randint(0, 255, (n_points, 3), dtype=np.uint8)
-    radii = np.random.uniform(0.05, 0.2, n_points).astype(np.float32)
-    sharpness = np.full(n_points, 2.0, dtype=np.float32)
+        # Generate your data
+        n_points = 1000
+        positions = np.random.randn(n_points, 4).astype(np.float32) * 10
+        colors = np.random.randint(0, 255, (n_points, 3), dtype=np.uint8)
+        radii = np.random.uniform(0.05, 0.2, n_points).astype(np.float32)
+        sharpness = np.full(n_points, 2.0, dtype=np.float32)
 
-    # Add to scene
-    scene.add_points(
-        "MyPoints",
-        positions,
-        colors=colors,
-        radii=radii,
-        sharpness=sharpness
-    )
-
-    scene.finalize()
+        # Add to scene
+        scene.add_points(
+            "MyPoints",
+            positions,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness
+        )
 
     # Print instructions
-    aprint(f"✓ Example created with {n_points:,} points")
-    aprint(f"\nTo view: luxar serve {output_path}")
+    aprint(f"Example created with {n_points:,} points")
+    aprint(f"To view: luxar serve {output_path}")
 
 if __name__ == "__main__":
     main()

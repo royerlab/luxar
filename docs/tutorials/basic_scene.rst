@@ -152,6 +152,10 @@ Then serve with the viewer:
 
    luxar serve tutorial_scene.zarr --viewer
 
+.. image:: ../images/docs/basic-3d-pointcloud.png
+   :alt: Luxar viewer showing a 3D point cloud
+   :width: 100%
+
 **What happens when you open the viewer?**
 
 1. JavaScript loads scene metadata (dimensions, bounds)
@@ -240,9 +244,10 @@ Luxar automatically optimizes encoding based on data semantics:
 Next Steps
 ----------
 
-* **Tutorial 2**: Add a time dimension for animation
-* **Tutorial 3**: Fit Gaussian splats to an image
-* **Tutorial 4**: Optimize performance for billion points
+* :doc:`nd_navigation` - Add time and channel dimensions for nD navigation
+* :doc:`programmatic_server` - Create and test servers programmatically
+* :doc:`gaussian_splatting` - Fit Gaussian splats for compression and denoising
+* :doc:`performance_optimization` - Optimize for billion-point datasets
 
 Troubleshooting
 ---------------

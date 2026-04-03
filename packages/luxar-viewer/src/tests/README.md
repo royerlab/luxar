@@ -37,22 +37,22 @@ open coverage/typescript/index.html
 tests/
 ├── mocks/                         # Mock infrastructure (WebGL, Browser APIs, etc.)
 │   ├── index.ts                   # Central export point
-│   ├── webgl.mock.ts              # WebGL2RenderingContext mock (164 LOC)
-│   ├── browser-apis.mock.ts       # window.matchMedia, ResizeObserver, etc. (90 LOC)
-│   ├── opfs.mock.ts               # Origin Private File System mock (24 LOC)
-│   ├── three.mock.ts              # THREE.js mocks (1524 LOC)
-│   └── orbit-controls.mock.ts     # OrbitControls mock (57 LOC)
+│   ├── webgl.mock.ts              # WebGL2RenderingContext mock
+│   ├── browser-apis.mock.ts       # window.matchMedia, ResizeObserver, etc.
+│   ├── opfs.mock.ts               # Origin Private File System mock
+│   ├── three.mock.ts              # THREE.js mocks
+│   └── orbit-controls.mock.ts     # OrbitControls mock
 │
-├── unit/                          # Unit tests (30 files, fast, isolated)
-│   ├── data/                      # Data loading & encoding (8 tests)
-│   ├── ndim/                      # nD slicing & spatial queries (3 tests)
-│   ├── cache/                     # Caching system (5 tests)
-│   ├── controls/                  # Camera controls & input (4 tests)
-│   ├── rendering/                 # Materials, shaders, post-processing (5 tests)
-│   ├── scene/                     # Scene management (3 tests)
-│   └── architecture/              # Global state, clean architecture (2 tests)
+├── unit/                          # Unit tests (fast, isolated)
+│   ├── data/                      # Data loading & encoding
+│   ├── ndim/                      # nD slicing & spatial queries
+│   ├── cache/                     # Caching system
+│   ├── controls/                  # Camera controls & input
+│   ├── rendering/                 # Materials, shaders, post-processing
+│   ├── scene/                     # Scene management
+│   └── architecture/              # Global state, clean architecture
 │
-├── e2e/                           # End-to-end tests (29 files, full browser)
+├── e2e/                           # End-to-end tests (full browser)
 │   ├── *.spec.ts                  # Playwright E2E test files
 │   └── *-snapshots/               # Visual regression snapshots (auto-generated)
 │
@@ -60,7 +60,8 @@ tests/
 │   └── test-data-builders.ts      # Fluent builders for test data
 │
 ├── setup.ts                       # Global test setup (installs mocks)
-└── test-config.ts                 # Vitest configuration
+├── test-config.ts                 # Vitest configuration helpers
+└── global-setup.ts                # Vitest global setup (auto-generates fixtures)
 
 # Test fixtures (auto-generated, Python → TypeScript compatibility)
 ../../tests/fixtures/              # At luxar-viewer root level
@@ -105,7 +106,7 @@ installAllMocks(); // Sets up all mocks at once
 
 **Key features**:
 
-- 164 lines of comprehensive WebGL API surface
+- Comprehensive WebGL API surface
 - Supports HDR extension detection
 - Tracks shader compilation for debugging
 - Mock canvas with resize support
@@ -149,7 +150,7 @@ installAllMocks(); // Sets up all mocks at once
 
 **Key features**:
 
-- 1524 lines of comprehensive THREE.js API surface
+- Comprehensive THREE.js API surface
 - Tracks scene graph changes for assertions
 - Mock shaders with uniform tracking
 - Dispose tracking for memory leak detection
@@ -181,7 +182,7 @@ installAllMocks(); // Sets up all mocks at once
 - Visual correctness requires E2E tests
 - Mock drift: Mocks must stay in sync with real APIs
 
-**Solution**: Comprehensive E2E test suite (29 spec files) covers full browser integration
+**Solution**: Comprehensive E2E test suite covers full browser integration
 
 ---
 
@@ -417,7 +418,7 @@ Tests for clean architecture and global state management.
 
 Full browser tests using Playwright that exercise the complete pipeline.
 
-**Scope**: Real browser, real WebGL, real OPFS, real datasets (29 spec files)
+**Scope**: Real browser, real WebGL, real OPFS, real datasets
 
 **Key Tests**:
 
@@ -831,7 +832,7 @@ Tests run automatically on:
 **CI Requirements**:
 
 - All unit tests pass (see CI for current count)
-- All E2E tests pass (29 spec files)
+- All E2E tests pass
 - Coverage ≥ 80%
 - No TypeScript errors
 - No linting errors
@@ -887,9 +888,9 @@ When adding new tests:
 
 ## Additional Resources
 
-- [Main README](../../../README.md) - Project documentation
+- [Main README](../../README.md) - Luxar Viewer documentation
 - [CLAUDE.md](../../../../CLAUDE.md) - Development guidance for AI assistants
-- [PLAYWRIGHT_GUIDE.md](../../docs/PLAYWRIGHT_GUIDE.md) - Playwright testing guide
+- [PLAYWRIGHT_GUIDE.md](../../../../docs/guides/developer/PLAYWRIGHT_GUIDE.md) - Playwright testing guide
 - [LUXAR_ZARR_FORMAT.md](../../../../docs/guides/user/LUXAR_ZARR_FORMAT.md) - Data format specification
 - [Console Output Style](../../../../docs/guides/developer/CONSOLE_OUTPUT_STYLE.md) - Logging style guide
 

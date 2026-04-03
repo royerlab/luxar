@@ -10,10 +10,17 @@ The tests are organized following the "in-subpackage" pattern, where each subpac
 gsplats/
 ├── tests/                          # Integration tests
 │   ├── __init__.py
-│   ├── test_candidates.py          # Candidate detection (requires scipy)
-│   ├── test_dynamic_ops.py         # Dynamic operations integration
+│   ├── test_batch.py               # Batch fitting orchestration
+│   ├── test_cholesky_dim_ops.py    # Cholesky dimension operations
+│   ├── test_culling.py             # Splat culling algorithms
 │   ├── test_fit_gsplats.py         # Full fitting pipeline (requires torch/scipy)
+│   ├── test_gpu_profile.py         # GPU profiling and benchmarks
+│   ├── test_gsplat_data.py         # GSplatData class tests
 │   ├── test_gsplats_integration.py # Integration tests
+│   ├── test_metrics.py             # Quality metrics (PSNR, SSIM, MSE)
+│   ├── test_progressive_fitting.py # Progressive fitting pipeline
+│   ├── test_spatial_volume_filter.py # Spatial volume filtering
+│   ├── test_tiled_fitting.py       # Tiled fitting for large volumes
 │   └── README.md                   # This file
 ├── fitting/
 │   └── tests/                      # Fitting pipeline unit tests
@@ -100,28 +107,21 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - Round-trip correctness
 - Edge cases and error handling
 
-**Coverage**: 18 test cases covering all functions in `trils.py`
+**Coverage**: Covers all functions in `trils.py`
 
 ### 2. Fitting Pipeline Tests (`fitting/tests/`)
 
-**Unit Tests for Modular Fitting Pipeline** (57 tests, 100% module coverage):
+**Unit Tests for Modular Fitting Pipeline:**
 - `test_fitting_config.py` - Configuration dataclass validation
 - `test_fitting_preprocessing.py` - Data preprocessing and normalization
 - `test_fitting_validation.py` - Input validation at API boundaries
-- `test_initialization.py` - Model and optimizer initialization (9 tests)
-- `test_losses.py` - Loss functions and regularization (12 tests)
-- `test_optimization.py` - Optimization loop and convergence (15 tests)
-- `test_results.py` - Result finalization and statistics (12 tests)
-- `test_visualization.py` - Visualization helpers (9 tests, napari mocked)
+- `test_initialization.py` - Model and optimizer initialization
+- `test_losses.py` - Loss functions and regularization
+- `test_optimization.py` - Optimization loop and convergence
+- `test_results.py` - Result finalization and statistics
+- `test_visualization.py` - Visualization helpers (napari mocked)
 
-### 3. Advanced Function Tests (Optional Dependencies)
-
-**`test_candidates.py`** (requires scipy):
-- Multi-scale candidate detection algorithms
-- Peak detection in n-dimensional arrays
-- Difference of Gaussians (DoG) response
-- Spatial deduplication algorithms
-- Parameter validation and edge cases
+### 3. Integration Tests (`tests/`)
 
 **`test_fit_gsplats.py`** (requires torch + scipy):
 - Gaussian splat fitting optimization pipeline
@@ -130,6 +130,41 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - Convergence and optimization properties
 - Device support (CPU/CUDA)
 - Edge cases (uniform images, empty candidates)
+
+**`test_gsplats_integration.py`** (requires torch):
+- End-to-end integration tests for the gsplats pipeline
+
+**`test_gsplat_data.py`**:
+- GSplatData class tests (save/load, concatenation, merging)
+
+**`test_batch.py`**:
+- Batch manifest creation and serialization
+- Task ID encoding/decoding
+- Slurm script generation
+
+**`test_cholesky_dim_ops.py`** (requires torch):
+- Cholesky factor dimension operations and transformations
+
+**`test_culling.py`** (requires torch):
+- Splat culling algorithms (cumulative, redundancy, error-budget)
+
+**`test_gpu_profile.py`**:
+- GPU profiling and benchmark data handling
+
+**`test_metrics.py`**:
+- Quality metrics computation (PSNR, SSIM, MSE)
+- Comparison between original and reconstructed volumes
+
+**`test_progressive_fitting.py`** (requires torch):
+- Progressive fitting pipeline with iterative residual refinement
+
+**`test_spatial_volume_filter.py`** (requires torch):
+- Spatial volume filtering for splat datasets
+
+**`test_tiled_fitting.py`** (requires torch):
+- Tiled fitting for large volumes with overlap and stitching
+
+### 4. Advanced Function Tests (Optional Dependencies)
 
 **`test_inverse_softplus.py`** (numpy + optional torch):
 - Numerical stability of inverse softplus
@@ -171,40 +206,14 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - **Optimization pipeline**: Full fit_gaussian_splats testing (25+ test methods)
 - **Rendering functions**: Comprehensive rendering tests (25+ test methods)
 
-### Test Execution Results
-```
-# Core tests (always available)
-packages/luxar/src/luxar/gsplats/utils/tests/test_trils.py .................. [18 tests]
+### Test Execution
 
-# Full test suite (when torch/scipy available) - 314 tests total:
-fitting/tests/ ........................................................ [84 tests]
-  - test_fitting_config.py ......................................... [4 tests]
-  - test_fitting_preprocessing.py .................................. [8 tests]
-  - test_fitting_validation.py ..................................... [16 tests]
-  - test_initialization.py ......................................... [9 tests]
-  - test_losses.py ................................................. [12 tests]
-  - test_optimization.py ........................................... [15 tests]
-  - test_results.py ................................................ [12 tests]
-  - test_visualization.py .......................................... [9 tests]
-models/gsplats/tests/ ................................................. [20 tests]
-  - test_gsplat_model.py ........................................... [20 tests]
-  - test_rendering.py .............................................. [25 tests]
-models/utils/tests/ ................................................... [25 tests]
-  - test_inverse_softplus.py ....................................... [15 tests]
-  - test_lt_solver.py .............................................. [18 tests]
-optim/tests/ .......................................................... [17 tests]
-  - test_integration.py ............................................ [17 tests]
-multiscale/tests/ ..................................................... [30 tests]
-  - test_decomposition_basic.py .................................... [21 tests]
-  - test_energy_distribution.py .................................... [9 tests]
-tests/ (integration) .................................................. [120 tests]
-  - test_candidates.py ............................................. [31 tests]
-  - test_dynamic_ops.py ............................................ [18 tests]
-  - test_fit_gsplats.py ............................................ [23 tests]
-  - test_gsplats_integration.py .................................... [11 tests]
-
-================== 312 passed, 2 skipped in 12.14s ===================
+Run the full test suite:
+```bash
+hatch run pytest packages/luxar/src/luxar/gsplats/ -v
 ```
+
+The test count and execution time varies depending on available dependencies (torch, scipy, CUDA).
 
 ## Adding New Tests
 
@@ -231,22 +240,13 @@ When adding new functionality to gsplats:
 4. **Cross-validation**: Comparison with reference implementations when possible
 5. **Graceful degradation**: Tests skip when dependencies unavailable
 
-## Future Enhancements
-
-When additional dependencies become available:
-- Enable scipy-dependent tests for candidate detection algorithms
-- Enable torch-dependent tests for model and optimization functions
-- Add integration tests for full gsplats pipeline
-- Add performance benchmarks for key algorithms
-
 ## Dependencies
 
-### Required (Always Available)
+### Required
 - `numpy>=1.24`
 - `pytest>=7.4.0`
+- `torch` (for model, fitting, and optimization tests)
+- `scipy` (for seed generation and spatial operations)
 
-### Optional (For Full Test Suite)
-- `scipy` (for candidate detection tests)
-- `torch` (for model and solver tests)
-
-The test suite is designed to provide maximum value even with minimal dependencies, while scaling up to comprehensive testing when full dependencies are available.
+### Optional
+- CUDA GPU (for GPU-specific tests, skipped gracefully when unavailable)

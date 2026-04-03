@@ -1,8 +1,14 @@
-# luxar.gsplats.fitting.dynamic_ops.tests
+# dynamic_ops Tests
 
-Test helpers and test cases for this package.
+Tests for the fixed-pool splat relocation system.
 
-## Scope
+## Test Files
 
-- Defines module behavior and public entry points.
-- Keeps tests/demos aligned with package semantics.
+- **test_dynamic_ops.py** - Config defaults, residual peak finding (2D/3D/empty), splat importance calculation, weak splat selection, full relocation pipeline integration, convergence guard, and end-to-end fitting with dynamic ops enabled/disabled.
+- **test_relocation_tracker.py** - `RecentlyRelocatedTracker` cooldown mechanism: initialization, marking, cooldown filtering, expiration, multiple relocations, statistics, and device compatibility.
+
+## Running
+
+```bash
+hatch run pytest packages/luxar/src/luxar/gsplats/fitting/dynamic_ops/tests/ -v
+```

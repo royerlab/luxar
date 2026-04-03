@@ -115,7 +115,10 @@ cleanup(): void {
   this.sceneManager?.dispose();
 
   // 5. Remove global event listeners
-  window.removeEventListener('beforeunload', this.cleanup);
+  if (this.boundCleanup) {
+    window.removeEventListener('beforeunload', this.boundCleanup);
+    this.boundCleanup = null;
+  }
 }
 ```
 
@@ -132,10 +135,7 @@ await this.sceneManager.init();
 
 // Pass scene components to animation controller
 this.animationController = new AnimationController(
-  this.sceneManager.renderer, // WebGL renderer
-  this.sceneManager.scene, // THREE.js scene graph
-  this.sceneManager.camera, // Perspective camera
-  this.sceneManager.controls, // Orbit/fly controls
+  this.sceneManager.controls, // Camera controls manager
   this.sceneManager.postProcessing // HDR post-processing
 );
 ```
@@ -162,16 +162,27 @@ private async loadDataset(src: string): Promise<void> {
   // 1. Clear existing UI state
   this.inputHandler.clearDimensionUI();
 
-  // 2. Load and parse Zarr data (async)
-  await this.sceneManager.loadSceneData(src);
-
-  // 3. Initialize nD navigation UI
-  this.inputHandler.initDimensionSliders();
-
-  // 4. Configure persistent settings
+  // 2. Set scene ID for rendering controls persistence BEFORE loading
   this.renderingControls.setSceneId(src);
 
-  // 5. Trigger immediate render
+  // 3. Load and parse Zarr data (async)
+  await this.sceneManager.loadSceneData(src);
+
+  // 4. Apply zarr viewer_config defaults if no stored settings exist
+  const viewerConfig = this.sceneManager.getSceneViewerConfig();
+  this.renderingControls.setZarrViewerConfig(viewerConfig);
+
+  // 5. Initialize nD navigation UI and scale bar
+  this.inputHandler.initDimensionSliders();
+  this.initScaleBar();
+
+  // 6. Initialize layers panel and colormap legend
+  // ...
+
+  // 7. Apply viewer config state (UI visibility, theme, dimensions)
+  this.applyViewerConfigState(viewerConfig);
+
+  // 8. Trigger immediate render
   this.animationController.startAnimation();
 }
 ```
@@ -184,24 +195,39 @@ The app automatically determines whether to show a dataset browser or load data 
 
 ```typescript
 private async shouldShowBrowser(src: string): Promise<boolean> {
-  // Directory URLs (ending with /) show browser
-  if (!src || src.endsWith('/')) {
+  // No source or empty string: show browser
+  if (!src || src.trim() === '') {
     return true;
   }
 
-  // Check for Zarr dataset markers
-  try {
-    const response = await fetch(src + '/.zgroup', { method: 'HEAD' });
-    if (response.ok) {
-      return false; // Valid Zarr dataset, load directly
-    }
-  } catch {
-    // Network errors don't prevent browser display
+  // Directory URLs (ending with /) show browser
+  if (src.endsWith('/')) {
+    return true;
   }
 
-  // Files without extensions are likely directories
-  const hasExtension = src.split('/').pop()?.includes('.');
-  return !hasExtension;
+  // Check for Zarr dataset markers (v2 .zgroup/.zattrs or v3 zarr.json)
+  // Short-circuits as soon as any probe confirms zarr metadata exists
+  const zarrChecks = [
+    fetch(src + '/.zgroup', { method: 'HEAD' }),
+    fetch(src + '/.zattrs', { method: 'HEAD' }),
+    fetch(src + '/zarr.json', { method: 'HEAD' }),
+  ];
+
+  try {
+    await Promise.any(
+      zarrChecks.map((p) =>
+        p.then((r) => {
+          if (!r.ok) throw new Error('not ok');
+          return r;
+        })
+      )
+    );
+    return false; // At least one zarr metadata file exists
+  } catch {
+    // All probes failed — likely a directory, show browser
+  }
+
+  return true;
 }
 ```
 
@@ -231,47 +257,33 @@ private showDatasetBrowser(): void {
 
 ## Error Handling
 
-### Comprehensive Error Recovery
+### Error Recovery
 
-The app implements multiple layers of error handling:
+The `init()` method uses a single top-level try/catch. All initialization steps (scene manager, animation controller, input handler, rendering controls, and dataset loading) run inside this block. If any step fails, the error propagates to the caller:
 
 ```typescript
-// 1. Initialization Error Handling
-try {
-  await this.init(src);
-} catch (error) {
-  console.error('Failed to initialize Luxar app:', error);
-  // Don't cleanup - preserve error messages for user
-  throw error;
-}
-
-// 2. Component-Level Error Isolation
 async init(src?: string): Promise<void> {
   try {
-    // Scene manager initialization
-    await this.sceneManager.init();
-  } catch (sceneError) {
-    // Scene errors are critical but don't prevent UI setup
-    console.error('Scene initialization failed:', sceneError);
-    throw sceneError;
-  }
-
-  // Animation continues even if data loading fails
-  this.animationController.startAnimation();
-
-  try {
-    // Dataset loading is isolated - failure doesn't break app
-    if (await this.shouldShowBrowser(src)) {
-      this.showDatasetBrowser();
-    } else {
-      await this.loadDataset(src);
-    }
-  } catch (dataError) {
-    // Data loading errors are displayed but don't crash app
-    console.error('Data loading failed:', dataError);
-    showError('Failed to load dataset. Check console for details.');
+    // All initialization in sequence inside one try block:
+    // 1. Scene manager + animation controller
+    // 2. Input handler + rendering controls
+    // 3. Start animation loop
+    // 4. Dataset loading or browser display
+    // 5. Cleanup/focus handlers
+  } catch (error) {
+    // Single catch handles all initialization failures
+    throw error;
   }
 }
+```
+
+The caller (in `main.ts`) catches and displays errors:
+
+```typescript
+app.init(src).catch((error) => {
+  console.error('Failed to start Luxar application:', error);
+  showError('Failed to start the application. Please check the console for details.');
+});
 ```
 
 ### User-Friendly Error Display
@@ -323,6 +335,7 @@ get components() {
     animationController: this.animationController,
     inputHandler: this.inputHandler,
     renderingControls: this.renderingControls,
+    adaptiveDPRManager: this.adaptiveDPRManager,
   };
 }
 ```
@@ -455,23 +468,24 @@ This ensures zero CPU/GPU usage when the tab is not visible, even if continuous 
 ### Error Handling Strategy
 
 ```typescript
-// ✅ Good: Isolate error domains
-try {
-  await this.sceneManager.init();
-} catch (sceneError) {
-  // Handle scene-specific errors
-  throw sceneError; // Critical errors should propagate
+// ✅ Good: Single try/catch in init(), let errors propagate to caller
+async init(src?: string): Promise<void> {
+  try {
+    // All steps in sequence; any failure propagates
+    await this.sceneManager.init();
+    // ... other initialization ...
+    await this.loadDataset(src);
+  } catch (error) {
+    throw error;
+  }
 }
 
-try {
-  await this.loadDataset(src);
-} catch (dataError) {
-  // Handle data-specific errors
-  showError('Dataset loading failed');
-  // Don't propagate - app can continue without data
-}
+// ✅ Good: Caller displays errors to user
+app.init(src).catch((error) => {
+  showError('Failed to start the application.');
+});
 
-// ✅ Good: Provide fallbacks
+// ✅ Good: Provide fallbacks for optional values
 const src = params.get('src') ?? config.defaultZarrPath;
 ```
 
@@ -489,12 +503,18 @@ cleanup(): void {
   this.sceneManager?.dispose();
 
   // Remove global listeners
-  window.removeEventListener('beforeunload', this.cleanup);
+  if (this.boundCleanup) {
+    window.removeEventListener('beforeunload', this.boundCleanup);
+    this.boundCleanup = null;
+  }
 }
 
-// ✅ Good: Automatic cleanup registration
+// ✅ Good: Store bound reference for proper cleanup
+private boundCleanup: (() => void) | null = null;
+
 private setupCleanup(): void {
-  window.addEventListener('beforeunload', this.cleanup.bind(this));
+  this.boundCleanup = this.cleanup.bind(this);
+  window.addEventListener('beforeunload', this.boundCleanup);
 }
 ```
 

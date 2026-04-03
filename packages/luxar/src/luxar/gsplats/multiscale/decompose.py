@@ -952,7 +952,7 @@ def decompose_image(
         Number of optimization iterations
     lr : float, default=0.01
         Learning rate for Adam optimizer
-    energy_weight : float, default=0.001
+    energy_weight : float, default=0.01
         Weight for hierarchical energy penalty (higher = more energy to coarse)
     alpha : float, default=1.5
         Growth factor for energy penalties (higher = stronger coarse preference)

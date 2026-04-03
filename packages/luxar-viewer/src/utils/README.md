@@ -26,18 +26,23 @@ The utils package provides specialized functionality that extends beyond basic 3
 
 - **Console Interception**: Ring buffer system for capturing all browser console output
 - **HDR Detection**: Comprehensive display capability detection and configuration
+- **HDR Video Encoding**: 10-bit HDR video encoding via WebCodecs (AV1/VP9)
+- **HDR Color Conversion**: Linear sRGB to BT.2020 PQ I420P10 pipeline
 - **Memory Detection**: Intelligent memory availability detection for cache sizing
 - **Structured Logging**: Consistent logging format with module identification
+- **HTML Escaping**: XSS prevention for safe HTML rendering
 
 ## Architecture
 
 ```typescript
 utils/
-├── console-interceptor.ts # Console output capture and buffering system
-├── escape-html.ts         # HTML entity escaping for safe rendering
-├── hdr-detection.ts       # HDR display capability detection
-├── log.ts                 # Structured logging utility
-└── memory-detector.ts     # System memory detection for cache management
+├── console-interceptor.ts  # Console output capture and buffering system
+├── escape-html.ts          # HTML entity escaping for safe rendering
+├── hdr-color-conversion.ts # Linear sRGB to BT.2020 PQ I420P10 conversion
+├── hdr-detection.ts        # HDR display capability detection
+├── hdr-video-encoder.ts    # HDR 10-bit video encoder (WebCodecs/mediabunny)
+├── log.ts                  # Structured logging utility
+└── memory-detector.ts      # System memory detection for cache management
 ```
 
 Each module is focused on a specific domain with minimal dependencies, promoting reusability and maintainability.
@@ -55,6 +60,18 @@ Ring buffer system for capturing and managing console output:
 - **Early Capture**: Starts before application initialization
 - **Real-time Listeners**: Callback system for live console updates
 
+### log.ts - Structured Logging
+
+Consistent logging with emoji prefixes and module identification:
+
+**Core Exports**:
+
+- `log` - Quick logging object (`log.info()`, `log.error()`, `log.warning()`, `log.success()`, `log.load()`, `log.update()`, `log.query()`, `log.data()`, `log.custom()`, `log.raw()`)
+- `Modules` - Standard module name constants (LUXAR, APP, WORKER_POOL, WASM, etc.)
+- `LogEmoji` - Standard emoji constants for log categories
+- `formatLog()` - Format a log message with consistent style
+- `createModuleLogger()` - Create a module-scoped logger instance
+
 ### hdr-detection.ts - HDR Display Detection
 
 Comprehensive system for detecting and configuring HDR display capabilities:
@@ -65,6 +82,30 @@ Comprehensive system for detecting and configuring HDR display capabilities:
 - `configureHDRRenderer()` - Log detected HDR capabilities (legacy name, doesn't actually configure renderer)
 - `logHDRCapabilities()` - Detailed capability reporting
 - `isHDRDisplay()` - Simple boolean HDR check
+- `getOptimalRenderTargetType()` - Get optimal THREE.TextureDataType for display
+
+### hdr-video-encoder.ts - HDR Video Encoding
+
+Streaming 10-bit HDR video encoder using mediabunny (WebCodecs-based):
+
+**Core Classes/Functions**:
+
+- `HDRVideoEncoder` - Streaming encoder: create, addFrame(), finalize()
+- `isHDRVideoSupported()` - Detect AV1/VP9 10-bit encoding support
+
+### hdr-color-conversion.ts - HDR Color Conversion
+
+Converts linear sRGB float data to BT.2020 PQ I420P10 for WebCodecs:
+
+**Core Function**:
+
+- `rgbaFloatToI420P10()` - Linear sRGB RGBA float to BT.2020 PQ YCbCr I420P10
+
+### escape-html.ts - HTML Escaping
+
+Simple XSS prevention utility:
+
+- `escapeHtml()` - Escape HTML special characters (&, <, >, ")
 
 ## Console Interception
 
@@ -171,7 +212,9 @@ export function configureHDRRenderer(
 
 Memory detection utilities help optimize cache sizing based on available system resources. See `memory-detector.ts` for implementation details.
 
-**Key Function**: `detectAvailableMemory()` - Returns estimated available memory for cache allocation using a three-tier fallback strategy (see SPECIFICATIONS.md Section 5).
+**Key Function**: `detectMemory()` - Returns estimated available memory for cache allocation using a three-tier fallback strategy (Chrome performance.memory API, navigator.deviceMemory, platform-based default).
+
+**Key Class**: `MemoryMonitor` - Monitors memory pressure over time and adjusts cache recommendations.
 
 ## Usage Examples
 

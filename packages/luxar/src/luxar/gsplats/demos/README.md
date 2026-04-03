@@ -2,7 +2,7 @@
 
 Comprehensive demonstration suite for Luxar's Gaussian splatting implementation, showcasing 2D/3D/4D fitting, compression analysis, and advanced features.
 
-## 📚 Quick Start
+## Quick Start
 
 **New to Gaussian splatting?** Start here:
 ```bash
@@ -20,16 +20,16 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_2d_synthetic_blobs.
 
 ---
 
-## 🎯 Demo Categories
+## Demo Categories
 
-### **🎓 Learning & Tutorial (Start Here)**
+### **Learning & Tutorial (Start Here)**
 
 | Demo | Purpose | Best For |
 |------|---------|----------|
 | **demo_basic_fitting.py** | Simple API introduction | Learning the `fit_gaussian_splats()` API |
 | **demo_performance_metrics.py** | Convergence & quality metrics | Understanding optimization behavior |
 
-### **📐 Dimensional Progression (2D → 3D → 4D)**
+### **Dimensional Progression (2D -> 3D -> 4D)**
 
 | Demo | Dimensions | Data | Key Feature |
 |------|------------|------|-------------|
@@ -39,7 +39,7 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_2d_synthetic_blobs.
 
 **Learning path**: Work through 2D → 3D → 4D to understand dimensional scaling
 
-### **🔬 Real Data Applications**
+### **Real Data Applications**
 
 | Demo | Data Source | Domain | Unique Feature |
 |------|-------------|--------|----------------|
@@ -48,15 +48,36 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_2d_synthetic_blobs.
 | **demo_splats_astronaut.py** | scikit-image | Photography | Facial features, textures |
 | **demo_splats_coins.py** | scikit-image | Photography | Metallic surfaces |
 
-### **🚀 Advanced & Specialized**
+### **Progressive Fitting**
+
+| Demo | Base Demo | Focus |
+|------|-----------|-------|
+| **demo_progressive_fitting.py** | Synthetic | Core progressive fitting API |
+| **demo_splats_mitosis_progressive.py** | Mitosis | Progressive fitting on biological data |
+| **demo_splats_astronaut_progressive.py** | Astronaut | Progressive fitting on photo data |
+| **demo_splats_coins_progressive.py** | Coins | Progressive fitting on coins image |
+| **demo_3d_celegans_confocal_progressive.py** | C. elegans | Progressive fitting on 3D confocal |
+| **demo_3d_dapi_progressive.py** | DAPI | Progressive fitting on 3D microscopy |
+
+### **C. elegans Confocal**
+
+| Demo | Focus | Demonstrates |
+|------|-------|--------------|
+| **demo_3d_celegans_confocal.py** | 3D confocal | Real 3D confocal microscopy fitting |
+| **demo_3d_celegans_culling.py** | Culling | Splat culling on confocal data |
+
+### **Advanced & Specialized**
 
 | Demo | Focus | Demonstrates |
 |------|-------|--------------|
 | **demo_splats_mitosis_intgrad.py** | Algorithm | CLAHE seeding with intensity gradients |
+| **demo_splats_mitosis_explicit_seeding.py** | Seeding | Explicit seed generation for mitosis |
+| **demo_boundary_containment.py** | Boundaries | Boundary containment during fitting |
+| **demo_tiled_fitting.py** | Tiling | Tiled fitting for large volumes |
 
 ---
 
-## 📖 Detailed Demo Descriptions
+## Detailed Demo Descriptions
 
 ### **demo_basic_fitting.py**
 **What it does**: Minimal working example of Gaussian splat fitting
@@ -208,7 +229,95 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_2d_synthetic_blobs.
 
 ---
 
-## 🎮 Running Demos
+### **demo_splats_mitosis_explicit_seeding.py**
+**What it does**: Demonstrates explicit seed initialization using the seeding API
+- Uses `seed_from_decomposition()`, `seed_from_grid()`, or `seed_from_edges()` to generate seeds with scale-informed Gaussian shapes before fitting
+
+**Usage**: `python demo_splats_mitosis_explicit_seeding.py [--no-napari]`
+
+---
+
+### **demo_progressive_fitting.py**
+**What it does**: Progressive (multi-pass) Gaussian splatting on synthetic data
+- Each pass fits splats to the residual of the previous approximation, building a multi-LOD GSplatData representation from coarse to fine detail
+
+**Usage**: `python demo_progressive_fitting.py [--no-napari]`
+
+---
+
+### **demo_splats_mitosis_progressive.py**
+**What it does**: Progressive multi-pass fitting on the scikit-image human mitosis dataset
+- Builds a multi-LOD representation where each pass captures progressively finer biological detail from the histology image
+
+**Usage**: `python demo_splats_mitosis_progressive.py [--no-napari]`
+
+---
+
+### **demo_splats_astronaut_progressive.py**
+**What it does**: Progressive fitting on the astronaut photograph
+- Handles challenging textures (sharp edges, facial detail, helmet patterns) by starting with coarse structure and progressively adding finer detail across passes
+
+**Usage**: `python demo_splats_astronaut_progressive.py [--no-napari]`
+
+---
+
+### **demo_splats_coins_progressive.py**
+**What it does**: Progressive multi-pass fitting on the scikit-image coins dataset
+- Each pass fits splats to the residual, building a coarse-to-fine representation of circular metallic surfaces
+
+**Usage**: `python demo_splats_coins_progressive.py [--no-napari]`
+
+---
+
+### **demo_3d_celegans_confocal.py**
+**What it does**: 3D Gaussian splatting on a single timepoint from a C. elegans embryo confocal dataset
+- Handles anisotropic voxel spacing (5:1 Z-anisotropy: 0.75 um Z vs 0.15 um XY)
+
+**Usage**: `python demo_3d_celegans_confocal.py [--no-napari]`
+
+---
+
+### **demo_3d_celegans_confocal_progressive.py**
+**What it does**: Progressive multi-pass fitting on 3D C. elegans confocal data
+- Combines progressive LOD fitting with real 3D confocal microscopy, building coarse-to-fine detail across passes
+
+**Usage**: `python demo_3d_celegans_confocal_progressive.py [--no-napari]`
+
+---
+
+### **demo_3d_celegans_culling.py**
+**What it does**: Contribution-based culling on pre-computed C. elegans Gaussian splats
+- Compares full (unculled) reconstruction against increasingly aggressive culling levels to show quality-vs-size trade-offs
+
+**Usage**: `python demo_3d_celegans_culling.py [--no-napari]`
+
+---
+
+### **demo_3d_dapi_progressive.py**
+**What it does**: Progressive fitting on real 3D DAPI-stained nuclear microscopy from the Image Data Resource
+- Multi-pass fitting on remote OME-ZARR data, building a multi-LOD representation of 3D nuclear structures
+
+**Usage**: `python demo_3d_dapi_progressive.py [--no-napari]`
+
+---
+
+### **demo_boundary_containment.py**
+**What it does**: Demonstrates the `boundary_penalty` parameter during optimization
+- Adds a differentiable loss term that discourages splats from extending beyond the volume boundaries
+
+**Usage**: `python demo_boundary_containment.py [--no-napari]`
+
+---
+
+### **demo_tiled_fitting.py**
+**What it does**: Tiled fitting on a 3x3 grid using the cells3d max-projection
+- Splits a large image into overlapping tiles with Hann cosine apodization, fits each tile independently, then concatenates results seamlessly
+
+**Usage**: `python demo_tiled_fitting.py [--no-napari]`
+
+---
+
+## Running Demos
 
 ### **Standard Execution (with napari visualization)**
 ```bash
@@ -242,7 +351,7 @@ python demo_performance_metrics.py --no-napari --n-iters 500
 
 ---
 
-## 📊 Quick Reference Table
+## Quick Reference Table
 
 | Demo Name | Dim | Data Type | Iterations | Key Feature | Run Time |
 |-----------|-----|-----------|------------|-------------|----------|
@@ -256,12 +365,23 @@ python demo_performance_metrics.py --no-napari --n-iters 500
 | demo_splats_coins | 2D | Real (photo) | 2000 | Metallic | ~10s |
 | demo_splats_mitosis | 2D | Real (bio) | 2000 | Histology | ~10s |
 | demo_splats_mitosis_intgrad | 2D | Real (bio) | 2000 | CLAHE Test | ~15s |
+| demo_splats_mitosis_explicit_seeding | 2D | Real (bio) | - | Explicit Seeding | ~10s |
+| demo_progressive_fitting | 2D | Synthetic | - | Progressive API | ~10s |
+| demo_splats_mitosis_progressive | 2D | Real (bio) | - | Progressive | ~15s |
+| demo_splats_astronaut_progressive | 2D | Real (photo) | - | Progressive | ~15s |
+| demo_splats_coins_progressive | 2D | Real (photo) | - | Progressive | ~12s |
+| demo_3d_celegans_confocal | 3D | Real (confocal) | - | 3D Confocal | ~90s |
+| demo_3d_celegans_confocal_progressive | 3D | Real (confocal) | - | Progressive 3D | ~120s |
+| demo_3d_celegans_culling | 3D | Real (confocal) | - | Culling | ~30s |
+| demo_3d_dapi_progressive | 3D | Real (IDR) | - | Progressive 3D | ~120s |
+| demo_boundary_containment | 2D | Synthetic | - | Boundaries | ~10s |
+| demo_tiled_fitting | 3D | Synthetic | - | Tiled Fitting | ~60s |
 
 *Run times are approximate on modern CPU (M1/M2 or recent Intel/AMD)*
 
 ---
 
-## 🎓 Recommended Learning Path
+## Recommended Learning Path
 
 ### **Beginner** (New to Gaussian Splatting)
 1. **demo_basic_fitting.py** - Understand the API
@@ -279,15 +399,15 @@ python demo_performance_metrics.py --no-napari --n-iters 500
 
 ---
 
-## 🔧 What Each Demo Demonstrates
+## What Each Demo Demonstrates
 
 ### **Core Features (All Demos)**
 - Standard PyTorch Adam optimizer with gradient dilution compensation
 - Dynamic operations (fixed-pool splat relocation)
 - Automatic seed generation with intelligent defaults
 - Early stopping based on convergence criteria
-- ✅ Structured logging with arbol
-- ✅ Headless operation (`--no-napari` flag)
+- Structured logging with arbol
+- Headless operation (`--no-napari` flag)
 
 ### **Unique Features by Demo**
 
@@ -319,14 +439,14 @@ python demo_performance_metrics.py --no-napari --n-iters 500
 
 ---
 
-## 🎨 Visualization Features
+## Visualization Features
 
 ### **Napari Layers (varies by demo)**
-- 🖼️ **Input**: Original image/volume
-- 🎨 **Reconstruction**: Fitted Gaussian splat rendering
-- 🔥 **Residual**: Absolute error (input - reconstruction)
-- ⭕ **Ellipses/Wireframes**: Oriented splat shape visualization
-- 📍 **Centers**: Splat center positions
+- **Input**: Original image/volume
+- **Reconstruction**: Fitted Gaussian splat rendering
+- **Residual**: Absolute error (input - reconstruction)
+- **Ellipses/Wireframes**: Oriented splat shape visualization
+- **Centers**: Splat center positions
 
 ### **Interactive Controls**
 - **Compression slider** (axis 0): Explore quality vs compression trade-offs
@@ -344,7 +464,7 @@ Most demos display real-time metrics:
 
 ---
 
-## 💾 Data Sources
+## Data Sources
 
 ### **Synthetic Data** (Generated)
 - **binary_blobs**: scikit-image blob generation with Gaussian smoothing
@@ -361,7 +481,7 @@ Most demos display real-time metrics:
 
 ---
 
-## ⚙️ Common Parameters
+## Common Parameters
 
 ### **Optimization**
 - `n_iters`: Maximum iterations (default varies: 300-2000)
@@ -383,7 +503,7 @@ Most demos display real-time metrics:
 
 ---
 
-## 🧪 Testing & Validation
+## Testing & Validation
 
 ### **Compilation Check**
 ```bash
@@ -410,7 +530,7 @@ done
 
 ---
 
-## 📈 Performance Expectations
+## Performance Expectations
 
 ### **Timing Guidelines (M1/M2/M3 MacBook Pro)**
 - **2D demos** (256×256): 3-15 seconds for 1000 iterations
@@ -431,7 +551,7 @@ done
 
 ---
 
-## 🎯 What to Look For
+## What to Look For
 
 ### **In Compression Demos**
 - How reconstruction quality degrades with fewer splats
@@ -456,7 +576,7 @@ done
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### **"No splats were fitted"**
 - Try lowering thresholds or increasing iterations
@@ -479,7 +599,7 @@ done
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
 - **Main gsplats README**: `../README.md` - Full package overview
 - **SPECIFICATIONS**: `../SPECIFICATIONS.md` - Mathematical specifications
@@ -488,7 +608,7 @@ done
 
 ---
 
-## 🤝 Contributing New Demos
+## Contributing New Demos
 
 When adding new demos, follow these standards:
 

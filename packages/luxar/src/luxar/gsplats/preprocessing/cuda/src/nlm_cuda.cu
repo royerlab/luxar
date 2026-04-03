@@ -9,11 +9,9 @@
  *   PATCH_HALF  — half the patch side length (compile-time for unrolling)
  *   SEARCH_DIST — half the search window side length (compile-time)
  *
- * Pre-instantiated for the 4 common microscopy parameter combos:
- *   (PATCH_HALF=1, SEARCH_DIST=5)  →  patch_size=3,  search_distance=5
- *   (PATCH_HALF=1, SEARCH_DIST=7)  →  patch_size=3,  search_distance=7
- *   (PATCH_HALF=2, SEARCH_DIST=5)  →  patch_size=5,  search_distance=5
- *   (PATCH_HALF=2, SEARCH_DIST=7)  →  patch_size=5,  search_distance=7
+ * Pre-instantiated for 12 microscopy parameter combos (2 patch sizes x 6 search distances):
+ *   PATCH_HALF = {1, 2}       → patch_size = {3, 5}
+ *   SEARCH_DIST = {5, 7, 9, 11, 13, 15}
  */
 
 #include <torch/extension.h>

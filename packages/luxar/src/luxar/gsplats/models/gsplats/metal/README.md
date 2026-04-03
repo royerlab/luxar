@@ -71,9 +71,13 @@ metal/
 │   ├── kernels.metal           # Metal compute shaders
 │   └── bindings.mm             # C++ dispatcher (PyTorch ↔ Metal)
 └── tests/
-    ├── test_metal_backend.py   # Core functionality tests
-    ├── test_metal_numerical.py # Gradient correctness tests
-    └── ...                     # Additional test modules
+    ├── __init__.py                    # Package marker
+    ├── test_metal_backend.py          # Core functionality tests
+    ├── test_metal_conic.py            # Conic computation tests
+    ├── test_metal_numerical.py        # Gradient correctness tests
+    ├── test_metal_performance.py      # Performance benchmarks
+    ├── test_coordinate_transforms.py  # Coordinate transform tests
+    └── test_optimizer_compatibility.py # Optimizer integration tests
 
 # Build artifacts (generated, gitignored):
 # ├── build/                    # Temporary build files
@@ -144,6 +148,7 @@ if is_metal_available():
         centers0=centers,
         L0=L,
         amps0=amps,
+        sigma_min_diag=(0.5, 0.5, 0.5),
         truncate=3.0,
         intensity_floor=1e-5,  # Early culling threshold
         device='mps'
@@ -229,10 +234,9 @@ python -c "from luxar.gsplats.models.gsplats.metal import is_metal_available; pr
 
 ## Limitations
 
-- **3D only for tiled optimization**: nD uses fallback (no binning)
+- **3D only**: The Metal backend only supports 3D volumes. For 2D or nD, use `GaussianSplatModel`.
 - **MPS device required**: CPU tensors not supported
 - **No mixed precision**: float32 only
-- **Maximum 8 dimensions**: nD kernels support up to 8D
 
 ## Development
 
@@ -243,8 +247,8 @@ python -c "from luxar.gsplats.models.gsplats.metal import is_metal_available; pr
 cd packages/luxar
 hatch run pytest src/luxar/gsplats/models/gsplats/metal/tests/
 
-# Gradient check
-python -c "from luxar.gsplats.models.gsplats.metal.tests import test_gradients; test_gradients()"
+# Gradient/numerical tests
+hatch run pytest src/luxar/gsplats/models/gsplats/metal/tests/test_metal_numerical.py -v
 
 # Benchmark
 python packages/luxar/examples/benchmark_m4_max.py
