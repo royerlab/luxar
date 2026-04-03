@@ -86,8 +86,8 @@ export default defineConfig({
     },
     {
       // Luxar serve for demo datasets with proper CORS headers
-      command: 'hatch run luxar serve . -p 9000',
-      url: 'http://localhost:9000',
+      command: 'hatch run luxar serve . -p 9876',
+      url: 'http://localhost:9876',
       cwd: path.resolve(__dirname, '../..'),
       reuseExistingServer: true,
       timeout: 60000,

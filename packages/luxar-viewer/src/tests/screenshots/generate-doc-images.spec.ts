@@ -21,7 +21,7 @@ import * as fs from 'fs';
 const OUTPUT_DIR = path.resolve(__dirname, '../../../../../docs/images/docs');
 
 // Server URLs
-const DATA_SERVER = 'http://localhost:9000';
+const DATA_SERVER = 'http://localhost:9876';
 const VIEWER_URL = 'http://localhost:5173';
 
 /**
@@ -31,7 +31,7 @@ const VIEWER_URL = 'http://localhost:5173';
  */
 async function waitForReady(
   page: any,
-  { timeout = 60000, requireElements = true } = {}
+  { timeout = 90000, requireElements = true } = {}
 ): Promise<void> {
   await page.waitForFunction(
     (req: boolean) => {
@@ -39,7 +39,8 @@ async function waitForReady(
       if (!debug || !debug.getState) return false;
       const state = debug.getState();
       if (!state || !state.initialized) return false;
-      if (req && (state.totalElements || 0) === 0) return false;
+      // totalElements includes both points and gsplats; fall back to totalPoints for compat
+      if (req && ((state.totalElements ?? state.totalPoints) || 0) === 0) return false;
       return true;
     },
     requireElements,
@@ -89,8 +90,16 @@ test.beforeAll(async () => {
 /**
  * 1. Basic 3D point cloud — clean view for landing page and basic tutorial
  */
-test('Basic 3D point cloud', async ({ page }) => {
+test('Basic 3D point cloud', async ({ page }, testInfo) => {
+  // First test bears Vite dev server cold-start compilation cost — warm up first
+  testInfo.setTimeout(240000);
   const dataUrl = `${DATA_SERVER}/datasets/demos/lorenz.zarr`;
+
+  // Warm up the Vite dev server by loading the page once (first load triggers module compilation)
+  await page.goto(`${VIEWER_URL}/?debug`, { waitUntil: 'networkidle', timeout: 120000 });
+  await page.waitForTimeout(2000);
+
+  // Now load with data
   await page.goto(`${VIEWER_URL}/?src=${dataUrl}&debug`, { waitUntil: 'networkidle' });
   await waitForReady(page);
   await centerCamera(page);
@@ -134,9 +143,9 @@ test('Viewer UI overview', async ({ page }) => {
  * 3. nD navigation with dimension sliders — using a 5D dataset
  */
 test('nD navigation with sliders', async ({ page }) => {
-  // Use the zebrahub 4D UMAP dataset (attribute + x,y,z) — Points-based, not GSplats,
-  // so it renders reliably in headless Chrome without blocking the main thread
-  const dataUrl = `${DATA_SERVER}/datasets/demos/zebrahub_multiome_peak_umap.zarr`;
+  // Use the 5D observatory dataset (X,Y,Z + Time + Channel) — lightweight Points-based,
+  // renders reliably in headless Chrome without blocking the main thread
+  const dataUrl = `${DATA_SERVER}/datasets/demos/nd_transforms_observatory.zarr`;
   await page.goto(`${VIEWER_URL}/?src=${dataUrl}&debug`, { waitUntil: 'networkidle' });
   await waitForReady(page);
   await centerCamera(page);
