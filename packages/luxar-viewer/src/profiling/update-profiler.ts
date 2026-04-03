@@ -167,7 +167,7 @@ class SessionImpl implements UpdateSession {
 /**
  * Root session that tracks the entire update
  */
-class RootSession extends SessionImpl {
+export class RootSession extends SessionImpl {
   constructor(profiler: UpdateProfiler) {
     super('Total Update', null, profiler);
   }

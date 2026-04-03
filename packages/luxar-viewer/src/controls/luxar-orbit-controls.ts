@@ -34,7 +34,7 @@ export interface LuxarOrbitControlsConfig {
   trackballRadius?: number;
 }
 
-type ControlAction = 'rotate' | 'pan' | 'zoom' | 'none';
+export type ControlAction = 'rotate' | 'pan' | 'zoom' | 'none';
 
 const _IDENTITY_QUAT = new THREE.Quaternion();
 const _v = new THREE.Vector3();

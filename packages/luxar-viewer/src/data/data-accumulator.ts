@@ -85,7 +85,7 @@ export interface AccumulatorStats {
 /**
  * Attribute types for Points accumulator (matches GPU buffer pool)
  */
-interface PointsAccumulatorTypes {
+export interface PointsAccumulatorTypes {
   position: 'Float32Array';
   color: 'Float32Array' | 'Uint8Array' | 'Uint16Array';
   radius: 'Float32Array' | 'Uint8Array';
@@ -499,7 +499,7 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<LoadedPoints
 /**
  * Attribute types for Lines accumulator (matches GPU buffer pool pattern)
  */
-interface LinesAccumulatorTypes {
+export interface LinesAccumulatorTypes {
   position: 'Float32Array';
   color: 'Float32Array' | 'Uint8Array' | 'Uint16Array';
   width: 'Float32Array';
@@ -779,7 +779,7 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
 /**
  * Attribute types for GSplats accumulator (matches GPU buffer pool pattern)
  */
-interface GSplatsAccumulatorTypes {
+export interface GSplatsAccumulatorTypes {
   position: 'Float32Array';
   amplitude: 'Float32Array';
   cholesky: 'Float32Array';

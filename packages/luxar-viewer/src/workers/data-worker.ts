@@ -215,7 +215,7 @@ async function computeNDVisibilityGSplats(params: {
 /**
  * Configuration for effective radius calculation (passed from main thread)
  */
-interface EffectiveRadiusConfig {
+export interface EffectiveRadiusConfig {
   spatialExtendDims: boolean[];
   maxRadius: number;
 }
@@ -223,7 +223,7 @@ interface EffectiveRadiusConfig {
 /**
  * View state for projection (subset of main thread ViewState)
  */
-interface ProjectionViewState {
+export interface ProjectionViewState {
   displayDims: number[];
   slicePosition: number[];
   tolerance: number[];
@@ -1099,7 +1099,7 @@ async function decodeBroadcasted(params: {
 /**
  * Expose worker API via Comlink
  */
-const workerAPI = {
+export const workerAPI = {
   initialize,
   querySpatialIndex,
   computeNDVisibilityPoints,

@@ -422,12 +422,12 @@ def fit_gaussian_splats(
         Whether to print optimization progress.
     max_abs_error : float or None, default=None (auto: 0.01)
         Maximum absolute error threshold for convergence. If specified,
-        optimization stops when max(|prediction - target|) < max_abs_error.
+        optimization stops when ``max(|prediction - target|)`` < max_abs_error.
         If None, automatically set to 0.01 (1% of normalized [0,1] range) for
         sensible convergence behavior. Auto-threshold usage is logged.
     rel_l2_target : float or None, default=None
         Relative L2 error threshold for convergence. If specified,
-        optimization stops when ||pred - target||₂ / ||target||₂ < rel_l2_target.
+        optimization stops when ``||pred - target||₂ / ||target||₂`` < rel_l2_target.
         This is an additional (OR) criterion alongside max_abs_error — either
         being satisfied triggers convergence. Provides a smoother, more stable
         convergence signal than max_abs_error. If None, this criterion is disabled.

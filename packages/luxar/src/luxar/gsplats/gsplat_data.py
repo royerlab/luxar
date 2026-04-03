@@ -1605,7 +1605,7 @@ class GSplatData(_SplatArrayMixin):
             shape: Volume shape for rendering (error_budget / redundancy).
                 Defaults to ``target.shape`` when target is provided.
             truncate: Truncation radius in standard deviations.
-            error_percentile: *error_budget only.*  Percentile of |residual|
+            error_percentile: *error_budget only.*  Percentile of ``|residual|``
                 for the budget (0--100).
             error_tolerance: *error_budget only.*  Multiplier on the budget.
             redundancy_threshold: *redundancy only.*  Max fractional

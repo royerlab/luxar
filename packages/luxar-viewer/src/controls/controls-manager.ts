@@ -83,7 +83,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
    *
    * @param camera - Camera to control (perspective or orthographic)
    * @param domElement - DOM element for mouse/touch input (typically canvas)
-   * @param scene - Optional scene reference
+   * @param _scene - Optional scene reference
    */
   constructor(camera: LuxarCamera, domElement: HTMLElement, _scene?: THREE.Scene) {
     super();

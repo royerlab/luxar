@@ -97,7 +97,7 @@ export class LuxarApp {
    * ```
    *
    * @see {@link SceneManager} for rendering pipeline setup
-   * @see {@link README.md#initialization-sequence} for detailed init flow
+   * @see README.md - initialization sequence section for detailed init flow
    */
   async init(src?: string): Promise<void> {
     if (this.isInitialized) {

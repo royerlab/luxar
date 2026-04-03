@@ -15,8 +15,7 @@ The main application provides the ``luxar`` command-line interface with commands
 serving data, building the viewer, and inspecting datasets.
 
 .. automodule:: luxar.cli.main
-   :members:
-   :undoc-members:
+   :no-members:
 
 Key Functions
 ~~~~~~~~~~~~~

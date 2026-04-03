@@ -4,9 +4,7 @@ I/O Package
 The io package handles reading and writing Luxar scenes to Zarr format with spatial indexing.
 
 .. automodule:: luxar.io
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   :no-members:
 
 Overview
 --------

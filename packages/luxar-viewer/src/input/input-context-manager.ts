@@ -478,7 +478,7 @@ export class InputContextManager {
    * DIMENSION_NAV context.
    *
    * @param event - Keyboard event to handle
-   * @param _type - Event type (unused but kept for future use)
+   * @param type - Event type ('down' or 'up')
    * @returns true if any lower context handled the event, false otherwise
    * @private
    */
