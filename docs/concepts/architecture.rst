@@ -64,7 +64,7 @@ Luxar is built on several core principles:
 Architectural Layers
 --------------------
 
-Luxar consists of four distinct layers:
+Luxar consists of five distinct layers:
 
 Server Layer (FastAPI)
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -470,7 +470,11 @@ Each array is classified by what it represents:
 Performance Model
 -----------------
 
-Understanding Luxar's performance characteristics:
+Understanding Luxar's performance characteristics.
+
+.. note::
+
+   The numbers below are approximate order-of-magnitude estimates based on typical hardware (modern laptop/desktop with dedicated GPU, SSD storage, broadband network). Actual performance varies with hardware, dataset characteristics, and network conditions.
 
 Write Performance (Python)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~

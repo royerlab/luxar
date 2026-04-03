@@ -379,7 +379,5 @@ class TestValidateZarrAttributes:
         """Test that ValidationErrors include helpful suggestions."""
         attrs_missing_type: dict[str, object] = {}
 
-        try:
+        with pytest.raises(ValidationError, match="type"):
             validate_zarr_attributes(attrs_missing_type, is_root=False)
-        except ValidationError as e:
-            assert "type" in str(e)

@@ -54,13 +54,18 @@ Each UI component has a dedicated CSS file:
 
 | File                       | Component                              |
 | -------------------------- | -------------------------------------- |
-| `dimension-sliders.css`    | nD dimension navigation sliders        |
+| `colormap-legend.css`      | Colormap legend display                |
+| `data-loading-monitor.css` | Loading progress indicators            |
 | `dataset-browser.css`      | Directory listing and dataset selector |
 | `debug-console.css`        | In-viewer debug console overlay        |
-| `data-loading-monitor.css` | Loading progress indicators            |
+| `dimension-sliders.css`    | nD dimension navigation sliders        |
 | `error-dialog.css`         | Error display dialogs                  |
 | `help-overlay.css`         | Keyboard shortcut help overlay         |
+| `layers-panel.css`         | Per-node layer visibility controls     |
+| `recording-panel.css`      | Screenshot and video capture panel     |
 | `resolution-indicator.css` | Adaptive DPR resolution badge          |
+| `scale-bar.css`            | Physical unit scale bar                |
+| `toast.css`                | Toast notification messages            |
 
 ## Theme Overrides
 

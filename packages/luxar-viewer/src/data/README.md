@@ -39,11 +39,17 @@ data/
 │                                  #   Given a world-space query (slicePosition + tolerance) and a
 │                                  #   composed nd_transform, produces the equivalent local-space query.
 │                                  #   Avoids transforming geometry data — all loader internals unchanged.
+├── gsplats-chunk-spatial-index.ts  # Spatial index loading and querying for GSplats
+├── gsplats-progressive-loader.ts  # Progressive multi-LOD GSplats loader (Composite pattern)
 ├── effective-radius-calculator.ts # Calculates effective radii for nD slicing
 ├── data-loader-types.ts           # TypeScript interfaces and types
 ├── data-accumulator.ts            # Zero-allocation buffer pooling
 ├── geometry-update-manager.ts     # GPU buffer & geometry updates (extracted from SceneLoader)
 ├── scene-graph-builder.ts         # Scene hierarchy builder (extracted from SceneLoader)
+├── view-state-manager.ts          # Centralized ViewState initialization and validation
+├── stats-aggregator.ts            # Accumulator stats aggregation across loaders
+├── loader-registry.ts             # Lifecycle management for geometry loaders (Points, Lines, GSplats)
+├── tolerance-computer.ts          # Unified tolerance computation for spatial queries
 ├── index.ts                       # Package exports
 ├── README.md                      # This documentation
 │
@@ -690,7 +696,7 @@ For very large datasets:
 ### Basic Loading
 
 ```typescript
-import { loadScene, updateView } from '@luxar/player/data';
+import { loadScene, updateView } from 'luxar-viewer/data';
 
 // Load a Zarr dataset (point spatial index required)
 const scene = await loadScene('http://server.com/data/points.zarr');
@@ -709,7 +715,7 @@ await updateView({
 ### nD Dataset Loading
 
 ```typescript
-import { loadScene, updateSceneForDimensions } from '@luxar/player/data';
+import { loadScene, updateSceneForDimensions } from 'luxar-viewer/data';
 import type { SimpleDims } from '@luxar/player/types';
 
 // Load 5D dataset (x, y, z, time, channel)
@@ -732,7 +738,7 @@ await updateSceneForDimensions(dims, scene);
 ### Directory Navigation
 
 ```typescript
-import { DirectoryNavigator } from '@luxar/player/data';
+import { DirectoryNavigator } from 'luxar-viewer/data';
 
 const navigator = new DirectoryNavigator('http://data.server.com/');
 
@@ -759,7 +765,7 @@ if (selected) {
 ### Multiple Loader Instances
 
 ```typescript
-import { loadScene, updateView, dispose } from '@luxar/player/data';
+import { loadScene, updateView, dispose } from 'luxar-viewer/data';
 
 // Create multiple independent loaders for different datasets
 const scene1 = await loadScene('http://server.com/data1.zarr', config, 'loader1');
@@ -779,7 +785,7 @@ dispose();
 ### Cache Management
 
 ```typescript
-import { getCacheStats, clearCaches } from '@luxar/player/data';
+import { getCacheStats, clearCaches } from 'luxar-viewer/data';
 
 // Monitor cache usage for default loader
 const stats = getCacheStats();
@@ -799,7 +805,7 @@ clearCaches();
 ### Advanced Instance Management
 
 ```typescript
-import { SceneLoaderManager, DataMonitorManager } from '@luxar/player/data';
+import { SceneLoaderManager, DataMonitorManager } from 'luxar-viewer/data';
 
 // Direct access to manager for advanced use cases
 const loaderManager = SceneLoaderManager.getInstance();

@@ -849,24 +849,23 @@ console.log('Should handle W:', shouldHandle);
 
 ### InputHandler
 
-| Method                                      | Description                   |
-| ------------------------------------------- | ----------------------------- |
-| `constructor(container, controls, context)` | Initialize handler            |
-| `setEnabled(enabled)`                       | Enable/disable input handling |
-| `dispose()`                                 | Clean up event listeners      |
+| Method                                           | Description                         |
+| ------------------------------------------------ | ----------------------------------- |
+| `constructor(sceneManager, animationController)` | Initialize with scene and animation |
+| `initDimensionSliders()`                         | Initialize nD dimension UI          |
+| `dispose()`                                      | Clean up event listeners            |
 
 ### InputContextManager
 
-| Method                  | Description                    |
-| ----------------------- | ------------------------------ |
-| `setContext(context)`   | Set active context             |
-| `pushContext(context)`  | Add context to stack           |
-| `popContext()`          | Remove top context             |
-| `getCurrentContext()`   | Get active context             |
-| `hasContext(context)`   | Check if context active        |
-| `shouldHandleKey(key)`  | Check if key should be handled |
-| `clearContextStack()`   | Reset context stack            |
-| `setDebugMode(enabled)` | Toggle debug logging           |
+| Method                                        | Description                  |
+| --------------------------------------------- | ---------------------------- |
+| `registerBinding(context, binding)`           | Register a key binding       |
+| `setContext(context)`                         | Set active context           |
+| `pushContext(context)`                        | Add context to stack         |
+| `popContext()`                                | Remove top context           |
+| `getCurrentContext()`                         | Get active context           |
+| `handleKeyDown(event)` / `handleKeyUp(event)` | Route key events to bindings |
+| `setDebugMode(enabled)`                       | Toggle debug logging         |
 
 ---
 

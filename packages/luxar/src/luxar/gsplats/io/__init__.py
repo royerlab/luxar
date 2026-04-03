@@ -11,7 +11,7 @@ Main functions:
 
 Spatial ordering utilities:
 - sort_splats_spatial() - Sort splats using Morton or Hilbert curves
-- compute_chunk_bounds() - Compute chunk bounding boxes with extent
+- compute_chunk_bounds_gsplats() - Compute chunk bounding boxes with extent
 """
 
 from luxar.gsplats.io.inspect_gsplats import (

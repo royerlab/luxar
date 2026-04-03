@@ -10,6 +10,9 @@ TypeScript type definitions for high-dimensional data visualization in Luxar. Th
 - [Dimension Metadata](#dimension-metadata)
 - [SimpleDims Interface](#simpledims-interface)
 - [Utility Functions](#utility-functions)
+- [Zarr Types](#zarr-types)
+- [Animation Types](#animation-types)
+- [Float16Array Type Declaration](#float16array-type-declaration)
 - [Usage Examples](#usage-examples)
 - [Type Safety](#type-safety)
 - [Best Practices](#best-practices)
@@ -287,6 +290,72 @@ const ranges = getDimensionRanges(positions, 5, 100000);
 //         Time    Z      Chan   Y        X
 ```
 
+## Points Types
+
+The package includes type definitions for point cloud visualization in `points.ts`:
+
+### PointsMetadata
+
+Metadata for points nodes from zarr `.zattrs`:
+
+```typescript
+interface PointsMetadata {
+  type: 'points';
+  n_points: number; // Total point count
+  ndim: number; // Position dimensionality
+  max_radius?: number; // Maximum point radius
+  has_colors?: boolean; // Whether colors array is present
+  has_radii?: boolean; // Whether radii array is present
+  has_sharpness?: boolean; // Whether sharpness array is present
+  // ... additional properties
+}
+```
+
+### Type Guards
+
+```typescript
+import { isPointsMetadata, isPointsUserData } from '../types/points';
+
+if (isPointsMetadata(attrs)) {
+  console.log(`Found ${attrs.n_points} points`);
+}
+```
+
+See `points.ts` for complete interface definitions including `PointsChunkSpatialIndex`, `PointsViewState`, `PointsDataLoader`, and `PointsUserData`.
+
+## Lines Types
+
+The package includes type definitions for line segment visualization in `lines.ts`:
+
+### LinesMetadata
+
+Metadata for lines nodes from zarr `.zattrs`:
+
+```typescript
+interface LinesMetadata {
+  type: 'lines';
+  line_type: LineType; // 'segments' | 'polyline' | 'loop' | 'indexed'
+  n_vertices: number; // Total vertex count
+  n_segments: number; // Total segment count
+  ndim: number; // Position dimensionality
+  has_colors?: boolean; // Whether colors array is present
+  has_widths?: boolean; // Whether widths array is present
+  // ... additional properties
+}
+```
+
+### Type Guards
+
+```typescript
+import { isLinesMetadata, isLinesUserData, isValidLineType } from '../types/lines';
+
+if (isLinesMetadata(attrs)) {
+  console.log(`Found ${attrs.n_segments} segments`);
+}
+```
+
+See `lines.ts` for complete interface definitions including `OrderingMetadata`, `LinesChunkSpatialIndex`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, and `LinesViewState`.
+
 ## GSplats Types
 
 The package includes complete type definitions for Gaussian Splats visualization in `gsplats.ts`:
@@ -331,7 +400,12 @@ interface LoadedGSplatsData {
 ### Type Guards
 
 ```typescript
-import { isGSplatsMetadata, isGSplatsUserData } from '../types/gsplats';
+import {
+  isGSplatsMetadata,
+  isGSplatsUserData,
+  choleskyPackedSize,
+  CHOLESKY_SIZES,
+} from '../types/gsplats';
 
 // Check if zarr attrs is for gsplats
 if (isGSplatsMetadata(attrs)) {
@@ -342,9 +416,76 @@ if (isGSplatsMetadata(attrs)) {
 if (isGSplatsUserData(mesh.userData)) {
   console.log(`Visible: ${mesh.userData.visibleSplatCount}`);
 }
+
+// Compute packed Cholesky factor count for a given dimensionality
+const packed = choleskyPackedSize(3); // 6 = 3*(3+1)/2
+
+// Pre-computed sizes for common dimensions (1D-7D)
+console.log(CHOLESKY_SIZES); // [1, 3, 6, 10, 15, 21, 28]
 ```
 
 See `gsplats.ts` for complete interface definitions including `GSplatsChunkSpatialIndex`, `ProcessedGSplatsData`, `GSplatsViewState`, and `GSplatsUserData`.
+
+## Zarr Types
+
+Type definitions in `zarr.ts` for Zarr store attributes and scene graph metadata. These provide proper typing for Zarr `.zattrs` data, eliminating `as any` assertions.
+
+### Key Types
+
+- **`ZarrViewerConfig`** -- Viewer configuration stored in the zarr root `.zattrs` by the Python API. All fields are optional and use `snake_case`. Covers camera, tone mapping, bloom, controls, post-processing, UI panel visibility, dimension navigation state, and animation state. This is also the format exported by Ctrl+Shift+S in the viewer, enabling round-trip Python-to-viewer-to-Python workflows.
+- **`ZarrSceneAttrs`** -- Root scene group attributes: format version, scene dimensions, units, position bounds, and an optional `viewer_config`.
+- **`ZarrNodeAttrs`** -- Per-node attributes in the scene graph: node type, 4x4 transform, nD transform, rendering properties (opacity, gamma, blending mode, etc.), position bounds, and `extend_to_all`.
+- **`SceneDimensionAttrs`** -- Scene-level dimension array mirroring Python's `luxar.core.Dimension` class.
+- **`PositionBounds`** -- nD bounding box with `min` and `max` arrays (one entry per dimension).
+
+### nD Transform Types
+
+Per-dimension transforms applied to non-displayed dimensions (see `docs/guides/specs/ND_TRANSFORMS_SPEC.md`):
+
+- **`NdTransformAffine`** -- Affine transform for continuous/discrete dimensions: `{ scale?, offset? }`. Applied as `effective = scale * value + offset`.
+- **`NdTransformPermutation`** -- Permutation for categorical dimensions: `{ permutation: number[] }`. Maps old category index to new index.
+- **`NdTransformEntry`** -- Union of `NdTransformAffine | NdTransformPermutation`.
+- **`NdTransformMap`** -- `Record<string, NdTransformEntry>` mapping dimension name to its transform.
+
+### Type Guards
+
+```typescript
+import {
+  hasContentsMethod,
+  hasTransform,
+  hasNdTransform,
+  hasSceneDimensions,
+  isPermutation,
+} from '../types/zarr';
+```
+
+- `hasContentsMethod(store)` -- checks if a zarr store supports `contents()`.
+- `hasTransform(attrs)` -- checks for a 16-element transform array.
+- `hasNdTransform(attrs)` -- checks for an `nd_transform` object.
+- `hasSceneDimensions(attrs)` -- checks for `scene_dimensions` with a `dimensions` array.
+- `isPermutation(entry)` -- distinguishes permutation entries from affine entries.
+
+## Animation Types
+
+Type definitions in `animation.ts` for FPS-based dimension animation. These types are **not re-exported** from `index.ts` -- import them directly from `../types/animation`.
+
+```typescript
+import type {
+  LoopMode,
+  AnimationDirection,
+  DimensionAnimationState,
+  DimensionAnimationEvents,
+} from '../types/animation';
+```
+
+- **`LoopMode`** -- `'once' | 'loop' | 'bounce'`. Controls behavior when animation reaches a dimension boundary.
+- **`AnimationDirection`** -- `'forward' | 'backward'`. Current playback direction.
+- **`DimensionAnimationState`** -- Full state for a single dimension's animation: `isPlaying`, `targetFPS`, `loopMode`, `direction`, FPS measurement fields (`actualFPS`, `frameCount`, timestamps).
+- **`DimensionAnimationEvents`** -- Event map emitted by `DimensionAnimationManager`: `play`, `pause`, `complete`, `speedChange`, `loopModeChange`, `directionChange`, `fpsWarning`.
+
+## Float16Array Type Declaration
+
+The file `float16array.d.ts` provides TypeScript type declarations for `Float16Array`, which is supported in modern browsers (Chrome 122+, Firefox 127+, Safari 17+) but lacks built-in TypeScript definitions. This allows the viewer to handle Float16-encoded zarr arrays without type errors.
 
 ## Usage Examples
 

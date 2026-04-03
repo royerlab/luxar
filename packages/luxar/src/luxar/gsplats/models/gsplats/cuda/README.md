@@ -142,14 +142,14 @@ make test-cuda
 make benchmark-cuda
 
 # Run specific test file
-hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/cuda/tests/test_cuda_backend.py -v
+hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/cuda/tests/test_cuda_forward.py -v
 ```
 
 ## File Structure
 
 ```
 cuda/
-├── src/                                   # 11 source files
+├── src/
 │   ├── cuda_splatting.cu                  # Dispatch layer: entry points, template instantiations
 │   ├── cuda_splatting.h                   # Public API: forward(), backward(), BinningState
 │   ├── bindings.cpp                       # pybind11: forward_wrapper(), backward_wrapper()
@@ -167,6 +167,7 @@ cuda/
 ├── benchmark.py                           # Performance benchmarks
 ├── __init__.py
 ├── tests/
+│   ├── __init__.py                        # Package marker
 │   ├── conftest.py                        # Pytest fixtures and configuration
 │   ├── test_cuda_forward.py               # Forward pass correctness
 │   ├── test_cuda_backward.py              # Backward pass correctness
@@ -183,6 +184,7 @@ cuda/
 ├── SPECIFICATIONS_TESTING.md              # Testing strategy spec
 ├── OPTIMIZATION_REPORT.md                 # Tile-based -> splat-centric transition
 ├── OPTIMIZATION_ROADMAP.md                # Future optimization plans
+├── EXTENDED_SMEM_PLAN.md                  # Extended shared memory optimization plan
 └── README.md                              # This file
 ```
 

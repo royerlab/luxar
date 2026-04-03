@@ -70,8 +70,9 @@ Luxar uses a hierarchical scene graph that mirrors Zarr's group structure:
 Scene (root)
 ├── Group
 │   ├── Points
-│   ├── Lines (future)
-│   └── Surface (future)
+│   ├── Lines
+│   ├── GSplats
+│   └── Group (nested)
 └── Points
 ```
 
@@ -245,6 +246,7 @@ class LuxarZarrCompiler:
         enable_spatial_index: bool = True,
         encoding_mode: EncodingMode = EncodingMode.AUTO,
         ordering_method: Literal["morton", "hilbert"] = "morton",
+        float16_allowed: bool = False,
     ) -> None:
         """
         Create a new Zarr compiler for progressive writing.
@@ -256,6 +258,7 @@ class LuxarZarrCompiler:
             enable_spatial_index: Whether to build spatial indices (default: True)
             encoding_mode: Encoding mode (AUTO/PRECISION/MEMORY)
             ordering_method: Spatial ordering ("morton" or "hilbert")
+            float16_allowed: Whether to allow float16 encoding (default: False)
         """
 
     def create_scene(self, dimensions: Dimensions) -> Scene:
@@ -348,6 +351,14 @@ class Dimensions:
     def __init__(self, dimensions: List[Dimension]) -> None:
         """Create dimensions from list of Dimension objects."""
 
+    @classmethod
+    def default_3d(cls) -> Dimensions:
+        """Create default 3D dimensions (x, y, z in generic units)."""
+
+    @classmethod
+    def default_timeseries(cls, n_timepoints: int = 100, time_unit: str = "s") -> Dimensions:
+        """Create default time series dimensions (t, x, y, z)."""
+
     def validate_positions(self, positions: np.ndarray) -> None:
         """Validate that positions match dimension count."""
 ```
@@ -392,9 +403,6 @@ luxar serve dataset.zarr
 
 # Create a demo dataset without serving
 luxar demo --no-serve --output demo.zarr --points 100000
-
-# Build a scene from a Python script
-luxar build scene_script.py
 
 # Get information about a dataset
 luxar info dataset.zarr
@@ -441,9 +449,11 @@ with LuxarZarrCompiler("styled_scene.zarr") as compiler:
 ```
 
 **Blending Modes:**
-- `"additive"` (default): HDR additive blending, colors add together (glow effect)
-- `"normal"`: Standard alpha blending
-- `"max"`: Maximum blending, brightest values win (highlight effect)
+- `"additive"` (default): HDR additive blending, ignores depth (renders on top of everything)
+- `"normal"`: Standard alpha blending (semi-transparent)
+- `"max"`: Maximum blending, brightest values win
+- `"opaque"`: Solid rendering with depth write (closest object wins)
+- `"luminous"`: Same as additive visually, but respects depth occlusion
 
 ## 🔬 Advanced Usage
 
@@ -525,37 +535,24 @@ t = transforms.translate(5, 0, 0)
 t_inv = transforms.inverse(t)  # Translates -5, 0, 0
 ```
 
-### Extending with New Geometry Types
+### Using Lines and GSplats
+
+Lines and Gaussian splats are first-class geometry types alongside points:
 
 ```python
-from luxar.node import Node
-from luxar._io import create_dataset
+from luxar import LuxarZarrCompiler, Dimensions
 
-class Lines(Node):
-    """Example: Adding line geometry support."""
+dims = Dimensions.default_3d()
+with LuxarZarrCompiler("scene.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
 
-    def __init__(
-        self,
-        name: str,
-        vertices: np.ndarray,  # shape: (N, 3)
-        edges: np.ndarray,     # shape: (M, 2), indices
-        colors: Optional[np.ndarray] = None,
-        parent: Optional[Node] = None,
-        **attrs
-    ):
-        # Initialize node
-        group = parent._group.create_group(name)
-        super().__init__(name, group)
+    # Add line geometry
+    vertices = np.array([[0,0,0],[1,1,0],[2,0,0]], dtype=np.float32)
+    widths = np.array([0.1, 0.05, 0.1], dtype=np.float32)
+    scene.add_lines("MyLine", vertices, widths=widths)
 
-        # Store geometry
-        create_dataset(group, "vertices", vertices)
-        create_dataset(group, "edges", edges)
-        if colors is not None:
-            create_dataset(group, "colors", colors)
-
-        # Set type attribute
-        group.attrs["type"] = "lines"
-        group.attrs.update(attrs)
+    # Add Gaussian splats (from a volume)
+    scene.add_gsplats_from_volume("MySplats", volume_data)
 ```
 
 ## 🎯 Performance Optimization
@@ -685,18 +682,19 @@ scene.add_points("measurements", positions, colors)
 ```python
 from scipy.spatial import Delaunay
 
-# Future: Triangulated surfaces from points
+# Compute Delaunay triangulation
 points = np.random.randn(1000, 3)
 tri = Delaunay(points[:, :2])  # 2D triangulation
 
-# When surface support is added:
-# scene.add_surface("delaunay", points, tri.simplices)
+# Visualize the triangulation vertices as points
+scene.add_points("delaunay_vertices", points.astype(np.float32))
 ```
 
-## 🚀 Roadmap
+## Roadmap
 
 ### Near Term
-- [ ] Line geometry support
+- [x] Line geometry support
+- [x] Gaussian splat geometry support
 - [ ] Surface mesh support
 - [ ] Custom attributes per vertex
 - [ ] Time-varying data support
@@ -722,4 +720,4 @@ Luxar Core is part of the Luxar project. See the main [LICENSE](../../LICENSE) f
 - [Luxar Viewer README](../luxar-viewer/README.md) - WebGL renderer documentation
 - [Main README](../../README.md) - Ecosystem overview
 - [Zarr Documentation](https://zarr.readthedocs.io/) - Storage format details
-- [Examples](../../examples/) - Code examples and tutorials
+- [Examples](examples/) - Code examples and tutorials

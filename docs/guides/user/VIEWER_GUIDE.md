@@ -1,0 +1,391 @@
+# Luxar Viewer User Guide
+
+The Luxar viewer is a browser-based WebGL application for exploring nD scientific
+scenes containing points, lines, and Gaussian splats. It loads data from Zarr
+archives served over HTTP or from local files.
+
+## Launching the Viewer
+
+There are three common ways to open the viewer:
+
+```bash
+# Serve a dataset and open the viewer in one step
+luxar serve scene.zarr --viewer
+
+# Run the built-in demo
+luxar demo
+
+# Export a self-contained offline viewer
+luxar export scene.zarr -o my_export/ --open
+```
+
+You can also start the viewer development server directly:
+
+```bash
+cd packages/luxar-viewer
+pnpm dev
+```
+
+Then open `http://localhost:5173/?src=http://127.0.0.1:8005` in a browser,
+pointing `src` at a running Luxar data server.
+
+**Important:** Data source URLs must NOT end with a trailing slash. A trailing
+slash causes the Zarr loader to produce 404 errors.
+
+---
+
+## URL Parameters
+
+Append parameters to the viewer URL to control startup behavior.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `src` | string | Zarr dataset URL or local path. |
+| `theme` | string | Initial theme. One of: `light`, `dark`, `liquid-glass`, `frosted-glass`. |
+| `debug` | flag | Enable the debug interface (developer use). |
+| `no-cache` | flag | Disable L0/L1/L2 caching layers. |
+| `cache-debug` | flag | Enable cache debug logging to the browser console. |
+| `clear-cache` | flag | Clear all caches on startup. |
+| `no-prefetch` | flag | Disable adjacent-chunk prefetching. |
+| `prefetch-debug` | flag | Enable prefetch logging to the browser console. |
+
+Flag parameters do not take a value; their presence activates the feature.
+
+Example:
+
+```
+http://localhost:5173/?src=http://127.0.0.1:8005&theme=dark&no-cache
+```
+
+---
+
+## Camera Controls
+
+The viewer supports three camera control modes, cycled with the **V** key:
+
+### Orbit Mode (default)
+
+Standard trackball camera for inspecting a scene from the outside.
+
+| Input | Action |
+|-------|--------|
+| Left-click + drag | Rotate around the target point |
+| Right-click + drag | Pan the camera |
+| Scroll wheel | Zoom in/out |
+| Ctrl/Cmd + Scroll | Adjust field of view |
+
+Press **F** to recenter the camera so the entire scene fits in view.
+
+### Fly Mode
+
+First-person controls for moving through the interior of a dataset.
+
+| Input | Action |
+|-------|--------|
+| W / A / S / D | Move forward / left / backward / right |
+| Q / E | Move down / up |
+| Arrow keys | Look around |
+| Shift (held) | Speed boost |
+| Mouse drag | Look direction |
+
+Enable **inertial mode** (press **I**) to add momentum to fly movement so the
+camera coasts after releasing keys.
+
+### Ortho Mode
+
+Orthographic projection for 2D viewing. The camera looks straight down one axis.
+
+| Input | Action |
+|-------|--------|
+| Left-click + drag | Pan |
+| Scroll wheel | Zoom |
+
+---
+
+## Keyboard Shortcuts
+
+### General Navigation and Panels
+
+| Key | Action |
+|-----|--------|
+| H | Toggle help overlay |
+| N | Toggle dimension sliders (for nD datasets) |
+| O | Open dataset browser |
+| P | Toggle performance stats (FPS, frame time) |
+| R | Toggle rendering controls panel |
+| B | Toggle scale bar |
+| L | Toggle colormap legend |
+| T | Toggle recording panel |
+| Escape | Close all open panels |
+
+### Camera and View
+
+| Key | Action |
+|-----|--------|
+| F | Recenter camera (frame entire scene) |
+| V | Cycle control mode: Orbit, Fly, Ortho |
+| Space | Toggle fullscreen |
+| Ctrl/Cmd + Scroll | Adjust field of view |
+
+### Visual Modes
+
+| Key | Action |
+|-----|--------|
+| C | Toggle cinematic mode (film grain, vignette, depth of field) |
+| I | Toggle inertial mode (fly controls momentum) |
+
+### nD Dimension Navigation
+
+| Key | Action |
+|-----|--------|
+| 1--9 | Select navigable dimension by index |
+| \[ | Step selected dimension backward |
+| \] | Step selected dimension forward |
+| M | Cycle data loading monitor |
+| G | Quick screenshot |
+
+### Animation Playback
+
+| Key | Action |
+|-----|--------|
+| K | Play / pause animation |
+| Home | Jump to dimension start |
+| End | Jump to dimension end |
+| Shift + Up | Increase animation speed |
+| Shift + Down | Decrease animation speed |
+
+### Fly Mode Movement
+
+| Key | Action |
+|-----|--------|
+| W / A / S / D | Move forward / left / backward / right |
+| Q / E | Move down / up |
+| Arrow keys | Look direction |
+| Shift (held) | Speed boost |
+
+### State Export
+
+| Key | Action |
+|-----|--------|
+| Ctrl+Shift+S | Export viewer state to clipboard as JSON |
+
+---
+
+## UI Panels
+
+Toggle panels with their keyboard shortcuts or through the help overlay (**H**).
+
+### Help Overlay (H)
+
+Displays the full list of keyboard shortcuts inside the viewer.
+
+### Rendering Controls (R)
+
+Adjust visual parameters in real time:
+
+- **Tone mapping** -- algorithm and exposure
+- **Bloom** -- glow effect strength, radius, and threshold
+- **Ambient occlusion** -- quality preset (low / medium / high / ultra)
+- **Cinematic effects** -- vignette, depth of field, film grain
+- **Anti-aliasing** -- FXAA, SMAA, MSAA, or SSAA
+- **Detector noise** -- physics-based Poisson + Gaussian + FPN simulation
+
+Changes persist to `localStorage` for the current scene.
+
+### Dimension Sliders (N)
+
+For datasets with more than three spatial dimensions, this panel shows a slider
+for each non-displayed dimension. Drag a slider to move the slice position along
+that axis. See the nD Navigation section below.
+
+### Performance Monitor (P)
+
+Displays live statistics: frames per second, frame time, and draw call count.
+Useful for diagnosing performance on large scenes.
+
+### Recording Panel (T)
+
+Controls for capturing image sequences or video from the viewer. Open the panel,
+configure frame rate and duration, and start recording.
+
+### Dataset Browser (O)
+
+Browse and switch between available datasets served by the data server.
+
+### Scale Bar (B)
+
+Displays a physical scale bar overlay when the scene defines spatial units
+(nm, um, mm, cm, m, etc.).
+
+### Colormap Legend (L)
+
+Shows the active colormap and its value range when a colormap is applied to the
+scene.
+
+---
+
+## nD Navigation
+
+Luxar supports datasets with an arbitrary number of dimensions. The viewer
+always displays three spatial dimensions at a time; additional dimensions are
+navigated by slicing.
+
+### How It Works
+
+1. **Displayed dimensions** are rendered in 3D (typically x, y, z).
+2. **Non-displayed dimensions** each have a slice position and a tolerance.
+   Geometry is visible when its coordinate along a non-displayed dimension falls
+   within the tolerance window around the current slice position.
+
+### Using Keyboard Navigation
+
+1. Press a number key (**1**--**9**) to select which navigable dimension to
+   control.
+2. Press **\[** to step backward or **\]** to step forward along that dimension.
+3. Step sizes are defined by the scene's dimension metadata.
+
+### Using Sliders
+
+Press **N** to open the dimension slider panel. Drag any slider to move the
+slice position for that dimension.
+
+### Tips for nD Data
+
+- If the viewer shows zero visible points after loading, the initial slice
+  position may be at a location with no data. Navigate along non-displayed
+  dimensions to find populated slices.
+- For 4D time-lapse data, use animation playback (see next section) to step
+  through time automatically.
+
+---
+
+## Animation Playback
+
+When a dimension is marked as animatable (for example, time), the viewer can
+play through its range automatically.
+
+| Action | Key |
+|--------|-----|
+| Play / pause | K |
+| Jump to start | Home |
+| Jump to end | End |
+| Speed up | Shift + Up |
+| Slow down | Shift + Down |
+
+Animation loops according to the configured loop mode: `once` (stop at end),
+`loop` (restart from beginning), or `bounce` (reverse direction at each end).
+The loop mode and direction can be set through `ViewerConfig` in Python (see
+below).
+
+---
+
+## Screenshots and Recording
+
+- Press **G** to capture a single screenshot immediately.
+- Press **T** to open the recording panel for multi-frame capture.
+- Press **Ctrl+Shift+S** to export the full viewer state (camera, settings,
+  dimension positions) to the clipboard as JSON. This JSON can be loaded back
+  via `ViewerConfig.from_file()` in Python.
+
+---
+
+## Configuring the Viewer from Python
+
+Set viewer defaults at scene-creation time by passing a `ViewerConfig` to the
+scene. These values are stored in the Zarr archive and applied when the viewer
+loads the dataset.
+
+```python
+import luxar
+
+vc = luxar.ViewerConfig(
+    theme="dark",
+    camera=luxar.CameraConfig(
+        position=(0, 5, 20),
+        target=(0, 0, 0),
+        fov=50,
+    ),
+    bloom_enabled=True,
+    bloom_strength=0.4,
+    control_type="orbit",
+    auto_rotate=True,
+)
+
+scene = luxar.Scene(viewer_config=vc)
+# ... add geometry, then compile
+```
+
+### Loading a Viewer Snapshot
+
+Export a viewer state with **Ctrl+Shift+S** in the browser, save the JSON to a
+file, then reload it in Python:
+
+```python
+vc = luxar.ViewerConfig.from_file("my_view.json")
+vc.bloom_strength = 0.8  # tweak as needed
+
+scene = luxar.Scene(viewer_config=vc)
+```
+
+### Priority Chain
+
+Settings are resolved with the following priority (highest first):
+
+1. **localStorage overrides** -- per-scene user changes made in the browser
+2. **viewer_config** -- defaults stored in the Zarr file
+3. **Built-in defaults** -- the viewer's own defaults
+
+### Available Configuration Categories
+
+| Category | Example fields |
+|----------|---------------|
+| Camera | `position`, `target`, `fov`, `fov_preset`, `near`, `far`, `target_node` |
+| Theme | `theme` (`dark`, `light`, `frosted-glass`, `liquid-glass`) |
+| Tone mapping | `tone_mapping`, `exposure`, `global_offset`, `global_gamma` |
+| Bloom | `bloom_enabled`, `bloom_strength`, `bloom_radius`, `bloom_threshold` |
+| Controls | `control_type`, `auto_rotate`, `auto_rotate_speed` |
+| Cinematic | `cinematic_mode`, `vignette_enabled`, `dof_enabled`, `dof_focus` |
+| Ambient occlusion | `ao_enabled`, `ao_quality` |
+| Detector noise | `detector_noise_enabled`, `detector_noise_readout_sigma`, `detector_noise_photon_gain` |
+| Anti-aliasing | `fxaa_enabled`, `smaa_enabled`, `msaa_enabled`, `ssaa_enabled` |
+| Fly controls | `fly_movement_speed`, `fly_rotation_speed`, `fly_inertial_mode`, `fly_damping` |
+| UI visibility | `ui.show_help`, `ui.show_rendering_controls`, `ui.show_dimensions`, `ui.show_performance_monitor`, `ui.show_scale_bar`, `ui.show_layers` |
+| Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |
+| Animation | `animation` (per-dimension: loop mode, direction, speed) |
+
+See `luxar.ViewerConfig` docstring for the full field list with types and
+valid ranges.
+
+---
+
+## Tips and Troubleshooting
+
+**Viewer shows a blank scene or zero points**
+- For nD datasets, the initial slice position may be empty. Press **N** to open
+  dimension sliders and navigate to a populated region.
+- Verify the data URL has no trailing slash.
+
+**Performance is poor with large datasets**
+- Press **P** to check FPS and identify bottlenecks.
+- Reduce anti-aliasing quality (disable SSAA, switch to FXAA).
+- Disable bloom and ambient occlusion in the rendering panel.
+- Adaptive resolution automatically lowers pixel density during interaction.
+
+**Camera feels stuck or wrong**
+- Press **F** to recenter the camera on the scene bounding box.
+- Press **V** to cycle to a different control mode.
+- If fly mode momentum is disorienting, press **I** to toggle inertial mode off.
+
+**Caching issues**
+- Add `?clear-cache` to the URL to wipe all cached data on startup.
+- Add `?no-cache` to disable caching entirely for debugging.
+
+**Exported state does not restore correctly**
+- Ensure you use `ViewerConfig.from_file()` and not manual JSON parsing.
+- The JSON format is viewer-version-specific; re-export if the viewer has been
+  updated.
+
+**Data fails to load (404 errors)**
+- Check that `luxar serve` is running and the port matches the `src` URL.
+- Remove any trailing slash from the data URL.
+- Verify the Zarr archive is complete (`luxar info <path>` can help).

@@ -1,0 +1,234 @@
+# Debug Interface Guide
+
+## Overview
+
+Luxar exposes a `window.__luxarDebug` object that provides programmatic access
+to the viewer's internal state. This is intended for:
+
+- Diagnosing rendering or data-loading issues during development
+- Writing and debugging Playwright E2E tests
+- AI-assisted debugging via the agent driver (`pnpm agent:debug`)
+- Generating state dumps for bug reports
+
+The interface is defined in two stages: `main.ts` creates the base object with
+the `app` reference and version string, then `app.ts` extends it with runtime
+components (scene, camera, cache helpers, etc.) after initialization completes.
+
+## Enabling the Debug Interface
+
+**URL parameter** (recommended):
+
+```
+http://localhost:5173/?src=http://127.0.0.1:8005&debug
+```
+
+**localStorage** (persists across page loads):
+
+```js
+localStorage.setItem('luxar_debug', 'true');
+```
+
+When enabled, the viewer logs `Debug interface available at window.__luxarDebug`
+to the console and, after initialization, prints a summary of available commands.
+
+When the `?debug` URL parameter is absent *and* localStorage is not set, the
+object is never created, so there is zero overhead in production.
+
+## Available Properties and Methods
+
+### Base properties (from `main.ts`, available immediately)
+
+| Property | Type | Description |
+|---|---|---|
+| `app` | `LuxarApp` | The application instance. |
+| `consoleInterceptor` | `ConsoleInterceptor` | Captures all console output for replay. |
+| `version` | `string` | Viewer version string (currently `"1.0.0"`). |
+
+### Runtime components (from `app.ts`, available once `runtimeReady` is `true`)
+
+| Property | Type | Description |
+|---|---|---|
+| `scene` | `THREE.Scene` | The Three.js scene graph root. |
+| `camera` | `LuxarCamera` | Active camera (perspective or orthographic). |
+| `renderer` | `THREE.WebGLRenderer` | The WebGL renderer instance. |
+| `controls` | `ControlsManager` | Orbit/fly controls manager. |
+| `postProcessing` | `PostProcessingManager` | Bloom, AO, AA pipeline. |
+| `animationController` | `AnimationController` | Manages the render loop. |
+| `inputHandler` | `InputHandler` | Keyboard and mouse input system. |
+| `renderingControls` | `RenderingControls` | UI panel for rendering settings. |
+| `recordingPanel` | `RecordingPanel` | Screenshot and video capture panel. |
+| `sceneDimsManager` | `SceneDimsManager` | Dimension navigation state. |
+| `runtimeReady` | `boolean` | `true` once all components are initialized. |
+
+### Helper functions
+
+| Method | Return type | Description |
+|---|---|---|
+| `getState()` | `object` | JSON-serializable snapshot of current state (point counts per cloud, camera position/FOV, dimension info, animation status, initialization status). |
+| `renderOnce()` | `void` | Kicks the animation loop to force a single render frame. Useful for stable screenshots. |
+| `getSceneLoader()` | `SceneLoaderManager` | Returns the singleton scene loader manager for inspecting loaded data. |
+
+### Cache helpers (`__luxarDebug.cache`)
+
+| Method | Return type | Description |
+|---|---|---|
+| `getStats()` | `{ l0, l1, l2 }` | Returns hit/miss/size statistics for all three cache tiers. |
+| `listDatasets()` | `object` | Lists datasets stored in the caching store. |
+| `clearL0()` | `void` | Clears the L0 decompressed chunk cache (in-memory). |
+| `clearL1()` | `void` | Clears the L1 memory cache. |
+| `clearL2()` | `Promise<void>` | Clears the L2 OPFS (Origin Private File System) persistent cache. |
+| `clearAll()` | `Promise<void>` | Clears all three cache tiers. |
+
+## Common Debug Workflows
+
+### Inspecting scene state
+
+Open the browser console and run:
+
+```js
+const state = __luxarDebug.getState();
+console.table(state.pointClouds);  // Per-cloud point counts, visibility, attributes
+console.log('Total points:', state.totalPoints);
+console.log('Camera:', state.camera);
+console.log('Dimensions:', state.dimensions);
+```
+
+To walk the Three.js scene graph directly:
+
+```js
+__luxarDebug.scene.traverse(obj => {
+  if (obj.type === 'Points') console.log(obj.name, obj.geometry.attributes);
+});
+```
+
+### Checking cache performance
+
+```js
+const stats = __luxarDebug.cache.getStats();
+console.log('L0 (decompressed):', stats.l0);
+console.log('L1 (memory):', stats.l1);
+console.log('L2 (OPFS):', stats.l2);
+```
+
+To isolate a cache tier during testing:
+
+```js
+__luxarDebug.cache.clearL0();  // Force re-decompression on next access
+await __luxarDebug.cache.clearL2();  // Force re-fetch from network
+```
+
+### Forcing re-renders
+
+```js
+__luxarDebug.renderOnce();
+```
+
+This restarts the animation loop briefly, producing at least one fresh frame.
+Useful after programmatically changing material uniforms or camera position.
+
+### Dumping state for bug reports
+
+Copy-paste the following into the console to produce a JSON blob suitable for
+attaching to an issue:
+
+```js
+JSON.stringify(__luxarDebug.getState(), null, 2);
+```
+
+For cache state:
+
+```js
+JSON.stringify(__luxarDebug.cache.getStats(), null, 2);
+```
+
+## Using with Playwright (E2E Tests)
+
+E2E tests load the viewer with `?debug` in the URL and wait for the debug
+interface before making assertions. The helpers in
+`src/tests/e2e/helpers.ts` encapsulate the common patterns.
+
+### Waiting for initialization
+
+```typescript
+import { waitForLuxarReady } from './helpers';
+
+await waitForLuxarReady(page);  // Waits for getState().initialized === true
+```
+
+Under the hood this polls `window.__luxarDebug.getState().initialized`:
+
+```typescript
+await page.waitForFunction(() => {
+  const debug = (window as any).__luxarDebug;
+  return debug && debug.getState && debug.getState().initialized;
+}, null, { timeout: 45000 });
+```
+
+### Reading state from a test
+
+```typescript
+import { getLuxarState } from './helpers';
+
+const state = await getLuxarState(page);
+expect(state.totalPoints).toBeGreaterThan(0);
+```
+
+### Forcing a render for screenshots
+
+```typescript
+import { renderOnce } from './helpers';
+
+await renderOnce(page);  // Triggers render + 100ms settle
+await page.screenshot({ path: 'screenshot.png' });
+```
+
+### Waiting for data to load
+
+```typescript
+import { waitForPointsLoaded } from './helpers';
+
+await waitForPointsLoaded(page, 100);  // Wait until >= 100 points are loaded
+```
+
+### Direct `page.evaluate` access
+
+For one-off checks not covered by helpers:
+
+```typescript
+const cacheStats = await page.evaluate(() => {
+  return (window as any).__luxarDebug.cache.getStats();
+});
+```
+
+## Using with the Agent Debugger
+
+The agent debugger (`pnpm agent:debug`) launches a headless Playwright browser
+with `?debug` in the URL and dumps the debug interface state automatically.
+
+```bash
+cd packages/luxar-viewer
+pnpm agent:debug           # Headless, captures state + screenshot
+pnpm agent:debug:visible   # Headed browser for visual inspection
+```
+
+The output includes:
+
+- `[BROWSER-CONSOLE-*]` -- all console messages captured by `consoleInterceptor`
+- A JSON state dump from `getState()` (point counts, camera, dimensions)
+- A screenshot saved to `test-results/debug/debug-view.png`
+
+Typical workflow:
+
+1. Run `pnpm agent:debug` to capture current viewer state.
+2. Inspect the JSON dump and screenshot for anomalies.
+3. If needed, add `console.log()` calls in source code and re-run.
+4. Fix the issue and verify with another `pnpm agent:debug` run.
+5. Remove any temporary logging before committing.
+
+## Source Files
+
+| File | Role |
+|---|---|
+| `packages/luxar-viewer/src/core/main.ts` | Creates the base `__luxarDebug` object and checks activation flags. |
+| `packages/luxar-viewer/src/core/app.ts` | Extends the object with runtime components in `setupDebugInterface()`. |
+| `packages/luxar-viewer/src/tests/e2e/helpers.ts` | Playwright helper functions that consume the debug interface. |

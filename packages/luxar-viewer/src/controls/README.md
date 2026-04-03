@@ -103,24 +103,46 @@ Camera state (position, target) is preserved across switches. The ortho mode res
 The `ControlsManager` class orchestrates the control system:
 
 ```typescript
-class ControlsManager {
+class ControlsManager extends THREE.EventDispatcher {
+  // Control type management
   setControlType(type: 'orbit' | 'fly' | 'ortho'): void;
   getControlType(): ControlType;
   getControls(): LuxarOrbitControls | LuxarFlyControls | null;
+  setCamera(camera: LuxarCamera): void;
+  setEnabled(enabled: boolean): void;
 
-  // Configuration
+  // Orbit configuration
   setAutoRotate(enabled: boolean): void;
   setAutoRotateSpeed(speed: number): void;
+  getAutoRotate(): boolean;
+  setEnableZoom(enabled: boolean): void;
+
+  // Fly configuration
   setFlyMovementSpeed(speed: number): void;
+  setFlyRotationSpeed(speed: number): void;
   setFlyInertialMode(inertial: boolean): void;
+  setFlyDamping(damping: number): void;
+  setFlyRotationDamping(damping: number): void;
+  getFlyControls(): LuxarFlyControls | null;
+  getFlyConfig(): { inertialMode; damping; rotationDamping; movementSpeed; rotationSpeed };
 
   // Camera control
   lookAt(target: Vector3, smooth?: boolean): void;
+  setTarget(target: Vector3): void;
+  getFocusTarget(): Vector3;
+  reinitialize(): void;
   reset(): void;
   saveState(): void;
 
+  // Scale-aware parameters
+  setSceneScale(diagonal: number): void;
+  getSceneScale(): number;
+  setDistanceLimits(min: number, max: number): void;
+  setZoomLimits(min: number, max: number): void;
+
   // Update loop (call every frame)
   update(): void;
+  dispose(): void;
 }
 ```
 
@@ -131,7 +153,7 @@ class LuxarOrbitControls extends EventDispatcher {
   target: Vector3; // Orbit center
   enabled: boolean;
   enableDamping: boolean;
-  dampingFactor: number; // 0.25 default (exponential decay)
+  dampingFactor: number; // 0.05 default (exponential decay)
   rotateSpeed: number; // 3.0 default
   panSpeed: number; // 1.0 default
   zoomSpeed: number; // 1.0 default
@@ -151,6 +173,17 @@ class LuxarOrbitControls extends EventDispatcher {
   dispose(): void;
 }
 ```
+
+### Type Definitions (`types.ts`)
+
+Key types and type guards exported from this package:
+
+- `ControlType` - `'orbit' | 'fly' | 'ortho'`
+- `ControlState`, `OrbitState`, `FlyState` - Complete control state interfaces
+- `ControlInstance` - Union of `LuxarOrbitControls | LuxarFlyControls`
+- `isOrbitControls(control)` - Type guard for orbit controls
+- `isFlyControls(control)` - Type guard for fly controls
+- `GuiControllers`, `RenderingControllers`, `BloomControllers`, `HDRControllers` - GUI controller type references
 
 ### Events
 

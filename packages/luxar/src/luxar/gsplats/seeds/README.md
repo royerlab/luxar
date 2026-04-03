@@ -9,11 +9,12 @@ Seed generation is the first step in Gaussian splat fitting - identifying potent
 - **Reconstruction quality**: Better coverage of important features
 - **Computational efficiency**: Fewer redundant splats
 
-The module provides three complementary approaches:
+The module provides four complementary approaches:
 
 1. **Decomposition-Based** (`seed_from_decomposition`): Scale-hierarchical detection via image decomposition
 2. **Grid-Based** (`seed_from_grid`): Uniform spatial coverage with isotropic shapes
 3. **Edge-Based** (`seed_from_edges`): Boundary detection with isotropic shapes
+4. **Peaks-Based** (`seed_from_peaks`): Intensity-weighted sampling at non-zero voxels (ideal for sparse residuals in progressive fitting)
 
 ## Unified Entry Point: `generate_seeds()`
 
@@ -35,6 +36,7 @@ def generate_seeds(
   - `"decomposition"`: Hierarchical scale decomposition-based detection (slow)
   - `"grid"`: Uniform grid seeding for spatial coverage
   - `"edges"`: Edge-based seeding along detected boundaries
+  - `"peaks"`: Intensity-weighted sampling at non-zero voxels
   - Comma-separated: e.g., `"decomposition,edges,grid"` for specific combination
 - `device` (str, optional): PyTorch device for GPU acceleration
   - `None` (default): CPU using scipy.ndimage
@@ -50,7 +52,6 @@ def generate_seeds(
   - `centers`: (N, ndim) float - peak positions
   - `amplitudes`: (N,) float - peak intensities
   - `cholesky_factors`: (N, ndim*(ndim+1)//2) float - scale-informed Cholesky factors
-  - `sharpnesses`: (N,) float - all set to 2.0 (standard Gaussian)
 
 **Examples**:
 ```python
@@ -177,7 +178,7 @@ seeds = seed_from_decomposition(
 ```python
 seeds = seed_from_grid(
     V,                                    # Input image/volume
-    spacing=None,                         # Grid spacing (None = auto ~5% of min dim)
+    spacing=None,                         # Grid spacing (None = auto, aspect-ratio-aware)
     jitter=0.0,                           # Jitter fraction (0.0-0.5)
     sigma=None,                           # Gaussian sigma (None = spacing/2)
     exclude_below=None,                   # Absolute intensity threshold
@@ -229,15 +230,51 @@ seeds = seed_from_edges(
 
 ---
 
+### 4. Peaks-Based Seed Generation
+
+**Function**: `seed_from_peaks()`
+
+**Strategy**: Sample seeds at non-zero voxels weighted by intensity. Every seed lands on actual signal, with splats starting at single-voxel size so the optimizer grows them as needed.
+
+**How It Works**:
+1. Find all non-zero voxels in the input volume
+2. Sample `n_seeds` locations with probability proportional to intensity
+3. Sort by intensity (brightest first)
+4. Assign isotropic Gaussians with auto-scaled sigma based on inter-seed spacing
+
+**When to Use**:
+- For sparse residuals in progressive fitting
+- When signal has varying shape (peaks, plateaus, edges)
+- When peak-detection would miss non-extremal structures
+- As a complement to other methods for residual fitting
+
+**Key Parameters**:
+```python
+seeds = seed_from_peaks(
+    V,                                    # Input volume (any dimensionality)
+    n_seeds=None,                         # Number of seeds (None = one per non-zero voxel)
+    init_sigma=None,                      # Gaussian sigma (None = auto-scaled)
+    device=None,                          # GPU device ('cuda', 'mps', 'auto', None)
+)
+```
+
+**Advantages**:
+- **Signal-focused**: Seeds placed only on actual signal, no wasted seeds on background
+- **Intensity-weighted**: Brighter voxels more likely to receive seeds
+- **Auto-scaling**: Sigma automatically computed from inter-seed spacing
+- **GPU-accelerated**: Uses PyTorch for fast multinomial sampling
+
+---
+
 ## Comparison: Methods Overview
 
-| Aspect | Decomposition | Grid | Edges |
-|--------|---------------|------|-------|
-| **Philosophy** | Scale-hierarchical | Uniform coverage | Boundary detection |
-| **Shape Type** | Isotropic | Isotropic | Isotropic |
-| **Best For** | Blob-like features | Textures, coverage | Boundaries |
-| **Noise Handling** | ignore_finest_k | Intensity threshold | Edge threshold |
-| **Speed** | Slower (decomposition) | Fast | Medium |
+| Aspect | Decomposition | Grid | Edges | Peaks |
+|--------|---------------|------|-------|-------|
+| **Philosophy** | Scale-hierarchical | Uniform coverage | Boundary detection | Intensity-weighted sampling |
+| **Shape Type** | Isotropic | Isotropic | Isotropic | Isotropic |
+| **Best For** | Blob-like features | Textures, coverage | Boundaries | Sparse residuals |
+| **Noise Handling** | ignore_finest_k | Intensity threshold | Edge threshold | Zero-voxel exclusion |
+| **Speed** | Slower (decomposition) | Fast | Medium | Fast |
 
 ## Integration with fit_gaussian_splats
 
@@ -425,12 +462,12 @@ The decomposition method uses `local_maxima()` for peak detection:
 
 ### Deduplication Strategy
 
-Uses `dedupe_farthest_first()` for spatial deduplication:
+Uses `dedupe_farthest_first()` for spatial deduplication (note: despite the legacy name, this uses a simple greedy approach which is ~50x faster and produces equivalent results for Gaussian splatting):
 1. Sort candidates by energy/intensity (highest first)
 2. Keep first (highest energy) candidate
-3. Iteratively select candidate farthest from all selected
-4. Only keep candidates satisfying min_distance constraint
-5. Ensures maximum spatial diversity with quality priority
+3. Iterate through remaining candidates in intensity order
+4. Keep each candidate if it satisfies min_distance from all already-selected seeds
+5. Uses KD-tree for O(log M) nearest-neighbor queries (rebuilt every 100 seeds)
 
 ### Edge Seeding (Sobel + Poisson Disk)
 
@@ -461,6 +498,12 @@ hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_generate_seed
 - **Tests**: See `tests/` for usage examples and validation
 
 ## Version History
+
+- **v2.3 (2025-01)**: Peaks-based seeding
+  - Added `seed_from_peaks()` for intensity-weighted sampling at non-zero voxels
+  - Ideal for sparse residuals in progressive fitting
+  - Auto-scaling sigma based on inter-seed spacing
+  - GPU-accelerated via PyTorch multinomial sampling
 
 - **v2.2 (2025-01)**: GPU acceleration
   - Added PyTorch GPU acceleration for all seeding methods

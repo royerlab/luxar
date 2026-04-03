@@ -22,9 +22,9 @@ pip install "luxar[gsplats]"
 - **Oriented Gaussians**: Full covariance matrices via Cholesky decomposition for arbitrary orientations
 - **Convergence-Driven Dynamic Operations**: Adaptive splat management based on convergence criteria with seeding and pruning
 - **Asymmetric Loss Functions**: 10x penalty for over-prediction addresses additive model constraints (MSE and Poisson)
-- **Standard PyTorch Adam**: Fast vectorized optimization with gradient dilution compensation (50x+ faster than alternatives)
+- **Standard PyTorch Adam**: Fast vectorized optimization with gradient dilution compensation (significantly faster than per-splat alternatives)
 - **Adaptive Thresholds**: Amplitude validation scales with local residual magnitude to prevent optimization plateaus
-- **Automatic Optimization**: Early stopping saves 20-60% of iterations without quality loss
+- **Automatic Optimization**: Early stopping saves a substantial fraction of iterations without quality loss
 - **GPU Acceleration**: CUDA support with batched operations, improved MPS compatibility
 - **Robust Initialization**: Multiscale candidate detection with DoG and peak finding
 - **Memory Efficient**: Truncated rendering, optional mixed precision, pre-allocated buffers
@@ -102,7 +102,7 @@ Efficient rendering using batched operations with two computational approaches:
 The implementation includes several key optimizations that provide significant speedup:
 
 1. **2D/3D Specialized Paths**: Optimized renderers with explicit forward-substitution for common cases
-2. **Convergence Detection**: Automatically stops when loss plateaus (saves 20-60% iterations)
+2. **Convergence Detection**: Automatically stops when loss plateaus (saves a substantial fraction of iterations)
 3. **Adaptive Learning**: Reduces learning rate on plateaus for better convergence
 4. **Device-Aware Selection**: Automatic selection of best available device (CUDA > CPU > MPS)
 5. **Cached Computations**: Reuses grids and strides for repeated operations
@@ -394,7 +394,7 @@ The system uses **fixed-pool splat relocation** instead of add/remove operations
 ### **Problem**: Traditional Add/Remove Approach
 - Adding/removing splats changes tensor shapes
 - Requires complex per-splat optimizer state management
-- 50x+ slower than standard vectorized optimization
+- Significantly slower than standard vectorized optimization
 
 ### **Solution**: Fixed-Pool Relocation
 - Identify weak splats (low importance = amplitude × volume)
@@ -403,7 +403,7 @@ The system uses **fixed-pool splat relocation** instead of add/remove operations
 - Standard PyTorch Adam works naturally
 
 ### **Benefits**
-- **50x+ faster**: Standard vectorized Adam optimizer
+- **Significantly faster**: Standard vectorized Adam optimizer
 - **Simple architecture**: No complex state management
 - **Natural adaptation**: Adam's momentum quickly adapts to relocated splats
 - **Spatial coverage**: Weak splats are reused for uncovered regions
@@ -446,7 +446,7 @@ The implementation features **fixed-pool splat relocation** that automatically i
 
 ### Key Benefits
 
-- **50x+ faster**: Standard vectorized PyTorch Adam optimizer
+- **Significantly faster**: Standard vectorized PyTorch Adam optimizer
 - **Convergence Alignment**: Operations directly serve optimization goals
 - **Simple Architecture**: No complex per-splat state management
 - **Quality Focus**: Continuous improvement throughout optimization
@@ -454,7 +454,7 @@ The implementation features **fixed-pool splat relocation** that automatically i
 ### Enabling Dynamic Operations
 
 ```python
-from luxar.gsplats.fitting.config import DynamicOpsConfig
+from luxar.gsplats import DynamicOpsConfig
 
 # Create configuration
 config = DynamicOpsConfig()
@@ -492,7 +492,7 @@ The implementation uses **standard PyTorch Adam** with a fixed-pool splat archit
 
 ### Key Benefits
 
-**50x+ Faster**: Standard vectorized Adam is dramatically faster than per-splat alternatives.
+**Significantly Faster**: Standard vectorized Adam is dramatically faster than per-splat alternatives.
 
 **Natural Momentum Adaptation**: When splats are relocated, Adam's momentum buffers at those indices quickly adapt to the new location as new gradients overwrite stale momentum.
 
@@ -678,7 +678,6 @@ result = load_gsplats('fitted.gsplats.zarr')
 # Access all fields
 print(f"Loaded {result.centers.shape[0]} splats")
 print(f"Has colors: {result.colors is not None}")
-print(f"Has colors: {result.colors is not None}")
 
 # Render loaded splats
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
@@ -773,9 +772,12 @@ Main fitting function with automatic optimizations.
 - `early_stopping`: Enable convergence detection (default: True)
 - `device`: PyTorch device (auto-detect if None)
 
-**Returns:**
-- `params`: (N, d + d*(d+1)/2) array of [centers, packed_cholesky]
-- `amps`: (N,) array of amplitudes
+**Returns:** `GSplatData` with fields:
+- `centers`: np.ndarray, shape (N, d) - Splat center positions
+- `amplitudes`: np.ndarray, shape (N,) - Non-negative amplitudes
+- `cholesky_factors`: np.ndarray, shape (N, d*(d+1)//2) - Packed Cholesky factors
+- `colors`: Optional[np.ndarray], shape (N, 3) - RGB colors
+- `stats`: Dict[str, Any] - Optimization statistics
 
 #### `fit_tiled(volume, tile_size=256, overlap=32, **fit_kwargs)`
 Tiled fitting for large volumes that exceed GPU memory. Splits the volume into
@@ -850,8 +852,8 @@ The implementation supports multiple PyTorch devices with performance-aware auto
 | Device | Auto-Selected | Performance | Notes |
 |--------|---------------|-------------|-------|
 | **CPU** | ✓ (default on Mac) | Baseline | Reliable, well-optimized |
-| **MPS** (Apple Silicon) | Manual only | ~0.1x (slower) | Compatible but has overhead issues |
-| **CUDA** | ✓ (when available) | 5-10x faster | Best performance, full features |
+| **MPS** (Apple Silicon) | Manual only | Slower than CPU | Compatible but has overhead issues |
+| **CUDA** | ✓ (when available) | Significant speedup | Best performance, full features |
 
 ### Device Selection Logic:
 ```python
@@ -866,15 +868,15 @@ fitter = GaussianSplatFitter(device="cpu")    # Force CPU
 
 ### Apple Silicon Performance Notes:
 
-**PyTorch MPS Issues**: The PyTorch MPS backend (as of 2024-2025) has significant overhead for `torch.linalg.solve_triangular` operations, making CPU ~10x faster than MPS on M1/M2/M3/M4 chips.
+**PyTorch MPS Issues**: The PyTorch MPS backend has significant overhead for `torch.linalg.solve_triangular` operations, making CPU substantially faster than MPS on Apple Silicon chips.
 
-**MLX Alternative Investigated**: Apple's MLX framework was evaluated as a potential solution. However, MLX's `solve_triangular` operation is currently CPU-only (not GPU-accelerated) and ~1.7x slower than PyTorch's CPU implementation as of MLX v0.29.0.
+**MLX Alternative Investigated**: Apple's MLX framework was evaluated as a potential solution. However, MLX's `solve_triangular` operation is currently CPU-only (not GPU-accelerated) and slower than PyTorch's CPU implementation.
 
 **Current Optimal Strategy**: Auto-select CPU on Apple Silicon, which provides the best performance available. This will automatically benefit from future improvements in either PyTorch MPS or MLX GPU acceleration.
 
 ### Metal Backend (Apple Silicon GPU Acceleration)
 
-For 3D volumes on Apple Silicon, a native **Metal compute shader** backend is available that provides **10-50x speedup** over CPU rendering:
+For 3D volumes on Apple Silicon, a native **Metal compute shader** backend is available that provides a **significant speedup** over CPU rendering:
 
 ```python
 from luxar.gsplats.models.gsplats.metal import GaussianSplatModelMetal
@@ -910,65 +912,125 @@ See [metal/README.md](models/gsplats/metal/README.md) for detailed installation 
 
 ```
 gsplats/
-├── fit_gsplats.py              # Main fitting interface (refactored to use modular pipeline)
-├── fit_tiled_gsplats.py        # Tiled fitting for large volumes (fit_tile, fit_tiled)
-├── tiling.py                   # Tile geometry and cosine apodization (TileSpec, cosine_window)
-├── metrics.py                  # Quality metrics (PSNR, SSIM, MSE, relative L2)
-├── seeds.py               # Multiscale candidate detection
-├── dynamic_ops.py              # Adaptive topology operations (prune, seed, merge, split)
-├── fitting/                    # Modular fitting pipeline (NEW - refactored components)
-│   ├── __init__.py            # Exports for main interface
-│   ├── config.py              # Configuration dataclasses (FitConfig, PreprocessedData, etc.)
-│   ├── validation.py          # Input validation and parameter checking
-│   ├── preprocessing.py       # Data normalization and candidate generation
-│   ├── initialization.py      # Model and optimizer initialization
-│   ├── losses.py              # Loss function creation (MSE, Poisson, L1)
-│   ├── optimization.py        # Main optimization loop and convergence logic
-│   ├── results.py             # Result finalization and statistics
-│   └── visualization.py       # Movie recording and compression analysis
-├── rendering/                  # Volume rendering module
-│   ├── __init__.py            # Exports render_to_volume, render_to_volume_tensor
-│   └── volume_rendering.py   # GPU-accelerated rendering with auto backend selection
-├── optim/                      # Optimizer utilities
-│   └── integration.py         # Standard Adam with gradient dilution compensation
+├── __init__.py                    # Public API exports (lazy import with graceful fallback)
+├── fit_gsplats.py                 # Main fitting interface (orchestrates modular pipeline)
+├── fit_progressive_gsplats.py     # Progressive fitting (iterative refinement)
+├── fit_tiled_gsplats.py           # Tiled fitting for large volumes (fit_tile, fit_tiled)
+├── tiling.py                      # Tile geometry and cosine apodization (TileSpec, cosine_window)
+├── gsplat_data.py                 # GSplatData / GSplatLOD dataclasses, save/load, transforms
+├── culling.py                     # Contribution-based splat culling (CullResult, cull_by_contribution)
+├── metrics.py                     # Quality metrics (PSNR, SSIM, MSE, relative L2)
+├── gpu_profile.py                 # GPU benchmark profile management
+│
+├── seeds/                         # Seed generation subpackage
+│   ├── generate.py                # Unified entry point (generate_seeds)
+│   ├── edges.py                   # Edge-based seeding (Sobel + Poisson disk)
+│   ├── grid.py                    # Grid-based seeding with optional jitter
+│   ├── multiscale_decomposition.py # Scale-hierarchical seed detection
+│   ├── peaks.py                   # Peak detection utilities
+│   ├── gpu_ops.py                 # GPU-accelerated seeding operations
+│   └── utils.py                   # Seeding helper utilities
+│
+├── fitting/                       # Modular fitting pipeline
+│   ├── config.py                  # Configuration dataclasses (FitConfig, PreprocessedData, etc.)
+│   ├── validation.py              # Input validation and parameter checking
+│   ├── preprocessing.py           # Data normalization and candidate generation
+│   ├── initialization.py          # Model and optimizer initialization
+│   ├── losses.py                  # Loss function creation (MSE, Poisson, L1)
+│   ├── optimization.py            # Main optimization loop and convergence logic
+│   ├── results.py                 # Result finalization and statistics
+│   ├── sorting.py                 # Spatial sorting (Hilbert, Morton)
+│   ├── downscale.py               # Volume downscaling utilities
+│   ├── visualization.py           # Movie recording and compression analysis
+│   └── dynamic_ops/               # Convergence-driven splat relocation
+│       ├── config.py              # DynamicOpsConfig dataclass
+│       ├── operations.py          # Relocation logic
+│       └── peak_finding.py        # Residual peak detection
+│
+├── rendering/                     # Volume rendering module
+│   ├── __init__.py                # Exports render_to_volume, render_to_volume_tensor
+│   └── volume_rendering.py        # GPU-accelerated rendering with auto backend selection
+│
+├── optim/                         # Optimizer utilities
+│   └── integration.py             # Standard Adam with gradient dilution compensation
+│
 ├── models/
 │   ├── gsplats/
-│   │   ├── gsplat_model.py    # PyTorch model definition
-│   │   ├── gsplats_batched_render.py  # GPU batched renderer
-│   │   └── gsplats_render.py  # CPU fallback renderer
+│   │   ├── gsplat_model.py        # PyTorch model definition
+│   │   ├── rendering_core.py      # Core rendering kernels
+│   │   ├── rendering_wrappers.py  # NumPy/PyTorch rendering convenience wrappers
+│   │   ├── cuda/                  # CUDA kernels for GPU-accelerated splatting
+│   │   └── metal/                 # Metal compute shaders for Apple Silicon
 │   └── utils/
-│       ├── inverse_softplus.py # Numerical utilities
-│       └── lt_solver.py       # Triangular system solver
+│       ├── inverse_softplus.py    # Numerical utilities
+│       └── lt_solver.py           # Triangular system solver
+│
+├── io/                            # I/O subpackage
+│   ├── save_gsplats.py            # Save GSplatData to .gsplats.zarr
+│   ├── load_gsplats.py            # Load GSplatData from .gsplats.zarr
+│   └── inspect_gsplats.py         # Inspect and summarize .gsplats.zarr files
+│
+├── batch/                         # HPC batch fitting (Slurm integration)
+│   ├── manifest.py                # Batch job manifest management
+│   ├── slurm_gen.py               # Slurm script generation
+│   ├── merge_orchestrator.py      # Tile merge orchestration
+│   ├── status.py                  # Job status tracking
+│   ├── time_estimate.py           # Fitting time estimation
+│   └── env_capture.py             # Environment capture for reproducibility
+│
+├── clahe/                         # CLAHE (adaptive histogram equalization)
+│   └── clahe_core.py              # Core CLAHE implementation
+│
+├── preprocessing/                 # Volume preprocessing (denoising, calibration)
+│   ├── nlm_core.py                # Non-Local Means denoising (NumPy)
+│   ├── nlm_pytorch.py             # Non-Local Means denoising (PyTorch)
+│   ├── denoise_pipeline.py        # Denoising pipeline orchestration
+│   ├── calibration.py             # Noise calibration
+│   └── cuda/                      # CUDA-accelerated preprocessing
+│
+├── multiscale/                    # Multiscale volume decomposition
+│   └── decompose.py               # Scale-space decomposition
+│
 ├── utils/
-│   └── trils.py               # Triangular matrix packing/unpacking
+│   └── trils.py                   # Triangular matrix packing/unpacking
+│
 ├── demos/                         # Interactive demonstrations
-│   ├── demo_basic_fitting.py      # Simple API introduction with standard optimizer
-│   ├── demo_performance_metrics.py # Detailed convergence and quality metrics
+│   ├── demo_basic_fitting.py      # Simple API introduction
+│   ├── demo_performance_metrics.py # Convergence and quality metrics
 │   ├── demo_tiled_fitting.py      # Tiled fitting for large volumes
-│   ├── demo_2d_synthetic_blobs.py # 2D compression analysis with oriented ellipses
-│   ├── demo_3d_synthetic_phantom.py # 3D volumetric compression with ellipsoid wireframes
+│   ├── demo_progressive_fitting.py # Progressive fitting demo
+│   ├── demo_2d_synthetic_blobs.py # 2D compression analysis
+│   ├── demo_3d_synthetic_phantom.py # 3D volumetric compression
 │   ├── demo_3d_dapi_microscopy.py # Real DAPI microscopy from IDR (remote zarr)
+│   ├── demo_3d_celegans_confocal.py # C. elegans confocal microscopy
 │   ├── demo_4d_hypercube.py       # 4D hypercube - nD algorithm validation
 │   ├── demo_splats_astronaut.py   # Astronaut photo compression analysis
-│   ├── demo_splats_coins.py       # Coins image with metallic textures
-│   ├── demo_splats_mitosis.py     # Mitosis histology compression analysis
-│   └── demo_splats_mitosis_intgrad.py # CLAHE seeding test with intensity gradient
+│   ├── demo_splats_coins.py       # Coins image compression
+│   ├── demo_splats_mitosis.py     # Mitosis histology compression
+│   └── ...                        # Additional progressive/culling/seeding demos
+│
 └── tests/
-    ├── test_tiled_fitting.py        # Tiled fitting tests
-    ├── test_metrics.py              # Quality metrics tests
-    └── test_gsplats_integration.py  # Comprehensive tests
+    ├── test_gsplats_integration.py # Comprehensive integration tests
+    ├── test_fit_gsplats.py         # Fitting function tests
+    ├── test_gsplat_data.py         # GSplatData dataclass tests
+    ├── test_culling.py             # Culling tests
+    ├── test_metrics.py             # Quality metrics tests
+    ├── test_tiled_fitting.py       # Tiled fitting tests
+    ├── test_progressive_fitting.py # Progressive fitting tests
+    ├── test_batch.py               # Batch fitting tests
+    └── ...                         # Additional test files
 ```
 
-### Refactored Architecture
+### Modular Fitting Architecture
 
-The fitting pipeline has been refactored from a monolithic 480+ line method into focused, maintainable modules:
+The fitting pipeline uses a modular architecture with focused, maintainable modules:
 
-- **fit_gsplats.py**: Now contains a clean orchestration method that coordinates the pipeline
+- **fit_gsplats.py**: Clean orchestration method that coordinates the pipeline
 - **fitting/ modules**: Each handles a specific aspect of the fitting process
-  - Improved testability with individual components
-  - Better separation of concerns
-  - Enhanced maintainability and readability
-  - Type-safe configuration objects
+  - Individual components are independently testable
+  - Clear separation of concerns across six pipeline stages
+  - Type-safe configuration via dataclasses (FitConfig, PreprocessedData, etc.)
+  - See `fitting/README.md` for the full pipeline architecture diagram
 
 ## Running Demos
 
@@ -1004,17 +1066,17 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_4d_hypercube.py --n
 The `demo_4d_hypercube.py` demonstrates complete nD algorithm validation:
 
 **4D Test Results:**
-- **Hypercube data**: (8x64x64x64) = 262K hypervoxels with synthetic 4D Gaussian blobs
-- **Auto-candidate generation**: Volume-proportional scaling (262K → 524 peaks/scale, perfect 0.2% density)
-- **4D splat fitting**: Successfully generates 787 4D splats (15 parameters each)
-- **Outstanding compression**: 95.5% bit reduction (8.3M → 377K bits)
+- **Hypercube data**: Synthetic 4D Gaussian blobs in a multi-frame volume
+- **Auto-candidate generation**: Volume-proportional scaling with automatic density tuning
+- **4D splat fitting**: Successfully generates 4D splats with full covariance parameterization
+- **Strong compression**: Substantial bit reduction compared to raw voxel storage
 - **Best state tracking**: Quality guarantee with restoration from optimal iteration
 - **Interactive 4D visualization**: Full napari navigation with dimension sliders
 - **nD algorithms validated**: All features working correctly in 4D space
 
 ## Testing
 
-The gsplats package has comprehensive test coverage with 325 tests organized into unit tests (per subpackage) and integration tests:
+The gsplats package has comprehensive test coverage organized into unit tests (per subpackage) and integration tests:
 
 ```bash
 # Run all gsplats tests
@@ -1034,13 +1096,12 @@ hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_tiled_fitting.py -v
 ```
 
 **Test Organization:**
-- `fitting/tests/` - 84 tests for modular fitting pipeline (100% module coverage)
-- `optim/tests/` - Tests for optimizer integration
-- `models/*/tests/` - 53 tests for model and utility functions
-- `multiscale/tests/` - 30 tests for multiscale decomposition
-- `tests/` - 131 integration tests for complete pipelines
-  - Includes 11 new tests for multi-scale fitting
-  - Includes tests for quality metrics and tiled fitting
+- `fitting/tests/` - Modular fitting pipeline
+- `optim/tests/` - Optimizer integration
+- `models/*/tests/` - Model and utility functions
+- `multiscale/tests/` - Multiscale decomposition
+- `tests/` - Integration tests for complete pipelines
+  - Includes tests for quality metrics, tiled fitting, culling, batch, and progressive fitting
 
 **Coverage:**
 - Unit tests for all pipeline components (validation, preprocessing, losses, optimization, etc.)
@@ -1055,12 +1116,12 @@ hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_tiled_fitting.py -v
 
 ## Performance Tips
 
-1. **Device Selection**: Use GPU when available (5-10x speedup)
-2. **Early Stopping**: Keep enabled for 20-60% iteration reduction
+1. **Device Selection**: Use GPU when available (significant speedup)
+2. **Early Stopping**: Keep enabled for substantial iteration reduction
 3. **Candidate Tuning**: Balance quality vs speed with `peaks_per_scale`
 4. **Loss Function**: Use Poisson for photon/count data, MSE for general
 5. **Regularization**: Add L1 penalty for sparser, faster solutions
-6. **Compilation**: Enable on CUDA for additional 20-30% speedup
+6. **Compilation**: Enable on CUDA for additional speedup
 7. **Tiled Fitting**: Use `fit_tiled()` for volumes exceeding GPU memory
 8. **GPU Tensor Rendering**: Use `render_to_volume_tensor()` instead of `render_to_volume()` when feeding results into further GPU operations (avoids GPU-CPU round-trip)
 

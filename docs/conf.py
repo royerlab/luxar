@@ -49,7 +49,7 @@ autodoc_default_options = {
 }
 
 # Mock imports for packages that may not be installed (e.g., torch, optional deps)
-autodoc_mock_imports = ["torch", "torchvision", "pytorch3d"]
+autodoc_mock_imports = ["torch", "torchvision", "pytorch3d", "scipy"]
 
 # Suppress warnings for missing references
 suppress_warnings = ["ref.any"]
@@ -86,7 +86,6 @@ html_favicon = None  # Add favicon if you have one
 # Theme options
 html_theme_options = {
     "logo_only": False,
-    "display_version": True,
     "prev_next_buttons_location": "bottom",
     "style_external_links": True,
     "collapse_navigation": False,

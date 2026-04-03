@@ -11,7 +11,8 @@ Colormap (CLUT) support for mapping scalar data to RGB colors in Luxar scenes.
 
 | Category | Names |
 |----------|-------|
-| Microscopy linear ramps | green, magenta, cyan, red, blue, yellow, gray |
+| Microscopy linear ramps | green, magenta, cyan, red, blue, yellow, gray, orange |
+| BOP (Blue-Orange-Purple) | bop_blue, bop_orange, bop_purple |
 | Perceptually uniform | viridis, inferno, plasma, turbo |
 | Domain-specific | fire, ice, phase (cyclic) |
 | Diverging | RdBu, coolwarm |
@@ -61,7 +62,7 @@ When `colormap` is set, `colors` must not be provided (mutually exclusive).
 
 | File | Purpose |
 |------|---------|
-| `__init__.py` | Public API exports |
+| `__init__.py` | Public API exports (`resolve_colormap`, `BUILTIN_COLORMAP_NAMES`) |
 | `registry.py` | `resolve_colormap()` and resolution logic |
-| `builtins.py` | Pre-generated 256x3 uint8 LUT data (auto-generated) |
-| `tests/test_registry.py` | 53 tests covering all resolution paths |
+| `builtins.py` | Pre-generated 256x3 uint8 LUT data, `get_builtin_lut()`, `BUILTIN_COLORMAP_NAMES` |
+| `tests/test_registry.py` | Tests covering all resolution paths |
