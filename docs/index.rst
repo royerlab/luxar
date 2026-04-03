@@ -67,15 +67,33 @@ Features
    :maxdepth: 2
    :caption: Tutorials:
 
-   tutorials/index
+   tutorials/basic_scene
+   tutorials/nd_navigation
+   tutorials/programmatic_server
+   tutorials/gaussian_splatting
+   tutorials/performance_optimization
 
 .. toctree::
    :maxdepth: 2
    :caption: User Guides:
 
    guides/user/VIEWER_GUIDE
-   guides/user/LUXAR_ZARR_FORMAT
    guides/user/HDR_GUIDE
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Format Specifications:
+
+   guides/user/LUXAR_ZARR_FORMAT
+   specs/GSPLATS_ZARR_FORMAT
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Technical Specifications:
+
+   guides/specs/ND_TRANSFORMS_SPEC
+   guides/specs/CACHE_PREFETCHING_SPEC
+   specs/GSPLATS_DIMENSION_MAPPING
 
 .. toctree::
    :maxdepth: 2
@@ -89,27 +107,12 @@ Features
    guides/developer/CONSOLE_OUTPUT_STYLE
    guides/developer/NETWORK_SIMULATION_SPEC
    guides/developer/ERROR_HANDLING_GUIDE
-   guides/developer/PERFORMANCE_OPTIMIZATION_SPEC
-   guides/developer/SCENE_UPDATE_OPTIMIZATION
-   guides/developer/METAL_SPLATTING_IMPLEMENTATION_SPEC
    guides/developer/DEBUG_INTERFACE_GUIDE
-   guides/developer/E2E_COVERAGE_GAPS
-   guides/developer/E2E_TEST_AUDIT
    guides/developer/INTENSITY_GAMMA_DESIGN
 
 .. toctree::
-   :maxdepth: 2
-   :caption: Technical Specifications:
-
-   guides/specs/CACHE_PREFETCHING_SPEC
-   guides/specs/DIMENSION_INITIALIZATION_FIX
-   guides/specs/LINES_SEGMENT_CHUNKING_BUG_FIX
-   guides/specs/ND_TRANSFORMS_SPEC
-   specs/GSPLATS_DIMENSION_MAPPING
-
-.. toctree::
    :maxdepth: 3
-   :caption: API Reference:
+   :caption: Python API Reference:
 
    api/core
    api/io
@@ -120,12 +123,11 @@ Features
    api/cli
    api/gsplats
 
-TypeScript Viewer API
-~~~~~~~~~~~~~~~~~~~~~
+.. toctree::
+   :maxdepth: 1
+   :caption: TypeScript API Reference:
 
-The TypeScript viewer API documentation is generated separately with TypeDoc:
-
-* `Viewer API Reference <api/viewer/index.html>`_ -- Full TypeDoc-generated API for the luxar-viewer package
+   api/viewer_api
 
 Packages Overview
 -----------------
