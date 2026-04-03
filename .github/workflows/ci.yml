@@ -120,7 +120,7 @@ jobs:
         run: cd packages/luxar-viewer && npx playwright install --with-deps chromium
 
       - name: Install software OpenGL for headless WebGL
-        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa libgl1-mesa-dri
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1-mesa-dri libegl-mesa0 libgbm1
 
       - name: Generate example datasets
         run: make run-examples
