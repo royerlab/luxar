@@ -10,7 +10,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, dismissDatasetBrowser } from './helpers';
+import { waitForLuxarReady, waitForNextRender, dismissDatasetBrowser } from './helpers';
 
 test.describe('Recording Panel', () => {
   test.beforeEach(async ({ page }) => {
@@ -29,7 +29,7 @@ test.describe('Recording Panel', () => {
 
     // Press T to show panel
     await page.keyboard.press('t');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     const panelAfterShow = await page.evaluate(() => {
       return (window as any).__luxarDebug.recordingPanel?.isVisible() ?? false;
@@ -42,7 +42,7 @@ test.describe('Recording Panel', () => {
 
     // Press T again to hide
     await page.keyboard.press('t');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     const panelAfterHide = await page.evaluate(() => {
       return (window as any).__luxarDebug.recordingPanel?.isVisible() ?? false;
@@ -53,7 +53,7 @@ test.describe('Recording Panel', () => {
   test('should close recording panel with Escape', async ({ page }) => {
     // Open panel
     await page.keyboard.press('t');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     const isVisible = await page.evaluate(() => {
       return (window as any).__luxarDebug.recordingPanel?.isVisible() ?? false;
@@ -62,7 +62,7 @@ test.describe('Recording Panel', () => {
 
     // Press Escape to close
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     const isVisibleAfter = await page.evaluate(() => {
       return (window as any).__luxarDebug.recordingPanel?.isVisible() ?? false;
@@ -73,7 +73,7 @@ test.describe('Recording Panel', () => {
   test('should have correct panel structure', async ({ page }) => {
     // Open panel
     await page.keyboard.press('t');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Verify title
     const titleText = await page
@@ -130,7 +130,7 @@ test.describe('Recording Panel', () => {
   test('should trigger screenshot from panel button', async ({ page }) => {
     // Open panel
     await page.keyboard.press('t');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Set up download listener
     const downloadPromise = page.waitForEvent('download', { timeout: 10000 });
@@ -146,7 +146,7 @@ test.describe('Recording Panel', () => {
   test('should show confirmation dialog for video recording', async ({ page }) => {
     // Open panel
     await page.keyboard.press('t');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Switch to video mode
     await page.evaluate(() => {
@@ -162,11 +162,11 @@ test.describe('Recording Panel', () => {
         }
       }
     });
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Click capture button (should show confirmation dialog)
     await page.locator('.luxar-recording-btn button').click();
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     // Verify confirmation dialog appears
     const dialogTitle = await page.locator('.luxar-recording-confirm__title').textContent();
@@ -178,7 +178,7 @@ test.describe('Recording Panel', () => {
 
     // Cancel the dialog
     await page.locator('[data-action="cancel"]').click();
-    await page.waitForTimeout(200);
+    await waitForNextRender(page);
 
     // Dialog should be gone
     const dialogGone = await page.locator('.luxar-recording-confirm').count();
@@ -217,7 +217,7 @@ test.describe('Recording Panel', () => {
   test('should have Show Panels toggle in Advanced Options', async ({ page }) => {
     // Open panel
     await page.keyboard.press('t');
-    await page.waitForTimeout(300);
+    await waitForNextRender(page);
 
     // Expand the Advanced Options folder (collapsed by default)
     const advancedFolder = page
@@ -225,7 +225,7 @@ test.describe('Recording Panel', () => {
       .filter({ hasText: 'Advanced' });
     if ((await advancedFolder.count()) > 0) {
       await advancedFolder.click();
-      await page.waitForTimeout(200);
+      await waitForNextRender(page);
     }
 
     // Check for Show Panels checkbox (label class is luxar-gui__controller-name)

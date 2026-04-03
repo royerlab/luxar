@@ -14,7 +14,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, waitForSpatialQuery } from './helpers';
+import { waitForLuxarReady, waitForSpatialQuery, waitForNextRender } from './helpers';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -141,7 +141,7 @@ test.describe('Performance Regression Tracking', () => {
 
     // Perform a single navigation
     await page.keyboard.press('4');
-    await page.waitForTimeout(100);
+    await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQuery(page);
 

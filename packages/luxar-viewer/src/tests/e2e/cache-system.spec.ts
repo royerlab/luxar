@@ -13,7 +13,12 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, getLuxarState, assertNoConsoleErrors } from './helpers';
+import {
+  waitForLuxarReady,
+  getLuxarState,
+  assertNoConsoleErrors,
+  waitForNextRender,
+} from './helpers';
 
 // Use 3D dataset - 4D datasets may have 0 points visible depending on slice position
 const DATASET = 'http://localhost:9000/datasets/examples/radius_basic_example.zarr';
@@ -118,7 +123,7 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
     await waitForLuxarReady(page);
 
     // Wait for data loading to settle
-    await page.waitForTimeout(1000);
+    await waitForNextRender(page);
 
     // Get initial stats
     const statsBeforeClear = await page.evaluate(async () => {
@@ -147,7 +152,7 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
     await waitForLuxarReady(page);
 
     // Wait for data loading to settle
-    await page.waitForTimeout(1000);
+    await waitForNextRender(page);
 
     // Get initial stats
     const statsBeforeClear = await page.evaluate(async () => {
@@ -179,7 +184,7 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
     await waitForLuxarReady(page);
 
     // Wait for initial load to complete
-    await page.waitForTimeout(1000);
+    await waitForNextRender(page);
 
     // Get stats after first load
     const statsAfterFirstLoad = await page.evaluate(async () => {
@@ -196,7 +201,7 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
     // Trigger a re-render or small navigation that reuses existing chunks
     // (This simulates accessing cached chunks again)
     await page.mouse.wheel(0, 10); // Small zoom
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     const statsAfterSecondAccess = await page.evaluate(async () => {
       const debug = (window as any).__luxarDebug;

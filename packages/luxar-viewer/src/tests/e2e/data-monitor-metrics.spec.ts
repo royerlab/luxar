@@ -9,7 +9,13 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, waitForPointsLoaded, getLuxarState, focusCanvas } from './helpers';
+import {
+  waitForLuxarReady,
+  waitForPointsLoaded,
+  getLuxarState,
+  focusCanvas,
+  waitForNextRender,
+} from './helpers';
 
 // Dataset served from Python HTTP server on port 9000
 // Use build_example_structured - it's 3D with guaranteed visible points
@@ -62,7 +68,7 @@ test.describe('Data Loading Monitor Metrics', () => {
 
     // Press M to show the monitor
     await page.keyboard.press('m');
-    await page.waitForTimeout(500);
+    await waitForNextRender(page);
 
     // Check if monitor panel is visible
     const monitorVisible = await page.evaluate(() => {

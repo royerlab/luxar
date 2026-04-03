@@ -10,7 +10,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, getLuxarState } from './helpers';
+import { waitForLuxarReady, getLuxarState, waitForNextRender } from './helpers';
 
 test.describe('Viewer Initialization', () => {
   test('should initialize viewer without dataset', async ({ page }) => {
@@ -132,8 +132,8 @@ test.describe('Viewer Initialization', () => {
       (window as any).__luxarDebug.renderOnce();
     });
 
-    // Wait a bit
-    await page.waitForTimeout(100);
+    // Wait for render
+    await waitForNextRender(page);
 
     // Check state again
     const state2 = await getLuxarState(page);

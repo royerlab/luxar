@@ -85,13 +85,13 @@ jobs:
       - name: Unit tests
         run: pnpm test --run
 
-  # E2E smoke tests run with software rendering on standard runners.
-  # Many tests may fail under software rendering — this job is informational,
-  # not a merge blocker. Use a GPU runner for full E2E CI.
+  # E2E tests disabled — requires GPU-capable runners for reliable WebGL rendering.
+  # Software rendering on standard ubuntu-latest is too slow and unreliable.
+  # Run locally with: make test-e2e
   e2e-tests:
+    if: false
     needs: [python-tests, typescript-tests]
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
