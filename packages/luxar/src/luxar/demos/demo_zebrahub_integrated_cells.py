@@ -130,6 +130,40 @@ def main() -> None:
                     intensity=0.25,
                 )
 
+                # --- Overlays ---
+                # Title
+                scene.add_text(
+                    "Zebrahub Integrated Cells",
+                    position=(0.5, 0.02),
+                    font_size=0.026,
+                    anchor="top-center",
+                    color="rgba(255,255,255,0.85)",
+                    stroke_color="black",
+                    stroke_width=0.002,
+                )
+
+                # Dimension-aware labels for view
+                for i, label in enumerate(["Cell Type", "Timepoint"]):
+                    scene.add_text(
+                        label,
+                        position=(0.02, 0.97),
+                        font_size=0.015,
+                        anchor="bottom-left",
+                        color="#ffcc44",
+                        visible_range={"view": float(i)},
+                        transition="fade",
+                        transition_duration=0.15,
+                    )
+
+                # Info
+                scene.add_text(
+                    "95K cells \u2022 32 cell types",
+                    position=(0.98, 0.97),
+                    font_size=0.015,
+                    anchor="bottom-right",
+                    color="rgba(200,200,200,0.45)",
+                )
+
             aprint(f"{len(positions):,} total points ({len(coords):,} per view)")
 
         aprint(f"Dataset generated at {output}")
@@ -177,6 +211,40 @@ def main() -> None:
                     sharpness=np.full(len(positions), 4.0, dtype=np.float32),
                     opacity=0.8,
                     intensity=0.25,
+                )
+
+                # --- Overlays ---
+                # Title
+                scene.add_text(
+                    "Zebrahub Integrated Cells",
+                    position=(0.5, 0.02),
+                    font_size=0.026,
+                    anchor="top-center",
+                    color="rgba(255,255,255,0.85)",
+                    stroke_color="black",
+                    stroke_width=0.002,
+                )
+
+                # Dimension-aware labels for view
+                for i, label in enumerate(["Cell Type", "Timepoint"]):
+                    scene.add_text(
+                        label,
+                        position=(0.02, 0.97),
+                        font_size=0.015,
+                        anchor="bottom-left",
+                        color="#ffcc44",
+                        visible_range={"view": float(i)},
+                        transition="fade",
+                        transition_duration=0.15,
+                    )
+
+                # Info
+                scene.add_text(
+                    "95K cells \u2022 32 cell types",
+                    position=(0.98, 0.97),
+                    font_size=0.015,
+                    anchor="bottom-right",
+                    color="rgba(200,200,200,0.45)",
                 )
 
             aprint(f"{len(positions):,} total points ({len(coords):,} per view)")

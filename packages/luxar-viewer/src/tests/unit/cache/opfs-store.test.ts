@@ -70,6 +70,11 @@ describe('OPFSStore', () => {
             async getDirectoryHandle(_id: string, _opts?: any) {
               return mockFS.mockDirHandle;
             },
+            async removeEntry(_name: string, _opts?: any) {
+              // Simulate atomic directory removal (clear all files)
+              mockFS.files.clear();
+              mockFS.metaFiles.clear();
+            },
           };
         },
         async estimate() {

@@ -122,6 +122,7 @@ Features
    api/typing_utils
    api/cli
    api/gsplats
+   api/colormaps
 
 .. toctree::
    :maxdepth: 1

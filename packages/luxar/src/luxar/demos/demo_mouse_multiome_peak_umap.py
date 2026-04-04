@@ -38,6 +38,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import launch_viewer
 from luxar.utils._umap_utils import (
     attribute_to_color,
+    build_legend_html,
     generate_all_legends,
 )
 from luxar.utils.paths import get_demos_output_dir
@@ -109,6 +110,7 @@ def create_mouse_scene(
     output_path: Path,
     coordinates: np.ndarray,
     attributes: dict,
+    category_maps: dict | None = None,
 ) -> int:
     """Create Luxar scene with categorical attribute visualization.
 
@@ -116,6 +118,7 @@ def create_mouse_scene(
         output_path: Where to write Luxar zarr
         coordinates: (N, 3) UMAP coordinates
         attributes: Dict of attribute arrays
+        category_maps: Dict of attribute name -> list of category labels
 
     Returns:
         Number of points
@@ -211,6 +214,54 @@ def create_mouse_scene(
                 intensity=0.25,
             )
 
+            # --- Overlays ---
+            scene.add_text(
+                "Mouse Embryo Multiome UMAP",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+
+            for attr_id, (label, attr_key) in enumerate(
+                zip(category_labels, available_attrs)
+            ):
+                scene.add_text(
+                    f"Colored by: {label}",
+                    position=(0.02, 0.97),
+                    font_size=0.015,
+                    anchor="bottom-left",
+                    color="#ffcc44",
+                    visible_range={"attribute": attr_id},
+                    transition="fade",
+                    transition_duration=0.2,
+                )
+
+                if category_maps and attr_key in category_maps:
+                    legend_html = build_legend_html(
+                        attr_key, category_maps[attr_key], attributes.get(attr_key)
+                    )
+                    if legend_html:
+                        scene.add_html(
+                            legend_html,
+                            position=(0.98, 0.5),
+                            anchor="center-right",
+                            opacity=0.9,
+                            visible_range={"attribute": attr_id},
+                            transition="fade",
+                            transition_duration=0.2,
+                        )
+
+            scene.add_text(
+                f"{n_points:,} peaks \u2022 E7.5\u2013E8.75 \u2022 3D UMAP",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         aprint(f"Scene created with {n_points:,} points")
 
     return n_points
@@ -241,7 +292,7 @@ def main() -> None:
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "mouse_multiome_peak_umap.zarr"
-        _n_points = create_mouse_scene(output_path, coordinates, attributes)
+        _n_points = create_mouse_scene(output_path, coordinates, attributes, category_maps)
         aprint(f"Dataset generated at {output_path}")
         return
 
@@ -250,7 +301,7 @@ def main() -> None:
         output_path = Path(tmpdir) / "mouse_umap.zarr"
 
         # Create scene
-        _n_points = create_mouse_scene(output_path, coordinates, attributes)
+        _n_points = create_mouse_scene(output_path, coordinates, attributes, category_maps)
 
         aprint("")
         aprint("=" * 70)

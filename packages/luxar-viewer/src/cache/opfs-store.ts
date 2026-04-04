@@ -144,43 +144,51 @@ export class OPFSStore {
       }
     }
 
-    // Write to OPFS
-    try {
-      const fileHandle = await this.navigateToFile(key, true);
-      const writable = await fileHandle.createWritable();
-      // Slice the view's portion, NOT data.buffer directly. If the Uint8Array is
-      // a view on a larger ArrayBuffer (e.g., from a sub-slice), data.buffer would
-      // write the entire underlying buffer, corrupting the stored data. slice()
-      // copies only the relevant bytes. Cast is safe: network data is never SharedArrayBuffer.
-      const bytes = data.buffer.slice(
-        data.byteOffset,
-        data.byteOffset + data.byteLength
-      ) as ArrayBuffer;
-      await writable.write(bytes);
-      await writable.close();
+    // Write to OPFS (with one retry on stale bucket handle)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const fileHandle = await this.navigateToFile(key, true);
+        const writable = await fileHandle.createWritable();
+        // Slice the view's portion, NOT data.buffer directly. If the Uint8Array is
+        // a view on a larger ArrayBuffer (e.g., from a sub-slice), data.buffer would
+        // write the entire underlying buffer, corrupting the stored data. slice()
+        // copies only the relevant bytes. Cast is safe: network data is never SharedArrayBuffer.
+        const bytes = data.buffer.slice(
+          data.byteOffset,
+          data.byteOffset + data.byteLength
+        ) as ArrayBuffer;
+        await writable.write(bytes);
+        await writable.close();
 
-      // Update index — delete+re-insert to move to end (MRU position)
-      const existingEntry = this.index.get(key);
-      if (existingEntry) {
-        this.totalSize -= existingEntry.size;
-        this.totalSize = Math.max(0, this.totalSize);
-        this.index.delete(key);
+        // Update index — delete+re-insert to move to end (MRU position)
+        const existingEntry = this.index.get(key);
+        if (existingEntry) {
+          this.totalSize -= existingEntry.size;
+          this.totalSize = Math.max(0, this.totalSize);
+          this.index.delete(key);
+        }
+        this.index.set(key, { size, order: this.orderCounter++ });
+        this.totalSize += size;
+        this.writeCount++;
+
+        // Compact order counters to prevent overflow after long sessions
+        if (this.orderCounter > 1e12) {
+          this.compactOrderCounter();
+        }
+
+        // Debounced metadata save
+        this.scheduleMetadataSave();
+        return; // Success — exit retry loop
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        if (attempt === 0 && errorMsg.includes('could not be found')) {
+          // Stale bucket handle from a concurrent clear() — invalidate and retry
+          const bucket = this.getBucket(key);
+          this.invalidateBucketHandle(bucket);
+          continue;
+        }
+        log.warning(Modules.CACHE, `OPFSStore failed to write ${key}: ${errorMsg}`);
       }
-      this.index.set(key, { size, order: this.orderCounter++ });
-      this.totalSize += size;
-      this.writeCount++;
-
-      // Compact order counters to prevent overflow after long sessions
-      if (this.orderCounter > 1e12) {
-        this.compactOrderCounter();
-      }
-
-      // Debounced metadata save
-      this.scheduleMetadataSave();
-    } catch (error) {
-      // Log error with message (error objects don't serialize well in console)
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      log.warning(Modules.CACHE, `OPFSStore failed to write ${key}: ${errorMsg}`);
     }
   }
 
@@ -213,19 +221,14 @@ export class OPFSStore {
 
   /**
    * Clear all OPFS data for this dataset.
+   *
+   * Uses atomic delete-and-recreate instead of iterating entries, which avoids
+   * race conditions when a previous page context still holds open file handles
+   * (e.g., quick-succession page refreshes with fire-and-forget L2 writes).
    */
   async clear(): Promise<void> {
-    if (this.opfsRoot) {
-      try {
-        // Remove all entries (bucket directories + metadata file)
-        for await (const name of (this.opfsRoot as any).keys()) {
-          await this.opfsRoot.removeEntry(name, { recursive: true });
-        }
-      } catch (error) {
-        log.warning(Modules.CACHE, 'OPFSStore failed to clear', error);
-      }
-    }
-    // Clear all in-memory state
+    // Clear all in-memory state first — ensures no stale handles are used
+    // even if the filesystem operations below fail
     this.index = new Map();
     this.bucketHandles = new Map();
     this.totalSize = 0;
@@ -233,6 +236,40 @@ export class OPFSStore {
     this.contentHash = null;
     this.readCount = 0;
     this.writeCount = 0;
+
+    if (this.opfsRoot) {
+      try {
+        // Atomic approach: remove entire dataset directory and recreate it.
+        // This is more robust than iterating entries, which can fail if a
+        // previous page context still holds open file handles on bucket dirs.
+        const root = await navigator.storage.getDirectory();
+        await root.removeEntry(this.datasetId, { recursive: true });
+        this.opfsRoot = await root.getDirectoryHandle(this.datasetId, { create: true });
+      } catch (error) {
+        log.warning(Modules.CACHE, 'OPFSStore failed to clear atomically, retrying entry-by-entry', error);
+        // Fallback: try to remove entries individually (best-effort)
+        try {
+          if (this.opfsRoot) {
+            for await (const name of (this.opfsRoot as any).keys()) {
+              try {
+                await this.opfsRoot.removeEntry(name, { recursive: true });
+              } catch {
+                // Skip locked/in-use entries — they'll be orphaned but harmless
+              }
+            }
+          }
+        } catch {
+          // Iterator itself failed — directory may be inaccessible
+        }
+        // Re-obtain a fresh root handle regardless
+        try {
+          const root = await navigator.storage.getDirectory();
+          this.opfsRoot = await root.getDirectoryHandle(this.datasetId, { create: true });
+        } catch {
+          this.opfsRoot = null;
+        }
+      }
+    }
   }
 
   /**
@@ -337,6 +374,9 @@ export class OPFSStore {
   /**
    * Get bucket directory handle, with caching.
    * Only 256 possible buckets, so caching is memory-efficient.
+   *
+   * If a cached handle turns out to be stale (e.g., directory was deleted during
+   * a clear() operation), callers should use invalidateBucketHandle() and retry.
    */
   private async getBucketHandle(
     bucket: string,
@@ -355,6 +395,13 @@ export class OPFSStore {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Invalidate a cached bucket handle (e.g., after a stale handle error).
+   */
+  private invalidateBucketHandle(bucket: string): void {
+    this.bucketHandles.delete(bucket);
   }
 
   /**

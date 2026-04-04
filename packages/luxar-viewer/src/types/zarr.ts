@@ -176,6 +176,7 @@ export interface ZarrViewerConfig {
     show_dimensions?: boolean;
     show_scale_bar?: boolean;
     show_layers?: boolean;
+    show_overlays?: boolean;
   };
 
   // Theme

@@ -450,6 +450,7 @@ export function showHelpOverlay() {
         'G: Quick screenshot',
         'B: Toggle scale bar',
         'J: Toggle colormap legend',
+        'U: Toggle overlays',
         'P: Performance monitor',
         'M: Cycle data monitor (mini/expanded/off)',
         'C: Toggle cinematic mode (noise/vignette/CA/lens)',

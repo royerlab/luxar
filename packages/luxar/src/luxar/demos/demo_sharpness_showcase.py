@@ -324,6 +324,27 @@ def generate_sharpness_showcase(
             create_mixed_sharpness_example(scene, n_points=mixed_points)
             create_sharpness_wave_example(scene, n_points=wave_points)
 
+            # --- Overlays ---
+            # Title
+            scene.add_text(
+                "Point Sharpness Showcase",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+
+            # Info
+            scene.add_text(
+                "Sharpness range 0.5\u201315",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         total_points = gradient_points + 120 + mixed_points + wave_points
         aprint(f"\n✓ Scene complete: {total_points:,} points total")
 

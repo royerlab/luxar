@@ -1,7 +1,7 @@
 # Gaussian Splats Dimension Mapping
 
-**Version**: 1.0
-**Last Updated**: 2026-01-15
+**Version**: 2.0
+**Last Updated**: 2026-04-03
 
 ## Overview
 
@@ -31,26 +31,34 @@ def add_gsplats(
     cholesky_factors: np.ndarray,  # Shape (N, k) where k = D_splat*(D_splat+1)/2
     colors: Optional[np.ndarray] = None,
     parent: Optional[Node] = None,
-    dimensions: Optional[Union[List[str], List[int]]] = None,
-    extend_to_all: Optional[Union[List[str], List[int]]] = None,
+    extend_to_all: Optional[Union[List[str], str]] = None,
+    dim_order: Optional[List[str]] = None,
+    fill: Optional[Dict[str, float]] = None,
+    fill_sigma: Optional[Dict[str, float]] = None,
     **attrs: Any,
 ) -> GSplats:
 ```
 
-**`dimensions`** — Which scene dimensions the splats span (have position and covariance in). Must match the dimensionality of `centers`. Can use names (`["x", "y", "z"]`) or indices (`[0, 1, 2]`).
+**`dim_order`** — Maps data columns to scene dimensions by name. Also reorders and embeds Cholesky factors automatically. For example, `dim_order=["z", "y", "x"]` declares that the first column of `centers` corresponds to the scene's "z" dimension, etc.
+
+When `dim_order` is specified and the data has fewer dimensions than the scene, the `fill` and `fill_sigma` parameters provide fixed coordinates and covariance widths for the unmapped dimensions. The method automatically expands the centers and Cholesky factors to scene dimensionality.
 
 Auto-mapping behavior when `None`:
 - If `splat_ndim == scene_ndim`: auto-map to all scene dimensions in order
-- If `splat_ndim == num_spatial_dims` and `extend_to_all` is specified: auto-map to spatial dimensions (with warning)
+- If `splat_ndim < scene_ndim` and `extend_to_all` covers the remaining dims: auto-map to spatial dimensions
 - Otherwise: raises an error
 
-**`extend_to_all`** — Which scene dimensions the splats should be visible across without attenuation. Must not overlap with `dimensions`. Together with `dimensions`, must cover all scene dimensions.
+**`extend_to_all`** — Which scene dimensions the splats should be visible across without attenuation. Can be a list of dimension names or a single name string. Must not overlap with mapped dimensions. Extended dimensions are never attenuated by slice position.
+
+**`fill`** — Fixed coordinate values for dimensions not covered by `dim_order`. For example, `fill={"time": 5.0}` places all splats at time=5.0.
+
+**`fill_sigma`** — Standard deviations for unmapped dimensions in the Cholesky embedding (default 1.0). Controls splat extent in filled dimensions.
 
 ---
 
 ## Usage Examples
 
-### 3D Splats in 4D Scene (Explicit Extension)
+### 3D Splats in 4D Scene (Extension)
 
 ```python
 result = fit_gaussian_splats(volume_3d, num_splats=10000)
@@ -65,7 +73,7 @@ scene.add_gsplats(
     amplitudes=result.amplitudes,
     cholesky_factors=result.cholesky_factors,  # (N, 6) - 3D covariance
     colors=result.colors,
-    dimensions=["x", "y", "z"],          # Splats span spatial dims
+    dim_order=["x", "y", "z"],           # Splats span spatial dims
     extend_to_all=["time"]               # Visible at all timepoints
 )
 ```
@@ -83,7 +91,7 @@ scene.add_gsplats(
     centers=result.centers,              # (N, 4)
     amplitudes=result.amplitudes,
     cholesky_factors=result.cholesky_factors,  # (N, 10)
-    # dimensions=None → auto-maps to all scene dimensions
+    # dim_order=None → auto-maps to all scene dimensions
 )
 ```
 
@@ -99,12 +107,12 @@ scene.add_gsplats(
     centers=result.centers,              # (N, 3)
     amplitudes=result.amplitudes,
     cholesky_factors=result.cholesky_factors,  # (N, 6)
-    dimensions=["x", "y", "z"],
+    dim_order=["x", "y", "z"],
     extend_to_all=["time", "channel"]    # Visible at all times and channels
 )
 ```
 
-### Dimension Reordering
+### Dimension Reordering with Fill
 
 ```python
 scene = Scene(dimensions=["x", "y", "z", "time"])
@@ -117,7 +125,7 @@ scene.add_gsplats(
     centers=result.centers,              # (N, 3) in [z,y,x] order
     amplitudes=result.amplitudes,
     cholesky_factors=result.cholesky_factors,
-    dimensions=["z", "y", "x"],          # Explicit ordering by name
+    dim_order=["z", "y", "x"],          # Explicit ordering by name
     extend_to_all=["time"]
 )
 ```
@@ -128,7 +136,7 @@ scene.add_gsplats(
 
 ### Rule 1: Shape Consistency
 ```
-len(dimensions) == centers.shape[1]
+len(dim_order) == centers.shape[1]
 ```
 The number of specified dimensions must match the splat data dimensionality.
 
@@ -140,17 +148,17 @@ Cholesky factors must match splat dimensionality, not scene dimensionality.
 
 ### Rule 3: Mutual Exclusivity
 ```
-set(dimensions) & set(extend_to_all) == {}
+set(dim_order) & set(extend_to_all) == {}
 ```
 A dimension cannot be both spanned and extended:
-- **Spanned** (`dimensions`): Splat has position and covariance in this dimension
+- **Spanned** (`dim_order`): Splat has position and covariance in this dimension
 - **Extended** (`extend_to_all`): Splat is visible everywhere in this dimension
 
 ### Rule 4: Complete Coverage
 ```
-set(dimensions) | set(extend_to_all) == set(scene_dimension_names)
+set(dim_order) | set(extend_to_all) | set(fill.keys()) == set(scene_dimension_names)
 ```
-Every scene dimension must be either spanned or extended.
+Every scene dimension must be covered by `dim_order`, `extend_to_all`, or `fill`.
 
 ### Rule 5: Dimension Name Validity
 All dimension names must exist in the scene.
@@ -161,24 +169,22 @@ All dimension names must exist in the scene.
 
 ### Metadata
 
+After dimension mapping is applied, the compiler writes scene-dimensionality data. The zarr metadata reflects the final (expanded) dimensionality:
+
 ```json
 {
   "type": "gsplats",
   "n_splats": 10000,
-  "ndim": 3,
-  "splat_dimensions": ["x", "y", "z"],
-  "extend_to_all": ["time"],
-  "scene_ndim": 4,
+  "ndim": 4,
   "has_colors": true,
-  "cholesky_k": 6
+  "extend_to_all": ["time"]
 }
 ```
 
 Key fields:
-- `ndim`: Intrinsic splat dimensionality (e.g., 3)
-- `splat_dimensions`: Scene dimension names the splats span
-- `extend_to_all`: Scene dimension names to extend across
-- `cholesky_k`: Number of Cholesky elements (`ndim*(ndim+1)/2`)
+- `ndim`: Final splat dimensionality after expansion (matches scene dimensionality). The viewer derives `cholesky_k` from this as `ndim*(ndim+1)/2`.
+- `extend_to_all`: Scene dimension names the splats extend across (visible everywhere). Stored only when non-empty.
+- `has_colors`: Whether the node has per-splat colors
 
 ### Zarr Arrays
 
@@ -191,7 +197,7 @@ gsplat_node/
   └── colors                    (N, 3) or (1, 3) uint8/float32
 ```
 
-Arrays use intrinsic dimensionality, not scene dimensionality.
+Arrays use scene dimensionality (after `dim_order` expansion), not the original data dimensionality.
 
 ---
 
@@ -200,14 +206,15 @@ Arrays use intrinsic dimensionality, not scene dimensionality.
 ### Loading Phase
 
 ```typescript
-interface GSplatsMetadata extends BaseMetadata {
+interface GSplatsMetadata {
   type: 'gsplats';
   n_splats: number;
-  ndim: number;                      // Intrinsic splat dims (e.g., 3)
-  splat_dimensions: string[];        // Scene dim names (e.g., ["x", "y", "z"])
+  ndim: number;                      // Splat dims (matches scene ndim after expansion)
+  has_colors: boolean;
+  chunk_size: number;
+  ordering: 'morton' | 'hilbert' | 'none';
   extend_to_all?: string[];          // Extended dim names (e.g., ["time"])
-  scene_ndim: number;                // Total scene dims (e.g., 4)
-  cholesky_k: number;                // k = ndim*(ndim+1)/2
+  // ... plus ordering bounds, transform, rendering params
 }
 ```
 

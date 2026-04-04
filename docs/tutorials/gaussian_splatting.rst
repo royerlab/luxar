@@ -49,6 +49,12 @@ When to Use Gaussian Splats
 ❌ **Binary masks** - Segmentations better as compressed arrays
 ❌ **Real-time processing** - Fitting is iterative (100-1000 iterations)
 
+.. note::
+
+   Gaussian splatting requires optional dependencies (PyTorch, SciPy). Install them with::
+
+      pip install 'luxar[gsplats]'
+
 Basic Gaussian Splat Fitting
 -----------------------------
 

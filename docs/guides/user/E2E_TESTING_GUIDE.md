@@ -43,7 +43,7 @@ See: `ai-debugging-demo.spec.ts` for complete examples
 
 ## 🧪 Test Suite Organization
 
-### Test Files (check `packages/luxar-viewer/src/tests/e2e/` for current count; 29 spec files as of 2026-03-31)
+### Test Files (check `packages/luxar-viewer/src/tests/e2e/` for current count)
 
 Key test suites include:
 
@@ -360,14 +360,10 @@ await page.screenshot({
 
 ## 🎉 Summary
 
-The Luxar E2E test suite is now:
-- ✅ **Comprehensive** - 226 tests covering all features
-- ✅ **Reliable** - Condition-based waits, not arbitrary timeouts
-- ✅ **Fast** - Optimized waits save 40%+ test time
-- ✅ **Robust** - Error recovery prevents crashes
-- ✅ **Regression-Proof** - Performance tracking catches slowdowns
-- ✅ **AI-Ready** - Full console access for autonomous debugging
-
-**Test Count**: 226 tests across 23 test suites
-
-**Ready for Production!** 🚀
+The Luxar E2E test suite is:
+- **Comprehensive** — covers all major features
+- **Reliable** — condition-based waits, not arbitrary timeouts
+- **Fast** — optimized waits save 40%+ test time
+- **Robust** — error recovery prevents crashes
+- **Regression-Proof** — performance tracking catches slowdowns
+- **AI-Ready** — full console access for autonomous debugging

@@ -375,6 +375,72 @@ def generate_all_legends(
 
 
 # ============================================================================
+# HTML Legend Builder
+# ============================================================================
+
+
+def build_legend_html(
+    attr_name: str,
+    category_names: list,
+    attr_values: "np.ndarray | None" = None,
+    max_entries: int = 40,
+) -> str | None:
+    """Build an HTML color legend from category names and the color palette.
+
+    Generates a compact HTML div with colored squares and labels, suitable
+    for use with ``scene.add_html()`` as a screen-space overlay.
+
+    Args:
+        attr_name: Attribute name (e.g., "celltype", "timepoint").
+            If "timepoint", uses sequential colormap instead of categorical.
+        category_names: List of category label strings.
+        attr_values: Optional attribute array to determine unique values.
+        max_entries: Maximum legend entries before truncation (default 40).
+
+    Returns:
+        HTML string for the legend, or None if no entries.
+    """
+    if attr_values is None:
+        return None
+
+    unique_indices = sorted(set(int(v) for v in np.unique(attr_values)))
+    n_cats = len(unique_indices)
+    use_sequential = attr_name == "timepoint"
+
+    entries = []
+    for i, idx in enumerate(unique_indices[:max_entries]):
+        name = format_label(
+            category_names[idx] if idx < len(category_names) else str(idx)
+        )
+        if use_sequential:
+            t = i / max(n_cats - 1, 1)
+            r, g, b = get_sequential_color(t)
+        else:
+            r, g, b = get_categorical_color(i, n_cats)
+        entries.append((name, f"rgb({r},{g},{b})"))
+
+    if not entries:
+        return None
+
+    lines = [
+        '<div style="font-size:1.3vh;line-height:1.5;'
+        "background:rgba(0,0,0,0.55);padding:0.5vh 0.7vh;"
+        'border-radius:3px;max-height:80vh;overflow:hidden">'
+    ]
+    for name, color in entries:
+        lines.append(
+            f'<div style="white-space:nowrap">'
+            f'<span style="color:{color}">\u2588</span> {name}</div>'
+        )
+    if n_cats > max_entries:
+        lines.append(
+            f'<div style="color:#888">... +{n_cats - max_entries} more</div>'
+        )
+    lines.append("</div>")
+    return "".join(lines)
+
+
+# ============================================================================
 # Attribute-to-Color Mapping
 # ============================================================================
 

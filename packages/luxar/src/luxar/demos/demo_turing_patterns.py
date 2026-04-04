@@ -270,6 +270,49 @@ def generate_turing_patterns(
                 intensity=0.1,
             )
 
+            # --- Overlays ---
+            # Title
+            scene.add_text(
+                "Gray-Scott Reaction-Diffusion",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+
+            # Dimension-aware pattern labels with parameters
+            pattern_info = [
+                ("Spots", "F=0.055, k=0.062", "Leopard/cheetah pattern"),
+                ("Stripes", "F=0.035, k=0.060", "Zebra-like pattern"),
+                ("Spirals", "F=0.018, k=0.051", "Rotating spiral waves"),
+                ("Mitosis", "F=0.029, k=0.057", "Cell division pattern"),
+                ("Coral", "F=0.026, k=0.051", "Branching coral growth"),
+                ("Labyrinth", "F=0.014, k=0.054", "Maze-like structure"),
+            ]
+
+            for pat_id, (name, params, desc) in enumerate(pattern_info):
+                scene.add_html(
+                    f'<div style="font-size:1.5vh;font-weight:bold;color:#ffcc44">{name}</div>'
+                    f'<div style="font-size:1.3vh;color:#aaa;font-family:monospace">{params}</div>'
+                    f'<div style="font-size:1.3vh;color:#888;margin-top:0.3vh">{desc}</div>',
+                    position=(0.02, 0.97),
+                    anchor="bottom-left",
+                    visible_range={"pattern": pat_id},
+                    transition="fade",
+                    transition_duration=0.2,
+                )
+
+            # Equation (always visible)
+            scene.add_html(
+                '<div style="font-size:1.3vh;color:rgba(200,200,200,0.5);font-family:monospace">'
+                "\u2202V/\u2202t = D\u2207\u00b2V + UV\u00b2 \u2212 (F+k)V"
+                "</div>",
+                position=(0.98, 0.97),
+                anchor="bottom-right",
+            )
+
         aprint(f"✓ Written to {output_path}")
         aprint(f"✓ Dataset size: ~{len(positions) * 32 / 1024 / 1024:.0f} MB")
 

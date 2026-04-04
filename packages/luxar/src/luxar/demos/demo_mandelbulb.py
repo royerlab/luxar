@@ -256,6 +256,24 @@ def generate_mandelbulb_volumetric(
                 intensity=0.0625,
             )
 
+            # Overlay annotations
+            scene.add_text(
+                "Mandelbulb Fractal",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+            scene.add_text(
+                "Power 8 \u2022 Distance estimation",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         aprint(f"✓ Written to {output_path}")
         aprint(f"✓ Dataset size: ~{len(positions) * 40 / 1024 / 1024:.1f} MB")
 

@@ -40,6 +40,7 @@ from .core.group import Group
 from .core.gsplats import GSplats
 from .core.lines import Lines
 from .core.node import Node
+from .core.overlay import Overlay
 from .core.points import Points
 from .core.scene import Scene
 from .core.transforms import (
@@ -131,6 +132,7 @@ __all__: list[str] = [
     "Lines",
     "GSplats",
     "Node",
+    "Overlay",
     # Progressive writing
     "LuxarZarrCompiler",
     # Reading

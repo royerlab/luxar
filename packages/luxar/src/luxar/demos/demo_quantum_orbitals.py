@@ -48,7 +48,7 @@ from pathlib import Path
 
 import numpy as np
 from arbol import aprint, asection
-from scipy.special import genlaguerre, sph_harm
+from scipy.special import genlaguerre, sph_harm_y
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import launch_viewer
@@ -122,7 +122,7 @@ def compute_orbital_density(
     R = hydrogen_radial_wavefunction(r, n, l_quantum, a0=1.0)
 
     # Spherical harmonic (complex-valued)
-    Y_lm = sph_harm(m, l_quantum, phi, theta)
+    Y_lm = sph_harm_y(l_quantum, m, theta, phi)
 
     # Probability density: |ψ|² = |R|² × |Y|²
     density = (R * np.conj(R)).real * (Y_lm * np.conj(Y_lm)).real
@@ -280,6 +280,51 @@ def generate_quantum_orbitals(
                 sharpness=sharpnesses,
                 opacity=0.6,  # Semi-transparent for volumetric effect
                 intensity=0.016,
+            )
+
+            # --- Overlays ---
+            # Title
+            scene.add_text(
+                "Hydrogen Atom Orbitals",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+
+            # Dimension-aware orbital labels — one per orbital state
+            orbital_descriptions = [
+                ("1s", "n=1, l=0, m=0", "Spherical ground state"),
+                ("2s", "n=2, l=0, m=0", "Sphere with radial node"),
+                ("2pz", "n=2, l=1, m=0", "Dumbbell along z-axis"),
+                ("2px", "n=2, l=1, m=1", "Dumbbell along x-axis"),
+                ("3pz", "n=3, l=1, m=0", "Larger dumbbell"),
+                ("3dz\u00b2", "n=3, l=2, m=0", "Dumbbell with torus"),
+                ("3dxz", "n=3, l=2, m=1", "Cloverleaf pattern"),
+                ("3dxy", "n=3, l=2, m=2", "Rotated cloverleaf"),
+            ]
+
+            for orb_id, (name, quantum, desc) in enumerate(orbital_descriptions):
+                scene.add_html(
+                    f'<div style="font-size:1.5vh;font-weight:bold;color:#ffcc44">{name}</div>'
+                    f'<div style="font-size:1.3vh;color:#aaa">{quantum}</div>'
+                    f'<div style="font-size:1.3vh;color:#888;margin-top:0.3vh">{desc}</div>',
+                    position=(0.02, 0.97),
+                    anchor="bottom-left",
+                    visible_range={"orbital": orb_id},
+                    transition="fade",
+                    transition_duration=0.2,
+                )
+
+            # Color scale hint (always visible)
+            scene.add_text(
+                "\u2588 High probability  \u2588 Low probability",
+                position=(0.5, 0.97),
+                font_size=0.015,
+                anchor="bottom-center",
+                color="rgba(200,200,200,0.6)",
             )
 
         aprint(f"✓ Written to {output_path}")

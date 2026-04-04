@@ -1,0 +1,200 @@
+/**
+ * Overlay Loader - Reads overlay configurations from zarr store.
+ *
+ * Enumerates the `overlays/` group in the zarr scene and extracts
+ * overlay metadata from each child group's .zattrs.
+ */
+
+import * as zarr from 'zarrita';
+import { hasContentsMethod } from '../types/zarr';
+import { log, Modules } from '../utils/log';
+
+/** Configuration for a single overlay, as stored in zarr .zattrs */
+export interface OverlayConfig {
+  /** Overlay name (zarr group name) */
+  name: string;
+  /** Overlay type: 'overlay_text', 'overlay_image', 'overlay_html' */
+  type: 'overlay_text' | 'overlay_image' | 'overlay_html';
+  /** Position in normalized screen coords [0, 1], top-left origin */
+  position: [number, number];
+  /** Opacity 0-1 */
+  opacity: number;
+  /** Anchor point for positioning */
+  anchor: string;
+  /** Dimension-based visibility filter */
+  visible_range?: Record<string, number | [number, number]>;
+  /** Transition type: 'none' or 'fade' */
+  transition: string;
+  /** Transition duration in seconds */
+  transition_duration: number;
+  /** Whether overlay captures pointer events */
+  interactive: boolean;
+  /** Z-ordering index (insertion order) */
+  z_index: number;
+
+  // --- Text-specific ---
+  text?: string;
+  font_size?: number;
+  font?: string;
+  color?: string;
+  width?: number;
+  text_align?: string;
+  line_height?: number;
+  background?: string;
+  padding?: number;
+  stroke_color?: string;
+  stroke_width?: number;
+
+  // --- Image-specific ---
+  image_file?: string;
+  size?: [number, number];
+  blend_mode?: string;
+
+  // --- HTML-specific ---
+  html?: string;
+}
+
+/**
+ * Load overlay configurations from the zarr store.
+ *
+ * Looks for an `overlays/` group in the root, enumerates its children,
+ * and returns their .zattrs as OverlayConfig objects sorted by z_index.
+ *
+ * @param store - The zarr readable store
+ * @param rootLoc - Root location in the zarr store
+ * @returns Array of overlay configs, sorted by z_index (ascending)
+ */
+export async function loadOverlayConfigs(
+  store: zarr.Readable,
+  rootLoc: zarr.Location<zarr.Readable>
+): Promise<OverlayConfig[]> {
+  const configs: OverlayConfig[] = [];
+
+  try {
+    // Try to open the overlays group (validates it exists)
+    const overlaysLoc = rootLoc.resolve('overlays');
+    await zarr.open(overlaysLoc, { kind: 'group' });
+
+    // Enumerate children of the overlays group
+    // We need to list the store to find overlay subgroups
+    const listing = await listGroupChildren(store, 'overlays');
+
+    for (const childName of listing) {
+      try {
+        const childLoc = rootLoc.resolve(`overlays/${childName}`);
+        const childGroup = await zarr.open(childLoc, { kind: 'group' });
+        const attrs = childGroup.attrs as Record<string, unknown>;
+
+        if (!attrs?.type || !String(attrs.type).startsWith('overlay_')) {
+          continue;
+        }
+
+        const config: OverlayConfig = {
+          name: childName,
+          type: attrs.type as OverlayConfig['type'],
+          position: (attrs.position as [number, number]) ?? [0, 0],
+          opacity: (attrs.opacity as number) ?? 1.0,
+          anchor: (attrs.anchor as string) ?? 'top-left',
+          visible_range: attrs.visible_range as OverlayConfig['visible_range'],
+          transition: (attrs.transition as string) ?? 'none',
+          transition_duration: (attrs.transition_duration as number) ?? 0.3,
+          interactive: (attrs.interactive as boolean) ?? false,
+          z_index: (attrs.z_index as number) ?? 0,
+
+          // Type-specific (only present for matching types)
+          text: attrs.text as string | undefined,
+          font_size: attrs.font_size as number | undefined,
+          font: attrs.font as string | undefined,
+          color: attrs.color as string | undefined,
+          width: attrs.width as number | undefined,
+          text_align: attrs.text_align as string | undefined,
+          line_height: attrs.line_height as number | undefined,
+          background: attrs.background as string | undefined,
+          padding: attrs.padding as number | undefined,
+          stroke_color: attrs.stroke_color as string | undefined,
+          stroke_width: attrs.stroke_width as number | undefined,
+          image_file: attrs.image_file as string | undefined,
+          size: attrs.size as [number, number] | undefined,
+          blend_mode: attrs.blend_mode as string | undefined,
+          html: attrs.html as string | undefined,
+        };
+
+        configs.push(config);
+      } catch {
+        log.warning(Modules.SCENE_LOADER, `Failed to load overlay: ${childName}`);
+      }
+    }
+  } catch {
+    // No overlays group — that's fine, scenes don't have to have overlays
+    return [];
+  }
+
+  // Sort by z_index (insertion order)
+  configs.sort((a, b) => a.z_index - b.z_index);
+
+  if (configs.length > 0) {
+    log.info(Modules.UI, `Loaded ${configs.length} overlay(s) from zarr`);
+  }
+
+  return configs;
+}
+
+/**
+ * List immediate child group names under a given path in the store.
+ *
+ * Uses the consolidated metadata (.zmetadata) `contents()` method — the same
+ * approach used by SceneLoader.enumerateStore(). This reliably finds all
+ * overlay names including custom-named overlays (not just auto-generated ones).
+ */
+async function listGroupChildren(store: zarr.Readable, parentPath: string): Promise<string[]> {
+  const prefix = parentPath + '/';
+
+  // Primary method: consolidated metadata (same pattern as SceneLoader.enumerateStore)
+  if (hasContentsMethod(store)) {
+    const contents = await store.contents();
+    const seen = new Set<string>();
+    const children: string[] = [];
+
+    for (const entry of contents) {
+      const path = typeof entry === 'string' ? entry : entry.path;
+      if (path.startsWith('/' + prefix) || path.startsWith(prefix)) {
+        // Normalize: strip leading '/' if present, then strip the prefix
+        const normalized = path.startsWith('/') ? path.slice(1) : path;
+        const relative = normalized.slice(prefix.length);
+        const childName = relative.split('/')[0];
+        if (childName && !seen.has(childName)) {
+          seen.add(childName);
+          children.push(childName);
+        }
+      }
+    }
+    return children;
+  }
+
+  // Fallback: try the store's list method if available
+  if ('list' in store && typeof (store as any).list === 'function') {
+    try {
+      const listing = await (store as any).list(parentPath + '/');
+      const seen = new Set<string>();
+      const children: string[] = [];
+      for (const item of listing) {
+        const key = typeof item === 'string' ? item : item.key || item.path || '';
+        const relative = key.startsWith(prefix) ? key.slice(prefix.length) : key;
+        const childName = relative.split('/')[0];
+        if (childName && childName !== '.zgroup' && childName !== '.zattrs' && !seen.has(childName)) {
+          seen.add(childName);
+          children.push(childName);
+        }
+      }
+      return children;
+    } catch {
+      // Fall through
+    }
+  }
+
+  log.warning(
+    Modules.UI,
+    'Cannot enumerate overlay children: store has no contents() or list() method'
+  );
+  return [];
+}

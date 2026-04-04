@@ -42,6 +42,7 @@ import type { RecordingPanel } from '../ui/recording-panel';
 import type { LayersPanel } from '../ui/layers';
 import type { ScaleBar } from '../ui/components/scale-bar';
 import type { ColormapLegend } from '../ui/components/colormap-legend';
+import type { OverlayManager } from '../ui/overlay-manager';
 import { showHelpOverlay, hideHelpOverlay, clearError, showToast } from '../ui/helpers';
 import { config } from '../config';
 import { captureViewerState } from '../config/viewer-state-capture';
@@ -82,6 +83,9 @@ export class InputHandler {
 
   /** Optional reference to layers panel */
   private layersPanel?: LayersPanel;
+
+  /** Optional reference to overlay manager */
+  private overlayManager?: OverlayManager;
 
   /** Index of currently selected dimension for keyboard navigation */
   private selectedDimension: number = 0;
@@ -173,6 +177,10 @@ export class InputHandler {
 
   setRecordingPanel(panel: RecordingPanel): void {
     this.recordingPanel = panel;
+  }
+
+  setOverlayManager(manager: OverlayManager): void {
+    this.overlayManager = manager;
   }
 
   setLayersPanel(panel: LayersPanel): void {
@@ -832,6 +840,14 @@ export class InputHandler {
       handler: () => this.colormapLegend?.toggle(),
       preventDefault: true,
       description: 'Toggle colormap legend',
+    });
+
+    // Screen-space overlays toggle
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: config.input.keyboard.shortcuts.toggleOverlays,
+      handler: () => this.overlayManager?.toggle(),
+      preventDefault: true,
+      description: 'Toggle overlays',
     });
 
     // Recording panel toggle

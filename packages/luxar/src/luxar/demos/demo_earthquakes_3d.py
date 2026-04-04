@@ -1362,6 +1362,24 @@ def generate_earthquake_scene(
                     layer=True,
                 )
 
+            # Overlay annotations
+            scene.add_text(
+                "Global Earthquakes",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+            scene.add_text(
+                "USGS data \u2022 Magnitude 4.5+",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         aprint(f"✓ Written to {output_path}")
 
     return len(earth_positions), n_clouds, n_lines
