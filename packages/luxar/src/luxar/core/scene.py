@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import warnings
 from os import PathLike
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -16,6 +17,7 @@ from arbol import aprint
 
 from ..core.dimensions import Dimensions
 from ..core.group import Group
+from ..core.overlay import Overlay
 from ..core.viewer_config import ViewerConfig
 from ..io.writer import ZarrWriterProtocol
 
@@ -95,6 +97,10 @@ class Scene(Group):
             self._viewer_config: Optional[ViewerConfig] = viewer_config
             if viewer_config is not None:
                 writer.write_group("/", viewer_config=viewer_config.to_dict())
+
+            # Overlay state
+            self._overlay_counter: int = 0
+            self._overlays: List[Overlay] = []
 
             aprint("✓ Scene initialized successfully with progressive writer")
 
@@ -443,6 +449,366 @@ class Scene(Group):
                 self._writer.write_group("/", viewer_config=vc.to_dict())
         elif "viewer_config" in self.attrs:
             del self.attrs["viewer_config"]
+
+    # ---------------------------------------------------------- overlays
+
+    @property
+    def overlays(self) -> List[Overlay]:
+        """Get the list of overlays added to this scene."""
+        return list(self._overlays)
+
+    def add_text(
+        self,
+        text: str,
+        position: Tuple[float, float],
+        *,
+        name: Optional[str] = None,
+        font_size: float = 0.025,
+        font: str = "sans",
+        color: str = "white",
+        opacity: float = 1.0,
+        anchor: str = "top-left",
+        width: Optional[float] = None,
+        text_align: str = "left",
+        line_height: float = 1.4,
+        background: Optional[str] = None,
+        padding: float = 0.005,
+        stroke_color: Optional[str] = None,
+        stroke_width: float = 0.002,
+        visible_range: Optional[Dict[str, Union[float, Tuple[float, float]]]] = None,
+        transition: str = "none",
+        transition_duration: float = 0.3,
+        interactive: bool = False,
+    ) -> Overlay:
+        """Add a text overlay to the scene.
+
+        Text is rendered as an HTML element over the viewer canvas.
+        If ``width`` is set, text wraps within that viewport-relative width.
+
+        Args:
+            text: The text content to display.
+            position: (x, y) in normalized screen coords [0, 1]. Origin is top-left.
+            name: Optional overlay name. Auto-generated if None.
+            font_size: Font size as fraction of viewport height (default 0.025 = 2.5vh).
+            font: Font preset ('sans', 'serif', 'mono') or CSS font-family string.
+            color: CSS color string (default 'white').
+            opacity: Opacity 0.0-1.0 (default 1.0).
+            anchor: Anchor point for positioning (default 'top-left').
+            width: Optional width as fraction of viewport width. Enables word wrapping.
+            text_align: Text alignment: 'left', 'center', 'right', 'justify'.
+            line_height: CSS line-height multiplier (default 1.4).
+            background: Optional CSS background color for a backing rectangle.
+            padding: Padding around text as fraction of viewport height (default 0.005).
+            stroke_color: Optional text stroke/outline color.
+            stroke_width: Stroke width as fraction of viewport height (default 0.002).
+            visible_range: Optional dimension-based visibility filter.
+                Maps dimension names to values or (min, max) range tuples.
+            transition: Transition type: 'none' or 'fade' (default 'none').
+            transition_duration: Transition duration in seconds (default 0.3).
+            interactive: If True, overlay captures pointer events (default False).
+
+        Returns:
+            Overlay metadata object.
+
+        Example:
+            >>> scene.add_text("Scale: 10um", position=(0.05, 0.95), font_size=0.02)
+            >>> scene.add_text(
+            ...     "This is a paragraph with wrapping.",
+            ...     position=(0.02, 0.85),
+            ...     width=0.3,
+            ...     text_align='left',
+            ...     background='rgba(0,0,0,0.6)',
+            ... )
+        """
+        from ..validation.overlays import (
+            validate_anchor,
+            validate_font,
+            validate_position,
+            validate_text_align,
+            validate_transition,
+            validate_visible_range,
+        )
+
+        name = self._next_overlay_name(name)
+        position = validate_position(position)
+        validate_anchor(anchor)
+        validate_font(font)
+        validate_text_align(text_align)
+        validate_transition(transition)
+        validated_range = validate_visible_range(
+            visible_range, self._dimensions.names
+        )
+
+        attrs: Dict[str, Any] = {
+            "type": "overlay_text",
+            "text": str(text),
+            "position": list(position),
+            "font_size": float(font_size),
+            "font": font,
+            "color": color,
+            "opacity": float(opacity),
+            "anchor": anchor,
+            "text_align": text_align,
+            "line_height": float(line_height),
+            "padding": float(padding),
+            "stroke_width": float(stroke_width),
+            "transition": transition,
+            "transition_duration": float(transition_duration),
+            "interactive": bool(interactive),
+            "z_index": len(self._overlays),
+        }
+        if width is not None:
+            attrs["width"] = float(width)
+        if background is not None:
+            attrs["background"] = background
+        if stroke_color is not None:
+            attrs["stroke_color"] = stroke_color
+        if validated_range is not None:
+            attrs["visible_range"] = validated_range
+
+        overlay = self._write_overlay(name, "overlay_text", position, attrs)
+        aprint(f"✓ Text overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})")
+        return overlay
+
+    def add_image(
+        self,
+        image: Any,
+        position: Tuple[float, float],
+        *,
+        name: Optional[str] = None,
+        size: Optional[Tuple[float, float]] = None,
+        opacity: float = 1.0,
+        anchor: str = "top-left",
+        blend_mode: str = "normal",
+        format: str = "png",
+        visible_range: Optional[Dict[str, Union[float, Tuple[float, float]]]] = None,
+        transition: str = "none",
+        transition_duration: float = 0.3,
+        interactive: bool = False,
+    ) -> Overlay:
+        """Add an image overlay to the scene.
+
+        The image is stored directly in the zarr directory and rendered as an
+        HTML ``<img>`` element over the viewer canvas.
+
+        Args:
+            image: Image data. Accepts: file path (str/Path), raw bytes,
+                numpy array (HWC uint8 or float 0-1), PIL Image.
+            position: (x, y) in normalized screen coords [0, 1].
+            name: Optional overlay name. Auto-generated if None.
+            size: Optional (width, height) as fractions of viewport dimensions.
+            opacity: Opacity 0.0-1.0 (default 1.0).
+            anchor: Anchor point for positioning (default 'top-left').
+            blend_mode: CSS blend mode: 'normal', 'multiply', 'screen',
+                'overlay', or 'additive' (default 'normal').
+            format: Image encoding format: 'png', 'jpeg', 'webp' (default 'png').
+            visible_range: Optional dimension-based visibility filter.
+            transition: Transition type: 'none' or 'fade' (default 'none').
+            transition_duration: Transition duration in seconds (default 0.3).
+            interactive: If True, overlay captures pointer events (default False).
+
+        Returns:
+            Overlay metadata object.
+
+        Example:
+            >>> scene.add_image('logo.png', position=(0.9, 0.05), anchor='top-right')
+            >>> scene.add_image(
+            ...     numpy_heatmap,
+            ...     position=(0.0, 0.0),
+            ...     size=(1.0, 1.0),
+            ...     opacity=0.5,
+            ...     blend_mode='multiply',
+            ... )
+        """
+        from ..validation.overlays import (
+            validate_anchor,
+            validate_image_input,
+            validate_position,
+            validate_transition,
+            validate_visible_range,
+        )
+        from ..validation.overlays import (
+            validate_blend_mode as validate_overlay_blend_mode,
+        )
+
+        name = self._next_overlay_name(name)
+        position = validate_position(position)
+        validate_anchor(anchor)
+        validate_overlay_blend_mode(blend_mode)
+        validate_transition(transition)
+        validated_range = validate_visible_range(
+            visible_range, self._dimensions.names
+        )
+
+        image_bytes, fmt = validate_image_input(image, fmt=format)
+        image_filename = f"image.{fmt}"
+
+        attrs: Dict[str, Any] = {
+            "type": "overlay_image",
+            "position": list(position),
+            "image_file": image_filename,
+            "opacity": float(opacity),
+            "anchor": anchor,
+            "blend_mode": blend_mode,
+            "transition": transition,
+            "transition_duration": float(transition_duration),
+            "interactive": bool(interactive),
+            "z_index": len(self._overlays),
+        }
+        if size is not None:
+            attrs["size"] = list(size)
+        if validated_range is not None:
+            attrs["visible_range"] = validated_range
+
+        overlay = self._write_overlay(
+            name,
+            "overlay_image",
+            position,
+            attrs,
+            image_data=image_bytes,
+            image_filename=image_filename,
+        )
+        aprint(f"✓ Image overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})")
+        return overlay
+
+    def add_html(
+        self,
+        html: str,
+        position: Tuple[float, float],
+        *,
+        name: Optional[str] = None,
+        width: Optional[float] = None,
+        opacity: float = 1.0,
+        anchor: str = "top-left",
+        visible_range: Optional[Dict[str, Union[float, Tuple[float, float]]]] = None,
+        transition: str = "none",
+        transition_duration: float = 0.3,
+        interactive: bool = False,
+    ) -> Overlay:
+        """Add an HTML overlay to the scene.
+
+        HTML is sanitized to a safe subset of tags and attributes before storage.
+        Allowed tags include: b, i, em, strong, a, span, div, br, img, ul, ol,
+        li, p, h1-h6, sub, sup, code, pre, table elements.
+        Inline styles are allowed. Script tags and event handlers are stripped.
+
+        Args:
+            html: HTML content string (will be sanitized).
+            position: (x, y) in normalized screen coords [0, 1].
+            name: Optional overlay name. Auto-generated if None.
+            width: Optional width as fraction of viewport width.
+            opacity: Opacity 0.0-1.0 (default 1.0).
+            anchor: Anchor point for positioning (default 'top-left').
+            visible_range: Optional dimension-based visibility filter.
+            transition: Transition type: 'none' or 'fade' (default 'none').
+            transition_duration: Transition duration in seconds (default 0.3).
+            interactive: If True, overlay captures pointer events (default False).
+
+        Returns:
+            Overlay metadata object.
+
+        Example:
+            >>> scene.add_html(
+            ...     '<span style="color:red;font-weight:bold">Warning</span>: '
+            ...     '<span style="color:#aaa">low signal region</span>',
+            ...     position=(0.5, 0.9),
+            ...     interactive=True,
+            ... )
+        """
+        from ..validation.overlays import (
+            sanitize_html,
+            validate_anchor,
+            validate_position,
+            validate_transition,
+            validate_visible_range,
+        )
+
+        name = self._next_overlay_name(name)
+        position = validate_position(position)
+        validate_anchor(anchor)
+        validate_transition(transition)
+        validated_range = validate_visible_range(
+            visible_range, self._dimensions.names
+        )
+
+        sanitized = sanitize_html(html)
+
+        attrs: Dict[str, Any] = {
+            "type": "overlay_html",
+            "position": list(position),
+            "html": sanitized,
+            "opacity": float(opacity),
+            "anchor": anchor,
+            "transition": transition,
+            "transition_duration": float(transition_duration),
+            "interactive": bool(interactive),
+            "z_index": len(self._overlays),
+        }
+        if width is not None:
+            attrs["width"] = float(width)
+        if validated_range is not None:
+            attrs["visible_range"] = validated_range
+
+        overlay = self._write_overlay(name, "overlay_html", position, attrs)
+        aprint(f"✓ HTML overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})")
+        return overlay
+
+    # ---------------------------------------------------------- overlay internals
+
+    def _next_overlay_name(self, name: Optional[str]) -> str:
+        """Generate or validate an overlay name."""
+        if name is None:
+            name = f"overlay_{self._overlay_counter}"
+            self._overlay_counter += 1
+        else:
+            if "/" in name:
+                raise ValueError(f"Overlay name cannot contain '/': got '{name}'")
+        # Check for duplicate names
+        existing_names = {o.name for o in self._overlays}
+        if name in existing_names:
+            raise ValueError(
+                f"Overlay name '{name}' already exists. Use a unique name."
+            )
+        return name
+
+    def _write_overlay(
+        self,
+        name: str,
+        overlay_type: str,
+        position: Tuple[float, float],
+        attrs: Dict[str, Any],
+        image_data: Optional[bytes] = None,
+        image_filename: Optional[str] = None,
+    ) -> Overlay:
+        """Write overlay metadata (and optional image) to the zarr store.
+
+        Creates an ``overlays/{name}`` group with metadata in ``.zattrs``.
+        For image overlays, writes the image file directly to the zarr directory.
+        """
+        overlay_path = f"overlays/{name}"
+
+        # Write group with all overlay attributes
+        if self._writer is not None:
+            self._writer.write_group(overlay_path, **attrs)
+
+            # Write raw image file if provided
+            if image_data is not None and image_filename is not None:
+                store_path = Path(self._writer.store_path)
+                image_dir = store_path / "overlays" / name
+                image_dir.mkdir(parents=True, exist_ok=True)
+                image_path = image_dir / image_filename
+                image_path.write_bytes(image_data)
+
+        overlay = Overlay(
+            name=name,
+            overlay_type=overlay_type,
+            position=position,
+            attrs=attrs,
+        )
+        self._overlays.append(overlay)
+        return overlay
+
+    # ---------------------------------------------------------- export
 
     def to_zarr(self, path: PathLike) -> None:
         """Export scene to a new Zarr store location.

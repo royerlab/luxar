@@ -1,0 +1,257 @@
+"""Tests for overlay validation functions."""
+
+import numpy as np
+import pytest
+
+from luxar.validation.overlays import (
+    VALID_ANCHORS,
+    VALID_BLEND_MODES,
+    VALID_IMAGE_FORMATS,
+    VALID_TEXT_ALIGNS,
+    VALID_TRANSITIONS,
+    sanitize_html,
+    validate_anchor,
+    validate_blend_mode,
+    validate_font,
+    validate_image_format,
+    validate_image_input,
+    validate_position,
+    validate_text_align,
+    validate_transition,
+    validate_visible_range,
+)
+
+
+class TestValidatePosition:
+    def test_valid_tuple(self):
+        assert validate_position((0.5, 0.5)) == (0.5, 0.5)
+
+    def test_valid_list(self):
+        assert validate_position([0.0, 1.0]) == (0.0, 1.0)
+
+    def test_corners(self):
+        assert validate_position((0.0, 0.0)) == (0.0, 0.0)
+        assert validate_position((1.0, 1.0)) == (1.0, 1.0)
+
+    def test_out_of_range_high(self):
+        with pytest.raises(ValueError, match="position"):
+            validate_position((1.1, 0.5))
+
+    def test_out_of_range_low(self):
+        with pytest.raises(ValueError, match="position"):
+            validate_position((-0.1, 0.5))
+
+    def test_wrong_length(self):
+        with pytest.raises(ValueError, match="2 floats"):
+            validate_position((0.5,))
+
+    def test_wrong_type(self):
+        with pytest.raises(ValueError, match="2 floats"):
+            validate_position(0.5)
+
+
+class TestValidateAnchor:
+    def test_all_valid_anchors(self):
+        for anchor in VALID_ANCHORS:
+            assert validate_anchor(anchor) == anchor
+
+    def test_invalid(self):
+        with pytest.raises(ValueError, match="anchor"):
+            validate_anchor("middle")
+
+
+class TestValidateFont:
+    def test_presets(self):
+        for preset in ("sans", "serif", "mono"):
+            assert validate_font(preset) == preset
+
+    def test_custom_font(self):
+        assert validate_font("Helvetica Neue") == "Helvetica Neue"
+
+    def test_empty_string(self):
+        with pytest.raises(ValueError, match="non-empty"):
+            validate_font("")
+
+
+class TestValidateBlendMode:
+    def test_all_valid(self):
+        for mode in VALID_BLEND_MODES:
+            assert validate_blend_mode(mode) == mode
+
+    def test_invalid(self):
+        with pytest.raises(ValueError, match="blend_mode"):
+            validate_blend_mode("dodge")
+
+
+class TestValidateTransition:
+    def test_valid(self):
+        for t in VALID_TRANSITIONS:
+            assert validate_transition(t) == t
+
+    def test_invalid(self):
+        with pytest.raises(ValueError, match="transition"):
+            validate_transition("slide")
+
+
+class TestValidateTextAlign:
+    def test_valid(self):
+        for align in VALID_TEXT_ALIGNS:
+            assert validate_text_align(align) == align
+
+    def test_invalid(self):
+        with pytest.raises(ValueError, match="text_align"):
+            validate_text_align("middle")
+
+
+class TestValidateImageFormat:
+    def test_valid(self):
+        for fmt in VALID_IMAGE_FORMATS:
+            assert validate_image_format(fmt) == fmt
+
+    def test_invalid(self):
+        with pytest.raises(ValueError, match="format"):
+            validate_image_format("bmp")
+
+
+class TestValidateVisibleRange:
+    def test_none(self):
+        assert validate_visible_range(None, ["X", "Y"]) is None
+
+    def test_single_value(self):
+        result = validate_visible_range({"time": 5}, ["time", "X", "Y"])
+        assert result == {"time": 5.0}
+
+    def test_range_tuple(self):
+        result = validate_visible_range({"time": (5, 10)}, ["time", "X"])
+        assert result == {"time": [5.0, 10.0]}
+
+    def test_range_list(self):
+        result = validate_visible_range({"time": [5, 10]}, ["time", "X"])
+        assert result == {"time": [5.0, 10.0]}
+
+    def test_unknown_dimension(self):
+        with pytest.raises(ValueError, match="Unknown dimension"):
+            validate_visible_range({"bad": 5}, ["time", "X"])
+
+    def test_min_greater_than_max(self):
+        with pytest.raises(ValueError, match="min.*max"):
+            validate_visible_range({"time": (10, 5)}, ["time", "X"])
+
+    def test_not_a_dict(self):
+        with pytest.raises(ValueError, match="dict"):
+            validate_visible_range("bad", ["time"])
+
+    def test_invalid_value_type(self):
+        with pytest.raises(ValueError, match="number or.*tuple"):
+            validate_visible_range({"time": "bad"}, ["time"])
+
+    def test_multiple_dimensions(self):
+        result = validate_visible_range(
+            {"time": (0, 50), "channel": 2},
+            ["time", "channel", "X", "Y"],
+        )
+        assert result == {"time": [0.0, 50.0], "channel": 2.0}
+
+
+class TestValidateImageInput:
+    def test_bytes_passthrough(self):
+        data, fmt = validate_image_input(b"\x89PNG\r\n\x1a\n")
+        assert data == b"\x89PNG\r\n\x1a\n"
+        assert fmt == "png"
+
+    def test_bytes_with_format(self):
+        data, fmt = validate_image_input(b"\xff\xd8", fmt="jpeg")
+        assert data == b"\xff\xd8"
+        assert fmt == "jpeg"
+
+    def test_numpy_rgb(self):
+        arr = np.zeros((4, 4, 3), dtype=np.uint8)
+        data, fmt = validate_image_input(arr)
+        assert len(data) > 0
+        assert fmt == "png"
+
+    def test_numpy_rgba(self):
+        arr = np.zeros((4, 4, 4), dtype=np.uint8)
+        data, fmt = validate_image_input(arr)
+        assert len(data) > 0
+
+    def test_numpy_grayscale(self):
+        arr = np.zeros((4, 4), dtype=np.uint8)
+        data, fmt = validate_image_input(arr)
+        assert len(data) > 0
+
+    def test_numpy_float(self):
+        arr = np.random.rand(4, 4, 3).astype(np.float32)
+        data, fmt = validate_image_input(arr)
+        assert len(data) > 0
+
+    def test_file_path(self, tmp_path):
+        test_file = tmp_path / "test.bin"
+        test_file.write_bytes(b"fake image data")
+        data, fmt = validate_image_input(str(test_file))
+        assert data == b"fake image data"
+
+    def test_nonexistent_file(self):
+        with pytest.raises(ValueError, match="not found"):
+            validate_image_input("/no/such/file.png")
+
+    def test_invalid_format(self):
+        with pytest.raises(ValueError, match="format"):
+            validate_image_input(b"data", fmt="bmp")
+
+    def test_unsupported_type(self):
+        with pytest.raises(ValueError, match="Cannot process"):
+            validate_image_input(12345)
+
+
+class TestSanitizeHtml:
+    def test_safe_html_unchanged(self):
+        html = "<p>Hello <strong>world</strong></p>"
+        assert sanitize_html(html) == html
+
+    def test_strips_script_tags(self):
+        result = sanitize_html('<p>OK</p><script>alert(1)</script>')
+        assert "<script>" not in result
+        assert "alert" not in result
+        assert "<p>OK</p>" in result
+
+    def test_strips_iframe(self):
+        result = sanitize_html('<iframe src="evil.html"></iframe>')
+        assert "<iframe" not in result
+
+    def test_strips_event_handlers(self):
+        result = sanitize_html('<p onclick="alert(1)">Click</p>')
+        assert "onclick" not in result
+        assert "<p" in result
+
+    def test_strips_javascript_urls(self):
+        result = sanitize_html('<a href="javascript:alert(1)">Link</a>')
+        assert "javascript:" not in result.lower()
+
+    def test_allows_inline_styles(self):
+        html = '<span style="color:red">Red text</span>'
+        result = sanitize_html(html)
+        assert 'style="color:red"' in result
+
+    def test_allows_safe_links(self):
+        html = '<a href="https://example.com">Link</a>'
+        result = sanitize_html(html)
+        assert 'href="https://example.com"' in result
+
+    def test_strips_form_elements(self):
+        result = sanitize_html('<form><input type="text"></form>')
+        assert "<form" not in result
+        assert "<input" not in result
+
+    def test_not_a_string(self):
+        with pytest.raises(ValueError, match="string"):
+            sanitize_html(123)
+
+    def test_strips_style_tags(self):
+        result = sanitize_html('<style>body{display:none}</style><p>OK</p>')
+        assert "<style>" not in result
+
+    def test_case_insensitive_stripping(self):
+        result = sanitize_html('<SCRIPT>alert(1)</SCRIPT>')
+        assert "SCRIPT" not in result
+        assert "alert" not in result

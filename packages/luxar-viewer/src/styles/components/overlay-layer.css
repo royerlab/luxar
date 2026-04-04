@@ -1,0 +1,61 @@
+/**
+ * Overlay Layer - Screen-space overlays (text, image, HTML) over the 3D canvas.
+ *
+ * The overlay container sits between the WebGL canvas (z-index: auto)
+ * and UI controls (z-index: 10+).
+ */
+
+.luxar-overlay {
+  position: fixed;
+  pointer-events: none;
+  box-sizing: border-box;
+  /* Sit between the WebGL canvas (z-index: auto) and UI controls (z-index: 10+) */
+  z-index: 5;
+  /* Prevent text selection by default */
+  user-select: none;
+}
+
+/* Interactive overlays capture pointer events */
+.luxar-overlay--interactive,
+.luxar-overlay--interactive * {
+  pointer-events: auto;
+  cursor: default;
+  user-select: text;
+}
+
+/* Fade transition support */
+.luxar-overlay--fade {
+  transition: opacity var(--luxar-overlay-transition-duration, 0.3s) ease;
+}
+
+/* Hidden state for fade transitions (opacity → 0, no pointer events) */
+.luxar-overlay--hidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Text overlay defaults */
+.luxar-overlay--text {
+  color: white;
+  border-radius: 2px;
+}
+
+/* Image overlay defaults */
+.luxar-overlay--image img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* HTML overlay defaults */
+.luxar-overlay--html {
+  color: white;
+}
+
+.luxar-overlay--html a {
+  color: #66b3ff;
+  text-decoration: underline;
+}
+
+.luxar-overlay--html a:hover {
+  color: #99ccff;
+}

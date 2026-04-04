@@ -346,6 +346,40 @@ dim_order usage:
                     )
                     aprint(f"  Added {n_splats:,} splats at Channel={i}")
 
+            # --- Overlays ---
+            # Title
+            scene.add_text(
+                "Cells3D Multichannel",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+
+            # Dimension-aware labels for Channel
+            for i, ch_config in enumerate(CHANNELS):
+                scene.add_text(
+                    ch_config["name"],
+                    position=(0.02, 0.97),
+                    font_size=0.015,
+                    anchor="bottom-left",
+                    color="#ffcc44",
+                    visible_range={"channel": float(i)},
+                    transition="fade",
+                    transition_duration=0.15,
+                )
+
+            # Info
+            scene.add_text(
+                "scikit-image \u2022 2 channels",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         aprint(f"Scene saved: {output_path}")
         return output_path
 

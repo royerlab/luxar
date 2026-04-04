@@ -486,6 +486,44 @@ def generate_4d_fractal_dataset(
                 intensity=0.0625,
             )
 
+            # --- Overlays ---
+            # Title
+            scene.add_text(
+                "4D Geometric Fractals",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+
+            # Dimension-aware labels for fractal type
+            fractal_labels = [
+                "XOR", "Menger", "Sierpinski",
+                "Cantor", "Checkerboard", "Diamond",
+            ]
+            for i, label in enumerate(fractal_labels):
+                scene.add_text(
+                    label,
+                    position=(0.02, 0.97),
+                    font_size=0.015,
+                    anchor="bottom-left",
+                    color="#ffcc44",
+                    visible_range={"fractal": float(i)},
+                    transition="fade",
+                    transition_duration=0.15,
+                )
+
+            # Info
+            scene.add_text(
+                "6 fractal types \u2022 4D space",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         aprint(f"✓ Written to {output_path}")
         aprint(f"✓ Dataset size: ~{len(positions_5d) * 40 / 1024 / 1024:.0f} MB")
 

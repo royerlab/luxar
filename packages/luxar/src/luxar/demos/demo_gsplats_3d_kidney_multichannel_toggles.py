@@ -491,6 +491,24 @@ Navigation:
                         f"extend_to_all={other_dims}"
                     )
 
+            # Overlay annotations
+            scene.add_text(
+                "Kidney Multichannel",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+            scene.add_text(
+                "Fluorescence \u2022 Toggle channels",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         aprint(f"Scene saved: {output_path}")
         return output_path
 

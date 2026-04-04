@@ -624,6 +624,27 @@ def generate_paper_landscape(
                 intensity=0.1,
             )
 
+            # --- Overlays ---
+            # Title
+            scene.add_text(
+                "ArXiv Paper Embeddings",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+
+            # Info
+            scene.add_text(
+                "500K papers \u2022 Kaggle dataset",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         aprint(f"✓ Visualization created with {n_papers:,} papers")
 
     return n_papers

@@ -240,6 +240,27 @@ def generate_performance_test_dataset(
                 intensity=0.1,
             )
 
+            # --- Overlays ---
+            # Title
+            scene.add_text(
+                "Network Performance Test",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+
+            # Info
+            scene.add_text(
+                "10M+ points \u2022 Stress test",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         total_points = len(positions)
         aprint(f"✓ Written {total_points:,} points (4D: W, X, Y, Z) to {output_path}")
         aprint(
