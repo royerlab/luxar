@@ -593,6 +593,50 @@ def generate_protein_landscape(
                 intensity=0.124,
             )
 
+            # --- Overlays ---
+            scene.add_text(
+                "Protein Function Landscape (CAFA5)",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+
+            # Function color legend
+            legend_items = [
+                ("Enzyme", "#ff8033"),
+                ("Transporter", "#4db3ff"),
+                ("Receptor", "#e64de6"),
+                ("Structural", "#80e680"),
+                ("Regulator", "#ffcc33"),
+                ("Binding", "#994dff"),
+                ("Signaling", "#ff6666"),
+                ("Membrane", "#4de6e6"),
+            ]
+            legend_html = (
+                '<div style="font-size:1.3vh;line-height:1.7;background:rgba(0,0,0,0.5);padding:0.5vh;border-radius:3px">'
+                '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">Function</div>'
+            )
+            for name, color in legend_items:
+                legend_html += f'<div><span style="color:{color}">\u2588</span> {name}</div>'
+            legend_html += "</div>"
+
+            scene.add_html(
+                legend_html,
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+            )
+
+            scene.add_text(
+                f"{n_proteins:,} proteins \u2022 ProtT5 embeddings \u2022 3D UMAP",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         aprint(f"✓ Visualization created with {n_proteins:,} proteins")
 
     return n_proteins

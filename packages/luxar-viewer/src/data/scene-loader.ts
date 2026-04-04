@@ -65,6 +65,7 @@ import {
 } from './stats-aggregator';
 import { LoaderRegistry } from './loader-registry';
 import { computeTolerance } from './tolerance-computer';
+import { loadOverlayConfigs } from '../ui/overlay-loader';
 
 /** Check if an object has any own properties (avoids Object.keys() allocation). */
 function hasOwnProperties(obj: Record<string, unknown>): boolean {
@@ -424,6 +425,14 @@ export class SceneLoader {
 
     // Load points
     await this.loadSceneNodes(sceneGraph, this.rootGroup, rootLoc);
+
+    // Load overlay configs (screen-space annotations)
+    const overlayConfigs = await loadOverlayConfigs(this.store, rootLoc);
+    if (overlayConfigs.length > 0) {
+      this.rootGroup.userData.overlayConfigs = overlayConfigs;
+      // Store base URL for image fetching
+      this.rootGroup.userData.zarrBaseUrl = this.normalizeURL(url);
+    }
 
     // Force update the monitor UI after all loaders are connected
     // This ensures the UI shows the correct state even if no events have fired yet
@@ -1548,6 +1557,11 @@ export class SceneLoader {
       .sort((a, b) => a.path.split('/').length - b.path.split('/').length);
 
     for (const entry of sortedPaths) {
+      // Skip overlays group — screen-space overlays are not part of the 3D scene graph
+      if (entry.path === '/overlays' || entry.path.startsWith('/overlays/')) {
+        continue;
+      }
+
       const loc = rootLoc.resolve(entry.path.slice(1)); // Remove leading /
       const group = await zarr.open(loc, { kind: 'group' });
       const attrs = group.attrs as ZarrNodeAttrs;

@@ -269,41 +269,38 @@ All features described in this document are **fully implemented**:
 
 ---
 
-## Files Affected
+## Implementation Locations
 
 ### Python
-- `packages/luxar/src/luxar/core/node.py` — add `intensity` and `offset` properties
-- `packages/luxar/src/luxar/core/viewer_config.py` — replace `hdr_multiplier` with `exposure`, `global_offset`, `global_gamma`
-- `packages/luxar/src/luxar/io/compiler.py` — write defaults for all three write methods
-- `packages/luxar/src/luxar/validation/types.py` — add validators for intensity, offset
-- `packages/luxar/src/luxar/typing_utils/constants.py` — add range constants
+- `packages/luxar/src/luxar/core/node.py` — `intensity` and `offset` properties
+- `packages/luxar/src/luxar/core/viewer_config.py` — `exposure`, `global_offset`, `global_gamma` fields (replaced `hdr_multiplier`)
+- `packages/luxar/src/luxar/io/compiler.py` — writes defaults for all three geometry write methods
+- `packages/luxar/src/luxar/validation/types.py` — validators for intensity, offset
+- `packages/luxar/src/luxar/typing_utils/constants.py` — range constants
 
 ### TypeScript (shaders)
-- `packages/luxar-viewer/src/rendering/point-material.ts` — add GOG uniforms, remove hdrMultiplier
-- `packages/luxar-viewer/src/rendering/line-material.ts` — same
-- `packages/luxar-viewer/src/rendering/gsplat-material.ts` — same
+- `packages/luxar-viewer/src/rendering/point-material.ts` — GOG uniforms
+- `packages/luxar-viewer/src/rendering/line-material.ts` — GOG uniforms
+- `packages/luxar-viewer/src/rendering/gsplat-material.ts` — GOG uniforms
 
 ### TypeScript (post-processing + scene management)
-- `packages/luxar-viewer/src/rendering/luxar-tone-mapping-effect.ts` — new file (vendored ToneMappingEffect + EOG)
-- `packages/luxar-viewer/src/rendering/post-processing-manager.ts` — replace ToneMappingEffect with vendored version, add update methods for exposure/offset/gamma
-- `packages/luxar-viewer/src/rendering/material-manager.ts` — remove `currentHdrMultiplier` field, `updateHDRMultiplier()` method, and hdrMultiplier from material creation
-- `packages/luxar-viewer/src/scene/scene-manager.ts` — replace `updateHDRMultiplier()` with `updateExposure()`/`updateGlobalOffset()`/`updateGlobalGamma()` routing to post-processing manager
-- `packages/luxar-viewer/src/data/scene-loader.ts` — pass per-node `intensity`/`offset` to material creation
+- `packages/luxar-viewer/src/rendering/luxar-tone-mapping-effect.ts` — vendored ToneMappingEffect with EOG
+- `packages/luxar-viewer/src/rendering/post-processing-manager.ts` — exposure/offset/gamma update methods
+- `packages/luxar-viewer/src/rendering/material-manager.ts` — per-node GOG uniforms in material creation
+- `packages/luxar-viewer/src/scene/scene-manager.ts` — `updateExposure()`/`updateGlobalOffset()`/`updateGlobalGamma()` routing
+- `packages/luxar-viewer/src/data/scene-loader.ts` — per-node `intensity`/`offset` from zarr attrs
 
 ### TypeScript (config + propagation)
-- `packages/luxar-viewer/src/config/types.ts` — remove `hdrMultiplier`, add `exposure`/`globalOffset`/`globalGamma` to RenderingSettings
-- `packages/luxar-viewer/src/config/index.ts` — update defaults
-- `packages/luxar-viewer/src/config/viewer-config-utils.ts` — update `RENDERING_SETTINGS_MAP`: remove `hdr_multiplier`, add `exposure`/`global_offset`/`global_gamma`
-- `packages/luxar-viewer/src/types/zarr.ts` — update `ZarrViewerConfig`: remove `hdr_multiplier`, add new fields
+- `packages/luxar-viewer/src/config/types.ts` — `exposure`/`globalOffset`/`globalGamma` in RenderingSettings
+- `packages/luxar-viewer/src/config/index.ts` — defaults
+- `packages/luxar-viewer/src/config/viewer-config-utils.ts` — `RENDERING_SETTINGS_MAP` snake_case → camelCase
+- `packages/luxar-viewer/src/types/zarr.ts` — `ZarrViewerConfig` fields
 
 ### TypeScript (UI)
-- `packages/luxar-viewer/src/ui/rendering-controls/hdr-setup.ts` — replace "Intensity" log10 slider with Exposure/Offset/Gamma linear sliders
-- `packages/luxar-viewer/src/ui/rendering-controls-utils.ts` — update `validateRenderingSettings()` with ranges for new fields
+- `packages/luxar-viewer/src/ui/rendering-controls/hdr-setup.ts` — Exposure/Offset/Gamma sliders
+- `packages/luxar-viewer/src/ui/rendering-controls-utils.ts` — `validateRenderingSettings()` ranges
 
 ### TypeScript (node types)
-- `packages/luxar-viewer/src/types/points.ts` — add `intensity?` and `offset?` to `PointsMetadata`
-- `packages/luxar-viewer/src/types/lines.ts` — add `intensity?` and `offset?` to `LinesMetadata`
-- `packages/luxar-viewer/src/types/gsplats.ts` — add `intensity?` and `offset?` to `GSplatsMetadata`
-
-### Documentation
-- `docs/guides/user/LUXAR_ZARR_FORMAT.md` — document new node + viewer_config attributes
+- `packages/luxar-viewer/src/types/points.ts` — `intensity?` and `offset?` in `PointsMetadata`
+- `packages/luxar-viewer/src/types/lines.ts` — `intensity?` and `offset?` in `LinesMetadata`
+- `packages/luxar-viewer/src/types/gsplats.ts` — `intensity?` and `offset?` in `GSplatsMetadata`

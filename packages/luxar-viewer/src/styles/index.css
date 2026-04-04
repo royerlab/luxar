@@ -26,6 +26,7 @@
 @import './components/layers-panel.css';
 @import './components/colormap-legend.css';
 @import './components/toast.css';
+@import './components/overlay-layer.css';
 /* (More components will be added as they are migrated) */
 /* @import './components/performance-monitor.css'; */
 

@@ -508,6 +508,41 @@ def generate_paper_landscape(
                 intensity=0.1,
             )
 
+            # --- Overlays ---
+            # Title
+            scene.add_text(
+                "ArXiv Paper Landscape",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+
+            # Field color legend (bottom-left)
+            scene.add_html(
+                '<div style="font-size:1.3vh;line-height:1.6;background:rgba(0,0,0,0.5);padding:0.6vh;border-radius:3px">'
+                '<div style="font-weight:bold;color:#ccc;margin-bottom:0.4vh">Fields of Study</div>'
+                '<div><span style="color:#4de6e6">\u2588</span> Computer Science</div>'
+                '<div><span style="color:#4d80ff">\u2588</span> Physics</div>'
+                '<div><span style="color:#4dff80">\u2588</span> Mathematics</div>'
+                '<div><span style="color:#ff6666">\u2588</span> Biology</div>'
+                '<div><span style="color:#ff9933">\u2588</span> Medicine</div>'
+                "</div>",
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+            )
+
+            # Info
+            scene.add_text(
+                "Semantic Scholar \u2022 5 fields",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         aprint(f"✓ Scene created with {n_papers:,} papers")
 
     return n_papers

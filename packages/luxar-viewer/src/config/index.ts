@@ -346,6 +346,7 @@ export const config: AppConfig = {
         toggleControlMode: 'v',
         toggleInertialMode: 'i',
         toggleCinematicMode: 'c',
+        toggleOverlays: 'u',
       },
       flyModeKeys: [
         'w',

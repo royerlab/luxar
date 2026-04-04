@@ -187,6 +187,24 @@ def generate_cubic_array(
             )
             aprint(f"✓ Added {len(star_pos):,} background stars")
 
+            # Overlay annotations
+            scene.add_text(
+                "Cubic Array",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+            scene.add_text(
+                "100\u00b3 grid \u2022 Depth gradient",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         aprint(f"✓ Written to {output_path}")
         aprint(f"✓ Total: {len(positions) + len(star_pos):,} points (cube + stars)")
 

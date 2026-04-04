@@ -4,6 +4,8 @@ The Luxar viewer is a browser-based WebGL application for exploring nD scientifi
 scenes containing points, lines, and Gaussian splats. It loads data from Zarr
 archives served over HTTP or from local files.
 
+![Luxar viewer interface overview](../../images/docs/viewer-ui-overview.png)
+
 ## Launching the Viewer
 
 There are three common ways to open the viewer:
@@ -114,7 +116,9 @@ Orthographic projection for 2D viewing. The camera looks straight down one axis.
 | P | Toggle performance stats (FPS, frame time) |
 | R | Toggle rendering controls panel |
 | B | Toggle scale bar |
-| L | Toggle colormap legend |
+| J | Toggle colormap legend |
+| L | Toggle layers panel |
+| U | Toggle overlays |
 | T | Toggle recording panel |
 | Escape | Close all open panels |
 
@@ -217,10 +221,22 @@ Browse and switch between available datasets served by the data server.
 Displays a physical scale bar overlay when the scene defines spatial units
 (nm, um, mm, cm, m, etc.).
 
-### Colormap Legend (L)
+### Colormap Legend (J)
 
 Shows the active colormap and its value range when a colormap is applied to the
 scene.
+
+### Layers Panel (L)
+
+Displays a list of all data nodes in the scene with toggles for visibility
+and opacity control.
+
+### Overlays (U)
+
+Screen-space annotations (text, images, HTML) positioned over the 3D canvas.
+Overlays are defined in the zarr scene by the Python API and rendered as HTML
+elements. Some overlays are dimension-aware: they appear or disappear as you
+navigate through dimensions. Press **U** to toggle all overlays on/off.
 
 ---
 

@@ -558,6 +558,37 @@ Controls:
                 blending_mode="additive",
             )
 
+            # --- Overlays ---
+            scene.add_text(
+                "Mouse Embryo Heart (E13.5)",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+
+            # Channel legend
+            scene.add_html(
+                '<div style="font-size:1.3vh;line-height:1.7;background:rgba(0,0,0,0.5);padding:0.5vh;border-radius:3px">'
+                '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">Channels</div>'
+                '<div><span style="color:#0088ff">\u2588</span> SYTOX Green (nuclei)</div>'
+                '<div><span style="color:#ff3300">\u2588</span> Tomato Lectin (vasculature)</div>'
+                '<div><span style="color:#00ff4d">\u2588</span> Anti-TNNI3 (cardiac tissue)</div>'
+                "</div>",
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+            )
+
+            scene.add_text(
+                "Light-sheet \u2022 1.06\u00d71.06\u00d72.40 \u03bcm",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         aprint(f"Scene saved: {output_path}")
         return output_path
 

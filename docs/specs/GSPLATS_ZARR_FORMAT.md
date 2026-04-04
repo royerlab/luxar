@@ -8,10 +8,9 @@
 The `gsplats.io` package provides I/O operations for persisting and loading Gaussian splat data in a dedicated zarr format (`.gsplats.zarr`). This enables efficient storage, compression, and retrieval of fitted Gaussian splat results.
 
 **Related Specifications**:
-- `luxar.encoding` - Array encoding and semantic types (see `../../encoding/SPECIFICATIONS.md`)
-- `luxar.io` - Spatial ordering algorithms (see `../../io/SPECIFICATIONS.md`)
-- `luxar.core` - GSplats node specification (see `../../core/SPECIFICATIONS.md`)
-- `luxar.gsplats` - Gaussian splatting algorithms (see `../SPECIFICATIONS.md`)
+- [Luxar Zarr Format](../guides/user/LUXAR_ZARR_FORMAT.md) — Scene-level format including GSplats nodes
+- [GSplats Dimension Mapping](GSPLATS_DIMENSION_MAPPING.md) — Dimension mapping for nD scenes
+- [nD Transforms](../guides/specs/ND_TRANSFORMS_SPEC.md) — nD navigation and transforms
 
 ---
 

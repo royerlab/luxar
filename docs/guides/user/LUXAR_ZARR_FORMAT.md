@@ -146,15 +146,20 @@ scene.zarr/
 ├── .zattrs                  # Scene-level metadata
 ├── .zgroup                  # Zarr group marker
 ├── .zmetadata              # Consolidated metadata (optional, created by finalize())
-└── <node_name>/            # Scene nodes (groups or points)
-    ├── .zattrs             # Node-level metadata (includes spatial index metadata)
-    ├── .zgroup             # Zarr group marker
-    ├── positions/          # Point positions (required for points, Morton-sorted)
-    ├── colors/             # Point colors (optional, same order as positions)
-    ├── radii/              # Point radii (optional, same order as positions)
-    ├── sharpness/          # Point sharpness (optional, same order as positions)
-    ├── chunk_bounds/       # Chunk bounding boxes for spatial queries (optional)
-    └── <child_nodes>/      # Nested child nodes (recursive structure)
+├── <node_name>/            # Scene nodes (groups or points)
+│   ├── .zattrs             # Node-level metadata (includes spatial index metadata)
+│   ├── .zgroup             # Zarr group marker
+│   ├── positions/          # Point positions (required for points, spatially sorted)
+│   ├── colors/             # Point colors (optional, same order as positions)
+│   ├── radii/              # Point radii (optional, same order as positions)
+│   ├── sharpness/          # Point sharpness (optional, same order as positions)
+│   ├── chunk_bounds/       # Chunk bounding boxes for spatial queries (optional)
+│   └── <child_nodes>/      # Nested child nodes (recursive structure)
+└── overlays/               # Screen-space overlays (optional)
+    └── <overlay_name>/     # Individual overlay
+        ├── .zattrs         # Overlay metadata (type, position, style, visible_range)
+        ├── .zgroup
+        └── image.png       # Raw image file (image overlays only)
 ```
 
 ## Scene-Level Metadata (.zattrs)
@@ -270,6 +275,79 @@ Points nodes contain the actual point data.
 - **Description:** Point edge sharpness (0.5-10.0 typical range)
 - **Default:** 2.0 if not provided
 - **Validation:** All values must be positive
+
+## Overlays (Screen-Space Annotations)
+
+Overlays are screen-space annotations (text, images, HTML) rendered over the 3D canvas.
+They are stored in an `overlays/` group at the scene root. Each overlay is a zarr subgroup
+with metadata in `.zattrs` and optional raw image files.
+
+Overlays are NOT part of the 3D scene graph — they use normalized screen coordinates
+`[0, 1]` with top-left origin `(0, 0)`.
+
+### Overlay Types
+
+**Text overlay** (`overlay_text`):
+```json
+{
+  "type": "overlay_text",
+  "text": "Scale: 10μm",
+  "position": [0.05, 0.95],
+  "font_size": 0.025,
+  "font": "sans",
+  "color": "white",
+  "opacity": 1.0,
+  "anchor": "top-left",
+  "visible_range": {"time": [5, 10]},
+  "transition": "fade",
+  "transition_duration": 0.3,
+  "interactive": false,
+  "z_index": 0
+}
+```
+
+**Image overlay** (`overlay_image`):
+```json
+{
+  "type": "overlay_image",
+  "position": [0.9, 0.05],
+  "image_file": "image.png",
+  "size": [0.1, 0.05],
+  "blend_mode": "normal",
+  "z_index": 1
+}
+```
+The image file (PNG/JPEG/WebP) is stored directly in the overlay's zarr directory.
+
+**HTML overlay** (`overlay_html`):
+```json
+{
+  "type": "overlay_html",
+  "position": [0.01, 0.5],
+  "html": "<p>Some <strong>formatted</strong> text</p>",
+  "width": 0.3,
+  "interactive": true,
+  "z_index": 2
+}
+```
+
+### Common Attributes
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `position` | `[float, float]` | Normalized screen coords, top-left origin |
+| `opacity` | `float` | 0.0 – 1.0 (default 1.0) |
+| `anchor` | `string` | Positioning anchor (9 options: top-left, center, bottom-right, etc.) |
+| `visible_range` | `object` | Dimension-based visibility: `{"dim_name": value_or_[min,max]}` |
+| `transition` | `string` | `"none"` or `"fade"` |
+| `transition_duration` | `float` | Seconds (default 0.3) |
+| `interactive` | `boolean` | Whether overlay captures pointer events |
+| `z_index` | `int` | Rendering order (lower = behind) |
+
+### Dimension-Aware Visibility
+
+The `visible_range` attribute enables overlays that appear/disappear based on dimension
+slider positions. Values can be exact numbers (matched with tolerance) or `[min, max]` ranges.
 
 ## Point Spatial Index
 
