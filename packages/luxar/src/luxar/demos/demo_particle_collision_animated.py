@@ -1480,6 +1480,41 @@ def generate_animated_detector_scene(
             aprint(f"  Vertex markers: {n_vertex_points} points x {n_frames} frames")
             total_points += n_vertex_points * n_frames
 
+        # --- Overlays ---
+        # Title
+        scene.add_text(
+            "Particle Collision (Animated)",
+            position=(0.5, 0.02),
+            font_size=0.026,
+            anchor="top-center",
+            color="rgba(255,255,255,0.85)",
+            stroke_color="black",
+            stroke_width=0.002,
+        )
+
+        # Particle type legend (bottom-left) — same as static demo
+        scene.add_html(
+            '<div style="font-size:1.3vh;line-height:1.6;background:rgba(0,0,0,0.5);padding:0.6vh;border-radius:3px">'
+            '<div style="font-weight:bold;color:#ccc;margin-bottom:0.4vh">Particle Tracks</div>'
+            '<div><span style="color:#6699ff">\u2588</span> e\u207b/e\u207a (electrons)</div>'
+            '<div><span style="color:#ff4466">\u2588</span> \u03bc\u207b/\u03bc\u207a (muons)</div>'
+            '<div><span style="color:#44cc44">\u2588</span> \u03c0\u00b1/K\u00b1 (hadrons)</div>'
+            '<div><span style="color:#ffaa22">\u2588</span> p/p\u0304 (protons)</div>'
+            '<div><span style="color:#ffff44">\u2588</span> \u03b3 (photons)</div>'
+            "</div>",
+            position=(0.02, 0.97),
+            anchor="bottom-left",
+        )
+
+        # Info (bottom-right)
+        scene.add_text(
+            "Animated tracks \u2022 Detector simulation",
+            position=(0.98, 0.97),
+            font_size=0.015,
+            anchor="bottom-right",
+            color="rgba(200,200,200,0.45)",
+        )
+
     return total_segments, total_points
 
 

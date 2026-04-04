@@ -19,6 +19,7 @@ import { RecordingPanel } from '../ui/recording-panel';
 import { LayersPanel } from '../ui/layers';
 import { ThemeManager } from '../themes/theme-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
+import { OverlayManager } from '../ui/overlay-manager';
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
@@ -32,6 +33,7 @@ export class LuxarApp {
   private colormapLegend?: ColormapLegend;
   private recordingPanel?: RecordingPanel;
   private layersPanel?: LayersPanel;
+  private overlayManager?: OverlayManager;
   private isInitialized = false;
   private boundCleanup: (() => void) | null = null;
   private boundFocusHandler: (() => void) | null = null;
@@ -352,6 +354,9 @@ export class LuxarApp {
       this.initColormapLegend();
     }
 
+    // Initialize overlays (screen-space annotations from zarr)
+    await this.initOverlays();
+
     // Apply zarr viewer_config: UI visibility, theme, dimension state, animation
     this.applyViewerConfigState(viewerConfig);
 
@@ -388,6 +393,8 @@ export class LuxarApp {
       if (ui.show_scale_bar === false && this.scaleBar) this.scaleBar.hide();
       if (ui.show_layers === true && this.layersPanel) this.layersPanel.show();
       if (ui.show_layers === false && this.layersPanel) this.layersPanel.hide();
+      if (ui.show_overlays === true && this.overlayManager) this.overlayManager.show();
+      if (ui.show_overlays === false && this.overlayManager) this.overlayManager.hide();
     }
 
     // --- Theme ---
@@ -452,6 +459,31 @@ export class LuxarApp {
       this.inputHandler.setColormapLegend(this.colormapLegend);
     } catch {
       // ColormapLegend requires DOM; may fail in test environments
+    }
+  }
+
+  /**
+   * Initialize screen-space overlays from zarr metadata.
+   * Creates an OverlayManager if the loaded scene contains overlays.
+   */
+  private async initOverlays(): Promise<void> {
+    // Dispose previous overlay manager if reloading
+    if (this.overlayManager) {
+      this.overlayManager.dispose();
+      this.overlayManager = undefined;
+    }
+
+    const root = this.sceneManager.scene?.children?.find(
+      (c) => c.name === 'LuxarScene'
+    ) as THREE.Group | undefined;
+
+    const overlayConfigs = root?.userData?.overlayConfigs;
+    const zarrBaseUrl = root?.userData?.zarrBaseUrl;
+
+    if (overlayConfigs?.length > 0 && zarrBaseUrl) {
+      this.overlayManager = new OverlayManager();
+      await this.overlayManager.loadOverlays(overlayConfigs, zarrBaseUrl);
+      this.inputHandler.setOverlayManager(this.overlayManager);
     }
   }
 
@@ -818,6 +850,12 @@ export class LuxarApp {
       if (this.layersPanel) {
         this.layersPanel.dispose();
         this.layersPanel = undefined;
+      }
+
+      // Clean up overlay manager
+      if (this.overlayManager) {
+        this.overlayManager.dispose();
+        this.overlayManager = undefined;
       }
 
       // Clean up input handlers

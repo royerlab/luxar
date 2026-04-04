@@ -138,6 +138,14 @@ class TestUIConfig:
         assert ui2.show_rendering_controls is True
         assert ui2.show_performance_monitor is None
 
+    def test_show_overlays_round_trip(self) -> None:
+        ui = UIConfig(show_overlays=False)
+        d = ui.to_dict()
+        assert d == {"show_overlays": False}
+        ui2 = UIConfig.from_dict(d)
+        assert ui2.show_overlays is False
+        assert ui2.show_help is None
+
 
 class TestDimensionsConfig:
     """Tests for DimensionsConfig."""

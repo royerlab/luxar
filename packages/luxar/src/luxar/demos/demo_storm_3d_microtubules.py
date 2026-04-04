@@ -668,6 +668,47 @@ def create_storm_scene(
 
                 aprint(f"✓ Added {n_splats * 2:,} splats (2 views × {n_splats:,})")
 
+            # --- Overlays ---
+            # Title
+            scene.add_text(
+                "3D STORM Microtubules",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+
+            # Dimension-aware view mode labels
+            scene.add_html(
+                '<div style="font-size:1.5vh;font-weight:bold;color:#88bbff">Widefield</div>'
+                f'<div style="font-size:1.3vh;color:#aaa">\u03c3 \u2248 {WIDEFIELD_PSF_SIGMA} nm (diffraction-limited)</div>',
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+                visible_range={"view": 0},
+                transition="fade",
+                transition_duration=0.3,
+            )
+            scene.add_html(
+                '<div style="font-size:1.5vh;font-weight:bold;color:#44ff88">Super-Resolution</div>'
+                f'<div style="font-size:1.3vh;color:#aaa">\u03c3 \u2248 {SUPERRES_PSF_SIGMA} nm (STORM)</div>',
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+                visible_range={"view": 1},
+                transition="fade",
+                transition_duration=0.3,
+            )
+
+            # Sample info (always visible)
+            scene.add_text(
+                "COS7 \u03b1-tubulin \u2022 Zenodo 3547521",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         aprint("✓ Scene saved")
 
     return output_path

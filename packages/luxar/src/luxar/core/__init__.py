@@ -6,6 +6,7 @@ from .group import Group
 from .gsplats import GSplats
 from .lines import Lines
 from .node import Node
+from .overlay import Overlay
 from .points import Points
 from .scene import Scene
 from .transforms import (
@@ -39,6 +40,7 @@ __all__ = [
     "DataNode",
     "Group",
     "Scene",
+    "Overlay",
     "Points",
     "Lines",
     "GSplats",

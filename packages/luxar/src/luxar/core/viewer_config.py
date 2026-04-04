@@ -143,12 +143,14 @@ class UIConfig:
     show_dimensions: Optional[bool] = None
     show_scale_bar: Optional[bool] = None
     show_layers: Optional[bool] = None
+    show_overlays: Optional[bool] = None
 
     # All field names for sparse serialization (alphabetical after show_)
     _FIELDS = (
         "show_dimensions",
         "show_help",
         "show_layers",
+        "show_overlays",
         "show_performance_monitor",
         "show_rendering_controls",
         "show_scale_bar",

@@ -250,30 +250,6 @@ describe('Data Loading', () => {
 
 ---
 
-## Migration Plan
-
-### Phase 1: Document Current State ✅ DONE
-- Identified 3 major over-mocked test files
-- Created these guidelines
-
-### Phase 2: Create Test Fixtures (TODO)
-- Generate comprehensive zarr test fixtures
-- Document fixture formats and usage
-- Add fixture generation to test setup
-
-### Phase 3: Refactor High-Impact Tests (TODO)
-Priority order:
-1. `app.test.ts` - Core application initialization
-2. `scene-manager.test.ts` - Scene management and rendering
-3. `data-loading-integration.test.ts` - Data loading pipeline
-
-### Phase 4: Update Testing Standards (TODO)
-- Add pre-commit hooks to catch over-mocking
-- Code review checklist for new tests
-- Update CLAUDE.md with these guidelines
-
----
-
 ## Testing Principles
 
 ### 1. Test Behavior, Not Implementation

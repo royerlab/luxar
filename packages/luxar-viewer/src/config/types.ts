@@ -180,6 +180,7 @@ export interface InputConfig {
       toggleControlMode: string;
       toggleInertialMode: string;
       toggleCinematicMode: string;
+      toggleOverlays: string;
     };
     flyModeKeys: string[];
     dimensionKeys: string[];

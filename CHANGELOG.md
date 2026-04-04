@@ -4,6 +4,24 @@ All notable changes to Luxar are documented in this file.
 
 ## [Unreleased]
 
+### April 2026
+
+#### Major Features
+
+**Screen-Space Overlay System**
+- New `scene.add_text()`, `scene.add_image()`, `scene.add_html()` Python API for screen-space annotations
+- Overlays rendered as HTML elements over the 3D canvas (below controls)
+- Normalized screen coordinates `[0, 1]` with top-left origin, 9-point anchoring
+- Viewport-relative sizing (fractions of viewport height/width)
+- **Dimension-aware visibility**: `visible_range` parameter shows/hides overlays based on slider positions
+- Image overlays: accept file paths, bytes, numpy arrays, PIL Images; stored as raw PNG/JPEG/WebP in zarr
+- HTML overlays: restricted safe tag subset with inline styles, XSS sanitization
+- Per-overlay configurable fade transitions
+- Optional pointer interactivity (`interactive=True`)
+- Blend modes for images: normal, multiply, screen, overlay, additive
+- Text features: font presets (sans/serif/mono), background boxes, stroke outlines
+- 93 new Python tests covering all overlay types, validation, and edge cases
+
 ### March 2026
 
 #### Breaking Changes

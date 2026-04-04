@@ -303,6 +303,29 @@ def generate_demo(output_path: Path) -> int:
                     aprint(f"  X-ray ch{ch_idx}: {n:,} points (scale=2, permuted)")
 
             # ================================================================
+            # OVERLAYS
+            # ================================================================
+            # Title
+            scene.add_text(
+                "Multi-Instrument Observatory",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+
+            # Info
+            scene.add_text(
+                "3 instruments \u2022 nD transforms",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
+            # ================================================================
             # VERIFICATION: Print world nd_transforms
             # ================================================================
             with asection("Verifying nd_transforms"):

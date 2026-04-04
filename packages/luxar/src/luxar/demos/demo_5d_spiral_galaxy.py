@@ -210,6 +210,41 @@ def generate_5d_spiral_galaxy(
                 intensity=5.58,
             )
 
+            # --- Overlays ---
+            # Title
+            scene.add_text(
+                "5D Spiral Galaxy",
+                position=(0.5, 0.02),
+                font_size=0.026,
+                anchor="top-center",
+                color="rgba(255,255,255,0.85)",
+                stroke_color="black",
+                stroke_width=0.002,
+            )
+
+            # Dimension-aware labels for Channel
+            channel_labels = ["Young Stars", "Intermediate", "Old Stars"]
+            for i, label in enumerate(channel_labels):
+                scene.add_text(
+                    label,
+                    position=(0.02, 0.97),
+                    font_size=0.015,
+                    anchor="bottom-left",
+                    color="#ffcc44",
+                    visible_range={"Channel": float(i)},
+                    transition="fade",
+                    transition_duration=0.15,
+                )
+
+            # Info
+            scene.add_text(
+                "1.2M stars \u2022 3 populations",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+
         aprint(f"Written to {output_path}")
 
     return total_points
