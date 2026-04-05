@@ -1383,9 +1383,9 @@ def generate_earthquake_scene(
                 stroke_width=0.002,
             )
             scene.add_text(
-                "USGS data \u2022 Magnitude 4.5+",
+                f"{n_lines:,} earthquakes • Magnitude 4.5+ • USGS",
                 position=(0.98, 0.97),
-                font_size=0.015,
+                font_size=0.012,
                 anchor="bottom-right",
                 color="rgba(200,200,200,0.45)",
             )
