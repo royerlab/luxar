@@ -116,8 +116,12 @@ export class PickingSystem {
   }
 
   /**
-   * Handle mouse move: debounce and schedule a pick.
-   * Called directly from the canvas mousemove listener.
+   * Handle mouse move: pick immediately from cache, debounce re-renders.
+   *
+   * When the pick buffer is clean (cached), readback is ~0.1ms so we fire
+   * immediately for instant tooltip response. When dirty (camera/geometry
+   * changed), we debounce to avoid re-rendering on every frame during
+   * orbit/pan/zoom — the render only fires once the mouse settles.
    */
   onMouseMove(event: MouseEvent): void {
     const rect = this.renderer.domElement.getBoundingClientRect();
@@ -129,12 +133,19 @@ export class PickingSystem {
     if (this.debounceTimer !== null) {
       clearTimeout(this.debounceTimer);
     }
-    this.debounceTimer = setTimeout(() => {
-      this.debounceTimer = null;
-      if (this.pendingMouse) {
-        this.performPick(this.pendingMouse.x, this.pendingMouse.y);
-      }
-    }, DEBOUNCE_MS);
+
+    if (!this._dirty) {
+      // Buffer is cached — readback is instant, no debounce needed
+      this.performPick(this.pendingMouse.x, this.pendingMouse.y);
+    } else {
+      // Buffer needs re-render — debounce to avoid rendering during active interaction
+      this.debounceTimer = setTimeout(() => {
+        this.debounceTimer = null;
+        if (this.pendingMouse) {
+          this.performPick(this.pendingMouse.x, this.pendingMouse.y);
+        }
+      }, DEBOUNCE_MS);
+    }
   }
 
   /** Clean up all resources. */
