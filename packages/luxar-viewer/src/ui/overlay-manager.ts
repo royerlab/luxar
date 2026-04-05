@@ -72,6 +72,23 @@ const ALLOWED_TAGS = new Set([
   'tbody',
 ]);
 
+/** Escape HTML entities to prevent XSS in template substitution. */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Hover overlay tracking entry. */
+interface HoverOverlayEntry {
+  el: HTMLDivElement;
+  template: string;
+  config: OverlayConfig;
+}
+
 export class OverlayManager {
   private overlayElements = new Map<string, HTMLDivElement>();
   private configs = new Map<string, OverlayConfig>();
@@ -79,6 +96,8 @@ export class OverlayManager {
   private boundDimChangeHandler: () => void;
   /** Whether overlays are globally hidden by the user toggle (U key) */
   private globallyHidden = false;
+  /** Hover overlays that update from GPU picking results. */
+  private hoverOverlays = new Map<string, HoverOverlayEntry>();
 
   constructor() {
     this.boundDimChangeHandler = () => this.updateVisibility();
@@ -99,6 +118,14 @@ export class OverlayManager {
         document.body.appendChild(el);
         this.overlayElements.set(config.name, el);
         this.configs.set(config.name, config);
+
+        // Track hover overlays for GPU picking template substitution
+        if (config.hover) {
+          const template = config.html ?? config.text ?? '{hover_label}';
+          this.hoverOverlays.set(config.name, { el, template, config });
+          // Start hidden — shown when a pick resolves to a labeled element
+          el.style.opacity = '0';
+        }
       } catch (e) {
         log.warning(Modules.UI, `Failed to create overlay '${config.name}': ${e}`);
       }
@@ -137,6 +164,18 @@ export class OverlayManager {
       const el = this.overlayElements.get(name);
       if (!el) continue;
 
+      // Hover overlay visibility is driven by updateHoverContent() (GPU picking),
+      // but the global hide toggle (U key) still applies.
+      if (config.hover) {
+        if (this.globallyHidden) {
+          el.style.display = 'none';
+        } else {
+          el.style.display = '';
+          // Don't touch opacity — updateHoverContent manages fade in/out
+        }
+        continue;
+      }
+
       const visible = !this.globallyHidden && this.isOverlayVisible(config);
       const isFade = config.transition === 'fade';
 
@@ -159,6 +198,43 @@ export class OverlayManager {
     }
   }
 
+  /**
+   * Update hover overlay content from a GPU picking result.
+   *
+   * Substitutes template variables ({hover_label}, {hover_node}, {hover_index})
+   * in all hover overlays. Fades out if result is null or label is empty.
+   *
+   * @param result - Pick result with label text, or null to clear
+   */
+  updateHoverContent(
+    result: { label: string; nodeName: string; elementIndex: number } | null
+  ): void {
+    for (const hover of this.hoverOverlays.values()) {
+      if (!result || !result.label) {
+        // Fade out
+        hover.el.style.opacity = '0';
+      } else {
+        const isHtml = hover.config.type === 'overlay_html';
+
+        // Substitute template variables
+        // HTML overlays: escape values to prevent XSS in innerHTML
+        // Text overlays: no escaping needed since textContent is XSS-safe
+        const esc = isHtml ? escapeHtml : (s: string) => s;
+        let text = hover.template;
+        text = text.replace(/\{hover_label\}/g, esc(result.label));
+        text = text.replace(/\{hover_node\}/g, esc(result.nodeName));
+        text = text.replace(/\{hover_index\}/g, String(result.elementIndex));
+
+        if (isHtml) {
+          hover.el.innerHTML = this.sanitizeHtml(text);
+        } else {
+          hover.el.textContent = text;
+        }
+        hover.el.style.opacity = String(hover.config.opacity);
+      }
+    }
+  }
+
   /** Dispose all overlays and clean up listeners. */
   dispose(): void {
     sceneDimsManager.removeListener(this.boundDimChangeHandler);
@@ -168,6 +244,7 @@ export class OverlayManager {
     }
     this.overlayElements.clear();
     this.configs.clear();
+    this.hoverOverlays.clear();
   }
 
   // ---------------------------------------------------------------- private
