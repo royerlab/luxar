@@ -689,11 +689,11 @@ def generate_tabula_sapiens(
             n_types = len(set(cell_types))
             n_tissues = len(set(tissues))
             scene.add_text(
-                f"{n_cells:,} cells • {n_types} cell types • {n_tissues} tissues • color = organ",
-                position=(0.5, 0.97),
-                font_size=0.014,
-                anchor="bottom-center",
-                color="rgba(200,200,200,0.6)",
+                f"{n_cells:,} cells • {n_types} cell types • {n_tissues} tissues • The Tabula Sapiens Consortium 2022",
+                position=(0.98, 0.97),
+                font_size=0.012,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
             )
 
     aprint(f"✓ Wrote {n_cells:,} cells to {output_path}")

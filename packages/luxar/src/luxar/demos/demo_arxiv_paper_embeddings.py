@@ -545,11 +545,11 @@ def generate_paper_landscape(
                 anchor="bottom-left",
             )
 
-            # Info
+            # Info + source
             scene.add_text(
-                "Semantic Scholar \u2022 5 fields",
+                f"{n_papers:,} papers • Semantic Scholar API • SentenceBERT embeddings",
                 position=(0.98, 0.97),
-                font_size=0.015,
+                font_size=0.012,
                 anchor="bottom-right",
                 color="rgba(200,200,200,0.45)",
             )

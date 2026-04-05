@@ -174,11 +174,11 @@ def main() -> None:
                         transition_duration=0.15,
                     )
 
-                # Info
+                # Info + citation
                 scene.add_text(
-                    "95K cells \u2022 32 cell types",
+                    "95K cells • 32 cell types • Wagner et al. 2024",
                     position=(0.98, 0.97),
-                    font_size=0.015,
+                    font_size=0.012,
                     anchor="bottom-right",
                     color="rgba(200,200,200,0.45)",
                 )
@@ -268,11 +268,11 @@ def main() -> None:
                         transition_duration=0.15,
                     )
 
-                # Info
+                # Info + citation
                 scene.add_text(
-                    "95K cells \u2022 32 cell types",
+                    "95K cells • 32 cell types • Wagner et al. 2024",
                     position=(0.98, 0.97),
-                    font_size=0.015,
+                    font_size=0.012,
                     anchor="bottom-right",
                     color="rgba(200,200,200,0.45)",
                 )
