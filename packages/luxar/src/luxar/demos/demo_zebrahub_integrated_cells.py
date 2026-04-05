@@ -103,6 +103,13 @@ def main() -> None:
             positions = np.vstack(all_pos)
             colors = np.vstack(all_col)
 
+            # Hover labels: cell type + timepoint, repeated for each view
+            per_cell_labels = [
+                f"{attrs['celltype'][i]} @ {attrs['timepoint'][i]}"
+                for i in range(len(coords))
+            ]
+            labels = per_cell_labels * len(attrs)
+
             dims = Dimensions(
                 [
                     Dimension(
@@ -128,6 +135,7 @@ def main() -> None:
                     sharpness=np.full(len(positions), 4.0, dtype=np.float32),
                     opacity=0.8,
                     intensity=0.25,
+                    labels=labels,
                 )
 
                 # --- Overlays ---
@@ -186,6 +194,13 @@ def main() -> None:
             positions = np.vstack(all_pos)
             colors = np.vstack(all_col)
 
+            # Hover labels: cell type + timepoint, repeated for each view
+            per_cell_labels = [
+                f"{attrs['celltype'][i]} @ {attrs['timepoint'][i]}"
+                for i in range(len(coords))
+            ]
+            labels = per_cell_labels * len(attrs)
+
             dims = Dimensions(
                 [
                     Dimension(
@@ -211,6 +226,7 @@ def main() -> None:
                     sharpness=np.full(len(positions), 4.0, dtype=np.float32),
                     opacity=0.8,
                     intensity=0.25,
+                    labels=labels,
                 )
 
                 # --- Overlays ---

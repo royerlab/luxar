@@ -583,6 +583,9 @@ def generate_protein_landscape(
 
             sharpness = np.full(n_proteins, 3.0, dtype=np.float32)
 
+            # Hover labels: function category for each protein
+            protein_labels = [f"{functions[i]}" for i in range(n_proteins)]
+
             scene.add_points(
                 "proteins",
                 positions=positions,
@@ -591,6 +594,7 @@ def generate_protein_landscape(
                 sharpness=sharpness,
                 opacity=0.9,
                 intensity=0.124,
+                labels=protein_labels,
             )
 
             # --- Overlays ---
