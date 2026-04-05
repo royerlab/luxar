@@ -19,20 +19,18 @@ import {
 } from './data-loader-types';
 import type { SceneGraphNode } from '../ui/data-monitor-types';
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
-import { materialManager, BlendingMode } from '../rendering/material-manager';
-import { createInstancedLinesMesh, updateInstancedLinesMesh } from '../rendering/line-geometry';
+import { updateInstancedLinesMesh } from '../rendering/line-geometry';
 import { DataMonitorManager } from './data-monitor-manager';
 import { ArrayRefRegistry } from './array-decoder';
 import { ViewStateManager, type SceneDimensions } from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
 import { TwoLevelCachingStore, ChunkPrefetcher, DecompressedChunkCache } from '../cache';
-import type { PointsMetadata, PointsUserData } from '../types/points';
+import type { PointsMetadata } from '../types/points';
 import { isPointsUserData } from '../types/points';
 import type {
   LinesMetadata,
   LinesDataLoader,
-  LinesUserData,
   LoadedLinesData,
   ProcessedLinesData,
 } from '../types/lines';
@@ -47,15 +45,13 @@ import type {
 import { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
 import { GSplatsProgressiveLoader } from './gsplats-progressive-loader';
 import { processGSplats } from './gsplats-processor';
-import { GSplatMaterial } from '../rendering/gsplat-material';
 import {
-  createInstancedGSplatsMesh,
   updateInstancedGSplatsMesh,
   packCholeskyForShader,
 } from '../rendering/gsplat-geometry';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
-import { getColormapTexture } from '../rendering/colormap-textures';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './nd-transform';
+import { NodeFactory } from './node-factory';
 import { UpdateProfiler } from '../profiling/update-profiler';
 import { getWorkerPool } from '../workers/worker-pool';
 import {
@@ -168,6 +164,7 @@ export class SceneLoader {
   // Integrated into updatePointsGeometry/updateLinesGeometry/updateGSplatsGeometry
   // Enabled via config.dataLoading.performance.useGPUBufferPool
   private _gpuBufferPool: GPUBufferPool | null = null;
+  private nodeFactory = new NodeFactory();
 
   // Update profiler for timing scene updates (optional, provided by SceneLoaderManager)
   private profiler: UpdateProfiler | null = null;
@@ -1630,7 +1627,7 @@ export class SceneLoader {
 
       // Apply transform if present
       if (node.attrs.transform) {
-        this.applyTransform(group, node.attrs.transform);
+        this.nodeFactory.applyTransform(group, node.attrs.transform);
       }
 
       parentThree.add(group);
@@ -1715,12 +1712,6 @@ export class SceneLoader {
 
       const data = await loader.loadPoints(pointsViewState);
 
-      // Create THREE.js geometry even if empty (for future updates)
-      // Pass max_radius and max_sharpness from node attributes for proper scaling
-      const maxRadius = (node.attrs.max_radius as number | undefined) ?? 1.0;
-      const maxSharpness = (node.attrs.max_sharpness as number | undefined) ?? 31.0;
-      const geometry = this.createGeometry(data, maxRadius, maxSharpness);
-
       // Log if no initial points are visible (this is normal for nD slicing)
       if (data.pointCount === 0) {
         log.info(
@@ -1729,31 +1720,8 @@ export class SceneLoader {
         );
       }
 
-      // Create material with radius and sharpness scales from geometry userData
-      const radiusScale = geometry.userData.radiusScale ?? 1.0;
-      const sharpnessScale = geometry.userData.sharpnessScale ?? 1.0;
-      const material = this.createMaterial(node.attrs, radiusScale, sharpnessScale);
-
-      // Create points object
-      const points = new THREE.Points(geometry, material);
-      points.name = node.path;
-
-      // Cast attrs to PointsMetadata for type-safe access
       const attrs = node.attrs as unknown as PointsMetadata;
-
-      // Store user data for identification (following Lines/GSplats pattern)
-      points.userData = {
-        nodeType: 'points',
-        loader,
-        attrs,
-        maxRadius: attrs.max_radius ?? 1.0,
-        visiblePointCount: data.pointCount,
-      } as PointsUserData;
-
-      // Apply transform
-      if (attrs.transform) {
-        this.applyTransform(points, attrs.transform);
-      }
+      const points = this.nodeFactory.createPointsNode(node.path, attrs, data, loader);
 
       log.success(Modules.SCENE_LOADER, `Loaded ${data.pointCount} points for ${node.path}`);
 
@@ -1872,50 +1840,7 @@ export class SceneLoader {
         );
       }
 
-      // Create material — start from cached base, clone if per-node colormap needed
-      let material = materialManager.getLineMaterial({
-        opacity: attrs.opacity ?? 1.0,
-        gamma: attrs.gamma ?? 1.0,
-        intensity: attrs.intensity ?? 1.0,
-        offset: attrs.offset ?? 0.0,
-        blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
-      });
-
-      // Apply colormap if specified AND scalar data exists to drive it.
-      // Clone the material — the manager returns cached instances shared across nodes.
-      const lnColormapName = node.attrs.colormap as string | undefined;
-      const lnHasScalars = !!node.attrs.has_scalars;
-      if (lnColormapName && lnHasScalars) {
-        // Known limitation: custom LUT data from zarr is not yet loaded.
-        // When colormapName is "custom", getColormapTexture returns undefined
-        // and the colormap is silently skipped. Built-in colormaps work fine.
-        const lnColormapTex = getColormapTexture(lnColormapName);
-        if (lnColormapTex) {
-          material = material.clone() as typeof material;
-          materialManager.register(material);
-          material.updateColormapTexture(lnColormapTex);
-          const lnScalarRange = (node.attrs.scalar_data_range as [number, number]) ?? [0, 1];
-          material.updateScalarRange(lnScalarRange[0], lnScalarRange[1]);
-        }
-      }
-
-      // Create instanced mesh
-      const mesh = createInstancedLinesMesh(processed, material);
-      mesh.name = node.path;
-
-      // Store user data for identification (including visible segment count for monitor)
-      mesh.userData = {
-        nodeType: 'lines',
-        loader,
-        attrs,
-        maxWidth: attrs.max_width ?? 1.0,
-        visibleSegmentCount: processed.segmentCount,
-      } as LinesUserData;
-
-      // Apply transform
-      if (attrs.transform) {
-        this.applyTransform(mesh, attrs.transform);
-      }
+      const mesh = this.nodeFactory.createLinesNode(node.path, node.attrs, attrs, processed, loader);
 
       log.success(
         Modules.SCENE_LOADER,
@@ -2052,71 +1977,16 @@ export class SceneLoader {
         processed.splatCount
       );
 
-      // Create material — start from cached base, clone if per-node colormap needed
-      let material: GSplatMaterial = materialManager.getGSplatMaterial({
-        opacity: attrs.opacity ?? 1.0,
-        gamma: attrs.gamma ?? 1.0,
-        intensity: attrs.intensity ?? 1.0,
-        offset: attrs.offset ?? 0.0,
-        blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
-      });
-
-      // Apply colormap if specified.
-      // Clone the material first — the material manager returns cached instances,
-      // so mutating the colormap would affect all nodes sharing the same cache key.
-      const gsColormapName = node.attrs.colormap as string | undefined;
-      let gsplatMaterialCloned = false;
-      if (gsColormapName) {
-        // Known limitation: custom LUT data from zarr is not yet loaded.
-        // When colormapName is "custom", getColormapTexture returns undefined
-        // and the colormap is silently skipped. Built-in colormaps work fine.
-        const gsColormapTex = getColormapTexture(gsColormapName);
-        if (gsColormapTex) {
-          material = material.clone() as GSplatMaterial;
-          materialManager.register(material);
-          gsplatMaterialCloned = true;
-          material.updateColormapTexture(gsColormapTex);
-          const ampRange = node.attrs.amplitude_data_range as [number, number] | undefined;
-          const gsScalarRange = ampRange ?? [0, 1];
-          material.updateScalarRange(gsScalarRange[0], gsScalarRange[1]);
-        } else if (gsColormapName === 'custom') {
-          log.warning(
-            Modules.SCENE_LOADER,
-            `Custom colormap LUT loading not yet implemented for ${node.path}`
-          );
-        }
-      }
-
-      // Create instanced mesh
-      const mesh = createInstancedGSplatsMesh(
-        {
-          centers: processed.centers3D,
-          cholesky01,
-          cholesky23,
-          cholesky45,
-          amplitudes: processed.amplitudes,
-          colors: processed.colors,
-          splatCount: processed.splatCount,
-        },
-        material
-      );
-      mesh.name = node.path;
-
-      // Store user data for identification
-      mesh.userData = {
-        nodeType: 'gsplats',
-        loader,
-        attrs,
-        visibleSplatCount: processed.splatCount,
-        // Mark material as already cloned if we made a per-node copy for colormap,
-        // so the layers panel doesn't redundantly clone it again.
-        _layerMaterialCloned: gsplatMaterialCloned,
-      } as GSplatsUserData;
-
-      // Apply transform
-      if (attrs.transform) {
-        this.applyTransform(mesh, attrs.transform);
-      }
+      const meshConfig = {
+        centers: processed.centers3D,
+        cholesky01,
+        cholesky23,
+        cholesky45,
+        amplitudes: processed.amplitudes,
+        colors: processed.colors,
+        splatCount: processed.splatCount,
+      };
+      const mesh = this.nodeFactory.createGSplatsNode(node.path, node.attrs, attrs, meshConfig, loader);
 
       log.success(
         Modules.SCENE_LOADER,
@@ -2258,317 +2128,6 @@ export class SceneLoader {
   }
 
   /**
-   * Validate points data for edge cases and malformed data
-   *
-   * Logs detailed diagnostics to browser console for debugging
-   */
-  private validateLoadedPointsData(data: LoadedPointsData): void {
-    const pointCount = data.positions.length / 3;
-
-    // Log data summary for debugging
-    log.info(Modules.SCENE_LOADER, 'Points Data Validation:', {
-      pointCount,
-      positionsLength: data.positions.length,
-      positionsType: data.positions.constructor.name,
-      hasColors: !!data.colors,
-      colorsType: data.colors?.constructor.name,
-      colorsLength: data.colors?.length,
-      hasRadii: !!data.radii,
-      radiiType: data.radii?.constructor.name,
-      radiiLength: data.radii?.length,
-      hasSharpness: !!data.sharpness,
-      sharpnessType: data.sharpness?.constructor.name,
-      sharpnessLength: data.sharpness?.length,
-    });
-
-    // EDGE CASE: Empty dataset
-    if (pointCount === 0) {
-      log.warning(Modules.SCENE_LOADER, 'Empty dataset detected - no points to render');
-      return;
-    }
-
-    // EDGE CASE: Malformed positions (not multiple of 3)
-    if (data.positions.length % 3 !== 0) {
-      const error = `Malformed positions array: length ${data.positions.length} is not divisible by 3`;
-      log.error(Modules.SCENE_LOADER, error);
-      throw new Error(error);
-    }
-
-    // VALIDATION: Colors length consistency
-    if (data.colors && data.colors.length !== data.positions.length) {
-      const expected = data.positions.length;
-      const actual = data.colors.length;
-      log.warning(
-        Modules.SCENE_LOADER,
-        `Colors length mismatch: expected ${expected}, got ${actual}`,
-        { expected, actual }
-      );
-    }
-
-    // VALIDATION: Radii length consistency
-    if (data.radii && data.radii.length !== pointCount) {
-      const expected = pointCount;
-      const actual = data.radii.length;
-      log.warning(
-        Modules.SCENE_LOADER,
-        `Radii length mismatch: expected ${expected}, got ${actual}`,
-        { expected, actual }
-      );
-    }
-
-    // VALIDATION: Sharpness length consistency
-    if (data.sharpness && data.sharpness.length !== pointCount) {
-      const expected = pointCount;
-      const actual = data.sharpness.length;
-      log.warning(
-        Modules.SCENE_LOADER,
-        `Sharpness length mismatch: expected ${expected}, got ${actual}`,
-        { expected, actual }
-      );
-    }
-
-    // Log successful validation
-    log.success(Modules.SCENE_LOADER, `Points data validated: ${pointCount} points`);
-  }
-
-  /**
-   * Create THREE.js geometry from points data
-   * @param data - Points data with positions, colors, radii, sharpness
-   * @param maxRadius - Maximum radius from node attributes for scaling uint8 radii
-   * @param maxSharpness - Maximum sharpness from node attributes for scaling uint8 sharpness
-   */
-  private createGeometry(
-    data: LoadedPointsData,
-    maxRadius: number = 1.0,
-    maxSharpness: number = 31.0
-  ): THREE.BufferGeometry {
-    const geometry = new THREE.BufferGeometry();
-
-    // VALIDATION: Check for edge cases and log detailed diagnostics
-    this.validateLoadedPointsData(data);
-
-    // Set positions (handle Float16Array conversion if needed)
-    if (
-      typeof (globalThis as any).Float16Array !== 'undefined' &&
-      data.positions instanceof (globalThis as any).Float16Array
-    ) {
-      // Convert Float16Array to Float32Array for THREE.js compatibility
-      const float32Positions = new Float32Array(data.positions);
-      geometry.setAttribute('position', new THREE.BufferAttribute(float32Positions, 3));
-    } else {
-      geometry.setAttribute(
-        'position',
-        new THREE.BufferAttribute(data.positions as Float32Array, 3)
-      );
-    }
-
-    // Set colors if available
-    if (data.colors) {
-      // Validate color mode consistency
-      this.validateColorMode(data.colors, data.metadata as any);
-
-      // Check if colors need normalization (for uint8/uint16 arrays)
-      const needsNormalization =
-        data.colors instanceof Uint8Array || data.colors instanceof Uint16Array;
-
-      geometry.setAttribute('color', new THREE.BufferAttribute(data.colors, 3, needsNormalization));
-    }
-
-    // Set radii if available, or use default
-    let radiusScale = 1.0; // Default scale for float32 radii
-
-    if (data.radii) {
-      // Check if radii need normalization or conversion
-      if (
-        typeof (globalThis as any).Float16Array !== 'undefined' &&
-        data.radii instanceof (globalThis as any).Float16Array
-      ) {
-        // Convert Float16Array to Float32Array for THREE.js
-        const float32Radii = new Float32Array(data.radii);
-        geometry.setAttribute('radius', new THREE.BufferAttribute(float32Radii, 1));
-        // Float16 values are already in world units, no scaling needed
-        radiusScale = 1.0;
-      } else if (data.radii instanceof Uint8Array) {
-        // Uint8 radii need scaling from 0-255 to 0-1 (or world units)
-        // Use the normalization flag for proper GPU upload
-        geometry.setAttribute(
-          'radius',
-          new THREE.BufferAttribute(data.radii, 1, true) // true = normalize on GPU
-        );
-        // GPU normalizes uint8 [0, 255] to [0, 1]
-        // Python encodes radii with bounded_scalar_uint8: value in [0, max_radius]
-        // After GPU normalization we get normalized values in [0, 1]
-        // Multiply by maxRadius to get world-space radius
-        radiusScale = maxRadius;
-      } else {
-        // Float32 radii - no normalization or scaling needed
-        geometry.setAttribute(
-          'radius',
-          new THREE.BufferAttribute(data.radii as Float32Array, 1, false)
-        );
-        radiusScale = 1.0;
-      }
-    } else {
-      // Create default radius array with value 0.5 for all points
-      const numPoints = data.positions.length / 3;
-      const defaultRadii = new Float32Array(numPoints).fill(0.5);
-      geometry.setAttribute('radius', new THREE.BufferAttribute(defaultRadii, 1));
-      radiusScale = 1.0;
-    }
-
-    // Set sharpness if available, or use default
-    let sharpnessScale = 1.0; // Default scale for float32 sharpness
-
-    if (data.sharpness) {
-      // Check if sharpness needs normalization or conversion
-      if (
-        typeof (globalThis as any).Float16Array !== 'undefined' &&
-        data.sharpness instanceof (globalThis as any).Float16Array
-      ) {
-        // Convert Float16Array to Float32Array for THREE.js
-        const float32Sharpness = new Float32Array(data.sharpness);
-        geometry.setAttribute('sharpness', new THREE.BufferAttribute(float32Sharpness, 1));
-        // Float16 values are already in world units, no scaling needed
-        sharpnessScale = 1.0;
-      } else if (data.sharpness instanceof Uint8Array) {
-        // Uint8 sharpness needs scaling - check metadata for range
-        // Use the normalization flag for proper GPU upload
-        geometry.setAttribute(
-          'sharpness',
-          new THREE.BufferAttribute(data.sharpness, 1, true) // true = normalize on GPU
-        );
-
-        // GPU normalizes uint8 to [0,1], then scale to sharpness range
-        // Use max_sharpness passed from node attributes
-        sharpnessScale = maxSharpness;
-      } else {
-        // Float32 sharpness - no normalization or scaling needed
-        geometry.setAttribute(
-          'sharpness',
-          new THREE.BufferAttribute(data.sharpness as Float32Array, 1, false)
-        );
-        sharpnessScale = 1.0;
-      }
-    } else {
-      // Create default sharpness array with value 2.0 for all points
-      const numPoints = data.positions.length / 3;
-      const defaultSharpness = new Float32Array(numPoints).fill(2.0);
-      geometry.setAttribute('sharpness', new THREE.BufferAttribute(defaultSharpness, 1));
-      sharpnessScale = 1.0;
-    }
-
-    // Compute bounding box
-    geometry.boundingBox = data.metadata.bounds.clone();
-
-    // Store radius and sharpness scales as user data for material creation
-    if (!geometry.userData) {
-      geometry.userData = {};
-    }
-    geometry.userData.radiusScale = radiusScale;
-    geometry.userData.sharpnessScale = sharpnessScale;
-
-    return geometry;
-  }
-
-  /**
-   * Create material for points
-   */
-  private createMaterial(
-    attrs: any,
-    radiusScale: number = 1.0,
-    sharpnessScale: number = 1.0
-  ): THREE.ShaderMaterial {
-    let material = materialManager.getPointMaterial({
-      opacity: attrs.opacity ?? 1.0,
-      gamma: attrs.gamma ?? 1.0,
-      intensity: attrs.intensity ?? 1.0,
-      offset: attrs.offset ?? 0.0,
-      blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
-      radiusScale: radiusScale,
-      sharpnessScale: sharpnessScale,
-    });
-
-    // Apply colormap if specified AND scalar data exists to drive it.
-    // Without scalar data, the shader's `scalar` attribute defaults to 0,
-    // which would map everything to the first LUT color (usually black).
-    // Clone the material — the manager returns cached instances shared across nodes.
-    const ptColormapName = attrs.colormap as string | undefined;
-    const ptHasScalars = !!attrs.has_scalars;
-    if (ptColormapName && ptHasScalars) {
-      // Known limitation: custom LUT data from zarr is not yet loaded.
-      // When colormapName is "custom", getColormapTexture returns undefined
-      // and the colormap is silently skipped. Built-in colormaps work fine.
-      const ptColormapTex = getColormapTexture(ptColormapName);
-      if (ptColormapTex) {
-        material = material.clone() as typeof material;
-        materialManager.register(material);
-        material.updateColormapTexture(ptColormapTex);
-        const ptScalarRange = (attrs.scalar_data_range as [number, number]) ?? [0, 1];
-        material.updateScalarRange(ptScalarRange[0], ptScalarRange[1]);
-      }
-    }
-
-    return material;
-  }
-
-  /**
-   * Validate transform matrix format (detect row-major vs column-major)
-   *
-   * THREE.js expects column-major (OpenGL-style) where translation is at indices [12, 13, 14]
-   * NumPy uses row-major (C-style) where translation is at indices [3, 7, 11]
-   *
-   * Python should transpose before writing: matrix.T.ravel().tolist()
-   */
-  private validateTransformFormat(transform: number[]): boolean {
-    // Check if translation components look suspicious
-    // In column-major (correct for THREE.js): [12]=tx, [13]=ty, [14]=tz
-    // In row-major (wrong for THREE.js): [3]=tx, [7]=ty, [11]=tz
-
-    const colMajorTranslation = [transform[12], transform[13], transform[14]];
-    const rowMajorTranslation = [transform[3], transform[7], transform[11]];
-
-    const colMajorNonZero = colMajorTranslation.some((v) => Math.abs(v) > 0.001);
-    const rowMajorNonZero = rowMajorTranslation.some((v) => Math.abs(v) > 0.001);
-
-    // If row-major positions are non-zero but column-major are zero, likely wrong format
-    if (rowMajorNonZero && !colMajorNonZero) {
-      log.warning(
-        Modules.SCENE_LOADER,
-        'Transform matrix appears to be in row-major (NumPy) format instead of column-major (THREE.js). ' +
-          'Translation detected at wrong indices [3,7,11] instead of [12,13,14]. ' +
-          'Python should transpose before storing: matrix.T.ravel().tolist()'
-      );
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Apply transformation matrix to object
-   */
-  private applyTransform(object: THREE.Object3D, transform: number[]): void {
-    if (transform.length !== 16) {
-      log.warning(Modules.SCENE_LOADER, `Invalid transform length: ${transform.length}`);
-      return;
-    }
-
-    // Validate transform format (detect common mistakes)
-    this.validateTransformFormat(transform);
-
-    const matrix = new THREE.Matrix4().fromArray(transform);
-    const position = new THREE.Vector3();
-    const quaternion = new THREE.Quaternion();
-    const scale = new THREE.Vector3();
-
-    matrix.decompose(position, quaternion, scale);
-
-    object.position.copy(position);
-    object.quaternion.copy(quaternion);
-    object.scale.copy(scale);
-  }
-
-  /**
    * Update geometry for a specific points
    */
   private updatePointsGeometry(
@@ -2650,53 +2209,12 @@ export class SceneLoader {
           if (oldGeometry) {
             oldGeometry.dispose();
           }
-          points.geometry = this.createGeometry(data);
+          points.geometry = this.nodeFactory.createPointsGeometry(data);
         }
       }
     } finally {
       bufferSession?.end();
     }
-  }
-
-  /**
-   * Validate color mode consistency
-   *
-   * Ensures color array type matches expected encoding:
-   * - Float32Array for HDR colors (values > 1.0)
-   * - Uint8Array for SDR colors (values [0, 1])
-   * - Warns about potential issues
-   */
-  private validateColorMode(
-    colors: Uint8Array | Uint16Array | Float32Array,
-    nodeMetadata: any
-  ): void {
-    const isHDR = colors instanceof Float32Array;
-    const isSDR = colors instanceof Uint8Array || colors instanceof Uint16Array;
-
-    // Check for suspicious patterns
-    if (isSDR && nodeMetadata?.color_mode === 'hdr') {
-      log.warning(
-        Modules.SCENE_LOADER,
-        `Node metadata indicates HDR colors but array is ${colors.constructor.name}. ` +
-          'HDR colors should use Float32Array. This may indicate incorrect encoding.'
-      );
-    }
-
-    if (isHDR) {
-      // For float32 colors, check if any values exceed 1.0 (HDR range)
-      const hasHDRValues = Array.from(colors).some((v) => v > 1.0);
-      if (!hasHDRValues && nodeMetadata?.color_mode === 'hdr') {
-        log.info(
-          Modules.SCENE_LOADER,
-          'HDR color mode specified but all values in [0, 1] range. Consider using SDR mode for better compression.'
-        );
-      }
-    }
-
-    // Log color mode for debugging
-    const colorType = colors.constructor.name;
-    const colorMode = isHDR ? 'HDR (float32)' : 'SDR (normalized integer)';
-    log.info(Modules.SCENE_LOADER, `Colors: ${colorType} - ${colorMode}`);
   }
 
   /**
