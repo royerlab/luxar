@@ -561,7 +561,7 @@ describe('SceneLoader', () => {
         1, // Column 3: translation + w
       ];
 
-      const isValid = (sceneLoader as any).validateTransformFormat(columnMajorTransform);
+      const isValid = (sceneLoader as any).nodeFactory.validateTransformFormat(columnMajorTransform);
       expect(isValid).toBe(true);
     });
 
@@ -588,7 +588,7 @@ describe('SceneLoader', () => {
         1, // Row 3: homogeneous
       ];
 
-      const isValid = (sceneLoader as any).validateTransformFormat(rowMajorTransform);
+      const isValid = (sceneLoader as any).nodeFactory.validateTransformFormat(rowMajorTransform);
       expect(isValid).toBe(false);
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('row-major (NumPy) format instead of column-major')
@@ -618,7 +618,7 @@ describe('SceneLoader', () => {
         1, // [12, 13, 14] are zero (column-major)
       ];
 
-      const isValid = (sceneLoader as any).validateTransformFormat(suspiciousTransform);
+      const isValid = (sceneLoader as any).nodeFactory.validateTransformFormat(suspiciousTransform);
       expect(isValid).toBe(false);
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('matrix.T.ravel().tolist()'));
     });
@@ -626,7 +626,7 @@ describe('SceneLoader', () => {
     it('should accept identity matrix', () => {
       const identityTransform = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
-      const isValid = (sceneLoader as any).validateTransformFormat(identityTransform);
+      const isValid = (sceneLoader as any).nodeFactory.validateTransformFormat(identityTransform);
       expect(isValid).toBe(true);
     });
 
@@ -634,7 +634,7 @@ describe('SceneLoader', () => {
       // Scale matrix: no translation, should pass validation
       const scaleTransform = [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1];
 
-      const isValid = (sceneLoader as any).validateTransformFormat(scaleTransform);
+      const isValid = (sceneLoader as any).nodeFactory.validateTransformFormat(scaleTransform);
       expect(isValid).toBe(true);
     });
   });
@@ -653,7 +653,7 @@ describe('SceneLoader', () => {
       const radiusScale = 2.5; // maxRadius from node attrs
       const sharpnessScale = 1.0;
 
-      const material = (sceneLoader as any).createMaterial(attrs, radiusScale, sharpnessScale);
+      const material = (sceneLoader as any).nodeFactory.createPointsMaterial(attrs, radiusScale, sharpnessScale);
 
       expect(material).toBeDefined();
       expect(material.updateCameraParams).toBeDefined();
@@ -668,7 +668,7 @@ describe('SceneLoader', () => {
       const radiusScale = 1.0;
       const sharpnessScale = 31.0; // SHARPNESS_MAX constant
 
-      const material = (sceneLoader as any).createMaterial(attrs, radiusScale, sharpnessScale);
+      const material = (sceneLoader as any).nodeFactory.createPointsMaterial(attrs, radiusScale, sharpnessScale);
 
       expect(material).toBeDefined();
       expect(material.updateCameraParams).toBeDefined();
@@ -678,8 +678,8 @@ describe('SceneLoader', () => {
       const normalAttrs = { blending_mode: 'normal' as const };
       const additiveAttrs = { blending_mode: 'additive' as const };
 
-      const material1 = (sceneLoader as any).createMaterial(normalAttrs, 1.0, 1.0);
-      const material2 = (sceneLoader as any).createMaterial(additiveAttrs, 1.0, 1.0);
+      const material1 = (sceneLoader as any).nodeFactory.createPointsMaterial(normalAttrs, 1.0, 1.0);
+      const material2 = (sceneLoader as any).nodeFactory.createPointsMaterial(additiveAttrs, 1.0, 1.0);
 
       expect(material1).toBeDefined();
       expect(material2).toBeDefined();
@@ -688,7 +688,7 @@ describe('SceneLoader', () => {
     it('should use default opacity and gamma when not specified', async () => {
       const attrs = {}; // No opacity/gamma specified
 
-      const material = (sceneLoader as any).createMaterial(attrs, 1.0, 1.0);
+      const material = (sceneLoader as any).nodeFactory.createPointsMaterial(attrs, 1.0, 1.0);
 
       expect(material).toBeDefined();
       expect(material.updateCameraParams).toBeDefined();
@@ -700,7 +700,7 @@ describe('SceneLoader', () => {
         gamma: 2.2,
       };
 
-      const material = (sceneLoader as any).createMaterial(attrs, 1.0, 1.0);
+      const material = (sceneLoader as any).nodeFactory.createPointsMaterial(attrs, 1.0, 1.0);
 
       expect(material).toBeDefined();
       expect(material.updateCameraParams).toBeDefined();
@@ -709,7 +709,7 @@ describe('SceneLoader', () => {
     it('should handle default radiusScale and sharpnessScale', async () => {
       const attrs = {};
 
-      const material = (sceneLoader as any).createMaterial(attrs); // No scales provided
+      const material = (sceneLoader as any).nodeFactory.createPointsMaterial(attrs); // No scales provided
 
       expect(material).toBeDefined();
       expect(material.updateCameraParams).toBeDefined();
@@ -1151,7 +1151,7 @@ describe('SceneLoader', () => {
 
       // Should not throw, just log info
       expect(() => {
-        (sceneLoader as any).validateLoadedPointsData(emptyData);
+        (sceneLoader as any).nodeFactory.validateLoadedPointsData(emptyData);
       }).not.toThrow();
 
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Empty dataset detected'));
@@ -1170,7 +1170,7 @@ describe('SceneLoader', () => {
       };
 
       expect(() => {
-        (sceneLoader as any).validateLoadedPointsData(malformedData);
+        (sceneLoader as any).nodeFactory.validateLoadedPointsData(malformedData);
       }).toThrow('not divisible by 3');
     });
 
@@ -1189,7 +1189,7 @@ describe('SceneLoader', () => {
 
       const consoleSpy = vi.spyOn(console, 'warn');
 
-      (sceneLoader as any).validateLoadedPointsData(data);
+      (sceneLoader as any).nodeFactory.validateLoadedPointsData(data);
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('Colors length mismatch'),
@@ -1212,7 +1212,7 @@ describe('SceneLoader', () => {
 
       const consoleSpy = vi.spyOn(console, 'warn');
 
-      (sceneLoader as any).validateLoadedPointsData(data);
+      (sceneLoader as any).nodeFactory.validateLoadedPointsData(data);
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('Radii length mismatch'),
@@ -1235,7 +1235,7 @@ describe('SceneLoader', () => {
 
       const consoleSpy = vi.spyOn(console, 'warn');
 
-      (sceneLoader as any).validateLoadedPointsData(data);
+      (sceneLoader as any).nodeFactory.validateLoadedPointsData(data);
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('Sharpness length mismatch'),
@@ -1260,7 +1260,7 @@ describe('SceneLoader', () => {
 
       const consoleSpy = vi.spyOn(console, 'warn');
 
-      (sceneLoader as any).validateLoadedPointsData(validData);
+      (sceneLoader as any).nodeFactory.validateLoadedPointsData(validData);
 
       // Should not have any warnings (only info/log messages)
       const warnCalls = consoleSpy.mock.calls.filter((call) =>
@@ -1277,7 +1277,7 @@ describe('SceneLoader', () => {
 
       const consoleSpy = vi.spyOn(console, 'warn');
 
-      (sceneLoader as any).validateColorMode(colors, metadata);
+      (sceneLoader as any).nodeFactory.validateColorMode(colors, metadata);
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('metadata indicates HDR colors but array is Uint8Array')
@@ -1290,7 +1290,7 @@ describe('SceneLoader', () => {
 
       const consoleSpy = vi.spyOn(console, 'warn');
 
-      (sceneLoader as any).validateColorMode(colors, metadata);
+      (sceneLoader as any).nodeFactory.validateColorMode(colors, metadata);
 
       // Should not have HDR/Uint8 mismatch warning
       const warnCalls = consoleSpy.mock.calls.filter((call) =>
@@ -1305,7 +1305,7 @@ describe('SceneLoader', () => {
 
       const consoleSpy = vi.spyOn(console, 'log');
 
-      (sceneLoader as any).validateColorMode(colors, metadata);
+      (sceneLoader as any).nodeFactory.validateColorMode(colors, metadata);
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('Consider using SDR mode for better compression')
@@ -1320,7 +1320,7 @@ describe('SceneLoader', () => {
 
       // Should not throw, should log color type
       expect(() => {
-        (sceneLoader as any).validateColorMode(colors, metadata);
+        (sceneLoader as any).nodeFactory.validateColorMode(colors, metadata);
       }).not.toThrow();
 
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Uint16Array'));
