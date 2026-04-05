@@ -570,7 +570,17 @@ export class LuxarApp {
     const canvas = this.sceneManager.renderer.domElement;
     const handler = (e: MouseEvent) => this.pickingSystem?.onMouseMove(e);
     canvas.addEventListener('mousemove', handler);
-    this.pickingCleanup = () => canvas.removeEventListener('mousemove', handler);
+
+    // Invalidate pick buffer on camera changes and window resize
+    const dirtyHandler = () => this.pickingSystem?.markDirty();
+    this.sceneManager.controls.addEventListener('change', dirtyHandler);
+    window.addEventListener('resize', dirtyHandler);
+
+    this.pickingCleanup = () => {
+      canvas.removeEventListener('mousemove', handler);
+      this.sceneManager.controls.removeEventListener('change', dirtyHandler);
+      window.removeEventListener('resize', dirtyHandler);
+    };
 
     log.info(Modules.APP, 'GPU picking system initialized (labels detected)');
   }
