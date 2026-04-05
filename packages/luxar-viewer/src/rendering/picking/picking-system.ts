@@ -56,6 +56,8 @@ export class PickingSystem {
 
   // Reusable objects to avoid per-pick allocations
   private _box = new THREE.Box3();
+  private _lastReadX = 0;
+  private _lastReadY = 0;
 
   constructor(
     private renderer: THREE.WebGLRenderer,
@@ -65,7 +67,9 @@ export class PickingSystem {
     this.pickScene = new THREE.Scene();
     // No background — pick buffer clears to (0,0,0,0) which means "no hit"
 
-    this.pickTarget = new THREE.WebGLRenderTarget(PICK_SIZE, PICK_SIZE, {
+    // Full-viewport-sized pick target — we scissor to PICK_SIZE×PICK_SIZE around
+    // the cursor and only readback those pixels. Resized dynamically in renderPickBuffer.
+    this.pickTarget = new THREE.WebGLRenderTarget(1, 1, {
       type: THREE.FloatType,
       format: THREE.RGBAFormat,
       minFilter: THREE.NearestFilter,
@@ -200,17 +204,47 @@ export class PickingSystem {
     const savedRenderTarget = renderer.getRenderTarget();
     const savedScissorTest = renderer.getScissorTest();
 
-    // Add candidates to pick scene
+    // Sync and add candidates to pick scene
     for (const entry of candidates) {
+      // Sync geometry (main node's geometry may have been replaced by view updates)
+      const mainGeom = (entry.main as THREE.Mesh).geometry ?? (entry.main as THREE.Points).geometry;
+      if (mainGeom) {
+        (entry.pick as THREE.Mesh).geometry = mainGeom;
+      }
+      // Sync world transform
+      entry.pick.matrixWorld.copy(entry.main.matrixWorld);
       this.pickScene.add(entry.pick);
     }
 
-    // Render to pick target (full 5x5).
-    // TODO: implement sub-frustum projection to resolve per-element picking.
-    // Currently the 5x5 buffer represents the entire viewport, so picking
-    // identifies the correct node but may not distinguish individual elements
-    // when multiple overlap.
+    // Scissor-based picking: render with the same camera to a target that
+    // matches the renderer's actual drawing buffer size, then readback
+    // PICK_SIZE×PICK_SIZE pixels around the cursor.
+    const drawBuf = renderer.getDrawingBufferSize(new THREE.Vector2());
+    const vpW = drawBuf.x;
+    const vpH = drawBuf.y;
+
+    // Resize pick target to match actual drawing buffer (only when size changes)
+    if (this.pickTarget.width !== vpW || this.pickTarget.height !== vpH) {
+      this.pickTarget.setSize(vpW, vpH);
+    }
+
+    // Cursor position in drawing buffer pixels, Y-flipped for WebGL
+    const canvas = renderer.domElement;
+    const scaleX = vpW / canvas.clientWidth;
+    const scaleY = vpH / canvas.clientHeight;
+    const cursorX = Math.floor(this.pendingMouse!.x * scaleX);
+    const cursorY = vpH - Math.floor(this.pendingMouse!.y * scaleY);
+
+    // Compute readback position (cursor in WebGL coords, clamped)
+    const half = Math.floor(PICK_SIZE / 2);
+    this._lastReadX = Math.max(0, Math.min(cursorX - half, vpW - PICK_SIZE));
+    this._lastReadY = Math.max(0, Math.min(cursorY - half, vpH - PICK_SIZE));
+
+    // Render full scene to pick target, then readback only the cursor region.
+    // Scissor optimization disabled — it interferes with THREE.js clear behavior.
+    // The GPU cost is minimal since pick materials are trivial (no lighting/texture).
     renderer.setRenderTarget(this.pickTarget);
+    renderer.setScissorTest(false);
     renderer.setClearColor(0x000000, 0);
     renderer.clear(true, true, false);
     renderer.render(this.pickScene, this.camera);
@@ -232,8 +266,8 @@ export class PickingSystem {
   private readbackAndVote(): PickResult | null {
     this.renderer.readRenderTargetPixels(
       this.pickTarget,
-      0,
-      0,
+      this._lastReadX,
+      this._lastReadY,
       PICK_SIZE,
       PICK_SIZE,
       this.readBuffer
