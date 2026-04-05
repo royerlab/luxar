@@ -20,7 +20,7 @@ import {
 import type { SceneGraphNode } from '../ui/data-monitor-types';
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
 import { materialManager, BlendingMode } from '../rendering/material-manager';
-import { createInstancedLinesMesh, updateInstancedLinesMesh } from '../rendering/line-material';
+import { createInstancedLinesMesh, updateInstancedLinesMesh } from '../rendering/line-geometry';
 import { DataMonitorManager } from './data-monitor-manager';
 import { ArrayRefRegistry } from './array-decoder';
 import { ViewStateManager, type SceneDimensions } from './view-state-manager';
@@ -47,12 +47,12 @@ import type {
 import { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
 import { GSplatsProgressiveLoader } from './gsplats-progressive-loader';
 import { processGSplats } from './gsplats-processor';
+import { GSplatMaterial } from '../rendering/gsplat-material';
 import {
-  GSplatMaterial,
   createInstancedGSplatsMesh,
   updateInstancedGSplatsMesh,
   packCholeskyForShader,
-} from '../rendering/gsplat-material';
+} from '../rendering/gsplat-geometry';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { getColormapTexture } from '../rendering/colormap-textures';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './nd-transform';
