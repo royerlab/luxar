@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
 import type { BlendingMode } from '../../rendering/material-manager';
+import type { CameraAwareMaterial } from '../../rendering/camera-aware-material';
 import {
   LayerStateManager,
   computeUniforms,
@@ -32,7 +33,7 @@ function clampGamma(gamma: number): number {
 }
 
 // Type guard: does this material have our update* methods?
-export interface LuxarMaterial extends THREE.Material {
+export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
   updateIntensity(v: number): void;
   updateOffset(v: number): void;
   updateGamma(v: number): void;

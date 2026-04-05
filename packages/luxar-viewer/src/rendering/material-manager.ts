@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { PointMaterial } from './point-material';
 import { LineMaterial } from './line-material';
 import { GSplatMaterial } from './gsplat-material';
+import type { CameraAwareMaterial } from './camera-aware-material';
 import { log, Modules } from '../utils/log';
 
 /**
@@ -65,7 +66,7 @@ export class MaterialManager {
   private pointMaterialCache = new Map<string, PointMaterial>();
   private lineMaterialCache = new Map<string, LineMaterial>();
   private gsplatMaterialCache = new Map<string, GSplatMaterial>();
-  private registeredMaterials = new Set<THREE.Material>();
+  private registeredMaterials = new Set<THREE.Material & CameraAwareMaterial>();
   private currentFov = (60 * Math.PI) / 180; // Current FOV in radians (or frustumHeight for ortho)
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
   private currentIsOrtho = false;
@@ -275,42 +276,31 @@ export class MaterialManager {
     this.currentNearCull = nearCull;
 
     // Update all registered materials
-    this.registeredMaterials.forEach((material) => {
-      // Check if this material has updateCameraParams method
-      if (
-        'updateCameraParams' in material &&
-        typeof (material as any).updateCameraParams === 'function'
-      ) {
-        (material as any).updateCameraParams(fov, resolution, isOrtho, nearCull);
-      }
-    });
+    for (const material of this.registeredMaterials) {
+      material.updateCameraParams(fov, resolution, isOrtho, nearCull);
+    }
   }
 
   /**
    * Register a material for global camera parameter updates.
    * Use this for cloned materials that need to receive updateCameraParams() calls.
    */
-  register(material: THREE.Material): void {
+  register(material: THREE.Material & CameraAwareMaterial): void {
     this.registeredMaterials.add(material);
     // Immediately update with current camera params so the material is in sync
-    if (
-      'updateCameraParams' in material &&
-      typeof (material as any).updateCameraParams === 'function'
-    ) {
-      (material as any).updateCameraParams(
-        this.currentFov,
-        this.currentResolution,
-        this.currentIsOrtho,
-        this.currentNearCull
-      );
-    }
+    material.updateCameraParams(
+      this.currentFov,
+      this.currentResolution,
+      this.currentIsOrtho,
+      this.currentNearCull
+    );
   }
 
   /**
    * Unregister a material from global updates
    * This should be called when a material is disposed to prevent memory leaks
    */
-  unregister(material: THREE.Material): void {
+  unregister(material: THREE.Material & CameraAwareMaterial): void {
     this.registeredMaterials.delete(material);
 
     // Also remove from cache based on material type
