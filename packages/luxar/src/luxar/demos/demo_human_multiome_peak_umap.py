@@ -273,9 +273,9 @@ def create_human_scene(
                         )
 
             scene.add_text(
-                f"{n_points:,} peaks \u2022 scATAC-seq \u2022 3D UMAP",
+                f"{n_points:,} peaks • Human scATAC-seq • 3D UMAP",
                 position=(0.98, 0.97),
-                font_size=0.015,
+                font_size=0.012,
                 anchor="bottom-right",
                 color="rgba(200,200,200,0.45)",
             )

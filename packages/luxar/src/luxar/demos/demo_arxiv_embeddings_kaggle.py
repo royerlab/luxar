@@ -650,11 +650,11 @@ def generate_paper_landscape(
                 stroke_width=0.002,
             )
 
-            # Info
+            # Info + source
             scene.add_text(
-                "500K papers \u2022 Kaggle dataset",
+                f"{n_papers:,} papers • OpenAI embeddings • Kaggle dataset",
                 position=(0.98, 0.97),
-                font_size=0.015,
+                font_size=0.012,
                 anchor="bottom-right",
                 color="rgba(200,200,200,0.45)",
             )

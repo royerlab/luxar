@@ -634,9 +634,9 @@ def generate_protein_landscape(
             )
 
             scene.add_text(
-                f"{n_proteins:,} proteins \u2022 ProtT5 embeddings \u2022 3D UMAP",
+                f"{n_proteins:,} proteins • ProtT5 embeddings • 3D UMAP • Zhou et al. 2024",
                 position=(0.98, 0.97),
-                font_size=0.015,
+                font_size=0.012,
                 anchor="bottom-right",
                 color="rgba(200,200,200,0.45)",
             )

@@ -307,13 +307,13 @@ def generate_spotify_landscape(
                 stroke_width=0.002,
             )
 
-            # Info overlay
+            # Info + source
             scene.add_text(
-                f"{n_tracks:,} tracks • UMAP on {len(AUDIO_FEATURES)} audio features • color = genre",
-                position=(0.5, 0.97),
-                font_size=0.014,
-                anchor="bottom-center",
-                color="rgba(200,200,200,0.6)",
+                f"{n_tracks:,} tracks • UMAP on {len(AUDIO_FEATURES)} audio features • Spotify dataset",
+                position=(0.98, 0.97),
+                font_size=0.012,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
             )
 
     aprint(f"✓ Wrote {n_tracks:,} tracks to {output_path}")
