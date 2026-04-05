@@ -3,17 +3,18 @@
  *
  * Orchestrates the picking pipeline:
  * 1. Debounced mousemove triggers a pick
- * 2. Ray-BBox culling filters candidate nodes
- * 3. 5x5 scissored render to RGBA32F pick buffer
- * 4. Readback + brightness-weighted majority voting
+ * 2. If dirty: re-render ALL registered nodes to cached RGBA32F pick buffer (half-res)
+ * 3. Ray-BBox culling to skip readback if cursor is in empty space
+ * 4. Readback 5×5 pixels at cursor + brightness-weighted majority voting
  * 5. Callback with winning (nodeId, elementId) or null
  *
  * The pick buffer encodes: R=nodeId, G=elementId, B=brightness, A=1.0
  * Brightness-as-depth (gl_FragDepth = 1 - brightness) ensures the
  * brightest element at each pixel wins the depth test.
  *
- * Zero impact on the main render loop — the pick pass only fires when
- * the mouse has been stationary for ~100ms, and renders at most 25 pixels.
+ * Caching: the pick buffer is only re-rendered when dirty (camera move,
+ * geometry update, window resize). Hover events just readback from the
+ * cached buffer — zero GPU cost per hover.
  */
 
 import * as THREE from 'three';
@@ -59,6 +60,10 @@ export class PickingSystem {
   private _lastReadX = 0;
   private _lastReadY = 0;
 
+  // Cache: only re-render when the view changes
+  private _dirty = true;
+  private _drawBufSize = new THREE.Vector2();
+
   constructor(
     private renderer: THREE.WebGLRenderer,
     private camera: THREE.Camera,
@@ -67,8 +72,8 @@ export class PickingSystem {
     this.pickScene = new THREE.Scene();
     // No background — pick buffer clears to (0,0,0,0) which means "no hit"
 
-    // Full-viewport-sized pick target — we scissor to PICK_SIZE×PICK_SIZE around
-    // the cursor and only readback those pixels. Resized dynamically in renderPickBuffer.
+    // Cached pick buffer at half viewport resolution. Resized dynamically in performPick.
+    // Rendered once per view change; hover events only readback from the cached buffer.
     this.pickTarget = new THREE.WebGLRenderTarget(1, 1, {
       type: THREE.FloatType,
       format: THREE.RGBAFormat,
@@ -103,6 +108,11 @@ export class PickingSystem {
   /** Number of registered pick nodes. */
   get registeredNodeCount(): number {
     return this.nodeMap.size;
+  }
+
+  /** Invalidate the cached pick buffer. Call when camera, geometry, or viewport changes. */
+  markDirty(): void {
+    this._dirty = true;
   }
 
   /**
@@ -143,7 +153,11 @@ export class PickingSystem {
   // ---------------------------------------------------------------------------
 
   /**
-   * Perform a full pick at the given screen coordinates.
+   * Perform a pick at the given screen coordinates.
+   *
+   * If the pick buffer is dirty (camera/geometry/resize changed), re-renders
+   * ALL registered nodes to the cached buffer first. Otherwise just reads
+   * from the cached buffer — zero GPU cost on hover.
    */
   private performPick(screenX: number, screenY: number): void {
     const canvas = this.renderer.domElement;
@@ -152,60 +166,75 @@ export class PickingSystem {
 
     if (width === 0 || height === 0) return;
 
-    // Convert screen coords to NDC [-1, +1]
-    this.ndcCoord.set((screenX / width) * 2 - 1, -(screenY / height) * 2 + 1);
+    // Pick buffer at half resolution (IDs don't need full res, 4× fewer pixels)
+    const drawBuf = this.renderer.getDrawingBufferSize(this._drawBufSize);
+    const pickW = Math.max(1, Math.floor(drawBuf.x / 2));
+    const pickH = Math.max(1, Math.floor(drawBuf.y / 2));
 
-    // Build ray from camera through cursor
+    // Check if pick target needs resize (also triggers re-render)
+    const sizeChanged = this.pickTarget.width !== pickW || this.pickTarget.height !== pickH;
+    if (sizeChanged) {
+      this.pickTarget.setSize(pickW, pickH);
+      this._dirty = true;
+    }
+
+    // Re-render pick buffer if dirty (camera moved, geometry changed, resized)
+    if (this._dirty) {
+      this.renderPickBuffer();
+      this._dirty = false;
+    }
+
+    // Compute cursor position in pick buffer pixels (half res), Y-flipped for WebGL
+    const scaleX = pickW / width;
+    const scaleY = pickH / height;
+    const cursorX = Math.floor(screenX * scaleX);
+    const cursorY = pickH - Math.floor(screenY * scaleY);
+
+    const half = Math.floor(PICK_SIZE / 2);
+    this._lastReadX = Math.max(0, Math.min(cursorX - half, pickW - PICK_SIZE));
+    this._lastReadY = Math.max(0, Math.min(cursorY - half, pickH - PICK_SIZE));
+
+    // Ray-BBox culling: quick check if cursor is near any node at all
+    this.ndcCoord.set((screenX / width) * 2 - 1, -(screenY / height) * 2 + 1);
     this.raycaster.setFromCamera(this.ndcCoord, this.camera);
     const ray = this.raycaster.ray;
 
-    // Ray-BBox culling: find candidate nodes
-    const candidates: PickNodeEntry[] = [];
+    let nearAnyNode = false;
     for (const entry of this.nodeMap.values()) {
-      const pickObj = entry.pick;
-
-      // Get the bounding box from the geometry
-      const geom = (pickObj as THREE.Mesh).geometry ?? (pickObj as THREE.Points).geometry;
+      const geom = (entry.main as THREE.Mesh).geometry ?? (entry.main as THREE.Points).geometry;
       if (!geom || !geom.boundingBox) continue;
-
-      // Transform bounding box to world space
       this._box.copy(geom.boundingBox);
-
-      // Sync the pick node's world matrix from the main node
-      entry.pick.matrixWorld.copy(entry.main.matrixWorld);
-      this._box.applyMatrix4(entry.pick.matrixWorld);
-
+      this._box.applyMatrix4(entry.main.matrixWorld);
       if (ray.intersectsBox(this._box)) {
-        candidates.push(entry);
+        nearAnyNode = true;
+        break;
       }
     }
 
-    if (candidates.length === 0) {
+    if (!nearAnyNode) {
       this.onPickResult(null);
       return;
     }
 
-    // Render candidates to pick buffer
-    this.renderPickBuffer(candidates);
-
-    // Read back and vote
+    // Readback 5×5 pixels at cursor from cached buffer and vote
     const result = this.readbackAndVote();
     this.onPickResult(result);
   }
 
   /**
-   * Render candidate pick nodes to the 5x5 pick buffer.
-   * Temporarily adds candidates to the pick scene, renders, then removes them.
+   * Render ALL registered pick nodes to the cached pick buffer.
+   * Called only when the buffer is dirty (camera/geometry/resize changed).
+   * Renders at half resolution for performance — pick IDs don't need full res.
    */
-  private renderPickBuffer(candidates: PickNodeEntry[]): void {
+  private renderPickBuffer(): void {
     const renderer = this.renderer;
 
     // Save renderer state
     const savedRenderTarget = renderer.getRenderTarget();
     const savedScissorTest = renderer.getScissorTest();
 
-    // Sync and add candidates to pick scene
-    for (const entry of candidates) {
+    // Sync and add ALL registered nodes to pick scene
+    for (const entry of this.nodeMap.values()) {
       // Sync geometry (main node's geometry may have been replaced by view updates)
       const mainGeom = (entry.main as THREE.Mesh).geometry ?? (entry.main as THREE.Points).geometry;
       if (mainGeom) {
@@ -216,41 +245,15 @@ export class PickingSystem {
       this.pickScene.add(entry.pick);
     }
 
-    // Scissor-based picking: render with the same camera to a target that
-    // matches the renderer's actual drawing buffer size, then readback
-    // PICK_SIZE×PICK_SIZE pixels around the cursor.
-    const drawBuf = renderer.getDrawingBufferSize(new THREE.Vector2());
-    const vpW = drawBuf.x;
-    const vpH = drawBuf.y;
-
-    // Resize pick target to match actual drawing buffer (only when size changes)
-    if (this.pickTarget.width !== vpW || this.pickTarget.height !== vpH) {
-      this.pickTarget.setSize(vpW, vpH);
-    }
-
-    // Cursor position in drawing buffer pixels, Y-flipped for WebGL
-    const canvas = renderer.domElement;
-    const scaleX = vpW / canvas.clientWidth;
-    const scaleY = vpH / canvas.clientHeight;
-    const cursorX = Math.floor(this.pendingMouse!.x * scaleX);
-    const cursorY = vpH - Math.floor(this.pendingMouse!.y * scaleY);
-
-    // Compute readback position (cursor in WebGL coords, clamped)
-    const half = Math.floor(PICK_SIZE / 2);
-    this._lastReadX = Math.max(0, Math.min(cursorX - half, vpW - PICK_SIZE));
-    this._lastReadY = Math.max(0, Math.min(cursorY - half, vpH - PICK_SIZE));
-
-    // Render full scene to pick target, then readback only the cursor region.
-    // Scissor optimization disabled — it interferes with THREE.js clear behavior.
-    // The GPU cost is minimal since pick materials are trivial (no lighting/texture).
+    // Render to pick target at half resolution (pick IDs don't need full res)
     renderer.setRenderTarget(this.pickTarget);
     renderer.setScissorTest(false);
     renderer.setClearColor(0x000000, 0);
     renderer.clear(true, true, false);
     renderer.render(this.pickScene, this.camera);
 
-    // Remove candidates from pick scene
-    for (const entry of candidates) {
+    // Remove all nodes from pick scene
+    for (const entry of this.nodeMap.values()) {
       this.pickScene.remove(entry.pick);
     }
 

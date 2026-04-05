@@ -39,6 +39,11 @@ export class NodeFactory {
     this.pickingSystem = ps;
   }
 
+  /** Invalidate the cached pick buffer (call after geometry updates). */
+  markPickingDirty(): void {
+    this.pickingSystem?.markDirty();
+  }
+
   /**
    * Retroactively register already-loaded scene nodes with the picking system.
    * Called after initPicking() since the scene is loaded before picking is wired up.
