@@ -20,6 +20,9 @@ import { LayersPanel } from '../ui/layers';
 import { ThemeManager } from '../themes/theme-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { OverlayManager } from '../ui/overlay-manager';
+import * as zarr from 'zarrita';
+import { PickingSystem, type PickResult } from '../rendering/picking/picking-system';
+import { LabelLoader } from '../data/label-loader';
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
@@ -34,6 +37,9 @@ export class LuxarApp {
   private recordingPanel?: RecordingPanel;
   private layersPanel?: LayersPanel;
   private overlayManager?: OverlayManager;
+  private pickingSystem?: PickingSystem;
+  private labelLoader?: LabelLoader;
+  private pickingCleanup?: () => void;
   private isInitialized = false;
   private boundCleanup: (() => void) | null = null;
   private boundFocusHandler: (() => void) | null = null;
@@ -357,6 +363,9 @@ export class LuxarApp {
     // Initialize overlays (screen-space annotations from zarr)
     await this.initOverlays();
 
+    // Initialize GPU picking system (if any node has labels)
+    await this.initPicking();
+
     // Apply zarr viewer_config: UI visibility, theme, dimension state, animation
     this.applyViewerConfigState(viewerConfig);
 
@@ -485,6 +494,85 @@ export class LuxarApp {
       await this.overlayManager.loadOverlays(overlayConfigs, zarrBaseUrl);
       this.inputHandler.setOverlayManager(this.overlayManager);
     }
+  }
+
+  /**
+   * Initialize GPU picking system for hover tooltips.
+   * Only activates if any scene node has labels (has_labels: true in .zattrs).
+   * Wires up: PickingSystem → LabelLoader → OverlayManager.updateHoverContent.
+   */
+  private async initPicking(): Promise<void> {
+    // Clean up previous picking if reloading
+    if (this.pickingCleanup) {
+      this.pickingCleanup();
+      this.pickingCleanup = undefined;
+    }
+    this.pickingSystem?.dispose();
+    this.labelLoader?.dispose();
+    this.pickingSystem = undefined;
+    this.labelLoader = undefined;
+
+    // Check if any node has labels
+    const root = this.sceneManager.scene?.children?.find(
+      (c) => c.name === 'LuxarScene'
+    ) as THREE.Group | undefined;
+    if (!root) return;
+
+    let hasAnyLabels = false;
+    root.traverse((obj) => {
+      if (obj.userData?.attrs?.has_labels) {
+        hasAnyLabels = true;
+      }
+    });
+    if (!hasAnyLabels) return;
+
+    // Get the scene loader for store/rootLoc access
+    const sceneLoader = getSceneLoader('default');
+    if (!sceneLoader) return;
+
+    // Create label loader using the scene loader's zarr store
+    const store = sceneLoader.zarrStore;
+    if (!store) {
+      log.warning(Modules.APP, 'Cannot init picking: zarr store not available');
+      return;
+    }
+    const rootLoc = zarr.root(store);
+    this.labelLoader = new LabelLoader(store, rootLoc);
+
+    // Create picking system with result callback
+    this.pickingSystem = new PickingSystem(
+      this.sceneManager.renderer,
+      this.sceneManager.camera,
+      async (result: PickResult | null) => {
+        if (!result) {
+          this.overlayManager?.updateHoverContent(null);
+          return;
+        }
+        const nodePath = result.mainNode.name;
+        const label = await this.labelLoader?.getLabel(nodePath, result.elementId);
+        this.overlayManager?.updateHoverContent(
+          label
+            ? { label, nodeName: nodePath, elementIndex: result.elementId }
+            : null
+        );
+      }
+    );
+
+    // Wire NodeFactory to create pick nodes for future scene loads
+    sceneLoader.nodeFactory.setPickingSystem(this.pickingSystem);
+
+    // Retroactively register already-loaded nodes (scene loads before picking init)
+    if (root) {
+      sceneLoader.nodeFactory.registerExistingSceneNodes(root);
+    }
+
+    // Register mousemove on canvas
+    const canvas = this.sceneManager.renderer.domElement;
+    const handler = (e: MouseEvent) => this.pickingSystem?.onMouseMove(e);
+    canvas.addEventListener('mousemove', handler);
+    this.pickingCleanup = () => canvas.removeEventListener('mousemove', handler);
+
+    log.info(Modules.APP, 'GPU picking system initialized (labels detected)');
   }
 
   /**
@@ -856,6 +944,20 @@ export class LuxarApp {
       if (this.overlayManager) {
         this.overlayManager.dispose();
         this.overlayManager = undefined;
+      }
+
+      // Clean up picking system
+      if (this.pickingCleanup) {
+        this.pickingCleanup();
+        this.pickingCleanup = undefined;
+      }
+      if (this.pickingSystem) {
+        this.pickingSystem.dispose();
+        this.pickingSystem = undefined;
+      }
+      if (this.labelLoader) {
+        this.labelLoader.dispose();
+        this.labelLoader = undefined;
       }
 
       // Clean up input handlers
