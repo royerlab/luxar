@@ -126,9 +126,26 @@ ORGANISM_KINGDOM_PATTERNS: list[tuple[str, str]] = [
 def _classify_kingdom(organism: str) -> str:
     """Classify an organism into a taxonomic kingdom by name heuristics."""
     org_lower = organism.lower()
+
+    # Check explicit patterns first
     for pattern, kingdom in ORGANISM_KINGDOM_PATTERNS:
         if pattern in org_lower:
             return kingdom
+
+    # Bacteria heuristics: genus names with common bacterial suffixes
+    first_word = org_lower.split()[0] if org_lower else ""
+    bacterial_suffixes = (
+        "bacillus", "coccus", "monas", "bacter", "bacterium", "spirillum",
+        "vibrio", "plasma", "phila", "oides", "ella", "inia", "eria",
+    )
+    if any(first_word.endswith(s) for s in bacterial_suffixes):
+        return "Bacteria"
+
+    # Archaea heuristics
+    archaeal_suffixes = ("archaeum", "archaeon", "pyrus", "thermus")
+    if any(first_word.endswith(s) for s in archaeal_suffixes):
+        return "Archaea"
+
     # Default: most Swiss-Prot organisms are eukaryotic
     return "Eukaryota"
 
