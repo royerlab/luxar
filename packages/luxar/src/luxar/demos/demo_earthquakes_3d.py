@@ -1351,6 +1351,15 @@ def generate_earthquake_scene(
             # Luminous objects are occluded by opaque Earth but add together
             # where they overlap (multiple earthquake rays at same location glow brighter)
             if len(line_verts) > 0:
+                # Hover labels: "M5.3 — 50 km W of Port Vila, Vanuatu"
+                # Two vertices per earthquake (segment base + tip), same label for both
+                eq_labels = []
+                for eq in earthquakes:
+                    mag = eq["magnitude"]
+                    place = eq.get("place", "Unknown location") or "Unknown location"
+                    label = f"M{mag:.1f} — {place}"
+                    eq_labels.extend([label, label])  # base vertex + tip vertex
+
                 scene.add_lines(
                     "Earthquakes",
                     vertices=line_verts,
@@ -1360,6 +1369,7 @@ def generate_earthquake_scene(
                     line_type="segments",
                     blending_mode="luminous",
                     layer=True,
+                    labels=eq_labels,
                 )
 
             # Overlay annotations
@@ -1373,9 +1383,9 @@ def generate_earthquake_scene(
                 stroke_width=0.002,
             )
             scene.add_text(
-                "USGS data \u2022 Magnitude 4.5+",
+                f"{n_lines:,} earthquakes • Magnitude 4.5+ • USGS",
                 position=(0.98, 0.97),
-                font_size=0.015,
+                font_size=0.012,
                 anchor="bottom-right",
                 color="rgba(200,200,200,0.45)",
             )

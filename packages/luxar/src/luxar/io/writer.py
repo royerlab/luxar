@@ -6,7 +6,7 @@ enabling memory-efficient handling of arbitrarily large datasets.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional, Protocol, Tuple, Union
+from typing import TYPE_CHECKING, Any, Optional, Protocol, Sequence, Tuple, Union
 
 import numpy as np
 from numpy.typing import NDArray
@@ -56,6 +56,7 @@ class ZarrWriterProtocol(Protocol):
         radii: Optional[Union[ScalarArray, float]] = None,
         sharpness: Optional[Union[ScalarArray, float]] = None,
         scalars: Optional[Union[ScalarArray, float]] = None,
+        labels: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> PointsMetadata:
         """Write points data immediately to Zarr.
@@ -80,6 +81,7 @@ class ZarrWriterProtocol(Protocol):
             colors: Optional - array of shape (N, 3), tuple/list (R,G,B), or None
             radii: Optional - array of shape (N,), scalar float, or None
             sharpness: Optional - array of shape (N,), scalar float, or None
+            labels: Optional list of strings, one per point, for hover tooltips
             **attrs: Additional attributes for the points
 
         Returns:
@@ -103,6 +105,7 @@ class ZarrWriterProtocol(Protocol):
         scalars: Optional[Union[ScalarArray, float]] = None,
         indices: Optional[NDArray[np.uint32]] = None,
         line_type: str = "polyline",
+        labels: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> LinesMetadata:
         """Write lines data immediately to Zarr.
@@ -120,6 +123,7 @@ class ZarrWriterProtocol(Protocol):
             sharpness: Optional - array of shape (N,), scalar float, or None
             indices: Optional vertex indices for indexed line type
             line_type: Type of line connectivity
+            labels: Optional list of strings, one per vertex, for hover tooltips
             **attrs: Additional attributes for the lines
 
         Returns:
@@ -134,6 +138,7 @@ class ZarrWriterProtocol(Protocol):
         amplitudes: Union[ScalarArray, float],
         cholesky_factors: NDArray[np.float32],
         colors: Optional[Union[ColorArray, tuple, list]] = None,
+        labels: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> GSplatsMetadata:
         """Write Gaussian splats data immediately to Zarr.
@@ -148,6 +153,7 @@ class ZarrWriterProtocol(Protocol):
             amplitudes: Amplitude values - array of shape (N,) or scalar float
             cholesky_factors: Packed Cholesky factors array of shape (N, k)
             colors: Optional - array of shape (N, 3), tuple/list (R,G,B), or None
+            labels: Optional list of strings, one per splat, for hover tooltips
             **attrs: Additional attributes for the gsplats
 
         Returns:

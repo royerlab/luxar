@@ -134,7 +134,12 @@ export interface StagedGSplatsCommit {
  * - Memory-efficient loading with proper caching
  */
 export class SceneLoader {
-  private store: zarr.Readable | null = null;
+  private _zarrStore: zarr.Readable | null = null;
+
+  /** Public accessor for the zarr store (needed by LabelLoader). */
+  get zarrStore(): zarr.Readable | null {
+    return this._zarrStore;
+  }
   private cachingStore: TwoLevelCachingStore | null = null;
   // L0 decompressed chunk cache - caches decoded zarr chunks to avoid Blosc decompression
   private l0Cache: DecompressedChunkCache | null = null;
@@ -164,7 +169,7 @@ export class SceneLoader {
   // Integrated into updatePointsGeometry/updateLinesGeometry/updateGSplatsGeometry
   // Enabled via config.dataLoading.performance.useGPUBufferPool
   private _gpuBufferPool: GPUBufferPool | null = null;
-  private nodeFactory = new NodeFactory();
+  public readonly nodeFactory = new NodeFactory();
 
   // Update profiler for timing scene updates (optional, provided by SceneLoaderManager)
   private profiler: UpdateProfiler | null = null;
@@ -365,14 +370,14 @@ export class SceneLoader {
     } else {
       rawStore = new zarr.FetchStore(this.normalizeURL(url));
     }
-    this.store = (await zarr.tryWithConsolidated(rawStore)) as zarr.Readable;
+    this._zarrStore = (await zarr.tryWithConsolidated(rawStore)) as zarr.Readable;
 
     // Create root THREE.js group
     this.rootGroup = new THREE.Group();
     this.rootGroup.name = 'LuxarScene';
 
     // Load scene metadata
-    const rootLoc = zarr.root(this.store);
+    const rootLoc = zarr.root(this._zarrStore);
     const rootZarrGroup = await zarr.open(rootLoc, { kind: 'group' });
     const sceneAttrs = rootZarrGroup.attrs as ZarrSceneAttrs;
 
@@ -424,7 +429,7 @@ export class SceneLoader {
     await this.loadSceneNodes(sceneGraph, this.rootGroup, rootLoc);
 
     // Load overlay configs (screen-space annotations)
-    const overlayConfigs = await loadOverlayConfigs(this.store, rootLoc);
+    const overlayConfigs = await loadOverlayConfigs(this._zarrStore, rootLoc);
     if (overlayConfigs.length > 0) {
       this.rootGroup.userData.overlayConfigs = overlayConfigs;
       // Store base URL for image fetching
@@ -913,6 +918,11 @@ export class SceneLoader {
       }
       for (const staged of gsplatsStaged) {
         if (staged) this.commitGSplatsGeometry(staged);
+      }
+
+      // Invalidate cached pick buffer after geometry changes
+      if (pointsStaged.length > 0 || linesStaged.length > 0 || gsplatsStaged.length > 0) {
+        this.nodeFactory.markPickingDirty();
       }
 
       // Update monitor with total visible segments across all lines nodes
@@ -1867,14 +1877,14 @@ export class SceneLoader {
    * Create a lines loader for a node
    */
   private createLinesLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): LinesDataLoader {
-    const nodeLoc = node.path === '/' ? loc : zarr.root(this.store!).resolve(node.path.slice(1));
+    const nodeLoc = node.path === '/' ? loc : zarr.root(this._zarrStore!).resolve(node.path.slice(1));
 
     log.query(Modules.SCENE_LOADER, `Using LinesSpatialIndexLoader for ${node.path}`);
     const loader = new LinesSpatialIndexLoader(
       nodeLoc,
       node,
       this.arrayRefRegistry,
-      this.store!,
+      this._zarrStore!,
       this.profiler ?? undefined,
       this.l0Cache ?? undefined,
       this.cachingStore?.getPrefetcher() ?? undefined
@@ -2016,14 +2026,14 @@ export class SceneLoader {
     node: SceneNode,
     loc: zarr.Location<zarr.Readable>
   ): GSplatsDataLoader {
-    const nodeLoc = node.path === '/' ? loc : zarr.root(this.store!).resolve(node.path.slice(1));
+    const nodeLoc = node.path === '/' ? loc : zarr.root(this._zarrStore!).resolve(node.path.slice(1));
 
     log.query(Modules.SCENE_LOADER, `Using GSplatsSpatialIndexLoader for ${node.path}`);
     const loader = new GSplatsSpatialIndexLoader(
       nodeLoc,
       node,
       this.arrayRefRegistry,
-      this.store!,
+      this._zarrStore!,
       this.profiler ?? undefined,
       this.l0Cache ?? undefined,
       this.cachingStore?.getPrefetcher() ?? undefined
@@ -2044,7 +2054,7 @@ export class SceneLoader {
     _loc: zarr.Location<zarr.Readable>,
     nLods: number
   ): Promise<GSplatsDataLoader> {
-    const parentLoc = zarr.root(this.store!).resolve(node.path === '/' ? '' : node.path.slice(1));
+    const parentLoc = zarr.root(this._zarrStore!).resolve(node.path === '/' ? '' : node.path.slice(1));
 
     log.query(
       Modules.SCENE_LOADER,
@@ -2081,7 +2091,7 @@ export class SceneLoader {
         lodLoc,
         lodNode,
         this.arrayRefRegistry,
-        this.store!,
+        this._zarrStore!,
         this.profiler ?? undefined,
         this.l0Cache ?? undefined,
         this.cachingStore?.getPrefetcher() ?? undefined
@@ -2098,7 +2108,7 @@ export class SceneLoader {
    */
   private createLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): DataLoader {
     // Resolve the correct location for this node
-    const nodeLoc = node.path === '/' ? loc : zarr.root(this.store!).resolve(node.path.slice(1));
+    const nodeLoc = node.path === '/' ? loc : zarr.root(this._zarrStore!).resolve(node.path.slice(1));
 
     // Use PointSpatialIndexLoader for all nodes (it will handle 3D datasets without indices)
     log.query(Modules.SCENE_LOADER, `Using PointSpatialIndexLoader for ${node.path}`);
@@ -2110,7 +2120,7 @@ export class SceneLoader {
       node,
       this.config,
       this.arrayRefRegistry,
-      this.store!,
+      this._zarrStore!,
       this.profiler ?? undefined,
       this.l0Cache ?? undefined,
       this.cachingStore?.getPrefetcher() ?? undefined
@@ -2286,11 +2296,11 @@ export class SceneLoader {
    * Enumerate all groups and arrays in the store
    */
   private async enumerateStore(): Promise<Array<{ path: string; kind: string }>> {
-    if (!this.store) return [];
+    if (!this._zarrStore) return [];
 
     // Try to use consolidated metadata
-    if (hasContentsMethod(this.store)) {
-      const contents = await this.store.contents();
+    if (hasContentsMethod(this._zarrStore)) {
+      const contents = await this._zarrStore.contents();
       log.custom('📋', Modules.SCENE_LOADER, `Found ${contents.length} items in store`);
       return contents;
     }
@@ -2537,7 +2547,7 @@ export class SceneLoader {
       this.l0Cache = null;
     }
 
-    this.store = null;
+    this._zarrStore = null;
     this.rootGroup = null;
     this._sceneGraph = null;
 

@@ -154,10 +154,12 @@ scene.zarr/
 │   ├── radii/              # Point radii (optional, same order as positions)
 │   ├── sharpness/          # Point sharpness (optional, same order as positions)
 │   ├── chunk_bounds/       # Chunk bounding boxes for spatial queries (optional)
+│   ├── label_offsets/      # Per-element label byte offsets, CSR-style (optional)
+│   ├── label_bytes/        # Concatenated UTF-8 label strings (optional)
 │   └── <child_nodes>/      # Nested child nodes (recursive structure)
 └── overlays/               # Screen-space overlays (optional)
     └── <overlay_name>/     # Individual overlay
-        ├── .zattrs         # Overlay metadata (type, position, style, visible_range)
+        ├── .zattrs         # Overlay metadata (type, position, style, visible_range, hover)
         ├── .zgroup
         └── image.png       # Raw image file (image overlays only)
 ```
@@ -389,6 +391,39 @@ The spatial index stores metadata in the points group `.zattrs` and chunk bounds
 - **Description:** Bounding box [min, max] for each dimension of each chunk
 - **Example:** For chunk 5 in a 4D dataset: `chunk_bounds[5, :, :]` = `[[x_min, x_max], [y_min, y_max], [z_min, z_max], [t_min, t_max]]`
 - **Note:** Bounds include point radii extent to ensure hyperspheres are found
+
+#### Per-Element Labels (CSR-style)
+
+Optional per-element string labels for hover tooltips (GPU picking). Available on all node types (points, lines, gsplats). When present, `.zattrs` includes `"has_labels": true`.
+
+**label_offsets/** Array:
+- **Shape:** `(N+1,)` where N = number of elements
+- **Dtype:** `uint64`
+- **Description:** CSR-style byte offsets into `label_bytes`. Label for element `i` spans bytes `[offsets[i], offsets[i+1])`.
+
+**label_bytes/** Array:
+- **Shape:** `(total_bytes,)`
+- **Dtype:** `uint8`
+- **Description:** Concatenated UTF-8 encoded label strings. Empty labels have `offsets[i] == offsets[i+1]` (zero-length byte range).
+
+**Decoding:**
+```
+label_i = utf8_decode(label_bytes[offsets[i] : offsets[i+1]])
+```
+
+Empty strings are treated as null labels (no tooltip shown on hover). Labels are reordered to match spatial ordering if enabled.
+
+### Hover Overlays
+
+Overlays with `"hover": true` in their `.zattrs` act as hover tooltips. Their `text` (or `html`) field can contain template variables that are substituted by the viewer when GPU picking resolves an element:
+
+| Variable | Description |
+|----------|-------------|
+| `{hover_label}` | The label string for the picked element |
+| `{hover_node}` | Zarr path of the picked node (e.g., "/cells") |
+| `{hover_index}` | Element index within the node |
+
+When labels exist on any node but no hover overlay is explicitly defined, a default hover overlay is auto-injected at scene finalization time.
 
 ### Compound Ordering
 

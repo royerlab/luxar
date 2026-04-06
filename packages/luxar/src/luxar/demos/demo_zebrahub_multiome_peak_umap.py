@@ -168,6 +168,7 @@ def create_zebrahub_scene(
         # Create one copy of points per attribute type
         all_positions = []
         all_colors = []
+        available_attrs = [name for name in attr_types if name in attributes]
 
         for attr_idx, attr_name in enumerate(attr_types):
             if attr_name in attributes:
@@ -232,6 +233,19 @@ def create_zebrahub_scene(
             radii = np.full(total_points, 0.02, dtype=np.float32)
             sharpnesses = np.full(total_points, 4.0, dtype=np.float32)
 
+            # Hover labels: resolve integer codes to category names, repeated per view
+            per_cell_labels = []
+            if category_maps:
+                for i in range(n_points):
+                    parts = []
+                    for attr_name in available_attrs:
+                        code = int(attributes[attr_name][i])
+                        cats = category_maps.get(attr_name, [])
+                        name = str(cats[code]) if code < len(cats) else str(code)
+                        parts.append(name)
+                    per_cell_labels.append(" | ".join(parts))
+            labels = per_cell_labels * len(available_attrs) if per_cell_labels else None
+
             scene.add_points(
                 "Cells",
                 positions_combined,
@@ -240,6 +254,7 @@ def create_zebrahub_scene(
                 sharpness=sharpnesses,
                 opacity=0.8,
                 intensity=0.067,
+                labels=labels,
             )
 
             # --- Overlays ---
@@ -292,9 +307,9 @@ def create_zebrahub_scene(
                         )
 
             scene.add_text(
-                f"{n_points:,} peaks \u2022 Zebrafish \u2022 3D UMAP",
+                f"{n_points:,} peaks • Zebrafish • 3D UMAP • Wagner et al. 2024",
                 position=(0.98, 0.97),
-                font_size=0.015,
+                font_size=0.012,
                 anchor="bottom-right",
                 color="rgba(200,200,200,0.45)",
             )

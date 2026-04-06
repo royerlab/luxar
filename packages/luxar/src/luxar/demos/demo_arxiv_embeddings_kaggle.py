@@ -463,10 +463,11 @@ def generate_paper_landscape(
 
     if cache_file and cache_file.exists():
         with asection("Loading cached UMAP coordinates"):
-            cached = np.load(cache_file)
+            cached = np.load(cache_file, allow_pickle=True)
             positions = cached["positions"]
             categories = list(cached["categories"])
             years = list(cached["years"])
+            titles = list(cached["titles"]) if "titles" in cached else None
             aprint(f"✓ Loaded {len(positions):,} papers from cache")
     else:
         # Check for cached embeddings dataset
@@ -565,6 +566,7 @@ def generate_paper_landscape(
                     positions=positions,
                     categories=np.array(categories),
                     years=np.array(years),
+                    titles=np.array(titles, dtype=object),
                 )
                 aprint("✓ UMAP cached successfully!")
                 aprint("  Next run with same sample size will be INSTANT!")
@@ -614,6 +616,17 @@ def generate_paper_landscape(
 
             sharpness = np.full(n_papers, 4.0, dtype=np.float32)
 
+            # Hover labels: title + year + category
+            if titles is not None:
+                paper_labels = [
+                    f"{titles[i][:60]}{'…' if len(titles[i]) > 60 else ''} ({years[i]}, {categories[i]})"
+                    for i in range(n_papers)
+                ]
+            else:
+                paper_labels = [
+                    f"{categories[i]} ({years[i]})" for i in range(n_papers)
+                ]
+
             scene.add_points(
                 "arxiv_papers",
                 positions=positions,
@@ -622,6 +635,7 @@ def generate_paper_landscape(
                 sharpness=sharpness,
                 opacity=0.9,
                 intensity=0.1,
+                labels=paper_labels,
             )
 
             # --- Overlays ---
@@ -636,11 +650,11 @@ def generate_paper_landscape(
                 stroke_width=0.002,
             )
 
-            # Info
+            # Info + source
             scene.add_text(
-                "500K papers \u2022 Kaggle dataset",
+                f"{n_papers:,} papers • OpenAI embeddings • Kaggle dataset",
                 position=(0.98, 0.97),
-                font_size=0.015,
+                font_size=0.012,
                 anchor="bottom-right",
                 color="rgba(200,200,200,0.45)",
             )

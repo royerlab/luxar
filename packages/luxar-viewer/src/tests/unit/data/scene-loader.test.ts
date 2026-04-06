@@ -443,7 +443,7 @@ describe('SceneLoader', () => {
 
       // Verify cleanup
       expect((sceneLoader as any).loaders.size).toBe(0);
-      expect((sceneLoader as any).store).toBeNull();
+      expect((sceneLoader as any)._zarrStore).toBeNull();
       expect((sceneLoader as any).rootGroup).toBeNull();
     });
   });
@@ -561,7 +561,9 @@ describe('SceneLoader', () => {
         1, // Column 3: translation + w
       ];
 
-      const isValid = (sceneLoader as any).nodeFactory.validateTransformFormat(columnMajorTransform);
+      const isValid = (sceneLoader as any).nodeFactory.validateTransformFormat(
+        columnMajorTransform
+      );
       expect(isValid).toBe(true);
     });
 
@@ -653,7 +655,11 @@ describe('SceneLoader', () => {
       const radiusScale = 2.5; // maxRadius from node attrs
       const sharpnessScale = 1.0;
 
-      const material = (sceneLoader as any).nodeFactory.createPointsMaterial(attrs, radiusScale, sharpnessScale);
+      const material = (sceneLoader as any).nodeFactory.createPointsMaterial(
+        attrs,
+        radiusScale,
+        sharpnessScale
+      );
 
       expect(material).toBeDefined();
       expect(material.updateCameraParams).toBeDefined();
@@ -668,7 +674,11 @@ describe('SceneLoader', () => {
       const radiusScale = 1.0;
       const sharpnessScale = 31.0; // SHARPNESS_MAX constant
 
-      const material = (sceneLoader as any).nodeFactory.createPointsMaterial(attrs, radiusScale, sharpnessScale);
+      const material = (sceneLoader as any).nodeFactory.createPointsMaterial(
+        attrs,
+        radiusScale,
+        sharpnessScale
+      );
 
       expect(material).toBeDefined();
       expect(material.updateCameraParams).toBeDefined();
@@ -678,8 +688,16 @@ describe('SceneLoader', () => {
       const normalAttrs = { blending_mode: 'normal' as const };
       const additiveAttrs = { blending_mode: 'additive' as const };
 
-      const material1 = (sceneLoader as any).nodeFactory.createPointsMaterial(normalAttrs, 1.0, 1.0);
-      const material2 = (sceneLoader as any).nodeFactory.createPointsMaterial(additiveAttrs, 1.0, 1.0);
+      const material1 = (sceneLoader as any).nodeFactory.createPointsMaterial(
+        normalAttrs,
+        1.0,
+        1.0
+      );
+      const material2 = (sceneLoader as any).nodeFactory.createPointsMaterial(
+        additiveAttrs,
+        1.0,
+        1.0
+      );
 
       expect(material1).toBeDefined();
       expect(material2).toBeDefined();
