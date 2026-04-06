@@ -63,14 +63,14 @@ WORKFLOW:
    - Each channel gets its own set of Gaussian splats
    - Captures channel-specific structures
 
-3. **Merge with channel colors**
-   - Channel 0: Magenta (1.0, 0.0, 0.5)
-   - Channel 1: Cyan (0.0, 1.0, 0.5)
-   - Uses GSplatData.merge_with_channel_colors()
+3. **Add each channel as a separate layer**
+   - Channel 0: Magenta colormap
+   - Channel 1: Cyan colormap (DAPI)
+   - Each channel is a toggleable layer in the viewer
 
 4. **Visualize** in the Luxar viewer
    - Additive blending shows channel overlap
-   - Distinct colors reveal co-localization
+   - Toggle layers to inspect individual channels
 
 USAGE:
 ======
@@ -103,7 +103,6 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
-from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.utils.demos import (
     launch_viewer,
@@ -349,7 +348,7 @@ def view_with_napari(volumes, gsplats_list, channel_configs):
             ch_name = ch_config["name"]
             aprint(f"Rendering gsplats for {ch_name}...")
             rendered = gsplats.render_to_volume(
-                shape=(dim_len * 2 for dim_len in volume.shape)
+                shape=tuple(dim_len * 2 for dim_len in volume.shape)
             )
             rendered_volumes.append(rendered)
 
@@ -386,13 +385,27 @@ def view_with_napari(volumes, gsplats_list, channel_configs):
 # =============================================================================
 
 
-def create_luxar_scene(merged_gsplats, output_path: Path | None = None):
-    """Create Luxar scene with merged multi-channel gsplats."""
+CHANNEL_COLORMAPS = ["magenta", "cyan"]
+
+
+def create_luxar_scene(gsplats_list, output_path: Path | None = None):
+    """Create Luxar scene with per-channel gsplat layers."""
     if output_path is None:
         output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel.zarr"
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
+
+        # Compute shared centroid across all channels (amplitude-weighted)
+        all_centers = [g.centers for g in gsplats_list]
+        all_amps = [g.amplitudes for g in gsplats_list]
+        total_amp = sum(a.sum() for a in all_amps)
+        if total_amp > 0:
+            shared_centroid = (
+                sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
+            )
+        else:
+            shared_centroid = np.mean(np.concatenate(all_centers, axis=0), axis=0)
 
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
@@ -408,7 +421,7 @@ Multi-Channel Gaussian Splatting - Organoid Microscopy
 =======================================================
 
 This scene demonstrates multi-channel microscopy visualization using
-Gaussian splats with per-channel colors.
+Gaussian splats with per-channel colors as separate layers.
 
 Data Source:
   - Image Data Resource (IDR) study idr0062, Image 6001240
@@ -416,11 +429,11 @@ Data Source:
   - Original research: Prisca Liberali lab, FMI
   - Citation: Blin et al. (2019) + Williams et al. (2017) Nat Methods 14(8):775-781
 
-Each channel was fitted independently then merged:
+Each channel is a separate layer with its own colormap:
 - Magenta: Channel 0
 - Cyan: Channel 1 (DAPI - nuclear stain)
 
-Color overlap indicates co-localization of markers.
+Toggle layers in the viewer to inspect individual channels.
 
 Controls:
 - Mouse drag to rotate
@@ -429,14 +442,29 @@ Controls:
 - 'C' to toggle fly controls
             """
 
-            # Add merged gsplats
-            aprint(f"Adding {len(merged_gsplats.amplitudes)} merged gsplats...")
-            scene.add_gsplats_from_data(
-                name="multichannel_gsplats",
-                result=merged_gsplats,
-                opacity=1.0,
-                blending_mode="additive",
-            )
+            # Add each channel as a separate layer
+            for i, (gsplats, ch_config) in enumerate(
+                zip(gsplats_list, CHANNELS[: len(gsplats_list)])
+            ):
+                ch_name = ch_config["name"]
+                colormap = CHANNEL_COLORMAPS[i]
+
+                # Center using shared centroid and reduce brightness
+                centered = gsplats.translate(-shared_centroid)
+                centered = centered.scale_intensity(0.1)
+
+                aprint(
+                    f"Adding {ch_name} ({len(centered.amplitudes)} splats, "
+                    f"colormap={colormap})..."
+                )
+                scene.add_gsplats_from_data(
+                    name=f"ch{i}_{ch_name.lower().replace(' ', '_')}",
+                    result=centered,
+                    opacity=1.0,
+                    blending_mode="additive",
+                    layer=True,
+                    colormap=colormap,
+                )
 
         aprint(f"Scene saved: {output_path}")
         return output_path
@@ -452,7 +480,7 @@ def main():
     aprint("=" * 70)
     aprint("GSplats Demo: Multi-Channel 3D Organoid Microscopy")
     aprint("=" * 70)
-    aprint("Per-channel fitting + color-coded merge + Web visualization")
+    aprint("Per-channel fitting + colormap layers + Web visualization")
     aprint("")
 
     # Determine output path
@@ -494,37 +522,16 @@ def main():
 
         gsplats_list = fit_all_channels(volumes)
 
-    # Merge with channel colors
-    with asection("Merging channels with colors"):
-        channel_colors = [ch["color"] for ch in CHANNELS[: len(gsplats_list)]]
-        aprint(f"Channel colors: {channel_colors}")
-
-        merged = GSplatData.merge_with_channel_colors(
-            gsplats_list,
-            channel_colors=channel_colors,
-        )
-
-        aprint(f"Merged: {len(merged.amplitudes)} total splats")
-        aprint(f"  Per channel: {merged.stats.get('splats_per_channel', 'N/A')}")
-
-    # Apply transformations for web viewer
-    with asection("Applying transformations"):
-        aprint("Centering at center-of-mass...")
-        merged = merged.center_at_centroid()
-
-        aprint("Reducing brightness by 10x...")
-        merged = merged.scale_intensity(0.1)
-
-    # Create scene
-    scene_path = create_luxar_scene(merged, output_path)
+    # Create scene (centering + intensity scaling happen inside)
+    scene_path = create_luxar_scene(gsplats_list, output_path)
 
     # Summary (only if volumes were loaded)
     if volumes is not None:
-        total_splats = len(merged.amplitudes)
+        total_splats = sum(len(g.amplitudes) for g in gsplats_list)
         total_voxels = sum(v.size for v in volumes)
         volume_bytes = total_voxels * 4  # float32
-        # 11 floats per splat + 3 for color = 14
-        splats_bytes = total_splats * 14 * 4
+        # 11 floats per splat (no per-splat color, using colormaps)
+        splats_bytes = total_splats * 11 * 4
         compression = volume_bytes / splats_bytes
 
         aprint("\n" + "=" * 70)
@@ -538,7 +545,7 @@ def main():
         aprint(f"Compression ratio: {compression:.1f}:1")
         aprint("=" * 70)
 
-    # Open in napari before merging/transforming for proper alignment
+    # Open in napari for visual comparison
     if not NO_NAPARI and volumes is not None:
         view_with_napari(volumes, gsplats_list, CHANNELS[: len(gsplats_list)])
 

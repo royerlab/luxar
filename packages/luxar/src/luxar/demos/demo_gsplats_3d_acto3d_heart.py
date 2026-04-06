@@ -13,7 +13,7 @@ on a real light-sheet microscopy dataset of a developing mouse heart:
 - Downloading the raw TIFF from Google Drive
 - Splitting into 3 fluorescence channels
 - Fitting Gaussian splats to each channel independently
-- Merging channels with distinct colours for visualisation
+- Adding each channel as a separate layer with a named colormap
 
 DATA SOURCE & CITATIONS:
 ========================
@@ -48,7 +48,7 @@ WORKFLOW:
 1. **Download** multi-page TIFF from Google Drive (1.65 GB)
 2. **Split** into 3 channels and downsample for fitting
 3. **Fit** Gaussian splats per channel with GPU acceleration
-4. **Merge** with per-channel colours (blue/red/green)
+4. **Add** each channel as a separate layer with named colormaps
 5. **Visualise** in the Luxar web viewer
 
 USAGE:
@@ -106,15 +106,11 @@ N_CHANNELS = 3
 ORIGINAL_SHAPE = (597, 960, 960)  # Z, Y, X per channel (already 0.5x downsampled)
 ORIGINAL_VOXEL_SIZE = (2.4009, 1.0635, 1.0635)  # Z, Y, X in um
 
-# Channel configuration with colours
+# Channel configuration with colormaps for layer-based rendering
 CHANNELS = [
-    {"index": 0, "name": "SYTOX Green (Nuclei)", "color": (0.0, 0.5, 1.0)},  # Blue
-    {
-        "index": 1,
-        "name": "Tomato Lectin (Vasculature)",
-        "color": (1.0, 0.2, 0.0),
-    },  # Red
-    {"index": 2, "name": "TNNI3 (Cardiac Tissue)", "color": (0.0, 1.0, 0.3)},  # Green
+    {"index": 0, "name": "SYTOX Green (Nuclei)", "colormap": "green"},
+    {"index": 1, "name": "Tomato Lectin (Vasculature)", "colormap": "red"},
+    {"index": 2, "name": "TNNI3 (Cardiac Tissue)", "colormap": "blue"},
 ]
 
 # Fitting parameters (progressive)
@@ -497,12 +493,12 @@ def fit_all_channels(
 
 
 def create_luxar_scene(
-    merged_gsplats: GSplatData, output_path: Path | None = None
+    gsplats_list: list[GSplatData], output_path: Path | None = None
 ) -> Path:
-    """Create Luxar scene with merged multi-channel gsplats.
+    """Create Luxar scene with per-channel gsplats layers.
 
     Args:
-        merged_gsplats: Merged GSplatData with per-channel colours.
+        gsplats_list: List of per-channel GSplatData objects.
         output_path: Output .zarr path (default: demos output dir).
 
     Returns:
@@ -540,23 +536,56 @@ Data Source:
   - Voxel size: 1.06 x 1.06 x 2.40 um (XY x Z)
 
 Channels:
-  - Blue:  SYTOX Green (nuclei)
+  - Green: SYTOX Green (nuclei)
   - Red:   Tomato lectin DyLight 594 (vasculature)
-  - Green: Anti-TNNI3 Alexa Fluor 633 (cardiac tissue)
+  - Blue:  Anti-TNNI3 Alexa Fluor 633 (cardiac tissue)
 
-Colour overlap indicates co-localisation of markers.
+Each channel is a separate layer with its own colormap.
 
 Controls:
   - Mouse drag to rotate, scroll to zoom, right-click drag to pan
             """
 
-            aprint(f"Adding {len(merged_gsplats.amplitudes):,} merged gsplats...")
-            scene.add_gsplats_from_data(
-                name="heart_multichannel",
-                result=merged_gsplats,
-                opacity=1.0,
-                blending_mode="additive",
-            )
+            # Compute shared centroid across ALL channels so they stay aligned
+            with asection("Computing shared centroid"):
+                all_centers = [g.centers for g in gsplats_list]
+                all_amps = [g.amplitudes for g in gsplats_list]
+                total_amp = sum(a.sum() for a in all_amps)
+                if total_amp > 0:
+                    shared_centroid = (
+                        sum(c.T @ a for c, a in zip(all_centers, all_amps))
+                        / total_amp
+                    )
+                else:
+                    shared_centroid = np.mean(
+                        np.concatenate(all_centers, axis=0), axis=0
+                    )
+                aprint(f"Shared centroid: {shared_centroid}")
+
+            # Add each channel as a layer-enabled gsplats node
+            for i, (gsplats, ch_config) in enumerate(
+                zip(gsplats_list, CHANNELS)
+            ):
+                ch_name = ch_config["name"]
+                colormap = ch_config["colormap"]
+
+                with asection(f"Adding {ch_name} (layer)"):
+                    centered = gsplats.translate(-shared_centroid)
+                    centered = centered.scale_intensity(0.1)
+                    n_splats = len(centered.amplitudes)
+
+                    scene.add_gsplats_from_data(
+                        name=f"gsplats_{ch_name.lower().replace(' ', '_').replace('(', '').replace(')', '')}",
+                        result=centered,
+                        dim_order=["z", "y", "x"],
+                        opacity=1.0,
+                        blending_mode="additive",
+                        layer=True,
+                        colormap=colormap,
+                    )
+                    aprint(
+                        f"Added {n_splats:,} splats with colormap='{colormap}'"
+                    )
 
             # --- Overlays ---
             scene.add_text(
@@ -565,15 +594,16 @@ Controls:
                 font_size=0.055,
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
+                blend_mode="difference",
             )
 
             # Channel legend
             scene.add_html(
                 '<div style="font-size:1.3vh;line-height:1.7;background:rgba(0,0,0,0.5);padding:0.5vh;border-radius:3px">'
                 '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">Channels</div>'
-                '<div><span style="color:#0088ff">\u2588</span> SYTOX Green (nuclei)</div>'
-                '<div><span style="color:#ff3300">\u2588</span> Tomato Lectin (vasculature)</div>'
-                '<div><span style="color:#00ff4d">\u2588</span> Anti-TNNI3 (cardiac tissue)</div>'
+                '<div><span style="color:#00ff00">\u2588</span> SYTOX Green (nuclei)</div>'
+                '<div><span style="color:#ff0000">\u2588</span> Tomato Lectin (vasculature)</div>'
+                '<div><span style="color:#0000ff">\u2588</span> Anti-TNNI3 (cardiac tissue)</div>'
                 "</div>",
                 position=(0.02, 0.97),
                 anchor="bottom-left",
@@ -601,7 +631,7 @@ def main():
     aprint("=" * 70)
     aprint("GSplats Demo: 3-Channel Mouse Embryo Heart E13.5 (Acto3D)")
     aprint("=" * 70)
-    aprint("Per-channel fitting + colour-coded merge + Web visualisation")
+    aprint("Per-channel fitting + layer-based rendering + Web visualisation")
     aprint("")
 
     output_path = get_demos_output_dir() / "gsplats_3d_acto3d_heart.zarr"
@@ -641,36 +671,16 @@ def main():
 
         gsplats_list = fit_all_channels(volumes, voxel_size)
 
-    # Merge with channel colours
-    with asection("Merging channels with colours"):
-        channel_colors = [ch["color"] for ch in CHANNELS[: len(gsplats_list)]]
-        aprint(f"Channel colours: {channel_colors}")
-
-        merged = GSplatData.merge_with_channel_colors(
-            gsplats_list,
-            channel_colors=channel_colors,
-        )
-
-        aprint(f"Merged: {len(merged.amplitudes):,} total splats")
-
-    # Apply transformations for web viewer
-    with asection("Applying transformations"):
-        aprint("Centering at centre-of-mass...")
-        merged = merged.center_at_centroid()
-
-        aprint("Reducing brightness by 10x...")
-        merged = merged.scale_intensity(0.1)
-
-    # Create scene
-    scene_path = create_luxar_scene(merged, output_path)
+    # Create scene with per-channel layers
+    scene_path = create_luxar_scene(gsplats_list, output_path)
 
     # Summary
     if volumes is not None:
-        total_splats = len(merged.amplitudes)
+        total_splats = sum(len(g.amplitudes) for g in gsplats_list)
         total_voxels = sum(v.size for v in volumes)
         volume_bytes = total_voxels * 4  # float32
-        # Floats per splat: d + d*(d+1)/2 + 2 + 3 (colors) = 3 + 6 + 2 + 3 = 14
-        splats_bytes = total_splats * 14 * 4
+        # Floats per splat: d + d*(d+1)/2 + 2 = 3 + 6 + 2 = 11 (no baked colors)
+        splats_bytes = total_splats * 11 * 4
         compression = volume_bytes / splats_bytes if splats_bytes > 0 else 0
 
         aprint("")

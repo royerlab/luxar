@@ -376,28 +376,6 @@ Multi-channel 3D microscopy data as Gaussian splats, with full compute pipeline 
 
 ---
 
-#### demo_gsplats_3d_cells3d_multichannel.py - 3D Multi-Channel Cells (dim_order)
-Two-channel cells3d dataset (membranes + nuclei) fitted as 3D Gaussian splats per channel, embedded into a 4D scene with a categorical Channel dimension using `dim_order`.
-
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cells3d_multichannel.py`
-
-**Requires**: `scikit-image` package (for `cells3d()` sample data).
-
-**Demonstrates**: `dim_order` feature for mapping 3D splats into a 4D scene, per-channel independent fitting, categorical Channel dimension with slider navigation, scikit-image sample data integration.
-
----
-
-#### demo_gsplats_3d_cells3d_multichannel_toggles.py - 3D Multi-Channel Cells (Boolean Toggles)
-Variant of the multichannel cells3d demo using two independent boolean dimensions (Membranes on/off, Nuclei on/off) instead of a single Channel slider.
-
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cells3d_multichannel_toggles.py`
-
-**Requires**: `scikit-image` package.
-
-**Demonstrates**: Boolean toggle dimensions for independent channel visibility, `extend_to_all` for cross-dimension visibility, four visibility combinations (both, either, neither).
-
----
-
 #### demo_gsplats_3d_kidney_multichannel_toggles.py - 3D Multi-Channel Kidney (Boolean Toggles)
 Three-channel confocal mouse kidney tissue (nuclei, WGA, actin) with independent boolean toggle dimensions for each channel.
 
@@ -718,8 +696,6 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_2d_cmu1_pathology.p
 # --- GSplats: 3D ---
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_dapi_nuclei.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_multichannel.py
-hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cells3d_multichannel.py
-hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cells3d_multichannel_toggles.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_toggles.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_layers.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_acto3d_heart.py
