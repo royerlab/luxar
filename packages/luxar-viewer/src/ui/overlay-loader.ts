@@ -48,10 +48,12 @@ export interface OverlayConfig {
   stroke_color?: string;
   stroke_width?: number;
 
+  /** CSS mix-blend-mode (e.g. 'difference', 'screen', 'multiply') */
+  blend_mode?: string;
+
   // --- Image-specific ---
   image_file?: string;
   size?: [number, number];
-  blend_mode?: string;
 
   // --- HTML-specific ---
   html?: string;
