@@ -235,6 +235,7 @@ def create_mouse_scene(
                 font_size=0.055,
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
+                blend_mode="difference",
             )
 
             for attr_id, (label, attr_key) in enumerate(

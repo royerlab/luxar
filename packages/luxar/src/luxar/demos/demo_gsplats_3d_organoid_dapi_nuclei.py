@@ -384,43 +384,6 @@ Controls:
         return output_path
 
 
-def add_reference_points(scene, volume, sample_rate=0.01):
-    """Add sampled points from original volume as reference (optional)."""
-    aprint(f"Adding reference points (sample rate: {sample_rate * 100:.1f}%)...")
-
-    # Sample volume at points above threshold
-    threshold = np.percentile(volume, 90)
-    coords = np.argwhere(volume > threshold)
-    intensities = volume[coords[:, 0], coords[:, 1], coords[:, 2]]
-
-    # Subsample
-    n_total = len(coords)
-    n_sample = int(n_total * sample_rate)
-    indices = np.random.choice(n_total, size=n_sample, replace=False)
-
-    sampled_coords = coords[indices].astype(np.float32)
-    sampled_intensities = intensities[indices]
-
-    # Normalize intensities to colors (grayscale)
-    intensities_norm = (sampled_intensities - sampled_intensities.min()) / (
-        sampled_intensities.max() - sampled_intensities.min() + 1e-8
-    )
-    colors = np.stack([intensities_norm] * 3, axis=1).astype(np.float32)
-
-    scene.add_points(
-        name="reference_points",
-        positions=sampled_coords,
-        colors=colors,
-        radii=np.full(n_sample, 0.3, dtype=np.float32),
-        sharpness=np.full(n_sample, 8.0, dtype=np.float32),
-        opacity=0.3,
-        blending_mode="max",
-        layer=True,
-    )
-
-    aprint(f"✓ Added {n_sample:,} reference points")
-
-
 # =============================================================================
 # Napari Viewing
 # =============================================================================

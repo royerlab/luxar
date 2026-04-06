@@ -469,6 +469,36 @@ class TestValidation:
             with pytest.raises(ValueError, match="text_align"):
                 scene.add_text("Bad", position=(0.5, 0.5), text_align="middle")
 
+    def test_text_blend_mode_written_to_attrs(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_text("Title", position=(0.02, 0.02), blend_mode="difference")
+
+        store = zarr.open_group(tmp_path / "test.zarr", mode="r")
+        attrs = dict(store["overlays/overlay_0"].attrs)
+        assert attrs["blend_mode"] == "difference"
+
+    def test_text_blend_mode_normal_omitted(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_text("Title", position=(0.02, 0.02))
+
+        store = zarr.open_group(tmp_path / "test.zarr", mode="r")
+        attrs = dict(store["overlays/overlay_0"].attrs)
+        assert "blend_mode" not in attrs
+
+    def test_invalid_text_blend_mode(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="blend_mode"):
+                scene.add_text("Bad", position=(0.5, 0.5), blend_mode="dodge")
+
+    def test_invalid_html_blend_mode(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="blend_mode"):
+                scene.add_html("<p>Bad</p>", position=(0.5, 0.5), blend_mode="dodge")
+
     def test_invalid_blend_mode(self, tmp_path) -> None:
         with LuxarZarrCompiler(tmp_path / "test.zarr") as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
