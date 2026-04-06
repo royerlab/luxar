@@ -168,6 +168,7 @@ def create_zebrahub_scene(
         # Create one copy of points per attribute type
         all_positions = []
         all_colors = []
+        available_attrs = [name for name in attr_types if name in attributes]
 
         for attr_idx, attr_name in enumerate(attr_types):
             if attr_name in attributes:
