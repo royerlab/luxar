@@ -14,7 +14,10 @@
 import * as THREE from 'three';
 import { materialManager, type BlendingMode } from '../rendering/material-manager';
 import { getColormapTexture } from '../rendering/colormap-textures';
-import { createInstancedLinesMesh, type InstancedLinesMeshConfig } from '../rendering/line-geometry';
+import {
+  createInstancedLinesMesh,
+  type InstancedLinesMeshConfig,
+} from '../rendering/line-geometry';
 import {
   createInstancedGSplatsMesh,
   type InstancedGSplatsMeshConfig,
@@ -88,7 +91,10 @@ export class NodeFactory {
       }
     });
 
-    log.info(Modules.SCENE_LOADER, `Registered ${this.pickingSystem!.registeredNodeCount} existing nodes for picking`);
+    log.info(
+      Modules.SCENE_LOADER,
+      `Registered ${this.pickingSystem!.registeredNodeCount} existing nodes for picking`
+    );
   }
 
   // ============================================================================
@@ -165,7 +171,7 @@ export class NodeFactory {
       gamma: (attrs.gamma as number | undefined) ?? 1.0,
       intensity: (attrs.intensity as number | undefined) ?? 1.0,
       offset: (attrs.offset as number | undefined) ?? 0.0,
-      blendingMode: ((attrs.blending_mode as string | undefined) as BlendingMode) ?? 'additive',
+      blendingMode: (attrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
     });
 
     // Apply colormap if specified AND scalar data exists
@@ -232,7 +238,7 @@ export class NodeFactory {
       gamma: (attrs.gamma as number | undefined) ?? 1.0,
       intensity: (attrs.intensity as number | undefined) ?? 1.0,
       offset: (attrs.offset as number | undefined) ?? 0.0,
-      blendingMode: ((attrs.blending_mode as string | undefined) as BlendingMode) ?? 'additive',
+      blendingMode: (attrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
     });
 
     // Apply colormap if specified
@@ -326,19 +332,31 @@ export class NodeFactory {
     if (data.colors && data.colors.length !== data.positions.length) {
       const expected = data.positions.length;
       const actual = data.colors.length;
-      log.warning(Modules.SCENE_LOADER, `Colors length mismatch: expected ${expected}, got ${actual}`, { expected, actual });
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Colors length mismatch: expected ${expected}, got ${actual}`,
+        { expected, actual }
+      );
     }
 
     if (data.radii && data.radii.length !== pointCount) {
       const expected = pointCount;
       const actual = data.radii.length;
-      log.warning(Modules.SCENE_LOADER, `Radii length mismatch: expected ${expected}, got ${actual}`, { expected, actual });
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Radii length mismatch: expected ${expected}, got ${actual}`,
+        { expected, actual }
+      );
     }
 
     if (data.sharpness && data.sharpness.length !== pointCount) {
       const expected = pointCount;
       const actual = data.sharpness.length;
-      log.warning(Modules.SCENE_LOADER, `Sharpness length mismatch: expected ${expected}, got ${actual}`, { expected, actual });
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Sharpness length mismatch: expected ${expected}, got ${actual}`,
+        { expected, actual }
+      );
     }
 
     log.success(Modules.SCENE_LOADER, `Points data validated: ${pointCount} points`);

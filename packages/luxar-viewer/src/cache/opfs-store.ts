@@ -246,7 +246,11 @@ export class OPFSStore {
         await root.removeEntry(this.datasetId, { recursive: true });
         this.opfsRoot = await root.getDirectoryHandle(this.datasetId, { create: true });
       } catch (error) {
-        log.warning(Modules.CACHE, 'OPFSStore failed to clear atomically, retrying entry-by-entry', error);
+        log.warning(
+          Modules.CACHE,
+          'OPFSStore failed to clear atomically, retrying entry-by-entry',
+          error
+        );
         // Fallback: try to remove entries individually (best-effort)
         try {
           if (this.opfsRoot) {
