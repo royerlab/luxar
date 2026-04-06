@@ -102,6 +102,10 @@ class Scene(Group):
             self._overlay_counter: int = 0
             self._overlays: List[Overlay] = []
 
+            # Picking/label state
+            self._has_labels: bool = False
+            self._suppress_hover_overlay: bool = False
+
             aprint("✓ Scene initialized successfully with progressive writer")
 
         except Exception as e:
@@ -807,6 +811,52 @@ class Scene(Group):
         )
         self._overlays.append(overlay)
         return overlay
+
+    # ---------------------------------------------------------- picking/labels
+
+    def _notify_labels_added(self) -> None:
+        """Called by Group.add_* when labels are provided on any child node."""
+        self._has_labels = True
+
+    def _auto_inject_hover_overlay(self) -> None:
+        """Auto-inject a default hover overlay if labels exist but none is defined.
+
+        Called by the compiler during finalize(). Checks:
+        1. At least one node has labels (_has_labels)
+        2. No existing overlay has hover=True
+        3. suppress_hover_overlay is False
+        """
+        if not self._has_labels:
+            return
+        if self._suppress_hover_overlay:
+            return
+        # Check if user already defined a hover overlay
+        if any(o.attrs.get("hover") for o in self._overlays):
+            return
+
+        aprint("  Auto-injecting default hover overlay (labels detected)")
+        self._write_overlay(
+            name="__hover_default",
+            overlay_type="overlay_text",
+            position=(0.5, 0.98),
+            attrs={
+                "type": "overlay_text",
+                "hover": True,
+                "text": "{hover_label}",
+                "position": [0.5, 0.98],
+                "anchor": "bottom-center",
+                "font_size": 0.02,
+                "font": "sans",
+                "color": "white",
+                "background": "rgba(0,0,0,0.7)",
+                "padding": 0.008,
+                "opacity": 1.0,
+                "transition": "fade",
+                "transition_duration": 0.15,
+                "interactive": False,
+                "z_index": len(self._overlays),
+            },
+        )
 
     # ---------------------------------------------------------- export
 

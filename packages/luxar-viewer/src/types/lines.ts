@@ -84,6 +84,9 @@ export interface LinesMetadata {
   /** Whether spatial index exists (redundant with ordering !== 'none', but explicit) */
   has_spatial_index?: boolean;
 
+  /** Whether per-element string labels exist (CSR-encoded, for hover tooltips) */
+  has_labels?: boolean;
+
   /** Spatial ordering method */
   ordering: 'morton' | 'hilbert' | 'none';
 
@@ -343,6 +346,9 @@ export interface LinesUserData {
 
   /** Currently visible segment count after nD clipping (updated on view change) */
   visibleSegmentCount?: number;
+
+  /** Pick ID assigned by PickingSystem for GPU picking (undefined if picking disabled) */
+  pickId?: number;
 }
 
 // ============================================================================

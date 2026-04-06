@@ -32,6 +32,9 @@ export interface OverlayConfig {
   /** Z-ordering index (insertion order) */
   z_index: number;
 
+  /** Whether this overlay acts as a hover tooltip (content updated by GPU picking) */
+  hover?: boolean;
+
   // --- Text-specific ---
   text?: string;
   font_size?: number;
@@ -100,6 +103,7 @@ export async function loadOverlayConfigs(
           transition_duration: (attrs.transition_duration as number) ?? 0.3,
           interactive: (attrs.interactive as boolean) ?? false,
           z_index: (attrs.z_index as number) ?? 0,
+          hover: (attrs.hover as boolean) ?? false,
 
           // Type-specific (only present for matching types)
           text: attrs.text as string | undefined,
@@ -181,7 +185,12 @@ async function listGroupChildren(store: zarr.Readable, parentPath: string): Prom
         const key = typeof item === 'string' ? item : item.key || item.path || '';
         const relative = key.startsWith(prefix) ? key.slice(prefix.length) : key;
         const childName = relative.split('/')[0];
-        if (childName && childName !== '.zgroup' && childName !== '.zattrs' && !seen.has(childName)) {
+        if (
+          childName &&
+          childName !== '.zgroup' &&
+          childName !== '.zattrs' &&
+          !seen.has(childName)
+        ) {
           seen.add(childName);
           children.push(childName);
         }

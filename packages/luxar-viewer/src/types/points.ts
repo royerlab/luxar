@@ -50,6 +50,9 @@ export interface PointsMetadata {
   /** Whether spatial index exists */
   has_spatial_index?: boolean;
 
+  /** Whether per-element string labels exist (CSR-encoded, for hover tooltips) */
+  has_labels?: boolean;
+
   /** Spatial ordering method */
   ordering?: 'morton' | 'hilbert' | 'none';
 
@@ -188,6 +191,9 @@ export interface PointsUserData {
 
   /** Currently visible point count after nD slicing (updated on view change) */
   visiblePointCount?: number;
+
+  /** Pick ID assigned by PickingSystem for GPU picking (undefined if picking disabled) */
+  pickId?: number;
 }
 
 // ============================================================================
