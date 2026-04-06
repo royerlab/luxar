@@ -185,6 +185,7 @@ class Group(Node):
         scalars: Optional[
             Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float]
         ] = None,
+        labels: Optional[Union[List[str], Sequence[str]]] = None,
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
         grid_shape: Optional[Tuple[int, ...]] = None,
@@ -202,6 +203,9 @@ class Group(Node):
             sharpness: Optional (N,) array, scalar, or None
             scalars: Optional (N,) array or scalar for colormap lookup.
                 Requires ``colormap`` in attrs. Mutually exclusive with ``colors``.
+            labels: Optional list of strings, one per point. Used for hover tooltips.
+                Length must equal the number of points. Empty strings are treated as
+                null labels (no tooltip shown on hover).
             parent: Parent node (default: this group)
             extend_to_all: Visibility extension across non-displayed dimensions
             grid_shape: Optional grid shape for structured data
@@ -273,6 +277,7 @@ class Group(Node):
                 radii=radii,
                 sharpness=sharpness,
                 scalars=scalars,
+                labels=labels,
                 grid_shape=grid_shape,
                 **attrs,
             )
@@ -289,6 +294,10 @@ class Group(Node):
                     isinstance(cm, str) and cm not in BUILTIN_COLORMAP_NAMES
                 ):
                     attrs["colormap"] = "custom"
+
+            # Notify scene that labels exist (for hover overlay auto-injection)
+            if labels is not None:
+                scene._notify_labels_added()
 
             return Points(
                 name,
@@ -317,6 +326,7 @@ class Group(Node):
         scalars: Optional[
             Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float]
         ] = None,
+        labels: Optional[Union[List[str], Sequence[str]]] = None,
         indices: Optional[np.ndarray[Any, Any]] = None,
         line_type: str = "polyline",
         parent: Optional[Node] = None,
@@ -335,6 +345,7 @@ class Group(Node):
             sharpness: Optional (N,) array, scalar, or None
             scalars: Optional (N,) array or scalar for colormap lookup.
                 Requires ``colormap`` in attrs. Mutually exclusive with ``colors``.
+            labels: Optional list of strings, one per vertex. Used for hover tooltips.
             indices: Optional vertex indices for indexed line type
             line_type: Connectivity ("segments", "polyline", "loop", "indexed")
             parent: Parent node (default: this group)
@@ -402,6 +413,7 @@ class Group(Node):
                 scalars=scalars,
                 indices=indices,
                 line_type=line_type,
+                labels=labels,
                 **attrs,
             )
 
@@ -414,6 +426,9 @@ class Group(Node):
                     isinstance(cm, str) and cm not in BUILTIN_COLORMAP_NAMES
                 ):
                     attrs["colormap"] = "custom"
+
+            if labels is not None:
+                scene._notify_labels_added()
 
             return Lines(
                 name,
@@ -439,6 +454,7 @@ class Group(Node):
         colors: Optional[
             Union[ColorArray, np.ndarray[Any, Any], Sequence[float | int]]
         ] = None,
+        labels: Optional[Union[List[str], Sequence[str]]] = None,
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
         dim_order: Optional[List[str]] = None,
@@ -454,6 +470,7 @@ class Group(Node):
             amplitudes: (N,) array or scalar for intensities
             cholesky_factors: (N, k) packed Cholesky factors, k=D*(D+1)/2
             colors: Optional (N, 3) array, RGB tuple, or None
+            labels: Optional list of strings, one per splat. Used for hover tooltips.
             parent: Parent node (default: this group)
             extend_to_all: Visibility extension across non-displayed dimensions
             dim_order: Map data columns to scene dimensions by name.
@@ -526,6 +543,7 @@ class Group(Node):
                 amplitudes=amplitudes,
                 cholesky_factors=chol_arr,
                 colors=cast(Any, colors),
+                labels=labels,
                 **attrs,
             )
 
@@ -544,6 +562,9 @@ class Group(Node):
             # in-memory node matches the zarr state.
             if not metadata.get("has_colors") and "colormap" not in attrs:
                 attrs["colormap"] = "gray"
+
+            if labels is not None:
+                scene._notify_labels_added()
 
             return GSplats(
                 name,

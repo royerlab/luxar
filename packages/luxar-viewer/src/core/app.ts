@@ -482,9 +482,9 @@ export class LuxarApp {
       this.overlayManager = undefined;
     }
 
-    const root = this.sceneManager.scene?.children?.find(
-      (c) => c.name === 'LuxarScene'
-    ) as THREE.Group | undefined;
+    const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
+      | THREE.Group
+      | undefined;
 
     const overlayConfigs = root?.userData?.overlayConfigs;
     const zarrBaseUrl = root?.userData?.zarrBaseUrl;
@@ -513,9 +513,9 @@ export class LuxarApp {
     this.labelLoader = undefined;
 
     // Check if any node has labels
-    const root = this.sceneManager.scene?.children?.find(
-      (c) => c.name === 'LuxarScene'
-    ) as THREE.Group | undefined;
+    const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
+      | THREE.Group
+      | undefined;
     if (!root) return;
 
     let hasAnyLabels = false;
@@ -544,22 +544,29 @@ export class LuxarApp {
       this.sceneManager.renderer,
       this.sceneManager.camera,
       async (result: PickResult | null) => {
-        if (!result) {
+        try {
+          if (!result) {
+            this.overlayManager?.updateHoverContent(null);
+            return;
+          }
+          const nodePath = result.mainNode.name;
+          const label = await this.labelLoader?.getLabel(nodePath, result.elementId);
+          this.overlayManager?.updateHoverContent(
+            label ? { label, nodeName: nodePath, elementIndex: result.elementId } : null
+          );
+        } catch (err) {
+          // Don't let label loading errors kill the hover loop
+          log.warning(Modules.APP, `Picking callback error: ${err}`);
           this.overlayManager?.updateHoverContent(null);
-          return;
         }
-        const nodePath = result.mainNode.name;
-        const label = await this.labelLoader?.getLabel(nodePath, result.elementId);
-        this.overlayManager?.updateHoverContent(
-          label
-            ? { label, nodeName: nodePath, elementIndex: result.elementId }
-            : null
-        );
       }
     );
 
     // Wire NodeFactory to create pick nodes for future scene loads
     sceneLoader.nodeFactory.setPickingSystem(this.pickingSystem);
+
+    // Wire post-processing for lens distortion coordinate correction
+    this.pickingSystem.setPostProcessing(this.sceneManager.postProcessing);
 
     // Retroactively register already-loaded nodes (scene loads before picking init)
     if (root) {
