@@ -24,6 +24,7 @@ const BLEND_MODE_MAP: Record<string, string> = {
   screen: 'screen',
   overlay: 'overlay',
   additive: 'plus-lighter',
+  difference: 'difference',
 };
 
 /** Anchor to CSS transform mapping for positioning offset */
@@ -327,6 +328,12 @@ export class OverlayManager {
     // Opacity
     el.style.opacity = String(config.opacity);
 
+    // Blend mode (works for all overlay types: text, image, html)
+    if (config.blend_mode && config.blend_mode !== 'normal') {
+      const cssBlend = BLEND_MODE_MAP[config.blend_mode] ?? config.blend_mode;
+      el.style.mixBlendMode = cssBlend;
+    }
+
     // Interaction
     if (config.interactive) {
       el.classList.add('luxar-overlay--interactive');
@@ -413,12 +420,6 @@ export class OverlayManager {
     }
 
     img.style.display = 'block';
-
-    // Blend mode
-    if (config.blend_mode && config.blend_mode !== 'normal') {
-      const cssBlend = BLEND_MODE_MAP[config.blend_mode] ?? config.blend_mode;
-      el.style.mixBlendMode = cssBlend;
-    }
 
     el.appendChild(img);
   }

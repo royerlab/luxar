@@ -120,208 +120,43 @@ Controls:
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.utils.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
-# =============================================================================
-# Physics Constants and Detector Geometry
-# =============================================================================
-#
-# These values are scaled for visualization but maintain realistic RATIOS.
-# Real detector dimensions (ATLAS): beam pipe ~5cm, tracker ~1m, ECAL ~2m, etc.
-# We scale by ~10x for better visualization of track curvature.
+# Import shared physics code from the static particle collision demo.
+# We use importlib because luxar.__init__ aliases sys.modules["luxar.demos"]
+# to luxar.utils.demos, which prevents normal submodule imports from the
+# luxar/demos/ package directory.
+_static_demo_path = Path(__file__).parent / "demo_particle_collision.py"
+_spec = importlib.util.spec_from_file_location(
+    "luxar.demos.demo_particle_collision", _static_demo_path
+)
+_mod = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = _mod
+_spec.loader.exec_module(_mod)
 
-# Detector layer radii (visualization units, roughly corresponding to meters)
-# Real ATLAS: beam pipe=5cm, pixel=5-12cm, SCT=30-52cm, TRT=56-107cm
-BEAM_PIPE_RADIUS = 0.5  # Central vacuum tube where beams collide
-TRACKER_INNER = 1.0  # Silicon pixel detector - highest precision
-TRACKER_OUTER = 4.0  # Silicon strip + transition radiation tracker
-ECAL_INNER = 4.5  # Electromagnetic calorimeter - lead/liquid-argon
-ECAL_OUTER = 6.0  # ~25 radiation lengths to fully contain EM showers
-HCAL_INNER = 6.5  # Hadronic calorimeter - iron/scintillator tiles
-HCAL_OUTER = 10.0  # ~10 interaction lengths for hadron containment
-MUON_INNER = 11.0  # Muon spectrometer - drift tubes and chambers
-MUON_OUTER = 15.0  # Outermost detector layer
-DETECTOR_LENGTH = 25.0  # Half-length in z (beam direction)
-
-# Magnetic field strength
-# Real ATLAS: 2 Tesla solenoid in inner detector
-# Real CMS: 3.8 Tesla (strongest at any collider)
-B_FIELD = 2.0  # Tesla (affects curvature via r = p_T / (q*B))
-
-# =============================================================================
-# Particle Properties (from Particle Data Group - PDG 2024)
-# =============================================================================
-# Masses in MeV/c² (rest mass energy equivalent)
-# These are REAL measured values from experiments!
-#
-# Stopping behavior based on particle-matter interactions:
-# - Electrons: Bremsstrahlung radiation → EM shower → stopped in ECAL
-# - Photons: Pair production (γ → e⁺e⁻) → EM shower → stopped in ECAL
-# - Hadrons: Strong nuclear interactions → hadronic shower → stopped in HCAL
-# - Muons: Minimum ionizing particles (MIP) → penetrate everything
-
-PARTICLE_TYPES = {
-    # LEPTONS (fundamental particles, no strong interaction)
-    "electron": {
-        "charge": -1,
-        "mass": 0.511,  # MeV/c² - PDG value: 0.51099895 MeV/c²
-        "color": [0.2, 0.6, 1.0],  # Blue - convention in particle physics
-        "stops_at": ECAL_OUTER,  # Creates EM shower via bremsstrahlung
-    },
-    "positron": {
-        "charge": +1,
-        "mass": 0.511,  # Antiparticle of electron, same mass (CPT theorem)
-        "color": [1.0, 0.4, 0.4],  # Red - opposite charge = opposite color
-        "stops_at": ECAL_OUTER,  # Also creates EM shower, then annihilates
-    },
-    "muon_minus": {
-        "charge": -1,
-        "mass": 105.7,  # MeV/c² - PDG value: 105.6583755 MeV/c²
-        "color": [0.2, 1.0, 0.4],  # Green - distinct from electrons
-        "stops_at": None,  # Penetrates entire detector! (MIP behavior)
-    },
-    "muon_plus": {
-        "charge": +1,
-        "mass": 105.7,  # Antimuon, same mass
-        "color": [1.0, 1.0, 0.2],  # Yellow-green
-        "stops_at": None,  # Also penetrates everything
-    },
-    # HADRONS (made of quarks, feel strong force)
-    # Pions: lightest mesons, most common in jets
-    "pion_plus": {
-        "charge": +1,
-        "mass": 139.6,  # MeV/c² - PDG value: 139.57039 MeV/c²
-        "color": [1.0, 0.6, 0.2],  # Orange
-        "stops_at": HCAL_OUTER,  # Hadronic shower via strong interaction
-    },
-    "pion_minus": {
-        "charge": -1,
-        "mass": 139.6,  # Same mass (isospin symmetry)
-        "color": [0.8, 0.4, 0.1],  # Darker orange
-        "stops_at": HCAL_OUTER,
-    },
-    # Kaons: strange mesons (contain strange quark)
-    "kaon": {
-        "charge": +1,
-        "mass": 493.7,  # MeV/c² - PDG value: 493.677 MeV/c² (K⁺)
-        "color": [0.9, 0.3, 0.6],  # Pink/magenta
-        "stops_at": HCAL_OUTER,
-    },
-    # Proton: stable baryon (uud quarks)
-    "proton": {
-        "charge": +1,
-        "mass": 938.3,  # MeV/c² - PDG value: 938.27208816 MeV/c²
-        "color": [0.6, 0.2, 0.8],  # Purple
-        "stops_at": HCAL_OUTER,
-    },
-    # BOSONS
-    "photon": {
-        "charge": 0,  # No charge → NO TRACK in magnetic field!
-        "mass": 0,  # Massless (travels at speed of light)
-        "color": [1.0, 1.0, 0.8],  # White/cream (light!)
-        "stops_at": ECAL_OUTER,  # Converts to e⁺e⁻ pair → EM shower
-    },
-    # Neutron: neutral baryon (udd quarks)
-    "neutron": {
-        "charge": 0,  # No charge → no track
-        "mass": 939.6,  # MeV/c² - PDG value: 939.56542052 MeV/c²
-        "color": [0.5, 0.5, 0.5],  # Gray (neutral)
-        "stops_at": HCAL_OUTER,  # Strong interaction → hadronic shower
-    },
-}
-
-
-# =============================================================================
-# Particle Track Generation
-# =============================================================================
-#
-# HELIX PHYSICS EXPLANATION
-# -------------------------
-# In a uniform magnetic field B along the z-axis (beam direction), charged
-# particles experience the Lorentz force:
-#
-#     F = q(v × B)
-#
-# This force is always perpendicular to velocity, so it changes direction
-# but not speed. The result is circular motion in the x-y plane (transverse)
-# combined with constant velocity along z → HELIX.
-#
-# The radius of the circular motion is:
-#
-#     r = m*v_T / (|q|*B) = p_T / (|q|*B)
-#
-# where p_T = transverse momentum = sqrt(px² + py²)
-#
-# KEY INSIGHTS:
-# 1. Higher p_T → larger radius → straighter track
-# 2. Positive charge → curves one way, negative → opposite
-# 3. Mass doesn't directly affect radius (only through momentum)
-# 4. Electrons curve tightly because they typically have low p_T
-# 5. Muons curve gently because they typically have high p_T
-#
-# The helix pitch (z-advance per revolution) depends on p_z/p_T ratio.
-
-
-@dataclass
-class Particle:
-    """Represents a particle with kinematic properties.
-
-    In particle physics, we typically work with:
-    - Energy E (GeV) - total relativistic energy
-    - Momentum p (GeV/c) - 3-vector (px, py, pz)
-    - Mass m (GeV/c²) - rest mass
-
-    Related by: E² = (pc)² + (mc²)²
-
-    For visualization, we use natural units where c = 1.
-    """
-
-    particle_type: str
-    energy: float  # Total energy in GeV
-    px: float  # x-component of momentum (GeV/c)
-    py: float  # y-component of momentum (GeV/c)
-    pz: float  # z-component of momentum (beam direction)
-    origin: np.ndarray  # Starting point (collision vertex)
-
-    @property
-    def momentum(self) -> float:
-        """Total momentum magnitude |p| = sqrt(px² + py² + pz²)."""
-        return np.sqrt(self.px**2 + self.py**2 + self.pz**2)
-
-    @property
-    def pt(self) -> float:
-        """Transverse momentum p_T = sqrt(px² + py²).
-
-        This is the key quantity for track curvature since the magnetic
-        field is along z. Higher p_T means straighter tracks.
-        """
-        return np.sqrt(self.px**2 + self.py**2)
-
-    @property
-    def charge(self) -> int:
-        """Electric charge in units of elementary charge e."""
-        return PARTICLE_TYPES[self.particle_type]["charge"]
-
-    @property
-    def color(self) -> list:
-        """Visualization color for this particle type."""
-        return PARTICLE_TYPES[self.particle_type]["color"]
-
-    @property
-    def stops_at(self) -> Optional[float]:
-        """Detector radius where this particle is absorbed (None = escapes)."""
-        return PARTICLE_TYPES[self.particle_type]["stops_at"]
+B_FIELD = _mod.B_FIELD
+BEAM_PIPE_RADIUS = _mod.BEAM_PIPE_RADIUS
+DETECTOR_LENGTH = _mod.DETECTOR_LENGTH
+ECAL_INNER = _mod.ECAL_INNER
+ECAL_OUTER = _mod.ECAL_OUTER
+HCAL_INNER = _mod.HCAL_INNER
+HCAL_OUTER = _mod.HCAL_OUTER
+MUON_INNER = _mod.MUON_INNER
+MUON_OUTER = _mod.MUON_OUTER
+TRACKER_INNER = _mod.TRACKER_INNER
+TRACKER_OUTER = _mod.TRACKER_OUTER
+Particle = _mod.Particle
+generate_collision_event = _mod.generate_collision_event
 
 
 def generate_helix_track_with_times(
@@ -576,251 +411,6 @@ def generate_straight_track_with_times(
 
     return vertices, widths, colors, birth_times
 
-
-# =============================================================================
-# Jet Generation
-# =============================================================================
-#
-# QUANTUM CHROMODYNAMICS (QCD) AND JET PHYSICS
-# ---------------------------------------------
-# Jets are the experimental signature of quarks and gluons. Due to a property
-# called "color confinement," quarks/gluons cannot exist freely. When produced
-# in a collision, they immediately undergo "hadronization" - a QCD process
-# where the color field energy creates quark-antiquark pairs that combine
-# into colorless hadrons (mesons and baryons).
-#
-# FRAGMENTATION PROCESS:
-#   q → q + (q̄q) → q + (q̄q) + (q̄q) → ...
-#   This cascade produces a collimated spray of hadrons: a "jet"
-#
-# KEY JET PROPERTIES:
-# 1. COLLIMATION: Higher energy → narrower jet (Lorentz boost)
-#    Typical cone radius: R = sqrt(Δη² + Δφ²) ≈ 0.4
-#
-# 2. FRAGMENTATION FUNCTION: Energy distribution follows D(z)
-#    where z = E_hadron / E_parton
-#    Approximately exponential: more soft particles than hard ones
-#
-# 3. PARTICLE COMPOSITION (typical jet):
-#    - ~60% pions (π±, π⁰) - lightest mesons
-#    - ~25% kaons (K±, K⁰) - contain strange quarks
-#    - ~15% protons/neutrons - baryons
-#    - Plus photons from π⁰ → γγ decay
-#
-# 4. MULTIPLICITY: <n> ≈ 2.5 × ln(E_jet/1GeV)
-#    More particles at higher energy
-
-
-def generate_jet(
-    origin: np.ndarray,
-    direction: np.ndarray,
-    energy: float,
-    rng: np.random.Generator,
-    n_particles: int = 15,
-) -> list[Particle]:
-    """Generate a jet of hadrons from quark/gluon fragmentation.
-
-    PHYSICS:
-    --------
-    Jets arise from QCD color confinement. When a quark or gluon is produced,
-    it cannot escape - instead, the strong force field energy creates new
-    quark-antiquark pairs that combine into observable hadrons.
-
-    This simulation models:
-    1. Jet cone angle inversely proportional to energy (Lorentz boost)
-    2. Exponential fragmentation function (more soft particles)
-    3. Realistic hadron composition (mostly pions)
-
-    Args:
-        origin: Collision vertex position
-        direction: Initial parton (quark/gluon) direction
-        energy: Total jet energy in GeV
-        rng: Random number generator
-        n_particles: Number of hadrons in jet
-
-    Returns:
-        List of Particle objects representing jet constituents
-    """
-    particles = []
-
-    # Normalize jet axis direction
-    jet_dir = direction / (np.linalg.norm(direction) + 1e-10)
-
-    # JET CONE ANGLE
-    # --------------
-    # Higher energy jets are more collimated due to Lorentz boost.
-    # Typical LHC jets: R ≈ 0.4 for 100 GeV, narrower for TeV jets.
-    cone_angle = 0.3 / (1 + energy / 100)
-
-    # Create orthonormal basis for distributing particles within cone
-    if abs(jet_dir[2]) < 0.9:
-        perp1 = np.cross(jet_dir, [0, 0, 1])
-    else:
-        perp1 = np.cross(jet_dir, [1, 0, 0])
-    perp1 = perp1 / np.linalg.norm(perp1)
-    perp2 = np.cross(jet_dir, perp1)
-
-    # FRAGMENTATION FUNCTION D(z)
-    # ---------------------------
-    # The fraction z = E_hadron/E_jet follows an exponential-like distribution.
-    z_fractions = rng.exponential(0.3, n_particles)
-    z_fractions = z_fractions / z_fractions.sum()
-
-    # HADRON COMPOSITION
-    # ------------------
-    # Pions dominate because they're the lightest mesons.
-    hadron_types = ["pion_plus", "pion_minus", "kaon", "proton"]
-    hadron_weights = [0.35, 0.35, 0.15, 0.15]
-
-    for i in range(n_particles):
-        theta = rng.exponential(cone_angle)
-        phi = rng.uniform(0, 2 * np.pi)
-
-        p_dir = (
-            jet_dir * np.cos(theta)
-            + perp1 * np.sin(theta) * np.cos(phi)
-            + perp2 * np.sin(theta) * np.sin(phi)
-        )
-
-        p_energy = energy * z_fractions[i]
-        p_momentum = p_energy
-        px, py, pz = p_dir * p_momentum
-        p_type = rng.choice(hadron_types, p=hadron_weights)
-
-        particles.append(
-            Particle(
-                particle_type=p_type,
-                energy=p_energy,
-                px=px,
-                py=py,
-                pz=pz,
-                origin=origin.copy(),
-            )
-        )
-
-    return particles
-
-
-# =============================================================================
-# Collision Event Generation
-# =============================================================================
-#
-# HIGH-ENERGY PROTON-PROTON COLLISIONS
-# ------------------------------------
-# At the LHC, protons collide at center-of-mass energy √s = 13.6 TeV.
-# But protons are composite particles (made of quarks and gluons).
-# The actual hard collision involves partons (quarks/gluons) carrying
-# only a fraction of the proton momentum.
-#
-# TYPICAL EVENT TOPOLOGY
-# ----------------------
-# Most interesting events involve heavy particle production and decay:
-#
-# 1. tt̄ (top-antitop) production:
-#    pp → tt̄ → (bW⁺)(b̄W⁻) → jets + leptons + missing energy
-#
-# 2. W/Z + jets:
-#    pp → W/Z + jets
-#
-# 3. Higgs production:
-#    pp → H → various decay modes
-#
-# CONSERVATION LAWS
-# -----------------
-# - Momentum conservation: Σp = 0 (in center-of-mass frame)
-# - Energy conservation: ΣE = √s
-# - Charge conservation: ΣQ = 0
-
-
-def generate_collision_event(
-    rng: np.random.Generator,
-    n_jets: int = 4,
-    n_leptons: int = 2,
-) -> list[Particle]:
-    """Generate a complete collision event mimicking LHC physics.
-
-    Simulates proton-proton collision producing:
-    - Multiple jets (from hard-scattered quarks/gluons)
-    - Isolated leptons (from W/Z boson decays)
-    - Possibly photons (from π⁰ decay or direct production)
-    """
-    particles = []
-    origin = np.array([0.0, 0.0, 0.0])
-
-    # BEAM SPOT / INTERACTION POINT
-    # Real collisions have finite size: σ_x ≈ σ_y ≈ 15 μm, σ_z ≈ 5 cm
-    vertex = origin + rng.normal(0, 0.02, 3)
-
-    total_energy = 500 + rng.uniform(0, 500)
-
-    # JET PRODUCTION
-    for i in range(n_jets):
-        theta = np.arccos(rng.uniform(-0.95, 0.95))
-        phi = rng.uniform(0, 2 * np.pi)
-
-        # Momentum conservation: back-to-back jets
-        if i > 0 and i % 2 == 1:
-            phi = (phi + np.pi + rng.normal(0, 0.3)) % (2 * np.pi)
-
-        direction = np.array(
-            [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
-        )
-
-        jet_energy = total_energy / n_jets * rng.uniform(0.5, 1.5)
-        jet_particles = generate_jet(
-            vertex, direction, jet_energy, rng, n_particles=int(8 + jet_energy / 30)
-        )
-        particles.extend(jet_particles)
-
-    # ISOLATED LEPTON PRODUCTION (from W/Z decay)
-    lepton_types = [("electron", "positron"), ("muon_minus", "muon_plus")]
-
-    for i in range(n_leptons):
-        theta = np.arccos(rng.uniform(-0.8, 0.8))
-        phi = rng.uniform(0, 2 * np.pi)
-
-        direction = np.array(
-            [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
-        )
-
-        lepton_energy = rng.uniform(20, 100)
-        px, py, pz = direction * lepton_energy
-
-        pair = lepton_types[i % len(lepton_types)]
-        l_type = pair[rng.integers(0, 2)]
-
-        particles.append(
-            Particle(
-                particle_type=l_type,
-                energy=lepton_energy,
-                px=px,
-                py=py,
-                pz=pz,
-                origin=vertex.copy(),
-            )
-        )
-
-    # PHOTON PRODUCTION
-    if rng.random() < 0.3:
-        theta = np.arccos(rng.uniform(-0.7, 0.7))
-        phi = rng.uniform(0, 2 * np.pi)
-        direction = np.array(
-            [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
-        )
-        photon_energy = rng.uniform(10, 50)
-
-        particles.append(
-            Particle(
-                particle_type="photon",
-                energy=photon_energy,
-                px=direction[0] * photon_energy,
-                py=direction[1] * photon_energy,
-                pz=direction[2] * photon_energy,
-                origin=vertex.copy(),
-            )
-        )
-
-    return particles
 
 
 # =============================================================================
@@ -1488,6 +1078,7 @@ def generate_animated_detector_scene(
             font_size=0.055,
             anchor="top-left",
             color="rgba(255,255,255,0.6)",
+            blend_mode="difference",
         )
 
         # Particle type legend (bottom-left) — same as static demo

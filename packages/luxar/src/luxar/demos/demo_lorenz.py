@@ -155,6 +155,7 @@ def generate_lorenz_attractor(
                 font_size=0.055,
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
+                blend_mode="difference",
             )
             scene.add_text(
                 "\u03c3=10, \u03c1=28, \u03b2=8/3 \u2022 500K points",

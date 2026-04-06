@@ -184,6 +184,7 @@ def load_and_convert_gaia_small(
                 font_size=0.055,
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
+                blend_mode="difference",
             )
             scene.add_text(
                 "8.1M stars \u2022 Gaia catalog",
