@@ -315,12 +315,12 @@ def _compute_esm3_embeddings(
         if model_name == "esmc-300m":
             from esm.models.esmc import ESMC
 
-            model = ESMC.from_pretrained("esmc_300m_2024_12").to("cuda").eval()
+            model = ESMC.from_pretrained("esmc_300m").to("cuda").eval()
             embed_dim = 960
         elif model_name == "esmc-600m":
             from esm.models.esmc import ESMC
 
-            model = ESMC.from_pretrained("esmc_600m_2024_12").to("cuda").eval()
+            model = ESMC.from_pretrained("esmc_600m").to("cuda").eval()
             embed_dim = 1152
         else:
             from esm.models.esm3 import ESM3
