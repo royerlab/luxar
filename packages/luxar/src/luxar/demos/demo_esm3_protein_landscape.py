@@ -52,54 +52,33 @@ SWISSPROT_FASTA_URLS = [
 # Checkpoint frequency for embedding computation
 CHECKPOINT_INTERVAL = 10000
 
-# Taxonomic kingdom colors
-KINGDOM_COLORS: dict[str, tuple[float, float, float]] = {
-    "Eukaryota": (0.2, 0.6, 1.0),  # blue
-    "Bacteria": (0.2, 0.9, 0.3),  # green
+# 12 taxonomic categories with distinct colors (max requested by user)
+TAXON_COLORS: dict[str, tuple[float, float, float]] = {
+    "Human": (0.25, 0.55, 1.0),  # bright blue
+    "Mouse & Rat": (0.5, 0.75, 1.0),  # light blue
+    "Other Vertebrates": (0.3, 0.8, 0.85),  # teal
+    "Insects & Worms": (0.7, 0.4, 0.9),  # purple
+    "Plants": (0.2, 0.75, 0.3),  # green
+    "Fungi": (0.9, 0.8, 0.2),  # yellow
+    "Other Eukaryotes": (0.6, 0.6, 0.9),  # lavender
+    "Proteobacteria": (0.4, 0.9, 0.5),  # lime
+    "Firmicutes & Actino": (0.6, 0.8, 0.3),  # olive
+    "Other Bacteria": (0.3, 0.65, 0.4),  # dark green
     "Archaea": (1.0, 0.5, 0.1),  # orange
     "Viruses": (0.9, 0.2, 0.2),  # red
-    "other": (0.5, 0.5, 0.5),  # gray
 }
 
-# Taxonomy ID → kingdom lookup (top-level NCBI taxonomy IDs)
-# OX= field in Swiss-Prot FASTA gives the taxonomy ID
-TAXID_KINGDOMS: dict[str, str] = {}  # populated lazily
-
-# Known organism → kingdom mappings for fast heuristic classification
-ORGANISM_KINGDOM_PATTERNS: list[tuple[str, str]] = [
-    # Bacteria
-    ("escherichia", "Bacteria"),
-    ("salmonella", "Bacteria"),
-    ("staphylococcus", "Bacteria"),
-    ("streptococcus", "Bacteria"),
-    ("bacillus", "Bacteria"),
-    ("mycobacterium", "Bacteria"),
-    ("pseudomonas", "Bacteria"),
-    ("clostridium", "Bacteria"),
-    ("lactobacillus", "Bacteria"),
-    ("helicobacter", "Bacteria"),
-    ("vibrio", "Bacteria"),
-    ("campylobacter", "Bacteria"),
-    ("neisseria", "Bacteria"),
-    ("bordetella", "Bacteria"),
-    ("borrelia", "Bacteria"),
-    ("treponema", "Bacteria"),
-    ("chlamydia", "Bacteria"),
-    ("rickettsia", "Bacteria"),
-    ("cyanobacteri", "Bacteria"),
-    ("rhizobium", "Bacteria"),
-    ("agrobacterium", "Bacteria"),
-    ("caulobacter", "Bacteria"),
-    ("synechocystis", "Bacteria"),
-    ("thermus", "Bacteria"),
-    ("deinococcus", "Bacteria"),
-    ("corynebacterium", "Bacteria"),
-    ("listeria", "Bacteria"),
-    ("legionella", "Bacteria"),
-    ("enterococcus", "Bacteria"),
-    ("acinetobacter", "Bacteria"),
-    ("klebsiella", "Bacteria"),
-    # Archaea
+# Organism classification rules — checked in order, first match wins.
+# Tuples of (pattern, category). Pattern matched against lowercase organism name.
+_CLASSIFICATION_RULES: list[tuple[str, str]] = [
+    # --- Viruses (check first: "virus" is unambiguous) ---
+    ("virus", "Viruses"),
+    ("phage", "Viruses"),
+    ("viridae", "Viruses"),
+    ("sars-cov", "Viruses"),
+    ("vaccinia", "Viruses"),
+    ("influenza", "Viruses"),
+    # --- Archaea ---
     ("methan", "Archaea"),
     ("halobacterium", "Archaea"),
     ("sulfolobus", "Archaea"),
@@ -109,45 +88,124 @@ ORGANISM_KINGDOM_PATTERNS: list[tuple[str, str]] = [
     ("haloferax", "Archaea"),
     ("thermoplasma", "Archaea"),
     ("aeropyrum", "Archaea"),
-    # Viruses
-    ("virus", "Viruses"),
-    ("phage", "Viruses"),
-    ("viridae", "Viruses"),
-    ("sars-cov", "Viruses"),
-    ("influenza", "Viruses"),
-    ("hiv", "Viruses"),
-    ("hepatitis", "Viruses"),
-    ("herpes", "Viruses"),
-    ("vaccinia", "Viruses"),
-    ("bacteriophage", "Viruses"),
+    # --- Human ---
+    ("homo sapiens", "Human"),
+    # --- Mouse & Rat ---
+    ("mus musculus", "Mouse & Rat"),
+    ("rattus", "Mouse & Rat"),
+    # --- Plants ---
+    ("arabidopsis", "Plants"),
+    ("oryza", "Plants"),
+    ("zea mays", "Plants"),
+    ("nicotiana", "Plants"),
+    ("solanum", "Plants"),
+    ("glycine max", "Plants"),
+    ("triticum", "Plants"),
+    ("hordeum", "Plants"),
+    ("medicago", "Plants"),
+    ("populus", "Plants"),
+    ("vitis", "Plants"),
+    ("physcomitrella", "Plants"),
+    ("marchantia", "Plants"),
+    ("chlamydomonas", "Plants"),
+    # --- Fungi ---
+    ("saccharomyces", "Fungi"),
+    ("schizosaccharomyces", "Fungi"),
+    ("candida", "Fungi"),
+    ("aspergillus", "Fungi"),
+    ("neurospora", "Fungi"),
+    ("cryptococcus", "Fungi"),
+    ("ustilago", "Fungi"),
+    ("yarrowia", "Fungi"),
+    ("kluyveromyces", "Fungi"),
+    ("emericella", "Fungi"),
+    # --- Insects & Worms ---
+    ("drosophila", "Insects & Worms"),
+    ("caenorhabditis", "Insects & Worms"),
+    ("anopheles", "Insects & Worms"),
+    ("aedes", "Insects & Worms"),
+    ("bombyx", "Insects & Worms"),
+    ("tribolium", "Insects & Worms"),
+    ("apis mellifera", "Insects & Worms"),
+    ("schistosoma", "Insects & Worms"),
+    ("brugia", "Insects & Worms"),
+    # --- Proteobacteria (E. coli, Salmonella, Pseudomonas, etc.) ---
+    ("escherichia", "Proteobacteria"),
+    ("salmonella", "Proteobacteria"),
+    ("shigella", "Proteobacteria"),
+    ("pseudomonas", "Proteobacteria"),
+    ("vibrio", "Proteobacteria"),
+    ("helicobacter", "Proteobacteria"),
+    ("campylobacter", "Proteobacteria"),
+    ("neisseria", "Proteobacteria"),
+    ("bordetella", "Proteobacteria"),
+    ("rickettsia", "Proteobacteria"),
+    ("rhizobium", "Proteobacteria"),
+    ("agrobacterium", "Proteobacteria"),
+    ("caulobacter", "Proteobacteria"),
+    ("legionella", "Proteobacteria"),
+    ("acinetobacter", "Proteobacteria"),
+    ("klebsiella", "Proteobacteria"),
+    ("haemophilus", "Proteobacteria"),
+    ("brucella", "Proteobacteria"),
+    ("burkholderia", "Proteobacteria"),
+    ("xanthomonas", "Proteobacteria"),
+    ("yersinia", "Proteobacteria"),
+    # --- Firmicutes & Actinobacteria ---
+    ("bacillus", "Firmicutes & Actino"),
+    ("staphylococcus", "Firmicutes & Actino"),
+    ("streptococcus", "Firmicutes & Actino"),
+    ("clostridium", "Firmicutes & Actino"),
+    ("lactobacillus", "Firmicutes & Actino"),
+    ("enterococcus", "Firmicutes & Actino"),
+    ("listeria", "Firmicutes & Actino"),
+    ("mycobacterium", "Firmicutes & Actino"),
+    ("corynebacterium", "Firmicutes & Actino"),
+    ("streptomyces", "Firmicutes & Actino"),
+    ("bifidobacterium", "Firmicutes & Actino"),
+    # --- Other Vertebrates ---
+    ("bos taurus", "Other Vertebrates"),
+    ("sus scrofa", "Other Vertebrates"),
+    ("gallus", "Other Vertebrates"),
+    ("xenopus", "Other Vertebrates"),
+    ("danio", "Other Vertebrates"),
+    ("pongo", "Other Vertebrates"),
+    ("pan troglodytes", "Other Vertebrates"),
+    ("oryctolagus", "Other Vertebrates"),
+    ("canis", "Other Vertebrates"),
+    ("equus", "Other Vertebrates"),
+    ("ovis", "Other Vertebrates"),
+    ("macaca", "Other Vertebrates"),
+    ("takifugu", "Other Vertebrates"),
+    ("torpedo", "Other Vertebrates"),
 ]
 
 
-def _classify_kingdom(organism: str) -> str:
-    """Classify an organism into a taxonomic kingdom by name heuristics."""
+def _classify_organism(organism: str) -> str:
+    """Classify an organism into one of 12 taxonomic categories."""
     org_lower = organism.lower()
 
     # Check explicit patterns first
-    for pattern, kingdom in ORGANISM_KINGDOM_PATTERNS:
+    for pattern, category in _CLASSIFICATION_RULES:
         if pattern in org_lower:
-            return kingdom
+            return category
 
-    # Bacteria heuristics: genus names with common bacterial suffixes
+    # Bacterial genus suffix heuristics
     first_word = org_lower.split()[0] if org_lower else ""
     bacterial_suffixes = (
         "bacillus", "coccus", "monas", "bacter", "bacterium", "spirillum",
         "vibrio", "plasma", "phila", "oides", "ella", "inia", "eria",
     )
     if any(first_word.endswith(s) for s in bacterial_suffixes):
-        return "Bacteria"
+        return "Other Bacteria"
 
-    # Archaea heuristics
-    archaeal_suffixes = ("archaeum", "archaeon", "pyrus", "thermus")
+    # Archaeal suffix heuristics
+    archaeal_suffixes = ("archaeum", "archaeon", "pyrus")
     if any(first_word.endswith(s) for s in archaeal_suffixes):
         return "Archaea"
 
-    # Default: most Swiss-Prot organisms are eukaryotic
-    return "Eukaryota"
+    # Default: other eukaryotes (amoeba, algae, protists, etc.)
+    return "Other Eukaryotes"
 
 
 # =============================================================================
@@ -431,7 +489,7 @@ def generate_esm3_landscape(
 
         # --- Step 2: Parse FASTA ---
         accessions, protein_names, organism_names, sequences = _parse_swissprot_fasta(fasta_path)
-        kingdoms = [_classify_kingdom(org) for org in organism_names]
+        kingdoms = [_classify_organism(org) for org in organism_names]
 
         # Subsample
         n = len(sequences)
@@ -472,10 +530,10 @@ def generate_esm3_landscape(
         colors = np.zeros((n, 3), dtype=np.float32)
         kingdom_counts: dict[str, int] = {}
         for i, k in enumerate(kingdoms):
-            colors[i] = KINGDOM_COLORS.get(k, KINGDOM_COLORS["other"])
+            colors[i] = TAXON_COLORS.get(k, TAXON_COLORS["other"])
             kingdom_counts[k] = kingdom_counts.get(k, 0) + 1
 
-        aprint("✓ Proteins by kingdom:")
+        aprint("✓ Proteins by taxon:")
         for k, count in sorted(kingdom_counts.items(), key=lambda x: -x[1]):
             aprint(f"  {k}: {count:,}")
 
