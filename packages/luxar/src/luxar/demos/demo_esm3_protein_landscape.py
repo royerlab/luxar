@@ -42,7 +42,12 @@ from luxar.utils.paths import get_demos_output_dir
 
 DEFAULT_SAMPLE_SIZE = 0  # 0 = all (~572K)
 
-SWISSPROT_FASTA_URL = "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz"
+SWISSPROT_FASTA_URLS = [
+    # ExPASy mirror (faster, more reliable)
+    "https://ftp.expasy.org/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz",
+    # Primary UniProt FTP (can be slow)
+    "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz",
+]
 
 # Checkpoint frequency for embedding computation
 CHECKPOINT_INTERVAL = 10000
@@ -397,7 +402,15 @@ def generate_esm3_landscape(
             from luxar.utils.download import robust_download
 
             with asection("Downloading Swiss-Prot FASTA (~90 MB)"):
-                robust_download(SWISSPROT_FASTA_URL, fasta_path)
+                for url in SWISSPROT_FASTA_URLS:
+                    try:
+                        robust_download(url, fasta_path)
+                        break
+                    except Exception as e:
+                        aprint(f"  ⚠ {url.split('/')[2]} failed: {e}")
+                        continue
+                else:
+                    raise RuntimeError("All Swiss-Prot mirrors failed")
 
         # --- Step 2: Parse FASTA ---
         accessions, protein_names, organism_names, sequences = _parse_swissprot_fasta(fasta_path)
