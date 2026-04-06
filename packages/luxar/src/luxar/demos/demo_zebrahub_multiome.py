@@ -24,10 +24,13 @@ from luxar.utils.paths import get_demos_output_dir
 
 
 def load_cells_data():  # type: ignore[no-untyped-def]
-    """Load integrated cells UMAP from Zebrahub."""
+    """Load integrated cells UMAP from Zebrahub.
+
+    Returns coords, attrs (integer codes), and category maps (code → name).
+    """
     base = "https://public.czbiohub.org/royerlab/zebrahub/sequencing/3d-umaps/integrated_umap_3d_annotated"
 
-    with asection("Loading Zebrahub Integrated Cells"):
+    with asection("Loading Zebrahub Multiome Integrated Cells"):
         try:
             # Coordinates
             coords_flat = zarr.open(fsspec.get_mapper(f"{base}/coords.zarr"), mode="r")[
@@ -36,13 +39,18 @@ def load_cells_data():  # type: ignore[no-untyped-def]
             coords = coords_flat.reshape(-1, 3)
             aprint(f"✓ {len(coords):,} cells loaded")
 
-            # Attributes
+            # Attributes (integer codes) + category maps from zarr attrs
             attrs = {}
+            category_maps = {}
             for name in ["celltype", "timepoint"]:
-                attrs[name] = zarr.open(
+                z = zarr.open(
                     fsspec.get_mapper(f"{base}/attribute_{name}.zarr"), mode="r"
-                )[:]
+                )
+                attrs[name] = z[:]
+                category_maps[name] = list(z.attrs.get("map", []))
                 aprint(f"  {name}: {len(np.unique(attrs[name]))} unique")
+                if category_maps[name]:
+                    aprint(f"    categories: {category_maps[name][:5]}...")
         except Exception as e:
             aprint(f"❌ Failed to load data from {base}")
             aprint(f"   Error: {e}")
@@ -55,7 +63,7 @@ def load_cells_data():  # type: ignore[no-untyped-def]
             aprint("Please check your internet connection and try again.")
             raise
 
-    return coords, attrs
+    return coords, attrs, category_maps
 
 
 def attr_to_colors(values):  # type: ignore[no-untyped-def]
@@ -79,17 +87,17 @@ def attr_to_colors(values):  # type: ignore[no-untyped-def]
 
 def main() -> None:
     aprint("=" * 70)
-    aprint("ZEBRAHUB INTEGRATED CELLS - 3D UMAP")
+    aprint("ZEBRAHUB MULTIOME — Integrated 3D UMAP")
     aprint("=" * 70)
     aprint("95k cells • 32 cell types • 6 timepoints")
-    aprint("https://zebrahub.org")
+    aprint("https://www.biorxiv.org/content/10.1101/2024.10.18.618987v1")
     aprint("")
 
-    coords, attrs = load_cells_data()
+    coords, attrs, category_maps = load_cells_data()
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output = get_demos_output_dir() / "zebrahub_integrated_cells.zarr"
+        output = get_demos_output_dir() / "zebrahub_multiome.zarr"
         with asection("Building Scene"):
             # Create 2 views (celltype, timepoint)
             all_pos, all_col = [], []
@@ -102,6 +110,16 @@ def main() -> None:
 
             positions = np.vstack(all_pos)
             colors = np.vstack(all_col)
+
+            # Hover labels: resolve integer codes to human-readable names
+            ct_map = category_maps.get("celltype", [])
+            tp_map = category_maps.get("timepoint", [])
+            per_cell_labels = [
+                f"{ct_map[attrs['celltype'][i]] if attrs['celltype'][i] < len(ct_map) else attrs['celltype'][i]}"
+                f" @ {tp_map[attrs['timepoint'][i]] if attrs['timepoint'][i] < len(tp_map) else attrs['timepoint'][i]}"
+                for i in range(len(coords))
+            ]
+            labels = per_cell_labels * len(attrs)
 
             dims = Dimensions(
                 [
@@ -128,12 +146,13 @@ def main() -> None:
                     sharpness=np.full(len(positions), 4.0, dtype=np.float32),
                     opacity=0.8,
                     intensity=0.25,
+                    labels=labels,
                 )
 
                 # --- Overlays ---
                 # Title
                 scene.add_text(
-                    "Zebrahub Integrated Cells",
+                    "Zebrahub Multiome — Integrated 3D UMAP",
                     position=(0.5, 0.02),
                     font_size=0.026,
                     anchor="top-center",
@@ -155,11 +174,11 @@ def main() -> None:
                         transition_duration=0.15,
                     )
 
-                # Info
+                # Info + citation
                 scene.add_text(
-                    "95K cells \u2022 32 cell types",
+                    "95K cells • 32 cell types • Wagner et al. 2024",
                     position=(0.98, 0.97),
-                    font_size=0.015,
+                    font_size=0.012,
                     anchor="bottom-right",
                     color="rgba(200,200,200,0.45)",
                 )
@@ -170,7 +189,7 @@ def main() -> None:
         return
 
     # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_zebrahub_cells_") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="luxar_zebrahub_multiome_") as tmpdir:
         output = Path(tmpdir) / "cells.zarr"
 
         with asection("Building Scene"):
@@ -186,6 +205,16 @@ def main() -> None:
             positions = np.vstack(all_pos)
             colors = np.vstack(all_col)
 
+            # Hover labels: resolve integer codes to human-readable names
+            ct_map = category_maps.get("celltype", [])
+            tp_map = category_maps.get("timepoint", [])
+            per_cell_labels = [
+                f"{ct_map[attrs['celltype'][i]] if attrs['celltype'][i] < len(ct_map) else attrs['celltype'][i]}"
+                f" @ {tp_map[attrs['timepoint'][i]] if attrs['timepoint'][i] < len(tp_map) else attrs['timepoint'][i]}"
+                for i in range(len(coords))
+            ]
+            labels = per_cell_labels * len(attrs)
+
             dims = Dimensions(
                 [
                     Dimension(
@@ -211,12 +240,13 @@ def main() -> None:
                     sharpness=np.full(len(positions), 4.0, dtype=np.float32),
                     opacity=0.8,
                     intensity=0.25,
+                    labels=labels,
                 )
 
                 # --- Overlays ---
                 # Title
                 scene.add_text(
-                    "Zebrahub Integrated Cells",
+                    "Zebrahub Multiome — Integrated 3D UMAP",
                     position=(0.5, 0.02),
                     font_size=0.026,
                     anchor="top-center",
@@ -238,11 +268,11 @@ def main() -> None:
                         transition_duration=0.15,
                     )
 
-                # Info
+                # Info + citation
                 scene.add_text(
-                    "95K cells \u2022 32 cell types",
+                    "95K cells • 32 cell types • Wagner et al. 2024",
                     position=(0.98, 0.97),
-                    font_size=0.015,
+                    font_size=0.012,
                     anchor="bottom-right",
                     color="rgba(200,200,200,0.45)",
                 )

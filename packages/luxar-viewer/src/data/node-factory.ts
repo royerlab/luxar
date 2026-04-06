@@ -25,8 +25,72 @@ import type { PointsMetadata, PointsUserData } from '../types/points';
 import type { LinesMetadata, LinesUserData, LinesDataLoader } from '../types/lines';
 import type { GSplatsMetadata, GSplatsUserData, GSplatsDataLoader } from '../types/gsplats';
 import { log, Modules } from '../utils/log';
+import type { PickingSystem } from '../rendering/picking/picking-system';
+import { PointPickingMaterial } from '../rendering/picking/point-picking-material';
+import { LinePickingMaterial } from '../rendering/picking/line-picking-material';
+import { GSplatPickingMaterial } from '../rendering/picking/gsplat-picking-material';
 
 export class NodeFactory {
+  private pickingSystem: PickingSystem | null = null;
+
+  /** Wire up the picking system. When set, all subsequent node creations
+   *  will also create shadow pick-scene nodes. */
+  setPickingSystem(ps: PickingSystem | null): void {
+    this.pickingSystem = ps;
+  }
+
+  /** Invalidate the cached pick buffer (call after geometry updates). */
+  markPickingDirty(): void {
+    this.pickingSystem?.markDirty();
+  }
+
+  /**
+   * Retroactively register already-loaded scene nodes with the picking system.
+   * Called after initPicking() since the scene is loaded before picking is wired up.
+   */
+  registerExistingSceneNodes(root: THREE.Object3D): void {
+    if (!this.pickingSystem) return;
+
+    root.traverse((obj) => {
+      const nodeType = obj.userData?.nodeType as string | undefined;
+      if (!nodeType || obj.userData.pickId != null) return; // skip non-data or already registered
+
+      if (nodeType === 'points' && obj instanceof THREE.Points) {
+        const pickId = this.pickingSystem!.allocatePickId();
+        obj.userData.pickId = pickId;
+        const radiusScale = obj.geometry?.userData?.radiusScale ?? 1.0;
+        const sharpnessScale = obj.geometry?.userData?.sharpnessScale ?? 1.0;
+        const pickMaterial = new PointPickingMaterial({
+          nodeId: pickId,
+          radiusScale,
+          sharpnessScale,
+        });
+        materialManager.register(pickMaterial);
+        const pickNode = new THREE.Points(obj.geometry, pickMaterial);
+        pickNode.matrixWorld.copy(obj.matrixWorld);
+        this.pickingSystem!.registerNode(obj, pickNode, pickId);
+      } else if (nodeType === 'lines' && obj instanceof THREE.Mesh) {
+        const pickId = this.pickingSystem!.allocatePickId();
+        obj.userData.pickId = pickId;
+        const pickMaterial = new LinePickingMaterial({ nodeId: pickId });
+        materialManager.register(pickMaterial);
+        const pickNode = new THREE.Mesh(obj.geometry, pickMaterial);
+        pickNode.matrixWorld.copy(obj.matrixWorld);
+        this.pickingSystem!.registerNode(obj, pickNode, pickId);
+      } else if (nodeType === 'gsplats' && obj instanceof THREE.Mesh) {
+        const pickId = this.pickingSystem!.allocatePickId();
+        obj.userData.pickId = pickId;
+        const pickMaterial = new GSplatPickingMaterial({ nodeId: pickId });
+        materialManager.register(pickMaterial);
+        const pickNode = new THREE.Mesh(obj.geometry, pickMaterial);
+        pickNode.matrixWorld.copy(obj.matrixWorld);
+        this.pickingSystem!.registerNode(obj, pickNode, pickId);
+      }
+    });
+
+    log.info(Modules.SCENE_LOADER, `Registered ${this.pickingSystem!.registeredNodeCount} existing nodes for picking`);
+  }
+
   // ============================================================================
   // Points Node Creation
   // ============================================================================
@@ -62,6 +126,21 @@ export class NodeFactory {
 
     if (attrs.transform) {
       this.applyTransform(points, attrs.transform);
+    }
+
+    // Create picking shadow node if picking system is active
+    if (this.pickingSystem) {
+      const pickId = this.pickingSystem.allocatePickId();
+      points.userData.pickId = pickId;
+      const pickMaterial = new PointPickingMaterial({
+        nodeId: pickId,
+        radiusScale,
+        sharpnessScale,
+      });
+      materialManager.register(pickMaterial);
+      const pickNode = new THREE.Points(geometry, pickMaterial);
+      pickNode.matrixWorld.copy(points.matrixWorld);
+      this.pickingSystem.registerNode(points, pickNode, pickId);
     }
 
     return points;
@@ -116,6 +195,18 @@ export class NodeFactory {
 
     if (attrs.transform) {
       this.applyTransform(mesh, attrs.transform);
+    }
+
+    // Create picking shadow node if picking system is active
+    if (this.pickingSystem) {
+      const pickId = this.pickingSystem.allocatePickId();
+      mesh.userData.pickId = pickId;
+      const pickMaterial = new LinePickingMaterial({ nodeId: pickId });
+      materialManager.register(pickMaterial);
+      // Share the same InstancedBufferGeometry — only material differs
+      const pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);
+      pickNode.matrixWorld.copy(mesh.matrixWorld);
+      this.pickingSystem.registerNode(mesh, pickNode, pickId);
     }
 
     return mesh;
@@ -178,6 +269,18 @@ export class NodeFactory {
 
     if (attrs.transform) {
       this.applyTransform(mesh, attrs.transform);
+    }
+
+    // Create picking shadow node if picking system is active
+    if (this.pickingSystem) {
+      const pickId = this.pickingSystem.allocatePickId();
+      mesh.userData.pickId = pickId;
+      const pickMaterial = new GSplatPickingMaterial({ nodeId: pickId });
+      materialManager.register(pickMaterial);
+      // Share the same InstancedBufferGeometry — only material differs
+      const pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);
+      pickNode.matrixWorld.copy(mesh.matrixWorld);
+      this.pickingSystem.registerNode(mesh, pickNode, pickId);
     }
 
     return mesh;

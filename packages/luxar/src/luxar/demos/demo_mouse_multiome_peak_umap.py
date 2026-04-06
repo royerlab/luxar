@@ -204,6 +204,19 @@ def create_mouse_scene(
             radii = np.full(total_points, 0.02, dtype=np.float32)
             sharpnesses = np.full(total_points, 4.0, dtype=np.float32)
 
+            # Hover labels: resolve integer codes to category names, repeated per view
+            per_cell_labels = []
+            if category_maps:
+                for i in range(n_points):
+                    parts = []
+                    for attr_name in available_attrs:
+                        code = int(attributes[attr_name][i])
+                        cats = category_maps.get(attr_name, [])
+                        name = str(cats[code]) if code < len(cats) else str(code)
+                        parts.append(name)
+                    per_cell_labels.append(" | ".join(parts))
+            labels = per_cell_labels * len(available_attrs) if per_cell_labels else None
+
             scene.add_points(
                 "Cells",
                 positions_combined,
@@ -212,6 +225,7 @@ def create_mouse_scene(
                 sharpness=sharpnesses,
                 opacity=0.8,
                 intensity=0.25,
+                labels=labels,
             )
 
             # --- Overlays ---
@@ -255,9 +269,9 @@ def create_mouse_scene(
                         )
 
             scene.add_text(
-                f"{n_points:,} peaks \u2022 E7.5\u2013E8.75 \u2022 3D UMAP",
+                f"{n_points:,} peaks • Mouse E7.5–E8.75 • 3D UMAP • Wagner et al. 2024",
                 position=(0.98, 0.97),
-                font_size=0.015,
+                font_size=0.012,
                 anchor="bottom-right",
                 color="rgba(200,200,200,0.45)",
             )

@@ -1190,6 +1190,33 @@ export class PostProcessingManager {
   }
 
   /**
+   * Get the active lens distortion parameters for picking coordinate correction.
+   * Returns null if no distortion effect is active.
+   *
+   * The picking system uses these to apply the same distortion transform to
+   * mouse coordinates before looking them up in the (undistorted) pick buffer.
+   */
+  getLensDistortionParams(): {
+    distortion: THREE.Vector2;
+    principalPoint: THREE.Vector2;
+    focalLength: THREE.Vector2;
+    skew: number;
+  } | null {
+    if (
+      !this.chromaticLensDistortionEffect ||
+      !isChromaticLensDistortionEffect(this.chromaticLensDistortionEffect)
+    ) {
+      return null;
+    }
+    return {
+      distortion: this.chromaticLensDistortionEffect.distortion,
+      principalPoint: this.chromaticLensDistortionEffect.principalPoint,
+      focalLength: this.chromaticLensDistortionEffect.focalLength,
+      skew: this.chromaticLensDistortionEffect.skew,
+    };
+  }
+
+  /**
    * Enable/disable MSAA (Multi-Sample Anti-Aliasing)
    * Requires recreating the composer with different multisampling settings
    */

@@ -400,7 +400,8 @@ def generate_paper_landscape(
                 embeddings_3d = np.array(cached["embeddings_3d"], dtype=np.float32)
                 primary_fields = cached["fields"]
                 citation_counts = cached["citations"]
-            aprint(f"✓ Loaded {len(papers_data)} papers from cache")
+            papers_clean = papers_data
+            aprint(f"✓ Loaded {len(papers_clean)} papers from cache")
             aprint(f"  Embeddings: {embeddings_3d.shape}")
     else:
         # Download papers
@@ -498,6 +499,15 @@ def generate_paper_landscape(
             # Sharp points for clarity
             sharpness = np.full(n_papers, 4.0, dtype=np.float32)
 
+            # Hover labels: title (citations, field)
+            paper_labels = []
+            for i in range(n_papers):
+                title = papers_clean[i].get("title", "Unknown") if i < len(papers_clean) else "Unknown"
+                title_short = title[:60] + ("…" if len(title) > 60 else "")
+                cites = int(citation_counts[i]) if i < len(citation_counts) else 0
+                field = primary_fields[i] if i < len(primary_fields) else "Unknown"
+                paper_labels.append(f"{title_short} ({cites} cites, {field})")
+
             scene.add_points(
                 "papers",
                 positions=positions,
@@ -506,6 +516,7 @@ def generate_paper_landscape(
                 sharpness=sharpness,
                 opacity=0.9,
                 intensity=0.1,
+                labels=paper_labels,
             )
 
             # --- Overlays ---
@@ -534,11 +545,11 @@ def generate_paper_landscape(
                 anchor="bottom-left",
             )
 
-            # Info
+            # Info + source
             scene.add_text(
-                "Semantic Scholar \u2022 5 fields",
+                f"{n_papers:,} papers • Semantic Scholar API • SentenceBERT embeddings",
                 position=(0.98, 0.97),
-                font_size=0.015,
+                font_size=0.012,
                 anchor="bottom-right",
                 color="rgba(200,200,200,0.45)",
             )

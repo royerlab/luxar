@@ -61,38 +61,38 @@ export function installIntersectionObserverMock(): void {
  * Used for animation loops. Tracks pending frames for proper cleanup.
  */
 export function installAnimationFrameMock(): void {
-  const pendingFrames = new Set<number>();
+  // Map from our rAF ID → the real setTimeout ID (needed for proper cancellation)
+  const pendingFrames = new Map<number, ReturnType<typeof setTimeout>>();
   let frameIdCounter = 1;
 
   (globalThis as any).requestAnimationFrame = vi.fn((cb: any) => {
     const id = frameIdCounter++;
-    setTimeout(() => {
+    const timerId = setTimeout(() => {
       pendingFrames.delete(id);
       // Wrap callback in try-catch to prevent test environment errors
       try {
-        cb(performance.now());
-      } catch (error) {
-        // Silently ignore errors after test teardown
-        if (error && (error as any).message?.includes('test environment')) {
-          return;
+        if (typeof requestAnimationFrame === 'function') {
+          cb(performance.now());
         }
-        throw error;
+      } catch {
+        // Silently ignore errors after test teardown
       }
     }, 16);
-    pendingFrames.add(id);
+    pendingFrames.set(id, timerId);
     return id;
   });
 
   (globalThis as any).cancelAnimationFrame = vi.fn((id: any) => {
-    if (pendingFrames.has(id)) {
-      clearTimeout(id);
+    const timerId = pendingFrames.get(id);
+    if (timerId !== undefined) {
+      clearTimeout(timerId);
       pendingFrames.delete(id);
     }
   });
 
   // Global cleanup helper (can be called in afterEach)
   (globalThis as any).__clearAllAnimationFrames = () => {
-    pendingFrames.forEach((id) => clearTimeout(id));
+    pendingFrames.forEach((timerId) => clearTimeout(timerId));
     pendingFrames.clear();
   };
 }

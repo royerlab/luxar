@@ -51,6 +51,9 @@ export interface GSplatsMetadata {
   /** Whether colors array is present */
   has_colors: boolean;
 
+  /** Whether per-element string labels exist (CSR-encoded, for hover tooltips) */
+  has_labels?: boolean;
+
   /** Elements per chunk */
   chunk_size: number;
 
@@ -285,6 +288,9 @@ export interface GSplatsUserData {
 
   /** Currently visible splat count after nD slicing (updated on view change) */
   visibleSplatCount?: number;
+
+  /** Pick ID assigned by PickingSystem for GPU picking (undefined if picking disabled) */
+  pickId?: number;
 }
 
 // ============================================================================
