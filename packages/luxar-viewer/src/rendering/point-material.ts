@@ -109,7 +109,12 @@ export class PointMaterial extends THREE.ShaderMaterial implements CameraAwareMa
    * Update camera parameters for world-space point sizing
    * Pre-computes pointSizeFactor and maxPointSize for shader performance
    */
-  updateCameraParams(fov: number, resolution: THREE.Vector2, isOrtho: boolean = false, _nearCull?: number): void {
+  updateCameraParams(
+    fov: number,
+    resolution: THREE.Vector2,
+    isOrtho: boolean = false,
+    _nearCull?: number
+  ): void {
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     if (isOrtho) {
       // fov carries frustumHeight in world units for ortho

@@ -260,12 +260,10 @@ def create_zebrahub_scene(
             # --- Overlays ---
             scene.add_text(
                 "Zebrahub Multiome Peak UMAP",
-                position=(0.5, 0.02),
-                font_size=0.026,
-                anchor="top-center",
-                color="rgba(255,255,255,0.85)",
-                stroke_color="black",
-                stroke_width=0.002,
+                position=(0.02, 0.02),
+                font_size=0.055,
+                anchor="top-left",
+                color="rgba(255,255,255,0.6)",
             )
 
             attr_labels = [

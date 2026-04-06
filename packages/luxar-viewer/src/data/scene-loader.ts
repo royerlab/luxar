@@ -45,10 +45,7 @@ import type {
 import { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
 import { GSplatsProgressiveLoader } from './gsplats-progressive-loader';
 import { processGSplats } from './gsplats-processor';
-import {
-  updateInstancedGSplatsMesh,
-  packCholeskyForShader,
-} from '../rendering/gsplat-geometry';
+import { updateInstancedGSplatsMesh, packCholeskyForShader } from '../rendering/gsplat-geometry';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './nd-transform';
 import { NodeFactory } from './node-factory';
@@ -1850,7 +1847,13 @@ export class SceneLoader {
         );
       }
 
-      const mesh = this.nodeFactory.createLinesNode(node.path, node.attrs, attrs, processed, loader);
+      const mesh = this.nodeFactory.createLinesNode(
+        node.path,
+        node.attrs,
+        attrs,
+        processed,
+        loader
+      );
 
       log.success(
         Modules.SCENE_LOADER,
@@ -1877,7 +1880,8 @@ export class SceneLoader {
    * Create a lines loader for a node
    */
   private createLinesLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): LinesDataLoader {
-    const nodeLoc = node.path === '/' ? loc : zarr.root(this._zarrStore!).resolve(node.path.slice(1));
+    const nodeLoc =
+      node.path === '/' ? loc : zarr.root(this._zarrStore!).resolve(node.path.slice(1));
 
     log.query(Modules.SCENE_LOADER, `Using LinesSpatialIndexLoader for ${node.path}`);
     const loader = new LinesSpatialIndexLoader(
@@ -1996,7 +2000,13 @@ export class SceneLoader {
         colors: processed.colors,
         splatCount: processed.splatCount,
       };
-      const mesh = this.nodeFactory.createGSplatsNode(node.path, node.attrs, attrs, meshConfig, loader);
+      const mesh = this.nodeFactory.createGSplatsNode(
+        node.path,
+        node.attrs,
+        attrs,
+        meshConfig,
+        loader
+      );
 
       log.success(
         Modules.SCENE_LOADER,
@@ -2026,7 +2036,8 @@ export class SceneLoader {
     node: SceneNode,
     loc: zarr.Location<zarr.Readable>
   ): GSplatsDataLoader {
-    const nodeLoc = node.path === '/' ? loc : zarr.root(this._zarrStore!).resolve(node.path.slice(1));
+    const nodeLoc =
+      node.path === '/' ? loc : zarr.root(this._zarrStore!).resolve(node.path.slice(1));
 
     log.query(Modules.SCENE_LOADER, `Using GSplatsSpatialIndexLoader for ${node.path}`);
     const loader = new GSplatsSpatialIndexLoader(
@@ -2054,7 +2065,9 @@ export class SceneLoader {
     _loc: zarr.Location<zarr.Readable>,
     nLods: number
   ): Promise<GSplatsDataLoader> {
-    const parentLoc = zarr.root(this._zarrStore!).resolve(node.path === '/' ? '' : node.path.slice(1));
+    const parentLoc = zarr
+      .root(this._zarrStore!)
+      .resolve(node.path === '/' ? '' : node.path.slice(1));
 
     log.query(
       Modules.SCENE_LOADER,
@@ -2108,7 +2121,8 @@ export class SceneLoader {
    */
   private createLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): DataLoader {
     // Resolve the correct location for this node
-    const nodeLoc = node.path === '/' ? loc : zarr.root(this._zarrStore!).resolve(node.path.slice(1));
+    const nodeLoc =
+      node.path === '/' ? loc : zarr.root(this._zarrStore!).resolve(node.path.slice(1));
 
     // Use PointSpatialIndexLoader for all nodes (it will handle 3D datasets without indices)
     log.query(Modules.SCENE_LOADER, `Using PointSpatialIndexLoader for ${node.path}`);
