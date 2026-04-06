@@ -1379,6 +1379,7 @@ def generate_earthquake_scene(
                 font_size=0.055,
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
+                blend_mode="difference",
             )
             scene.add_text(
                 f"{n_lines:,} earthquakes • Magnitude 4.5+ • USGS",

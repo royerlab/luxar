@@ -444,15 +444,15 @@ def generate_4d_fractal_dataset(
                     "fractal",
                     unit="",
                     categories=[
-                        "Mandelbrot",
-                        "Julia c=-0.4+0.6i",
-                        "Julia c=0.285+0.01i",
-                        "Julia c=-0.8+0.156i",
-                        "Julia c=-0.7269+0.1889i",
-                        "Julia c=0.45+0.1428i",
+                        "XOR",
+                        "Menger",
+                        "Sierpinski",
+                        "Cantor",
+                        "Checkerboard",
+                        "Diamond",
                     ],
                     display=False,
-                    description="Fractal type in 4D complex space - different Julia set parameters",
+                    description="Fractal type - geometric 4D fractals",
                 ),
                 Dimension(
                     "w",
@@ -494,6 +494,7 @@ def generate_4d_fractal_dataset(
                 font_size=0.055,
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
+                blend_mode="difference",
             )
 
             # Dimension-aware labels for fractal type
