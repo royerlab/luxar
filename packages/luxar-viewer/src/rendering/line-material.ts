@@ -156,7 +156,12 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
    * @param fov - Field of view in radians
    * @param resolution - Viewport resolution
    */
-  updateCameraParams(fov: number, resolution: THREE.Vector2, isOrtho: boolean = false, _nearCull?: number): void {
+  updateCameraParams(
+    fov: number,
+    resolution: THREE.Vector2,
+    isOrtho: boolean = false,
+    _nearCull?: number
+  ): void {
     this.uniforms.uFOV.value = fov; // FOV in radians (perspective) or frustumHeight (ortho)
     this.uniforms.uResolution.value.copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
