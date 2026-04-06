@@ -26,13 +26,14 @@ VALID_ANCHORS: Set[str] = {
     "bottom-right",
 }
 
-# Valid blend modes for image overlays
+# Valid blend modes for overlays (image + text + html)
 VALID_BLEND_MODES: Set[str] = {
     "normal",
     "multiply",
     "screen",
     "overlay",
     "additive",
+    "difference",
 }
 
 # Valid transition types
@@ -144,10 +145,10 @@ def validate_font(font: str) -> str:
 
 
 def validate_blend_mode(blend_mode: str) -> str:
-    """Validate image blend mode.
+    """Validate overlay blend mode.
 
     Args:
-        blend_mode: One of: normal, multiply, screen, overlay, additive
+        blend_mode: One of: normal, multiply, screen, overlay, additive, difference
 
     Returns:
         Validated blend mode string

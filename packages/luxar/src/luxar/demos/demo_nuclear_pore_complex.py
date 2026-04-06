@@ -62,8 +62,8 @@ Usage:
     python demo_nuclear_pore_complex.py [--representation=TYPE]
 
     Representation types:
-    - calpha: C-alpha trace (default, clean backbone view)
-    - all: All atoms (dense, detailed)
+    - calpha: C-alpha trace (clean backbone view)
+    - all: All atoms (default, dense, detailed)
     - backbone: Backbone atoms only (C, N, O, CA)
 
 Controls:
@@ -372,10 +372,10 @@ def element_to_color(
         mask = elements == element_idx
         colors[mask] = color
 
-    # Brighten sidechain atoms if backbone info provided
+    # Dim sidechain atoms if backbone info provided
     if is_backbone is not None:
         sidechain_mask = ~is_backbone
-        colors[sidechain_mask] *= 1.2  # Make sidechains brighter for emphasis
+        colors[sidechain_mask] *= 0.6  # Dim sidechains relative to backbone
 
     return colors
 
@@ -587,6 +587,7 @@ def generate_nuclear_pore_complex(
                     font_size=0.055,
                     anchor="top-left",
                     color="rgba(255,255,255,0.6)",
+                    blend_mode="difference",
                 )
                 scene.add_text(
                     "8-fold symmetry \u2022 PDB structure",

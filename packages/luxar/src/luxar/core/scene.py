@@ -483,6 +483,7 @@ class Scene(Group):
         transition: str = "none",
         transition_duration: float = 0.3,
         interactive: bool = False,
+        blend_mode: str = "normal",
     ) -> Overlay:
         """Add a text overlay to the scene.
 
@@ -510,6 +511,8 @@ class Scene(Group):
             transition: Transition type: 'none' or 'fade' (default 'none').
             transition_duration: Transition duration in seconds (default 0.3).
             interactive: If True, overlay captures pointer events (default False).
+            blend_mode: CSS mix-blend-mode (default 'normal'). Use 'difference'
+                for XOR-style text that inverts the background colors.
 
         Returns:
             Overlay metadata object.
@@ -532,6 +535,9 @@ class Scene(Group):
             validate_transition,
             validate_visible_range,
         )
+        from ..validation.overlays import (
+            validate_blend_mode as validate_overlay_blend_mode,
+        )
 
         name = self._next_overlay_name(name)
         position = validate_position(position)
@@ -539,6 +545,7 @@ class Scene(Group):
         validate_font(font)
         validate_text_align(text_align)
         validate_transition(transition)
+        validate_overlay_blend_mode(blend_mode)
         validated_range = validate_visible_range(
             visible_range, self._dimensions.names
         )
@@ -567,6 +574,8 @@ class Scene(Group):
             attrs["background"] = background
         if stroke_color is not None:
             attrs["stroke_color"] = stroke_color
+        if blend_mode != "normal":
+            attrs["blend_mode"] = blend_mode
         if validated_range is not None:
             attrs["visible_range"] = validated_range
 
@@ -604,7 +613,7 @@ class Scene(Group):
             opacity: Opacity 0.0-1.0 (default 1.0).
             anchor: Anchor point for positioning (default 'top-left').
             blend_mode: CSS blend mode: 'normal', 'multiply', 'screen',
-                'overlay', or 'additive' (default 'normal').
+                'overlay', 'additive', or 'difference' (default 'normal').
             format: Image encoding format: 'png', 'jpeg', 'webp' (default 'png').
             visible_range: Optional dimension-based visibility filter.
             transition: Transition type: 'none' or 'fade' (default 'none').
@@ -688,6 +697,7 @@ class Scene(Group):
         transition: str = "none",
         transition_duration: float = 0.3,
         interactive: bool = False,
+        blend_mode: str = "normal",
     ) -> Overlay:
         """Add an HTML overlay to the scene.
 
@@ -707,6 +717,8 @@ class Scene(Group):
             transition: Transition type: 'none' or 'fade' (default 'none').
             transition_duration: Transition duration in seconds (default 0.3).
             interactive: If True, overlay captures pointer events (default False).
+            blend_mode: CSS mix-blend-mode (default 'normal'). Use 'difference'
+                for XOR-style content that inverts the background colors.
 
         Returns:
             Overlay metadata object.
@@ -726,11 +738,15 @@ class Scene(Group):
             validate_transition,
             validate_visible_range,
         )
+        from ..validation.overlays import (
+            validate_blend_mode as validate_overlay_blend_mode,
+        )
 
         name = self._next_overlay_name(name)
         position = validate_position(position)
         validate_anchor(anchor)
         validate_transition(transition)
+        validate_overlay_blend_mode(blend_mode)
         validated_range = validate_visible_range(
             visible_range, self._dimensions.names
         )
@@ -750,6 +766,8 @@ class Scene(Group):
         }
         if width is not None:
             attrs["width"] = float(width)
+        if blend_mode != "normal":
+            attrs["blend_mode"] = blend_mode
         if validated_range is not None:
             attrs["visible_range"] = validated_range
 
