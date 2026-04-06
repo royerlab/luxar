@@ -99,3 +99,8 @@ class Points(DataNode):
     def has_scalars(self) -> bool:
         """Check if points have scalar values for colormap lookup."""
         return bool(self._metadata.get("has_scalars", False))
+
+    @property
+    def has_labels(self) -> bool:
+        """Check if points have per-element string labels for hover tooltips."""
+        return bool(self._metadata.get("has_labels", False))

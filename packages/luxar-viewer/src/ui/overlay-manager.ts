@@ -98,6 +98,10 @@ export class OverlayManager {
   private globallyHidden = false;
   /** Hover overlays that update from GPU picking results. */
   private hoverOverlays = new Map<string, HoverOverlayEntry>();
+  /** Cache last hover result to skip redundant DOM updates. */
+  private _lastHoverLabel: string | null = null;
+  private _lastHoverIndex: number = -1;
+  private _lastHoverNode: string | null = null;
 
   constructor() {
     this.boundDimChangeHandler = () => this.updateVisibility();
@@ -209,6 +213,20 @@ export class OverlayManager {
   updateHoverContent(
     result: { label: string; nodeName: string; elementIndex: number } | null
   ): void {
+    // Skip redundant DOM updates when hovering over the same element
+    const newLabel = result?.label ?? null;
+    const newIndex = result?.elementIndex ?? -1;
+    const newNode = result?.nodeName ?? null;
+    if (
+      newLabel === this._lastHoverLabel &&
+      newIndex === this._lastHoverIndex &&
+      newNode === this._lastHoverNode
+    )
+      return;
+    this._lastHoverLabel = newLabel;
+    this._lastHoverIndex = newIndex;
+    this._lastHoverNode = newNode;
+
     for (const hover of this.hoverOverlays.values()) {
       if (!result || !result.label) {
         // Fade out
@@ -258,10 +276,7 @@ export class OverlayManager {
     // Fade transition support
     if (config.transition === 'fade') {
       el.classList.add('luxar-overlay--fade');
-      el.style.setProperty(
-        '--luxar-overlay-transition-duration',
-        `${config.transition_duration}s`,
-      );
+      el.style.setProperty('--luxar-overlay-transition-duration', `${config.transition_duration}s`);
     }
 
     // Start hidden — updateVisibility() will show the right ones
@@ -316,7 +331,6 @@ export class OverlayManager {
     if (config.interactive) {
       el.classList.add('luxar-overlay--interactive');
     }
-
   }
 
   /** Create text overlay content. */

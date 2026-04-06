@@ -115,6 +115,11 @@ class Lines(DataNode):
         return bool(self._metadata.get("has_scalars", False))
 
     @property
+    def has_labels(self) -> bool:
+        """Check if lines have per-element string labels for hover tooltips."""
+        return bool(self._metadata.get("has_labels", False))
+
+    @property
     def max_width(self) -> float:
         """Get maximum line width."""
         return float(self._metadata.get("max_width", 0.0))

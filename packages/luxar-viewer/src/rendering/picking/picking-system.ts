@@ -18,6 +18,7 @@
  */
 
 import * as THREE from 'three';
+import type { PostProcessingManager } from '../post-processing-manager';
 import { log, Modules } from '../../utils/log';
 
 /** Result of a successful pick operation. */
@@ -41,8 +42,8 @@ interface PickNodeEntry {
 /** Size of the pick buffer in pixels (5x5 = 25 pixels). */
 const PICK_SIZE = 5;
 
-/** Debounce delay in milliseconds before triggering a pick. */
-const DEBOUNCE_MS = 100;
+/** Debounce delay in milliseconds before triggering a pick re-render. */
+const DEBOUNCE_MS = 10;
 
 export class PickingSystem {
   private pickScene: THREE.Scene;
@@ -59,10 +60,22 @@ export class PickingSystem {
   private _box = new THREE.Box3();
   private _lastReadX = 0;
   private _lastReadY = 0;
+  private _savedClearColor = new THREE.Color();
+  private _savedClearAlpha = 0;
+  private _lensUV = { x: 0, y: 0 }; // reusable return for applyLensDistortion
 
   // Cache: only re-render when the view changes
   private _dirty = true;
   private _drawBufSize = new THREE.Vector2();
+
+  // Cached canvas rect (invalidated on resize via markDirty)
+  private _canvasRect: DOMRect | null = null;
+
+  // Throttle clean-buffer picks to max ~60Hz (one per rAF)
+  private _lastPickTime = 0;
+
+  /** Optional post-processing reference for lens distortion correction. */
+  private postProcessing: PostProcessingManager | null = null;
 
   constructor(
     private renderer: THREE.WebGLRenderer,
@@ -110,9 +123,15 @@ export class PickingSystem {
     return this.nodeMap.size;
   }
 
+  /** Set post-processing reference for lens distortion correction. */
+  setPostProcessing(pp: PostProcessingManager | null): void {
+    this.postProcessing = pp;
+  }
+
   /** Invalidate the cached pick buffer. Call when camera, geometry, or viewport changes. */
   markDirty(): void {
     this._dirty = true;
+    this._canvasRect = null; // Invalidate cached rect (may have resized)
   }
 
   /**
@@ -124,10 +143,13 @@ export class PickingSystem {
    * orbit/pan/zoom — the render only fires once the mouse settles.
    */
   onMouseMove(event: MouseEvent): void {
-    const rect = this.renderer.domElement.getBoundingClientRect();
+    // Cache getBoundingClientRect to avoid forced reflow on every mousemove
+    if (!this._canvasRect) {
+      this._canvasRect = this.renderer.domElement.getBoundingClientRect();
+    }
     this.pendingMouse = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
+      x: event.clientX - this._canvasRect.left,
+      y: event.clientY - this._canvasRect.top,
     };
 
     if (this.debounceTimer !== null) {
@@ -135,7 +157,11 @@ export class PickingSystem {
     }
 
     if (!this._dirty) {
-      // Buffer is cached — readback is instant, no debounce needed
+      // Buffer is cached — readback is instant, but throttle to ~60Hz
+      // to avoid redundant picks when mouse fires faster than display refresh
+      const now = performance.now();
+      if (now - this._lastPickTime < 16) return;
+      this._lastPickTime = now;
       this.performPick(this.pendingMouse.x, this.pendingMouse.y);
     } else {
       // Buffer needs re-render — debounce to avoid rendering during active interaction
@@ -148,12 +174,24 @@ export class PickingSystem {
     }
   }
 
-  /** Clean up all resources. */
+  /** Clean up all resources — render target, pick materials, scene. */
   dispose(): void {
     if (this.debounceTimer !== null) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
+
+    // Dispose all pick materials (unregisters from materialManager automatically)
+    for (const entry of this.nodeMap.values()) {
+      const material = (entry.pick as THREE.Mesh).material as THREE.ShaderMaterial;
+      if (material?.dispose) material.dispose();
+    }
+
+    // Clean up pick scene children (paranoia — should be empty between renders)
+    while (this.pickScene.children.length > 0) {
+      this.pickScene.remove(this.pickScene.children[0]);
+    }
+
     this.pickTarget.dispose();
     this.nodeMap.clear();
     log.info(Modules.RENDERER, 'PickingSystem disposed');
@@ -195,18 +233,32 @@ export class PickingSystem {
       this._dirty = false;
     }
 
+    // Apply lens distortion correction if post-processing distortion is active.
+    // The post-processing shader maps each output pixel to a source pixel via
+    // Brown-Conrady distortion. We apply the same forward map to the mouse coords
+    // so they index into the undistorted pick buffer correctly.
+    let correctedX = screenX;
+    let correctedY = screenY;
+    const lensParams = this.postProcessing?.getLensDistortionParams();
+    if (lensParams) {
+      const uv = this.applyLensDistortion(screenX / width, screenY / height, lensParams);
+      correctedX = uv.x * width;
+      correctedY = uv.y * height;
+    }
+
     // Compute cursor position in pick buffer pixels (half res), Y-flipped for WebGL
     const scaleX = pickW / width;
     const scaleY = pickH / height;
-    const cursorX = Math.floor(screenX * scaleX);
-    const cursorY = pickH - Math.floor(screenY * scaleY);
+    const cursorX = Math.floor(correctedX * scaleX);
+    const cursorY = pickH - Math.floor(correctedY * scaleY);
 
     const half = Math.floor(PICK_SIZE / 2);
     this._lastReadX = Math.max(0, Math.min(cursorX - half, pickW - PICK_SIZE));
     this._lastReadY = Math.max(0, Math.min(cursorY - half, pickH - PICK_SIZE));
 
     // Ray-BBox culling: quick check if cursor is near any node at all
-    this.ndcCoord.set((screenX / width) * 2 - 1, -(screenY / height) * 2 + 1);
+    // Use corrected coordinates so the ray matches the undistorted pick buffer
+    this.ndcCoord.set((correctedX / width) * 2 - 1, -(correctedY / height) * 2 + 1);
     this.raycaster.setFromCamera(this.ndcCoord, this.camera);
     const ray = this.raycaster.ray;
 
@@ -240,9 +292,11 @@ export class PickingSystem {
   private renderPickBuffer(): void {
     const renderer = this.renderer;
 
-    // Save renderer state
+    // Save full renderer state (render target, scissor, clear color)
     const savedRenderTarget = renderer.getRenderTarget();
     const savedScissorTest = renderer.getScissorTest();
+    renderer.getClearColor(this._savedClearColor);
+    this._savedClearAlpha = renderer.getClearAlpha();
 
     // Sync and add ALL registered nodes to pick scene
     for (const entry of this.nodeMap.values()) {
@@ -268,9 +322,47 @@ export class PickingSystem {
       this.pickScene.remove(entry.pick);
     }
 
-    // Restore renderer state
+    // Restore full renderer state
     renderer.setRenderTarget(savedRenderTarget);
     renderer.setScissorTest(savedScissorTest);
+    renderer.setClearColor(this._savedClearColor, this._savedClearAlpha);
+  }
+
+  /**
+   * Apply Brown-Conrady lens distortion to UV coordinates.
+   * TypeScript port of the GLSL applyDistortion() function in chromatic-lens-distortion-effect.ts.
+   * Uses the green channel distortion (reference, no chromatic offset).
+   *
+   * This maps from distorted screen space to undistorted source space — exactly
+   * what we need to convert mouse coords on the distorted display to pick buffer coords.
+   * Writes result in-place to this._lensUV to avoid per-call allocation.
+   */
+  private applyLensDistortion(
+    u: number,
+    v: number,
+    params: {
+      distortion: THREE.Vector2;
+      principalPoint: THREE.Vector2;
+      focalLength: THREE.Vector2;
+      skew: number;
+    }
+  ): { x: number; y: number } {
+    // UV [0,1] → normalized [-1,1]
+    const xn = 2.0 * (u - 0.5);
+    const yn = 2.0 * (v - 0.5);
+
+    // Brown-Conrady radial distortion: r' = r * (1 + k * r²)
+    const r2 = xn * xn + yn * yn;
+    const xd = (1.0 + params.distortion.x * r2) * xn;
+    const yd = (1.0 + params.distortion.y * r2) * yn;
+
+    // Camera intrinsic matrix K × distorted point → back to [0,1] UV
+    const fx = params.focalLength.x;
+    const fy = params.focalLength.y;
+
+    this._lensUV.x = (fx * xd + params.skew * fx * yd + params.principalPoint.x) * 0.5 + 0.5;
+    this._lensUV.y = (fy * yd + params.principalPoint.y) * 0.5 + 0.5;
+    return this._lensUV;
   }
 
   /**
@@ -288,7 +380,9 @@ export class PickingSystem {
     );
 
     // Brightness-weighted majority voting
-    const votes = new Map<string, { nodeId: number; elementId: number; weight: number }>();
+    // Use numeric key (nodeId * 2^24 + elementId) to avoid string allocation per pixel.
+    // Both nodeId and elementId fit in 24 bits (float32 mantissa), so this is lossless.
+    const votes = new Map<number, { nodeId: number; elementId: number; weight: number }>();
 
     for (let i = 0; i < PICK_SIZE * PICK_SIZE; i++) {
       const r = this.readBuffer[i * 4]; // nodeId
@@ -300,7 +394,7 @@ export class PickingSystem {
 
       const nodeId = Math.round(r);
       const elementId = Math.round(g);
-      const key = `${nodeId}:${elementId}`;
+      const key = nodeId * 16777216 + elementId; // nodeId << 24 | elementId (safe for 24-bit ints)
 
       const existing = votes.get(key);
       if (existing) {
