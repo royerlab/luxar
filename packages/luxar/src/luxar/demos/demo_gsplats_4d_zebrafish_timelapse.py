@@ -522,6 +522,7 @@ Navigation:
                         extend_to_all=[],
                         opacity=1.0,
                         blending_mode="additive",
+                        layer=True,
                     )
                     aprint(f"  Added {n_splats:,} splats at time={t}")
 
@@ -532,6 +533,7 @@ Navigation:
                 font_size=0.055,
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
+                blend_mode="difference",
             )
 
             # Per-timepoint labels
