@@ -23,7 +23,14 @@ import { escapeHtml } from '../utils/escape-html';
  * Semantic color names mapped to CSS class modifiers.
  * These are used with the luxar-color--{name} classes.
  */
-export type SemanticColor = 'success' | 'warning' | 'error' | 'info' | 'muted' | 'dimmed' | 'primary';
+export type SemanticColor =
+  | 'success'
+  | 'warning'
+  | 'error'
+  | 'info'
+  | 'muted'
+  | 'dimmed'
+  | 'primary';
 
 /**
  * Get CSS class for a semantic color.

@@ -1,10 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { LineMaterial } from '../../../rendering/line-material';
-import {
-  createLineQuadGeometry,
-  createInstancedLinesMesh,
-} from '../../../rendering/line-geometry';
+import { createLineQuadGeometry, createInstancedLinesMesh } from '../../../rendering/line-geometry';
 
 // Mock THREE.ShaderMaterial
 vi.mock('three', async () => {
