@@ -2,7 +2,7 @@
 """GSplats Demo: 2D 12-Channel CODEX Pancreas (Multiplexed Fluorescence)
 
 Visualises a 12-channel multiplexed immunofluorescence image of human pancreas
-tissue as 2D Gaussian splats with per-channel colours, using tiled fitting.
+tissue as 2D Gaussian splats with per-channel layers, using tiled fitting.
 
 ================================================================================
 2D GAUSSIAN SPLATTING — CODEX MULTIPLEXED PANCREAS (12 CHANNELS, TILED)
@@ -13,7 +13,7 @@ splatting on a real multiplexed immunofluorescence dataset:
 - Downloading 12-channel CODEX data from Zenodo
 - Extracting and normalising each fluorescence channel
 - Tiled fitting of 2D Gaussian splats per channel (Hann cosine apodization)
-- Merging all 12 channels with biologically meaningful colours
+- Adding each channel as a separate layer with colormap
 - Visualising in the Luxar web viewer
 
 DATA SOURCE & CITATIONS:
@@ -60,7 +60,7 @@ WORKFLOW:
 2. **Extract** 12 TIFF channel files
 3. **Normalise** each channel (uint16 -> float32 [0, 1])
 4. **Tiled fit** 2D Gaussian splats per channel with GPU acceleration
-5. **Merge** all 12 channels with biologically meaningful colours
+5. **Add** each channel as a separate layer with colormap
 6. **Visualise** in the Luxar web viewer
 
 USAGE:
@@ -129,61 +129,73 @@ CHANNELS = [
         "file": "reg001_cyc001_ch001_Hoechst.tiff",
         "name": "Hoechst (Nuclei)",
         "color": (0.0, 0.4, 1.0),
+        "colormap": "blue",
     },
     {
         "file": "reg001_cyc002_ch003_CGC.tiff",
         "name": "CGC (Endocrine)",
         "color": (1.0, 0.8, 0.0),
+        "colormap": "yellow",
     },
     {
         "file": "reg001_cyc002_ch004_BETA-CATENIN.tiff",
         "name": "Beta-Catenin (Junctions)",
         "color": (0.0, 1.0, 0.6),
+        "colormap": "green",
     },
     {
         "file": "reg001_cyc003_ch003_CPEP.tiff",
         "name": "CPEP (Beta Cells)",
         "color": (1.0, 0.0, 0.4),
+        "colormap": "red",
     },
     {
         "file": "reg001_cyc003_ch004_VIM.tiff",
         "name": "VIM (Mesenchymal)",
         "color": (0.6, 0.0, 1.0),
+        "colormap": "magenta",
     },
     {
         "file": "reg001_cyc004_ch003_KRT19.tiff",
         "name": "KRT19 (Ductal)",
         "color": (0.0, 1.0, 1.0),
+        "colormap": "cyan",
     },
     {
         "file": "reg001_cyc005_ch002_PECAM-1.tiff",
         "name": "PECAM-1 (Vasculature)",
         "color": (1.0, 0.0, 0.0),
+        "colormap": "red",
     },
     {
         "file": "reg001_cyc005_ch003_SST.tiff",
         "name": "SST (Delta Cells)",
         "color": (1.0, 0.5, 0.0),
+        "colormap": "orange",
     },
     {
         "file": "reg001_cyc006_ch003_E-CADHERIN.tiff",
         "name": "E-Cadherin (Epithelial)",
         "color": (0.5, 1.0, 0.0),
+        "colormap": "green",
     },
     {
         "file": "reg001_cyc006_ch004_CHGA.tiff",
         "name": "CHGA (Endocrine)",
         "color": (1.0, 1.0, 0.0),
+        "colormap": "yellow",
     },
     {
         "file": "reg001_cyc007_ch002_ACTA2.tiff",
         "name": "ACTA2 (Smooth Muscle)",
         "color": (1.0, 0.0, 1.0),
+        "colormap": "magenta",
     },
     {
         "file": "reg001_cyc007_ch003_IAPP.tiff",
         "name": "IAPP (Beta Cells)",
         "color": (0.0, 1.0, 0.3),
+        "colormap": "green",
     },
 ]
 
@@ -417,12 +429,16 @@ def fit_all_channels(tiff_dir: Path) -> list[GSplatData]:
 
 
 def create_luxar_scene(
-    merged_gsplats: GSplatData, output_path: Path | None = None
+    gsplats_list: list[GSplatData], output_path: Path | None = None
 ) -> Path:
-    """Create Luxar scene with merged 12-channel 2D gsplats.
+    """Create Luxar scene with per-channel 2D gsplat layers.
+
+    Each channel is added as a separate gsplats node with ``layer=True``
+    and a ``colormap``, so the viewer's Layers panel (press L) provides
+    per-channel visibility, display-range, gamma, and colormap controls.
 
     Args:
-        merged_gsplats: Merged GSplatData with per-channel colours.
+        gsplats_list: List of per-channel GSplatData (one per channel).
         output_path: Output .zarr path (default: demos output dir).
 
     Returns:
@@ -457,7 +473,7 @@ def create_luxar_scene(
 ======================================================
 
 12-channel multiplexed immunofluorescence of human pancreas tissue,
-represented as 2D Gaussian splats with per-channel colours.
+represented as 2D Gaussian splats with per-channel layers.
 
 Fitted using tiled Gaussian splatting with Hann cosine apodization
 for seamless stitching across {ORIGINAL_WIDTH:,} x {ORIGINAL_HEIGHT:,} pixels.
@@ -475,19 +491,51 @@ Tiled Fitting:
 Channels ({N_CHANNELS} protein markers):
 {ch_list}
 
-Colour overlap reveals co-localisation of protein markers in the tissue.
-
 Controls:
+  - Press L to open the Layers panel
+  - Toggle visibility, adjust display range, gamma, colormap per channel
   - Mouse drag to pan, scroll to zoom
             """
 
-            aprint(f"Adding {len(merged_gsplats.amplitudes):,} merged 2D gsplats...")
-            scene.add_gsplats_from_data(
-                name="pancreas_multichannel",
-                result=merged_gsplats,
-                opacity=1.0,
-                blending_mode="additive",
-            )
+            # Compute shared centroid across ALL channels so they stay aligned
+            with asection("Computing shared centroid"):
+                all_centers = [g.centers for g in gsplats_list]
+                all_amps = [g.amplitudes for g in gsplats_list]
+                total_amp = sum(a.sum() for a in all_amps)
+                if total_amp > 0:
+                    shared_centroid = (
+                        sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
+                    )
+                else:
+                    shared_centroid = np.mean(
+                        np.concatenate(all_centers, axis=0), axis=0
+                    )
+                aprint(f"  Shared centroid: {shared_centroid}")
+
+            # Add each channel as a layer-enabled gsplats node
+            for i, (gsplats, ch_config) in enumerate(zip(gsplats_list, CHANNELS)):
+                ch_name = ch_config["name"]
+                colormap = ch_config["colormap"]
+
+                with asection(f"Adding {ch_name} (layer)"):
+                    # Transform: shared centroid so channels stay aligned
+                    gsplats = gsplats.translate(-shared_centroid)
+                    gsplats = gsplats.scale_intensity(0.1)
+
+                    n_splats = len(gsplats.amplitudes)
+
+                    scene.add_gsplats(
+                        name=f"gsplats_{ch_name.lower().replace(' ', '_').replace('(', '').replace(')', '')}",
+                        centers=gsplats.centers,
+                        amplitudes=gsplats.amplitudes,
+                        cholesky_factors=gsplats.cholesky_factors,
+                        dim_order=["y", "x"],
+                        opacity=1.0,
+                        blending_mode="additive",
+                        layer=True,
+                        colormap=colormap,
+                    )
+                    aprint(f"  Added {n_splats:,} splats with colormap='{colormap}'")
 
             # --- Overlays ---
             # Title
@@ -497,6 +545,7 @@ Controls:
                 font_size=0.055,
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
+                blend_mode="difference",
             )
 
             # Info
@@ -522,7 +571,7 @@ def main():
     aprint("=" * 70)
     aprint("GSplats Demo: 2D CODEX Pancreas (12-Channel Multiplexed)")
     aprint("=" * 70)
-    aprint("Tiled per-channel fitting + colour-coded merge + Web viewer")
+    aprint("Tiled per-channel fitting + per-channel layers + Web viewer")
     if TARGET_SIZE > 0:
         aprint(f"Target size: {TARGET_SIZE} px (longest axis)")
     else:
@@ -555,32 +604,11 @@ def main():
         aprint(f"Error: Need {N_CHANNELS} channels, got {len(gsplats_list)}")
         return
 
-    # Merge with channel colours
-    with asection("Merging 12 channels with colours"):
-        channel_colors = [ch["color"] for ch in CHANNELS[: len(gsplats_list)]]
-        for ch, color in zip(CHANNELS, channel_colors):
-            aprint(f"  {ch['name']}: {color}")
-
-        merged = GSplatData.merge_with_channel_colors(
-            gsplats_list,
-            channel_colors=channel_colors,
-        )
-
-        aprint(f"Merged: {len(merged.amplitudes):,} total splats")
-
-    # Apply transformations for web viewer
-    with asection("Applying transformations"):
-        aprint("Centering at centre-of-mass...")
-        merged = merged.center_at_centroid()
-
-        aprint("Reducing brightness by 10x...")
-        merged = merged.scale_intensity(0.1)
-
-    # Create scene
-    scene_path = create_luxar_scene(merged, output_path)
+    # Create scene (centering and intensity scaling happen per-channel inside)
+    scene_path = create_luxar_scene(gsplats_list, output_path)
 
     # Summary
-    total_splats = len(merged.amplitudes)
+    total_splats = sum(len(g.amplitudes) for g in gsplats_list)
     total_pixels = ORIGINAL_WIDTH * ORIGINAL_HEIGHT * N_CHANNELS
     pixel_bytes = total_pixels * 2  # uint16 original
     # Floats per 2D splat: d + d*(d+1)/2 + 2 + 3 (colors) = 2 + 3 + 2 + 3 = 10

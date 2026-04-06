@@ -485,6 +485,7 @@ Navigation:
                         extend_to_all=other_dims,
                         opacity=1.0,
                         blending_mode="additive",
+                        layer=True,
                     )
                     aprint(
                         f"  Added {n_splats:,} splats with {own_dim}=On, "
@@ -498,6 +499,7 @@ Navigation:
                 font_size=0.055,
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
+                blend_mode="difference",
             )
             scene.add_text(
                 "Fluorescence \u2022 Toggle channels",
