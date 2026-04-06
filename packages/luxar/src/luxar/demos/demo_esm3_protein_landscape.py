@@ -607,7 +607,7 @@ def main() -> None:
 
     # Parse args
     sample_size = DEFAULT_SAMPLE_SIZE
-    model_name = "esm3-open"
+    model_name = "esmc-300m"
     for arg in sys.argv[1:]:
         if arg.startswith("--sample="):
             sample_size = int(arg.split("=")[1])
