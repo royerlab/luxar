@@ -11,7 +11,17 @@ import json
 import tempfile
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
 
 import numpy as np
 import xxhash
@@ -185,6 +195,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Each entry is [min_per_dim, max_per_dim] where each is a list of floats
         self._scene_bounds: Optional[Dict[str, List[float]]] = None
 
+        # Scene reference for finalize-time hover overlay auto-injection
+        self._scene: Optional["Scene"] = None
+
         aprint(f"✅ Zarr compiler initialized at {self._store_path}")
 
     def __enter__(self) -> LuxarZarrCompiler:
@@ -237,6 +250,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # Create scene with writer injection and optional viewer config
         scene = Scene(writer=self, dimensions=dimensions, viewer_config=viewer_config)
+        self._scene = scene  # Store reference for finalize-time hover overlay injection
         aprint("✅ Scene created with progressive writer")
 
         return scene
@@ -301,6 +315,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         radii: Optional[Union[NDArray[np.float32], float]] = None,
         sharpness: Optional[Union[NDArray[np.float32], float]] = None,
         scalars: Optional[Union[NDArray[np.float32], float]] = None,
+        labels: Optional["Sequence[str]"] = None,
         **attrs: Any,
     ) -> PointsMetadata:
         """Write points data progressively to Zarr.
@@ -321,6 +336,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             radii: Radii - array (N,), scalar float, or None
             sharpness: Sharpness - array (N,), scalar float, or None
             scalars: Scalars for colormap lookup - array (N,), scalar float, or None
+            labels: Optional list of strings, one per point. Stored as CSR-encoded
+                label_offsets + label_bytes arrays for hover tooltips.
             **attrs: Additional attributes
 
         Returns:
@@ -475,7 +492,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             self._write_spatial_ordering_to_zarr(group, ordering_data)
             metadata["has_spatial_index"] = True
 
-        # 10. Cache metadata and finish
+        # 11. Write labels if provided (CSR-style: label_offsets + label_bytes)
+        if labels is not None:
+            sort_order = ordering_data["sort_order"] if ordering_data is not None else None
+            self._write_labels_csr(group, labels, n_points, sort_order)
+            metadata["has_labels"] = True
+
+        # 12. Cache metadata and finish
         self._metadata_cache[path] = metadata
         aprint(f"✅ Points written to {path}")
 
@@ -493,6 +516,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         scalars: Optional[Union[NDArray[np.float32], float]] = None,
         indices: Optional[NDArray[np.uint32]] = None,
         line_type: str = "polyline",
+        labels: Optional["Sequence[str]"] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
         """Write lines data to Zarr with dual spatial indexing.
@@ -516,6 +540,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             sharpness: Sharpness - array (N,), scalar float, or None
             indices: Optional vertex indices for indexed line type
             line_type: Type of line connectivity
+            labels: Optional list of strings, one per vertex. Stored as CSR-encoded
+                label_offsets + label_bytes arrays for hover tooltips.
             **attrs: Additional attributes
 
         Returns:
@@ -863,6 +889,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Update scene-level bounds (union of all node bounds)
         self._update_scene_bounds(position_bounds)
 
+        # Write labels if provided (CSR-style: label_offsets + label_bytes)
+        # For lines, labels are per-vertex (n_vertices)
+        if labels is not None:
+            sort_order = ordering_data["vertex_sort_indices"] if ordering_data is not None else None
+            self._write_labels_csr(group, labels, n_vertices, sort_order)
+            metadata["has_labels"] = True
+
         self._metadata_cache[path] = metadata
         aprint(f"✅ Lines written to {path}")
 
@@ -989,6 +1022,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             )
 
             ordering_data = {
+                "sort_order": sort_indices,
                 "chunk_bounds": chunk_bounds,
                 "chunk_size": chunk_size,
                 **ordering_metadata,
@@ -1265,6 +1299,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         colors: Optional[
             Union[NDArray[np.float32], List[float], Tuple[float, ...]]
         ] = None,
+        labels: Optional["Sequence[str]"] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
         """Write Gaussian splats data to Zarr (single-LOD, flat layout).
@@ -1279,6 +1314,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             amplitudes: Amplitudes - array (N,) or scalar float
             cholesky_factors: Packed Cholesky factors of shape (N, k)
             colors: Colors - array (N, 3), RGB tuple/list, or None
+            labels: Optional list of strings, one per splat. Stored as CSR-encoded
+                label_offsets + label_bytes arrays for hover tooltips.
             **attrs: Additional attributes
 
         Returns:
@@ -1344,6 +1381,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # Update scene-level bounds
         self._update_scene_bounds(metadata["position_bounds"])
+
+        # Write labels if provided (CSR-style: label_offsets + label_bytes)
+        if labels is not None:
+            sort_order = ordering_data["sort_order"] if ordering_data is not None else None
+            self._write_labels_csr(group, labels, n_splats, sort_order)
+            metadata["has_labels"] = True
 
         self._metadata_cache[path] = metadata
         aprint(f"✅ GSplats written to {path}")
@@ -2163,6 +2206,80 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs["scalar_data_range"] = [scalar_min, scalar_max]
         aprint(f"  ✓ Wrote scalars (range [{scalar_min:.4f}, {scalar_max:.4f}])")
 
+    def _write_labels_csr(
+        self,
+        group: zarr.Group,
+        labels: "Sequence[str]",
+        n_elements: int,
+        sort_order: Optional[np.ndarray] = None,
+    ) -> None:
+        """Write per-element string labels using CSR-style encoding.
+
+        Stores two zarr arrays:
+        - ``label_offsets``: uint64 of shape (N+1,) — byte offset of each label
+        - ``label_bytes``: uint8 — concatenated UTF-8 encoded label strings
+
+        Label ``i`` is decoded as ``label_bytes[offsets[i]:offsets[i+1]]``.
+        Empty strings (null labels) have ``offsets[i] == offsets[i+1]``.
+
+        Args:
+            group: Zarr group to write to
+            labels: Sequence of strings, one per element. Length must equal n_elements.
+            n_elements: Expected element count (for validation)
+            sort_order: Optional index array to reorder labels (e.g. from spatial ordering).
+                For points: ``ordering_data["sort_order"]``
+                For lines: ``ordering_data["vertex_sort_indices"]``
+                For gsplats: ``ordering_data["sort_order"]``
+        """
+        if len(labels) != n_elements:
+            raise ValueError(
+                f"Labels length ({len(labels)}) must match element count ({n_elements})"
+            )
+
+        # Apply spatial reordering if present
+        ordered_labels: "Sequence[str]" = labels
+        if sort_order is not None:
+            ordered_labels = [labels[i] for i in sort_order]
+
+        # Build CSR arrays
+        offsets = np.zeros(n_elements + 1, dtype=np.uint64)
+        encoded_parts: list[bytes] = []
+        for i, label in enumerate(ordered_labels):
+            encoded = label.encode("utf-8") if label else b""
+            encoded_parts.append(encoded)
+            offsets[i + 1] = offsets[i] + len(encoded)
+
+        total_bytes = int(offsets[-1])
+        label_bytes = np.zeros(max(total_bytes, 1), dtype=np.uint8)
+        pos = 0
+        for encoded in encoded_parts:
+            if encoded:
+                label_bytes[pos : pos + len(encoded)] = np.frombuffer(
+                    encoded, dtype=np.uint8
+                )
+                pos += len(encoded)
+
+        # Write to zarr
+        group.create_dataset(
+            "label_offsets",
+            data=offsets,
+            chunks=(min(n_elements + 1, 65536),),
+            compressor=self.compressor,
+            overwrite=True,
+        )
+        group.create_dataset(
+            "label_bytes",
+            data=label_bytes,
+            chunks=(min(total_bytes, 65536) if total_bytes > 0 else 1,),
+            compressor=self.compressor,
+            overwrite=True,
+        )
+        group.attrs["has_labels"] = True
+        n_nonempty = sum(1 for lbl in ordered_labels if lbl)
+        aprint(
+            f"  ✓ Wrote labels ({n_nonempty}/{n_elements} non-empty, {total_bytes:,} bytes)"
+        )
+
     def _write_colormap_lut_if_needed(
         self,
         group: zarr.Group,
@@ -2469,6 +2586,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """Finalize the Zarr store with metadata consolidation."""
         if self._is_finalized:
             return
+
+        # Auto-inject default hover overlay if labels exist but no hover overlay defined
+        if self._scene is not None:
+            self._scene._auto_inject_hover_overlay()
 
         try:
             aprint("🔧 Finalizing Zarr store...")
