@@ -2,7 +2,7 @@
 """GSplats Demo: 2D Whole-Slide Pathology Image (CMU-1, OpenSlide)
 
 Visualises a large H&E-stained whole-slide pathology image as 2D Gaussian
-splats with per-channel (R/G/B) colours, using tiled fitting to handle
+splats with per-channel (R/G/B) layers, using tiled fitting to handle
 the full gigapixel resolution.
 
 ================================================================================
@@ -14,7 +14,7 @@ splatting on a real gigapixel digital pathology dataset:
 - Downloading the Aperio SVS whole-slide image from OpenSlide test data
 - Splitting into R, G, B channels (with brightness inversion for brightfield)
 - Tiled fitting of 2D Gaussian splats per channel (Hann cosine apodization)
-- Merging channels with distinct colours for visualisation
+- Adding each channel as a separate layer with colormap for visualisation
 
 DATA SOURCE & CITATIONS:
 ========================
@@ -59,7 +59,7 @@ WORKFLOW:
 3. **Split** into R, G, B channels and invert (brightfield -> dark-on-light)
 4. **Tiled fit** 2D Gaussian splats per channel (Hann cosine apodization
    for seamless tile stitching) with GPU acceleration
-5. **Merge** with per-channel colours
+5. **Add** each channel as a separate layer with colormap
 6. **Visualise** in the Luxar web viewer
 
 USAGE:
@@ -388,12 +388,12 @@ def fit_all_channels(
 
 
 def create_luxar_scene(
-    merged_gsplats: GSplatData, output_path: Path | None = None
+    gsplats_list: list[GSplatData], output_path: Path | None = None
 ) -> Path:
-    """Create Luxar scene with merged multi-channel 2D gsplats.
+    """Create Luxar scene with per-channel 2D gsplats as separate layers.
 
     Args:
-        merged_gsplats: Merged GSplatData with per-channel colours.
+        gsplats_list: List of per-channel GSplatData objects (one per RGB channel).
         output_path: Output .zarr path (default: demos output dir).
 
     Returns:
@@ -401,6 +401,9 @@ def create_luxar_scene(
     """
     if output_path is None:
         output_path = get_demos_output_dir() / "gsplats_2d_cmu1_pathology.zarr"
+
+    # Channel -> colormap mapping
+    CHANNEL_COLORMAPS = ["red", "green", "blue"]
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -427,7 +430,7 @@ def create_luxar_scene(
 ======================================================
 
 H&E-stained human tissue section from digital pathology,
-represented as 2D Gaussian splats with per-channel colours.
+represented as 2D Gaussian splats with per-channel layers.
 
 Fitted using tiled Gaussian splatting with Hann cosine apodization
 for seamless stitching across {ORIGINAL_WIDTH:,} x {ORIGINAL_HEIGHT:,} pixels.
@@ -441,22 +444,59 @@ Tiled Fitting:
   - Tile size: {TILE_SIZE} px, overlap: {OVERLAP} px
   - Seeds per tile: {SEEDS_PER_TILE:,}, iterations: {N_ITERS:,}
 
-Channels (inverted brightfield RGB):
+Channels (inverted brightfield RGB, each a separate layer):
   - Red:   Eosin / cytoplasm / connective tissue
   - Green: Mixed contribution from both stains
   - Blue:  Hematoxylin / nuclei / basophilic structures
 
 Controls:
+  - Press L to open the Layers panel
+  - Click eye icon to toggle channel visibility
+  - Adjust [min, max] display range per channel
   - Mouse drag to pan, scroll to zoom
             """
 
-            aprint(f"Adding {len(merged_gsplats.amplitudes):,} merged 2D gsplats...")
-            scene.add_gsplats_from_data(
-                name="pathology_multichannel",
-                result=merged_gsplats,
-                opacity=1.0,
-                blending_mode="additive",
-            )
+            # Compute shared centroid across ALL channels so they stay aligned
+            with asection("Computing shared centroid"):
+                all_centers = [g.centers for g in gsplats_list]
+                all_amps = [g.amplitudes for g in gsplats_list]
+                total_amp = sum(a.sum() for a in all_amps)
+                if total_amp > 0:
+                    shared_centroid = (
+                        sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
+                    )
+                else:
+                    shared_centroid = np.mean(
+                        np.concatenate(all_centers, axis=0), axis=0
+                    )
+                aprint(f"  Shared centroid: {shared_centroid}")
+
+            # Add each channel as a layer-enabled gsplats node
+            for i, (gsplats, ch_config) in enumerate(
+                zip(gsplats_list, CHANNELS[: len(gsplats_list)])
+            ):
+                ch_name = ch_config["name"]
+                colormap = CHANNEL_COLORMAPS[i]
+
+                with asection(f"Adding {ch_name} (layer)"):
+                    # Transform: shared centroid so channels stay aligned
+                    gsplats = gsplats.translate(-shared_centroid)
+                    gsplats = gsplats.scale_intensity(0.1)
+
+                    n_splats = len(gsplats.amplitudes)
+
+                    scene.add_gsplats(
+                        name=f"gsplats_{colormap}",
+                        centers=gsplats.centers,
+                        amplitudes=gsplats.amplitudes,
+                        cholesky_factors=gsplats.cholesky_factors,
+                        dim_order=["x", "y"],
+                        opacity=1.0,
+                        blending_mode="additive",
+                        layer=True,
+                        colormap=colormap,
+                    )
+                    aprint(f"  Added {n_splats:,} splats with colormap='{colormap}'")
 
             # --- Overlays ---
             # Title
@@ -466,6 +506,7 @@ Controls:
                 font_size=0.055,
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
+                blend_mode="difference",
             )
 
             # Info
@@ -491,7 +532,7 @@ def main():
     aprint("=" * 70)
     aprint("GSplats Demo: 2D Whole-Slide Pathology (CMU-1, H&E)")
     aprint("=" * 70)
-    aprint("Tiled per-channel RGB fitting + colour-coded merge + Web viewer")
+    aprint("Tiled per-channel RGB fitting + per-channel layers + Web viewer")
     if TARGET_SIZE > 0:
         aprint(f"Target size: {TARGET_SIZE} px (longest axis)")
     else:
@@ -539,32 +580,12 @@ def main():
         # Tiled fitting per channel
         gsplats_list = fit_all_channels(images)
 
-    # Merge with channel colours
-    with asection("Merging channels with colours"):
-        channel_colors = [ch["color"] for ch in CHANNELS[: len(gsplats_list)]]
-        aprint(f"Channel colours: {channel_colors}")
-
-        merged = GSplatData.merge_with_channel_colors(
-            gsplats_list,
-            channel_colors=channel_colors,
-        )
-
-        aprint(f"Merged: {len(merged.amplitudes):,} total splats")
-
-    # Apply transformations for web viewer
-    with asection("Applying transformations"):
-        aprint("Centering at centre-of-mass...")
-        merged = merged.center_at_centroid()
-
-        aprint("Reducing brightness by 10x...")
-        merged = merged.scale_intensity(0.1)
-
-    # Create scene
-    scene_path = create_luxar_scene(merged, output_path)
+    # Create scene with per-channel layers
+    scene_path = create_luxar_scene(gsplats_list, output_path)
 
     # Summary
     if images is not None:
-        total_splats = len(merged.amplitudes)
+        total_splats = sum(len(g.amplitudes) for g in gsplats_list)
         total_pixels = sum(img.size for img in images)
         pixel_bytes = total_pixels * 4  # float32
         # Floats per 2D splat: d + d*(d+1)/2 + 2 + 3 (colors) = 2 + 3 + 2 + 3 = 10
