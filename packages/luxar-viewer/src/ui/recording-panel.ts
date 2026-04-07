@@ -646,14 +646,16 @@ export class RecordingPanel {
     const isZipMode = isImageMode || mode === 'exr';
     const zipChunks: Uint8Array[] = [];
     let zipTotalBytes = 0;
-    let zipStreamError = false;
+    let zipDiskFailed = false;
     let zipWritable: FileSystemWritableFileStream | null = null;
     let streamingZip: InstanceType<typeof Zip> | null = null;
     if (isZipMode) {
       // Try to get a file handle for true disk-streaming (user gesture context
       // from the confirmation dialog click propagates here).
       try {
-        const w = window as unknown as { showSaveFilePicker?: (opts: unknown) => Promise<FileSystemFileHandle> };
+        const w = window as unknown as {
+          showSaveFilePicker?: (opts: unknown) => Promise<FileSystemFileHandle>;
+        };
         if (typeof w.showSaveFilePicker === 'function') {
           const handle = await w.showSaveFilePicker({
             suggestedName: this.generateFilename('zip'),
@@ -667,19 +669,25 @@ export class RecordingPanel {
       }
       streamingZip = new Zip((err, chunk, _final) => {
         if (err) {
-          log.error(Modules.RECORDING, `ZIP stream error: ${err}`);
-          zipStreamError = true;
+          if (!zipDiskFailed) {
+            zipDiskFailed = true;
+            log.error(Modules.RECORDING, `ZIP stream error: ${err}`);
+          }
           return;
         }
         if (chunk) {
-          if (zipWritable) {
+          if (zipWritable && !zipDiskFailed) {
             zipWritable.write(chunk as BlobPart).catch((writeErr) => {
-              if (!zipStreamError) {
-                log.error(Modules.RECORDING, `Disk write failed: ${writeErr}`);
-                zipStreamError = true;
+              if (!zipDiskFailed) {
+                zipDiskFailed = true;
+                log.error(
+                  Modules.RECORDING,
+                  `Disk write failed: ${writeErr}. ` +
+                    'Free browser storage or use video format instead of image sequence.'
+                );
               }
             });
-          } else {
+          } else if (!zipDiskFailed) {
             zipChunks.push(chunk);
           }
           zipTotalBytes += chunk.length;
@@ -702,7 +710,7 @@ export class RecordingPanel {
     };
 
     for (let i = 0; i < totalFrames; i++) {
-      if (!this.isRecording || zipStreamError) break;
+      if (!this.isRecording || zipDiskFailed) break;
 
       // Orbit camera by one step and capture in a single animation frame.
       // The callback applies a quaternion rotation (same as auto-rotate) AFTER
@@ -788,11 +796,20 @@ export class RecordingPanel {
 
     /** Finalize a streamed ZIP: add ffmpeg script, close stream, save or download. */
     const finalizeZipSequence = async (ext: string, label: string): Promise<void> => {
-      if (zipStreamError) {
+      if (zipDiskFailed) {
+        // Disk write failed — abort the partial file and inform the user
         streamingZip!.end();
-        if (zipWritable) await zipWritable.abort();
-        log.error(Modules.RECORDING, 'ZIP stream encountered an error — discarding output');
-        showToast('Recording failed: ZIP stream error');
+        if (zipWritable) {
+          try {
+            await zipWritable.abort();
+          } catch {
+            /* already closed/aborted */
+          }
+        }
+        showToast(
+          'Recording failed: disk storage quota exceeded. ' +
+            'Free browser storage, reduce duration/resolution, or use video format.'
+        );
         return;
       }
       if (capturedFrames > 0) {
@@ -801,10 +818,7 @@ export class RecordingPanel {
         const encoder = new TextEncoder();
         const scriptEntry = new ZipPassThrough('encode_video.sh');
         streamingZip!.add(scriptEntry);
-        scriptEntry.push(
-          encoder.encode(this.generateFfmpegScript(fps, capturedFrames, ext)),
-          true
-        );
+        scriptEntry.push(encoder.encode(this.generateFfmpegScript(fps, capturedFrames, ext)), true);
         streamingZip!.end();
         if (zipWritable) {
           await zipWritable.close();
@@ -819,7 +833,13 @@ export class RecordingPanel {
         }
       } else {
         streamingZip!.end();
-        if (zipWritable) await zipWritable.close();
+        if (zipWritable) {
+          try {
+            await zipWritable.abort();
+          } catch {
+            /* already closed/aborted */
+          }
+        }
         showToast('No frames captured');
       }
     };
