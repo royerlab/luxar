@@ -118,7 +118,8 @@ export class PointMaterial extends THREE.ShaderMaterial implements CameraAwareMa
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     if (isOrtho) {
       // fov carries frustumHeight in world units for ortho
-      this.uniforms.pointSizeFactor.value = resolution.y / fov;
+      // Factor of 2 converts radius → diameter, matching the perspective formula
+      this.uniforms.pointSizeFactor.value = (2.0 * resolution.y) / fov;
     } else {
       const tanHalfFov = Math.tan(fov / 2);
       // pointSizeFactor = 2.0 * resolution.y / tan(fov/2)

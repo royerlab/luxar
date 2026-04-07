@@ -1719,7 +1719,7 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Key Exports**: `SceneLoader`
 
-**Relationships**: Uses `GeometryUpdateManager` for GPU buffer management, `SceneGraphBuilder` for zarr metadata parsing, `ViewStateManager` for view state initialization, and `DataMonitorManager` for monitoring.
+**Relationships**: Uses `NodeFactory` for scene node creation, `SceneGraphBuilder` for zarr metadata parsing, `ViewStateManager` for view state initialization, `GPUBufferPool` for GPU buffer management, and `DataMonitorManager` for monitoring.
 
 #### `scene-loader-manager.ts`
 
@@ -1797,7 +1797,7 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Key Exports**: `processGSplats()`
 
-**Relationships**: Called by `GeometryUpdateManager` during GSplats geometry updates. Consumes `LoadedGSplatsData`, `ProcessedGSplatsData`, and `GSplatsViewState` types from `types/gsplats.ts`.
+**Relationships**: Called by `SceneLoader` during GSplats geometry updates. Consumes `LoadedGSplatsData`, `ProcessedGSplatsData`, and `GSplatsViewState` types from `types/gsplats.ts`.
 
 #### `effective-radius-calculator.ts`
 
@@ -1807,13 +1807,13 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Relationships**: Used by `PointSpatialIndexLoader` for nD point visibility filtering.
 
-#### `geometry-update-manager.ts`
+#### `node-factory.ts`
 
-**Purpose**: Handles GPU buffer management and geometry updates for Points, Lines, and GSplats. Creates and updates THREE.js geometries, manages GPU buffer pool for zero-allocation updates, supports worker-based projection offloading, and applies data validation and transforms. Extracted from `SceneLoader` (~500 lines).
+**Purpose**: Creates THREE.js scene nodes (Points, Lines, GSplats) from loaded data. Handles geometry creation with proper dtype handling (Float32, Uint8, Float16), material creation with colormap support, transform application and validation, and picking system integration (creates parallel pick-scene shadow nodes).
 
-**Key Exports**: `GeometryUpdateManager`, `GeometryUpdateManagerConfig`
+**Key Exports**: `NodeFactory`
 
-**Relationships**: Used by `SceneLoader`. Integrates with `GPUBufferPool` from `rendering/`, `processGSplats()` from `gsplats-processor.ts`, and `buildInstanceBuffers()` from `lines-spatial-index-loader.ts`.
+**Relationships**: Owned by `SceneLoader`. Integrates with `PickingSystem` from `rendering/picking/`, `materialManager` from `rendering/`, and picking material classes (`PointPickingMaterial`, `LinePickingMaterial`, `GSplatPickingMaterial`).
 
 ### 9.5 State Management
 

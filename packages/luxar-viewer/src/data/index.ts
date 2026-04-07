@@ -74,10 +74,6 @@ export {
   computeVertexRangesFromIndices,
 } from './lines-chunk-spatial-index';
 
-// Geometry update manager (extracted from SceneLoader for modularity)
-export { GeometryUpdateManager } from './geometry-update-manager';
-export type { GeometryUpdateManagerConfig } from './geometry-update-manager';
-
 // Scene graph builder (extracted from SceneLoader for modularity)
 export { SceneGraphBuilder } from './scene-graph-builder';
 export type { StoreEntry } from './scene-graph-builder';

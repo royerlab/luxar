@@ -1,13 +1,15 @@
 /**
- * Unit tests for GeometryUpdateManager.
+ * Unit tests for NodeFactory.
  *
  * Tests geometry creation, validation, and transform utilities.
- * GPU buffer pool and worker integration are tested separately.
+ * Migrated from geometry-update-manager.test.ts after removing the dead
+ * GeometryUpdateManager class — NodeFactory is the single source of truth
+ * for these operations.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
-import { GeometryUpdateManager } from '../../../data/geometry-update-manager';
+import { NodeFactory } from '../../../data/node-factory';
 import type { LoadedPointsData } from '../../../data/data-loader-types';
 
 // Helper to create mock LoadedPointsData
@@ -85,33 +87,17 @@ function createMockPointsData(
   return data;
 }
 
-describe('GeometryUpdateManager', () => {
-  let manager: GeometryUpdateManager;
+describe('NodeFactory', () => {
+  let factory: NodeFactory;
 
   beforeEach(() => {
-    // Create manager without GPU buffer pool for simpler testing
-    manager = new GeometryUpdateManager(null, { useWebWorkers: false });
-  });
-
-  describe('constructor', () => {
-    it('should create manager without GPU buffer pool', () => {
-      const m = new GeometryUpdateManager();
-      expect(m.gpuBufferPool).toBeNull();
-    });
-
-    it('should accept configuration options', () => {
-      const m = new GeometryUpdateManager(null, {
-        useWebWorkers: false,
-        workerThreshold: 5000,
-      });
-      expect(m.gpuBufferPool).toBeNull();
-    });
+    factory = new NodeFactory();
   });
 
   describe('createPointsGeometry', () => {
     it('should create geometry with positions only', () => {
       const data = createMockPointsData({ pointCount: 50 });
-      const geometry = manager.createPointsGeometry(data);
+      const geometry = factory.createPointsGeometry(data);
 
       expect(geometry).toBeInstanceOf(THREE.BufferGeometry);
       expect(geometry.getAttribute('position')).toBeDefined();
@@ -120,7 +106,7 @@ describe('GeometryUpdateManager', () => {
 
     it('should create geometry with colors', () => {
       const data = createMockPointsData({ pointCount: 50, hasColors: true });
-      const geometry = manager.createPointsGeometry(data);
+      const geometry = factory.createPointsGeometry(data);
 
       expect(geometry.getAttribute('color')).toBeDefined();
       expect(geometry.getAttribute('color').count).toBe(50);
@@ -128,7 +114,7 @@ describe('GeometryUpdateManager', () => {
 
     it('should create geometry with radii', () => {
       const data = createMockPointsData({ pointCount: 50, hasRadii: true });
-      const geometry = manager.createPointsGeometry(data);
+      const geometry = factory.createPointsGeometry(data);
 
       expect(geometry.getAttribute('radius')).toBeDefined();
       expect(geometry.getAttribute('radius').count).toBe(50);
@@ -136,7 +122,7 @@ describe('GeometryUpdateManager', () => {
 
     it('should create geometry with sharpness', () => {
       const data = createMockPointsData({ pointCount: 50, hasSharpness: true });
-      const geometry = manager.createPointsGeometry(data);
+      const geometry = factory.createPointsGeometry(data);
 
       expect(geometry.getAttribute('sharpness')).toBeDefined();
       expect(geometry.getAttribute('sharpness').count).toBe(50);
@@ -144,7 +130,7 @@ describe('GeometryUpdateManager', () => {
 
     it('should set default radius when not provided', () => {
       const data = createMockPointsData({ pointCount: 50 });
-      const geometry = manager.createPointsGeometry(data);
+      const geometry = factory.createPointsGeometry(data);
 
       const radiusAttr = geometry.getAttribute('radius');
       expect(radiusAttr).toBeDefined();
@@ -155,7 +141,7 @@ describe('GeometryUpdateManager', () => {
 
     it('should set default sharpness when not provided', () => {
       const data = createMockPointsData({ pointCount: 50 });
-      const geometry = manager.createPointsGeometry(data);
+      const geometry = factory.createPointsGeometry(data);
 
       const sharpnessAttr = geometry.getAttribute('sharpness');
       expect(sharpnessAttr).toBeDefined();
@@ -170,7 +156,7 @@ describe('GeometryUpdateManager', () => {
         hasColors: true,
         colorType: 'uint8',
       });
-      const geometry = manager.createPointsGeometry(data);
+      const geometry = factory.createPointsGeometry(data);
 
       const colorAttr = geometry.getAttribute('color');
       expect(colorAttr).toBeDefined();
@@ -183,7 +169,7 @@ describe('GeometryUpdateManager', () => {
         hasRadii: true,
         radiiType: 'uint8',
       });
-      const geometry = manager.createPointsGeometry(data, 2.0);
+      const geometry = factory.createPointsGeometry(data, 2.0);
 
       const radiusAttr = geometry.getAttribute('radius');
       expect(radiusAttr).toBeDefined();
@@ -198,7 +184,7 @@ describe('GeometryUpdateManager', () => {
         hasSharpness: true,
         radiiType: 'uint8',
       });
-      const geometry = manager.createPointsGeometry(data, 1.5, 20.0);
+      const geometry = factory.createPointsGeometry(data, 1.5, 20.0);
 
       expect(geometry.userData.radiusScale).toBe(1.5);
       expect(geometry.userData.sharpnessScale).toBe(1.0); // Float32 sharpness = 1.0 scale
@@ -206,7 +192,7 @@ describe('GeometryUpdateManager', () => {
 
     it('should set bounding box from metadata', () => {
       const data = createMockPointsData({ pointCount: 50 });
-      const geometry = manager.createPointsGeometry(data);
+      const geometry = factory.createPointsGeometry(data);
 
       expect(geometry.boundingBox).not.toBeNull();
       expect(geometry.boundingBox?.min.x).toBe(0);
@@ -217,7 +203,7 @@ describe('GeometryUpdateManager', () => {
   describe('validateLoadedPointsData', () => {
     it('should not throw for valid data', () => {
       const data = createMockPointsData({ pointCount: 50 });
-      expect(() => manager.validateLoadedPointsData(data)).not.toThrow();
+      expect(() => factory.validateLoadedPointsData(data)).not.toThrow();
     });
 
     it('should throw for malformed positions (not divisible by 3)', () => {
@@ -225,12 +211,12 @@ describe('GeometryUpdateManager', () => {
       // Corrupt the positions array
       data.positions = new Float32Array(151); // Not divisible by 3
 
-      expect(() => manager.validateLoadedPointsData(data)).toThrow('Malformed positions array');
+      expect(() => factory.validateLoadedPointsData(data)).toThrow('Malformed positions array');
     });
 
     it('should handle empty dataset without throwing', () => {
       const data = createMockPointsData({ pointCount: 0 });
-      expect(() => manager.validateLoadedPointsData(data)).not.toThrow();
+      expect(() => factory.validateLoadedPointsData(data)).not.toThrow();
     });
 
     it('should warn about colors length mismatch but not throw', () => {
@@ -239,7 +225,7 @@ describe('GeometryUpdateManager', () => {
       // Corrupt colors array length
       data.colors = new Float32Array(100); // Wrong length
 
-      expect(() => manager.validateLoadedPointsData(data)).not.toThrow();
+      expect(() => factory.validateLoadedPointsData(data)).not.toThrow();
       consoleSpy.mockRestore();
     });
   });
@@ -248,50 +234,26 @@ describe('GeometryUpdateManager', () => {
     it('should return true for valid column-major transform', () => {
       // Identity matrix with translation at [12,13,14]
       const transform = [
-        1,
-        0,
-        0,
-        0, // Column 0
-        0,
-        1,
-        0,
-        0, // Column 1
-        0,
-        0,
-        1,
-        0, // Column 2
-        5,
-        10,
-        15,
-        1, // Column 3 (translation)
+        1, 0, 0, 0, // Column 0
+        0, 1, 0, 0, // Column 1
+        0, 0, 1, 0, // Column 2
+        5, 10, 15, 1, // Column 3 (translation)
       ];
 
-      expect(manager.validateTransformFormat(transform)).toBe(true);
+      expect(factory.validateTransformFormat(transform)).toBe(true);
     });
 
     it('should return false and warn for row-major transform', () => {
       // Row-major matrix with translation at [3,7,11]
       const transform = [
-        1,
-        0,
-        0,
-        5, // Row 0 (tx at index 3)
-        0,
-        1,
-        0,
-        10, // Row 1 (ty at index 7)
-        0,
-        0,
-        1,
-        15, // Row 2 (tz at index 11)
-        0,
-        0,
-        0,
-        1, // Row 3
+        1, 0, 0, 5, // Row 0 (tx at index 3)
+        0, 1, 0, 10, // Row 1 (ty at index 7)
+        0, 0, 1, 15, // Row 2 (tz at index 11)
+        0, 0, 0, 1, // Row 3
       ];
 
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-      const result = manager.validateTransformFormat(transform);
+      const result = factory.validateTransformFormat(transform);
       expect(result).toBe(false);
       consoleSpy.mockRestore();
     });
@@ -299,7 +261,7 @@ describe('GeometryUpdateManager', () => {
     it('should return true for identity matrix', () => {
       const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
-      expect(manager.validateTransformFormat(identity)).toBe(true);
+      expect(factory.validateTransformFormat(identity)).toBe(true);
     });
   });
 
@@ -308,7 +270,7 @@ describe('GeometryUpdateManager', () => {
       const object = new THREE.Object3D();
       const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
-      manager.applyTransform(object, identity);
+      factory.applyTransform(object, identity);
 
       expect(object.position.x).toBeCloseTo(0);
       expect(object.position.y).toBeCloseTo(0);
@@ -323,7 +285,7 @@ describe('GeometryUpdateManager', () => {
       // Column-major translation matrix
       const translation = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 10, 15, 1];
 
-      manager.applyTransform(object, translation);
+      factory.applyTransform(object, translation);
 
       expect(object.position.x).toBeCloseTo(5);
       expect(object.position.y).toBeCloseTo(10);
@@ -335,7 +297,7 @@ describe('GeometryUpdateManager', () => {
       // Column-major scale matrix
       const scale = [2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0, 1];
 
-      manager.applyTransform(object, scale);
+      factory.applyTransform(object, scale);
 
       expect(object.scale.x).toBeCloseTo(2);
       expect(object.scale.y).toBeCloseTo(3);
@@ -347,7 +309,7 @@ describe('GeometryUpdateManager', () => {
       const invalidTransform = [1, 0, 0, 0, 0, 1, 0, 0]; // Only 8 elements
 
       // Should not throw, just return early
-      expect(() => manager.applyTransform(object, invalidTransform)).not.toThrow();
+      expect(() => factory.applyTransform(object, invalidTransform)).not.toThrow();
     });
   });
 
@@ -356,14 +318,14 @@ describe('GeometryUpdateManager', () => {
       const colors = new Float32Array([1.5, 0.5, 2.0]); // HDR values > 1.0
       const metadata = { color_mode: 'hdr' };
 
-      expect(() => manager.validateColorMode(colors, metadata)).not.toThrow();
+      expect(() => factory.validateColorMode(colors, metadata)).not.toThrow();
     });
 
     it('should accept Uint8Array for SDR colors', () => {
       const colors = new Uint8Array([255, 128, 64]);
       const metadata = { color_mode: 'sdr' };
 
-      expect(() => manager.validateColorMode(colors, metadata)).not.toThrow();
+      expect(() => factory.validateColorMode(colors, metadata)).not.toThrow();
     });
 
     it('should warn about SDR array with HDR metadata', () => {
@@ -371,31 +333,23 @@ describe('GeometryUpdateManager', () => {
       const colors = new Uint8Array([255, 128, 64]);
       const metadata = { color_mode: 'hdr' };
 
-      manager.validateColorMode(colors, metadata);
+      factory.validateColorMode(colors, metadata);
       expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
-    });
-  });
-
-  describe('dispose', () => {
-    it('should set gpuBufferPool to null', () => {
-      const m = new GeometryUpdateManager(null);
-      m.dispose();
-      expect(m.gpuBufferPool).toBeNull();
     });
   });
 
   describe('createPointsMaterial', () => {
     it('should create material with default options', () => {
       const attrs = { opacity: 1.0, gamma: 1.0 };
-      const material = manager.createPointsMaterial(attrs as any);
+      const material = factory.createPointsMaterial(attrs);
 
       expect(material).toBeInstanceOf(THREE.ShaderMaterial);
     });
 
     it('should pass radius and sharpness scales', () => {
       const attrs = { opacity: 0.8, gamma: 2.2, blending_mode: 'additive' };
-      const material = manager.createPointsMaterial(attrs as any, 2.0, 10.0);
+      const material = factory.createPointsMaterial(attrs, 2.0, 10.0);
 
       expect(material).toBeInstanceOf(THREE.ShaderMaterial);
     });
