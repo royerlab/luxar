@@ -19,6 +19,9 @@
 
 import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing-manager';
+import { isCameraAwareMaterial } from '../camera-aware-material';
+import { getCameraFovRadians, isOrthographicCamera, getOrthoFrustumHeight } from '../../scene/camera-utils';
+import type { LuxarCamera } from '../../scene/camera-utils';
 import { log, Modules } from '../../utils/log';
 
 /** Result of a successful pick operation. */
@@ -63,6 +66,7 @@ export class PickingSystem {
   private _savedClearColor = new THREE.Color();
   private _savedClearAlpha = 0;
   private _lensUV = { x: 0, y: 0 }; // reusable return for applyLensDistortion
+  private _pickResolution = new THREE.Vector2(); // reusable for pick buffer resolution
 
   // Cache: only re-render when the view changes
   private _dirty = true;
@@ -110,6 +114,14 @@ export class PickingSystem {
 
   /** Register a main scene node and its picking shadow node. */
   registerNode(mainNode: THREE.Object3D, pickNode: THREE.Object3D, pickId: number): void {
+    // Disable automatic matrix updates on pick nodes. Their matrixWorld is
+    // manually synced from the main node in renderPickBuffer(). Without this,
+    // renderer.render() calls scene.updateMatrixWorld() which recomputes
+    // matrixWorld from the pick node's local transform (identity) and parent
+    // (pickScene = identity), overwriting the correct synced transform.
+    pickNode.matrixAutoUpdate = false;
+    pickNode.matrixWorldAutoUpdate = false;
+
     this.nodeMap.set(pickId, { main: mainNode, pick: pickNode });
   }
 
@@ -121,6 +133,12 @@ export class PickingSystem {
   /** Number of registered pick nodes. */
   get registeredNodeCount(): number {
     return this.nodeMap.size;
+  }
+
+  /** Update camera reference (e.g., after perspective ↔ orthographic swap). */
+  setCamera(camera: THREE.Camera): void {
+    this.camera = camera;
+    this._dirty = true; // Must re-render pick buffer with new projection
   }
 
   /** Set post-processing reference for lens distortion correction. */
@@ -298,6 +316,16 @@ export class PickingSystem {
     renderer.getClearColor(this._savedClearColor);
     this._savedClearAlpha = renderer.getClearAlpha();
 
+    // Compute pick-buffer resolution and camera params for material updates.
+    // Pick materials (especially GSplats) use uResolution for screen-space positioning.
+    // They must be updated to match the half-res pick buffer — otherwise
+    // vCenterScreen (full-res) vs gl_FragCoord (half-res) will mismatch.
+    const pickRes = this._pickResolution;
+    pickRes.set(this.pickTarget.width, this.pickTarget.height);
+    const cam = this.camera as LuxarCamera;
+    const isOrtho = isOrthographicCamera(cam);
+    const fov = isOrtho ? getOrthoFrustumHeight(cam) : getCameraFovRadians(cam);
+
     // Sync and add ALL registered nodes to pick scene
     for (const entry of this.nodeMap.values()) {
       // Sync geometry (main node's geometry may have been replaced by view updates)
@@ -307,6 +335,13 @@ export class PickingSystem {
       }
       // Sync world transform
       entry.pick.matrixWorld.copy(entry.main.matrixWorld);
+
+      // Update pick material camera params to match half-res pick buffer
+      const mat = (entry.pick as THREE.Mesh).material;
+      if (isCameraAwareMaterial(mat)) {
+        mat.updateCameraParams(fov, pickRes, isOrtho);
+      }
+
       this.pickScene.add(entry.pick);
     }
 

@@ -78,7 +78,7 @@ const LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
       float rawPixelWidth;
       if (uIsOrtho == 1) {
-        rawPixelWidth = width * uResolution.y / uFOV;
+        rawPixelWidth = width * 2.0 * uResolution.y / uFOV;
       } else {
         float dist = length(mvPos.xyz);
         float tanHalfFov = tan(uFOV * 0.5);

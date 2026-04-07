@@ -714,12 +714,14 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       if (!p0 || !p1) return;
 
       // Dolly (pinch)
+      // Negate so pinch-out (fingers spread) = zoom in = negative zoomDelta,
+      // consistent with scroll-up = zoom in = negative zoomDelta.
       const dx = p0.x - p1.x;
       const dy = p0.y - p1.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
       const dollyDelta = distance / this.dollyStart.y;
       if (dollyDelta > 0) {
-        this.zoomDelta += dollyDelta - 1;
+        this.zoomDelta -= dollyDelta - 1;
       }
       this.dollyStart.set(0, distance);
 
