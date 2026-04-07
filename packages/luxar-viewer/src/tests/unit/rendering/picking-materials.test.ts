@@ -60,7 +60,7 @@ describe('PointPickingMaterial', () => {
     material.updateCameraParams(frustumHeight, resolution, true);
 
     expect(material.uniforms.uIsOrtho.value).toBe(1);
-    expect(material.uniforms.pointSizeFactor.value).toBe(120); // 2 * 600 / 10
+    expect(material.uniforms.pointSizeFactor.value).toBe(240); // 2 * 600 / (10 * 0.5)
     material.dispose();
   });
 });

@@ -11,7 +11,7 @@ import { log, Modules } from '../utils/log';
 import type { OverlayConfig } from './overlay-loader';
 
 /** Font preset mappings to CSS font-family stacks */
-const FONT_PRESETS: Record<string, string> = {
+export const FONT_PRESETS: Record<string, string> = {
   sans: 'system-ui, -apple-system, sans-serif',
   serif: 'Georgia, Times, serif',
   mono: 'ui-monospace, monospace',
@@ -252,6 +252,26 @@ export class OverlayManager {
         hover.el.style.opacity = String(hover.config.opacity);
       }
     }
+  }
+
+  /**
+   * Return all currently visible overlay elements and their configs.
+   * Used by the recording panel to composite overlays onto the capture canvas.
+   */
+  getVisibleOverlays(): { el: HTMLDivElement; config: OverlayConfig }[] {
+    const result: { el: HTMLDivElement; config: OverlayConfig }[] = [];
+    for (const [name, el] of this.overlayElements) {
+      const config = this.configs.get(name);
+      if (!config) continue;
+      if (this.globallyHidden) continue;
+      // Skip hover overlays — their content is transient (GPU picking tooltips)
+      if (config.hover) continue;
+      if (el.style.display === 'none') continue;
+      if (el.classList.contains('luxar-overlay--hidden')) continue;
+      if (parseFloat(el.style.opacity) === 0) continue;
+      result.push({ el, config });
+    }
+    return result;
   }
 
   /** Dispose all overlays and clean up listeners. */
