@@ -4,7 +4,7 @@
 // HDR export: EXR screenshots, EXR frame sequences (ZIP), 10-bit HDR video (WebCodecs)
 
 import * as THREE from 'three';
-import { zipSync } from 'fflate';
+import { Zip, ZipPassThrough } from 'fflate';
 import GUI, { type Controller } from './gui';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
@@ -119,8 +119,8 @@ export class RecordingPanel {
   private savedAutoRotate: boolean = false;
 
   // EXR sequence recording state
-  private exrFrames: Uint8Array[] = [];
   private isEXRSequenceRecording: boolean = false;
+  private isOfflineCaptureActive: boolean = false;
 
   // Screenshot debounce
   private isCaptureInProgress: boolean = false;
@@ -434,8 +434,8 @@ export class RecordingPanel {
       return;
     }
 
-    // Branch: offline capture loop (non-EXR) — no mediaRecorder, signal via flag
-    if (!this.mediaRecorder) {
+    // Branch: offline capture loop (non-EXR) — signal via flag to break the loop
+    if (this.isOfflineCaptureActive) {
       this.isRecording = false;
       return;
     }
@@ -447,7 +447,7 @@ export class RecordingPanel {
       this.durationTimer = null;
     }
 
-    this.mediaRecorder.stop();
+    this.mediaRecorder?.stop();
   }
 
   // ========== EXR Sequence Recording ==========
@@ -511,10 +511,10 @@ export class RecordingPanel {
 
     // Set recording state
     if (mode === 'exr') {
-      this.exrFrames = [];
       this.isEXRSequenceRecording = true;
     }
     this.isRecording = true;
+    this.isOfflineCaptureActive = true;
     this.recordingStartTime = Date.now();
     this.showRecordingIndicator();
 
@@ -632,33 +632,101 @@ export class RecordingPanel {
     // This guarantees we read pixels from a properly rendered frame — the same
     // pipeline that produces visible on-screen output.
     let captureCanvas: HTMLCanvasElement | null = null;
-    const imageFrames: Uint8Array[] = [];
     let capturedFrames = 0;
     let consecutiveErrors = 0;
     const MAX_CONSECUTIVE_ERRORS = 3;
     const captureCallbackId = 'recording-offline-capture';
 
+    // Streaming ZIP for image/EXR sequences: frames are written incrementally.
+    // When the File System Access API is available (Chrome/Edge), ZIP chunks are
+    // flushed directly to disk via showSaveFilePicker, keeping memory usage O(1).
+    // Otherwise chunks are collected and passed to `new Blob(chunks)` which avoids
+    // a single contiguous allocation (the old approach's OOM trigger).
+    const isImageMode = mode === 'png' || mode === 'webp' || mode === 'jpeg';
+    const isZipMode = isImageMode || mode === 'exr';
+    const zipChunks: Uint8Array[] = [];
+    let zipTotalBytes = 0;
+    let zipStreamError = false;
+    let zipWritable: FileSystemWritableFileStream | null = null;
+    let streamingZip: InstanceType<typeof Zip> | null = null;
+    if (isZipMode) {
+      // Try to get a file handle for true disk-streaming (user gesture context
+      // from the confirmation dialog click propagates here).
+      try {
+        const w = window as unknown as { showSaveFilePicker?: (opts: unknown) => Promise<FileSystemFileHandle> };
+        if (typeof w.showSaveFilePicker === 'function') {
+          const handle = await w.showSaveFilePicker({
+            suggestedName: this.generateFilename('zip'),
+            types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }],
+          });
+          zipWritable = await handle.createWritable();
+        }
+      } catch {
+        // User cancelled or API unavailable — fall back to in-memory Blob
+        zipWritable = null;
+      }
+      streamingZip = new Zip((err, chunk, _final) => {
+        if (err) {
+          log.error(Modules.RECORDING, `ZIP stream error: ${err}`);
+          zipStreamError = true;
+          return;
+        }
+        if (chunk) {
+          if (zipWritable) {
+            zipWritable.write(chunk as BlobPart).catch((writeErr) => {
+              if (!zipStreamError) {
+                log.error(Modules.RECORDING, `Disk write failed: ${writeErr}`);
+                zipStreamError = true;
+              }
+            });
+          } else {
+            zipChunks.push(chunk);
+          }
+          zipTotalBytes += chunk.length;
+        }
+      });
+    }
+
+    // Keep the animation loop alive during the entire capture session.
+    // This is a separate no-op callback so we can safely add/remove the rotation
+    // callback each frame without risking the animation loop pausing mid-capture.
+    const keepAliveId = 'recording-offline-keepalive';
+    this.animationController.addPerFrameCallback(keepAliveId, () => {}, { continuous: true });
+
+    /** Add a single frame to the streaming ZIP archive. */
+    const addZipFrame = (data: Uint8Array, ext: string): void => {
+      const padded = String(capturedFrames).padStart(6, '0');
+      const entry = new ZipPassThrough(`frame_${padded}.${ext}`);
+      streamingZip!.add(entry);
+      entry.push(data, true);
+    };
+
     for (let i = 0; i < totalFrames; i++) {
-      if (!this.isRecording) break;
+      if (!this.isRecording || zipStreamError) break;
 
       // Orbit camera by one step and capture in a single animation frame.
       // The callback applies a quaternion rotation (same as auto-rotate) AFTER
       // controls.update, BEFORE render, so the frame is rendered at the new angle.
-      this.animationController.addPerFrameCallback(
-        captureCallbackId,
-        () => {
-          if (i > 0) controls.applyOrbitRotation(anglePerFrame);
-        },
-        { continuous: true }
-      );
+      //
+      // IMPORTANT: The rotation callback is registered fresh each iteration and
+      // removed immediately after the frame renders. If it stayed registered
+      // (continuous: true), the animation loop would apply extra rotations during
+      // the async capture work (toBlob, arrayBuffer, etc.) between iterations.
+      this.animationController.addPerFrameCallback(captureCallbackId, () => {
+        if (i > 0) controls.applyOrbitRotation(anglePerFrame);
+      });
 
       // Wait for one full animation frame (callback + render)
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
+      // Remove the rotation callback immediately so the animation loop cannot
+      // apply extra rotations while we do async capture work below.
+      this.animationController.removePerFrameCallback(captureCallbackId);
+
       // The animation loop has rendered with the rotated camera.
       // Now capture the pixels from the default framebuffer.
       try {
-        if (mode === 'png' || mode === 'webp' || mode === 'jpeg') {
+        if (isImageMode && streamingZip) {
           captureCanvas = this.renderFrameToCanvas();
           const mimeType = mode === 'jpeg' ? 'image/jpeg' : `image/${mode}`;
           const quality = mode === 'png' ? undefined : this.options.imageQuality;
@@ -667,7 +735,7 @@ export class RecordingPanel {
           );
           if (blob) {
             const buf = new Uint8Array(await blob.arrayBuffer());
-            imageFrames.push(buf);
+            addZipFrame(buf, mode === 'jpeg' ? 'jpg' : mode);
           }
         } else if (isVideoMode && videoSource) {
           captureCanvas = this.renderFrameToCanvas();
@@ -678,9 +746,9 @@ export class RecordingPanel {
           });
           await videoSource.add(sample);
           sample.close();
-        } else if (mode === 'exr') {
+        } else if (mode === 'exr' && streamingZip) {
           const exrData = await this.sceneManager.postProcessing.captureHDRAsEXR();
-          this.exrFrames.push(exrData);
+          addZipFrame(exrData, 'exr');
         }
         capturedFrames++;
         consecutiveErrors = 0;
@@ -709,36 +777,55 @@ export class RecordingPanel {
       }
     }
 
-    // Remove the capture callback
+    // Remove capture callbacks
     this.animationController.removePerFrameCallback(captureCallbackId);
+    this.animationController.removePerFrameCallback(keepAliveId);
 
     // Finalize
     this.hideRecordingIndicator();
     this.isRecording = false;
+    this.isOfflineCaptureActive = false;
 
-    if (mode === 'png' || mode === 'webp' || mode === 'jpeg') {
-      // Package image frames as ZIP with ffmpeg script
-      if (imageFrames.length > 0) {
+    /** Finalize a streamed ZIP: add ffmpeg script, close stream, save or download. */
+    const finalizeZipSequence = async (ext: string, label: string): Promise<void> => {
+      if (zipStreamError) {
+        streamingZip!.end();
+        if (zipWritable) await zipWritable.abort();
+        log.error(Modules.RECORDING, 'ZIP stream encountered an error — discarding output');
+        showToast('Recording failed: ZIP stream error');
+        return;
+      }
+      if (capturedFrames > 0) {
         if (labelEl) labelEl.textContent = 'Packaging ZIP...';
         await new Promise((r) => requestAnimationFrame(r));
-        const ext = mode === 'jpeg' ? 'jpg' : mode;
-        const files: Record<string, Uint8Array> = {};
-        for (let j = 0; j < imageFrames.length; j++) {
-          const padded = String(j).padStart(6, '0');
-          files[`frame_${padded}.${ext}`] = imageFrames[j];
-        }
-        // Include ffmpeg encode script
         const encoder = new TextEncoder();
-        files['encode_video.sh'] = encoder.encode(
-          this.generateFfmpegScript(fps, imageFrames.length, ext)
+        const scriptEntry = new ZipPassThrough('encode_video.sh');
+        streamingZip!.add(scriptEntry);
+        scriptEntry.push(
+          encoder.encode(this.generateFfmpegScript(fps, capturedFrames, ext)),
+          true
         );
-        const zipData = zipSync(files, { level: 0 });
-        const blob = new Blob([zipData as BlobPart], { type: 'application/zip' });
-        this.downloadBlob(blob, this.generateFilename('zip'));
-        showToast(`${mode.toUpperCase()} sequence saved (${imageFrames.length} frames)`);
+        streamingZip!.end();
+        if (zipWritable) {
+          await zipWritable.close();
+          showToast(
+            `${label} sequence saved to disk (${capturedFrames} frames, ` +
+              `${(zipTotalBytes / (1024 * 1024)).toFixed(1)} MB)`
+          );
+        } else {
+          const blob = new Blob(zipChunks as BlobPart[], { type: 'application/zip' });
+          this.downloadBlob(blob, this.generateFilename('zip'));
+          showToast(`${label} sequence saved (${capturedFrames} frames)`);
+        }
       } else {
+        streamingZip!.end();
+        if (zipWritable) await zipWritable.close();
         showToast('No frames captured');
       }
+    };
+
+    if (isImageMode && streamingZip) {
+      await finalizeZipSequence(mode === 'jpeg' ? 'jpg' : mode, mode.toUpperCase());
     } else if (isVideoMode) {
       if (videoOutput && capturedFrames > 0) {
         if (labelEl) labelEl.textContent = 'Finalizing video...';
@@ -764,29 +851,9 @@ export class RecordingPanel {
       } else {
         showToast('No frames captured');
       }
-    } else if (mode === 'exr') {
+    } else if (mode === 'exr' && streamingZip) {
       this.isEXRSequenceRecording = false;
-      if (this.exrFrames.length > 0) {
-        if (labelEl) labelEl.textContent = 'Packaging ZIP...';
-        await new Promise((r) => requestAnimationFrame(r));
-        const files: Record<string, Uint8Array> = {};
-        for (let j = 0; j < this.exrFrames.length; j++) {
-          const padded = String(j).padStart(6, '0');
-          files[`frame_${padded}.exr`] = this.exrFrames[j];
-        }
-        // Include ffmpeg encode script
-        const encoder = new TextEncoder();
-        files['encode_video.sh'] = encoder.encode(
-          this.generateFfmpegScript(fps, this.exrFrames.length, 'exr')
-        );
-        const zipData = zipSync(files, { level: 0 });
-        const blob = new Blob([zipData as BlobPart], { type: 'application/zip' });
-        this.downloadBlob(blob, this.generateFilename('zip'));
-        showToast(`EXR sequence saved (${this.exrFrames.length} frames)`);
-      } else {
-        showToast('No frames captured');
-      }
-      this.exrFrames = [];
+      await finalizeZipSequence('exr', 'EXR');
     }
 
     // Remove overlay, restore all saved state

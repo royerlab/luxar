@@ -686,7 +686,6 @@ describe('RecordingPanel', () => {
 
   describe('EXR sequence recording', () => {
     it('should initialize EXR sequence state fields', () => {
-      expect((panel as any).exrFrames).toEqual([]);
       expect((panel as any).isEXRSequenceRecording).toBe(false);
     });
 
