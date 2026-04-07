@@ -66,6 +66,7 @@ TAXON_COLORS: dict[str, tuple[float, float, float]] = {
     "Other Bacteria": (0.3, 0.65, 0.4),  # dark green
     "Archaea": (1.0, 0.5, 0.1),  # orange
     "Viruses": (0.9, 0.2, 0.2),  # red
+    "Other": (0.5, 0.5, 0.5),  # gray fallback
 }
 
 # Organism classification rules — checked in order, first match wins.
@@ -530,7 +531,7 @@ def generate_esm3_landscape(
         colors = np.zeros((n, 3), dtype=np.float32)
         kingdom_counts: dict[str, int] = {}
         for i, k in enumerate(kingdoms):
-            colors[i] = TAXON_COLORS.get(k, TAXON_COLORS["other"])
+            colors[i] = TAXON_COLORS.get(k, TAXON_COLORS["Other"])
             kingdom_counts[k] = kingdom_counts.get(k, 0) + 1
 
         aprint("✓ Proteins by taxon:")
