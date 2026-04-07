@@ -483,6 +483,8 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   private updateOrientation(): void {
     // Apply the orientation quaternion to the camera
     this.camera.quaternion.copy(this.orientation);
+    // Keep camera.up in sync so state export and non-screenSpacePanning pan work correctly
+    this.camera.up.set(0, 1, 0).applyQuaternion(this.orientation);
   }
 
   /**

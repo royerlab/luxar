@@ -137,7 +137,7 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
   ): void {
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     if (isOrtho) {
-      this.uniforms.pointSizeFactor.value = resolution.y / fov;
+      this.uniforms.pointSizeFactor.value = (2.0 * resolution.y) / fov;
     } else {
       const tanHalfFov = Math.tan(fov / 2);
       this.uniforms.pointSizeFactor.value = (2.0 * resolution.y) / tanHalfFov;

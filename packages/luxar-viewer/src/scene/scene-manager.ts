@@ -73,6 +73,7 @@ const ZOOM_RANGE_FACTOR = 100;
  */
 export class SceneManager extends THREE.EventDispatcher<{
   change: {};
+  'camera-changed': {};
 }> {
   /** Three.js WebGL renderer - handles all GPU-accelerated rendering */
   public renderer!: THREE.WebGLRenderer;
@@ -1599,6 +1600,7 @@ export class SceneManager extends THREE.EventDispatcher<{
   setControlType(type: ControlType): void {
     const needsOrtho = type === 'ortho';
     const hasOrtho = isOrthographicCamera(this.camera);
+    const cameraChanged = needsOrtho !== hasOrtho;
 
     // Swap camera if projection mode changes
     if (needsOrtho && !hasOrtho) {
@@ -1613,6 +1615,11 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Update materials for new projection mode
     this.updateMaterialsForCurrentCamera();
+
+    // Notify listeners that the camera object was replaced (picking system, etc.)
+    if (cameraChanged) {
+      this.dispatchEvent({ type: 'camera-changed' });
+    }
   }
 
   /**
@@ -1676,7 +1683,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     );
 
     persp.position.copy(this.camera.position);
-    persp.rotation.copy(this.camera.rotation);
+    persp.quaternion.copy(this.camera.quaternion);
     persp.up.copy(this.camera.up);
     persp.updateMatrixWorld();
 
