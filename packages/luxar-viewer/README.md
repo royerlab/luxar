@@ -262,7 +262,6 @@ src/
 │   ├── data-monitor-manager.ts    # Data monitoring
 │   ├── directory-navigator.ts     # Directory navigation
 │   ├── effective-radius-calculator.ts # nD effective radius computation
-│   ├── geometry-update-manager.ts # Geometry update coordination
 │   ├── gsplats-chunk-spatial-index.ts # GSplats chunk spatial indexing
 │   ├── gsplats-processor.ts       # Gaussian splat processing
 │   ├── gsplats-progressive-loader.ts # Progressive GSplats loading

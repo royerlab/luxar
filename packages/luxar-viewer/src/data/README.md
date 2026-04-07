@@ -44,7 +44,6 @@ data/
 ├── effective-radius-calculator.ts # Calculates effective radii for nD slicing
 ├── data-loader-types.ts           # TypeScript interfaces and types
 ├── data-accumulator.ts            # Zero-allocation buffer pooling
-├── geometry-update-manager.ts     # GPU buffer & geometry updates (extracted from SceneLoader)
 ├── scene-graph-builder.ts         # Scene hierarchy builder (extracted from SceneLoader)
 ├── view-state-manager.ts          # Centralized ViewState initialization and validation
 ├── stats-aggregator.ts            # Accumulator stats aggregation across loaders
@@ -128,12 +127,13 @@ The SceneLoader has been refactored into focused, testable modules:
 - Pure data structure building (no THREE.js dependencies)
 - Enumerates store contents
 
-**GeometryUpdateManager** (`geometry-update-manager.ts`):
+**NodeFactory** (`node-factory.ts`):
 
-- GPU buffer pool integration
-- THREE.js geometry creation and updates
-- Worker-based projection for large datasets
-- Material caching and data validation
+- Creates THREE.js scene nodes (Points, Lines, GSplats) from loaded data
+- Geometry creation with proper dtype handling (Float32, Uint8, Float16)
+- Material creation and colormap application
+- Transform application and validation
+- Picking system integration (shadow pick-node creation)
 
 **Data Accumulators** (`data-accumulator.ts`):
 
@@ -993,17 +993,18 @@ location /data/ {
 | `buildSceneGraph(rootAttrs)`  | Build complete scene graph             |
 | `getNodesOfType(node, type)`  | Get all nodes of a specific type       |
 
-### Geometry Update Manager (geometry-update-manager.ts)
+### Node Factory (node-factory.ts)
 
-| Class/Method                        | Description                         |
-| ----------------------------------- | ----------------------------------- |
-| `GeometryUpdateManager`             | GPU buffer and geometry management  |
-| `constructor(gpuPool, profiler?)`   | Create with GPU pool reference      |
-| `createPointsGeometry(data)`        | Create THREE.js geometry for points |
-| `updatePointsGeometry(mesh, data)`  | Update existing points geometry     |
-| `updateLinesGeometry(mesh, data)`   | Update lines geometry               |
-| `updateGSplatsGeometry(mesh, data)` | Update GSplats geometry             |
-| `dispose()`                         | Clean up resources                  |
+| Class/Method                                    | Description                                   |
+| ----------------------------------------------- | --------------------------------------------- |
+| `NodeFactory`                                   | Creates THREE.js scene nodes from loaded data  |
+| `createPointsNode(path, attrs, data, loader)`   | Create Points node with geometry and material  |
+| `createLinesNode(path, attrs, data, loader)`    | Create instanced Lines mesh                    |
+| `createGSplatsNode(path, attrs, data, loader)`  | Create instanced GSplats mesh                  |
+| `createPointsGeometry(data, maxR, maxS)`        | Create THREE.js geometry for points            |
+| `createPointsMaterial(attrs, rScale, sScale)`   | Create shader material for points              |
+| `applyTransform(object, transform)`             | Apply 4x4 column-major transform               |
+| `validateTransformFormat(transform)`            | Detect row-major vs column-major format         |
 
 ### Point Spatial Index Loader (point-spatial-index-loader.ts)
 

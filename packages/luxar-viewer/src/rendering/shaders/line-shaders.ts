@@ -90,7 +90,8 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       if (uIsOrtho == 1) {
         // Orthographic: constant screen size regardless of distance
         // uFOV stores frustumHeight in ortho mode
-        rawPixelWidth = width * uResolution.y / uFOV;
+        // Factor of 2 matches the perspective formula (which has implicit 2x from 1/tanHalfFov)
+        rawPixelWidth = width * 2.0 * uResolution.y / uFOV;
       } else {
         float dist = length(mvPos.xyz);
         float tanHalfFov = tan(uFOV * 0.5);

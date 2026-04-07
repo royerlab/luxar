@@ -583,9 +583,16 @@ export class LuxarApp {
     this.sceneManager.controls.addEventListener('change', dirtyHandler);
     window.addEventListener('resize', dirtyHandler);
 
+    // Update picking camera when perspective ↔ orthographic swap occurs
+    const cameraChangedHandler = () => {
+      this.pickingSystem?.setCamera(this.sceneManager.camera);
+    };
+    this.sceneManager.addEventListener('camera-changed', cameraChangedHandler);
+
     this.pickingCleanup = () => {
       canvas.removeEventListener('mousemove', handler);
       this.sceneManager.controls.removeEventListener('change', dirtyHandler);
+      this.sceneManager.removeEventListener('camera-changed', cameraChangedHandler);
       window.removeEventListener('resize', dirtyHandler);
     };
 
