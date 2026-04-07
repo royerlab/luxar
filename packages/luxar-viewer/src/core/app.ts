@@ -493,6 +493,7 @@ export class LuxarApp {
       this.overlayManager = new OverlayManager();
       await this.overlayManager.loadOverlays(overlayConfigs, zarrBaseUrl);
       this.inputHandler.setOverlayManager(this.overlayManager);
+      this.recordingPanel?.setOverlayManager(this.overlayManager);
     }
   }
 
@@ -952,6 +953,13 @@ export class LuxarApp {
         this.colormapLegend = undefined;
       }
 
+      // Clean up overlay manager (before recording panel so we can clear the reference)
+      if (this.overlayManager) {
+        this.recordingPanel?.setOverlayManager(null);
+        this.overlayManager.dispose();
+        this.overlayManager = undefined;
+      }
+
       // Clean up recording panel
       if (this.recordingPanel) {
         this.recordingPanel.dispose();
@@ -962,12 +970,6 @@ export class LuxarApp {
       if (this.layersPanel) {
         this.layersPanel.dispose();
         this.layersPanel = undefined;
-      }
-
-      // Clean up overlay manager
-      if (this.overlayManager) {
-        this.overlayManager.dispose();
-        this.overlayManager = undefined;
       }
 
       // Clean up picking system
