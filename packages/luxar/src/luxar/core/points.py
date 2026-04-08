@@ -104,3 +104,8 @@ class Points(DataNode):
     def has_labels(self) -> bool:
         """Check if points have per-element string labels for hover tooltips."""
         return bool(self._metadata.get("has_labels", False))
+
+    @property
+    def has_image_labels(self) -> bool:
+        """Check if points have per-element image labels for hover thumbnails."""
+        return bool(self._metadata.get("has_image_labels", False))

@@ -57,6 +57,7 @@ class ZarrWriterProtocol(Protocol):
         sharpness: Optional[Union[ScalarArray, float]] = None,
         scalars: Optional[Union[ScalarArray, float]] = None,
         labels: Optional[Sequence[str]] = None,
+        image_labels: Optional[Any] = None,
         **attrs: Any,
     ) -> PointsMetadata:
         """Write points data immediately to Zarr.
@@ -82,6 +83,7 @@ class ZarrWriterProtocol(Protocol):
             radii: Optional - array of shape (N,), scalar float, or None
             sharpness: Optional - array of shape (N,), scalar float, or None
             labels: Optional list of strings, one per point, for hover tooltips
+            image_labels: Optional per-element images for hover thumbnails
             **attrs: Additional attributes for the points
 
         Returns:
@@ -106,6 +108,7 @@ class ZarrWriterProtocol(Protocol):
         indices: Optional[NDArray[np.uint32]] = None,
         line_type: str = "polyline",
         labels: Optional[Sequence[str]] = None,
+        image_labels: Optional[Any] = None,
         **attrs: Any,
     ) -> LinesMetadata:
         """Write lines data immediately to Zarr.
@@ -124,6 +127,7 @@ class ZarrWriterProtocol(Protocol):
             indices: Optional vertex indices for indexed line type
             line_type: Type of line connectivity
             labels: Optional list of strings, one per vertex, for hover tooltips
+            image_labels: Optional per-element images for hover thumbnails
             **attrs: Additional attributes for the lines
 
         Returns:
@@ -139,6 +143,7 @@ class ZarrWriterProtocol(Protocol):
         cholesky_factors: NDArray[np.float32],
         colors: Optional[Union[ColorArray, tuple, list]] = None,
         labels: Optional[Sequence[str]] = None,
+        image_labels: Optional[Any] = None,
         **attrs: Any,
     ) -> GSplatsMetadata:
         """Write Gaussian splats data immediately to Zarr.
@@ -154,6 +159,7 @@ class ZarrWriterProtocol(Protocol):
             cholesky_factors: Packed Cholesky factors array of shape (N, k)
             colors: Optional - array of shape (N, 3), tuple/list (R,G,B), or None
             labels: Optional list of strings, one per splat, for hover tooltips
+            image_labels: Optional per-element images for hover thumbnails
             **attrs: Additional attributes for the gsplats
 
         Returns:
