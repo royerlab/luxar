@@ -17,7 +17,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     uniform float uScalarMin;         // Scalar range minimum
     uniform float uScalarScale;       // 1.0 / (max - min)
     #endif
-    uniform float pointSizeFactor; // Pre-computed: 2.0 * resolution.y / tanHalfFov (or resolution.y / frustumHeight for ortho)
+    uniform float pointSizeFactor; // Pre-computed: 2.0 * resolution.y / tanHalfFov (or 4.0 * resolution.y / frustumHeight for ortho)
     uniform float maxPointSize;    // Pre-computed: resolution.y * 0.5
     uniform float radiusScale;
     uniform float sharpnessScale;

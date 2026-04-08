@@ -186,6 +186,7 @@ class Group(Node):
             Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float]
         ] = None,
         labels: Optional[Union[List[str], Sequence[str]]] = None,
+        image_labels: Optional[Any] = None,
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
         grid_shape: Optional[Tuple[int, ...]] = None,
@@ -206,6 +207,10 @@ class Group(Node):
             labels: Optional list of strings, one per point. Used for hover tooltips.
                 Length must equal the number of points. Empty strings are treated as
                 null labels (no tooltip shown on hover).
+            image_labels: Optional per-element images for hover thumbnails.
+                Accepts List[bytes], List[PIL.Image], List[ndarray], List[Path],
+                or Dict[int, Any] for sparse assignment. Prefer pre-encoded
+                JPEG/WebP blobs for best compression.
             parent: Parent node (default: this group)
             extend_to_all: Visibility extension across non-displayed dimensions
             grid_shape: Optional grid shape for structured data
@@ -278,6 +283,7 @@ class Group(Node):
                 sharpness=sharpness,
                 scalars=scalars,
                 labels=labels,
+                image_labels=image_labels,
                 grid_shape=grid_shape,
                 **attrs,
             )
@@ -298,6 +304,8 @@ class Group(Node):
             # Notify scene that labels exist (for hover overlay auto-injection)
             if labels is not None:
                 scene._notify_labels_added()
+            if image_labels is not None:
+                scene._notify_image_labels_added()
 
             return Points(
                 name,
@@ -327,6 +335,7 @@ class Group(Node):
             Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float]
         ] = None,
         labels: Optional[Union[List[str], Sequence[str]]] = None,
+        image_labels: Optional[Any] = None,
         indices: Optional[np.ndarray[Any, Any]] = None,
         line_type: str = "polyline",
         parent: Optional[Node] = None,
@@ -346,6 +355,7 @@ class Group(Node):
             scalars: Optional (N,) array or scalar for colormap lookup.
                 Requires ``colormap`` in attrs. Mutually exclusive with ``colors``.
             labels: Optional list of strings, one per vertex. Used for hover tooltips.
+            image_labels: Optional per-element images for hover thumbnails.
             indices: Optional vertex indices for indexed line type
             line_type: Connectivity ("segments", "polyline", "loop", "indexed")
             parent: Parent node (default: this group)
@@ -414,6 +424,7 @@ class Group(Node):
                 indices=indices,
                 line_type=line_type,
                 labels=labels,
+                image_labels=image_labels,
                 **attrs,
             )
 
@@ -429,6 +440,8 @@ class Group(Node):
 
             if labels is not None:
                 scene._notify_labels_added()
+            if image_labels is not None:
+                scene._notify_image_labels_added()
 
             return Lines(
                 name,
@@ -455,6 +468,7 @@ class Group(Node):
             Union[ColorArray, np.ndarray[Any, Any], Sequence[float | int]]
         ] = None,
         labels: Optional[Union[List[str], Sequence[str]]] = None,
+        image_labels: Optional[Any] = None,
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
         dim_order: Optional[List[str]] = None,
@@ -471,6 +485,7 @@ class Group(Node):
             cholesky_factors: (N, k) packed Cholesky factors, k=D*(D+1)/2
             colors: Optional (N, 3) array, RGB tuple, or None
             labels: Optional list of strings, one per splat. Used for hover tooltips.
+            image_labels: Optional per-element images for hover thumbnails.
             parent: Parent node (default: this group)
             extend_to_all: Visibility extension across non-displayed dimensions
             dim_order: Map data columns to scene dimensions by name.
@@ -544,6 +559,7 @@ class Group(Node):
                 cholesky_factors=chol_arr,
                 colors=cast(Any, colors),
                 labels=labels,
+                image_labels=image_labels,
                 **attrs,
             )
 
@@ -565,6 +581,8 @@ class Group(Node):
 
             if labels is not None:
                 scene._notify_labels_added()
+            if image_labels is not None:
+                scene._notify_image_labels_added()
 
             return GSplats(
                 name,
