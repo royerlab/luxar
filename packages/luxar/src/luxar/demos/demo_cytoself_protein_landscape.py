@@ -55,6 +55,21 @@ from luxar.utils.paths import get_demos_output_dir
 GDRIVE_EMBEDDINGS_ID = "1s9TL72912HH947SFWcO6tClF91xDOEEi"  # Global_representation.npy
 GDRIVE_LABELS_ID = "1fl0lcrZCOkdN2vwXQSHe7i1MC04RXCiE"  # label.csv
 
+# Image data: 10 numpy files with shape (batch, 100, 100, 4)
+# Channels: [target_protein_GFP, nucleus_Hoechst, nuclear_distance, nuclear_segmentation]
+GDRIVE_IMAGE_IDS = {
+    "Image_data00.npy": "15_CHBPT-p5JG44acP6D2hKd8jAacZatp",
+    "Image_data01.npy": "1m7Cj2OALiZTIiHpvb9zFPG_I3j1wRnzK",
+    "Image_data02.npy": "17nknzqlcYO3n9bAe4FwGVPkU-mJAhQ4j",
+    "Image_data03.npy": "1vEsddF68dyOda-hwI-ptAL4vShBGl98Y",
+    "Image_data04.npy": "1aB7WaRuhobG_IDl0l_PPeSJAxCYy-Pye",
+    "Image_data05.npy": "1qb0waKcLprDtuFAdCec3WegWkmd-U45A",
+    "Image_data06.npy": "1y-1vlfZ4eNhvTvpuqTZVL8DvSwYX3CH_",
+    "Image_data07.npy": "1ejcPdh-d5lB1OcZ6x8SJx61pEUioZvB2",
+    "Image_data08.npy": "1DOicAkruNsU5F4DWLzO2QrV6xU4kuVxs",
+    "Image_data09.npy": "1a5YyHeRSRdJStG3KnFe2vsNjrsit9zbf",
+}
+
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "luxar" / "cytoself"
 
 
@@ -322,6 +337,124 @@ def load_cytoself_data(
     return coordinates, attributes, category_maps
 
 
+def _encode_crops_to_webp(
+    images: np.ndarray,
+) -> list[bytes]:
+    """Encode (N, 100, 100, 4) image crops to WebP thumbnails.
+
+    Takes channels 0 (protein GFP) and 1 (nucleus Hoechst), normalizes
+    per-image to uint8, composites as green+blue RGB, and encodes to WebP.
+    """
+    import io
+
+    from PIL import Image as PILImage
+
+    n_crops = images.shape[0]
+
+    # Extract channels: 0 = protein (GFP), 1 = nucleus (Hoechst)
+    protein = images[:, :, :, 0].astype(np.float32)
+    nucleus = images[:, :, :, 1].astype(np.float32)
+
+    # Per-image min-max normalization to uint8
+    def normalize(ch: np.ndarray) -> np.ndarray:
+        flat = ch.reshape(ch.shape[0], -1)
+        ch_min = flat.min(axis=1)[:, np.newaxis, np.newaxis]
+        ch_max = flat.max(axis=1)[:, np.newaxis, np.newaxis]
+        return ((ch - ch_min) / np.maximum(ch_max - ch_min, 1e-8) * 255).astype(
+            np.uint8
+        )
+
+    protein_u8 = normalize(protein)
+    nucleus_u8 = normalize(nucleus)
+
+    # RGB composite: green = protein, blue = nucleus
+    rgb = np.zeros((n_crops, 100, 100, 3), dtype=np.uint8)
+    rgb[:, :, :, 1] = protein_u8
+    rgb[:, :, :, 2] = nucleus_u8
+
+    blobs: list[bytes] = []
+    for i in range(n_crops):
+        buf = io.BytesIO()
+        PILImage.fromarray(rgb[i], mode="RGB").save(buf, format="webp", quality=85)
+        blobs.append(buf.getvalue())
+
+    return blobs
+
+
+def load_cytoself_images(
+    cache_dir: Path | None = None,
+) -> list[bytes]:
+    """Load and encode CytoSelf image crops as WebP thumbnails.
+
+    Downloads the 10 Image_data*.npy files from Google Drive (cached),
+    processes each file incrementally (download → encode → discard raw),
+    keeping memory usage low.
+
+    Args:
+        cache_dir: Directory for caching downloads and encoded thumbnails.
+
+    Returns:
+        List of WebP-encoded bytes, one per crop (aligned with embeddings).
+    """
+    if cache_dir is None:
+        cache_dir = DEFAULT_CACHE_DIR
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check for cached encoded thumbnails
+    thumbnails_cache = cache_dir / "image_labels_webp.npz"
+    if thumbnails_cache.exists():
+        with asection("Loading cached image thumbnails"):
+            data = np.load(thumbnails_cache, allow_pickle=True)
+            blobs = list(data["blobs"])
+            aprint(f"Loaded {len(blobs):,} cached thumbnails")
+            return [bytes(b) for b in blobs]
+
+    # Process each file incrementally: download → load → encode → free
+    all_blobs: list[bytes] = []
+    with asection("Downloading and encoding CytoSelf image data"):
+        for i, (filename, file_id) in enumerate(GDRIVE_IMAGE_IDS.items()):
+            img_path = cache_dir / filename
+
+            # Each .npy file is ~500MB-1.5GB; use 400MB as minimum
+            _download_from_google_drive(
+                file_id, img_path, expected_min_size=400_000_000
+            )
+
+            with asection(f"Processing {filename} ({i + 1}/{len(GDRIVE_IMAGE_IDS)})"):
+                try:
+                    arr = np.load(img_path)
+                except Exception:
+                    # File may be partially downloaded — delete and retry
+                    aprint("  ⚠ Corrupt file detected, re-downloading...")
+                    img_path.unlink(missing_ok=True)
+                    _download_from_google_drive(
+                        file_id, img_path, expected_min_size=400_000_000
+                    )
+                    arr = np.load(img_path)
+                aprint(f"Shape: {arr.shape}, dtype: {arr.dtype}")
+
+                blobs = _encode_crops_to_webp(arr)
+                aprint(f"Encoded {len(blobs):,} crops")
+                all_blobs.extend(blobs)
+
+                # Free raw array memory before loading next file
+                del arr
+
+        avg_size = sum(len(b) for b in all_blobs) / len(all_blobs)
+        total_mb = sum(len(b) for b in all_blobs) / (1024 * 1024)
+        aprint(
+            f"Total: {len(all_blobs):,} thumbnails, "
+            f"avg {avg_size:.0f} bytes/image, {total_mb:.1f} MB total"
+        )
+
+    # Cache encoded thumbnails for fast subsequent loads
+    with asection("Caching encoded thumbnails"):
+        np.savez(thumbnails_cache, blobs=np.array(all_blobs, dtype=object))
+        aprint(f"Cached to {thumbnails_cache}")
+
+    return all_blobs
+
+
 # =============================================================================
 # Scene Construction
 # =============================================================================
@@ -332,6 +465,7 @@ def create_cytoself_scene(
     coordinates: np.ndarray,
     attributes: dict,
     category_maps: dict | None = None,
+    image_labels: list[bytes] | None = None,
 ) -> int:
     """Create Luxar scene with categorical attribute visualization.
 
@@ -340,6 +474,7 @@ def create_cytoself_scene(
         coordinates: (N, 3) UMAP coordinates
         attributes: Dict of attribute arrays
         category_maps: Dict of attribute name -> list of category labels
+        image_labels: Optional list of WebP-encoded image blobs (one per point)
 
     Returns:
         Number of points
@@ -425,6 +560,11 @@ def create_cytoself_scene(
                 per_cell_labels * len(available_attrs) if per_cell_labels else None
             )
 
+            # Image labels: replicate per attribute view (same as text labels)
+            all_image_labels = None
+            if image_labels is not None:
+                all_image_labels = image_labels * len(available_attrs)
+
             scene.add_points(
                 "Images",
                 positions_combined,
@@ -434,6 +574,7 @@ def create_cytoself_scene(
                 opacity=0.8,
                 intensity=0.18,
                 labels=labels,
+                image_labels=all_image_labels,
             )
 
             # --- Overlays ---
@@ -513,8 +654,10 @@ def main() -> None:
     aprint("  OpenCell: Cho et al., Science 2022")
     aprint("  GitHub:   https://github.com/royerlab/cytoself")
     aprint("")
-    aprint("NOTE: First run downloads ~4 GB and computes UMAP (~10-30 min).")
-    aprint("      Requires ~16 GB RAM. Subsequent runs load from cache.")
+    aprint("NOTE: First run downloads ~4 GB embeddings + ~4-17 GB images")
+    aprint("      and computes UMAP (~10-30 min). Requires ~16 GB RAM.")
+    aprint("      Subsequent runs load from cache.")
+    aprint("      Use --without-images to skip image download.")
     aprint("")
 
     # Check runtime dependencies
@@ -531,11 +674,27 @@ def main() -> None:
             sys.exit(1)
 
     recompute = "--recompute" in sys.argv
+    without_images = "--without-images" in sys.argv
 
     # Load data (downloads + UMAP on first run, cached thereafter)
     coordinates, attributes, category_maps = load_cytoself_data(
         recompute=recompute,
     )
+
+    # Load image labels (unless opted out)
+    image_labels: list[bytes] | None = None
+    if not without_images:
+        try:
+            from PIL import Image as _PILImage  # noqa: F401
+
+            image_labels = load_cytoself_images()
+        except ImportError:
+            aprint("WARNING: Pillow not installed — skipping image labels.")
+            aprint("  Install with: pip install Pillow")
+        except Exception as e:
+            aprint(f"WARNING: Failed to load images — skipping: {e}")
+    else:
+        aprint("Skipping image labels (--without-images)")
 
     # Generate legend images
     generate_all_legends(
@@ -551,7 +710,8 @@ def main() -> None:
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "cytoself_protein_landscape.zarr"
         _n_points = create_cytoself_scene(
-            output_path, coordinates, attributes, category_maps
+            output_path, coordinates, attributes, category_maps,
+            image_labels=image_labels,
         )
         aprint(f"Dataset generated at {output_path}")
         return
@@ -560,7 +720,8 @@ def main() -> None:
         output_path = Path(tmpdir) / "cytoself_landscape.zarr"
 
         _n_points = create_cytoself_scene(
-            output_path, coordinates, attributes, category_maps
+            output_path, coordinates, attributes, category_maps,
+            image_labels=image_labels,
         )
 
         aprint("")
@@ -571,6 +732,7 @@ def main() -> None:
         aprint("")
         aprint("  - Rotate to explore UMAP structure")
         aprint("  - Zoom in to see individual images")
+        aprint("  - Hover over a point to see its fluorescence image")
         aprint("")
         aprint("  Press '1' to select ATTRIBUTE VIEW, then use [/]:")
         aprint("     0: Localization (subcellular compartment)")
