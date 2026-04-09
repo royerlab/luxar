@@ -40,22 +40,8 @@ constexpr int MAX_SUPPORTED_DIM = 8;
 
 /**
  * State from forward pass, cached for backward pass reuse.
- *
- * Contains cached device tensors and empty placeholders for backward API
- * compatibility (tile_counts, tile_offsets, etc. are no longer computed
- * by the splat-centric forward kernel).
  */
-struct BinningState {
-    // Empty tensors for backward API compatibility
-    torch::Tensor tile_counts;      // empty (0,) int32
-    torch::Tensor tile_offsets;     // empty (0,) int64
-    torch::Tensor tile_content;     // empty (0,) int32
-    torch::Tensor global_splat_ids; // empty (0,) int32
-    int num_global_splats;
-
-    // Metadata
-    int64_t num_tiles;
-
+struct ForwardState {
     // Cached device tensor for backward pass reuse
     torch::Tensor shape_tensor;     // (dim,) int32 - volume shape on device
 };
@@ -70,12 +56,9 @@ struct BinningState {
  * @param centers         (N, d) float32 - splat centers in voxel coordinates
  * @param conic           (N, d*(d+1)/2) float32 - packed upper-triangle of Sigma^-1
  * @param amps            (N,) float32 - amplitudes
- * @param L_row_norms     (N, d) float32 - per-axis std dev from Cholesky row norms
  * @param shape           Target volume shape (d elements)
  * @param truncate        Base truncation radius
  * @param intensity_floor Minimum intensity threshold for culling
- * @param tile_size       Tile size for spatial partitioning
- * @param batch_size      Unused (kept for API compatibility)
  *
  * @return Tuple of 2 tensors: (output, shape_tensor)
  */
@@ -84,12 +67,9 @@ forward(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size,
-    int batch_size,
     const torch::Tensor& output_buffer = torch::Tensor()
 );
 
@@ -141,12 +121,9 @@ forward_fp16(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size,
-    int batch_size,
     const torch::Tensor& output_buffer = torch::Tensor()
 );
 
@@ -170,19 +147,6 @@ backward_fp16(
 // =============================================================================
 // UTILITY FUNCTIONS
 // =============================================================================
-
-/**
- * Compute tile dimensions from volume shape and tile size.
- */
-std::vector<int> compute_tile_dims(
-    const std::vector<int64_t>& shape,
-    int tile_size
-);
-
-/**
- * Compute total number of tiles.
- */
-int64_t compute_num_tiles(const std::vector<int>& tile_dims);
 
 /**
  * Validate input tensors.

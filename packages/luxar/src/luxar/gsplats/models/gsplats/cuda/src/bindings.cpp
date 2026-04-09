@@ -26,12 +26,9 @@ forward_wrapper(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     double truncate,
     double intensity_floor,
-    int64_t tile_size,
-    int64_t batch_size,
     bool use_fp16,
     const c10::optional<torch::Tensor>& output_buffer
 ) {
@@ -41,19 +38,16 @@ forward_wrapper(
         auto centers_fp16 = centers.dtype() == torch::kFloat16 ? centers : centers.to(torch::kFloat16);
         auto conic_fp16 = conic.dtype() == torch::kFloat16 ? conic : conic.to(torch::kFloat16);
         auto amps_fp16 = amps.dtype() == torch::kFloat16 ? amps : amps.to(torch::kFloat16);
-        auto L_row_norms_fp16 = L_row_norms.dtype() == torch::kFloat16 ? L_row_norms : L_row_norms.to(torch::kFloat16);
 
         return forward_fp16(
-            centers_fp16, conic_fp16, amps_fp16, L_row_norms_fp16,
-            shape, (float)truncate, (float)intensity_floor,
-            (int)tile_size, (int)batch_size, out_buf
+            centers_fp16, conic_fp16, amps_fp16,
+            shape, (float)truncate, (float)intensity_floor, out_buf
         );
     }
 
     return forward(
-        centers, conic, amps, L_row_norms,
-        shape, (float)truncate, (float)intensity_floor,
-        (int)tile_size, (int)batch_size, out_buf
+        centers, conic, amps,
+        shape, (float)truncate, (float)intensity_floor, out_buf
     );
 }
 
@@ -127,18 +121,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                 (N, d*(d+1)/2) float32 - Packed upper-triangle of inverse covariance
             amps : torch.Tensor
                 (N,) float32 - Amplitudes
-            L_row_norms : torch.Tensor
-                (N, d) float32 - Per-axis standard deviations from Cholesky row norms.
             shape : List[int]
                 Target volume shape (d elements)
             truncate : float
                 Base truncation radius in standard deviations
             intensity_floor : float
                 Minimum intensity threshold for culling
-            tile_size : int
-                Tile size for spatial partitioning
-            batch_size : int
-                Unused (kept for API compatibility). Default: 128.
             use_fp16 : bool
                 If True, use FP16 precision for inputs. Default: False.
 
@@ -151,12 +139,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("centers"),
         py::arg("conic"),
         py::arg("amps"),
-        py::arg("L_row_norms"),
         py::arg("shape"),
         py::arg("truncate"),
         py::arg("intensity_floor"),
-        py::arg("tile_size"),
-        py::arg("batch_size") = 128,
         py::arg("use_fp16") = false,
         py::arg("output_buffer") = py::none()
     );

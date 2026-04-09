@@ -92,52 +92,6 @@ class TestGaussianSplatModelCUDA:
                 device="cpu",
             )
 
-    def test_auto_tile_size(self):
-        """Test automatic tile size selection based on dimension.
-
-        Tile sizes are empirically tuned for good occupancy (~256-512 threads).
-        Newer GPUs (Hopper with 2048 threads/SM vs Turing's 1024) automatically
-        benefit from more concurrent blocks without code changes.
-        """
-        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
-            GaussianSplatModelCUDA,
-        )
-
-        N = 5
-
-        # 2D: tile_size=16 -> 16² = 256 threads
-        model_2d = GaussianSplatModelCUDA(
-            shape=(64, 64),
-            centers0=np.random.rand(N, 2).astype(np.float32) * 60,
-            L0=np.eye(2, dtype=np.float32)[None, :, :].repeat(N, axis=0),
-            amps0=np.ones(N, dtype=np.float32),
-            sigma_min_diag=(0.5, 0.5),
-            device="cuda",
-        )
-        assert model_2d._tile_size == 16, "2D tile size should be 16"
-
-        # 3D: tile_size=8 -> 8³ = 512 threads
-        model_3d = GaussianSplatModelCUDA(
-            shape=(32, 32, 32),
-            centers0=np.random.rand(N, 3).astype(np.float32) * 30,
-            L0=np.eye(3, dtype=np.float32)[None, :, :].repeat(N, axis=0),
-            amps0=np.ones(N, dtype=np.float32),
-            sigma_min_diag=(0.5, 0.5, 0.5),
-            device="cuda",
-        )
-        assert model_3d._tile_size == 8, "3D tile size should be 8"
-
-        # 4D: tile_size=4 -> 4⁴ = 256 threads
-        model_4d = GaussianSplatModelCUDA(
-            shape=(16, 16, 16, 16),
-            centers0=np.random.rand(N, 4).astype(np.float32) * 14,
-            L0=np.eye(4, dtype=np.float32)[None, :, :].repeat(N, axis=0),
-            amps0=np.ones(N, dtype=np.float32),
-            sigma_min_diag=(0.5, 0.5, 0.5, 0.5),
-            device="cuda",
-        )
-        assert model_4d._tile_size == 4, "4D tile size should be 4"
-
     def test_output_shape_matches_initialization(self):
         """Test that model forward() returns tensor with correct shape.
 
