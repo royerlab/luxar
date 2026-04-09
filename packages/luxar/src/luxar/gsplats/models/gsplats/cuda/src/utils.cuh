@@ -26,9 +26,6 @@
 // Maximum supported dimensions
 constexpr int MAX_DIM = 8;
 
-// Maximum splats that can be handled in a single tile batch
-constexpr int MAX_SPLATS_PER_BATCH = 256;
-
 // Error checking macro
 #define CUDA_CHECK(call)                                                       \
     do {                                                                       \

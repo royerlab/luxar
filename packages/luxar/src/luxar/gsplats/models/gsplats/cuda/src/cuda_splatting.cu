@@ -104,25 +104,6 @@ INSTANTIATE_SPLAT_BWD(8)
 // UTILITY FUNCTIONS
 // =============================================================================
 
-std::vector<int> compute_tile_dims(
-    const std::vector<int64_t>& shape,
-    int tile_size
-) {
-    std::vector<int> tile_dims(shape.size());
-    for (size_t d = 0; d < shape.size(); d++) {
-        tile_dims[d] = (int)((shape[d] + tile_size - 1) / tile_size);
-    }
-    return tile_dims;
-}
-
-int64_t compute_num_tiles(const std::vector<int>& tile_dims) {
-    int64_t num_tiles = 1;
-    for (int td : tile_dims) {
-        num_tiles *= td;
-    }
-    return num_tiles;
-}
-
 void validate_inputs(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
@@ -181,14 +162,11 @@ void dispatch_forward_impl(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size,
-    int batch_size,
     torch::Tensor& output,
-    BinningState& state
+    ForwardState& state
 ) {
     cudaStream_t stream = c10::cuda::getCurrentCUDAStream().stream();
 
@@ -296,27 +274,15 @@ forward_impl(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size,
-    int batch_size,
     const torch::Tensor& output_buffer
 ) {
     constexpr torch::ScalarType expected_dtype =
         std::is_same_v<InputDType, __half> ? torch::kFloat16 : torch::kFloat32;
 
     validate_inputs(centers, conic, amps, shape, expected_dtype);
-
-    // Validate L_row_norms
-    int dim = (int)shape.size();
-    int N = (int)centers.size(0);
-    TORCH_CHECK(L_row_norms.is_cuda(), "L_row_norms must be on CUDA device");
-    TORCH_CHECK(L_row_norms.is_contiguous(), "L_row_norms must be contiguous");
-    TORCH_CHECK(L_row_norms.size(0) == N && L_row_norms.size(1) == dim,
-        "L_row_norms must have shape (", N, ", ", dim, ")");
-    TORCH_CHECK(L_row_norms.dtype() == expected_dtype, "L_row_norms dtype mismatch");
 
     auto device = centers.device();
 
@@ -336,9 +302,9 @@ forward_impl(
     }
 
     // Run forward pass
-    BinningState state;
-    dispatch_forward_impl<InputDType>(dim, centers, conic, amps, L_row_norms, shape,
-                                      truncate, intensity_floor, tile_size, batch_size, output, state);
+    ForwardState state;
+    dispatch_forward_impl<InputDType>(dim, centers, conic, amps, shape,
+                                      truncate, intensity_floor, output, state);
 
     return std::make_tuple(output, state.shape_tensor);
 }
@@ -391,16 +357,13 @@ forward(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size,
-    int batch_size,
     const torch::Tensor& output_buffer
 ) {
-    return forward_impl<float>(centers, conic, amps, L_row_norms,
-                               shape, truncate, intensity_floor, tile_size, batch_size, output_buffer);
+    return forward_impl<float>(centers, conic, amps,
+                               shape, truncate, intensity_floor, output_buffer);
 }
 
 std::tuple<torch::Tensor, torch::Tensor>
@@ -408,16 +371,13 @@ forward_fp16(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size,
-    int batch_size,
     const torch::Tensor& output_buffer
 ) {
-    return forward_impl<__half>(centers, conic, amps, L_row_norms,
-                                shape, truncate, intensity_floor, tile_size, batch_size, output_buffer);
+    return forward_impl<__half>(centers, conic, amps,
+                                shape, truncate, intensity_floor, output_buffer);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
