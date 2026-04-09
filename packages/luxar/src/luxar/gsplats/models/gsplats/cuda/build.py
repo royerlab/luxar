@@ -17,6 +17,36 @@ SCRIPT_DIR = Path(__file__).parent.absolute()
 SRC_DIR = SCRIPT_DIR / "src"
 
 
+def _get_nvcc_supported_archs() -> set[int] | None:
+    """Query nvcc --list-gpu-arch to get supported compute capabilities.
+
+    Returns a set of integer arch codes (e.g. {75, 80, 86, ...}), or None
+    if the query fails (older nvcc without --list-gpu-arch).
+    """
+    try:
+        result = subprocess.run(
+            ["nvcc", "--list-gpu-arch"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        archs = set()
+        for line in result.stdout.strip().split("\n"):
+            line = line.strip()
+            # Lines look like "compute_86" or "sm_86"
+            for prefix in ("compute_", "sm_"):
+                if line.startswith(prefix):
+                    try:
+                        archs.add(int(line[len(prefix) :]))
+                    except ValueError:
+                        pass
+        return archs if archs else None
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+
 def build() -> None:
     """Build the CUDA extension in-place."""
     try:
@@ -25,7 +55,7 @@ def build() -> None:
     except ImportError:
         print("ERROR: PyTorch not found. Install with:")
         print(
-            "  hatch run pip install torch --index-url https://download.pytorch.org/whl/cu121"
+            "  hatch run pip install torch --index-url https://download.pytorch.org/whl/cu128"
         )
         sys.exit(1)
 
@@ -33,7 +63,7 @@ def build() -> None:
         print("ERROR: CUDA not available in PyTorch.")
         print("Install PyTorch with CUDA support:")
         print(
-            "  hatch run pip install torch --index-url https://download.pytorch.org/whl/cu121"
+            "  hatch run pip install torch --index-url https://download.pytorch.org/whl/cu128"
         )
         sys.exit(1)
 
@@ -62,10 +92,25 @@ def build() -> None:
         # Default: detect current GPU + well-known HPC architectures
         major, minor = torch.cuda.get_device_capability()
         current = major * 10 + minor
-        # Volta(70), Turing(75), Ampere(80,86), Ada(89), Hopper(90)
-        default_archs = {70, 75, 80, 86, 89, 90}
+        # Turing(75), Ampere(80,86), Ada(89), Hopper(90)
+        default_archs = {75, 80, 86, 89, 90}
         default_archs.add(current)
-        target_archs = sorted(a for a in default_archs if a >= 70)
+
+        # Query nvcc for supported architectures and filter out unsupported ones
+        supported = _get_nvcc_supported_archs()
+        if supported:
+            default_archs = {a for a in default_archs if a in supported}
+            # Always keep the current GPU's arch — if nvcc can't target it the
+            # build will fail with a clear compiler error instead of an empty list.
+            default_archs.add(current)
+
+        target_archs = sorted(a for a in default_archs if a >= 75)
+        if not target_archs:
+            print("ERROR: No supported CUDA architectures found.")
+            print(f"  Detected GPU compute capability: {current}")
+            print("  Minimum supported: sm_75 (Turing)")
+            print("  Override with: CUDA_ARCHS='75' make build-cuda")
+            sys.exit(1)
 
     gencode_flags = []
     for arch in target_archs:

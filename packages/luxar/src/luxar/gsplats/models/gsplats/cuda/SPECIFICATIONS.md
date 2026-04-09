@@ -76,34 +76,10 @@ Floating-point summation is **not strictly associative**. Different tile process
 may produce slightly different results (~1e-6 relative error). This is similar to
 PyTorch's CUDA reduction behavior and is documented as expected.
 
-**Deterministic Mode Implementation**:
-
-For reproducible results across runs (debugging/testing), add optional per-tile sorting:
-
-```cuda
-// In forward pass, after binning and before rasterize:
-if (deterministic_mode) {
-    // Sort splat IDs within each tile segment for consistent order
-    // Uses CUB segmented sort (tile_offsets define segments)
-    cub::DeviceSegmentedRadixSort::SortKeys(
-        d_temp_storage, temp_storage_bytes,
-        tile_content, tile_content_sorted,
-        total_pairs, num_tiles,
-        tile_offsets, tile_offsets + 1,  // segment begin/end
-        0, sizeof(int) * 8,              // bit range
-        stream
-    );
-}
-```
-
-**Cost** (architecture-dependent):
-- **Ampere+ (A100, RTX 30xx/40xx)**: ~5-10% overhead (efficient CUB radix sort)
-- **Volta/Turing (V100, RTX 20xx)**: ~10-20% overhead
-- **Older architectures**: ~20-30% overhead
-
-Profile with Nsight Compute to confirm on your specific GPU. Disabled by default.
-
-**Testing**: Add `test_determinism_across_runs()` verifying identical outputs with flag enabled.
+**Determinism**: The splat-centric architecture uses `atomicAdd` for output
+accumulation, which is non-deterministic in floating-point. For debugging,
+compare against the PyTorch reference implementation which uses deterministic
+sequential summation.
 
 ### Key Differentiators from Metal Backend
 
@@ -136,159 +112,13 @@ C(x) = Σₖ cₖ × αₖ × Πⱼ₌₁ᵏ⁻¹(1 - αⱼ)  # Order-dependent!
 
 ### Known Limitations and Constraints
 
-**Tile Count Explosion in High-D**:
+**Tiles in the Splat-Centric Architecture**:
 
-Tile count grows as `O(∏ tile_dims[d])`. For high-dimensional data:
-- 5D with tile_size=2 and shape=32: 16⁵ = 1M tiles (at limit)
-- 5D with tile_size=2 and shape=64: 32⁵ = 33M tiles (unacceptable)
-
-**Hard Limit**: The implementation enforces a **1 million tile maximum** (`MAX_TILES = 1000000`).
-Exceeding this triggers an error with guidance to use CPU fallback or downsample. This limit
-exists because:
-1. Memory: 1M tiles × ~12 bytes metadata = 12MB overhead before splat data
-2. Performance: CUB prefix sum and binning become less efficient at >1M elements
-3. Practicality: >1M tiles usually indicates inappropriate tiling strategy for the dimension
-
-**Automatic Tile Size Adjustment**:
-
-```cpp
-// Auto-compute tile_size balancing:
-// 1. num_tiles <= MAX_TILES (memory constraint)
-// 2. pixels_per_tile <= MAX_THREADS_PER_BLOCK (thread constraint)
-// 3. Reasonable occupancy for the dimension
-
-struct TileConfig {
-    int tile_size;
-    int64_t num_tiles;
-    int pixels_per_tile;
-    bool uses_multi_pass;  // True if pixels_per_tile > max threads
-};
-
-TileConfig auto_tile_size(
-    const int* shape,
-    int DIM,
-    int64_t max_tiles = 1'000'000,
-    int max_threads_per_block = 1024
-) {
-    TileConfig config;
-    config.uses_multi_pass = false;
-
-    // Start with ideal tile size for occupancy
-    int tile_size = (DIM <= 2) ? 16 : (DIM <= 3) ? 8 : (DIM <= 4) ? 4 : 2;
-
-    // Iteratively adjust until constraints are satisfied
-    while (true) {
-        // Compute number of tiles
-        int64_t num_tiles = 1;
-        for (int d = 0; d < DIM; d++) {
-            num_tiles *= (shape[d] + tile_size - 1) / tile_size;
-        }
-
-        // Compute pixels per tile
-        int pixels_per_tile = 1;
-        for (int d = 0; d < DIM; d++) {
-            pixels_per_tile *= tile_size;
-        }
-
-        // Check thread constraint FIRST (hard limit)
-        // If pixels_per_tile > max_threads, we CANNOT increase tile_size further
-        // Must use multi-pass strategy instead
-        if (pixels_per_tile > max_threads_per_block) {
-            // Revert to previous tile_size and use multi-pass
-            if (tile_size > 2) {
-                tile_size /= 2;
-                // Recompute with smaller tile_size
-                num_tiles = 1;
-                pixels_per_tile = 1;
-                for (int d = 0; d < DIM; d++) {
-                    num_tiles *= (shape[d] + tile_size - 1) / tile_size;
-                    pixels_per_tile *= tile_size;
-                }
-            }
-
-            // If still exceeds max_tiles, we need multi-pass
-            if (num_tiles > max_tiles) {
-                config.uses_multi_pass = true;
-                // Use largest tile_size that fits thread limit
-                // Each thread processes multiple pixels
-            }
-            break;
-        }
-
-        // Check tile count constraint
-        if (num_tiles <= max_tiles) {
-            break;  // Found valid configuration
-        }
-
-        // Try doubling tile size to reduce tile count
-        int next_tile_size = tile_size * 2;
-        int next_pixels = 1;
-        for (int d = 0; d < DIM; d++) {
-            next_pixels *= next_tile_size;
-        }
-
-        // But don't exceed thread limit
-        if (next_pixels > max_threads_per_block) {
-            // Can't increase further - must use multi-pass or error
-            if (num_tiles > max_tiles * 10) {
-                throw std::runtime_error(
-                    "Volume too large for CUDA backend. Consider downsampling or CPU fallback."
-                );
-            }
-            config.uses_multi_pass = true;
-            break;
-        }
-
-        tile_size = next_tile_size;
-    }
-
-    // Final computation
-    config.tile_size = tile_size;
-    config.num_tiles = 1;
-    config.pixels_per_tile = 1;
-    for (int d = 0; d < DIM; d++) {
-        config.num_tiles *= (shape[d] + tile_size - 1) / tile_size;
-        config.pixels_per_tile *= tile_size;
-    }
-
-    return config;
-}
-
-// Multi-pass kernel launch for large tiles (pixels_per_tile > max_threads)
-// Each thread processes multiple pixels in a strided pattern
-template<int DIM>
-void launch_rasterize_multipass(
-    const TileConfig& config,
-    int max_threads,
-    cudaStream_t stream,
-    /* other params */
-) {
-    int threads_per_block = min(config.pixels_per_tile, max_threads);
-    int pixels_per_thread = (config.pixels_per_tile + threads_per_block - 1) / threads_per_block;
-
-    // Kernel uses strided access: each thread handles pixels at
-    // indices: threadIdx.x, threadIdx.x + blockDim.x, threadIdx.x + 2*blockDim.x, ...
-    rasterize_fwd_multipass<DIM><<<config.num_tiles, threads_per_block, smem_size, stream>>>(
-        /* params */, pixels_per_thread
-    );
-}
-```
-
-**Tile Size Limits by Dimension**:
-
-| DIM | Max tile_size (thread limit) | Pixels at max | Typical tile_size |
-|-----|------------------------------|---------------|-------------------|
-| 2D  | 32 (32²=1024)                | 1024          | 16 (256 threads)  |
-| 3D  | 10 (10³=1000)                | 1000          | 8 (512 threads)   |
-| 4D  | 5 (5⁴=625)                   | 625           | 4 (256 threads)   |
-| 5D  | 4 (4⁵=1024)                  | 1024          | 2 (32 threads)    |
-| 6D+ | 3 (3⁶=729)                   | 729           | 2 (64 threads)    |
-
-**Fallback Strategy**:
-1. Auto-adjust tile_size respecting BOTH tile count AND thread limits
-2. If constraints conflict: Use multi-pass kernel (each thread handles multiple pixels)
-3. If num_tiles > 10M even with multi-pass: Error, suggest CPU fallback
-4. Future: Sparse-tile variant for high-D with low splat density
+Both forward and backward kernels are **splat-centric** (each CUDA block = one splat).
+The splat-centric architecture does not use tiles for parallelization. The
+`tile_size` parameter is retained in the Python API for cache-related metadata
+but does not affect kernel behavior. Each CUDA block processes one splat's
+full AABB regardless of tile boundaries.
 
 **Sharpness Numerical Stability**:
 
@@ -300,7 +130,7 @@ The sharpness gradient involves `ln(D²)` which explodes as D²→0:
 ### Prerequisites
 
 - CUDA 11.8+ (CUDA 12.x recommended for best performance)
-- NVIDIA GPU with Compute Capability 7.0+ (Volta, Turing, Ampere, Ada, Hopper)
+- NVIDIA GPU with Compute Capability 7.5+ (Turing, Ampere, Ada, Hopper, Blackwell)
 - PyTorch 2.0+ with CUDA support
 - cuBLAS and CUB libraries (bundled with CUDA Toolkit)
 
@@ -613,7 +443,7 @@ graph LR
         C["splat_bwd_kernel<br/>(1 block per splat)<br/>block-local gradient reduction"]
     end
 
-    B -.->|shape_tensor, tile_dims_tensor| C
+    B -.->|shape_tensor| C
 
     style A fill:#e1f5fe
     style B fill:#fce4ec
@@ -627,8 +457,8 @@ graph LR
 | Forward kernels | preprocess + CUB prefix_sum + bin + rasterize_fwd + global_fwd | **1 kernel** (`rasterize_forward_splat_centric_kernel`) |
 | Backward kernels | rasterize_bwd + global_bwd | **1 kernel** (`rasterize_backward_splat_centric_kernel`) |
 | Kernel launches/iter | 20+ | **3** (L->conic fused + fwd + bwd) |
-| Tensor allocs/fwd | ~13 | **3** |
-| Synchronization | 1 full `cudaStreamSynchronize` | diagnostics only |
+| Tensor allocs/fwd | ~13 | **1** (shape_tensor cached on device) |
+| Synchronization | 1 full `cudaStreamSynchronize` | **None** |
 | Tile binning | Required | **Eliminated** |
 | Shared memory barriers | Multiple `__syncthreads` | None in hot path |
 | Global atomics (bwd) | Per-tile atomics | **Zero** (block-local reduction) |
@@ -738,58 +568,35 @@ __device__ __forceinline__ void compute_L_row_norms(
 
 ### 4.4 State Structures
 
-The `BinningState` struct (see `cuda_splatting.h`) stores workspace and cached
-tensors passed between forward and backward. In the splat-centric architecture,
-most tile-related fields are populated for API compatibility but not used by kernels.
+The `BinningState` struct (see `cuda_splatting.h`) stores state from the forward
+pass for backward pass reuse.
 
 ```cpp
 struct BinningState {
-    // Tile metadata (populated for diagnostic/API compatibility, not used by splat-centric kernels)
-    torch::Tensor tile_counts;      // (num_tiles,) int32 - splats per tile
-    torch::Tensor tile_offsets;     // (num_tiles,) int64 - exclusive prefix sum
-    torch::Tensor tile_content;     // (0,) int32 - empty (tile binning eliminated)
-    torch::Tensor tile_write_heads; // (num_tiles,) int32 - unused
-
-    // CUB scan temp storage (unused in splat-centric path)
-    torch::Tensor scan_temp_storage;
-    size_t scan_temp_bytes;
-
-    // Global splat detection (set as side effect in splat-centric forward kernel)
-    torch::Tensor global_splat_flags; // (N,) bool
-    torch::Tensor global_splat_ids;   // (num_global,) int32
+    // Empty tensors (backward API compatibility placeholders)
+    torch::Tensor tile_counts;      // empty (0,) int32
+    torch::Tensor tile_offsets;     // empty (0,) int64
+    torch::Tensor tile_content;     // empty (0,) int32
+    torch::Tensor global_splat_ids; // empty (0,) int32
     int num_global_splats;
 
-    // AABB cache (unused in splat-centric path -- AABB computed inline)
-    torch::Tensor aabb_lo;          // (N, DIM) int32
-    torch::Tensor aabb_hi;          // (N, DIM) int32
-
-    // Metadata
     int64_t num_tiles;
-    int64_t total_pairs;
 
-    // OPTIMIZATION: Cached device tensors for backward pass reuse
-    // Eliminates redundant host-to-device copies in backward pass
+    // Cached device tensors for backward pass reuse
     torch::Tensor shape_tensor;     // (dim,) int32 - volume shape on device
-    torch::Tensor tile_dims_tensor; // (dim,) int32 - tile dimensions on device
-    int tile_size;                  // Cached tile size
 };
 ```
 
-**Splat-centric memory usage**: The forward pass allocates only 3 tensors:
-`tile_counts` (diagnostic), `global_splat_flags` (N bools), and
-`global_count_tensor` (1 int). Compare this with the old tile-based pipeline
-which allocated ~13 tensors per forward call.
+The forward pass allocates only `shape_tensor` on device (cached for backward reuse).
 
 ---
 
 ## 5. Kernel Design
 
-> **Historical note**: The tile-based kernels (`preprocess_kernel`, `bin_kernel`,
+> **Note**: The tile-based kernels (`preprocess_kernel`, `bin_kernel`,
 > `rasterize_forward_kernel`, `rasterize_backward_kernel`) and global splat kernels
-> (`rasterize_global_forward_kernel`, `rasterize_global_backward_kernel`) still exist
-> in the codebase for reference and fallback, but the primary pipeline uses the
-> splat-centric kernels described below. Template instantiations for all kernel
-> families are in `cuda_splatting.cu`.
+> have been removed. The pipeline uses only the splat-centric kernels described below.
+> Template instantiations are in `cuda_splatting.cu`.
 
 ### 5.0 Shared Device Functions
 
@@ -1153,75 +960,18 @@ __device__ __forceinline__ void unravel_index(
 **Usage Pattern** (in splat-centric kernels, the AABB is computed inline):
 ```cuda
 // In rasterize_forward_splat_centric_kernel and rasterize_backward_splat_centric_kernel:
-// AABB computed from conic diagonal, using ceilf-based radius formula.
+// Thread 0 computes voxel AABB inline from the conic (inverse covariance) diagonal.
+// For 2D/3D: exact cofactor/determinant sigma extraction.
+// For higher DIM: diagonal approximation with 1.5x safety factor.
 // See kernels_core.cuh for the actual inline computation.
-
-// Legacy preprocess_kernel uses L_row_norms for AABB:
-float mu[DIM], L_row_norms[DIM];
-load_center<DIM>(centers, idx, mu);
-compute_L_row_norms<DIM>(&L[idx * DIM * DIM], L_row_norms);
-
-AABB<DIM> aabb = compute_splat_aabb<DIM>(
-    mu, L_row_norms, sharpness[idx], amps[idx],
-    truncate, intensity_floor, tile_size, tile_dims, shape
-);
-
-// Skip splats with empty AABB (outside volume or degenerate)
-if (aabb_is_empty<DIM>(aabb)) return;
 ```
 
 #### Large Splat Handling
 
-> **Note**: In the splat-centric architecture, large splats are handled
-> uniformly -- each block processes its splat's AABB regardless of size.
-> The "global splat" detection below is performed as a diagnostic side effect
-> in `rasterize_forward_splat_centric_kernel()` (thread 0 checks tile count
-> and sets `global_splat_flags`). It does NOT affect the rendering pipeline.
-
-**Problem**: A splat with very large covariance (large L) can touch **every tile** in the volume.
-In volumetric fitting, the optimization process often initializes splats with high variance.
-
-**Detection**:
-```cuda
-template<int DIM>
-__device__ __forceinline__ int count_tiles_in_aabb(const AABB<DIM>& aabb) {
-    int count = 1;
-    #pragma unroll
-    for (int d = 0; d < DIM; d++) {
-        count *= (aabb.hi[d] - aabb.lo[d] + 1);
-    }
-    return count;
-}
-
-// In rasterize_forward_splat_centric_kernel (thread 0 per block):
-int tiles_touched = count_tiles_in_aabb<DIM>(aabb);
-
-// Threshold: if splat touches > 10% of all tiles, flag as "global"
-constexpr int GLOBAL_SPLAT_THRESHOLD_PERCENT = 10;
-int threshold = (num_tiles * GLOBAL_SPLAT_THRESHOLD_PERCENT) / 100;
-if (tiles_touched > threshold) {
-    atomicAdd(&global_splat_count, 1);
-    global_splat_flags[idx] = 1;  // DO NOT bin this splat
-    return;  // Skip binning entirely for global splats
-}
-```
-
-**Splat-Centric Implementation**
-
-In the current architecture, global splat detection is a **side effect** of the forward kernel:
-- Thread 0 in each block checks the AABB tile count against `GLOBAL_SPLAT_THRESHOLD` (10%)
-- If exceeded, it sets `global_splat_flags[splat_idx] = true` and increments `global_splat_count`
-- After the kernel, `dispatch_forward_impl()` reads the count and compacts the IDs via `torch::nonzero()`
-- The `global_splat_ids` tensor is stored in `BinningState` for diagnostic purposes
-
-The splat-centric forward and backward kernels process all splats uniformly (including global
-ones), so no separate global splat kernel is needed in the current pipeline.
-
-The legacy `rasterize_global_forward_kernel()` and `rasterize_global_backward_kernel()` in
-`kernels_global.cuh` are retained for the fallback tile-based path.
-
-**Memory Overhead**: ~5 bytes per splat (`global_splat_flags` bool + counter).
-Negligible compared to the binning disaster it prevents.
+The splat-centric architecture handles all splats uniformly regardless of size.
+Each CUDA block processes one splat's full AABB, so large splats simply result
+in more voxel iterations per block — no special detection or separate kernel path
+is needed.
 
 **Alternative Strategies (NOT recommended as primary, but useful as fallbacks)**:
 
@@ -1257,8 +1007,6 @@ This is the main forward kernel. It replaces the entire tile-based pipeline
 3. All threads cooperatively iterate over voxels in the AABB
 4. For each voxel: compute Mahalanobis distance, shifted Gaussian intensity,
    and `atomicAdd` the contribution to the output volume
-5. As a side effect, thread 0 detects "global" splats (touching >10% of tiles)
-   and sets `global_splat_flags[splat_idx]`
 
 **Signature** (see `kernels_core.cuh`):
 ```cuda
@@ -1271,45 +1019,27 @@ __global__ void rasterize_forward_splat_centric_kernel(
     const int* __restrict__ shape,            // (DIM,)
     float truncate,
     float intensity_floor,
-    float* __restrict__ output,               // (prod(shape),) - must be pre-zeroed
-    bool* __restrict__ global_splat_flags,    // (N,) optional diagnostic output
-    int* __restrict__ global_splat_count,     // scalar atomic counter
-    int64_t num_tiles,
-    int tile_size_param,
-    int* __restrict__ tile_counts_out,        // optional diagnostic output
-    const int* __restrict__ tile_dims
+    float* __restrict__ output               // (prod(shape),) - must be pre-zeroed
 );
 ```
 
 **Shared memory usage**: `DIM + CONIC_SIZE + 1` floats for splat data broadcast,
-plus `DIM` ints each for AABB lo/hi, shape, and truncation. No batch loading,
+plus `DIM` ints each for AABB lo/hi, extent, and total voxel count. No batch loading,
 no `__syncthreads` barriers in the hot loop.
 
 **Key optimizations**:
 - **No tile binning**: Each block computes its own AABB directly from the conic
 - **`atomicAdd` scatter**: Contributions written directly to global output
-- **Global splat detection as side effect**: No separate preprocess kernel needed
 - **`__expf` fast math**: ~2 ULP error for ~15% speedup
 
 #### Dispatch: `dispatch_forward_impl<InputDType>()` (cuda_splatting.cu)
 
-The host-side entry point validates inputs, allocates the output buffer, creates
-minimal `BinningState` for API compatibility, and calls
+The host-side entry point validates inputs, allocates the output buffer, caches
+`shape_tensor` on device for backward reuse, and calls
 `launch_rasterize_forward_splat_centric()` via the `DIM_DISPATCH` macro.
 
 **Output buffer reuse**: If an `output_buffer` tensor is provided (pre-zeroed from
 a previous backward pass), it is reused to avoid the `output.zero_()` overhead.
-See `forward_impl()` in `cuda_splatting.cu`.
-
-#### Legacy tile-based forward (retained, not used)
-
-The following kernels are still compiled but not called in the default pipeline:
-- `preprocess_kernel()` in `kernels_core.cuh` -- AABB + tile counting
-- `bin_kernel()` in `kernels_core.cuh` -- splat-to-tile assignment (uses cached int AABBs, not InputDType)
-- `rasterize_forward_kernel()` in `kernels_core.cuh` -- tile-parallel forward with shared memory batch loading
-- `rasterize_global_forward_kernel()` in `kernels_global.cuh` -- pixel-parallel forward for global splats
-
-These are retained for potential future hybrid strategies and as reference implementations.
 
 ### 5.2 Splat-Centric Backward Kernel
 
@@ -1349,13 +1079,11 @@ __global__ void rasterize_backward_splat_centric_kernel(
 );
 ```
 
-**Key design advantages over the old tile-based backward**:
+**Key design properties**:
 - **Zero global atomics**: Each block owns its splat exclusively, so the final
   gradient write is a direct store (no `atomicAdd` contention)
-- **No tile binning dependency**: No need for `tile_offsets`, `tile_counts`, or
-  `tile_content` from the forward pass
-- **Handles all splats uniformly**: No separate "global splat backward" kernel;
-  large splats are processed the same way as small ones
+- **Handles all splats uniformly**: Large splats are processed the same way as
+  small ones — more voxels per block, but no special kernel path
 - **Block-local reduction**: Gradients accumulated in registers, reduced via
   warp shuffles (`warp_reduce_sum()` in `reduction_utils.cuh`), then cross-warp
   reduction in shared memory
@@ -1369,13 +1097,8 @@ __global__ void rasterize_backward_splat_centric_kernel(
 
 The host-side entry point allocates gradient buffers (always FP32), then calls
 `launch_rasterize_backward_splat_centric()` via the `DIM_DISPATCH` macro.
-Cached `shape_tensor` and `tile_dims_tensor` from the forward pass are reused
-to avoid redundant host-to-device copies.
-
-#### Legacy tile-based backward (retained, not used)
-
-- `rasterize_backward_kernel()` in `kernels_core.cuh` -- tile-parallel backward with shared memory gradient accumulators
-- `rasterize_global_backward_kernel()` in `kernels_global.cuh` -- pixel-parallel backward for global splats with warp-aggregated atomic adds
+The cached `shape_tensor` from the forward pass is reused to avoid a redundant
+host-to-device copy.
 
 ### 5.3 FP16 (Half Precision) Support
 
@@ -1394,19 +1117,14 @@ The Python `forward_wrapper()` in `bindings.cpp` accepts a `use_fp16` flag and
 handles the FP32-to-FP16 conversion of input tensors before calling the
 appropriate dispatch function.
 
-### 5.4 Template Instantiation and Batch Size Selection
+### 5.4 Template Instantiation
 
-Template instantiations for all DIM x InputDType x BATCH_SIZE combinations are
-in `cuda_splatting.cu`. The splat-centric kernels have no `BATCH_SIZE` template
-parameter (they process one splat per block).
+Template instantiations for all DIM x InputDType combinations are in
+`cuda_splatting.cu`. The splat-centric kernels have no `BATCH_SIZE` template
+parameter (they process one splat per block, 256 threads).
 
-The legacy tile-based rasterize kernels are instantiated for:
-- **Batch size 32**: All dimensions (2-8) -- minimum safe batch size
-- **Batch size 128**: Dimensions 2-6 (fits in 48KB shared memory)
-- **Batch size 256**: Dimensions 2-4 (fits in 48KB shared memory)
-
-DIM=7,8 with BATCH=128 and DIM>=5 with BATCH=256 exceed the 48KB shared memory
-limit and are intentionally not instantiated.
+Each kernel is instantiated for DIM=2..8 and InputDType={float, __half},
+giving 28 total instantiations (14 forward + 14 backward).
 
 ### 5.5 Shared Device Utility Functions
 
@@ -1415,7 +1133,7 @@ The kernels rely on utility functions organized into four headers:
 | Header | Functions | Purpose |
 |--------|-----------|---------|
 | `math_utils.cuh` | `conic_size<DIM>()`, `tri_index<DIM>()`, `mahalanobis_distance_sq<DIM>()`, `gaussian_intensity()`, `effective_truncate_sq()`, `compute_shift_params()` | Triangular indexing, distance, intensity |
-| `tile_utils.cuh` | `AABB<DIM>`, `compute_aabb_from_L_row_norms()`, `get_tile_info_2d()`, `get_tile_info_3d()` | Spatial binning, tile indexing |
+| `voxel_utils.cuh` | `voxel_to_linear<DIM>()` | Voxel coordinate conversion |
 | `reduction_utils.cuh` | `warp_reduce_sum()`, `warp_aggregated_atomic_add()`, `grad_intensity_wrt_dist_sq()`, `backward_pixel_splat_2d()`, `backward_pixel_splat_3d()` | Warp reduction, gradient helpers |
 | `dtype_traits.cuh` | `DTypeTraits<float>`, `DTypeTraits<__half>` | FP16 load/convert, vectorized access |
 
@@ -1443,812 +1161,64 @@ See `OPTIMIZATION_REPORT.md` for full benchmark results across all configuration
 ---
 
 _The old tile-based kernel descriptions (preprocess_nd, bin_nd, rasterize_fwd_nd,
-rasterize_bwd_nd, specialized 2D/3D kernels, etc.) have been removed from this
-spec. The actual kernel code in `kernels_core.cuh` retains all tile-based kernels
-for reference. See git history for the original Section 5 content._
+rasterize_bwd_nd, global splat kernels, etc.) have been removed from this spec
+and from the codebase. See git history for the original Section 5 content._
 
 
-## 6. Memory Optimization
+## 6. Memory Model
 
-### 6.1 Memory Layout (AoS vs SoA)
+### 6.1 Splat-Centric Memory Profile
 
-**Problem**: Default SoA layout causes non-coalesced memory access.
+The splat-centric architecture has a simple memory profile:
 
-**Solution**: Use AoS for frequently co-accessed attributes + shared memory batching.
+**Forward pass allocations:**
+- `output`: `prod(shape)` float32 — the rendered volume (pre-zeroed)
+- `shape_tensor`: `dim` int32 — cached on device for backward reuse
 
-```cpp
-// Structure-of-Arrays (SoA) - DEFAULT, non-optimal
-float* centers_x;  // [x0, x1, x2, ...]
-float* centers_y;  // [y0, y1, y2, ...]
-float* centers_z;  // [z0, z1, z2, ...]
-// Accessing center[i] requires 3 separate memory transactions
+No per-tile or per-splat intermediate buffers are allocated. The kernel
+writes directly to the output via `atomicAdd`.
 
-// Array-of-Structures (AoS) - OPTIMIZED
-struct SplatData {
-    float3 center;    // [x, y, z]
-    float amplitude;
-    float sharpness;
-};
-SplatData* splats;
-// Accessing splat[i] is a single coalesced transaction
-```
+**Backward pass allocations:**
+- `d_centers`: `(N, dim)` float32
+- `d_conic`: `(N, conic_size)` float32
+- `d_amps`: `(N,)` float32
 
-### 6.2 Shared Memory Strategy with Dynamic Batch Size
+Each block writes its single splat's gradients directly to global memory
+(no atomics needed — each block exclusively owns its splat index).
 
-For nD support, batch size must adapt to dimension to stay within shared memory limits.
+### 6.2 Shared Memory Usage
 
-```cpp
-// Per-splat shared memory usage depends on dimension:
-// - center:    DIM floats
-// - conic:     DIM*(DIM+1)/2 floats
-// - amplitude: 1 float
-// - sharpness: 1 float
-// Total: DIM + DIM*(DIM+1)/2 + 2 floats = (DIM² + 3*DIM + 4) / 2 floats
+**Forward kernel** per block:
+- `DIM` floats — splat center
+- `CONIC_SIZE` floats — packed conic (upper triangle of inverse covariance)
+- 1 float — amplitude
+- 1 float — truncation threshold squared
+- `3 * DIM` ints — AABB lo, hi, extent
+- 1 int — total voxels in AABB
 
-// Example memory per splat:
-// 2D: 2 + 3 + 2 = 7 floats  = 28 bytes
-// 3D: 3 + 6 + 2 = 11 floats = 44 bytes
-// 4D: 4 + 10 + 2 = 16 floats = 64 bytes
-// 5D: 5 + 15 + 2 = 22 floats = 88 bytes
-// 8D: 8 + 36 + 2 = 46 floats = 184 bytes
+Total: `(DIM + CONIC_SIZE + 2)` floats + `(3*DIM + 1)` ints, loaded by thread 0
+and broadcast via `__syncthreads()`.
 
-// Shared memory limit: 48KB = 49152 bytes
-// Reserve some for other uses: 40KB = 40960 bytes for splat data
+**Backward kernel** per block:
+Same splat data as forward, plus per-thread register accumulators for gradients
+(reduced within the block via warp shuffle and shared memory cross-warp reduction).
 
-// =============================================================================
-// FORWARD PASS BATCH SIZE
-// =============================================================================
-// Forward only needs to load splat data into shared memory
+### 6.3 Fast Math
 
-template<int DIM>
-constexpr int compute_batch_size_forward() {
-    constexpr int floats_per_splat = DIM + (DIM * (DIM + 1)) / 2 + 2;
-    constexpr int bytes_per_splat = floats_per_splat * sizeof(float);
-    constexpr int max_smem_bytes = 40 * 1024;  // 40KB budget
+The kernels use `--use_fast_math` (compiler flag) and `__expf()` intrinsics
+for the Gaussian intensity computation. This provides ~15% speedup with ~2 ULP
+error, which is acceptable for the fitting use case.
 
-    // Compute max batch size (round down to power of 2 for efficiency)
-    int max_batch = max_smem_bytes / bytes_per_splat;
+### 6.4 Output Buffer Reuse
 
-    // Round down to nearest power of 2
-    int batch = 1;
-    while (batch * 2 <= max_batch) batch *= 2;
+If an `output_buffer` tensor is provided to the forward pass (pre-zeroed from
+a previous backward pass), it is reused to skip the `output.zero_()` overhead.
+This saves ~0.5ms for large volumes (768³+).
 
-    // Clamp to reasonable range
-    return min(max(batch, 8), 256);
-}
-
-// =============================================================================
-// BACKWARD PASS BATCH SIZE - CRITICAL: ACCOUNTS FOR GRADIENT STORAGE
-// =============================================================================
-// Backward needs BOTH:
-// 1. Splat data (centers, conic, amp, sharpness) for recomputing intensity
-// 2. Gradient accumulators (d_centers, d_conic, d_amp, d_sharpness) per splat
-//
-// Total per splat = 2 × (DIM + CONIC_SIZE + 2) floats = 2 × forward storage!
-
-template<int DIM>
-constexpr int compute_batch_size_backward() {
-    constexpr int CONIC_SIZE = (DIM * (DIM + 1)) / 2;
-    constexpr int GRAD_SIZE = DIM + CONIC_SIZE + 2;  // centers + conic + amp + sharpness
-
-    // Backward needs: splat data + gradient accumulators
-    // Splat data: DIM + CONIC_SIZE + 2 floats (same as forward)
-    // Grad accum: DIM + CONIC_SIZE + 2 floats (parallel storage)
-    // Total: 2 × GRAD_SIZE floats per splat
-
-    constexpr int floats_per_splat_backward = 2 * GRAD_SIZE;
-    constexpr int bytes_per_splat = floats_per_splat_backward * sizeof(float);
-    constexpr int max_smem_bytes = 40 * 1024;  // 40KB budget
-
-    int max_batch = max_smem_bytes / bytes_per_splat;
-
-    // Round down to nearest power of 2
-    int batch = 1;
-    while (batch * 2 <= max_batch) batch *= 2;
-
-    // Backward typically uses smaller batches due to 2× memory requirement
-    return min(max(batch, 8), 128);
-}
-
-// Resulting batch sizes (FORWARD):
-// 2D: 256 splats (28 bytes each → 7168 bytes, well under limit)
-// 3D: 256 splats (44 bytes each → 11264 bytes)
-// 4D: 256 splats (64 bytes each → 16384 bytes)
-// 5D: 256 splats (88 bytes each → 22528 bytes)
-// 6D: 128 splats (108 bytes → 13824 bytes, rounded to power of 2)
-// 7D: 128 splats (128 bytes → 16384 bytes)
-// 8D: 128 splats (184 bytes → 23552 bytes)
-
-// Resulting batch sizes (BACKWARD) - smaller due to gradient storage:
-// 2D: 128 splats (56 bytes each → 7168 bytes)
-// 3D: 128 splats (88 bytes each → 11264 bytes)
-// 4D: 64 splats (128 bytes each → 8192 bytes)
-// 5D: 64 splats (176 bytes each → 11264 bytes)
-// 6D: 32 splats (216 bytes each → 6912 bytes)
-// 7D: 32 splats (256 bytes each → 8192 bytes)
-// 8D: 32 splats (368 bytes each → 11776 bytes)
-
-// IMPORTANT: Query device SMEM limit at runtime, don't assume 48KB!
-int get_max_smem_per_block() {
-    cudaDeviceProp props;
-    cudaGetDeviceProperties(&props, 0);
-    // Ampere+: up to 164KB configurable, but default is 48KB
-    // Use 80% of available to leave room for other uses
-    return static_cast<int>(props.sharedMemPerBlock * 0.8);
-}
-
-template<int DIM>
-int compute_batch_size_dynamic(int max_smem) {
-    constexpr int floats_per_splat = DIM + (DIM * (DIM + 1)) / 2 + 2;
-    constexpr int bytes_per_splat = floats_per_splat * sizeof(float);
-
-    int max_batch = max_smem / bytes_per_splat;
-
-    // Round down to power of 2
-    int batch = 1;
-    while (batch * 2 <= max_batch) batch *= 2;
-
-    return min(max(batch, 8), 256);
-}
-
-// ========================================
-// ALTERNATIVE IMPLEMENTATION: Struct-based with Padding
-// ========================================
-// The kernel code in Section 5.1 uses FLAT ARRAYS for simplicity.
-// This struct-based alternative provides bank conflict avoidance and is shown
-// here for reference. Use this approach if profiling shows bank conflicts as
-// a bottleneck (check with Nsight Compute's "Shared Memory Bank Conflicts" metric).
-
-// Bank conflicts occur when adjacent threads access different struct instances
-// at offsets that map to the same shared memory bank (32 banks, 4 bytes each).
-// Padding ensures struct size is a multiple of 128 bytes (32 banks × 4 bytes).
-
-template<int DIM>
-struct SplatSMem {
-    float center[DIM];
-    float conic[DIM * (DIM + 1) / 2];
-    float amplitude;
-    float sharpness;
-
-    // Padding to align struct to 32 floats (128 bytes) for bank conflict avoidance
-    // Total floats without padding: DIM + DIM*(DIM+1)/2 + 2
-    // 2D: 2 + 3 + 2 = 7  → pad to 8 or 32
-    // 3D: 3 + 6 + 2 = 11 → pad to 16 or 32
-    // 4D: 4 + 10 + 2 = 16 → pad to 16 or 32
-    // 5D: 5 + 15 + 2 = 22 → pad to 32
-    // 8D: 8 + 36 + 2 = 46 → pad to 48 or 64
-
-    static constexpr int BASE_SIZE = DIM + (DIM * (DIM + 1)) / 2 + 2;
-    static constexpr int PAD_TARGET = (BASE_SIZE <= 8) ? 8 :
-                                      (BASE_SIZE <= 16) ? 16 :
-                                      (BASE_SIZE <= 32) ? 32 :
-                                      (BASE_SIZE <= 48) ? 48 : 64;
-    static constexpr int PAD_SIZE = PAD_TARGET - BASE_SIZE;
-
-    float _padding[PAD_SIZE > 0 ? PAD_SIZE : 1];  // Minimum 1 to avoid zero-length array
-};
-
-template<int DIM>
-__global__ void rasterize_fwd_nd(...) {
-    constexpr int BATCH_SIZE = compute_batch_size<DIM>();
-
-    // Dynamic shared memory allocation
-    extern __shared__ char smem_raw[];
-    SplatSMem<DIM>* splats_smem = reinterpret_cast<SplatSMem<DIM>*>(smem_raw);
-
-    // Process splats in batches
-    for (int batch_start = 0; batch_start < count; batch_start += BATCH_SIZE) {
-        int batch_end = min(batch_start + BATCH_SIZE, count);
-        int batch_count = batch_end - batch_start;
-
-        // Cooperative batch load
-        for (int i = threadIdx.x; i < batch_count; i += blockDim.x) {
-            int splat_id = tile_content[start + batch_start + i];
-            load_splat_to_smem<DIM>(splat_id, splats_smem[i], ...);
-        }
-        __syncthreads();
-
-        // Process batch from shared memory
-        for (int i = 0; i < batch_count; i++) {
-            // ... compute Gaussian contribution ...
-        }
-        __syncthreads();
-    }
-}
-
-// Kernel launch with dynamic shared memory
-template<int DIM>
-void launch_rasterize_fwd(cudaStream_t stream, ...) {
-    constexpr int BATCH_SIZE = compute_batch_size<DIM>();
-    size_t smem_size = BATCH_SIZE * sizeof(SplatSMem<DIM>);
-
-    rasterize_fwd_nd<DIM><<<grid, block, smem_size, stream>>>(...);
-}
-```
-
-**IMPORTANT**: Failing to adapt batch size for high-D will cause shared memory overflow,
-resulting in kernel launch failure or incorrect results.
-
-### 6.3 powf() Optimization
-
-The `powf(x, p)` function is expensive (~20-50 cycles) and called frequently:
-- In AABB: `powf(truncate, 2.0f / s)` per splat
-- In rasterize: `powf(dist_sq, s * 0.5f)` per pixel-splat pair
-
-**Optimization Strategies**:
-
-1. **Precompute effective_truncate** in preprocessing kernel:
-   ```cuda
-   // In preprocess_nd, compute once per splat:
-   float effective_truncate = powf(truncate, 2.0f / fmaxf(sharpness[idx], 0.5f));
-   effective_truncate_sq_arr[idx] = effective_truncate * effective_truncate;
-
-   // In rasterize, just load the precomputed value
-   float effective_truncate_sq = effective_truncate_sq_arr[splat_id];
-   ```
-
-2. **Fast approximation** using exp/log (slightly less accurate):
-   ```cuda
-   // powf(x, p) = expf(p * logf(x))
-   // ~15 cycles vs ~25 cycles for powf on Ampere
-   __device__ __forceinline__ float fast_powf(float x, float p) {
-       return __expf(p * __logf(x));  // Intrinsics, ~10% faster
-   }
-   ```
-
-3. **Restrict sharpness to powers of 2** (if acceptable):
-   ```cuda
-   // For s=1,2,4,8: use repeated multiplication
-   // s=2: dist_sq (trivial)
-   // s=4: dist_sq * dist_sq
-   // s=1: sqrtf(dist_sq)
-   ```
-
-4. **Lookup table for common sharpness values**:
-   ```cuda
-   // If sharpness is quantized to N discrete values
-   __constant__ float truncate_powers[N];  // Precomputed powf(truncate, 2/s)
-
-   // In kernel:
-   int s_idx = __float2int_rn(sharpness[splat_id] * scale);
-   float eff_trunc = truncate_powers[s_idx];
-   ```
-
-**Recommendation**: Use strategy 1 (precompute) as it has zero runtime cost in the
-hot rasterization loop and maintains numerical accuracy.
-
-### 6.4 Memory Allocation Strategy
-
-**Persistent Allocation**: Allocate once, reuse across iterations.
-
-```cpp
-class CUDAWorkspace {
-    // Pre-allocated buffers sized for maximum expected workload
-    DeviceBuffer<int> tile_counts_;        // num_tiles
-    DeviceBuffer<int> tile_offsets_;       // num_tiles
-    DeviceBuffer<int> tile_content_;       // max_pairs (dynamic resize if exceeded)
-    DeviceBuffer<int> tile_write_heads_;   // num_tiles
-
-    // Gradient buffers (zeroed each iteration)
-    DeviceBuffer<float> d_centers_;        // N * DIM
-    DeviceBuffer<float> d_conic_;          // N * conic_size
-    DeviceBuffer<float> d_amps_;           // N
-    DeviceBuffer<float> d_sharpness_;      // N
-
-public:
-    void resize_if_needed(int N, int num_tiles, int max_pairs);
-    void zero_gradients(cudaStream_t stream);
-};
-```
-
-### 6.5 Global Memory Optimizations
-
-#### 6.5.1 Read-Only Data Path (`__ldg`)
-
-Use `__ldg()` intrinsic for read-only global memory accesses to leverage the texture
-cache path (L1 read-only cache), which can provide better bandwidth for scattered reads:
-
-```cuda
-// Instead of direct global reads:
-float center = centers[splat_id * DIM + d];
-
-// Use __ldg for read-only data:
-float center = __ldg(&centers[splat_id * DIM + d]);
-```
-
-**When to use `__ldg`**:
-- Read-only arrays: `centers`, `conic`, `amps`, `sharpness`, `tile_content`
-- Arrays marked with `const float* __restrict__`
-- Scattered access patterns (non-coalesced reads)
-
-**When NOT to use**:
-- Write destinations (`output`, gradient buffers)
-- Shared memory (already fast)
-- Already sequential/coalesced access patterns
-
-**Implementation in forward kernel**:
-
-```cuda
-template<int DIM>
-__device__ void load_splat_data_ldg(
-    const float* __restrict__ centers,
-    const float* __restrict__ conic,
-    const float* __restrict__ amps,
-    const float* __restrict__ sharpness,
-    int splat_id,
-    float* mu,       // output: center
-    float* C,        // output: conic
-    float& amp,      // output: amplitude
-    float& s         // output: sharpness
-) {
-    constexpr int CONIC_SIZE = (DIM * (DIM + 1)) / 2;
-
-    // Use __ldg for all read-only global accesses
-    #pragma unroll
-    for (int d = 0; d < DIM; d++) {
-        mu[d] = __ldg(&centers[splat_id * DIM + d]);
-    }
-
-    #pragma unroll
-    for (int c = 0; c < CONIC_SIZE; c++) {
-        C[c] = __ldg(&conic[splat_id * CONIC_SIZE + c]);
-    }
-
-    amp = __ldg(&amps[splat_id]);
-    s = __ldg(&sharpness[splat_id]);
-}
-```
-
-#### 6.5.2 Vectorized Memory Access
-
-For aligned data, use vectorized loads (`float2`, `float4`) to maximize memory
-bandwidth utilization. Each `float4` load fetches 16 bytes in a single transaction:
-
-```cuda
-// Vectorized center loading for 2D (DIM=2)
-__device__ void load_center_2d_vec(
-    const float* __restrict__ centers,
-    int splat_id,
-    float& cx, float& cy
-) {
-    // Assumes centers are float2-aligned
-    float2 center = __ldg(reinterpret_cast<const float2*>(&centers[splat_id * 2]));
-    cx = center.x;
-    cy = center.y;
-}
-
-// Vectorized center loading for 3D (DIM=3) - requires padding to float4
-__device__ void load_center_3d_vec(
-    const float* __restrict__ centers,  // Padded to (N, 4) with centers[i*4+3]=0
-    int splat_id,
-    float* mu
-) {
-    float4 center = __ldg(reinterpret_cast<const float4*>(&centers[splat_id * 4]));
-    mu[0] = center.x;
-    mu[1] = center.y;
-    mu[2] = center.z;
-    // center.w is padding (unused)
-}
-
-// Vectorized conic loading for 2D: 3 floats → pad to float4
-__device__ void load_conic_2d_vec(
-    const float* __restrict__ conic,  // Padded to (N, 4)
-    int splat_id,
-    float* C
-) {
-    float4 con = __ldg(reinterpret_cast<const float4*>(&conic[splat_id * 4]));
-    C[0] = con.x;  // c_00
-    C[1] = con.y;  // c_01
-    C[2] = con.z;  // c_11
-    // con.w is padding
-}
-
-// Vectorized conic loading for 3D: 6 floats → 2x float4 or pad to 8
-__device__ void load_conic_3d_vec(
-    const float* __restrict__ conic,  // Padded to (N, 8) with 2 padding floats
-    int splat_id,
-    float* C
-) {
-    float4 con0 = __ldg(reinterpret_cast<const float4*>(&conic[splat_id * 8]));
-    float4 con1 = __ldg(reinterpret_cast<const float4*>(&conic[splat_id * 8 + 4]));
-    C[0] = con0.x; C[1] = con0.y; C[2] = con0.z; C[3] = con0.w;
-    C[4] = con1.x; C[5] = con1.y;
-    // con1.z, con1.w are padding
-}
-```
-
-**Memory Layout Requirements for Vectorization**:
-
-| DIM | Centers Layout | Conic Layout | Padding Overhead |
-|-----|----------------|--------------|------------------|
-| 2D  | (N, 2) → float2 | (N, 3) → (N, 4) | +33% conic |
-| 3D  | (N, 3) → (N, 4) | (N, 6) → (N, 8) | +33% centers, +33% conic |
-| 4D  | (N, 4) → float4 | (N, 10) → (N, 12) | +20% conic |
-
-**Trade-off**: Vectorization increases memory footprint but can improve bandwidth
-utilization by 2-4× for scattered access patterns. Enable via compile flag:
-
-```cpp
-#ifdef USE_VECTORIZED_LOADS
-    load_center_3d_vec(centers_padded, splat_id, mu);
-#else
-    load_center_scalar(centers, splat_id, mu);
-#endif
-```
-
-#### 6.5.3 Precomputed Visibility Masks
-
-For iterative optimization where splat positions change slowly, precompute and
-cache tile visibility to skip unnecessary work:
-
-```cuda
-struct VisibilityCache {
-    // Bit mask: tile_visible[tile_idx * ((N + 31) / 32) + (splat_id / 32)]
-    // Bit (splat_id % 32) indicates if splat is visible from tile
-    uint32_t* tile_visible;
-
-    // Counts for each tile (redundant with tile_counts, but cached)
-    int* cached_counts;
-
-    // Frame counter for invalidation
-    int last_update_frame;
-};
-
-// Update visibility only when parameters change significantly
-__global__ void update_visibility_cache(
-    const float* __restrict__ centers,
-    const float* __restrict__ conic,
-    const int* shape,
-    float truncate,
-    int N,
-    int num_tiles,
-    uint32_t* tile_visible,
-    int* cached_counts
-) {
-    int tile_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tile_idx >= num_tiles) return;
-
-    // Compute tile bounds
-    float tile_min[MAX_DIM], tile_max[MAX_DIM];
-    compute_tile_bounds(tile_idx, shape, tile_min, tile_max);
-
-    // Check each splat
-    int count = 0;
-    for (int splat_id = 0; splat_id < N; splat_id++) {
-        bool visible = check_aabb_overlap(centers, conic, splat_id, tile_min, tile_max, truncate);
-        if (visible) {
-            // Set bit
-            int word_idx = tile_idx * ((N + 31) / 32) + (splat_id / 32);
-            int bit_idx = splat_id % 32;
-            atomicOr(&tile_visible[word_idx], 1u << bit_idx);
-            count++;
-        }
-    }
-    cached_counts[tile_idx] = count;
-}
-```
-
-**When visibility caching helps**:
-- Training with small learning rates (positions change <1% per iteration)
-- Inference with static scenes
-- Interactive editing with localized changes
-
-**When to invalidate**:
-- Large parameter updates (check center movement threshold)
-- User explicitly requests re-binning
-- Every N iterations as safety measure
-
-### 6.6 Modern CUDA 12 Features
-
-This section describes optional enhancements for CUDA 12.x and newer architectures.
-These are **not required** for the initial implementation but can provide significant
-performance benefits on modern hardware.
-
-#### 6.6.1 CUDA C++ Core Libraries (CCCL)
-
-CUDA 12 introduces unified CCCL headers. Prefer these over legacy includes:
-
-```cpp
-// Modern CCCL headers (CUDA 12+)
-#include <cuda/std/cstddef>
-#include <cuda/std/type_traits>
-#include <cuda/std/limits>
-#include <cub/cub.cuh>
-
-// Instead of legacy headers
-// #include <cstddef>  // host-only
-// #include <limits>   // host-only
-```
-
-**Key benefits**:
-- Consistent behavior between host and device
-- Better constexpr support
-- Improved compile times with modular headers
-
-**CUB device algorithms** (already used in Section 5.1):
-
-```cpp
-#include <cub/device/device_scan.cuh>
-#include <cub/device/device_reduce.cuh>
-
-// Prefix sum for tile_offsets (used in binning)
-cub::DeviceScan::ExclusiveSum(
-    d_temp_storage, temp_storage_bytes,
-    tile_counts, tile_offsets, num_tiles,
-    stream
-);
-```
-
-#### 6.6.2 Asynchronous Memory Operations
-
-For overlapping memory operations with computation:
-
-```cpp
-#include <cuda/barrier>
-#include <cuda/pipeline>
-
-// Modern async copy (CUDA 12+, CC 8.0+)
-template<int DIM>
-__device__ void async_load_splat_batch(
-    const float* __restrict__ global_centers,
-    const float* __restrict__ global_conic,
-    float* smem_centers,
-    float* smem_conic,
-    int batch_start,
-    int batch_size,
-    cuda::pipeline<cuda::thread_scope_block>& pipeline
-) {
-    constexpr int CONIC_SIZE = (DIM * (DIM + 1)) / 2;
-
-    // Initiate async copies
-    for (int i = threadIdx.x; i < batch_size; i += blockDim.x) {
-        int splat_id = batch_start + i;
-
-        // Async copy centers
-        cuda::memcpy_async(
-            &smem_centers[i * DIM],
-            &global_centers[splat_id * DIM],
-            sizeof(float) * DIM,
-            pipeline
-        );
-
-        // Async copy conic
-        cuda::memcpy_async(
-            &smem_conic[i * CONIC_SIZE],
-            &global_conic[splat_id * CONIC_SIZE],
-            sizeof(float) * CONIC_SIZE,
-            pipeline
-        );
-    }
-
-    // Wait for completion before use
-    pipeline.consumer_wait();
-}
-```
-
-**Pipeline for double-buffering**:
-
-```cuda
-template<int DIM>
-__global__ void rasterize_fwd_nd_pipelined(
-    const float* __restrict__ centers,
-    const float* __restrict__ conic,
-    // ... other params
-) {
-    // Double-buffered shared memory
-    __shared__ float smem_centers[2][BATCH_SIZE * DIM];
-    __shared__ float smem_conic[2][BATCH_SIZE * CONIC_SIZE];
-
-    cuda::pipeline<cuda::thread_scope_block> pipeline;
-    int buffer_idx = 0;
-
-    // Prefetch first batch
-    async_load_splat_batch<DIM>(
-        centers, conic,
-        smem_centers[buffer_idx], smem_conic[buffer_idx],
-        start, min(BATCH_SIZE, count),
-        pipeline
-    );
-    pipeline.consumer_wait();
-
-    for (int batch_start = 0; batch_start < count; batch_start += BATCH_SIZE) {
-        int next_buffer = 1 - buffer_idx;
-        int next_batch_start = batch_start + BATCH_SIZE;
-
-        // Start async load of next batch while processing current
-        if (next_batch_start < count) {
-            async_load_splat_batch<DIM>(
-                centers, conic,
-                smem_centers[next_buffer], smem_conic[next_buffer],
-                start + next_batch_start, min(BATCH_SIZE, count - next_batch_start),
-                pipeline
-            );
-        }
-
-        // Process current batch from smem_centers[buffer_idx], smem_conic[buffer_idx]
-        // ... (existing rasterization logic)
-
-        // Wait for next batch before swapping
-        if (next_batch_start < count) {
-            pipeline.consumer_wait();
-        }
-        buffer_idx = next_buffer;
-    }
-}
-```
-
-#### 6.6.3 Thread Block Clusters (Hopper, CC 9.0+)
-
-Thread Block Clusters enable distributed shared memory (DSMEM) across multiple
-SMs, allowing tiles to share data without going through global memory.
-
-**When useful for Gaussian splatting**:
-- Adjacent tiles often process overlapping splats
-- Large splats spanning many tiles can be processed collaboratively
-- Gradient accumulation can be distributed
-
-```cpp
-#include <cooperative_groups.h>
-#include <cooperative_groups/reduce.h>
-
-namespace cg = cooperative_groups;
-
-// Cluster configuration for 3D tiled rendering
-// 2×2×2 cluster = 8 thread blocks sharing DSMEM
-template<int DIM>
-__global__ __cluster_dims__(2, 2, 2)
-void rasterize_fwd_nd_clustered(
-    const float* __restrict__ centers,
-    const float* __restrict__ conic,
-    // ...
-) {
-    // Get cluster info
-    cg::cluster_group cluster = cg::this_cluster();
-    unsigned int cluster_rank = cluster.block_rank();
-    unsigned int cluster_size = cluster.num_blocks();
-
-    // Distributed shared memory (DSMEM)
-    extern __shared__ float smem[];
-
-    // Each block in cluster can access other blocks' shared memory
-    // via cluster.map_shared_rank(smem_ptr, block_rank)
-
-    // Cluster-wide synchronization
-    cluster.sync();
-
-    // Cluster-wide reduction for gradient accumulation
-    float local_grad = /* computed gradient */;
-    float cluster_grad = cg::reduce(cluster, local_grad, cg::plus<float>());
-}
-
-// Launch configuration with clusters
-void launch_clustered_kernel(cudaStream_t stream, int num_tiles) {
-    // Cluster size must divide grid
-    dim3 cluster_dim(2, 2, 2);  // 8 blocks per cluster
-    dim3 grid_dim((num_tiles_x + 1) / 2 * 2,
-                  (num_tiles_y + 1) / 2 * 2,
-                  (num_tiles_z + 1) / 2 * 2);
-
-    cudaLaunchConfig_t config;
-    config.gridDim = grid_dim;
-    config.blockDim = dim3(256, 1, 1);
-    config.dynamicSmemBytes = smem_size;
-    config.stream = stream;
-
-    cudaLaunchAttribute attrs[1];
-    attrs[0].id = cudaLaunchAttributeClusterDimension;
-    attrs[0].val.clusterDim = cluster_dim;
-    config.attrs = attrs;
-    config.numAttrs = 1;
-
-    cudaLaunchKernelEx(&config, rasterize_fwd_nd_clustered<DIM>, /* args */);
-}
-```
-
-**Note**: Cluster support requires:
-- CUDA 12.0+
-- Hopper architecture (CC 9.0+)
-- Kernel compiled with `-arch=sm_90`
-
-Provide fallback path for older architectures:
-
-```cpp
-#if __CUDA_ARCH__ >= 900
-    // Use clustered kernel
-    rasterize_fwd_nd_clustered<DIM><<<...>>>(...);
-#else
-    // Fallback to standard kernel
-    rasterize_fwd_nd<DIM><<<...>>>(...);
-#endif
-```
-
-#### 6.6.4 Tensor Memory Accelerator (TMA)
-
-TMA provides hardware-accelerated async copy between global and shared memory,
-particularly efficient for 2D/3D tiles:
-
-```cpp
-#include <cuda/ptx>
-
-// TMA descriptor for 2D tile copy (Hopper+)
-// Useful if splat data is laid out as 2D texture
-__device__ void tma_copy_2d_tile(
-    void* smem_ptr,
-    const CUtensorMap* tensor_map,
-    int tile_x, int tile_y
-) {
-#if __CUDA_ARCH__ >= 900
-    uint64_t smem_addr = (uint64_t)smem_ptr;
-    asm volatile (
-        "cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes"
-        " [%0], [%1, {%2, %3}];"
-        :
-        : "r"(smem_addr), "l"(tensor_map), "r"(tile_x), "r"(tile_y)
-        : "memory"
-    );
-#endif
-}
-```
-
-**When TMA helps**:
-- Tile-sized data prefetch (our use case is well-suited)
-- Structured data layouts matching tile dimensions
-- Bulk transfers without wasting threads on memory copies
-
-#### 6.6.5 Compile-Time Architecture Selection
-
-Support multiple architectures in a single binary:
-
-```cmake
-# CMakeLists.txt
-set(CMAKE_CUDA_ARCHITECTURES 70 75 80 86 89 90)
-
-# Generate PTX for forward compatibility
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_90,code=compute_90")
-```
-
-```cpp
-// Runtime architecture detection
-int get_sm_version() {
-    int device;
-    cudaGetDevice(&device);
-    cudaDeviceProp props;
-    cudaGetDeviceProperties(&props, device);
-    return props.major * 10 + props.minor;
-}
-
-// Dispatch to optimal kernel
-void dispatch_rasterize(/* args */) {
-    int sm = get_sm_version();
-
-    if (sm >= 90) {
-        // Hopper: Use clusters + TMA
-        rasterize_fwd_nd_clustered<DIM><<<...>>>(...);
-    } else if (sm >= 80) {
-        // Ampere: Use async copy
-        rasterize_fwd_nd_pipelined<DIM><<<...>>>(...);
-    } else {
-        // Volta/Turing: Standard kernel
-        rasterize_fwd_nd<DIM><<<...>>>(...);
-    }
-}
-```
-
-#### 6.6.6 Feature Summary by Architecture
-
-| Feature | CC 7.0 (Volta) | CC 8.0 (Ampere) | CC 9.0 (Hopper) |
-|---------|----------------|-----------------|-----------------|
-| Base kernel | ✓ | ✓ | ✓ |
-| `__ldg` | ✓ | ✓ | ✓ |
-| `cuda::pipeline` | ✗ | ✓ | ✓ |
-| `cuda::memcpy_async` | ✗ | ✓ | ✓ |
-| Thread Block Clusters | ✗ | ✗ | ✓ |
-| Distributed Shared Memory | ✗ | ✗ | ✓ |
-| TMA | ✗ | ✗ | ✓ |
-
-**Recommendation**: Implement base kernel first (CC 7.0+), then add async copy
-path (CC 8.0+), and optionally cluster path (CC 9.0+) for maximum performance
-on latest hardware.
+_The original Section 6 contained extensive memory optimization strategies for
+the tile-centric architecture (AoS layout, batch loading, persistent workspaces,
+CUB prefix sums). These have been removed along with the tile-centric kernels.
+See git history for the original content._
 
 ---
 

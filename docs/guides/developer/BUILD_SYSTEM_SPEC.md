@@ -488,13 +488,13 @@ All compiler output is in `build-cuda-logs/build_<JOB_ID>.out`. Common issues:
 
 ### Multi-architecture CUDA build
 
-The CUDA extension compiles for **all common GPU architectures** (sm_70 through sm_90)
+The CUDA extension compiles for **all common GPU architectures** (sm_75 through sm_90)
 plus PTX for forward compatibility with future GPUs. This ensures the `.so` works on any
 GPU in a heterogeneous cluster (e.g. A6000 sm_86 + H100/H200 sm_90).
 
 Override with `CUDA_ARCHS` environment variable:
 ```bash
-make build-cuda SLURM=1                     # Default: sm_70,75,80,86,89,90 + PTX
+make build-cuda SLURM=1                     # Default: sm_75,80,86,89,90 + PTX
 CUDA_ARCHS="86;90" make build-cuda SLURM=1  # Only sm_86 and sm_90 (faster compile)
 ```
 

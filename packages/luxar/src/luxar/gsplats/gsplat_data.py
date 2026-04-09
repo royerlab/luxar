@@ -25,17 +25,19 @@ def _merge_lod_colors(
         return None
     has_colors = [lod.colors is not None for lod in lods]
     if all(has_colors):
-        return np.concatenate([lod.colors for lod in lods], axis=0)
+        result: np.ndarray = np.concatenate([lod.colors for lod in lods], axis=0)
+        return result
     elif not any(has_colors):
         return None
     else:
-        parts = []
+        parts: list[np.ndarray] = []
         for lod in lods:
             if lod.colors is not None:
                 parts.append(lod.colors)
             else:
                 parts.append(np.ones((lod.n_splats, 3), dtype=np.float32))
-        return np.concatenate(parts, axis=0)
+        merged: np.ndarray = np.concatenate(parts, axis=0)
+        return merged
 
 
 class _SplatArrayMixin:

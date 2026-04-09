@@ -98,10 +98,11 @@ USAGE:
     python demo_gsplats_3d_organoid_dapi_nuclei.py [--recompute] [--no-serve] [--no-napari]
 
 Options:
-    --recompute: Force re-fitting from scratch (download + GPU fitting)
-    --no-serve:  Don't auto-launch viewer after scene creation
-    --no-napari: Skip napari visualization (useful for headless/CI)
-    --serve-only: Skip fitting, just serve existing scene
+    --recompute:      Force re-fitting from scratch (download + GPU fitting)
+    --no-serve:       Don't auto-launch viewer after scene creation
+    --no-napari:      Skip napari visualization (useful for headless/CI)
+    --serve-only:     Skip fitting, just serve existing scene
+    --show-roundtrip: Show matplotlib comparison of original vs reconstructed volume
 
 By default, precomputed GSplats are loaded from package data (Git LFS).
 Use --recompute to re-fit from scratch (requires network + GPU).
@@ -142,6 +143,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.utils.paths import get_demos_output_dir
 
@@ -171,6 +173,7 @@ NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
 NO_NAPARI = "--no-napari" in sys.argv
+SHOW_ROUNDTRIP = "--show-roundtrip" in sys.argv
 
 # Setup
 Arbol.max_depth = 3
@@ -385,6 +388,58 @@ Controls:
 
 
 # =============================================================================
+# Round-Trip Visualisation
+# =============================================================================
+
+
+def show_roundtrip_comparison(
+    volume: np.ndarray,
+    gsplats_data: GSplatData,
+) -> None:
+    """Show original vs round-trip reconstructed volume side by side."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        aprint("matplotlib is required for --show-roundtrip. Install with: pip install matplotlib")
+        return
+
+    with asection("Round-trip reconstruction comparison"):
+        with asection("Rendering reconstruction"):
+            recon = gsplats_data.render_to_volume(shape=volume.shape, device=DEVICE)
+            mse = float(np.mean((volume - recon) ** 2))
+            psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
+            aprint(f"  PSNR: {psnr:.2f} dB, MSE: {mse:.6g}")
+
+        mid_z = volume.shape[0] // 2
+        orig_slice = volume[mid_z]
+        recon_slice = recon[mid_z]
+        diff_slice = np.abs(orig_slice - recon_slice)
+
+        fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
+
+        axes[0].imshow(orig_slice, cmap="gray", vmin=0, vmax=1)
+        axes[0].set_title("Original (DAPI)")
+        axes[0].axis("off")
+
+        axes[1].imshow(recon_slice, cmap="gray", vmin=0, vmax=1)
+        axes[1].set_title(f"Reconstructed (PSNR {psnr:.1f} dB)")
+        axes[1].axis("off")
+
+        im = axes[2].imshow(diff_slice, cmap="inferno", vmin=0, vmax=0.3)
+        axes[2].set_title("|Difference|")
+        axes[2].axis("off")
+        fig.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04)
+
+        fig.suptitle(
+            f"Organoid DAPI — Round-Trip Comparison — z-slice {mid_z}  "
+            f"({len(gsplats_data.amplitudes):,} splats)",
+            fontsize=14,
+        )
+        plt.tight_layout()
+        plt.show()
+
+
+# =============================================================================
 # Napari Viewing
 # =============================================================================
 
@@ -501,6 +556,16 @@ def main():
         warn_if_no_cuda_gpu()
         volume = load_dapi_data()
         gsplats_data_original = fit_dapi_gsplats(volume)
+
+    # Optional round-trip visualisation (before centering/scaling transforms)
+    if SHOW_ROUNDTRIP:
+        if volume is not None:
+            show_roundtrip_comparison(volume, gsplats_data_original)
+        else:
+            aprint(
+                "Cannot show round-trip: original volume not available "
+                "(loaded from precomputed cache). Re-run with --recompute."
+            )
 
     # Apply transformations for web viewer
     with asection("Applying transformations for web viewer"):
