@@ -7,7 +7,7 @@
  * Sub-headers:
  * - dtype_traits.cuh: FP16 support and vectorized load helpers (DTypeTraits)
  * - math_utils.cuh: Triangular matrix indexing, Mahalanobis distance, Gaussian intensity
- * - tile_utils.cuh: AABB computation, tile indexing, grid optimization
+ * - voxel_utils.cuh: Voxel coordinate conversion
  * - reduction_utils.cuh: Warp-level reduction, gradient helpers, backward pass implementations
  */
 
@@ -60,8 +60,8 @@ constexpr int MAX_SPLATS_PER_BATCH = 256;
 // Mathematical utilities (triangular matrix, Mahalanobis distance, Gaussian intensity)
 #include "math_utils.cuh"
 
-// Tile-based spatial utilities (AABB, tile indexing, grid optimization)
-#include "tile_utils.cuh"
+// Voxel coordinate conversion utilities
+#include "voxel_utils.cuh"
 
 // Reduction and gradient utilities (warp reduction, backward pass helpers)
 #include "reduction_utils.cuh"

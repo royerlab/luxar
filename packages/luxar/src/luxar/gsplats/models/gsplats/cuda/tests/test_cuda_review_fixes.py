@@ -288,16 +288,10 @@ class TestGradCacheBufferOverflowGuard:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            result[2],  # tile_offsets
-            result[1],  # tile_counts
-            result[3],  # tile_content
-            result[4],  # global_splat_ids
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
-            shape_tensor_cached=result[5],
-            tile_dims_tensor_cached=result[6],
+            shape_tensor_cached=result[1],
         )
 
         # Should produce finite gradients (not crash or produce garbage)

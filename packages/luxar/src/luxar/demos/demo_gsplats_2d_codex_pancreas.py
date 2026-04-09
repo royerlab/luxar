@@ -71,6 +71,7 @@ Options:
     --recompute:        Force re-fitting from scratch
     --no-serve:         Generate scene without launching viewer
     --serve-only:       Just serve a previously generated scene
+    --show-roundtrip:   Show matplotlib comparison of original vs reconstructed images
     --target-size=N:    Downsample target for longest axis (default: 0 = full res)
     --tile-size=N:      Tile size in pixels for tiled fitting (default: 4096)
     --overlap=N:        Tile overlap in pixels (default: 512)
@@ -213,6 +214,7 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+SHOW_ROUNDTRIP = "--show-roundtrip" in sys.argv
 
 # Parse optional CLI overrides
 TARGET_SIZE = 0  # Default: full resolution
@@ -562,6 +564,82 @@ Controls:
 
 
 # =============================================================================
+# Round-Trip Visualisation
+# =============================================================================
+
+# Max channels to show in round-trip comparison (full set is 12, which is huge)
+_ROUNDTRIP_MAX_CHANNELS = 3
+
+
+def show_roundtrip_comparison(
+    tiff_dir: Path,
+    gsplats_list: list[GSplatData],
+) -> None:
+    """Show original vs round-trip reconstructed 2D images side by side.
+
+    Reloads a subset of channels from disk to avoid keeping all 12 in memory.
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        aprint("matplotlib is required for --show-roundtrip. Install with: pip install matplotlib")
+        return
+
+    n_show = min(_ROUNDTRIP_MAX_CHANNELS, len(gsplats_list))
+
+    with asection(f"Round-trip reconstruction comparison ({n_show}/{len(gsplats_list)} channels)"):
+        images = []
+        reconstructions = []
+        for i in range(n_show):
+            ch_config = CHANNELS[i]
+            gsplats = gsplats_list[i]
+
+            with asection(f"Ch{i}: {ch_config['name']}"):
+                image = load_channel(tiff_dir, ch_config)
+                recon = gsplats.render_to_volume(shape=image.shape, device=DEVICE)
+                images.append(image)
+                reconstructions.append(recon)
+
+                mse = float(np.mean((image - recon) ** 2))
+                psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
+                aprint(f"  PSNR: {psnr:.2f} dB, MSE: {mse:.6g}")
+
+        fig, axes = plt.subplots(
+            n_show, 3, figsize=(14, 4.5 * n_show), squeeze=False
+        )
+
+        for i in range(n_show):
+            image = images[i]
+            recon = reconstructions[i]
+            ch_config = CHANNELS[i]
+            diff = np.abs(image - recon)
+
+            mse = float(np.mean((image - recon) ** 2))
+            psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
+
+            axes[i, 0].imshow(image, cmap="gray", vmin=0, vmax=1)
+            axes[i, 0].set_title(f"Original — {ch_config['name']}")
+            axes[i, 0].axis("off")
+
+            axes[i, 1].imshow(recon, cmap="gray", vmin=0, vmax=1)
+            axes[i, 1].set_title(f"Reconstructed (PSNR {psnr:.1f} dB)")
+            axes[i, 1].axis("off")
+
+            im = axes[i, 2].imshow(diff, cmap="inferno", vmin=0, vmax=0.3)
+            axes[i, 2].set_title("|Difference|")
+            axes[i, 2].axis("off")
+            fig.colorbar(im, ax=axes[i, 2], fraction=0.046, pad=0.04)
+
+        fig.suptitle(
+            f"Round-Trip Comparison ({n_show} of {N_CHANNELS} channels)  "
+            f"({sum(len(g.amplitudes) for g in gsplats_list):,} total splats)",
+            fontsize=14,
+        )
+        plt.tight_layout()
+        plt.show()
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -603,6 +681,10 @@ def main():
     if len(gsplats_list) < N_CHANNELS:
         aprint(f"Error: Need {N_CHANNELS} channels, got {len(gsplats_list)}")
         return
+
+    # Optional round-trip visualisation
+    if SHOW_ROUNDTRIP:
+        show_roundtrip_comparison(tiff_dir, gsplats_list)
 
     # Create scene (centering and intensity scaling happen per-channel inside)
     scene_path = create_luxar_scene(gsplats_list, output_path)

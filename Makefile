@@ -1647,9 +1647,18 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 		TORCH_CUDA=$$(hatch run python -c "import torch; print(torch.version.cuda)" 2>/dev/null); \
 		echo "✅ PyTorch with CUDA $$TORCH_CUDA already installed"; \
 	else \
-		echo "📥 Installing PyTorch with CUDA 12.1 support..."; \
+		CUDA_VER=$$(nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+\.[0-9]+' || echo "12.8"); \
+		CUDA_MAJOR=$$(echo $$CUDA_VER | cut -d. -f1); \
+		CUDA_MINOR=$$(echo $$CUDA_VER | cut -d. -f2); \
+		CUDA_NUM=$$(( $$CUDA_MAJOR * 10 + $$CUDA_MINOR )); \
+		if [ $$CUDA_NUM -ge 128 ]; then CUDA_TAG="cu128"; \
+		elif [ $$CUDA_NUM -ge 124 ]; then CUDA_TAG="cu124"; \
+		elif [ $$CUDA_NUM -ge 121 ]; then CUDA_TAG="cu121"; \
+		elif [ $$CUDA_NUM -ge 118 ]; then CUDA_TAG="cu118"; \
+		else CUDA_TAG="cu118"; fi; \
+		echo "📥 Installing PyTorch with CUDA support (system CUDA $$CUDA_VER -> PyTorch index $$CUDA_TAG)..."; \
 		echo ""; \
-		hatch run pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121; \
+		hatch run pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/$$CUDA_TAG; \
 		echo ""; \
 		if hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
 			echo "✅ PyTorch with CUDA installed successfully"; \
@@ -1740,7 +1749,7 @@ check-cuda-deps:  ## Check CUDA development dependencies
 	@echo ""
 	@echo "=== 3. PyTorch with CUDA ==="
 	@hatch run python -c "import sys; import torch; print('✅ PyTorch:', torch.__version__); cuda_available = torch.cuda.is_available(); print('✅ PyTorch CUDA:', torch.version.cuda if cuda_available else 'not available'); (print('   GPU:', torch.cuda.get_device_name(0)) if cuda_available else None); (print('   Compute capability:', str(torch.cuda.get_device_capability()[0]) + '.' + str(torch.cuda.get_device_capability()[1])) if cuda_available else None)" 2>/dev/null || \
-	hatch run python -c "print('❌ PyTorch not installed'); print(''); print('   Install PyTorch with CUDA:'); print('     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu121')" 2>/dev/null || \
+	hatch run python -c "print('❌ PyTorch not installed'); print(''); print('   Install PyTorch with CUDA:'); print('     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu128')" 2>/dev/null || \
 	echo "❌ Could not check PyTorch (hatch environment issue)"
 	@echo ""
 	@echo "=== 4. Python Development Headers ==="

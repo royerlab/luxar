@@ -18,15 +18,10 @@
 /**
  * Forward pass wrapper for Python.
  *
- * Converts Python types to C++ types and calls the CUDA forward function.
- * Supports optional FP16 mode for reduced memory bandwidth.
- *
- * Returns a 7-tuple: (output, tile_counts, tile_offsets, tile_content,
- *                      global_splat_ids, shape_tensor, tile_dims_tensor)
- * The last two are cached device tensors for backward pass reuse.
+ * Returns a 2-tuple: (output, shape_tensor)
+ * The second is a cached device tensor for backward pass reuse.
  */
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
-           torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor>
 forward_wrapper(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
@@ -49,39 +44,23 @@ forward_wrapper(
         auto L_row_norms_fp16 = L_row_norms.dtype() == torch::kFloat16 ? L_row_norms : L_row_norms.to(torch::kFloat16);
 
         return forward_fp16(
-            centers_fp16,
-            conic_fp16,
-            amps_fp16,
-            L_row_norms_fp16,
-            shape,
-            (float)truncate,
-            (float)intensity_floor,
-            (int)tile_size,
-            (int)batch_size,
-            out_buf
+            centers_fp16, conic_fp16, amps_fp16, L_row_norms_fp16,
+            shape, (float)truncate, (float)intensity_floor,
+            (int)tile_size, (int)batch_size, out_buf
         );
     }
 
     return forward(
-        centers,
-        conic,
-        amps,
-        L_row_norms,
-        shape,
-        (float)truncate,
-        (float)intensity_floor,
-        (int)tile_size,
-        (int)batch_size,
-        out_buf
+        centers, conic, amps, L_row_norms,
+        shape, (float)truncate, (float)intensity_floor,
+        (int)tile_size, (int)batch_size, out_buf
     );
 }
 
 /**
  * Backward pass wrapper for Python.
  *
- * Supports optional FP16 mode matching the forward pass.
  * Gradients are always returned as FP32 for numerical stability.
- *
  * Returns a 3-tuple: (d_centers, d_conic, d_amps)
  */
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
@@ -90,22 +69,14 @@ backward_wrapper(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& tile_offsets,
-    const torch::Tensor& tile_counts,
-    const torch::Tensor& tile_content,
-    const torch::Tensor& global_splat_ids,
     const std::vector<int64_t>& shape,
     double truncate,
     double intensity_floor,
-    int64_t tile_size,
-    int64_t batch_size,
     bool use_fp16,
     const c10::optional<torch::Tensor>& shape_tensor_cached,
-    const c10::optional<torch::Tensor>& tile_dims_tensor_cached,
     const c10::optional<torch::Tensor>& output_to_zero
 ) {
     torch::Tensor shape_cached = shape_tensor_cached.value_or(torch::Tensor());
-    torch::Tensor tile_dims_cached = tile_dims_tensor_cached.value_or(torch::Tensor());
     torch::Tensor output_zero = output_to_zero.value_or(torch::Tensor());
 
     if (use_fp16) {
@@ -114,42 +85,16 @@ backward_wrapper(
         auto amps_fp16 = amps.dtype() == torch::kFloat16 ? amps : amps.to(torch::kFloat16);
 
         return backward_fp16(
-            grad_output,
-            centers_fp16,
-            conic_fp16,
-            amps_fp16,
-            tile_offsets,
-            tile_counts,
-            tile_content,
-            global_splat_ids,
-            shape,
-            (float)truncate,
-            (float)intensity_floor,
-            (int)tile_size,
-            (int)batch_size,
-            shape_cached,
-            tile_dims_cached,
-            output_zero
+            grad_output, centers_fp16, conic_fp16, amps_fp16,
+            shape, (float)truncate, (float)intensity_floor,
+            shape_cached, output_zero
         );
     }
 
     return backward(
-        grad_output,
-        centers,
-        conic,
-        amps,
-        tile_offsets,
-        tile_counts,
-        tile_content,
-        global_splat_ids,
-        shape,
-        (float)truncate,
-        (float)intensity_floor,
-        (int)tile_size,
-        (int)batch_size,
-        shape_cached,
-        tile_dims_cached,
-        output_zero
+        grad_output, centers, conic, amps,
+        shape, (float)truncate, (float)intensity_floor,
+        use_fp16, shape_cached, output_zero
     );
 }
 
@@ -163,13 +108,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
         This module provides GPU-accelerated forward and backward passes for
         rendering volumetric Gaussian splats. It supports 2D-8D volumes with
-        tile-based rasterization and optimized gradient computation.
-
-        Key Features:
-        - Tile-based spatial binning (no depth sorting needed)
-        - Warp-level gradient reduction
-        - Shared memory batch loading
-        - Standard Gaussian rendering (intensity = amplitude * exp(-0.5 * D^2))
+        splat-centric rasterization and optimized gradient computation.
 
         See SPECIFICATIONS.md for detailed algorithm descriptions.
     )doc";
@@ -190,7 +129,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                 (N,) float32 - Amplitudes
             L_row_norms : torch.Tensor
                 (N, d) float32 - Per-axis standard deviations from Cholesky row norms.
-                L_row_norms[i] = sqrt(sum_j L[i,j]^2) for exact AABB computation.
             shape : List[int]
                 Target volume shape (d elements)
             truncate : float
@@ -198,24 +136,17 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
             intensity_floor : float
                 Minimum intensity threshold for culling
             tile_size : int
-                Tile size for spatial binning
+                Tile size for spatial partitioning
             batch_size : int
-                Number of splats to process per batch in shared memory.
-                Must be 32, 128, or 256. Default: 128.
+                Unused (kept for API compatibility). Default: 128.
             use_fp16 : bool
-                If True, use FP16 precision for inputs to reduce memory bandwidth.
-                Default: False.
+                If True, use FP16 precision for inputs. Default: False.
 
             Returns
             -------
-            Tuple of 7 tensors:
+            Tuple of 2 tensors:
                 - output: (prod(shape),) float32 - Rendered volume (flattened)
-                - tile_counts: (num_tiles,) int32 - Splats per tile
-                - tile_offsets: (num_tiles,) int64 - Exclusive prefix sum
-                - tile_content: (total_pairs,) int32 - Splat IDs per tile
-                - global_splat_ids: (num_global,) int32 - Global splat IDs (for backward)
                 - shape_tensor: (d,) int32 - Volume shape on device (for backward reuse)
-                - tile_dims_tensor: (d,) int32 - Tile dims on device (for backward reuse)
         )doc",
         py::arg("centers"),
         py::arg("conic"),
@@ -246,29 +177,15 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                 (N, d*(d+1)/2) float32 - Packed conic (from forward)
             amps : torch.Tensor
                 (N,) float32 - Amplitudes (from forward)
-            tile_offsets : torch.Tensor
-                (num_tiles,) int64 - From forward pass
-            tile_counts : torch.Tensor
-                (num_tiles,) int32 - From forward pass
-            tile_content : torch.Tensor
-                (total_pairs,) int32 - From forward pass
-            global_splat_ids : torch.Tensor
-                (num_global,) int32 - Global splat IDs from forward pass
             shape : List[int]
                 Target volume shape
             truncate : float
                 Base truncation radius
             intensity_floor : float
                 Minimum intensity threshold
-            tile_size : int
-                Tile size
-            batch_size : int
-                Must match forward pass. Default: 128.
             use_fp16 : bool
                 Must match forward pass. Default: False.
             shape_tensor_cached : torch.Tensor, optional
-                Cached device tensor from forward pass.
-            tile_dims_tensor_cached : torch.Tensor, optional
                 Cached device tensor from forward pass.
 
             Returns
@@ -282,22 +199,15 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("centers"),
         py::arg("conic"),
         py::arg("amps"),
-        py::arg("tile_offsets"),
-        py::arg("tile_counts"),
-        py::arg("tile_content"),
-        py::arg("global_splat_ids"),
         py::arg("shape"),
         py::arg("truncate"),
         py::arg("intensity_floor"),
-        py::arg("tile_size"),
-        py::arg("batch_size") = 128,
         py::arg("use_fp16") = false,
         py::arg("shape_tensor_cached") = py::none(),
-        py::arg("tile_dims_tensor_cached") = py::none(),
         py::arg("output_to_zero") = py::none()
     );
 
     // Version info
-    m.attr("__version__") = "0.1.0";
+    m.attr("__version__") = "0.2.0";
     m.attr("__cuda_version__") = std::to_string(CUDART_VERSION);
 }

@@ -49,14 +49,11 @@ cuda/
 │   ├── cuda_splatting.h       # Public API: forward(), backward(), BinningState,
 │   │                          #   forward_fp16(), backward_fp16()
 │   ├── bindings.cpp           # pybind11 bindings: forward_wrapper(), backward_wrapper()
-│   ├── kernels_core.cuh       # Core kernels: preprocess, bin, rasterize fwd/bwd (tile-based),
-│   │                          #   rasterize_forward_splat_centric_kernel,
-│   │                          #   rasterize_backward_splat_centric_kernel
-│   ├── kernels_global.cuh     # Global splat kernels (pixel-parallel, for legacy path)
-│   ├── kernel_launchers.cuh   # Launch wrappers for all kernels (grid/block config)
+│   ├── kernels_core.cuh       # Core kernels: splat-centric forward and backward
+│   ├── kernel_launchers.cuh   # Launch wrappers for splat-centric kernels
 │   ├── utils.cuh              # Umbrella header (includes all sub-headers below)
 │   ├── math_utils.cuh         # Mahalanobis distance, Gaussian intensity, shift params
-│   ├── tile_utils.cuh         # AABB struct, tile indexing, grid optimization
+│   ├── voxel_utils.cuh        # Voxel coordinate conversion (voxel_to_linear)
 │   ├── reduction_utils.cuh    # Warp reduction, gradient helpers, 2D/3D backward specializations
 │   └── dtype_traits.cuh       # DTypeTraits for FP16/FP32 load abstraction
 ├── gsplat_model_cuda.py       # Python model class (GaussianSplatModelCUDA)

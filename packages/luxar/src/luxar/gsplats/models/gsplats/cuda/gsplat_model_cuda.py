@@ -193,15 +193,7 @@ class CUDASplatFunction(torch.autograd.Function):
                 use_fp16_kernel,
             )
             output = result[0]
-
-            # Save tile data for backward pass
-            tile_counts = result[1] if len(result) > 1 else None
-            tile_offsets = result[2] if len(result) > 2 else None
-            tile_content = result[3] if len(result) > 3 else None
-            global_splat_ids = result[4] if len(result) > 4 else None
-            # Cached device tensors from forward (avoids H2D copy in backward)
-            shape_tensor_cached = result[5] if len(result) > 5 else None
-            tile_dims_tensor_cached = result[6] if len(result) > 6 else None
+            shape_tensor_cached = result[1]
         else:
             # Fallback to PyTorch rendering
             from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
@@ -209,37 +201,20 @@ class CUDASplatFunction(torch.autograd.Function):
             output = render_gaussians(
                 shape, centers, Ls, amps, truncate, intensity_floor
             )
-            tile_counts = None
-            tile_offsets = None
-            tile_content = None
-            global_splat_ids = None
             shape_tensor_cached = None
-            tile_dims_tensor_cached = None
 
-        # Save for backward (keep FP16 tensors for backward pass if enabled)
+        # Save for backward
         ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps)
-        # NOTE: output buffer reuse (ctx.forward_output) was removed because it
-        # keeps the output tensor alive during backward, doubling memory for large
-        # volumes (768³ = 1.72GB). The 0.56ms output.zero_() savings wasn't worth
-        # the OOM risk. See git history for the implementation if needed.
-        # Cache FP16 tensors for backward to avoid re-conversion
         ctx.centers_kernel = centers_kernel
         ctx.conic_kernel = conic_kernel
         ctx.amps_kernel = amps_kernel
         ctx.shape = shape
         ctx.truncate = truncate
         ctx.intensity_floor = intensity_floor
-        ctx.tile_size = tile_size
-        ctx.batch_size = batch_size
-        ctx.tile_counts = tile_counts
-        ctx.tile_offsets = tile_offsets
-        ctx.tile_content = tile_content
-        ctx.global_splat_ids = global_splat_ids
         ctx.shape_tensor_cached = shape_tensor_cached
-        ctx.tile_dims_tensor_cached = tile_dims_tensor_cached
         ctx.d = d
-        ctx.use_fp16 = use_fp16_kernel  # Actual kernel mode
-        ctx.explicit_fp16 = use_fp16  # Original flag (FP16 params, unsafe for train)
+        ctx.use_fp16 = use_fp16_kernel
+        ctx.explicit_fp16 = use_fp16
 
         output_tensor: torch.Tensor = output
         return output_tensor
@@ -275,43 +250,26 @@ class CUDASplatFunction(torch.autograd.Function):
         shape = ctx.shape
         truncate = ctx.truncate
         intensity_floor = ctx.intensity_floor
-        tile_size = ctx.tile_size
-        batch_size = ctx.batch_size
         use_fp16 = ctx.use_fp16
 
-        if CUDA_BACKEND_AVAILABLE and ctx.tile_counts is not None:
-            # Use CUDA backward kernels with cached FP16 tensors if enabled
-            # This avoids re-conversion overhead in the backward pass
-            # Build optional kwargs for cached device tensors (backward compat)
+        if CUDA_BACKEND_AVAILABLE:
+            # Build optional kwargs for cached device tensors
             cached_kwargs = {}
             if ctx.shape_tensor_cached is not None:
                 cached_kwargs["shape_tensor_cached"] = ctx.shape_tensor_cached
-            if ctx.tile_dims_tensor_cached is not None:
-                cached_kwargs["tile_dims_tensor_cached"] = ctx.tile_dims_tensor_cached
-
-            output_to_zero = None  # Buffer reuse disabled (see note above)
 
             d_centers, d_conic, d_amps = cuda_splatting_backend.backward(
                 grad_output.contiguous(),
-                ctx.centers_kernel,  # Use cached FP16 or FP32 tensor
+                ctx.centers_kernel,
                 ctx.conic_kernel,
                 ctx.amps_kernel,
-                ctx.tile_offsets,
-                ctx.tile_counts,
-                ctx.tile_content,
-                ctx.global_splat_ids,
                 list(shape),
                 truncate,
                 intensity_floor,
-                tile_size,
-                batch_size,
                 use_fp16,
                 **cached_kwargs,
-                output_to_zero=output_to_zero,
             )
 
-            # Chain rule: d_conic → d_Ls via analytical formula (replaces autograd)
-            # This saves ~0.3ms by avoiding autograd graph construction + traversal.
             # Chain rule: d_conic → d_Ls via PyTorch autograd.
             # torch.compile fuses both forward and backward into optimized kernels,
             # giving ~0.3ms (vs ~1.6ms without compile). Autograd is correct by
@@ -359,9 +317,8 @@ class CUDASplatFunction(torch.autograd.Function):
             d_amps = grads[2] if grads[2] is not None else torch.zeros_like(amps)
 
         # Return grads for: centers, Ls, amps + non-diff params
-        # Order: centers, Ls, amps, shape, truncate, intensity_floor, tile_size, batch_size, use_fp16
-        # Gradients for: centers, Ls, amps, shape, truncate, intensity_floor,
-        #                tile_size, batch_size, use_fp16
+        # Order: centers, Ls, amps, shape, truncate, intensity_floor,
+        #        tile_size, batch_size, use_fp16
         return d_centers, d_Ls, d_amps, None, None, None, None, None, None
 
 
@@ -689,6 +646,17 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         # Get optimal batch size based on GPU capabilities
         batch_size = self._get_splat_batch_size(len(self._shape))
 
+        # NOTE: The C++ backend supports an optional output_buffer parameter for
+        # pre-allocated buffer reuse (see bindings.cpp and cuda_splatting.cu). We
+        # intentionally do NOT use it here. Benchmarking (2026-04-08) showed that
+        # PyTorch's autograd requires .clone() on the output when the buffer is
+        # reused (autograd detects in-place modification of a custom Function's
+        # output on the next forward). The clone overhead negates the allocation
+        # savings — the CUDA caching allocator already efficiently reuses freed
+        # memory blocks, making torch::zeros essentially free. Net result was a
+        # 5-17% regression across all configs. The C++ output_buffer + output_to_zero
+        # infrastructure remains for potential future use in inference-only mode
+        # (no autograd) or if PyTorch adds a way to opt out of this check.
         output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call]
             centers,
             Ls,
