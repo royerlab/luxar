@@ -89,21 +89,6 @@ def set_random_seed():
 
 
 # =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-
-def compute_L_row_norms(L: torch.Tensor) -> torch.Tensor:
-    """Compute per-axis std dev from Cholesky row norms for AABB computation.
-
-    L_row_norms[i] = sqrt(sum_j L[i,j]^2) = sqrt(Sigma[i,i])
-
-    This must be passed to cuda_splatting_backend.forward() as the 5th argument.
-    """
-    return torch.sqrt(torch.sum(L * L, dim=2))
-
-
-# =============================================================================
 # TEST DATA FIXTURES
 # =============================================================================
 
