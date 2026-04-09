@@ -77,10 +77,11 @@ USAGE:
     python demo_gsplats_3d_organoid_multichannel.py [--recompute] [--no-serve] [--no-napari]
 
 Options:
-    --recompute: Force re-fitting from scratch (download + GPU fitting)
-    --no-serve:  Don't auto-launch viewer after scene creation
-    --no-napari: Skip napari visualization (useful for headless/CI)
-    --serve-only: Skip fitting, just serve existing scene
+    --recompute:      Force re-fitting from scratch (download + GPU fitting)
+    --no-serve:       Don't auto-launch viewer after scene creation
+    --no-napari:      Skip napari visualization (useful for headless/CI)
+    --serve-only:     Skip fitting, just serve existing scene
+    --show-roundtrip: Show matplotlib comparison of original vs reconstructed volumes
 
 By default, precomputed GSplats are loaded from package data (Git LFS).
 Use --recompute to re-fit from scratch (requires network + GPU).
@@ -103,6 +104,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.utils.demos import (
     launch_viewer,
@@ -142,6 +144,7 @@ NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
 NO_NAPARI = "--no-napari" in sys.argv
+SHOW_ROUNDTRIP = "--show-roundtrip" in sys.argv
 
 # Setup
 Arbol.max_depth = 10
@@ -471,6 +474,73 @@ Controls:
 
 
 # =============================================================================
+# Round-Trip Visualisation
+# =============================================================================
+
+
+def show_roundtrip_comparison(
+    volumes: list[np.ndarray],
+    gsplats_list: list[GSplatData],
+) -> None:
+    """Show original vs round-trip reconstructed volumes side by side."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        aprint("matplotlib is required for --show-roundtrip. Install with: pip install matplotlib")
+        return
+
+    n_channels = len(volumes)
+
+    with asection("Round-trip reconstruction comparison"):
+        reconstructions = []
+        for i, (volume, gsplats, ch_config) in enumerate(
+            zip(volumes, gsplats_list, CHANNELS[:n_channels])
+        ):
+            with asection(f"Rendering Ch{i}: {ch_config['name']}"):
+                recon = gsplats.render_to_volume(shape=volume.shape, device=DEVICE)
+                reconstructions.append(recon)
+                mse = float(np.mean((volume - recon) ** 2))
+                psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
+                aprint(f"  PSNR: {psnr:.2f} dB, MSE: {mse:.6g}")
+
+        fig, axes = plt.subplots(
+            n_channels, 3, figsize=(14, 4.5 * n_channels), squeeze=False
+        )
+
+        for i, (volume, recon, ch_config) in enumerate(
+            zip(volumes, reconstructions, CHANNELS[:n_channels])
+        ):
+            mid_z = volume.shape[0] // 2
+            orig_slice = volume[mid_z]
+            recon_slice = recon[mid_z]
+            diff_slice = np.abs(orig_slice - recon_slice)
+
+            mse = float(np.mean((volume - recon) ** 2))
+            psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
+
+            axes[i, 0].imshow(orig_slice, cmap="gray", vmin=0, vmax=1)
+            axes[i, 0].set_title(f"Original — {ch_config['name']}")
+            axes[i, 0].axis("off")
+
+            axes[i, 1].imshow(recon_slice, cmap="gray", vmin=0, vmax=1)
+            axes[i, 1].set_title(f"Reconstructed (PSNR {psnr:.1f} dB)")
+            axes[i, 1].axis("off")
+
+            im = axes[i, 2].imshow(diff_slice, cmap="inferno", vmin=0, vmax=0.3)
+            axes[i, 2].set_title("|Difference|")
+            axes[i, 2].axis("off")
+            fig.colorbar(im, ax=axes[i, 2], fraction=0.046, pad=0.04)
+
+        fig.suptitle(
+            f"Round-Trip Comparison — z-slice {mid_z}  "
+            f"({sum(len(g.amplitudes) for g in gsplats_list):,} total splats)",
+            fontsize=14,
+        )
+        plt.tight_layout()
+        plt.show()
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -521,6 +591,16 @@ def main():
             return
 
         gsplats_list = fit_all_channels(volumes)
+
+    # Optional round-trip visualisation
+    if SHOW_ROUNDTRIP:
+        if volumes is not None:
+            show_roundtrip_comparison(volumes, gsplats_list)
+        else:
+            aprint(
+                "Cannot show round-trip: original volumes not available "
+                "(loaded from precomputed cache). Re-run with --recompute."
+            )
 
     # Create scene (centering + intensity scaling happen inside)
     scene_path = create_luxar_scene(gsplats_list, output_path)

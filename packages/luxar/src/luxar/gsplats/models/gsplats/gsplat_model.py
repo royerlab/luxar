@@ -17,7 +17,10 @@ import torch.nn.functional as F
 from arbol import aprint
 
 from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
-from luxar.gsplats.models.utils.inverse_softplus import stable_inverse_softplus
+from luxar.gsplats.models.utils.inverse_softplus import (
+    stable_inverse_softplus,
+    stable_inverse_softplus_torch,
+)
 
 
 class GaussianSplatModel(nn.Module):
@@ -69,6 +72,16 @@ class GaussianSplatModel(nn.Module):
         PyTorch device for computations.
     """
 
+    # Class-level type annotations for register_buffer attributes.
+    # These override mypy's default `Tensor | Module` inference from register_buffer().
+    sigma_min_diag: torch.Tensor
+    sigma_max_diag: torch.Tensor | None
+    voxel_size: torch.Tensor | None
+    _diag_idx: torch.Tensor
+    _tril_rows: torch.Tensor
+    _tril_cols: torch.Tensor
+    _shape_f32: torch.Tensor
+
     def __init__(
         self,
         shape: Sequence[int],
@@ -101,11 +114,16 @@ class GaussianSplatModel(nn.Module):
         aprint(f"GaussianSplatModel: using device '{device}'")
 
         # Store voxel_size for physical-space constraint enforcement
+        # register_buffer ensures it moves with .to() calls
         if voxel_size is not None:
-            self.voxel_size: Optional[torch.Tensor] = torch.tensor(
-                np.asarray(voxel_size, dtype=np.float32),
-                dtype=torch.float32,
-                device=device,
+            self.register_buffer(
+                "voxel_size",
+                torch.tensor(
+                    np.asarray(voxel_size, dtype=np.float32),
+                    dtype=torch.float32,
+                    device=device,
+                ),
+                persistent=False,
             )
         else:
             self.voxel_size = None
@@ -128,7 +146,6 @@ class GaussianSplatModel(nn.Module):
         self.max_eccentricity: float | None = max_eccentricity
 
         # ---- Cholesky factor parameterization: ensure positive definiteness ----
-        self.sigma_max_diag: torch.Tensor | None
         L0 = np.asarray(L0, dtype=np.float32)
         assert L0.shape == (N, d, d), (
             f"Expected L0 shape ({N}, {d}, {d}), got {L0.shape}"
@@ -151,8 +168,10 @@ class GaussianSplatModel(nn.Module):
         if sigma_max_diag is not None:
             sigma_max_diag_arr = np.asarray(sigma_max_diag, dtype=np.float32)
             assert sigma_max_diag_arr.shape == (d,), "sigma_max_diag must be length d"
-            self.sigma_max_diag = torch.tensor(
-                sigma_max_diag_arr, dtype=torch.float32, device=device
+            self.register_buffer(
+                "sigma_max_diag",
+                torch.tensor(sigma_max_diag_arr, dtype=torch.float32, device=device),
+                persistent=False,
             )
         else:
             self.sigma_max_diag = None
@@ -171,9 +190,11 @@ class GaussianSplatModel(nn.Module):
             torch.tensor(off0, dtype=torch.float32, device=device)
         )
 
-        # Store minimum diagonal constraint as non-trainable tensor
-        self.sigma_min_diag = torch.tensor(
-            sigma_min_diag, dtype=torch.float32, device=device
+        # Store minimum diagonal constraint as non-trainable buffer
+        self.register_buffer(
+            "sigma_min_diag",
+            torch.tensor(sigma_min_diag, dtype=torch.float32, device=device),
+            persistent=False,
         )
 
         # ---- Amplitude parameterization: softplus ensures non-negativity ----
@@ -183,12 +204,37 @@ class GaussianSplatModel(nn.Module):
             torch.tensor(raw_a0, dtype=torch.float32, device=device)
         )
 
+        # ---- Cached tensors for vectorized _build_L (avoids Python loops) ----
+        # register_buffer with persistent=False: moves with .to(), not in state_dict
+        self.register_buffer(
+            "_diag_idx", torch.arange(d, device=device), persistent=False
+        )
+        if d > 1:
+            tril = torch.tril_indices(d, d, offset=-1, device=device)
+            self.register_buffer("_tril_rows", tril[0], persistent=False)
+            self.register_buffer("_tril_cols", tril[1], persistent=False)
+        else:
+            self.register_buffer(
+                "_tril_rows", torch.empty(0, dtype=torch.long, device=device), persistent=False
+            )
+            self.register_buffer(
+                "_tril_cols", torch.empty(0, dtype=torch.long, device=device), persistent=False
+            )
+        # Cache shape as float32 tensor for current_params
+        self.register_buffer(
+            "_shape_f32",
+            torch.tensor(self.shape, dtype=torch.float32, device=device),
+            persistent=False,
+        )
+
     def _build_L(self) -> torch.Tensor:
         """
         Reconstruct lower-triangular Cholesky factors from learnable parameters.
 
         Combines constrained diagonal elements with free off-diagonal elements to
         form valid lower-triangular matrices for covariance parameterization.
+
+        Uses vectorized indexing (no Python loops) for performance.
 
         Returns
         -------
@@ -204,16 +250,12 @@ class GaussianSplatModel(nn.Module):
         if self.sigma_max_diag is not None:
             diag = torch.minimum(diag, self.sigma_max_diag)
 
-        # Apply eccentricity constraint if specified
-        # Two-part constraint for efficiency:
-        # 1. Constrain diagonal ratio: max(diag)/min(diag) <= sqrt(max_eccentricity)
-        # 2. Constrain off-diagonal magnitude relative to diagonal (see below)
-        # When voxel_size is set, eccentricity is evaluated in physical space:
-        # diag_phys = diag_vox * voxel_size, then ratio computed on physical diags.
+        # Apply eccentricity constraint on diagonal if specified
+        # Constrain diagonal ratio: max(diag)/min(diag) <= sqrt(max_eccentricity)
+        # When voxel_size is set, eccentricity is evaluated in physical space.
         if self.max_eccentricity is not None:
             max_ratio = float(self.max_eccentricity) ** 0.5
             if self.voxel_size is not None:
-                # Physical-space eccentricity
                 diag_phys = diag * self.voxel_size  # (N, d)
                 min_phys = diag_phys.min(dim=1, keepdim=True).values  # (N, 1)
                 max_allowed_vox = (min_phys * max_ratio) / self.voxel_size  # (N, d)
@@ -226,56 +268,45 @@ class GaussianSplatModel(nn.Module):
                 max_allowed_diag = min_diag * max_ratio
                 diag = torch.minimum(diag, max_allowed_diag)
 
-        # Initialize lower-triangular matrices (zeros above diagonal)
-        L = torch.zeros((N, d, d), dtype=torch.float32, device=diag.device)
+        # Build L matrix using vectorized indexing (no Python loops)
+        # Use diag.dtype to support both FP32 (training) and FP16 (inference)
+        L = torch.zeros((N, d, d), dtype=diag.dtype, device=diag.device)
 
-        # Fill diagonal elements (constrained to be positive)
-        for i in range(d):
-            L[:, i, i] = diag[:, i]
+        # Fill all diagonal elements at once
+        L[:, self._diag_idx, self._diag_idx] = diag
 
-        # Fill off-diagonal elements below diagonal
-        # Apply eccentricity constraint on off-diagonals to prevent elongation
-        k = 0
+        # Fill off-diagonal elements below diagonal (vectorized)
+        if self.L_off.shape[1] > 0:
+            off_val: torch.Tensor = self.L_off  # (N, num_off)
 
-        # Precompute gamma for eccentricity constraint if needed
-        # For 2D, the exact relationship between gamma and eccentricity E is:
-        #   E = ((2 + γ²) + γ√(γ² + 4)) / ((2 + γ²) - γ√(γ² + 4))
-        # Solving for γ gives: γ ≈ sqrt(E-1) / k where k varies with E
-        # k values: E=2 → k=2.87, E=4 → k=2.45, E→∞ → k=2.41
-        # Tight approximation: k = 2.4 + 0.5/sqrt(E-1)
-        # For d dimensions, scale by (d-1)^0.7 to account for multiple off-diagonals
-        # (power 0.7 empirically gives tightest bounds across dimensions)
-        off_gamma = None
-        if self.max_eccentricity is not None and d > 1:
-            E = float(self.max_eccentricity)
-            sqrt_E_minus_1 = (E - 1.0) ** 0.5
-            # k varies with E: tighter for small E, looser for large E
-            k_2d = 2.4 + 0.5 / sqrt_E_minus_1 if sqrt_E_minus_1 > 0 else 3.0
-            # Scale for dimension with power 0.7
-            off_gamma = sqrt_E_minus_1 / (k_2d * (d - 1) ** 0.7)
+            # Apply eccentricity constraint on off-diagonals to prevent elongation
+            # |L[i,j]| <= γ * min(L[i,i], L[j,j])
+            if self.max_eccentricity is not None and d > 1:
+                E = float(self.max_eccentricity)
+                sqrt_E_minus_1 = (E - 1.0) ** 0.5
+                k_2d = 2.4 + 0.5 / sqrt_E_minus_1 if sqrt_E_minus_1 > 0 else 3.0
+                off_gamma = sqrt_E_minus_1 / (k_2d * (d - 1) ** 0.7)
 
-        for i in range(d):
-            for j in range(i):  # j < i (below diagonal)
-                off_val = self.L_off[:, k]
+                rows = self._tril_rows  # (num_off,)
+                cols = self._tril_cols  # (num_off,)
 
-                # Constrain off-diagonal elements to limit eccentricity
-                # |L[i,j]| <= γ * min(L[i,i], L[j,j])
-                # With voxel_size: constraint evaluated in physical space
-                # |vs[i]*L[i,j]| <= γ * min(vs[i]*L[i,i], vs[j]*L[j,j])
-                if off_gamma is not None:
-                    if self.voxel_size is not None:
-                        min_phys_ij = torch.minimum(
-                            diag[:, i] * self.voxel_size[i],
-                            diag[:, j] * self.voxel_size[j],
-                        )
-                        max_off = off_gamma * min_phys_ij / self.voxel_size[i]
-                    else:
-                        min_diag_ij = torch.minimum(diag[:, i], diag[:, j])
-                        max_off = off_gamma * min_diag_ij
-                    off_val = torch.clamp(off_val, min=-max_off, max=max_off)
+                if self.voxel_size is not None:
+                    # Physical-space constraint:
+                    # |vs[i]*L[i,j]| <= γ * min(vs[i]*L[i,i], vs[j]*L[j,j])
+                    min_phys_ij = torch.minimum(
+                        diag[:, rows] * self.voxel_size[rows],
+                        diag[:, cols] * self.voxel_size[cols],
+                    )  # (N, num_off)
+                    max_off = off_gamma * min_phys_ij / self.voxel_size[rows]
+                else:
+                    min_diag_ij = torch.minimum(
+                        diag[:, rows], diag[:, cols]
+                    )  # (N, num_off)
+                    max_off = off_gamma * min_diag_ij
 
-                L[:, i, j] = off_val
-                k += 1
+                off_val = torch.clamp(off_val, min=-max_off, max=max_off)
+
+            L[:, self._tril_rows, self._tril_cols] = off_val
 
         return L
 
@@ -303,8 +334,7 @@ class GaussianSplatModel(nn.Module):
         u = torch.sigmoid(self.raw_mu)
 
         # Scale to actual voxel coordinates within image bounds
-        shape = torch.tensor(self.shape, dtype=torch.float32, device=u.device)
-        centers = u * torch.clamp(shape - 1.0, min=1.0)  # Maps [0,1] -> [0, shape-1]
+        centers = u * torch.clamp(self._shape_f32 - 1.0, min=1.0)  # Maps [0,1] -> [0, shape-1]
 
         # Reconstruct Cholesky factors and apply amplitude transformation
         L = self._build_L()
@@ -336,35 +366,21 @@ class GaussianSplatModel(nn.Module):
         )
         raw_mu = torch.log(u) - torch.log(1.0 - u)
 
-        # L -> diag/off raw (diag via inverse-softplus)
+        # L -> diag/off raw (diag via inverse-softplus, GPU-only)
         diag = torch.diagonal(Ls, dim1=1, dim2=2)  # (N,d)
         # Subtract sigma_min_diag before inverse softplus (matches _build_L: sigma_min + softplus(raw))
         eps = 1e-6
         diag_shifted = torch.clamp(diag - self.sigma_min_diag, min=eps)
-        L_diag_raw = torch.tensor(
-            stable_inverse_softplus(diag_shifted.detach().cpu().numpy()),
-            device=device,
-            dtype=torch.float32,
-        )
+        L_diag_raw = stable_inverse_softplus_torch(diag_shifted)
 
-        # Pack off-diagonals (row-major, below diag)
-        off_elems = []
-        for i in range(d):
-            for j in range(i):
-                off_elems.append(Ls[:, i, j])
-        L_off = (
-            torch.stack(off_elems, dim=1)
-            if len(off_elems)
-            else torch.zeros((centers.shape[0], 0), device=device)
-        )
+        # Pack off-diagonals (row-major, below diag) — vectorized
+        if d > 1:
+            L_off = Ls[:, self._tril_rows, self._tril_cols]  # (N, num_off)
+        else:
+            L_off = torch.zeros((centers.shape[0], 0), device=device)
 
-        # amps -> amp_raw
-        amps = torch.clamp(amps, min=0.0)
-        amp_raw = torch.tensor(
-            stable_inverse_softplus(amps.detach().cpu().numpy()),
-            device=device,
-            dtype=torch.float32,
-        )
+        # amps -> amp_raw (GPU-only, no CPU roundtrip)
+        amp_raw = stable_inverse_softplus_torch(torch.clamp(amps, min=1e-6))
 
         return raw_mu, L_diag_raw, L_off, amp_raw
 

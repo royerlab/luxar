@@ -44,7 +44,7 @@ CUDA Dispatch Layer  [cuda_splatting.cu]
 ## Requirements
 
 - CUDA 11.8+ (CUDA 12.x recommended)
-- NVIDIA GPU with Compute Capability 7.0+ (Volta, Turing, Ampere, Ada, Hopper)
+- NVIDIA GPU with Compute Capability 7.5+ (Turing, Ampere, Ada, Hopper, Blackwell)
 - PyTorch 2.0+ with CUDA support
 - CUB library (bundled with CUDA Toolkit)
 
@@ -67,7 +67,7 @@ make build-cuda
 
 ```bash
 # Ensure PyTorch with CUDA is installed in hatch environment (from project root)
-hatch run pip install torch --index-url https://download.pytorch.org/whl/cu121
+hatch run pip install torch --index-url https://download.pytorch.org/whl/cu128
 
 # Build the extension (from project root)
 hatch run python packages/luxar/src/luxar/gsplats/models/gsplats/cuda/build.py
@@ -151,14 +151,13 @@ hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/cuda/tests/test
 cuda/
 ├── src/
 │   ├── cuda_splatting.cu                  # Dispatch layer: entry points, template instantiations
-│   ├── cuda_splatting.h                   # Public API: forward(), backward(), BinningState
+│   ├── cuda_splatting.h                   # Public API: forward(), backward()
 │   ├── bindings.cpp                       # pybind11: forward_wrapper(), backward_wrapper()
-│   ├── kernels_core.cuh                   # Core kernels: splat-centric fwd/bwd, tile-based (legacy)
-│   ├── kernels_global.cuh                 # Global splat kernels (pixel-parallel, legacy path)
-│   ├── kernel_launchers.cuh               # Launch wrappers for all kernels
+│   ├── kernels_core.cuh                   # Core kernels: splat-centric forward and backward
+│   ├── kernel_launchers.cuh               # Launch wrappers for splat-centric kernels
 │   ├── utils.cuh                          # Umbrella header (includes all sub-headers)
 │   ├── math_utils.cuh                     # Mahalanobis distance, Gaussian intensity, shift params
-│   ├── tile_utils.cuh                     # AABB struct, tile indexing, grid optimization
+│   ├── voxel_utils.cuh                    # Voxel coordinate conversion utilities
 │   ├── reduction_utils.cuh                # Warp reduction, gradient helpers
 │   └── dtype_traits.cuh                   # DTypeTraits for FP16/FP32 load abstraction
 ├── gsplat_model_cuda.py                   # Python model class (GaussianSplatModelCUDA)

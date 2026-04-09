@@ -58,6 +58,7 @@ Options:
     --recompute:         Force re-fitting from scratch (ignore precomputed/cached results)
     --no-serve:          Generate scene without launching viewer
     --serve-only:        Just serve a previously generated scene
+    --show-roundtrip:    Show matplotlib comparison of original vs reconstructed volumes
     --max-timepoints=N:  Max number of timepoints to process (default: 64)
     --downsample-xy=N:   XY downsample factor (default: 2)
 
@@ -111,6 +112,7 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+SHOW_ROUNDTRIP = "--show-roundtrip" in sys.argv
 
 MAX_TIMEPOINTS = 64
 DOWNSAMPLE_XY = 2
@@ -562,6 +564,81 @@ Navigation:
 
 
 # =============================================================================
+# Round-Trip Visualisation
+# =============================================================================
+
+# Show first, middle, and last timepoints in the round-trip comparison
+_ROUNDTRIP_SAMPLE_COUNT = 3
+
+
+def show_roundtrip_comparison(
+    volumes: list[np.ndarray],
+    gsplats_list: list[GSplatData],
+) -> None:
+    """Show original vs round-trip reconstructed volumes for sample timepoints."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        aprint("matplotlib is required for --show-roundtrip. Install with: pip install matplotlib")
+        return
+
+    n_total = len(volumes)
+    # Pick first, middle, last
+    if n_total <= _ROUNDTRIP_SAMPLE_COUNT:
+        sample_indices = list(range(n_total))
+    else:
+        sample_indices = [0, n_total // 2, n_total - 1]
+    n_show = len(sample_indices)
+
+    with asection(f"Round-trip reconstruction comparison ({n_show} of {n_total} timepoints)"):
+        reconstructions = []
+        for t in sample_indices:
+            with asection(f"Rendering timepoint {t}"):
+                recon = gsplats_list[t].render_to_volume(
+                    shape=volumes[t].shape, device=DEVICE
+                )
+                reconstructions.append(recon)
+                mse = float(np.mean((volumes[t] - recon) ** 2))
+                psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
+                aprint(f"  T={t}: PSNR: {psnr:.2f} dB, MSE: {mse:.6g}")
+
+        fig, axes = plt.subplots(
+            n_show, 3, figsize=(14, 4.5 * n_show), squeeze=False
+        )
+
+        for row, (t, recon) in enumerate(zip(sample_indices, reconstructions)):
+            volume = volumes[t]
+            mid_z = volume.shape[0] // 2
+            orig_slice = volume[mid_z]
+            recon_slice = recon[mid_z]
+            diff_slice = np.abs(orig_slice - recon_slice)
+
+            mse = float(np.mean((volume - recon) ** 2))
+            psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
+
+            axes[row, 0].imshow(orig_slice, cmap="gray", vmin=0, vmax=1)
+            axes[row, 0].set_title(f"Original — T={t}")
+            axes[row, 0].axis("off")
+
+            axes[row, 1].imshow(recon_slice, cmap="gray", vmin=0, vmax=1)
+            axes[row, 1].set_title(f"Reconstructed (PSNR {psnr:.1f} dB)")
+            axes[row, 1].axis("off")
+
+            im = axes[row, 2].imshow(diff_slice, cmap="inferno", vmin=0, vmax=0.3)
+            axes[row, 2].set_title("|Difference|")
+            axes[row, 2].axis("off")
+            fig.colorbar(im, ax=axes[row, 2], fraction=0.046, pad=0.04)
+
+        fig.suptitle(
+            f"Zebrafish Time-Lapse — Round-Trip Comparison — z-slice {mid_z}  "
+            f"({sum(len(g.amplitudes) for g in gsplats_list):,} total splats)",
+            fontsize=14,
+        )
+        plt.tight_layout()
+        plt.show()
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -605,6 +682,8 @@ def main():
         recompute=RECOMPUTE,
     )
 
+    volumes = None
+
     if gsplats_list is None:
         # Recompute path: warn about GPU requirements, load data, fit
         warn_if_no_cuda_gpu()
@@ -618,6 +697,16 @@ def main():
         gsplats_list = fit_all_timepoints(
             volumes, voxel_size=voxel_size_zyx, time_indices=time_indices
         )
+
+    # Optional round-trip visualisation
+    if SHOW_ROUNDTRIP:
+        if volumes is not None:
+            show_roundtrip_comparison(volumes, gsplats_list)
+        else:
+            aprint(
+                "Cannot show round-trip: original volumes not available "
+                "(loaded from precomputed cache). Re-run with --recompute."
+            )
 
     # Report
     with asection("Fitting Summary"):
