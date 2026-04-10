@@ -217,7 +217,6 @@ def initialize_optimization(
                     max_eccentricity=config.max_eccentricity,
                     truncate=config.truncate,
                     intensity_floor=config.cuda_intensity_floor,
-                    tile_size=config.cuda_tile_size,  # None = auto-select
                     voxel_size=config.voxel_size,
                     device=config.device,
                 )

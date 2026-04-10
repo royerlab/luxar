@@ -15,7 +15,7 @@
    - 8.1 [Extension Structure](#81-extension-structure)
    - 8.2 [Backend Protocol (for Testability)](#82-backend-protocol-for-testability)
    - 8.3 [Python Model Class](#83-python-model-class)
-   - 8.4 [Multi-Stream Support (Phase 5)](#84-multi-stream-support-phase-5)
+   - 8.4 [Custom Autograd Function](#84-custom-autograd-function)
    - 8.5 [Custom Autograd Function](#85-custom-autograd-function)
    - 8.6 [Modern torch.library API (Recommended for PyTorch 2.0+)](#86-modern-torchlibrary-api-recommended-for-pytorch-20)
 9. [Performance Targets](#9-performance-targets)
@@ -156,202 +156,14 @@ def backward(
 
 ### 8.3 Python Model Class
 
-```python
-from typing import Optional, Sequence, Tuple
+See `gsplat_model_cuda.py` for the actual implementation. Key design points:
 
-import numpy as np
-import torch
-
-# Import CUDA backend (compiled from C++/CUDA)
-import cuda_splatting_backend
-
-# Import base model for parameter management
-from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
-
-
-def cholesky_to_conic(L: torch.Tensor) -> torch.Tensor:
-    """
-    Convert Cholesky factor L to packed conic (Σ⁻¹).
-
-    Args:
-        L: (N, DIM, DIM) lower triangular Cholesky factor
-
-    Returns:
-        conic: (N, DIM*(DIM+1)/2) packed upper-triangular inverse covariance
-    """
-    Sigma = torch.bmm(L, L.transpose(-1, -2))
-    Sigma_inv = torch.linalg.inv(Sigma)
-
-    N, DIM = L.shape[0], L.shape[1]
-    conic_size = (DIM * (DIM + 1)) // 2
-
-    # Extract and pack upper triangle
-    indices = torch.triu_indices(DIM, DIM)
-    conic = Sigma_inv[:, indices[0], indices[1]].reshape(N, conic_size)
-
-    return conic.contiguous()
-
-
-class GaussianSplatModelCUDA(torch.nn.Module):
-    """
-    CUDA-accelerated Gaussian splat model for NVIDIA GPUs.
-
-    Drop-in replacement for GaussianSplatModel with identical API.
-    """
-
-    def __init__(
-        self,
-        shape: Tuple[int, ...],
-        centers0: np.ndarray,
-        L0: np.ndarray,
-        amps0: np.ndarray,
-        sigma_min_diag: Sequence[float],
-        sigma_max_diag: Optional[Sequence[float]] = None,
-        truncate: float = 3.0,
-        intensity_floor: float = 1e-5,
-        tile_size: Optional[int] = None,  # Auto-select based on dimension
-        device: Optional[torch.device] = None,
-    ):
-        super().__init__()
-
-        # === Input Validation ===
-
-        # Device validation
-        device = device or torch.device("cuda")
-        if not str(device).startswith("cuda"):
-            raise ValueError(f"CUDA backend requires CUDA device (got {device})")
-
-        # Dimension validation
-        self.dim = len(shape)
-        if self.dim < 2 or self.dim > 8:
-            raise ValueError(f"CUDA backend supports 2D-8D (got {self.dim}D)")
-
-        # Shape validation
-        for i, s in enumerate(shape):
-            if s <= 0:
-                raise ValueError(f"shape[{i}] must be positive (got {s})")
-
-        # Input array shape validation
-        N = centers0.shape[0]
-        if centers0.shape != (N, self.dim):
-            raise ValueError(
-                f"centers0 shape mismatch: expected ({N}, {self.dim}), "
-                f"got {centers0.shape}"
-            )
-        if L0.shape != (N, self.dim, self.dim):
-            raise ValueError(
-                f"L0 shape mismatch: expected ({N}, {self.dim}, {self.dim}), "
-                f"got {L0.shape}"
-            )
-        if amps0.shape != (N,):
-            raise ValueError(
-                f"amps0 shape mismatch: expected ({N},), got {amps0.shape}"
-            )
-
-        # Dtype validation
-        if centers0.dtype != np.float32:
-            centers0 = centers0.astype(np.float32)
-        if L0.dtype != np.float32:
-            L0 = L0.astype(np.float32)
-        if amps0.dtype != np.float32:
-            amps0 = amps0.astype(np.float32)
-
-        # Finite value check
-        if not np.all(np.isfinite(centers0)):
-            raise ValueError("centers0 contains non-finite values (inf or nan)")
-        if not np.all(np.isfinite(L0)):
-            raise ValueError("L0 contains non-finite values (inf or nan)")
-        if not np.all(np.isfinite(amps0)):
-            raise ValueError("amps0 contains non-finite values (inf or nan)")
-
-        # Parameter range validation
-        if truncate <= 0:
-            raise ValueError(f"truncate must be positive (got {truncate})")
-        if intensity_floor < 0:
-            raise ValueError(f"intensity_floor must be non-negative (got {intensity_floor})")
-        if len(sigma_min_diag) != self.dim:
-            raise ValueError(
-                f"sigma_min_diag length mismatch: expected {self.dim}, "
-                f"got {len(sigma_min_diag)}"
-            )
-        if sigma_max_diag is not None and len(sigma_max_diag) != self.dim:
-            raise ValueError(
-                f"sigma_max_diag length mismatch: expected {self.dim}, "
-                f"got {len(sigma_max_diag)}"
-            )
-
-        # Tile size validation (if provided)
-        # NOTE: tile_size=32 is valid for 2D (32×32 = 1024 threads, max block size)
-        if tile_size is not None:
-            if tile_size not in (2, 4, 8, 16, 32):
-                raise ValueError(
-                    f"tile_size must be 2, 4, 8, 16, or 32 (got {tile_size})"
-                )
-            # Additional check: 32 only valid for 2D (32^3 = 32768 > max threads)
-            if tile_size == 32 and self.dim > 2:
-                raise ValueError(
-                    f"tile_size=32 only valid for 2D (got {self.dim}D)"
-                )
-
-        # === End Input Validation ===
-
-        # Create base model for parameter management
-        self._base = GaussianSplatModel(
-            shape=shape,
-            centers0=centers0,
-            L0=L0,
-            amps0=amps0,
-            sigma_min_diag=sigma_min_diag,
-            sigma_max_diag=sigma_max_diag,
-            truncate=truncate,
-            device=device or torch.device("cuda"),
-        )
-
-        # Auto-select tile size based on dimension
-        if tile_size is None:
-            tile_size = self._auto_tile_size()
-
-        self._shape = shape
-        self._truncate = truncate
-        self._intensity_floor = intensity_floor
-        self._tile_size = tile_size
-
-    def _auto_tile_size(self) -> int:
-        """
-        Select tile size automatically based on dimension.
-
-        Strategy: Maximize occupancy while staying within thread limits.
-        tile_size^dim <= 1024 (max threads per block)
-
-        Returns:
-            Tile size (power of 2)
-        """
-        # Map dimension to optimal tile size (see table in Section 4.3)
-        tile_size_map = {
-            2: 16,   # 16² = 256 threads (could use 32 for 1024)
-            3: 8,    # 8³ = 512 threads
-            4: 4,    # 4⁴ = 256 threads
-            5: 4,    # 4⁵ = 1024 threads (max)
-            6: 2,    # 2⁶ = 64 threads
-            7: 2,    # 2⁷ = 128 threads
-            8: 2,    # 2⁸ = 256 threads
-        }
-        return tile_size_map.get(self.dim, 2)
-
-    def forward(self) -> torch.Tensor:
-        centers, Ls, amps, sharpness = self._base.current_params()
-
-        return CUDASplatFunction.apply(
-            centers,
-            Ls,
-            amps,
-            sharpness,
-            self._shape,
-            self._truncate,
-            self._intensity_floor,
-            self._tile_size,
-        )
-```
+- `GaussianSplatModelCUDA` wraps `GaussianSplatModel` (base model for parameter management)
+- `CUDASplatFunction(torch.autograd.Function)` handles forward/backward dispatch
+- L -> conic conversion is done in PyTorch (with `torch.compile`) for autograd chain rule
+- CUDA kernels handle splat-centric rendering (forward) and gradient computation (backward)
+- FP16 support via `use_fp16` flag and `torch.autocast()` detection
+- Output buffer allocation uses `torch::zeros` on the C++ side (PyTorch caching allocator)
 
 ### 8.4 Custom Autograd Function
 
@@ -402,31 +214,18 @@ class CUDASplatFunction(torch.autograd.Function):
 ### 8.5 Usage with torch.compile
 
 ```python
-# Model using torch.library ops
-class GaussianSplatModelCUDA(torch.nn.Module):
-    def forward(self):
-        centers, Ls, amps, sharpness = self._base.current_params()
-        conic = cholesky_to_conic(Ls)
-
-        # Use the registered op
-        output, _, _, _ = torch.ops.luxar_cuda.gaussian_splat_forward(
-            centers, conic, amps, sharpness,
-            list(self._shape), self._truncate, self._intensity_floor, self._tile_size
-        )
-        return output.view(self._shape)
-
-
-# Compile the model for additional speedup
+# The L→conic conversion (cholesky_to_conic) is already compiled via
+# @torch.compile. The full model can also be compiled for additional speedup:
 model = GaussianSplatModelCUDA(...)
 compiled_model = torch.compile(model, mode="reduce-overhead")
 
 # Use normally - backward works automatically
 output = compiled_model()
 loss = (output - target).pow(2).mean()
-loss.backward()  # Uses registered backward
+loss.backward()
 ```
 
-#### 8.6.5 Benefits of torch.library vs torch.autograd.Function
+#### 8.6 Benefits of torch.library vs torch.autograd.Function
 
 | Feature | torch.autograd.Function | torch.library |
 |---------|------------------------|---------------|
@@ -581,15 +380,14 @@ Local Memory (LMEM), killing performance. **LMEM spills can cause 10× slowdown.
 
 ### 9.5 Memory Bandwidth Analysis
 
-**Forward Pass (per pixel)**:
+**Forward Pass (splat-centric, per block/splat)**:
 
 | Access | Size | Type | Notes |
 |--------|------|------|-------|
-| tile_content | 4B × splats_in_tile | Global | Sequential, cacheable |
-| centers | 4B × DIM | Global | Per-splat, cached in L2 |
-| conic | 4B × conic_size | Global | Per-splat, cached in L2 |
-| amps + sharpness | 8B | Global | Per-splat |
-| output (write) | 4B | Global | One write per pixel |
+| centers | 4B × DIM | Global → Shared | Loaded once per splat |
+| conic | 4B × conic_size | Global → Shared | Loaded once per splat |
+| amps | 4B | Global → Shared | Loaded once per splat |
+| output (write) | 4B per pixel | Global | atomicAdd per pixel in AABB |
 
 **Arithmetic Intensity** (FLOPs per byte):
 - Mahalanobis distance: ~DIM² FLOPs
@@ -629,15 +427,9 @@ ncu --metrics \
 #include <nvtx3/nvToolsExt.h>
 
 void forward_pass(...) {
-    nvtxRangePush("Preprocess");
-    preprocess_nd<<<...>>>(...);
+    nvtxRangePush("SplatForward");
+    launch_rasterize_forward_splat_centric<DIM>(...);
     nvtxRangePop();
-
-    nvtxRangePush("PrefixSum");
-    cub::DeviceScan::ExclusiveSum(...);
-    nvtxRangePop();
-
-    // ... etc
 }
 ```
 
@@ -645,28 +437,26 @@ void forward_pass(...) {
 
 ## 10. Implementation Phases
 
-### Phase 1: Core Infrastructure
+### Phase 1: Core Infrastructure (DONE)
 
 - [x] Setup CUDA extension build system (build.py using torch.utils.cpp_extension)
-- [ ] Implement pybind11 bindings skeleton
-- [ ] Create `GaussianSplatModelCUDA` Python class (with CPU fallback)
-- [ ] Implement `cholesky_to_conic` for 2D/3D (CUDA kernel)
-- [ ] Unit tests for L → conic conversion
+- [x] Implement pybind11 bindings (`bindings.cpp`)
+- [x] Create `GaussianSplatModelCUDA` Python class (with CPU fallback)
+- [x] Implement `cholesky_to_conic` for 2D/3D/nD (PyTorch + `torch.compile`)
+- [x] Unit tests for L → conic conversion
 
-### Phase 2: Forward Pass
+### Phase 2: Forward Pass (DONE)
 
-- [ ] Implement `preprocess_nd` kernel (3D first)
-- [ ] Implement CUB prefix sum integration
-- [ ] Implement `bin_nd` kernel
-- [ ] Implement `rasterize_fwd_nd` kernel (3D)
-- [ ] Numerical validation against PyTorch reference
-- [ ] Extend to 2D
-- [ ] Benchmark forward pass performance
+- [x] Implement splat-centric forward kernel (1 block per splat, atomicAdd)
+- [x] Support 2D-8D via DIM template parameter
+- [x] Numerical validation against PyTorch reference
+- [x] FP16 input support (FP32 output)
+- [x] Benchmark forward pass performance
 
-### Phase 3: Backward Pass
+### Phase 3: Backward Pass (IN PROGRESS)
 
-- [ ] Implement `rasterize_bwd_nd` kernel (3D)
-- [ ] Add warp-level reduction optimization
+- [x] Implement splat-centric backward kernel (1 block per splat, warp reduction)
+- [x] Zero-atomics gradient accumulation (warp → block → single global write)
 - [ ] Chain rule integration for L gradients (Python)
 - [ ] Gradient validation with `torch.autograd.gradcheck`
 - [ ] Extend to 2D
@@ -875,12 +665,10 @@ All CUDA API calls should be wrapped with error checking to fail fast on errors:
 
 // Usage example:
 void forward_pass(...) {
-    CUDA_CHECK(cudaMalloc(&ptr, size));
-
-    preprocess_nd<DIM><<<grid, block, 0, stream>>>(...);
+    launch_rasterize_forward_splat_centric<DIM>(
+        centers_ptr, conic_ptr, amps_ptr, N,
+        shape_ptr, truncate, intensity_floor, output_ptr, stream);
     CUDA_CHECK_LAST();
-
-    CUDA_CHECK(cudaStreamSynchronize(stream));
 }
 ```
 
@@ -938,8 +726,7 @@ General: D*(D+1)/2 elements
 | 3 | INVALID_DEVICE | Tensor not on CUDA device |
 | 4 | SIZE_MISMATCH | Tensor sizes don't match |
 | 5 | OUT_OF_MEMORY | Failed to allocate GPU memory |
-| 6 | TILE_OVERFLOW | Tile content buffer too small |
 
 ---
 
-*Last updated: 2026-01-10*
+*Last updated: 2026-04-08*
