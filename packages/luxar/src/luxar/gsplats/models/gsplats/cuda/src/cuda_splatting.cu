@@ -284,6 +284,7 @@ forward_impl(
 
     validate_inputs(centers, conic, amps, shape, expected_dtype);
 
+    int dim = (int)shape.size();
     auto device = centers.device();
 
     // Compute output size

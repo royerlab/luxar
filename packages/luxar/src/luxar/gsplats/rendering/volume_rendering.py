@@ -118,11 +118,6 @@ def render_to_volume_tensor(
             )
 
             if CUDA_BACKEND_AVAILABLE:
-                # Use safe defaults for tile/batch size.  These match the
-                # CUDAGSplatModel defaults for Ampere+ GPUs in 3D.
-                tile_size = 16
-                batch_size = 128 if ndim == 3 else 256
-
                 with torch.no_grad():
                     output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call]
                         centers_t,
@@ -131,8 +126,6 @@ def render_to_volume_tensor(
                         tuple(shape),
                         truncate,
                         intensity_floor,
-                        tile_size,
-                        batch_size,
                         False,  # use_fp16
                     )
                     if output.shape != tuple(shape):
