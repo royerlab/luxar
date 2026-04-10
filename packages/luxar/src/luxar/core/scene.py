@@ -485,6 +485,7 @@ class Scene(Group):
         transition_duration: float = 0.3,
         interactive: bool = False,
         blend_mode: str = "normal",
+        hover: bool = False,
     ) -> Overlay:
         """Add a text overlay to the scene.
 
@@ -492,7 +493,9 @@ class Scene(Group):
         If ``width`` is set, text wraps within that viewport-relative width.
 
         Args:
-            text: The text content to display.
+            text: The text content to display. When ``hover`` is True, this
+                is a template with ``{hover_label}``, ``{hover_node}``,
+                ``{hover_index}`` placeholders.
             position: (x, y) in normalized screen coords [0, 1]. Origin is top-left.
             name: Optional overlay name. Auto-generated if None.
             font_size: Font size as fraction of viewport height (default 0.025 = 2.5vh).
@@ -514,6 +517,8 @@ class Scene(Group):
             interactive: If True, overlay captures pointer events (default False).
             blend_mode: CSS mix-blend-mode (default 'normal'). Use 'difference'
                 for XOR-style text that inverts the background colors.
+            hover: If True, this overlay is a hover tooltip updated by GPU
+                picking. The ``text`` is treated as a template (default False).
 
         Returns:
             Overlay metadata object.
@@ -577,6 +582,8 @@ class Scene(Group):
             attrs["stroke_color"] = stroke_color
         if blend_mode != "normal":
             attrs["blend_mode"] = blend_mode
+        if hover:
+            attrs["hover"] = True
         if validated_range is not None:
             attrs["visible_range"] = validated_range
 
@@ -699,6 +706,8 @@ class Scene(Group):
         transition_duration: float = 0.3,
         interactive: bool = False,
         blend_mode: str = "normal",
+        hover: bool = False,
+        hover_image_size: Optional[Tuple[float, float]] = None,
     ) -> Overlay:
         """Add an HTML overlay to the scene.
 
@@ -708,7 +717,10 @@ class Scene(Group):
         Inline styles are allowed. Script tags and event handlers are stripped.
 
         Args:
-            html: HTML content string (will be sanitized).
+            html: HTML content string (will be sanitized). When ``hover``
+                is True, this is a template with ``{hover_label}``,
+                ``{hover_image_label}``, ``{hover_node}``,
+                ``{hover_index}`` placeholders.
             position: (x, y) in normalized screen coords [0, 1].
             name: Optional overlay name. Auto-generated if None.
             width: Optional width as fraction of viewport width.
@@ -720,6 +732,11 @@ class Scene(Group):
             interactive: If True, overlay captures pointer events (default False).
             blend_mode: CSS mix-blend-mode (default 'normal'). Use 'difference'
                 for XOR-style content that inverts the background colors.
+            hover: If True, this overlay is a hover tooltip updated by GPU
+                picking. The ``html`` is treated as a template (default False).
+            hover_image_size: Optional (width, height) as viewport fractions
+                for hover image thumbnails. Controls the size of
+                ``{hover_image_label}`` images.
 
         Returns:
             Overlay metadata object.
@@ -769,6 +786,10 @@ class Scene(Group):
             attrs["width"] = float(width)
         if blend_mode != "normal":
             attrs["blend_mode"] = blend_mode
+        if hover:
+            attrs["hover"] = True
+        if hover_image_size is not None:
+            attrs["hover_image_size"] = list(hover_image_size)
         if validated_range is not None:
             attrs["visible_range"] = validated_range
 
@@ -863,49 +884,60 @@ class Scene(Group):
         has_text = self._has_labels
         has_img = self._has_image_labels
 
-        if has_img and has_text:
-            overlay_type = "overlay_html"
-            template = (
-                '<div style="text-align:center">'
-                "{hover_image_label}"
-                '<div style="margin-top:4px">{hover_label}</div>'
-                "</div>"
+        # Inject separate overlays for image and text so they don't
+        # interfere (image loading would cause layout shift in a
+        # combined overlay). Both anchor top-right; demos can suppress
+        # auto-injection and define custom hover overlays for
+        # different layouts.
+        z = len(self._overlays)
+
+        if has_img:
+            aprint("  Auto-injecting hover image overlay")
+            self._write_overlay(
+                name="__hover_image",
+                overlay_type="overlay_html",
+                position=(0.98, 0.02),
+                attrs={
+                    "type": "overlay_html",
+                    "hover": True,
+                    "html": "{hover_image_label}",
+                    "position": [0.98, 0.02],
+                    "anchor": "top-right",
+                    "background": "rgba(0,0,0,0.7)",
+                    "padding": 0.008,
+                    "opacity": 1.0,
+                    "transition": "fade",
+                    "transition_duration": 0.15,
+                    "interactive": False,
+                    "z_index": z,
+                },
             )
-        elif has_img:
-            overlay_type = "overlay_html"
-            template = "{hover_image_label}"
-        else:
-            overlay_type = "overlay_text"
-            template = "{hover_label}"
+            z += 1
 
-        aprint(f"  Auto-injecting default hover overlay ({overlay_type})")
-        attrs: Dict[str, Any] = {
-            "type": overlay_type,
-            "hover": True,
-            "position": [0.5, 0.98],
-            "anchor": "bottom-center",
-            "font_size": 0.02,
-            "font": "sans",
-            "color": "white",
-            "background": "rgba(0,0,0,0.7)",
-            "padding": 0.008,
-            "opacity": 1.0,
-            "transition": "fade",
-            "transition_duration": 0.15,
-            "interactive": False,
-            "z_index": len(self._overlays),
-        }
-        if overlay_type == "overlay_html":
-            attrs["html"] = template
-        else:
-            attrs["text"] = template
-
-        self._write_overlay(
-            name="__hover_default",
-            overlay_type=overlay_type,
-            position=(0.5, 0.98),
-            attrs=attrs,
-        )
+        if has_text:
+            aprint("  Auto-injecting hover text overlay")
+            self._write_overlay(
+                name="__hover_text",
+                overlay_type="overlay_text",
+                position=(0.98, 0.02),
+                attrs={
+                    "type": "overlay_text",
+                    "hover": True,
+                    "text": "{hover_label}",
+                    "position": [0.98, 0.02],
+                    "anchor": "top-right",
+                    "font_size": 0.018,
+                    "font": "sans",
+                    "color": "white",
+                    "background": "rgba(0,0,0,0.7)",
+                    "padding": 0.008,
+                    "opacity": 1.0,
+                    "transition": "fade",
+                    "transition_duration": 0.15,
+                    "interactive": False,
+                    "z_index": z,
+                },
+            )
 
     # ---------------------------------------------------------- export
 

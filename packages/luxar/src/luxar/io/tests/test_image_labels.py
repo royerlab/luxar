@@ -299,13 +299,13 @@ class TestImageLabelAutoInject:
             scene.add_points("pts", positions, image_labels=blobs)
 
         store = zarr.open_group(path, mode="r")
-        hover_attrs = store["overlays"]["__hover_default"].attrs
+        hover_attrs = store["overlays"]["__hover_image"].attrs
         assert hover_attrs["type"] == "overlay_html"
         assert "{hover_image_label}" in hover_attrs["html"]
         assert hover_attrs["hover"] is True
 
     def test_auto_inject_combined_text_and_image(self, tmp_path):
-        """Both labels and image_labels → combined HTML template."""
+        """Both labels and image_labels → separate image and text hover overlays."""
         path = str(tmp_path / "test.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
         blobs = [_make_fake_jpeg(50)] * 3
@@ -316,10 +316,12 @@ class TestImageLabelAutoInject:
             scene.add_points("pts", positions, labels=labels, image_labels=blobs)
 
         store = zarr.open_group(path, mode="r")
-        hover_attrs = store["overlays"]["__hover_default"].attrs
-        assert hover_attrs["type"] == "overlay_html"
-        assert "{hover_image_label}" in hover_attrs["html"]
-        assert "{hover_label}" in hover_attrs["html"]
+        img_attrs = store["overlays"]["__hover_image"].attrs
+        assert img_attrs["type"] == "overlay_html"
+        assert "{hover_image_label}" in img_attrs["html"]
+        txt_attrs = store["overlays"]["__hover_text"].attrs
+        assert txt_attrs["type"] == "overlay_text"
+        assert txt_attrs["text"] == "{hover_label}"
 
     def test_auto_inject_text_only_unchanged(self, tmp_path):
         """Text labels only → overlay_text with {hover_label} (existing behavior)."""
@@ -332,7 +334,7 @@ class TestImageLabelAutoInject:
             scene.add_points("pts", positions, labels=labels)
 
         store = zarr.open_group(path, mode="r")
-        hover_attrs = store["overlays"]["__hover_default"].attrs
+        hover_attrs = store["overlays"]["__hover_text"].attrs
         assert hover_attrs["type"] == "overlay_text"
         assert hover_attrs["text"] == "{hover_label}"
 

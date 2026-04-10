@@ -606,6 +606,19 @@ export class LuxarApp {
     this.sceneManager.controls.addEventListener('change', dirtyHandler);
     window.addEventListener('resize', dirtyHandler);
 
+    // Suppress picking during orbit/pan/zoom — no expensive offscreen renders
+    // while the user is navigating, and fade out stale hover labels.
+    const controls = this.sceneManager.controls;
+    const interactionStart = () => {
+      this.pickingSystem?.suppress(true);
+      this.overlayManager?.updateHoverContent(null);
+    };
+    const interactionEnd = () => {
+      this.pickingSystem?.suppress(false);
+    };
+    controls.addEventListener('start', interactionStart);
+    controls.addEventListener('end', interactionEnd);
+
     // Update picking camera when perspective ↔ orthographic swap occurs
     const cameraChangedHandler = () => {
       this.pickingSystem?.setCamera(this.sceneManager.camera);
@@ -615,6 +628,8 @@ export class LuxarApp {
     this.pickingCleanup = () => {
       canvas.removeEventListener('mousemove', handler);
       this.sceneManager.controls.removeEventListener('change', dirtyHandler);
+      controls.removeEventListener('start', interactionStart);
+      controls.removeEventListener('end', interactionEnd);
       this.sceneManager.removeEventListener('camera-changed', cameraChangedHandler);
       window.removeEventListener('resize', dirtyHandler);
     };
