@@ -142,7 +142,6 @@ class FitConfig:
     # CUDA acceleration (with defaults)
     use_cuda: bool = True  # Enable custom CUDA kernels when available (NVIDIA GPUs)
     cuda_intensity_floor: float = 1e-5  # Early culling threshold for CUDA kernels
-    cuda_tile_size: Optional[int] = None  # Auto-select based on dimension if None
 
     # Seed generation (with defaults - must come after required fields)
     seed_method: str = (

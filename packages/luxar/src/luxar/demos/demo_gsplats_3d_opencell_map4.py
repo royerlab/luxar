@@ -102,8 +102,8 @@ CHANNELS = [
 ]
 
 # Progressive fitting parameters
-MAX_SPLATS = 30000
-MAX_SPLATS_PER_PASS = 10000
+MAX_SPLATS = 50000
+MAX_SPLATS_PER_PASS = 45000
 ITERS_PER_PASS = 5000
 PSNR_PATIENCE = 0.1
 
@@ -246,7 +246,7 @@ def fit_channel(
         device=DEVICE,
         verbose=True,
         enable_dynamic_ops=True,
-        cull_retention=1.0
+        cull_retention=0.99
     )
 
     n_splats = len(result.amplitudes)
