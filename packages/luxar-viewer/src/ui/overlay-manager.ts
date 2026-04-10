@@ -255,10 +255,21 @@ export class OverlayManager {
         text = text.replace(/\{hover_node\}/g, esc(result.nodeName));
         text = text.replace(/\{hover_index\}/g, String(result.elementIndex));
 
-        // Image label: render as <img> tag (only meaningful in HTML overlays)
-        const imgHtml = result.imageUrl
-          ? `<img src="${escapeHtml(result.imageUrl)}" style="max-width:200px;max-height:200px;display:block;border-radius:4px" />`
-          : '';
+        // Image label: render as <img> tag (only meaningful in HTML overlays).
+        // When hover_image_size is set, wrap in a fixed-size container so the
+        // image scales up to fill it. Otherwise use default max constraints.
+        const imgSize = hover.config.hover_image_size;
+        let imgHtml = '';
+        if (result.imageUrl) {
+          const src = escapeHtml(result.imageUrl);
+          if (imgSize) {
+            const w = `${imgSize[0] * 100}vw`;
+            const h = `${imgSize[1] * 100}vh`;
+            imgHtml = `<div style="width:${w};height:${h}"><img src="${src}" style="width:100%;height:100%;object-fit:contain;display:block;border-radius:4px" /></div>`;
+          } else {
+            imgHtml = `<img src="${src}" style="max-width:20vh;max-height:20vh;display:block;border-radius:4px" />`;
+          }
+        }
         text = text.replace(/\{hover_image_label\}/g, imgHtml);
 
         if (isHtml) {
@@ -401,10 +412,12 @@ export class OverlayManager {
     // Width (enables word wrapping)
     if (config.width) {
       el.style.width = `${config.width * 100}vw`;
-      el.style.whiteSpace = 'normal';
+      // Hover overlays use pre-line so \n in labels creates line breaks;
+      // regular overlays use normal for standard word wrapping.
+      el.style.whiteSpace = config.hover ? 'pre-line' : 'normal';
       el.style.wordWrap = 'break-word';
     } else {
-      el.style.whiteSpace = 'nowrap';
+      el.style.whiteSpace = config.hover ? 'pre-line' : 'nowrap';
     }
 
     // Text alignment

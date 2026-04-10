@@ -57,6 +57,9 @@ GDRIVE_LABELS_ID = "1fl0lcrZCOkdN2vwXQSHe7i1MC04RXCiE"  # label.csv
 
 # Image data: 10 numpy files with shape (batch, 100, 100, 4)
 # Channels: [target_protein_GFP, nucleus_Hoechst, nuclear_distance, nuclear_segmentation]
+# These contain ALL crops (train+val+test, ~1.1M total). The embeddings and
+# label.csv are the TEST split only (~114K). We use the paired Label_data CSVs
+# to identify which image rows correspond to the test split.
 GDRIVE_IMAGE_IDS = {
     "Image_data00.npy": "15_CHBPT-p5JG44acP6D2hKd8jAacZatp",
     "Image_data01.npy": "1m7Cj2OALiZTIiHpvb9zFPG_I3j1wRnzK",
@@ -68,6 +71,21 @@ GDRIVE_IMAGE_IDS = {
     "Image_data07.npy": "1ejcPdh-d5lB1OcZ6x8SJx61pEUioZvB2",
     "Image_data08.npy": "1DOicAkruNsU5F4DWLzO2QrV6xU4kuVxs",
     "Image_data09.npy": "1a5YyHeRSRdJStG3KnFe2vsNjrsit9zbf",
+}
+
+# Label data: 10 CSV files paired with Image_data (same row ordering).
+# Used to match test-split embeddings back to their image crops.
+GDRIVE_LABEL_DATA_IDS = {
+    "Label_data00.csv": "1CVwvXW2KhVBbTBixwRXIIiMhrlGDXz-4",
+    "Label_data01.csv": "1mTYe5icvWXNfY5wEsuQUhSwgtefBJpjg",
+    "Label_data02.csv": "1HckmktklyPo6qbakrwtERsCT34mRdn7l",
+    "Label_data03.csv": "1GBxDmWcl_o49i4lGujA8EgIn5G4htkBr",
+    "Label_data04.csv": "1G4FpJnlqB3ejmdw3SF2w3DFYt8Wnq0fT",
+    "Label_data05.csv": "1Vo1J09qP2TAoXwltCF84socz2TPV92JU",
+    "Label_data06.csv": "1d7gJjLTQhOw-e9KZJY9pr6KOCIN8NBvp",
+    "Label_data07.csv": "1kr5EF0RA3ZwSXmoaBFwFDVnrokh2EaOE",
+    "Label_data08.csv": "1mXyedmLezzty2LSSH3asw0LQeu-ie9mz",
+    "Label_data09.csv": "1Vdv1cD75VhvC3FdKTen-5rqLJnWpHvmb",
 }
 
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "luxar" / "cytoself"
@@ -381,41 +399,143 @@ def _encode_crops_to_webp(
     return blobs
 
 
+def _build_test_index_mapping(
+    cache_dir: Path,
+) -> tuple[dict[int, int], int]:
+    """Build a mapping from test-split row index to global image row index.
+
+    Downloads the 10 Label_data CSVs (small files), concatenates them to get
+    the full ~1.1M-row label table, then matches rows from label.csv (the
+    test split) to find their positions in the full dataset.
+
+    The Image_data .npy files are row-aligned with the Label_data CSVs, so
+    the resulting mapping tells us which image rows to encode.
+
+    Args:
+        cache_dir: Directory for caching downloads.
+
+    Returns:
+        Tuple of (mapping, n_test) where mapping is
+        test_row_index -> global_image_row_index and n_test is the total
+        number of test rows.
+    """
+    import pandas as pd
+
+    with asection("Building test-to-image index mapping"):
+        # Download the 10 Label_data CSVs (small: ~5-10 MB each)
+        label_dfs = []
+        for filename, file_id in GDRIVE_LABEL_DATA_IDS.items():
+            csv_path = cache_dir / filename
+            _download_from_google_drive(file_id, csv_path, expected_min_size=1_000_000)
+            df = pd.read_csv(csv_path, header=None)
+            label_dfs.append(df)
+
+        full_labels = pd.concat(label_dfs, ignore_index=True)
+        aprint(f"Full label table: {len(full_labels):,} rows x {full_labels.shape[1]} cols")
+
+        # Load test-split labels
+        test_labels = pd.read_csv(cache_dir / "label.csv")
+        aprint(f"Test labels: {len(test_labels):,} rows")
+
+        # The Label_data CSVs have no header; label.csv has headers.
+        # Assign column names from label.csv to the full table.
+        if full_labels.shape[1] == len(test_labels.columns):
+            full_labels.columns = test_labels.columns
+        else:
+            aprint(
+                f"  ⚠ Column count mismatch: full={full_labels.shape[1]}, "
+                f"test={len(test_labels.columns)}"
+            )
+            # Try using the first N columns that match
+            full_labels.columns = [
+                test_labels.columns[i] if i < len(test_labels.columns) else f"col_{i}"
+                for i in range(full_labels.shape[1])
+            ]
+
+        # Build composite key for matching. Use all available columns for
+        # an exact row match. Fill NaN consistently so keys match.
+        key_cols = list(test_labels.columns)
+        for col in key_cols:
+            full_labels[col] = full_labels[col].fillna("__NA__").astype(str)
+            test_labels[col] = test_labels[col].fillna("__NA__").astype(str)
+
+        full_labels["_key"] = full_labels[key_cols].agg("|".join, axis=1)
+        test_labels["_key"] = test_labels[key_cols].agg("|".join, axis=1)
+
+        # Build lookup: key -> list of global indices (duplicates possible)
+        from collections import defaultdict
+
+        key_to_global: dict[str, list[int]] = defaultdict(list)
+        for global_idx, key in enumerate(full_labels["_key"]):
+            key_to_global[key].append(global_idx)
+
+        # Match each test row. For duplicate keys, consume indices in order.
+        key_usage: dict[str, int] = defaultdict(int)
+        mapping: dict[int, int] = {}
+        unmatched = 0
+
+        for test_idx, key in enumerate(test_labels["_key"]):
+            candidates = key_to_global.get(key, [])
+            usage = key_usage[key]
+            if usage < len(candidates):
+                mapping[test_idx] = candidates[usage]
+                key_usage[key] = usage + 1
+            else:
+                unmatched += 1
+
+        aprint(
+            f"Matched {len(mapping):,}/{len(test_labels):,} test rows "
+            f"to image indices ({unmatched:,} unmatched)"
+        )
+
+    return mapping, len(test_labels)
+
+
 def load_cytoself_images(
     cache_dir: Path | None = None,
 ) -> list[bytes]:
     """Load and encode CytoSelf image crops as WebP thumbnails.
 
-    Downloads the 10 Image_data*.npy files from Google Drive (cached),
-    processes each file incrementally (download → encode → discard raw),
-    keeping memory usage low.
+    Downloads the 10 Label_data CSVs to identify which of the ~1.1M image
+    crops correspond to the 114K test-split embeddings, then downloads and
+    encodes only the matched crops from the Image_data .npy files.
 
     Args:
         cache_dir: Directory for caching downloads and encoded thumbnails.
 
     Returns:
-        List of WebP-encoded bytes, one per crop (aligned with embeddings).
+        List of WebP-encoded bytes aligned with label.csv / embeddings.
     """
     if cache_dir is None:
         cache_dir = DEFAULT_CACHE_DIR
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check for cached encoded thumbnails
-    thumbnails_cache = cache_dir / "image_labels_webp.npz"
+    # Check for cached encoded thumbnails (test-aligned)
+    thumbnails_cache = cache_dir / "image_labels_test_webp.npz"
     if thumbnails_cache.exists():
         with asection("Loading cached image thumbnails"):
             data = np.load(thumbnails_cache, allow_pickle=True)
             blobs = list(data["blobs"])
-            aprint(f"Loaded {len(blobs):,} cached thumbnails")
+            aprint(f"Loaded {len(blobs):,} cached thumbnails (test-aligned)")
             return [bytes(b) for b in blobs]
 
-    # Process each file incrementally: download → load → encode → free
-    all_blobs: list[bytes] = []
-    with asection("Downloading and encoding CytoSelf image data"):
+    # Step 1: Build index mapping (test row -> global image row)
+    mapping, n_test = _build_test_index_mapping(cache_dir)
+
+    # Invert: global_index -> list of test_indices (for per-file processing)
+    global_to_test: dict[int, list[int]] = {}
+    for test_idx, global_idx in mapping.items():
+        global_to_test.setdefault(global_idx, []).append(test_idx)
+
+    # Step 2: Process Image_data files, encoding only matched crops
+    result_blobs: list[bytes | None] = [None] * n_test
+    global_offset = 0
+    matched_count = 0
+
+    with asection("Downloading and encoding matched image crops"):
         for i, (filename, file_id) in enumerate(GDRIVE_IMAGE_IDS.items()):
             img_path = cache_dir / filename
 
-            # Each .npy file is ~500MB-1.5GB; use 400MB as minimum
             _download_from_google_drive(
                 file_id, img_path, expected_min_size=400_000_000
             )
@@ -424,35 +544,79 @@ def load_cytoself_images(
                 try:
                     arr = np.load(img_path)
                 except Exception:
-                    # File may be partially downloaded — delete and retry
                     aprint("  ⚠ Corrupt file detected, re-downloading...")
                     img_path.unlink(missing_ok=True)
                     _download_from_google_drive(
                         file_id, img_path, expected_min_size=400_000_000
                     )
                     arr = np.load(img_path)
+
+                n_crops = arr.shape[0]
                 aprint(f"Shape: {arr.shape}, dtype: {arr.dtype}")
 
-                blobs = _encode_crops_to_webp(arr)
-                aprint(f"Encoded {len(blobs):,} crops")
-                all_blobs.extend(blobs)
+                # Find which local indices in this file are needed
+                local_indices = []
+                local_to_test_map: list[tuple[int, int]] = []
+                for local_idx in range(n_crops):
+                    global_idx = global_offset + local_idx
+                    if global_idx in global_to_test:
+                        local_indices.append(local_idx)
+                        for test_idx in global_to_test[global_idx]:
+                            local_to_test_map.append((local_idx, test_idx))
 
-                # Free raw array memory before loading next file
+                if local_indices:
+                    # Extract and encode only the needed crops
+                    unique_local = sorted(set(local_indices))
+                    subset = arr[unique_local]
+                    encoded = _encode_crops_to_webp(subset)
+
+                    # Map encoded blobs back to test indices
+                    local_to_encoded = {
+                        li: ei for ei, li in enumerate(unique_local)
+                    }
+                    for local_idx, test_idx in local_to_test_map:
+                        encoded_idx = local_to_encoded[local_idx]
+                        result_blobs[test_idx] = encoded[encoded_idx]
+                        matched_count += 1
+
+                    aprint(
+                        f"Encoded {len(unique_local):,} matched crops "
+                        f"(of {n_crops:,} total)"
+                    )
+                else:
+                    aprint(f"No matched crops in this file ({n_crops:,} total)")
+
+                global_offset += n_crops
                 del arr
 
-        avg_size = sum(len(b) for b in all_blobs) / len(all_blobs)
-        total_mb = sum(len(b) for b in all_blobs) / (1024 * 1024)
-        aprint(
-            f"Total: {len(all_blobs):,} thumbnails, "
-            f"avg {avg_size:.0f} bytes/image, {total_mb:.1f} MB total"
+        aprint(f"Total matched: {matched_count:,}/{n_test:,}")
+
+    # Fill any unmatched slots with a 1x1 transparent placeholder
+    import io
+
+    from PIL import Image as PILImage
+
+    placeholder = io.BytesIO()
+    PILImage.new("RGB", (1, 1), (0, 0, 0)).save(placeholder, format="webp")
+    placeholder_bytes = placeholder.getvalue()
+    n_filled = 0
+    for idx in range(n_test):
+        if result_blobs[idx] is None:
+            result_blobs[idx] = placeholder_bytes
+            n_filled += 1
+    if n_filled:
+        aprint(f"  Filled {n_filled:,} unmatched slots with placeholder")
+
+    final_blobs: list[bytes] = [b for b in result_blobs if b is not None]
+
+    # Cache the test-aligned thumbnails
+    with asection("Caching test-aligned thumbnails"):
+        np.savez(
+            thumbnails_cache, blobs=np.array(final_blobs, dtype=object)
         )
+        aprint(f"Cached {len(final_blobs):,} thumbnails to {thumbnails_cache}")
 
-    # Cache encoded thumbnails for fast subsequent loads
-    with asection("Caching encoded thumbnails"):
-        np.savez(thumbnails_cache, blobs=np.array(all_blobs, dtype=object))
-        aprint(f"Cached to {thumbnails_cache}")
-
-    return all_blobs
+    return final_blobs
 
 
 # =============================================================================
@@ -555,15 +719,23 @@ def create_cytoself_scene(
                         cats = category_maps.get(attr_name, [])
                         name = str(cats[code]) if code < len(cats) else str(code)
                         parts.append(name)
-                    per_cell_labels.append(" | ".join(parts))
+                    per_cell_labels.append("\n".join(parts))
             labels = (
                 per_cell_labels * len(available_attrs) if per_cell_labels else None
             )
 
-            # Image labels: replicate per attribute view (same as text labels)
+            # Image labels: replicate per attribute view (same as text labels).
+            # Only use if count matches embeddings — the image .npy files may
+            # contain more crops than the embedding/label rows.
             all_image_labels = None
             if image_labels is not None:
-                all_image_labels = image_labels * len(available_attrs)
+                if len(image_labels) == n_points:
+                    all_image_labels = image_labels * len(available_attrs)
+                else:
+                    aprint(
+                        f"  ⚠ Skipping image labels: count mismatch "
+                        f"({len(image_labels):,} images vs {n_points:,} embeddings)"
+                    )
 
             scene.add_points(
                 "Images",
@@ -617,6 +789,37 @@ def create_cytoself_scene(
                             transition="fade",
                             transition_duration=0.2,
                         )
+
+            # Custom hover overlays: image top-right, text to its left
+            # (two lines via \n separator in labels). Defining these
+            # suppresses the auto-injected default hover overlay.
+            if all_image_labels is not None:
+                scene.add_html(
+                    "{hover_image_label}",
+                    position=(0.98, 0.02),
+                    anchor="top-right",
+                    opacity=1.0,
+                    transition="fade",
+                    transition_duration=0.15,
+                    hover=True,
+                    hover_image_size=(0.15, 0.20),
+                )
+            if labels is not None:
+                scene.add_text(
+                    "{hover_label}",
+                    position=(0.82, 0.02),
+                    anchor="top-right",
+                    font_size=0.018,
+                    color="white",
+                    width=0.12,
+                    text_align="right",
+                    background="rgba(0,0,0,0.7)",
+                    padding=0.008,
+                    opacity=1.0,
+                    transition="fade",
+                    transition_duration=0.15,
+                    hover=True,
+                )
 
             scene.add_text(
                 f"{n_points:,} images \u2022 OpenCell \u2022 3D UMAP \u2022 Kobayashi et al., Nat Methods 2022",
