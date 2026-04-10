@@ -78,6 +78,9 @@ export class PickingSystem {
   // Throttle clean-buffer picks to max ~60Hz (one per rAF)
   private _lastPickTime = 0;
 
+  /** When true, picking is suppressed (e.g. during orbit/pan/zoom). */
+  private _suppressed = false;
+
   /** Optional post-processing reference for lens distortion correction. */
   private postProcessing: PostProcessingManager | null = null;
 
@@ -152,6 +155,15 @@ export class PickingSystem {
     this._canvasRect = null; // Invalidate cached rect (may have resized)
   }
 
+  /** Suppress or resume picking (e.g. during orbit/pan/zoom interactions). */
+  suppress(value: boolean): void {
+    this._suppressed = value;
+    if (value && this.debounceTimer !== null) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+  }
+
   /**
    * Handle mouse move: pick immediately from cache, debounce re-renders.
    *
@@ -161,6 +173,8 @@ export class PickingSystem {
    * orbit/pan/zoom — the render only fires once the mouse settles.
    */
   onMouseMove(event: MouseEvent): void {
+    if (this._suppressed) return;
+
     // Cache getBoundingClientRect to avoid forced reflow on every mousemove
     if (!this._canvasRect) {
       this._canvasRect = this.renderer.domElement.getBoundingClientRect();
