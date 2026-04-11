@@ -285,7 +285,6 @@ def initialize_optimization(
         scheduler_type=config.scheduler_type,
         patience=config.patience,
         factor=config.lr_reduction_factor,
-        n_iters=config.n_iters,
     )
 
     return ModelComponents(
