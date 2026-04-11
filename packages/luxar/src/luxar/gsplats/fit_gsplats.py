@@ -94,7 +94,10 @@ class GaussianSplatFitter:
 
         # Dynamic operations configuration
         self.enable_dynamic_ops = enable_dynamic_ops
-        self.dynamic_config = dynamic_config or DynamicOpsConfig()
+        self.dynamic_config = dynamic_config or DynamicOpsConfig(
+            k_max_residuals=40,
+            max_relocations_per_step=64,
+        )
 
     def fit(
         self,
