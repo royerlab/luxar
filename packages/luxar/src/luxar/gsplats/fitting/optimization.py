@@ -211,20 +211,8 @@ def run_optimization_loop(
     _is_plateau_scheduler = (
         scheduler is not None and "Plateau" in type(scheduler).__name__
     )
-
-    # LR warmup: ramp from 10% to 100% over first 50 iters to avoid early
-    # instability when splats are far from optimal. Store base LRs once.
-    _WARMUP_ITERS = min(50, config.n_iters // 4)  # cap at 25% of total
-    _base_lrs = [pg["lr"] for pg in optimizer.param_groups]
-
     for it in range(1, config.n_iters + 1):
         actual_iters = it
-
-        # Apply warmup LR scaling (linear ramp: 0.1 → 1.0)
-        if it <= _WARMUP_ITERS:
-            warmup_factor = 0.1 + 0.9 * (it / _WARMUP_ITERS)
-            for pg, base_lr in zip(optimizer.param_groups, _base_lrs):
-                pg["lr"] = base_lr * warmup_factor
 
         # Forward pass (training — always needed)
         optimizer.zero_grad()
@@ -239,12 +227,10 @@ def run_optimization_loop(
         optimizer.step()
 
         # Learning rate scheduling (pass loss tensor, no .item() needed)
-        # Skip scheduler during warmup to avoid interference
-        if it > _WARMUP_ITERS:
-            if _is_plateau_scheduler:
-                scheduler.step(loss.detach())
-            elif scheduler is not None:
-                scheduler.step()
+        if _is_plateau_scheduler:
+            scheduler.step(loss.detach())
+        elif scheduler is not None:
+            scheduler.step()
 
         # --- Best state tracking using tensor comparison (no CPU sync) ---
         loss_detached = loss.detach()
