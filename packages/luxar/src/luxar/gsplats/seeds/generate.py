@@ -361,7 +361,7 @@ def _auto_combine(
         target_seeds = min(target_seeds, 10000)  # Cap at 10k
 
     # Budget allocation (edges + grid only)
-    budget_edges = int(target_seeds * 0.60)
+    budget_edges = int(target_seeds * 0.75)
     budget_grid = target_seeds - budget_edges
 
     if verbose:
