@@ -24,7 +24,7 @@ def create_optimizer_and_scheduler(
     scheduler_type: Optional[str] = "plateau",
     # Optimizer-specific arguments
     betas: Tuple[float, float] = (0.9, 0.999),
-    eps: float = 1e-4,
+    eps: float = 1e-8,
     weight_decay: float = 0.0,
     amsgrad: bool = False,
     # Scheduler-specific arguments
