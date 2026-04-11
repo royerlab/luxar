@@ -266,10 +266,7 @@ def run_optimization_loop(
                 best_state["loss"] = best_loss
 
             with torch.no_grad():
-                # Reuse training prediction instead of a second forward pass.
-                # This is one optimizer step behind, but close enough for
-                # convergence checking and early stopping decisions.
-                pred_eval = pred.detach()
+                pred_eval = model()
                 current_max_abs_error, current_rel_l2 = _compute_eval_metrics(
                     pred_eval, V_t
                 )
