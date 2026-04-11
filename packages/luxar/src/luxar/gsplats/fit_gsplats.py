@@ -97,6 +97,7 @@ class GaussianSplatFitter:
         self.dynamic_config = dynamic_config or DynamicOpsConfig(
             k_max_residuals=40,
             max_relocations_per_step=64,
+            relocation_cooldown_steps=1,
         )
 
     def fit(
