@@ -273,11 +273,11 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     # Use config values if provided, otherwise calculate defaults
     l1_amp = config.l1_amp
     if l1_amp is None:
-        l1_amp = 0.02 * config.lr  # 2% of LR for mild amplitude sparsity
+        l1_amp = 0.1 * config.lr  # 10% of LR for amplitude sparsity
 
     l1_diag = config.l1_diag
     if l1_diag is None:
-        l1_diag = 0.002 * config.lr  # 0.2% of LR for very mild shape regularization
+        l1_diag = 0.01 * config.lr  # 1% of LR for mild shape regularization
 
     # Move to device
     V_tensor = torch.tensor(V_normalized, dtype=torch.float32, device=config.device)
