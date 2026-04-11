@@ -129,7 +129,7 @@ class GaussianSplatFitter:
         scheduler_type: str = "plateau",
         patience: int = 25,
         lr_reduction_factor: float = 0.98,
-        early_stop_patience: Optional[int] = 300,
+        early_stop_patience: Optional[int] = 200,
         dynamic_ops_verbose: bool = False,
         voxel_footprint_correction: bool | float = False,
         boundary_penalty: Optional[float] = None,
@@ -276,7 +276,7 @@ def fit_gaussian_splats(
     scheduler_type: str = "plateau",
     patience: int = 25,
     lr_reduction_factor: float = 0.98,
-    early_stop_patience: Optional[int] = 300,
+    early_stop_patience: Optional[int] = 200,
     # Dynamic operations parameters
     enable_dynamic_ops: bool = True,
     dynamic_config: Optional[DynamicOpsConfig] = None,
