@@ -211,29 +211,20 @@ def run_optimization_loop(
     _is_plateau_scheduler = (
         scheduler is not None and "Plateau" in type(scheduler).__name__
     )
-    # AMP (Automatic Mixed Precision): use FP16 forward+backward on CUDA for
-    # ~2x throughput on tensor cores. The CUDA splatting kernel already supports
-    # FP16 via autocast detection. Loss scaling prevents gradient underflow.
-    _use_amp = V_t.is_cuda
-    _grad_scaler = torch.amp.GradScaler(enabled=_use_amp)
-
     for it in range(1, config.n_iters + 1):
         actual_iters = it
 
         # Forward pass (training — always needed)
         optimizer.zero_grad()
-        with torch.amp.autocast("cuda", enabled=_use_amp):
-            pred = model()
-            loss = loss_fn(pred)
-        _grad_scaler.scale(loss).backward()
+        pred = model()
+        loss = loss_fn(pred)
+        loss.backward()  # type: ignore[no-untyped-call]
 
-        # Gradient clipping (unscale first for accurate clipping)
+        # Gradient clipping
         if config.gradient_clip is not None:
-            _grad_scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip)
 
-        _grad_scaler.step(optimizer)
-        _grad_scaler.update()
+        optimizer.step()
 
         # Learning rate scheduling (pass loss tensor, no .item() needed)
         if _is_plateau_scheduler:
