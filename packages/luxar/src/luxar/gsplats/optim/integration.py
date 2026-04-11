@@ -113,6 +113,12 @@ def create_optimizer_and_scheduler(
             cooldown=cooldown,
             min_lr=min_lr,
         )
+    elif scheduler_type == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=extra_kwargs.get("n_iters", 1000),
+            eta_min=min_lr,
+        )
     elif scheduler_type == "exponential":
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
     elif scheduler_type is None:
