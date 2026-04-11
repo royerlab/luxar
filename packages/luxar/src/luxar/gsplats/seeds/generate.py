@@ -398,6 +398,11 @@ def _auto_combine(
 
         with asection(f"Grid generation (spacing={spacing:.1f})"):
             grid_kwargs_auto = {**grid_kwargs, "spacing": spacing}
+            # Exclude low-intensity grid seeds (bottom 10% of image intensity).
+            # In microscopy, these are typically background voxels where no
+            # Gaussians are needed, freeing splats for signal-bearing regions.
+            if "exclude_below_percentile" not in grid_kwargs_auto:
+                grid_kwargs_auto["exclude_below_percentile"] = 10.0
             seeds_grid = seed_from_grid(V, **grid_kwargs_auto)
             if len(seeds_grid.centers) > 0:
                 results.append(seeds_grid)
