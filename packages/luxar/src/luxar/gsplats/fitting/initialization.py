@@ -72,16 +72,12 @@ def initialize_optimization(
                         f"(5% of min physical dim {min_phys_dim:.1f})"
                     )
             else:
-                # Voxel-space auto: based on expected inter-splat spacing.
-                # Each splat "owns" V/N voxels → cube root gives linear spacing.
-                # Sigma = spacing / 2 gives ~95% overlap with neighbors.
-                total_voxels = float(np.prod(opt_shape))
-                spacing = (total_voxels / max(N, 1)) ** (1.0 / d)
-                init_sigma = max(1.5, spacing * 0.5)
+                # Voxel-space auto: ~5% of smallest dimension, min 1.5
+                min_dim = float(min(opt_shape))
+                init_sigma = max(1.5, min_dim * 0.05)
                 if config.verbose:
                     aprint(
-                        f"Auto-computed init_sigma={init_sigma:.2f} "
-                        f"(half of inter-splat spacing {spacing:.1f})"
+                        f"Auto-computed init_sigma={init_sigma:.2f} (5% of min dim {min_dim})"
                     )
 
         L0 = np.zeros((N, d, d), dtype=np.float32)
