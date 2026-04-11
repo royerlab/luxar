@@ -87,29 +87,9 @@ def initialize_optimization(
             for i in range(d):
                 L0[:, i, i] = init_sigma_phys / config.voxel_size[i]
         else:
-            # Adaptive per-splat sigma: based on distance to nearest neighbor.
-            # Each splat's initial sigma is proportional to its local spacing,
-            # clamped between sigma_min and global init_sigma.
-            # This gives better initial coverage (large in sparse areas, small in dense).
-            if N > 1 and N <= 500_000:
-                from scipy.spatial import cKDTree
-
-                tree = cKDTree(preprocessed_data.seed_centers)
-                nn_dists, _ = tree.query(preprocessed_data.seed_centers, k=2)
-                nn_dist = nn_dists[:, 1]  # distance to nearest neighbor (skip self)
-                # sigma = half the nearest-neighbor distance, clamped
-                adaptive_sigma = np.clip(nn_dist * 0.5, 0.5, init_sigma * 2.0)
-                for i in range(d):
-                    L0[:, i, i] = adaptive_sigma
-                if config.verbose:
-                    aprint(
-                        f"Adaptive init_sigma: range [{adaptive_sigma.min():.2f}, "
-                        f"{adaptive_sigma.max():.2f}] (median {np.median(adaptive_sigma):.2f})"
-                    )
-            else:
-                # Fallback: scalar voxel-space sigma (for very large or single splat)
-                for i in range(d):
-                    L0[:, i, i] = init_sigma
+            # Scalar voxel-space sigma (backward-compatible)
+            for i in range(d):
+                L0[:, i, i] = init_sigma
 
     # Ensure diagonal values are at least sigma_min_diag to prevent gradient death
     # (inverse_softplus of values near 0 causes gradients to vanish)
