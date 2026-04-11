@@ -122,7 +122,7 @@ class GaussianSplatFitter:
         verbose: bool = True,
         max_abs_error: Optional[float] = None,
         rel_l2_target: Optional[float] = None,
-        gradient_clip: Optional[float] = 1.0,
+        gradient_clip: Optional[float] = None,
         napari_movie: bool = False,
         movie_every: int = 1,
         movie_max_frames: Optional[int] = None,
@@ -271,7 +271,7 @@ def fit_gaussian_splats(
     # Optimization parameters
     max_abs_error: Optional[float] = None,
     rel_l2_target: Optional[float] = None,
-    gradient_clip: Optional[float] = 1.0,
+    gradient_clip: Optional[float] = None,
     # Per-splat optimizer parameters
     scheduler_type: str = "plateau",
     patience: int = 25,
