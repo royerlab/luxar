@@ -211,26 +211,35 @@ def run_optimization_loop(
     _is_plateau_scheduler = (
         scheduler is not None and "Plateau" in type(scheduler).__name__
     )
+    # Gradient accumulation: accumulate over _ACCUM_STEPS before stepping.
+    # Halves the expensive Adam.step() calls (35% of GPU time per profiling).
+    _ACCUM_STEPS = 2
+
     for it in range(1, config.n_iters + 1):
         actual_iters = it
 
         # Forward pass (training — always needed)
-        optimizer.zero_grad()
+        # On accumulation iterations, don't zero_grad (accumulate)
+        if (it - 1) % _ACCUM_STEPS == 0:
+            optimizer.zero_grad()
+
         pred = model()
-        loss = loss_fn(pred)
+        loss = loss_fn(pred) / _ACCUM_STEPS  # scale loss for accumulation
         loss.backward()  # type: ignore[no-untyped-call]
 
-        # Gradient clipping
-        if config.gradient_clip is not None:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip)
+        # Only step every _ACCUM_STEPS iterations
+        if it % _ACCUM_STEPS == 0 or it == config.n_iters:
+            # Gradient clipping
+            if config.gradient_clip is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip)
 
-        optimizer.step()
+            optimizer.step()
 
-        # Learning rate scheduling (pass loss tensor, no .item() needed)
-        if _is_plateau_scheduler:
-            scheduler.step(loss.detach())
-        elif scheduler is not None:
-            scheduler.step()
+            # Learning rate scheduling (pass loss tensor, no .item() needed)
+            if _is_plateau_scheduler:
+                scheduler.step(loss.detach() * _ACCUM_STEPS)
+            elif scheduler is not None:
+                scheduler.step()
 
         # --- Best state tracking using tensor comparison (no CPU sync) ---
         loss_detached = loss.detach()
