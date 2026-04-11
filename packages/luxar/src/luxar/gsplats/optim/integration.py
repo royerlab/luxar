@@ -96,7 +96,7 @@ def create_optimizer_and_scheduler(
     for name, param in model.named_parameters():
         pg = dict(adam_kwargs)
         if "raw_a" in name:
-            pg["lr"] = effective_lr * 2.0  # amplitudes converge fast (reduced for MSE loss)
+            pg["lr"] = effective_lr * 3.0  # amplitudes converge fast
         param_groups.append({"params": [param], **pg})
 
     optimizer = torch.optim.Adam(param_groups)
