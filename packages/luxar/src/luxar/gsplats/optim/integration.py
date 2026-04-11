@@ -30,7 +30,7 @@ def create_optimizer_and_scheduler(
     # Scheduler-specific arguments
     patience: int = 10,
     factor: float = 0.5,
-    threshold: float = 1e-4,
+    threshold: float = 1e-3,
     cooldown: int = 0,
     min_lr: float = 1e-8,
     gamma: float = 0.95,
