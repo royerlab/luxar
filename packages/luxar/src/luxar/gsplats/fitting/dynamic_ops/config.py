@@ -25,10 +25,10 @@ class DynamicOpsConfig:
     """
 
     # Scheduling
-    step_every: int = 25  # Run operations every N iterations
+    step_every: int = 50  # Run operations every N iterations
 
     # Step 1: Residual Peak Analysis
-    k_max_residuals: int = 40  # Max peaks to find per step
+    k_max_residuals: int = 20  # Max peaks to find per step
     nms_radius_vox: float = 2.0  # Minimum distance between detected peaks
 
     # Tile-based peak finding for spatial fairness (enabled by default)
@@ -45,7 +45,7 @@ class DynamicOpsConfig:
         1.0  # Percentage of least important splats eligible for relocation
     )
     max_relocations_per_step: Optional[int] = (
-        64  # Maximum splats to relocate per step (None = no limit, relocate all matches)
+        32  # Maximum splats to relocate per step (None = no limit, relocate all matches)
     )
 
     # Step 3: Relocation Parameters
