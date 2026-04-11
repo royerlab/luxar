@@ -116,7 +116,7 @@ class GaussianSplatFitter:
         sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
         sigma_max_diag: Optional[Sequence[float] | float] = None,
         amp_max: Optional[float] = None,  # Max amplitude (default auto: 1.0)
-        max_eccentricity: Optional[float] = 5.0,
+        max_eccentricity: Optional[float] = 10.0,
         truncate: float = 2.75,
         seed_method: str = "auto",
         verbose: bool = True,
@@ -263,7 +263,7 @@ def fit_gaussian_splats(
     sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
     sigma_max_diag: Optional[Sequence[float] | float] = None,
     amp_max: Optional[float] = None,
-    max_eccentricity: Optional[float] = 5.0,
+    max_eccentricity: Optional[float] = 10.0,
     truncate: float = 2.75,
     device: Optional[str] = None,
     seed_method: str = "auto",
