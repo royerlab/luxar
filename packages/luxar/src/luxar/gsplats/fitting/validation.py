@@ -160,8 +160,8 @@ def prepare_fit_config(
         raise ValueError("lr_reduction_factor must be in range (0, 1)")
     if early_stop_patience is not None and early_stop_patience < 1:
         raise ValueError("early_stop_patience must be >= 1 if specified")
-    if scheduler_type not in ["plateau", "exponential", "cosine"]:
-        raise ValueError("scheduler_type must be 'plateau', 'exponential', or 'cosine'")
+    if scheduler_type not in ["plateau", "exponential"]:
+        raise ValueError("scheduler_type must be 'plateau' or 'exponential'")
     if truncate <= 0:
         raise ValueError("truncate must be positive")
     if max_abs_error is not None and max_abs_error <= 0:

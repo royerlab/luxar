@@ -126,7 +126,7 @@ class GaussianSplatFitter:
         napari_movie: bool = False,
         movie_every: int = 1,
         movie_max_frames: Optional[int] = None,
-        scheduler_type: str = "cosine",
+        scheduler_type: str = "plateau",
         patience: int = 25,
         lr_reduction_factor: float = 0.98,
         early_stop_patience: Optional[int] = 300,
@@ -273,7 +273,7 @@ def fit_gaussian_splats(
     rel_l2_target: Optional[float] = None,
     gradient_clip: Optional[float] = 1.0,
     # Per-splat optimizer parameters
-    scheduler_type: str = "cosine",
+    scheduler_type: str = "plateau",
     patience: int = 25,
     lr_reduction_factor: float = 0.98,
     early_stop_patience: Optional[int] = 300,
