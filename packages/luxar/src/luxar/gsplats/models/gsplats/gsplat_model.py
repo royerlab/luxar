@@ -227,6 +227,7 @@ class GaussianSplatModel(nn.Module):
             persistent=False,
         )
 
+    @torch.compile(fullgraph=False)
     def _build_L(self) -> torch.Tensor:
         """
         Reconstruct lower-triangular Cholesky factors from learnable parameters.
