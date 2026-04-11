@@ -98,6 +98,7 @@ class GaussianSplatFitter:
             k_max_residuals=40,
             max_relocations_per_step=64,
             relocation_cooldown_steps=1,
+            relocation_percentile=5.0,
         )
 
     def fit(
