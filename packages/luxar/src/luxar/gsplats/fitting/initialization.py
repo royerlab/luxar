@@ -117,13 +117,13 @@ def initialize_optimization(
         amps0 = preprocessed_data.V_normalized[tuple(idx.T)]
 
     # Auto-determine amp_max if not specified
-    # Default: 2.0 (above max normalized [0, 1] to allow overlapping Gaussians
-    # to each contribute partial amplitude). Individual splats rarely need >2.0.
+    # Default: 1.0 (matches max value in normalized [0, 1] image)
+    # This prevents amplitude explosion during optimization
     amp_max = config.amp_max
     if amp_max is None:
-        amp_max = 2.0
+        amp_max = 1.0
         if config.verbose:
-            aprint(f"Using auto amp_max={amp_max} (allows overlap compensation)")
+            aprint(f"Using auto amp_max={amp_max} (prevents amplitude explosion)")
 
     # Resolve sigma constraints: pass empty list when None (model uses defaults)
     _sigma_min: Sequence[float] = (
