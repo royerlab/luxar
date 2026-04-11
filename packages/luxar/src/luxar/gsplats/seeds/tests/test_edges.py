@@ -273,5 +273,138 @@ class TestCircularEdge:
             assert result.cholesky_factors.shape[1] == 3
 
 
+class TestPoissonDiskSampleWeighted:
+    """Test _poisson_disk_sample_weighted function."""
+
+    def test_deterministic_output(self) -> None:
+        """Same input should always produce same output."""
+        from luxar.gsplats.seeds.edges import _poisson_disk_sample_weighted
+
+        density = np.zeros((50, 50), dtype=float)
+        density[20:30, 20:30] = 1.0
+        mask = density > 0.1
+
+        r1 = _poisson_disk_sample_weighted(density, mask, n_samples=20, min_distance=2.0)
+        r2 = _poisson_disk_sample_weighted(density, mask, n_samples=20, min_distance=2.0)
+        np.testing.assert_array_equal(r1, r2)
+
+    def test_density_priority(self) -> None:
+        """Higher density regions should be seeded first."""
+        from luxar.gsplats.seeds.edges import _poisson_disk_sample_weighted
+
+        density = np.zeros((50, 50), dtype=float)
+        # Bright region (high density)
+        density[10:15, 10:15] = 10.0
+        # Dim region (low density)
+        density[35:40, 35:40] = 1.0
+        mask = density > 0.5
+
+        # Request few seeds — should prioritize the bright region
+        result = _poisson_disk_sample_weighted(
+            density, mask, n_samples=3, min_distance=1.0
+        )
+        assert len(result) > 0
+        # First seed should be in the bright region
+        assert result[0, 0] >= 10 and result[0, 0] < 15
+        assert result[0, 1] >= 10 and result[0, 1] < 15
+
+    def test_min_distance_enforced(self) -> None:
+        """All returned points must satisfy minimum distance constraint."""
+        from luxar.gsplats.seeds.edges import _poisson_disk_sample_weighted
+
+        rng = np.random.default_rng(42)
+        density = rng.uniform(0.1, 1.0, size=(100, 100))
+        mask = density > 0.2
+        min_dist = 5.0
+
+        result = _poisson_disk_sample_weighted(
+            density, mask, n_samples=200, min_distance=min_dist
+        )
+
+        if len(result) > 1:
+            from scipy.spatial.distance import pdist
+
+            dists = pdist(result)
+            assert np.all(dists >= min_dist - 1e-5), (
+                f"Min pairwise distance {dists.min():.4f} < {min_dist}"
+            )
+
+    def test_respects_mask(self) -> None:
+        """Seeds should only be placed where mask is True."""
+        from luxar.gsplats.seeds.edges import _poisson_disk_sample_weighted
+
+        density = np.ones((50, 50), dtype=float)
+        mask = np.zeros((50, 50), dtype=bool)
+        mask[20:30, 20:30] = True  # Only valid in center
+
+        result = _poisson_disk_sample_weighted(
+            density, mask, n_samples=50, min_distance=1.0
+        )
+
+        if len(result) > 0:
+            # All seeds should be within the mask region
+            assert np.all(result[:, 0] >= 20) and np.all(result[:, 0] < 30)
+            assert np.all(result[:, 1] >= 20) and np.all(result[:, 1] < 30)
+
+    def test_empty_mask_returns_empty(self) -> None:
+        """Empty mask should return zero seeds."""
+        from luxar.gsplats.seeds.edges import _poisson_disk_sample_weighted
+
+        density = np.ones((20, 20), dtype=float)
+        mask = np.zeros((20, 20), dtype=bool)
+
+        result = _poisson_disk_sample_weighted(
+            density, mask, n_samples=10, min_distance=1.0
+        )
+        assert result.shape == (0, 2)
+
+    def test_3d_volume(self) -> None:
+        """Should work for 3D density fields."""
+        from luxar.gsplats.seeds.edges import _poisson_disk_sample_weighted
+
+        density = np.zeros((20, 20, 20), dtype=float)
+        density[5:15, 5:15, 5:15] = 1.0
+        mask = density > 0.5
+        min_dist = 3.0
+
+        result = _poisson_disk_sample_weighted(
+            density, mask, n_samples=50, min_distance=min_dist
+        )
+
+        assert result.shape[1] == 3
+        assert len(result) > 0
+
+        if len(result) > 1:
+            from scipy.spatial.distance import pdist
+
+            dists = pdist(result)
+            assert np.all(dists >= min_dist - 1e-5)
+
+    def test_n_samples_upper_bound(self) -> None:
+        """Should not return more seeds than requested."""
+        from luxar.gsplats.seeds.edges import _poisson_disk_sample_weighted
+
+        density = np.ones((100, 100), dtype=float)
+        mask = np.ones((100, 100), dtype=bool)
+
+        result = _poisson_disk_sample_weighted(
+            density, mask, n_samples=10, min_distance=1.0
+        )
+        assert len(result) <= 10
+
+    def test_large_min_distance_few_seeds(self) -> None:
+        """Very large min_distance should produce very few seeds."""
+        from luxar.gsplats.seeds.edges import _poisson_disk_sample_weighted
+
+        density = np.ones((50, 50), dtype=float)
+        mask = np.ones((50, 50), dtype=bool)
+
+        result = _poisson_disk_sample_weighted(
+            density, mask, n_samples=100, min_distance=40.0
+        )
+        # With min_distance=40 on a 50x50 grid, at most ~2 seeds can fit
+        assert len(result) <= 4
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
