@@ -108,13 +108,35 @@ def initialize_optimization(
                 f"Using pre-initialized amplitudes: range [{amps0.min():.4f}, {amps0.max():.4f}]"
             )
     else:
-        # Default: extract amplitudes from image at seed locations
+        # Default: extract amplitudes from image at seed locations, scaled
+        # down by estimated local overlap count. Without this correction,
+        # overlapping Gaussians sum to overshoot, causing the optimizer to
+        # spend early iterations reducing amplitudes instead of positioning.
         idx = np.clip(
             np.round(preprocessed_data.seed_centers).astype(int),
             0,
             np.array(opt_shape) - 1,
         )
-        amps0 = preprocessed_data.V_normalized[tuple(idx.T)]
+        raw_amps = preprocessed_data.V_normalized[tuple(idx.T)]
+
+        # Estimate overlap count at each seed: count how many other seeds
+        # are within init_sigma radius (cheap O(N) with binning approximation)
+        init_sigma = config.init_sigma_vox
+        if init_sigma is None:
+            init_sigma = max(1.5, float(min(opt_shape)) * 0.05)
+        # Use the effective render radius as the overlap criterion
+        overlap_radius = init_sigma * config.truncate
+        # Quick overlap estimate: compute density via spatial binning
+        from scipy.ndimage import uniform_filter
+        seed_density = np.zeros(opt_shape, dtype=np.float32)
+        np.add.at(seed_density, tuple(idx.T), 1.0)
+        kernel_size = max(3, int(2 * overlap_radius + 1))
+        kernel_size = min(kernel_size, min(opt_shape))  # clamp to volume
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        local_count = uniform_filter(seed_density, size=kernel_size, mode="constant")
+        overlap_at_seeds = np.maximum(local_count[tuple(idx.T)], 1.0)
+        amps0 = raw_amps / overlap_at_seeds
 
     # Auto-determine amp_max if not specified
     # Default: 1.0 (matches max value in normalized [0, 1] image)
