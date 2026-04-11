@@ -43,19 +43,19 @@ from datasets import DATASETS
 # Configuration
 # ---------------------------------------------------------------------------
 
-SPLAT_COUNTS = [1000, 2000, 4000, 8000, 16000, 32000, 64000, 128000]
+SPLAT_COUNTS = [1000, 2000, 4000, 8000, 16000, 32000, 64000, 128000, 256000, 512000]
 
 # Z-slice indices for representative slices (~quartiles of Z=51)
 SLICE_PERCENTILES = [0.25, 0.50, 0.75]
 
 # Fitting hyperparameters — fixed across all splat counts
 FIT_KWARGS = dict(
-    n_iters=5000,
+    n_iters=20000,
     lr=0.01,
     loss_type="l1",
     early_stop_patience=500,
     enable_dynamic_ops=True,
-    cull_retention=0.99,
+    cull_retention=0.999,
     seed_method="auto",
     verbose=True,
 )
