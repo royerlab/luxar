@@ -287,6 +287,14 @@ def initialize_optimization(
         factor=config.lr_reduction_factor,
     )
 
+    # Boost center position LR by 1.5x post-creation.
+    # Centers are the most critical parameters for PSNR; a small boost
+    # accelerates position convergence without destabilizing shapes.
+    for pg in optimizer.param_groups:
+        params = pg["params"]
+        if len(params) == 1 and params[0] is model.raw_mu:
+            pg["lr"] = pg["lr"] * 1.5
+
     return ModelComponents(
         model=model,
         optimizer=optimizer,
