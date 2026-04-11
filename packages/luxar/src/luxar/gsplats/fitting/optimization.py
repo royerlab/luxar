@@ -211,6 +211,12 @@ def run_optimization_loop(
     _is_plateau_scheduler = (
         scheduler is not None and "Plateau" in type(scheduler).__name__
     )
+    # Graduated optimization: freeze Cholesky shape params for the first
+    # _SHAPE_FREEZE_ITERS iterations, letting positions and amplitudes settle
+    # first in a lower-dimensional space. This reduces early parameter
+    # interference and improves convergence speed (block coordinate descent).
+    _SHAPE_FREEZE_ITERS = min(200, config.n_iters // 5)
+
     for it in range(1, config.n_iters + 1):
         actual_iters = it
 
@@ -219,6 +225,13 @@ def run_optimization_loop(
         pred = model()
         loss = loss_fn(pred)
         loss.backward()  # type: ignore[no-untyped-call]
+
+        # Graduated unfreezing: zero out shape gradients in early phase
+        if it <= _SHAPE_FREEZE_ITERS:
+            if model.raw_L_diag.grad is not None:
+                model.raw_L_diag.grad.zero_()
+            if model.L_off.grad is not None:
+                model.L_off.grad.zero_()
 
         # Gradient clipping
         if config.gradient_clip is not None:
