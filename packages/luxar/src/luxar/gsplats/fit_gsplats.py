@@ -274,8 +274,8 @@ def fit_gaussian_splats(
     gradient_clip: Optional[float] = None,
     # Per-splat optimizer parameters
     scheduler_type: str = "plateau",
-    patience: int = 25,
-    lr_reduction_factor: float = 0.98,
+    patience: int = 15,
+    lr_reduction_factor: float = 0.9,
     early_stop_patience: Optional[int] = 300,
     # Dynamic operations parameters
     enable_dynamic_ops: bool = True,
