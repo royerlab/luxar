@@ -214,27 +214,9 @@ def run_optimization_loop(
     for it in range(1, config.n_iters + 1):
         actual_iters = it
 
-        # --- Check if this is an eval/dynamic iteration (decide before forward) ---
-        need_dynamic = (
-            config.enable_dynamic_ops and it % config.dynamic_config.step_every == 0
-        )
-        need_eval = it % _EVAL_INTERVAL == 0 or it <= 5 or need_dynamic
-
         # Forward pass (training — always needed)
         optimizer.zero_grad()
         pred = model()
-
-        # On eval iterations, compute metrics from the training prediction
-        # BEFORE backward/step — the prediction is accurate (current weights).
-        # This eliminates the expensive second forward pass entirely.
-        if need_eval:
-            with torch.no_grad():
-                pred_eval = pred.detach()
-                current_max_abs_error, current_rel_l2 = _compute_eval_metrics(
-                    pred_eval, V_t
-                )
-                last_max_abs_error = current_max_abs_error
-
         loss = loss_fn(pred)
         loss.backward()  # type: ignore[no-untyped-call]
 
@@ -271,7 +253,12 @@ def run_optimization_loop(
         else:
             iterations_since_improvement += 1
 
-        # --- Periodic evaluation (metrics already computed above, no 2nd fwd pass) ---
+        # --- Periodic full evaluation (expensive — involves second forward pass) ---
+        need_dynamic = (
+            config.enable_dynamic_ops and it % config.dynamic_config.step_every == 0
+        )
+        need_eval = it % _EVAL_INTERVAL == 0 or it <= 5 or need_dynamic
+
         if need_eval:
             # Sync best_loss to CPU (only on eval iterations, not every iter)
             best_loss = float(_best_loss_t.item())
@@ -279,6 +266,12 @@ def run_optimization_loop(
                 best_state["loss"] = best_loss
 
             with torch.no_grad():
+                pred_eval = model()
+                current_max_abs_error, current_rel_l2 = _compute_eval_metrics(
+                    pred_eval, V_t
+                )
+                last_max_abs_error = current_max_abs_error
+
                 # Update best_state metrics if this is at or near the best iteration
                 if (
                     best_state is not None
