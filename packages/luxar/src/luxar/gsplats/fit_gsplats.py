@@ -137,7 +137,7 @@ class GaussianSplatFitter:
         voxel_size: Optional[Sequence[float] | float] = None,
         output_space: str = "real",
         sort_splats_enabled: bool = True,
-        sort_splats_interval: int = 1000,
+        sort_splats_interval: int = 500,
         **seed_kwargs: Any,
     ) -> GSplatData:
         """
@@ -298,7 +298,7 @@ def fit_gaussian_splats(
     output_space: str = "real",
     # Z-order sorting for memory locality
     sort_splats_enabled: bool = True,
-    sort_splats_interval: int = 1000,
+    sort_splats_interval: int = 500,
     **seed_kwargs: Any,
 ) -> GSplatData:
     """
