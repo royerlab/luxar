@@ -194,8 +194,15 @@ def run_optimization_loop(
     # ~30% of per-iteration wall-clock time.
     # Eval interval: skip the expensive eval forward pass on most iterations.
     # For short runs (<100 iters), check every iteration to not miss convergence.
-    # For long runs (progressive fitting: 3000 iters), check every 25.
-    _EVAL_INTERVAL = 25 if config.n_iters >= 100 else 1
+    # For medium runs (100-999): every 25 to catch convergence promptly.
+    # For long runs (≥1000 iters): every 50 saves eval overhead with minimal
+    # impact on early stopping accuracy (worst case: 50 extra iterations).
+    if config.n_iters < 100:
+        _EVAL_INTERVAL = 1
+    elif config.n_iters < 1000:
+        _EVAL_INTERVAL = 25
+    else:
+        _EVAL_INTERVAL = 50
 
     # Main optimization loop
     converged_early = False
