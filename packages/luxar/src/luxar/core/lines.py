@@ -120,6 +120,11 @@ class Lines(DataNode):
         return bool(self._metadata.get("has_labels", False))
 
     @property
+    def has_image_labels(self) -> bool:
+        """Check if lines have per-element image labels for hover thumbnails."""
+        return bool(self._metadata.get("has_image_labels", False))
+
+    @property
     def max_width(self) -> float:
         """Get maximum line width."""
         return float(self._metadata.get("max_width", 0.0))

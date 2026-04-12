@@ -90,6 +90,11 @@ class GSplats(DataNode):
         return bool(self._metadata.get("has_labels", False))
 
     @property
+    def has_image_labels(self) -> bool:
+        """Check if gsplats have per-element image labels for hover thumbnails."""
+        return bool(self._metadata.get("has_image_labels", False))
+
+    @property
     def ordering(self) -> str:
         """Get spatial ordering type."""
         return str(self._metadata.get("ordering", "none"))

@@ -87,6 +87,9 @@ export interface LinesMetadata {
   /** Whether per-element string labels exist (CSR-encoded, for hover tooltips) */
   has_labels?: boolean;
 
+  /** Whether per-element image labels exist (CSR-encoded, for hover thumbnails) */
+  has_image_labels?: boolean;
+
   /** Spatial ordering method */
   ordering: 'morton' | 'hilbert' | 'none';
 

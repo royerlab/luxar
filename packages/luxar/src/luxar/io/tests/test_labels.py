@@ -151,8 +151,8 @@ class TestHoverOverlayAutoInjection:
         # Check that the hover overlay was auto-injected
         store = zarr.open_group(path, mode="r")
         assert "overlays" in store
-        assert "__hover_default" in store["overlays"]
-        hover_attrs = dict(store["overlays"]["__hover_default"].attrs)
+        assert "__hover_text" in store["overlays"]
+        hover_attrs = dict(store["overlays"]["__hover_text"].attrs)
         assert hover_attrs["hover"] is True
         assert hover_attrs["text"] == "{hover_label}"
 
@@ -165,7 +165,7 @@ class TestHoverOverlayAutoInjection:
             scene.add_points("pts", positions)
 
         store = zarr.open_group(path, mode="r")
-        assert "overlays" not in store or "__hover_default" not in store.get("overlays", {})
+        assert "overlays" not in store or "__hover_text" not in store.get("overlays", {})
 
     def test_no_injection_when_user_provides_hover_overlay(self, tmp_path):
         path = str(tmp_path / "test.zarr")
@@ -185,6 +185,6 @@ class TestHoverOverlayAutoInjection:
 
         store = zarr.open_group(path, mode="r")
         # Should NOT have the auto-injected default
-        assert "__hover_default" not in store.get("overlays", {})
+        assert "__hover_text" not in store.get("overlays", {})
         # Should have the user's overlay
         assert "my_hover" in store["overlays"]
