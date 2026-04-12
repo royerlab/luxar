@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Pareto-dominance benchmark for progressive (multi-pass) gsplat fitting.
+"""3-axis Pareto benchmark for progressive (multi-pass) gsplat fitting.
 
-Fits on 3 diverse microscopy datasets with a fixed budget, reports
-(median_PSNR, median_time), and checks Pareto dominance against stored baseline.
+Optimizes (PSNR, time, peak GPU memory) simultaneously.
+Accepts a change only if ALL three axes are at least as good as baseline,
+and at least one is strictly better.
 
 Exit code:
-  0 — New result Pareto-dominates (or no baseline yet)
-  1 — Not Pareto-dominant
+  0 — Pareto-dominates (or first run)
+  1 — Not dominant
 
 Usage::
 
@@ -28,7 +29,7 @@ import numpy as np
 import torch
 
 # ---------------------------------------------------------------------------
-# Dataset loaders (same as single-pass benchmark)
+# Dataset loaders
 # ---------------------------------------------------------------------------
 
 
@@ -102,11 +103,16 @@ def run_single_fit(
     max_splats_per_pass: int,
     iters_per_pass: int,
     device: str,
-) -> tuple[float, float]:
-    """Fit progressively and return (psnr_db, wall_time_seconds)."""
+) -> tuple[float, float, float]:
+    """Fit progressively and return (psnr_db, wall_time_s, peak_gpu_mb)."""
     from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
     from luxar.gsplats.metrics import compute_quality_metrics
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+
+    # Reset peak memory tracking before each fit
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.synchronize()
 
     t0 = time.perf_counter()
     gsplat_data = fit_progressive_gaussian_splats(
@@ -121,6 +127,12 @@ def run_single_fit(
     )
     fit_time = time.perf_counter() - t0
 
+    # Capture peak GPU memory BEFORE rendering (fitting peak is what matters)
+    if torch.cuda.is_available():
+        peak_gpu_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
+    else:
+        peak_gpu_mb = 0.0
+
     # Render combined result and compute PSNR
     recon = render_to_volume_tensor(gsplat_data, V.shape, device=device)
     target = torch.as_tensor(V, dtype=torch.float32, device=recon.device)
@@ -131,7 +143,7 @@ def run_single_fit(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    return psnr, fit_time
+    return psnr, fit_time, peak_gpu_mb
 
 
 def run_benchmark(
@@ -139,8 +151,24 @@ def run_benchmark(
     max_splats_per_pass: int,
     iters_per_pass: int,
     device: str,
-) -> tuple[float, float, list[dict]]:
-    """Run on all datasets, return (median_psnr, median_time, per_dataset)."""
+) -> tuple[float, float, float, list[dict]]:
+    """Run on all datasets. Return (median_psnr, median_time, max_peak_mem, per_dataset).
+
+    Uses MEDIAN for PSNR/time (robust to outliers) but MAX for peak memory
+    (worst-case determines GPU compatibility).
+    """
+    # Warmup run (first torch.compile is expensive, skews memory)
+    if torch.cuda.is_available():
+        V_warmup, _ = DATASET_LOADERS[0]()
+        from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+        _ = fit_progressive_gaussian_splats(
+            V_warmup, max_splats=1000, max_splats_per_pass=500,
+            iters_per_pass=50, max_passes=2, device=device, verbose=False,
+        )
+        del V_warmup, _
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+
     results = []
     for loader in DATASET_LOADERS:
         V, name = loader()
@@ -149,36 +177,59 @@ def run_benchmark(
             f"{max_splats_per_pass}/pass, {iters_per_pass} iters/pass...",
             flush=True,
         )
-        psnr, wall_time = run_single_fit(
+        psnr, wall_time, peak_mb = run_single_fit(
             V, max_splats, max_splats_per_pass, iters_per_pass, device
         )
-        print(f"    PSNR={psnr:.2f} dB, time={wall_time:.1f}s")
-        results.append({"dataset": name, "psnr_db": psnr, "time_s": wall_time})
+        print(f"    PSNR={psnr:.2f} dB, time={wall_time:.1f}s, peak_mem={peak_mb:.1f} MB")
+        results.append({
+            "dataset": name, "psnr_db": psnr,
+            "time_s": wall_time, "peak_gpu_mb": peak_mb,
+        })
         del V
 
     psnrs = [r["psnr_db"] for r in results]
     times = [r["time_s"] for r in results]
-    return float(np.median(psnrs)), float(np.median(times)), results
+    mems = [r["peak_gpu_mb"] for r in results]
+    return (
+        float(np.median(psnrs)),
+        float(np.median(times)),
+        float(np.max(mems)),  # worst-case across datasets
+        results,
+    )
 
 
 # ---------------------------------------------------------------------------
-# Pareto dominance (same as single-pass)
+# 3-axis Pareto dominance
 # ---------------------------------------------------------------------------
 
-PSNR_EPS = 0.05
-TIME_EPS_FRAC = 0.02
+PSNR_EPS = 0.05       # dB — below this is noise
+TIME_EPS_FRAC = 0.02  # 2% — measurement jitter
+MEM_EPS_FRAC = 0.02   # 2% — allocation jitter
 
 
 def pareto_dominates(
-    new_psnr: float, new_time: float, old_psnr: float, old_time: float,
+    new_psnr: float, new_time: float, new_mem: float,
+    old_psnr: float, old_time: float, old_mem: float,
 ) -> bool:
+    """3-axis Pareto: (PSNR higher, time lower, memory lower).
+
+    All axes must be at least as good (within tolerance).
+    At least one must be strictly better.
+    """
+    # "at least as good" checks
     psnr_ok = new_psnr >= old_psnr - PSNR_EPS
     time_ok = new_time <= old_time * (1 + TIME_EPS_FRAC)
-    if not (psnr_ok and time_ok):
+    mem_ok = new_mem <= old_mem * (1 + MEM_EPS_FRAC)
+
+    if not (psnr_ok and time_ok and mem_ok):
         return False
+
+    # "at least one strictly better" check
     psnr_better = new_psnr > old_psnr + PSNR_EPS
     time_better = new_time < old_time * (1 - TIME_EPS_FRAC)
-    return psnr_better or time_better
+    mem_better = new_mem < old_mem * (1 - MEM_EPS_FRAC)
+
+    return psnr_better or time_better or mem_better
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +238,7 @@ def pareto_dominates(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Progressive Pareto benchmark")
+    parser = argparse.ArgumentParser(description="Progressive 3-axis Pareto benchmark")
     parser.add_argument("--max-splats", type=int, default=16000)
     parser.add_argument("--splats-per-pass", type=int, default=8000)
     parser.add_argument("--iters-per-pass", type=int, default=5000)
@@ -209,42 +260,49 @@ def main():
 
     baseline_path = Path(args.baseline)
 
-    print(f"=== Progressive Pareto Fitting Benchmark ===")
+    print(f"=== Progressive 3-Axis Pareto Benchmark ===")
     print(
         f"Budget: {args.max_splats} total, {args.splats_per_pass}/pass, "
         f"{args.iters_per_pass} iters/pass, device={device}"
     )
     print()
 
-    median_psnr, median_time, per_dataset = run_benchmark(
+    median_psnr, median_time, max_mem, per_dataset = run_benchmark(
         args.max_splats, args.splats_per_pass, args.iters_per_pass, device
     )
 
     print()
-    print(f"--- Aggregate (median across {len(per_dataset)} datasets) ---")
-    print(f"  median_PSNR = {median_psnr:.4f} dB")
-    print(f"  median_time = {median_time:.2f} s")
+    print(f"--- Aggregate ---")
+    print(f"  median_PSNR  = {median_psnr:.4f} dB")
+    print(f"  median_time  = {median_time:.2f} s")
+    print(f"  max_peak_mem = {max_mem:.1f} MB")
 
     if baseline_path.exists():
         with open(baseline_path) as f:
             baseline = json.load(f)
         old_psnr = baseline["median_psnr"]
         old_time = baseline["median_time"]
+        old_mem = baseline.get("max_peak_mem", float("inf"))
         print()
         print(f"--- Baseline ---")
-        print(f"  median_PSNR = {old_psnr:.4f} dB")
-        print(f"  median_time = {old_time:.2f} s")
+        print(f"  median_PSNR  = {old_psnr:.4f} dB")
+        print(f"  median_time  = {old_time:.2f} s")
+        print(f"  max_peak_mem = {old_mem:.1f} MB")
 
-        dominates = pareto_dominates(median_psnr, median_time, old_psnr, old_time)
+        dominates = pareto_dominates(
+            median_psnr, median_time, max_mem,
+            old_psnr, old_time, old_mem,
+        )
         print()
         if dominates:
             print("PARETO: NEW DOMINATES BASELINE")
         else:
             dpsnr = median_psnr - old_psnr
             dtime = median_time - old_time
+            dmem = max_mem - old_mem
             print(
                 f"PARETO: NOT DOMINANT "
-                f"(dPSNR={dpsnr:+.4f} dB, dtime={dtime:+.2f} s)"
+                f"(dPSNR={dpsnr:+.4f} dB, dtime={dtime:+.2f} s, dmem={dmem:+.1f} MB)"
             )
     else:
         dominates = True
@@ -258,6 +316,7 @@ def main():
                 {
                     "median_psnr": median_psnr,
                     "median_time": median_time,
+                    "max_peak_mem": max_mem,
                     "per_dataset": per_dataset,
                     "max_splats": args.max_splats,
                     "splats_per_pass": args.splats_per_pass,
