@@ -332,6 +332,12 @@ def fit_progressive_gaussian_splats(
         # No eccentricity limit: let splats adapt shape to irregular features.
         pass_kwargs["max_eccentricity"] = None
 
+        if pass_i == 0:
+            # L1 loss for pass 0: robust to outliers in the dense volume fit.
+            # L1 with asymmetric penalty encourages under-prediction, producing
+            # clean positive residuals for subsequent passes.
+            pass_kwargs["loss_type"] = "l1"
+
         if pass_i > 0:
             # No sigma_max_diag constraint: let residual splats size freely.
             # The old coarse-to-fine cascade prevented capturing broad residual
