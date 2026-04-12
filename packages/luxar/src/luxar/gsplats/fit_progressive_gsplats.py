@@ -54,7 +54,6 @@ Additional optimisations in fitting sub-modules:
 
 from __future__ import annotations
 
-import gc
 import math
 import time
 from typing import Any, Callable, Optional
