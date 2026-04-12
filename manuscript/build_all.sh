@@ -46,6 +46,33 @@ for build_script in manuscript/supp_doc/*/build.py; do
 done
 
 # ──────────────────────────────────────────────────────────────────────
+# 3. BUILD MAIN PAPER (if it exists)
+# ──────────────────────────────────────────────────────────────────────
+MAIN_TEX="manuscript/paper/main.tex"
+if [ -f "$MAIN_TEX" ]; then
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║  3. MAIN PAPER                                              ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    PAPER_DIR=$(dirname "$MAIN_TEX")
+    PAPER_NAME=$(basename "$MAIN_TEX" .tex)
+    cd "$PAPER_DIR"
+    pdflatex -interaction=nonstopmode "$PAPER_NAME.tex" > /dev/null 2>&1
+    bibtex "$PAPER_NAME" > /dev/null 2>&1 || true
+    pdflatex -interaction=nonstopmode "$PAPER_NAME.tex" > /dev/null 2>&1
+    pdflatex -interaction=nonstopmode "$PAPER_NAME.tex" > /dev/null 2>&1
+    cd "$(git rev-parse --show-toplevel)"
+    if [ -f "$PAPER_DIR/$PAPER_NAME.pdf" ]; then
+        echo "  Built: $PAPER_DIR/$PAPER_NAME.pdf"
+    else
+        echo "  WARNING: $PAPER_DIR/$PAPER_NAME.pdf not produced"
+    fi
+else
+    echo ""
+    echo "  (Main paper not found at $MAIN_TEX — skipping)"
+fi
+
+# ──────────────────────────────────────────────────────────────────────
 # SUMMARY
 # ──────────────────────────────────────────────────────────────────────
 echo ""
