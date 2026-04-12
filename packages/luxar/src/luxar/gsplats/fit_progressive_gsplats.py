@@ -400,17 +400,27 @@ def fit_progressive_gaussian_splats(
             torch.cuda.empty_cache()
 
         # --- Compute global PSNR (and cache render for next pass's residual) ---
-        # Memory-efficient: render on GPU (CUDA backend is tiled and uses
-        # minimal intermediates), compute PSNR in chunks (only ~200 MB of
-        # V_original on GPU at a time), then move render to CPU.
-        accumulated_data = GSplatData.from_lods(accumulated_lods)
+        # Incremental rendering: only render the LATEST pass's splats and ADD
+        # to the cached render from previous passes. This avoids re-rendering
+        # all previous LODs (which doubles render cost for 2-pass fitting).
+        latest_lod_data = GSplatData.from_lods([lod])
         with torch.no_grad():
-            rendered_gpu = render_to_volume_tensor(
-                accumulated_data,
+            latest_rendered_gpu = render_to_volume_tensor(
+                latest_lod_data,
                 shape=V.shape,
                 device=device,
                 truncate=truncate,
             )
+            if cached_rendered_np is not None:
+                # Add latest pass to accumulated render (incremental)
+                cached_gpu = torch.from_numpy(cached_rendered_np).to(
+                    latest_rendered_gpu.device
+                )
+                rendered_gpu = cached_gpu + latest_rendered_gpu
+                del cached_gpu, latest_rendered_gpu
+            else:
+                rendered_gpu = latest_rendered_gpu
+
             current_psnr = _compute_psnr_chunked(rendered_gpu, V_original)
             cached_rendered_np = rendered_gpu.cpu().numpy()
             del rendered_gpu
