@@ -316,11 +316,13 @@ def fit_progressive_gaussian_splats(
 
         # --- Per-pass configuration (see module docstring for rationale) ---
 
-        # Asymmetric penalty: mild for pass 0 (capture more signal), full for
-        # residual passes (prevent permanent overshoot in the residual chain).
+        # Asymmetric penalty: symmetric (1.0) for pass 0 since it fits the full
+        # dense volume where MSE is optimal. Full penalty for residual passes to
+        # prevent permanent overshoot in the residual chain (clamped residuals
+        # hide over-prediction from subsequent passes).
         if asymmetric_penalty is not None:
             if pass_i == 0:
-                pass_asymmetric_penalty: Optional[float] = min(asymmetric_penalty, 3.0)
+                pass_asymmetric_penalty: Optional[float] = 1.0
             else:
                 pass_asymmetric_penalty = asymmetric_penalty
         else:
