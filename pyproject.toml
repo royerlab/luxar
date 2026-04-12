@@ -307,6 +307,15 @@ module = [
 ]
 ignore_missing_imports = true
 
+# tifffile >= 2025.3 uses `type X = ...` (PEP 695) which mypy rejects
+# as a syntax error, aborting the entire check. Skip it entirely.
+[[tool.mypy.overrides]]
+module = [
+    "tifffile",
+    "tifffile.*",
+]
+follow_imports = "skip"
+
 # Relax strict rules for test files
 [[tool.mypy.overrides]]
 module = [
