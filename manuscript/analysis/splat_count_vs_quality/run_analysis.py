@@ -84,10 +84,25 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # ---------------------------------------------------------------------------
 
 
-def slice_indices_for_volume(volume: np.ndarray) -> list[int]:
-    """Compute representative z-slice indices from SLICE_PERCENTILES."""
-    z_size = volume.shape[0]
-    return [int(p * (z_size - 1)) for p in SLICE_PERCENTILES]
+def slice_axis_and_indices(volume: np.ndarray) -> tuple[int, list[int]]:
+    """Pick the slicing axis that produces the most square slices, then
+    compute representative slice indices from SLICE_PERCENTILES.
+
+    Returns (axis, indices).
+    """
+    # For each axis, compute the aspect ratio of the resulting 2D slice
+    best_axis = 0
+    best_ratio = float("inf")
+    for ax in range(volume.ndim):
+        other = [volume.shape[i] for i in range(volume.ndim) if i != ax]
+        ratio = max(other) / max(min(other), 1)
+        if ratio < best_ratio:
+            best_ratio = ratio
+            best_axis = ax
+
+    n = volume.shape[best_axis]
+    indices = [int(p * (n - 1)) for p in SLICE_PERCENTILES]
+    return best_axis, indices
 
 
 def get_completed_seeds(tsv_path: Path, dataset_key: str) -> set[int]:
@@ -116,15 +131,19 @@ def append_row(tsv_path: Path, row: dict) -> None:
 def save_slices(
     volume: np.ndarray,
     recon: np.ndarray,
-    z_indices: list[int],
+    axis: int,
+    indices: list[int],
     path: Path,
 ) -> None:
     """Save target and reconstruction slices as compressed npz."""
+    target = np.moveaxis(np.take(volume, indices, axis=axis), axis, 0)
+    recon_sl = np.moveaxis(np.take(recon, indices, axis=axis), axis, 0)
     np.savez_compressed(
         str(path),
-        target_slices=volume[z_indices],
-        recon_slices=recon[z_indices],
-        z_indices=np.array(z_indices),
+        target_slices=target,
+        recon_slices=recon_sl,
+        z_indices=np.array(indices),
+        slice_axis=np.array(axis),
     )
 
 
@@ -138,6 +157,7 @@ def run_single(
     volume: np.ndarray,
     seeds: int,
     device: str,
+    slice_ax: int,
     z_indices: list[int],
 ) -> None:
     """Fit, render, measure, and save results for one splat count."""
@@ -195,7 +215,7 @@ def run_single(
     )
 
     # 3. Save representative slices
-    save_slices(volume, recon_np, z_indices, slices_file)
+    save_slices(volume, recon_np, slice_ax, z_indices, slices_file)
 
     # 4. Compression ratio: volume voxels / (n_splats * floats_per_splat)
     d = volume.ndim
@@ -272,8 +292,8 @@ def main():
         volume, metadata = DATASETS[dataset_key]()
         aprint(f"Shape: {metadata['shape']}, ndim: {metadata['ndim']}")
 
-    z_indices = slice_indices_for_volume(volume)
-    aprint(f"Representative z-slices: {z_indices}")
+    slice_ax, z_indices = slice_axis_and_indices(volume)
+    aprint(f"Slicing axis: {slice_ax}, indices: {z_indices}")
 
     ds_dir = RESULTS_DIR / dataset_key
     tsv_path = ds_dir / "metrics.tsv"
@@ -284,7 +304,7 @@ def main():
             aprint(f"Skipping seeds={seeds:,} (already completed)")
             continue
         with asection(f"Seeds = {seeds:,}"):
-            run_single(dataset_key, volume, seeds, device, z_indices)
+            run_single(dataset_key, volume, seeds, device, slice_ax, z_indices)
 
     aprint(f"\nAll splat counts completed. Results: {tsv_path}")
 
