@@ -363,9 +363,8 @@ def fit_progressive_gaussian_splats(
         if pass_i == 0:
             pass_iters = iters_per_pass
         else:
-            # Steeper decay: pass 1=85%, pass 2=70%, pass 3=55%, min 50%
-            # Later passes fit sparser residuals and converge faster.
-            decay = max(0.5, 1.0 - 0.15 * pass_i)
+            # Gentle decay: pass 1=95%, pass 2=90%, ..., min 80%
+            decay = max(0.8, 1.0 - 0.05 * pass_i)
             pass_iters = max(500, int(iters_per_pass * decay))
 
         result = fit_gaussian_splats(
