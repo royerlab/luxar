@@ -279,10 +279,8 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     if l1_diag is None:
         l1_diag = 0.01 * config.lr  # 1% of LR for mild shape regularization
 
-    # Move to device — use float16 to halve memory (70→35 MB for typical volumes).
-    # Loss computation auto-upcasts when compared with float32 model output.
-    _v_dtype = torch.float16 if config.device.type == "cuda" else torch.float32
-    V_tensor = torch.tensor(V_normalized, dtype=_v_dtype, device=config.device)
+    # Move to device
+    V_tensor = torch.tensor(V_normalized, dtype=torch.float32, device=config.device)
 
     # Log L1 regularization settings
     if config.verbose:
