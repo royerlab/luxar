@@ -394,10 +394,10 @@ def fit_progressive_gaussian_splats(
         # for each unique AABB box shape seen during optimization.
         from luxar.gsplats.models.gsplats.rendering_core import clear_grid_cache
 
-        clear_grid_cache()
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        # Skip aggressive memory cleanup between passes — gc.collect() and
+        # cache clearing add overhead. For moderate splat counts (≤50K/pass),
+        # GPU memory is not a constraint. The allocator reuses freed blocks.
+        clear_grid_cache()  # keep this (small, avoids stale cache entries)
 
         # --- Compute global PSNR (and cache render for next pass's residual) ---
         # Memory-efficient: render on GPU (CUDA backend is tiled and uses
