@@ -359,13 +359,14 @@ def fit_gaussian_splats(
         max_abs_error convergence criterion to work effectively.
     lr : float, default=0.01
         Learning rate for Adam optimizer.
-    loss_type : str, default="l1"
-        Loss function: "mse", "poisson" (better for count/photon data), or "l1" (robust to outliers, preserves sharp features, default).
-    asymmetric_penalty : float, default=10.0
+    loss_type : str, default="mse"
+        Loss function: "mse" (directly optimises PSNR, default), "poisson" (better
+        for count/photon data), or "l1" (robust to outliers, preserves sharp features).
+    asymmetric_penalty : float, default=1.0
         Over-prediction penalty factor for asymmetric loss. Multiplies loss for regions
         where pred > target by this factor. Set to None to disable asymmetric loss.
-        Default 10.0 heavily penalizes over-prediction since non-negative Gaussian sums
-        cannot easily reduce intensity, making under-prediction easier to correct.
+        Default 1.0 (symmetric) — optimal for MSE loss on dense volumes.
+        Progressive fitting uses 10.0 for residual passes to prevent locked-in overshoot.
     l1_amp : float, default=None (auto: 0.1 * lr)
         L1 regularization coefficient on splat amplitudes for sparsity.
         If None, automatically set to 10% of learning rate for consistent
@@ -397,7 +398,7 @@ def fit_gaussian_splats(
         anisotropy by constraining diagonal elements of Cholesky factor L so that
         max(diag)/min(diag) <= sqrt(max_eccentricity). For example, 2.0 means the
         longest axis can be at most sqrt(2) ≈ 1.41x the shortest axis.
-    truncate : float, default=3.0
+    truncate : float, default=2.75
         Truncation radius in standard deviations for rendering efficiency.
     device : str, optional
         PyTorch device ("cpu", "cuda", "mps"). Auto-detects if None.
@@ -439,15 +440,16 @@ def fit_gaussian_splats(
         This is an additional (OR) criterion alongside max_abs_error — either
         being satisfied triggers convergence. Provides a smoother, more stable
         convergence signal than max_abs_error. If None, this criterion is disabled.
-    gradient_clip : float or None, default=1.0
-        Maximum gradient norm for clipping. None disables clipping.
+    gradient_clip : float or None, default=None
+        Maximum gradient norm for clipping. None disables clipping (default for
+        MSE loss where gradients are inherently well-scaled by error magnitude).
     scheduler_type : str, default="plateau"
         Type of learning rate scheduler ("plateau" or "exponential").
-    patience : int, default=25
+    patience : int, default=15
         Scheduler patience: iterations without loss improvement before LR reduction.
-    lr_reduction_factor : float, default=0.98
+    lr_reduction_factor : float, default=0.9
         LR multiplier on plateau (new_lr = lr × lr_reduction_factor).
-        Examples: 0.5=halve LR, 0.1=reduce to 10%, 0.98=gentle reduction.
+        Examples: 0.5=halve LR, 0.1=reduce to 10%, 0.9=moderate reduction.
     early_stop_patience : Optional[int], default=300
         Early stopping: stop if no loss improvement for N iterations.
         None disables early stopping (runs until convergence or iteration limit).

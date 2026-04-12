@@ -411,7 +411,7 @@ These are user-facing configuration options:
 - **`truncate`**: Truncation radius in standard deviations (default: 3.0)
 - **`init_sigma_vox`**: Initial sigma for isotropic covariance initialization
 - **`norm_percentile`**: Percentile for robust normalization (0 = full range)
-- **`asymmetric_penalty`**: Over-prediction penalty factor (default: 10.0)
+- **`asymmetric_penalty`**: Over-prediction penalty factor (default: 1.0 single-pass, 10.0 progressive)
 
 **Convention**: Use descriptive names with units when applicable (`_vox` = voxels)
 
