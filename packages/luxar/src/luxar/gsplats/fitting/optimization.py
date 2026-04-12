@@ -218,6 +218,7 @@ def run_optimization_loop(
         optimizer.zero_grad()
         pred = model()
         loss = loss_fn(pred)
+        del pred  # Free output volume (~70 MB) before backward allocates gradients
         loss.backward()  # type: ignore[no-untyped-call]
 
         # Gradient clipping
