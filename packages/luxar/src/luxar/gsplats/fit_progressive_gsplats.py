@@ -55,6 +55,7 @@ Additional optimisations in fitting sub-modules:
 from __future__ import annotations
 
 import math
+import gc
 import time
 from typing import Any, Callable, Optional
 
@@ -388,13 +389,16 @@ def fit_progressive_gaussian_splats(
         # --- Free GPU memory from the per-pass fit before rendering ---
         # The fitter's optimizer state, gradients, and V_tensor are
         # unreferenced but PyTorch's caching allocator may hold the blocks.
-        # Clear the rendering grid cache (accumulated GPU tensors for AABB
-        # shapes) to avoid stale entries. Intentionally skip gc.collect() and
-        # torch.cuda.empty_cache() here — they add overhead without benefit
-        # for moderate splat counts (≤50K/pass, autoresearch iter 20).
+        # Memory cleanup between passes: gc.collect() + empty_cache() ensure
+        # the previous pass's model/optimizer/gradient tensors are released
+        # BEFORE the next pass allocates. Without this, peak GPU memory
+        # stacks both passes' live allocations.
         from luxar.gsplats.models.gsplats.rendering_core import clear_grid_cache
 
         clear_grid_cache()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         # --- Compute global PSNR (and cache render for next pass's residual) ---
         # Memory-efficient: render on GPU (CUDA backend is tiled and uses
