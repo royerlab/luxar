@@ -345,8 +345,9 @@ def fit_progressive_gaussian_splats(
             # Poisson loss: natural for sparse, count-like residuals.
             pass_kwargs["loss_type"] = "poisson"
 
-            # Higher LR: fine-detail splats need faster convergence.
-            pass_kwargs["lr"] = 0.03
+            # Use base pipeline LR (0.01) — the MSE loss already provides
+            # error-proportional gradients; the old 0.03 was tuned for L1.
+            # Removing the override lets residual passes use the optimized default.
 
             # Progressive compactness: gentle shrinkage increasing each pass.
             pass_kwargs["l1_diag"] = 0.0001 * pass_i
