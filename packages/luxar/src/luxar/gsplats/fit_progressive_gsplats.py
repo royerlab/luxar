@@ -279,8 +279,13 @@ def fit_progressive_gaussian_splats(
             # the entire residual is legitimate signal. Peaks seeding
             # already concentrates seeds on high-intensity regions.
 
-        # --- Determine seed count (adapt based on previous culling rate) ---
-        effective_max_splats_per_pass = max_splats_per_pass
+        # --- Determine seed count (adapt based on pass and culling rate) ---
+        # Pass 0 gets 20% more splats (dense volume needs more coverage);
+        # later passes get 20% fewer (sparse residuals need fewer).
+        if pass_i == 0:
+            effective_max_splats_per_pass = int(max_splats_per_pass * 1.2)
+        else:
+            effective_max_splats_per_pass = int(max_splats_per_pass * 0.8)
         if len(accumulated_lods) > 0:
             last_lod = accumulated_lods[-1]
             requested = last_lod.stats.get("seeds_requested", 0)
