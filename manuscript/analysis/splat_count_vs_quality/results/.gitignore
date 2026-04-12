@@ -1,0 +1,4 @@
+# Ignore all generated analysis data
+*
+# But keep this .gitignore
+!.gitignore

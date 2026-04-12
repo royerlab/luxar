@@ -55,10 +55,11 @@ USAGE:
     python demo_gsplats_3d_tribolium_embryo.py [--recompute] [--no-serve] [--serve-only] [--downsample=N]
 
 Options:
-    --recompute:     Force re-fitting from scratch (download + GPU fitting)
-    --no-serve:      Generate scene without launching viewer
-    --serve-only:    Just serve a previously generated scene
-    --downsample=N:  Downsample factor for fitting (default: 2)
+    --recompute:      Force re-fitting from scratch (download + GPU fitting)
+    --no-serve:       Generate scene without launching viewer
+    --serve-only:     Just serve a previously generated scene
+    --show-roundtrip: Show matplotlib comparison of original vs reconstructed volume
+    --downsample=N:   Downsample factor for fitting (default: 1)
 
 By default, precomputed GSplats are loaded from package data (Git LFS).
 Use --recompute to re-fit from scratch (requires network + GPU).
@@ -99,10 +100,10 @@ ZENODO_URL = (
 VOXEL_SIZE_UM = 0.381  # Isotropic voxel size in micrometres
 
 # Fitting parameters (progressive)
-MAX_SPLATS = 10_000
-MAX_SPLATS_PER_PASS = 2_000
-ITERS_PER_PASS = 3_000
-PSNR_PATIENCE = 0.2
+MAX_SPLATS = 64_000
+MAX_SPLATS_PER_PASS = 16_000
+ITERS_PER_PASS = 5_000
+PSNR_PATIENCE = 0.1
 
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_tribolium"
@@ -112,8 +113,9 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+SHOW_ROUNDTRIP = "--show-roundtrip" in sys.argv
 
-DOWNSAMPLE_FACTOR = 2
+DOWNSAMPLE_FACTOR = 1
 for _arg in sys.argv:
     if _arg.startswith("--downsample="):
         DOWNSAMPLE_FACTOR = int(_arg.split("=")[1])
@@ -436,6 +438,58 @@ Navigation:
 
 
 # =============================================================================
+# Round-Trip Visualisation
+# =============================================================================
+
+
+def show_roundtrip_comparison(
+    volume: np.ndarray,
+    gsplats_data: GSplatData,
+) -> None:
+    """Show original vs round-trip reconstructed volume side by side."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        aprint("matplotlib is required for --show-roundtrip. Install with: pip install matplotlib")
+        return
+
+    with asection("Round-trip reconstruction comparison"):
+        with asection("Rendering reconstruction"):
+            recon = gsplats_data.render_to_volume(shape=volume.shape, device=DEVICE)
+            mse = float(np.mean((volume - recon) ** 2))
+            psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
+            aprint(f"  PSNR: {psnr:.2f} dB, MSE: {mse:.6g}")
+
+        mid_z = volume.shape[0] // 2
+        orig_slice = volume[mid_z]
+        recon_slice = recon[mid_z]
+        diff_slice = np.abs(orig_slice - recon_slice)
+
+        fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
+
+        axes[0].imshow(orig_slice, cmap="gray", vmin=0, vmax=1)
+        axes[0].set_title("Original")
+        axes[0].axis("off")
+
+        axes[1].imshow(recon_slice, cmap="gray", vmin=0, vmax=1)
+        axes[1].set_title(f"Reconstructed (PSNR {psnr:.1f} dB)")
+        axes[1].axis("off")
+
+        im = axes[2].imshow(diff_slice, cmap="inferno", vmin=0, vmax=0.3)
+        axes[2].set_title("|Difference|")
+        axes[2].axis("off")
+        fig.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04)
+
+        fig.suptitle(
+            f"Tribolium Embryo — Round-Trip Comparison — z-slice {mid_z}  "
+            f"({len(gsplats_data.amplitudes):,} splats)",
+            fontsize=14,
+        )
+        plt.tight_layout()
+        plt.show()
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -466,6 +520,8 @@ def main():
         recompute=RECOMPUTE,
     )
 
+    volume = None
+
     if precomputed is not None:
         gsplats_data = precomputed[0]
     else:
@@ -473,6 +529,16 @@ def main():
         warn_if_no_cuda_gpu()
         volume = load_tribolium_volume()
         gsplats_data = fit_tribolium(volume)
+
+    # Optional round-trip visualisation
+    if SHOW_ROUNDTRIP:
+        if volume is not None:
+            show_roundtrip_comparison(volume, gsplats_data)
+        else:
+            aprint(
+                "Cannot show round-trip: original volume not available "
+                "(loaded from precomputed cache). Re-run with --recompute."
+            )
 
     # Report
     with asection("Summary"):

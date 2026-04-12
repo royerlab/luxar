@@ -997,6 +997,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         n_splats: int,
         n_dims: int,
         cholesky_is_uniform: bool,
+        coverage_sigma: float = 3.0,
     ) -> Tuple[
         NDArray[np.float32],
         Union[NDArray[np.float32], float],
@@ -1036,7 +1037,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             chunk_size = min(chunk_size, n_splats)
 
             chunk_bounds = compute_chunk_bounds_gsplats(
-                centers, cholesky_factors, chunk_size
+                centers, cholesky_factors, chunk_size,
+                coverage_sigma=coverage_sigma,
             )
 
             ordering_data = {
@@ -1273,6 +1275,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             ("intensity", 1.0),
             ("offset", 0.0),
             ("blending_mode", "additive"),
+            ("truncation_radius", 3.0),
         ]:
             if key not in attrs:
                 attrs[key] = default
@@ -1355,6 +1358,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             cholesky_is_uniform,
         ) = self._validate_gsplat_inputs(centers, amplitudes, cholesky_factors, colors)
 
+        # Extract truncation_radius for spatial ordering (default 3.0)
+        truncation_radius = float(attrs.get("truncation_radius", 3.0))
+
         aprint(f"📝 Writing {n_splats:,} gsplats ({n_dims}D) to {path}")
         if isinstance(amplitudes, (int, float)):
             aprint(f"  → Uniform amplitude {amplitudes:.3f} for all splats")
@@ -1381,6 +1387,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             n_splats,
             n_dims,
             cholesky_is_uniform,
+            coverage_sigma=truncation_radius,
         )
 
         # Write arrays
@@ -1456,6 +1463,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group = self.store.require_group(path)
         n_lods = len(lods)
 
+        # Extract truncation_radius for spatial ordering (default 3.0)
+        truncation_radius = float(attrs.get("truncation_radius", 3.0))
+
         # Validate all LODs and collect metadata
         total_splats = 0
         all_center_mins: list[list[float]] = []
@@ -1499,6 +1509,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 ns,
                 nd,
                 chol_uniform,
+                coverage_sigma=truncation_radius,
             )
 
             lod_meta = self._write_gsplat_arrays(

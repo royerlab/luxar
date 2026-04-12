@@ -13,8 +13,6 @@ import numpy as np
 import pytest
 import torch
 
-from .conftest import compute_L_row_norms
-
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
 
@@ -565,7 +563,6 @@ class TestFP16LowLevelBackend:
             .repeat(N, 1, 1)
         )
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
         amps = torch.rand(N, device="cuda", dtype=torch.float32)
 
         # Call backend with use_fp16=False
@@ -573,13 +570,10 @@ class TestFP16LowLevelBackend:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             shape,
             3.0,  # truncate
             1e-5,  # intensity_floor
-            8,  # tile_size
-            128,  # batch_size
-            False,  # use_fp16
+            use_fp16=False,
         )
 
         output = result[0]
@@ -603,7 +597,6 @@ class TestFP16LowLevelBackend:
             .repeat(N, 1, 1)
         )
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
         amps = torch.rand(N, device="cuda", dtype=torch.float32)
 
         # Call backend with use_fp16=True
@@ -611,13 +604,10 @@ class TestFP16LowLevelBackend:
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             shape,
             3.0,  # truncate
             1e-5,  # intensity_floor
-            8,  # tile_size
-            128,  # batch_size
-            True,  # use_fp16
+            use_fp16=True,
         )
 
         output = result[0]

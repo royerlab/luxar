@@ -430,3 +430,233 @@ class TestDedupeGPU:
             assert deduped.shape[1] == ndim
             assert len(deduped) > 0
             assert len(indices) == len(deduped)
+
+
+class TestSpatialHashGrid:
+    """Test SpatialHashGrid for proximity queries."""
+
+    def test_empty_grid(self) -> None:
+        """Empty grid should have no neighbors."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        grid = SpatialHashGrid(cell_size=2.0, ndim=3)
+        assert len(grid) == 0
+        assert grid.points.shape == (0, 3)
+
+        point = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        assert not grid.has_neighbor_within(point, distance=1.0)
+
+    def test_insert_and_len(self) -> None:
+        """Inserting points should increase length."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        grid = SpatialHashGrid(cell_size=2.0, ndim=2)
+        grid.insert(np.array([0.0, 0.0], dtype=np.float32))
+        assert len(grid) == 1
+        grid.insert(np.array([5.0, 5.0], dtype=np.float32))
+        assert len(grid) == 2
+
+    def test_points_property(self) -> None:
+        """points property should return all inserted points."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        grid = SpatialHashGrid(cell_size=2.0, ndim=2)
+        p1 = np.array([1.0, 2.0], dtype=np.float32)
+        p2 = np.array([5.0, 6.0], dtype=np.float32)
+        grid.insert(p1)
+        grid.insert(p2)
+
+        pts = grid.points
+        assert pts.shape == (2, 2)
+        np.testing.assert_array_almost_equal(pts[0], p1)
+        np.testing.assert_array_almost_equal(pts[1], p2)
+
+    def test_points_returns_copy(self) -> None:
+        """points property should return a copy, not a view."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        grid = SpatialHashGrid(cell_size=2.0, ndim=2)
+        grid.insert(np.array([1.0, 2.0], dtype=np.float32))
+
+        pts = grid.points
+        pts[0, 0] = 999.0
+        # Internal state should be unchanged
+        assert grid.points[0, 0] != 999.0
+
+    def test_neighbor_within_distance(self) -> None:
+        """Should detect a point within the query distance."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        grid = SpatialHashGrid(cell_size=2.0, ndim=2)
+        grid.insert(np.array([0.0, 0.0], dtype=np.float32))
+
+        # Point at distance 1.0 (within 2.0)
+        close = np.array([0.7, 0.7], dtype=np.float32)
+        assert grid.has_neighbor_within(close, distance=2.0)
+
+    def test_no_neighbor_beyond_distance(self) -> None:
+        """Should not detect a point beyond the query distance."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        grid = SpatialHashGrid(cell_size=5.0, ndim=2)
+        grid.insert(np.array([0.0, 0.0], dtype=np.float32))
+
+        # Point at distance ~7.07 (beyond 5.0)
+        far = np.array([5.0, 5.0], dtype=np.float32)
+        assert not grid.has_neighbor_within(far, distance=5.0)
+
+    def test_boundary_distance_exact(self) -> None:
+        """Point at exactly the boundary should not be detected (strict <)."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        grid = SpatialHashGrid(cell_size=5.0, ndim=2)
+        grid.insert(np.array([0.0, 0.0], dtype=np.float32))
+
+        # Point at exactly distance=5.0 along one axis
+        boundary = np.array([5.0, 0.0], dtype=np.float32)
+        assert not grid.has_neighbor_within(boundary, distance=5.0)
+
+    def test_1d(self) -> None:
+        """Should work in 1D."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        grid = SpatialHashGrid(cell_size=3.0, ndim=1)
+        grid.insert(np.array([0.0], dtype=np.float32))
+        grid.insert(np.array([10.0], dtype=np.float32))
+
+        assert grid.has_neighbor_within(np.array([1.0], dtype=np.float32), 3.0)
+        assert not grid.has_neighbor_within(np.array([5.0], dtype=np.float32), 3.0)
+
+    def test_3d(self) -> None:
+        """Should work in 3D."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        grid = SpatialHashGrid(cell_size=2.0, ndim=3)
+        grid.insert(np.array([0.0, 0.0, 0.0], dtype=np.float32))
+
+        # Distance = sqrt(3) ≈ 1.73, within 2.0
+        close = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+        assert grid.has_neighbor_within(close, distance=2.0)
+
+        # Distance = sqrt(12) ≈ 3.46, beyond 2.0
+        far = np.array([2.0, 2.0, 2.0], dtype=np.float32)
+        assert not grid.has_neighbor_within(far, distance=2.0)
+
+    def test_4d(self) -> None:
+        """Should work in 4D."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        grid = SpatialHashGrid(cell_size=3.0, ndim=4)
+        grid.insert(np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
+
+        # Distance = sqrt(4) = 2.0, within 3.0
+        close = np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32)
+        assert grid.has_neighbor_within(close, distance=3.0)
+
+    def test_many_points_min_distance(self) -> None:
+        """Poisson-disk-style usage: all accepted points maintain min_distance."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        rng = np.random.default_rng(42)
+        min_dist = 3.0
+        grid = SpatialHashGrid(cell_size=min_dist, ndim=3)
+
+        candidates = rng.uniform(0, 50, size=(5000, 3)).astype(np.float32)
+
+        for c in candidates:
+            if not grid.has_neighbor_within(c, min_dist):
+                grid.insert(c)
+
+        pts = grid.points
+        assert len(pts) > 10  # Sanity: should accept some
+
+        # Verify all pairwise distances >= min_dist
+        from scipy.spatial.distance import pdist
+
+        dists = pdist(pts)
+        assert np.all(dists >= min_dist - 1e-5), (
+            f"Min pairwise distance {dists.min():.4f} < {min_dist}"
+        )
+
+    def test_consistency_with_bruteforce(self) -> None:
+        """Grid queries should match brute-force distance checks."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        rng = np.random.default_rng(123)
+        min_dist = 2.0
+        ndim = 3
+        stored = rng.uniform(0, 20, size=(100, ndim)).astype(np.float32)
+
+        grid = SpatialHashGrid(cell_size=min_dist, ndim=ndim)
+        for p in stored:
+            grid.insert(p)
+
+        # Test 200 random query points
+        queries = rng.uniform(0, 20, size=(200, ndim)).astype(np.float32)
+        for q in queries:
+            grid_result = grid.has_neighbor_within(q, min_dist)
+            # Brute force
+            diffs = stored - q
+            brute_min = np.min(np.sum(diffs**2, axis=1))
+            brute_result = brute_min < min_dist**2
+            assert grid_result == brute_result, (
+                f"Mismatch at {q}: grid={grid_result}, brute={brute_result}, "
+                f"min_dist_sq={brute_min:.4f}"
+            )
+
+    def test_array_growth(self) -> None:
+        """Internal array should grow beyond initial allocation."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        grid = SpatialHashGrid(cell_size=0.1, ndim=2)
+        # Insert more than 64 points (initial allocation)
+        for i in range(200):
+            grid.insert(np.array([float(i), 0.0], dtype=np.float32))
+
+        assert len(grid) == 200
+        pts = grid.points
+        assert pts.shape == (200, 2)
+        # Verify first and last are correct
+        assert pts[0, 0] == 0.0
+        assert pts[199, 0] == 199.0
+
+    def test_negative_coordinates(self) -> None:
+        """Negative coordinates should be hashed correctly (floor, not trunc)."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        grid = SpatialHashGrid(cell_size=2.0, ndim=2)
+        # Insert at (-1, -1)
+        grid.insert(np.array([-1.0, -1.0], dtype=np.float32))
+
+        # Query at (-0.5, -0.5): distance = sqrt(0.5) ≈ 0.71, within 2.0
+        close = np.array([-0.5, -0.5], dtype=np.float32)
+        assert grid.has_neighbor_within(close, distance=2.0)
+
+        # Query at (0.5, 0.5): distance = sqrt(4.5) ≈ 2.12, beyond 2.0
+        far = np.array([0.5, 0.5], dtype=np.float32)
+        assert not grid.has_neighbor_within(far, distance=2.0)
+
+    def test_negative_coordinates_consistency_with_bruteforce(self) -> None:
+        """Grid queries with negative coordinates should match brute-force."""
+        from luxar.gsplats.seeds.utils import SpatialHashGrid
+
+        rng = np.random.default_rng(99)
+        min_dist = 2.0
+        ndim = 3
+        # Coordinates spanning negative and positive range
+        stored = rng.uniform(-20, 20, size=(80, ndim)).astype(np.float32)
+
+        grid = SpatialHashGrid(cell_size=min_dist, ndim=ndim)
+        for p in stored:
+            grid.insert(p)
+
+        queries = rng.uniform(-20, 20, size=(150, ndim)).astype(np.float32)
+        for q in queries:
+            grid_result = grid.has_neighbor_within(q, min_dist)
+            diffs = stored - q
+            brute_min = np.min(np.sum(diffs**2, axis=1))
+            brute_result = brute_min < min_dist**2
+            assert grid_result == brute_result, (
+                f"Mismatch at {q}: grid={grid_result}, brute={brute_result}, "
+                f"min_dist_sq={brute_min:.4f}"
+            )

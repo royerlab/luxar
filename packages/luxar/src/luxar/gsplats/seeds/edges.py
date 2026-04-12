@@ -10,11 +10,11 @@ from typing import Optional
 
 import numpy as np
 from scipy import ndimage as ndi
-from scipy.spatial import cKDTree
 
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds.utils import (
     SEED_AMPLITUDE_SCALE,
+    SpatialHashGrid,
     sigmas_to_cholesky_isotropic,
 )
 
@@ -288,9 +288,12 @@ def _poisson_disk_sample_weighted(
     min_distance: float,
 ) -> np.ndarray:
     """
-    Weighted Poisson disk sampling.
+    Weighted Poisson disk sampling using spatial hash grid.
 
-    Samples points proportional to density while maintaining minimum distance.
+    Candidates are sorted by density (highest first) and accepted if they
+    satisfy the min_distance constraint. A spatial hash grid provides O(1)
+    amortized neighbor lookups, replacing the previous KD-tree approach that
+    scaled as O(n² log n) due to repeated tree rebuilds.
 
     Parameters
     ----------
@@ -315,69 +318,28 @@ def _poisson_disk_sample_weighted(
     if len(valid_coords) == 0:
         return np.zeros((0, ndim), dtype=float)
 
-    # Get density at valid positions
+    # Sort by density descending — seeds strongest edges first.
+    # Replaces weighted rng.choice(replace=False, p=prob) which is O(N log N)
+    # with high constants on millions of candidates.
     valid_density = density[tuple(valid_coords.T)]
+    order = np.argsort(-valid_density)
 
-    # Normalize to probability
-    prob = valid_density / valid_density.sum()
-
-    # Use weighted sampling with rejection for min_distance
-    # KD-tree acceleration provides O(N log M) instead of O(N×M) complexity
-    rng = np.random.default_rng(seed=42)
-
-    # Pre-allocate array for selected seeds (avoids repeated list→array conversions)
-    selected_array = np.empty((n_samples, ndim), dtype=np.float32)
-    n_selected = 0
-
-    # Number of candidates to try (oversample)
     n_candidates = min(len(valid_coords), n_samples * 10)
+    candidates = valid_coords[order[:n_candidates]].astype(np.float32)
 
-    # Sample candidate indices weighted by density
-    candidate_indices = rng.choice(
-        len(valid_coords),
-        size=n_candidates,
-        replace=False if n_candidates <= len(valid_coords) else True,
-        p=prob,
-    )
+    # Spatial hash grid for O(1) amortized distance checks with zero rebuild cost.
+    grid = SpatialHashGrid(cell_size=min_distance, ndim=ndim)
 
-    # Use KD-tree for fast distance queries (O(log M) instead of O(M) per query)
-    tree = None
+    for i in range(n_candidates):
+        coord = candidates[i]
 
-    for idx in candidate_indices:
-        coord = valid_coords[idx].astype(np.float32)
+        if not grid.has_neighbor_within(coord, min_distance):
+            grid.insert(coord)
 
-        # Check distance to existing selected points
-        if n_selected > 0:
-            # Early termination optimization: for last few candidates, use simple check
-            # This avoids tree rebuild overhead when very few slots remain
-            if n_samples - n_selected <= 3:
-                # Simple distance check for last few slots
-                diffs = selected_array[:n_selected] - coord
-                min_dist_sq = np.min(np.sum(diffs**2, axis=1))
-                if min_dist_sq < min_distance**2:
-                    continue  # Too close, reject
-            else:
-                # Use KD-tree for larger selection sets
-                if tree is None:
-                    tree = cKDTree(selected_array[:n_selected])
-                dist, _ = tree.query(coord, k=1)
-                if dist < min_distance:
-                    continue  # Too close, reject
-
-        # Add to pre-allocated array
-        selected_array[n_selected] = coord
-        n_selected += 1
-
-        # Rebuild KD-tree with array slice (no list→array conversion overhead)
-        # Still O(M log M) per rebuild, but with lower constant factors
-        if n_selected > 0 and n_samples - n_selected > 3:
-            tree = cKDTree(selected_array[:n_selected])
-
-        if n_selected >= n_samples:
+        if len(grid) >= n_samples:
             break
 
-    if n_selected == 0:
+    if len(grid) == 0:
         return np.zeros((0, ndim), dtype=float)
 
-    # Trim to actual size and convert back to float64 for consistency
-    return selected_array[:n_selected].astype(float)
+    return grid.points.astype(float)
