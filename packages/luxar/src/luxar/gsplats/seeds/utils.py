@@ -58,9 +58,7 @@ class SpatialHashGrid:
         # Pre-allocate with doubling growth
         self._points = np.empty((64, ndim), dtype=np.float32)
         self._n_points = 0
-        self._neighbor_offsets = list(
-            itertools.product([-1, 0, 1], repeat=ndim)
-        )
+        self._neighbor_offsets = list(itertools.product([-1, 0, 1], repeat=ndim))
 
     def _cell_key(self, point: np.ndarray) -> tuple[int, ...]:
         """Compute the grid cell key for a point.

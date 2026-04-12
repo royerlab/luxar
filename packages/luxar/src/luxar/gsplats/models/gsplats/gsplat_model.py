@@ -215,10 +215,14 @@ class GaussianSplatModel(nn.Module):
             self.register_buffer("_tril_cols", tril[1], persistent=False)
         else:
             self.register_buffer(
-                "_tril_rows", torch.empty(0, dtype=torch.long, device=device), persistent=False
+                "_tril_rows",
+                torch.empty(0, dtype=torch.long, device=device),
+                persistent=False,
             )
             self.register_buffer(
-                "_tril_cols", torch.empty(0, dtype=torch.long, device=device), persistent=False
+                "_tril_cols",
+                torch.empty(0, dtype=torch.long, device=device),
+                persistent=False,
             )
         # Cache shape as float32 tensor for current_params
         self.register_buffer(
@@ -334,7 +338,9 @@ class GaussianSplatModel(nn.Module):
         u = torch.sigmoid(self.raw_mu)
 
         # Scale to actual voxel coordinates within image bounds
-        centers = u * torch.clamp(self._shape_f32 - 1.0, min=1.0)  # Maps [0,1] -> [0, shape-1]
+        centers = u * torch.clamp(
+            self._shape_f32 - 1.0, min=1.0
+        )  # Maps [0,1] -> [0, shape-1]
 
         # Reconstruct Cholesky factors and apply amplitude transformation
         L = self._build_L()
