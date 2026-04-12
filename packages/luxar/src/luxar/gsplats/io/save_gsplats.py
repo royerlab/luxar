@@ -66,6 +66,7 @@ def _save_splat_arrays_to_group(
     float16_allowed: bool,
     lod_stats: Optional[Dict[str, Any]] = None,
     compressor: Optional[Any] = None,
+    truncation_radius: float = 3.0,
 ) -> None:
     """Write splat arrays into an existing zarr group.
 
@@ -108,7 +109,9 @@ def _save_splat_arrays_to_group(
 
     # Compute chunk size and bounds
     chunk_size = _compute_chunk_size(n_splats, ndim)
-    chunk_bounds = compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size)
+    chunk_bounds = compute_chunk_bounds_gsplats(
+        centers, cholesky_factors, chunk_size, coverage_sigma=truncation_radius
+    )
 
     # Compute amplitude ranges for metadata
     if n_splats == 0:
@@ -130,6 +133,7 @@ def _save_splat_arrays_to_group(
         "chunk_size": chunk_size,
         "amplitude_range": {"min": amplitude_min, "max": amplitude_max},
         "center_bounds": {"min": center_min, "max": center_max},
+        "truncation_radius": truncation_radius,
     }
     splats_attrs.update(ordering_metadata)
     if lod_stats is not None:
@@ -232,6 +236,7 @@ def save_gsplats(
     compress: Optional[Literal["zip", "tar.gz"]] = None,
     compressor: Optional[Any] = DEFAULT_COMP,
     zip_deflate: bool = False,
+    truncation_radius: float = 3.0,
 ) -> None:
     """Save Gaussian splats to .gsplats.zarr format.
 
@@ -252,6 +257,7 @@ def save_gsplats(
         float16_allowed: Enable float16 encoding (default: False for compatibility)
         compress: Optional compression format ("zip" or "tar.gz"). Creates compressed archive.
         zip_deflate: Use DEFLATE compression for the outer zip (default: STORED).
+        truncation_radius: Gaussian truncation radius in standard deviations (default 3.0).
 
     Raises:
         ValueError: If arrays have incompatible shapes or invalid parameters
@@ -308,6 +314,7 @@ def save_gsplats(
         positive_scalar_encoding=positive_scalar_encoding,
         float16_allowed=float16_allowed,
         compressor=compressor,
+        truncation_radius=truncation_radius,
     )
 
     # Write fitting info (optional)

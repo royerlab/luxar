@@ -387,6 +387,7 @@ def fit_progressive_gaussian_splats(
             cholesky_factors=result.cholesky_factors,
             colors=result.colors,
             stats=dict(result.stats),
+            truncation_radius=result.truncation_radius,
         )
         accumulated_lods.append(lod)
 
@@ -516,6 +517,7 @@ def fit_progressive_gaussian_splats(
                     cholesky_factors=new_chol.astype(np.float32),
                     colors=lod.colors,
                     stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
                 )
             )
         final_result = GSplatData.from_lods(converted_lods, stats=overall_stats)

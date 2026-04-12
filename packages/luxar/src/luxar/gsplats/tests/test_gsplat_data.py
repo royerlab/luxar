@@ -2032,3 +2032,66 @@ class TestGSplatsWithoutSharpness:
         assert isinstance(result, GSplatData)
         assert not hasattr(result, "sharpnesses")
         assert result.centers.shape[1] == 2
+
+
+class TestTruncationRadius:
+    """Tests for the truncation_radius field on GSplatData and GSplatLOD."""
+
+    def _make_gsplat(self, n: int = 10, truncation_radius: float = 3.0) -> GSplatData:
+        rng = np.random.RandomState(42)
+        return GSplatData(
+            centers=rng.rand(n, 3).astype(np.float32),
+            amplitudes=rng.rand(n).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
+            ),
+            truncation_radius=truncation_radius,
+        )
+
+    def test_default_truncation_radius(self):
+        """Default truncation_radius is 3.0."""
+        g = self._make_gsplat()
+        assert g.truncation_radius == 3.0
+        assert g.lods[0].truncation_radius == 3.0
+
+    def test_custom_truncation_radius(self):
+        """Custom truncation_radius is propagated to LOD."""
+        g = self._make_gsplat(truncation_radius=2.5)
+        assert g.truncation_radius == 2.5
+        assert g.lods[0].truncation_radius == 2.5
+
+    def test_truncation_preserved_by_filter(self):
+        """filter() preserves truncation_radius."""
+        g = self._make_gsplat(truncation_radius=2.75)
+        mask = np.ones(g.n_splats, dtype=bool)
+        mask[0] = False
+        filtered = g.filter(mask)
+        assert filtered.truncation_radius == 2.75
+
+    def test_truncation_preserved_by_flattened(self):
+        """flattened() preserves truncation_radius."""
+        g = self._make_gsplat(truncation_radius=2.5)
+        flat = g.flattened()
+        assert flat.truncation_radius == 2.5
+
+    def test_concatenate_same_truncation(self):
+        """concatenate works when all datasets have same truncation_radius."""
+        g1 = self._make_gsplat(5, truncation_radius=2.75)
+        g2 = self._make_gsplat(8, truncation_radius=2.75)
+        merged = GSplatData.concatenate([g1, g2])
+        assert merged.truncation_radius == 2.75
+        assert merged.n_splats == 13
+
+    def test_concatenate_rejects_mismatched_truncation(self):
+        """concatenate raises ValueError on mismatched truncation_radius."""
+        g1 = self._make_gsplat(5, truncation_radius=3.0)
+        g2 = self._make_gsplat(5, truncation_radius=2.5)
+        with pytest.raises(ValueError, match="Truncation radius mismatch"):
+            GSplatData.concatenate([g1, g2])
+
+    def test_filter_by_uses_stored_truncation(self):
+        """filter_by uses self.truncation_radius when truncate=None."""
+        g = self._make_gsplat(truncation_radius=2.5)
+        # filter_by with no filtering criteria returns same data
+        filtered = g.filter_by()
+        assert filtered.truncation_radius == 2.5
