@@ -154,9 +154,10 @@ class CUDASplatFunction(torch.autograd.Function):
         use_fp16_kernel = use_fp16 or torch.is_autocast_enabled()
 
         # Compute conic (Σ⁻¹) from Cholesky factors (preserves dtype)
-        # The clone creates an independent autograd leaf for the L→conic chain.
+        # detach() creates a view sharing storage (no copy); requires_grad_
+        # makes it an independent autograd leaf for the L→conic chain.
         # torch.compile fuses the forward+backward into optimized kernels (~0.3ms).
-        Ls_for_conic = Ls.detach().clone().requires_grad_(True)
+        Ls_for_conic = Ls.detach().requires_grad_(True)
         conic = _cholesky_to_conic_compiled(Ls_for_conic)
 
         # Convert to FP16 for kernel if needed (AMP mode converts FP32 params to FP16)
@@ -191,8 +192,14 @@ class CUDASplatFunction(torch.autograd.Function):
             )
             shape_tensor_cached = None
 
-        # Save for backward
-        ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps)
+        # Save for backward — only Ls_for_conic is needed for the CUDA path
+        # (chain rule d_conic → d_Ls). centers/conic/amps are accessed via
+        # ctx.*_kernel. Ls is only needed for the PyTorch fallback path,
+        # stored as a regular attribute (not in the autograd-managed save list).
+        ctx.save_for_backward(Ls_for_conic,)
+        ctx.centers_for_fallback = centers
+        ctx.Ls_for_fallback = Ls
+        ctx.amps_for_fallback = amps
         ctx.centers_kernel = centers_kernel
         ctx.conic_kernel = conic_kernel
         ctx.amps_kernel = amps_kernel
@@ -234,7 +241,7 @@ class CUDASplatFunction(torch.autograd.Function):
                 "use_fp16=True is only for inference with pre-trained models."
             )
 
-        centers, Ls, Ls_for_conic, conic, amps = ctx.saved_tensors
+        (Ls_for_conic,) = ctx.saved_tensors
         shape = ctx.shape
         truncate = ctx.truncate
         intensity_floor = ctx.intensity_floor
@@ -276,6 +283,9 @@ class CUDASplatFunction(torch.autograd.Function):
             from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
             # Recompute with gradient tracking
+            centers = ctx.centers_for_fallback
+            Ls = ctx.Ls_for_fallback
+            amps = ctx.amps_for_fallback
             with torch.enable_grad():
                 centers_grad = centers.detach().clone().requires_grad_(True)
                 Ls_grad = Ls.detach().clone().requires_grad_(True)
