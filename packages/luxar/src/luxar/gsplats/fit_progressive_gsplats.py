@@ -352,10 +352,10 @@ def fit_progressive_gaussian_splats(
             # already provides good convergence; extra regularization hurts PSNR.
             # (Original l1_diag = 0.0001 * pass_i was tuned for L1 base pipeline.)
 
-        # Dynamic ops: enable for pass 0 (dense volume, same as single-pass where
-        # it helps +0.47 dB), disable for residual passes where peaks seeding
-        # already places seeds optimally at residual maxima.
-        pass_enable_dynamic = enable_dynamic_ops if pass_i == 0 else False
+        # Disable dynamic ops for progressive passes: seeds are already placed
+        # at residual peaks, and diverse benchmark showed no quality benefit
+        # from relocation (quality iteration 30).  Saves per-iteration overhead.
+        pass_enable_dynamic = False
 
         # Adaptive iteration count: later passes fit progressively smaller
         # residuals and converge faster. Scale iterations with pass index.
