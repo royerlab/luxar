@@ -79,7 +79,7 @@ fitted.gsplats.zarr/
 │   ├── cholesky_factors         # (N, k) or (1, k) float32, spatially ordered
 │   ├── colors                   # (N, 3) or (1, 3) float32/uint8, optional
 │   ├── chunk_bounds             # (num_chunks, d, 2) float32, single chunk
-│   └── .zattrs                  # n_splats, ndim, ordering info
+│   └── .zattrs                  # n_splats, ndim, truncation_radius, ordering info
 │
 ├── fitting/                     # Optimization info (optional)
 │   ├── .zattrs                  # Common: time_seconds, fitter_name, fitter_version
@@ -157,6 +157,7 @@ Each LOD subgroup has the same internal structure as the v1.0 `splats/` group (a
   "n_splats": 10000,
   "ndim": 3,
   "has_colors": true,
+  "truncation_radius": 3.0,      // Gaussian truncation in sigmas (default 3.0 if absent)
   "ordering": "morton",           // "morton", "hilbert", or "none"
   "morton_min": [0.0, 0.0, 0.0],  // Bounds for Morton normalization (all dimensions)
   "morton_max": [256.0, 256.0, 128.0],
@@ -253,7 +254,7 @@ GSplats have ellipsoidal extent (unlike point radii). Chunk bounds include this 
 #   2D: [L00, L10, L11] → cov[0,0]=L00², cov[1,1]=L10²+L11²
 #   3D: [L00, L10, L11, L20, L21, L22] → cov[2,2]=L20²+L21²+L22²
 
-extent[d] = sqrt(covariance[d, d]) * 3.0  # 3σ coverage (99.7%)
+extent[d] = sqrt(covariance[d, d]) * truncation_radius  # default 3.0 (3σ = 99.7%)
 
 # Chunk bounds include extent
 chunk_bounds[i, d, 0] = min(centers[chunk_i, d] - extent[chunk_i, d])

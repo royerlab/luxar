@@ -146,10 +146,10 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 
 # Progressive fitting parameters
-MAX_SPLATS = 8000
-MAX_SPLATS_PER_PASS = 1500
-ITERS_PER_PASS = 3000
-PSNR_PATIENCE = 0.2
+MAX_SPLATS = 32000
+MAX_SPLATS_PER_PASS = 8000
+ITERS_PER_PASS = 5000
+PSNR_PATIENCE = 0.1
 
 # Voxel spacing (Z, Y, X) in micrometres for kidney dataset
 VOXEL_SIZE_ZYX = (1.25, 1.24, 1.24)
@@ -301,7 +301,6 @@ def fit_channel(volume, channel_name, cache_file):
 
     result = fit_progressive_gaussian_splats(
         volume,
-        lr=0.01,
         max_splats=MAX_SPLATS,
         max_splats_per_pass=MAX_SPLATS_PER_PASS,
         iters_per_pass=ITERS_PER_PASS,
@@ -309,8 +308,8 @@ def fit_channel(volume, channel_name, cache_file):
         device=DEVICE,
         verbose=True,
         enable_dynamic_ops=True,
-        boundary_penalty=0.1,
-        clip_to_bounds=True,
+        #boundary_penalty=0.1,
+        #clip_to_bounds=True,
         voxel_size=VOXEL_SIZE_ZYX,
     )
 

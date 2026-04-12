@@ -153,6 +153,10 @@ class GSplatLOD(_SplatArrayMixin):
         Optional RGB colors per splat.
     stats : Dict[str, Any]
         Per-LOD statistics (e.g., psnr_db, time_seconds, pass_index).
+    truncation_radius : float
+        Gaussian truncation radius in standard deviations. Controls the shifted
+        Gaussian formula: C = exp(-0.5 * T²), scale = 1/(1-C). Stored in zarr
+        metadata and propagated to the viewer for consistent rendering.
     """
 
     centers: np.ndarray
@@ -160,6 +164,7 @@ class GSplatLOD(_SplatArrayMixin):
     cholesky_factors: np.ndarray
     colors: Optional[np.ndarray] = None
     stats: Dict[str, Any] = field(default_factory=dict)
+    truncation_radius: float = 3.0
 
     def __post_init__(self) -> None:
         """Validate array shape consistency."""
@@ -236,6 +241,7 @@ class GSplatData(_SplatArrayMixin):
         stats: Optional[Dict[str, Any]] = None,
         *,
         lods: Optional[List[GSplatLOD]] = None,
+        truncation_radius: float = 3.0,
     ) -> None:
         if lods is not None:
             # Explicit LOD construction
@@ -259,6 +265,7 @@ class GSplatData(_SplatArrayMixin):
                 cholesky_factors=cholesky_factors,
                 colors=colors,
                 stats=stats if stats is not None else {},
+                truncation_radius=truncation_radius,
             )
             self.lods = [single_lod]
         else:
@@ -291,6 +298,11 @@ class GSplatData(_SplatArrayMixin):
         else:
             # Convenience constructor already set stats on the LOD; mirror it
             self.stats = dict(self.lods[0].stats)
+
+    @property
+    def truncation_radius(self) -> float:
+        """Gaussian truncation radius in standard deviations (from first LOD)."""
+        return self.lods[0].truncation_radius
 
     def __repr__(self) -> str:
         """Summary representation (avoids dumping full arrays)."""
@@ -349,6 +361,7 @@ class GSplatData(_SplatArrayMixin):
             cholesky_factors=self.cholesky_factors,
             colors=self.colors,
             stats=dict(self.stats),
+            truncation_radius=self.truncation_radius,
         )
         return GSplatData(lods=[single], stats=dict(self.stats))
 
@@ -413,6 +426,7 @@ class GSplatData(_SplatArrayMixin):
                         cholesky_factors=lod.cholesky_factors[lod_mask],
                         colors=lod.colors[lod_mask] if lod.colors is not None else None,
                         stats=dict(lod.stats),
+                        truncation_radius=lod.truncation_radius,
                     )
                 )
                 offset += n
@@ -424,6 +438,7 @@ class GSplatData(_SplatArrayMixin):
             cholesky_factors=self.cholesky_factors[mask],
             colors=self.colors[mask] if self.colors is not None else None,
             stats=dict(self.stats),
+            truncation_radius=self.truncation_radius,
         )
 
     @staticmethod
@@ -458,7 +473,7 @@ class GSplatData(_SplatArrayMixin):
         sigma_axis: int | None = None,
         sigma_min: float | None = None,
         sigma_max: float | None = None,
-        truncate: float = 3.0,
+        truncate: float | None = None,
     ) -> "GSplatData":
         """Filter splats by multiple criteria (AND logic).
 
@@ -486,7 +501,8 @@ class GSplatData(_SplatArrayMixin):
             sigma_axis: Axis index for per-axis sigma filtering.
             sigma_min: Minimum marginal sigma on sigma_axis.
             sigma_max: Maximum marginal sigma on sigma_axis.
-            truncate: Sigma truncation factor for volume computation (default 3.0).
+            truncate: Sigma truncation factor for volume computation.
+                Defaults to ``self.truncation_radius``.
 
         Returns:
             New GSplatData with only splats that pass all criteria.
@@ -505,6 +521,9 @@ class GSplatData(_SplatArrayMixin):
             >>> # Remove top 10% largest volumes (normalized)
             >>> filtered = data.filter_by(volume_max=0.9, volume_normalized=True)
         """
+        if truncate is None:
+            truncate = self.truncation_radius
+
         # Short-circuit for empty data
         if self.n_splats == 0:
             result = self.filter(np.ones(0, dtype=bool))
@@ -674,11 +693,18 @@ class GSplatData(_SplatArrayMixin):
             return datasets[0]  # All empty: return first as-is
 
         ndim = non_empty[0].ndim
+        tr = non_empty[0].truncation_radius
         for i, ds in enumerate(non_empty[1:], start=1):
             if ds.ndim != ndim:
                 raise ValueError(
                     f"Dimensionality mismatch: dataset 0 has {ndim}D, "
                     f"dataset {i} has {ds.ndim}D"
+                )
+            if ds.truncation_radius != tr:
+                raise ValueError(
+                    f"Truncation radius mismatch: dataset 0 has {tr}, "
+                    f"dataset {i} has {ds.truncation_radius}. "
+                    f"Cannot concatenate datasets fitted with different truncation radii."
                 )
 
         merged_stats: Dict[str, Any] = {
@@ -708,6 +734,7 @@ class GSplatData(_SplatArrayMixin):
                         cholesky_factors=cholesky,
                         colors=colors,
                         stats={"lod_level": level, "n_sources": len(level_lods)},
+                        truncation_radius=level_lods[0].truncation_radius,
                     )
                 )
             return cls(lods=merged_lods, stats=merged_stats)
@@ -726,6 +753,7 @@ class GSplatData(_SplatArrayMixin):
             cholesky_factors=all_cholesky,
             colors=all_colors,
             stats=merged_stats,
+            truncation_radius=non_empty[0].truncation_radius,
         )
 
     @classmethod
@@ -828,6 +856,7 @@ class GSplatData(_SplatArrayMixin):
                         if self.colors is not None
                         else None,
                         stats=dict(self.stats),
+                        truncation_radius=self.truncation_radius,
                     )
                 )
             else:
@@ -838,6 +867,7 @@ class GSplatData(_SplatArrayMixin):
                         cholesky_factors=self.cholesky_factors[idx],
                         colors=self.colors[idx] if self.colors is not None else None,
                         stats=dict(self.stats),
+                        truncation_radius=self.truncation_radius,
                     )
                 )
         return results
@@ -902,6 +932,7 @@ class GSplatData(_SplatArrayMixin):
                         cholesky_factors=lod_cholesky,
                         colors=lod.colors,
                         stats=dict(lod.stats),
+                        truncation_radius=lod.truncation_radius,
                     )
                 )
                 offset += nl
@@ -933,6 +964,7 @@ class GSplatData(_SplatArrayMixin):
             cholesky_factors=new_cholesky,
             colors=self.colors,
             stats=dict(self.stats),
+            truncation_radius=self.truncation_radius,
         )
 
     # ── Geometric transforms ────────────────────────────────
@@ -992,6 +1024,7 @@ class GSplatData(_SplatArrayMixin):
                             cholesky_factors=lod.cholesky_factors.copy(),
                             colors=lod.colors,
                             stats=dict(lod.stats),
+                            truncation_radius=lod.truncation_radius,
                         )
                         for lod in self.lods
                     ],
@@ -1003,6 +1036,7 @@ class GSplatData(_SplatArrayMixin):
                 cholesky_factors=self.cholesky_factors.copy(),
                 colors=self.colors,
                 stats=dict(self.stats),
+                truncation_radius=self.truncation_radius,
             )
 
         # Precompute cholesky transform (shared between single/multi-LOD paths)
@@ -1037,6 +1071,7 @@ class GSplatData(_SplatArrayMixin):
                         cholesky_factors=lod_cholesky,
                         colors=lod.colors,
                         stats=dict(lod.stats),
+                        truncation_radius=lod.truncation_radius,
                     )
                 )
             return GSplatData.from_lods(new_lods, stats=dict(self.stats))
@@ -1053,6 +1088,7 @@ class GSplatData(_SplatArrayMixin):
             cholesky_factors=new_cholesky,
             colors=self.colors,
             stats=dict(self.stats),
+            truncation_radius=self.truncation_radius,
         )
 
     # ── Intensity transforms ────────────────────────────────
@@ -1071,6 +1107,7 @@ class GSplatData(_SplatArrayMixin):
                         cholesky_factors=lod.cholesky_factors,
                         colors=lod.colors,
                         stats=dict(lod.stats),
+                        truncation_radius=lod.truncation_radius,
                     )
                 )
                 offset += n
@@ -1081,6 +1118,7 @@ class GSplatData(_SplatArrayMixin):
             cholesky_factors=self.cholesky_factors,
             colors=self.colors,
             stats=dict(self.stats),
+            truncation_radius=self.truncation_radius,
         )
 
     def with_colors(
@@ -1116,6 +1154,7 @@ class GSplatData(_SplatArrayMixin):
                         cholesky_factors=lod.cholesky_factors,
                         colors=colors[offset : offset + n],
                         stats=dict(lod.stats),
+                        truncation_radius=lod.truncation_radius,
                     )
                 )
                 offset += n
@@ -1126,6 +1165,7 @@ class GSplatData(_SplatArrayMixin):
             cholesky_factors=self.cholesky_factors,
             colors=colors,
             stats=dict(self.stats),
+            truncation_radius=self.truncation_radius,
         )
 
     def affine_intensity(self, scale: float = 1.0, offset: float = 0.0) -> "GSplatData":
@@ -1292,6 +1332,7 @@ class GSplatData(_SplatArrayMixin):
                 compress=compress,
                 compressor=compressor,
                 zip_deflate=zip_deflate,
+                truncation_radius=self.truncation_radius,
             )
         else:
             # Multi-LOD: use v1.1 format with per-LOD groups
@@ -1378,6 +1419,7 @@ class GSplatData(_SplatArrayMixin):
                 "type": "gsplats",
                 "n_lods": self.n_lods,
                 "n_splats_total": self.n_splats,
+                "truncation_radius": self.truncation_radius,
             }
         )
 
@@ -1405,6 +1447,7 @@ class GSplatData(_SplatArrayMixin):
                 float16_allowed=False,
                 lod_stats=lod_stats,
                 compressor=compressor,
+                truncation_radius=lod.truncation_radius,
             )
 
         # Write fitting info (optional, root level)
@@ -1466,6 +1509,7 @@ class GSplatData(_SplatArrayMixin):
                     cholesky_factors=lod.cholesky_factors,
                     colors=lod.colors,
                     stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
                 )
                 for lod in self.lods
             ]
@@ -1477,6 +1521,7 @@ class GSplatData(_SplatArrayMixin):
             cholesky_factors=self.cholesky_factors,
             colors=self.colors,
             stats=dict(self.stats),
+            truncation_radius=self.truncation_radius,
         )
 
     def center_at_centroid(self) -> "GSplatData":
@@ -1530,7 +1575,7 @@ class GSplatData(_SplatArrayMixin):
         *,
         method: str = "auto",
         shape: tuple[int, ...] | None = None,
-        truncate: float = 3.0,
+        truncate: float | None = None,
         # --- error_budget / redundancy params ---
         error_percentile: float = 99.0,
         error_tolerance: float = 1.0,
@@ -1607,6 +1652,7 @@ class GSplatData(_SplatArrayMixin):
             shape: Volume shape for rendering (error_budget / redundancy).
                 Defaults to ``target.shape`` when target is provided.
             truncate: Truncation radius in standard deviations.
+                Defaults to ``self.truncation_radius``.
             error_percentile: *error_budget only.*  Percentile of ``|residual|``
                 for the budget (0--100).
             error_tolerance: *error_budget only.*  Multiplier on the budget.
@@ -1628,6 +1674,9 @@ class GSplatData(_SplatArrayMixin):
             New GSplatData with culled splats removed.  Stats include
             ``culled``, ``culling_method``, ``n_original``, ``n_culled``.
         """
+        if truncate is None:
+            truncate = self.truncation_radius
+
         # --- Resolve "auto" method ---
         if method == "auto":
             if target is not None:
@@ -1823,7 +1872,7 @@ class GSplatData(_SplatArrayMixin):
         self,
         shape: tuple[int, ...],
         device: str | None = None,
-        truncate: float = 3.0,
+        truncate: float | None = None,
         intensity_floor: float = 1e-5,
         chunk_size: int | None = None,
     ) -> np.ndarray:
@@ -1839,9 +1888,9 @@ class GSplatData(_SplatArrayMixin):
         device : str, optional
             Device to use for rendering. If None, auto-detects the best device.
             Options: "cuda", "mps", "cpu".
-        truncate : float, default=3.0
+        truncate : float, optional
             Truncation radius in standard deviations. Gaussians are evaluated within
-            this radius from their centers.
+            this radius from their centers. Defaults to ``self.truncation_radius``.
         intensity_floor : float, default=1e-5
             Minimum intensity threshold for amplitude-aware culling. Splats with
             contributions below this threshold are culled early for performance.
@@ -1871,6 +1920,9 @@ class GSplatData(_SplatArrayMixin):
         - Automatically chunks large volumes to prevent out-of-memory errors
         - Uses specialized fast paths for 2D/3D rendering
         """
+        if truncate is None:
+            truncate = self.truncation_radius
+
         from luxar.gsplats.rendering.volume_rendering import render_to_volume
 
         return render_to_volume(
@@ -1951,13 +2003,20 @@ class GSplatData(_SplatArrayMixin):
         if len(gsplats_per_channel) == 0:
             raise ValueError("At least one GSplatData object is required")
 
-        # Validate all have same dimensionality
+        # Validate all have same dimensionality and truncation radius
         ndim = gsplats_per_channel[0].ndim
+        tr = gsplats_per_channel[0].truncation_radius
         for i, gsplat in enumerate(gsplats_per_channel[1:], start=1):
             if gsplat.ndim != ndim:
                 raise ValueError(
                     f"Dimensionality mismatch: channel 0 has {ndim}D, "
                     f"channel {i} has {gsplat.ndim}D"
+                )
+            if gsplat.truncation_radius != tr:
+                raise ValueError(
+                    f"Truncation radius mismatch: channel 0 has {tr}, "
+                    f"channel {i} has {gsplat.truncation_radius}. "
+                    f"Cannot merge datasets fitted with different truncation radii."
                 )
 
         # Merge stats (basic aggregation)
@@ -2000,6 +2059,7 @@ class GSplatData(_SplatArrayMixin):
                         cholesky_factors=cholesky,
                         colors=colors,
                         stats={"lod_level": level, "n_channels": len(level_parts)},
+                        truncation_radius=level_parts[0][0].truncation_radius,
                     )
                 )
             return cls(lods=merged_lods, stats=merged_stats)
@@ -2026,4 +2086,5 @@ class GSplatData(_SplatArrayMixin):
             cholesky_factors=all_cholesky,
             colors=all_colors,
             stats=merged_stats,
+            truncation_radius=gsplats_per_channel[0].truncation_radius,
         )
