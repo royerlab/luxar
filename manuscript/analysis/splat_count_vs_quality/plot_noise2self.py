@@ -79,31 +79,22 @@ def plot_noise2self(df: pd.DataFrame, dataset_key: str, output_path: Path):
         color="#6b7280", linewidth=1.0, markersize=4, alpha=0.6, label="Full volume",
     )
 
-    # Find the point of peak marginal noise fraction.
-    # For each step i→i+1, compute the fraction of train improvement that is noise:
-    #   noise_frac = 1 - (held_out_gain / train_gain)
-    # Mark the step with the highest noise fraction.
-    train_psnr = df["train_psnr_db"].values
+    # Mark the held-out PSNR peak — the optimal splat count.
     held_psnr = df["held_out_psnr_db"].values
-    noise_fracs = []
-    for i in range(len(x) - 1):
-        train_gain = train_psnr[i + 1] - train_psnr[i]
-        held_gain = held_psnr[i + 1] - held_psnr[i]
-        if train_gain > 0:
-            noise_fracs.append(1.0 - (held_gain / train_gain))
-        else:
-            noise_fracs.append(0.0)
+    peak_idx = int(np.argmax(held_psnr))
+    peak_val = held_psnr[peak_idx]
+    final_val = held_psnr[-1]
+    drop = peak_val - final_val
 
-    if noise_fracs:
-        peak_idx = int(np.argmax(noise_fracs)) + 1  # +1 because frac[i] is for step i→i+1
-        peak_nf = noise_fracs[peak_idx - 1]
-        cx, cy = x[peak_idx], held_psnr[peak_idx]
+    # Only annotate if the peak is meaningful (not the last point, and >0.2 dB drop)
+    if peak_idx < len(x) - 1 and drop > 0.2:
+        cx, cy = x[peak_idx], peak_val
         ax_psnr.axvline(cx, color="#9333ea", linestyle=":", alpha=0.5)
         ax_psnr.annotate(
-            f"{peak_nf:.0%} noise\n{_format_count(cx)} splats",
+            f"Held-out peak\n{_format_count(cx)} splats\n{peak_val:.1f} dB",
             (cx, cy),
             textcoords="offset points",
-            xytext=(-65, -25),
+            xytext=(-70, -30),
             fontsize=8,
             color="#9333ea",
             fontweight="bold",
