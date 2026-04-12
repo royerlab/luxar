@@ -342,10 +342,8 @@ def fit_progressive_gaussian_splats(
             else:
                 pass_kwargs["sigma_max_diag"] = 4.0
 
-            # MSE loss for residual passes: directly optimizes PSNR metric.
-            # Previous Poisson loss was tuned for L1 base pipeline; with MSE
-            # as the single-pass default, consistency across passes is better.
-            pass_kwargs["loss_type"] = "mse"
+            # Poisson loss: natural for sparse, count-like residuals.
+            pass_kwargs["loss_type"] = "poisson"
 
             # Higher LR: fine-detail splats need faster convergence.
             pass_kwargs["lr"] = 0.03
