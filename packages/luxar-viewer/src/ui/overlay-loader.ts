@@ -34,6 +34,8 @@ export interface OverlayConfig {
 
   /** Whether this overlay acts as a hover tooltip (content updated by GPU picking) */
   hover?: boolean;
+  /** Size of hover image thumbnails as [width, height] in viewport fractions */
+  hover_image_size?: [number, number];
 
   // --- Text-specific ---
   text?: string;
@@ -106,6 +108,7 @@ export async function loadOverlayConfigs(
           interactive: (attrs.interactive as boolean) ?? false,
           z_index: (attrs.z_index as number) ?? 0,
           hover: (attrs.hover as boolean) ?? false,
+          hover_image_size: attrs.hover_image_size as [number, number] | undefined,
 
           // Type-specific (only present for matching types)
           text: attrs.text as string | undefined,

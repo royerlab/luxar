@@ -23,6 +23,7 @@ import { OverlayManager } from '../ui/overlay-manager';
 import * as zarr from 'zarrita';
 import { PickingSystem, type PickResult } from '../rendering/picking/picking-system';
 import { LabelLoader } from '../data/label-loader';
+import { ImageLabelLoader } from '../data/image-label-loader';
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
@@ -39,6 +40,7 @@ export class LuxarApp {
   private overlayManager?: OverlayManager;
   private pickingSystem?: PickingSystem;
   private labelLoader?: LabelLoader;
+  private imageLabelLoader?: ImageLabelLoader;
   private pickingCleanup?: () => void;
   private isInitialized = false;
   private boundCleanup: (() => void) | null = null;
@@ -499,8 +501,9 @@ export class LuxarApp {
 
   /**
    * Initialize GPU picking system for hover tooltips.
-   * Only activates if any scene node has labels (has_labels: true in .zattrs).
-   * Wires up: PickingSystem → LabelLoader → OverlayManager.updateHoverContent.
+   * Only activates if any scene node has labels or image labels
+   * (has_labels / has_image_labels in .zattrs).
+   * Wires up: PickingSystem → LabelLoader/ImageLabelLoader → OverlayManager.updateHoverContent.
    */
   private async initPicking(): Promise<void> {
     // Clean up previous picking if reloading
@@ -510,22 +513,28 @@ export class LuxarApp {
     }
     this.pickingSystem?.dispose();
     this.labelLoader?.dispose();
+    this.imageLabelLoader?.dispose();
     this.pickingSystem = undefined;
     this.labelLoader = undefined;
+    this.imageLabelLoader = undefined;
 
-    // Check if any node has labels
+    // Check if any node has labels or image labels
     const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
       | THREE.Group
       | undefined;
     if (!root) return;
 
     let hasAnyLabels = false;
+    let hasAnyImageLabels = false;
     root.traverse((obj) => {
       if (obj.userData?.attrs?.has_labels) {
         hasAnyLabels = true;
       }
+      if (obj.userData?.attrs?.has_image_labels) {
+        hasAnyImageLabels = true;
+      }
     });
-    if (!hasAnyLabels) return;
+    if (!hasAnyLabels && !hasAnyImageLabels) return;
 
     // Get the scene loader for store/rootLoc access
     const sceneLoader = getSceneLoader('default');
@@ -538,7 +547,12 @@ export class LuxarApp {
       return;
     }
     const rootLoc = zarr.root(store);
-    this.labelLoader = new LabelLoader(store, rootLoc);
+    if (hasAnyLabels) {
+      this.labelLoader = new LabelLoader(store, rootLoc);
+    }
+    if (hasAnyImageLabels) {
+      this.imageLabelLoader = new ImageLabelLoader(store, rootLoc);
+    }
 
     // Create picking system with result callback
     this.pickingSystem = new PickingSystem(
@@ -551,9 +565,17 @@ export class LuxarApp {
             return;
           }
           const nodePath = result.mainNode.name;
-          const label = await this.labelLoader?.getLabel(nodePath, result.elementId);
+          // Fetch text label and image URL in parallel
+          const [label, imageUrl] = await Promise.all([
+            this.labelLoader?.getLabel(nodePath, result.elementId) ?? Promise.resolve(null),
+            this.imageLabelLoader?.getImageUrl(nodePath, result.elementId) ??
+              Promise.resolve(null),
+          ]);
+          const hasContent = label || imageUrl;
           this.overlayManager?.updateHoverContent(
-            label ? { label, nodeName: nodePath, elementIndex: result.elementId } : null
+            hasContent
+              ? { label, imageUrl, nodeName: nodePath, elementIndex: result.elementId }
+              : null
           );
         } catch (err) {
           // Don't let label loading errors kill the hover loop
@@ -584,6 +606,19 @@ export class LuxarApp {
     this.sceneManager.controls.addEventListener('change', dirtyHandler);
     window.addEventListener('resize', dirtyHandler);
 
+    // Suppress picking during orbit/pan/zoom — no expensive offscreen renders
+    // while the user is navigating, and fade out stale hover labels.
+    const controls = this.sceneManager.controls;
+    const interactionStart = () => {
+      this.pickingSystem?.suppress(true);
+      this.overlayManager?.updateHoverContent(null);
+    };
+    const interactionEnd = () => {
+      this.pickingSystem?.suppress(false);
+    };
+    controls.addEventListener('start', interactionStart);
+    controls.addEventListener('end', interactionEnd);
+
     // Update picking camera when perspective ↔ orthographic swap occurs
     const cameraChangedHandler = () => {
       this.pickingSystem?.setCamera(this.sceneManager.camera);
@@ -593,6 +628,8 @@ export class LuxarApp {
     this.pickingCleanup = () => {
       canvas.removeEventListener('mousemove', handler);
       this.sceneManager.controls.removeEventListener('change', dirtyHandler);
+      controls.removeEventListener('start', interactionStart);
+      controls.removeEventListener('end', interactionEnd);
       this.sceneManager.removeEventListener('camera-changed', cameraChangedHandler);
       window.removeEventListener('resize', dirtyHandler);
     };
@@ -984,6 +1021,10 @@ export class LuxarApp {
       if (this.labelLoader) {
         this.labelLoader.dispose();
         this.labelLoader = undefined;
+      }
+      if (this.imageLabelLoader) {
+        this.imageLabelLoader.dispose();
+        this.imageLabelLoader = undefined;
       }
 
       // Clean up input handlers

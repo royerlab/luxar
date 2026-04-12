@@ -428,4 +428,40 @@ describe('LRUCache', () => {
       expect(cache.size).toBe(60);
     });
   });
+
+  describe('onEvict Callback', () => {
+    it('should call onEvict when items are evicted', () => {
+      const evicted: Array<{ key: string; size: number }> = [];
+      const evictCache = new LRUCache<Uint8Array>(100, getSize, (key, value) => {
+        evicted.push({ key, size: value.byteLength });
+      });
+
+      evictCache.set('key1', new Uint8Array(60));
+      evictCache.set('key2', new Uint8Array(60)); // Evicts key1
+      expect(evicted).toHaveLength(1);
+      expect(evicted[0]).toEqual({ key: 'key1', size: 60 });
+    });
+
+    it('should call onEvict for all items on clear()', () => {
+      const evicted: string[] = [];
+      const evictCache = new LRUCache<Uint8Array>(100, getSize, (key) => {
+        evicted.push(key);
+      });
+
+      evictCache.set('a', new Uint8Array(10));
+      evictCache.set('b', new Uint8Array(20));
+      evictCache.set('c', new Uint8Array(30));
+      evictCache.clear();
+
+      expect(evicted.sort()).toEqual(['a', 'b', 'c']);
+    });
+
+    it('should not call onEvict when no callback provided', () => {
+      // No callback — should not throw
+      const noCallbackCache = new LRUCache<Uint8Array>(50, getSize);
+      noCallbackCache.set('key1', new Uint8Array(40));
+      noCallbackCache.set('key2', new Uint8Array(40)); // Evicts key1, no error
+      expect(noCallbackCache.count).toBe(1);
+    });
+  });
 });
