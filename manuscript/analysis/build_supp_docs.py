@@ -75,33 +75,56 @@ def merge_pdfs_gs(pdf_paths: list[Path], output: Path) -> bool:
 
 
 def build_splat_count_vs_quality():
-    """Merge all splat_count_vs_quality PDFs into one supplementary document."""
+    """Build the splat_count_vs_quality supplementary document via LaTeX.
+
+    First copies per-dataset figures into the LaTeX figures/ directory,
+    then compiles the .tex file to produce the final PDF.
+    """
+    import subprocess
+
     base = ANALYSIS_DIR / "splat_count_vs_quality" / "results"
-    pdfs = []
+    tex_dir = SUPP_DOC_DIR / "splat_count_vs_quality"
+    fig_dir = tex_dir / "figures"
+    fig_dir.mkdir(parents=True, exist_ok=True)
 
+    # Copy per-dataset figures into figures/ for LaTeX
+    n_copied = 0
     for ds in DATASETS:
-        # Rate-distortion figures
-        for name in ["fig_quality_curves.pdf", "fig_slice_montage.pdf"]:
-            p = base / ds / name
-            if p.exists():
-                pdfs.append(p)
+        for src_dir, prefix in [
+            (base / ds, ds),
+            (base / f"{ds}_n2s", ds),
+        ]:
+            if not src_dir.exists():
+                continue
+            for pdf in src_dir.glob("fig_*.pdf"):
+                dst = fig_dir / f"{prefix}_{pdf.name}"
+                shutil.copy2(pdf, dst)
+                n_copied += 1
 
-        # N2S figure
-        n2s = base / f"{ds}_n2s" / "fig_noise2self.pdf"
-        if n2s.exists():
-            pdfs.append(n2s)
+    print(f"  Copied {n_copied} figures to {fig_dir}")
 
-    if pdfs:
-        out = SUPP_DOC_DIR / "splat_count_vs_quality" / "splat_count_vs_quality_all.pdf"
-        print(f"Merging {len(pdfs)} PDFs -> {out}")
-        merge_pdfs(pdfs, out)
+    # Compile LaTeX (3 passes for references + TOC)
+    tex_file = tex_dir / "splat_count_vs_quality_all.tex"
+    if not tex_file.exists():
+        print(f"  WARNING: {tex_file} not found, skipping LaTeX compilation")
+        return
 
-        # Also copy the INTERPRETATION.md
-        interp = ANALYSIS_DIR / "splat_count_vs_quality" / "INTERPRETATION.md"
-        if interp.exists():
-            shutil.copy2(interp, out.parent / "INTERPRETATION.md")
+    print(f"  Compiling {tex_file.name}...")
+    for i, cmd in enumerate([
+        ["pdflatex", "-interaction=nonstopmode", tex_file.name],
+        ["bibtex", tex_file.stem],
+        ["pdflatex", "-interaction=nonstopmode", tex_file.name],
+        ["pdflatex", "-interaction=nonstopmode", tex_file.name],
+    ]):
+        result = subprocess.run(cmd, cwd=tex_dir, capture_output=True, text=True)
+        if result.returncode != 0 and i != 1:  # bibtex warnings are OK
+            print(f"  WARNING: {cmd[0]} returned {result.returncode}")
+
+    out_pdf = tex_dir / f"{tex_file.stem}.pdf"
+    if out_pdf.exists():
+        print(f"  Built: {out_pdf} ({out_pdf.stat().st_size // 1024 // 1024} MB)")
     else:
-        print("  No PDFs found for splat_count_vs_quality")
+        print(f"  ERROR: {out_pdf} not produced")
 
 
 def build_convergence():
