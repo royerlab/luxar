@@ -345,9 +345,8 @@ def fit_progressive_gaussian_splats(
             # Poisson loss: natural for sparse, count-like residuals.
             pass_kwargs["loss_type"] = "poisson"
 
-            # Higher LR for Poisson on sparse residuals: Poisson gradients are
-            # smaller for low-intensity regions, so a higher LR compensates.
-            pass_kwargs["lr"] = 0.05
+            # Higher LR: fine-detail splats need faster convergence.
+            pass_kwargs["lr"] = 0.03
 
             # No progressive L1 on diagonal: the MSE loss + Poisson loss combo
             # already provides good convergence; extra regularization hurts PSNR.
