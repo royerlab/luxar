@@ -223,9 +223,7 @@ def fit_progressive_gaussian_splats(
     accumulated_lods: list[GSplatLOD] = []
     prev_psnr = 0.0
     stop_reason = "max_splats"
-    # Cache the rendered volume (CPU numpy) from PSNR computation to avoid
-    # re-rendering at the start of the next pass (same accumulated splats).
-    # Stored on CPU to free GPU memory for the next pass's fitting.
+    # Cache rendered volume on CPU for residual computation.
     cached_rendered_np: Optional[np.ndarray] = None
 
     if verbose:
@@ -399,21 +397,32 @@ def fit_progressive_gaussian_splats(
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        # --- Compute global PSNR (and cache render for next pass's residual) ---
-        # Memory-efficient: render on GPU (CUDA backend is tiled and uses
-        # minimal intermediates), compute PSNR in chunks (only ~200 MB of
-        # V_original on GPU at a time), then move render to CPU.
-        accumulated_data = GSplatData.from_lods(accumulated_lods)
+        # --- Incremental render: only render latest LOD, accumulate on GPU ---
+        # Instead of re-rendering ALL accumulated LODs each pass (O(total)),
+        # render only the latest pass's splats (O(pass)) and add to a
+        # GPU-resident accumulator. PSNR is computed on GPU (fast), and the
+        # result is transferred to CPU only for residual computation.
+        latest_data = GSplatData.from_lods([lod])
         with torch.no_grad():
-            rendered_gpu = render_to_volume_tensor(
-                accumulated_data,
+            latest_gpu = render_to_volume_tensor(
+                latest_data,
                 shape=V.shape,
                 device=device,
                 truncate=truncate,
             )
-            current_psnr = _compute_psnr_chunked(rendered_gpu, V_original)
-            cached_rendered_np = rendered_gpu.cpu().numpy()
-            del rendered_gpu
+            if cached_rendered_np is not None:
+                # Load previous cache to GPU, add latest, compute PSNR, save back
+                accumulated_gpu = torch.from_numpy(cached_rendered_np).to(
+                    latest_gpu.device
+                )
+                accumulated_gpu += latest_gpu
+                del latest_gpu
+            else:
+                accumulated_gpu = latest_gpu
+
+            current_psnr = _compute_psnr_chunked(accumulated_gpu, V_original)
+            cached_rendered_np = accumulated_gpu.cpu().numpy()
+            del accumulated_gpu
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         delta_psnr = current_psnr - prev_psnr
