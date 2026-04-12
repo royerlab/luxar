@@ -169,20 +169,22 @@ def _compute_mse_loss(
     pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: float | None
 ) -> torch.Tensor:
     """Compute MSE (Mean Squared Error) loss."""
-    # Fast path: symmetric MSE (penalty=None or 1.0) — use fused F.mse_loss
-    # which creates zero intermediate volume-sized tensors (saves ~140 MB peak
-    # GPU memory vs the manual diff → diff² → where path).
-    if asymmetric_penalty is None or asymmetric_penalty == 1.0:
-        return F.mse_loss(pred, target)
-
-    # Asymmetric MSE: heavily penalize over-prediction (pred > target)
+    # MSE loss (default)
     squared_error = (pred - target) ** 2
-    over_prediction_mask = pred > target
-    data = torch.mean(
-        torch.where(
-            over_prediction_mask,
-            asymmetric_penalty * squared_error,  # F times penalty
-            squared_error,  # Normal penalty
+    if asymmetric_penalty is not None:
+        # Asymmetric MSE: heavily penalize over-prediction (pred > target)
+        # This addresses the fundamental asymmetry in additive Gaussian models:
+        # - Under-prediction (pred < target): Easy to fix by adding more Gaussians
+        # - Over-prediction (pred > target): Hard to fix, requires reducing/moving splats
+        over_prediction_mask = pred > target
+        data = torch.mean(
+            torch.where(
+                over_prediction_mask,
+                asymmetric_penalty * squared_error,  # F times penalty
+                squared_error,  # Normal penalty
+            )
         )
-    )
+    else:
+        data = F.mse_loss(pred, target)
+
     return data
