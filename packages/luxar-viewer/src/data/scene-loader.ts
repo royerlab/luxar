@@ -1348,6 +1348,11 @@ export class SceneLoader {
     const useWorkerProjection =
       appConfig.dataLoading.performance.useWebWorkers && data.splatCount > 1000 && data.ndim > 3; // Only worth offloading for nD processing
 
+    // Read truncation radius from material (propagated from zarr metadata via node-factory)
+    const truncate =
+      (mesh.material as { uniforms?: { uTruncate?: { value: number } } })?.uniforms?.uTruncate
+        ?.value ?? 3.0;
+
     // Process nD data to 3D for rendering (with timing)
     let processed: ReturnType<typeof processGSplats>;
     let cholesky01: Float32Array;
@@ -1358,9 +1363,9 @@ export class SceneLoader {
       const projectSession = session.begin('Project to 3D');
       try {
         if (useWorkerProjection) {
-          processed = await this.projectGSplatsTo3DUsingWorker(data, viewState);
+          processed = await this.projectGSplatsTo3DUsingWorker(data, viewState, truncate);
         } else {
-          processed = processGSplats(data, viewState);
+          processed = processGSplats(data, viewState, truncate);
         }
         // Pack Cholesky factors for shader
         const packed = packCholeskyForShader(processed.choleskyFactors3D, processed.splatCount);
@@ -1372,9 +1377,9 @@ export class SceneLoader {
       }
     } else {
       if (useWorkerProjection) {
-        processed = await this.projectGSplatsTo3DUsingWorker(data, viewState);
+        processed = await this.projectGSplatsTo3DUsingWorker(data, viewState, truncate);
       } else {
-        processed = processGSplats(data, viewState);
+        processed = processGSplats(data, viewState, truncate);
       }
       // Pack Cholesky factors for shader
       const packed = packCholeskyForShader(processed.choleskyFactors3D, processed.splatCount);
@@ -1464,7 +1469,8 @@ export class SceneLoader {
    */
   private async projectGSplatsTo3DUsingWorker(
     data: LoadedGSplatsData,
-    viewState: GSplatsViewState
+    viewState: GSplatsViewState,
+    truncate: number = 3.0
   ): Promise<ReturnType<typeof processGSplats>> {
     try {
       const worker = await getWorkerPool().getWorker();
@@ -1505,6 +1511,7 @@ export class SceneLoader {
         discreteDims,
         discreteSteps,
         extendToAllDims,
+        truncate,
       });
 
       if (this._updateVersion <= 1) {
@@ -1528,7 +1535,7 @@ export class SceneLoader {
         'Worker GSplats projection failed, falling back to main thread:',
         error
       );
-      return processGSplats(data, viewState);
+      return processGSplats(data, viewState, truncate);
     }
   }
 
@@ -1978,11 +1985,14 @@ export class SceneLoader {
       const useWorkerProjection =
         appConfig.dataLoading.performance.useWebWorkers && data.splatCount > 1000 && data.ndim > 3;
 
+      // Read truncation radius from zarr metadata for nD attenuation
+      const truncate = (attrs.truncation_radius as number | undefined) ?? 3.0;
+
       let processed: ReturnType<typeof processGSplats>;
       if (useWorkerProjection) {
-        processed = await this.projectGSplatsTo3DUsingWorker(data, gsplatsViewState);
+        processed = await this.projectGSplatsTo3DUsingWorker(data, gsplatsViewState, truncate);
       } else {
-        processed = processGSplats(data, gsplatsViewState);
+        processed = processGSplats(data, gsplatsViewState, truncate);
       }
 
       // Pack Cholesky factors for shader

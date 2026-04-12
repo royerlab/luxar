@@ -239,6 +239,7 @@ export class NodeFactory {
       intensity: (attrs.intensity as number | undefined) ?? 1.0,
       offset: (attrs.offset as number | undefined) ?? 0.0,
       blendingMode: (attrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
+      truncationRadius: (attrs.truncation_radius as number | undefined) ?? 3.0,
     });
 
     // Apply colormap if specified

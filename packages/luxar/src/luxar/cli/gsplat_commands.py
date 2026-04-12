@@ -393,7 +393,7 @@ def napari_viewer(
                 volume = data.render_to_volume(
                     shape=shape,
                     device=None,  # Auto-detect best device (cuda/mps/cpu)
-                    truncate=3.0,
+                    truncate=data.truncation_radius,
                 )
                 aprint(f"Rendered to {volume.shape}")
 
@@ -692,10 +692,11 @@ def cull_dataset(
         max=100.0,
     ),
     # --- common params ---
-    truncate: float = typer.Option(
-        3.0,
+    truncate: Optional[float] = typer.Option(
+        None,
         "--truncate",
         help="Gaussian truncation radius in standard deviations. "
+        "Defaults to the value stored in the dataset (typically 3.0). "
         "Affects AABB size for per-splat evaluation in GPU-based modes.",
     ),
     max_iters: int = typer.Option(
@@ -769,6 +770,10 @@ def cull_dataset(
                 data = GSplatData.load(input_path, include_stats=True)
                 n_original = data.n_splats
                 aprint(f"Loaded {n_original:,} splats ({data.ndim}D)")
+
+            # Resolve truncation radius from dataset if not explicitly set
+            if truncate is None:
+                truncate = data.truncation_radius
 
             # Load target volume if provided
             target_np = None
@@ -949,8 +954,8 @@ def filter_dataset(
         None, "--sigma-max", help="Maximum marginal sigma on --sigma-axis"
     ),
     # Truncation
-    truncate: float = typer.Option(
-        3.0, "--truncate", help="Sigma truncation for volume computation"
+    truncate: Optional[float] = typer.Option(
+        None, "--truncate", help="Sigma truncation for volume computation. Defaults to dataset's stored value."
     ),
     # Output options
     encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
@@ -1016,6 +1021,10 @@ def filter_dataset(
                 n_original = data.n_splats
                 ndim = data.ndim
                 aprint(f"Loaded {n_original:,} splats ({ndim}D)")
+
+            # Resolve truncation radius from dataset if not explicitly set
+            if truncate is None:
+                truncate = data.truncation_radius
 
             # Parse bbox
             bbox_parsed = None
@@ -2345,8 +2354,8 @@ def render_to_file(
     device: Optional[str] = typer.Option(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
     ),
-    truncate: float = typer.Option(
-        3.0, "--truncate", "-t", help="Truncation radius in sigma"
+    truncate: Optional[float] = typer.Option(
+        None, "--truncate", "-t", help="Truncation radius in sigma. Defaults to dataset's stored value."
     ),
 ) -> None:
     """Render Gaussian splats back to a volume.
@@ -2372,6 +2381,10 @@ def render_to_file(
                 data = GSplatData.load(input_path, include_stats=False)
                 ndim = data.ndim
                 aprint(f"Loaded {data.n_splats:,} splats ({ndim}D)")
+
+            # Resolve truncation radius from dataset if not explicitly set
+            if truncate is None:
+                truncate = data.truncation_radius
 
             if shape is not None:
                 output_shape = parse_shape(shape)
@@ -2448,8 +2461,8 @@ def compare_quality(
     device: Optional[str] = typer.Option(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
     ),
-    truncate: float = typer.Option(
-        3.0, "--truncate", "-t", help="Truncation radius in sigma"
+    truncate: Optional[float] = typer.Option(
+        None, "--truncate", "-t", help="Truncation radius in sigma. Defaults to dataset's stored value."
     ),
     channel: Optional[int] = typer.Option(
         None, "--channel", "-c", help="Channel index for OME-Zarr reference"
@@ -2499,6 +2512,10 @@ def compare_quality(
                 n_splats = data.n_splats
                 ndim = data.ndim
                 aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
+
+            # Resolve truncation radius from dataset if not explicitly set
+            if truncate is None:
+                truncate = data.truncation_radius
 
             # Load reference volume
             with asection("Loading reference volume"):
