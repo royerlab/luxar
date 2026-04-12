@@ -92,15 +92,9 @@ class GaussianSplatFitter:
                 stacklevel=2,
             )
 
-        # Dynamic operations configuration — tuned via autoresearch (43 experiments):
-        # 2x peaks (40 vs 20) and 2x relocations (64 vs 32) per step improve
-        # quality +0.47 dB. Cooldown 1 (vs 3) allows faster re-adaptation.
+        # Dynamic operations configuration
         self.enable_dynamic_ops = enable_dynamic_ops
-        self.dynamic_config = dynamic_config or DynamicOpsConfig(
-            k_max_residuals=40,
-            max_relocations_per_step=64,
-            relocation_cooldown_steps=1,
-        )
+        self.dynamic_config = dynamic_config or DynamicOpsConfig()
 
     def fit(
         self,

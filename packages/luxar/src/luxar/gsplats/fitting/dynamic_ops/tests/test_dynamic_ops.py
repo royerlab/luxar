@@ -26,11 +26,11 @@ class TestDynamicOpsConfig:
         """Test default configuration values."""
         cfg = DynamicOpsConfig()
         assert cfg.step_every == 50
-        assert cfg.k_max_residuals == 20
+        assert cfg.k_max_residuals == 40
         assert cfg.nms_radius_vox == 2.0
         assert cfg.enable_tiled_seeding is True
         assert cfg.relocation_percentile == 1.0
-        assert cfg.max_relocations_per_step == 32
+        assert cfg.max_relocations_per_step == 64
         assert cfg.init_sigma_vox == 0.5
         assert cfg.min_contribution_threshold == 0.01
         assert cfg.enable_coverage_check is False

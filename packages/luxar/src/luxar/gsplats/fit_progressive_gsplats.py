@@ -41,8 +41,9 @@ Speed optimisations
    progressive fitting — peaks seeding already places seeds at residual maxima.
 8. **Adaptive iteration count** (−9.4%): Later passes fit progressively
    smaller residuals and converge faster.  Budget: 100%, 95%, 90%, ..., 80%.
-9. **Skip gc.collect() between passes** — Python garbage collection adds
-   overhead without benefit for moderate splat counts (≤50K/pass).
+9. **gc.collect() between passes** — ensures the previous pass's model and
+   optimizer tensors are freed before the next pass allocates, preventing
+   peak GPU memory from stacking both passes' allocations.
 10. **Center LR boost (1.5×)** — center positions are the most critical
     parameters for PSNR; a moderate boost accelerates convergence.
 11. **Per-parameter-group LR** (−4.4%): Amplitudes get 3× base LR.
@@ -54,8 +55,8 @@ Additional optimisations in fitting sub-modules:
 
 from __future__ import annotations
 
-import math
 import gc
+import math
 import time
 from typing import Any, Callable, Optional
 
@@ -332,19 +333,9 @@ def fit_progressive_gaussian_splats(
         pass_kwargs["max_eccentricity"] = None
 
         if pass_i > 0:
-            # No sigma_max_diag constraint: let residual splats size freely.
-            # The old coarse-to-fine cascade prevented capturing broad residual
-            # patterns. With MSE+Poisson, the optimizer finds optimal sizes.
-
-            # Poisson loss: natural for sparse, count-like residuals.
-            pass_kwargs["loss_type"] = "poisson"
-
-            # Higher LR: fine-detail splats need faster convergence.
-            pass_kwargs["lr"] = 0.03
-
-            # No progressive L1 on diagonal: the MSE loss + Poisson loss combo
-            # already provides good convergence; extra regularization hurts PSNR.
-            # (Original l1_diag = 0.0001 * pass_i was tuned for L1 base pipeline.)
+            # Residual-pass overrides (see module docstring for rationale):
+            pass_kwargs["loss_type"] = "poisson"  # natural for sparse residuals
+            pass_kwargs["lr"] = 0.03  # fine-detail splats converge faster
 
         # Disable dynamic ops for progressive passes: seeds are already placed
         # at residual peaks, and diverse benchmark showed no quality benefit
@@ -388,11 +379,10 @@ def fit_progressive_gaussian_splats(
 
         # --- Free GPU memory from the per-pass fit before rendering ---
         # The fitter's optimizer state, gradients, and V_tensor are
-        # unreferenced but PyTorch's caching allocator may hold the blocks.
-        # Memory cleanup between passes: gc.collect() + empty_cache() ensure
-        # the previous pass's model/optimizer/gradient tensors are released
-        # BEFORE the next pass allocates. Without this, peak GPU memory
-        # stacks both passes' live allocations.
+        # --- Inter-pass memory cleanup ---
+        # gc.collect() + empty_cache() ensure the previous pass's model,
+        # optimizer, and gradient tensors are freed before the next pass
+        # allocates. Without this, peak GPU memory stacks both passes.
         from luxar.gsplats.models.gsplats.rendering_core import clear_grid_cache
 
         clear_grid_cache()
