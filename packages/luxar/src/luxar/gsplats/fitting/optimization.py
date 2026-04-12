@@ -215,8 +215,13 @@ def run_optimization_loop(
         actual_iters = it
 
         # Forward pass (training — always needed)
+        # Use gradient checkpointing to reduce peak GPU memory: recomputes
+        # forward intermediates during backward instead of caching them.
+        # Trades ~1 extra forward pass for ~200 MB less peak memory.
         optimizer.zero_grad()
-        pred = model()
+        pred = torch.utils.checkpoint.checkpoint(
+            model.forward, use_reentrant=False
+        )
         loss = loss_fn(pred)
         loss.backward()  # type: ignore[no-untyped-call]
 
