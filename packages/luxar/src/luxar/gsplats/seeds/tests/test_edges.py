@@ -284,8 +284,12 @@ class TestPoissonDiskSampleWeighted:
         density[20:30, 20:30] = 1.0
         mask = density > 0.1
 
-        r1 = _poisson_disk_sample_weighted(density, mask, n_samples=20, min_distance=2.0)
-        r2 = _poisson_disk_sample_weighted(density, mask, n_samples=20, min_distance=2.0)
+        r1 = _poisson_disk_sample_weighted(
+            density, mask, n_samples=20, min_distance=2.0
+        )
+        r2 = _poisson_disk_sample_weighted(
+            density, mask, n_samples=20, min_distance=2.0
+        )
         np.testing.assert_array_equal(r1, r2)
 
     def test_density_priority(self) -> None:

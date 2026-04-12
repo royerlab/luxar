@@ -783,9 +783,7 @@ class TestGlobalSplatHandling:
             (4, (32, 32, 32, 32), 8.0),
         ],
     )
-    def test_global_splat_backward_multi_dimension(
-        self, dim, shape, L_scale
-    ):
+    def test_global_splat_backward_multi_dimension(self, dim, shape, L_scale):
         """
         Test global splat backward pass across 2D, 3D, and 4D volumes.
 
