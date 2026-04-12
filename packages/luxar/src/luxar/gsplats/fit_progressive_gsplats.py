@@ -304,9 +304,7 @@ def fit_progressive_gaussian_splats(
         # --- Fit splats to target ---
         # Pass 0: use default seeding (auto). Passes 1+: use peaks seeding
         # to place seeds directly at local maxima of the sparse residual.
-        # Use "auto" seeding for all passes: edges+grid provides better spatial
-        # coverage than peaks-only for residuals (grid fills gaps between peaks).
-        pass_seed_method = "auto"
+        pass_seed_method = "auto" if pass_i == 0 else "peaks"
 
         if verbose:
             aprint(f"\n{'=' * 60}")
