@@ -284,9 +284,12 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
 
     # Log L1 regularization settings
     if config.verbose:
-        aprint("L1 regularization (as % of base LR):")
-        aprint(f"  Amplitude: {l1_amp:.4f} (10% of LR {config.lr:.3f})")
-        aprint(f"  Diagonal: {l1_diag:.5f} (1% of LR {config.lr:.3f})")
+        amp_pct = l1_amp / config.lr * 100 if config.lr > 0 else 0
+        diag_pct = l1_diag / config.lr * 100 if config.lr > 0 else 0
+        aprint(
+            f"L1 regularization: amplitude={l1_amp:.4f} ({amp_pct:.0f}% of LR), "
+            f"diagonal={l1_diag:.5f} ({diag_pct:.1f}% of LR)"
+        )
 
     return PreprocessedData(
         V_normalized=V_normalized,

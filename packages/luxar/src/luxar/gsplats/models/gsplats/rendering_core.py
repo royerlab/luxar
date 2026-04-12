@@ -85,7 +85,7 @@ def calculate_optimal_chunk_size(
 
 # Simple process-wide cache for base grids and linear offsets.
 # Keyed by (device, dtype, strides_tuple, box_shape_tuple).
-_GRID_CACHE_MAX_ENTRIES = 64  # ~4 MB typical, saves ~30 MB GPU peak vs 512
+_GRID_CACHE_MAX_ENTRIES = 64  # ~4 MB typical; smaller cache reduces eviction overhead
 
 _GRID_CACHE: Dict[
     Tuple[str, str, Tuple[int, ...], Tuple[int, ...]], Tuple[torch.Tensor, torch.Tensor]
