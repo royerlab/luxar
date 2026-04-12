@@ -223,7 +223,6 @@ def fit_progressive_gaussian_splats(
     accumulated_lods: list[GSplatLOD] = []
     prev_psnr = 0.0
     stop_reason = "max_splats"
-    original_energy = float(np.sum(V_original ** 2))  # for adaptive budget
     # Cache the rendered volume (CPU numpy) from PSNR computation to avoid
     # re-rendering at the start of the next pass (same accumulated splats).
     # Stored on CPU to free GPU memory for the next pass's fitting.
@@ -280,25 +279,8 @@ def fit_progressive_gaussian_splats(
             # the entire residual is legitimate signal. Peaks seeding
             # already concentrates seeds on high-intensity regions.
 
-        # --- Determine seed count (adaptive: energy-based + culling-based) ---
-        # Scale splat budget by residual-to-original energy ratio: sparse
-        # residuals need fewer splats, freeing budget for earlier passes.
-        if pass_i > 0 and original_energy > 0:
-            residual_energy = float(np.sum(target ** 2))
-            energy_ratio = residual_energy / original_energy
-            # Scale between 30% and 100% of budget based on energy
-            energy_scale = max(0.3, min(1.0, energy_ratio * 2.0))
-            effective_max_splats_per_pass = max(
-                100, int(max_splats_per_pass * energy_scale)
-            )
-            if verbose:
-                aprint(
-                    f"Energy-adaptive budget: {energy_ratio:.1%} residual energy "
-                    f"→ {energy_scale:.0%} splat budget "
-                    f"({effective_max_splats_per_pass}/{max_splats_per_pass})"
-                )
-        else:
-            effective_max_splats_per_pass = max_splats_per_pass
+        # --- Determine seed count (adapt based on previous culling rate) ---
+        effective_max_splats_per_pass = max_splats_per_pass
         if len(accumulated_lods) > 0:
             last_lod = accumulated_lods[-1]
             requested = last_lod.stats.get("seeds_requested", 0)
