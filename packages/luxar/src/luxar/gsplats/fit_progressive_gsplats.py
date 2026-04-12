@@ -347,6 +347,10 @@ def fit_progressive_gaussian_splats(
             # already provides good convergence; extra regularization hurts PSNR.
             # (Original l1_diag = 0.0001 * pass_i was tuned for L1 base pipeline.)
 
+            # Faster early stopping for residual passes: sparse signals converge
+            # faster, so waiting 300 iterations for improvement is wasteful.
+            pass_kwargs["early_stop_patience"] = 200
+
         # Disable dynamic ops for progressive passes: seeds are already placed
         # at residual peaks, and diverse benchmark showed no quality benefit
         # from relocation (quality iteration 30).  Saves per-iteration overhead.
