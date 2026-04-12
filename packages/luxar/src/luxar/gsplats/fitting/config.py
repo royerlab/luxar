@@ -49,8 +49,8 @@ class LossConfig:
         result = fit_gaussian_splats(volume, loss=cfg)
     """
 
-    loss_type: str = "l1"
-    asymmetric_penalty: Optional[float] = 10.0
+    loss_type: str = "mse"
+    asymmetric_penalty: Optional[float] = 1.0
     l1_amp: Optional[float] = None
     l1_diag: Optional[float] = None
     boundary_penalty: Optional[float] = None
@@ -71,7 +71,7 @@ class ConstraintConfig:
     sigma_max_diag: Optional[Sequence[float] | float] = None
     amp_max: Optional[float] = None
     max_eccentricity: Optional[float] = 10.0
-    truncate: float = 3.0
+    truncate: float = 2.75
     voxel_size: Optional[Sequence[float] | float] = None
     output_space: str = "real"
     boundary_penalty: Optional[float] = None
