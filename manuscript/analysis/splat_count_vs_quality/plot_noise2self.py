@@ -34,6 +34,11 @@ DATASET_LABELS = {
     "organoid_ch0": "Organoid — Channel 0",
     "celegans_t100": "C. elegans Embryo — t=100",
     "tribolium": "Tribolium Embryo (Light-Sheet)",
+    "opencell_lmnb1_ch0": "OpenCell LMNB1 — Hoechst (Nuclei)",
+    "opencell_lmnb1_ch1": "OpenCell LMNB1 — GFP (Nuclear Lamina)",
+    "cells3d_nuclei": "HeLa Cells — Nuclei",
+    "cells3d_membrane": "HeLa Cells — Membrane",
+    "acto3d_heart_nuclei": "Mouse Heart — Nuclei (Light-Sheet)",
 }
 
 
@@ -79,34 +84,51 @@ def plot_noise2self(df: pd.DataFrame, dataset_key: str, output_path: Path):
         color="#6b7280", linewidth=1.0, markersize=4, alpha=0.6, label="Full volume",
     )
 
-    # Mark the held-out PSNR peak — the optimal splat count.
+    # Mark the optimal splat count using a hybrid approach:
+    # - "Clear peak": the argmax has avg(values before) and avg(values after)
+    #   both at least 0.1 dB below the peak. This means the peak is a true
+    #   local maximum, not just the endpoint of a plateau.
+    # - Otherwise (plateau/monotonic): first point within 0.3 dB of the max.
     held_psnr = df["held_out_psnr_db"].values
+    _PEAK_MARGIN = 0.1  # dB — both sides must be this far below the peak
+    _KNEE_MARGIN_DB = 0.3  # dB — fallback margin for plateau detection
+
     peak_idx = int(np.argmax(held_psnr))
     peak_val = held_psnr[peak_idx]
-    final_val = held_psnr[-1]
-    drop = peak_val - final_val
 
-    # Only annotate if the peak is meaningful (not the last point, and >0.2 dB drop)
-    if peak_idx < len(x) - 1 and drop > 0.2:
-        cx, cy = x[peak_idx], peak_val
-        ax_psnr.axvline(cx, color="#9333ea", linestyle=":", alpha=0.5)
-        ax_psnr.annotate(
-            f"Held-out peak\n{_format_count(cx)} splats\n{peak_val:.1f} dB",
-            (cx, cy),
-            textcoords="offset points",
-            xytext=(-70, -30),
-            fontsize=8,
-            color="#9333ea",
-            fontweight="bold",
-            arrowprops=dict(arrowstyle="->", color="#9333ea", alpha=0.6),
-        )
-        crossover_idx = peak_idx
+    # Check if peak is a true local maximum
+    avg_before_gap = (peak_val - np.mean(held_psnr[:peak_idx])) if peak_idx > 0 else 0.0
+    avg_after_gap = (peak_val - np.mean(held_psnr[peak_idx + 1:])) if peak_idx < len(held_psnr) - 1 else 0.0
+    has_clear_peak = avg_before_gap >= _PEAK_MARGIN and avg_after_gap >= _PEAK_MARGIN
+
+    if has_clear_peak:
+        knee_idx = peak_idx
+        label = f"Held-out peak\n{_format_count(x[knee_idx])} splats\n{held_psnr[knee_idx]:.1f} dB"
     else:
-        crossover_idx = None
+        threshold = peak_val - _KNEE_MARGIN_DB
+        knee_idx = next(
+            (i for i in range(len(held_psnr)) if held_psnr[i] >= threshold),
+            peak_idx,
+        )
+        label = f"Peak \u22120.3 dB\n{_format_count(x[knee_idx])} splats\n{held_psnr[knee_idx]:.1f} dB"
+
+    cx, cy = x[knee_idx], held_psnr[knee_idx]
+    ax_psnr.axvline(cx, color="#9333ea", linestyle=":", alpha=0.5)
+    ax_psnr.annotate(
+        label,
+        (cx, cy),
+        textcoords="offset points",
+        xytext=(-65, -30),
+        fontsize=8,
+        color="#9333ea",
+        fontweight="bold",
+        arrowprops=dict(arrowstyle="->", color="#9333ea", alpha=0.6),
+    )
+    crossover_idx = knee_idx
 
     ax_psnr.set_xscale("log", base=2)
     ax_psnr.xaxis.set_major_formatter(ticker.FuncFormatter(_format_count))
-    ax_psnr.set_xlabel("Number of Gaussians")
+    ax_psnr.set_xlabel("Gaussian Splats (effective)")
     ax_psnr.set_ylabel("PSNR (dB)")
     # Overlay noise floor if available
     try:
@@ -151,7 +173,7 @@ def plot_noise2self(df: pd.DataFrame, dataset_key: str, output_path: Path):
 
     ax_mse.set_xscale("log", base=2)
     ax_mse.xaxis.set_major_formatter(ticker.FuncFormatter(_format_count))
-    ax_mse.set_xlabel("Number of Gaussians")
+    ax_mse.set_xlabel("Gaussian Splats (effective)")
     ax_mse.set_ylabel("MSE")
     # Overlay noise variance if available
     if _nf is not None:

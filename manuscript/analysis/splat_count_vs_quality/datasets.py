@@ -404,3 +404,193 @@ def load_tribolium() -> tuple[np.ndarray, dict[str, Any]]:
         "source": "Zenodo 5270323",
         "citation": "Cell Tracking Challenge / Stegmaier et al.",
     }
+
+
+# ---- OpenCell LMNB1 (spinning-disk confocal, nuclear lamina) ----
+
+@register("opencell_lmnb1_ch0")
+def load_opencell_lmnb1_ch0() -> tuple[np.ndarray, dict[str, Any]]:
+    """OpenCell LMNB1 Hoechst (nuclei). 51x600x600."""
+    return _load_opencell_target("LMNB1", "ENSG00000113368", "CID000892", "FID00003884", 0)
+
+
+@register("opencell_lmnb1_ch1")
+def load_opencell_lmnb1_ch1() -> tuple[np.ndarray, dict[str, Any]]:
+    """OpenCell LMNB1-GFP (nuclear lamina). 51x600x600."""
+    return _load_opencell_target("LMNB1", "ENSG00000113368", "CID000892", "FID00003884", 1)
+
+
+def _load_opencell_target(
+    gene: str, ensg: str, cid: str, fid: str, channel: int
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Load a channel from any OpenCell target."""
+    import tifffile
+
+    cache_dir = ANALYSIS_CACHE / f"gsplats_opencell_{gene.lower()}"
+    filename = f"OC-FOV_{gene}_{ensg}_{cid}_{fid}_stack.tif"
+    url = (
+        f"https://czb-opencell.s3.amazonaws.com/microscopy/raw/"
+        f"{gene}_{ensg}/{filename}"
+    )
+    tiff_path = _download_cached(url, cache_dir, filename, f"OpenCell {gene} TIFF (~70 MB)")
+
+    with asection(f"Loading OpenCell {gene} channel {channel}"):
+        data = tifffile.imread(str(tiff_path))
+        aprint(f"Raw shape: {data.shape}, dtype: {data.dtype}")
+
+        if data.ndim == 4 and data.shape[1] == 2:
+            V = np.array(data[:, channel], dtype=np.float32)
+        elif data.ndim == 4 and data.shape[0] == 2:
+            V = np.array(data[channel], dtype=np.float32)
+        else:
+            raise ValueError(f"Unexpected TIFF shape: {data.shape}")
+        del data
+
+        V = _normalize_volume(V, 1.0, 99.5)
+        aprint(f"Volume: {V.shape}, range [{V.min():.3f}, {V.max():.3f}]")
+
+    ch_names = {0: "Hoechst (Nuclei)", 1: f"{gene}-GFP"}
+    return V, {
+        "name": f"OpenCell {gene} — {ch_names.get(channel, f'ch{channel}')}",
+        "shape": V.shape,
+        "ndim": V.ndim,
+        "source": "OpenCell",
+        "citation": "Cho et al. (2022) Science 375(6585)",
+    }
+
+
+# ---- HeLa cells3d (confocal, scikit-image) ----
+
+@register("cells3d_nuclei")
+def load_cells3d_nuclei() -> tuple[np.ndarray, dict[str, Any]]:
+    """HeLa cells nuclei channel (confocal). 60x256x256."""
+    with asection("Loading cells3d nuclei from scikit-image"):
+        from skimage.data import cells3d
+
+        raw = cells3d()  # (60, 2, 256, 256) uint16
+        aprint(f"Raw shape: {raw.shape}, dtype: {raw.dtype}")
+        V = raw[:, 1, :, :].astype(np.float32)  # Channel 1 = nuclei
+        V = (V - V.min()) / (V.max() - V.min() + 1e-8)
+        aprint(f"Volume: {V.shape}, range [{V.min():.3f}, {V.max():.3f}]")
+
+    return V, {
+        "name": "HeLa Cells — Nuclei",
+        "shape": V.shape,
+        "ndim": V.ndim,
+        "source": "scikit-image cells3d",
+        "citation": "van der Walt et al. (2014) PeerJ 2:e453",
+    }
+
+
+@register("cells3d_membrane")
+def load_cells3d_membrane() -> tuple[np.ndarray, dict[str, Any]]:
+    """HeLa cells membrane channel (confocal). 60x256x256."""
+    with asection("Loading cells3d membrane from scikit-image"):
+        from skimage.data import cells3d
+
+        raw = cells3d()
+        V = raw[:, 0, :, :].astype(np.float32)  # Channel 0 = membrane
+        V = (V - V.min()) / (V.max() - V.min() + 1e-8)
+        aprint(f"Volume: {V.shape}, range [{V.min():.3f}, {V.max():.3f}]")
+
+    return V, {
+        "name": "HeLa Cells — Membrane",
+        "shape": V.shape,
+        "ndim": V.ndim,
+        "source": "scikit-image cells3d",
+        "citation": "van der Walt et al. (2014) PeerJ 2:e453",
+    }
+
+
+# ---- Acto3D mouse heart (light-sheet, single channel, cropped) ----
+
+@register("acto3d_heart_nuclei")
+def load_acto3d_heart_nuclei() -> tuple[np.ndarray, dict[str, Any]]:
+    """Mouse embryo heart nuclei (light-sheet, SYTOX Green). Cropped from 597x960x960."""
+    import tifffile
+
+    cache_dir = ANALYSIS_CACHE / "gsplats_acto3d_heart"
+    tiff_name = "acto3d_heart_E13_5.tif"
+    tiff_path = cache_dir / tiff_name
+    max_voxels = 100_000_000
+
+    # Download from Google Drive if not cached
+    if not tiff_path.exists():
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        # Import the Google Drive downloader from the demo
+        import importlib.util
+        demo_path = (
+            Path(__file__).parent.parent.parent
+            / "packages/luxar/src/luxar/demos/demo_gsplats_3d_acto3d_heart.py"
+        )
+        if demo_path.exists():
+            spec = importlib.util.spec_from_file_location("acto3d_demo", demo_path)
+            mod = importlib.util.module_from_spec(spec)
+            # We only need the download function, but loading the module is complex.
+            # Simpler: use urllib with the direct Google Drive URL
+            pass
+
+        # Direct download approach
+        gdrive_id = "1VHiLkK2O1ZrWoWX4ahPwnZfNgDQ242Kz"
+        with asection("Downloading Acto3D heart from Google Drive (~1.65 GB)"):
+            import requests
+            url = f"https://drive.usercontent.google.com/download?id={gdrive_id}&confirm=t"
+            aprint(f"Downloading from Google Drive...")
+            resp = requests.get(url, stream=True)
+            resp.raise_for_status()
+            tmp = tiff_path.with_suffix(".tmp")
+            with open(tmp, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8192 * 1024):
+                    f.write(chunk)
+            tmp.rename(tiff_path)
+            aprint(f"Saved to {tiff_path}")
+
+    with asection("Loading Acto3D heart"):
+        data = tifffile.imread(str(tiff_path))
+        aprint(f"Raw shape: {data.shape}, dtype: {data.dtype}")
+
+        # The TIFF is interleaved: (Z*C, Y, X) or (C, Z, Y, X) or (Z, C, Y, X)
+        if data.ndim == 3:
+            # Interleaved Z*C — 3 channels
+            n_channels = 3
+            n_planes = data.shape[0] // n_channels
+            data = data.reshape(n_planes, n_channels, data.shape[1], data.shape[2])
+        if data.ndim == 4:
+            if data.shape[1] <= 4:  # (Z, C, Y, X)
+                V = data[:, 0, :, :].astype(np.float32)
+            elif data.shape[0] <= 4:  # (C, Z, Y, X)
+                V = data[0, :, :, :].astype(np.float32)
+            else:
+                V = data[:, 0, :, :].astype(np.float32)
+        else:
+            V = data.astype(np.float32)
+        del data
+
+        aprint(f"Channel 0 (nuclei) shape: {V.shape}")
+
+        # Crop along largest axis if too big
+        total = V.size
+        if total > max_voxels:
+            shape = list(V.shape)
+            largest = int(np.argmax(shape))
+            target_len = max_voxels // (
+                shape[(largest + 1) % 3] * shape[(largest + 2) % 3]
+            )
+            target_len = min(target_len, shape[largest])
+            start = (shape[largest] - target_len) // 2
+            slc = [slice(None)] * 3
+            slc[largest] = slice(start, start + target_len)
+            axis_name = "ZYX"[largest]
+            aprint(f"Cropping {axis_name}-axis: {shape[largest]} -> {target_len}")
+            V = V[tuple(slc)]
+
+        V = _normalize_volume(V, 0.0, 100.0)
+        aprint(f"Volume: {V.shape}, range [{V.min():.3f}, {V.max():.3f}]")
+
+    return V, {
+        "name": "Mouse Heart — Nuclei (light-sheet, cropped)",
+        "shape": V.shape,
+        "ndim": V.ndim,
+        "source": "Acto3D / Google Drive",
+        "citation": "Acto3D project (https://github.com/Acto3D/Acto3D)",
+    }

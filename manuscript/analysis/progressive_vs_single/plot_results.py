@@ -31,6 +31,11 @@ DATASET_LABELS = {
     "organoid_ch0": "Organoid — Channel 0",
     "celegans_t100": "C. elegans Embryo — t=100",
     "tribolium": "Tribolium Embryo (Light-Sheet)",
+    "opencell_lmnb1_ch0": "OpenCell LMNB1 — Hoechst (Nuclei)",
+    "opencell_lmnb1_ch1": "OpenCell LMNB1 — GFP (Nuclear Lamina)",
+    "cells3d_nuclei": "HeLa Cells — Nuclei",
+    "cells3d_membrane": "HeLa Cells — Membrane",
+    "acto3d_heart_nuclei": "Mouse Heart — Nuclei (Light-Sheet)",
 }
 
 _COLORS = ["#2563eb", "#059669", "#d97706", "#dc2626"]
