@@ -132,7 +132,7 @@ def fit_progressive_gaussian_splats(
     on_pass_complete: Optional[Callable[[int, GSplatLOD, float], None]] = None,
     device: Optional[str] = None,
     verbose: bool = True,
-    truncate: float = 3.0,
+    truncate: float = 2.75,
     **kwargs: Any,
 ) -> GSplatData:
     """Fit Gaussian splats progressively via iterative residual decomposition.
