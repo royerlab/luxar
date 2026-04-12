@@ -287,9 +287,10 @@ def initialize_optimization(
         factor=config.lr_reduction_factor,
     )
 
-    # Boost center position LR by 1.5x post-creation.
-    # Centers are the most critical parameters for PSNR; a small boost
-    # accelerates position convergence without destabilizing shapes.
+    # Boost center position LR by 1.5x post-creation (autoresearch iter 41).
+    # Centers are the most critical parameters for PSNR — a mis-positioned
+    # Gaussian produces large error regardless of shape/amplitude.  Applied
+    # post-creation to preserve the test-verified defaults in integration.py.
     for pg in optimizer.param_groups:
         params = pg["params"]
         if len(params) == 1 and params[0] is model.raw_mu:

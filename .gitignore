@@ -145,3 +145,5 @@ yarn-error.log*
 *.zarr
 *.zarr/
 autoresearch-progressive-results.tsv
+scripts/benchmarks/data/pareto_baseline.json
+scripts/benchmarks/data/progressive_pareto_baseline.json
