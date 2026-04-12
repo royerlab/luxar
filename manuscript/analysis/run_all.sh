@@ -58,7 +58,7 @@ done
 
 echo ""
 echo "--- Building splat_count_vs_quality supplementary PDF ---"
-hatch run python manuscript/analysis/build_supp_docs.py --analysis splat_count_vs_quality
+hatch run python manuscript/supp_doc/splat_count_vs_quality/build.py
 
 # ──────────────────────────────────────────────────────────────────────
 # 3. PROGRESSIVE VS SINGLE-PASS (4 conditions per dataset)
@@ -75,7 +75,7 @@ done
 
 echo ""
 echo "--- Building progressive supplementary PDF ---"
-hatch run python manuscript/analysis/build_supp_docs.py --analysis progressive
+hatch run python manuscript/supp_doc/progressive_vs_single/build.py
 
 # ──────────────────────────────────────────────────────────────────────
 # 4. CONVERGENCE ANALYSIS (5 counts x 11 checkpoints — SLOWEST)
@@ -92,7 +92,7 @@ done
 
 echo ""
 echo "--- Building convergence supplementary PDF ---"
-hatch run python manuscript/analysis/build_supp_docs.py --analysis convergence
+hatch run python manuscript/supp_doc/convergence/build.py
 
 # ──────────────────────────────────────────────────────────────────────
 # DONE
