@@ -208,8 +208,8 @@ class TestLossConfig:
     def test_default_values(self) -> None:
         """Test LossConfig default values."""
         cfg = LossConfig()
-        assert cfg.loss_type == "l1"
-        assert cfg.asymmetric_penalty == 10.0
+        assert cfg.loss_type == "mse"
+        assert cfg.asymmetric_penalty == 1.0
         assert cfg.l1_amp is None
         assert cfg.l1_diag is None
         assert cfg.boundary_penalty is None
@@ -238,7 +238,7 @@ class TestConstraintConfig:
         assert cfg.sigma_max_diag is None
         assert cfg.amp_max is None
         assert cfg.max_eccentricity == 10.0
-        assert cfg.truncate == 3.0
+        assert cfg.truncate == 2.75
         assert cfg.voxel_size is None
         assert cfg.output_space == "real"
         assert cfg.boundary_penalty is None
