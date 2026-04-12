@@ -13,7 +13,6 @@ import numpy as np
 import pytest
 import torch
 
-
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
 
