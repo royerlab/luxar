@@ -142,7 +142,7 @@ def prepare_fit_config(
         raise ValueError("n_iters must be positive")
     if lr <= 0:
         raise ValueError("lr must be positive")
-    if loss_type not in ["mse", "poisson", "l1", "auto"]:
+    if loss_type not in ["mse", "poisson", "l1"]:
         raise ValueError("loss_type must be 'mse', 'poisson', or 'l1'")
     if l1_amp is not None and l1_amp < 0:
         raise ValueError("l1_amp must be non-negative if specified")

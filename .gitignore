@@ -144,3 +144,4 @@ yarn-debug.log*
 yarn-error.log*
 *.zarr
 *.zarr/
+autoresearch-progressive-results.tsv
