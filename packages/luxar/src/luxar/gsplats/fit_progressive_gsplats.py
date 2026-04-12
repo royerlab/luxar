@@ -322,10 +322,7 @@ def fit_progressive_gaussian_splats(
             if pass_i == 0:
                 pass_asymmetric_penalty: Optional[float] = min(asymmetric_penalty, 3.0)
             else:
-                # Residual passes: moderate penalty (5.0) — enough to prevent
-                # permanent overshoot from being locked in by clamped residuals,
-                # but less aggressive than the caller's 10.0 default.
-                pass_asymmetric_penalty = min(asymmetric_penalty, 5.0)
+                pass_asymmetric_penalty = asymmetric_penalty
         else:
             pass_asymmetric_penalty = None
 
