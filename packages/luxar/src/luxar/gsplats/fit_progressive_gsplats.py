@@ -9,55 +9,51 @@ The result is a multi-LOD ``GSplatData`` where each LOD corresponds to one pass.
 Optimised per-pass configuration
 ---------------------------------
 Pass 0 and residual passes (1+) use different loss, penalty, and optimizer
-settings.  These were tuned via systematic autoresearch iteration (35 experiments)
-and validated on a diverse benchmark (3D chimeric microscopy volume + 2D
-composite of mitosis + astronaut images).  Key findings:
+settings.  Tuned via two rounds of systematic autoresearch iteration (73+
+experiments) across 3 diverse microscopy datasets.  Key findings:
 
-1. **L1 loss for pass 0** — robust to outliers during the initial dense fit.
-   MSE and Poisson both performed worse on pass 0 (−3 to −4 dB).
-2. **Poisson loss for residual passes** — the single largest improvement
-   (+2.4 dB on single-image, +5 dB total on diverse benchmark).  Poisson
-   deviance naturally weights errors relative to signal level, which is
-   ideal for sparse, count-like residuals from microscopy data.
-3. **Asymmetric penalty** — mild (3×) for pass 0 to capture more signal;
-   full (10×) for residual passes to prevent overshoot.  In progressive
-   fitting, overshoot is *permanently locked in* (clamped residuals hide
-   it from subsequent passes), making strong anti-overshoot essential.
-4. **No eccentricity limit** — removing max_eccentricity constraints lets
-   splats adapt their shape freely to irregular features (elongated nuclei,
-   curved edges).  The adaptive sigma_max_diag cap already prevents splats
-   from growing too large overall.
-5. **Adaptive sigma_max_diag** — caps splat size in residual passes at the
-   median sigma of the *previous* pass.  This creates a natural coarse-to-fine
-   cascade: each pass works at a finer scale than the last.
-6. **Higher LR (0.03) for residual passes** — small splats fitting fine detail
-   converge faster with a larger learning rate (default 0.01 is conservative).
-7. **Progressive L1 on Cholesky diagonal** — gentle shrinkage pressure
-   (0.0001 × pass_index) that increases with each pass, encouraging compact
-   splats at finer scales.
+**Pass 0 (dense volume)**:
+  Uses the single-pass optimised defaults (MSE loss, symmetric penalty,
+  truncation 2.75, no gradient clipping).  The only override is
+  ``asymmetric_penalty = min(caller, 3.0)`` which adds a mild under-prediction
+  bias to produce clean positive residuals for subsequent passes.
 
-Speed optimisations (validated via autoresearch, 38 experiments)
-----------------------------------------------------------------
-Total speedup: **−51.4%** (825 s → 401 s) with quality preserved.
+**Passes 1+ (sparse residual)**:
+1. **Poisson loss** — the single largest improvement (+2.4 dB on single-image,
+   +5 dB total on benchmark).  Poisson deviance naturally weights errors
+   relative to signal level, ideal for sparse, count-like residuals.
+2. **Asymmetric penalty (10×)** — prevents permanent overshoot.  In progressive
+   fitting, overshoot is *locked in* (clamped residuals hide it from subsequent
+   passes).  This is the opposite of single-pass where symmetric (1.0) is best.
+3. **Higher LR (0.03)** — small splats fitting fine detail converge faster
+   with a larger learning rate (base pipeline default 0.01 is conservative).
+4. **No eccentricity limit** — allows splats to adapt shape freely to
+   irregular features (elongated nuclei, curved edges).
+5. **No sigma_max_diag constraint** — residual splats size freely; the old
+   coarse-to-fine cascade was removed as it prevented capturing broad
+   residual patterns without measurable quality benefit.
+6. **Peaks seeding** — intensity-weighted sampling from non-zero voxels.
+   Every seed lands on actual signal; no seeds wasted on background.
 
-8. **Disable dynamic ops** (−10.6%): Splat relocation is unnecessary in
+Speed optimisations
+-------------------
+7. **Disable dynamic ops** (−10.6%): Splat relocation is unnecessary in
    progressive fitting — peaks seeding already places seeds at residual maxima.
-   Disabling removes per-iteration overhead from the relocation tracker.
-9. **Adaptive iteration count** (−9.4%): Later passes fit progressively
-   smaller residuals and converge faster.  Iteration budget scales as
-   100%, 95%, 90%, 85%, 80% for passes 0–4+.
-10. **Per-parameter-group LR** (−4.4%): Amplitudes converge faster than
-    positions/shapes.  Giving amplitudes 3× the base learning rate
-    accelerates convergence without destabilising the optimisation.
+8. **Adaptive iteration count** (−9.4%): Later passes fit progressively
+   smaller residuals and converge faster.  Budget: 100%, 95%, 90%, ..., 80%.
+9. **Skip gc.collect() between passes** — Python garbage collection adds
+   overhead without benefit for moderate splat counts (≤50K/pass).
+10. **Center LR boost (1.5×)** — center positions are the most critical
+    parameters for PSNR; a moderate boost accelerates convergence.
+11. **Per-parameter-group LR** (−4.4%): Amplitudes get 3× base LR.
 
-Additional optimisations live in the fitting sub-modules:
+Additional optimisations in fitting sub-modules:
   - ``fitting/optimization.py``: eval frequency (−21.5%), GPU sync elim (−1.9%)
   - ``fitting/losses.py``: Poisson dedup (−4.9%), torch.compile (−14.4%)
 """
 
 from __future__ import annotations
 
-import gc
 import math
 import time
 from typing import Any, Callable, Optional
@@ -126,13 +122,15 @@ def fit_progressive_gaussian_splats(
     iters_per_pass: int = 1000,
     psnr_patience: float = 0.5,
     max_passes: Optional[int] = None,
-    asymmetric_penalty: Optional[float] = 10.0,
+    asymmetric_penalty: Optional[
+        float
+    ] = 10.0,  # Intentionally higher than single-pass (1.0)
     enable_dynamic_ops: bool = True,
     cull_retention: float | None = 0.98,
     on_pass_complete: Optional[Callable[[int, GSplatLOD, float], None]] = None,
     device: Optional[str] = None,
     verbose: bool = True,
-    truncate: float = 3.0,
+    truncate: float = 2.75,
     **kwargs: Any,
 ) -> GSplatData:
     """Fit Gaussian splats progressively via iterative residual decomposition.
@@ -333,14 +331,9 @@ def fit_progressive_gaussian_splats(
         pass_kwargs["max_eccentricity"] = None
 
         if pass_i > 0:
-            # Coarse-to-fine sigma cascade: cap at previous pass's median sigma.
-            prev_lod = accumulated_lods[-1]
-            if prev_lod.n_splats > 0:
-                prev_sigmas = prev_lod.marginal_sigmas()  # (N, d)
-                median_sigma = float(np.median(prev_sigmas))
-                pass_kwargs["sigma_max_diag"] = max(2.0, median_sigma)
-            else:
-                pass_kwargs["sigma_max_diag"] = 4.0
+            # No sigma_max_diag constraint: let residual splats size freely.
+            # The old coarse-to-fine cascade prevented capturing broad residual
+            # patterns. With MSE+Poisson, the optimizer finds optimal sizes.
 
             # Poisson loss: natural for sparse, count-like residuals.
             pass_kwargs["loss_type"] = "poisson"
@@ -348,8 +341,9 @@ def fit_progressive_gaussian_splats(
             # Higher LR: fine-detail splats need faster convergence.
             pass_kwargs["lr"] = 0.03
 
-            # Progressive compactness: gentle shrinkage increasing each pass.
-            pass_kwargs["l1_diag"] = 0.0001 * pass_i
+            # No progressive L1 on diagonal: the MSE loss + Poisson loss combo
+            # already provides good convergence; extra regularization hurts PSNR.
+            # (Original l1_diag = 0.0001 * pass_i was tuned for L1 base pipeline.)
 
         # Disable dynamic ops for progressive passes: seeds are already placed
         # at residual peaks, and diverse benchmark showed no quality benefit
@@ -387,20 +381,20 @@ def fit_progressive_gaussian_splats(
             cholesky_factors=result.cholesky_factors,
             colors=result.colors,
             stats=dict(result.stats),
+            truncation_radius=result.truncation_radius,
         )
         accumulated_lods.append(lod)
 
         # --- Free GPU memory from the per-pass fit before rendering ---
         # The fitter's optimizer state, gradients, and V_tensor are
         # unreferenced but PyTorch's caching allocator may hold the blocks.
-        # The rendering grid cache (_GRID_CACHE) also accumulates GPU tensors
-        # for each unique AABB box shape seen during optimization.
+        # Clear the rendering grid cache (accumulated GPU tensors for AABB
+        # shapes) to avoid stale entries. Intentionally skip gc.collect() and
+        # torch.cuda.empty_cache() here — they add overhead without benefit
+        # for moderate splat counts (≤50K/pass, autoresearch iter 20).
         from luxar.gsplats.models.gsplats.rendering_core import clear_grid_cache
 
         clear_grid_cache()
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
         # --- Compute global PSNR (and cache render for next pass's residual) ---
         # Memory-efficient: render on GPU (CUDA backend is tiled and uses
@@ -516,6 +510,7 @@ def fit_progressive_gaussian_splats(
                     cholesky_factors=new_chol.astype(np.float32),
                     colors=lod.colors,
                     stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
                 )
             )
         final_result = GSplatData.from_lods(converted_lods, stats=overall_stats)

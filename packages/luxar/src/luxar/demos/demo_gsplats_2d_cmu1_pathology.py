@@ -70,6 +70,7 @@ Options:
     --recompute:        Force re-fitting from scratch (download + GPU fitting)
     --no-serve:         Generate scene without launching viewer
     --serve-only:       Just serve a previously generated scene
+    --show-roundtrip:   Show matplotlib comparison of original vs reconstructed images
     --target-size=N:    Downsample target for longest axis (default: 0 = full res)
     --tile-size=N:      Tile size in pixels for tiled fitting (default: 4096)
     --overlap=N:        Tile overlap in pixels (default: 512)
@@ -145,6 +146,7 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+SHOW_ROUNDTRIP = "--show-roundtrip" in sys.argv
 
 # Parse optional CLI overrides
 TARGET_SIZE = 0  # Default: full resolution (46,000 x 32,914)
@@ -523,6 +525,70 @@ Controls:
 
 
 # =============================================================================
+# Round-Trip Visualisation
+# =============================================================================
+
+
+def show_roundtrip_comparison(
+    images: list[np.ndarray],
+    gsplats_list: list[GSplatData],
+) -> None:
+    """Show original vs round-trip reconstructed 2D images side by side."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        aprint("matplotlib is required for --show-roundtrip. Install with: pip install matplotlib")
+        return
+
+    n_channels = len(images)
+
+    with asection("Round-trip reconstruction comparison"):
+        reconstructions = []
+        for i, (image, gsplats, ch_config) in enumerate(
+            zip(images, gsplats_list, CHANNELS[:n_channels])
+        ):
+            with asection(f"Rendering Ch{i}: {ch_config['name']}"):
+                recon = gsplats.render_to_volume(shape=image.shape, device=DEVICE)
+                reconstructions.append(recon)
+                mse = float(np.mean((image - recon) ** 2))
+                psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
+                aprint(f"  PSNR: {psnr:.2f} dB, MSE: {mse:.6g}")
+
+        fig, axes = plt.subplots(
+            n_channels, 3, figsize=(14, 4.5 * n_channels), squeeze=False
+        )
+
+        for i, (image, recon, ch_config) in enumerate(
+            zip(images, reconstructions, CHANNELS[:n_channels])
+        ):
+            diff = np.abs(image - recon)
+
+            mse = float(np.mean((image - recon) ** 2))
+            psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
+
+            axes[i, 0].imshow(image, cmap="gray", vmin=0, vmax=1)
+            axes[i, 0].set_title(f"Original — {ch_config['name']}")
+            axes[i, 0].axis("off")
+
+            axes[i, 1].imshow(recon, cmap="gray", vmin=0, vmax=1)
+            axes[i, 1].set_title(f"Reconstructed (PSNR {psnr:.1f} dB)")
+            axes[i, 1].axis("off")
+
+            im = axes[i, 2].imshow(diff, cmap="inferno", vmin=0, vmax=0.3)
+            axes[i, 2].set_title("|Difference|")
+            axes[i, 2].axis("off")
+            fig.colorbar(im, ax=axes[i, 2], fraction=0.046, pad=0.04)
+
+        fig.suptitle(
+            f"Round-Trip Comparison  "
+            f"({sum(len(g.amplitudes) for g in gsplats_list):,} total splats)",
+            fontsize=14,
+        )
+        plt.tight_layout()
+        plt.show()
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -579,6 +645,16 @@ def main():
 
         # Tiled fitting per channel
         gsplats_list = fit_all_channels(images)
+
+    # Optional round-trip visualisation
+    if SHOW_ROUNDTRIP:
+        if images is not None:
+            show_roundtrip_comparison(images, gsplats_list)
+        else:
+            aprint(
+                "Cannot show round-trip: original images not available "
+                "(loaded from precomputed cache). Re-run with --recompute."
+            )
 
     # Create scene with per-channel layers
     scene_path = create_luxar_scene(gsplats_list, output_path)

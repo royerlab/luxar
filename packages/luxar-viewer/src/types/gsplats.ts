@@ -117,6 +117,9 @@ export interface GSplatsMetadata {
 
   /** Total splat count across all LODs (v1.1 multi-LOD format). */
   n_splats_total?: number;
+
+  /** Gaussian truncation radius in standard deviations (default 3.0 if absent). */
+  truncation_radius?: number;
 }
 
 // ============================================================================

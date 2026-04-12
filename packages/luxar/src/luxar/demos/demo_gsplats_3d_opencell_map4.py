@@ -53,10 +53,11 @@ USAGE:
     python demo_gsplats_3d_opencell_map4.py [--recompute] [--no-serve] [--serve-only]
 
 Options:
-    --data-path=PATH: Path to a local OpenCell TIFF (overrides auto-download)
-    --recompute:      Force re-fitting from scratch
-    --no-serve:       Generate scene without launching viewer
-    --serve-only:     Just serve a previously generated scene
+    --data-path=PATH:   Path to a local OpenCell TIFF (overrides auto-download)
+    --recompute:        Force re-fitting from scratch
+    --no-serve:         Generate scene without launching viewer
+    --serve-only:       Just serve a previously generated scene
+    --show-roundtrip:   Show matplotlib comparison of original vs reconstructed volumes
 
 The TIFF is auto-downloaded from the OpenCell S3 bucket on first run.
 You can also provide a local path with: --data-path=<path_to_tiff>
@@ -101,10 +102,10 @@ CHANNELS = [
 ]
 
 # Progressive fitting parameters
-MAX_SPLATS = 8000
-MAX_SPLATS_PER_PASS = 1500
-ITERS_PER_PASS = 3000
-PSNR_PATIENCE = 0.2
+MAX_SPLATS = 64000
+MAX_SPLATS_PER_PASS = 16000
+ITERS_PER_PASS = 5000
+PSNR_PATIENCE = 0.1
 
 # Data source URL (OpenCell S3 bucket)
 TIFF_URL = (
@@ -121,6 +122,7 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+SHOW_ROUNDTRIP = "--show-roundtrip" in sys.argv
 
 # Arbol logging depth
 Arbol.max_depth = 10
@@ -244,6 +246,7 @@ def fit_channel(
         device=DEVICE,
         verbose=True,
         enable_dynamic_ops=True,
+        cull_retention=0.99
     )
 
     n_splats = len(result.amplitudes)
@@ -408,6 +411,85 @@ Controls:
 
 
 # =============================================================================
+# Round-Trip Visualisation
+# =============================================================================
+
+
+def show_roundtrip_comparison(
+    volumes: list[np.ndarray],
+    gsplats_list: list[GSplatData],
+) -> None:
+    """Show original vs round-trip reconstructed volumes side by side.
+
+    Renders each channel's gsplats back to a volume at the original resolution,
+    then displays the middle z-slice of original, reconstructed, and absolute
+    difference using matplotlib.
+
+    Args:
+        volumes: Original per-channel volumes (Z, Y, X), float32 in [0, 1].
+        gsplats_list: Fitted GSplatData per channel.
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        aprint("matplotlib is required for --show-roundtrip. Install with: pip install matplotlib")
+        return
+
+    n_channels = len(volumes)
+
+    with asection("Round-trip reconstruction comparison"):
+        reconstructions = []
+        for i, (volume, gsplats, ch_config) in enumerate(
+            zip(volumes, gsplats_list, CHANNELS[:n_channels])
+        ):
+            with asection(f"Rendering Ch{i}: {ch_config['name']}"):
+                recon = gsplats.render_to_volume(shape=volume.shape, device=DEVICE)
+                reconstructions.append(recon)
+
+                # Compute basic quality metrics
+                mse = float(np.mean((volume - recon) ** 2))
+                psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
+                aprint(f"  PSNR: {psnr:.2f} dB, MSE: {mse:.6g}")
+
+        # Plot: 3 columns (original, reconstructed, |difference|) x n_channels rows
+        fig, axes = plt.subplots(
+            n_channels, 3, figsize=(14, 4.5 * n_channels), squeeze=False
+        )
+
+        for i, (volume, recon, ch_config) in enumerate(
+            zip(volumes, reconstructions, CHANNELS[:n_channels])
+        ):
+            mid_z = volume.shape[0] // 2
+            orig_slice = volume[mid_z]
+            recon_slice = recon[mid_z]
+            diff_slice = np.abs(orig_slice - recon_slice)
+
+            mse = float(np.mean((volume - recon) ** 2))
+            psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
+
+            axes[i, 0].imshow(orig_slice, cmap="gray", vmin=0, vmax=1)
+            axes[i, 0].set_title(f"Original — {ch_config['name']}")
+            axes[i, 0].axis("off")
+
+            axes[i, 1].imshow(recon_slice, cmap="gray", vmin=0, vmax=1)
+            axes[i, 1].set_title(f"Reconstructed (PSNR {psnr:.1f} dB)")
+            axes[i, 1].axis("off")
+
+            im = axes[i, 2].imshow(diff_slice, cmap="inferno", vmin=0, vmax=0.3)
+            axes[i, 2].set_title("|Difference|")
+            axes[i, 2].axis("off")
+            fig.colorbar(im, ax=axes[i, 2], fraction=0.046, pad=0.04)
+
+        fig.suptitle(
+            f"Round-Trip Comparison — z-slice {mid_z}  "
+            f"({sum(len(g.amplitudes) for g in gsplats_list):,} total splats)",
+            fontsize=14,
+        )
+        plt.tight_layout()
+        plt.show()
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -488,6 +570,16 @@ def main():
             return
 
         gsplats_list = fit_all_channels(volumes)
+
+    # Optional round-trip visualisation
+    if SHOW_ROUNDTRIP:
+        if volumes is not None:
+            show_roundtrip_comparison(volumes, gsplats_list)
+        else:
+            aprint(
+                "Cannot show round-trip: original volumes not available "
+                "(loaded from precomputed cache). Re-run with --recompute."
+            )
 
     # Create scene with per-channel layers (centering + intensity scaling done inside)
     scene_path = create_luxar_scene(gsplats_list, output_path)

@@ -140,6 +140,7 @@ def _compute_poisson_loss(
     return data
 
 
+@torch.compile(fullgraph=False)
 def _compute_l1_loss(
     pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: float | None
 ) -> torch.Tensor:
@@ -163,6 +164,7 @@ def _compute_l1_loss(
     return data
 
 
+@torch.compile(fullgraph=False)
 def _compute_mse_loss(
     pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: float | None
 ) -> torch.Tensor:

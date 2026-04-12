@@ -319,6 +319,7 @@ def finalize_results(
         amplitudes=amps_np.astype(np.float32),
         cholesky_factors=cholesky_packed.astype(np.float32),
         stats=stats,
+        truncation_radius=config.truncate,
     )
 
     # Compute round-trip quality metrics (PSNR, SSIM, MSE).

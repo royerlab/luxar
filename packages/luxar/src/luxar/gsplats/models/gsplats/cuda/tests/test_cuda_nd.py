@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-from .conftest import Tolerances, compute_L_row_norms
+from .conftest import Tolerances
 
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
@@ -64,7 +64,6 @@ class Test4DDiagnostics:
 
         dim = 4
         shape = (8, 8, 8, 8)
-        tile_size = 4
 
         # Single splat at exact center
         center = torch.tensor(
@@ -75,16 +74,13 @@ class Test4DDiagnostics:
 
         # CUDA forward
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
             center,
             conic,
             amps,
-            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -218,7 +214,6 @@ class Test4DDiagnostics:
 
         dim = 4
         shape = (8, 8, 8, 8)
-        tile_size = 4
 
         # Single splat at center
         center = torch.tensor(
@@ -228,35 +223,18 @@ class Test4DDiagnostics:
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
             center,
             conic,
             amps,
-            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
-            tile_size,
         )
 
-        # cuda_result contains: [output, tile_counts, tile_offsets, tile_content]
-        tile_counts = cuda_result[1]
-
-        # With shape (8,8,8,8) and tile_size 4, we have 2^4 = 16 tiles
-        num_tiles = (8 // 4) ** 4
-        assert tile_counts.numel() == num_tiles, (
-            f"Expected {num_tiles} tiles, got {tile_counts.numel()}"
-        )
-
-        # Check that at least one tile has the splat
-        tiles_with_splats = (tile_counts > 0).sum().item()
-        assert tiles_with_splats > 0, "No tiles have splats - binning failed!"
-
-        # A splat at center (4,4,4,4) with L=2*I should cover multiple tiles
-        # The effective radius is ~3 * 2 = 6 voxels in each dimension
-        # So it should be binned to tiles near the center
-        assert tiles_with_splats >= 1, f"Only {tiles_with_splats} tiles have the splat"
+        # Verify output is non-zero (splat was rendered)
+        output = cuda_result[0]
+        assert output.sum().item() > 0, "Output should be non-zero for a centered splat"
 
     def test_4d_multiple_splats_detailed(self):
         """Detailed test with multiple splats to identify pattern of discrepancy."""
@@ -271,7 +249,6 @@ class Test4DDiagnostics:
         N = 5
         dim = 4
         shape = (12, 12, 12, 12)
-        tile_size = 4
 
         # Well-separated splats at known positions
         centers = torch.tensor(
@@ -299,16 +276,13 @@ class Test4DDiagnostics:
         amps = torch.ones(N, device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
         cuda_result = cuda_splatting_backend.forward(
             centers,
             conic,
             amps,
-            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -356,7 +330,6 @@ class Test4DDiagnostics:
 
         dim = 4
         shape = (12, 12, 12, 12)
-        tile_size = 4
 
         # Test positions that span different tiles
         test_positions = [
@@ -371,27 +344,18 @@ class Test4DDiagnostics:
             amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
 
             conic = cholesky_to_conic(L)
-            L_row_norms = compute_L_row_norms(L)
             cuda_result = cuda_splatting_backend.forward(
                 center,
                 conic,
                 amps,
-                L_row_norms.contiguous(),
                 list(shape),
                 3.0,
                 1e-5,
-                tile_size,
             )
             cuda_output = cuda_result[0].reshape(shape)
-            tile_counts = cuda_result[1]
-
             pos_int = tuple(int(p) for p in pos)
             cuda_val = cuda_output[pos_int].item()
-            tiles_with_splats = (tile_counts > 0).sum().item()
 
-            assert tiles_with_splats > 0, (
-                f"Position {pos}: No tiles have the splat (binning failed)"
-            )
             assert cuda_val > 0.5, (
                 f"Position {pos}: CUDA value at center = {cuda_val:.4f} (should be > 0.5)"
             )
@@ -407,7 +371,6 @@ class Test4DDiagnostics:
 
         dim = 4
         shape = (12, 12, 12, 12)
-        tile_size = 4
 
         # Position exactly on tile boundary (at 4.0, 8.0, etc.)
         boundary_positions = [
@@ -421,16 +384,13 @@ class Test4DDiagnostics:
             amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
 
             conic = cholesky_to_conic(L)
-            L_row_norms = compute_L_row_norms(L)
             cuda_result = cuda_splatting_backend.forward(
                 center,
                 conic,
                 amps,
-                L_row_norms.contiguous(),
                 list(shape),
                 3.0,
                 1e-5,
-                tile_size,
             )
             cuda_output = cuda_result[0].reshape(shape)
 
@@ -451,7 +411,7 @@ class TestGlobalSplatHandling:
     Test global splat handling - splats that touch >10% of tiles AND >1024 tiles.
 
     Global splats are handled by a separate kernel that processes all pixels
-    instead of using tile-based binning. These tests verify that:
+    with one CUDA block per splat. These tests verify that:
     1. Global splats produce correct output matching PyTorch reference
     2. intensity_floor is properly applied to global splats
     3. Gradients are correctly computed for global splats
@@ -471,47 +431,38 @@ class TestGlobalSplatHandling:
         )
         from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
-        # Large volume: 128^3 with tile_size=8 = 16^3 = 4096 tiles
+        # Large volume: 128^3 = many tiles
         shape = (128, 128, 128)
-        tile_size = 8
         d = 3
         truncate = 3.0
         intensity_floor = 1e-5
 
         # Create one very large splat centered in the volume
         # With L diagonal entries of 20, the effective radius is 3*20=60 pixels
-        # This touches ~(60/8)^3 ~= 422 tiles per octant, or ~3375 tiles total
-        # which exceeds 1024 tiles minimum for global handling
+        # This touches many tiles, triggering global handling
         centers = torch.tensor([[64.0, 64.0, 64.0]], device="cuda", dtype=torch.float32)
         L = torch.eye(d, device="cuda", dtype=torch.float32).unsqueeze(0) * 20.0
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
 
         # Run CUDA backend (should trigger global splat handling)
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
-        global_splat_ids = cuda_result[4]
-
-        # Verify global splat was detected
-        assert len(global_splat_ids) > 0, "Expected global splat to be detected"
 
         # Run PyTorch reference
         pytorch_output = render_gaussians(
             shape, centers, L, amps, truncate, intensity_floor
         )
 
-        # Compare outputs
+        # Compare outputs — large splats should match reference
         cuda_cpu = cuda_output.cpu()
         pytorch_cpu = pytorch_output.cpu()
 
@@ -520,16 +471,10 @@ class TestGlobalSplatHandling:
             abs_diff = (cuda_cpu - pytorch_cpu).abs()
             rel_diff = abs_diff / (max_val + 1e-8)
 
-            max_abs_diff = abs_diff.max().item()
             max_rel_diff = rel_diff.max().item()
 
-            print("\nGlobal splat CUDA vs PyTorch:")
-            print(f"  Global splats detected: {len(global_splat_ids)}")
-            print(f"  Max absolute diff: {max_abs_diff:.6f}")
-            print(f"  Max relative diff: {max_rel_diff:.4f}")
-
             assert max_rel_diff < 0.05, (
-                f"Global splat max relative diff {max_rel_diff:.4f} too large"
+                f"Large splat max relative diff {max_rel_diff:.4f} too large"
             )
 
     def test_global_splat_intensity_floor_applied(self):
@@ -547,10 +492,7 @@ class TestGlobalSplatHandling:
         from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         # Use 3D volume large enough for global splats
-        # 128^3 with tile_size=8 = 16^3 = 4096 tiles
-        # Global splat requires > 1024 tiles AND > 10% of tiles (> 409)
         shape = (128, 128, 128)
-        tile_size = 8
         d = 3
         truncate = 3.0
 
@@ -563,24 +505,17 @@ class TestGlobalSplatHandling:
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
 
         # Run CUDA backend
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
-        global_splat_ids = cuda_result[4]
-
-        # Verify global splat was detected
-        assert len(global_splat_ids) > 0, "Expected global splat to be detected"
 
         # Run PyTorch reference with same intensity_floor
         pytorch_output = render_gaussians(
@@ -631,9 +566,7 @@ class TestGlobalSplatHandling:
         )
 
         # Use 3D volume large enough for global splats
-        # 128^3 with tile_size=8 = 16^3 = 4096 tiles
         shape = (128, 128, 128)
-        tile_size = 8
         d = 3
         truncate = 3.0
         intensity_floor = 1e-5
@@ -649,50 +582,34 @@ class TestGlobalSplatHandling:
         )
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
 
         # Forward pass
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
         )
         output = cuda_result[0]
-        global_splat_ids = cuda_result[4]
-
-        # Verify global splat was detected
-        assert len(global_splat_ids) > 0, "Expected global splat to be detected"
 
         # Create gradient output (ones)
         grad_output = torch.ones_like(output)
 
-        # Backward pass - ensure correct tensor types
-        # Note: backward expects: tile_offsets, tile_counts, tile_content (different from forward return order!)
-        tile_counts = cuda_result[1]
-        tile_offsets = cuda_result[2]
-        tile_content = cuda_result[3]
-
+        # Backward pass
         d_centers, d_conic, d_amps = cuda_splatting_backend.backward(
             grad_output.contiguous(),
-            centers.detach().contiguous(),  # Detach to avoid autograd issues
+            centers.detach().contiguous(),
             conic.detach().contiguous(),
             amps.detach().contiguous(),
-            tile_offsets,  # Note: tile_offsets first
-            tile_counts,  # tile_counts second
-            tile_content,
-            global_splat_ids,
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
+            shape_tensor_cached=cuda_result[1],
         )
 
-        print("\nGlobal splat backward pass:")
+        print("\nLarge splat backward pass:")
         print(
             f"  d_centers shape: {d_centers.shape}, sum: {d_centers.sum().item():.4f}"
         )
@@ -714,10 +631,10 @@ class TestGlobalSplatHandling:
 
     def test_mixed_global_and_tile_splats(self):
         """
-        Test scene with both global splats and normal tile-based splats.
+        Test scene with both large and small splats.
 
-        This tests the combination of both rendering paths and ensures
-        they are properly accumulated.
+        Verifies that large splats covering many voxels are rendered
+        correctly alongside small, localized splats.
         """
         import cuda_splatting_backend  # noqa: F401
 
@@ -728,12 +645,11 @@ class TestGlobalSplatHandling:
 
         # Large enough volume for global splats
         shape = (128, 128, 128)
-        tile_size = 8
         d = 3
         truncate = 3.0
         intensity_floor = 1e-5
 
-        # Create mixed splats: 1 large (global) + 5 small (tile-based)
+        # Create mixed splats: 1 large + 5 small
         np.random.seed(42)
 
         # Global splat - large, centered
@@ -755,28 +671,17 @@ class TestGlobalSplatHandling:
         amps_t = torch.tensor(amps, device="cuda")
 
         conic = cholesky_to_conic(L_t)
-        L_row_norms = compute_L_row_norms(L_t)
 
         # Run CUDA backend
         cuda_result = cuda_splatting_backend.forward(
             centers_t.contiguous(),
             conic.contiguous(),
             amps_t.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
-        global_splat_ids = cuda_result[4]
-
-        # Should have exactly 1 global splat
-        n_global = len(global_splat_ids)
-        print("\nMixed splat test:")
-        print(f"  Global splats: {n_global}, Tile splats: {6 - n_global}")
-
-        assert n_global >= 1, "Expected at least 1 global splat"
 
         # Run PyTorch reference
         pytorch_output = render_gaussians(
@@ -807,18 +712,18 @@ class TestGlobalSplatHandling:
             )
 
     @pytest.mark.parametrize(
-        "dim,shape,tile_size,L_scale",
+        "dim,shape,L_scale",
         [
-            (2, (256, 256), 4, 30.0),  # 2D: 64x64 = 4096 tiles, need big splat
-            (3, (128, 128, 128), 8, 20.0),  # 3D: 16^3 = 4096 tiles
-            (4, (32, 32, 32, 32), 4, 8.0),  # 4D: 8^4 = 4096 tiles
+            (2, (256, 256), 30.0),  # 2D: large volume, need big splat
+            (3, (128, 128, 128), 20.0),  # 3D: large volume
+            (4, (32, 32, 32, 32), 8.0),  # 4D: large volume
         ],
     )
-    def test_global_splat_multi_dimension(self, dim, shape, tile_size, L_scale):
+    def test_global_splat_multi_dimension(self, dim, shape, L_scale):
         """
         Test global splat handling across 2D, 3D, and 4D volumes.
 
-        Each test creates a volume with ~4096 tiles and a large splat that
+        Each test creates a volume with a large splat that
         triggers global handling, then compares CUDA output to PyTorch reference.
         """
         import cuda_splatting_backend  # noqa: F401
@@ -838,36 +743,24 @@ class TestGlobalSplatHandling:
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
 
         # Run CUDA backend
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
-        global_splat_ids = cuda_result[4]
-
-        # Verify global splat was detected
-        n_global = len(global_splat_ids)
-        print(f"\n{dim}D global splat test:")
-        print(f"  Shape: {shape}, tile_size: {tile_size}")
-        print(f"  Global splats detected: {n_global}")
-
-        assert n_global > 0, f"Expected global splat in {dim}D test"
 
         # Run PyTorch reference
         pytorch_output = render_gaussians(
             shape, centers, L, amps, truncate, intensity_floor
         )
 
-        # Compare outputs
+        # Compare outputs — large splats should match reference
         cuda_cpu = cuda_output.cpu()
         pytorch_cpu = pytorch_output.cpu()
 
@@ -877,26 +770,20 @@ class TestGlobalSplatHandling:
             rel_diff = abs_diff / (max_val + 1e-8)
 
             max_rel_diff = rel_diff.max().item()
-            mean_rel_diff = rel_diff.mean().item()
-
-            print(f"  Max relative diff: {max_rel_diff:.4f}")
-            print(f"  Mean relative diff: {mean_rel_diff:.6f}")
 
             assert max_rel_diff < 0.1, (
-                f"{dim}D global splat max relative diff {max_rel_diff:.4f} too large"
+                f"{dim}D large splat max relative diff {max_rel_diff:.4f} too large"
             )
 
     @pytest.mark.parametrize(
-        "dim,shape,tile_size,L_scale",
+        "dim,shape,L_scale",
         [
-            (2, (256, 256), 4, 30.0),
-            (3, (128, 128, 128), 8, 20.0),
-            (4, (32, 32, 32, 32), 4, 8.0),
+            (2, (256, 256), 30.0),
+            (3, (128, 128, 128), 20.0),
+            (4, (32, 32, 32, 32), 8.0),
         ],
     )
-    def test_global_splat_backward_multi_dimension(
-        self, dim, shape, tile_size, L_scale
-    ):
+    def test_global_splat_backward_multi_dimension(self, dim, shape, L_scale):
         """
         Test global splat backward pass across 2D, 3D, and 4D volumes.
 
@@ -918,51 +805,31 @@ class TestGlobalSplatHandling:
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
 
         # Forward pass
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
         )
         output = cuda_result[0]
-        global_splat_ids = cuda_result[4]
-
-        # Verify global splat was detected
-        assert len(global_splat_ids) > 0, (
-            f"Expected global splat in {dim}D backward test"
-        )
 
         # Backward pass
         grad_output = torch.ones_like(output)
-        tile_counts = cuda_result[1]
-        tile_offsets = cuda_result[2]
-        tile_content = cuda_result[3]
 
         d_centers, d_conic, d_amps = cuda_splatting_backend.backward(
             grad_output.contiguous(),
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            tile_offsets,
-            tile_counts,
-            tile_content,
-            global_splat_ids,
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
+            shape_tensor_cached=cuda_result[1],
         )
-
-        print(f"\n{dim}D global splat backward:")
-        print(f"  d_centers sum: {d_centers.sum().item():.4f}")
-        print(f"  d_amps: {d_amps.item():.4f}")
 
         # Verify gradients are reasonable
         assert d_amps.item() > 0, f"Expected positive amplitude gradient in {dim}D"

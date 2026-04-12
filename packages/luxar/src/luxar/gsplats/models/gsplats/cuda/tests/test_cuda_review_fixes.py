@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import torch
 
-from .conftest import Tolerances, compute_L_row_norms
+from .conftest import Tolerances
 
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
@@ -63,29 +63,25 @@ def _make_splat_data(
         amps_t = torch.tensor(amps, device=device, dtype=torch.float32)
 
     conic = cholesky_to_conic(L)
-    L_row_norms = compute_L_row_norms(L)
 
     return {
         "centers": centers_t,
         "L": L,
         "conic": conic,
         "amps": amps_t,
-        "L_row_norms": L_row_norms,
         "shape": shape,
     }
 
 
-def _run_cuda_forward(data, tile_size, truncate=3.0, intensity_floor=1e-5):
+def _run_cuda_forward(data, truncate=3.0, intensity_floor=1e-5):
     """Run CUDA forward pass and return reshaped output + state."""
     result = cuda_splatting_backend.forward(
         data["centers"].contiguous(),
         data["conic"].contiguous(),
         data["amps"].contiguous(),
-        data["L_row_norms"].contiguous(),
         list(data["shape"]),
         truncate,
         intensity_floor,
-        tile_size,
     )
     output = result[0].reshape(data["shape"])
     return output, result
@@ -124,9 +120,7 @@ class TestAmplitudeBasedTruncation:
         )
 
         data = _make_splat_data(N, d, shape, amps=amps)
-        cuda_out, _ = _run_cuda_forward(
-            data, tile_size=8, intensity_floor=intensity_floor
-        )
+        cuda_out, _ = _run_cuda_forward(data, intensity_floor=intensity_floor)
         pytorch_out = _run_pytorch_reference(data, intensity_floor=intensity_floor)
 
         cuda_cpu = cuda_out.cpu()
@@ -173,9 +167,7 @@ class TestAmplitudeBasedTruncation:
         amps = np.concatenate([amps_above, amps_below])
 
         data = _make_splat_data(N_above + N_below, d, shape, centers=centers, amps=amps)
-        cuda_out, _ = _run_cuda_forward(
-            data, tile_size=8, intensity_floor=intensity_floor
-        )
+        cuda_out, _ = _run_cuda_forward(data, intensity_floor=intensity_floor)
 
         cuda_cpu = cuda_out.cpu()
 
@@ -212,9 +204,7 @@ class TestAmplitudeBasedTruncation:
         )
 
         data = _make_splat_data(N, d, shape, amps=amps)
-        cuda_out, _ = _run_cuda_forward(
-            data, tile_size=16, intensity_floor=intensity_floor
-        )
+        cuda_out, _ = _run_cuda_forward(data, intensity_floor=intensity_floor)
         pytorch_out = _run_pytorch_reference(data, intensity_floor=intensity_floor)
 
         cuda_cpu = cuda_out.cpu()
@@ -226,23 +216,11 @@ class TestAmplitudeBasedTruncation:
             assert rel_diff.max().item() < Tolerances.COMPARISON_MAX_REL_DIFF
 
 
-class TestGradCacheBufferOverflowGuard:
-    """Tests for Fix 1: buffer overflow guard in backward kernel's grad_output cache.
+class TestBackwardKernelGradients:
+    """Tests for backward kernel gradient correctness."""
 
-    The backward kernel has a fixed-size shared memory buffer (MAX_TILE_PIXELS)
-    for caching grad_output. When a non-default tile_size is used such that
-    tile_pixels > MAX_TILE_PIXELS, the cache must be disabled to avoid OOB writes.
-
-    For 3D: MAX_TILE_PIXELS=512 (8^3), so tile_size=16 gives 16^3=4096 > 512.
-    For 2D: MAX_TILE_PIXELS=256 (16^2), so tile_size=32 gives 32^2=1024 > 256.
-    """
-
-    def test_3d_oversized_tile_backward_no_crash(self):
-        """3D backward with tile_size=16 (4096 pixels > 512 MAX_TILE_PIXELS) should not crash.
-
-        Before Fix 1, this would write past the s_grad_output[512] buffer.
-        After Fix 1, the kernel falls back to global memory reads for grad_output.
-        """
+    def test_3d_backward_produces_finite_gradients(self):
+        """3D backward pass should produce finite, sensible gradients."""
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
         )
@@ -250,7 +228,6 @@ class TestGradCacheBufferOverflowGuard:
         np.random.seed(55)
         N, d = 10, 3
         shape = (32, 32, 32)
-        tile_size = 16  # 16^3 = 4096 >> 512 MAX_TILE_PIXELS
         truncate = 3.0
         intensity_floor = 1e-5
         device = torch.device("cuda:0")
@@ -266,38 +243,29 @@ class TestGradCacheBufferOverflowGuard:
         amps = torch.rand(N, device=device, dtype=torch.float32) * 0.5 + 0.5
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
 
-        # Forward with oversized tile
+        # Forward
         result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
         )
         output = result[0]
 
-        # Backward with oversized tile - this would crash without Fix 1
+        # Backward
         grad_output = torch.ones_like(output)
         d_centers, d_conic, d_amps = cuda_splatting_backend.backward(
             grad_output.contiguous(),
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            result[2],  # tile_offsets
-            result[1],  # tile_counts
-            result[3],  # tile_content
-            result[4],  # global_splat_ids
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
-            shape_tensor_cached=result[5],
-            tile_dims_tensor_cached=result[6],
+            shape_tensor_cached=result[1],
         )
 
         # Should produce finite gradients (not crash or produce garbage)
@@ -309,31 +277,3 @@ class TestGradCacheBufferOverflowGuard:
         active = d_amps.abs() > 1e-10
         if active.any():
             assert (d_amps[active] > 0).all()
-
-    def test_3d_oversized_tile_forward_matches_default(self):
-        """3D forward with tile_size=16 should produce the same result as tile_size=8.
-
-        The tile_size only affects spatial binning, not the final output.
-        """
-        np.random.seed(66)
-        N, d = 8, 3
-        shape = (24, 24, 24)
-        truncate = 3.0
-        intensity_floor = 1e-5
-
-        data = _make_splat_data(N, d, shape, L_scale=2.0)
-
-        # Forward with default tile_size=8
-        out_default, _ = _run_cuda_forward(
-            data, tile_size=8, truncate=truncate, intensity_floor=intensity_floor
-        )
-        # Forward with oversized tile_size=16
-        out_oversized, _ = _run_cuda_forward(
-            data, tile_size=16, truncate=truncate, intensity_floor=intensity_floor
-        )
-
-        # Results should be very close (both FP32, same algorithm, just different tiling)
-        diff = (out_default.cpu() - out_oversized.cpu()).abs()
-        assert diff.max().item() < 1e-5, (
-            f"tile_size=8 vs 16 differ by {diff.max().item():.6e}"
-        )

@@ -750,3 +750,84 @@ class TestCompression:
             np.testing.assert_allclose(
                 g.cholesky_factors, g2.cholesky_factors, atol=1e-6
             )
+
+
+class TestTruncationRadiusRoundtrip:
+    """Tests for truncation_radius save/load round-trip."""
+
+    def test_default_truncation_radius(self):
+        """Default truncation_radius (3.0) survives save/load."""
+        splats = create_test_splats_3d(50)
+        g = GSplatData(**splats)
+        assert g.truncation_radius == 3.0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.gsplats.zarr"
+            g.save(path, ordering="none", encoding_mode=EncodingMode.PRECISION)
+            g2 = GSplatData.load(path)
+            assert g2.truncation_radius == 3.0
+
+    def test_custom_truncation_radius_single_lod(self):
+        """Non-default truncation_radius survives single-LOD save/load."""
+        splats = create_test_splats_3d(50)
+        g = GSplatData(**splats, truncation_radius=2.75)
+        assert g.truncation_radius == 2.75
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.gsplats.zarr"
+            g.save(path, ordering="none", encoding_mode=EncodingMode.PRECISION)
+            g2 = GSplatData.load(path)
+            assert g2.truncation_radius == 2.75
+
+    def test_custom_truncation_radius_multi_lod(self):
+        """Non-default truncation_radius survives multi-LOD save/load."""
+        from luxar.gsplats.gsplat_data import GSplatLOD
+
+        lods = [
+            GSplatLOD(
+                centers=np.random.randn(n, 3).astype(np.float32),
+                amplitudes=np.random.rand(n).astype(np.float32),
+                cholesky_factors=np.random.randn(n, 6).astype(np.float32),
+                truncation_radius=2.5,
+            )
+            for n in [30, 50]
+        ]
+        g = GSplatData(lods=lods)
+        assert g.truncation_radius == 2.5
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.gsplats.zarr"
+            g.save(path, ordering="none", encoding_mode=EncodingMode.PRECISION)
+            g2 = GSplatData.load(path)
+            assert g2.truncation_radius == 2.5
+            assert g2.lods[0].truncation_radius == 2.5
+            assert g2.lods[1].truncation_radius == 2.5
+
+    def test_truncation_radius_in_zarr_metadata(self):
+        """truncation_radius is written to zarr splats group attrs."""
+        splats = create_test_splats_3d(50)
+        g = GSplatData(**splats, truncation_radius=2.0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.gsplats.zarr"
+            g.save(path, ordering="none", encoding_mode=EncodingMode.PRECISION)
+            root = zarr.open(str(path), "r")
+            assert root["splats"].attrs["truncation_radius"] == 2.0
+
+    def test_backward_compat_missing_truncation_radius(self):
+        """Files without truncation_radius default to 3.0 on load."""
+        splats = create_test_splats_3d(50)
+        g = GSplatData(**splats)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.gsplats.zarr"
+            g.save(path, ordering="none", encoding_mode=EncodingMode.PRECISION)
+
+            # Remove truncation_radius from zarr attrs to simulate old file
+            root = zarr.open(str(path), "r+")
+            attrs = dict(root["splats"].attrs)
+            del attrs["truncation_radius"]
+            root["splats"].attrs.put(attrs)
+
+            g2 = GSplatData.load(path)
+            assert g2.truncation_radius == 3.0

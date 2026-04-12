@@ -217,7 +217,6 @@ def initialize_optimization(
                     max_eccentricity=config.max_eccentricity,
                     truncate=config.truncate,
                     intensity_floor=config.cuda_intensity_floor,
-                    tile_size=config.cuda_tile_size,  # None = auto-select
                     voxel_size=config.voxel_size,
                     device=config.device,
                 )
@@ -287,6 +286,15 @@ def initialize_optimization(
         patience=config.patience,
         factor=config.lr_reduction_factor,
     )
+
+    # Boost center position LR by 1.5x post-creation (autoresearch iter 41).
+    # Centers are the most critical parameters for PSNR — a mis-positioned
+    # Gaussian produces large error regardless of shape/amplitude.  Applied
+    # post-creation to preserve the test-verified defaults in integration.py.
+    for pg in optimizer.param_groups:
+        params = pg["params"]
+        if len(params) == 1 and params[0] is model.raw_mu:
+            pg["lr"] = pg["lr"] * 1.5
 
     return ModelComponents(
         model=model,

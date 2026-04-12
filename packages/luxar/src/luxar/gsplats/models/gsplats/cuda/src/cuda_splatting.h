@@ -6,8 +6,8 @@
  * PyTorch C++ bindings (bindings.cpp).
  *
  * Architecture:
- *   Forward:  preprocess -> prefix_sum -> bin -> rasterize_fwd [-> global_fwd]
- *   Backward: rasterize_bwd [-> global_bwd]
+ *   Forward:  splat-centric rasterization (1 block per splat, atomicAdd to output)
+ *   Backward: splat-centric gradient computation (1 block per splat, warp reduction)
  *
  * FP16 support: All kernels and launch wrappers are templated on InputDType
  * (float or __half). The dispatch layer in cuda_splatting.cu uses unified
@@ -33,57 +33,17 @@
 constexpr int MIN_DIM = 2;
 constexpr int MAX_SUPPORTED_DIM = 8;
 
-// Maximum number of tiles (1M limit for safety)
-constexpr int64_t MAX_TILES = 1000000;
-
-// Default tile sizes per dimension
-constexpr int DEFAULT_TILE_SIZE_2D = 16;
-constexpr int DEFAULT_TILE_SIZE_3D = 8;
-constexpr int DEFAULT_TILE_SIZE_4D = 4;
-constexpr int DEFAULT_TILE_SIZE_HIGH = 2;
 
 // =============================================================================
-// BINNING STATE
+// FORWARD STATE
 // =============================================================================
 
 /**
- * Workspace for tile binning operations.
- *
- * This structure holds temporary buffers used during the forward pass
- * and passed to the backward pass for gradient computation.
- *
- * OPTIMIZATION: Cached device tensors (shape_tensor, tile_dims_tensor) are
- * stored here for reuse in backward pass, avoiding redundant allocations
- * and host-to-device copies.
+ * State from forward pass, cached for backward pass reuse.
  */
-struct BinningState {
-    torch::Tensor tile_counts;      // (num_tiles,) int32 - splats per tile
-    torch::Tensor tile_offsets;     // (num_tiles,) int64 - exclusive prefix sum
-    torch::Tensor tile_content;     // (total_pairs,) int32 - splat IDs per tile
-    torch::Tensor tile_write_heads; // (num_tiles,) int32 - atomic write positions
-
-    // Scan temporary storage (persisted for reuse)
-    torch::Tensor scan_temp_storage;
-    size_t scan_temp_bytes;
-
-    // Global splat handling (large splats)
-    torch::Tensor global_splat_flags; // (N,) bool - is global splat
-    torch::Tensor global_splat_ids;   // (num_global,) int32 - global splat IDs
-    int num_global_splats;
-
-    // AABB cache: avoids recomputing AABBs in bin_kernel
-    torch::Tensor aabb_lo;          // (N, DIM) int32 - AABB lower bounds (tile coords)
-    torch::Tensor aabb_hi;          // (N, DIM) int32 - AABB upper bounds (tile coords)
-
-    // Metadata
-    int64_t num_tiles;
-    int64_t total_pairs;  // Total (tile, splat) pairs
-
-    // OPTIMIZATION: Cached device tensors for backward pass reuse
-    // These eliminate redundant host-to-device copies in backward pass
+struct ForwardState {
+    // Cached device tensor for backward pass reuse
     torch::Tensor shape_tensor;     // (dim,) int32 - volume shape on device
-    torch::Tensor tile_dims_tensor; // (dim,) int32 - tile dimensions on device
-    int tile_size;                  // Cached tile size
 };
 
 // =============================================================================
@@ -96,27 +56,20 @@ struct BinningState {
  * @param centers         (N, d) float32 - splat centers in voxel coordinates
  * @param conic           (N, d*(d+1)/2) float32 - packed upper-triangle of Sigma^-1
  * @param amps            (N,) float32 - amplitudes
- * @param L_row_norms     (N, d) float32 - per-axis std dev from Cholesky row norms
  * @param shape           Target volume shape (d elements)
  * @param truncate        Base truncation radius
  * @param intensity_floor Minimum intensity threshold for culling
- * @param tile_size       Tile size for spatial binning
- * @param batch_size      Splat batch size for shared memory loading (32, 128, or 256)
  *
- * @return Tuple of 7 tensors (see cuda_splatting.cu for details)
+ * @return Tuple of 2 tensors: (output, shape_tensor)
  */
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
-           torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor>
 forward(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size,
-    int batch_size,
     const torch::Tensor& output_buffer = torch::Tensor()
 );
 
@@ -135,17 +88,11 @@ backward(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& tile_offsets,
-    const torch::Tensor& tile_counts,
-    const torch::Tensor& tile_content,
-    const torch::Tensor& global_splat_ids,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size,
-    int batch_size,
+    bool use_fp16,
     const torch::Tensor& shape_tensor_cached = torch::Tensor(),
-    const torch::Tensor& tile_dims_tensor_cached = torch::Tensor(),
     const torch::Tensor& output_to_zero = torch::Tensor()
 );
 
@@ -169,18 +116,14 @@ backward(
  * Same signature as forward() but expects float16 input tensors.
  * Output is always FP32.
  */
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
-           torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor>
 forward_fp16(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& L_row_norms,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size,
-    int batch_size,
     const torch::Tensor& output_buffer = torch::Tensor()
 );
 
@@ -194,36 +137,16 @@ backward_fp16(
     const torch::Tensor& centers,
     const torch::Tensor& conic,
     const torch::Tensor& amps,
-    const torch::Tensor& tile_offsets,
-    const torch::Tensor& tile_counts,
-    const torch::Tensor& tile_content,
-    const torch::Tensor& global_splat_ids,
     const std::vector<int64_t>& shape,
     float truncate,
     float intensity_floor,
-    int tile_size,
-    int batch_size,
     const torch::Tensor& shape_tensor_cached = torch::Tensor(),
-    const torch::Tensor& tile_dims_tensor_cached = torch::Tensor(),
     const torch::Tensor& output_to_zero = torch::Tensor()
 );
 
 // =============================================================================
 // UTILITY FUNCTIONS
 // =============================================================================
-
-/**
- * Compute tile dimensions from volume shape and tile size.
- */
-std::vector<int> compute_tile_dims(
-    const std::vector<int64_t>& shape,
-    int tile_size
-);
-
-/**
- * Compute total number of tiles.
- */
-int64_t compute_num_tiles(const std::vector<int>& tile_dims);
 
 /**
  * Validate input tensors.
