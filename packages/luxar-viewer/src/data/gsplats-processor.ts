@@ -402,7 +402,8 @@ export function processGSplats3DOnly(loaded: LoadedGSplatsData): ProcessedGSplat
  */
 export function processGSplats(
   loaded: LoadedGSplatsData,
-  viewState: GSplatsViewState
+  viewState: GSplatsViewState,
+  truncate: number = 3.0
 ): ProcessedGSplatsData {
   // Use optimized path for pure 3D data
   if (loaded.ndim === 3 && viewState.displayDims.length === 3) {
@@ -418,5 +419,5 @@ export function processGSplats(
   }
 
   // General nD → 3D processing
-  return processGSplatsTo3D(loaded, viewState);
+  return processGSplatsTo3D(loaded, viewState, truncate);
 }

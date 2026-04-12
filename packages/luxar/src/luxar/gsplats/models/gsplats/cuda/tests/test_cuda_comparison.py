@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-from .conftest import Tolerances, compute_L_row_norms
+from .conftest import Tolerances
 
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
@@ -72,18 +72,15 @@ class TestCUDAVsPyTorchReference:
 
         # Compute conic for CUDA backend
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
 
         # Run CUDA backend
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
-            8,  # tile_size for 3D
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -164,18 +161,15 @@ class TestCUDAVsPyTorchReference:
 
         # Compute conic for CUDA backend
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
 
         # Run CUDA backend
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
-            16,  # tile_size for 2D
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -237,18 +231,15 @@ class TestCUDAVsPyTorchReference:
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
 
         # CUDA output
         cuda_result = cuda_splatting_backend.forward(
             centers,
             conic,
             amps,
-            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
-            8,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -315,10 +306,8 @@ class TestCUDAVsPyTorchComprehensive:
         # Create appropriate shape and parameters for each dimension
         if dim == 2:
             shape = (48, 48)
-            tile_size = 16
         else:  # dim == 3
             shape = (24, 24, 24)
-            tile_size = 8
 
         # Random centers inside volume with margin
         margin = 2
@@ -346,16 +335,14 @@ class TestCUDAVsPyTorchComprehensive:
 
         # CUDA forward
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
+
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -380,7 +367,6 @@ class TestCUDAVsPyTorchComprehensive:
         N = 20
         dim = 4
         shape = (12, 12, 12, 12)
-        tile_size = 4
 
         margin = 2
         max_coord = min(shape) - margin
@@ -402,16 +388,14 @@ class TestCUDAVsPyTorchComprehensive:
         amps = torch.ones(N, device="cuda", dtype=torch.float32) * 0.5
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
+
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -435,10 +419,8 @@ class TestCUDAVsPyTorchComprehensive:
 
         if dim == 2:
             shape = (48, 48)
-            tile_size = 16
         else:
             shape = (24, 24, 24)
-            tile_size = 8
 
         margin = 3
         max_coord = min(shape) - margin
@@ -462,16 +444,14 @@ class TestCUDAVsPyTorchComprehensive:
         intensity_floor = 1e-5
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
+
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -493,7 +473,6 @@ class TestCUDAVsPyTorchComprehensive:
         np.random.seed(127)
         N, dim = 15, 4
         shape = (12, 12, 12, 12)
-        tile_size = 4
 
         margin = 3
         max_coord = min(shape) - margin
@@ -513,16 +492,14 @@ class TestCUDAVsPyTorchComprehensive:
         amps = torch.rand(N, device="cuda", dtype=torch.float32) * 0.5 + 0.3
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
+
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -545,10 +522,8 @@ class TestCUDAVsPyTorchComprehensive:
 
         if dim == 2:
             shape = (64, 64)
-            tile_size = 16
         else:
             shape = (32, 32, 32)
-            tile_size = 8
 
         margin = 4
         max_coord = min(shape) - margin
@@ -573,16 +548,14 @@ class TestCUDAVsPyTorchComprehensive:
         intensity_floor = 1e-5
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
+
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -604,7 +577,6 @@ class TestCUDAVsPyTorchComprehensive:
         np.random.seed(460)
         N, dim = 10, 4
         shape = (16, 16, 16, 16)
-        tile_size = 4
 
         margin = 4
         max_coord = min(shape) - margin
@@ -626,16 +598,14 @@ class TestCUDAVsPyTorchComprehensive:
         amps = torch.ones(N, device="cuda", dtype=torch.float32) * 0.7
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
+
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -672,10 +642,8 @@ class TestCUDAVsPyTorchComprehensive:
 
         if dim == 2:
             shape = (64, 64)
-            tile_size = 16
         else:
             shape = (32, 32, 32)
-            tile_size = 8
 
         margin = int(scale * 3) + 2
         max_coord = min(shape) - margin
@@ -702,16 +670,14 @@ class TestCUDAVsPyTorchComprehensive:
         intensity_floor = 1e-5
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
+
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             truncate,
             intensity_floor,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -987,10 +953,8 @@ class TestCUDAVsPyTorchComprehensive:
 
         if dim == 2:
             shape = (32, 32)
-            tile_size = 16
         else:
             shape = (24, 24, 24)
-            tile_size = 8
 
         center = torch.tensor(
             [[s // 2 for s in shape]], device="cuda", dtype=torch.float32
@@ -999,16 +963,14 @@ class TestCUDAVsPyTorchComprehensive:
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
+
         cuda_result = cuda_splatting_backend.forward(
             center,
             conic,
             amps,
-            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -1043,7 +1005,6 @@ class TestCUDAVsPyTorchComprehensive:
 
         dim = 4
         shape = (16, 16, 16, 16)
-        tile_size = 4
 
         center = torch.tensor(
             [[s // 2 for s in shape]], device="cuda", dtype=torch.float32
@@ -1052,16 +1013,14 @@ class TestCUDAVsPyTorchComprehensive:
         amps = torch.tensor([1.0], device="cuda", dtype=torch.float32)
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
+
         cuda_result = cuda_splatting_backend.forward(
             center,
             conic,
             amps,
-            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -1096,10 +1055,8 @@ class TestCUDAVsPyTorchComprehensive:
 
         if dim == 2:
             shape = (48, 48)
-            tile_size = 16
         else:
             shape = (24, 24, 24)
-            tile_size = 8
 
         # All splats near center to ensure overlap
         center_pos = [s // 2 for s in shape]
@@ -1123,16 +1080,14 @@ class TestCUDAVsPyTorchComprehensive:
         )  # Small amplitudes that sum
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
+
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 
@@ -1152,10 +1107,8 @@ class TestCUDAVsPyTorchComprehensive:
 
         if dim == 2:
             shape = (32, 32)
-            tile_size = 16
         else:
             shape = (24, 24, 24)
-            tile_size = 8
 
         # Splats at corners and edges
         corners = []
@@ -1177,16 +1130,14 @@ class TestCUDAVsPyTorchComprehensive:
         amps = torch.ones(N, device="cuda", dtype=torch.float32) * 0.5
 
         conic = cholesky_to_conic(L)
-        L_row_norms = compute_L_row_norms(L)
+
         cuda_result = cuda_splatting_backend.forward(
             centers.contiguous(),
             conic.contiguous(),
             amps.contiguous(),
-            L_row_norms.contiguous(),
             list(shape),
             3.0,
             1e-5,
-            tile_size,
         )
         cuda_output = cuda_result[0].reshape(shape)
 

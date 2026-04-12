@@ -634,6 +634,10 @@ class Group(Node):
         if not isinstance(result, GSplatData):
             raise TypeError(f"Expected GSplatData, got {type(result).__name__}")
 
+        # Propagate truncation_radius through attrs (unless caller overrode it)
+        if "truncation_radius" not in attrs:
+            attrs["truncation_radius"] = result.truncation_radius
+
         # Single-LOD: delegate to flat writer
         if result.n_lods <= 1:
             return self.add_gsplats(

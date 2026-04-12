@@ -3,15 +3,17 @@
 Shared utility functions for seed generation.
 
 This module contains common utilities used by multiple seed generation methods,
-including peak detection, spatial deduplication algorithms, and Cholesky factor
-construction for Gaussian initialization.
+including peak detection, spatial deduplication algorithms, Cholesky factor
+construction for Gaussian initialization, and spatial hash grid for fast
+proximity queries.
 """
 
+import itertools
+import math
 from typing import Optional, cast
 
 import numpy as np
 from scipy import ndimage as ndi
-from scipy.spatial import cKDTree
 
 # Amplitude scaling factor for seed initialization.
 # Multiplying by 0.9 (90%) helps avoid initial over-prediction when splats overlap,
@@ -19,6 +21,123 @@ from scipy.spatial import cKDTree
 # Starting slightly below the target intensity allows the optimizer to increase
 # amplitudes as needed rather than fighting against penalty gradients.
 SEED_AMPLITUDE_SCALE = 0.9
+
+
+class SpatialHashGrid:
+    """
+    Spatial hash grid for O(1) amortized proximity queries on nD points.
+
+    Points are hashed into cells of a given size. Proximity queries check
+    only the 3^ndim neighboring cells, giving O(1) amortized cost per query
+    (assuming bounded density per cell). This replaces KD-tree approaches
+    that require O(M log M) rebuilds.
+
+    Parameters
+    ----------
+    cell_size : float
+        Size of each grid cell. Must be >= the query distance used in
+        ``has_neighbor_within`` for correctness (the 3^ndim neighbor check
+        only guarantees finding all points within ``cell_size``).
+    ndim : int
+        Number of spatial dimensions.
+
+    Notes
+    -----
+    Correctness guarantee: if ``cell_size >= distance``, then for any query
+    point p and stored point q with ||p - q|| < distance, q is guaranteed
+    to be in the same cell or an adjacent cell (within 1 cell offset in
+    each dimension). Proof: ||p - q|| < distance <= cell_size implies
+    |p[d] - q[d]| < cell_size for each dimension d.
+    """
+
+    def __init__(self, cell_size: float, ndim: int):
+        self._cell_size = max(cell_size, 1e-10)
+        self._inv_cell_size = 1.0 / self._cell_size
+        self._ndim = ndim
+        self._grid: dict[tuple[int, ...], list[int]] = {}
+        # Pre-allocate with doubling growth
+        self._points = np.empty((64, ndim), dtype=np.float32)
+        self._n_points = 0
+        self._neighbor_offsets = list(itertools.product([-1, 0, 1], repeat=ndim))
+
+    def _cell_key(self, point: np.ndarray) -> tuple[int, ...]:
+        """Compute the grid cell key for a point.
+
+        Uses ``math.floor`` (not ``int()``) so that negative coordinates
+        are handled correctly.  ``int()`` truncates toward zero, which
+        would map e.g. -0.5 and +0.5 to the same cell 0.
+        """
+        return tuple(math.floor(x) for x in (point * self._inv_cell_size))
+
+    def insert(self, point: np.ndarray) -> int:
+        """
+        Insert a point into the grid.
+
+        Parameters
+        ----------
+        point : np.ndarray
+            Point coordinates, shape (ndim,).
+
+        Returns
+        -------
+        int
+            Index of the inserted point.
+        """
+        idx = self._n_points
+        # Grow backing array if needed (doubling strategy)
+        if idx >= len(self._points):
+            new_size = len(self._points) * 2
+            new_arr = np.empty((new_size, self._ndim), dtype=np.float32)
+            new_arr[:idx] = self._points[:idx]
+            self._points = new_arr
+        self._points[idx] = point
+        self._n_points += 1
+
+        key = self._cell_key(point)
+        if key in self._grid:
+            self._grid[key].append(idx)
+        else:
+            self._grid[key] = [idx]
+        return idx
+
+    def has_neighbor_within(self, point: np.ndarray, distance: float) -> bool:
+        """
+        Check if any stored point is within the given distance.
+
+        Parameters
+        ----------
+        point : np.ndarray
+            Query point coordinates, shape (ndim,).
+        distance : float
+            Maximum distance threshold. Must be <= cell_size for the
+            3^ndim neighbor check to be correct.
+
+        Returns
+        -------
+        bool
+            True if any stored point is strictly closer than ``distance``.
+        """
+        dist_sq = distance * distance
+        cell_key = self._cell_key(point)
+        for offset in self._neighbor_offsets:
+            key = tuple(cell_key[d] + offset[d] for d in range(self._ndim))
+            bucket = self._grid.get(key)
+            if bucket is not None:
+                for j in bucket:
+                    diff = self._points[j] - point
+                    if np.dot(diff, diff) < dist_sq:
+                        return True
+        return False
+
+    @property
+    def points(self) -> np.ndarray:
+        """Return a copy of all stored points, shape (n_points, ndim)."""
+        result: np.ndarray = self._points[: self._n_points].copy()
+        return result
+
+    def __len__(self) -> int:
+        """Return the number of stored points."""
+        return self._n_points
 
 
 def sigmas_to_cholesky_isotropic(
@@ -216,7 +335,7 @@ def dedupe_farthest_first(
     """
     Remove duplicate seeds using greedy selection with min_distance constraint.
 
-    Uses KD-tree for efficient distance computation (CPU only).
+    Uses a spatial hash grid for O(1) amortized distance queries.
 
     Algorithm:
     1. Sort seeds by intensity (if provided) or keep original order
@@ -241,8 +360,7 @@ def dedupe_farthest_first(
         If provided, seeds are sorted by intensity (highest first) before selection.
     device : str, optional
         Device parameter (ignored for deduplication).
-        Deduplication always uses CPU with KD-tree as it's fastest for typical
-        seed counts. CPU completes 16K seeds in ~0.77s vs 27s before optimization.
+        Deduplication always uses CPU as it's fastest for typical seed counts.
 
     Returns
     -------
@@ -255,10 +373,8 @@ def dedupe_farthest_first(
     Notes
     -----
     Implementation:
-    - Time complexity: O(N log M) where M is number of selected seeds
+    - Time complexity: O(N) amortized via spatial hash grid
     - Space complexity: O(M) where M is the number of selected seeds
-    - Uses KD-tree for O(log M) nearest-neighbor queries
-    - KD-tree rebuilt every 100 seeds for efficiency
     - For small datasets (<50 seeds), uses simple O(N²) greedy fallback
 
     Examples
@@ -273,15 +389,11 @@ def dedupe_farthest_first(
     if len(coords) == 0:
         return coords.astype(float), np.array([], dtype=np.intp)
 
-    # Note: GPU deduplication was removed because CPU with KD-tree is faster
-    # for typical seed counts (<100K). The GPU version had O(N²) complexity
-    # and significant transfer overhead. CPU completes 16K seeds in ~0.77s.
-    # If device is specified, we ignore it for deduplication and use CPU.
-
-    # CPU path (default)
     # For very small inputs, use simple greedy (overhead not worth it)
     if len(coords) < 50:
         return _dedupe_simple(coords, min_distance, intensities)
+
+    ndim = coords.shape[1]
 
     # Sort by intensity if provided (highest first), otherwise keep original order
     if intensities is not None:
@@ -291,52 +403,20 @@ def dedupe_farthest_first(
         sort_indices = None
         coords_sorted = coords.astype(np.float32)
 
-    # Pre-allocate arrays for selected seeds (avoids repeated list→array conversions)
-    max_selections = len(coords_sorted)
-    selected_array = np.empty(
-        (max_selections, coords_sorted.shape[1]), dtype=np.float32
-    )
-    selected_sorted_indices_array = np.empty(max_selections, dtype=np.intp)
+    # Spatial hash grid for O(1) amortized distance checks
+    grid = SpatialHashGrid(cell_size=min_distance, ndim=ndim)
+    selected_sorted_indices_list: list[int] = []
 
-    # Start with first (strongest) seed
-    selected_array[0] = coords_sorted[0]
-    selected_sorted_indices_array[0] = 0
-    n_selected = 1
-
-    tree = cKDTree(selected_array[:1])
-    last_tree_rebuild_at = 1  # Track when we last rebuilt tree
-
-    # Simple greedy selection loop (much faster than farthest-first)
-    # For seed deduplication, simple greedy produces equivalent results to farthest-first
-    # since the Gaussian fitter will adjust positions anyway
-    for idx in range(1, len(coords_sorted)):
+    for idx in range(len(coords_sorted)):
         coord = coords_sorted[idx]
 
-        # Check distance to nearest seed in tree
-        dist_to_tree, _ = tree.query(coord, k=1)
+        if not grid.has_neighbor_within(coord, min_distance):
+            grid.insert(coord)
+            selected_sorted_indices_list.append(idx)
 
-        # Also check distance to seeds added since last tree rebuild
-        min_dist = dist_to_tree
-        if n_selected > last_tree_rebuild_at:
-            recent_seeds = selected_array[last_tree_rebuild_at:n_selected]
-            diffs = recent_seeds - coord
-            dists_to_recent = np.sqrt(np.sum(diffs**2, axis=1))
-            min_dist = min(min_dist, np.min(dists_to_recent))
-
-        # Keep seed if it satisfies min_distance constraint
-        if min_dist >= min_distance:
-            selected_array[n_selected] = coord
-            selected_sorted_indices_array[n_selected] = idx
-            n_selected += 1
-
-            # Rebuild tree every 100 seeds for efficiency
-            if n_selected % 100 == 0:
-                tree = cKDTree(selected_array[:n_selected])
-                last_tree_rebuild_at = n_selected
-
-    # Trim to actual size and convert back to float64 for consistency
-    deduped_coords = selected_array[:n_selected].astype(float)
-    selected_sorted_indices = selected_sorted_indices_array[:n_selected]
+    # Build output arrays
+    deduped_coords = grid.points.astype(float)
+    selected_sorted_indices = np.array(selected_sorted_indices_list, dtype=np.intp)
 
     # Map back to original indices if we sorted by intensity
     if sort_indices is not None:

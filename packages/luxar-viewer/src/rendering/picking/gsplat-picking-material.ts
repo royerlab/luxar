@@ -149,7 +149,8 @@ const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         if (abs(Sigma2D[0][1]) > 1e-6) {
             majorAxis = normalize(vec2(lambda1 - Sigma2D[1][1], Sigma2D[0][1]));
         } else {
-            majorAxis = vec2(1.0, 0.0);
+            // Near-diagonal covariance: pick axis with larger variance
+            majorAxis = (Sigma2D[0][0] >= Sigma2D[1][1]) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
         }
         vec2 minorAxis = vec2(-majorAxis.y, majorAxis.x);
 

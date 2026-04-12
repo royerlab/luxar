@@ -161,6 +161,9 @@ def load_gsplats(
             if "description" in root.attrs:
                 stats["description"] = root.attrs["description"]
 
+        # Read truncation radius (default 3.0 for backward compatibility with old files)
+        truncation_radius = float(splats_group.attrs.get("truncation_radius", 3.0))
+
         if format_version == "1.1":
             # v1.1: Multi-LOD format with per-LOD groups
             n_lods = splats_group.attrs.get("n_lods", 1)
@@ -190,6 +193,7 @@ def load_gsplats(
                         cholesky_factors=lod_cholesky,
                         colors=lod_colors,
                         stats=lod_stats,
+                        truncation_radius=truncation_radius,
                     )
                 )
             data = GSplatData(lods=lods, stats=stats)
@@ -214,6 +218,7 @@ def load_gsplats(
                 cholesky_factors=cholesky_factors,
                 colors=colors,
                 stats=stats,
+                truncation_radius=truncation_radius,
             )
 
         return data
