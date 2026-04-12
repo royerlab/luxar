@@ -348,8 +348,9 @@ def fit_progressive_gaussian_splats(
             # Higher LR: fine-detail splats need faster convergence.
             pass_kwargs["lr"] = 0.03
 
-            # Progressive compactness: gentle shrinkage increasing each pass.
-            pass_kwargs["l1_diag"] = 0.0001 * pass_i
+            # No progressive L1 on diagonal: the MSE loss + Poisson loss combo
+            # already provides good convergence; extra regularization hurts PSNR.
+            # (Original l1_diag = 0.0001 * pass_i was tuned for L1 base pipeline.)
 
         # Disable dynamic ops for progressive passes: seeds are already placed
         # at residual peaks, and diverse benchmark showed no quality benefit
