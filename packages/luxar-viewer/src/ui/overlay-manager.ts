@@ -101,6 +101,7 @@ export class OverlayManager {
   private hoverOverlays = new Map<string, HoverOverlayEntry>();
   /** Cache last hover result to skip redundant DOM updates. */
   private _lastHoverLabel: string | null = null;
+  private _lastHoverImageUrl: string | null = null;
   private _lastHoverIndex: number = -1;
   private _lastHoverNode: string | null = null;
 
@@ -206,30 +207,40 @@ export class OverlayManager {
   /**
    * Update hover overlay content from a GPU picking result.
    *
-   * Substitutes template variables ({hover_label}, {hover_node}, {hover_index})
-   * in all hover overlays. Fades out if result is null or label is empty.
+   * Substitutes template variables ({hover_label}, {hover_image_label},
+   * {hover_node}, {hover_index}) in all hover overlays.
+   * Fades out if result is null or has no content.
    *
    * @param result - Pick result with label text, or null to clear
    */
   updateHoverContent(
-    result: { label: string; nodeName: string; elementIndex: number } | null
+    result: {
+      label?: string | null;
+      imageUrl?: string | null;
+      nodeName: string;
+      elementIndex: number;
+    } | null
   ): void {
     // Skip redundant DOM updates when hovering over the same element
     const newLabel = result?.label ?? null;
+    const newImageUrl = result?.imageUrl ?? null;
     const newIndex = result?.elementIndex ?? -1;
     const newNode = result?.nodeName ?? null;
     if (
       newLabel === this._lastHoverLabel &&
+      newImageUrl === this._lastHoverImageUrl &&
       newIndex === this._lastHoverIndex &&
       newNode === this._lastHoverNode
     )
       return;
     this._lastHoverLabel = newLabel;
+    this._lastHoverImageUrl = newImageUrl;
     this._lastHoverIndex = newIndex;
     this._lastHoverNode = newNode;
 
     for (const hover of this.hoverOverlays.values()) {
-      if (!result || !result.label) {
+      const hasContent = result && (result.label || result.imageUrl);
+      if (!hasContent) {
         // Fade out
         hover.el.style.opacity = '0';
       } else {
@@ -240,9 +251,26 @@ export class OverlayManager {
         // Text overlays: no escaping needed since textContent is XSS-safe
         const esc = isHtml ? escapeHtml : (s: string) => s;
         let text = hover.template;
-        text = text.replace(/\{hover_label\}/g, esc(result.label));
+        text = text.replace(/\{hover_label\}/g, result.label ? esc(result.label) : '');
         text = text.replace(/\{hover_node\}/g, esc(result.nodeName));
         text = text.replace(/\{hover_index\}/g, String(result.elementIndex));
+
+        // Image label: render as <img> tag (only meaningful in HTML overlays).
+        // When hover_image_size is set, wrap in a fixed-size container so the
+        // image scales up to fill it. Otherwise use default max constraints.
+        const imgSize = hover.config.hover_image_size;
+        let imgHtml = '';
+        if (result.imageUrl) {
+          const src = escapeHtml(result.imageUrl);
+          if (imgSize) {
+            const w = `${imgSize[0] * 100}vw`;
+            const h = `${imgSize[1] * 100}vh`;
+            imgHtml = `<div style="width:${w};height:${h}"><img src="${src}" style="width:100%;height:100%;object-fit:contain;display:block;border-radius:4px" /></div>`;
+          } else {
+            imgHtml = `<img src="${src}" style="max-width:20vh;max-height:20vh;display:block;border-radius:4px" />`;
+          }
+        }
+        text = text.replace(/\{hover_image_label\}/g, imgHtml);
 
         if (isHtml) {
           hover.el.innerHTML = this.sanitizeHtml(text);
@@ -384,10 +412,12 @@ export class OverlayManager {
     // Width (enables word wrapping)
     if (config.width) {
       el.style.width = `${config.width * 100}vw`;
-      el.style.whiteSpace = 'normal';
+      // Hover overlays use pre-line so \n in labels creates line breaks;
+      // regular overlays use normal for standard word wrapping.
+      el.style.whiteSpace = config.hover ? 'pre-line' : 'normal';
       el.style.wordWrap = 'break-word';
     } else {
-      el.style.whiteSpace = 'nowrap';
+      el.style.whiteSpace = config.hover ? 'pre-line' : 'nowrap';
     }
 
     // Text alignment
@@ -451,6 +481,23 @@ export class OverlayManager {
     // Client-side sanitization (defense-in-depth, Python already sanitizes)
     const sanitized = this.sanitizeHtml(config.html ?? '');
     el.innerHTML = sanitized;
+
+    // Font (shared with text overlays; needed for auto-injected hover HTML overlays)
+    if (config.font) {
+      const fontFamily = FONT_PRESETS[config.font] ?? (config.font || FONT_PRESETS.sans);
+      el.style.fontFamily = fontFamily;
+    }
+    if (config.font_size) {
+      el.style.fontSize = `${config.font_size * 100}vh`;
+    }
+    if (config.color) {
+      el.style.color = config.color;
+    }
+    if (config.background) {
+      el.style.backgroundColor = config.background;
+      const padding = config.padding ?? 0.005;
+      el.style.padding = `${padding * 100}vh`;
+    }
 
     // Width
     if (config.width) {

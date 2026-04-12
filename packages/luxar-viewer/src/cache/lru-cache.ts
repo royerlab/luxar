@@ -7,15 +7,17 @@ export class LRUCache<V> {
   private maxSize: number;
   private currentSize = 0;
   private getSize: (v: V) => number;
+  private onEvict?: (key: string, value: V) => void;
 
   // Hit/miss tracking for monitoring
   private hits = 0;
   private misses = 0;
   private evictions = 0;
 
-  constructor(maxSize: number, getSize: (v: V) => number) {
+  constructor(maxSize: number, getSize: (v: V) => number, onEvict?: (key: string, value: V) => void) {
     this.maxSize = maxSize;
     this.getSize = getSize;
+    this.onEvict = onEvict;
   }
 
   /**
@@ -109,7 +111,9 @@ export class LRUCache<V> {
     while (this.currentSize + size > this.maxSize && this.cache.size > 0) {
       const oldestKey = this.cache.keys().next().value;
       if (!oldestKey) break; // Safety check (should never happen)
-      this.currentSize -= this.getSize(this.cache.get(oldestKey)!);
+      const oldestValue = this.cache.get(oldestKey)!;
+      this.onEvict?.(oldestKey, oldestValue);
+      this.currentSize -= this.getSize(oldestValue);
       this.cache.delete(oldestKey);
       this.evictions++;
     }
@@ -125,6 +129,7 @@ export class LRUCache<V> {
   delete(key: string): boolean {
     const value = this.cache.get(key);
     if (value !== undefined) {
+      this.onEvict?.(key, value);
       this.currentSize -= this.getSize(value);
       return this.cache.delete(key);
     }
@@ -132,6 +137,11 @@ export class LRUCache<V> {
   }
 
   clear(): void {
+    if (this.onEvict) {
+      for (const [key, value] of this.cache) {
+        this.onEvict(key, value);
+      }
+    }
     this.cache.clear();
     this.currentSize = 0;
     this.hits = 0;

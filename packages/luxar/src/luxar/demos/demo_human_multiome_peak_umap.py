@@ -213,7 +213,7 @@ def create_human_scene(
                         cats = category_maps.get(attr_name, [])
                         name = str(cats[code]) if code < len(cats) else str(code)
                         parts.append(name)
-                    per_cell_labels.append(" | ".join(parts))
+                    per_cell_labels.append("\n".join(parts))
             labels = per_cell_labels * len(available_attrs) if per_cell_labels else None
 
             scene.add_points(
