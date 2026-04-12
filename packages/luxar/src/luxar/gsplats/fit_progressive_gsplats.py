@@ -414,8 +414,6 @@ def fit_progressive_gaussian_splats(
             current_psnr = _compute_psnr_chunked(rendered_gpu, V_original)
             cached_rendered_np = rendered_gpu.cpu().numpy()
             del rendered_gpu
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
         delta_psnr = current_psnr - prev_psnr
         pass_time = time.time() - pass_start
 
@@ -453,10 +451,9 @@ def fit_progressive_gaussian_splats(
             break
         pass_i += 1
 
-    # Free cached render (CPU numpy) from the last pass
+    # Free cached render (CPU numpy) from the last pass.
+    # Skip empty_cache() — caller manages GPU memory lifecycle.
     del cached_rendered_np
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
     # --- Build result ---
     total_time = time.time() - start_time
