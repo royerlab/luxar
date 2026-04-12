@@ -126,13 +126,13 @@ def fit_progressive_gaussian_splats(
     iters_per_pass: int = 1000,
     psnr_patience: float = 0.5,
     max_passes: Optional[int] = None,
-    asymmetric_penalty: Optional[float] = 10.0,
+    asymmetric_penalty: Optional[float] = 1.0,
     enable_dynamic_ops: bool = True,
     cull_retention: float | None = 0.98,
     on_pass_complete: Optional[Callable[[int, GSplatLOD, float], None]] = None,
     device: Optional[str] = None,
     verbose: bool = True,
-    truncate: float = 3.0,
+    truncate: float = 2.75,
     **kwargs: Any,
 ) -> GSplatData:
     """Fit Gaussian splats progressively via iterative residual decomposition.
