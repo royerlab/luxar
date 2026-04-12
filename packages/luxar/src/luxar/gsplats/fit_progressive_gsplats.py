@@ -333,14 +333,9 @@ def fit_progressive_gaussian_splats(
         pass_kwargs["max_eccentricity"] = None
 
         if pass_i > 0:
-            # Coarse-to-fine sigma cascade: cap at previous pass's median sigma.
-            prev_lod = accumulated_lods[-1]
-            if prev_lod.n_splats > 0:
-                prev_sigmas = prev_lod.marginal_sigmas()  # (N, d)
-                median_sigma = float(np.median(prev_sigmas))
-                pass_kwargs["sigma_max_diag"] = max(2.0, median_sigma)
-            else:
-                pass_kwargs["sigma_max_diag"] = 4.0
+            # No sigma_max_diag constraint: let residual splats size freely.
+            # The old coarse-to-fine cascade prevented capturing broad residual
+            # patterns. With MSE+Poisson, the optimizer finds optimal sizes.
 
             # Poisson loss: natural for sparse, count-like residuals.
             pass_kwargs["loss_type"] = "poisson"
