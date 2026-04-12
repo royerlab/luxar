@@ -534,26 +534,6 @@ def fit_gaussian_splats(
     """
 
     with asection("Fitting Gaussian Splats"):
-        # Auto-parameter selection: resolve "auto" values from data statistics
-        if loss_type == "auto" or asymmetric_penalty == "auto":
-            from luxar.gsplats.fitting.auto_config import auto_fit_params
-
-            n_splats_hint = seeds if isinstance(seeds, int) else None
-            auto_params = auto_fit_params(V, n_splats=n_splats_hint)
-            if loss_type == "auto":
-                loss_type = auto_params.loss_type
-            if asymmetric_penalty == "auto":
-                asymmetric_penalty = auto_params.asymmetric_penalty
-            if gradient_clip == "auto":
-                gradient_clip = auto_params.gradient_clip
-            if verbose:
-                from arbol import aprint as _ap
-
-                _ap(
-                    f"Auto-selected: loss={loss_type}, "
-                    f"penalty={asymmetric_penalty}, clip={gradient_clip}"
-                )
-
         # Use per-splat optimizer
         fitter = GaussianSplatFitter(
             device=device,
