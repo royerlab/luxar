@@ -32,6 +32,11 @@ DATASET_LABELS = {
     "organoid_ch0": "Organoid — Channel 0",
     "celegans_t100": "C. elegans Embryo — t=100",
     "tribolium": "Tribolium Embryo (Light-Sheet)",
+    "opencell_lmnb1_ch0": "OpenCell LMNB1 — Hoechst (Nuclei)",
+    "opencell_lmnb1_ch1": "OpenCell LMNB1 — GFP (Nuclear Lamina)",
+    "cells3d_nuclei": "HeLa Cells — Nuclei",
+    "cells3d_membrane": "HeLa Cells — Membrane",
+    "acto3d_heart_nuclei": "Mouse Heart — Nuclei (Light-Sheet)",
 }
 
 _COLORS = [
@@ -69,7 +74,7 @@ def plot_convergence(df: pd.DataFrame, dataset_key: str, output_path: Path):
     for i, seeds in enumerate(seeds_list):
         sub = df[df["seeds_requested"] == seeds].sort_values("n_iters")
         color = _COLORS[i % len(_COLORS)]
-        label = f"{_format_count(seeds)} seeds"
+        label = f"{_format_count(seeds)} Gaussian Splats"
 
         # PSNR vs iteration
         ax_psnr.plot(

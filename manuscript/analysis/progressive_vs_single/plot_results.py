@@ -31,6 +31,11 @@ DATASET_LABELS = {
     "organoid_ch0": "Organoid — Channel 0",
     "celegans_t100": "C. elegans Embryo — t=100",
     "tribolium": "Tribolium Embryo (Light-Sheet)",
+    "opencell_lmnb1_ch0": "OpenCell LMNB1 — Hoechst (Nuclei)",
+    "opencell_lmnb1_ch1": "OpenCell LMNB1 — GFP (Nuclear Lamina)",
+    "cells3d_nuclei": "HeLa Cells — Nuclei",
+    "cells3d_membrane": "HeLa Cells — Membrane",
+    "acto3d_heart_nuclei": "Mouse Heart — Nuclei (Light-Sheet)",
 }
 
 _COLORS = ["#2563eb", "#059669", "#d97706", "#dc2626"]
@@ -126,6 +131,8 @@ def plot_slice_montage(df: pd.DataFrame, dataset_key: str, output_path: Path):
     # Load target from first available
     data0 = dict(np.load(str(slices_dir / f"pass{available[0]:02d}_slices.npz")))
     target_slices = data0["target_slices"]
+    slice_axis = int(data0["slice_axis"]) if "slice_axis" in data0 else 0
+    axis_label = ["z", "y", "x"][slice_axis] if slice_axis < 3 else f"ax{slice_axis}"
     z_indices = data0["z_indices"]
     n_slices = len(z_indices)
 
@@ -151,7 +158,7 @@ def plot_slice_montage(df: pd.DataFrame, dataset_key: str, output_path: Path):
         axes[row, 0].imshow(target_slices[row], cmap="gray", vmin=0, vmax=1)
         if row == 0:
             axes[row, 0].set_title("Target", fontsize=8, fontweight="bold")
-        axes[row, 0].set_ylabel(f"z = {z_idx}", fontsize=8)
+        axes[row, 0].set_ylabel(f"{axis_label} = {z_idx}", fontsize=8)
         axes[row, 0].set_xticks([])
         axes[row, 0].set_yticks([])
 

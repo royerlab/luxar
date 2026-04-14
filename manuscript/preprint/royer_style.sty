@@ -1,0 +1,135 @@
+\ProvidesPackage{royer_style}[Royerlab article template file, started by Jordao Bragantini]
+
+\RequirePackage{abstract}  % This package gives more control over the abstract environment
+\RequirePackage{amsmath}  % For advanced math typesetting
+\RequirePackage{amssymb}   % Extended symbol collection
+\RequirePackage{bm}       % Bold math symbols
+\RequirePackage{caption}
+\RequirePackage{geometry}
+\RequirePackage{graphicx}
+\RequirePackage{hyperref}
+\RequirePackage[utf8]{inputenc}
+\RequirePackage{siunitx}
+\RequirePackage{titlesec}  % For customizing section titles
+\RequirePackage{xcolor}
+\RequirePackage{xspace}
+\RequirePackage[superscript]{cite}
+
+% hyperref setup
+\definecolor{lightblue}{rgb}{0.21,0.49,0.74}
+\definecolor{midgreen}{rgb}{0.15,0.85,0.25}
+\definecolor{yelloworange}{rgb}{0.855,0.675,0.247}
+\hypersetup{
+    breaklinks=true,
+    colorlinks=true,
+    citecolor=lightblue,
+    linkcolor=lightblue,
+    urlcolor=lightblue,
+}
+
+%revisions (use the first two lines to show changes in red, last two to hide them
+\newcommand{\rev}[1]{\textcolor{red}{#1}}   %revision text in red
+\newcommand{\revst}[1]{\textcolor{red}{\st{#1}}} %strikethrough text that is removed
+% \newcommand{\rev}[1]{#1}
+% \newcommand{\revst}[1]{}{}
+
+% setting fonts
+\usepackage{carlito}
+\renewcommand*\familydefault{\sfdefault}
+
+% declaring additional math operators
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+% citing operation
+\newcommand{\vref}[1]{Supp.~Video~\ref{#1}}
+
+% abbrv shortcuts
+\newcommand{\tm}{\textsuperscript{TM}\xspace}
+\newcommand{\ts}[1]{\textsuperscript{#1}}
+
+\DeclareRobustCommand\onedot{\futurelet\@let@token\@onedot}
+\def\@onedot{\ifx\@let@token.\else.\null\fi\xspace}
+
+\def\eg{\emph{e.g}\onedot} \def\Eg{\emph{E.g}\onedot}
+\def\ie{\emph{i.e}\onedot} \def\Ie{\emph{I.e}\onedot}
+\def\cf{\emph{c.f}\onedot} \def\Cf{\emph{C.f}\onedot}
+\def\etc{\emph{etc}\onedot} \def\vs{\emph{vs}\onedot}
+\def\wrt{w.r.t\onedot} \def\dof{d.o.f\onedot}
+\def\etal{\emph{et al}\onedot}
+
+% declaring helpful coloring commands
+\newcommand{\red}[1]{\textcolor{red}{#1}}
+\newcommand{\green}[1]{\textcolor{midgreen}{#1}}
+\newcommand{\blue}[1]{\textcolor{blue}{#1}}
+\newcommand{\yelloworange}[1]{\textcolor{yelloworange}{#1}}
+\newcommand{\todo}[1]{\textcolor{purple}{#1}}
+
+% define affiliation
+\def\@affiliation{}
+\newcommand{\affiliation}[1]{\def\@affiliation{\small #1}}
+
+% define correspondence email
+\def\@email{}
+\newcommand{\email}[1]{\def\@email{#1}}
+
+% Redefine the maketitle command
+\renewcommand{\maketitle}
+{
+        \noindent
+        {\LARGE \bfseries \@title \par}
+        \vspace{0.5em}
+        {\large \bfseries \@author \par}
+        \vspace{0.5em}
+        {\large \@affiliation \par}
+        \vspace{0.5em}
+        {correspondence to \href{mailto:\@email}{\@email} \par}
+        \vspace{1em}
+}
+
+% Redefining the abstract environment to span two columns
+\renewcommand{\abstract}[1]
+{
+    \textbf{#1} \vspace{1em}
+}
+
+% Set specific margin sizes
+\geometry{
+  top=2.5cm,
+  bottom=2.5cm,
+  left=2.5cm,
+  right=2.5cm
+}
+
+% Modify figure and captions style
+\DeclareCaptionLabelSeparator{pipe}{\, \textbf{\textbar} \,}
+\captionsetup{
+    format=plain,
+    justification=raggedright,
+    singlelinecheck=false,
+    font={small},
+    labelfont={bf},
+    labelsep=pipe
+}
+\renewcommand{\figurename}{Fig.}
+
+% section formatting
+\titleformat{\section}
+  {\normalfont\normalsize\bfseries}{\thesubsection}{1em}{}
+\titlespacing*{\section}
+  {0pt}{1em}{0.5ex}
+
+% subsection formatting
+\titleformat{\subsection}
+  {\normalfont\normalsize\bfseries}{\thesubsection}{1em}{}
+\titlespacing*{\subsection}
+  {0pt}{0.5em}{0.2ex}
+
+% paragraph formatting
+\titleformat{\paragraph}[runin]
+  {\normalfont\normalsize\bfseries}
+  {\theparagraph}{1em}{}[]
+\titlespacing{\paragraph}
+  {0pt}{0.5em}{1ex}
+
+\endinput

@@ -1,0 +1,8 @@
+Dataset	Modality	Shape	Voxels (M)	PSNR@32K	CR@32K	Best PSNR	Noise (dB)	N2S opt.
+Kidney DAPI	Confocal	16x512x512	4.2	33.7	13x	37.3	41.3	63K
+Kidney Actin	Confocal	16x512x512	4.2	30.5	13x	37.1	43.5	124K
+OpenCell Nuclei	Spinning-disk	51x600x600	18.4	28.3	57x	29.9	32.6	32K
+OpenCell MT	Spinning-disk	51x600x600	18.4	25.1	57x	27.6	30.4	62K
+Organoid	Confocal	236x275x271	17.6	39.0	62x	41.0	54.4	28K
+C. elegans	Confocal	41x512x512	10.7	39.4	34x	40.4	40.7	16K
+Tribolium	Light-sheet	991x104x965	99.5	42.6	313x	42.7	61.0	510K

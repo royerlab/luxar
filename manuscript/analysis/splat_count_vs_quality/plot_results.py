@@ -42,6 +42,11 @@ DATASET_LABELS = {
     "organoid_ch0": "Organoid — Channel 0",
     "celegans_t100": "C. elegans Embryo — t=100",
     "tribolium": "Tribolium Embryo (Light-Sheet)",
+    "opencell_lmnb1_ch0": "OpenCell LMNB1 — Hoechst (Nuclei)",
+    "opencell_lmnb1_ch1": "OpenCell LMNB1 — GFP (Nuclear Lamina)",
+    "cells3d_nuclei": "HeLa Cells — Nuclei",
+    "cells3d_membrane": "HeLa Cells — Membrane",
+    "acto3d_heart_nuclei": "Mouse Heart — Nuclei (Light-Sheet)",
 }
 
 # Consistent styling
@@ -130,7 +135,7 @@ def plot_quality_curves(df: pd.DataFrame, dataset_key: str, output_path: Path):
     ax_psnr.plot(x, df["psnr_db"].values, "o-", color=_COLORS["psnr"], **_STYLE)
     ax_psnr.set_xscale("log", base=2)
     ax_psnr.xaxis.set_major_formatter(ticker.FuncFormatter(_format_count))
-    ax_psnr.set_xlabel("Number of Gaussians")
+    ax_psnr.set_xlabel("Gaussian Splats (effective)")
     ax_psnr.set_ylabel("PSNR (dB)")
     ax_psnr.grid(True, alpha=0.2, linewidth=0.5)
 
@@ -155,7 +160,7 @@ def plot_quality_curves(df: pd.DataFrame, dataset_key: str, output_path: Path):
     ax_ssim.plot(x, df["ssim"].values, "s-", color=_COLORS["ssim"], **_STYLE)
     ax_ssim.set_xscale("log", base=2)
     ax_ssim.xaxis.set_major_formatter(ticker.FuncFormatter(_format_count))
-    ax_ssim.set_xlabel("Number of Gaussians")
+    ax_ssim.set_xlabel("Gaussian Splats (effective)")
     ax_ssim.set_ylabel("SSIM")
     ax_ssim.grid(True, alpha=0.2, linewidth=0.5)
     _make_compression_top_axis(ax_ssim, df)
@@ -164,7 +169,7 @@ def plot_quality_curves(df: pd.DataFrame, dataset_key: str, output_path: Path):
     ax_time.plot(x, df["fit_time_s"].values, "^-", color=_COLORS["time"], **_STYLE)
     ax_time.set_xscale("log", base=2)
     ax_time.xaxis.set_major_formatter(ticker.FuncFormatter(_format_count))
-    ax_time.set_xlabel("Number of Gaussians")
+    ax_time.set_xlabel("Gaussian Splats (effective)")
     ax_time.set_ylabel("Fitting time (s)")
     ax_time.grid(True, alpha=0.2, linewidth=0.5)
     _make_compression_top_axis(ax_time, df)
@@ -220,6 +225,8 @@ def plot_slice_montage(
     data0 = load_slices(dataset_key, montage_counts[0])
     target_slices = data0["target_slices"]
     z_indices = data0["z_indices"]
+    slice_axis = int(data0["slice_axis"]) if "slice_axis" in data0 else 0
+    axis_label = ["z", "y", "x"][slice_axis] if slice_axis < 3 else f"ax{slice_axis}"
     n_slices = len(z_indices)
 
     # Columns: Target | recon_1 | ... | recon_N | |Error| at max
@@ -241,7 +248,7 @@ def plot_slice_montage(
         axes[row, 0].imshow(target_slices[row], cmap="gray", vmin=0, vmax=1)
         if row == 0:
             axes[row, 0].set_title("Target", fontsize=8, fontweight="bold")
-        axes[row, 0].set_ylabel(f"z = {z_idx}", fontsize=8)
+        axes[row, 0].set_ylabel(f"{axis_label} = {z_idx}", fontsize=8)
         axes[row, 0].set_xticks([])
         axes[row, 0].set_yticks([])
 

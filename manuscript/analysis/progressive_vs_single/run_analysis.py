@@ -165,16 +165,25 @@ def run_condition(
         metrics = compute_quality_metrics(recon, V_t)
 
     # Save representative slices for montage
+    # Pick the axis that produces the most square slices
     recon_np = recon.cpu().numpy()
-    z_size = volume.shape[0]
-    z_indices = [int(p * (z_size - 1)) for p in SLICE_PERCENTILES]
+    best_axis, best_ratio = 0, float("inf")
+    for ax in range(volume.ndim):
+        other = [volume.shape[i] for i in range(volume.ndim) if i != ax]
+        ratio = max(other) / max(min(other), 1)
+        if ratio < best_ratio:
+            best_ratio = ratio
+            best_axis = ax
+    n = volume.shape[best_axis]
+    z_indices = [int(p * (n - 1)) for p in SLICE_PERCENTILES]
     slices_dir = ds_dir / "slices"
     slices_dir.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         str(slices_dir / f"pass{n_passes:02d}_slices.npz"),
-        target_slices=volume[z_indices],
-        recon_slices=recon_np[z_indices],
+        target_slices=np.moveaxis(np.take(volume, z_indices, axis=best_axis), best_axis, 0),
+        recon_slices=np.moveaxis(np.take(recon_np, z_indices, axis=best_axis), best_axis, 0),
         z_indices=np.array(z_indices),
+        slice_axis=np.array(best_axis),
     )
 
     aprint(
