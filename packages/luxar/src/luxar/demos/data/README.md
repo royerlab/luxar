@@ -62,7 +62,7 @@ If demo files are very small (< 1 KB), they're pointer files — run `git lfs pu
 
 ```bash
 # Should show actual file sizes, not ~130 bytes
-ls -lh packages/luxar/src/luxar/demos/data/tribolium/
+ls -lh packages/luxar/src/luxar/demos/data/gsplats_tribolium/
 ```
 
 ## File Formats

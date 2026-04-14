@@ -65,17 +65,24 @@ result = fit_gaussian_splats(volume_3d, num_splats=10000)
 # result.centers.shape = (10000, 3)
 # result.cholesky_factors.shape = (10000, 6)
 
-scene = Scene(dimensions=["x", "y", "z", "time"])
+from luxar import LuxarZarrCompiler, Dimensions, Dimension
 
-scene.add_gsplats(
-    "cell_structure",
-    centers=result.centers,              # (N, 3) - native dimensionality
-    amplitudes=result.amplitudes,
-    cholesky_factors=result.cholesky_factors,  # (N, 6) - 3D covariance
-    colors=result.colors,
-    dim_order=["x", "y", "z"],           # Splats span spatial dims
-    extend_to_all=["time"]               # Visible at all timepoints
-)
+dims = Dimensions([
+    Dimension("x", display=True), Dimension("y", display=True),
+    Dimension("z", display=True), Dimension("time", display=False),
+])
+with LuxarZarrCompiler("scene.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
+
+    scene.add_gsplats(
+        "cell_structure",
+        centers=result.centers,              # (N, 3) - native dimensionality
+        amplitudes=result.amplitudes,
+        cholesky_factors=result.cholesky_factors,  # (N, 6) - 3D covariance
+        colors=result.colors,
+        dim_order=["x", "y", "z"],           # Splats span spatial dims
+        extend_to_all=["time"]               # Visible at all timepoints
+    )
 ```
 
 ### Full-Dimensional Splats (Automatic)
@@ -84,50 +91,72 @@ scene.add_gsplats(
 result = fit_gaussian_splats(data_4d, num_splats=50000)
 # result.centers.shape = (50000, 4)
 
-scene = Scene(dimensions=["x", "y", "z", "time"])
+from luxar import LuxarZarrCompiler, Dimensions, Dimension
 
-scene.add_gsplats(
-    "dynamic_process",
-    centers=result.centers,              # (N, 4)
-    amplitudes=result.amplitudes,
-    cholesky_factors=result.cholesky_factors,  # (N, 10)
-    # dim_order=None → auto-maps to all scene dimensions
-)
+dims = Dimensions([
+    Dimension("x", display=True), Dimension("y", display=True),
+    Dimension("z", display=True), Dimension("time", display=False),
+])
+with LuxarZarrCompiler("scene.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
+
+    scene.add_gsplats(
+        "dynamic_process",
+        centers=result.centers,              # (N, 4)
+        amplitudes=result.amplitudes,
+        cholesky_factors=result.cholesky_factors,  # (N, 10)
+        # dim_order=None → auto-maps to all scene dimensions
+    )
 ```
 
 ### Multiple Extended Dimensions
 
 ```python
-scene = Scene(dimensions=["x", "y", "z", "time", "channel"])
+from luxar import LuxarZarrCompiler, Dimensions, Dimension
 
-result = fit_gaussian_splats(volume_3d, num_splats=5000)
+dims = Dimensions([
+    Dimension("x", display=True), Dimension("y", display=True),
+    Dimension("z", display=True), Dimension("time", display=False),
+    Dimension("channel", display=False),
+])
+with LuxarZarrCompiler("scene.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
 
-scene.add_gsplats(
-    "nuclei",
-    centers=result.centers,              # (N, 3)
-    amplitudes=result.amplitudes,
-    cholesky_factors=result.cholesky_factors,  # (N, 6)
-    dim_order=["x", "y", "z"],
-    extend_to_all=["time", "channel"]    # Visible at all times and channels
-)
+    result = fit_gaussian_splats(volume_3d, num_splats=5000)
+
+    scene.add_gsplats(
+        "nuclei",
+        centers=result.centers,              # (N, 3)
+        amplitudes=result.amplitudes,
+        cholesky_factors=result.cholesky_factors,  # (N, 6)
+        dim_order=["x", "y", "z"],
+        extend_to_all=["time", "channel"]    # Visible at all times and channels
+    )
 ```
 
 ### Dimension Reordering with Fill
 
 ```python
-scene = Scene(dimensions=["x", "y", "z", "time"])
+from luxar import LuxarZarrCompiler, Dimensions, Dimension
 
-# Centers are in [z, y, x] order from fitting
-result = fit_gaussian_splats(data_zyx, num_splats=1000)
+dims = Dimensions([
+    Dimension("x", display=True), Dimension("y", display=True),
+    Dimension("z", display=True), Dimension("time", display=False),
+])
+with LuxarZarrCompiler("scene.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
 
-scene.add_gsplats(
-    "reordered",
-    centers=result.centers,              # (N, 3) in [z,y,x] order
-    amplitudes=result.amplitudes,
-    cholesky_factors=result.cholesky_factors,
-    dim_order=["z", "y", "x"],          # Explicit ordering by name
-    extend_to_all=["time"]
-)
+    # Centers are in [z, y, x] order from fitting
+    result = fit_gaussian_splats(data_zyx, num_splats=1000)
+
+    scene.add_gsplats(
+        "reordered",
+        centers=result.centers,              # (N, 3) in [z,y,x] order
+        amplitudes=result.amplitudes,
+        cholesky_factors=result.cholesky_factors,
+        dim_order=["z", "y", "x"],          # Explicit ordering by name
+        extend_to_all=["time"]
+    )
 ```
 
 ---

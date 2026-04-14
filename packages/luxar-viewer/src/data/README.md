@@ -528,7 +528,7 @@ interface ZarrGroupAttrs {
 
   // Rendering
   opacity?: number; // 0.0 to 1.0
-  gamma?: number; // 0.2 to 2.0
+  gamma?: number; // 0.1 to 10.0
   blending_mode?: BlendingMode;
 
   // Dimensions

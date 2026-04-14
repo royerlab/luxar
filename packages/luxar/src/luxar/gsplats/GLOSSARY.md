@@ -94,6 +94,9 @@ This glossary defines standard terminology used throughout the gsplats package s
 ---
 
 ### Sharpness (s)
+
+> **Note:** Per-splat sharpness was removed from the model. These entries are retained for historical context.
+
 **Definition**: Controls edge falloff in generalized Gaussian: `exp(-0.5 * ||y||^s)`
 
 **Shape**: `(,)` for single splat (scalar), `(N,)` for batch
@@ -411,7 +414,7 @@ These are user-facing configuration options:
 - **`truncate`**: Truncation radius in standard deviations (default: 3.0)
 - **`init_sigma_vox`**: Initial sigma for isotropic covariance initialization
 - **`norm_percentile`**: Percentile for robust normalization (0 = full range)
-- **`asymmetric_penalty`**: Over-prediction penalty factor (default: 1.0 single-pass, 10.0 progressive)
+- **`asymmetric_penalty`**: Over-prediction penalty factor (default: 1.0)
 
 **Convention**: Use descriptive names with units when applicable (`_vox` = voxels)
 
@@ -447,6 +450,9 @@ These are user-facing configuration options:
 ---
 
 ### s (sharpness)
+
+> **Note:** Per-splat sharpness was removed from the model. These entries are retained for historical context.
+
 **Meaning**: Generalized Gaussian exponent
 
 **Formula**: `I(x) = a * scale * max(0, exp(-0.5 * ||y||^s) - C)` (shifted truncation, C⁰ continuous)
@@ -529,7 +535,7 @@ These are user-facing configuration options:
 - ✅ **CUDA**: NVIDIA GPU acceleration (preferred when available)
 - ✅ **MPS**: Apple Silicon GPU (experimental)
 
-**Auto-detection order**: CUDA → CPU (MPS supported but may be slower)
+**Auto-detection order**: CUDA → MPS → CPU
 
 ---
 
@@ -562,7 +568,7 @@ These are user-facing configuration options:
 
 **Formula**: `penalty = F if pred > target else 1.0`
 
-**Default factor**: F = 10.0 (10× penalty for over-prediction)
+**Default factor**: F = 1.0
 
 **Rationale**: Additive Gaussian models struggle to reduce intensity (can't have negative splats)
 

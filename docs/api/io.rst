@@ -113,6 +113,7 @@ Writer Protocol
    :members:
    :undoc-members:
 
-The writer protocol defines the interface for writing data to Zarr stores. This allows
-for alternative implementations (e.g., remote writers, streaming writers) while
+``ZarrWriterProtocol`` is a ``Protocol`` (abstract interface), not a concrete class.
+It defines the writer contract that any Zarr writer implementation must satisfy. This
+allows for alternative implementations (e.g., remote writers, streaming writers) while
 maintaining compatibility with the compiler.

@@ -67,7 +67,7 @@ Four parallel deep reviews were conducted covering:
 - **Grid cache has no eviction** (rendering_core.py:87) - Unbounded GPU memory growth
 - **O(n) list removal in farthest-first loop** (preprocessing.py:598) - Use set or boolean mask
 - **Amplitude threshold compared against pre-scaled values** (grid.py:226) - Apply threshold before SEED_AMPLITUDE_SCALE
-- **KD-tree rebuilt after every accepted point** (edges.py:374) - Add periodic rebuild like utils.py
+- **SpatialHashGrid used for deduplication** (edges.py) - Uses O(1) amortized proximity queries
 - **Non-deterministic random** in tiled peak finding (peak_finding.py:329) - Use seeded RNG
 
 ### Priority 3: MEDIUM (code quality)

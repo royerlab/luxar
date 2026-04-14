@@ -197,10 +197,10 @@ The `fitting/` group is **optional** and designed to be **fitter-agnostic**. Dif
   // Luxar gsplats fitter example:
   "n_iters": 1000,
   "lr": 0.01,
-  "loss_type": "l1",
-  "asymmetric_penalty": 10.0,
+  "loss_type": "mse",
+  "asymmetric_penalty": 1.0,
   "init_sigma_vox": 0.5,
-  "seed_method": "both",
+  "seed_method": "auto",
   "enable_dynamic_ops": true,
   // ... any other fitter-specific parameters
 }
@@ -415,7 +415,7 @@ Default zarr compressor configuration:
 ```python
 compressor = Blosc(
     cname='zstd',      # Best compression ratio
-    clevel=5,          # Balance speed/ratio (1-9)
+    clevel=3,          # Balance speed/ratio (1-9)
     shuffle=Blosc.BITSHUFFLE,  # Good for float arrays
 )
 ```
@@ -712,7 +712,7 @@ incrementally for progressive rendering.
 | Encoding system | `luxar.encoding` package | Shared infrastructure, semantic types |
 | Ordering methods | Both Morton and Hilbert | User choice, Hilbert default |
 | Resolution | Auto with cap at 2^16 | Safe default, configurable |
-| Chunk size | Configurable, default 8192 | Optimal for blosc |
+| Chunk size | 64KB (TARGET_CHUNK_BYTES = 65536) | Optimal for blosc |
 | Broadcasting | Standard encoding metadata | Consistent with other Luxar formats |
 | Covariance storage | Cholesky (packed) | Already have it, compresses well |
 | Fitting info | Fitter-agnostic design | Allows other programs to use format |

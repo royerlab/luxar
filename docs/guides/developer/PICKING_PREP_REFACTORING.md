@@ -1,5 +1,7 @@
 # Pre-Picking Refactoring Plan
 
+> **STATUS: COMPLETED** — All four refactorings described below have been implemented. Shaders are in `rendering/shaders/`, geometry in `line-geometry.ts`/`gsplat-geometry.ts`, `camera-aware-material.ts` exists, and `node-factory.ts` exists. This document is retained for reference.
+
 > **Purpose**: This document is a self-contained brief for an agent to execute four preparatory refactorings that unblock the implementation of GPU-based object picking (hover tooltips) in the Luxar viewer. Each refactoring is independent and can be done in any order, though the numbered order reflects priority.
 >
 > **Scope**: Read-only analysis is complete. This document describes exactly what to change and why. All file paths are relative to `packages/luxar-viewer/src/`.
@@ -188,8 +190,8 @@ Also move these **types**:
 |------|----------------|-----------------|---------|
 | `data/scene-loader.ts` | `../rendering/line-material` | `../rendering/line-geometry` | `createInstancedLinesMesh`, `updateInstancedLinesMesh` |
 | `data/scene-loader.ts` | `../rendering/gsplat-material` | `../rendering/gsplat-geometry` | `createInstancedGSplatsMesh`, `updateInstancedGSplatsMesh`, `packCholeskyForShader` |
-| `data/geometry-update-manager.ts` | `../rendering/line-material` | `../rendering/line-geometry` | `updateInstancedLinesMesh` |
-| `data/geometry-update-manager.ts` | `../rendering/gsplat-material` | `../rendering/gsplat-geometry` | `updateInstancedGSplatsMesh`, `packCholeskyForShader` |
+| `data/scene-loader.ts` (geometry updates) | `../rendering/line-material` | `../rendering/line-geometry` | `updateInstancedLinesMesh` |
+| `data/scene-loader.ts` (geometry updates) | `../rendering/gsplat-material` | `../rendering/gsplat-geometry` | `updateInstancedGSplatsMesh`, `packCholeskyForShader` |
 | `tests/unit/rendering/line-material.test.ts` | `../../../rendering/line-material` | `../../../rendering/line-geometry` | geometry functions |
 | `tests/unit/rendering/gsplat-material.test.ts` | `../../../rendering/gsplat-material` | `../../../rendering/gsplat-geometry` | geometry functions |
 
@@ -657,6 +659,6 @@ npx playwright test basic-rendering.spec.ts viewer-initialization.spec.ts
 | `rendering/material-manager.ts` | Use CameraAwareMaterial interface, remove duck typing |
 | `data/scene-loader.ts` | Use NodeFactory, remove extracted methods (~400-500 lines removed) |
 | `data/scene-loader.ts` | Import geometry functions from line-geometry/gsplat-geometry (not material files) |
-| `data/geometry-update-manager.ts` | Import geometry functions from line-geometry/gsplat-geometry (not material files) |
+| `data/scene-loader.ts` (geometry updates) | Import geometry functions from line-geometry/gsplat-geometry (not material files) |
 | `tests/unit/rendering/line-material.test.ts` | Import geometry functions from line-geometry (not material file) |
 | `tests/unit/rendering/gsplat-material.test.ts` | Import geometry functions from gsplat-geometry (not material file) |

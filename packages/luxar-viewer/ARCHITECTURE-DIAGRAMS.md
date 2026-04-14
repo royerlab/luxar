@@ -809,7 +809,7 @@ graph LR
     A[LuxarApp.cleanup]
     B[AnimationController.dispose<br/>Stop rendering]
     C[InputHandler.dispose<br/>Remove event listeners]
-    D[RenderingControls.dispose<br/>Destroy lil-gui]
+    D[RenderingControls.dispose<br/>Destroy custom GUI library]
     E[SceneManager.dispose<br/>WebGL cleanup]
 
     F[PostProcessing.dispose<br/>Render targets]

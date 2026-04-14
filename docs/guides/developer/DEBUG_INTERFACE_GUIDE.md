@@ -28,6 +28,8 @@ http://localhost:5173/?src=http://127.0.0.1:8005&debug
 localStorage.setItem('luxar_debug', 'true');
 ```
 
+Note: `localStorage.setItem('luxar_debug', 'true')` creates the base debug object in `main.ts`, but the full runtime debug interface (with scene, camera, controls, etc.) requires the `?debug` URL parameter, which triggers `setupDebugInterface()` in `app.ts`.
+
 When enabled, the viewer logs `Debug interface available at window.__luxarDebug`
 to the console and, after initialization, prints a summary of available commands.
 

@@ -9,7 +9,7 @@ ranked by a composite score considering:
 
 | ID | Optimization | Status | Notes |
 |----|-------------|--------|-------|
-| 1.1 | Remove Unnecessary atomicAdd | ✅ Complete | Direct write in forward pass |
+| 1.1 | Remove Unnecessary atomicAdd | N/A | Splat-centric architecture requires atomicAdd for concurrent voxel accumulation |
 | 1.2 | Precompute effective_truncate_sq | ✅ Complete | s_truncate_sq + early rejection |
 | 1.3 | Hardcoded 3D Mahalanobis Distance | ✅ Complete | Template specialization |
 | 1.4 | Bitwise Tile-Local Pixel Indexing | ✅ Complete | 8×8×8 and 16×16 fast paths |
@@ -19,9 +19,9 @@ ranked by a composite score considering:
 | 2.2 | Explicit 3D Gradient Formulas | ✅ Complete | backward_pixel_splat_3d/2d |
 | 2.3 | Shared Memory Bank Conflict Avoidance | ✅ Complete | CENTER_STRIDE=4 for 3D |
 | 2.4 | Vectorized Memory Loads (float4) | ⏳ Pending | Would require input padding |
-| 2.5 | Standard Gaussian Fast Path (s=2) | ❌ Skipped | User prefers sharpness |
-| 2.6 | Cache shape/tile_dims Device Tensors | ✅ Complete | BinningState caching |
-| 2.7 | Persist CUB Scan Temporary Storage | ✅ Complete | BinningState.scan_temp_storage |
+| 2.5 | Standard Gaussian Fast Path (s=2) | ✅ Complete | Sharpness removed from model. Standard Gaussian (s=2) is now the only mode. |
+| 2.6 | Cache shape/tile_dims Device Tensors | ✅ Complete | ForwardState caching |
+| 2.7 | Persist CUB Scan Temporary Storage | ✅ Complete | ForwardState.scan_temp_storage |
 
 ---
 
@@ -41,29 +41,18 @@ These optimizations are low-hanging fruit with predictable, significant gains.
 
 ### 1.1 Remove Unnecessary `atomicAdd` in Forward Pass
 
+> **N/A**: This optimization does not apply to the current splat-centric architecture.
+> In the splat-centric design, each CUDA block processes one splat and scatters its
+> contributions to multiple voxels via `atomicAdd`. Multiple splats can contribute to the
+> same voxel, so `atomicAdd` is required for correctness. The original optimization was
+> designed for the tile-based architecture where each pixel was owned by exactly one tile.
+
 | Metric | Rating |
 |--------|--------|
-| Impact | ⭐⭐⭐⭐⭐ (15-25%) |
-| Simplicity | ⭐⭐⭐⭐⭐ (1 line change) |
-| Certainty | ⭐⭐⭐⭐⭐ (guaranteed) |
-| Risk | ⭐ (very low) |
-
-**Current code** (`cuda_splatting.cu:493`):
-```cuda
-atomicAdd(&output[global_px_idx], intensity_sum);
-```
-
-**Optimized**:
-```cuda
-output[global_px_idx] = intensity_sum;  // Direct write
-```
-
-**Why it works**: Each pixel belongs to exactly one tile. Tiles are disjoint partitions,
-so no two blocks ever write to the same pixel. `atomicAdd` has 10-50 cycle latency;
-direct write is 1 cycle.
-
-**Caveat**: This assumes global splats (which could contribute from multiple tiles) are
-handled separately. Currently global splats are dropped, so this is safe.
+| Impact | N/A |
+| Simplicity | N/A |
+| Certainty | N/A |
+| Risk | N/A |
 
 ---
 
@@ -405,7 +394,7 @@ auto shape_tensor = torch::tensor(std::vector<int>(shape.begin(), shape.end()),
 
 **Optimized**:
 ```cpp
-// In BinningState initialization (once):
+// In ForwardState initialization (once):
 state.shape_tensor = torch::tensor(...).to(device);
 state.tile_dims_tensor = torch::tensor(...).to(device);
 
@@ -917,8 +906,8 @@ __global__ void rasterize(...) {
 7. ✅ 3D grid launch (2.1) - **DONE** (cuda_splatting.cu: `dim3` grid for 2D/3D with `get_tile_info_3d`)
 8. ✅ Explicit 3D backward gradients (2.2) - **DONE** (cuda_splatting.cu: `compute_pixel_gradients<3>`)
 9. ✅ Bank conflict avoidance (2.3) - **DONE** (CENTER_STRIDE=4 for 3D)
-10. ✅ Cache device tensors (2.6) - **DONE** (BinningState: shape_tensor, tile_dims_tensor)
-11. ✅ Persist CUB storage (2.7) - **DONE** (BinningState: scan_temp_storage)
+10. ✅ Cache device tensors (2.6) - **DONE** (ForwardState: shape_tensor, tile_dims_tensor)
+11. ✅ Persist CUB storage (2.7) - **DONE** (ForwardState: scan_temp_storage)
 
 ### Phase 3: Advanced (1-2 weeks, additional ~30% speedup)
 12. 🔧 Double-buffered prefetch (3.1) - Ampere+

@@ -487,7 +487,7 @@ Most demos display real-time metrics:
 - `n_iters`: Maximum iterations (default varies: 300-2000)
 - `lr`: Learning rate (default: 0.01 or auto)
 - `max_abs_error`: Convergence threshold (default: 0.01 = 1% of range)
-- `loss_type`: "l1" (default, robust), "mse", or "poisson"
+- `loss_type`: "mse" (default), "l1" (robust), or "poisson"
 
 ### **Regularization**
 - `l1_amp`: Amplitude sparsity (default: 0.1 × lr)

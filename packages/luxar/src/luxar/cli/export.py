@@ -20,7 +20,12 @@ from pathlib import Path
 
 from arbol import aprint, asection
 
-from .utils import check_viewer_built, get_viewer_dist_path, validate_zarr_store
+from .utils import (
+    check_viewer_built,
+    format_memory_size,
+    get_viewer_dist_path,
+    validate_zarr_store,
+)
 
 
 def export_scene(
@@ -155,8 +160,7 @@ def _copy_zarr_data(source: Path, dest: Path) -> None:
         shutil.copytree(source, dest)
         # Calculate size for user feedback
         total_size = sum(f.stat().st_size for f in dest.rglob("*") if f.is_file())
-        size_mb = total_size / (1024 * 1024)
-        aprint(f"Copied zarr data ({size_mb:.1f} MB) to {dest}")
+        aprint(f"Copied zarr data ({format_memory_size(total_size)}) to {dest}")
 
 
 def _generate_serve_script(output: Path, data_dir_name: str) -> None:

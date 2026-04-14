@@ -37,8 +37,6 @@ pnpm agent:debug              # Headless - shows console in terminal
 pnpm agent:debug:visible      # Visible browser
 ```
 
-See: `ai-debugging-demo.spec.ts` for complete examples
-
 ---
 
 ## 🧪 Test Suite Organization
@@ -49,7 +47,6 @@ Key test suites include:
 
 | File | Purpose |
 |------|---------|
-| **ai-debugging-demo.spec.ts** | AI debugging capabilities demo |
 | **all-examples-smoke-test.spec.ts** | Comprehensive smoke tests for all examples |
 | **basic-rendering.spec.ts** | Initialization, canvas, errors |
 | **cache-system.spec.ts** | OPFS caching functionality |

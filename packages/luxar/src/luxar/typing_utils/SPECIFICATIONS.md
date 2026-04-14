@@ -97,6 +97,8 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 ### Rendering Constants
 - `OPACITY_MIN/MAX = 0.0, 1.0`
 - `GAMMA_MIN/MAX = 0.1, 10.0` (symmetric: gamma and 1/gamma have equal range)
+- `INTENSITY_MIN/MAX = 0.0, 100.0` (per-node color multiplier)
+- `OFFSET_MIN/MAX = -10.0, 10.0` (per-node color offset)
 - `SHARPNESS_MIN/MAX = 0.001, 31.0` (SHARPNESS_MIN is practical minimum; values must be > 0)
 - `DEFAULT_OPACITY/GAMMA/BLENDING_MODE = 1.0, 1.0, "additive"`
 
