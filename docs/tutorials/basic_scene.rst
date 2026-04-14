@@ -91,7 +91,7 @@ Step 4: Create Scene and Write Data
    with LuxarZarrCompiler(
        'tutorial_scene.zarr',
        encoding_mode=EncodingMode.AUTO,  # Let Luxar choose encoding
-       ordering_method="morton",         # Morton space-filling curve
+       ordering_method="hilbert",        # Hilbert space-filling curve (best locality)
        enable_spatial_index=True,        # Calculate chunk bounds (CRITICAL for performance)
    ) as compiler:
 
@@ -142,9 +142,9 @@ Step 5: Verify and View
 
    # Get compression stats
    rainbow = store['rainbow_cloud']
-   positions_size = rainbow['positions'].nbytes
-   positions_stored = rainbow['positions'].nchunks * rainbow['positions'].chunks[0]
-   print(f"Compression: {positions_size / positions_stored:.1f}×")
+   # Note: Actual compression ratio depends on zarr store backend
+   print(f"Number of chunks: {rainbow['positions'].nchunks}")
+   print(f"Chunk shape: {rainbow['positions'].chunks}")
 
 Then serve with the viewer:
 

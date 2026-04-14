@@ -558,7 +558,7 @@ Workflow 1: Microscopy Time-Series
    ])
 
    # Write with compound ordering for efficient time navigation
-   with LuxarZarrCompiler('cells.zarr', ordering_method="morton") as c:
+   with LuxarZarrCompiler('cells.zarr') as c:  # Hilbert ordering by default
        scene = c.create_scene(dimensions=dims)
 
        # Track cell positions over time

@@ -57,7 +57,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 │ ┌─────────────────────────────────────────────────────────────────┐ │
 │ │ losses.py: create_loss_function()                               │ │
 │ │ • Creates loss function based on config (MSE/Poisson/L1)        │ │
-│ │ • Applies asymmetric penalty (10× for over-prediction)          │ │
+│ │ • Applies asymmetric penalty for over-prediction (default 1.0)  │ │
 │ │ • Adds L1 regularization on amplitudes (sparsity)               │ │
 │ │ • Adds L1 regularization on diagonals (shape control)           │ │
 │ │ • Adds boundary penalty for splats extending beyond bounds       │ │
@@ -171,7 +171,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 - **Poisson**: Poisson deviance (count/photon data)
 - **L1**: Mean Absolute Error (robust to outliers)
 
-**Asymmetric Penalty:** 10× penalty for over-prediction (pred > target)
+**Asymmetric Penalty:** Configurable penalty for over-prediction (pred > target), default 1.0
 - **Rationale**: Additive Gaussian models can easily add splats (fix under-prediction) but struggle to reduce intensity (fix over-prediction)
 
 **Regularization:**

@@ -40,7 +40,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 │           ↓                                                                 │
 │  luxar.encoding                                                             │
 │  ┌──────────────────┐                                                      │
-│  │ Semantic typing  │  COORDINATE → uint16 quantization                    │
+│  │ Semantic typing  │  COORDINATE → float32 (AUTO/PRECISION) or float16 (MEMORY) │
 │  │ Quantization     │  COLOR → uint8/float32 (SDR/HDR)                     │
 │  │ Broadcasting     │  Uniform values → single scalar                      │
 │  └────────┬─────────┘                                                      │

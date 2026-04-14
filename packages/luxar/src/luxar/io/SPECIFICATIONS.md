@@ -322,7 +322,7 @@ Both Morton and Hilbert ordering are available via the `luxar.io.ordering` modul
 sort_indices, metadata = sort_points_compound(
     positions,
     dimensions,
-    method="hilbert",  # or "morton" (default: "morton")
+    method="hilbert",  # or "morton" (default: "hilbert")
 )
 
 # For GSplats (simple spatial ordering):

@@ -62,7 +62,7 @@ def create_optimizer_and_scheduler(
     # Scheduler arguments
     patience: int = 10,
     factor: float = 0.5,
-    threshold: float = 1e-4,
+    threshold: float = 1e-3,
     cooldown: int = 0,
     min_lr: float = 1e-8,
     gamma: float = 0.95,
@@ -82,7 +82,7 @@ def create_optimizer_and_scheduler(
 | `amsgrad` | bool | False | Use AMSGrad variant |
 | `patience` | int | 10 | Plateau scheduler: iterations without improvement before LR reduction |
 | `factor` | float | 0.5 | LR reduction factor (new_lr = lr × factor) |
-| `threshold` | float | 1e-4 | Plateau scheduler: minimum improvement threshold |
+| `threshold` | float | 1e-3 | Plateau scheduler: minimum improvement threshold |
 | `cooldown` | int | 0 | Iterations to wait after LR reduction |
 | `min_lr` | float | 1e-8 | Minimum learning rate floor |
 | `gamma` | float | 0.95 | Exponential scheduler: decay rate per step |

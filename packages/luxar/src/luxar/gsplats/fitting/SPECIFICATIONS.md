@@ -45,7 +45,7 @@ class FitConfig:
     # Input data
     V: np.ndarray                            # Input image/volume to fit (ndim >= 1)
     seeds: Optional[np.ndarray | int | float]  # Centers array (N, d), int count, OR float compression ratio
-    seed_method: str                         # Method for auto seed generation: "gaussian", "decomposition", "both", or combinations
+    seed_method: str                         # Method for auto seed generation: "auto", "edges", "grid", "decomposition", or combinations
     seed_kwargs: Dict[str, Any]              # Additional parameters for seed generation function
 
     # Normalization
@@ -66,7 +66,7 @@ class FitConfig:
 
     # Loss function
     loss_type: str                           # Loss function: "mse", "poisson", or "l1"
-    asymmetric_penalty: Optional[float]      # Over-prediction penalty factor (default 10.0)
+    asymmetric_penalty: Optional[float]      # Over-prediction penalty factor (default 1.0)
     l1_amp: Optional[float]                  # L1 regularization on amplitudes (default: 0.1 * lr)
     l1_diag: Optional[float]                 # L1 regularization on diagonal elements (default: 0.01 * lr)
 
@@ -74,7 +74,7 @@ class FitConfig:
     scheduler_type: str                      # "plateau" or "exponential"
     patience: int                            # Iters without loss improvement before LR reduction
     lr_reduction_factor: float               # LR multiplier (0.5=halve, 0.1=reduce to 10%)
-    early_stop_patience: Optional[int]       # Stop if no better state for N iters (None=off, default=200)
+    early_stop_patience: Optional[int]       # Stop if no better state for N iters (None=off, default=300)
 
     # Dynamic operations
     enable_dynamic_ops: bool                 # Enable fixed-pool splat relocation
@@ -213,8 +213,8 @@ def prepare_fit_config(
     init_sigma_vox: Optional[float] = None,  # None = use scale-informed init_L from seeding
     n_iters: int = 1000,
     lr: float = 0.01,
-    loss_type: str = "l1",
-    asymmetric_penalty: Optional[float] = 10.0,
+    loss_type: str = "mse",
+    asymmetric_penalty: Optional[float] = 1.0,
     l1_amp: Optional[float] = None,
     l1_diag: Optional[float] = None,
     sigma_min_diag: Optional[Sequence[float] | float] = None,  # Per-dimension (float is broadcast)
@@ -229,7 +229,7 @@ def prepare_fit_config(
     scheduler_type: str = "plateau",
     patience: int = 10,
     lr_reduction_factor: float = 0.5,
-    early_stop_patience: Optional[int] = 200,
+    early_stop_patience: Optional[int] = 300,
     dynamic_ops_verbose: bool = False,
 ) -> FitConfig:
     """

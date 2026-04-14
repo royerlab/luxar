@@ -140,7 +140,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         version: str = DEFAULT_VERSION,
         enable_spatial_index: bool = True,
         encoding_mode: EncodingMode = EncodingMode.AUTO,
-        ordering_method: Literal["morton", "hilbert"] = "morton",
+        ordering_method: Literal["morton", "hilbert"] = "hilbert",
         float16_allowed: bool = False,
     ) -> None:
         """Initialize the Zarr compiler.
@@ -151,7 +151,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             version: Luxar format version
             enable_spatial_index: Whether to use spatial ordering for points/gsplats (default: True)
             encoding_mode: Encoding mode for array storage (AUTO/PRECISION/MEMORY)
-            ordering_method: Spatial ordering method ("morton" or "hilbert", default: "morton")
+            ordering_method: Spatial ordering method ("morton" or "hilbert", default: "hilbert")
             float16_allowed: Allow float16 encoding in MEMORY mode (default: False for TypeScript compatibility)
 
         Note:

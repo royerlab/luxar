@@ -29,8 +29,8 @@ The `luxar-viewer.controls` package provides comprehensive 3D navigation systems
 
 **Features**:
 
-- Rotate: Left mouse drag
-- Pan: Right mouse drag
+- Pan: Left mouse drag
+- Rotate: Right mouse drag
 - Zoom: Scroll wheel
 - Roll: Shift+scroll
 

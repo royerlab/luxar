@@ -6,15 +6,31 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import typer
 from arbol import aprint, asection
+
+from .utils import format_memory_size
 
 if TYPE_CHECKING:
     import numpy as np
 
 app_gsplat = typer.Typer(help="Gaussian splat tools")
+
+
+def _resolve_encoding_mode(
+    mode: str,
+) -> Any:
+    """Convert a string encoding mode to an EncodingMode enum value."""
+    from luxar.encoding import EncodingMode
+
+    _ENCODING_MAP = {
+        "auto": EncodingMode.AUTO,
+        "precision": EncodingMode.PRECISION,
+        "memory": EncodingMode.MEMORY,
+    }
+    return _ENCODING_MAP[mode]
 
 
 def _ascii_histogram(
@@ -156,18 +172,11 @@ def info_dataset(
         aprint("═" * 70)
 
         aprint(f"\nFile: {path.name}")
-        file_size = path.stat().st_size
-        if file_size < 1024:
-            aprint(f"Size: {file_size} bytes")
-        elif file_size < 1024 * 1024:
-            aprint(f"Size: {file_size / 1024:.1f} KB")
-        else:
-            aprint(f"Size: {file_size / (1024 * 1024):.2f} MB")
+        aprint(f"Size: {format_memory_size(path.stat().st_size)}")
 
         aprint(f"\nSplats: {n_splats:,}")
         aprint(f"Dimensions: {ndim}D")
         aprint(f"Has Colors: {'Yes' if data.colors is not None else 'No'}")
-        aprint("Has Sharpness: Yes")  # Always present after load
 
         # ================================================================
         # Bounding Box
@@ -755,15 +764,9 @@ def cull_dataset(
         luxar gsplat cull input.gsplats.zarr output.gsplats.zarr --target vol.tiff -p 95
     """
     try:
-        from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
 
-        encoding_map = {
-            "auto": EncodingMode.AUTO,
-            "precision": EncodingMode.PRECISION,
-            "memory": EncodingMode.MEMORY,
-        }
-        encoding_mode_obj = encoding_map[encoding_mode]
+        encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
 
         with asection(f"Culling: {input_path.name}"):
             with asection("Loading dataset"):
@@ -1004,15 +1007,9 @@ def filter_dataset(
             --amplitude-min 0.1 --compress zip
     """
     try:
-        from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
 
-        encoding_map = {
-            "auto": EncodingMode.AUTO,
-            "precision": EncodingMode.PRECISION,
-            "memory": EncodingMode.MEMORY,
-        }
-        encoding_mode_obj = encoding_map[encoding_mode]
+        encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
 
         with asection(f"Filtering: {input_path.name}"):
             # Load
@@ -1095,11 +1092,7 @@ def filter_dataset(
                     aprint(f"Saved filtered dataset: {output_path}")
 
                     if output_path.exists():
-                        output_size = output_path.stat().st_size
-                        if output_size < 1024 * 1024:
-                            aprint(f"  Size: {output_size / 1024:.1f} KB")
-                        else:
-                            aprint(f"  Size: {output_size / (1024 * 1024):.1f} MB")
+                        aprint(f"  Size: {format_memory_size(output_path.stat().st_size)}")
 
     except typer.Exit:
         raise
@@ -1159,7 +1152,6 @@ def split_dataset(
         luxar gsplat split input.gsplats.zarr output_dir/ --parts 3 --compress zip
     """
     try:
-        from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
 
         # Validate mode
@@ -1170,12 +1162,7 @@ def split_dataset(
             aprint("❌ Error: --parts and --indices are mutually exclusive")
             raise typer.Exit(1)
 
-        encoding_map = {
-            "auto": EncodingMode.AUTO,
-            "precision": EncodingMode.PRECISION,
-            "memory": EncodingMode.MEMORY,
-        }
-        encoding_mode_obj = encoding_map[encoding_mode]
+        encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
 
         with asection(f"Splitting: {input_path.name}"):
             # Load
@@ -1308,15 +1295,9 @@ def slice_dataset(
         luxar gsplat slice input.gsplats.zarr output.gsplats.zarr.zip "0:50, :, :" --compress zip
     """
     try:
-        from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
 
-        encoding_map = {
-            "auto": EncodingMode.AUTO,
-            "precision": EncodingMode.PRECISION,
-            "memory": EncodingMode.MEMORY,
-        }
-        encoding_mode_obj = encoding_map[encoding_mode]
+        encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
 
         with asection(f"Slicing: {input_path.name}"):
             # Load
@@ -1360,11 +1341,7 @@ def slice_dataset(
                     aprint(f"Saved sliced dataset: {output_path}")
 
                     if output_path.exists():
-                        output_size = output_path.stat().st_size
-                        if output_size < 1024 * 1024:
-                            aprint(f"  Size: {output_size / 1024:.1f} KB")
-                        else:
-                            aprint(f"  Size: {output_size / (1024 * 1024):.1f} MB")
+                        aprint(f"  Size: {format_memory_size(output_path.stat().st_size)}")
 
     except typer.Exit:
         raise
@@ -1473,15 +1450,9 @@ def transform_dataset(
     try:
         import numpy as np
 
-        from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
 
-        encoding_map = {
-            "auto": EncodingMode.AUTO,
-            "precision": EncodingMode.PRECISION,
-            "memory": EncodingMode.MEMORY,
-        }
-        encoding_mode_obj = encoding_map[encoding_mode]
+        encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
 
         # Check that at least one transform is requested
         has_transform = any(
@@ -1632,11 +1603,7 @@ def transform_dataset(
                 aprint(f"Saved: {output_path}")
 
                 if output_path.exists():
-                    output_size = output_path.stat().st_size
-                    if output_size < 1024 * 1024:
-                        aprint(f"  Size: {output_size / 1024:.1f} KB")
-                    else:
-                        aprint(f"  Size: {output_size / (1024 * 1024):.1f} MB")
+                    aprint(f"  Size: {format_memory_size(output_path.stat().st_size)}")
 
     except typer.Exit:
         raise
@@ -2230,11 +2197,7 @@ def fit_volume(
                 n_splats = result.n_splats
                 aprint(f"Saved {n_splats:,} splats")
                 if output_path.exists():
-                    size = output_path.stat().st_size
-                    if size < 1024 * 1024:
-                        aprint(f"File size: {size / 1024:.1f} KB")
-                    else:
-                        aprint(f"File size: {size / (1024 * 1024):.2f} MB")
+                    aprint(f"File size: {format_memory_size(output_path.stat().st_size)}")
 
         time_s = result.stats.get("time_seconds", 0)
         aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")
@@ -2287,14 +2250,7 @@ def convert_to_scene(
     try:
         from luxar import LuxarZarrCompiler
         from luxar.cli.gsplat_config import build_dimensions_from_data
-        from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
-
-        encoding_map = {
-            "auto": EncodingMode.AUTO,
-            "precision": EncodingMode.PRECISION,
-            "memory": EncodingMode.MEMORY,
-        }
 
         with asection(f"Converting: {input_path.name} -> {output_path.name}"):
             with asection("Loading gsplat dataset"):
@@ -2312,7 +2268,7 @@ def convert_to_scene(
             with asection("Creating Luxar scene"):
                 dims = build_dimensions_from_data(data.centers)
                 with LuxarZarrCompiler(
-                    output_path, encoding_mode=encoding_map[encoding]
+                    output_path, encoding_mode=_resolve_encoding_mode(encoding)
                 ) as compiler:
                     scene = compiler.create_scene(dimensions=dims)
                     scene.add_gsplats_from_data(
@@ -2422,11 +2378,7 @@ def render_to_file(
                     np.save(str(output_path), volume)
 
                 if output_path.exists():
-                    size = output_path.stat().st_size
-                    if size < 1024 * 1024:
-                        aprint(f"File size: {size / 1024:.1f} KB")
-                    else:
-                        aprint(f"File size: {size / (1024 * 1024):.2f} MB")
+                    aprint(f"File size: {format_memory_size(output_path.stat().st_size)}")
 
         aprint(f"\nSaved: {output_path}")
 
@@ -2682,14 +2634,7 @@ def merge_datasets(
     """
     try:
         from luxar.cli.gsplat_config import parse_hex_color
-        from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
-
-        encoding_map = {
-            "auto": EncodingMode.AUTO,
-            "precision": EncodingMode.PRECISION,
-            "memory": EncodingMode.MEMORY,
-        }
 
         if len(inputs) < 2:
             aprint("Error: At least 2 input datasets required for merge")
@@ -2758,7 +2703,7 @@ def merge_datasets(
 
                 merged.save(
                     output_path,
-                    encoding_mode=encoding_map[encoding],
+                    encoding_mode=_resolve_encoding_mode(encoding),
                     compress=compress,
                     color_mode=save_color_mode,
                 )

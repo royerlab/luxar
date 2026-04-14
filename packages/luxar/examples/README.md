@@ -404,18 +404,19 @@ When viewing nD data (>3D), use these controls:
 - **Number keys (1-9)**: Select which non-displayed dimension to navigate
 - **`[` and `]`**: Move backward/forward in the selected dimension
 - **Mouse wheel**: Zoom in/out
-- **Shift + Mouse wheel**: Adjust field of view
+- **Shift + Mouse wheel**: Roll camera
+- **Ctrl/Cmd + Mouse wheel**: Adjust field of view
 
 ### Camera Controls
-- **Left mouse drag**: Rotate view (arcball rotation)
-- **Right mouse drag**: Pan view
+- **Left mouse drag**: Pan view
+- **Right mouse drag**: Rotate view (arcball rotation)
 - **Space**: Toggle fullscreen
 - **H**: Show help overlay
 
 ### Advanced Controls
 - **P**: Toggle performance stats
 - **R**: Toggle rendering controls
-- **C**: Toggle center (origin/bounding box)
+- **C**: Toggle cinematic mode
 - **D**: Toggle dimension sliders
 - **O**: Open dataset browser
 

@@ -21,7 +21,7 @@
       - 11.1.1 [Reference Comparison Tests (CUDA vs PyTorch)](#1111-reference-comparison-tests-cuda-vs-pytorch)
     - 11.2 [Edge Case Tests](#112-edge-case-tests)
     - 11.3 [Operator Correctness Tests (opcheck)](#113-operator-correctness-tests-opcheck)
-    - 11.4 [C++ Kernel Unit Tests](#114-c-kernel-unit-tests)
+    - 11.4 [C++ Kernel Unit Tests (reference design, not implemented)](#114-c-kernel-unit-tests)
       - 11.4.1 [Test Framework Setup](#1141-test-framework-setup)
       - 11.4.2 [AABB Computation Tests](#1142-aabb-computation-tests)
       - 11.4.3 [Mahalanobis Distance Tests](#1143-mahalanobis-distance-tests)
@@ -137,7 +137,7 @@ def splat_params_3d() -> Dict[str, np.ndarray]:
     }
 
 
-@pytest.fixture(params=[2, 3, 4, 5])
+@pytest.fixture(params=[2, 3, 4])
 def splat_params_nd(request) -> Dict[str, np.ndarray]:
     """Parameterized fixture for testing multiple dimensions."""
     DIM = request.param
@@ -202,9 +202,13 @@ def cuda_model_factory(cuda_device):
 
 @pytest.fixture
 def mock_backend():
-    """Return mock backend for testing without GPU."""
-    from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import MockSplattingBackend
-    return MockSplattingBackend()
+    """Return mock backend for testing without GPU.
+
+    Note: MockSplattingBackend was removed. Tests requiring no GPU
+    should use pytest markers (@pytest.mark.gpu) to skip GPU tests
+    or use the PyTorch reference model (GaussianSplatModel) instead.
+    """
+    pytest.skip("MockSplattingBackend is no longer available; use reference model instead")
 
 
 # =============================================================================
@@ -215,19 +219,19 @@ class Tolerances:
     """Tolerance levels for numerical comparisons."""
 
     # Forward pass comparison
-    FORWARD_RTOL = 1e-5
-    FORWARD_ATOL = 1e-7
+    FORWARD_RTOL = 1e-4
+    FORWARD_ATOL = 1e-6
 
     # Backward pass comparison (looser due to atomics)
-    BACKWARD_RTOL = 1e-4
-    BACKWARD_ATOL = 1e-6
+    BACKWARD_RTOL = 1e-3
+    BACKWARD_ATOL = 1e-5
 
     # FP16 comparison
-    FP16_RTOL = 1e-3
-    FP16_ATOL = 1e-5
+    FP16_RTOL = 1e-2
+    FP16_ATOL = 1e-4
 
     # Convergence comparison (for fitting tests)
-    CONVERGENCE_RTOL = 0.05  # 5% relative difference in final loss
+    CONVERGENCE_RTOL = 0.1  # 10% relative difference in final loss
 
 
 @pytest.fixture
@@ -311,17 +315,16 @@ jobs:
 ```
 tests/
 ├── conftest.py                    # Fixtures and configuration
-├── test_cuda_backend.py           # Core functionality (forward, backward)
-├── test_cuda_numerical.py         # Numerical accuracy (gradients, distances)
-├── test_cuda_vs_reference.py      # Comparison with PyTorch reference
-├── test_cuda_edge_cases.py        # Edge cases and error handling
-├── test_cuda_integration.py       # Full pipeline integration
+├── test_cuda_forward.py           # Forward pass correctness tests
+├── test_cuda_backward.py          # Backward pass correctness tests
+├── test_cuda_gradcheck.py         # Gradient correctness (autograd comparison)
+├── test_cuda_numerical.py         # Numerical precision tests
+├── test_cuda_comparison.py        # CUDA vs PyTorch reference comparison
+├── test_cuda_model.py             # Full model integration tests
+├── test_cuda_nd.py                # nD (4D-8D) tests
+├── test_cuda_fp16.py              # FP16 mode tests
 ├── test_cuda_performance.py       # Performance benchmarks (marked slow)
-├── test_cuda_opcheck.py           # PyTorch 2.x compatibility (opcheck)
-└── cpp/                           # C++ unit tests (see Section 11.4)
-    ├── test_aabb.cpp
-    ├── test_mahalanobis.cpp
-    └── CMakeLists.txt
+└── test_cuda_review_fixes.py      # Regression tests for specific bug fixes
 ```
 
 #### 11.0.4 Running Tests
@@ -337,7 +340,7 @@ pytest tests/ -m "not gpu"
 pytest tests/ --cov=cuda_splatting --cov-report=html
 
 # Run specific test file
-pytest tests/test_cuda_vs_reference.py -v
+pytest tests/test_cuda_comparison.py -v
 
 # Run parameterized tests for specific dimension
 pytest tests/ -k "3d" -v
@@ -655,7 +658,7 @@ These tests ensure the CUDA backend produces numerically equivalent results to t
 `GaussianSplatModel` reference implementation. This is **critical** for validating correctness.
 
 ```python
-# tests/test_cuda_vs_reference.py
+# tests/test_cuda_comparison.py
 """
 Reference comparison tests: CUDA backend vs PyTorch GaussianSplatModel.
 
@@ -944,10 +947,10 @@ class TestOptimizationConvergence:
 
 | Comparison | Tolerance | Rationale |
 |------------|-----------|-----------|
-| Forward (CUDA vs PyTorch) | rtol=1e-5, atol=1e-7 | FP32 precision, deterministic computation |
-| Backward (gradients) | rtol=1e-4, atol=1e-6 | Atomic operations have non-deterministic order |
-| Convergence (final loss) | 5% relative | Different rounding accumulates over iterations |
-| FP16 forward | rtol=1e-3, atol=1e-5 | FP16 has ~3 decimal digits precision |
+| Forward (CUDA vs PyTorch) | rtol=1e-4, atol=1e-6 | FP32 precision, atomicAdd non-determinism |
+| Backward (gradients) | rtol=1e-3, atol=1e-5 | Atomic operations have non-deterministic order |
+| Convergence (final loss) | 10% relative | Different rounding accumulates over iterations |
+| FP16 forward | rtol=1e-2, atol=1e-4 | FP16 has ~3 decimal digits precision |
 
 ### 11.2 Edge Case Tests
 
@@ -1210,10 +1213,10 @@ class TestOpCheck:
 
 ```bash
 # Run all opcheck tests
-pytest tests/test_cuda_opcheck.py -v
+pytest tests/test_cuda_gradcheck.py -v
 
 # Run with verbose output to see which subtests pass/fail
-pytest tests/test_cuda_opcheck.py -v --tb=short
+pytest tests/test_cuda_gradcheck.py -v --tb=short
 ```
 
 **Common opcheck failures and fixes**:
@@ -1231,11 +1234,17 @@ pytest tests/test_cuda_opcheck.py -v --tb=short
 # .github/workflows/test.yml
 - name: Run opcheck tests
   run: |
-    pytest tests/test_cuda_opcheck.py -v --tb=short
+    pytest tests/test_cuda_gradcheck.py -v --tb=short
     # Fail CI if any opcheck test fails
 ```
 
 ### 11.4 C++ Kernel Unit Tests
+
+> **NOTE**: The `cpp/` test directory described below was never implemented.
+> All kernel correctness testing is done through the Python test suite
+> (`test_cuda_forward.py`, `test_cuda_backward.py`, `test_cuda_gradcheck.py`,
+> `test_cuda_numerical.py`). The section below is retained as a reference design
+> for potential future C++ unit tests.
 
 CUDA kernels and device functions should be tested in isolation using C++ unit tests.
 This catches bugs before they reach the Python layer and provides faster iteration.
