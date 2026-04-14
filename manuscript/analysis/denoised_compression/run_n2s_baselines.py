@@ -66,16 +66,22 @@ def apply_median_donut(volume, mask):
     """Replace masked voxels with median of their 3D donut neighborhood.
 
     The donut excludes the center pixel — this is the N2S blind-spot.
-    Uses a 3x3x3 neighborhood (26-connected minus center).
+    Uses a 3x3x3 neighborhood (26-connected, center excluded).
     """
-    from scipy.ndimage import median_filter
+    from itertools import product
 
-    # Compute median of 3x3x3 neighborhood
-    median_vol = median_filter(volume, size=3, mode='reflect')
+    # Compute true donut median: 26 neighbors, excluding center
+    shifts = list(product([-1, 0, 1], repeat=3))
+    shifts.remove((0, 0, 0))
 
-    # Replace masked voxels with their neighborhood median
+    neighbors = []
+    for dz, dy, dx in shifts:
+        neighbors.append(np.roll(np.roll(np.roll(volume, -dz, 0), -dy, 1), -dx, 2))
+    donut_median = np.median(np.stack(neighbors, axis=0), axis=0).astype(volume.dtype)
+
+    # Replace masked voxels with their donut-median
     masked_volume = volume.copy()
-    masked_volume[mask] = median_vol[mask]
+    masked_volume[mask] = donut_median[mask]
     return masked_volume
 
 

@@ -44,7 +44,7 @@
     Here we introduce \luxar, an open-source, Python-first system in which a few lines of code compile arbitrary-dimensional data---points, lines, and Gaussian splats---into compact, spatially indexed archives that are served to a browser-based viewer with HDR rendering, progressive streaming, and native $n$-dimensional navigation.
     No web development or server expertise is required.
     We demonstrate \luxar across domains including microscopy, single-cell genomics, and astronomy, and focus on a new capability: fitting microscopy volumes to Gaussian splats---compact, continuous, GPU-renderable primitives that exploit the sparsity of fluorescence data.
-    Systematic evaluation on 12~microscopy datasets achieves 13--313$\times$ compression at 28--43~dB PSNR---a 100-million-voxel light-sheet volume shrinks from 400~MB to 1.3~MB while preserving structural fidelity. A Noise2Self analysis provides a principled criterion for determining when the model has captured all recoverable signal, separating structural information from noise.
+    Systematic evaluation on 12~microscopy datasets achieves 13--313$\times$ compression at 25--43~dB PSNR---a 100-million-voxel light-sheet volume shrinks from 400~MB to 1.3~MB while preserving structural fidelity. A Noise2Self analysis provides a principled criterion for determining when the model has captured all recoverable signal, separating structural information from noise.
     Tiled fitting with cosine apodization removes the GPU memory ceiling.
     \luxar makes volumetric scientific data as easy to share and explore as a web link.}
 ]
@@ -58,7 +58,7 @@ Yet the dominant mode of dissemination remains downloading raw files---or, more 
 
 Interactive exploration fares no better.
 Desktop tools such as napari\cite{sofroniew2022napari}, Fiji\cite{schindelin2012fiji}, and BigDataViewer\cite{pietzsch2015bigdataviewer} provide powerful visualization but require local installation and data download.
-Web-based viewers like Neuroglancer\cite{cheng2024neuroglancer} stream voxel data over HTTP but remain limited to axis-aligned slicing and require multi-resolution pyramid preprocessing.
+Web-based viewers like Neuroglancer\cite{maitinshepard2021neuroglancer} stream voxel data over HTTP but remain limited to axis-aligned slicing and require multi-resolution pyramid preprocessing.
 Neither paradigm is designed for the full diversity of scientific data: volumetric microscopy, point-cloud embeddings, polyline trajectories, and higher-dimensional datasets all require different tools, formats, and expertise.
 
 Here we present \luxar (Fig.~\ref{fig:overview}), an open-source system that bridges the gap between data generation in Python and interactive exploration in a web browser.
@@ -110,7 +110,7 @@ All datasets exhibit a log-linear rate-distortion relationship (Fig.~\ref{fig:ra
 The Tribolium light-sheet volume ($\sigma = 0.0009$) plateaus at 32K~splats with 42.6~dB PSNR and 313$\times$ compression (Fig.~\ref{fig:visual}i--l).
 Kidney tissue achieves 33.7~dB at 32K~splats and continues to 37.3~dB at 512K (Fig.~\ref{fig:visual}a--d).
 SSIM follows a similar pattern (Fig.~\ref{fig:ratedistortion}b).
-At 32K~splats, compression ratios range from 13$\times$ to 313$\times$ with 28--43~dB PSNR (Fig.~\ref{fig:ratedistortion}c, Table~\ref{tab:summary}), and fitting completes in 10--60~seconds on a consumer GPU.
+At 32K~splats, compression ratios range from 13$\times$ to 313$\times$ with 25--43~dB PSNR (Fig.~\ref{fig:ratedistortion}c, Table~\ref{tab:summary}), and fitting completes in 10--60~seconds on a consumer GPU.
 
 \paragraph{Noise2Self identifies the boundary between signal and noise.}
 The number of splats needed to represent a volume is primarily determined by its information content---the structural complexity of the biological signal.
@@ -142,7 +142,7 @@ By separating data \emph{compilation} (in Python, where scientists already work)
 The Python-first design is deliberate.
 The bioimaging community, and scientific computing more broadly, has converged on Python as the common language---from acquisition control and analysis pipelines to machine learning frameworks.
 \luxar meets scientists where they are: a few lines of NumPy and \luxar produce an interactive, streamable visualization without requiring web development skills.
-This stands in contrast to existing approaches that either require desktop software (napari\cite{sofroniew2022napari}, Fiji\cite{schindelin2012fiji}) or web-development expertise (custom Neuroglancer\cite{cheng2024neuroglancer} deployments).
+This stands in contrast to existing approaches that either require desktop software (napari\cite{sofroniew2022napari}, Fiji\cite{schindelin2012fiji}) or web-development expertise (custom Neuroglancer\cite{maitinshepard2021neuroglancer} deployments).
 Compared with these tools, \luxar occupies a distinct niche: it requires neither local installation nor multi-resolution pyramid preprocessing, supports mixed geometry types (not just voxels), and achieves 10--300$\times$ compression that makes data transfer practical even over modest bandwidth (Supplementary Fig.~3).
 In benchmarks on an NVIDIA RTX~3070, the viewer maintains 60~FPS for scenes up to 500\,000 elements, with uncapped GPU throughput exceeding 2\,000~renders/second for 100K GSplats during interactive camera orbit (Supplementary Table~1).
 GSplat scenes load in under one second; larger point-cloud datasets (millions of elements) require longer initial transfer but render at full frame rate once loaded.
@@ -152,7 +152,7 @@ The core insight is that fluorescence data is sparse, and Gaussian splats exploi
 Our Noise2Self analysis provides a principled way to determine how much representational capacity a given dataset warrants: the information content of the volume drives the splat count upward, while the noise level caps it.
 At the optimal count, splats capture the recoverable signal while naturally discarding noise---without an explicit denoising step, unlike dedicated self-supervised methods\cite{krull2019noise2void}.
 For light-sheet data, the representation is extraordinarily compact (313$\times$ compression); for noisier confocal data, a lower splat count yields higher-fidelity reconstructions than blindly adding more.
-When compared against H.265 video compression using a Noise2Self held-out framework that measures true signal recovery, Gaussian splats achieve 1--2~dB higher held-out PSNR on noisy confocal data at comparable bits per voxel (Supplementary Fig.~3).
+When compared against H.265 video compression using a Noise2Self held-out framework that measures true signal recovery, Gaussian splats achieve 1--3~dB higher held-out PSNR on noisy confocal data at comparable bits per voxel (Supplementary Fig.~3).
 The splat representation is additionally \emph{directly renderable} without decompression.
 
 While this paper focuses on microscopy, \luxar is domain-agnostic.
@@ -300,7 +300,7 @@ STORM microtubules (5M pts) & 5\,000\,000 & 22.2 & 59 & 103 & 1\,244 \\
 \caption*{\textbf{Supplementary Figure~3 $\vert$ Noise2Self-based signal recovery: Gaussian splats vs.\ H.265 video codec.}
 Held-out PSNR (Noise2Self, 5\% blind-spot mask) vs.\ bits per voxel for 6 datasets spanning confocal (a--e) and light-sheet (f) modalities.
 Blue: GSplats. Orange: H.265 (Z-stack as video, CRF 0--51). Solid: held-out (N2S) PSNR. Faded dashed: raw PSNR (includes noise). Stars: peak held-out PSNR. Dotted: noise floor.
-\textbf{For noisy confocal data (a--d), GSplats achieve 1--2~dB higher held-out PSNR than H.265}, meaning superior signal recovery.
+\textbf{For noisy confocal data (a--d), GSplats achieve 1--3~dB higher held-out PSNR than H.265}, meaning superior signal recovery.
 The gap between raw and held-out curves quantifies noise memorization: both methods overfit at high bit rates, but GSplats reach a higher signal-recovery peak.
 For clean light-sheet data (f), H.265 outperforms because there is minimal noise to distinguish from signal.
 Both methods are spatially aware (GSplats: global mixture model; H.265: block prediction + DCT).
