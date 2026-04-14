@@ -48,7 +48,7 @@ done
 # ──────────────────────────────────────────────────────────────────────
 # 3. BUILD MAIN PAPER (if it exists)
 # ──────────────────────────────────────────────────────────────────────
-MAIN_TEX="manuscript/paper/main.tex"
+MAIN_TEX="manuscript/preprint/luxar_preprint.tex"
 if [ -f "$MAIN_TEX" ]; then
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"

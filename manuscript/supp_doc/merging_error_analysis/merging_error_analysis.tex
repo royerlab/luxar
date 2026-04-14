@@ -111,11 +111,14 @@ implementation.
 % ══════════════════════════════════════════════════════════════════
 
 Gaussian splatting represents a scene as a collection of $N$ oriented
-Gaussians (``splats''), each parameterised by a centre~$\bmu$, an
-amplitude~$a$, and a covariance matrix~$\Sig$
-\citep{kerbl2023}.  For large scientific volumes, $N$ can reach
-millions, making simplification essential for interactive
-visualisation and efficient storage.
+Gaussians (``splats'')~\citep{kerbl2023}.  Each splat is a smooth,
+bell-shaped density function in $D$-dimensional space, fully
+determined by three parameters: a \emph{centre}~$\bmu$ (its position),
+an \emph{amplitude}~$a$ (its peak height), and a \emph{covariance
+matrix}~$\Sig$ (which controls its shape, orientation, and width).
+For large scientific volumes, $N$ can reach millions, making
+simplification essential for interactive visualisation and efficient
+storage.
 
 The most natural simplification primitive is \emph{merging}: replacing
 two nearby or similar splats with a single splat that approximates
@@ -176,10 +179,12 @@ $\phi_1 + \phi_2$ and the best single-splat approximation~$g$.
 \end{figure}
 
 \paragraph{Why \texorpdfstring{$L^2$}{L2}?}
-Several divergences could measure approximation quality
-(\cref{tab:divergences}).  The $L^2$ (integrated squared error)
-framework is uniquely suited because \emph{the integral of a product
-of two Gaussians has a closed-form expression}.  Every term in the
+To quantify how well a single Gaussian approximates a mixture, we
+need a \emph{divergence}---a way to measure the ``distance'' between
+two functions.  Several options exist (\cref{tab:divergences}), but
+the $L^2$ (integrated squared error) framework is uniquely suited
+because \emph{the integral of a product of two Gaussians has a
+closed-form expression}.  Every term in the
 error expansion reduces to such a product, yielding a fully analytical
 result.  By contrast, the Kullback--Leibler divergence for a Gaussian
 mixture involves $\log(\phi_1 + \phi_2)$, which has no closed form
@@ -237,12 +242,17 @@ We work in $\R^D$.  A \textbf{Gaussian splat} is a function
   \phi(\bx) \;=\; a \,\exp\!\Bigl(
     -\tfrac{1}{2}\,(\bx - \bmu)^\top \Sig^{-1} (\bx - \bmu)
   \Bigr),
-  \qquad a > 0,\; \bmu \in \R^D,\;
-  \Sig \in \R^{D\times D} \text{ s.p.d.}
+  \qquad a > 0,\;\; \bmu \in \R^D,\;\;
+  \Sig \succ 0
 \end{equation}
-The covariance $\Sig$ is stored via its lower-triangular Cholesky
-factor $\Lchol$ satisfying $\Sig = \Lchol\Lchol^\top$.  We denote
-the precision matrix $\Prec = \Sig^{-1}$.  In the Luxar implementation,
+where $\Sig \succ 0$ means $\Sig$ is symmetric positive definite
+(i.e., it defines a valid ellipsoidal shape).
+The covariance is stored via its \textbf{Cholesky factor}
+$\Lchol$---a lower-triangular matrix satisfying
+$\Sig = \Lchol\Lchol^\top$ (analogous to taking the ``square root''
+of $\Sig$).  We also write $\Prec = \Sig^{-1}$ for the
+\textbf{precision matrix} (the inverse covariance, which appears
+naturally in the Gaussian exponent).  In the Luxar implementation,
 $\Lchol$ is stored in packed row-major lower-triangular format with
 $D(D{+}1)/2$ elements.
 
@@ -257,6 +267,13 @@ Since $a > 0$ and $\Sig \succ 0$, every splat has finite energy
 $\|\phi\|^2 < \infty$ and all inner products below are well-defined.
 
 \subsection{Derivation of the Kernel}
+
+The inner product $\langle\phi_i, \phi_j\rangle$ measures the
+\emph{geometric overlap} between two Gaussians: it is large when
+they sit close together with similar shapes, and vanishes when they
+are far apart or oriented very differently.  The central result of
+this section is that this overlap has a remarkably simple
+closed-form expression.
 
 \begin{theorem}[Gaussian $L^2$ inner product]\label{thm:kernel}
 For two splats $\phi_i$, $\phi_j$ as in~\eqref{eq:splat_def},
@@ -423,6 +440,10 @@ avoiding explicit matrix inversion.
 \section{The Moment-Matched Approximation}\label{sec:moment_match}
 % ══════════════════════════════════════════════════════════════════
 
+Armed with the closed-form kernel from \cref{sec:kernel}, we can now
+construct the best single-Gaussian replacement for a pair of splats
+and compute the resulting error analytically.
+
 Given two splats $\phi_1, \phi_2$, we seek a single splat
 $g(\bx) = \bar{a}\,\bar{G}(\bx)$
 that best approximates their sum $f = \phi_1 + \phi_2$.
@@ -435,15 +456,19 @@ for the merged splat.
 
 \subsection{Why Moment-Matching?}
 
-The Gaussian family forms an exponential family with sufficient
-statistics $\bx$ and $\bx\bx^\top$ \citep{bishop2006}.
-A classical result from information geometry states that the minimiser
-of the forward KL divergence
-$\mathrm{KL}\!\left(\frac{f}{\int f}\,\middle\|\,
-  \frac{g}{\int g}\right)$
-over any member of an exponential family matches the sufficient
-statistics of the target---i.e., it matches the mean and
-covariance of the \emph{normalised} mixture~\citep{bishop2006, west1993}.
+Any density function can be summarised by its \emph{moments}: the
+total mass (zeroth moment), the mean position (first moment), and the
+spread or covariance (second moment).  A single Gaussian is fully
+determined by its mean and covariance, so matching these moments is
+the most natural way to ``compress'' a mixture into one Gaussian.
+
+This intuition has a rigorous justification.  The Gaussian family
+forms an \emph{exponential family} whose sufficient statistics are
+$\bx$ and $\bx\bx^\top$ \citep{bishop2006}, and a classical result
+from information geometry guarantees that the minimiser of the
+Kullback--Leibler (KL) divergence from a target distribution to a
+single Gaussian matches the target's mean and
+covariance~\citep{bishop2006, west1993}.
 
 Applied to our problem: we first normalise $f = \phi_1 + \phi_2$ to
 a probability distribution, find the Gaussian whose mean and
@@ -584,8 +609,14 @@ all six terms use the kernel from \cref{thm:kernel}.
 
 \subsection{Amplitude Optimisation}\label{ssec:amp_opt}
 
+The moment-matched amplitude~$\bar{a}$ from~\eqref{eq:mm_amp}
+preserves the total mass, but is it the best choice for minimising
+the $L^2$ error?  Not necessarily.  Since the shape parameters
+$(\bar\bmu, \Sigbar)$ are already fixed, we can treat the amplitude
+as a free knob and choose it optimally.
+
 Rather than using the mass-preserving amplitude~$\bar{a}$
-from~\eqref{eq:mm_amp}, we can fix the moment-matched shape parameters
+from~\eqref{eq:mm_amp}, we fix the moment-matched shape parameters
 $(\bar\bmu, \Sigbar)$ and choose the amplitude that minimises the
 $L^2$ error.  Write $\bar{G}(\bx) = \exp(-\frac{1}{2}(\bx {-}
 \bar\bmu)^\top\Sigbar^{-1}(\bx {-} \bar\bmu))$ for the
@@ -613,8 +644,16 @@ error, and still fully closed-form.
 
 \subsection{The Mergeability Score}\label{ssec:mergeability}
 
-Normalising~\eqref{eq:E_star} by the mixture's total energy gives a
-dimensionless score (\cref{fig:angle_diagram}):
+The error~$E^*$ has units of ``energy squared,'' which depends on
+the amplitudes and dimension.  To obtain a universal, dimensionless
+measure, we normalise by the mixture's total energy~$\|f\|^2$.
+The result has a beautiful geometric interpretation
+(\cref{fig:angle_diagram}): think of the mixture~$f$ and the template
+Gaussian~$\bar{G}$ as vectors in the infinite-dimensional Hilbert
+space of square-integrable functions.  The best amplitude~$a^*$ is
+the scalar projection of~$f$ onto~$\bar{G}$, exactly as in
+ordinary Euclidean geometry, and the relative error is the sine
+squared of the angle between them:
 
 \begin{equation}\label{eq:mergeability}
 \boxed{
@@ -700,6 +739,9 @@ $L^2$} (the Hilbert space of square-integrable functions).
 
 \subsection{Expanding the Score}
 
+For implementation, we expand the inner products in the mergeability
+score into explicit kernel evaluations.  The score depends on four
+types of kernel evaluation, listed in~\cref{tab:kernel_evals}.
 Writing out all terms in~\eqref{eq:mergeability} using the
 kernel~\eqref{eq:kernel}:
 
@@ -860,6 +902,10 @@ proxy for ranking pairs by mergeability.
 % ══════════════════════════════════════════════════════════════════
 \section{Special Cases}\label{sec:special}
 % ══════════════════════════════════════════════════════════════════
+
+To build intuition for the general formulas, we examine three
+limiting cases where the expressions simplify dramatically and yield
+practical rules of thumb.
 
 \subsection{Equal Isotropic Covariances}
 \label{ssec:iso}
