@@ -1,2 +1,5 @@
+# Ignore binary analysis artifacts but track TSV results
 *
 !.gitignore
+!*/
+!**/*.tsv

@@ -1,4 +1,5 @@
-# Ignore all generated analysis data
+# Ignore binary analysis artifacts but track TSV results
 *
-# But keep this .gitignore
 !.gitignore
+!*/
+!**/*.tsv
