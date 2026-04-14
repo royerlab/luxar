@@ -1,5 +1,8 @@
-# Ignore binary analysis artifacts but track TSV results
+# Ignore binary analysis artifacts but track TSV results and cached slices
 *
 !.gitignore
 !*/
 !**/*.tsv
+# Allow cached slices (needed for figure generation without GPU)
+!*/slices/
+!*/slices/*.npz
