@@ -8,8 +8,8 @@ biological structures, and a wide range of volume sizes. It consists of three
 complementary experiments per dataset:
 
 1. **Rate-distortion analysis** — PSNR, SSIM, and compression vs splat count
-2. **Noise2Self analysis** — blind-spot cross-validation to disentangle signal
-   fitting from noise fitting (Batson & Royer, ICML 2019)
+2. **Blind-spot cross-validation** — held-out validation to disentangle signal
+   fitting from noise fitting (masking inspired by Batson & Royer, ICML 2019)
 3. **Noise floor estimation** — theoretical PSNR ceiling from ensemble noise
    estimators (Laplacian MAD + Haar MAD + background MAD)
 
@@ -77,7 +77,7 @@ the recoverable signal.
 
 ---
 
-## Analysis 2: Noise2Self — Signal vs Noise Fitting
+## Analysis 2: Blind-Spot Cross-Validation — Signal vs Noise Fitting
 
 ### Held-out PSNR behaviour
 
@@ -127,7 +127,7 @@ stopping criterion:
 The dashed noise floor line in the figures shows the theoretical PSNR ceiling for
 a perfect denoiser. When the *train* PSNR approaches or exceeds this line (as in
 kidney_dapi at 512K), the model is fitting noise — confirmed by the held-out
-decline. In the N2S MSE panel, the noise variance line shows the minimum achievable
+decline. In the cross-validation MSE panel, the noise variance line shows the minimum achievable
 MSE; the train MSE drops below it, confirming noise memorisation.
 
 ---
@@ -164,7 +164,7 @@ sparse microtubule signal) and the lowest noise floor (30.4 dB).
 
 2. **Conservative culling (0.999) exposes overfitting.** With aggressive culling
    (0.99), the post-fit removal of weak splats masks the noise-fitting problem.
-   With minimal culling, the overfitting is clearly visible in the N2S curves.
+   With minimal culling, the overfitting is clearly visible in the cross-validation curves.
 
 3. **The noise floor contextualises the rate-distortion curves.** Datasets far
    below their noise floor (OpenCell, kidney) have room for improvement through
@@ -184,8 +184,8 @@ splat_count_vs_quality/
     datasets.py              # 7 registered datasets
     run_analysis.py          # Rate-distortion runner
     plot_results.py          # Quality curves + slice montage
-    run_noise2self.py        # Noise2Self blind-spot analysis
-    plot_noise2self.py       # N2S train/held-out curves
+    run_noise2self.py        # Blind-spot cross-validation analysis
+    plot_noise2self.py       # Cross-validation train/held-out curves
     noise_floor.py           # Noise estimation module
     run_noise_floor.py       # Noise floor runner
     INTERPRETATION.md        # This file

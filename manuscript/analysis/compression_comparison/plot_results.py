@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot compression comparison at N2S-optimal splat counts."""
+"""Plot compression comparison at CV-optimal splat counts."""
 
 import matplotlib
 
@@ -11,7 +11,8 @@ import numpy as np
 import pandas as pd
 
 RESULTS_DIR = Path(__file__).parent / "results"
-FIGS_DIR = Path(__file__).parent.parent.parent / "preprint" / "figs"
+FIGS_DIR = Path(__file__).parent.parent.parent / "preprint" / "figs" / "suppfig"
+FIGS_DIR.mkdir(parents=True, exist_ok=True)
 
 COLORS = {
     'kidney_dapi': '#0072B2', 'kidney_actin': '#D55E00',
@@ -43,7 +44,7 @@ def main():
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.2, 2.8))
 
-    # Panel a: Raw vs splat file sizes at N2S-optimal count
+    # Panel a: Raw vs splat file sizes at CV-optimal count
     summary = df.sort_values('raw_MB', ascending=True)
 
     y = np.arange(len(summary))
@@ -52,11 +53,10 @@ def main():
     ax1.barh(y + bar_h/2, summary['raw_MB'], bar_h, color='#cccccc',
              label='Raw (float32)', edgecolor='none')
     ax1.barh(y - bar_h/2, summary['splat_MB'], bar_h, color='#0072B2',
-             label='GSplats (N2S optimal)', edgecolor='none')
+             label='GSplats (CV optimal)', edgecolor='none')
 
-    # Add N2S count and CR annotations
+    # Add CV-optimal count and CR annotations
     for i, (_, row) in enumerate(summary.iterrows()):
-        peak_mark = '' if row['n2s_genuine_peak'] else '*'
         ax1.text(row['splat_MB'] * 1.3, i - bar_h/2,
                  f"{row['cr_vs_raw']:.0f}x",
                  fontsize=5, va='center', color='#0072B2', fontweight='bold')
@@ -78,7 +78,7 @@ def main():
                  color=COLORS.get(ds, '#333'), label=NAMES.get(ds, ds),
                  markersize=3, linewidth=0.9, markeredgewidth=0.3, markeredgecolor='white')
 
-        # Mark the N2S-optimal point with a star
+        # Mark the CV-optimal point with a star
         opt_row = df[df['dataset'] == ds]
         if not opt_row.empty and opt_row['n2s_genuine_peak'].values[0]:
             opt_bpv = opt_row['bpv_splat'].values[0]
@@ -93,7 +93,7 @@ def main():
     ax2.text(-0.02, 1.05, 'b', transform=ax2.transAxes, fontsize=10, fontweight='bold')
 
     plt.tight_layout()
-    out = FIGS_DIR / "suppfig_compression.pdf"
+    out = FIGS_DIR / "compression_cv_optimal.pdf"
     fig.savefig(out, dpi=300)
     plt.close()
     print(f"Saved: {out}")

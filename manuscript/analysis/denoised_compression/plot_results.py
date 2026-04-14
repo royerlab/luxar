@@ -14,7 +14,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 RESULTS_DIR = Path(__file__).parent / "results"
-FIGS_DIR = Path(__file__).parent.parent.parent / "preprint" / "figs"
+FIGS_DIR = Path(__file__).parent.parent.parent / "preprint" / "figs" / "suppfig"
+FIGS_DIR.mkdir(parents=True, exist_ok=True)
 
 NAMES = {
     'kidney_dapi': 'Kidney DAPI',
@@ -53,7 +54,7 @@ def main():
                 markeredgewidth=0.3, markeredgecolor='white',
                 label='GSplats (held-out)', zorder=6)
 
-        # Mark N2S-optimal (held-out peak)
+        # Mark CV-optimal (held-out peak)
         if not gs.empty:
             peak_idx = gs['psnr_heldout'].idxmax()
             last_idx = gs.index[-1]
@@ -91,7 +92,7 @@ def main():
                 fontsize=10, fontweight='bold')
 
     plt.tight_layout()
-    out = FIGS_DIR / "suppfig_compression.pdf"
+    out = FIGS_DIR / "compression_denoised.pdf"
     fig.savefig(out, dpi=300)
     plt.close()
     print(f"Saved: {out}")

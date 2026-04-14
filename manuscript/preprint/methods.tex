@@ -18,7 +18,7 @@ The loss function is:
 \begin{equation}
 \mathcal{L} = \mathcal{L}_\text{recon} + \lambda_a \|\mathbf{a}\|_1 + \lambda_d \|\text{diag}(\mathbf{L})\|_1 + \lambda_b \mathcal{L}_\text{boundary}
 \end{equation}
-where $\mathcal{L}_\text{recon}$ is an asymmetric L1 loss that penalizes over-prediction $10\times$ more than under-prediction, $\lambda_a = 10^{-5}$ and $\lambda_d = 10^{-4}$ regularize splat amplitude and extent, and $\mathcal{L}_\text{boundary}$ penalizes splats whose centers fall outside the volume.
+where $\mathcal{L}_\text{recon}$ is the L1 reconstruction loss between the predicted and target volumes, $\lambda_a = 10^{-5}$ and $\lambda_d = 10^{-4}$ regularize splat amplitude and extent, and $\mathcal{L}_\text{boundary}$ penalizes splats whose centers fall outside the volume.
 
 \paragraph{Dynamic operations.}
 Every 500 iterations, the optimizer performs dynamic topology adjustment: (1) splats with amplitude below a threshold ($10^{-4}$ of the volume maximum) are pruned; (2) residual-guided relocation moves the lowest-amplitude splats to positions of peak reconstruction error; (3) Z-order (Morton code) sorting is applied to improve GPU cache locality.
@@ -32,14 +32,14 @@ Seeding supports GPU acceleration (CUDA, MPS) for 10--50$\times$ speedup on larg
 \paragraph{Tiled fitting.}
 For volumes exceeding GPU memory, \luxar partitions the volume into overlapping tiles on a regular grid with stride $T - L$, where $T$ is the tile size and $L$ is the overlap.
 Each tile is fitted independently with the same optimizer configuration.
-Splat amplitudes are modulated by a cosine (Hann) window $w(k) = \frac{1}{2}(1 - \cos(\pi k / (L+1)))$ applied along each overlap face, producing a partition-of-unity: adjacent windows sum to 1.0.
+Splat amplitudes are modulated by a cosine (Hann) window $w(k) = \frac{1}{2}(1 - \cos(\pi k / (L+1)))$ for $k = 1, \ldots, L$, where $k$ indexes voxels within the overlap region, applied along each overlap face, producing a partition-of-unity: adjacent windows sum to 1.0.
 Boundary faces retain unit weight.
 The constraint $L \leq T/2$ prevents triple overlap.
 After fitting, tiles are concatenated into a single splat dataset.
 
 \paragraph{Data encoding and spatial indexing.}
 Fitted splats are written to Zarr\cite{miles2023zarr} archives with semantic encoding (7 data types, 4 compression modes) and Blosc compression (zstd level~3).
-Spatial indexing uses compound ordering: discrete non-spatial dimensions (time, channel) form the most-significant bits, followed by a Morton (Z-order) curve over spatial coordinates.
+Spatial indexing uses compound ordering: discrete non-spatial dimensions (time, channel) form the most-significant bits, followed by a space-filling curve over spatial coordinates. Both Hilbert and Morton (Z-order) curves are supported; Hilbert provides superior spatial locality and is the default for serialization, while Morton is used for in-memory reordering during fitting due to its lower computational cost.
 This ordering ensures that spatially proximate splats are stored in adjacent chunks, enabling efficient view-frustum culling at load time.
 Chunk-level axis-aligned bounding boxes are precomputed and stored as metadata.
 
@@ -55,20 +55,21 @@ Gaussian splats are treated as hyperspheres: the effective display radius is $r_
 Per-dimension affine transforms (scale, offset) and categorical permutations are supported via an inverse-query approach that transforms the query in O(1) rather than transforming all point positions.
 
 \paragraph{Rate-distortion analysis.}
-For each of the 12 datasets, we fitted Gaussian splat models at 10 splat counts logarithmically spaced from 1K to 512K.
+For each of the 12 datasets, we fitted Gaussian splat models at 10 splat counts geometrically spaced (doubling from 1K to 512K).
 All fits used conservative culling (99.9\% amplitude retention), 20,000 maximum iterations, early stopping patience of 500 iterations, L1 loss, and enabled dynamic operations.
-PSNR was computed as $10 \log_{10}(1 / \text{MSE})$ on volumes normalized to $[0, 1]$.
+PSNR was computed as $10 \log_{10}(1 / \text{MSE})$ on volumes normalized to $[0, 1]$ (equivalent to the standard $10\log_{10}(\text{MAX}^2/\text{MSE})$ with $\text{MAX} = 1$); MSE is averaged over all voxels including background.
 SSIM\cite{wang2004image} was computed with a window size of 7 and Gaussian weighting.
+The compression ratio is defined as $N_\text{voxels} / (K \times F_D)$, where $K$ is the number of splats after culling and $F_D = D + D(D{+}1)/2 + 1$ is the number of float parameters per splat (10 for 3D: 3 center coordinates, 6 Cholesky elements, 1 amplitude).
 
-\paragraph{Noise2Self analysis.}
-We adapted the Noise2Self\cite{batson2019noise2self} blind-spot framework for Gaussian splat model selection.
+\paragraph{Blind-spot cross-validation.}
+We adapted the blind-spot cross-validation framework of Batson \& Royer\cite{batson2019noise2self} for Gaussian splat model selection.
 For each dataset and splat count, 5\% of voxels were randomly selected and replaced with the median of their 3$\times$3$\times$3 donut neighborhood (excluding the center voxel).
 Gaussian splats were fitted to this modified volume.
 The train PSNR was computed on unmasked voxels against the original volume; the held-out PSNR was computed on the masked voxels against the original (pre-replacement) values.
 The splat count at which the held-out PSNR peaks identifies the point beyond which additional splats memorize noise rather than capture signal.
 
 \paragraph{Compression baseline comparison.}
-We compared Gaussian splats against H.265 video compression (libx265, treating Z-stacks as video sequences) using the Noise2Self blind-spot framework\cite{batson2019noise2self} applied identically to both methods.
+We compared Gaussian splats against H.265 video compression (libx265, treating Z-stacks as video sequences) using the same blind-spot cross-validation framework\cite{batson2019noise2self} applied identically to both methods.
 For each dataset, 5\% of voxels were randomly selected and replaced with the median of their 3$\times$3$\times$3 donut neighborhood (26-connected, excluding the center voxel).
 Both GSplats and H.265 were then applied to this modified volume: GSplats were fitted to it (the optimizer sees donut-filled values at masked positions); H.265 encoded it at CRF values 0--51.
 In both cases, the held-out PSNR was computed by comparing the output at masked positions against the \emph{original} (pre-replacement) values, measuring each method's ability to recover the true signal from surrounding context.
@@ -83,7 +84,7 @@ The noise floor PSNR is $10\log_{10}(1/\sigma^2)$.
 All datasets are from public repositories.
 OpenCell spinning-disk confocal\cite{cho2022opencell}: MAP4-GFP (microtubules) and Hoechst (nuclei), 51$\times$600$\times$600 voxels; LMNB1, 112$\times$600$\times$600 voxels.
 Mouse kidney confocal: DAPI (nuclei) and Phalloidin (actin), 16$\times$512$\times$512 voxels, acquired by G.~Buckley (Monash Micro Imaging), distributed via scikit-image\cite{vanderWalt2014scikit}.
-Cells3D (hiPSC, Allen Institute\cite{viana2023allen}): nuclei and membrane channels, 60$\times$256$\times$256, via scikit-image\cite{vanderWalt2014scikit}.
+Cells3D (HeLa, confocal): nuclei and membrane channels, 60$\times$256$\times$256, via scikit-image\cite{vanderWalt2014scikit}.
 3D cell culture (mouse ESC acini)\cite{blin2019nessys}: 236$\times$275$\times$271 voxels, from IDR (idr0062).
 \emph{C.~elegans} embryo confocal\cite{murray2008celegans}: timepoint 100, 41$\times$512$\times$512, via the Cell Tracking Challenge\cite{maska2023celltracking}.
 Tribolium embryo light-sheet: 991$\times$104$\times$965 voxels (cropped, multi-view deconvolved)\cite{preibisch2014efficient}.

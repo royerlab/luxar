@@ -44,7 +44,7 @@
     Here we introduce \luxar, an open-source, Python-first system in which a few lines of code compile arbitrary-dimensional data---points, lines, and Gaussian splats---into compact, spatially indexed archives that are served to a browser-based viewer with HDR rendering, progressive streaming, and native $n$-dimensional navigation.
     No web development or server expertise is required.
     We demonstrate \luxar across domains including microscopy, single-cell genomics, and astronomy, and focus on a new capability: fitting microscopy volumes to Gaussian splats---compact, continuous, GPU-renderable primitives that exploit the sparsity of fluorescence data.
-    Systematic evaluation on 12~microscopy datasets achieves 13--313$\times$ compression at 25--43~dB PSNR---a 100-million-voxel light-sheet volume shrinks from 400~MB to 1.3~MB while preserving structural fidelity. A Noise2Self analysis provides a principled criterion for determining when the model has captured all recoverable signal, separating structural information from noise.
+    Systematic evaluation on 12~microscopy datasets achieves 13--313$\times$ compression at 25--43~dB PSNR---a 100-million-voxel light-sheet volume shrinks from 400~MB to 1.3~MB while preserving structural fidelity. Blind-spot cross-validation provides a principled criterion for determining when the model has captured all recoverable signal, separating structural information from noise.
     Tiled fitting with cosine apodization removes the GPU memory ceiling.
     \luxar makes volumetric scientific data as easy to share and explore as a web link.}
 ]
@@ -73,8 +73,8 @@ Fluorescence microscopy data is inherently sparse: signal is concentrated in str
 Gaussian splatting\cite{kerbl2023gaussian}, originally developed for real-time novel-view synthesis as an alternative to neural radiance fields\cite{mildenhall2021nerf}, represents a volume as a mixture of oriented, anisotropic Gaussian primitives, placing representational capacity only where signal exists.
 The resulting representation is continuous, compact, and directly GPU-renderable---properties that align precisely with the needs of microscopy data dissemination.
 
-We adapt Gaussian splatting for microscopy with a purpose-built optimization pipeline featuring asymmetric loss, per-splat Adam optimization with dynamic topology, and Cholesky-parameterized covariance.
-We validate the approach on 12~datasets spanning confocal, spinning-disk, and light-sheet modalities, and show via a Noise2Self\cite{batson2019noise2self} analysis that the noise level sets an upper bound on useful model complexity---providing a principled criterion for separating signal from noise.
+We adapt Gaussian splatting for microscopy with a purpose-built optimization pipeline featuring per-splat Adam optimization with dynamic topology and Cholesky-parameterized covariance.
+We validate the approach on 12~datasets spanning confocal, spinning-disk, and light-sheet modalities, and show via blind-spot cross-validation\cite{batson2019noise2self} that the noise level sets an upper bound on useful model complexity---providing a principled criterion for separating signal from noise.
 Tiled fitting with cosine apodization removes the GPU memory ceiling, enabling reconstruction of arbitrarily large volumes via embarrassingly parallel computation.
 
 
@@ -100,11 +100,11 @@ Gaussian splats and points are treated as hyperspheres in $n$D; visibility is de
 \end{equation}
 where $\boldsymbol{\mu}_k$ is the position, $a_k > 0$ the amplitude, and $\mathbf{L}_k$ the Cholesky factor of the covariance ($\boldsymbol{\Sigma}_k = \mathbf{L}_k \mathbf{L}_k^\top$), ensuring positive-definiteness by construction.
 Parameters are optimized via a per-splat Adam optimizer\cite{kingma2015adam} with individual momentum states, enabling dynamic operations---relocation, pruning, and seeding---without disrupting existing primitives.
-An asymmetric L1 loss penalizes over-prediction 10$\times$ more than under-prediction, reflecting the asymmetry of additive models.
+The reconstruction loss is L1 with regularization on splat amplitudes and extents (see Methods).
 Initial positions are determined by GPU-accelerated edge detection (see Methods).
 
 \paragraph{Reconstruction quality across microscopy modalities.}
-We evaluated reconstruction across 12~datasets spanning spinning-disk confocal (OpenCell\cite{cho2022opencell}), standard confocal (kidney tissue, intestinal organoid, \emph{C.~elegans} embryo), and light-sheet (Tribolium embryo) modalities, with volumes from 4~to 100~million voxels (Table~\ref{tab:summary}).
+We evaluated reconstruction across 12~datasets spanning spinning-disk confocal (OpenCell\cite{cho2022opencell}), standard confocal (kidney tissue, intestinal organoid, \emph{C.~elegans} embryo), and light-sheet (Tribolium embryo) modalities, with volumes from 4~to 100~million voxels (Table~\ref{tab:summary}; 7 representative datasets shown, all 12 in Supplementary Document~2).
 
 All datasets exhibit a log-linear rate-distortion relationship (Fig.~\ref{fig:ratedistortion}a).
 The Tribolium light-sheet volume ($\sigma = 0.0009$) plateaus at 32K~splats with 42.6~dB PSNR and 313$\times$ compression (Fig.~\ref{fig:visual}i--l).
@@ -112,18 +112,18 @@ Kidney tissue achieves 33.7~dB at 32K~splats and continues to 37.3~dB at 512K (F
 SSIM follows a similar pattern (Fig.~\ref{fig:ratedistortion}b).
 At 32K~splats, compression ratios range from 13$\times$ to 313$\times$ with 25--43~dB PSNR (Fig.~\ref{fig:ratedistortion}c, Table~\ref{tab:summary}), and fitting completes in 10--60~seconds on a consumer GPU.
 
-\paragraph{Noise2Self identifies the boundary between signal and noise.}
+\paragraph{Cross-validation identifies the boundary between signal and noise.}
 The number of splats needed to represent a volume is primarily determined by its information content---the structural complexity of the biological signal.
 However, adding splats beyond what the signal requires causes the model to memorize noise.
-We used a Noise2Self\cite{batson2019noise2self} blind-spot analysis to detect this transition: 5\% of voxels were replaced with their donut-median neighborhood values (blind-spot), splats were fitted to the modified volume, and reconstruction quality was evaluated on the masked voxels against the original (pre-replacement) values.
+We used blind-spot cross-validation---masking 5\% of voxels and replacing them with donut-median neighborhood values\cite{batson2019noise2self}, then evaluating held-out reconstruction---to detect this transition.
 
 The held-out PSNR peaks and then declines for 6 of 7~core datasets (Fig.~\ref{fig:ratedistortion}d, Supplementary Document~2).
 For kidney DAPI ($\sigma = 0.009$), the train--held-out gap widens to 5.9~dB at 512K~splats, indicating that splats beyond the 63K optimum are fitting noise rather than structure.
-Across datasets, the noise level caps useful model capacity (Fig.~\ref{fig:ratedistortion}f): noisier datasets reach their representational ceiling at fewer splats because noise obscures the remaining recoverable signal.
+Across datasets, the noise level constrains useful model capacity (Fig.~\ref{fig:ratedistortion}f): the held-out peak provides a per-dataset stopping criterion, with noisier datasets generally reaching their ceiling at fewer splats, though structural complexity also plays a role.
 This provides a practical recipe: fit at increasing capacity, stop at the held-out peak.
 
 The sole exception is the Tribolium light-sheet volume, where train and held-out curves are virtually identical (Fig.~\ref{fig:ratedistortion}e).
-This dataset was produced by multi-view deconvolution\cite{preibisch2014efficient}, a process that introduces spatial correlations in the residual noise, violating the pixel-independence assumption underlying Noise2Self.
+This dataset was produced by multi-view deconvolution\cite{preibisch2014efficient}, a process that introduces spatial correlations in the residual noise, violating the pixel-independence assumption underlying the blind-spot framework.
 Consequently, the blind-spot validation cannot distinguish signal from noise in this case---the model appears signal-limited at all tested capacities.
 
 \paragraph{Tiled fitting for scalability.}
@@ -131,6 +131,10 @@ For volumes exceeding GPU memory, \luxar partitions the volume into overlapping 
 Cosine (Hann) apodization windows ensure a partition of unity at tile boundaries---adjacent windows sum to exactly 1.0---eliminating visible seams.
 Tiles are embarrassingly parallel: they distribute across GPUs, cluster nodes, or Slurm array jobs---a 512$^3$ volume that would exceed consumer GPU memory can be processed as overlapping 256$^3$ tiles in minutes.
 The \luxar batch system handles OME-Zarr\cite{moore2021ome} 5D layouts (time, channel, Z, Y, X) with automatic fan-in merging.
+
+\paragraph{Viewer performance.}
+In benchmarks on an NVIDIA RTX~3070, the web viewer maintains 60~FPS for scenes up to 500,000 elements, with uncapped GPU throughput exceeding 2,000~renders/second for 100K GSplats during interactive camera orbit (Supplementary Table~1).
+GSplat scenes load in under one second; larger point-cloud datasets (millions of elements) require longer initial transfer but render at full frame rate once loaded.
 
 
 %% ========== DISCUSSION ==========
@@ -144,23 +148,23 @@ The bioimaging community, and scientific computing more broadly, has converged o
 \luxar meets scientists where they are: a few lines of NumPy and \luxar produce an interactive, streamable visualization without requiring web development skills.
 This stands in contrast to existing approaches that either require desktop software (napari\cite{sofroniew2022napari}, Fiji\cite{schindelin2012fiji}) or web-development expertise (custom Neuroglancer\cite{maitinshepard2021neuroglancer} deployments).
 Compared with these tools, \luxar occupies a distinct niche: it requires neither local installation nor multi-resolution pyramid preprocessing, supports mixed geometry types (not just voxels), and achieves 10--300$\times$ compression that makes data transfer practical even over modest bandwidth (Supplementary Fig.~3).
-In benchmarks on an NVIDIA RTX~3070, the viewer maintains 60~FPS for scenes up to 500\,000 elements, with uncapped GPU throughput exceeding 2\,000~renders/second for 100K GSplats during interactive camera orbit (Supplementary Table~1).
-GSplat scenes load in under one second; larger point-cloud datasets (millions of elements) require longer initial transfer but render at full frame rate once loaded.
+Rendering performance is sufficient for interactive exploration of all tested scene sizes (Supplementary Table~1).
 
 The Gaussian splatting contribution extends this accessibility to volumetric microscopy.
 The core insight is that fluorescence data is sparse, and Gaussian splats exploit this sparsity by placing representational capacity only where signal exists.
-Our Noise2Self analysis provides a principled way to determine how much representational capacity a given dataset warrants: the information content of the volume drives the splat count upward, while the noise level caps it.
+Our cross-validation analysis provides a principled way to determine how much representational capacity a given dataset warrants: the information content of the volume drives the splat count upward, while the noise level caps it.
 At the optimal count, splats capture the recoverable signal while naturally discarding noise---without an explicit denoising step, unlike dedicated self-supervised methods\cite{krull2019noise2void}.
 For light-sheet data, the representation is extraordinarily compact (313$\times$ compression); for noisier confocal data, a lower splat count yields higher-fidelity reconstructions than blindly adding more.
-When compared against H.265 video compression using a Noise2Self held-out framework that measures true signal recovery, Gaussian splats achieve up to 3~dB higher held-out PSNR on noisy confocal data (Supplementary Fig.~3).
+When compared against H.265 video compression using a blind-spot held-out framework that measures true signal recovery, Gaussian splats achieve up to 3~dB higher held-out PSNR on noisy confocal data (Supplementary Fig.~3).
 The splat representation is additionally \emph{directly renderable} without decompression.
+We also find that single-pass fitting with conservative culling outperforms progressive multi-pass approaches at a fixed splat budget for 8 of 12~datasets, while 2-pass progressive fitting yields +0.9 to +1.7~dB gains for clean, well-structured volumes---and is consistently 2--9$\times$ faster (Supplementary Fig.~4; Supplementary Document~3).
 
 While this paper focuses on microscopy, \luxar is domain-agnostic.
 The same system visualizes millions of stars from astronomical surveys, hundreds of thousands of cells from single-cell atlases (Tabula Sapiens), protein embeddings, super-resolution localizations, and cell tracking trajectories mixing Gaussian splats with polyline overlays---all with native $n$-dimensional navigation (Fig.~\ref{fig:overview}c).
 We envision \luxar as infrastructure: a common layer between Python-based data generation and interactive, web-based exploration, applicable wherever scientists produce multidimensional data and need to share it.
 
-Limitations include the inherent approximation of Gaussian splats for thin structures, coordination overhead for very large tiled fits on HPC systems, and the absence of quantitative intensity analysis (the representation is lossy).
-The Noise2Self model-selection procedure requires fitting at multiple splat counts, though each fit takes only 10--60~seconds, making a full sweep practical.
+Limitations include the inherent approximation of Gaussian splats, which can blur thin filamentous structures (e.g., individual microtubules) where the Gaussian shape is a poor local fit; coordination overhead for very large tiled fits on HPC systems; and the absence of quantitative intensity analysis (the representation is lossy).
+The cross-validation model-selection procedure requires fitting at multiple splat counts, though each fit takes only 10--60~seconds, making a full sweep practical.
 
 \luxar is open source and installable via \texttt{pip install luxar}.
 Code, documentation, and live demos are available at \url{https://github.com/royerlab/luxar}.
@@ -170,7 +174,7 @@ Code, documentation, and live demos are available at \url{https://github.com/roy
 
 \begin{figure*}[t]
     \centering
-    \includegraphics[width=\textwidth]{figs/fig1_overview.pdf}
+    \includegraphics[width=\textwidth]{figs/overview/overview.pdf}
     \vspace{-0.5em}
     \caption{\textbf{The \luxar system: from Python to interactive web visualization.}
     \textbf{a,} Scientists work entirely in Python: a few lines of code compile data (points, lines, or Gaussian splats) into a spatially indexed Zarr archive with $n$-dimensional coordinates.
@@ -182,7 +186,7 @@ Code, documentation, and live demos are available at \url{https://github.com/roy
 
 \begin{figure*}[t]
     \centering
-    \includegraphics[width=\textwidth]{figs/fig_visual_comparison.pdf}
+    \includegraphics[width=\textwidth]{figs/visual_comparison/visual_comparison.pdf}
     \caption{\textbf{Visual quality of Gaussian splat reconstructions across modalities.}
     Representative slices at increasing splat counts.
     \textbf{a--d,} Mouse kidney\cite{vanderWalt2014scikit} (confocal, DAPI): 128K splats recover fine nuclear morphology at 3$\times$ compression.
@@ -194,21 +198,21 @@ Code, documentation, and live demos are available at \url{https://github.com/roy
 
 \begin{figure*}[t]
     \centering
-    \includegraphics[width=\textwidth]{figs/fig3_combined.pdf}
+    \includegraphics[width=\textwidth]{figs/quantitative_analysis/quantitative_analysis.pdf}
     \caption{\textbf{Quantitative analysis and noise-aware model selection.}
     \emph{Top row:} rate-distortion analysis across 7~representative datasets (of 12 total).
     \textbf{a,} PSNR vs.\ splat count. All datasets show log-linear improvement.
     \textbf{b,} SSIM vs.\ splat count.
     \textbf{c,} PSNR vs.\ compression ratio (higher compression to the left).
-    \emph{Bottom row:} Noise2Self blind-spot validation.
+    \emph{Bottom row:} Blind-spot cross-validation.
     \textbf{d,} Kidney DAPI (confocal): held-out PSNR peaks at 63K splats (star) then declines---a 5.9~dB overfitting gap at 512K.
     \textbf{e,} Tribolium (light-sheet): no overfitting; train and held-out curves overlap.
-    \textbf{f,} Optimal splat count (held-out peak) correlates with noise level: noisier data saturates at fewer splats. Tribolium excluded (no held-out peak; see text).}
+    \textbf{f,} Optimal splat count (held-out peak) varies with noise level and structural complexity: noisier data generally saturates at fewer splats. Tribolium excluded (no held-out peak; see text).}
     \label{fig:ratedistortion}
 \end{figure*}
 
 %% ========== TABLE ==========
-\input{figs/table_summary.tex}
+\input{figs/table/table_summary.tex}
 
 
 %% ========== METHODS ==========
@@ -244,11 +248,11 @@ Closed-form L$^2$ integrated squared-error framework for merging two Gaussian sp
 
 \vspace{0.5em}
 \noindent\textbf{Supplementary Document~2\label{suppdoc:ratedistortion}} --- \textbf{Splat count vs.\ reconstruction quality.}
-Systematic rate-distortion analysis across all 12~microscopy datasets with Noise2Self model selection, noise floor estimation, per-dataset quality curves, visual reconstructions, and held-out validation.
+Systematic rate-distortion analysis across all 12~microscopy datasets with blind-spot cross-validation model selection, noise floor estimation, per-dataset quality curves, visual reconstructions, and held-out validation.
 
 \vspace{0.5em}
 \noindent\textbf{Supplementary Document~3\label{suppdoc:progressive}} --- \textbf{Progressive vs.\ single-pass fitting.}
-Comparison at a fixed 32K-splat budget across 12~datasets. Single-pass with conservative culling outperforms progressive approaches for most confocal data.
+Comparison at a fixed 32K-splat budget across 12~datasets. Single-pass wins for 8/12 datasets (mostly confocal); 2-pass progressive gains +0.9 to +1.7~dB for 4 datasets with clean, well-structured signals, and is 2--9$\times$ faster across all datasets.
 
 \vspace{0.5em}
 \noindent\textbf{Supplementary Document~4\label{suppdoc:convergence}} --- \textbf{Convergence analysis.}
@@ -256,16 +260,16 @@ Convergence at 5 splat counts and 11 iteration checkpoints. 500--2\,000 iteratio
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=0.95\textwidth]{figs/suppfig_n2s_all.pdf}
-\caption*{\textbf{Supplementary Figure~1 $\vert$ Noise2Self analysis for all 7 core datasets.}
+\includegraphics[width=0.95\textwidth]{figs/suppfig/cv_all.pdf}
+\caption*{\textbf{Supplementary Figure~1 $\vert$ Blind-spot cross-validation for all 7 core datasets.}
 Train (solid) and held-out (dashed) PSNR vs.\ splat count.
 Stars: held-out peak. Dotted lines: noise floor.
-All confocal datasets exhibit overfitting at high counts; the Tribolium light-sheet dataset does not, likely because multi-view deconvolution introduces spatial noise correlations that violate the Noise2Self pixel-independence assumption.}
+All confocal datasets exhibit overfitting at high counts; the Tribolium light-sheet dataset does not, likely because multi-view deconvolution introduces spatial noise correlations that violate the pixel-independence assumption underlying the blind-spot framework.}
 \end{figure*}
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=0.95\textwidth]{figs/suppfig_convergence.pdf}
+\includegraphics[width=0.95\textwidth]{figs/suppfig/convergence.pdf}
 \caption*{\textbf{Supplementary Figure~2 $\vert$ Convergence across datasets and splat counts.}
 Most quality is gained within 500--2\,000 iterations.
 Model capacity has a larger effect than optimization duration.}
@@ -296,15 +300,27 @@ STORM microtubules (5M pts) & 5\,000\,000 & 22.2 & 59 & 103 & 1\,244 \\
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=0.95\textwidth]{figs/suppfig_compression.pdf}
-\caption*{\textbf{Supplementary Figure~3 $\vert$ Noise2Self-based signal recovery: Gaussian splats vs.\ H.265 video codec.}
-Held-out PSNR (Noise2Self, 5\% blind-spot mask) vs.\ bits per voxel for 6 datasets spanning confocal (a--e) and light-sheet (f) modalities.
-Blue: GSplats. Orange: H.265 (Z-stack as video, CRF 0--51). Solid: held-out (N2S) PSNR. Faded dashed: raw PSNR (includes noise). Stars: peak held-out PSNR. Dotted: noise floor.
+\includegraphics[width=0.95\textwidth]{figs/suppfig/compression.pdf}
+\caption*{\textbf{Supplementary Figure~3 $\vert$ Cross-validation signal recovery: Gaussian splats vs.\ H.265 video codec.}
+Held-out PSNR (5\% blind-spot mask) vs.\ bits per voxel for 6 datasets spanning confocal (a--e) and light-sheet (f) modalities.
+Blue: GSplats. Orange: H.265 (Z-stack as video, CRF 0--51). Solid: held-out PSNR. Faded dashed: raw PSNR (includes noise). Stars: peak held-out PSNR. Dotted: noise floor.
 \textbf{For noisy confocal data, GSplats achieve up to 3~dB higher held-out PSNR than H.265} (a,~b,~d), meaning superior signal recovery; for spinning-disk data (c,~e) the methods are comparable.
 The gap between raw and held-out curves quantifies noise memorization: both methods overfit at high bit rates, but GSplats reach a higher signal-recovery peak.
 For clean light-sheet data (f), H.265 outperforms because there is minimal noise to distinguish from signal.
 Both methods are spatially aware (GSplats: global mixture model; H.265: block prediction + DCT).
 The GSplat representation is additionally \emph{directly renderable} without decompression.}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figs/suppfig/progressive.pdf}
+\caption*{\textbf{Supplementary Figure~4 $\vert$ Progressive vs.\ single-pass fitting at a fixed 32K-splat budget.}
+\textbf{a,} PSNR difference (2-pass minus 1-pass) across 12~microscopy datasets grouped by modality.
+Green bars: 2-pass progressive fitting achieves higher PSNR; purple bars: single-pass is better.
+Error bars: propagated standard deviation across 2--3 replicates.
+Four datasets with clean, well-structured signals (HeLa, Tribolium, mouse heart) gain +0.9 to +1.7~dB from 2-pass fitting; eight noisier confocal datasets favour single-pass.
+\textbf{b,} Wall-clock speedup of 2-pass over 1-pass fitting.
+Progressive fitting is 2--9$\times$ faster for all 12~datasets because fitting smaller batches of splats is sub-linearly cheaper per iteration.}
 \end{figure*}
 
 \end{document}

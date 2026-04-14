@@ -20,7 +20,7 @@ Architecture options:
 
 Requirements:
     - CUDA 11.8+ (12.x recommended)
-    - PyTorch 2.0+ with CUDA support
+    - PyTorch 2.2+ with CUDA support
     - C++17 compatible compiler
 """
 
@@ -153,6 +153,6 @@ setup(
     cmdclass={"build_ext": BuildExtension},
     python_requires=">=3.9",
     install_requires=[
-        "torch>=2.0.0",
+        "torch>=2.2.0",
     ],
 )

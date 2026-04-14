@@ -1,9 +1,14 @@
 #!/bin/bash
 # Master build script: regenerates all manuscript content from scratch.
 #
-# Delegates to:
-#   1. manuscript/analysis/run_all.sh — runs all analyses + builds supp PDFs inline
-#   2. manuscript/supp_doc/*/build.py  — (re)builds each supplementary document
+# Runs four phases in order:
+#   1. Analysis computations (~6h with GPU)  — manuscript/analysis/run_all.sh
+#   2. Figure generation (from TSVs)         — manuscript/build_figures.sh
+#   3. Supplementary document PDFs           — manuscript/build_supp_docs.sh
+#   4. Main preprint PDF                     — manuscript/build_preprint.sh
+#
+# Each phase can be run independently — see the individual scripts.
+# If analysis TSVs already exist, skip phase 1 and start from phase 2.
 #
 # Usage:
 #   bash manuscript/build_all.sh
@@ -19,8 +24,7 @@ echo "================================================================"
 echo ""
 
 # ──────────────────────────────────────────────────────────────────────
-# 1. RUN ALL ANALYSES (rate-distortion, N2S, progressive, convergence)
-#    This also builds the supp PDFs inline after each analysis phase.
+# 1. RUN ALL ANALYSES (rate-distortion, cross-validation, progressive, convergence)
 # ──────────────────────────────────────────────────────────────────────
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║  1. ANALYSES                                                ║"
@@ -28,49 +32,31 @@ echo "╚═══════════════════════�
 bash manuscript/analysis/run_all.sh
 
 # ──────────────────────────────────────────────────────────────────────
-# 2. (RE)BUILD ALL SUPPLEMENTARY DOCUMENTS
-#    Even though run_all.sh builds them inline, this ensures they're
-#    up to date if any figures were regenerated after the analysis.
+# 2. GENERATE ALL FIGURES (from TSVs → PDF figures)
 # ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║  2. SUPPLEMENTARY DOCUMENTS                                 ║"
+echo "║  2. FIGURES                                                 ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
-
-for build_script in manuscript/supp_doc/*/build.py; do
-    if [ -f "$build_script" ]; then
-        echo ""
-        echo "--- $(dirname "$build_script" | xargs basename) ---"
-        hatch run python "$build_script"
-    fi
-done
+bash manuscript/build_figures.sh
 
 # ──────────────────────────────────────────────────────────────────────
-# 3. BUILD MAIN PAPER (if it exists)
+# 3. BUILD ALL SUPPLEMENTARY DOCUMENTS
 # ──────────────────────────────────────────────────────────────────────
-MAIN_TEX="manuscript/preprint/luxar_preprint.tex"
-if [ -f "$MAIN_TEX" ]; then
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║  3. MAIN PAPER                                              ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    PAPER_DIR=$(dirname "$MAIN_TEX")
-    PAPER_NAME=$(basename "$MAIN_TEX" .tex)
-    cd "$PAPER_DIR"
-    pdflatex -interaction=nonstopmode "$PAPER_NAME.tex" > /dev/null 2>&1
-    bibtex "$PAPER_NAME" > /dev/null 2>&1 || true
-    pdflatex -interaction=nonstopmode "$PAPER_NAME.tex" > /dev/null 2>&1
-    pdflatex -interaction=nonstopmode "$PAPER_NAME.tex" > /dev/null 2>&1
-    cd "$(git rev-parse --show-toplevel)"
-    if [ -f "$PAPER_DIR/$PAPER_NAME.pdf" ]; then
-        echo "  Built: $PAPER_DIR/$PAPER_NAME.pdf"
-    else
-        echo "  WARNING: $PAPER_DIR/$PAPER_NAME.pdf not produced"
-    fi
-else
-    echo ""
-    echo "  (Main paper not found at $MAIN_TEX — skipping)"
-fi
+echo ""
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║  3. SUPPLEMENTARY DOCUMENTS                                 ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+bash manuscript/build_supp_docs.sh
+
+# ──────────────────────────────────────────────────────────────────────
+# 4. BUILD MAIN PAPER
+# ──────────────────────────────────────────────────────────────────────
+echo ""
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║  4. MAIN PAPER                                              ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+bash manuscript/build_preprint.sh
 
 # ──────────────────────────────────────────────────────────────────────
 # SUMMARY
@@ -80,8 +66,8 @@ echo "================================================================"
 echo "  MANUSCRIPT BUILD COMPLETE"
 echo "  Finished: $(date -Iseconds)"
 echo ""
-echo "  Generated supplementary documents:"
-for pdf in manuscript/supp_doc/*/*.pdf; do
+echo "  Generated PDFs:"
+for pdf in manuscript/preprint/*.pdf manuscript/supp_doc/*/*.pdf; do
     if [ -f "$pdf" ]; then
         size=$(du -h "$pdf" | cut -f1)
         echo "    $pdf ($size)"

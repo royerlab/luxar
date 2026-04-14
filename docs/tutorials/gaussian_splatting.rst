@@ -72,7 +72,7 @@ Basic Gaussian Splat Fitting
        image,
        n_iters=300,           # More iterations = better fit
        lr=0.01,               # Learning rate
-       loss_type="l1",        # L1 loss is robust to outliers
+       loss_type="l1",        # L1 loss is robust to outliers (default is "mse")
        seed_method="edges",   # Edge-based initialization
    )
 
@@ -234,17 +234,17 @@ Advanced: Dynamic Operations
    result = fit_gaussian_splats(
        image,
        n_iters=500,
-       enable_dynamic_ops=True,
+       enable_dynamic_ops=True,  # Note: True is already the default
        dynamic_config=DynamicOpsConfig(),  # Uses sensible defaults
    )
 
-**Operations**:
+**How it works**:
 
-* **Split**: Large splats in high-gradient regions → two smaller splats
-* **Prune**: Low-amplitude splats → remove (don't contribute to image)
-* **Clone**: Undersaturated regions → duplicate nearby splat
-
-**Result**: Adapts number of splats to image complexity (500 → 1200 for complex images).
+Dynamic operations perform **fixed-pool relocation** — weak splats (lowest
+amplitude) are relocated to high-residual regions. The total splat count
+remains fixed throughout training. This avoids the complexity of managing a
+changing number of splats while still allowing the optimization to adapt
+spatial coverage to where it is needed most.
 
 Saving and Visualizing Results
 -------------------------------

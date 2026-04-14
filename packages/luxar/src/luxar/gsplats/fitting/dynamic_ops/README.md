@@ -59,7 +59,7 @@ Tracks recently relocated splats using a cooldown mechanism to prevent immediate
 
 ### Cooldown Mechanism
 
-After a splat is relocated, it cannot be relocated again for N dynamic ops steps (default: 3). This ensures diverse splat coverage instead of repeatedly relocating the same splats.
+After a splat is relocated, it cannot be relocated again for N dynamic ops steps (default: 1). This ensures diverse splat coverage instead of repeatedly relocating the same splats.
 
 ### Convergence Guard
 
@@ -80,7 +80,7 @@ config = DynamicOpsConfig()
 config.step_every = 50                    # Run every N iterations
 
 # Peak finding
-config.k_max_residuals = 20               # Max peaks to analyze
+config.k_max_residuals = 40               # Max peaks to analyze
 config.nms_radius_vox = 2.0               # Spatial exclusion radius
 
 # Tile-based seeding (enabled by default)
@@ -89,7 +89,7 @@ config.num_tiles_per_dim = None           # Auto: 16 for 2D, 6 for 3D, 4 for 4D,
 
 # Weak splat identification
 config.relocation_percentile = 1.0        # % of weakest splats eligible
-config.max_relocations_per_step = 32      # Cap relocations per step (None = no limit)
+config.max_relocations_per_step = 64      # Cap relocations per step (None = no limit)
 
 # Relocation parameters
 config.init_sigma_vox = 0.5               # Initial sigma for relocated splats
@@ -103,7 +103,7 @@ config.enable_coverage_check = False      # If True, skip peaks already covered
 #   May leave persistent high-error regions unaddressed
 
 # Cooldown mechanism
-config.relocation_cooldown_steps = 3      # Steps to wait before re-relocation
+config.relocation_cooldown_steps = 1      # Steps to wait before re-relocation
 
 # Safety
 config.min_splats_to_keep = 10            # Minimum to retain

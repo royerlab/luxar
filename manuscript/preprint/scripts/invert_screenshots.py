@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-FIGS_DIR = Path(__file__).parent.parent / "figs"
+FIGS_DIR = Path(__file__).parent.parent / "figs" / "overview"
 
 SCREENSHOTS = [
     "viewer_gsplats_organoid.png",

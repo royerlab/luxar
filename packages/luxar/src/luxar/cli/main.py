@@ -123,6 +123,9 @@ class DirectoryListingStaticFiles(StaticFiles):
                 return JSONResponse({"entries": entries})
 
             # Return HTML for browser requests
+            import html
+            from urllib.parse import quote
+
             from starlette.responses import HTMLResponse
 
             html_content = "<html><body><h1>Directory Listing</h1><ul>"
@@ -132,7 +135,9 @@ class DirectoryListingStaticFiles(StaticFiles):
                 name = str(entry["name"])
                 if entry["type"] in ("directory", "zarr"):
                     name += "/"
-                html_content += f'<li><a href="{name}">{name}</a></li>'
+                safe_name = html.escape(name)
+                safe_href = quote(name, safe="/")
+                html_content += f'<li><a href="{safe_href}">{safe_name}</a></li>'
             html_content += "</ul></body></html>"
             return HTMLResponse(content=html_content)
 

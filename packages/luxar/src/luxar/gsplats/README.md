@@ -21,7 +21,7 @@ pip install "luxar[gsplats]"
 - **Device Optimized**: CUDA acceleration with automatic device selection (CPU preferred on Apple Silicon)
 - **Oriented Gaussians**: Full covariance matrices via Cholesky decomposition for arbitrary orientations
 - **Convergence-Driven Dynamic Operations**: Adaptive splat management based on convergence criteria with seeding and pruning
-- **Asymmetric Loss Functions**: 10x penalty for over-prediction addresses additive model constraints (MSE and Poisson)
+- **Asymmetric Loss Functions**: Configurable penalty for over-prediction addresses additive model constraints (MSE and Poisson)
 - **Standard PyTorch Adam**: Fast vectorized optimization with gradient dilution compensation (significantly faster than per-splat alternatives)
 - **Adaptive Thresholds**: Amplitude validation scales with local residual magnitude to prevent optimization plateaus
 - **Automatic Optimization**: Early stopping saves a substantial fraction of iterations without quality loss
@@ -81,7 +81,7 @@ and computing the quadratic form as `||y||²`.
 The fitting uses PyTorch with advanced optimization strategies:
 - **Standard PyTorch Adam**: Fast vectorized optimizer with automatic gradient dilution compensation
 - **Convergence-Based Dynamic Operations**: Fixed-pool splat relocation instead of add/remove operations
-- **Asymmetric Loss Functions**: 10x penalty for over-prediction addresses additive model constraints
+- **Asymmetric Loss Functions**: Configurable penalty for over-prediction addresses additive model constraints
 - **Adaptive Amplitude Thresholds**: Scale with local residual magnitude to prevent plateaus
 - **Early Stopping**: Maximum absolute error convergence criterion
 - **Adaptive Learning Rate**: ReduceLROnPlateau scheduler for automatic LR adjustment
@@ -104,7 +104,7 @@ The implementation includes several key optimizations that provide significant s
 1. **2D/3D Specialized Paths**: Optimized renderers with explicit forward-substitution for common cases
 2. **Convergence Detection**: Automatically stops when loss plateaus (saves a substantial fraction of iterations)
 3. **Adaptive Learning**: Reduces learning rate on plateaus for better convergence
-4. **Device-Aware Selection**: Automatic selection of best available device (CUDA > CPU > MPS)
+4. **Device-Aware Selection**: Automatic selection of best available device (CUDA > MPS > CPU)
 5. **Cached Computations**: Reuses grids and strides for repeated operations
 6. **Optional Enhancements**:
    - Model compilation with `torch.compile` (PyTorch 2.0+, CUDA only)
@@ -128,8 +128,8 @@ result = fit_gaussian_splats(
     # norm_percentile=0.0 by default (full range normalization)
     n_iters=300,                          # Maximum iterations
     lr=0.01,                              # Stable learning rate
-    asymmetric_penalty=10.0,              # 10x penalty for over-prediction (default)
-    loss_type="l1",                       # "mse", "poisson", or "l1" for robust features
+    asymmetric_penalty=1.0,               # Over-prediction penalty factor (default)
+    loss_type="mse",                      # "mse", "poisson", or "l1" for robust features
     # max_abs_error auto-set to 0.01 (1% of normalized range)
     # l1_amp auto-set to 0.1 * lr for proportional amplitude regularization
     # l1_diag auto-set to 0.01 * lr for mild diagonal regularization
@@ -321,9 +321,9 @@ The implementation includes asymmetric loss functions that address the fundament
 - **Under-prediction** (`pred < target`): Easy to fix by adding more Gaussians
 - **Over-prediction** (`pred > target`): Hard to fix, requires reducing/moving existing splats
 
-**The Solution**: Asymmetric loss with 10x penalty for over-prediction
-- **MSE**: `mean(where(pred > target, 10 * (pred - target)², (pred - target)²))`
-- **Poisson**: Similar 10x penalty applied to Poisson deviance
+**The Solution**: Asymmetric loss with configurable penalty for over-prediction (default: 1.0)
+- **MSE**: `mean(where(pred > target, F * (pred - target)², (pred - target)²))` where F = `asymmetric_penalty`
+- **Poisson**: Similar penalty applied to Poisson deviance
 
 ### Benefits
 
@@ -459,10 +459,10 @@ from luxar.gsplats import DynamicOpsConfig
 # Create configuration
 config = DynamicOpsConfig()
 config.step_every = 50              # Run every 50 iterations
-config.k_max_residuals = 20         # Max peaks to find
+config.k_max_residuals = 40         # Max peaks to find
 config.nms_radius_vox = 2.0         # Non-maximum suppression radius
-config.relocation_percentile = 5.0  # % of weakest splats to relocate
-config.max_relocations_per_step = 10  # Cap relocations per step
+config.relocation_percentile = 1.0  # % of weakest splats to relocate
+config.max_relocations_per_step = 64  # Cap relocations per step
 
 # Fit with dynamic operations
 result = fit_gaussian_splats(
@@ -764,7 +764,7 @@ Main fitting function with automatic optimizations.
 - `seeds`: Initial candidate positions (N, d), int count, or float compression ratio
 - `n_iters`: Maximum iterations (default: 1000)
 - `lr`: Learning rate (default: 0.01)
-- `loss_type`: "mse", "poisson", or "l1" (default: "l1")
+- `loss_type`: "mse", "poisson", or "l1" (default: "mse")
 - `l1_amp`: L1 regularization on amplitudes (default: 0.1 * lr)
 - `l1_diag`: L1 regularization on diagonal elements (default: 0.01 * lr)
 - `sigma_min_diag`: Minimum Gaussian size per axis
@@ -857,7 +857,7 @@ The implementation supports multiple PyTorch devices with performance-aware auto
 
 ### Device Selection Logic:
 ```python
-# Auto-detection priority: CUDA → CPU (skips MPS due to performance)
+# Auto-detection priority: CUDA → MPS → CPU
 fitter = GaussianSplatFitter()  # Uses best available
 
 # Manual device selection:

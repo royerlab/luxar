@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Plot Noise2Self analysis: train vs held-out loss curves.
+"""Plot blind-spot cross-validation: train vs held-out loss curves.
 
-Reads the N2S metrics TSV and generates a figure showing where the
-model transitions from fitting signal to fitting noise.
+Reads the cross-validation metrics TSV and generates a figure showing
+where the model transitions from fitting signal to fitting noise.
 
 Usage::
 
@@ -26,25 +26,13 @@ import pandas as pd
 
 RESULTS_DIR = Path(__file__).parent / "results"
 
-DATASET_LABELS = {
-    "opencell_map4_ch0": "OpenCell MAP4 — Hoechst (Nuclei)",
-    "opencell_map4_ch1": "OpenCell MAP4 — GFP (Microtubules)",
-    "kidney_dapi": "Mouse Kidney — DAPI (Nuclei)",
-    "kidney_actin": "Mouse Kidney — Phalloidin (Actin)",
-    "organoid_ch0": "Organoid — Channel 0",
-    "celegans_t100": "C. elegans Embryo — t=100",
-    "tribolium": "Tribolium Embryo (Light-Sheet)",
-    "opencell_lmnb1_ch0": "OpenCell LMNB1 — Hoechst (Nuclei)",
-    "opencell_lmnb1_ch1": "OpenCell LMNB1 — GFP (Nuclear Lamina)",
-    "cells3d_nuclei": "HeLa Cells — Nuclei",
-    "cells3d_membrane": "HeLa Cells — Membrane",
-    "acto3d_heart_nuclei": "Mouse Heart — Nuclei (Light-Sheet)",
-}
+sys.path.insert(0, str(Path(__file__).parent))
+from datasets import DATASET_LABELS  # noqa: E402
 
 
 def _format_count(x: float, _pos=None) -> str:
     if x >= 1000:
-        return f"{int(x / 1000)}K"
+        return f"{int(round(x / 1000))}K"
     return str(int(x))
 
 
@@ -61,7 +49,7 @@ def load_metrics(dataset_key: str) -> pd.DataFrame:
     return df.sort_values("seeds_requested").reset_index(drop=True)
 
 
-def plot_noise2self(df: pd.DataFrame, dataset_key: str, output_path: Path):
+def plot_cross_validation(df: pd.DataFrame, dataset_key: str, output_path: Path):
     """Train vs held-out loss, gap (noise absorption), and culling."""
     fig, (ax_psnr, ax_mse, ax_cull) = plt.subplots(
         1, 3, figsize=(15, 4.5), constrained_layout=True
@@ -213,7 +201,7 @@ def plot_noise2self(df: pd.DataFrame, dataset_key: str, output_path: Path):
         )
 
     fig.suptitle(
-        f"Noise2Self Analysis — Signal vs Noise Fitting\n{_dataset_label(dataset_key)}",
+        f"Blind-Spot Cross-Validation — Signal vs Noise Fitting\n{_dataset_label(dataset_key)}",
         fontsize=11,
         fontweight="bold",
     )
@@ -224,7 +212,7 @@ def plot_noise2self(df: pd.DataFrame, dataset_key: str, output_path: Path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Plot Noise2Self train vs held-out analysis"
+        description="Plot cross-validation train vs held-out analysis"
     )
     parser.add_argument(
         "--dataset",
@@ -238,7 +226,7 @@ def main():
     print(f"Loaded {len(df)} rows from {dataset_key}_n2s/metrics_n2s.tsv")
 
     out_dir = RESULTS_DIR / f"{dataset_key}_n2s"
-    plot_noise2self(df, dataset_key, out_dir / "fig_noise2self.pdf")
+    plot_cross_validation(df, dataset_key, out_dir / "fig_noise2self.pdf")
 
 
 if __name__ == "__main__":

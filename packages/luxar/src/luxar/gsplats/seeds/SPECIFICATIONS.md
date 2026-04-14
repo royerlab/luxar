@@ -16,7 +16,7 @@ This subpackage provides seed Gaussian splat generation from n-dimensional image
 
 **Shared Utilities:**
 - L-infinity neighborhood peak detection
-- Greedy spatial deduplication with KD-tree acceleration
+- Greedy spatial deduplication with `SpatialHashGrid` (O(1) amortized proximity queries)
 - Isotropic sigma to Cholesky factor conversion
 - Seed combination and merging
 
@@ -200,7 +200,7 @@ def seed_from_edges(
    - GPU path: Separable convolution with differentiation kernel `[-1, 0, 1]` and smoothing kernel `[1, 2, 1]`
 2. **Normalize**: Scale edge response to [0, 1]
 3. **Threshold**: Apply `edge_threshold_rel` mask
-4. **Poisson disk sampling**: `_poisson_disk_sample_weighted()` selects `n_seeds` points weighted by edge response, enforcing `min_distance` via KD-tree
+4. **Poisson disk sampling**: `_poisson_disk_sample_weighted()` selects `n_seeds` points weighted by edge response, enforcing `min_distance` via `SpatialHashGrid`
 5. **Isotropic initialization**: All seeds get sigma=1.0 via `sigmas_to_cholesky_isotropic()`
 6. **Amplitude sampling**: Interpolate from V at seed positions via `_sample_amplitudes()`, scaled by `SEED_AMPLITUDE_SCALE` (0.9)
 
@@ -227,14 +227,14 @@ Algorithm:
 1. Extract valid coordinates and density values from mask
 2. Normalize density to probability distribution
 3. Oversample: draw `min(len(valid), n_samples * 10)` candidates weighted by density
-4. Greedy selection with KD-tree distance checks:
-   - For each candidate, query KD-tree for nearest selected seed
+4. Greedy selection with `SpatialHashGrid` distance checks:
+   - For each candidate, query spatial hash grid for nearest selected seed
    - Accept if distance >= `min_distance`
-   - Rebuild KD-tree periodically for efficiency
-   - For last 3 slots, use simple distance check (avoids tree rebuild overhead)
+   - O(1) amortized proximity queries
+   - For last 3 slots, use simple distance check (avoids overhead)
 5. Uses fixed random seed (42) for reproducibility
 
-**Complexity**: O(N_candidates * log(M_selected)) with KD-tree queries
+**Complexity**: O(N_candidates) amortized with `SpatialHashGrid` queries
 
 ### Internal Functions
 
@@ -441,7 +441,7 @@ Convert per-seed isotropic sigmas to packed Cholesky factors.
 
 **Returns:** (N, ndim*(ndim+1)//2) packed lower-triangular Cholesky factors
 
-**Packed format:** Column-by-column lower triangular: `[L00, L10, L11, L20, L21, L22, ...]`
+**Packed format:** Row-major lower triangular: `[L00, L10, L11, L20, L21, L22, ...]`
 
 For isotropic: only diagonal positions are non-zero. Diagonal index for dimension k: `k*(k+3)//2`
 
@@ -477,13 +477,13 @@ Count local maxima with optional soft blur preprocessing. Returns integer count.
 
 ### `dedupe_farthest_first(coords, min_distance, intensities, device) -> tuple[np.ndarray, np.ndarray]`
 
-Greedy spatial deduplication with KD-tree acceleration.
+Greedy spatial deduplication with `SpatialHashGrid` acceleration (O(1) amortized proximity queries).
 
 **Parameters:**
 - `coords`: (N, ndim) seed coordinates
 - `min_distance`: minimum Euclidean distance between kept seeds
 - `intensities`: optional (N,) quality values for priority sorting
-- `device`: ignored (always uses CPU KD-tree)
+- `device`: ignored (always uses CPU `SpatialHashGrid`)
 
 **Returns:** `(deduped_coords, kept_indices)` tuple
 - `deduped_coords`: (M, ndim) deduplicated coordinates
@@ -495,14 +495,13 @@ Greedy spatial deduplication with KD-tree acceleration.
    - Sort by intensity (highest first) if provided
    - Pre-allocate output arrays
    - Start with strongest seed
-   - For each candidate: query KD-tree for nearest selected, keep if >= min_distance
-   - Also check against seeds added since last tree rebuild
-   - Rebuild KD-tree every 100 seeds for efficiency
+   - For each candidate: query `SpatialHashGrid` for nearest selected, keep if >= min_distance
+   - O(1) amortized proximity queries via spatial hash grid
 3. Map back to original indices if sorted
 
-**Complexity:** O(N log M) where N is input count, M is selected count
+**Complexity:** O(N) amortized where N is input count, using `SpatialHashGrid`
 
-**Note:** GPU deduplication was removed because CPU with KD-tree is faster for typical seed counts (<100K). CPU completes 16K seeds in ~0.77s.
+**Note:** GPU deduplication was removed because CPU with `SpatialHashGrid` is faster for typical seed counts (<100K). CPU completes 16K seeds in ~0.77s.
 
 ### `_dedupe_simple(coords, min_distance, intensities) -> tuple[np.ndarray, np.ndarray]`
 

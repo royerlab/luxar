@@ -197,10 +197,10 @@ The `fitting/` group is **optional** and designed to be **fitter-agnostic**. Dif
   // Luxar gsplats fitter example:
   "n_iters": 1000,
   "lr": 0.01,
-  "loss_type": "l1",
-  "asymmetric_penalty": 10.0,
+  "loss_type": "mse",
+  "asymmetric_penalty": 1.0,
   "init_sigma_vox": 0.5,
-  "seed_method": "both",
+  "seed_method": "auto",
   "enable_dynamic_ops": true,
   // ... any other fitter-specific parameters
 }

@@ -109,11 +109,11 @@ Optimization 2: Spatial Ordering Strategy
 
 .. code-block:: python
 
-   # For interactive visualization (speed priority)
-   compiler = LuxarZarrCompiler('scene.zarr', ordering_method="morton")
+   # Default: Hilbert curve (best spatial locality, recommended)
+   compiler = LuxarZarrCompiler('scene.zarr')  # ordering_method="hilbert" by default
 
-   # For archival storage (compression priority)
-   compiler = LuxarZarrCompiler('archive.zarr', ordering_method="hilbert")
+   # Alternative: Morton curve (faster to compute, slightly worse locality)
+   compiler = LuxarZarrCompiler('scene.zarr', ordering_method="morton")
 
 **Measured Impact**:
 
@@ -416,11 +416,11 @@ Issue: Slow Initial Load
    compiler = LuxarZarrCompiler(
        'scene.zarr',
        enable_spatial_index=True,  # CRITICAL!
-       ordering_method="morton",   # Or hilbert
+       ordering_method="hilbert",  # Default, best locality
    )
 
    # Use spatial ordering for best query performance
-   compiler = LuxarZarrCompiler('scene.zarr', ordering_method="morton")
+   compiler = LuxarZarrCompiler('scene.zarr')  # Hilbert by default
 
 Issue: Low FPS During Navigation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

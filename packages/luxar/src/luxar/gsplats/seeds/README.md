@@ -331,7 +331,7 @@ GPU acceleration is applied to:
 - **Peak detection**: 20-100x faster (2D/3D only)
 - **Soft blur**: 5-20x faster (all dimensions via separable 1D convolution)
 - **Interpolation**: 10-30x faster (2D/3D only)
-- **Deduplication**: Always CPU (KD-tree based, `device` parameter ignored)
+- **Deduplication**: Always CPU (SpatialHashGrid based, `device` parameter ignored)
 
 ### Dimension Support
 
@@ -467,7 +467,7 @@ Uses `dedupe_farthest_first()` for spatial deduplication (note: despite the lega
 2. Keep first (highest energy) candidate
 3. Iterate through remaining candidates in intensity order
 4. Keep each candidate if it satisfies min_distance from all already-selected seeds
-5. Uses KD-tree for O(log M) nearest-neighbor queries (rebuilt every 100 seeds)
+5. Uses SpatialHashGrid for O(1) amortized nearest-neighbor queries
 
 ### Edge Seeding (Sobel + Poisson Disk)
 

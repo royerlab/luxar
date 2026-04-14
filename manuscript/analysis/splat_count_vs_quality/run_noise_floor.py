@@ -25,8 +25,9 @@ from arbol import Arbol, aprint, asection
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from datasets import DATASETS
 from noise_floor import estimate_noise_floor
+
+from datasets import DATASETS
 
 # ---------------------------------------------------------------------------
 # Configuration

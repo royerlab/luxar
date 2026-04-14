@@ -90,6 +90,7 @@ Each node can have:
 - **Points**: Point geometry with positions, colors, radii, sharpness
 - **Lines**: Line/curve geometry with vertices, widths, colors, sharpness
 - **GSplats**: Gaussian splat geometry with centers, amplitudes, cholesky factors, colors
+- **Overlay**: 2D overlay geometry for annotations and labels
 
 #### Planned Geometry Types
 - **Surfaces**: Triangulated meshes with normals and textures
@@ -284,7 +285,7 @@ class Scene:
             name: Group node name
             **attrs: Additional attributes including:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
-                gamma: float (0.2-2.0, default 1.0) - Gamma correction
+                gamma: float (0.1-10.0, default 1.0) - Gamma correction
                 blending_mode: str ("normal", "additive", "max", "opaque", "luminous", default "additive")
                 transform: np.ndarray or list[float] - 4x4 transformation matrix (row-major)
         """
@@ -310,7 +311,7 @@ class Scene:
             parent: Parent node in hierarchy
             **attrs: Additional attributes including:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
-                gamma: float (0.2-2.0, default 1.0) - Gamma correction
+                gamma: float (0.1-10.0, default 1.0) - Gamma correction
                 blending_mode: str ("normal", "additive", "max", "opaque", "luminous", default "additive")
                 transform: np.ndarray or list[float] - 4x4 transformation matrix (row-major)
         """
@@ -375,9 +376,9 @@ class Dimension:
         unit: str = "",
         scale: float = 1.0,
         range: Optional[Tuple[float, float]] = None,
-        display: bool = False,
+        display: bool = True,
         discrete: bool = False,
-        step: float = 1.0
+        step: Optional[float] = None
     ) -> None:
         """
         Define a dimension.
@@ -436,7 +437,7 @@ with LuxarZarrCompiler("styled_scene.zarr") as compiler:
         positions,
         colors=colors,
         opacity=0.8,           # Semi-transparent (0.0-1.0)
-        gamma=1.5,             # Brighter gamma correction (0.2-2.0)
+        gamma=1.5,             # Brighter gamma correction (0.1-10.0)
         blending_mode="normal" # Use normal blending instead of additive
     )
 

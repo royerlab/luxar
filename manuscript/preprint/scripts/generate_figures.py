@@ -22,6 +22,18 @@ RESULTS_DIR = ANALYSIS_DIR / "results"
 FIGS_DIR = SCRIPT_DIR / "figs"
 FIGS_DIR.mkdir(exist_ok=True)
 
+# Per-figure subdirectories
+OVERVIEW_DIR = FIGS_DIR / "overview"
+OVERVIEW_DIR.mkdir(exist_ok=True)
+RATE_DISTORTION_DIR = FIGS_DIR / "rate_distortion"
+RATE_DISTORTION_DIR.mkdir(exist_ok=True)
+QUANT_ANALYSIS_DIR = FIGS_DIR / "quantitative_analysis"
+QUANT_ANALYSIS_DIR.mkdir(exist_ok=True)
+TABLE_DIR = FIGS_DIR / "table"
+TABLE_DIR.mkdir(exist_ok=True)
+SUPPFIG_DIR = FIGS_DIR / "suppfig"
+SUPPFIG_DIR.mkdir(exist_ok=True)
+
 # Style constants
 FONTSIZE = 7
 FONTSIZE_LABEL = 7.5
@@ -124,7 +136,7 @@ def load_metrics(dataset_name: str) -> pd.DataFrame:
     return df.sort_values('seeds_requested')
 
 
-def load_n2s_metrics(dataset_name: str) -> pd.DataFrame:
+def load_cv_metrics(dataset_name: str) -> pd.DataFrame:
     path = RESULTS_DIR / f"{dataset_name}_n2s" / "metrics_n2s.tsv"
     if not path.exists():
         return pd.DataFrame()
@@ -219,7 +231,7 @@ def figure_1_pipeline():
             fontsize=FONTSIZE + 2, fontweight='bold', color='#333333',
             style='italic')
 
-    out_path = FIGS_DIR / "fig1_pipeline.pdf"
+    out_path = OVERVIEW_DIR / "pipeline.pdf"
     fig.savefig(out_path)
     plt.close(fig)
     print(f"  Saved: {out_path}")
@@ -237,8 +249,6 @@ def figure_2_rate_distortion():
     fig = plt.figure(figsize=(TWO_COL_WIDTH, 2.3))
     gs = gridspec.GridSpec(1, 3, figure=fig, wspace=0.35,
                            left=0.06, right=0.99, top=0.90, bottom=0.20)
-
-    noise_floor_df = load_noise_floor()
 
     # --- Panel a: PSNR vs splat count ---
     ax_a = fig.add_subplot(gs[0, 0])
@@ -300,15 +310,15 @@ def figure_2_rate_distortion():
     ax_c.invert_xaxis()  # Higher compression on left
     add_panel_label(ax_c, 'c')
 
-    out_path = FIGS_DIR / "fig2_rate_distortion.pdf"
+    out_path = RATE_DISTORTION_DIR / "rate_distortion.pdf"
     fig.savefig(out_path)
     plt.close(fig)
     print(f"  Saved: {out_path}")
 
 
-def figure_3_noise2self():
+def figure_3_cross_validation():
     """
-    Figure 3: Noise2Self model selection (3 panels).
+    Figure 3: Cross-validation model selection (3 panels).
     a) Kidney DAPI (strong overfitting)
     b) Tribolium (no overfitting)
     c) Optimal splat count vs noise level
@@ -324,7 +334,7 @@ def figure_3_noise2self():
     # --- Panel a: Kidney DAPI ---
     ax_a = fig.add_subplot(gs[0, 0])
     ds = 'kidney_dapi'
-    n2s = load_n2s_metrics(ds)
+    n2s = load_cv_metrics(ds)
     color = COLORS[ds]
 
     if not n2s.empty:
@@ -386,7 +396,7 @@ def figure_3_noise2self():
     # --- Panel b: Tribolium ---
     ax_b = fig.add_subplot(gs[0, 1])
     ds = 'tribolium'
-    n2s = load_n2s_metrics(ds)
+    n2s = load_cv_metrics(ds)
     color = COLORS[ds]
 
     if not n2s.empty:
@@ -424,7 +434,7 @@ def figure_3_noise2self():
     if not noise_floor_df.empty:
         plot_data = []
         for ds in CORE_DATASETS:
-            n2s = load_n2s_metrics(ds)
+            n2s = load_cv_metrics(ds)
             nf_row = noise_floor_df[noise_floor_df['dataset'] == ds]
             if n2s.empty or nf_row.empty:
                 continue
@@ -468,7 +478,7 @@ def figure_3_noise2self():
     ax_c.set_yscale('log')
     add_panel_label(ax_c, 'c')
 
-    out_path = FIGS_DIR / "fig3_noise2self.pdf"
+    out_path = QUANT_ANALYSIS_DIR / "cross_validation.pdf"
     fig.savefig(out_path)
     plt.close(fig)
     print(f"  Saved: {out_path}")
@@ -481,7 +491,7 @@ def figure_table_summary():
     rows = []
     for ds in CORE_DATASETS:
         df = load_metrics(ds)
-        n2s = load_n2s_metrics(ds)
+        n2s = load_cv_metrics(ds)
         if df.empty:
             continue
 
@@ -504,7 +514,7 @@ def figure_table_summary():
         ssim_32k = row_32k['ssim'].values[0] if not row_32k.empty else 0
         cr_32k = row_32k['compression_ratio'].values[0] if not row_32k.empty else 0
 
-        # N2S optimal
+        # CV optimal
         if not n2s.empty:
             peak_idx = n2s['held_out_psnr_db'].idxmax()
             optimal_count = n2s.loc[peak_idx, 'n_splats_final'] / 1000
@@ -520,17 +530,17 @@ def figure_table_summary():
             'cr_32k': f'{cr_32k:.0f}$\\times$',
             'best_psnr': f'{best_psnr:.1f}',
             'nf_psnr': f'{nf_psnr:.1f}' if 0 < nf_psnr < 100 else '--',
-            'n2s_opt': f'{optimal_count:.0f}K' if optimal_count > 0 else '--',
+            'cv_opt': f'{optimal_count:.0f}K' if optimal_count > 0 else '--',
         })
 
-    latex_path = FIGS_DIR / "table_summary.tex"
+    latex_path = TABLE_DIR / "table_summary.tex"
     with open(latex_path, 'w') as f:
         f.write('\\begin{table*}[t]\n')
         f.write('\\centering\n')
         f.write('\\small\n')
         f.write('\\caption{\\textbf{Gaussian splat reconstruction quality across microscopy modalities.} ')
         f.write('PSNR, SSIM, and compression ratio (CR) at 32K splats; best PSNR at 512K splats; ')
-        f.write('estimated noise floor; and Noise2Self-optimal splat count. ')
+        f.write('estimated noise floor; and cross-validation-optimal splat count. ')
         f.write('Volumes normalized to $[0, 1]$.}\n')
         f.write('\\label{tab:summary}\n')
         f.write('\\begin{tabular}{@{}llccccccc@{}}\n')
@@ -539,14 +549,14 @@ def figure_table_summary():
         f.write('\\makecell{PSNR\\\\@32K} & \\makecell{SSIM\\\\@32K} & ')
         f.write('\\makecell{CR\\\\@32K} & ')
         f.write('\\makecell{Best\\\\PSNR} & \\makecell{Noise\\\\floor} & ')
-        f.write('\\makecell{N2S\\\\optimal} \\\\\n')
+        f.write('\\makecell{CV\\\\optimal} \\\\\n')
         f.write('\\midrule\n')
         for row in rows:
             f.write(f"  {row['name']} & {row['modality']} & "
                     f"\\footnotesize{{{row['shape']}}} & "
                     f"{row['psnr_32k']} & {row['ssim_32k']} & "
                     f"{row['cr_32k']} & {row['best_psnr']} & "
-                    f"{row['nf_psnr']} & {row['n2s_opt']} \\\\\n")
+                    f"{row['nf_psnr']} & {row['cv_opt']} \\\\\n")
         f.write('\\bottomrule\n')
         f.write('\\end{tabular}\n')
         f.write('\\end{table*}\n')
@@ -604,15 +614,15 @@ def figure_convergence_summary():
         add_panel_label(ax, chr(ord('a') + i))
 
     plt.tight_layout()
-    out_path = FIGS_DIR / "suppfig_convergence.pdf"
+    out_path = SUPPFIG_DIR / "convergence.pdf"
     fig.savefig(out_path)
     plt.close(fig)
     print(f"  Saved: {out_path}")
 
 
-def figure_4_n2s_all_datasets():
+def figure_4_cv_all_datasets():
     """
-    Supplementary Figure: N2S curves for ALL core datasets.
+    Supplementary Figure: Cross-validation curves for ALL core datasets.
     Shows train vs held-out PSNR with noise floor for each dataset.
     """
     setup_matplotlib()
@@ -627,7 +637,7 @@ def figure_4_n2s_all_datasets():
 
     for i, ds in enumerate(CORE_DATASETS):
         ax = axes_flat[i]
-        n2s = load_n2s_metrics(ds)
+        n2s = load_cv_metrics(ds)
         color = COLORS[ds]
 
         if not n2s.empty:
@@ -672,7 +682,7 @@ def figure_4_n2s_all_datasets():
         axes_flat[j].set_visible(False)
 
     plt.tight_layout()
-    out_path = FIGS_DIR / "suppfig_n2s_all.pdf"
+    out_path = SUPPFIG_DIR / "cv_all.pdf"
     fig.savefig(out_path)
     plt.close(fig)
     print(f"  Saved: {out_path}")
@@ -690,8 +700,8 @@ if __name__ == '__main__':
     figure_2_rate_distortion()
     print()
 
-    print("Figure 3: Noise2Self")
-    figure_3_noise2self()
+    print("Figure 3: Cross-validation")
+    figure_3_cross_validation()
     print()
 
     print("Table 1: Summary")
@@ -702,8 +712,8 @@ if __name__ == '__main__':
     figure_convergence_summary()
     print()
 
-    print("Supp: N2S all datasets")
-    figure_4_n2s_all_datasets()
+    print("Supp: CV all datasets")
+    figure_4_cv_all_datasets()
     print()
 
     print("Done!")

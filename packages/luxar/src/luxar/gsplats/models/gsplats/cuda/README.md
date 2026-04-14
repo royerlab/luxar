@@ -45,7 +45,7 @@ CUDA Dispatch Layer  [cuda_splatting.cu]
 
 - CUDA 11.8+ (CUDA 12.x recommended)
 - NVIDIA GPU with Compute Capability 7.5+ (Turing, Ampere, Ada, Hopper, Blackwell)
-- PyTorch 2.0+ with CUDA support
+- PyTorch 2.2+ with CUDA support
 - CUB library (bundled with CUDA Toolkit)
 
 ## Installation

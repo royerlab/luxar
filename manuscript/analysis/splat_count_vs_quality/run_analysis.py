@@ -205,7 +205,7 @@ def run_single(
         V_tensor = torch.from_numpy(volume.astype(np.float32)).to(
             recon_tensor.device
         )
-        metrics = compute_quality_metrics(recon_tensor, V_tensor)
+        metrics = compute_quality_metrics(recon_tensor, V_tensor, data_range=1.0)
         recon_np = recon_tensor.cpu().numpy()
 
     aprint(

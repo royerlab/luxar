@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""N2S-based compression comparison: GSplats vs H.265 video codec.
+"""Cross-validation-based compression comparison: GSplats vs H.265 video codec.
 
-Applies the Noise2Self blind-spot framework to both GSplats and H.265:
+Applies the blind-spot cross-validation framework to both GSplats and H.265:
   1. Mask 5% of voxels with their median-donut neighborhood value
   2. Compress the masked volume (GSplats: fit; H.265: encode Z-stack as video)
   3. Decompress / render
@@ -56,8 +56,8 @@ def compute_psnr(orig, recon, mask=None):
     return 10 * np.log10(1.0 / mse)
 
 
-def generate_n2s_mask(shape, fraction, seed):
-    """Generate random blind-spot mask."""
+def generate_cv_mask(shape, fraction, seed):
+    """Generate random blind-spot mask for cross-validation."""
     rng = np.random.RandomState(seed)
     return rng.random(shape) < fraction
 
@@ -65,7 +65,7 @@ def generate_n2s_mask(shape, fraction, seed):
 def apply_median_donut(volume, mask):
     """Replace masked voxels with median of their 3D donut neighborhood.
 
-    The donut excludes the center pixel — this is the N2S blind-spot.
+    The donut excludes the center pixel — this is the cross-validation blind-spot.
     Uses a 3x3x3 neighborhood (26-connected, center excluded).
     """
     from itertools import product
@@ -174,8 +174,8 @@ def encode_h265(volume, crf, tmpdir):
     return compressed_size, decoded_vol
 
 
-def get_gsplat_n2s_data(ds):
-    """Get existing GSplat N2S results."""
+def get_gsplat_cv_data(ds):
+    """Get existing GSplat cross-validation results."""
     n2s_path = QUALITY_DIR / f"{ds}_n2s" / "metrics_n2s.tsv"
     if not n2s_path.exists():
         return pd.DataFrame()
@@ -219,11 +219,10 @@ def main():
             volume, meta = ds_module.DATASETS[ds_name]()
             nz, ny, nx = volume.shape
             n_voxels = volume.size
-            raw_bytes = n_voxels * 4
             aprint(f"Shape: {volume.shape}")
 
-            # Generate N2S mask
-            mask = generate_n2s_mask(volume.shape, MASK_FRACTION, SEED)
+            # Generate cross-validation blind-spot mask
+            mask = generate_cv_mask(volume.shape, MASK_FRACTION, SEED)
             aprint(f"Held-out: {mask.sum()} voxels ({mask.sum()/n_voxels*100:.1f}%)")
 
             # Create masked volume (blind-spot filled with median-donut)
@@ -266,9 +265,9 @@ def main():
                                f"held-out={psnr_heldout:.1f}  size={comp_size/1e3:.0f}KB  "
                                f"time={elapsed:.1f}s")
 
-            # --- GSplats (from existing N2S analysis) ---
-            with asection("GSplats (existing N2S)"):
-                gsplat_df = get_gsplat_n2s_data(ds_name)
+            # --- GSplats (from existing cross-validation analysis) ---
+            with asection("GSplats (existing CV)"):
+                gsplat_df = get_gsplat_cv_data(ds_name)
                 if not gsplat_df.empty:
                     gsplat_df['dataset'] = ds_name
                     for _, r in gsplat_df.iterrows():

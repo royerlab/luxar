@@ -11,7 +11,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-FIGS_DIR = Path(__file__).parent / "figs"
+FIGS_DIR = Path(__file__).parent.parent / "figs" / "overview"
+FIGS_DIR.mkdir(parents=True, exist_ok=True)
 
 CODE = '''import numpy as np
 from luxar import LuxarZarrCompiler, Dimensions, Dimension
@@ -51,7 +52,6 @@ def main():
     mono = 'DejaVu Sans Mono'
 
     keywords = {'import', 'from', 'as', 'with'}
-    strings_start = ['"', "'"]
 
     for i, line in enumerate(lines):
         y = y_start - i * line_height
@@ -65,7 +65,6 @@ def main():
             continue
         else:
             # Basic colorization
-            colored_line = line
             # Just render the whole line with a base color
             # and highlight keywords
             parts = line.split(' ')
@@ -92,7 +91,7 @@ def main():
             color='#888899', va='top', ha='center', transform=ax.transAxes,
             fontweight='bold', zorder=2)
 
-    out = FIGS_DIR / "fig1_code_snippet.pdf"
+    out = FIGS_DIR / "code_snippet.pdf"
     fig.savefig(out, dpi=300, bbox_inches='tight', pad_inches=0.02)
     plt.close(fig)
     print(f"Saved: {out}")

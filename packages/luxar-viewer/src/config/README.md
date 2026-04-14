@@ -129,7 +129,7 @@ renderingControls: {
     bloomRadius: 1.0,
     bloomLevels: 8,
     // Global EOG (Exposure-Offset-Gamma) in LuxarToneMappingEffect
-    exposure: 1.0,
+    exposure: 0.0,
     globalOffset: 0.0,
     globalGamma: 1.0,
     // Anti-aliasing
@@ -142,9 +142,9 @@ renderingControls: {
     dofEnabled: false,          // Depth of field
     // Detector noise (physics-based: Poisson + Gaussian + FPN)
     detectorNoiseEnabled: false,
-    detectorNoiseReadoutSigma: 0.01,  // Temporal readout noise
-    detectorNoisePhotonGain: 0.01,    // Shot noise visibility
-    detectorNoiseFpnSigma: 0.005,     // Fixed pattern noise
+    detectorNoiseReadoutSigma: 0.002,  // Temporal readout noise
+    detectorNoisePhotonGain: 0.002,    // Shot noise visibility
+    detectorNoiseFpnSigma: 0.001,     // Fixed pattern noise
     vignetteEnabled: false,
     aoEnabled: false,           // Ambient occlusion
     controlType: 'orbit',       // vs 'fly' or 'ortho'
@@ -215,9 +215,9 @@ dimensionAnimation: {
     direction: 'forward'              // 'forward' | 'backward'
   },
   presets: {
-    fps: [1, 2, 5, 10, 15, 30],      // Quick FPS presets
+    fps: [1, 2, 5, 10, 15, 30, 60],   // Quick FPS presets
     customMin: 0.1,                   // Minimum custom FPS
-    customMax: 60                     // Maximum custom FPS
+    customMax: 120                    // Maximum custom FPS
   },
   timing: {
     minFrameTimeMs: 16,               // Minimum frame duration
@@ -245,12 +245,12 @@ dataLoading: {
   performance: {
     // Phase 1: Object pooling (reuse buffers across updates)
     useAccumulators: true,
-    initialAccumulatorCapacity: 10000,
+    initialAccumulatorCapacity: 8192,
     accumulatorGrowthFactor: 1.5,
 
     // Phase 2: Web Workers (offload CPU work)
     useWebWorkers: true,
-    workerCount: 4,
+    workerCount: 0,                  // 0 = auto-detect based on navigator.hardwareConcurrency
 
     // Phase 3: WASM acceleration
     useWASM: true,
@@ -258,8 +258,8 @@ dataLoading: {
 
     // Phase 4: GPU buffer pool (reuse WebGL buffers)
     useGPUBufferPool: true,
-    gpuPoolMaxSize: 50,
-    gpuPoolEvictionFrames: 120,
+    gpuPoolMaxSize: 20,
+    gpuPoolEvictionFrames: 300,
 
     // Debugging
     enablePerformanceMonitoring: false

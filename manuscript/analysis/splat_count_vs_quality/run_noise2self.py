@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Noise2Self-inspired analysis: optimal splat count via held-out loss.
+"""Blind-spot cross-validation: optimal splat count via held-out loss.
 
 Determines where Gaussian splatting transitions from fitting signal to
 fitting noise by masking a fraction of voxels, replacing them with a
@@ -10,8 +10,8 @@ noisy values.
 The held-out loss minimum indicates the optimal splat count — beyond
 that, adding splats captures noise rather than signal.
 
-Based on: Batson & Royer, "Noise2Self: Blind Denoising by
-Self-Supervision", ICML 2019.
+The blind-spot masking strategy is inspired by Batson & Royer,
+"Noise2Self: Blind Denoising by Self-Supervision", ICML 2019.
 
 Usage::
 
@@ -35,7 +35,6 @@ from pathlib import Path
 import numpy as np
 import torch
 from arbol import Arbol, aprint, asection
-from scipy.ndimage import median_filter
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -88,7 +87,7 @@ def donut_median_3d(volume: np.ndarray, radius: int = 1) -> np.ndarray:
     """Compute donut median: median of neighbors excluding the center voxel.
 
     For each voxel, computes the median of all voxels within a (2r+1)^3 cube
-    excluding the center. This is the blind-spot estimator from Noise2Self.
+    excluding the center. This is the blind-spot estimator (Batson & Royer, 2019).
 
     Parameters
     ----------
@@ -107,9 +106,6 @@ def donut_median_3d(volume: np.ndarray, radius: int = 1) -> np.ndarray:
     # of 26 neighbors ≈ median of 26 neighbors when center is not an outlier.
     # But for correctness, we compute it explicitly using shifted volumes.
 
-    d = volume.ndim
-    size = 2 * radius + 1
-
     # Collect all neighbor values (excluding center) for each voxel
     # For 3D radius=1: 26 neighbors
     shifts = []
@@ -119,6 +115,16 @@ def donut_median_3d(volume: np.ndarray, radius: int = 1) -> np.ndarray:
                 if dz == 0 and dy == 0 and dx == 0:
                     continue  # Skip center (blind spot)
                 shifts.append((dz, dy, dx))
+
+    # Memory warning: this allocates 26x the volume size
+    mem_gb = len(shifts) * volume.nbytes / (1024**3)
+    if mem_gb > 4.0:
+        from arbol import aprint as _aprint
+        _aprint(
+            f"WARNING: donut_median_3d will allocate ~{mem_gb:.1f} GB "
+            f"for the neighbor array. Consider slice-by-slice processing "
+            f"for very large volumes."
+        )
 
     # Pad volume to handle boundaries
     padded = np.pad(volume, radius, mode="reflect")
@@ -267,22 +273,26 @@ def run_single(
         )
         recon_np = recon_tensor.cpu().numpy()
 
+    # PSNR helper with explicit data_range=1.0 (volumes normalized to [0,1])
+    def _psnr(mse: float, data_range: float = 1.0) -> float:
+        return 10.0 * np.log10(data_range**2 / mse) if mse > 0 else float("inf")
+
     # 3. Compute held-out loss (masked pixels vs original noisy values)
     recon_masked = recon_np[mask]
     original_masked = original_volume[mask]
     held_out_mse = float(np.mean((recon_masked - original_masked) ** 2))
-    held_out_psnr = 10 * np.log10(1.0 / held_out_mse) if held_out_mse > 0 else float("inf")
+    held_out_psnr = _psnr(held_out_mse)
 
     # 4. Compute train loss (unmasked pixels vs original noisy values)
     train_mask = ~mask
     recon_train = recon_np[train_mask]
     original_train = original_volume[train_mask]
     train_mse = float(np.mean((recon_train - original_train) ** 2))
-    train_psnr = 10 * np.log10(1.0 / train_mse) if train_mse > 0 else float("inf")
+    train_psnr = _psnr(train_mse)
 
     # 5. Full volume loss (for reference)
     full_mse = float(np.mean((recon_np - original_volume) ** 2))
-    full_psnr = 10 * np.log10(1.0 / full_mse) if full_mse > 0 else float("inf")
+    full_psnr = _psnr(full_mse)
 
     aprint(
         f"Held-out PSNR: {held_out_psnr:.2f} dB, "
@@ -325,7 +335,7 @@ def run_single(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Noise2Self analysis: optimal splat count via held-out loss"
+        description="Cross-validation analysis: optimal splat count via held-out loss"
     )
     parser.add_argument(
         "--dataset",
@@ -387,7 +397,7 @@ def main():
                 dataset_key, masked_volume, volume, mask, seeds, device
             )
 
-    aprint(f"\nNoise2Self analysis complete. Results: {tsv_path}")
+    aprint(f"\nCross-validation analysis complete. Results: {tsv_path}")
 
 
 if __name__ == "__main__":

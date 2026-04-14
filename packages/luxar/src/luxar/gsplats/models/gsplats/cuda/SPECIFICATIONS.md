@@ -131,8 +131,8 @@ The sharpness gradient involves `ln(D²)` which explodes as D²→0:
 
 - CUDA 11.8+ (CUDA 12.x recommended for best performance)
 - NVIDIA GPU with Compute Capability 7.5+ (Turing, Ampere, Ada, Hopper, Blackwell)
-- PyTorch 2.0+ with CUDA support
-- cuBLAS and CUB libraries (bundled with CUDA Toolkit)
+- PyTorch 2.2+ with CUDA support
+- CUB library (bundled with CUDA Toolkit)
 
 **CUDA Version Compatibility**:
 
@@ -169,7 +169,7 @@ nvcc -DLUXAR_CUDA_COMPAT_MODE=1 ...
 - **Fully unrolled loops** for Mahalanobis, tile iteration, gradient computation
 - **Vectorized memory access** (`float2`, `float3`, `float4`)
 - **Maximum occupancy** via hand-tuned `__launch_bounds__`
-- **Optimal tile sizes**: 16×16 for 2D, 8×8×8 for 3D
+- **Optimal tile sizes**: 16x16 for 2D, 8x8x8 for 3D (historical reference; the splat-centric architecture replaced the tile-based approach)
 
 **Performance Targets by Dimension**:
 
@@ -478,7 +478,8 @@ template<int DIM>
 struct GaussianParams {
     float center[DIM];            // μ: center position
     float amplitude;              // a: intensity
-    float sharpness;              // s: generalized Gaussian exponent
+    // Note: Per-splat sharpness was removed from the model.
+    // The standard Gaussian (s=2) is now the only mode, using exp(-0.5 * D^2).
     // Note: L is stored separately in FULL matrix format (see below)
 };
 ```
@@ -568,20 +569,11 @@ __device__ __forceinline__ void compute_L_row_norms(
 
 ### 4.4 State Structures
 
-The `BinningState` struct (see `cuda_splatting.h`) stores state from the forward
+The `ForwardState` struct (see `cuda_splatting.h`) stores state from the forward
 pass for backward pass reuse.
 
 ```cpp
-struct BinningState {
-    // Empty tensors (backward API compatibility placeholders)
-    torch::Tensor tile_counts;      // empty (0,) int32
-    torch::Tensor tile_offsets;     // empty (0,) int64
-    torch::Tensor tile_content;     // empty (0,) int32
-    torch::Tensor global_splat_ids; // empty (0,) int32
-    int num_global_splats;
-
-    int64_t num_tiles;
-
+struct ForwardState {
     // Cached device tensors for backward pass reuse
     torch::Tensor shape_tensor;     // (dim,) int32 - volume shape on device
 };

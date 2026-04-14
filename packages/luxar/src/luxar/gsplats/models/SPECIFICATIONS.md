@@ -19,6 +19,7 @@ The models package contains PyTorch model implementations and rendering engines 
 - **Rendering Algorithm**: [Main SPECIFICATIONS.md](../SPECIFICATIONS.md) → Section 2: Rendering Function
 - **Optimizers**: [optim/SPECIFICATIONS.md](../optim/SPECIFICATIONS.md)
 - **Matrix Utilities**: [utils/SPECIFICATIONS.md](../utils/SPECIFICATIONS.md)
+- **CUDA Backend**: [gsplats/cuda/SPECIFICATIONS.md](gsplats/cuda/SPECIFICATIONS.md) - NVIDIA CUDA GPU acceleration
 - **Metal Backend**: [gsplats/metal/SPECIFICATIONS.md](gsplats/metal/SPECIFICATIONS.md) - Apple Silicon GPU acceleration
 
 ## Package Structure
@@ -30,6 +31,17 @@ models/
 │   ├── rendering_core.py       # Core rendering engine
 │   ├── rendering_wrappers.py   # NumPy/PyTorch wrappers
 │   ├── __init__.py
+│   ├── cuda/                   # NVIDIA CUDA GPU acceleration
+│   │   ├── gsplat_model_cuda.py   # CUDA-accelerated model
+│   │   ├── SPECIFICATIONS.md      # CUDA backend specification (core algorithms)
+│   │   ├── SPECIFICATIONS_PYTORCH_INTEGRATION.md  # PyTorch integration spec
+│   │   ├── SPECIFICATIONS_TESTING.md  # Testing strategy spec
+│   │   ├── README.md              # Installation and usage
+│   │   ├── src/
+│   │   │   ├── cuda_splatting.cu  # Dispatch layer
+│   │   │   ├── kernels_core.cuh   # Core splat-centric kernels
+│   │   │   └── bindings.cpp       # pybind11 bindings
+│   │   └── tests/                 # CUDA backend tests
 │   └── metal/                  # Apple Silicon GPU acceleration
 │       ├── gsplat_model_metal.py  # Metal-accelerated model
 │       ├── SPECIFICATIONS.md      # Metal backend specification

@@ -128,7 +128,7 @@ The `generate_seeds()` function in `seeds/generate.py` is the recommended entry 
 ### Shared Utilities (`utils.py`)
 
 - **`local_maxima(img, radius, thresh, top_k)`**: L-infinity neighborhood peak detection using `scipy.ndimage.maximum_filter`
-- **`dedupe_farthest_first(coords, min_distance, intensities)`**: Greedy spatial deduplication with KD-tree acceleration. Returns `(deduped_coords, kept_indices)` for O(1) attribute lookup.
+- **`dedupe_farthest_first(coords, min_distance, intensities)`**: Greedy spatial deduplication with SpatialHashGrid acceleration. Returns `(deduped_coords, kept_indices)` for O(1) attribute lookup.
 - **`sigmas_to_cholesky_isotropic(sigmas, ndim)`**: Converts per-seed isotropic sigmas to packed lower-triangular Cholesky factors
 - **`combine_seeds(*arrays, min_distance)`**: Merges seed coordinate arrays with optional deduplication
 
@@ -236,13 +236,13 @@ Dynamic operations use **fixed-pool splat relocation** to address reconstruction
 
 ### Configuration: `DynamicOpsConfig`
 - `step_every=50`: Run operations every N iterations during optimization
-- `k_max_residuals=20`: Number of strongest residual peaks to analyze per iteration
+- `k_max_residuals=40`: Number of strongest residual peaks to analyze per iteration
 - `nms_radius_vox=2.0`: Minimum distance between detected residual peaks (non-maximum suppression)
 - `min_contribution_threshold=0.01`: Fixed threshold for influence detection
 
 **Relocation Parameters**:
-- `relocation_percentile=5.0`: Percentage of least important splats eligible for relocation
-- `max_relocations_per_step=10`: Maximum relocations per dynamic ops step
+- `relocation_percentile=1.0`: Percentage of least important splats eligible for relocation
+- `max_relocations_per_step=64`: Maximum relocations per dynamic ops step
 - `init_sigma_vox=0.5`: Initial sigma for relocated splats (isotropic)
 
 **Safety Parameters**:
@@ -347,7 +347,7 @@ The implementation uses a **modular 6-stage pipeline** (see [fitting/SPECIFICATI
 This modular design separates concerns, improves testability, and makes the codebase maintainable.
 The root-level functions delegate to the `fitting/` sub-package for actual implementation.
 
-### Primary Function: `fit_gaussian_splats(V, seeds=None, norm_percentile=0.0, init_sigma_vox=0.5, n_iters=1000, lr=0.01, loss_type="l1", asymmetric_penalty=10.0, l1_amp=None, l1_diag=None, max_abs_error=None, seed_method="both", ...)`
+### Primary Function: `fit_gaussian_splats(V, seeds=None, norm_percentile=0.0, init_sigma_vox=0.5, n_iters=1000, lr=0.01, loss_type="mse", asymmetric_penalty=1.0, l1_amp=None, l1_diag=None, max_abs_error=None, seed_method="auto", ...)`
 
 **Functional Signature**:
 ```python
@@ -358,19 +358,19 @@ def fit_gaussian_splats(
     init_sigma_vox: float = 0.5,  # Default changed to 0.5 for single-voxel splats
     n_iters: int = 1000,
     lr: float = 0.01,
-    loss_type: str = "l1",
-    asymmetric_penalty: Optional[float] = 10.0,
+    loss_type: str = "mse",
+    asymmetric_penalty: Optional[float] = 1.0,
     l1_amp: Optional[float] = None,
-    seed_method: str = "both",  # DEFAULT: hybrid decomposition + Gaussian for best convergence
+    seed_method: str = "auto",  # DEFAULT: edges (60%) + grid (40%)
     l1_diag: Optional[float] = None,
     # ... additional parameters
-) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]
+) -> GSplatData
 ```
 
 **Implementation Flow**:
 1. Create `GaussianSplatFitter` instance with device and dynamic ops config
 2. Call `fitter.fit()` which executes the 6-stage pipeline
-3. Return (params, amps, stats) tuple from finalization stage
+3. Return GSplatData from finalization stage
 
 
 **Input Validation and Error Handling**:
@@ -392,14 +392,14 @@ def fit_gaussian_splats(
 - Validate `max_abs_error` is positive if specified
 
 **Auto-Seed Generation:**
-- **Default behavior**: If `seeds=None`, automatically generate seeds using `seed_method="both"` (hybrid approach)
-- **Hybrid method (DEFAULT)**: Combines decomposition-based seeds (global/coarse structure) with Gaussian-based seeds (local features) for optimal convergence
+- **Default behavior**: If `seeds=None`, automatically generate seeds using `seed_method="auto"` (edges + grid)
+- **Auto method (DEFAULT)**: Combines edges (60%) + grid (40%) for fast, comprehensive seed coverage
 - **Universal scale series**: `(0.5, 1.0, 2.0, 4.0, 8.0, 16.0)` works optimally for all dimensions from fine details to large structures
 - **Volume-proportional density**: `peaks_per_scale = max(50, int(V.size * 0.002))` scales seed count with image size (~0.2% of pixels)
 - **Inclusive detection**: `percentile_thresh=70` for comprehensive feature coverage
 - **Standard parameters**: `min_distance=2.0, add_intensity_grid=False` for robust detection
 - **Logging**: Auto-generation usage is logged for transparency
-- **Alternative methods**: Can specify `seed_method="gaussian"` (Gaussian only), `seed_method="decomposition"` (decomposition only), or custom order like `"decomposition,gaussian"`
+- **Alternative methods**: Can specify `seed_method="edges"` (edges only), `seed_method="grid"` (grid only), `seed_method="decomposition"` (decomposition only), or comma-separated combinations
 
 **Auto-Convergence Threshold:**
 - **Default behavior**: If `max_abs_error=None`, automatically set threshold to 1% of normalized image dynamic range
@@ -510,10 +510,10 @@ The verbose output uses the `arbol` library for hierarchical console logging.
 - **L1**: Robust to outliers, preserves sharp features, encourages sparse residuals, excellent with asymmetric penalty
 
 **Asymmetric Loss Rationale:**
-- **Over-prediction** (`pred > target`, negative residual): Heavily penalized by factor F (**default 10x**) since non-negative Gaussian sums cannot easily reduce intensity
+- **Over-prediction** (`pred > target`, negative residual): Penalized by factor F (**default 1.0**) since non-negative Gaussian sums cannot easily reduce intensity
 - **Under-prediction** (`pred < target`, positive residual): Normal penalty since additional Gaussians can easily add intensity
 - **Model alignment**: Reflects the additive constraint of Gaussian splatting where reducing intensity is harder than adding it
-- **Default enabled**: `asymmetric_penalty=10.0` by default for optimal results with additive Gaussian models
+- **Default enabled**: `asymmetric_penalty=1.0` by default
 - **L1 synergy**: L1 + asymmetric penalty provides exceptional robustness and stability for challenging datasets
 
 ### GaussianSplatFitter Class
@@ -536,7 +536,7 @@ def fit(
     V: np.ndarray,
     seeds: Optional[np.ndarray | float] = None,
     # ... all parameters from fit_gaussian_splats()
-) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]
+) -> GSplatData
 ```
 
 **Relationship to Functional API**:
@@ -546,8 +546,8 @@ def fit(
 - Identical parameter signatures and return values
 
 **Device Selection Logic**:
-- Auto-detection order: CUDA → CPU
-- MPS (Apple Silicon) supported but may be slower than CPU for typical workloads
+- Auto-detection order: CUDA → MPS → CPU
+- MPS (Apple Silicon) supported
 - Explicit device specification overrides auto-detection
 
 ## 6. Utilities
@@ -569,7 +569,7 @@ def fit(
 ## 7. Integration Requirements
 
 ### Device Support
-- Auto-detect best device: CUDA � CPU (MPS supported but may be slower)
+- Auto-detect best device: CUDA > MPS > CPU
 - Handle device-specific limitations (e.g., MPS doesn't support torch.unique with dim)
 - Provide fallbacks for missing functionality
 

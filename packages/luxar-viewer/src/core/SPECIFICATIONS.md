@@ -42,9 +42,6 @@ async function init(src?: string): Promise<void> {
 
   // 2. Animation system (depends on scene)
   this.animationController = new AnimationController(
-    this.sceneManager.renderer,
-    this.sceneManager.scene,
-    this.sceneManager.camera,
     this.sceneManager.controls,
     this.sceneManager.postProcessing
   );
@@ -132,14 +129,16 @@ async function shouldShowBrowser(src: string): Promise<boolean> {
     return true;
   }
 
-  // 2. Check for .zgroup marker (Zarr dataset)
+  // 2. Check for Zarr markers (.zgroup, .zattrs, zarr.json) via Promise.any()
   try {
-    const response = await fetch(src + '/.zgroup', { method: 'HEAD' });
-    if (response.ok) {
-      return false; // Valid Zarr, load directly
-    }
+    await Promise.any([
+      fetch(src + '/.zgroup', { method: 'HEAD' }).then(r => { if (!r.ok) throw r; return r; }),
+      fetch(src + '/.zattrs', { method: 'HEAD' }).then(r => { if (!r.ok) throw r; return r; }),
+      fetch(src + '/zarr.json', { method: 'HEAD' }).then(r => { if (!r.ok) throw r; return r; }),
+    ]);
+    return false; // Valid Zarr, load directly
   } catch {
-    // Network error, can't determine
+    // None of the markers found or network error
   }
 
   // 3. Files without extensions likely directories
@@ -191,34 +190,23 @@ async function loadDataset(src: string): Promise<void> {
 
 ```typescript
 async function init(src?: string): Promise<void> {
-  // Critical: Scene initialization
   try {
+    // Critical: Scene initialization (failure is fatal)
     await this.sceneManager.init();
-  } catch (sceneError) {
-    // Scene failure is fatal
-    console.error('Scene initialization failed:', sceneError);
-    throw sceneError;
-  }
 
-  // Non-critical: Animation (continues on failure)
-  try {
+    // Start animation before data loading (enables progress rendering)
     this.animationController.startAnimation();
-  } catch (animError) {
-    console.warn('Animation start failed:', animError);
-    // Continue without animation
-  }
 
-  // Non-critical: Data loading (show browser on failure)
-  try {
+    // Load data or show browser
     if (await this.shouldShowBrowser(src)) {
       this.showDatasetBrowser();
     } else {
       await this.loadDataset(src);
     }
-  } catch (dataError) {
-    console.error('Data loading failed:', dataError);
-    showError('Failed to load dataset');
-    // App continues without data
+  } catch (error) {
+    console.error('Initialization failed:', error);
+    showError(`Failed to initialize: ${error.message}`);
+    throw error;
   }
 }
 ```
@@ -734,7 +722,7 @@ const recent = messages.slice(-100);
 - Filterable by log level
 - Resizable and draggable
 
-**Configuration**: See `config/debug-console.ts` for dimensions and styling.
+**Configuration**: See `config/index.ts` under `ui.debugConsole` for dimensions and styling.
 
 **Usage**:
 

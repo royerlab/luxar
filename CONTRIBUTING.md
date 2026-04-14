@@ -246,10 +246,12 @@ Closes #(issue_number)
 Create `.vscode/settings.json`:
 ```json
 {
-    "python.formatting.provider": "ruff",
-    "python.linting.enabled": true,
-    "python.linting.ruffEnabled": true,
-    "python.linting.mypyEnabled": true,
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true
+    },
+    "ruff.lint.enable": true,
+    "mypy-type-checker.reportingScope": "file",
     "python.testing.pytestEnabled": true,
     "python.testing.pytestArgs": [
         "packages/luxar/"

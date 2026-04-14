@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Generate combined rate-distortion + Noise2Self figure (Fig 3).
+"""Generate combined rate-distortion + cross-validation figure (Fig 3).
 
-Merges the previous Fig 3 (rate-distortion) and Fig 4 (N2S) into a single
-two-row figure for more efficient use of page space.
+Merges the previous Fig 3 (rate-distortion) and Fig 4 (cross-validation)
+into a single two-row figure for more efficient use of page space.
 
 Layout:
   Row 1: a) PSNR vs splats  b) SSIM vs splats  c) Compression vs PSNR
-  Row 2: d) N2S kidney DAPI  e) N2S tribolium   f) Noise-capacity scatter
+  Row 2: d) CV kidney DAPI   e) CV tribolium     f) Noise-capacity scatter
 """
 
 import matplotlib
@@ -23,7 +23,8 @@ import pandas as pd
 SCRIPT_DIR = Path(__file__).parent.parent
 ANALYSIS_DIR = SCRIPT_DIR.parent / "analysis" / "splat_count_vs_quality"
 RESULTS_DIR = ANALYSIS_DIR / "results"
-FIGS_DIR = SCRIPT_DIR / "figs"
+FIGS_DIR = SCRIPT_DIR / "figs" / "quantitative_analysis"
+FIGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Style
 FONTSIZE = 6.5
@@ -91,7 +92,7 @@ def load_metrics(ds):
     return pd.read_csv(p, sep='\t').sort_values('seeds_requested') if p.exists() else pd.DataFrame()
 
 
-def load_n2s(ds):
+def load_cv(ds):
     p = RESULTS_DIR / f"{ds}_n2s" / "metrics_n2s.tsv"
     return pd.read_csv(p, sep='\t').sort_values('seeds_requested') if p.exists() else pd.DataFrame()
 
@@ -129,7 +130,8 @@ def main():
     ax = fig.add_subplot(gs[0, 0])
     for ds in CORE_DATASETS:
         df = load_metrics(ds)
-        if df.empty: continue
+        if df.empty:
+            continue
         ax.plot(df['n_splats_final']/1000, df['psnr_db'],
                 '-o', color=COLORS[ds], label=DISPLAY_NAMES[ds],
                 markersize=MARKERSIZE, markeredgewidth=0.3, markeredgecolor='white', zorder=3)
@@ -143,7 +145,8 @@ def main():
     ax = fig.add_subplot(gs[0, 1])
     for ds in CORE_DATASETS:
         df = load_metrics(ds)
-        if df.empty: continue
+        if df.empty:
+            continue
         ax.plot(df['n_splats_final']/1000, df['ssim'],
                 '-o', color=COLORS[ds], label=DISPLAY_NAMES[ds],
                 markersize=MARKERSIZE, markeredgewidth=0.3, markeredgecolor='white', zorder=3)
@@ -160,7 +163,8 @@ def main():
     ax = fig.add_subplot(gs[0, 2])
     for ds in CORE_DATASETS:
         df = load_metrics(ds)
-        if df.empty: continue
+        if df.empty:
+            continue
         mask = df['compression_ratio'] > 1
         ax.plot(df.loc[mask, 'compression_ratio'], df.loc[mask, 'psnr_db'],
                 '-o', color=COLORS[ds],
@@ -172,12 +176,12 @@ def main():
     ax.invert_xaxis()
     add_label(ax, 'c')
 
-    # ===== ROW 2: Noise2Self =====
+    # ===== ROW 2: Cross-validation =====
 
     # Panel d: Kidney DAPI (overfitting)
     ax = fig.add_subplot(gs[1, 0])
     ds = 'kidney_dapi'
-    n2s = load_n2s(ds)
+    n2s = load_cv(ds)
     c = COLORS[ds]
     if not n2s.empty:
         ax.plot(n2s['n_splats_final']/1000, n2s['train_psnr_db'],
@@ -219,7 +223,7 @@ def main():
     # Panel e: Tribolium (no overfitting)
     ax = fig.add_subplot(gs[1, 1])
     ds = 'tribolium'
-    n2s = load_n2s(ds)
+    n2s = load_cv(ds)
     c = COLORS[ds]
     if not n2s.empty:
         ax.plot(n2s['n_splats_final']/1000, n2s['train_psnr_db'],
@@ -244,17 +248,19 @@ def main():
     # Panel f: Optimal splat count vs noise
     ax = fig.add_subplot(gs[1, 2])
     if not nf.empty:
-        # Collect data - EXCLUDE Tribolium (signal-limited, no N2S peak;
+        # Collect data - EXCLUDE Tribolium (signal-limited, no CV peak;
         # multi-view deconvolution breaks pixel-independence assumption)
         plot_data = []
         for ds in CORE_DATASETS:
             if ds == 'tribolium':
                 continue  # No meaningful held-out peak
-            n2s = load_n2s(ds)
+            n2s = load_cv(ds)
             nfr = nf[nf['dataset']==ds]
-            if n2s.empty or nfr.empty: continue
+            if n2s.empty or nfr.empty:
+                continue
             sigma = nfr['sigma_ensemble'].values[0]
-            if sigma == 0: continue
+            if sigma == 0:
+                continue
             # Check for genuine overfitting: held-out must decline from peak
             peak_idx = n2s['held_out_psnr_db'].idxmax()
             last_idx = n2s.index[-1]
@@ -300,7 +306,7 @@ def main():
     ax.xaxis.set_minor_locator(ticker.NullLocator())
     add_label(ax, 'f')
 
-    out = FIGS_DIR / "fig3_combined.pdf"
+    out = FIGS_DIR / "quantitative_analysis.pdf"
     fig.savefig(out)
     plt.close(fig)
     print(f"  Saved: {out}")

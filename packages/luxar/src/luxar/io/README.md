@@ -54,7 +54,7 @@ from luxar.encoding import EncodingMode
 with LuxarZarrCompiler(
     'scene.zarr',
     encoding_mode=EncodingMode.AUTO,      # AUTO, PRECISION, or MEMORY
-    ordering_method="morton",             # "morton" or "hilbert"
+    ordering_method="hilbert",            # "hilbert" (default, best locality) or "morton" (fastest)
     enable_spatial_index=True,            # Apply spatial ordering
 ) as compiler:
     scene = compiler.create_scene(dimensions=dims)
@@ -127,7 +127,7 @@ print(splats['cholesky_factors'].shape)  # (N, 6)
 
 **Return Types** (dataclasses with dict-compatible access):
 - `PointsData`: positions, colors, radii, sharpness, chunk_bounds, metadata
-- `LinesData`: vertices, colors, widths, sharpness, segments, chunk_bounds, metadata
+- `LinesData`: vertices, widths, colors, sharpness, segments, metadata, indices
 - `GSplatsData`: centers, amplitudes, cholesky_factors, colors, chunk_bounds, metadata
 
 **Key Features**:
