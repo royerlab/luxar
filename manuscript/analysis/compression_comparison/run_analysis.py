@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Compression comparison: Gaussian splats at N2S-optimal count vs raw volume.
+"""Compression comparison: Gaussian splats at CV-optimal count vs raw volume.
 
-For each dataset, finds the Noise2Self-optimal splat count (held-out PSNR peak),
-then computes file sizes and compression metrics at that operating point.
-For signal-limited datasets (no N2S peak), uses the count at which quality plateaus.
+For each dataset, finds the cross-validation-optimal splat count (held-out PSNR
+peak), then computes file sizes and compression metrics at that operating point.
+For signal-limited datasets (no CV peak), uses the count at which quality plateaus.
 """
 
 import sys
@@ -37,8 +37,8 @@ def compute_splat_size_bytes(n_splats, ndim=3):
     return n_splats * params_per_splat * 4
 
 
-def find_n2s_optimal(ds):
-    """Find the N2S-optimal splat count (held-out PSNR peak).
+def find_cv_optimal(ds):
+    """Find the CV-optimal splat count (held-out PSNR peak).
 
     Returns (seeds_requested, held_out_psnr, is_genuine_peak).
     If no genuine peak (last point is max), returns last point with is_genuine_peak=False.
@@ -86,14 +86,14 @@ def main():
         raw_bytes = n_voxels * 4
         raw_mb = raw_bytes / 1e6
 
-        # Find N2S-optimal splat count
-        opt_seeds, opt_held_out_psnr, is_genuine = find_n2s_optimal(ds)
+        # Find CV-optimal splat count
+        opt_seeds, opt_held_out_psnr, is_genuine = find_cv_optimal(ds)
 
         if opt_seeds is None:
-            print(f"  Skipping {ds} (no N2S data)")
+            print(f"  Skipping {ds} (no CV data)")
             continue
 
-        # Get metrics at the N2S-optimal count
+        # Get metrics at the CV-optimal count
         row = metrics[metrics['seeds_requested'] == opt_seeds]
         if row.empty:
             # Find closest available count
@@ -166,9 +166,9 @@ def main():
 
     # Print summary
     print(f"\n{'='*90}")
-    print("  Compression at N2S-optimal splat count")
+    print("  Compression at CV-optimal splat count")
     print(f"{'='*90}")
-    print(f"{'Dataset':25s}  {'N2S opt':>7s}  {'Peak?':>5s}  {'Splats':>7s}  "
+    print(f"{'Dataset':25s}  {'CV opt':>7s}  {'Peak?':>5s}  {'Splats':>7s}  "
           f"{'Raw MB':>7s}  {'Splat MB':>8s}  {'CR':>6s}  {'PSNR':>5s}  {'BPV':>6s}")
     print(f"{'-'*90}")
     for _, r in df.iterrows():

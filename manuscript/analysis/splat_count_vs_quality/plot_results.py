@@ -33,21 +33,8 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # Subset of splat counts shown in the montage (avoids overcrowding)
 MONTAGE_COUNTS = [1000, 4000, 16000, 64000, 256000, 512000]
 
-# Dataset display names (for figure titles)
-DATASET_LABELS = {
-    "opencell_map4_ch0": "OpenCell MAP4 — Hoechst (Nuclei)",
-    "opencell_map4_ch1": "OpenCell MAP4 — GFP (Microtubules)",
-    "kidney_dapi": "Mouse Kidney — DAPI (Nuclei)",
-    "kidney_actin": "Mouse Kidney — Phalloidin (Actin)",
-    "organoid_ch0": "Organoid — Channel 0",
-    "celegans_t100": "C. elegans Embryo — t=100",
-    "tribolium": "Tribolium Embryo (Light-Sheet)",
-    "opencell_lmnb1_ch0": "OpenCell LMNB1 — Hoechst (Nuclei)",
-    "opencell_lmnb1_ch1": "OpenCell LMNB1 — GFP (Nuclear Lamina)",
-    "cells3d_nuclei": "HeLa Cells — Nuclei",
-    "cells3d_membrane": "HeLa Cells — Membrane",
-    "acto3d_heart_nuclei": "Mouse Heart — Nuclei (Light-Sheet)",
-}
+sys.path.insert(0, str(Path(__file__).parent))
+from datasets import DATASET_LABELS  # noqa: E402
 
 # Consistent styling
 _STYLE = dict(linewidth=1.5, markersize=5)
@@ -93,15 +80,15 @@ def _dataset_label(dataset_key: str) -> str:
 def _format_count(x: float, _pos=None) -> str:
     """Format splat count as '1K', '16K', '128K', etc."""
     if x >= 1000:
-        return f"{int(x / 1000)}K"
+        return f"{int(round(x / 1000))}K"
     return str(int(x))
 
 
 def _make_compression_top_axis(ax: plt.Axes, df: pd.DataFrame) -> None:
     """Add a secondary top x-axis showing compression ratio."""
     # Compute constant: volume_voxels / floats_per_splat = cr * n_splats
-    # Use first row to calibrate
-    k = float(df["compression_ratio"].iloc[0]) * float(df["n_splats_final"].iloc[0])
+    # Use median across all rows to reduce rounding error from TSV storage
+    k = float(np.median(df["compression_ratio"].values * df["n_splats_final"].values))
 
     ax_top = ax.secondary_xaxis(
         "top",
@@ -222,6 +209,10 @@ def plot_slice_montage(
         return
 
     # Load reference slices (target is the same in all files)
+    slices_dir = RESULTS_DIR / dataset_key / "slices"
+    if not slices_dir.exists() or not any(slices_dir.glob("*.npz")):
+        print(f"No slice data found in {slices_dir}. Skipping montage.")
+        return
     data0 = load_slices(dataset_key, montage_counts[0])
     target_slices = data0["target_slices"]
     z_indices = data0["z_indices"]

@@ -575,19 +575,20 @@ describe('Encoded Array Range Extraction', () => {
       // CRITICAL: This tests the bug fix where TypeScript was using scale factor 15.0
       // instead of 31.0 (matching Python's SHARPNESS_MAX)
       // Expected values: [1.0, 2.0, 3.0, ..., 31.0]
-      // With quantization tolerance of ~0.5 due to uint8 compression
+      // Spatial ordering may reorder points, so check sorted values
+      const sorted = Array.from(decoded).sort((a, b) => a - b);
 
-      // First value should be close to 1.0
-      expect(decoded[0]).toBeGreaterThanOrEqual(0.5);
-      expect(decoded[0]).toBeLessThanOrEqual(1.5);
+      // Smallest value should be close to 1.0
+      expect(sorted[0]).toBeGreaterThanOrEqual(0.5);
+      expect(sorted[0]).toBeLessThanOrEqual(1.5);
 
-      // Last value should be close to 31.0
-      expect(decoded[30]).toBeGreaterThanOrEqual(30.0);
-      expect(decoded[30]).toBeLessThanOrEqual(31.5);
+      // Largest value should be close to 31.0
+      expect(sorted[30]).toBeGreaterThanOrEqual(30.0);
+      expect(sorted[30]).toBeLessThanOrEqual(31.5);
 
-      // Middle value (index 15) should be close to 16.0
-      expect(decoded[15]).toBeGreaterThanOrEqual(15.0);
-      expect(decoded[15]).toBeLessThanOrEqual(17.0);
+      // Middle value should be close to 16.0
+      expect(sorted[15]).toBeGreaterThanOrEqual(15.0);
+      expect(sorted[15]).toBeLessThanOrEqual(17.0);
     });
   });
 

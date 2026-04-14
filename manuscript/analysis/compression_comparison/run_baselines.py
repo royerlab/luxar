@@ -149,7 +149,6 @@ def get_gsplat_curve(ds):
         return []
 
     shape = tuple(int(x) for x in nf_row['volume_shape'].values[0].split('x'))
-    n_voxels = int(np.prod(shape))
     ndim = len(shape)
 
     metrics = pd.read_csv(metrics_path, sep='\t')

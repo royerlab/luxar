@@ -586,7 +586,7 @@ The build system uses these environment variables:
 | `SLURM_QOS` | Slurm QOS for GPU builds | (none) |
 | `SLURM_TIME` | Wall-time limit for Slurm build jobs | `01:00:00` |
 | `CUDA_MODULE` | CUDA module to load on compute node (`auto` = detect) | `auto` |
-| `CUDA_ARCHS` | CUDA architectures to compile for (e.g. `86;90`) | all common (70-90) |
+| `CUDA_ARCHS` | CUDA architectures to compile for (e.g. `86;90`) | all common (75-90) |
 
 ## CI/CD Integration
 

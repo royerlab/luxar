@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot N2S-based compression comparison: GSplats vs H.265 (6 datasets)."""
+"""Plot cross-validation-based compression comparison: GSplats vs H.265 (6 datasets)."""
 
 import matplotlib
 
@@ -10,7 +10,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 RESULTS_DIR = Path(__file__).parent / "results"
-FIGS_DIR = Path(__file__).parent.parent.parent / "preprint" / "figs"
+FIGS_DIR = Path(__file__).parent.parent.parent / "preprint" / "figs" / "suppfig"
+FIGS_DIR.mkdir(parents=True, exist_ok=True)
 
 NAMES = {
     'kidney_dapi': 'Kidney DAPI',
@@ -114,7 +115,7 @@ def main():
             panel_idx += 1
 
     plt.tight_layout(h_pad=1.0)
-    out = FIGS_DIR / "suppfig_compression.pdf"
+    out = FIGS_DIR / "compression.pdf"
     fig.savefig(out, dpi=300)
     plt.close()
     print(f"Saved: {out}")

@@ -1,4 +1,4 @@
-Dataset	Modality	Shape	Voxels (M)	PSNR@32K	CR@32K	Best PSNR	Noise (dB)	N2S opt.
+Dataset	Modality	Shape	Voxels (M)	PSNR@32K	CR@32K	Best PSNR	Noise (dB)	CV opt.
 Kidney DAPI	Confocal	16x512x512	4.2	33.7	13x	37.3	41.3	63K
 Kidney Actin	Confocal	16x512x512	4.2	30.5	13x	37.1	43.5	124K
 OpenCell Nuclei	Spinning-disk	51x600x600	18.4	28.3	57x	29.9	32.6	32K

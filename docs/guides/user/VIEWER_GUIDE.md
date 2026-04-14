@@ -327,8 +327,9 @@ vc = luxar.ViewerConfig(
     auto_rotate=True,
 )
 
-scene = luxar.Scene(viewer_config=vc)
-# ... add geometry, then compile
+with luxar.LuxarZarrCompiler("output.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims, viewer_config=vc)
+    # ... add geometry to scene
 ```
 
 ### Loading a Viewer Snapshot
@@ -340,7 +341,9 @@ file, then reload it in Python:
 vc = luxar.ViewerConfig.from_file("my_view.json")
 vc.bloom_strength = 0.8  # tweak as needed
 
-scene = luxar.Scene(viewer_config=vc)
+with luxar.LuxarZarrCompiler("output.zarr") as compiler:
+    scene = compiler.create_scene(viewer_config=vc)
+    # ... add geometry to scene
 ```
 
 ### Priority Chain

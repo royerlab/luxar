@@ -3,7 +3,7 @@
 #
 # Ordered fastest-to-slowest, with PDF consolidation after each analysis:
 #   1. Noise floor estimation (~seconds)
-#   2. Splat count vs quality — rate-distortion + Noise2Self + plots (~2h)
+#   2. Splat count vs quality — rate-distortion + cross-validation + plots (~2h)
 #      → builds splat_count_vs_quality supplementary PDF
 #   3. Progressive vs single-pass — 4 conditions per dataset (~1h)
 #      → builds progressive supplementary PDF
@@ -37,7 +37,7 @@ echo "╚═══════════════════════�
 hatch run python manuscript/analysis/splat_count_vs_quality/run_noise_floor.py --all
 
 # ──────────────────────────────────────────────────────────────────────
-# 2. SPLAT COUNT VS QUALITY (rate-distortion + Noise2Self + plots)
+# 2. SPLAT COUNT VS QUALITY (rate-distortion + cross-validation + plots)
 # ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
@@ -48,7 +48,7 @@ for ds in $DATASETS; do
     echo "--- Rate-distortion: $ds ---"
     hatch run python manuscript/analysis/splat_count_vs_quality/run_analysis.py --dataset $ds
 
-    echo "--- Noise2Self: $ds ---"
+    echo "--- Cross-validation: $ds ---"
     hatch run python manuscript/analysis/splat_count_vs_quality/run_noise2self.py --dataset $ds
 
     echo "--- Plotting: $ds ---"

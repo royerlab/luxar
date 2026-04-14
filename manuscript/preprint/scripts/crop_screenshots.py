@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 
-FIGS_DIR = Path(__file__).parent.parent / "figs"
+FIGS_DIR = Path(__file__).parent.parent / "figs" / "overview"
 
 # Crop specs: (left%, top%, right%, bottom%) as fractions of image size
 # Removes title bar at top and status bar at bottom
@@ -19,7 +19,7 @@ CROPS = {
 }
 
 def main():
-    for fname, (l, t, r, b) in CROPS.items():
+    for fname, (left, t, r, b) in CROPS.items():
         path = FIGS_DIR / fname
         if not path.exists():
             print(f"  Skipping {fname}")
@@ -27,7 +27,7 @@ def main():
 
         img = Image.open(path)
         w, h = img.size
-        cropped = img.crop((int(l*w), int(t*h), int(r*w), int(b*h)))
+        cropped = img.crop((int(left*w), int(t*h), int(r*w), int(b*h)))
 
         out = FIGS_DIR / fname.replace('_inverted.png', '_paper.png')
         cropped.save(out, quality=95)

@@ -185,9 +185,8 @@ Connected line segments with per-vertex attributes.
 scene.add_lines(
     "Branches",
     positions,     # (N, 3) float32 - vertex positions
-    segments,      # (M, 2) uint32 - start/end vertex indices
-    colors=colors, # (N, 3) float32 - per-vertex colors
     widths=widths, # (N,) float32 - per-vertex width
+    colors=colors, # (N, 3) float32 - per-vertex colors
 )
 ```
 
@@ -252,7 +251,7 @@ Points in nD space are treated as **hyperspheres**. When viewing a 3D slice:
 
 | Key | Action |
 |-----|--------|
-| `V` | Toggle between Orbit and Fly modes |
+| `V` | Cycle control mode (Orbit / Fly / Ortho) |
 | `F` | Recenter camera on scene |
 | `Space` | Toggle fullscreen |
 
@@ -260,10 +259,11 @@ Points in nD space are treated as **hyperspheres**. When viewing a 3D slice:
 
 | Input | Action |
 |-------|--------|
-| Mouse drag | Rotate around scene |
+| Mouse drag | Pan |
 | Scroll | Zoom |
-| Right-click drag | Pan |
-| Shift + scroll | Change field of view |
+| Right-click drag | Rotate around scene |
+| Shift + scroll | Roll camera (rotate around viewing axis) |
+| Ctrl/Cmd + scroll | Change field of view |
 
 ### Fly Mode
 
@@ -297,7 +297,7 @@ from luxar import transforms
 
 # Basic transforms
 t = transforms.translate(10, 0, 0)
-r = transforms.rotate_z(np.pi / 4)
+r = transforms.rotate_z(45)
 s = transforms.scale(2, 2, 2)
 
 # Compose (applied left-to-right)
@@ -447,8 +447,8 @@ with LuxarZarrCompiler("output.zarr") as compiler:
 
     # Add geometry
     scene.add_points(name, positions, colors=..., radii=..., ...)
-    scene.add_lines(name, vertices, segments, colors=..., widths=...)
-    scene.add_group(name, transform=..., opacity=..., parent=...)
+    scene.add_lines(name, vertices, widths=..., colors=...)
+    scene.add_group(name, transform=..., opacity=...)
 
     # Gaussian splatting (requires luxar[gsplats])
     scene.add_gsplats_from_data(name, gsplat_result)
@@ -561,7 +561,7 @@ If you see "GPU fitting will use slower PyTorch fallback", fitting still works â
 |---------|--------|
 | Chrome 90+ | Fully supported |
 | Firefox 88+ | Fully supported (recommended for large datasets) |
-| Safari 14+ | Supported |
+| Safari 15+ | Supported |
 | Edge 90+ | Fully supported |
 
 ### Viewer URL Parameters
@@ -571,7 +571,7 @@ If you see "GPU fitting will use slower PyTorch fallback", fitting still works â
 | `?src=<url>` | Data source URL (Zarr store) |
 | `?theme=light` | Set UI theme (`light` or `dark`) |
 | `?debug` | Enable debug mode (`window.__luxarDebug`) |
-| `?no-cache` | Disable L1/L2 chunk caching |
+| `?no-cache` | Disable all chunk caching (L0/L1/L2) |
 | `?cache-debug` | Show cache hit/miss statistics |
 | `?clear-cache` | Clear the OPFS persistent cache on load |
 | `?no-prefetch` | Disable predictive chunk prefetching |

@@ -176,6 +176,10 @@ luxar export my_scene.zarr -o my_export/ --open
 - `luxar gsplat split` - Split dataset into multiple parts
 - `luxar gsplat slice` - Slice splats by coordinate ranges
 - `luxar gsplat compare` - Compare reconstruction quality against reference
+- `luxar gsplat transform` - Apply spatial and intensity transforms to a gsplat dataset
+- `luxar gsplat denoise` - Denoise a volume using Non-Local Means
+- `luxar gsplat benchmark` - GPU benchmark for auto tile-size
+- `luxar gsplat batch` - HPC batch fitting (plan, submit, status, merge, validate, cancel)
 
 ---
 
@@ -300,7 +304,7 @@ luxar gsplat cull input.gsplats.zarr output.gsplats.zarr --target volume.npy -p 
 - `--seeds, -s`: Seed count (int), compression ratio (float 0-1), or "auto"
 - `--iters, -n`: Max optimization iterations
 - `--device, -d`: Device: auto/cpu/cuda/mps
-- `--preset`: Parameter preset: draft/standard/hifi
+- `--preset`: Parameter preset: draft/standard/hifi/ultra
 - `--loss`: Loss function: l1/mse/poisson
 - `--lr`: Learning rate
 - `--seed-method`: Seed generation method (auto/edges/grid/decomposition)
@@ -321,11 +325,11 @@ When `--tiled` is enabled, the volume is split into overlapping tiles with Hann 
 
 **Presets**:
 
-| Parameter | draft | standard | hifi |
-|---|---|---|---|
-| n_iters | 500 | 3000 | 6000 |
-| early_stop_patience | 100 | 300 | 500 |
-| max_eccentricity | 10.0 | 10.0 | 15.0 |
+| Parameter | draft | standard | hifi | ultra |
+|---|---|---|---|---|
+| n_iters | 500 | 3000 | 6000 | 10000 |
+| early_stop_patience | 100 | 300 | 500 | 1000 |
+| max_eccentricity | 10.0 | 10.0 | 15.0 | 20.0 |
 
 **Config priority chain**: CLI flags > YAML config > preset > function defaults
 
@@ -568,7 +572,7 @@ luxar gsplat compare fitted.gsplats.zarr original.npy --device cuda --output-jso
 
 The `luxar gsplat fit` command supports a tiered configuration system:
 
-1. **Presets** (`--preset draft|standard|hifi`): Coherent parameter bundles for common use cases
+1. **Presets** (`--preset draft|standard|hifi|ultra`): Coherent parameter bundles for common use cases
 2. **YAML config** (`--config params.yaml`): Full control over all ~35 parameters
 3. **CLI flags** (`--iters`, `--lr`, etc.): Quick overrides for common parameters
 4. **`--dump-config`**: Generate a fully-commented YAML template

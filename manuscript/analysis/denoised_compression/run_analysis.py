@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Denoised compression comparison using Noise2Self held-out evaluation.
+"""Denoised compression comparison using blind-spot held-out evaluation.
 
 Standard PSNR measures reconstruction of the RAW signal (noise included).
 This inflates the apparent quality of methods that preserve noise (like
 quantization), and penalises methods that denoise (like GSplats at the
-N2S-optimal count).
+CV-optimal count).
 
-This analysis applies the Noise2Self held-out framework to ALL compression
-methods equally:
+This analysis applies the blind-spot cross-validation framework to ALL
+compression methods equally:
   1. Generate a random 5% held-out mask
   2. For GSplats: fit on the remaining 95%, evaluate on the held-out 5%
-     (already computed in the N2S analysis)
+     (already computed in the cross-validation analysis)
   3. For quantization baselines: apply quantization+compression to the
      FULL volume, then evaluate on the held-out 5%. Since quantization
      doesn't "learn" from the data, the mask doesn't affect the compression
@@ -19,7 +19,7 @@ methods equally:
 
 The key insight: for lossless/near-lossless methods, the held-out PSNR
 equals the noise floor (they preserve noise perfectly). For GSplats at
-the N2S-optimal count, the held-out PSNR exceeds the noise floor at low
+the CV-optimal count, the held-out PSNR exceeds the noise floor at low
 BPV because the representation captures signal while discarding noise.
 """
 
@@ -38,7 +38,7 @@ sys.path.insert(0, str(ANALYSIS_DIR.parent / "splat_count_vs_quality"))
 
 DATASETS = ['kidney_dapi', 'organoid_ch0', 'celegans_t100', 'tribolium', 'opencell_map4_ch0']
 
-MASK_FRACTION = 0.05  # Same as N2S analysis
+MASK_FRACTION = 0.05  # Same as cross-validation analysis
 SEED = 42
 
 
@@ -59,7 +59,7 @@ def compute_splat_bytes(n_splats, ndim=3):
 
 
 def generate_mask(shape, fraction, seed):
-    """Generate a random held-out mask (same as N2S analysis)."""
+    """Generate a random held-out mask (same as cross-validation analysis)."""
     rng = np.random.RandomState(seed)
     mask = rng.random(shape) < fraction
     return mask
@@ -77,8 +77,8 @@ def quantize_volume(volume, bits):
     return recon
 
 
-def get_gsplat_n2s_data(ds):
-    """Get GSplat N2S held-out PSNR data from existing analysis."""
+def get_gsplat_cv_data(ds):
+    """Get GSplat cross-validation held-out PSNR data from existing analysis."""
     n2s_path = QUALITY_DIR / f"{ds}_n2s" / "metrics_n2s.tsv"
     if not n2s_path.exists():
         return pd.DataFrame()
@@ -135,7 +135,6 @@ def main():
                 aprint(f"Noise floor: {noise_floor_psnr:.1f} dB")
 
             n_voxels = volume.size
-            raw_bytes = n_voxels * 4
 
             # --- Quantization baselines ---
             for bits in [4, 6, 8, 10, 12, 16]:
@@ -144,23 +143,6 @@ def main():
                 psnr_raw = compute_psnr(volume, recon)
                 psnr_heldout = compute_psnr(volume, recon, mask)
                 psnr_train = compute_psnr(volume, recon, ~mask)
-
-                # Estimate compressed size with zstd
-                import zstandard as zstd
-                if bits <= 8:
-                    compressed_data = zstd.ZstdCompressor(level=9).compress(
-                        recon.astype(np.float32).tobytes()  # Store as float for fair comparison
-                    )
-                else:
-                    compressed_data = zstd.ZstdCompressor(level=9).compress(
-                        recon.astype(np.float32).tobytes()
-                    )
-
-                # Actually, for BPV calculation, use the quantized size
-                if bits <= 8:
-                    q_bytes = n_voxels * 1  # uint8
-                else:
-                    q_bytes = n_voxels * 2  # uint16
                 # After zstd compression
                 import zstandard as zstd
                 q_data = np.clip(
@@ -187,8 +169,8 @@ def main():
                 all_rows.append(row)
                 aprint(f"  quant{bits}b: BPV={bpv:.3f}  raw={psnr_raw:.1f}  held-out={psnr_heldout:.1f}")
 
-            # --- GSplats (from existing N2S analysis) ---
-            gsplat_df = get_gsplat_n2s_data(ds_name)
+            # --- GSplats (from existing cross-validation analysis) ---
+            gsplat_df = get_gsplat_cv_data(ds_name)
             if not gsplat_df.empty:
                 gsplat_df['dataset'] = ds_name
                 for _, r in gsplat_df.iterrows():

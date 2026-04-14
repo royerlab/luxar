@@ -198,18 +198,18 @@ log.data(Modules.SPATIAL_INDEX_LOADER, `Loaded ${points.toLocaleString()} points
 
 ### ❌ Too Verbose
 ```typescript
-log.info(Modules.LOADER, 'Starting to load');
-log.info(Modules.LOADER, 'Checking cache');
-log.info(Modules.LOADER, 'Cache checked');
-log.info(Modules.LOADER, 'Opening file');
-log.info(Modules.LOADER, 'File opened');
+log.info(Modules.SCENE_LOADER, 'Starting to load');
+log.info(Modules.SCENE_LOADER, 'Checking cache');
+log.info(Modules.SCENE_LOADER, 'Cache checked');
+log.info(Modules.SCENE_LOADER, 'Opening file');
+log.info(Modules.SCENE_LOADER, 'File opened');
 ```
 
 ### ✅ Appropriate Detail
 ```typescript
-log.load(Modules.LOADER, 'Loading data from cache');
+log.load(Modules.SCENE_LOADER, 'Loading data from cache');
 // ... actual loading work ...
-log.success(Modules.LOADER, `Loaded ${size} bytes in ${time}ms`);
+log.success(Modules.SCENE_LOADER, `Loaded ${size} bytes in ${time}ms`);
 ```
 
 ## Debugging Features

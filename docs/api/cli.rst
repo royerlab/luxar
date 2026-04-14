@@ -62,13 +62,15 @@ Network Profiles
 
 The network simulation supports several built-in profiles that simulate real-world network conditions:
 
-* **3g**: Mobile 3G connection (400 kbps, 200ms latency, 1% packet loss)
-* **4g**: Mobile 4G/LTE (10 Mbps, 50ms latency)
-* **5g**: 5G mobile (100 Mbps, 10ms latency)
-* **broadband**: Home broadband (50 Mbps, 20ms latency)
-* **satellite**: Satellite internet (25 Mbps, 600ms latency, 0.5% packet loss)
-* **rural**: Rural DSL (2 Mbps, 100ms latency)
-* **congested**: Congested network (1 Mbps, 300ms latency, 5% packet loss)
+* **3g**: Mobile 3G connection (384 kbps, 300ms latency, 1% packet loss)
+* **4g**: Mobile 4G/LTE (10 Mbps, 100ms latency, 0.5% packet loss)
+* **5g**: 5G mobile (100 Mbps, 30ms latency, 0.1% packet loss)
+* **satellite**: Satellite internet (25 Mbps, 600ms latency, 1% packet loss)
+* **rural**: Rural DSL (1 Mbps, 100ms latency, 2% packet loss)
+* **congested**: Congested network (2 Mbps, 200ms latency, 3% packet loss)
+* **slow-broadband**: Slow broadband (5 Mbps, 50ms latency, 0.5% packet loss)
+* **broadband**: Home broadband (50 Mbps, 20ms latency, 0.1% packet loss)
+* **fast-broadband**: Fast broadband (200 Mbps, 10ms latency, 0.05% packet loss)
 
 Example usage::
 

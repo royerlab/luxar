@@ -820,7 +820,7 @@ def main():
         sys.exit(1)
 
     # Filter to only existing datasets
-    existing = [(n, l, g) for n, l, g in datasets if (DEMOS_DIR / n).exists()]
+    existing = [(n, label, g) for n, label, g in datasets if (DEMOS_DIR / n).exists()]
     if len(existing) < len(datasets):
         missing = set(d[0] for d in datasets) - set(d[0] for d in existing)
         print(f"Warning: Missing datasets: {missing}")

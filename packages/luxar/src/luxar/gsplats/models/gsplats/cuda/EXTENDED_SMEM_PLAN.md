@@ -1,3 +1,5 @@
+> **HISTORICAL DOCUMENT**: This plan was written for the tile-based backward kernel architecture. The current implementation uses a **splat-centric architecture** with completely different memory layout and kernel design. See `OPTIMIZATION_REPORT.md` for the current state. This document is retained for historical reference only.
+
 # Extended Shared Memory for Modern GPUs (A100/H100)
 
 ## Summary

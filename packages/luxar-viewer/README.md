@@ -75,13 +75,13 @@ Luxar Viewer supports three navigation modes:
 | **V** | Cycle control modes: Orbit -> Fly -> Ortho -> Orbit |
 | **I** | Toggle inertial mode (Fly mode only) |
 | **F** | Recenter camera on scene |
-| **C** | Toggle between native center and bounding box center |
+| **C** | Toggle cinematic mode |
 
 ### Orbit Mode Controls
 | Input | Action |
 |-------|--------|
-| **Left Mouse Drag** | Rotate camera around scene |
-| **Right Click + Drag** | Pan camera |
+| **Left Mouse Drag** | Pan camera |
+| **Right Click + Drag** | Rotate camera around scene |
 | **Mouse Wheel** | Zoom in/out |
 | **Shift + Mouse Wheel** | Roll (view-axis rotation) |
 
@@ -562,7 +562,7 @@ renderingControls: {
 ```
 
 **Anti-Aliasing Notes:**
-- **MSAA**: Hardware-accelerated, fast and sharp — great default for most scenes
+- **MSAA**: Hardware-accelerated, fast and sharp — great default for most scenes. Note: MSAA has limitations with additive blending (used by GSplats); consider FXAA or SMAA for scenes with Gaussian splats
 - **FXAA**: Fastest post-process AA, may slightly blur the image
 - **SMAA**: Advanced edge detection with preset quality levels (LOW/MEDIUM/HIGH/ULTRA)
 - **SSAA**: Highest quality (supersampling), significant performance cost
@@ -642,7 +642,7 @@ monitor.toggle();   // Toggle visibility
 |---------|---------|--------|
 | Chrome | 90+ | ✅ Fully supported |
 | Firefox | 88+ | ✅ Fully supported |
-| Safari | 14+ | ✅ Supported |
+| Safari | 15+ | ✅ Supported |
 | Edge | 90+ | ✅ Fully supported |
 
 ### WebGL Requirements

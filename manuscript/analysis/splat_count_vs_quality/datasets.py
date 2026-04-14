@@ -25,6 +25,22 @@ from arbol import aprint, asection
 
 DATASETS: dict[str, Callable[[], tuple[np.ndarray, dict[str, Any]]]] = {}
 
+# Human-readable display names for figures and tables
+DATASET_LABELS: dict[str, str] = {
+    "opencell_map4_ch0": "OpenCell MAP4 — Hoechst (Nuclei)",
+    "opencell_map4_ch1": "OpenCell MAP4 — GFP (Microtubules)",
+    "kidney_dapi": "Mouse Kidney — DAPI (Nuclei)",
+    "kidney_actin": "Mouse Kidney — Phalloidin (Actin)",
+    "organoid_ch0": "Organoid — Channel 0",
+    "celegans_t100": "C. elegans Embryo — t=100",
+    "tribolium": "Tribolium Embryo (Light-Sheet)",
+    "opencell_lmnb1_ch0": "OpenCell LMNB1 — Hoechst (Nuclei)",
+    "opencell_lmnb1_ch1": "OpenCell LMNB1 — GFP (Nuclear Lamina)",
+    "cells3d_nuclei": "HeLa Cells — Nuclei",
+    "cells3d_membrane": "HeLa Cells — Membrane",
+    "acto3d_heart_nuclei": "Mouse Heart — Nuclei (Light-Sheet)",
+}
+
 
 def register(name: str):
     """Decorator that registers a dataset loader under *name*."""
@@ -177,8 +193,8 @@ def load_kidney_actin() -> tuple[np.ndarray, dict[str, Any]]:
 @register("organoid_ch0")
 def load_organoid_ch0() -> tuple[np.ndarray, dict[str, Any]]:
     """Mouse intestinal organoid channel 0 (confocal, IDR). Full-res, center crop if needed."""
-    import zarr
     import fsspec
+    import zarr
 
     zarr_url = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.2/6001240.zarr"
     max_voxels = 20_000_000  # ~20M voxels max to keep fitting tractable
@@ -239,8 +255,9 @@ def load_organoid_ch0() -> tuple[np.ndarray, dict[str, Any]]:
 @register("celegans_t100")
 def load_celegans_t100() -> tuple[np.ndarray, dict[str, Any]]:
     """C. elegans embryo, single mid-movie timepoint t=100. 41x512x512."""
-    import tifffile
     import zipfile
+
+    import tifffile
 
     cache_dir = ANALYSIS_CACHE / "gsplats_celegans"
     timepoint = 100  # Mid-movie (~400 total)
@@ -316,8 +333,9 @@ def load_celegans_t100() -> tuple[np.ndarray, dict[str, Any]]:
 @register("tribolium")
 def load_tribolium() -> tuple[np.ndarray, dict[str, Any]]:
     """Tribolium castaneum embryo (light-sheet). 965x1871x991, cropped along largest axis."""
-    import tifffile
     import zipfile
+
+    import tifffile
 
     cache_dir = ANALYSIS_CACHE / "gsplats_tribolium"
     max_voxels = 100_000_000  # ~100M voxels — gives ~104 Y-slices from 1871
@@ -340,7 +358,6 @@ def load_tribolium() -> tuple[np.ndarray, dict[str, Any]]:
     # 2. Extract TIFFs
     extract_dir = cache_dir / "extracted"
     with asection("Extracting Tribolium volume"):
-        tiff_exts = (".tif", ".tiff", ".ome.tif", ".ome.tiff")
         tiff_files = sorted(
             f for f in extract_dir.rglob("*") if f.suffix.lower() in (".tif", ".tiff")
         ) if extract_dir.exists() else []
@@ -517,25 +534,14 @@ def load_acto3d_heart_nuclei() -> tuple[np.ndarray, dict[str, Any]]:
     # Download from Google Drive if not cached
     if not tiff_path.exists():
         cache_dir.mkdir(parents=True, exist_ok=True)
-        # Import the Google Drive downloader from the demo
-        import importlib.util
-        demo_path = (
-            Path(__file__).parent.parent.parent
-            / "packages/luxar/src/luxar/demos/demo_gsplats_3d_acto3d_heart.py"
-        )
-        if demo_path.exists():
-            spec = importlib.util.spec_from_file_location("acto3d_demo", demo_path)
-            mod = importlib.util.module_from_spec(spec)
-            # We only need the download function, but loading the module is complex.
-            # Simpler: use urllib with the direct Google Drive URL
-            pass
+        # Direct download approach (simpler than loading the demo module)
 
         # Direct download approach
         gdrive_id = "1VHiLkK2O1ZrWoWX4ahPwnZfNgDQ242Kz"
         with asection("Downloading Acto3D heart from Google Drive (~1.65 GB)"):
             import requests
             url = f"https://drive.usercontent.google.com/download?id={gdrive_id}&confirm=t"
-            aprint(f"Downloading from Google Drive...")
+            aprint("Downloading from Google Drive...")
             resp = requests.get(url, stream=True)
             resp.raise_for_status()
             tmp = tiff_path.with_suffix(".tmp")

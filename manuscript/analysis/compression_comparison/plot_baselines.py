@@ -10,7 +10,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 RESULTS_DIR = Path(__file__).parent / "results"
-FIGS_DIR = Path(__file__).parent.parent.parent / "preprint" / "figs"
+FIGS_DIR = Path(__file__).parent.parent.parent / "preprint" / "figs" / "suppfig"
+FIGS_DIR.mkdir(parents=True, exist_ok=True)
 
 DATASET_NAMES = {
     'kidney_dapi': 'Kidney DAPI',
@@ -96,7 +97,7 @@ def main():
                         fontstyle='italic')
 
     plt.tight_layout()
-    out = FIGS_DIR / "suppfig_compression.pdf"
+    out = FIGS_DIR / "compression_rate_distortion.pdf"
     fig.savefig(out, dpi=300)
     plt.close()
     print(f"Saved: {out}")

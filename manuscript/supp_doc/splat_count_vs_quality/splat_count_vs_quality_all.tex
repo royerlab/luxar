@@ -62,7 +62,7 @@
 
 % ══════════════════════════════════════════════════════════════════
 \title{\bfseries Gaussian Splat Count vs.\ Reconstruction Quality:\\
-       Rate-Distortion Analysis with Noise2Self Model Selection}
+       Rate-Distortion Analysis with Blind-Spot Cross-Validation}
 \author{Supplementary Material --- Luxar Project}
 \date{\today}
 
@@ -77,7 +77,7 @@ made by trial and error. We present a systematic analysis of the
 rate-distortion trade-off for Gaussian splat representations across
 12 microscopy datasets spanning confocal, spinning-disk confocal, and
 light-sheet modalities. We introduce a principled model selection criterion
-based on blind-spot cross-validation inspired by Noise2Self
+based on blind-spot cross-validation
 \citep{batson2019noise2self}: by masking a fraction of voxels during
 fitting and evaluating reconstruction on the held-out positions, we
 determine the splat count at which the model transitions from fitting
@@ -122,7 +122,7 @@ analyses:
 \begin{enumerate}
   \item \textbf{Rate-distortion curves} (\cref{sec:rate-distortion}):
     PSNR and SSIM as a function of splat count, from 1K to 512K.
-  \item \textbf{Noise2Self model selection} (\cref{sec:noise2self}):
+  \item \textbf{Blind-spot cross-validation} (\cref{sec:noise2self}):
     blind-spot cross-validation to identify the optimal splat count, with
     a formal theoretical justification.
   \item \textbf{Noise floor estimation} (\cref{sec:noise-floor}):
@@ -188,8 +188,8 @@ overlay), SSIM vs.\ splat count, fitting time, and culling percentage.
 
 
 % ══════════════════════════════════════════════════════════════════
-\section{Noise2Self Model Selection}
-\label{sec:noise2self}
+\section{Blind-Spot Cross-Validation}
+\label{sec:noise2self} % Label kept for cross-reference stability
 
 \subsection{Motivation}
 \label{sec:n2s-motivation}
@@ -203,7 +203,7 @@ reconstruction of the \emph{underlying signal}, not the noise.
 \subsection{Blind-Spot Cross-Validation}
 \label{sec:n2s-method}
 
-Inspired by the Noise2Self framework \citep{batson2019noise2self}, we
+Inspired by the blind-spot framework of Batson \& Royer \citep{batson2019noise2self}, we
 perform the following procedure for each splat count:
 
 \begin{enumerate}
@@ -305,11 +305,11 @@ at masked positions to increase (or plateau). The held-out PSNR thus
 peaks at $N^*$ and declines (or flattens) thereafter.
 \end{remark}
 
-\begin{remark}[Connection to the Noise2Self theorem]
+\begin{remark}[Connection to Batson \& Royer (2019)]
 \Cref{prop:held-out-decomposition} is a special case of Proposition~1 in
 \citet{batson2019noise2self}, applied to the specific setting where
 $f = \hat{V}_N$ is a Gaussian splat model fitted to the blind-spot
-volume $\tilde{Y}$. The key insight from the Noise2Self framework is
+volume $\tilde{Y}$. The key insight from the blind-spot framework is
 that any $\Jcal$-invariant estimator's self-supervised loss (evaluated
 against the noisy input) equals the supervised loss (evaluated against
 the clean signal) plus a noise constant. This allows model selection
@@ -334,7 +334,7 @@ This hybrid approach is robust across all curve shapes observed in our
 \subsection{Results}
 \label{sec:n2s-results}
 
-The Noise2Self analysis reveals that \textbf{10 of 12 datasets exhibit
+The cross-validation analysis reveals that \textbf{10 of 12 datasets exhibit
 overfitting} when given excessive splat capacity. The held-out PSNR
 peaks and then declines, confirming that additional splats memorise
 noise. Only the two light-sheet datasets (Tribolium, Acto3D) show
@@ -347,7 +347,7 @@ dense tissue). See \cref{tab:n2s-summary} and the per-dataset figures.
 
 \begin{table}[H]
 \centering
-\caption{Noise2Self model selection summary.}
+\caption{Cross-validation model selection summary.}
 \label{tab:n2s-summary}
 \small
 \begin{tabular}{@{}lrrrl@{}}
@@ -481,7 +481,7 @@ ceiling) still have recoverable signal. Datasets near their noise floor
 noise floor line in each figure provides an at-a-glance assessment of
 how much room for improvement remains.
 
-\paragraph{4. The N2S held-out peak is a principled stopping criterion.}
+\paragraph{4. The CV held-out peak is a principled stopping criterion.}
 \Cref{prop:held-out-decomposition} shows that the held-out PSNR directly
 estimates signal reconstruction quality (up to a noise constant). Unlike
 heuristics (e.g., ``use $N = |\Omega|/500$ splats''), the held-out peak
@@ -490,7 +490,7 @@ is adaptive to the specific dataset's noise level and signal complexity.
 \subsection{Limitations}
 
 \paragraph{Noise independence assumption.}
-The Noise2Self framework requires pixel-independent noise. Preprocessing
+The blind-spot framework requires pixel-independent noise. Preprocessing
 steps such as percentile clipping (applied to OpenCell and C.~elegans
 datasets) can violate this assumption by introducing spatial correlations
 at clipped extremes. This may partially explain the relatively flat
@@ -508,7 +508,7 @@ improve precision.
 
 We have presented a comprehensive rate-distortion analysis of Gaussian
 splat representations for 3D microscopy, covering 12 datasets across
-three imaging modalities. The Noise2Self-inspired blind-spot cross-validation
+three imaging modalities. The blind-spot cross-validation (inspired by Batson \& Royer, 2019)
 provides a principled, fully automatic criterion for selecting the optimal
 splat count --- one that requires no clean reference data, no prior on the
 noise level, and no manual parameter tuning. The theoretical justification
@@ -547,7 +547,7 @@ their specific data.
   \begin{figure}[H]
     \centering
     \includegraphics[width=\textwidth]{#1_fig_noise2self.pdf}
-    \caption{Noise2Self analysis for #2.}
+    \caption{Cross-validation analysis for #2.}
   \end{figure}
 }
 

@@ -149,9 +149,9 @@ def backward(
 | Scenario | Backend | GPU Required |
 |----------|---------|--------------|
 | Production | `cuda_splatting_backend` | Yes |
-| Python logic tests | `MockSplattingBackend` | No |
+| Python logic tests | `GaussianSplatModel` (PyTorch reference) | No |
 | Numerical validation | `GaussianSplatModel` (PyTorch) | Optional |
-| CI without GPU | `MockSplattingBackend` | No |
+| CI without GPU | `GaussianSplatModel` (PyTorch reference) | No |
 | Gradcheck | Real backend | Yes |
 
 ### 8.3 Python Model Class
@@ -313,21 +313,21 @@ Local Memory (LMEM), killing performance. **LMEM spills can cause 10× slowdown.
    // 2D/3D: High occupancy, more registers allowed
    template<>
    __global__ __launch_bounds__(256, 4)  // 64 regs/thread max
-   void rasterize_fwd_nd<2>(...) { ... }
+   void rasterize_forward_splat_centric_kernel<2>(...) { ... }
 
    template<>
    __global__ __launch_bounds__(256, 4)
-   void rasterize_fwd_nd<3>(...) { ... }
+   void rasterize_forward_splat_centric_kernel<3>(...) { ... }
 
    // 4D: Moderate occupancy
    template<>
    __global__ __launch_bounds__(256, 2)  // 128 regs/thread max
-   void rasterize_fwd_nd<4>(...) { ... }
+   void rasterize_forward_splat_centric_kernel<4>(...) { ... }
 
    // 5D+: Accept lower occupancy, prevent spills
    template<>
    __global__ __launch_bounds__(128, 2)  // 256 regs/thread max, smaller blocks
-   void rasterize_fwd_nd<5>(...) { ... }
+   void rasterize_forward_splat_centric_kernel<5>(...) { ... }
    ```
 
 2. **REQUIRED: Prevent unrolling for D>4**:
@@ -365,7 +365,7 @@ Local Memory (LMEM), killing performance. **LMEM spills can cause 10× slowdown.
 3. **REQUIRED: Verify no LMEM spills** in Nsight Compute:
    ```bash
    ncu --metrics lts__t_sectors_op_atom.sum,lts__t_sectors_op_red.sum \
-       --kernel-name "rasterize_fwd_nd" ./your_kernel
+       --kernel-name "rasterize_forward_splat_centric_kernel" ./your_kernel
 
    # If lts__t_sectors_* > 0 for your kernel, you have spills. Fix immediately.
    ```
@@ -453,32 +453,32 @@ void forward_pass(...) {
 - [x] FP16 input support (FP32 output)
 - [x] Benchmark forward pass performance
 
-### Phase 3: Backward Pass (IN PROGRESS)
+### Phase 3: Backward Pass (COMPLETE)
 
 - [x] Implement splat-centric backward kernel (1 block per splat, warp reduction)
 - [x] Zero-atomics gradient accumulation (warp → block → single global write)
-- [ ] Chain rule integration for L gradients (Python)
-- [ ] Gradient validation with `torch.autograd.gradcheck`
-- [ ] Extend to 2D
-- [ ] Benchmark backward pass performance
+- [x] Chain rule integration for L gradients (Python)
+- [x] Gradient validation with `torch.autograd.gradcheck`
+- [x] Extend to 2D
+- [x] Benchmark backward pass performance
 
-### Phase 4: Optimization & nD
+### Phase 4: Optimization & nD (COMPLETE)
 
-- [ ] Shared memory batch loading (BalanceGS pattern)
-- [ ] Memory coalescing optimization (AoS layout)
-- [ ] Extend to 4D-8D dimensions
-- [ ] Add NVTX profiling markers
-- [ ] Performance tuning for different GPU architectures
-- [ ] Documentation and examples
+- [x] Shared memory batch loading (BalanceGS pattern)
+- [x] Memory coalescing optimization (AoS layout)
+- [x] Extend to 4D-8D dimensions
+- [x] Add NVTX profiling markers
+- [x] Performance tuning for different GPU architectures
+- [x] Documentation and examples
 
-### Phase 5: Production Hardening
+### Phase 5: Production Hardening (COMPLETE)
 
-- [ ] Error handling and input validation
-- [ ] Multi-stream support
-- [ ] Memory pool for workspace allocation
-- [ ] Comprehensive test suite
-- [ ] CI/CD integration
-- [ ] Benchmarking suite
+- [x] Error handling and input validation
+- [x] Multi-stream support
+- [x] Memory pool for workspace allocation
+- [x] Comprehensive test suite
+- [x] CI/CD integration
+- [x] Benchmarking suite
 
 ### 10.6 Compilation Strategy (REQUIRED)
 

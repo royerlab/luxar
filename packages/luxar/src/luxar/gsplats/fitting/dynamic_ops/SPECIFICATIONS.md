@@ -53,7 +53,7 @@ class DynamicOpsConfig:
         self.step_every: int = 50              # Run every N iterations
 
         # Step 1: Residual Peak Analysis
-        self.k_max_residuals: int = 20         # Max peaks to find
+        self.k_max_residuals: int = 40         # Max peaks to find
         self.nms_radius_vox: float = 2.0       # Non-maximum suppression radius
 
         # Tiled seeding (spatial fairness)
@@ -62,7 +62,7 @@ class DynamicOpsConfig:
 
         # Step 2: Weak Splat Identification
         self.relocation_percentile: float = 1.0   # % of least important splats
-        self.max_relocations_per_step: int | None = 32   # Cap relocations per step (None = no limit)
+        self.max_relocations_per_step: int | None = 64   # Cap relocations per step (None = no limit)
 
         # Step 3: Relocation Parameters
         self.init_sigma_vox: float = 0.5          # Initial sigma for relocated splats
@@ -79,7 +79,7 @@ class DynamicOpsConfig:
         self.min_splats_to_keep: int = 10         # Minimum splat count
 
         # Cooldown mechanism (prevents immediate re-relocation)
-        self.relocation_cooldown_steps: int = 3   # Steps to wait before allowing re-relocation
+        self.relocation_cooldown_steps: int = 1   # Steps to wait before allowing re-relocation
 ```
 
 ### RecentlyRelocatedTracker
@@ -176,7 +176,7 @@ Output: bool (any_relocated)
 7. RELOCATION (batched):
    peak_coords = peak_locations[peak_indices]  # Vectorized lookup
    relocate_splats_batch(model, splat_indices, peak_coords, residual, cfg, optimizer)
-   # - Resets model parameters (mu, L, a, sharpness)
+   # - Resets model parameters (mu, L, a)
    # - Resets optimizer state (exp_avg, exp_avg_sq) if provided
 
 8. TRACKER UPDATE (NEW):
@@ -319,8 +319,7 @@ BATCHED OPERATIONS (all vectorized on GPU):
    model.raw_L_diag[splat_indices] = raw_L_diag_batch
    model.L_off[splat_indices] = 0  # (N, d*(d-1)//2) Zero off-diagonal
 
-4. SHARPNESS: Reset to standard (s=2.0 → s'=0)
-   model.sharpness_offsets_raw[splat_indices] = 0.0
+4. SHARPNESS: (removed from model — per-splat sharpness is no longer used; all splats use s=2)
 
 5. OPTIMIZER STATE RESET (if optimizer provided):
    reset_optimizer_state_batch(optimizer, model, splat_indices)
@@ -366,7 +365,7 @@ Output: (modifies optimizer.state in-place)
 For Adam optimizer only:
 
 1. PARAMETER ITERATION:
-   params = [raw_mu, raw_L_diag, L_off, raw_a, sharpness_offsets_raw]
+   params = [raw_mu, raw_L_diag, L_off, raw_a]  # Note: sharpness_offsets_raw removed from model
 
    for param in params:
        if param not in optimizer.state:

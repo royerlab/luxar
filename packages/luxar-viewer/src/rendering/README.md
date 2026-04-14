@@ -15,7 +15,7 @@ The Luxar Rendering package provides a modern, high-performance rendering pipeli
 - **Line Rendering**: Instanced quad geometry for thick lines with seamless joints
 - **Material Management**: Efficient caching and reuse for points and lines
 - **World-Space Point Sizing**: Physically accurate scaling
-- **Multiple Anti-Aliasing Options**: FXAA and SMAA support
+- **Multiple Anti-Aliasing Options**: FXAA, SMAA, MSAA, and SSAA support
 
 ### Package Architecture
 

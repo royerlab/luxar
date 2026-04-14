@@ -313,18 +313,14 @@ if (ndT && Object.keys(ndT).length > 0 && viewState.dimensions) {
 
 If a dimension has `extend_to_all`, its tolerance is already set to 1e10 (infinite). The inverse transform scales this: `1e10 / |scale|` is still effectively infinite. No special handling needed.
 
-### 9.6 Hierarchical Composition (Known Limitation)
+### 9.6 Hierarchical Composition
 
 **Python side**: Full hierarchical composition is implemented via `world_nd_transform` property, which walks the parent chain and composes all nd_transforms.
 
-**TypeScript viewer side**: Currently reads `nd_transform` directly from the node's own attrs (stored per-node in userData). Parent nd_transforms are NOT automatically composed. This means:
-- `nd_transform` on a group applies only when queried directly (Python reader)
+**TypeScript viewer side**: Parent nd_transforms ARE automatically composed via `computeWorldNdTransform()` in `scene-loader.ts`. This function traverses the scene graph and composes nd_transforms from parent to child. This means:
+- `nd_transform` on a group propagates correctly to all child data nodes in the viewer
 - `nd_transform` on a points/lines/gsplats node applies correctly in the viewer
-- A parent group's `nd_transform` does NOT propagate to child data nodes in the viewer
-
-**Workaround**: Set `nd_transform` directly on leaf data nodes rather than on parent groups.
-
-**Future enhancement**: Store the scene graph as a class member in SceneLoader, then use `computeWorldNdTransform()` (already implemented in `nd-transform.ts`) to pre-compose at scene load time. The composition utility exists; the wiring is the missing piece.
+- Composition follows the same rules as the Python side (affine composition for continuous/discrete, permutation composition for categorical)
 
 ## 10. Performance Analysis
 
