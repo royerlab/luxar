@@ -231,7 +231,7 @@ def generate_figure(device: str, output_path: Path) -> None:
                 ax = axes[row, col]
                 img = all_slices[row][col]
 
-                ax.imshow(img, cmap="gray", vmin=0, vmax=1,
+                ax.imshow(img, cmap="inferno", vmin=0, vmax=1,
                           interpolation="nearest", aspect="equal")
                 ax.set_xticks([])
                 ax.set_yticks([])

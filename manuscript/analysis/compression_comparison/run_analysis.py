@@ -13,6 +13,9 @@ import numpy as np
 import pandas as pd
 
 ANALYSIS_DIR = Path(__file__).parent
+sys.path.insert(0, str(ANALYSIS_DIR.parent))
+from cv_optimal import find_cv_optimal_idx  # noqa: E402
+
 QUALITY_DIR = ANALYSIS_DIR.parent / "splat_count_vs_quality" / "results"
 RESULTS_DIR = ANALYSIS_DIR / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
@@ -38,22 +41,22 @@ def compute_splat_size_bytes(n_splats, ndim=3):
 
 
 def find_cv_optimal(ds):
-    """Find the CV-optimal splat count (held-out PSNR peak).
+    """Find the CV-optimal splat count using the shared hybrid algorithm.
 
     Returns (seeds_requested, held_out_psnr, is_genuine_peak).
-    If no genuine peak (last point is max), returns last point with is_genuine_peak=False.
     """
     n2s_path = QUALITY_DIR / f"{ds}_n2s" / "metrics_n2s.tsv"
     if not n2s_path.exists():
         return None, None, False
 
     n2s = pd.read_csv(n2s_path, sep='\t').sort_values('seeds_requested')
-    peak_idx = n2s['held_out_psnr_db'].idxmax()
-    last_idx = n2s.index[-1]
+    opt_pos = find_cv_optimal_idx(n2s['held_out_psnr_db'].values)
+    opt_row = n2s.iloc[opt_pos]
 
-    seeds = int(n2s.loc[peak_idx, 'seeds_requested'])
-    psnr = float(n2s.loc[peak_idx, 'held_out_psnr_db'])
-    is_genuine = peak_idx != last_idx
+    seeds = int(opt_row['seeds_requested'])
+    psnr = float(opt_row['held_out_psnr_db'])
+    # A genuine peak means the optimal is not at the very last tested count
+    is_genuine = opt_pos != len(n2s) - 1
 
     return seeds, psnr, is_genuine
 

@@ -10,14 +10,19 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use('Agg')
+import sys
+
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import pandas as pd
 
-# Paths
+# Paths — add manuscript/analysis/ to sys.path for shared utilities
 SCRIPT_DIR = Path(__file__).parent.parent
 ANALYSIS_DIR = SCRIPT_DIR.parent / "analysis" / "splat_count_vs_quality"
+sys.path.insert(0, str(SCRIPT_DIR.parent / "analysis"))
+from cv_optimal import find_cv_optimal_idx  # noqa: E402
+
 RESULTS_DIR = ANALYSIS_DIR / "results"
 FIGS_DIR = SCRIPT_DIR / "figs"
 FIGS_DIR.mkdir(exist_ok=True)
@@ -65,15 +70,15 @@ COLORS = {
 DISPLAY_NAMES = {
     'kidney_dapi': 'Kidney DAPI',
     'kidney_actin': 'Kidney actin',
-    'opencell_map4_ch0': 'OpenCell nuclei',
-    'opencell_map4_ch1': 'OpenCell MT',
+    'opencell_map4_ch0': 'MAP4 (Hoechst)',
+    'opencell_map4_ch1': 'MAP4 (GFP)',
     'organoid_ch0': 'Organoid',
     'celegans_t100': 'C. elegans',
     'tribolium': 'Tribolium',
     'cells3d_nuclei': 'Cells3D nuclei',
     'cells3d_membrane': 'Cells3D membrane',
-    'opencell_lmnb1_ch0': 'LMNB1 ch0',
-    'opencell_lmnb1_ch1': 'LMNB1 ch1',
+    'opencell_lmnb1_ch0': 'LMNB1 (Hoechst)',
+    'opencell_lmnb1_ch1': 'LMNB1 (GFP)',
     'acto3d_heart_nuclei': 'Heart nuclei',
 }
 
@@ -355,15 +360,17 @@ def figure_3_cross_validation():
                 ax_a.axhline(y=nf_val, color='#999999', linestyle=':',
                              linewidth=0.7, label='Noise floor', zorder=1)
 
-        # Mark optimal
-        peak_idx = n2s['held_out_psnr_db'].idxmax()
-        peak_x = n2s.loc[peak_idx, 'n_splats_final'] / 1000
-        peak_y = n2s.loc[peak_idx, 'held_out_psnr_db']
+        # Mark CV-optimal (clear peak or plateau onset)
+        opt_pos = find_cv_optimal_idx(n2s['held_out_psnr_db'].values)
+        opt_iloc = n2s.index[opt_pos]
+        peak_x = n2s.loc[opt_iloc, 'n_splats_final'] / 1000
+        peak_y = n2s.loc[opt_iloc, 'held_out_psnr_db']
         ax_a.plot(peak_x, peak_y, '*', color='black',
                   markersize=8, zorder=5)
 
-        # Shade overfitting region
-        overfit_mask = n2s['n_splats_final'] / 1000 > peak_x
+        # Shade overfitting region (past the absolute peak)
+        abs_peak_x = n2s.loc[n2s['held_out_psnr_db'].idxmax(), 'n_splats_final'] / 1000
+        overfit_mask = n2s['n_splats_final'] / 1000 > abs_peak_x
         if overfit_mask.any():
             ax_a.fill_between(
                 n2s.loc[overfit_mask, 'n_splats_final'] / 1000,
@@ -441,8 +448,8 @@ def figure_3_cross_validation():
             sigma = nf_row['sigma_ensemble'].values[0]
             if sigma == 0:
                 continue
-            peak_idx = n2s['held_out_psnr_db'].idxmax()
-            optimal_count = n2s.loc[peak_idx, 'n_splats_final'] / 1000
+            opt_pos = find_cv_optimal_idx(n2s['held_out_psnr_db'].values)
+            optimal_count = n2s.iloc[opt_pos]['n_splats_final'] / 1000
             plot_data.append((ds, sigma, optimal_count))
 
         # Plot with offset labels
@@ -514,10 +521,10 @@ def figure_table_summary():
         ssim_32k = row_32k['ssim'].values[0] if not row_32k.empty else 0
         cr_32k = row_32k['compression_ratio'].values[0] if not row_32k.empty else 0
 
-        # CV optimal
+        # CV optimal (clear peak or plateau onset)
         if not n2s.empty:
-            peak_idx = n2s['held_out_psnr_db'].idxmax()
-            optimal_count = n2s.loc[peak_idx, 'n_splats_final'] / 1000
+            opt_pos = find_cv_optimal_idx(n2s['held_out_psnr_db'].values)
+            optimal_count = n2s.iloc[opt_pos]['n_splats_final'] / 1000
         else:
             optimal_count = 0
 
@@ -659,13 +666,11 @@ def figure_4_cv_all_datasets():
                         ax.axhline(y=nf_val, color='#999999', linestyle=':',
                                    linewidth=0.6)
 
-            # Mark peak only if it's a genuine peak (not at last point)
-            peak_idx = n2s['held_out_psnr_db'].idxmax()
-            last_idx = n2s.index[-1]
-            if peak_idx != last_idx:
-                peak_x = n2s.loc[peak_idx, 'n_splats_final'] / 1000
-                peak_y = n2s.loc[peak_idx, 'held_out_psnr_db']
-                ax.plot(peak_x, peak_y, '*', color='black', markersize=6, zorder=5)
+            # Mark CV-optimal (clear peak or plateau onset)
+            opt_pos = find_cv_optimal_idx(n2s['held_out_psnr_db'].values)
+            peak_x = n2s.iloc[opt_pos]['n_splats_final'] / 1000
+            peak_y = n2s.iloc[opt_pos]['held_out_psnr_db']
+            ax.plot(peak_x, peak_y, '*', color='black', markersize=6, zorder=5)
 
         format_splat_axis(ax)
         ax.set_title(DISPLAY_NAMES[ds], fontsize=FONTSIZE, fontweight='bold', pad=2)

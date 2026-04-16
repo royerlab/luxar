@@ -19,8 +19,8 @@ NAMES = {
     'organoid_ch0': 'Organoid',
     'celegans_t100': 'C. elegans',
     'tribolium': 'Tribolium',
-    'opencell_map4_ch0': 'OpenCell nuclei',
-    'opencell_map4_ch1': 'OpenCell MT',
+    'opencell_map4_ch0': 'MAP4 (Hoechst)',
+    'opencell_map4_ch1': 'MAP4 (GFP)',
     'cells3d_nuclei': 'Cells3D nuclei',
 }
 
