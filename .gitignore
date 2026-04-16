@@ -1,4 +1,8 @@
 
+# Manuscript split into sibling repo royerlab/luxar-paper; accessed via
+# optional symlink `manuscript -> ../luxar-paper` (not tracked here).
+/manuscript
+
 *~
 .~*
 *$py.class
