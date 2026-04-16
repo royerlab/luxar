@@ -88,7 +88,7 @@ the recoverable signal.
 | kidney_dapi | 33.7 dB | 63K | 31.5 dB | 5.9 dB | **Yes** |
 | kidney_actin | 30.8 dB | 124K | 28.4 dB | 8.8 dB | **Yes** |
 | organoid_ch0 | 37.7 dB | 28K | 37.2 dB | 3.9 dB | **Yes** |
-| celegans_t100 | 39.3 dB | 15K | 38.9 dB | 1.4 dB | **Yes** |
+| celegans_t100 | 39.3 dB | 16K | 38.9 dB | 1.4 dB | **Yes** |
 | tribolium | 42.8 dB | 510K | 42.8 dB | -0.1 dB | **No** |
 
 ### Key findings
@@ -119,7 +119,7 @@ stopping criterion:
 - OpenCell: 32K–62K splats
 - Kidney: 63K–124K splats
 - Organoid: 28K splats
-- C. elegans: 15K splats
+- C. elegans: 16K splats
 - Tribolium: no peak (signal-limited)
 
 **4. The noise floor line provides context.**

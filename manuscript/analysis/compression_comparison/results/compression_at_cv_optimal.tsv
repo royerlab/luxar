@@ -1,4 +1,4 @@
-dataset	shape	n_voxels_M	n2s_optimal_seeds	n2s_genuine_peak	n_splats	psnr_db	ssim	held_out_psnr	raw_MB	splat_MB	cr_vs_raw	bpv_splat	fit_time_s
+dataset	shape	n_voxels_M	cv_optimal_seeds	cv_genuine_peak	n_splats	psnr_db	ssim	held_out_psnr	raw_MB	splat_MB	cr_vs_raw	bpv_splat	fit_time_s
 kidney_dapi	16x512x512	4.2	64000	True	63046	35.5	0.978	33.6	16.8	2.52	6.7	4.81	102.9
 kidney_actin	16x512x512	4.2	128000	True	124259	35.4	0.985	30.8	16.8	4.97	3.4	9.48	114.8
 opencell_map4_ch0	51x600x600	18.4	32000	True	32312	28.3	0.675	28.0	73.4	1.29	56.8	0.563	10.8

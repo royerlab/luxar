@@ -119,7 +119,7 @@ structures amenable to progressive decomposition.
 ### 3. Progressive fitting is consistently 2-4x faster
 
 Even when progressive does not win on quality, it is substantially faster in
-wall-clock time. For 10 of 12 datasets, 2-pass is the fastest condition:
+wall-clock time. For all 12 datasets, 2-pass is faster than 1-pass:
 
 - OpenCell MAP4 ch0: 19s (2-pass) vs 70s (1-pass) = **3.7x faster**
 - C. elegans: 16s (2-pass) vs 145s (1-pass) = **9.1x faster**
@@ -213,7 +213,7 @@ signal and noise, causing subsequent passes to partially fit noise.
 
 **Practical recommendation:**
 - Use **2-pass** for large, clean volumes (light-sheet) or small volumes with
-  high-contrast structures — gains of +0.9 to +1.7 dB at 2-4x faster speed.
+  high-contrast structures — gains of +0.9 to +1.6 dB at 1.2-4.4x faster speed.
 - Use **1-pass** for noisy confocal/spinning-disk data with conservative culling.
 - Never use more than 2 passes at this budget level — diminishing returns are
   consistent across all datasets.
