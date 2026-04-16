@@ -24,11 +24,11 @@ COLORS = {
 }
 NAMES = {
     'kidney_dapi': 'Kidney DAPI', 'kidney_actin': 'Kidney actin',
-    'opencell_map4_ch0': 'OpenCell nuclei', 'opencell_map4_ch1': 'OpenCell MT',
+    'opencell_map4_ch0': 'MAP4 (Hoechst)', 'opencell_map4_ch1': 'MAP4 (GFP)',
     'organoid_ch0': 'Organoid', 'celegans_t100': 'C. elegans',
     'tribolium': 'Tribolium', 'cells3d_nuclei': 'Cells3D nuclei',
-    'cells3d_membrane': 'Cells3D membrane', 'opencell_lmnb1_ch0': 'LMNB1 ch0',
-    'opencell_lmnb1_ch1': 'LMNB1 ch1', 'acto3d_heart_nuclei': 'Heart nuclei',
+    'cells3d_membrane': 'Cells3D membrane', 'opencell_lmnb1_ch0': 'LMNB1 (Hoechst)',
+    'opencell_lmnb1_ch1': 'LMNB1 (GFP)', 'acto3d_heart_nuclei': 'Heart nuclei',
 }
 
 

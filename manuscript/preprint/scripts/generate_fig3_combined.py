@@ -12,6 +12,7 @@ Layout:
 import matplotlib
 
 matplotlib.use('Agg')
+import sys
 from pathlib import Path
 
 import matplotlib.gridspec as gridspec
@@ -19,9 +20,12 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import pandas as pd
 
-# Paths
+# Paths — add manuscript/analysis/ to sys.path for shared utilities
 SCRIPT_DIR = Path(__file__).parent.parent
 ANALYSIS_DIR = SCRIPT_DIR.parent / "analysis" / "splat_count_vs_quality"
+sys.path.insert(0, str(SCRIPT_DIR.parent / "analysis"))
+from cv_optimal import find_cv_optimal_idx  # noqa: E402
+
 RESULTS_DIR = ANALYSIS_DIR / "results"
 FIGS_DIR = SCRIPT_DIR / "figs" / "quantitative_analysis"
 FIGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -47,8 +51,8 @@ COLORS = {
 DISPLAY_NAMES = {
     'kidney_dapi': 'Kidney DAPI',
     'kidney_actin': 'Kidney actin',
-    'opencell_map4_ch0': 'OpenCell nuclei',
-    'opencell_map4_ch1': 'OpenCell MT',
+    'opencell_map4_ch0': 'MAP4 (Hoechst)',
+    'opencell_map4_ch1': 'MAP4 (GFP)',
     'organoid_ch0': 'Organoid',
     'celegans_t100': 'C. elegans',
     'tribolium': 'Tribolium',
@@ -193,12 +197,16 @@ def main():
         if not nf.empty:
             nf_val = nf[nf['dataset']==ds]['psnr_max_db'].values[0]
             ax.axhline(y=nf_val, color='#999999', linestyle=':', linewidth=0.6, label='Noise floor')
-        peak_idx = n2s['held_out_psnr_db'].idxmax()
-        px = n2s.loc[peak_idx, 'n_splats_final']/1000
-        py = n2s.loc[peak_idx, 'held_out_psnr_db']
+        # Star at the CV-optimal point (clear peak or plateau onset)
+        opt_pos = find_cv_optimal_idx(n2s['held_out_psnr_db'].values)
+        opt_iloc = n2s.index[opt_pos]
+        px = n2s.loc[opt_iloc, 'n_splats_final']/1000
+        py = n2s.loc[opt_iloc, 'held_out_psnr_db']
         ax.plot(px, py, '*', color='black', markersize=7, zorder=5)
-        # Shade overfitting
-        mask = n2s['n_splats_final']/1000 > px
+        # Shade overfitting (past the absolute peak)
+        abs_peak_idx = n2s['held_out_psnr_db'].idxmax()
+        abs_px = n2s.loc[abs_peak_idx, 'n_splats_final']/1000
+        mask = n2s['n_splats_final']/1000 > abs_px
         if mask.any():
             ax.fill_between(n2s.loc[mask, 'n_splats_final']/1000,
                             n2s.loc[mask, 'held_out_psnr_db'],
@@ -262,11 +270,12 @@ def main():
             if sigma == 0:
                 continue
             # Check for genuine overfitting: held-out must decline from peak
-            peak_idx = n2s['held_out_psnr_db'].idxmax()
+            abs_peak_idx = n2s['held_out_psnr_db'].idxmax()
             last_idx = n2s.index[-1]
-            if peak_idx == last_idx:
+            if abs_peak_idx == last_idx:
                 continue  # No decline = no meaningful peak
-            opt = n2s.loc[peak_idx, 'n_splats_final']/1000
+            opt_pos = find_cv_optimal_idx(n2s['held_out_psnr_db'].values)
+            opt = n2s.iloc[opt_pos]['n_splats_final']/1000
             plot_data.append((ds, sigma*100, opt))
             ax.scatter(sigma*100, opt, color=COLORS[ds], s=30, zorder=5,
                        edgecolors='white', linewidths=0.4)

@@ -26,6 +26,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -201,15 +202,136 @@ def generate_figure(output_path: Path) -> None:
     if n_rows == 1:
         axes = axes[np.newaxis, :]
 
+    def _find_best_roi(img: np.ndarray, crop_size: int,
+                       excluded_regions: list[tuple[int, int, int, int]],
+                       step: int = 6) -> tuple[int, int]:
+        """Find the crop with the brightest, most detailed content.
+
+        Scores each candidate by  brightness * edge_density  so that
+        bright, complex regions (structures, not background) win.
+        The *entire* ROI rectangle must be outside every excluded zone.
+
+        Parameters
+        ----------
+        img : 2-D array, values in [0, 1].
+        crop_size : side length of the square crop in pixels.
+        excluded_regions : list of (x0, y0, x1, y1) rectangles — the ROI
+            must not overlap any of them (full-rectangle check).
+        step : stride for the sliding-window search.
+
+        Returns
+        -------
+        (best_y, best_x) : top-left corner of the best crop.
+        """
+        from scipy.ndimage import sobel
+
+        h, w = img.shape[:2]
+        cs = crop_size
+
+        # Edge magnitude
+        sx = sobel(img, axis=1)
+        sy = sobel(img, axis=0)
+        edge_mag = np.hypot(sx, sy)
+
+        # Combined score map: brightness * edges  (favours bright + detailed)
+        score_map = img * edge_mag
+
+        # Integral image for fast box-sum
+        integral = score_map.cumsum(axis=0).cumsum(axis=1)
+
+        def _box_sum(iy: int, ix: int) -> float:
+            y1, x1 = iy + cs, ix + cs
+            s = integral[y1 - 1, x1 - 1]
+            if iy > 0:
+                s -= integral[iy - 1, x1 - 1]
+            if ix > 0:
+                s -= integral[y1 - 1, ix - 1]
+            if iy > 0 and ix > 0:
+                s += integral[iy - 1, ix - 1]
+            return float(s)
+
+        def _overlaps_excluded(iy: int, ix: int) -> bool:
+            """True if the crop [ix..ix+cs, iy..iy+cs] overlaps any excluded rect."""
+            ry0, ry1 = iy, iy + cs
+            rx0, rx1 = ix, ix + cs
+            for ex0, ey0, ex1, ey1 in excluded_regions:
+                if rx0 < ex1 and rx1 > ex0 and ry0 < ey1 and ry1 > ey0:
+                    return True
+            return False
+
+        best_score = -1.0
+        best_y, best_x = (h - cs) // 2, (w - cs) // 2  # fallback: image center
+        for iy in range(0, h - cs, step):
+            for ix in range(0, w - cs, step):
+                if _overlaps_excluded(iy, ix):
+                    continue
+                score = _box_sum(iy, ix)
+                if score > best_score:
+                    best_score = score
+                    best_y, best_x = iy, ix
+        return best_y, best_x
+
+    # Pre-compute best ROI per row (from the original image, col=0)
+    # so all columns in a row share the same ROI.
+    INSET_CROP_FRAC = 0.15  # crop side = 15% of image short side
+    row_rois: dict[int, tuple[int, int, int]] = {}  # row -> (y0, x0, crop_size)
+    for row in range(n_rows):
+        orig = all_slices[row][0]
+        h_img, w_img = orig.shape[:2]
+        crop_size = int(min(h_img, w_img) * INSET_CROP_FRAC)
+
+        # Excluded regions (in pixel coords) — ROI must NOT overlap any of these:
+        # - upper-left: panel label badge
+        # - upper-right: inset display area (generous margin)
+        # - bottom-right: PSNR/CR annotation
+        # - bottom-left: scale bar + text
+        excluded = [
+            # upper-left panel label
+            (0, 0, int(0.12 * w_img), int(0.12 * h_img)),
+            # upper-right where inset will be drawn (35% box + padding)
+            (int(0.58 * w_img), 0, w_img, int(0.45 * h_img)),
+            # bottom-right PSNR annotation
+            (int(0.65 * w_img), int(0.80 * h_img), w_img, h_img),
+            # bottom-left scale bar
+            (0, int(0.82 * h_img), int(0.45 * w_img), h_img),
+        ]
+
+        best_y, best_x = _find_best_roi(orig, crop_size, excluded)
+        row_rois[row] = (best_y, best_x, crop_size)
+
     for row in range(n_rows):
         for col in range(n_cols):
             ax = axes[row, col]
             img = all_slices[row][col]
 
-            ax.imshow(img, cmap="gray", vmin=0, vmax=1,
+            ax.imshow(img, cmap="inferno", vmin=0, vmax=1,
                       interpolation="nearest", aspect="equal")
             ax.set_xticks([])
             ax.set_yticks([])
+
+            # Zoom inset (reconstruction panels only, col > 0)
+            if col > 0 and row in row_rois:
+                h_img, w_img = img.shape[:2]
+                ry0, rx0, cs = row_rois[row]
+                ry1 = min(ry0 + cs, h_img)
+                rx1 = min(rx0 + cs, w_img)
+
+                axins = inset_axes(ax, width="35%", height="35%",
+                                   loc="upper right", borderpad=0.3)
+                axins.imshow(img, cmap="inferno", vmin=0, vmax=1,
+                             interpolation="nearest", aspect="equal")
+                axins.set_xlim(rx0, rx1)
+                axins.set_ylim(ry1, ry0)
+                axins.set_xticks([])
+                axins.set_yticks([])
+                for spine in axins.spines.values():
+                    spine.set_edgecolor("white")
+                    spine.set_linewidth(0.8)
+                # Draw source rectangle on main image
+                rect = plt.Rectangle((rx0, ry0), rx1 - rx0, ry1 - ry0,
+                                     linewidth=0.6, edgecolor="white",
+                                     facecolor="none", zorder=8)
+                ax.add_patch(rect)
 
             # Panel label (a-l)
             panel_idx = row * n_cols + col

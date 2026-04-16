@@ -12,16 +12,17 @@ Amplitudes are clamped to $[0, \infty)$ via softplus with a configurable $\beta$
 \paragraph{Optimization.}
 We use a per-splat Adam optimizer\cite{kingma2015adam} ($\beta_1{=}0.9$, $\beta_2{=}0.999$, $\epsilon{=}10^{-8}$) that maintains individual momentum and variance accumulators for each splat's parameters.
 This enables dynamic operations (relocation, pruning, seeding of new splats) without disrupting the optimization state of existing splats.
-The base learning rate is $0.01$ with dimensional compensation: for $D$-dimensional data, the effective learning rate is scaled by $D^{0.8} \times P_D / P_2$, where $P_D$ is the number of parameters per splat in $D$ dimensions.
+The base learning rate is $0.01$ with dimensional compensation: for $D$-dimensional data, the effective learning rate is scaled by $D^{0.8} \times P_D / P_2$, where $P_D$ is the number of parameters per splat in $D$ dimensions (chosen empirically to maintain stable convergence across dimensionalities).
 
 The loss function is:
 \begin{equation}
 \mathcal{L} = \mathcal{L}_\text{recon} + \lambda_a \|\mathbf{a}\|_1 + \lambda_d \|\text{diag}(\mathbf{L})\|_1 + \lambda_b \mathcal{L}_\text{boundary}
 \end{equation}
-where $\mathcal{L}_\text{recon}$ is the L1 reconstruction loss between the predicted and target volumes, $\lambda_a = 10^{-5}$ and $\lambda_d = 10^{-4}$ regularize splat amplitude and extent, and $\mathcal{L}_\text{boundary}$ penalizes splats whose centers fall outside the volume.
+where $\mathcal{L}_\text{recon}$ is the L1 reconstruction loss between the predicted and target volumes, $\lambda_a = 0.1 \times \text{lr}$ and $\lambda_d = 0.01 \times \text{lr}$ (with $\text{lr} = 0.01$, yielding $\lambda_a = 10^{-3}$ and $\lambda_d = 10^{-4}$) regularize splat amplitude and extent, and $\mathcal{L}_\text{boundary}$ penalizes splats whose centers fall outside the volume.
 
 \paragraph{Dynamic operations.}
-Every 500 iterations, the optimizer performs dynamic topology adjustment: (1) splats with amplitude below a threshold ($10^{-4}$ of the volume maximum) are pruned; (2) residual-guided relocation moves the lowest-amplitude splats to positions of peak reconstruction error; (3) Z-order (Morton code) sorting is applied to improve GPU cache locality.
+Every 50 iterations, the optimizer performs dynamic topology adjustment: (1) splats with amplitude below a threshold ($10^{-4}$ of the volume maximum) are pruned; (2) residual-guided relocation moves the lowest-amplitude splats to positions of peak reconstruction error; (3) Z-order (Morton code) sorting is applied to improve GPU cache locality.
+Conservative culling retains splats accounting for 99.9\% of cumulative amplitude, removing only the weakest contributions.
 The relocation step detects under-represented regions by computing $|\hat{V} - V|$, finding local maxima in the residual, and teleporting selected splats to these positions while preserving their momentum states.
 
 \paragraph{Seed generation.}
@@ -36,6 +37,7 @@ Splat amplitudes are modulated by a cosine (Hann) window $w(k) = \frac{1}{2}(1 -
 Boundary faces retain unit weight.
 The constraint $L \leq T/2$ prevents triple overlap.
 After fitting, tiles are concatenated into a single splat dataset.
+We also evaluated progressive multi-pass fitting, where a fixed splat budget is distributed across sequential passes of increasing refinement; results are reported in Supplementary Document~3.
 
 \paragraph{Data encoding and spatial indexing.}
 Fitted splats are written to Zarr\cite{miles2023zarr} archives with semantic encoding (7 data types, 4 compression modes) and Blosc compression (zstd level~3).

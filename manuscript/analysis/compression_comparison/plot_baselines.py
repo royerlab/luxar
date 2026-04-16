@@ -18,7 +18,7 @@ DATASET_NAMES = {
     'organoid_ch0': 'Organoid',
     'celegans_t100': 'C. elegans',
     'tribolium': 'Tribolium',
-    'opencell_map4_ch0': 'OpenCell nuclei',
+    'opencell_map4_ch0': 'MAP4 (Hoechst)',
 }
 
 LOSSLESS_COLORS = {

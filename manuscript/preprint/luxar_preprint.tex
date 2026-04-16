@@ -53,7 +53,7 @@
 \section*{Introduction}
 
 Modern scientific instruments generate multidimensional data at a pace that far outstrips our ability to share and explore it.
-A single light-sheet microscope run produces hundreds of gigabytes\cite{keller2008reconstruction,power2017guide}; a single-cell atlas\cite{regev2017humancellatlas} contains millions of cells embedded in high-dimensional spaces; a sky survey catalogs billions of sources with dozens of attributes per object.
+A single light-sheet microscope run produces hundreds of gigabytes\cite{keller2008reconstruction,power2017guide}; a single-cell atlas\cite{regev2017humancellatlas} contains millions of cells embedded in high-dimensional spaces; a sky survey such as Gaia\cite{gaiacollaboration2023gaia} catalogs billions of sources with dozens of attributes per object.
 Yet the dominant mode of dissemination remains downloading raw files---or, more commonly, inspecting static projections that discard the very dimensionality that motivated the measurement.
 
 Interactive exploration fares no better.
@@ -82,7 +82,7 @@ Tiled fitting with cosine apodization removes the GPU memory ceiling, enabling r
 \section*{Results}
 
 \paragraph{The \luxar system.}
-\luxar is designed around a simple principle: scientists should describe their data in Python and explore it in a browser, with nothing in between.
+\luxar is designed around a simple principle: scientists should describe their data in Python and explore it in a browser, without requiring web development expertise.
 The core API exposes three geometry types---\texttt{Points} (positions, colors, radii), \texttt{Lines} (vertices, widths, colors), and \texttt{GSplats} (centers, amplitudes, Cholesky factors)---organized in a hierarchical scene graph with groups, transforms, and $n$-dimensional coordinate systems (Fig.~\ref{fig:overview}a).
 
 A \texttt{LuxarZarrCompiler} context manager writes data progressively to Zarr, enabling datasets far exceeding RAM to be compiled on a laptop.
@@ -125,16 +125,17 @@ This provides a practical recipe: fit at increasing capacity, stop at the held-o
 The sole exception is the Tribolium light-sheet volume, where train and held-out curves are virtually identical (Fig.~\ref{fig:ratedistortion}e).
 This dataset was produced by multi-view deconvolution\cite{preibisch2014efficient}, a process that introduces spatial correlations in the residual noise, violating the pixel-independence assumption underlying the blind-spot framework.
 Consequently, the blind-spot validation cannot distinguish signal from noise in this case---the model appears signal-limited at all tested capacities.
+Nevertheless, the reconstruction quality itself plateaus (42.6~dB at 32K splats), providing a practical stopping criterion: additional splats yield negligible improvement, regardless of whether the ceiling reflects noise or signal exhaustion.
 
 \paragraph{Tiled fitting for scalability.}
 For volumes exceeding GPU memory, \luxar partitions the volume into overlapping tiles, each fitted independently, and concatenates the results.
 Cosine (Hann) apodization windows ensure a partition of unity at tile boundaries---adjacent windows sum to exactly 1.0---eliminating visible seams.
-Tiles are embarrassingly parallel: they distribute across GPUs, cluster nodes, or Slurm array jobs---a 512$^3$ volume that would exceed consumer GPU memory can be processed as overlapping 256$^3$ tiles in minutes.
+Tiles are embarrassingly parallel: they distribute across GPUs, cluster nodes, or Slurm array jobs---a 2048$^3$ volume that would exceed consumer GPU memory (e.g., NVIDIA RTX~3090, 24~GB) can be processed as overlapping 256$^3$ tiles.
 The \luxar batch system handles OME-Zarr\cite{moore2021ome} 5D layouts (time, channel, Z, Y, X) with automatic fan-in merging.
 
 \paragraph{Viewer performance.}
 In benchmarks on an NVIDIA RTX~3070, the web viewer maintains 60~FPS for scenes up to 500,000 elements, with uncapped GPU throughput exceeding 2,000~renders/second for 100K GSplats during interactive camera orbit (Supplementary Table~1).
-GSplat scenes load in under one second; larger point-cloud datasets (millions of elements) require longer initial transfer but render at full frame rate once loaded.
+GSplat scenes load in under one second; larger point-cloud datasets (millions of elements) render at full frame rate once loaded, though initial transfer time scales with dataset size even with progressive streaming.
 
 
 %% ========== DISCUSSION ==========
@@ -144,7 +145,7 @@ GSplat scenes load in under one second; larger point-cloud datasets (millions of
 By separating data \emph{compilation} (in Python, where scientists already work) from \emph{rendering} (in a web browser, where no installation is needed), \luxar makes multidimensional scientific data as easy to share as a web link.
 
 The Python-first design is deliberate.
-The bioimaging community, and scientific computing more broadly, has converged on Python as the common language---from acquisition control and analysis pipelines to machine learning frameworks.
+The bioimaging community, and scientific computing more broadly, has converged on Python as the common language\cite{sofroniew2022napari,vanderWalt2014scikit}---from acquisition control and analysis pipelines to machine learning frameworks.
 \luxar meets scientists where they are: a few lines of NumPy and \luxar produce an interactive, streamable visualization without requiring web development skills.
 This stands in contrast to existing approaches that either require desktop software (napari\cite{sofroniew2022napari}, Fiji\cite{schindelin2012fiji}) or web-development expertise (custom Neuroglancer\cite{maitinshepard2021neuroglancer} deployments).
 Compared with these tools, \luxar occupies a distinct niche: it requires neither local installation nor multi-resolution pyramid preprocessing, supports mixed geometry types (not just voxels), and achieves 10--300$\times$ compression that makes data transfer practical even over modest bandwidth (Supplementary Fig.~3).
@@ -153,17 +154,17 @@ Rendering performance is sufficient for interactive exploration of all tested sc
 The Gaussian splatting contribution extends this accessibility to volumetric microscopy.
 The core insight is that fluorescence data is sparse, and Gaussian splats exploit this sparsity by placing representational capacity only where signal exists.
 Our cross-validation analysis provides a principled way to determine how much representational capacity a given dataset warrants: the information content of the volume drives the splat count upward, while the noise level caps it.
-At the optimal count, splats capture the recoverable signal while naturally discarding noise---without an explicit denoising step, unlike dedicated self-supervised methods\cite{krull2019noise2void}.
+At the optimal count, splats capture the recoverable signal while naturally discarding noise---without an explicit denoising step.
 For light-sheet data, the representation is extraordinarily compact (313$\times$ compression); for noisier confocal data, a lower splat count yields higher-fidelity reconstructions than blindly adding more.
 When compared against H.265 video compression using a blind-spot held-out framework that measures true signal recovery, Gaussian splats achieve up to 3~dB higher held-out PSNR on noisy confocal data (Supplementary Fig.~3).
 The splat representation is additionally \emph{directly renderable} without decompression.
 We also find that single-pass fitting with conservative culling outperforms progressive multi-pass approaches at a fixed splat budget for 8 of 12~datasets, while 2-pass progressive fitting yields +0.9 to +1.7~dB gains for clean, well-structured volumes---and is consistently 2--9$\times$ faster (Supplementary Fig.~4; Supplementary Document~3).
 
 While this paper focuses on microscopy, \luxar is domain-agnostic.
-The same system visualizes millions of stars from astronomical surveys, hundreds of thousands of cells from single-cell atlases (Tabula Sapiens), protein embeddings, super-resolution localizations, and cell tracking trajectories mixing Gaussian splats with polyline overlays---all with native $n$-dimensional navigation (Fig.~\ref{fig:overview}c).
+The same system visualizes millions of stars from astronomical surveys\cite{gaiacollaboration2023gaia}, hundreds of thousands of cells from single-cell atlases\cite{tabula2022tabula} (Tabula Sapiens), protein embeddings, super-resolution localizations, and cell tracking trajectories mixing Gaussian splats with polyline overlays---all with native $n$-dimensional navigation (Fig.~\ref{fig:overview}c).
 We envision \luxar as infrastructure: a common layer between Python-based data generation and interactive, web-based exploration, applicable wherever scientists produce multidimensional data and need to share it.
 
-Limitations include the inherent approximation of Gaussian splats, which can blur thin filamentous structures (e.g., individual microtubules) where the Gaussian shape is a poor local fit; coordination overhead for very large tiled fits on HPC systems; and the absence of quantitative intensity analysis (the representation is lossy).
+Limitations include the inherent approximation of Gaussian splats, which can blur thin filamentous structures (e.g., individual microtubules) where the Gaussian shape is a poor local fit; coordination overhead for very large tiled fits on HPC systems (automatic volume partitioning is not yet supported); the absence of quantitative intensity analysis (the representation targets visualization and sharing, not downstream tasks such as segmentation or tracking); and a light-sheet evaluation limited to a single dataset, though we expect broader light-sheet coverage in future work.
 The cross-validation model-selection procedure requires fitting at multiple splat counts, though each fit takes only 10--60~seconds, making a full sweep practical.
 
 \luxar is open source and installable via \texttt{pip install luxar}.
@@ -271,8 +272,8 @@ All confocal datasets exhibit overfitting at high counts; the Tribolium light-sh
 \centering
 \includegraphics[width=0.95\textwidth]{figs/suppfig/convergence.pdf}
 \caption*{\textbf{Supplementary Figure~2 $\vert$ Convergence across datasets and splat counts.}
-Most quality is gained within 500--2\,000 iterations.
-Model capacity has a larger effect than optimization duration.}
+Most quality is gained within 500--2\,000 iterations; beyond this point, additional iterations yield diminishing returns regardless of splat count.
+Model capacity (splat count) has a substantially larger effect on reconstruction quality than optimization duration, and convergence behavior is largely independent of splat count beyond $\sim$1\,000 iterations.}
 \end{figure*}
 
 \begin{table*}[t]
@@ -289,7 +290,7 @@ Dataset & Elements & Load (s) & \makecell{rAF\\FPS} & \makecell{Orbit\\throughpu
 Cells3D GSplats (8K) & 4\,397 & 0.5 & 60 & 5\,684 & 32 \\
 Tribolium GSplats (44K) & 44\,433 & 0.6 & 60 & 3\,311 & 40 \\
 Kidney 6D GSplats (68K) & 67\,749 & 0.7 & 60 & 5\,137 & 43 \\
-OpenCell GSplats (102K) & 101\,539 & 0.8 & 60 & 2\,045 & 53 \\
+MAP4 GSplats (102K) & 101\,539 & 0.8 & 60 & 2\,045 & 53 \\
 Lorenz attractor (500K pts) & 500\,000 & 1.5 & 60 & 1\,766 & 137 \\
 Spiral galaxy (500K pts) & 500\,000 & 1.8 & 60 & 4\,872 & 142 \\
 L-system forest (pts + lines) & 140\,866 & 15.4 & 60 & 452 & 211 \\
@@ -308,7 +309,7 @@ Blue: GSplats. Orange: H.265 (Z-stack as video, CRF 0--51). Solid: held-out PSNR
 The gap between raw and held-out curves quantifies noise memorization: both methods overfit at high bit rates, but GSplats reach a higher signal-recovery peak.
 For clean light-sheet data (f), H.265 outperforms because there is minimal noise to distinguish from signal.
 Both methods are spatially aware (GSplats: global mixture model; H.265: block prediction + DCT).
-The GSplat representation is additionally \emph{directly renderable} without decompression.}
+The GSplat representation is additionally \emph{directly renderable} without decompression---a critical advantage for interactive exploration.}
 \end{figure*}
 
 \begin{figure*}[t]

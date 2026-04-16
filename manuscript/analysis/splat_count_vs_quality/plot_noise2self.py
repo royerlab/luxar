@@ -27,6 +27,9 @@ import pandas as pd
 RESULTS_DIR = Path(__file__).parent / "results"
 
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from cv_optimal import find_cv_optimal_idx  # noqa: E402
+
 from datasets import DATASET_LABELS  # noqa: E402
 
 
@@ -72,32 +75,15 @@ def plot_cross_validation(df: pd.DataFrame, dataset_key: str, output_path: Path)
         color="#6b7280", linewidth=1.0, markersize=4, alpha=0.6, label="Full volume",
     )
 
-    # Mark the optimal splat count using a hybrid approach:
-    # - "Clear peak": the argmax has avg(values before) and avg(values after)
-    #   both at least 0.1 dB below the peak. This means the peak is a true
-    #   local maximum, not just the endpoint of a plateau.
-    # - Otherwise (plateau/monotonic): first point within 0.3 dB of the max.
+    # Mark the CV-optimal splat count (clear peak or plateau onset)
     held_psnr = df["held_out_psnr_db"].values
-    _PEAK_MARGIN = 0.1  # dB — both sides must be this far below the peak
-    _KNEE_MARGIN_DB = 0.3  # dB — fallback margin for plateau detection
-
+    knee_idx = find_cv_optimal_idx(held_psnr)
     peak_idx = int(np.argmax(held_psnr))
-    peak_val = held_psnr[peak_idx]
+    is_clear_peak = knee_idx == peak_idx and peak_idx != len(held_psnr) - 1
 
-    # Check if peak is a true local maximum
-    avg_before_gap = (peak_val - np.mean(held_psnr[:peak_idx])) if peak_idx > 0 else 0.0
-    avg_after_gap = (peak_val - np.mean(held_psnr[peak_idx + 1:])) if peak_idx < len(held_psnr) - 1 else 0.0
-    has_clear_peak = avg_before_gap >= _PEAK_MARGIN and avg_after_gap >= _PEAK_MARGIN
-
-    if has_clear_peak:
-        knee_idx = peak_idx
+    if is_clear_peak:
         label = f"Held-out peak\n{_format_count(x[knee_idx])} splats\n{held_psnr[knee_idx]:.1f} dB"
     else:
-        threshold = peak_val - _KNEE_MARGIN_DB
-        knee_idx = next(
-            (i for i in range(len(held_psnr)) if held_psnr[i] >= threshold),
-            peak_idx,
-        )
         label = f"Peak \u22120.3 dB\n{_format_count(x[knee_idx])} splats\n{held_psnr[knee_idx]:.1f} dB"
 
     cx, cy = x[knee_idx], held_psnr[knee_idx]

@@ -53,10 +53,10 @@ DATASETS = [
 ]
 
 SHORT_LABELS = {
-    "opencell_map4_ch0": "OpenCell MAP4\nnuclei",
-    "opencell_map4_ch1": "OpenCell MAP4\nmicrotubules",
-    "opencell_lmnb1_ch0": "OpenCell LMNB1\nnuclei",
-    "opencell_lmnb1_ch1": "OpenCell LMNB1\nlamina",
+    "opencell_map4_ch0": "MAP4\n(Hoechst)",
+    "opencell_map4_ch1": "MAP4\n(GFP)",
+    "opencell_lmnb1_ch0": "LMNB1\n(Hoechst)",
+    "opencell_lmnb1_ch1": "LMNB1\n(GFP)",
     "kidney_dapi": "Kidney\nDAPI",
     "kidney_actin": "Kidney\nactin",
     "cells3d_nuclei": "HeLa\nnuclei",
@@ -114,77 +114,80 @@ def load_all() -> pd.DataFrame:
 
 
 def plot_summary(data: pd.DataFrame, output: Path):
-    """Two-panel horizontal summary figure."""
+    """Two-panel horizontal summary figure — Tufte-style: maximize data-ink ratio."""
+    plt.rcParams.update({
+        'font.family': 'sans-serif',
+        'font.sans-serif': ['DejaVu Sans', 'Arial', 'Helvetica'],
+        'font.size': 7,
+        'axes.linewidth': 0.4,
+        'xtick.major.width': 0.4,
+        'ytick.major.width': 0.4,
+        'axes.spines.top': False,
+        'axes.spines.right': False,
+        'pdf.fonttype': 42,
+    })
+
     n = len(data)
     y = np.arange(n)
 
     fig, (ax_psnr, ax_speed) = plt.subplots(
-        1, 2, figsize=(7.0, 3.8),
-        gridspec_kw={"width_ratios": [1.1, 1], "wspace": 0.45},
+        1, 2, figsize=(7.0, 3.2),
+        gridspec_kw={"width_ratios": [1.1, 1], "wspace": 0.35},
     )
 
-    # --- Panel (a): PSNR delta (2-pass minus 1-pass) ---
+    # --- Panel (a): PSNR delta — Cleveland dot plot ---
     deltas = data["psnr_delta"].values
-    colors = ["#059669" if d > 0 else "#6366f1" for d in deltas]
-    ax_psnr.barh(y, deltas, height=0.65, color=colors, edgecolor="white",
-                 linewidth=0.3)
-
-    # Propagated uncertainty for delta
     delta_std = np.sqrt(data["psnr_1_std"].values**2 + data["psnr_2_std"].values**2)
-    ax_psnr.errorbar(deltas, y, xerr=delta_std, fmt="none", ecolor="0.4",
-                     elinewidth=0.7, capsize=2)
+    colors = ["#059669" if d > 0 else "#6366f1" for d in deltas]
 
-    ax_psnr.axvline(0, color="0.3", linewidth=0.6, zorder=0)
+    # Thin connecting lines from zero to dot (Tufte lollipop)
+    for i, d in enumerate(deltas):
+        ax_psnr.plot([0, d], [i, i], color="0.80", linewidth=0.5, zorder=1)
+
+    # Dots with error bars
+    for i, (d, s, c) in enumerate(zip(deltas, delta_std, colors)):
+        ax_psnr.errorbar(d, i, xerr=s, fmt="o", color=c,
+                         markersize=4, markeredgewidth=0, ecolor="0.5",
+                         elinewidth=0.6, capsize=0, zorder=3)
+
+    ax_psnr.axvline(0, color="0.4", linewidth=0.5, zorder=2)
     ax_psnr.set_yticks(y)
     ax_psnr.set_yticklabels(data["label"].values, fontsize=6.5)
-    ax_psnr.set_xlabel("PSNR change (dB)\n2-pass minus 1-pass", fontsize=8)
+    ax_psnr.set_xlabel("PSNR change (dB), 2-pass minus 1-pass", fontsize=7)
     ax_psnr.invert_yaxis()
-    ax_psnr.grid(True, axis="x", alpha=0.15, linewidth=0.5)
-    ax_psnr.set_title("a", fontsize=10, fontweight="bold", loc="left", pad=4)
+    ax_psnr.spines["left"].set_visible(False)
+    ax_psnr.tick_params(axis="y", length=0)
+    ax_psnr.text(-0.12, 1.04, "a", transform=ax_psnr.transAxes,
+                 fontsize=9, fontweight="bold", va="top", ha="left")
 
-    # Annotate values
-    for i, (d, s) in enumerate(zip(deltas, delta_std)):
-        offset = 0.05 if d >= 0 else -0.05
-        ha = "left" if d >= 0 else "right"
-        ax_psnr.text(d + offset, i, f"{d:+.1f}", va="center", ha=ha, fontsize=6)
-
-    # Add modality shading bands and labels
-    _band_colors = ["#f0f0f0", "#ffffff"]
-    for idx, (start, end, label) in enumerate(MODALITY_SPANS):
-        ax_psnr.axhspan(start - 0.4, end - 0.6, color=_band_colors[idx % 2],
-                        zorder=0, linewidth=0)
-        ax_speed.axhspan(start - 0.4, end - 0.6, color=_band_colors[idx % 2],
-                         zorder=0, linewidth=0)
     # Thin separator lines between modality groups
     for start, end, label in MODALITY_SPANS[1:]:
         for ax in (ax_psnr, ax_speed):
-            ax.axhline(start - 0.5, color="0.75", linewidth=0.5, zorder=1)
+            ax.axhline(start - 0.5, color="0.85", linewidth=0.4, zorder=0)
 
-    # Legend
-    from matplotlib.patches import Patch
-    legend_elements = [
-        Patch(facecolor="#059669", label="2-pass better"),
-        Patch(facecolor="#6366f1", label="1-pass better"),
-    ]
-    ax_psnr.legend(handles=legend_elements, fontsize=6, loc="lower right",
-                   framealpha=0.8)
-
-    # --- Panel (b): Time speedup ---
+    # --- Panel (b): Time speedup — Cleveland dot plot ---
     speedups = data["speedup"].values
-    ax_speed.barh(y, speedups, height=0.65, color="#2563eb", edgecolor="white",
-                  linewidth=0.3, alpha=0.85)
-    ax_speed.axvline(1, color="0.3", linewidth=0.6, zorder=0, linestyle="--")
+    for i, s in enumerate(speedups):
+        ax_speed.plot([0, s], [i, i], color="0.80", linewidth=0.5, zorder=1)
+    ax_speed.scatter(speedups, y, color="#2563eb", s=16, zorder=3,
+                     edgecolors="none")
+
+    # Direct value labels (right of dot)
+    for i, s in enumerate(speedups):
+        ax_speed.text(s + 0.15, i, f"{s:.1f}\u00d7", va="center", ha="left",
+                      fontsize=6, color="0.3")
+
+    ax_speed.axvline(1, color="0.4", linewidth=0.4, linestyle=":", zorder=2)
     ax_speed.set_yticks(y)
     ax_speed.set_yticklabels([])
-    ax_speed.set_xlabel("Wall-clock speedup\n(1-pass time / 2-pass time)", fontsize=8)
+    ax_speed.set_xlabel("Wall-clock speedup (1-pass / 2-pass)", fontsize=7)
     ax_speed.invert_yaxis()
-    ax_speed.grid(True, axis="x", alpha=0.15, linewidth=0.5)
-    ax_speed.set_title("b", fontsize=10, fontweight="bold", loc="left", pad=4)
+    ax_speed.spines["left"].set_visible(False)
+    ax_speed.tick_params(axis="y", length=0)
+    ax_speed.text(-0.08, 1.04, "b", transform=ax_speed.transAxes,
+                  fontsize=9, fontweight="bold", va="top", ha="left")
 
-    for i, s in enumerate(speedups):
-        ax_speed.text(s + 0.1, i, f"{s:.1f}x", va="center", ha="left", fontsize=6)
-
-    fig.savefig(str(output), dpi=300, bbox_inches="tight")
+    fig.savefig(str(output), dpi=300, bbox_inches="tight", pad_inches=0.03)
     plt.close(fig)
     print(f"Saved: {output}")
 

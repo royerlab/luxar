@@ -23,15 +23,15 @@ import pandas as pd
 RESULTS_DIR = Path(__file__).parent / "results"
 
 DATASET_LABELS = {
-    "opencell_map4_ch0": "OpenCell MAP4 — Hoechst (Nuclei)",
-    "opencell_map4_ch1": "OpenCell MAP4 — GFP (Microtubules)",
+    "opencell_map4_ch0": "MAP4 (Hoechst) — Nuclei",
+    "opencell_map4_ch1": "MAP4 (GFP) — Microtubules",
     "kidney_dapi": "Mouse Kidney — DAPI (Nuclei)",
     "kidney_actin": "Mouse Kidney — Phalloidin (Actin)",
     "organoid_ch0": "Organoid — Channel 0",
     "celegans_t100": "C. elegans Embryo — t=100",
     "tribolium": "Tribolium Embryo (Light-Sheet)",
-    "opencell_lmnb1_ch0": "OpenCell LMNB1 — Hoechst (Nuclei)",
-    "opencell_lmnb1_ch1": "OpenCell LMNB1 — GFP (Nuclear Lamina)",
+    "opencell_lmnb1_ch0": "LMNB1 (Hoechst) — Nuclei",
+    "opencell_lmnb1_ch1": "LMNB1 (GFP) — Nuclear Lamina",
     "cells3d_nuclei": "HeLa Cells — Nuclei",
     "cells3d_membrane": "HeLa Cells — Membrane",
     "acto3d_heart_nuclei": "Mouse Heart — Nuclei (Light-Sheet)",
