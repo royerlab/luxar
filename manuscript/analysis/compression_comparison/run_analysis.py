@@ -14,6 +14,7 @@ import pandas as pd
 
 ANALYSIS_DIR = Path(__file__).parent
 sys.path.insert(0, str(ANALYSIS_DIR.parent))
+from _shared import compute_splat_bytes  # noqa: E402
 from cv_optimal import find_cv_optimal_idx  # noqa: E402
 
 QUALITY_DIR = ANALYSIS_DIR.parent / "splat_count_vs_quality" / "results"
@@ -32,12 +33,6 @@ DATASETS = [
 
 def parse_shape(shape_str):
     return tuple(int(x) for x in shape_str.split('x'))
-
-
-def compute_splat_size_bytes(n_splats, ndim=3):
-    cholesky_params = ndim * (ndim + 1) // 2
-    params_per_splat = ndim + 1 + cholesky_params
-    return n_splats * params_per_splat * 4
 
 
 def find_cv_optimal(ds):
@@ -108,7 +103,7 @@ def main():
         ssim = float(row['ssim'].values[0])
         fit_time = float(row['fit_time_s'].values[0])
 
-        splat_bytes = compute_splat_size_bytes(n_splats, ndim)
+        splat_bytes = compute_splat_bytes(n_splats, ndim)
         splat_mb = splat_bytes / 1e6
 
         cr_vs_raw = raw_mb / splat_mb if splat_mb > 0 else 0
@@ -118,8 +113,8 @@ def main():
             'dataset': ds,
             'shape': shape_str,
             'n_voxels_M': round(n_voxels / 1e6, 1),
-            'n2s_optimal_seeds': opt_seeds,
-            'n2s_genuine_peak': is_genuine,
+            'cv_optimal_seeds': opt_seeds,
+            'cv_genuine_peak': is_genuine,
             'n_splats': n_splats,
             'psnr_db': round(psnr, 1),
             'ssim': round(ssim, 3),
@@ -132,7 +127,7 @@ def main():
         })
 
     df = pd.DataFrame(rows)
-    out_path = RESULTS_DIR / "compression_at_n2s_optimal.tsv"
+    out_path = RESULTS_DIR / "compression_at_cv_optimal.tsv"
     df.to_csv(out_path, sep='\t', index=False)
     print(f"Saved: {out_path}")
 
@@ -152,7 +147,7 @@ def main():
 
         for _, r in metrics.iterrows():
             n_splats = int(r['n_splats_final'])
-            splat_bytes = compute_splat_size_bytes(n_splats, ndim)
+            splat_bytes = compute_splat_bytes(n_splats, ndim)
             bpv_rows.append({
                 'dataset': ds,
                 'seeds_requested': int(r['seeds_requested']),
@@ -175,8 +170,8 @@ def main():
           f"{'Raw MB':>7s}  {'Splat MB':>8s}  {'CR':>6s}  {'PSNR':>5s}  {'BPV':>6s}")
     print(f"{'-'*90}")
     for _, r in df.iterrows():
-        peak = 'Yes' if r['n2s_genuine_peak'] else 'No'
-        print(f"  {r['dataset']:23s}  {r['n2s_optimal_seeds']:>7d}  {peak:>5s}  "
+        peak = 'Yes' if r['cv_genuine_peak'] else 'No'
+        print(f"  {r['dataset']:23s}  {r['cv_optimal_seeds']:>7d}  {peak:>5s}  "
               f"{r['n_splats']:>7d}  {r['raw_MB']:>7.1f}  {r['splat_MB']:>8.2f}  "
               f"{r['cr_vs_raw']:>5.1f}x  {r['psnr_db']:>5.1f}  {r['bpv_splat']:>6.3f}")
 

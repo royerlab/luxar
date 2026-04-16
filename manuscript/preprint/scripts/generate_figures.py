@@ -14,13 +14,26 @@ import sys
 
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
 import pandas as pd
 
 # Paths — add manuscript/analysis/ to sys.path for shared utilities
 SCRIPT_DIR = Path(__file__).parent.parent
 ANALYSIS_DIR = SCRIPT_DIR.parent / "analysis" / "splat_count_vs_quality"
 sys.path.insert(0, str(SCRIPT_DIR.parent / "analysis"))
+from _shared import (  # noqa: E402
+    COLORS,
+    CORE_DATASETS,
+    DISPLAY_NAMES,
+    FONTSIZE,
+    FONTSIZE_TITLE,
+    LINEWIDTH,
+    MARKERSIZE,
+    MODALITIES,
+    TWO_COL_WIDTH,
+    add_panel_label,
+    format_splat_axis,
+    setup_matplotlib,
+)
 from cv_optimal import find_cv_optimal_idx  # noqa: E402
 
 RESULTS_DIR = ANALYSIS_DIR / "results"
@@ -38,99 +51,6 @@ TABLE_DIR = FIGS_DIR / "table"
 TABLE_DIR.mkdir(exist_ok=True)
 SUPPFIG_DIR = FIGS_DIR / "suppfig"
 SUPPFIG_DIR.mkdir(exist_ok=True)
-
-# Style constants
-FONTSIZE = 7
-FONTSIZE_LABEL = 7.5
-FONTSIZE_TITLE = 8
-LINEWIDTH = 1.0
-MARKERSIZE = 3
-DPI = 300
-
-# Column width for Nature Methods (mm -> inches)
-COL_WIDTH = 3.5  # inches (single column ~89mm)
-TWO_COL_WIDTH = 7.2  # inches (two columns ~183mm)
-
-# Colorblind-friendly palette (Okabe-Ito based, darkened for legibility)
-COLORS = {
-    'kidney_dapi': '#0072B2',       # Blue
-    'kidney_actin': '#D55E00',      # Vermillion
-    'opencell_map4_ch0': '#009E73', # Bluish green
-    'opencell_map4_ch1': '#CC79A7', # Reddish purple
-    'organoid_ch0': '#8B6914',      # Dark yellow/gold (NOT yellow)
-    'celegans_t100': '#56B4E9',     # Sky blue
-    'tribolium': '#E69F00',         # Orange
-    'cells3d_nuclei': '#666666',    # Grey
-    'cells3d_membrane': '#882255',  # Wine
-    'opencell_lmnb1_ch0': '#117733',# Forest green
-    'opencell_lmnb1_ch1': '#AA4499',# Rose
-    'acto3d_heart_nuclei': '#44AA99',# Teal
-}
-
-DISPLAY_NAMES = {
-    'kidney_dapi': 'Kidney DAPI',
-    'kidney_actin': 'Kidney actin',
-    'opencell_map4_ch0': 'MAP4 (Hoechst)',
-    'opencell_map4_ch1': 'MAP4 (GFP)',
-    'organoid_ch0': 'Organoid',
-    'celegans_t100': 'C. elegans',
-    'tribolium': 'Tribolium',
-    'cells3d_nuclei': 'Cells3D nuclei',
-    'cells3d_membrane': 'Cells3D membrane',
-    'opencell_lmnb1_ch0': 'LMNB1 (Hoechst)',
-    'opencell_lmnb1_ch1': 'LMNB1 (GFP)',
-    'acto3d_heart_nuclei': 'Heart nuclei',
-}
-
-MODALITIES = {
-    'kidney_dapi': 'Confocal',
-    'kidney_actin': 'Confocal',
-    'opencell_map4_ch0': 'Spinning-disk',
-    'opencell_map4_ch1': 'Spinning-disk',
-    'organoid_ch0': 'Confocal',
-    'celegans_t100': 'Confocal',
-    'tribolium': 'Light-sheet',
-    'cells3d_nuclei': 'Confocal',
-    'cells3d_membrane': 'Confocal',
-    'opencell_lmnb1_ch0': 'Spinning-disk',
-    'opencell_lmnb1_ch1': 'Spinning-disk',
-    'acto3d_heart_nuclei': 'Confocal',
-}
-
-CORE_DATASETS = [
-    'kidney_dapi', 'kidney_actin',
-    'opencell_map4_ch0', 'opencell_map4_ch1',
-    'organoid_ch0', 'celegans_t100', 'tribolium',
-]
-
-
-def setup_matplotlib():
-    """Configure matplotlib for publication quality."""
-    plt.rcParams.update({
-        'font.family': 'sans-serif',
-        'font.sans-serif': ['DejaVu Sans', 'Arial', 'Helvetica'],
-        'font.size': FONTSIZE,
-        'axes.labelsize': FONTSIZE_LABEL,
-        'axes.titlesize': FONTSIZE_TITLE,
-        'xtick.labelsize': FONTSIZE,
-        'ytick.labelsize': FONTSIZE,
-        'legend.fontsize': FONTSIZE - 1,
-        'figure.dpi': DPI,
-        'savefig.dpi': DPI,
-        'savefig.bbox': 'tight',
-        'savefig.pad_inches': 0.03,
-        'axes.linewidth': 0.5,
-        'xtick.major.width': 0.5,
-        'ytick.major.width': 0.5,
-        'xtick.minor.width': 0.3,
-        'ytick.minor.width': 0.3,
-        'lines.linewidth': LINEWIDTH,
-        'lines.markersize': MARKERSIZE,
-        'axes.spines.top': False,
-        'axes.spines.right': False,
-        'pdf.fonttype': 42,
-        'ps.fonttype': 42,
-    })
 
 
 def load_metrics(dataset_name: str) -> pd.DataFrame:
@@ -154,21 +74,6 @@ def load_noise_floor() -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
     return pd.read_csv(path, sep='\t')
-
-
-def add_panel_label(ax, label, x=-0.12, y=1.05):
-    ax.text(x, y, label, transform=ax.transAxes,
-            fontsize=FONTSIZE_TITLE + 2, fontweight='bold',
-            va='top', ha='left')
-
-
-def format_splat_axis(ax):
-    """Format x-axis for splat count (log scale, K notation)."""
-    ax.set_xscale('log')
-    ax.set_xlim(0.8, 600)
-    ax.set_xticks([1, 10, 100, 500])
-    ax.set_xticklabels(['1K', '10K', '100K', '500K'])
-    ax.xaxis.set_minor_locator(ticker.NullLocator())
 
 
 def figure_1_pipeline():

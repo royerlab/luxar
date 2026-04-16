@@ -94,8 +94,8 @@ class Colors:
 # ---------------------------------------------------------------------------
 # Font settings
 # ---------------------------------------------------------------------------
-FONT_MONO = "Menlo"
-FONT_SANS = "Helvetica Neue, Helvetica, Arial, sans-serif"
+FONT_MONO = "Menlo, DejaVu Sans Mono, Consolas, monospace"
+FONT_SANS = "Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif"
 
 
 # ---------------------------------------------------------------------------
@@ -739,7 +739,7 @@ def main():
         )
         print(f"Saved PNG: {png_path}")
     else:
-        print("rsvg-convert not found. Install with: brew install librsvg")
+        print("rsvg-convert not found. Install with: brew install librsvg (macOS) or apt install librsvg2-bin (Linux)")
 
 
 if __name__ == "__main__":

@@ -8,7 +8,6 @@ Methods and their knobs:
 - GSplats: splat count (1K-512K) → already computed
 - Quantization+zstd: bit depth (4, 6, 8, 10, 12, 16 bits)
 - Blosc+bitshuffle: lossless (single point, perfect quality)
-- JPEG2000 per-slice: quality parameter
 
 The key architectural distinction: GSplats are RENDERABLE at their compressed
 size (no decompression). All other methods require full decompression to voxels
@@ -28,21 +27,11 @@ QUALITY_DIR = ANALYSIS_DIR.parent / "splat_count_vs_quality" / "results"
 RESULTS_DIR = ANALYSIS_DIR / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
+sys.path.insert(0, str(ANALYSIS_DIR.parent))
 sys.path.insert(0, str(ANALYSIS_DIR.parent / "splat_count_vs_quality"))
+from _shared import compute_psnr, compute_splat_bytes  # noqa: E402
 
 DATASETS = ['kidney_dapi', 'organoid_ch0', 'celegans_t100', 'tribolium', 'opencell_map4_ch0']
-
-
-def compute_psnr(orig, recon):
-    mse = np.mean((orig.astype(np.float64) - recon.astype(np.float64)) ** 2)
-    if mse == 0:
-        return float('inf')
-    return 10 * np.log10(1.0 / mse)
-
-
-def compute_splat_bytes(n_splats, ndim=3):
-    cholesky = ndim * (ndim + 1) // 2
-    return n_splats * (ndim + 1 + cholesky) * 4
 
 
 def sweep_quantization(volume):

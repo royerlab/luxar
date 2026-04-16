@@ -23,15 +23,23 @@ PAPER_NAME=$(basename "$MAIN_TEX" .tex)
 echo "Building: $PAPER_DIR/$PAPER_NAME.pdf"
 cd "$PAPER_DIR"
 
-pdflatex -interaction=nonstopmode "$PAPER_NAME.tex" > /dev/null 2>&1 || true
-bibtex "$PAPER_NAME" > /dev/null 2>&1 || true
-pdflatex -interaction=nonstopmode "$PAPER_NAME.tex" > /dev/null 2>&1 || true
-pdflatex -interaction=nonstopmode "$PAPER_NAME.tex" > /dev/null 2>&1 || true
+BUILD_LOG="$PAPER_NAME.build.log"
+rm -f "$BUILD_LOG"
+
+pdflatex -interaction=nonstopmode "$PAPER_NAME.tex" >> "$BUILD_LOG" 2>&1 || true
+bibtex "$PAPER_NAME" >> "$BUILD_LOG" 2>&1 || true
+pdflatex -interaction=nonstopmode "$PAPER_NAME.tex" >> "$BUILD_LOG" 2>&1 || true
+pdflatex -interaction=nonstopmode "$PAPER_NAME.tex" >> "$BUILD_LOG" 2>&1 || true
 
 if [ -f "$PAPER_NAME.pdf" ]; then
     size=$(du -h "$PAPER_NAME.pdf" | cut -f1)
     echo "  Built: $PAPER_NAME.pdf ($size)"
+    warnings=$(grep -c "Warning\|Error" "$BUILD_LOG" 2>/dev/null || true)
+    warnings=${warnings:-0}
+    if [ "$warnings" -gt 0 ]; then
+        echo "  $warnings warnings/errors — see $BUILD_LOG for details"
+    fi
 else
-    echo "  ERROR: $PAPER_NAME.pdf not produced"
+    echo "  ERROR: $PAPER_NAME.pdf not produced — see $BUILD_LOG for details"
     exit 1
 fi

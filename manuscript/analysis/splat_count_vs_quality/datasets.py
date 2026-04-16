@@ -590,6 +590,9 @@ def load_acto3d_heart_nuclei() -> tuple[np.ndarray, dict[str, Any]]:
             aprint(f"Cropping {axis_name}-axis: {shape[largest]} -> {target_len}")
             V = V[tuple(slc)]
 
+        # Note: full min-max normalization on quantized integer data means noise
+        # estimators will return 0 (sub-quantization noise is undetectable).
+        # The noise floor for this dataset is recorded as inf in noise_floor.tsv.
         V = _normalize_volume(V, 0.0, 100.0)
         aprint(f"Volume: {V.shape}, range [{V.min():.3f}, {V.max():.3f}]")
 

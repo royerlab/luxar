@@ -24,71 +24,22 @@ import pandas as pd
 SCRIPT_DIR = Path(__file__).parent.parent
 ANALYSIS_DIR = SCRIPT_DIR.parent / "analysis" / "splat_count_vs_quality"
 sys.path.insert(0, str(SCRIPT_DIR.parent / "analysis"))
+from _shared import (  # noqa: E402
+    COLORS,
+    CORE_DATASETS,
+    DISPLAY_NAMES,
+    FONTSIZE,
+    MARKERSIZE,
+    TWO_COL_WIDTH,
+    add_panel_label,
+    format_splat_axis,
+    setup_matplotlib,
+)
 from cv_optimal import find_cv_optimal_idx  # noqa: E402
 
 RESULTS_DIR = ANALYSIS_DIR / "results"
 FIGS_DIR = SCRIPT_DIR / "figs" / "quantitative_analysis"
 FIGS_DIR.mkdir(parents=True, exist_ok=True)
-
-# Style
-FONTSIZE = 6.5
-FONTSIZE_LABEL = 7
-FONTSIZE_TITLE = 7.5
-LINEWIDTH = 0.9
-MARKERSIZE = 2.5
-TWO_COL_WIDTH = 7.2
-
-COLORS = {
-    'kidney_dapi': '#0072B2',
-    'kidney_actin': '#D55E00',
-    'opencell_map4_ch0': '#009E73',
-    'opencell_map4_ch1': '#CC79A7',
-    'organoid_ch0': '#8B6914',
-    'celegans_t100': '#56B4E9',
-    'tribolium': '#E69F00',
-}
-
-DISPLAY_NAMES = {
-    'kidney_dapi': 'Kidney DAPI',
-    'kidney_actin': 'Kidney actin',
-    'opencell_map4_ch0': 'MAP4 (Hoechst)',
-    'opencell_map4_ch1': 'MAP4 (GFP)',
-    'organoid_ch0': 'Organoid',
-    'celegans_t100': 'C. elegans',
-    'tribolium': 'Tribolium',
-}
-
-CORE_DATASETS = [
-    'kidney_dapi', 'kidney_actin',
-    'opencell_map4_ch0', 'opencell_map4_ch1',
-    'organoid_ch0', 'celegans_t100', 'tribolium',
-]
-
-
-def setup():
-    plt.rcParams.update({
-        'font.family': 'sans-serif',
-        'font.sans-serif': ['DejaVu Sans', 'Arial', 'Helvetica'],
-        'font.size': FONTSIZE,
-        'axes.labelsize': FONTSIZE_LABEL,
-        'axes.titlesize': FONTSIZE_TITLE,
-        'xtick.labelsize': FONTSIZE,
-        'ytick.labelsize': FONTSIZE,
-        'legend.fontsize': FONTSIZE - 1,
-        'figure.dpi': 300,
-        'savefig.dpi': 300,
-        'savefig.bbox': 'tight',
-        'savefig.pad_inches': 0.03,
-        'axes.linewidth': 0.4,
-        'xtick.major.width': 0.4,
-        'ytick.major.width': 0.4,
-        'lines.linewidth': LINEWIDTH,
-        'lines.markersize': MARKERSIZE,
-        'axes.spines.top': False,
-        'axes.spines.right': False,
-        'pdf.fonttype': 42,
-        'ps.fonttype': 42,
-    })
 
 
 def load_metrics(ds):
@@ -106,21 +57,8 @@ def load_noise_floor():
     return pd.read_csv(p, sep='\t') if p.exists() else pd.DataFrame()
 
 
-def add_label(ax, label, x=-0.14, y=1.08):
-    ax.text(x, y, label, transform=ax.transAxes,
-            fontsize=FONTSIZE_TITLE + 2, fontweight='bold', va='top', ha='left')
-
-
-def fmt_x(ax):
-    ax.set_xscale('log')
-    ax.set_xlim(0.8, 600)
-    ax.set_xticks([1, 10, 100, 500])
-    ax.set_xticklabels(['1K', '10K', '100K', '500K'])
-    ax.xaxis.set_minor_locator(ticker.NullLocator())
-
-
 def main():
-    setup()
+    setup_matplotlib()
 
     fig = plt.figure(figsize=(TWO_COL_WIDTH, 4.2))
     gs = gridspec.GridSpec(2, 3, figure=fig, wspace=0.35, hspace=0.50,
@@ -139,11 +77,11 @@ def main():
         ax.plot(df['n_splats_final']/1000, df['psnr_db'],
                 '-o', color=COLORS[ds], label=DISPLAY_NAMES[ds],
                 markersize=MARKERSIZE, markeredgewidth=0.3, markeredgecolor='white', zorder=3)
-    fmt_x(ax)
+    format_splat_axis(ax)
     ax.set_xlabel('Splat count')
     ax.set_ylabel('PSNR (dB)')
     ax.set_ylim(18, 46)
-    add_label(ax, 'a')
+    add_panel_label(ax,'a')
 
     # Panel b: SSIM vs splat count (legend goes here - more space)
     ax = fig.add_subplot(gs[0, 1])
@@ -154,14 +92,14 @@ def main():
         ax.plot(df['n_splats_final']/1000, df['ssim'],
                 '-o', color=COLORS[ds], label=DISPLAY_NAMES[ds],
                 markersize=MARKERSIZE, markeredgewidth=0.3, markeredgecolor='white', zorder=3)
-    fmt_x(ax)
+    format_splat_axis(ax)
     ax.set_xlabel('Splat count')
     ax.set_ylabel('SSIM')
     ax.set_ylim(0.2, 1.02)
     ax.legend(loc='lower right', frameon=False,
               fontsize=FONTSIZE - 1.5, ncol=2, handlelength=1.0, handletextpad=0.3,
               borderpad=0.2, labelspacing=0.15, columnspacing=0.5)
-    add_label(ax, 'b')
+    add_panel_label(ax,'b')
 
     # Panel c: Compression ratio vs PSNR
     ax = fig.add_subplot(gs[0, 2])
@@ -178,7 +116,7 @@ def main():
     ax.set_ylabel('PSNR (dB)')
     ax.set_ylim(18, 46)
     ax.invert_xaxis()
-    add_label(ax, 'c')
+    add_panel_label(ax,'c')
 
     # ===== ROW 2: Cross-validation =====
 
@@ -219,14 +157,14 @@ def main():
                         xy=(n2s.iloc[last_idx]['n_splats_final']/1000,
                             (n2s.iloc[last_idx]['train_psnr_db']+n2s.iloc[last_idx]['held_out_psnr_db'])/2),
                         ha='center', va='center', color='#D55E00', fontweight='bold')
-    fmt_x(ax)
+    format_splat_axis(ax)
     ax.set_xlabel('Splat count')
     ax.set_ylabel('PSNR (dB)')
     ax.set_title('Kidney DAPI (confocal)', fontweight='bold', pad=2)
     ax.legend(loc='upper left', frameon=True, fancybox=False, edgecolor='#cccccc',
               framealpha=0.95, fontsize=FONTSIZE-1.5, handlelength=1.0,
               handletextpad=0.3, borderpad=0.2, labelspacing=0.15)
-    add_label(ax, 'd')
+    add_panel_label(ax,'d')
 
     # Panel e: Tribolium (no overfitting)
     ax = fig.add_subplot(gs[1, 1])
@@ -244,14 +182,14 @@ def main():
             nf_val = nf[nf['dataset']==ds]['psnr_max_db'].values[0]
             if nf_val < 65:
                 ax.axhline(y=nf_val, color='#999999', linestyle=':', linewidth=0.6, label='Noise floor')
-    fmt_x(ax)
+    format_splat_axis(ax)
     ax.set_xlabel('Splat count')
     ax.set_ylabel('PSNR (dB)')
     ax.set_title('Tribolium (light-sheet)', fontweight='bold', pad=2)
     ax.legend(loc='lower right', frameon=True, fancybox=False, edgecolor='#cccccc',
               framealpha=0.95, fontsize=FONTSIZE-1.5, handlelength=1.0,
               handletextpad=0.3, borderpad=0.2, labelspacing=0.15)
-    add_label(ax, 'e')
+    add_panel_label(ax,'e')
 
     # Panel f: Optimal splat count vs noise
     ax = fig.add_subplot(gs[1, 2])
@@ -313,7 +251,7 @@ def main():
     ax.set_xticks([0.2, 0.5, 1, 3])
     ax.set_xticklabels(['0.2', '0.5', '1', '3'])
     ax.xaxis.set_minor_locator(ticker.NullLocator())
-    add_label(ax, 'f')
+    add_panel_label(ax,'f')
 
     out = FIGS_DIR / "quantitative_analysis.pdf"
     fig.savefig(out)

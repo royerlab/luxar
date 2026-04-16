@@ -34,35 +34,18 @@ QUALITY_DIR = ANALYSIS_DIR.parent / "splat_count_vs_quality" / "results"
 RESULTS_DIR = ANALYSIS_DIR / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
+sys.path.insert(0, str(ANALYSIS_DIR.parent))
 sys.path.insert(0, str(ANALYSIS_DIR.parent / "splat_count_vs_quality"))
+from _shared import (  # noqa: E402
+    compute_psnr,
+    compute_splat_bytes,
+    generate_holdout_mask,
+)
 
 DATASETS = ['kidney_dapi', 'organoid_ch0', 'celegans_t100', 'tribolium', 'opencell_map4_ch0']
 
 MASK_FRACTION = 0.05  # Same as cross-validation analysis
 SEED = 42
-
-
-def compute_psnr(orig, recon, mask=None):
-    """Compute PSNR, optionally only on masked voxels."""
-    if mask is not None:
-        orig = orig[mask]
-        recon = recon[mask]
-    mse = np.mean((orig.astype(np.float64) - recon.astype(np.float64)) ** 2)
-    if mse == 0:
-        return float('inf')
-    return 10 * np.log10(1.0 / mse)
-
-
-def compute_splat_bytes(n_splats, ndim=3):
-    cholesky = ndim * (ndim + 1) // 2
-    return n_splats * (ndim + 1 + cholesky) * 4
-
-
-def generate_mask(shape, fraction, seed):
-    """Generate a random held-out mask (same as cross-validation analysis)."""
-    rng = np.random.RandomState(seed)
-    mask = rng.random(shape) < fraction
-    return mask
 
 
 def quantize_volume(volume, bits):
@@ -123,7 +106,7 @@ def main():
             aprint(f"Shape: {volume.shape}, Range: [{volume.min():.3f}, {volume.max():.3f}]")
 
             # Generate held-out mask
-            mask = generate_mask(volume.shape, MASK_FRACTION, SEED)
+            mask = generate_holdout_mask(volume.shape, MASK_FRACTION, SEED)
             n_heldout = mask.sum()
             aprint(f"Held-out mask: {n_heldout} voxels ({n_heldout/volume.size*100:.1f}%)")
 

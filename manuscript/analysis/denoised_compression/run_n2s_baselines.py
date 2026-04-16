@@ -31,7 +31,13 @@ QUALITY_DIR = ANALYSIS_DIR.parent / "splat_count_vs_quality" / "results"
 RESULTS_DIR = ANALYSIS_DIR / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
+sys.path.insert(0, str(ANALYSIS_DIR.parent))
 sys.path.insert(0, str(ANALYSIS_DIR.parent / "splat_count_vs_quality"))
+from _shared import (  # noqa: E402
+    compute_psnr,
+    compute_splat_bytes,
+    generate_holdout_mask,
+)
 
 DATASETS = [
     'kidney_dapi', 'kidney_actin', 'organoid_ch0',
@@ -44,22 +50,6 @@ SEED = 42
 
 # H.265 CRF values to sweep (lower = better quality, larger file)
 H265_CRF_VALUES = [51, 45, 40, 35, 30, 25, 20, 15, 10, 5, 0]
-
-
-def compute_psnr(orig, recon, mask=None):
-    if mask is not None:
-        orig = orig[mask]
-        recon = recon[mask]
-    mse = np.mean((orig.astype(np.float64) - recon.astype(np.float64)) ** 2)
-    if mse == 0:
-        return float('inf')
-    return 10 * np.log10(1.0 / mse)
-
-
-def generate_cv_mask(shape, fraction, seed):
-    """Generate random blind-spot mask for cross-validation."""
-    rng = np.random.RandomState(seed)
-    return rng.random(shape) < fraction
 
 
 def apply_median_donut(volume, mask):
@@ -83,11 +73,6 @@ def apply_median_donut(volume, mask):
     masked_volume = volume.copy()
     masked_volume[mask] = donut_median[mask]
     return masked_volume
-
-
-def compute_splat_bytes(n_splats, ndim=3):
-    cholesky = ndim * (ndim + 1) // 2
-    return n_splats * (ndim + 1 + cholesky) * 4
 
 
 def encode_h265(volume, crf, tmpdir):
@@ -222,7 +207,7 @@ def main():
             aprint(f"Shape: {volume.shape}")
 
             # Generate cross-validation blind-spot mask
-            mask = generate_cv_mask(volume.shape, MASK_FRACTION, SEED)
+            mask = generate_holdout_mask(volume.shape, MASK_FRACTION, SEED)
             aprint(f"Held-out: {mask.sum()} voxels ({mask.sum()/n_voxels*100:.1f}%)")
 
             # Create masked volume (blind-spot filled with median-donut)

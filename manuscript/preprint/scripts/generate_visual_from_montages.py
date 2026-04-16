@@ -9,8 +9,8 @@ No GPU required -- this only reads NumPy arrays and creates a matplotlib figure.
 
 Usage::
 
-    hatch run python manuscript/paper/generate_visual_from_montages.py
-    hatch run python manuscript/paper/generate_visual_from_montages.py --output figs/visual_comparison/visual_comparison.pdf
+    hatch run python manuscript/preprint/scripts/generate_visual_from_montages.py
+    hatch run python manuscript/preprint/scripts/generate_visual_from_montages.py --output figs/visual_comparison/visual_comparison.pdf
 """
 
 from __future__ import annotations

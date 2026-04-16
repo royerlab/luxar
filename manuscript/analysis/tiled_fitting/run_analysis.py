@@ -9,20 +9,14 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 import torch
 
 ANALYSIS_DIR = Path(__file__).parent
 RESULTS_DIR = ANALYSIS_DIR / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
-
-def compute_psnr(original, reconstructed):
-    """Compute PSNR between original and reconstructed volumes."""
-    mse = np.mean((original - reconstructed) ** 2)
-    if mse == 0:
-        return float('inf')
-    return 10 * np.log10(1.0 / mse)
+sys.path.insert(0, str(ANALYSIS_DIR.parent))
+from _shared import compute_psnr  # noqa: E402
 
 
 def measure_peak_memory():
@@ -45,7 +39,7 @@ def run_monolithic(volume, n_seeds=8000, n_iters=2000):
     t0 = time.time()
 
     result = fit_gaussian_splats(
-        volume, n_seeds=n_seeds, n_iters=n_iters,
+        volume, seeds=n_seeds, n_iters=n_iters,
         loss_type='l1', early_stop_patience=200,
         enable_dynamic_ops=True, cull_retention=0.999, verbose=False,
     )
@@ -77,7 +71,7 @@ def run_tiled(volume, tile_size, overlap, n_seeds=2000, n_iters=2000):
 
     result = fit_tiled(
         volume, tile_size=tile_size, overlap=overlap,
-        n_seeds=n_seeds, n_iters=n_iters,
+        seeds=n_seeds, n_iters=n_iters,
         loss_type='l1', early_stop_patience=200,
         enable_dynamic_ops=True, cull_retention=0.999, verbose=False,
     )

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Plot compression comparison at CV-optimal splat counts."""
 
+import sys
+
 import matplotlib
 
 matplotlib.use('Agg')
@@ -10,26 +12,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-RESULTS_DIR = Path(__file__).parent / "results"
-FIGS_DIR = Path(__file__).parent.parent.parent / "preprint" / "figs" / "suppfig"
-FIGS_DIR.mkdir(parents=True, exist_ok=True)
+ANALYSIS_DIR = Path(__file__).parent
+sys.path.insert(0, str(ANALYSIS_DIR.parent))
+from _shared import COLORS, DISPLAY_NAMES  # noqa: E402
 
-COLORS = {
-    'kidney_dapi': '#0072B2', 'kidney_actin': '#D55E00',
-    'opencell_map4_ch0': '#009E73', 'opencell_map4_ch1': '#CC79A7',
-    'organoid_ch0': '#8B6914', 'celegans_t100': '#56B4E9',
-    'tribolium': '#E69F00', 'cells3d_nuclei': '#666666',
-    'cells3d_membrane': '#882255', 'opencell_lmnb1_ch0': '#117733',
-    'opencell_lmnb1_ch1': '#AA4499', 'acto3d_heart_nuclei': '#44AA99',
-}
-NAMES = {
-    'kidney_dapi': 'Kidney DAPI', 'kidney_actin': 'Kidney actin',
-    'opencell_map4_ch0': 'MAP4 (Hoechst)', 'opencell_map4_ch1': 'MAP4 (GFP)',
-    'organoid_ch0': 'Organoid', 'celegans_t100': 'C. elegans',
-    'tribolium': 'Tribolium', 'cells3d_nuclei': 'Cells3D nuclei',
-    'cells3d_membrane': 'Cells3D membrane', 'opencell_lmnb1_ch0': 'LMNB1 (Hoechst)',
-    'opencell_lmnb1_ch1': 'LMNB1 (GFP)', 'acto3d_heart_nuclei': 'Heart nuclei',
-}
+RESULTS_DIR = ANALYSIS_DIR / "results"
+FIGS_DIR = ANALYSIS_DIR.parent.parent / "preprint" / "figs" / "suppfig"
+FIGS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def main():
@@ -39,7 +28,7 @@ def main():
         'pdf.fonttype': 42,
     })
 
-    df = pd.read_csv(RESULTS_DIR / "compression_at_n2s_optimal.tsv", sep='\t')
+    df = pd.read_csv(RESULTS_DIR / "compression_at_cv_optimal.tsv", sep='\t')
     bpv = pd.read_csv(RESULTS_DIR / "bits_per_voxel_all.tsv", sep='\t')
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.2, 2.8))
@@ -62,7 +51,7 @@ def main():
                  fontsize=5, va='center', color='#0072B2', fontweight='bold')
 
     ax1.set_yticks(y)
-    ax1.set_yticklabels([f"{NAMES.get(d, d)}" for d in summary['dataset']],
+    ax1.set_yticklabels([f"{DISPLAY_NAMES.get(d, d)}" for d in summary['dataset']],
                          fontsize=6)
     ax1.set_xlabel('File size (MB)')
     ax1.set_xscale('log')
@@ -75,12 +64,12 @@ def main():
     for ds in core:
         sub = bpv[bpv['dataset'] == ds].sort_values('bpv_splat')
         ax2.plot(sub['bpv_splat'], sub['psnr_db'], '-o',
-                 color=COLORS.get(ds, '#333'), label=NAMES.get(ds, ds),
+                 color=COLORS.get(ds, '#333'), label=DISPLAY_NAMES.get(ds, ds),
                  markersize=3, linewidth=0.9, markeredgewidth=0.3, markeredgecolor='white')
 
         # Mark the CV-optimal point with a star
         opt_row = df[df['dataset'] == ds]
-        if not opt_row.empty and opt_row['n2s_genuine_peak'].values[0]:
+        if not opt_row.empty and opt_row['cv_genuine_peak'].values[0]:
             opt_bpv = opt_row['bpv_splat'].values[0]
             opt_psnr = opt_row['psnr_db'].values[0]
             ax2.plot(opt_bpv, opt_psnr, '*', color=COLORS.get(ds, '#333'),

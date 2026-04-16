@@ -34,16 +34,16 @@ for ds in $DATASETS; do
     echo "--- $ds ---"
 
     # Convergence curves
-    hatch run python manuscript/analysis/convergence/plot_convergence.py --dataset "$ds" 2>&1 || true
+    hatch run python manuscript/analysis/convergence/plot_convergence.py --dataset "$ds" 2>&1 || echo "  WARNING: $ds convergence plotting failed"
 
     # Progressive vs single-pass comparison
-    hatch run python manuscript/analysis/progressive_vs_single/plot_results.py --dataset "$ds" 2>&1 || true
+    hatch run python manuscript/analysis/progressive_vs_single/plot_results.py --dataset "$ds" 2>&1 || echo "  WARNING: $ds progressive plotting failed"
 
     # Splat count vs quality curves
-    hatch run python manuscript/analysis/splat_count_vs_quality/plot_results.py --dataset "$ds" 2>&1 || true
+    hatch run python manuscript/analysis/splat_count_vs_quality/plot_results.py --dataset "$ds" 2>&1 || echo "  WARNING: $ds quality plotting failed"
 
     # Cross-validation curves
-    hatch run python manuscript/analysis/splat_count_vs_quality/plot_noise2self.py --dataset "$ds" 2>&1 || true
+    hatch run python manuscript/analysis/splat_count_vs_quality/plot_noise2self.py --dataset "$ds" 2>&1 || echo "  WARNING: $ds noise2self plotting failed"
 done
 
 # ──────────────────────────────────────────────────────────────────────

@@ -84,10 +84,11 @@ The noise floor PSNR is $10\log_{10}(1/\sigma^2)$.
 
 \paragraph{Datasets.}
 All datasets are from public repositories.
-OpenCell spinning-disk confocal\cite{cho2022opencell}: MAP4-GFP (microtubules) and Hoechst (nuclei), 51$\times$600$\times$600 voxels; LMNB1, 112$\times$600$\times$600 voxels.
+OpenCell spinning-disk confocal\cite{cho2022opencell}: MAP4-GFP (microtubules) and Hoechst (nuclei), 51$\times$600$\times$600 voxels; LMNB1-GFP (nuclear envelope) and Hoechst (nuclei), 112$\times$600$\times$600 voxels.
 Mouse kidney confocal: DAPI (nuclei) and Phalloidin (actin), 16$\times$512$\times$512 voxels, acquired by G.~Buckley (Monash Micro Imaging), distributed via scikit-image\cite{vanderWalt2014scikit}.
 Cells3D (HeLa, confocal): nuclei and membrane channels, 60$\times$256$\times$256, via scikit-image\cite{vanderWalt2014scikit}.
 3D cell culture (mouse ESC acini)\cite{blin2019nessys}: 236$\times$275$\times$271 voxels, from IDR (idr0062).
 \emph{C.~elegans} embryo confocal\cite{murray2008celegans}: timepoint 100, 41$\times$512$\times$512, via the Cell Tracking Challenge\cite{maska2023celltracking}.
 Tribolium embryo light-sheet: 991$\times$104$\times$965 voxels (cropped, multi-view deconvolved)\cite{preibisch2014efficient}.
+Mouse heart nuclei (confocal): cropped to ${\leq}$100~million voxels, from the Acto3D project.
 All volumes were normalized to $[0, 1]$ intensity range before fitting.

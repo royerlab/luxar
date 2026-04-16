@@ -2,10 +2,7 @@
 
 \usepackage{royer_style}
 \usepackage[english]{babel}
-\usepackage{amsmath}
-\usepackage{graphicx}
 \usepackage{orcidlink}
-\usepackage{xcolor}
 \usepackage{multirow}
 \usepackage{soul}
 \usepackage{enumitem}
@@ -57,7 +54,7 @@ A single light-sheet microscope run produces hundreds of gigabytes\cite{keller20
 Yet the dominant mode of dissemination remains downloading raw files---or, more commonly, inspecting static projections that discard the very dimensionality that motivated the measurement.
 
 Interactive exploration fares no better.
-Desktop tools such as napari\cite{sofroniew2022napari}, Fiji\cite{schindelin2012fiji}, and BigDataViewer\cite{pietzsch2015bigdataviewer} provide powerful visualization but require local installation and data download.
+Desktop tools such as napari\cite{sofroniew2022napari}, Fiji\cite{schindelin2012fiji}, Vaa3D\cite{peng2014vaa3d}, and BigDataViewer\cite{pietzsch2015bigdataviewer} provide powerful visualization but require local installation and data download.
 Web-based viewers like Neuroglancer\cite{maitinshepard2021neuroglancer} stream voxel data over HTTP but remain limited to axis-aligned slicing and require multi-resolution pyramid preprocessing.
 Neither paradigm is designed for the full diversity of scientific data: volumetric microscopy, point-cloud embeddings, polyline trajectories, and higher-dimensional datasets all require different tools, formats, and expertise.
 
@@ -70,7 +67,7 @@ This Python-first, compile-then-view architecture enables applications across do
 In this paper, we focus on the last of these---Gaussian splatting for microscopy volumes---which represents the most technically novel contribution.
 
 Fluorescence microscopy data is inherently sparse: signal is concentrated in structures---nuclei, membranes, filaments---while the vast majority of voxels are background.
-Gaussian splatting\cite{kerbl2023gaussian}, originally developed for real-time novel-view synthesis as an alternative to neural radiance fields\cite{mildenhall2021nerf}, represents a volume as a mixture of oriented, anisotropic Gaussian primitives, placing representational capacity only where signal exists.
+Gaussian splatting\cite{kerbl2023gaussian,yun2024gsplat}, originally developed for real-time novel-view synthesis as an alternative to neural radiance fields\cite{mildenhall2021nerf}, represents a volume as a mixture of oriented, anisotropic Gaussian primitives, placing representational capacity only where signal exists.
 The resulting representation is continuous, compact, and directly GPU-renderable---properties that align precisely with the needs of microscopy data dissemination.
 
 We adapt Gaussian splatting for microscopy with a purpose-built optimization pipeline featuring per-splat Adam optimization with dynamic topology and Cholesky-parameterized covariance.
@@ -158,7 +155,7 @@ At the optimal count, splats capture the recoverable signal while naturally disc
 For light-sheet data, the representation is extraordinarily compact (313$\times$ compression); for noisier confocal data, a lower splat count yields higher-fidelity reconstructions than blindly adding more.
 When compared against H.265 video compression using a blind-spot held-out framework that measures true signal recovery, Gaussian splats achieve up to 3~dB higher held-out PSNR on noisy confocal data (Supplementary Fig.~3).
 The splat representation is additionally \emph{directly renderable} without decompression.
-We also find that single-pass fitting with conservative culling outperforms progressive multi-pass approaches at a fixed splat budget for 8 of 12~datasets, while 2-pass progressive fitting yields +0.9 to +1.7~dB gains for clean, well-structured volumes---and is consistently 2--9$\times$ faster (Supplementary Fig.~4; Supplementary Document~3).
+We also find that single-pass fitting with conservative culling outperforms progressive multi-pass approaches at a fixed splat budget for 8 of 12~datasets, while 2-pass progressive fitting yields +0.9 to +1.6~dB gains for clean, well-structured volumes---and is 1.2--4.4$\times$ faster (Supplementary Fig.~4; Supplementary Document~3).
 
 While this paper focuses on microscopy, \luxar is domain-agnostic.
 The same system visualizes millions of stars from astronomical surveys\cite{gaiacollaboration2023gaia}, hundreds of thousands of cells from single-cell atlases\cite{tabula2022tabula} (Tabula Sapiens), protein embeddings, super-resolution localizations, and cell tracking trajectories mixing Gaussian splats with polyline overlays---all with native $n$-dimensional navigation (Fig.~\ref{fig:overview}c).
@@ -192,7 +189,7 @@ Code, documentation, and live demos are available at \url{https://github.com/roy
     Representative slices at increasing splat counts.
     \textbf{a--d,} Mouse kidney\cite{vanderWalt2014scikit} (confocal, DAPI): 128K splats recover fine nuclear morphology at 3$\times$ compression.
     \textbf{e--h,} 3D cell culture\cite{blin2019nessys} (confocal, mouse ESC acini): lumenal structure and cell boundaries faithfully reconstructed.
-    \textbf{i--l,} Tribolium embryo\cite{preibisch2014efficient} (light-sheet): 4K splats capture the full morphology at 2\,512$\times$ compression ($\sigma = 0.0009$).
+    \textbf{i--l,} Tribolium embryo\cite{preibisch2014efficient} (light-sheet): 4K splats capture the full morphology at 2{,}512$\times$ compression ($\sigma = 0.0009$).
     White annotations: PSNR and compression ratio. Scale bars in original panels.}
     \label{fig:visual}
 \end{figure*}
@@ -253,11 +250,13 @@ Systematic rate-distortion analysis across all 12~microscopy datasets with blind
 
 \vspace{0.5em}
 \noindent\textbf{Supplementary Document~3\label{suppdoc:progressive}} --- \textbf{Progressive vs.\ single-pass fitting.}
-Comparison at a fixed 32K-splat budget across 12~datasets. Single-pass wins for 8/12 datasets (mostly confocal); 2-pass progressive gains +0.9 to +1.7~dB for 4 datasets with clean, well-structured signals, and is 2--9$\times$ faster across all datasets.
+Comparison at a fixed 32K-splat budget across 12~datasets. Single-pass wins for 8/12 datasets (mostly confocal); 2-pass progressive gains +0.9 to +1.6~dB for 4 datasets with clean, well-structured signals, and is 1.2--4.4$\times$ faster across all datasets.
 
 \vspace{0.5em}
 \noindent\textbf{Supplementary Document~4\label{suppdoc:convergence}} --- \textbf{Convergence analysis.}
 Convergence at 5 splat counts and 11 iteration checkpoints. 500--2\,000 iterations suffice; model capacity dominates optimization budget.
+
+\clearpage
 
 \begin{figure*}[t]
 \centering
@@ -319,9 +318,9 @@ The GSplat representation is additionally \emph{directly renderable} without dec
 \textbf{a,} PSNR difference (2-pass minus 1-pass) across 12~microscopy datasets grouped by modality.
 Green bars: 2-pass progressive fitting achieves higher PSNR; purple bars: single-pass is better.
 Error bars: propagated standard deviation across 2--3 replicates.
-Four datasets with clean, well-structured signals (HeLa, Tribolium, mouse heart) gain +0.9 to +1.7~dB from 2-pass fitting; eight noisier confocal datasets favour single-pass.
+Four datasets with clean, well-structured signals (HeLa, Tribolium, mouse heart) gain +0.9 to +1.6~dB from 2-pass fitting; eight noisier confocal datasets favour single-pass.
 \textbf{b,} Wall-clock speedup of 2-pass over 1-pass fitting.
-Progressive fitting is 2--9$\times$ faster for all 12~datasets because fitting smaller batches of splats is sub-linearly cheaper per iteration.}
+Progressive fitting is 1.2--4.4$\times$ faster for all 12~datasets because fitting smaller batches of splats is sub-linearly cheaper per iteration.}
 \end{figure*}
 
 \end{document}

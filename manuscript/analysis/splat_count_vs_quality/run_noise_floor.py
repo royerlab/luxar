@@ -191,6 +191,12 @@ def main():
             aprint(f"  Ensemble σ:    {result['sigma_ensemble']:.6f}")
             aprint(f"  PSNR_max:      {result['psnr_max_db']:.2f} dB")
 
+            if result["sigma_ensemble"] == 0.0:
+                aprint(f"  WARNING: zero noise estimate for {key}. "
+                       "This typically indicates quantized/integer source data "
+                       "where noise estimators cannot detect sub-quantization "
+                       "noise. The noise floor will be recorded as inf.")
+
             # Check cross-method consistency
             sigmas = [v for v in [
                 result["sigma_laplacian"],

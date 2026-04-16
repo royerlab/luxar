@@ -10,9 +10,9 @@ extracts representative slices, and assembles the composite figure.
 
 Usage::
 
-    hatch run python manuscript/paper/generate_visual_comparisons.py
-    hatch run python manuscript/paper/generate_visual_comparisons.py --device cuda
-    hatch run python manuscript/paper/generate_visual_comparisons.py --device cpu  # slow!
+    hatch run python manuscript/preprint/scripts/generate_visual_comparisons.py
+    hatch run python manuscript/preprint/scripts/generate_visual_comparisons.py --device cuda
+    hatch run python manuscript/preprint/scripts/generate_visual_comparisons.py --device cpu  # slow!
 """
 
 from __future__ import annotations
