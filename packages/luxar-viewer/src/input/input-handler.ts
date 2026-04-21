@@ -128,7 +128,7 @@ export class InputHandler {
    * inputHandler.init();
    *
    * // Later, when scene loads, initialize dimension navigation
-   * await sceneManager.loadScene(url);
+   * await sceneManager.loadSceneData(url);
    * inputHandler.initDimensionSliders();
    * ```
    */
@@ -233,7 +233,7 @@ export class InputHandler {
    * ```typescript
    * // Before loading new scene
    * inputHandler.clearDimensionUI();
-   * await sceneManager.loadScene(newUrl);
+   * await sceneManager.loadSceneData(newUrl);
    * inputHandler.initDimensionSliders();
    * ```
    */
@@ -275,7 +275,7 @@ export class InputHandler {
    * @example
    * ```typescript
    * // After scene loads
-   * await sceneManager.loadScene(url);
+   * await sceneManager.loadSceneData(url);
    *
    * // Initialize dimension navigation
    * inputHandler.initDimensionSliders();
@@ -866,14 +866,18 @@ export class InputHandler {
       description: 'Quick screenshot',
     });
 
-    // Layers panel (L key without modifiers)
+    // Layers panel (L key without modifiers).
+    // If the focus is already inside the panel (e.g. on a range slider,
+    // select, or bound-edit text input), swallow L so dragging sliders
+    // doesn't accidentally close the panel.
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
       key: config.input.keyboard.shortcuts.toggleLayers,
       handler: (event) => {
-        if (!event.metaKey && !event.ctrlKey && !event.shiftKey) {
-          event.preventDefault();
-          this.layersPanel?.toggle();
-        }
+        if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+        const active = document.activeElement as HTMLElement | null;
+        if (active && active.closest('.luxar-layers-panel')) return;
+        event.preventDefault();
+        this.layersPanel?.toggle();
       },
       preventDefault: false,
       description: 'Toggle layers panel',

@@ -54,7 +54,7 @@ if not CUDA_AVAILABLE:
 # 9.0 = Hopper (H100, H200)
 # 10.0 = Blackwell (B100, B200) - requires CUDA 12.8+
 # 12.0 = Blackwell (future) - requires very recent CUDA
-ALL_MODERN_ARCHS = "7.5;8.0;8.6;8.9;9.0"
+ALL_MODERN_ARCHS = "7.5;8.0;8.6;8.9;9.0;10.0;12.0"
 
 # Get CUDA compute capabilities
 cuda_arch_list = os.environ.get("TORCH_CUDA_ARCH_LIST", None)

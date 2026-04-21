@@ -77,6 +77,9 @@ class DataNode(Node, ABC):
 
         Returns:
             Number of dimensions (from metadata)
+
+        Raises:
+            ValueError: If the node has no 'ndim' key in its metadata
         """
         value = self._metadata.get("ndim")
         if value is None:

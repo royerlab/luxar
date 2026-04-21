@@ -121,9 +121,12 @@ def validate_sharpness(
 ) -> np.ndarray[Any, np.dtype[np.float32]]:
     """Validate and convert sharpness array to correct type.
 
-    Sharpness controls the falloff profile of points, from soft (low values) to sharp (high values).
-    Must be positive float32 values with shape (N,) where N is the number of points.
-    Typical range is 0.5 to 10.0.
+    Sharpness controls the falloff profile of points, from soft (low values)
+    to sharp (high values). Must be positive float32 values with shape (N,)
+    where N is the number of points. The full allowed range is
+    (SHARPNESS_MIN, SHARPNESS_MAX] and is enforced by
+    ``base.validate_sharpness_for_writing``; this basic validator only
+    requires values to be positive.
 
     Args:
         sharpness: Input sharpness array to validate
@@ -381,6 +384,25 @@ def validate_layer(value: Any) -> bool:
     raise TypeError(f"Layer must be a boolean, got {type(value).__name__}")
 
 
+def validate_visible(value: Any) -> bool:
+    """Validate and convert visible flag.
+
+    Args:
+        value: Value to validate as a boolean visibility flag
+
+    Returns:
+        Valid visible flag as bool
+
+    Raises:
+        TypeError: If value cannot be interpreted as a boolean
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    raise TypeError(f"Visible must be a boolean, got {type(value).__name__}")
+
+
 def validate_blending_mode(mode: Any) -> BlendingMode:
     """Validate blending mode string.
 
@@ -431,6 +453,20 @@ def validate_colormap(value: Any) -> Union[str, "np.ndarray[Any, Any]"]:
     if isinstance(value, str):
         if not value:
             raise ValueError("Colormap name must be non-empty")
+        # Fast-path: accept the sentinel used by the writer for resolved
+        # custom/array colormaps (round-tripped through attrs).
+        if value == "custom":
+            return value
+        # Fail fast on unknown names: resolve_colormap walks builtin →
+        # matplotlib → colorcet and raises ValueError if the name is
+        # found nowhere. Catches typos like "viridus" at authoring time
+        # rather than producing a silently-empty colormap downstream.
+        from ..colormaps.registry import resolve_colormap
+
+        try:
+            resolve_colormap(value)
+        except (ValueError, ImportError) as e:
+            raise ValueError(str(e)) from e
         return value
 
     if isinstance(value, np.ndarray):

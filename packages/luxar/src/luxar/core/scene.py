@@ -123,7 +123,8 @@ class Scene(Group):
             **attrs: Additional attributes for the group. Supports:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.1-10.0, default 1.0) - Gamma correction
-                blending_mode: str ("normal", "additive", "max", default "additive")
+                blending_mode: str ("normal", "additive", "max", "opaque",
+                    "luminous"; default "additive")
 
         Returns:
             The created group node

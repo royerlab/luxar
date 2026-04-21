@@ -117,9 +117,11 @@ export class WorkerPool {
   }
 
   /**
-   * Get a worker API using least-busy selection
+   * Get a worker API using round-robin selection.
    *
-   * Selects the worker with the fewest active queries for better load distribution.
+   * Untracked callers receive workers in rotating order. For load-aware
+   * selection (picking the worker with the fewest active queries), use
+   * {@link getWorkerWithTracking} instead.
    */
   async getWorker(): Promise<Remote<DataWorkerAPI>> {
     await this.initialize();

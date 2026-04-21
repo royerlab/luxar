@@ -310,7 +310,11 @@ def has_network_simulation(
     jitter_percent: float,
     packet_loss_rate: float,
 ) -> bool:
-    """Check if any network simulation parameters are active."""
+    """Check if any network simulation parameters are active.
+
+    Returns True when at least one of bandwidth, latency, jitter, or packet
+    loss is set to a non-zero/non-None value.
+    """
     return any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0])
 
 

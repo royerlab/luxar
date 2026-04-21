@@ -94,7 +94,7 @@ describe('LayerStateManager', () => {
     mgr = new LayerStateManager();
   });
 
-  it('collects only nodes with layer=true', () => {
+  it('collects nodes with layer=true (including groups as composite layers)', () => {
     const graph: SceneNode = {
       path: '',
       type: 'scene',
@@ -104,13 +104,35 @@ describe('LayerStateManager', () => {
         { path: 'a', type: 'points', attrs: { layer: true }, hasSpatialIndex: true },
         { path: 'b', type: 'points', attrs: {}, hasSpatialIndex: true }, // no layer flag
         { path: 'c', type: 'lines', attrs: { layer: true }, hasSpatialIndex: false },
-        { path: 'd', type: 'group', attrs: { layer: true }, hasSpatialIndex: false }, // group — NOT a data node
+        { path: 'd', type: 'group', attrs: { layer: true }, hasSpatialIndex: false }, // group — composite layer
       ],
     };
     mgr.initFromSceneGraph(graph);
-    expect(mgr.count).toBe(2); // a (points) + c (lines)
+    expect(mgr.count).toBe(3); // a (points) + c (lines) + d (group)
     const names = mgr.getLayers().map((l) => l.name);
-    expect(names).toEqual(['a', 'c']);
+    expect(names).toEqual(['a', 'c', 'd']);
+    expect(mgr.getLayer('d')!.type).toBe('group');
+  });
+
+  it('honors the `visible` attr for initial visibility', () => {
+    const graph: SceneNode = {
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        { path: 'a', type: 'points', attrs: { layer: true }, hasSpatialIndex: true },
+        {
+          path: 'b',
+          type: 'points',
+          attrs: { layer: true, visible: false },
+          hasSpatialIndex: true,
+        },
+      ],
+    };
+    mgr.initFromSceneGraph(graph);
+    expect(mgr.getLayer('a')!.visible).toBe(true);
+    expect(mgr.getLayer('b')!.visible).toBe(false);
   });
 
   it('initializes display range from color_data_range', () => {

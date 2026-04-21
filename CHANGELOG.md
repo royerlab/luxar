@@ -6,6 +6,27 @@ All notable changes to Luxar are documented in this file.
 
 ### April 2026
 
+#### Changed — Layer Semantics
+
+**Rendering attribute composition (was: override)**
+- Rendering attributes (`opacity`, `gamma`, `intensity`, `offset`, `blending_mode`) now compose along the scene graph root-to-leaf per the Luxar spec, rather than the previous override-only behavior
+- `opacity`/`gamma`/`intensity` multiply through the chain; `offset` adds; `blending_mode` uses the nearest ancestor that sets it
+- Wired via new `packages/luxar-viewer/src/data/attrs-composer.ts` and `SceneLoader.applyEffectiveAttrs()`; also applied in the progressive GSplats LOD pass-through
+- The Layers panel recomposes per-leaf on every slider change so edits to group/ancestor layers flow into every descendant
+
+**Group layers**
+- A `group` node with `layer=True` is now exposed in the Layers panel as a composite layer whose controls fan out to every data descendant (points/lines/gsplats)
+- Viewer's `LayerStateManager` was previously silently ignoring groups — fixed
+
+#### Added — Layer API
+
+- `Node.layer` is now a settable property (previously creation-only): `points.layer = True`
+- New `Node.visible` authoring property (default `True`); `add_points(..., layer=True, visible=False)` starts the layer hidden in the panel
+- `validate_colormap` now fails fast on unknown names (catches typos like `colormap='viridus'` at authoring time instead of downstream)
+- Layers panel gained an **opacity** slider alongside gamma/range/blend/colormap
+- Pressing **L** while focus is inside the Layers panel no longer closes it (previously a slider-drag could accidentally dismiss the panel)
+- Docs: `LUXAR_ZARR_FORMAT.md` now has a Layers section; `data/README.md` documents composition; `layers/README.md` reflects groups + opacity
+
 #### Major Features
 
 **Screen-Space Overlay System**

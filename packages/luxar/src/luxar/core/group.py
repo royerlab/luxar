@@ -219,7 +219,15 @@ class Group(Node):
                 Unmapped dims are filled with ``fill`` values and auto-extended.
             fill: Fixed coordinate values for unmapped scene dimensions
                 when using ``dim_order``. Defaults to 0.0 for unspecified dims.
-            **attrs: Additional node attributes (opacity, blending_mode, colormap, etc.)
+            **attrs: Additional node attributes. Common ones:
+
+                - ``layer`` (bool): Expose this node in the viewer's Layers
+                  panel for per-node control.
+                - ``visible`` (bool): Initial visibility when scene loads
+                  (default ``True``). Used by the Layers panel to start a
+                  layer hidden.
+                - ``opacity``, ``intensity``, ``gamma``, ``blending_mode``,
+                  ``colormap``: standard rendering attributes.
 
         Returns:
             The created Points node
@@ -362,7 +370,14 @@ class Group(Node):
             extend_to_all: Visibility extension across non-displayed dimensions
             dim_order: Map data columns to scene dimensions by name
             fill: Fixed values for unmapped dimensions when using dim_order
-            **attrs: Additional node attributes
+            **attrs: Additional node attributes. Common ones:
+
+                - ``layer`` (bool): Expose this node in the viewer's Layers
+                  panel for per-node control.
+                - ``visible`` (bool): Initial visibility when scene loads
+                  (default ``True``).
+                - ``opacity``, ``intensity``, ``gamma``, ``blending_mode``,
+                  ``colormap``: standard rendering attributes.
 
         Returns:
             The created Lines node
@@ -494,7 +509,14 @@ class Group(Node):
             fill_sigma: Standard deviations for unmapped dimensions in the
                 Cholesky embedding (default 1.0). Controls splat extent in
                 unmapped dims.
-            **attrs: Additional node attributes (opacity, blending_mode, etc.)
+            **attrs: Additional node attributes. Common ones:
+
+                - ``layer`` (bool): Expose this node in the viewer's Layers
+                  panel for per-node control.
+                - ``visible`` (bool): Initial visibility when scene loads
+                  (default ``True``).
+                - ``opacity``, ``intensity``, ``gamma``, ``blending_mode``,
+                  ``colormap``: standard rendering attributes.
 
         Returns:
             The created GSplats node
@@ -851,7 +873,8 @@ class Group(Node):
             fill: Fixed coordinate values for unmapped dimensions
             fill_sigma: Standard deviations for unmapped dims in Cholesky embedding
             opacity: Node opacity (0.0-1.0)
-            blending_mode: Blending mode ("normal", "additive", "max")
+            blending_mode: Blending mode ("normal", "additive", "max",
+                "opaque", "luminous")
             **fit_kwargs: Extra kwargs for fitting function
         """
         if progressive:

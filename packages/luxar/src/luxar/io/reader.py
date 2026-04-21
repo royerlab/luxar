@@ -378,8 +378,8 @@ class LuxarScene:
 
         Returns:
             GSplatsData with fields: centers, amplitudes, cholesky_factors,
-            colors, sharpness, chunk_bounds, metadata.  Supports dict-style
-            access for backward compatibility.
+            colors, chunk_bounds, metadata.  Supports dict-style access for
+            backward compatibility.
 
         Raises:
             KeyError: If node doesn't exist

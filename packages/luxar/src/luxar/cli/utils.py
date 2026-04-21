@@ -170,7 +170,8 @@ def format_tree_node(
         depth: Current depth in tree.
         is_last: Whether this is the last child.
         prefix: Prefix for the current line.
-        node_type: Type of node (scene, group, points).
+        node_type: Type of node ("scene", "group", "points", "lines", or
+            "gsplats"). Unknown values are rendered without a type icon.
         attrs: Node attributes to display.
 
     Returns:

@@ -24,8 +24,6 @@
  *
  * Processing phases (buildInstanceBuffers, processGSplats) analyzed and determined
  * to be optimal with current two-pass algorithms - accumulator NOT recommended.
- *
- * See src/data/DATA_ACCUMULATOR_STATUS.md for detailed status and performance metrics.
  */
 
 import * as THREE from 'three';

@@ -4,12 +4,16 @@ Napari-inspired per-layer control panel for Luxar scenes.
 
 ## Overview
 
-The Layers panel exposes scene graph nodes marked with `layer=True` (set in the Python API) as controllable layers in the viewer. Each layer provides:
+The Layers panel exposes scene graph nodes marked with `layer=True` (set in the Python API) as controllable layers in the viewer. Data nodes (`points`, `lines`, `gsplats`) and container `group` nodes may both be exposed as layers; for groups, controls apply to every data descendant. Each layer provides:
 
-- **Visibility toggle** (eye icon)
+- **Visibility toggle** (eye icon) — initial state taken from the node's `visible` attr (default `true`)
 - **Display range** [min, max] — maps to shader intensity/offset uniforms
 - **Gamma** correction
+- **Opacity**
 - **Blending mode** (additive, normal, max, opaque, luminous)
+- **Colormap** (for gsplats and scalar-backed points/lines)
+
+Edits made in the panel are viewer-only and not persisted back to the zarr store; reload the page to return to the authored state.
 
 ## Usage
 

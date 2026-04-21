@@ -339,7 +339,6 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     // Initialize data accumulator for object pooling (Phase 1 optimization)
     // NOTE: Infrastructure-only for Phase 1. Full hot path integration deferred to Phase 2.
-    // See src/data/DATA_ACCUMULATOR_STATUS.md for details.
     if (appConfig.dataLoading.performance.useAccumulators) {
       const totalPoints = this.chunkIndex?.metadata.total_points || this.totalPointsNoIndex || 0;
       const ndim = this.chunkIndex?.metadata.ndim || this.arrays.positions?.shape[1] || 3;

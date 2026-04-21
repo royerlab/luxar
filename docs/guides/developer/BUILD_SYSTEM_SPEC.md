@@ -488,14 +488,19 @@ All compiler output is in `build-cuda-logs/build_<JOB_ID>.out`. Common issues:
 
 ### Multi-architecture CUDA build
 
-The CUDA extension compiles for **all common GPU architectures** (sm_75 through sm_90)
-plus PTX for forward compatibility with future GPUs. This ensures the `.so` works on any
-GPU in a heterogeneous cluster (e.g. A6000 sm_86 + H100/H200 sm_90).
+The CUDA extension compiles for **all common GPU architectures** (sm_75 through
+sm_120, covering Turing → Blackwell) plus PTX for forward compatibility with
+future GPUs. The build script queries `nvcc --list-gpu-arch` and automatically
+drops any archs the current toolkit cannot target (e.g. sm_100 / sm_120 require
+CUDA 12.8+), so the default works on both older and newest toolchains. This
+ensures the `.so` works on any GPU in a heterogeneous cluster (e.g. A6000 sm_86
++ H100/H200 sm_90 + B100/B200 sm_100).
 
 Override with `CUDA_ARCHS` environment variable:
 ```bash
-make build-cuda SLURM=1                     # Default: sm_75,80,86,89,90 + PTX
-CUDA_ARCHS="86;90" make build-cuda SLURM=1  # Only sm_86 and sm_90 (faster compile)
+make build-cuda SLURM=1                          # Default: sm_75,80,86,89,90,100,120 + PTX
+CUDA_ARCHS="86;90" make build-cuda SLURM=1       # Only sm_86 and sm_90 (faster compile)
+CUDA_ARCHS="100;120" make build-cuda SLURM=1     # Blackwell-only (requires CUDA 12.8+)
 ```
 
 ### Build metadata (`cuda_build_info.json`)
@@ -586,7 +591,7 @@ The build system uses these environment variables:
 | `SLURM_QOS` | Slurm QOS for GPU builds | (none) |
 | `SLURM_TIME` | Wall-time limit for Slurm build jobs | `01:00:00` |
 | `CUDA_MODULE` | CUDA module to load on compute node (`auto` = detect) | `auto` |
-| `CUDA_ARCHS` | CUDA architectures to compile for (e.g. `86;90`) | all common (75-90) |
+| `CUDA_ARCHS` | CUDA architectures to compile for (e.g. `86;90`) | all common (75-120) |
 
 ## CI/CD Integration
 

@@ -1,8 +1,9 @@
 /**
  * Data processing worker for CPU-intensive spatial queries and visibility computation.
  *
- * Phase 2: Worker infrastructure with TypeScript WASM fallbacks
- * Phase 3: Upgrade to actual WASM module for 3-5x speedup
+ * Loads the compiled WASM module via initWasm() (with TypeScript fallback when WASM
+ * is unavailable) and exposes projection/decoding/visibility tasks to the main thread
+ * through Comlink.
  *
  * Worker Responsibilities:
  * - Spatial index queries (chunk bounding box tests)
@@ -26,15 +27,15 @@ let wasmModule: WasmModule | null = null;
 let visibilityMaskBuffer: Uint8Array | null = null;
 
 /**
- * Initialize worker (called once at startup)
+ * Initialize worker (called once at startup).
  *
- * Phase 2: Loads TypeScript fallback
- * Phase 3: Loads actual WASM module (REQUIRED - fails if unavailable)
+ * Loads the WASM module via initWasm(); if that fails catastrophically (including
+ * the TypeScript fallback), throws — the viewer requires a functioning worker.
  */
 async function initialize(): Promise<void> {
   log.info(Modules.WORKER_POOL, 'DataWorker initializing...');
 
-  // Load WASM module (Phase 2: TypeScript fallback, Phase 3: actual WASM)
+  // Load WASM module (falls back to TypeScript implementation if compiled WASM missing)
   try {
     wasmModule = await initWasm();
     log.info(Modules.WORKER_POOL, 'DataWorker WASM module loaded successfully');
@@ -73,7 +74,7 @@ async function querySpatialIndex(params: {
   // Output buffer for matching chunk indices
   const matchingChunks = new Uint32Array(numChunks); // Max size
 
-  // Call WASM (Phase 2: TypeScript fallback, Phase 3: actual WASM)
+  // Call WASM (or TypeScript fallback)
   const count = wasmModule.query_chunks_for_view(
     chunkBounds,
     slicePosition,
@@ -111,7 +112,7 @@ async function computeNDVisibilityPoints(params: {
     visibilityMaskBuffer = new Uint8Array(Math.ceil(numPoints * 1.5));
   }
 
-  // Call WASM (Phase 2: TypeScript fallback, Phase 3: actual WASM)
+  // Call WASM (or TypeScript fallback)
   const visibleCount = wasmModule.compute_nd_visibility_points(
     positions,
     radii,

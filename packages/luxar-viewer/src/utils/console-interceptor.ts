@@ -24,8 +24,13 @@ class ConsoleInterceptor {
   /** Current write position in ring buffer */
   private bufferIndex = 0;
 
-  /** Maximum messages to buffer (configurable) */
-  private readonly maxBufferSize = 10000; // TODO: Import from config when circular dependency is resolved
+  /** Maximum messages to buffer. Kept in sync manually with
+   * `config.ui.debugConsole.interceptor.maxBufferSize` — the singleton is
+   * instantiated at module-load time (bottom of this file), before the config
+   * module is guaranteed to have finished evaluating, so importing `config`
+   * here is unsafe.
+   */
+  private readonly maxBufferSize = 10000;
 
   /** Whether buffer has wrapped around */
   private hasWrapped = false;

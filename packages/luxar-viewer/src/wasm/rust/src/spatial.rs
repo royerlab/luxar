@@ -38,7 +38,7 @@ pub fn query_chunks_for_view(
     );
 
     let mut match_count = 0;
-    let stride = ndim * 2; // Hoisted: bytes per chunk in bounds array
+    let stride = ndim * 2; // Hoisted: f32 count per chunk in bounds array (min/max pair per dim)
 
     for chunk_idx in 0..num_chunks {
         let chunk_base = chunk_idx * stride; // Hoisted outside inner loop

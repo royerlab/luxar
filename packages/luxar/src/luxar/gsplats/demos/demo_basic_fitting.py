@@ -4,16 +4,16 @@ Basic Gaussian Splatting Demo - Simple API Introduction
 
 **What this demo demonstrates:**
 - Basic usage of the high-level `fit_gaussian_splats()` API
-- Per-splat Adam optimizer with individual learning rates
-- Dynamic operations (seeding, splitting, pruning) - enabled by default
+- Standard PyTorch Adam with gradient-dilution compensation
+- Fixed-pool splat relocation - enabled by default
 - Automatic seed generation with intelligent defaults
 - Early stopping based on convergence criteria
 - Simple napari visualization of results
 
 **Key concepts:**
 - High-level API: Single function call handles entire fitting pipeline
-- Per-splat optimization: Each splat maintains its own learning rate and momentum
-- Dynamic operations: Topology changes during optimization improve quality
+- Fixed-pool relocation: weak splats are moved to high-residual regions
+  (no add/remove, so optimizer tensor shapes stay constant)
 - Convergence monitoring: Automatic early stopping when max absolute error threshold is met
 
 **Data source:** Synthetic 2D blob data (generated via scikit-image)
@@ -78,8 +78,7 @@ def main() -> None:
     else:
         aprint("Dynamic operations disabled")
 
-    with asection(f"Fitting with per-splat optimizer ({args.n_iters} iterations)"):
-        # Use the high-level fit function with per-splat optimizer
+    with asection(f"Fitting ({args.n_iters} iterations)"):
         result = fit_gaussian_splats(
             V=V,
             n_iters=args.n_iters,
@@ -131,16 +130,15 @@ def main() -> None:
 
             # Add text info
             optimization_info = (
-                f"Per-Splat Optimizer fit_gaussian_splats() Demo\n"
+                f"fit_gaussian_splats() Demo\n"
                 f"Target: {V.shape} image\n"
                 f"Splats: {len(result.amplitudes)}\n"
                 f"Iterations: {stats['iterations']}/{args.n_iters}\n"
                 f"Time: {stats['time_seconds']:.2f}s\n"
                 f"Final loss: {stats.get('final_loss', 'N/A'):.6f}\n"
                 f"Dynamic ops: {'Enabled' if enable_dynamic_ops else 'Disabled'}\n\n"
-                f"✅ High-level API with per-splat optimization\n"
-                f"✅ Individual learning rates per splat\n"
-                f"✅ Momentum preservation during topology changes"
+                f"Standard PyTorch Adam optimizer\n"
+                f"Fixed-pool splat relocation"
             )
 
             viewer.text_overlay.text = optimization_info

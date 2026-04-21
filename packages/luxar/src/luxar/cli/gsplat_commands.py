@@ -133,7 +133,6 @@ def info_dataset(
     - Bounding box in each dimension
     - Amplitude distribution with statistics and histogram
     - Volume distribution (size at 3-sigma) with statistics and histogram
-    - Sharpness distribution
     - Color information (if present)
     - Metadata (fitting info, provenance, etc.)
 

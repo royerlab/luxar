@@ -143,7 +143,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
  *
  * Computes parabolic falloff from semicircle kernel convolution,
  * with cap factor for correct joint intensity.
- * The picking system uses a different fragment shader (see picking-materials.ts).
+ * The picking system uses a different fragment shader (see picking/line-picking-material.ts).
  */
 export const LINE_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;

@@ -102,9 +102,13 @@ export class ResolutionIndicator {
 
     this.isVisible = true;
     this.hasShownForCurrentMode = true;
-    log.info(Modules.ADAPTIVE_DPR, 'Resolution indicator shown (will auto-hide in 4s)');
+    const autoHideSeconds = ResolutionIndicator.AUTO_HIDE_DELAY / 1000;
+    log.info(
+      Modules.ADAPTIVE_DPR,
+      `Resolution indicator shown (will auto-hide in ${autoHideSeconds}s)`
+    );
 
-    // Auto-hide after 4 seconds
+    // Auto-hide after AUTO_HIDE_DELAY
     this.autoHideTimeout = setTimeout(() => {
       this.hide();
       this.autoHideTimeout = null;

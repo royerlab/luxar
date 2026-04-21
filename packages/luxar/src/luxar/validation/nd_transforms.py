@@ -227,15 +227,11 @@ def _validate_permutation(perm: Any, dim_name: str, categories: List[str]) -> No
 
 
 def compose_nd_transforms(*transforms: NdTransform) -> NdTransform:
-    """Compose multiple nD transforms (applied left-to-right, like compose()).
+    """Compose multiple nD transforms along a hierarchical chain.
 
-    compose_nd_transforms(parent, child) means parent is applied first,
-    then child. This matches the convention in world_nd_transform where
-    root is first and leaf is last.
-
-    Actually, following the hierarchical composition model: transforms
-    are listed root-first. The effective transform is:
-    child applied first to the data, then parent transforms the result.
+    Transforms are passed root-first (parent → ... → leaf). The leaf
+    (innermost / last argument) is applied first to the data and each
+    parent transforms the result in turn, matching scene-graph semantics.
 
     For affine: result = parent(child(x)) = s_p * (s_c * x + o_c) + o_p
     For permutation: result[i] = parent_perm[child_perm[i]]

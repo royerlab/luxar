@@ -443,16 +443,24 @@ Benefits:
 - **Works for Points and Lines**: Both primitive types support extend_to_all
 - **Cache Aware**: Proper cache key isolation prevents data corruption
 
-### Attribute Inheritance
+### Attribute Composition
 
-Rendering attributes cascade through the scene hierarchy:
+Rendering attributes **compose** along the scene-graph hierarchy (root → leaf),
+as specified in `packages/luxar/src/luxar/core/SPECIFICATIONS.md`. Unset values
+are treated as identity:
 
 ```typescript
-// Child inherits from parent unless overridden
-opacity: child.opacity ?? parent.opacity ?? 1.0;
-gamma: child.gamma ?? parent.gamma ?? 1.0;
-blending_mode: child.blending_mode ?? parent.blending_mode ?? 'additive';
+effective_opacity   = clamp(∏ opacity_i,   0, 1)
+effective_gamma     = clamp(∏ gamma_i,     0.1, 10)
+effective_intensity = max(0, ∏ intensity_i)
+effective_offset    = Σ offset_i
+effective_blending  = nearest ancestor that sets blending_mode, else 'additive'
 ```
+
+Composition is applied by `SceneLoader.applyEffectiveAttrs()` (uses
+`data/attrs-composer.ts`) before each leaf material is created. The
+Layers panel recomposes on every slider change so live edits to a group
+or ancestor layer are reflected in every affected descendant.
 
 ### Web Worker Offloading
 
@@ -995,16 +1003,16 @@ location /data/ {
 
 ### Node Factory (node-factory.ts)
 
-| Class/Method                                    | Description                                   |
-| ----------------------------------------------- | --------------------------------------------- |
-| `NodeFactory`                                   | Creates THREE.js scene nodes from loaded data  |
-| `createPointsNode(path, attrs, data, loader)`   | Create Points node with geometry and material  |
-| `createLinesNode(path, attrs, data, loader)`    | Create instanced Lines mesh                    |
-| `createGSplatsNode(path, attrs, data, loader)`  | Create instanced GSplats mesh                  |
-| `createPointsGeometry(data, maxR, maxS)`        | Create THREE.js geometry for points            |
-| `createPointsMaterial(attrs, rScale, sScale)`   | Create shader material for points              |
-| `applyTransform(object, transform)`             | Apply 4x4 column-major transform               |
-| `validateTransformFormat(transform)`            | Detect row-major vs column-major format         |
+| Class/Method                                   | Description                                   |
+| ---------------------------------------------- | --------------------------------------------- |
+| `NodeFactory`                                  | Creates THREE.js scene nodes from loaded data |
+| `createPointsNode(path, attrs, data, loader)`  | Create Points node with geometry and material |
+| `createLinesNode(path, attrs, data, loader)`   | Create instanced Lines mesh                   |
+| `createGSplatsNode(path, attrs, data, loader)` | Create instanced GSplats mesh                 |
+| `createPointsGeometry(data, maxR, maxS)`       | Create THREE.js geometry for points           |
+| `createPointsMaterial(attrs, rScale, sScale)`  | Create shader material for points             |
+| `applyTransform(object, transform)`            | Apply 4x4 column-major transform              |
+| `validateTransformFormat(transform)`           | Detect row-major vs column-major format       |
 
 ### Point Spatial Index Loader (point-spatial-index-loader.ts)
 

@@ -26,6 +26,13 @@ import { showToast } from '../helpers';
 import type { AnimationController } from '../../scene/animation-controller';
 import { getColormapTexture } from '../../rendering/colormap-textures';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
+import {
+  composeAttrs,
+  collectAncestorNodes,
+  collectDataDescendants,
+  type ComposableAttrs,
+  type EffectiveAttrs,
+} from '../../data/attrs-composer';
 
 /** Clamp a gamma value to a safe range for the shader (prevents division by zero and extreme exponents) */
 function clampGamma(gamma: number): number {
@@ -54,6 +61,7 @@ const BLENDING_MODES: BlendingMode[] = ['additive', 'normal', 'max', 'opaque', '
 export class LayersPanel {
   private container: HTMLElement;
   private rootGroup: THREE.Group | null = null;
+  private sceneGraph: SceneNode | null = null;
   private animationController: AnimationController;
 
   private state = new LayerStateManager();
@@ -68,6 +76,8 @@ export class LayersPanel {
   private rangeSlider: RangeSlider | null = null;
   private gammaSlider: HTMLInputElement | null = null;
   private gammaValueEl: HTMLElement | null = null;
+  private opacitySlider: HTMLInputElement | null = null;
+  private opacityValueEl: HTMLElement | null = null;
   private blendSelect: HTMLSelectElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
   private visible = false;
@@ -101,6 +111,7 @@ export class LayersPanel {
     this.clear();
 
     this.rootGroup = rootGroup;
+    this.sceneGraph = sceneGraph;
     this.state.initFromSceneGraph(sceneGraph);
 
     // Subscribe to state changes — only update selection highlights and controls,
@@ -129,9 +140,14 @@ export class LayersPanel {
     // displayMin/displayMax from the data range that differs from the material's
     // default intensity=1/offset=0 (which corresponds to display range [0,1]).
     // Without this, the first slider interaction causes a sudden brightness jump.
+    // Also honor the authoring-time `visible` attr by applying initial
+    // visibility to the scene object.
     const layers = this.state.getLayers();
     for (const layer of layers) {
       this.applyDisplayRange(layer);
+      if (!layer.visible) {
+        this.applyVisibility(layer.path, false);
+      }
     }
 
     // Auto-select first layer
@@ -185,6 +201,7 @@ export class LayersPanel {
       this.unsubscribeState();
       this.unsubscribeState = null;
     }
+    this.sceneGraph = null;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     // Reset visibility and GUI position before removing the panel DOM
@@ -195,6 +212,8 @@ export class LayersPanel {
     this.rangeSlider = null;
     this.gammaSlider = null;
     this.gammaValueEl = null;
+    this.opacitySlider = null;
+    this.opacityValueEl = null;
     this.blendSelect = null;
     this.rowElements.clear();
     this.panelEl?.remove();
@@ -327,6 +346,7 @@ export class LayersPanel {
       points: 'pts',
       lines: 'lines',
       gsplats: 'splat',
+      group: 'group',
     };
     const badge = document.createElement('span');
     badge.className = 'luxar-layer-row__badge';
@@ -420,6 +440,40 @@ export class LayersPanel {
     gammaGroup.appendChild(this.gammaSlider);
     this.controlsEl.appendChild(gammaGroup);
 
+    // Opacity
+    const opacityGroup = document.createElement('div');
+    opacityGroup.className = 'luxar-layers-panel__control-group';
+    const opacityLabel = document.createElement('div');
+    opacityLabel.className = 'luxar-layers-panel__control-label';
+    const opacityText = document.createElement('span');
+    opacityText.textContent = 'Opacity';
+    this.opacityValueEl = document.createElement('span');
+    this.opacityValueEl.className = 'luxar-layers-panel__control-value';
+    opacityLabel.appendChild(opacityText);
+    opacityLabel.appendChild(this.opacityValueEl);
+
+    this.opacitySlider = document.createElement('input');
+    this.opacitySlider.type = 'range';
+    this.opacitySlider.min = '0';
+    this.opacitySlider.max = '1';
+    this.opacitySlider.step = '0.01';
+    this.opacitySlider.className = 'luxar-layers-panel__slider';
+    this.opacitySlider.addEventListener('input', () => {
+      this.controlsInteracting = true;
+      const val = Math.max(0, Math.min(1, parseFloat(this.opacitySlider!.value)));
+      this.opacityValueEl!.textContent = val.toFixed(2);
+      this.state.applyToSelected((l) => {
+        l.opacity = val;
+      });
+      for (const sel of this.state.getSelected()) {
+        this.applyOpacity(sel);
+      }
+      this.controlsInteracting = false;
+    });
+    opacityGroup.appendChild(opacityLabel);
+    opacityGroup.appendChild(this.opacitySlider);
+    this.controlsEl.appendChild(opacityGroup);
+
     // Blending mode
     const blendGroup = document.createElement('div');
     blendGroup.className = 'luxar-layers-panel__control-group';
@@ -511,6 +565,13 @@ export class LayersPanel {
       this.gammaValueEl.textContent = primary.gamma.toFixed(2);
     }
 
+    if (this.opacitySlider) {
+      this.opacitySlider.value = String(primary.opacity);
+    }
+    if (this.opacityValueEl) {
+      this.opacityValueEl.textContent = primary.opacity.toFixed(2);
+    }
+
     if (this.blendSelect) {
       this.blendSelect.value = primary.blendingMode;
     }
@@ -527,74 +588,96 @@ export class LayersPanel {
   }
 
   // ─── Scene Application ─────────────────────────────────
+  //
+  // Rendering attributes compose along the scene graph per the Luxar
+  // composition spec (opacity/gamma/intensity multiply, offset adds,
+  // blending_mode takes the nearest ancestor's choice). Every time a
+  // layer's slider moves, we recompose effective values for each affected
+  // data-leaf (the layer itself for a data-node layer, or every data
+  // descendant for a group layer) and push the result into the material.
+  // Authoring-time zarr values are used for non-layer nodes in the chain;
+  // live panel state overrides them for `layer=True` nodes.
 
   private getMesh(path: string): THREE.Object3D | null {
     if (!this.rootGroup) return null;
     return this.rootGroup.getObjectByName(path) ?? null;
   }
 
-  private getMaterial(obj: THREE.Object3D): LuxarMaterial | null {
+  /**
+   * Clone-on-first-use for the material at a data-leaf, registering the
+   * clone with MaterialManager so camera-dependent uniforms stay current.
+   * Non-luxar materials return null.
+   */
+  private getLeafMaterial(obj: THREE.Object3D): LuxarMaterial | null {
     const mesh = obj as THREE.Points | THREE.Mesh;
     if (!mesh.material) return null;
-
     const mat = mesh.material as THREE.Material;
+    if (!isLuxarMaterial(mat)) return null;
 
-    // Clone on first use to avoid mutating shared cached materials.
-    // Register the clone with MaterialManager so camera-dependent uniforms
-    // (pointSizeFactor, maxPointSize, uIsOrtho) continue to be updated.
-    if (!mesh.userData._layerMaterialCloned && isLuxarMaterial(mat)) {
+    if (!mesh.userData._layerMaterialCloned) {
       const cloned = mat.clone() as LuxarMaterial;
       mesh.material = cloned;
       mesh.userData._layerMaterialCloned = true;
-
-      // Register so MaterialManager.updateCameraParams() keeps this material current
       materialManager.register(cloned);
-
       return cloned;
     }
-
-    return isLuxarMaterial(mat) ? (mat as LuxarMaterial) : null;
+    return mat as LuxarMaterial;
   }
 
-  private applyVisibility(path: string, visible: boolean): void {
-    const obj = this.getMesh(path);
-    if (obj) {
-      obj.visible = visible;
-      this.requestRender();
-    }
+  /**
+   * Resolve every data-leaf affected by changes to a layer at `path`.
+   * Data-node layers map to themselves; group layers fan out to all
+   * descendant points/lines/gsplats.
+   */
+  private getAffectedDataLeaves(path: string): SceneNode[] {
+    if (!this.sceneGraph) return [];
+    const chain = collectAncestorNodes(this.sceneGraph, path);
+    const target = chain[chain.length - 1];
+    if (!target) return [];
+    if (target.type === 'group') return collectDataDescendants(target);
+    return [target];
   }
 
-  private applyDisplayRange(layer: LayerInfo): void {
-    const obj = this.getMesh(layer.path);
-    if (!obj) return;
-    const mat = this.getMaterial(obj);
-    if (!mat) return;
-
+  /**
+   * Compute the layer's current live composable attributes. For layers
+   * whose user hasn't touched a control, these match the authored zarr
+   * values — so composition stays a no-op for untouched scenes.
+   */
+  private liveLayerAttrs(layer: LayerInfo): ComposableAttrs {
     const { intensity, offset } = computeUniforms(layer.displayMin, layer.displayMax);
-    mat.updateIntensity(intensity);
-    mat.updateOffset(offset);
-    this.requestRender();
+    return {
+      opacity: layer.opacity,
+      gamma: clampGamma(layer.gamma),
+      intensity,
+      offset,
+      blending_mode: layer.blendingMode as string,
+    };
   }
 
-  private applyGamma(layer: LayerInfo): void {
-    const obj = this.getMesh(layer.path);
-    if (!obj) return;
-    const mat = this.getMaterial(obj);
-    if (!mat) return;
-
-    const safeGamma = clampGamma(layer.gamma);
-    mat.updateGamma(safeGamma);
-    this.requestRender();
+  /**
+   * Recompose the effective attrs for a single data-leaf by walking the
+   * scene-graph ancestry, substituting panel state for every `layer=true`
+   * node in the chain.
+   */
+  private composeEffective(leafPath: string): EffectiveAttrs | null {
+    if (!this.sceneGraph) return null;
+    const ancestors = collectAncestorNodes(this.sceneGraph, leafPath);
+    const chain: ComposableAttrs[] = ancestors.map((node) => {
+      const layerInfo = this.state.getLayer(node.path);
+      if (layerInfo) return this.liveLayerAttrs(layerInfo);
+      return {
+        opacity: node.attrs.opacity as number | undefined,
+        gamma: node.attrs.gamma as number | undefined,
+        intensity: node.attrs.intensity as number | undefined,
+        offset: node.attrs.offset as number | undefined,
+        blending_mode: node.attrs.blending_mode as string | undefined,
+      };
+    });
+    return composeAttrs(chain);
   }
 
-  private applyBlendingMode(layer: LayerInfo): void {
-    const obj = this.getMesh(layer.path);
-    if (!obj) return;
-    const mat = this.getMaterial(obj);
-    if (!mat) return;
-
-    // Directly mutate THREE.js blending state
-    switch (layer.blendingMode) {
+  private applyBlendingStateToMaterial(mat: LuxarMaterial, mode: string): void {
+    switch (mode) {
       case 'additive':
         mat.blending = THREE.AdditiveBlending;
         mat.depthTest = false;
@@ -628,31 +711,82 @@ export class LayersPanel {
         break;
     }
     mat.needsUpdate = true;
-    this.requestRender();
   }
 
   /**
-   * Apply a colormap change to the material.
-   * Gets the LUT texture and updates the material's colormap uniforms.
+   * Push each composed effective attribute (except colormap, which is
+   * per-leaf and doesn't chain through ancestors) to every affected leaf
+   * material. Colormap is handled separately because textures don't
+   * compose — the nearest ancestor's colormap wins.
+   */
+  private applyComposed(layer: LayerInfo): void {
+    const leaves = this.getAffectedDataLeaves(layer.path);
+    if (leaves.length === 0) return;
+
+    for (const leaf of leaves) {
+      const obj = this.getMesh(leaf.path);
+      if (!obj) continue;
+      const mat = this.getLeafMaterial(obj);
+      if (!mat) continue;
+      const eff = this.composeEffective(leaf.path);
+      if (!eff) continue;
+      mat.updateOpacity(eff.opacity);
+      mat.updateGamma(eff.gamma);
+      mat.updateIntensity(eff.intensity);
+      mat.updateOffset(eff.offset);
+      this.applyBlendingStateToMaterial(mat, eff.blending_mode);
+    }
+    this.requestRender();
+  }
+
+  private applyVisibility(path: string, visible: boolean): void {
+    const obj = this.getMesh(path);
+    if (obj) {
+      obj.visible = visible;
+      this.requestRender();
+    }
+  }
+
+  private applyDisplayRange(layer: LayerInfo): void {
+    this.applyComposed(layer);
+  }
+
+  private applyGamma(layer: LayerInfo): void {
+    this.applyComposed(layer);
+  }
+
+  private applyOpacity(layer: LayerInfo): void {
+    this.applyComposed(layer);
+  }
+
+  private applyBlendingMode(layer: LayerInfo): void {
+    this.applyComposed(layer);
+  }
+
+  /**
+   * Colormap applies per-leaf (not composed). For a group-layer we push
+   * the selected colormap to every data descendant that accepts one.
    */
   private applyColormap(layer: LayerInfo): void {
-    const obj = this.getMesh(layer.path);
-    if (!obj) return;
-    const mat = this.getMaterial(obj);
-    if (!mat || !mat.updateColormapTexture) return;
+    const leaves = this.getAffectedDataLeaves(layer.path);
+    if (leaves.length === 0) return;
 
-    if (layer.colormap) {
-      const tex = getColormapTexture(layer.colormap);
-      if (tex) {
+    const tex = layer.colormap ? getColormapTexture(layer.colormap) : null;
+    for (const leaf of leaves) {
+      const obj = this.getMesh(leaf.path);
+      if (!obj) continue;
+      const mat = this.getLeafMaterial(obj);
+      if (!mat || !mat.updateColormapTexture) continue;
+      if (layer.colormap && tex) {
         mat.updateColormapTexture(tex);
         if (layer.scalarDataRange && mat.updateScalarRange) {
           mat.updateScalarRange(layer.scalarDataRange[0], layer.scalarDataRange[1]);
         }
+      } else {
+        mat.updateColormapTexture(null);
       }
-    } else {
-      mat.updateColormapTexture(null);
+      mat.needsUpdate = true;
     }
-    mat.needsUpdate = true;
     this.requestRender();
   }
 
