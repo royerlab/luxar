@@ -36,14 +36,16 @@ __device__ __forceinline__ float warp_reduce_sum(float val) {
 /**
  * Atomic add with warp aggregation to reduce contention.
  *
- * All threads in the warp with the same address sum their values,
- * and only one thread performs the atomic add.
+ * Sums `val` across all 32 lanes in the warp and has lane 0 perform a single
+ * atomicAdd. The caller MUST guarantee that every active lane is targeting the
+ * same `addr`; otherwise values from different addresses will be merged
+ * incorrectly.
  */
 __device__ __forceinline__ void warp_aggregated_atomic_add(
     float* __restrict__ addr,
     float val
 ) {
-    // Sum across warp
+    // Sum across warp (assumes all lanes share the same `addr`)
     float sum = warp_reduce_sum(val);
 
     // Lane 0 performs the atomic add

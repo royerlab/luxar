@@ -143,7 +143,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * ```typescript
    * const sceneManager = new SceneManager();
    * await sceneManager.init();  // Initialize Three.js components
-   * await sceneManager.loadSceneFromUrl(url);  // Load data
+   * await sceneManager.loadSceneData(url);  // Load data
    * ```
    */
   constructor() {
@@ -708,8 +708,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    *
    * Computes the bounding box of all Points and InstancedMesh objects,
    * positions camera to view entire scene, and updates controls target.
-   * Skips centering if scene is too small (< 1.0 units) or has too few
-   * points (< 100) to avoid awkward positioning.
+   * Skips centering if no geometry is found in the scene.
    *
    * Called automatically after scene loading if dataset has reasonable size.
    * Can be called manually via F key to recenter after navigation.
@@ -717,7 +716,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * @example
    * ```typescript
    * // After loading scene
-   * await sceneManager.loadSceneFromUrl(url);
+   * await sceneManager.loadSceneData(url);
    * sceneManager.centerCameraOnScene();
    * // Camera now frames entire dataset
    * ```

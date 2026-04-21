@@ -179,8 +179,9 @@ export function extract_cholesky_submatrix(
  * For each splat, computes:
  * 1. Difference vector in hidden dimensions
  * 2. Mahalanobis distance using hidden Cholesky submatrix
- * 3. Attenuation = exp(-0.5 * mahal²) (standard Gaussian)
- * 4. Visibility = (amplitude * attenuation) >= threshold
+ * 3. Attenuation via shifted Gaussian: scale · max(0, exp(-0.5 · D²) - C),
+ *    where C = exp(-0.5 · truncate²) and scale = 1 / (1 - C) — C⁰-continuous truncation
+ * 4. Visibility = (amplitude · attenuation) >= minAmplitude
  *
  * @param positions - Splat centers [splatCount * ndim]
  * @param cholesky - Packed Cholesky factors [splatCount * packedSize]
@@ -190,6 +191,7 @@ export function extract_cholesky_submatrix(
  * @param ndim - Total dimensionality
  * @param splatCount - Number of splats
  * @param minAmplitude - Visibility threshold
+ * @param truncate - Truncation radius in sigmas for the shifted Gaussian (typically 3.0)
  * @param outputVisibility - Output visibility mask [splatCount]
  * @param outputAttenuation - Output attenuation factors [splatCount]
  * @returns Number of visible splats

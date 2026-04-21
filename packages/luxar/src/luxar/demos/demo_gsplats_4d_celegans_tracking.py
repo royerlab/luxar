@@ -128,6 +128,45 @@ PSNR_PATIENCE = 0.3  # Stop if ΔPSNR < this (dB) — tighter to save a pass
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_celegans"
 
+# Fading trail visualisation (per-timepoint rolling trail of the last
+# TRAIL_HISTORY segments leading up to the current time, each dimmed by
+# TRAIL_FADE[age] where age 0 is the newest segment).
+TRAIL_HISTORY = 80  # frames of history per comet tail (~100 min at 75 s/frame)
+# Brightness fade per segment age (index 0 = newest/brightest). Length must
+# equal TRAIL_HISTORY. Linear ramp from 1.0 down to 0.1 gives a smooth
+# photographic long-exposure look over the TRAIL_HISTORY-frame window.
+TRAIL_FADE = tuple(round(v, 3) for v in np.linspace(1.0, 0.1, TRAIL_HISTORY))
+TRAIL_LINE_WIDTH = 0.083  # µm — very thin (≈ 1/3 of a cell-displacement)
+# so that consecutive segments flow together as a line (at wider widths,
+# individual segments render as short rectangles that look like radial spikes
+# rather than a coherent tail)
+TRAIL_OPACITY = 0.2  # alpha for fading trails so GSplats underneath show through
+CURRENT_POINT_RADIUS = 0.3  # µm — small marker (well under ~3–5 µm nucleus
+# diameter) so current-position points don't obscure the GSplat cells
+# Moving-average window (in timepoints) used to smooth track positions
+# before drawing trails. StarryNite positions are voxel-quantised (0.15 µm
+# lateral, 0.75 µm axial); without smoothing, per-frame jitter of ±1 voxel
+# dominates the real per-frame biological motion (~0.3-1 µm), producing
+# cross/X-shaped artefacts instead of smooth comet tails. A 5-frame
+# window (~6 minutes) preserves true trajectories while denoising
+# discretisation. Set to 1 to disable smoothing.
+TRAIL_SMOOTH_WINDOW = 5  # denoises voxel-quantisation jitter without eating
+# real motion signal. A ~5-frame window (~6 min) is sized to the noise
+# timescale, not to TRAIL_HISTORY — heavier smoothing over long histories
+# smears out genuine biological displacement and shortens visible tails.
+# Trail-segment stride: since we smooth positions over TRAIL_SMOOTH_WINDOW
+# frames, consecutive per-frame segments are nearly collinear. Striding by
+# ~half the smoothing window keeps each segment an independent motion step
+# and halves the line count with no visible loss. Must be >= 1.
+TRAIL_SEGMENT_STRIDE = max(1, TRAIL_SMOOTH_WINDOW // 2)
+# Reject implausibly long per-frame displacements. C. elegans nuclei move
+# roughly 1–5 µm/min during morphogenesis (much less in early cleavage). At
+# 75 s per frame, real jumps are well under ~5 µm; a 5 µm threshold rejects
+# mis-linked segments caused by the StarryNite parser falling back to
+# per-file indices for unnamed nuclei (these "cells" teleport across the
+# embryo between timepoints and produce visual starbursts).
+TRAIL_MAX_DISPLACEMENT_UM = 5.0
+
 # Preprocessing parameters (CLAHE + Noise2Self-calibrated NLM)
 PREPROCESS_CLAHE_TILE = 16
 PREPROCESS_CLAHE_CLIP = 2.0
@@ -540,7 +579,14 @@ def load_tracks_from_nuclei_files(nuclei_dirs: list, n_timepoints: int) -> dict:
 
                         cell_name = parts[9].strip() if len(parts) > 9 else ""
                         if not cell_name:
-                            cell_name = f"cell_{parts[0].strip()}"
+                            # Skip unnamed nuclei: the per-file `index`
+                            # (parts[0]) is NOT a consistent identity across
+                            # timepoints, so pooling them under
+                            # ``cell_{index}`` teleports a synthetic cell
+                            # across the embryo every frame. These spurious
+                            # tracks produce the "starburst" artefact in
+                            # downstream fading-trail visualisations.
+                            continue
 
                         if cell_name not in tracks:
                             tracks[cell_name] = []
@@ -979,7 +1025,9 @@ def show_roundtrip_comparison(
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        aprint("matplotlib is required for --show-roundtrip. Install with: pip install matplotlib")
+        aprint(
+            "matplotlib is required for --show-roundtrip. Install with: pip install matplotlib"
+        )
         return
 
     # Pick first, middle, last
@@ -990,12 +1038,16 @@ def show_roundtrip_comparison(
         sample_indices = [0, n_total // 2, n_total - 1]
     n_show = len(sample_indices)
 
-    with asection(f"Round-trip reconstruction comparison ({n_show} of {n_total} timepoints)"):
+    with asection(
+        f"Round-trip reconstruction comparison ({n_show} of {n_total} timepoints)"
+    ):
         # Load preprocessed volumes from cache
         volumes = []
         valid_indices = []
         for t in sample_indices:
-            cache_file = CACHE_DIR / f"celegans_s{SAMPLE_INDEX}_t{t:04d}_preprocessed.npy"
+            cache_file = (
+                CACHE_DIR / f"celegans_s{SAMPLE_INDEX}_t{t:04d}_preprocessed.npy"
+            )
             if cache_file.exists():
                 vol = np.load(cache_file)
                 volumes.append(vol)
@@ -1017,9 +1069,7 @@ def show_roundtrip_comparison(
                 aprint(f"  T={t}: PSNR: {psnr:.2f} dB, MSE: {mse:.6g}")
 
         n_show = len(valid_indices)
-        fig, axes = plt.subplots(
-            n_show, 3, figsize=(14, 4.5 * n_show), squeeze=False
-        )
+        fig, axes = plt.subplots(n_show, 3, figsize=(14, 4.5 * n_show), squeeze=False)
 
         for row, (t, vol, recon) in enumerate(
             zip(valid_indices, volumes, reconstructions)
@@ -1155,6 +1205,193 @@ def add_cell_tracks(
         aprint(f"  Added cell_tracks node ({total_segments:,} segments)")
 
 
+def add_fading_trail_tracks(
+    scene,
+    tracking_data: dict,
+    shared_centroid: np.ndarray,
+    n_timepoints: int,
+) -> None:
+    """Add per-timepoint fading-trail tracks + current-position points.
+
+    At each current time ``T``, emits line segments covering the last
+    ``TRAIL_HISTORY`` hops ending at ``T`` — i.e. segments
+    ``(T - k - 1) -> (T - k)`` for ``k = 0 .. TRAIL_HISTORY - 1``.
+    Each segment's RGB is scaled by ``TRAIL_FADE[k]`` (newest = brightest),
+    so older hops fade toward black.
+
+    Every current cell position at ``T`` is also emitted as a bright point
+    so the live state is clearly visible above the trail.
+
+    All emitted geometry uses ``extend_to_all=[]`` so it only appears at
+    its tagged time — scrubbing the time slider produces a rolling
+    comet-tail effect behind each tracked cell.
+
+    Args:
+        scene: Luxar Scene object.
+        tracking_data: Dict with ``tracks`` (tid -> list[(t, z, y, x)]) and
+            ``colors`` (tid -> (r, g, b) in [0, 1]).
+        shared_centroid: 3D centroid in physical µm (Z, Y, X order),
+            matching the GSplats output space.
+        n_timepoints: Number of timepoints in the scene (time dim length).
+    """
+    tracks = tracking_data["tracks"]
+    track_colors = tracking_data["colors"]
+    vz, vy, vx = VOXEL_SIZE_ZYX
+    # shared_centroid is in µm order [Z, Y, X]; scene dims are [x, y, z, time]
+    cx, cy, cz = shared_centroid[2], shared_centroid[1], shared_centroid[0]
+
+    # Build per-track {t: (x, y, z)} lookup in physical µm, centered.
+    #
+    # IMPORTANT: the StarryNite nuclei x-coordinate is flipped relative to
+    # the voxel-index convention used by the Gaussian-splat fitter for this
+    # MSKCC confocal dataset — the fitter sees the volume with its x-axis
+    # reversed. We reflect x about the image width (IMAGE_SHAPE[2] - 1) so
+    # that fitter-space and track-space align. Empirically, this brings
+    # mean nearest-gsplat distance across named cells down to 0.6-0.9 µm
+    # at every timepoint tested (vs 1.5-2.1 µm for a naive
+    # centroid-reflection and 2.3-2.9 µm for no flip at all).
+    x_width = IMAGE_SHAPE[2]  # 512 along x
+    positions_by_time: dict[int, dict[int, np.ndarray]] = {}
+    for tid, positions in tracks.items():
+        pbt: dict[int, np.ndarray] = {}
+        for t, z, y, x in positions:
+            x_flipped = (x_width - 1) - x
+            pbt[int(t)] = np.array(
+                [x_flipped * vx - cx, y * vy - cy, z * vz - cz],
+                dtype=np.float32,
+            )
+        positions_by_time[tid] = pbt
+
+    # Temporal smoothing is applied ONLY to trail-line vertices, not to the
+    # current-timepoint point positions. Smoothing the point positions would
+    # offset the splat markers from the underlying nuclei image by up to a
+    # voxel. Trails, by contrast, benefit from smoothing — it dampens the
+    # sub-voxel jitter that dominates short-horizon biological motion.
+    # Endpoints are left as-is (windows simply shrink near boundaries).
+    positions_smoothed: dict[int, dict[int, np.ndarray]] = positions_by_time
+    if TRAIL_SMOOTH_WINDOW and TRAIL_SMOOTH_WINDOW > 1:
+        half = TRAIL_SMOOTH_WINDOW // 2
+        positions_smoothed = {}
+        for tid, pbt in positions_by_time.items():
+            out: dict[int, np.ndarray] = {}
+            for t, p in pbt.items():
+                # Gather centred window of neighbours that actually exist
+                neighbours = [
+                    pbt[tt] for tt in range(t - half, t + half + 1) if tt in pbt
+                ]
+                out[t] = (
+                    np.mean(np.stack(neighbours, axis=0), axis=0).astype(np.float32)
+                    if neighbours
+                    else p
+                )
+            positions_smoothed[tid] = out
+
+    trail_verts: list[np.ndarray] = []
+    trail_colors: list[np.ndarray] = []
+    point_positions: list[np.ndarray] = []
+    point_colors: list[np.ndarray] = []
+    n_rejected = 0
+
+    with asection(
+        f"Building fading trails (history={TRAIL_HISTORY}) over "
+        f"{n_timepoints} timepoints"
+    ):
+        for current_t in range(n_timepoints):
+            for tid, pbt in positions_by_time.items():
+                base = np.asarray(track_colors[tid], dtype=np.float32)
+                pbt_smooth = positions_smoothed[tid]
+
+                # Current-position point (bright). Use RAW positions so the
+                # splat markers align with the nuclei in the image volume.
+                if current_t in pbt:
+                    p = pbt[current_t]
+                    point_positions.append(
+                        np.array([p[0], p[1], p[2], float(current_t)], dtype=np.float32)
+                    )
+                    point_colors.append(base)
+
+                # Fading trail segments ending at current_t.
+                # Use SMOOTHED positions so trails read as clean motion paths,
+                # and stride by TRAIL_SEGMENT_STRIDE to avoid emitting nearly
+                # collinear segments within the smoothing window.
+                # ANCHOR: the tip of the newest segment (seg_idx=0) uses the
+                # RAW position at current_t so the trail visibly connects to
+                # the cell marker (which is also drawn at the raw position).
+                # Only past positions (t < current_t) are smoothed.
+                stride = TRAIL_SEGMENT_STRIDE
+                n_segments = TRAIL_HISTORY // stride
+                for seg_idx in range(n_segments):
+                    t_new = current_t - seg_idx * stride
+                    t_old = current_t - (seg_idx + 1) * stride
+                    if t_new not in pbt_smooth or t_old not in pbt_smooth:
+                        continue
+                    p_old = pbt_smooth[t_old]
+                    p_new = pbt[current_t] if seg_idx == 0 else pbt_smooth[t_new]
+                    # Reject implausibly long jumps — threshold scales with
+                    # the segment's temporal span.
+                    if (
+                        float(np.linalg.norm(p_new - p_old))
+                        > TRAIL_MAX_DISPLACEMENT_UM * stride
+                    ):
+                        n_rejected += 1
+                        continue
+                    faded = base * float(TRAIL_FADE[seg_idx * stride])
+
+                    trail_verts.append(
+                        np.array(
+                            [p_old[0], p_old[1], p_old[2], float(current_t)],
+                            dtype=np.float32,
+                        )
+                    )
+                    trail_verts.append(
+                        np.array(
+                            [p_new[0], p_new[1], p_new[2], float(current_t)],
+                            dtype=np.float32,
+                        )
+                    )
+                    trail_colors.append(faded)
+                    trail_colors.append(faded)
+
+        n_segs = len(trail_verts) // 2
+        n_pts = len(point_positions)
+        aprint(f"  Fading trails: {n_segs:,} segments")
+        aprint(f"  Current positions: {n_pts:,} points")
+        if n_rejected > 0:
+            aprint(
+                f"  Rejected {n_rejected:,} segments exceeding "
+                f"{TRAIL_MAX_DISPLACEMENT_UM} µm/frame × "
+                f"{TRAIL_SEGMENT_STRIDE}-frame stride (mis-linked tracks)"
+            )
+
+    if trail_verts:
+        scene.add_lines(
+            name="cell_tracks_trail",
+            vertices=np.asarray(trail_verts, dtype=np.float32),
+            widths=TRAIL_LINE_WIDTH,
+            colors=np.asarray(trail_colors, dtype=np.float32),
+            line_type="segments",
+            extend_to_all=[],
+            layer=True,
+            opacity=TRAIL_OPACITY,
+        )
+        aprint(
+            f"  Added cell_tracks_trail node ({n_segs:,} segments, "
+            f"opacity={TRAIL_OPACITY})"
+        )
+
+    if point_positions:
+        scene.add_points(
+            name="current_positions",
+            positions=np.asarray(point_positions, dtype=np.float32),
+            colors=np.asarray(point_colors, dtype=np.float32),
+            radii=CURRENT_POINT_RADIUS,
+            extend_to_all=[],
+            layer=True,
+            opacity=0.2,
+        )
+        aprint(f"  Added current_positions node ({n_pts:,} points, opacity=0.2)")
+
+
 def _compute_max_sigma(gsplats: GSplatData) -> np.ndarray:
     """Compute the maximum standard deviation across spatial dimensions per splat."""
     ndim = gsplats.centers.shape[1]
@@ -1176,7 +1413,7 @@ def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
       1. Translate to amplitude-weighted shared centroid (all timepoints)
       2. Filter oversized background splats (sigma > 3 um)
       3. Normalise amplitudes per-timepoint (max = 0.1)
-      4. Assign soft green fluorescence colour
+      4. Skip per-splat color — the scene uses the ``bop_blue`` colormap
 
     Then combines all timepoints into one 4D dataset using
     ``GSplatData.combine_as_new_dimension`` with ``sigma=0`` (splats do not
@@ -1243,13 +1480,14 @@ def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
                         f"(sigma > {sigma_threshold} um), {n_after} remain"
                     )
 
-                # Normalise per-timepoint so max amplitude = 0.1,
-                # and assign soft green fluorescence colour.
+                # Normalise per-timepoint so max amplitude = 0.1. Leave
+                # per-splat colors unset — the scene uses the ``bop_blue``
+                # colormap on the gsplats layer (see add_gsplats_from_data
+                # below) to shade splats by amplitude.
                 if n_after > 0:
                     amp_max = gsplats.amplitudes.max()
                     if amp_max > 0:
                         gsplats = gsplats.scale_intensity(0.1 / amp_max)
-                    gsplats = gsplats.with_colors((0.4, 1.0, 0.5))
 
                 processed.append(gsplats)
                 aprint(f"  {n_after:,} splats ready")
@@ -1376,6 +1614,7 @@ def filter_background_splats(
 def create_luxar_scene(
     combined_4d: GSplatData,
     tracking_data: dict | None = None,
+    shared_centroid: np.ndarray | None = None,
     output_path: Path | None = None,
 ) -> Path:
     """Create 4D Luxar scene from a single combined 4D GSplat dataset.
@@ -1383,6 +1622,9 @@ def create_luxar_scene(
     Args:
         combined_4d: Single 4D GSplatData (3D spatial + time).
         tracking_data: Optional tracking data with 'tracks' and 'colors'.
+        shared_centroid: 3D (Z, Y, X) centroid in physical µm that was
+            subtracted from the GSplat centers during 4D combine. Required
+            to align tracks with GSplats.
         output_path: Output .zarr path.
 
     Returns:
@@ -1461,15 +1703,25 @@ Navigation:
                 result=combined_4d,
                 dim_order=["z", "y", "x", "time"],
                 extend_to_all=[],
-                opacity=0.7,
+                opacity=1.0,
                 blending_mode="additive",
+                colormap="bop_blue",
                 layer=True,
             )
             aprint(f"Added single 4D gsplats node: {combined_4d.n_splats:,} splats")
 
-            # # Add cell track lines (commented out — too visually cluttered)
-            # if tracking_data:
-            #     add_cell_tracks(scene, tracking_data, shared_centroid)
+            # Add cell tracks as per-timepoint rolling fading trails
+            # (short windowed trails fix the "too cluttered" issue of showing
+            # every full lineage all the time). Also emits a bright current-
+            # position point per tracked cell, giving a three-geometry-type
+            # visualisation (GSplats + Lines + Points) in a single scene.
+            if tracking_data and shared_centroid is not None:
+                add_fading_trail_tracks(
+                    scene,
+                    tracking_data,
+                    shared_centroid,
+                    n_timepoints=n_timepoints,
+                )
 
             # --- Overlays ---
             # Title
@@ -1537,7 +1789,34 @@ def main():
     if precomputed is not None:
         gsplats_list = precomputed
         aprint(f"Loaded {len(gsplats_list)} precomputed timepoints")
-        aprint("Note: Tracking lines require --recompute (Zenodo download)")
+
+        # Tracks: the GSplats come from Git LFS (no Zenodo download needed),
+        # but tracking lineages require the StarryNite nuclei files from the
+        # Zenodo archive. Fast path: if the nuclei directory has already been
+        # extracted (e.g. via HTTP-range extraction of just the tracks/), use
+        # it directly and skip the 24 GB zip download/resume entirely.
+        extracted_nuclei_dir = (
+            CACHE_DIR
+            / "extracted"
+            / "mskcc-confocal"
+            / f"mskcc_confocal_s{SAMPLE_INDEX}"
+            / "tracks"
+            / "nuclei"
+        )
+        if extracted_nuclei_dir.is_dir() and any(
+            extracted_nuclei_dir.glob("t*-nuclei*")
+        ):
+            aprint(f"Using cached StarryNite tracks at {extracted_nuclei_dir}")
+            tracking_data = load_tracks_from_nuclei_files(
+                [extracted_nuclei_dir], len(gsplats_list)
+            )
+        else:
+            aprint("Fetching StarryNite tracking lineage (Zenodo)...")
+            zip_path = download_celegans_data()
+            _, csv_files, nuclei_dirs = extract_sample_data(zip_path)
+            tracking_data = load_tracking_data(
+                csv_files, nuclei_dirs, len(gsplats_list)
+            )
     else:
         # --recompute path: download, preprocess, fit from scratch
         warn_if_no_cuda_gpu()
@@ -1575,6 +1854,20 @@ def main():
             total_pts = sum(len(pts) for pts in tracking_data["tracks"].values())
             aprint(f"Track points: {total_pts:,}")
 
+    # Precompute the same amplitude-weighted shared centroid that
+    # combine_timepoints_to_4d applies internally — we need it downstream
+    # so cell tracks can be aligned to the centered GSplat coordinate frame.
+    all_centers = [g.centers for g in gsplats_list]
+    all_amps = [g.amplitudes for g in gsplats_list]
+    _total_amp = sum(a.sum() for a in all_amps)
+    if _total_amp > 0:
+        shared_centroid = (
+            sum(c.T @ a for c, a in zip(all_centers, all_amps)) / _total_amp
+        )
+    else:
+        shared_centroid = np.mean(np.concatenate(all_centers, axis=0), axis=0)
+    aprint(f"Shared centroid (ZYX µm): {shared_centroid}")
+
     # Combine all timepoints into a single 4D GSplat dataset (cached)
     combined_4d = combine_timepoints_to_4d(gsplats_list)
 
@@ -1589,7 +1882,7 @@ def main():
         aprint(f"Splats after filtering: {combined_4d.n_splats:,}")
 
     # Create 4D scene from the single combined dataset
-    scene_path = create_luxar_scene(combined_4d, tracking_data)
+    scene_path = create_luxar_scene(combined_4d, tracking_data, shared_centroid)
 
     # Launch viewer
     if not NO_SERVE:

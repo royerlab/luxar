@@ -8,6 +8,9 @@
 import type { SceneNode } from '../../data/data-loader-types';
 import type { BlendingMode } from '../../rendering/material-manager';
 
+/** Geometry type of a layer (groups expose a "group" type — controls apply to descendants) */
+export type LayerType = 'points' | 'lines' | 'gsplats' | 'group';
+
 /** Information about a single layer in the Layers panel */
 export interface LayerInfo {
   /** Zarr path (e.g. "group/channel_gfp") — used as unique key */
@@ -15,9 +18,11 @@ export interface LayerInfo {
   /** Display name (last segment of path) */
   name: string;
   /** Geometry type */
-  type: 'points' | 'lines' | 'gsplats';
+  type: LayerType;
   /** Whether the layer is visible in the scene */
   visible: boolean;
+  /** Opacity (0–1) */
+  opacity: number;
   /** Current display-range minimum (maps to intensity+offset in shader) */
   displayMin: number;
   /** Current display-range maximum */
@@ -119,22 +124,33 @@ export class LayerStateManager {
   }
 
   private walkSceneGraph(node: SceneNode): void {
-    // Skip the root scene node
+    // Skip the root scene node; collect anything else with layer=true.
+    // Groups exposed as layers act as composites — their controls fan out
+    // to every data descendant when applied in the scene.
     if (node.type !== 'scene' && node.attrs.layer === true) {
-      const isDataNode = node.type === 'points' || node.type === 'lines' || node.type === 'gsplats';
-      if (isDataNode) {
+      const isLayerType =
+        node.type === 'points' ||
+        node.type === 'lines' ||
+        node.type === 'gsplats' ||
+        node.type === 'group';
+      if (isLayerType) {
         const name = node.path.split('/').pop() || node.path;
 
-        // Determine data range from zarr attrs
+        // Determine data range from zarr attrs. Groups don't have their
+        // own ranges — fall back to [0, 1] so the slider remains usable.
         const colorRange = node.attrs.color_data_range as [number, number] | undefined;
         const ampRange = node.attrs.amplitude_data_range as [number, number] | undefined;
         const scalarRange = node.attrs.scalar_data_range as [number, number] | undefined;
         const dataRange = scalarRange || colorRange || ampRange || [0, 1];
 
-        // Colormap support
+        // Colormap support — groups inherit no colormap, but they do apply
+        // a chosen colormap to every data descendant that can accept one.
         const colormap = node.attrs.colormap as string | undefined;
-        const supportsColormap = node.type === 'gsplats' || !!node.attrs.has_scalars || !!colormap;
-        // Scalar data range for colormap normalization
+        const supportsColormap =
+          node.type === 'gsplats' ||
+          node.type === 'group' ||
+          !!node.attrs.has_scalars ||
+          !!colormap;
         const colormapScalarRange = scalarRange || ampRange;
 
         // Initialize display range from existing intensity/offset if present,
@@ -145,22 +161,25 @@ export class LayerStateManager {
         let displayMax: number;
 
         if (intensity === 1.0 && offset === 0.0) {
-          // Default: use full data range
           displayMin = dataRange[0];
           displayMax = dataRange[1];
         } else {
-          // Recover from existing attrs
           const recovered = computeDisplayRange(intensity, offset);
           displayMin = recovered.min;
           displayMax = recovered.max;
         }
 
+        // Honor the authoring-time `visible` attr (default true). Allows
+        // Python authors to start a layer hidden via add_points(..., visible=False).
+        const initialVisible = node.attrs.visible !== false;
+
         this.layerOrder.push(node.path);
         this.layers.set(node.path, {
           path: node.path,
           name,
-          type: node.type as 'points' | 'lines' | 'gsplats',
-          visible: true,
+          type: node.type as LayerType,
+          visible: initialVisible,
+          opacity: (node.attrs.opacity as number) ?? 1.0,
           displayMin,
           displayMax,
           dataMin: dataRange[0],
@@ -288,6 +307,14 @@ export class LayerStateManager {
     const layer = this.layers.get(path);
     if (!layer) return;
     layer.gamma = gamma;
+    this.notify();
+  }
+
+  /** Set opacity for a layer */
+  setOpacity(path: string, opacity: number): void {
+    const layer = this.layers.get(path);
+    if (!layer) return;
+    layer.opacity = opacity;
     this.notify();
   }
 

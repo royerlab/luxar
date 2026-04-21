@@ -49,7 +49,13 @@ from .utils import (
 
 
 def _add_cors(api: FastAPI, cors_origin: str = "*") -> None:
-    """Add CORS middleware to a FastAPI application."""
+    """Add CORS middleware to a FastAPI application.
+
+    Args:
+        api: FastAPI app to extend.
+        cors_origin: Origin to allow. Defaults to ``"*"`` (any origin). All
+            methods and headers are permitted and credentials are allowed.
+    """
     api.add_middleware(
         CORSMiddleware,
         allow_origins=[cors_origin],
@@ -450,7 +456,17 @@ def serve(
 def _serve_viewer(
     host: str, port: int, data_url: Optional[str] = None, open_browser_flag: bool = True
 ) -> None:
-    """Internal function to serve the viewer."""
+    """Internal function to serve the viewer.
+
+    Args:
+        host: Host interface for the viewer HTTP server.
+        port: Port for the viewer HTTP server.
+        data_url: Optional data URL appended as ``?src=<data_url>`` to the
+            opened viewer URL (trailing slash stripped to avoid double-slash
+            in viewer fetches).
+        open_browser_flag: If True, open the viewer URL in the system browser
+            shortly after the server starts.
+    """
     viewer_dist = get_viewer_dist_path()
 
     api = FastAPI(title="Luxar Viewer", docs_url=None, redoc_url=None)
@@ -873,7 +889,7 @@ def info(
         tree (bool, optional): Show tree view. Defaults to True.
         stats (bool, optional): Show detailed statistics. Defaults to False.
         depth (int, optional): Max tree depth. Defaults to None (unlimited).
-        format (str, optional): Output format. Defaults to "text".
+        format (str, optional): Output format, "text" or "json". Defaults to "text".
     """
     if format not in ("text", "json"):
         aprint(f"❌ Unknown format: {format}. Use 'text' or 'json'.")
@@ -1042,14 +1058,16 @@ def _print_tree(
 def _dfs(
     group: zarr.Group, depth: int = 0
 ) -> Generator[Tuple[int, zarr.Group], None, None]:
-    """Depth-first walk that yields (depth, group) for every subgroup.
+    """Depth-first walk that yields (depth, group) for the given group and
+    every nested subgroup.
 
     Args:
         group (zarr.Group): Zarr group to traverse.
-        depth (int, optional): Current depth. Defaults to 0.
+        depth (int, optional): Starting depth for the root group. Defaults to 0.
 
     Yields:
-        Tuple[int, zarr.Group]: (depth, group) for each subgroup.
+        Tuple[int, zarr.Group]: (depth, group) for the input group and each
+        descendant subgroup.
     """
     try:
         yield depth, group

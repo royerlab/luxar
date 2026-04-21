@@ -3,7 +3,7 @@
 The encoder follows a strict priority order:
 1. Broadcasting (if all values identical)
 2. Array Reference (if duplicate exists)
-3. LUT Encoding (if ≤256 unique values)
+3. LUT Encoding (if ≤256 unique values and mode != PRECISION)
 4. Dtype Encoding (based on semantic type and mode)
 """
 

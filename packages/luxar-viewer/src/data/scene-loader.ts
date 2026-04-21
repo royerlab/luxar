@@ -48,6 +48,7 @@ import { processGSplats } from './gsplats-processor';
 import { updateInstancedGSplatsMesh, packCholeskyForShader } from '../rendering/gsplat-geometry';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './nd-transform';
+import { getEffectiveAttrs } from './attrs-composer';
 import { NodeFactory } from './node-factory';
 import { UpdateProfiler } from '../profiling/update-profiler';
 import { getWorkerPool } from '../workers/worker-pool';
@@ -181,6 +182,28 @@ export class SceneLoader {
   /** Public accessor for the scene graph built during loadScene(). */
   get sceneGraph(): SceneNode | null {
     return this._sceneGraph;
+  }
+
+  /**
+   * Return a node-attrs record with rendering attributes replaced by the
+   * effective values composed along the scene-graph ancestry (root → leaf).
+   * This implements the hierarchical composition described in the Python
+   * core/SPECIFICATIONS.md: opacity/gamma/intensity multiply, offset adds,
+   * blending_mode uses the nearest ancestor's choice.
+   *
+   * If the scene graph is unavailable, falls back to the node's raw attrs.
+   */
+  private applyEffectiveAttrs(node: SceneNode): SceneNode['attrs'] {
+    if (!this._sceneGraph) return node.attrs;
+    const eff = getEffectiveAttrs(this._sceneGraph, node.path);
+    return {
+      ...node.attrs,
+      opacity: eff.opacity,
+      gamma: eff.gamma,
+      intensity: eff.intensity,
+      offset: eff.offset,
+      blending_mode: eff.blending_mode,
+    };
   }
 
   constructor(config: LoaderConfig = {}, id?: string, profiler?: UpdateProfiler) {
@@ -1734,7 +1757,7 @@ export class SceneLoader {
         );
       }
 
-      const attrs = node.attrs as unknown as PointsMetadata;
+      const attrs = this.applyEffectiveAttrs(node) as unknown as PointsMetadata;
       const points = this.nodeFactory.createPointsNode(node.path, attrs, data, loader);
 
       log.success(Modules.SCENE_LOADER, `Loaded ${data.pointCount} points for ${node.path}`);
@@ -1856,7 +1879,7 @@ export class SceneLoader {
 
       const mesh = this.nodeFactory.createLinesNode(
         node.path,
-        node.attrs,
+        this.applyEffectiveAttrs(node),
         attrs,
         processed,
         loader
@@ -2012,7 +2035,7 @@ export class SceneLoader {
       };
       const mesh = this.nodeFactory.createGSplatsNode(
         node.path,
-        node.attrs,
+        this.applyEffectiveAttrs(node),
         attrs,
         meshConfig,
         loader
@@ -2085,6 +2108,12 @@ export class SceneLoader {
     );
 
     const lodLoaders: GSplatsSpatialIndexLoader[] = [];
+    // Compose the parent's effective rendering attrs once so every LOD's
+    // synthetic SceneNode sees values already composed through the graph
+    // ancestry rather than just the parent's direct zarr attrs. Without
+    // this, progressive LODs of a nested gsplats node wouldn't reflect
+    // ancestor group opacity/intensity/etc.
+    const composedParent = this.applyEffectiveAttrs(node);
 
     for (let i = 0; i < nLods; i++) {
       const lodLoc = parentLoc.resolve(`lod_${i}`);
@@ -2098,12 +2127,11 @@ export class SceneLoader {
         type: 'gsplats',
         attrs: {
           ...lodAttrs,
-          // Inherit rendering attrs from parent (opacity, gamma, transform, etc.)
-          opacity: node.attrs.opacity,
-          gamma: node.attrs.gamma,
-          intensity: node.attrs.intensity,
-          offset: node.attrs.offset,
-          blending_mode: node.attrs.blending_mode,
+          opacity: composedParent.opacity,
+          gamma: composedParent.gamma,
+          intensity: composedParent.intensity,
+          offset: composedParent.offset,
+          blending_mode: composedParent.blending_mode,
           extend_to_all: node.attrs.extend_to_all,
         },
         hasSpatialIndex: false,

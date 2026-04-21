@@ -194,8 +194,6 @@ class NoOpSession implements UpdateSession {
 
 const NOOP_SESSION = new NoOpSession();
 
-// ScopedSession class removed - no longer needed with explicit parent tracking
-
 /**
  * Main profiler class
  *

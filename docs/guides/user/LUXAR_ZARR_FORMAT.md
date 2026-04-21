@@ -212,7 +212,9 @@ Group nodes organize the scene hierarchy and can contain child nodes.
   "gamma": 1.0,            // 0.1-10.0, per-node gamma correction
   "intensity": 1.0,        // 0.0-100.0, per-node linear color multiplier (gain)
   "offset": 0.0,           // -10.0-10.0, per-node additive brightness shift (black level)
-  "blending_mode": "additive"  // normal, additive, max (default: additive)
+  "blending_mode": "additive",  // normal, additive, max (default: additive)
+  "layer": false,          // Optional: if true, node appears in the viewer's Layers panel
+  "visible": true          // Optional: initial visibility when the scene loads (default true)
 }
 ```
 
@@ -233,6 +235,8 @@ Points nodes contain the actual point data.
   "intensity": 1.0,
   "offset": 0.0,
   "blending_mode": "additive",  // or "normal", "max"
+  "layer": false,          // Optional: if true, node appears in the viewer's Layers panel
+  "visible": true,         // Optional: initial visibility when the scene loads (default true)
   "n_points": 10000,
   "max_radius": 2.5,
   "extend_to_all": ["Time", "Channel"]  // Optional: extend visibility to all values of these dimensions
@@ -277,6 +281,57 @@ Points nodes contain the actual point data.
 - **Description:** Point edge sharpness (0.5-10.0 typical range)
 - **Default:** 2.0 if not provided
 - **Validation:** All values must be positive
+
+## Layers (Viewer Panel)
+
+Any scene-graph node — `points`, `lines`, `gsplats`, or a container `group` —
+may be exposed as a layer in the viewer's Layers panel by setting
+`layer: true` in its zarr attrs. The panel (toggled with **L**) provides
+per-layer visibility, display-range, gamma, opacity, blending mode, and
+colormap controls.
+
+```json
+{
+  "type": "points",
+  "layer": true,      // Expose this node as a layer in the panel
+  "visible": true,    // Optional initial visibility (default true)
+  "opacity": 1.0,
+  "colormap": "viridis"
+}
+```
+
+### Group Layers (Composite)
+
+A `group` node marked `layer=true` acts as a composite layer: its controls
+fan out to every data descendant (points/lines/gsplats) beneath it.
+Composition uses the rules described in *Rendering Attribute Composition*
+below — the group's live slider value replaces its authored zarr value in
+the root-to-leaf chain for each descendant.
+
+### Initial Visibility
+
+The `visible` attr is authoring-time only: it determines the layer's
+starting state when the scene loads. Subsequent toggling is done from the
+eye icon in the panel and is **not** persisted back to zarr.
+
+### Rendering Attribute Composition
+
+Rendering attributes compose along the scene graph (root → leaf):
+
+- `opacity`, `gamma`, `intensity` — multiplied
+- `offset` — summed
+- `blending_mode` — the nearest ancestor that sets it wins
+
+Example: a group with `opacity=0.5` and a child with `opacity=0.5` yields
+an effective opacity of `0.25` for the child's material. Unset values are
+identity (1.0 for multiplicative, 0.0 for additive). The viewer recomposes
+on every slider change so edits to group layers flow into descendants.
+
+### Edits Are Viewer-Only
+
+Changes made in the panel (range, gamma, opacity, blending, colormap) are
+not written back to the zarr store; reloading the page restores the
+authored state.
 
 ## Overlays (Screen-Space Annotations)
 

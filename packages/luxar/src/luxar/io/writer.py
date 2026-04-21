@@ -82,6 +82,8 @@ class ZarrWriterProtocol(Protocol):
             colors: Optional - array of shape (N, 3), tuple/list (R,G,B), or None
             radii: Optional - array of shape (N,), scalar float, or None
             sharpness: Optional - array of shape (N,), scalar float, or None
+            scalars: Optional - array of shape (N,), scalar float, or None.
+                Used for colormap lookup when a colormap is applied.
             labels: Optional list of strings, one per point, for hover tooltips
             image_labels: Optional per-element images for hover thumbnails
             **attrs: Additional attributes for the points
@@ -89,7 +91,7 @@ class ZarrWriterProtocol(Protocol):
         Returns:
             Dictionary containing only metadata about the written data:
             - n_points: Number of points written
-            - dims: Dimensionality of the points
+            - ndim: Dimensionality of the points
             - path: Path where data was written
             - has_colors: Whether colors were written
             - has_radii: Whether radii were written
@@ -124,6 +126,8 @@ class ZarrWriterProtocol(Protocol):
             widths: Line widths - array of shape (N,) or scalar float
             colors: Optional - array of shape (N, 3), tuple/list (R,G,B), or None
             sharpness: Optional - array of shape (N,), scalar float, or None
+            scalars: Optional - array of shape (N,), scalar float, or None.
+                Used for colormap lookup when a colormap is applied.
             indices: Optional vertex indices for indexed line type
             line_type: Type of line connectivity
             labels: Optional list of strings, one per vertex, for hover tooltips

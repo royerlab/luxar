@@ -1,11 +1,11 @@
-"""Protocols, dataclasses, validation functions, and type guards.
+"""Protocols and generic type variables for type checking.
 
 This module contains:
 - Protocol definitions for type checking
-- Dataclasses for structured data
-- Validation functions for runtime type checking
-- Type guards for conditional type narrowing
 - Generic type variables
+
+Validation functions, dataclasses, and type guards have moved to
+``luxar.validation.types``.
 
 For simple type aliases, see aliases.py.
 For enums and literal types, see enums.py.

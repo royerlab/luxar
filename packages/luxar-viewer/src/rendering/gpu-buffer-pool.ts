@@ -1,7 +1,7 @@
 /**
  * GPU Buffer Pool - Geometry reuse for Points, Lines, and GSplats
  *
- * Phase 4: Eliminates GPU buffer allocations by reusing BufferGeometry objects
+ * Eliminates GPU buffer allocations by reusing BufferGeometry objects
  * across view updates. Uses LRU eviction to prevent unbounded memory growth.
  *
  * Key optimizations:

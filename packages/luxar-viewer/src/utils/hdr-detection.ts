@@ -41,9 +41,13 @@ export function detectHDRCapabilities(renderer?: THREE.WebGLRenderer): HDRCapabi
   const rec2020Gamut = window.matchMedia('(color-gamut: rec2020)').matches;
   const hdr = window.matchMedia('(dynamic-range: high)').matches;
 
-  // Check for deep color support (10-bit or higher)
-  // 48-bit total = 16 bits per channel (including alpha)
-  // For 10-bit RGB, we'd see at least 30 bits
+  // Check for deep color support (10-bit or higher).
+  // Per CSS Media Queries Level 4, `(color: N)` matches if the device uses
+  // at least N bits *per color component*. A true 10-bit display should
+  // match `(color: 10)`. The `(color: 48)` / `(color: 30)` thresholds below
+  // are empirical: in practice some shipping browsers report the *total*
+  // bit depth (~48 for 16-bpc, ~30 for 10-bpc RGB) rather than per-component,
+  // so both probes are kept as a belt-and-braces feature test.
   const deepColor =
     window.matchMedia('(color: 48)').matches || window.matchMedia('(color: 30)').matches;
 

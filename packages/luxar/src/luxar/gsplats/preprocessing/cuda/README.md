@@ -35,7 +35,7 @@ make build-nlm-cuda
 hatch run python packages/luxar/src/luxar/gsplats/preprocessing/cuda/build.py
 ```
 
-The build script auto-detects GPU architectures (sm_75+), compiles with `-O3 --use_fast_math`, and copies the resulting `.so` to this directory. A `nlm_build_info.json` metadata file is written alongside for environment reproducibility.
+The build script auto-detects GPU architectures (sm_75 through sm_120, covering Turing → Blackwell; Blackwell archs require CUDA 12.8+), compiles with `-O3 --use_fast_math`, and copies the resulting `.so` to this directory. A `nlm_build_info.json` metadata file is written alongside for environment reproducibility.
 
 ## Usage
 

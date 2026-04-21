@@ -3,21 +3,22 @@
 Performance Metrics - Convergence Speed and Quality Analysis
 
 **What this demo demonstrates:**
-- Detailed performance metrics for per-splat optimizer
+- Detailed performance metrics for standard Adam + fixed-pool relocation
 - Convergence monitoring with early stopping
 - Quality metrics: MSE, relative L2 error, PSNR
 - Timing analysis: iterations per second, total time
-- Active vs total splat counting (pruning effectiveness)
+- Active vs total splat counting (fixed-pool architecture)
 - Memory-efficient movie recording (every 5 iterations)
 
 **Key concepts:**
 - Early stopping: Saves compute when max absolute error threshold is met
-- Per-splat efficiency: Each splat optimizes independently with own LR
+- Fixed-pool relocation: weak splats are moved to high-residual regions
+  rather than added/removed, keeping optimizer tensor shapes constant
 - Quality metrics:
   * MSE: Mean Squared Error (lower is better)
   * Relative L2: Normalized error relative to signal magnitude
   * PSNR: Peak Signal-to-Noise Ratio in dB (higher is better)
-- Dynamic operations impact: Shows effect of automatic seeding/pruning
+- Dynamic operations impact: Shows effect of periodic relocation
 
 **Metrics displayed:**
 - Optimization time (seconds)
@@ -90,8 +91,7 @@ def main() -> None:
         dynamic_config = DynamicOpsConfig()
         aprint(f"Dynamic operations enabled (step_every={dynamic_config.step_every})")
 
-        # Fit with per-splat optimizer
-        with asection("Per-Splat Optimizer Fitting"):
+        with asection("Adam + Fixed-Pool Relocation Fitting"):
             start_time = time.time()
 
             # Use simplified one-step API with auto-candidate generation
@@ -119,7 +119,7 @@ def main() -> None:
             aprint(
                 f"  Active splats: {np.sum(result.amplitudes > 0.01)}/{len(result.amplitudes)}"
             )
-            aprint("  ✓ Per-splat optimizer with individual learning rates")
+            aprint("  ✓ Standard Adam with gradient-dilution-compensated LR")
 
             if stats["converged"]:
                 saved_iters = args.n_iters - stats["iterations"]
@@ -194,7 +194,7 @@ def main() -> None:
         # Add text overlay with stats
         viewer.text_overlay.visible = True
         viewer.text_overlay.text = (
-            f"Per-Splat Optimizer: {stats['iterations']} iterations in {fit_time:.1f}s | "
+            f"Adam + Fixed-Pool Relocation: {stats['iterations']} iterations in {fit_time:.1f}s | "
             f"Active splats: {len(active_centers)}/{len(result.amplitudes)} total | "
             f"MSE: {mse:.5f} | Rel L2: {rel_l2:.4f} | PSNR: {psnr:.1f} dB"
         )
@@ -208,7 +208,7 @@ def main() -> None:
     else:
         aprint("\nPerformance Demo Complete (napari disabled)")
         aprint(
-            f"Per-splat optimizer: {stats['iterations']} iterations in {fit_time:.1f}s"
+            f"Adam + fixed-pool relocation: {stats['iterations']} iterations in {fit_time:.1f}s"
         )
         aprint(f"Active splats: {len(active_centers)}/{len(result.amplitudes)} total")
         aprint(f"Quality: MSE={mse:.5f}, Rel L2={rel_l2:.4f}, PSNR={psnr:.1f} dB")

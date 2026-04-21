@@ -26,18 +26,21 @@ from luxar.gsplats.utils.trils import tril_size
 
 class GaussianSplatFitter:
     """
-    Advanced Gaussian splat fitter with per-splat optimizer.
+    Gaussian splat fitter using standard PyTorch Adam with fixed-pool relocation.
 
-    This class uses the per-splat Adam optimizer to maintain momentum
-    for individual splats during dynamic operations, providing smooth
-    optimization without global disruption.
+    Parameters are optimized with a single ``torch.optim.Adam`` instance
+    (fused on CUDA when available). Rather than dynamically adding and
+    removing splats, the fitter periodically relocates the least
+    informative splats to regions of high reconstruction residual, which
+    keeps optimizer tensor shapes constant and avoids per-splat state
+    management.
 
     Parameters
     ----------
     device : str, optional
         PyTorch device ('cpu', 'cuda', 'mps'). Auto-detects if None.
     enable_dynamic_ops : bool, default=True
-        Enable dynamic operations (seeding, splitting, pruning).
+        Enable fixed-pool splat relocation during fitting.
     dynamic_config : DynamicOpsConfig, optional
         Configuration for dynamic operations.
     use_metal : bool, default=True
@@ -137,9 +140,8 @@ class GaussianSplatFitter:
         **seed_kwargs: Any,
     ) -> GSplatData:
         """
-        Fit Gaussian splats using per-splat Adam optimizer.
+        Fit Gaussian splats using the modular fitting pipeline.
 
-        This is the refactored version that uses the modular fitting pipeline.
         See fit_gaussian_splats() for full parameter documentation.
 
         Parameters
@@ -268,7 +270,7 @@ def fit_gaussian_splats(
     max_abs_error: Optional[float] = None,
     rel_l2_target: Optional[float] = None,
     gradient_clip: Optional[float] = None,  # Disabled: MSE gradients are well-scaled
-    # Per-splat optimizer parameters — tuned via autoresearch (43 experiments):
+    # Scheduler parameters — tuned via autoresearch (43 experiments):
     # patience 15 + factor 0.9 gives faster LR decay than the gentler 25/0.98,
     # yielding 33% speed improvement with same PSNR.
     scheduler_type: str = "plateau",
@@ -302,12 +304,13 @@ def fit_gaussian_splats(
     """
     Fit n-dimensional oriented Gaussian splats to reconstruct input image/volume.
 
-    This function uses the per-splat Adam optimizer to maintain momentum
-    for individual splats during dynamic operations, providing smooth
-    optimization without global disruption.
+    Uses standard PyTorch Adam (fused on CUDA when available) combined with
+    fixed-pool splat relocation: the least informative splats are periodically
+    moved to regions of high reconstruction residual, which keeps optimizer
+    tensor shapes constant and avoids per-splat state management.
 
     The optimization uses:
-    - Per-splat Adam optimizer with individual learning rates
+    - Standard PyTorch Adam with gradient-dilution-compensated learning rates
     - Center position (bounded to image domain via sigmoid)
     - Non-negative amplitude (via softplus activation)
     - Covariance matrix Σ = L @ L^T where L is the Cholesky factor
@@ -522,19 +525,15 @@ def fit_gaussian_splats(
 
     Notes
     -----
-    The optimization uses per-splat Adam optimizer which provides:
-    - Individual learning rates per splat
-    - Momentum preservation during dynamic operations
-    - Smooth optimization trajectory without global disruption
-    - Early stopping for improved efficiency
-    - Adaptive learning rate scheduling
-
-    This approach is particularly beneficial when dynamic operations
-    (prune, seed, merge, split) are enabled.
+    The optimization uses standard PyTorch Adam combined with fixed-pool
+    splat relocation:
+    - Gradient-dilution-compensated learning rates for dimensional consistency
+    - Periodic relocation of low-importance splats to high-residual regions
+    - Optimizer state reset for relocated splats; all others untouched
+    - Early stopping and adaptive learning-rate scheduling
     """
 
     with asection("Fitting Gaussian Splats"):
-        # Use per-splat optimizer
         fitter = GaussianSplatFitter(
             device=device,
             enable_dynamic_ops=enable_dynamic_ops,

@@ -12,9 +12,14 @@ class TestValidateColormap:
     def test_accepts_string(self) -> None:
         assert validate_colormap("viridis") == "viridis"
 
-    def test_accepts_any_string(self) -> None:
-        """Any non-empty string is accepted (resolution happens later)."""
-        assert validate_colormap("some_custom_name") == "some_custom_name"
+    def test_accepts_custom_sentinel(self) -> None:
+        """The "custom" sentinel is reserved for writer-resolved array colormaps."""
+        assert validate_colormap("custom") == "custom"
+
+    def test_rejects_unknown_name(self) -> None:
+        """Unknown names (typos like 'viridus') fail fast at authoring time."""
+        with pytest.raises(ValueError, match="Unknown colormap"):
+            validate_colormap("viridus")
 
     def test_rejects_empty_string(self) -> None:
         with pytest.raises(ValueError, match="non-empty"):

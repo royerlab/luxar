@@ -92,8 +92,10 @@ def build() -> None:
         # Default: detect current GPU + well-known HPC architectures
         major, minor = torch.cuda.get_device_capability()
         current = major * 10 + minor
-        # Turing(75), Ampere(80,86), Ada(89), Hopper(90)
-        default_archs = {75, 80, 86, 89, 90}
+        # Turing(75), Ampere(80,86), Ada(89), Hopper(90), Blackwell(100,120)
+        # nvcc --list-gpu-arch filtering below drops archs the current toolkit
+        # can't target (e.g. sm_100/sm_120 require CUDA 12.8+).
+        default_archs = {75, 80, 86, 89, 90, 100, 120}
         default_archs.add(current)
 
         # Query nvcc for supported architectures and filter out unsupported ones

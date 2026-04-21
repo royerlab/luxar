@@ -250,7 +250,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     // Initialize data accumulator for object pooling (Phase 1 optimization)
     // NOTE: Infrastructure-only for Phase 1. Full hot path integration deferred to Phase 2.
-    // See src/data/DATA_ACCUMULATOR_STATUS.md for details.
     if (appConfig.dataLoading.performance.useAccumulators) {
       const metadata = attrs as LinesMetadata;
       const totalSegments = this.chunkIndex?.metadata.n_segments || metadata.n_segments || 0;

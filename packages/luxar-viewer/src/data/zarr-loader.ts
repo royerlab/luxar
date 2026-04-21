@@ -26,6 +26,7 @@ import { config } from '../config';
  *
  * @param src - URL or path to the Zarr store
  * @param config - Optional loader configuration
+ * @param loaderId - Optional ID to register the created SceneLoader under (default: 'default')
  * @returns Promise resolving to a THREE.Group containing the scene
  */
 export async function loadScene(
