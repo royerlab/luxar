@@ -172,7 +172,7 @@ __all__ = [
     "SHARPNESS_MAX",
     "SHARPNESS_MIN",
     "TARGET_CHUNK_BYTES",
-    # From config
+    # From enums
     "Defaults",
     "RenderingLimits",
 ]

@@ -1038,10 +1038,10 @@ class TestCUDAIntegration:
         """Full fitting pipeline works with CUDA backend."""
 
     def test_optimizer_compatibility(self):
-        """Per-splat Adam optimizer works correctly."""
+        """Standard PyTorch Adam works correctly with the CUDA backend."""
 
     def test_dynamic_ops(self):
-        """Prune/append operations work correctly."""
+        """Fixed-pool splat relocation works correctly."""
 ```
 
 ### 11.3 Operator Correctness Tests (opcheck)
@@ -1266,7 +1266,7 @@ find_package(CUDA REQUIRED)
 enable_language(CUDA)
 
 # Set CUDA architectures
-set(CMAKE_CUDA_ARCHITECTURES 70 75 80 86 89 90)
+set(CMAKE_CUDA_ARCHITECTURES 70 75 80 86 89 90 100 120)
 
 # Test executable
 add_executable(cuda_kernel_tests

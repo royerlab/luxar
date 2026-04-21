@@ -53,7 +53,7 @@ def nlm_cuda_denoise(
         )
 
     # Check shared memory for 3D with large search distances.
-    # Ampere (RTX 3090) supports 100 KB, Ada/Hopper 164+ KB.
+    # Ampere (RTX 3090) supports 100 KB, Ada/Hopper 164+ KB, Blackwell 228 KB.
     if vol.ndim == 3 and search_distance >= 9:
         halo = search_distance + patch_half
         smem_z = 4 + 2 * halo  # TILE_3D_Z=4

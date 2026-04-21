@@ -271,8 +271,12 @@ def load_volume(
 
     Args:
         path: Path to the volume file
-        channel: Channel index for 5D OME-ZARR data (default: 0)
-        timepoint: Timepoint index for 5D OME-ZARR data (default: 0)
+        channel: Channel index for 4D/5D+ OME-ZARR data. If None, defaults
+            to 0 when slicing is needed; for 4D arrays, ``None`` returns
+            the array as-is.
+        timepoint: Timepoint index for 5D+ OME-ZARR data. If None, defaults
+            to 0 when slicing is needed; for 4D arrays, ``None`` returns
+            the array as-is.
         array_key: Array key within .npz or .zarr files
 
     Returns:

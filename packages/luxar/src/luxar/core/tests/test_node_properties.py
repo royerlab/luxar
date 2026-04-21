@@ -737,6 +737,76 @@ class TestNodeLayer:
 
             assert points.layer is True
 
+    def test_layer_setter_persists(self, tmp_path: Path) -> None:
+        """Setting node.layer after creation updates attrs and zarr store."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            assert points.layer is False
+            points.layer = True
+            assert points.layer is True
+            assert points.attrs["layer"] is True
+
+            points.layer = False
+            assert points.layer is False
+
+    def test_layer_setter_rejects_invalid(self, tmp_path: Path) -> None:
+        """Non-boolean-compatible values are rejected by the setter."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            with pytest.raises(TypeError):
+                points.layer = "yes"
+
+
+class TestNodeVisible:
+    """Test Node visible authoring-time property."""
+
+    def test_visible_default_true(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "test.zarr"
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+            assert points.visible is True
+
+    def test_visible_false_at_creation(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "test.zarr"
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions, layer=True, visible=False)
+            assert points.visible is False
+            assert points.attrs["visible"] is False
+
+    def test_visible_setter_persists(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "test.zarr"
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("test", positions)
+
+            points.visible = False
+            assert points.visible is False
+            points.visible = True
+            assert points.visible is True
+
+    def test_visible_rejects_invalid(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "test.zarr"
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            with pytest.raises((TypeError, ValueError)):
+                scene.add_points("test", positions, visible="yes")
+
 
 class TestNodeColormap:
     """Test Node colormap property."""

@@ -72,7 +72,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
  * Fragment shader for standard point rendering.
  *
  * Computes Gaussian falloff, GOG color adjustment, and alpha output.
- * The picking system uses a different fragment shader (see picking-materials.ts).
+ * The picking system uses a different fragment shader (see picking/point-picking-material.ts).
  */
 export const POINT_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;

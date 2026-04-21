@@ -200,6 +200,9 @@ export interface SceneNode {
     /** Whether this node is exposed as a layer in the Layers panel */
     layer?: boolean;
 
+    /** Initial visibility when the scene loads (default: true). Authoring-time only. */
+    visible?: boolean;
+
     /** Min/max of color data, computed at encoding time */
     color_data_range?: [number, number];
 

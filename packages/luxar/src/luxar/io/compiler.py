@@ -498,13 +498,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # 11. Write labels if provided (CSR-style: label_offsets + label_bytes)
         if labels is not None:
-            sort_order = ordering_data["sort_order"] if ordering_data is not None else None
+            sort_order = (
+                ordering_data["sort_order"] if ordering_data is not None else None
+            )
             self._write_labels_csr(group, labels, n_points, sort_order)
             metadata["has_labels"] = True
 
         # 12. Write image labels if provided (CSR-style, no compression on blobs)
         if image_labels is not None:
-            sort_order = ordering_data["sort_order"] if ordering_data is not None else None
+            sort_order = (
+                ordering_data["sort_order"] if ordering_data is not None else None
+            )
             self._write_image_labels_csr(group, image_labels, n_points, sort_order)
             metadata["has_image_labels"] = True
 
@@ -549,6 +553,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             widths: Line widths - array (N,) or scalar float
             colors: Colors - array (N, 3), RGB tuple/list, or None
             sharpness: Sharpness - array (N,), scalar float, or None
+            scalars: Scalars for colormap lookup - array (N,), scalar float, or None
             indices: Optional vertex indices for indexed line type
             line_type: Type of line connectivity
             labels: Optional list of strings, one per vertex. Stored as CSR-encoded
@@ -904,13 +909,21 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Write labels if provided (CSR-style: label_offsets + label_bytes)
         # For lines, labels are per-vertex (n_vertices)
         if labels is not None:
-            sort_order = ordering_data["vertex_sort_indices"] if ordering_data is not None else None
+            sort_order = (
+                ordering_data["vertex_sort_indices"]
+                if ordering_data is not None
+                else None
+            )
             self._write_labels_csr(group, labels, n_vertices, sort_order)
             metadata["has_labels"] = True
 
         # Write image labels if provided (CSR-style, no compression on blobs)
         if image_labels is not None:
-            sort_order = ordering_data["vertex_sort_indices"] if ordering_data is not None else None
+            sort_order = (
+                ordering_data["vertex_sort_indices"]
+                if ordering_data is not None
+                else None
+            )
             self._write_image_labels_csr(group, image_labels, n_vertices, sort_order)
             metadata["has_image_labels"] = True
 
@@ -1037,7 +1050,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             chunk_size = min(chunk_size, n_splats)
 
             chunk_bounds = compute_chunk_bounds_gsplats(
-                centers, cholesky_factors, chunk_size,
+                centers,
+                cholesky_factors,
+                chunk_size,
                 coverage_sigma=coverage_sigma,
             )
 
@@ -1411,13 +1426,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # Write labels if provided (CSR-style: label_offsets + label_bytes)
         if labels is not None:
-            sort_order = ordering_data["sort_order"] if ordering_data is not None else None
+            sort_order = (
+                ordering_data["sort_order"] if ordering_data is not None else None
+            )
             self._write_labels_csr(group, labels, n_splats, sort_order)
             metadata["has_labels"] = True
 
         # Write image labels if provided (CSR-style, no compression on blobs)
         if image_labels is not None:
-            sort_order = ordering_data["sort_order"] if ordering_data is not None else None
+            sort_order = (
+                ordering_data["sort_order"] if ordering_data is not None else None
+            )
             self._write_image_labels_csr(group, image_labels, n_splats, sort_order)
             metadata["has_image_labels"] = True
 

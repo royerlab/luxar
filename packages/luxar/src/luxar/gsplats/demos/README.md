@@ -562,7 +562,7 @@ done
 ### **In Performance Demos**
 - Early stopping saves iterations when convergence criteria met
 - Dynamic operations improve quality (compare with `--disable-dynamic`)
-- Per-splat optimizer maintains smooth convergence
+- Standard Adam + fixed-pool relocation maintains smooth convergence
 
 ### **In 3D/4D Demos**
 - Wireframe ellipsoids align with 3D structures

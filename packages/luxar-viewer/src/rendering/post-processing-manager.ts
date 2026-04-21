@@ -46,7 +46,7 @@ import {
  * - Bloom effect with mipmap blur
  * - ACES filmic tone mapping
  * - Anti-aliasing (FXAA, SMAA, MSAA, SSAA)
- * - Visual effects (DOF, chromatic aberration, vignette, lens distortion, detector noise)
+ * - Visual effects (DOF, chromatic lens distortion, vignette, detector noise)
  * - Dynamic effect management with deferred rebuild
  *
  * The manager handles effect lifecycle, settings persistence, and optimized

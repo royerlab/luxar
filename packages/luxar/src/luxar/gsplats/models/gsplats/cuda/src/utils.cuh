@@ -23,9 +23,6 @@
 // CONFIGURATION CONSTANTS
 // =============================================================================
 
-// Maximum supported dimensions
-constexpr int MAX_DIM = 8;
-
 // Error checking macro
 #define CUDA_CHECK(call)                                                       \
     do {                                                                       \

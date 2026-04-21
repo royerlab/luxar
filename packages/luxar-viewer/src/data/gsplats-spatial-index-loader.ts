@@ -180,7 +180,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     // Initialize data accumulator for object pooling (Phase 1 optimization)
     // NOTE: Infrastructure-only for Phase 1. Full hot path integration deferred to Phase 2.
-    // See src/data/DATA_ACCUMULATOR_STATUS.md for details.
     if (appConfig.dataLoading.performance.useAccumulators) {
       const metadata = attrs as GSplatsMetadata;
       const totalSplats = this.chunkIndex?.metadata.n_splats || metadata.n_splats || 0;

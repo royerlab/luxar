@@ -166,7 +166,7 @@ def sigmas_to_cholesky_isotropic(
     Notes
     -----
     The packed Cholesky format stores the lower triangular elements
-    column by column: [L00, L10, L11, L20, L21, L22, ...].
+    row by row: [L00, L10, L11, L20, L21, L22, ...].
     For isotropic (diagonal) matrices, only diagonal positions are non-zero.
 
     Diagonal indices in packed format: 0, 2, 5, 9, 14, ... = k*(k+3)//2

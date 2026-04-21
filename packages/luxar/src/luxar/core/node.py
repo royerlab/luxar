@@ -122,6 +122,11 @@ class Node:
 
                 attrs["layer"] = validate_layer(attrs["layer"])
 
+            if "visible" in attrs:
+                from ..validation.types import validate_visible
+
+                attrs["visible"] = validate_visible(attrs["visible"])
+
             if "colormap" in attrs:
                 from ..validation.types import validate_colormap
 
@@ -179,8 +184,8 @@ class Node:
         try:
             aprint(f"Adding child group '{name}' to node '{self.name}'.")
 
-            # Duplicate check is handled by Node.__init__ (lines 59-65)
-            # Node.__init__ handles writing to storage, attr validation, and caching
+            # Duplicate child check and writing to storage, attr validation,
+            # and caching are all handled by Node.__init__.
             attrs["type"] = "group"
 
             if self._writer is not None:
@@ -362,6 +367,53 @@ class Node:
             True if this node should appear in the Layers panel, False otherwise
         """
         return bool(self.attrs.get("layer", False))
+
+    @layer.setter
+    def layer(self, value: Any) -> None:
+        """Set the layer flag for this node.
+
+        Changes are persisted to zarr immediately if a writer is available.
+
+        Args:
+            value: Boolean layer flag. When True, the node appears as an
+                entry in the viewer's Layers panel.
+
+        Raises:
+            TypeError: If value is not a boolean-compatible value.
+        """
+        from ..validation.types import validate_layer
+
+        self._persist_attr("layer", validate_layer(value))
+
+    # --------------------------------------------------------- visibility
+    @property
+    def visible(self) -> bool:
+        """Initial visibility in the viewer (default True).
+
+        This controls whether the layer starts visible when the scene
+        loads. Authoring-time property only — runtime toggling is done
+        from the viewer's Layers panel (eye icon).
+
+        Returns:
+            True if the layer should start visible, False to start hidden.
+        """
+        return bool(self.attrs.get("visible", True))
+
+    @visible.setter
+    def visible(self, value: Any) -> None:
+        """Set the initial visibility for this node.
+
+        Changes are persisted to zarr immediately if a writer is available.
+
+        Args:
+            value: Boolean visibility flag.
+
+        Raises:
+            TypeError: If value is not a boolean-compatible value.
+        """
+        from ..validation.types import validate_visible
+
+        self._persist_attr("visible", validate_visible(value))
 
     # --------------------------------------------------------------- rendering
     @property

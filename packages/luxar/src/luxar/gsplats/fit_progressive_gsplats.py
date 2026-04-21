@@ -377,8 +377,6 @@ def fit_progressive_gaussian_splats(
         )
         accumulated_lods.append(lod)
 
-        # --- Free GPU memory from the per-pass fit before rendering ---
-        # The fitter's optimizer state, gradients, and V_tensor are
         # --- Inter-pass memory cleanup ---
         # gc.collect() + empty_cache() ensure the previous pass's model,
         # optimizer, and gradient tensors are freed before the next pass

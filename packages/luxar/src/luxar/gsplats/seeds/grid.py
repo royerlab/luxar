@@ -51,7 +51,8 @@ def seed_from_grid(
         as a fraction of spacing. 0.0 = no jitter, 0.5 = up to half spacing.
     sigma : float or None, optional
         Gaussian sigma (standard deviation) for all seeds. If None, defaults
-        to spacing / 2 (ensures ~95% overlap between adjacent grid points).
+        to ``mean(spacing) / 2`` (ensures ~60% overlap at midpoints between
+        adjacent grid points).
     exclude_below : float or None, optional
         Absolute intensity threshold. Grid points where V < threshold are excluded.
         Mutually exclusive with exclude_below_percentile.

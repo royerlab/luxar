@@ -265,7 +265,7 @@ export class SceneDimsManager {
    * visualization objects to react automatically to navigation events.
    * Typical subscribers include sliders, points, and status displays.
    *
-   * Callbacks can be async - they will be awaited when using setDimensionValueAsync().
+   * Callbacks can be async — their completion can be awaited via waitForUpdate().
    *
    * @param callback - Function to call when dimensions change (can return Promise)
    */

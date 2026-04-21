@@ -3,8 +3,8 @@
 
 Seeds are placed at non-zero voxels, sampled with probability proportional
 to intensity. Every seed lands on actual signal — no seeds wasted on
-zero-background. Splats start at single-voxel size so the optimizer grows
-them as needed.
+zero-background. The default ``init_sigma`` is derived from expected
+inter-seed spacing so seeds can cover their allotted neighbourhood.
 
 Designed for progressive fitting where residuals are sparse (mostly zero
 with scattered structures of varying shape — peaks, plateaus, edges).
@@ -24,9 +24,6 @@ from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds.gpu_ops import _get_device, should_use_gpu
 from luxar.gsplats.seeds.utils import SEED_AMPLITUDE_SCALE, sigmas_to_cholesky_isotropic
 
-# Default init sigma: sqrt(1/12) ≈ 0.289 voxels (single-voxel Gaussian)
-_SINGLE_VOXEL_SIGMA = float(np.sqrt(1.0 / 12.0))
-
 
 def seed_from_peaks(
     V: np.ndarray,
@@ -38,8 +35,10 @@ def seed_from_peaks(
 
     Samples ``n_seeds`` locations from the non-zero voxels of V, with
     probability proportional to voxel intensity.  Brighter voxels are
-    more likely to receive a seed.  Splats start at single-voxel size
-    (sigma ≈ 0.289 voxels) so the optimizer grows them to fit.
+    more likely to receive a seed.  Unless overridden, ``init_sigma`` is
+    auto-scaled to roughly half the expected inter-seed spacing (with a
+    floor of 1.5 voxels) so that splats have enough support to generate
+    useful gradients without massively overlapping.
 
     This method is ideal for sparse residuals in progressive fitting
     where the signal has varying shape (peaks, plateaus, edges) and
@@ -140,7 +139,8 @@ def seed_from_peaks(
         amplitudes = selected_intensities.cpu().numpy().astype(np.float32)
         amplitudes = amplitudes * SEED_AMPLITUDE_SCALE
 
-        # Isotropic Cholesky at init_sigma (single-voxel by default)
+        # Isotropic Cholesky at init_sigma (auto-scaled to ~half the
+        # expected inter-seed spacing unless overridden)
         cholesky = sigmas_to_cholesky_isotropic(
             np.full(len(centers), init_sigma, dtype=np.float32), ndim
         )

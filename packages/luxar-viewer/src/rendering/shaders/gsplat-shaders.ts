@@ -267,7 +267,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
  *
  * Uses the 2D Cholesky factor passed from vertex shader to compute
  * Mahalanobis distance, then applies shifted Gaussian falloff.
- * The picking system uses a different fragment shader (see picking-materials.ts).
+ * The picking system uses a different fragment shader (see picking/gsplat-picking-material.ts).
  */
 export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
