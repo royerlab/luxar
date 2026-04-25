@@ -43,7 +43,7 @@ export class LuxarApp {
   private imageLabelLoader?: ImageLabelLoader;
   private pickingCleanup?: () => void;
   private isInitialized = false;
-  private boundCleanup: (() => void) | null = null;
+  private boundDispose: (() => void) | null = null;
   private boundFocusHandler: (() => void) | null = null;
   private boundVisibilityHandler: (() => void) | null = null;
   private boundDatasetBrowserHandler: (() => void) | null = null;
@@ -111,8 +111,9 @@ export class LuxarApp {
    */
   async init(src?: string): Promise<void> {
     if (this.isInitialized) {
-      log.info(Modules.APP, 'Re-initializing app (cleaning up previous state)');
-      this.cleanup();
+      throw new Error(
+        'LuxarApp is already initialized. Call dispose() before initializing again.'
+      );
     }
 
     try {
@@ -217,8 +218,8 @@ export class LuxarApp {
         await this.loadDataset(sceneSrc);
       }
 
-      // Setup cleanup on page unload
-      this.setupCleanup();
+      // Dispose on page unload (cleans up listeners, workers, GPU resources).
+      this.setupDisposeOnUnload();
 
       // Setup dataset browser keyboard shortcut
       this.setupDatasetBrowserShortcut();
@@ -232,8 +233,8 @@ export class LuxarApp {
       this.isInitialized = true;
     } catch (error) {
       log.error(Modules.APP, 'Failed to initialize Luxar app:', error);
-      // Don't call cleanup() here as it removes error messages that were just displayed
-      // The error UI should remain visible to inform the user
+      // Don't dispose() here — it would remove the error UI the user still
+      // needs to see. Caller decides whether to dispose and retry.
       throw error;
     }
   }
@@ -638,11 +639,11 @@ export class LuxarApp {
   }
 
   /**
-   * Setup cleanup on page unload
+   * Register a beforeunload handler that disposes the app on page unload.
    */
-  private setupCleanup(): void {
-    this.boundCleanup = this.cleanup.bind(this);
-    window.addEventListener('beforeunload', this.boundCleanup);
+  private setupDisposeOnUnload(): void {
+    this.boundDispose = this.dispose.bind(this);
+    window.addEventListener('beforeunload', this.boundDispose);
   }
 
   /**
@@ -959,9 +960,15 @@ export class LuxarApp {
   }
 
   /**
-   * Clean up all application resources
+   * Dispose all application resources.
+   *
+   * Tears down the animation loop, scene, input handlers, UI panels, and
+   * registered listeners. Idempotent: safe to call repeatedly. After
+   * dispose(), the LuxarApp instance is in an uninitialized state — call
+   * init() again to re-create resources, or discard the instance.
    */
-  cleanup(): void {
+  dispose(): void {
+    if (!this.isInitialized) return;
     try {
       // Stop animation first
       if (this.animationController) {
@@ -1064,14 +1071,14 @@ export class LuxarApp {
       }
 
       // Remove beforeunload listener with stored reference
-      if (this.boundCleanup) {
-        window.removeEventListener('beforeunload', this.boundCleanup);
-        this.boundCleanup = null;
+      if (this.boundDispose) {
+        window.removeEventListener('beforeunload', this.boundDispose);
+        this.boundDispose = null;
       }
 
       this.isInitialized = false;
     } catch (error) {
-      log.error(Modules.LUXAR, 'Error during cleanup:', error);
+      log.error(Modules.LUXAR, 'Error during dispose:', error);
     }
   }
 

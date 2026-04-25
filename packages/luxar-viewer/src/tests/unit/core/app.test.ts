@@ -139,7 +139,7 @@ describe('LuxarApp', () => {
 
   afterEach(() => {
     if (app) {
-      app.cleanup();
+      app.dispose();
     }
   });
 
@@ -230,11 +230,29 @@ describe('LuxarApp', () => {
       expect(app.initialized).toBe(true);
     });
 
-    it('should setup cleanup handler', async () => {
+    it('should setup beforeunload dispose handler', async () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init('http://example.com/data.zarr');
 
       expect(mockAddEventListener).toHaveBeenCalledWith('beforeunload', expect.any(Function));
+    });
+
+    it('throws if init() is called twice without an intervening dispose()', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      await app.init('http://example.com/data.zarr');
+
+      await expect(app.init('http://example.com/data.zarr')).rejects.toThrow(
+        /already initialized/i
+      );
+    });
+
+    it('allows init() again after dispose()', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      await app.init('http://example.com/data.zarr');
+      app.dispose();
+
+      await expect(app.init('http://example.com/data.zarr')).resolves.toBeUndefined();
+      expect(app.initialized).toBe(true);
     });
 
     it('should setup focus handling', async () => {
@@ -332,25 +350,6 @@ describe('LuxarApp', () => {
       expect(components.renderingControls).toBe(mockRenderingControls);
     });
 
-    it('should trigger render after data loading', async () => {
-      mockAnimationController.startAnimation.mockClear();
-
-      // Simulate loading a new dataset
-      mockRenderingControls.setSceneId.mockClear();
-      await app.init('http://example.com/new-data.zarr');
-
-      expect(mockAnimationController.startAnimation).toHaveBeenCalled();
-    });
-
-    it('should clear dimension UI before loading new dataset', async () => {
-      mockInputHandler.clearDimensionUI.mockClear();
-      mockFetch.mockResolvedValue({ ok: true });
-
-      await app.init('http://example.com/new-data.zarr');
-
-      expect(mockInputHandler.clearDimensionUI).toHaveBeenCalled();
-    });
-
     it('should initialize dimension sliders after loading', async () => {
       expect(mockInputHandler.initDimensionSliders).toHaveBeenCalled();
     });
@@ -422,7 +421,7 @@ describe('LuxarApp', () => {
     });
   });
 
-  describe('cleanup', () => {
+  describe('dispose', () => {
     beforeEach(async () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init('http://example.com/data.zarr');
@@ -445,7 +444,7 @@ describe('LuxarApp', () => {
         disposeOrder.push('sceneManager');
       });
 
-      app.cleanup();
+      app.dispose();
 
       expect(disposeOrder).toEqual([
         'animationController',
@@ -456,41 +455,41 @@ describe('LuxarApp', () => {
     });
 
     it('should call cleanupUI', () => {
-      app.cleanup();
+      app.dispose();
 
       expect(mockCleanupUI).toHaveBeenCalled();
     });
 
     it('should remove beforeunload listener', () => {
-      app.cleanup();
+      app.dispose();
 
       expect(mockRemoveEventListener).toHaveBeenCalledWith('beforeunload', expect.any(Function));
     });
 
     it('should set isInitialized to false', () => {
-      app.cleanup();
+      app.dispose();
 
       expect(app.initialized).toBe(false);
     });
 
-    it('should handle cleanup errors gracefully', () => {
+    it('should handle dispose errors gracefully', () => {
       mockSceneManager.dispose.mockImplementation(() => {
         throw new Error('Dispose failed');
       });
 
-      expect(() => app.cleanup()).not.toThrow();
+      expect(() => app.dispose()).not.toThrow();
     });
 
-    it('should handle multiple cleanup calls safely', () => {
-      app.cleanup();
-      app.cleanup();
+    it('should handle multiple dispose calls safely', () => {
+      app.dispose();
+      app.dispose();
 
       // Should not throw on second call
       expect(app.initialized).toBe(false);
     });
 
     it('should dispose animation controller first', () => {
-      app.cleanup();
+      app.dispose();
 
       expect(mockAnimationController.dispose).toHaveBeenCalled();
     });
@@ -505,7 +504,7 @@ describe('LuxarApp', () => {
         disposeOrder.push('scene');
       });
 
-      app.cleanup();
+      app.dispose();
 
       expect(disposeOrder.indexOf('scene')).toBeGreaterThan(disposeOrder.indexOf('animation'));
     });
@@ -572,17 +571,6 @@ describe('LuxarApp', () => {
   });
 
   describe('dataset browser', () => {
-    it('should not show browser if already open', async () => {
-      // First init shows browser
-      await app.init('');
-      vi.clearAllMocks();
-
-      // Second init should not create new browser
-      await app.init('');
-
-      expect(DatasetBrowser).not.toHaveBeenCalled();
-    });
-
     it('should clear error when opening browser', async () => {
       await app.init('');
 
