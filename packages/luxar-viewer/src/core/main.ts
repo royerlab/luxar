@@ -26,6 +26,7 @@ import { LuxarApp } from './app';
 import { config } from '../config';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams } from '../config/url-params';
+import { StorageKeys } from '../utils/storage-keys';
 import { showError } from '../ui/helpers';
 import { ThemeManager } from '../themes/theme-manager';
 import type { LuxarCamera } from '../scene/camera-utils';
@@ -105,7 +106,7 @@ import * as THREE from 'three';
 
 // Only expose debug interface in development/debug mode
 // Check for debug flag in URL or localStorage
-const isDebugMode = urlParams.debug || localStorage.getItem('luxar_debug') === 'true';
+const isDebugMode = urlParams.debug || localStorage.getItem(StorageKeys.debug) === 'true';
 if (isDebugMode) {
   window.__luxarDebug = {
     app,

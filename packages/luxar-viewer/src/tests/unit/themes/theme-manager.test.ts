@@ -184,13 +184,13 @@ describe('ThemeManager', () => {
       const manager = ThemeManager.getInstance();
       manager.setTheme('light');
 
-      const savedTheme = localStorage.getItem('luxar-theme');
+      const savedTheme = localStorage.getItem('luxar.theme');
       expect(savedTheme).toBe('light');
     });
 
     it('should load saved theme on initialization', () => {
       // Set theme in localStorage before creating manager
-      localStorage.setItem('luxar-theme', 'frosted-glass');
+      localStorage.setItem('luxar.theme', 'frosted-glass');
 
       const manager = ThemeManager.getInstance();
       const current = manager.getCurrentTheme();
@@ -199,7 +199,7 @@ describe('ThemeManager', () => {
     });
 
     it('should fallback to frosted-glass theme if saved theme is invalid', () => {
-      localStorage.setItem('luxar-theme', 'invalid');
+      localStorage.setItem('luxar.theme', 'invalid');
 
       const manager = ThemeManager.getInstance();
       const current = manager.getCurrentTheme();

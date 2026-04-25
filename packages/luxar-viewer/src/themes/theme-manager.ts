@@ -21,6 +21,7 @@ import {
   setupGlassRefractionObserver,
 } from './glass-filters';
 import { log, Modules } from '../utils/log';
+import { StorageKeys } from '../utils/storage-keys';
 
 /**
  * ThemeManager singleton class
@@ -40,8 +41,8 @@ export class ThemeManager {
   /** Theme change observers */
   private observers: Set<ThemeChangeHandler> = new Set();
 
-  /** LocalStorage key for theme persistence */
-  private readonly STORAGE_KEY = 'luxar-theme';
+  /** LocalStorage key for theme persistence (see {@link StorageKeys.theme}). */
+  private readonly STORAGE_KEY = StorageKeys.theme;
 
   /** Cleanup function for the glass refraction observer */
   private glassRefractionObserverCleanup: (() => void) | null = null;

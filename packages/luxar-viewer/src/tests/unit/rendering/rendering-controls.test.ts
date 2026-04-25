@@ -426,13 +426,13 @@ describe('RenderingControls', () => {
       // Setup: Save custom settings
       controls.settings.fov = 100;
       controls.saveSettings();
-      expect(localStorage.getItem('luxar-rendering-settings-test-clear')).not.toBeNull();
+      expect(localStorage.getItem('luxar.rendering.test-clear')).not.toBeNull();
 
       // Action: Reset to defaults
       controls.resetToDefaults();
 
       // Verify: localStorage cleared
-      expect(localStorage.getItem('luxar-rendering-settings-test-clear')).toBeNull();
+      expect(localStorage.getItem('luxar.rendering.test-clear')).toBeNull();
     });
   });
 
